@@ -17,7 +17,7 @@ Options:
 
 Environment variables:
   CLEANUP_ARTIFACTS=1                 Remove common upgrade artifacts from target webroot after success
-  REMOVE_UPGRADE_SH_FROM_TARGET=0     Also delete upgrade.sh from the target webroot after success
+  REMOVE_UPGRADE_SH_FROM_TARGET=1     Also delete upgrade.sh from the target webroot after success (default on)
 USAGE
 }
 
@@ -26,7 +26,7 @@ FORCE=0
 FORCE_DOWNGRADE=0
 
 CLEANUP_ARTIFACTS="${CLEANUP_ARTIFACTS:-1}"
-REMOVE_UPGRADE_SH_FROM_TARGET="${REMOVE_UPGRADE_SH_FROM_TARGET:-0}"
+REMOVE_UPGRADE_SH_FROM_TARGET="${REMOVE_UPGRADE_SH_FROM_TARGET:-1}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -228,8 +228,6 @@ if [[ -n "$PHP_BIN" && -f "$TARGET_DIR/migrate.php" ]]; then
     log "Rollback completed. Please inspect."
     exit 10
   }
-else
-  log "No migrate.php or php CLI not found; skipping migrations."
 fi
 
 if [[ "$CLEANUP_ARTIFACTS" == "1" ]]; then

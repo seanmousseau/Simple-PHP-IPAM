@@ -3,9 +3,7 @@ declare(strict_types=1);
 require __DIR__ . '/init.php';
 require_login();
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    csrf_require();
-}
+if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 
 $err = '';
 $msg = '';
@@ -16,18 +14,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $new1 = (string)($_POST['new_password'] ?? '');
     $new2 = (string)($_POST['new_password2'] ?? '');
 
-    if ($new1 !== $new2) {
-        $err = 'New passwords do not match.';
-    } elseif (strlen($new1) < 12) {
-        $err = 'Password must be at least 12 characters.';
-    } else {
+    if ($new1 !== $new2) $err = 'New passwords do not match.';
+    elseif (strlen($new1) < 12) $err = 'Password must be at least 12 characters.';
+    else {
         $st = $db->prepare("SELECT password_hash FROM users WHERE id = :id");
         $st->execute([':id' => $cur['id']]);
         $row = $st->fetch();
 
-        if (!$row || !password_verify($old, $row['password_hash'])) {
-            $err = 'Current password is incorrect.';
-        } else {
+        if (!$row || !password_verify($old, $row['password_hash'])) $err = 'Current password is incorrect.';
+        else {
             $hash = password_hash($new1, PASSWORD_DEFAULT);
             $up = $db->prepare("UPDATE users SET password_hash = :h WHERE id = :id");
             $up->execute([':h' => $hash, ':id' => $cur['id']]);

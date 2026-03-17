@@ -3,9 +3,7 @@ declare(strict_types=1);
 require __DIR__ . '/init.php';
 require_role('admin');
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    csrf_require();
-}
+if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 
 $err = '';
 $msg = '';
@@ -18,13 +16,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $password = (string)($_POST['password'] ?? '');
         $role = (string)($_POST['role'] ?? 'readonly');
 
-        if ($username === '' || !preg_match('~^[a-zA-Z0-9_.-]{3,32}$~', $username)) {
-            $err = 'Username must be 3-32 chars (letters/numbers/._-).';
-        } elseif (strlen($password) < 12) {
-            $err = 'Password must be at least 12 characters.';
-        } elseif (!in_array($role, ['admin', 'readonly'], true)) {
-            $err = 'Invalid role.';
-        } else {
+        if ($username === '' || !preg_match('~^[a-zA-Z0-9_.-]{3,32}$~', $username)) $err = 'Username must be 3-32 chars (letters/numbers/._-).';
+        elseif (strlen($password) < 12) $err = 'Password must be at least 12 characters.';
+        elseif (!in_array($role, ['admin', 'readonly'], true)) $err = 'Invalid role.';
+        else {
             try {
                 $hash = password_hash($password, PASSWORD_DEFAULT);
                 $st = $db->prepare("INSERT INTO users (username, password_hash, role, is_active) VALUES (:u,:h,:r,1)");
@@ -44,9 +39,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($action === 'set_role') {
         $id = (int)($_POST['id'] ?? 0);
         $role = (string)($_POST['role'] ?? '');
-        if (!in_array($role, ['admin', 'readonly'], true)) {
-            $err = 'Invalid role.';
-        } else {
+        if (!in_array($role, ['admin', 'readonly'], true)) $err = 'Invalid role.';
+        else {
             $st = $db->prepare("UPDATE users SET role = :r WHERE id = :id");
             $st->execute([':r' => $role, ':id' => $id]);
             audit($db, 'user.set_role', 'user', $id, "role=$role");
@@ -55,9 +49,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($action === 'reset_password') {
         $id = (int)($_POST['id'] ?? 0);
         $pw = (string)($_POST['new_password'] ?? '');
-        if (strlen($pw) < 12) {
-            $err = 'Password must be at least 12 characters.';
-        } else {
+        if (strlen($pw) < 12) $err = 'Password must be at least 12 characters.';
+        else {
             $hash = password_hash($pw, PASSWORD_DEFAULT);
             $st = $db->prepare("UPDATE users SET password_hash = :h WHERE id = :id");
             $st->execute([':h' => $hash, ':id' => $id]);

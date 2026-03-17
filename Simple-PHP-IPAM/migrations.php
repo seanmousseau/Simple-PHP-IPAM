@@ -4,7 +4,6 @@ declare(strict_types=1);
 function ipam_migrations(): array
 {
     return [
-        // Adds subnets.network_bin and backfills it for existing rows
         '0.3' => function(PDO $db) {
             $cols = $db->query("PRAGMA table_info(subnets)")->fetchAll();
             $names = array_map(fn($c) => $c['name'], $cols);

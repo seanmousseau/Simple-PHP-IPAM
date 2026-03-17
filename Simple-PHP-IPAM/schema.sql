@@ -19,11 +19,11 @@ END;
 
 CREATE TABLE IF NOT EXISTS subnets (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  cidr TEXT NOT NULL UNIQUE,             -- normalized network/prefix
-  ip_version INTEGER NOT NULL,           -- 4 or 6
-  network TEXT NOT NULL,                 -- normalized network IP (string)
-  network_bin BLOB NOT NULL,             -- inet_pton(network)
-  prefix INTEGER NOT NULL,               -- prefix length
+  cidr TEXT NOT NULL UNIQUE,
+  ip_version INTEGER NOT NULL,
+  network TEXT NOT NULL,
+  network_bin BLOB NOT NULL,
+  prefix INTEGER NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -41,8 +41,8 @@ END;
 CREATE TABLE IF NOT EXISTS addresses (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   subnet_id INTEGER NOT NULL,
-  ip TEXT NOT NULL,                      -- normalized textual IP
-  ip_bin BLOB NOT NULL,                  -- inet_pton packed bytes
+  ip TEXT NOT NULL,
+  ip_bin BLOB NOT NULL,
   hostname TEXT NOT NULL DEFAULT '',
   owner TEXT NOT NULL DEFAULT '',
   note TEXT NOT NULL DEFAULT '',

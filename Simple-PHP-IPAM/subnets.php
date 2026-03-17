@@ -3,9 +3,7 @@ declare(strict_types=1);
 require __DIR__ . '/init.php';
 require_login();
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    csrf_require();
-}
+if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 
 $err = '';
 $msg = '';
@@ -19,9 +17,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $desc = trim((string)($_POST['description'] ?? ''));
 
         $p = parse_cidr($cidr);
-        if (!$p) {
-            $err = 'Invalid CIDR. Examples: 192.168.1.0/24 or 2001:db8::/64';
-        } else {
+        if (!$p) $err = 'Invalid CIDR. Examples: 192.168.1.0/24 or 2001:db8::/64';
+        else {
             $normalized = $p['network'] . '/' . $p['prefix'];
             try {
                 $st = $db->prepare("INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description)
@@ -34,8 +31,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ':pre' => $p['prefix'],
                     ':d' => $desc
                 ]);
-                $id = (int)$db->lastInsertId();
-                audit($db, 'subnet.create', 'subnet', $id, $normalized);
+                audit($db, 'subnet.create', 'subnet', (int)$db->lastInsertId(), $normalized);
                 header('Location: subnets.php');
                 exit;
             } catch (PDOException $e) {
@@ -49,9 +45,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $desc = trim((string)($_POST['description'] ?? ''));
 
         $p = parse_cidr($cidr);
-        if (!$p) {
-            $err = 'Invalid CIDR.';
-        } else {
+        if (!$p) $err = 'Invalid CIDR.';
+        else {
             $normalized = $p['network'] . '/' . $p['prefix'];
             try {
                 $st = $db->prepare("UPDATE subnets
@@ -83,17 +78,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$st = $db->prepare("SELECT id, cidr, ip_version, network, network_bin, prefix, description, created_at, updated_at
-                    FROM subnets
-                    ORDER BY ip_version ASC, prefix ASC, network_bin ASC");
+$st = $db->prepare("SELECT id, cidr, ip_version, network, network_bin, prefix, description, updated_at
+                    FROM subnets ORDER BY ip_version ASC, prefix ASC, network_bin ASC");
 $st->execute();
 $list = $st->fetchAll();
 
 $tree = build_subnet_tree($list);
 $direct = subnet_direct_counts($db);
 $agg = subnet_aggregated_counts($tree, $direct);
+$ipv4Unassigned = ipv4_unassigned_summary($db);
 
-function render_subnet_node(array $tree, array $direct, array $agg, int $id, int $depth = 0): void
+function render_subnet_node(array $tree, array $direct, array $agg, array $ipv4Unassigned, int $id, int $depth = 0): void
 {
     $row = $tree['byId'][$id];
     $pad = $depth * 18;
@@ -110,6 +105,14 @@ function render_subnet_node(array $tree, array $direct, array $agg, int $id, int
     echo "<span class='muted'>(v" . (int)$row['ip_version'] . ")</span> ";
     if ($row['description'] !== '') echo " - " . e($row['description']);
     echo "<br><span class='muted'>Direct: " . e(fmt_counts($d)) . " | With children: " . e(fmt_counts($a)) . "</span>";
+
+    if ((int)$row['ip_version'] === 4 && isset($ipv4Unassigned[$id])) {
+        $u = $ipv4Unassigned[$id];
+        echo "<br><span class='muted'>Assignable: " . e((string)$u['assignable_total']) .
+             " | Assigned: " . e((string)$u['assigned_assignable']) .
+             " | Unassigned: <b>" . e((string)$u['unassigned_assignable']) . "</b></span>";
+    }
+
     echo "</summary>";
 
     echo "<div style='margin-top:8px'>";
@@ -131,12 +134,10 @@ function render_subnet_node(array $tree, array $direct, array $agg, int $id, int
     echo "<button type='submit' $disabled>Delete</button>";
     echo "</form>";
 
-    if (current_user()['role'] === 'readonly') {
-        echo "<p class='muted'>Read-only account.</p>";
-    }
+    if (current_user()['role'] === 'readonly') echo "<p class='muted'>Read-only account.</p>";
 
     foreach (($tree['children'][$id] ?? []) as $cid) {
-        render_subnet_node($tree, $direct, $agg, (int)$cid, $depth + 1);
+        render_subnet_node($tree, $direct, $agg, $ipv4Unassigned, (int)$cid, $depth + 1);
     }
 
     echo "</div>";
@@ -167,7 +168,7 @@ page_header('Subnets');
   <p class="muted">No subnets yet.</p>
 <?php else: ?>
   <?php foreach ($tree['roots'] as $rid): ?>
-    <?php render_subnet_node($tree, $direct, $agg, (int)$rid, 0); ?>
+    <?php render_subnet_node($tree, $direct, $agg, $ipv4Unassigned, (int)$rid, 0); ?>
   <?php endforeach; ?>
 <?php endif; ?>
 

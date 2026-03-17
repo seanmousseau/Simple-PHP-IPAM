@@ -3,13 +3,9 @@ declare(strict_types=1);
 require __DIR__ . '/init.php';
 
 if (is_logged_in()) { header('Location: dashboard.php'); exit; }
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    csrf_require();
-}
+if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 
 $error = '';
-
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $username = trim((string)($_POST['username'] ?? ''));
     $password = (string)($_POST['password'] ?? '');

@@ -4,9 +4,7 @@ declare(strict_types=1);
 function ipam_db(string $path): PDO
 {
     $dir = dirname($path);
-    if (!is_dir($dir)) {
-        mkdir($dir, 0700, true);
-    }
+    if (!is_dir($dir)) mkdir($dir, 0700, true);
 
     $pdo = new PDO('sqlite:' . $path, null, null, [
         PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
@@ -21,15 +19,16 @@ function ipam_db(string $path): PDO
 
 function ipam_db_init(PDO $db): void
 {
-    $schema = file_get_contents(__DIR__ . '/schema.sql');
-    if ($schema === false) throw new RuntimeException("Cannot read schema.sql");
-    $db->exec($schema);
-
-    $st = $db->prepare("SELECT COUNT(*) AS c FROM users");
+    // New DB?
+    $st = $db->prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'");
     $st->execute();
-    $count = (int)$st->fetch()['c'];
+    $hasUsers = (bool)$st->fetch();
 
-    if ($count === 0) {
+    if (!$hasUsers) {
+        $schema = file_get_contents(__DIR__ . '/schema.sql');
+        if ($schema === false) throw new RuntimeException("Cannot read schema.sql");
+        $db->exec($schema);
+
         $config = require __DIR__ . '/config.php';
         $u = $config['bootstrap_admin']['username'];
         $p = $config['bootstrap_admin']['password'];
@@ -37,9 +36,27 @@ function ipam_db_init(PDO $db): void
         $hash = password_hash($p, PASSWORD_DEFAULT);
         $ins = $db->prepare("INSERT INTO users (username, password_hash, role, is_active) VALUES (:u,:h,'admin',1)");
         $ins->execute([':u' => $u, ':h' => $hash]);
+
+        ensure_migrations_table($db);
+        return;
     }
 
+    // Existing DB: don't exec schema.sql
     ensure_migrations_table($db);
+    apply_migrations($db);
+
+    // Ensure at least one user exists
+    $st = $db->prepare("SELECT COUNT(*) AS c FROM users");
+    $st->execute();
+    $count = (int)$st->fetch()['c'];
+    if ($count === 0) {
+        $config = require __DIR__ . '/config.php';
+        $u = $config['bootstrap_admin']['username'];
+        $p = $config['bootstrap_admin']['password'];
+        $hash = password_hash($p, PASSWORD_DEFAULT);
+        $ins = $db->prepare("INSERT INTO users (username, password_hash, role, is_active) VALUES (:u,:h,'admin',1)");
+        $ins->execute([':u' => $u, ':h' => $hash]);
+    }
 }
 
 function e(string $s): string
@@ -47,12 +64,13 @@ function e(string $s): string
     return htmlspecialchars($s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
+/* ---- CSRF / auth helpers ---- */
+
 function csrf_token(): string { return $_SESSION['csrf'] ?? ''; }
 
 function csrf_require(): void
 {
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') return;
-
     $sent = $_POST['csrf'] ?? '';
     $real = $_SESSION['csrf'] ?? '';
     if (!is_string($sent) || !hash_equals($real, $sent)) {
@@ -118,10 +136,7 @@ function logout_user(): void
     session_destroy();
 }
 
-function client_ip(): string
-{
-    return (string)($_SERVER['REMOTE_ADDR'] ?? '');
-}
+function client_ip(): string { return (string)($_SERVER['REMOTE_ADDR'] ?? ''); }
 
 function audit(PDO $db, string $action, string $entityType, ?int $entityId, string $details = ''): void
 {
@@ -140,7 +155,7 @@ function audit(PDO $db, string $action, string $entityType, ?int $entityId, stri
     ]);
 }
 
-/* ---------------- Migrations ---------------- */
+/* ---- migrations ---- */
 
 function ensure_migrations_table(PDO $db): void
 {
@@ -156,8 +171,7 @@ function applied_migrations(PDO $db): array
     ensure_migrations_table($db);
     $st = $db->prepare("SELECT version FROM schema_migrations");
     $st->execute();
-    $rows = $st->fetchAll();
-    return array_map(fn($r) => (string)$r['version'], $rows);
+    return array_map(fn($r) => (string)$r['version'], $st->fetchAll());
 }
 
 function apply_migrations(PDO $db): array
@@ -190,7 +204,7 @@ function apply_migrations(PDO $db): array
     return $appliedNow;
 }
 
-/* ---------------- IP helpers ---------------- */
+/* ---- IP helpers ---- */
 
 function parse_cidr(string $cidr): ?array
 {
@@ -198,28 +212,22 @@ function parse_cidr(string $cidr): ?array
     if (strpos($cidr, '/') === false) return null;
     [$ip, $prefixStr] = explode('/', $cidr, 2);
 
-    $ip = trim($ip);
-    $prefixStr = trim($prefixStr);
-    if ($ip === '' || $prefixStr === '') return null;
-
-    $ipBin = @inet_pton($ip);
+    $ipBin = @inet_pton(trim($ip));
     if ($ipBin === false) return null;
 
     $len = strlen($ipBin);
     $version = ($len === 4) ? 4 : (($len === 16) ? 6 : 0);
     if ($version === 0) return null;
 
-    if (!ctype_digit($prefixStr)) return null;
+    if (!ctype_digit(trim($prefixStr))) return null;
     $prefix = (int)$prefixStr;
     $max = ($version === 4) ? 32 : 128;
     if ($prefix < 0 || $prefix > $max) return null;
 
     $netBin = apply_prefix_mask($ipBin, $prefix);
-    $network = inet_ntop($netBin);
-
     return [
         'version' => $version,
-        'network' => $network,
+        'network' => inet_ntop($netBin),
         'prefix' => $prefix,
         'net_bin' => $netBin,
     ];
@@ -229,9 +237,7 @@ function apply_prefix_mask(string $ipBin, int $prefix): string
 {
     $len = strlen($ipBin);
     $maxBits = ($len === 4) ? 32 : 128;
-
-    if ($prefix < 0) $prefix = 0;
-    if ($prefix > $maxBits) $prefix = $maxBits;
+    $prefix = max(0, min($prefix, $maxBits));
 
     $fullBytes = intdiv($prefix, 8);
     $remBits = $prefix % 8;
@@ -239,14 +245,11 @@ function apply_prefix_mask(string $ipBin, int $prefix): string
     $out = '';
     for ($i = 0; $i < $len; $i++) {
         $b = ord($ipBin[$i]);
-        if ($i < $fullBytes) {
-            $out .= chr($b);
-        } elseif ($i === $fullBytes && $remBits !== 0) {
+        if ($i < $fullBytes) $out .= chr($b);
+        elseif ($i === $fullBytes && $remBits !== 0) {
             $mask = (0xFF << (8 - $remBits)) & 0xFF;
             $out .= chr($b & $mask);
-        } else {
-            $out .= chr(0);
-        }
+        } else $out .= chr(0);
     }
     return $out;
 }
@@ -257,36 +260,27 @@ function ip_in_cidr(string $ip, string $network, int $prefix): bool
     $netBin = @inet_pton(trim($network));
     if ($ipBin === false || $netBin === false) return false;
     if (strlen($ipBin) !== strlen($netBin)) return false;
-
-    $ipNet = apply_prefix_mask($ipBin, $prefix);
-    return hash_equals($ipNet, $netBin);
+    return hash_equals(apply_prefix_mask($ipBin, $prefix), $netBin);
 }
 
 function normalize_ip(string $ip): ?array
 {
     $bin = @inet_pton(trim($ip));
     if ($bin === false) return null;
-
-    $text = inet_ntop($bin);
-    $ver = (strlen($bin) === 4) ? 4 : 6;
-    return ['ip' => $text, 'bin' => $bin, 'version' => $ver];
+    return ['ip' => inet_ntop($bin), 'bin' => $bin, 'version' => (strlen($bin) === 4) ? 4 : 6];
 }
 
-/* ---------------- Subnet hierarchy + utilization ---------------- */
+/* ---- Subnet hierarchy + utilization ---- */
 
 function subnet_contains_bin(string $parentNetBin, int $parentPrefix, string $childNetBin): bool
 {
-    $masked = apply_prefix_mask($childNetBin, $parentPrefix);
-    return hash_equals($masked, $parentNetBin);
+    return hash_equals(apply_prefix_mask($childNetBin, $parentPrefix), $parentNetBin);
 }
 
 function build_subnet_tree(array $rows): array
 {
     $byId = [];
-    foreach ($rows as $r) {
-        $id = (int)$r['id'];
-        $byId[$id] = $r;
-    }
+    foreach ($rows as $r) $byId[(int)$r['id']] = $r;
 
     $ids = array_keys($byId);
     $parentOf = [];
@@ -300,35 +294,27 @@ function build_subnet_tree(array $rows): array
 
         foreach ($ids as $parentId) {
             if ($parentId === $childId) continue;
-
             $parent = $byId[$parentId];
-            if ((int)$parent['ip_version'] !== (int)$child['ip_version']) continue;
 
+            if ((int)$parent['ip_version'] !== (int)$child['ip_version']) continue;
             $pp = (int)$parent['prefix'];
             $cp = (int)$child['prefix'];
             if ($pp >= $cp) continue;
 
-            if (subnet_contains_bin($parent['network_bin'], $pp, $child['network_bin'])) {
-                if ($pp > $bestPrefix) {
-                    $bestPrefix = $pp;
-                    $bestParent = $parentId;
-                }
+            if (subnet_contains_bin($parent['network_bin'], $pp, $child['network_bin']) && $pp > $bestPrefix) {
+                $bestPrefix = $pp;
+                $bestParent = $parentId;
             }
         }
-
         $parentOf[$childId] = $bestParent;
     }
 
     $cmpFn = function(int $a, int $b) use ($byId): int {
-        $ra = $byId[$a];
-        $rb = $byId[$b];
-        $va = (int)$ra['ip_version'];
-        $vb = (int)$rb['ip_version'];
+        $ra = $byId[$a]; $rb = $byId[$b];
+        $va = (int)$ra['ip_version']; $vb = (int)$rb['ip_version'];
         if ($va !== $vb) return $va <=> $vb;
-
         $c = strcmp($ra['network_bin'], $rb['network_bin']);
         if ($c !== 0) return $c;
-
         return (int)$ra['prefix'] <=> (int)$rb['prefix'];
     };
 
@@ -349,16 +335,11 @@ function build_subnet_tree(array $rows): array
 
 function subnet_direct_counts(PDO $db): array
 {
-    $st = $db->prepare("
-        SELECT subnet_id, status, COUNT(*) AS c
-        FROM addresses
-        GROUP BY subnet_id, status
-    ");
+    $st = $db->prepare("SELECT subnet_id, status, COUNT(*) AS c FROM addresses GROUP BY subnet_id, status");
     $st->execute();
-    $rows = $st->fetchAll();
 
     $out = [];
-    foreach ($rows as $r) {
+    foreach ($st->fetchAll() as $r) {
         $sid = (int)$r['subnet_id'];
         $status = (string)$r['status'];
         $c = (int)$r['c'];
@@ -387,14 +368,10 @@ function subnet_aggregated_counts(array $tree, array $directCounts): array
             $sum['free']     += $c['free'];
             $sum['total']    += $c['total'];
         }
-
         return $agg[$id] = $sum;
     };
 
-    foreach ($tree['byId'] as $id => $_row) {
-        $sumNode((int)$id);
-    }
-
+    foreach ($tree['byId'] as $id => $_row) $sumNode((int)$id);
     return $agg;
 }
 
@@ -403,7 +380,92 @@ function fmt_counts(array $c): string
     return "total {$c['total']} (used {$c['used']}, res {$c['reserved']}, free {$c['free']})";
 }
 
-/* ---------------- UI helpers ---------------- */
+/* ---- IPv4 unassigned (assignable only) ---- */
+
+function ipv4_assignable_count(int $prefix): int
+{
+    if ($prefix >= 32) return 1;
+    if ($prefix === 31) return 2;
+
+    $hostBits = 32 - $prefix;
+    $total = ($hostBits === 32) ? 4294967296 : (1 << $hostBits);
+    $assignable = $total - 2;
+    return ($assignable > 0) ? (int)$assignable : 0;
+}
+
+function ipv4_broadcast_bin(string $netBin, int $prefix): string
+{
+    $hostBits = 32 - $prefix;
+    if ($hostBits <= 0) return $netBin;
+
+    $n = unpack('N', $netBin)[1];
+    $hostMask = ($hostBits === 32) ? 0xFFFFFFFF : ((1 << $hostBits) - 1);
+    $b = ($n | $hostMask) & 0xFFFFFFFF;
+
+    return pack('N', $b);
+}
+
+/**
+ * Returns IPv4-only unassigned summary:
+ * [subnet_id => ['assignable_total'=>int,'assigned_assignable'=>int,'unassigned_assignable'=>int]]
+ */
+function ipv4_unassigned_summary(PDO $db): array
+{
+    $st = $db->prepare("SELECT id, prefix, network_bin FROM subnets WHERE ip_version = 4");
+    $st->execute();
+    $subs = $st->fetchAll();
+    if (!$subs) return [];
+
+    $st = $db->prepare("
+        SELECT a.subnet_id, a.ip_bin
+        FROM addresses a
+        JOIN subnets s ON s.id = a.subnet_id
+        WHERE s.ip_version = 4
+    ");
+    $st->execute();
+    $addrRows = $st->fetchAll();
+
+    $ipsBySubnet = [];
+    foreach ($addrRows as $r) {
+        $sid = (int)$r['subnet_id'];
+        $ipsBySubnet[$sid] ??= [];
+        $ipsBySubnet[$sid][] = $r['ip_bin'];
+    }
+
+    $out = [];
+    foreach ($subs as $s) {
+        $sid = (int)$s['id'];
+        $prefix = (int)$s['prefix'];
+        $netBin = $s['network_bin'];
+
+        $assignableTotal = ipv4_assignable_count($prefix);
+        $ips = $ipsBySubnet[$sid] ?? [];
+
+        if ($prefix <= 30) {
+            $bcast = ipv4_broadcast_bin($netBin, $prefix);
+            $assignedAssignable = 0;
+            foreach ($ips as $ipb) {
+                if (hash_equals($ipb, $netBin) || hash_equals($ipb, $bcast)) continue;
+                $assignedAssignable++;
+            }
+        } else {
+            $assignedAssignable = count($ips);
+        }
+
+        $unassigned = $assignableTotal - $assignedAssignable;
+        if ($unassigned < 0) $unassigned = 0;
+
+        $out[$sid] = [
+            'assignable_total' => (int)$assignableTotal,
+            'assigned_assignable' => (int)$assignedAssignable,
+            'unassigned_assignable' => (int)$unassigned,
+        ];
+    }
+
+    return $out;
+}
+
+/* ---- UI ---- */
 
 function page_header(string $title): void
 {
@@ -418,7 +480,6 @@ function page_header(string $title): void
       table{border-collapse:collapse;width:100%}
       th,td{border:1px solid #ccc;padding:8px;text-align:left;vertical-align:top}
       input,select{padding:6px}
-      textarea{padding:6px;font-family:inherit}
       .row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
       .muted{color:#666}
       .danger{color:#b00020}

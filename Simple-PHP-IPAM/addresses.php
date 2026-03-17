@@ -3,9 +3,7 @@ declare(strict_types=1);
 require __DIR__ . '/init.php';
 require_login();
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    csrf_require();
-}
+if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 
 $err = '';
 $msg = '';
@@ -41,19 +39,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $st->execute([':id' => $subnetId]);
         $sub = $st->fetch();
 
-        if (!$sub) {
-            $err = 'Invalid subnet.';
-        } else {
+        if (!$sub) $err = 'Invalid subnet.';
+        else {
             $norm = normalize_ip($ipInput);
-            if (!$norm) {
-                $err = 'Invalid IP (IPv4/IPv6).';
-            } elseif ((int)$sub['ip_version'] !== (int)$norm['version']) {
-                $err = 'IP version does not match subnet.';
-            } elseif (!ip_in_cidr($norm['ip'], (string)$sub['network'], (int)$sub['prefix'])) {
-                $err = 'IP is not within selected subnet.';
-            } elseif (!in_array($status, ['used','reserved','free'], true)) {
-                $err = 'Invalid status.';
-            } else {
+            if (!$norm) $err = 'Invalid IP (IPv4/IPv6).';
+            elseif ((int)$sub['ip_version'] !== (int)$norm['version']) $err = 'IP version does not match subnet.';
+            elseif (!ip_in_cidr($norm['ip'], (string)$sub['network'], (int)$sub['prefix'])) $err = 'IP is not within selected subnet.';
+            elseif (!in_array($status, ['used','reserved','free'], true)) $err = 'Invalid status.';
+            else {
                 try {
                     $ins = $db->prepare("INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, status)
                                          VALUES (:sid,:ip,:bin,:hn,:ow,:nt,:st)");
@@ -66,8 +59,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ':nt'  => $note,
                         ':st'  => $status,
                     ]);
-                    $id = (int)$db->lastInsertId();
-                    audit($db, 'address.create', 'address', $id, $norm['ip'] . " subnet_id=$subnetId");
+                    audit($db, 'address.create', 'address', (int)$db->lastInsertId(), $norm['ip'] . " subnet_id=$subnetId");
                     header('Location: addresses.php?subnet_id=' . $subnetId);
                     exit;
                 } catch (PDOException $e) {
@@ -85,9 +77,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $note = trim((string)($_POST['note'] ?? ''));
         $status = (string)($_POST['status'] ?? 'used');
 
-        if (!in_array($status, ['used','reserved','free'], true)) {
-            $err = 'Invalid status.';
-        } else {
+        if (!in_array($status, ['used','reserved','free'], true)) $err = 'Invalid status.';
+        else {
             $up = $db->prepare("UPDATE addresses
                                 SET hostname=:hn, owner=:ow, note=:nt, status=:st
                                 WHERE id=:id AND subnet_id=:sid");
@@ -118,9 +109,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $addresses = [];
 if ($selectedSubnetId > 0) {
     $st = $db->prepare("SELECT id, ip, hostname, owner, note, status, updated_at
-                        FROM addresses
-                        WHERE subnet_id = :sid
-                        ORDER BY ip_bin ASC");
+                        FROM addresses WHERE subnet_id = :sid ORDER BY ip_bin ASC");
     $st->execute([':sid' => $selectedSubnetId]);
     $addresses = $st->fetchAll();
 }
@@ -169,8 +158,7 @@ page_header('Addresses');
   </div>
 
   <p>
-    <button type="submit"
-      <?= ($selectedSubnetId>0 && current_user()['role']!=='readonly') ? '' : 'disabled' ?>>
+    <button type="submit" <?= ($selectedSubnetId>0 && current_user()['role']!=='readonly') ? '' : 'disabled' ?>>
       Add
     </button>
   </p>
