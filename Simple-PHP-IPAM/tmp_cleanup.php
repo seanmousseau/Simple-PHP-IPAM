@@ -1,10 +1,6 @@
 <?php
 declare(strict_types=1);
 
-// CLI utility to clean up old temp files in data/tmp.
-// Usage:
-//   php tmp_cleanup.php
-
 require __DIR__ . '/init.php';
 
 if (php_sapi_name() !== 'cli') {

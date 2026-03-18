@@ -30,5 +30,4 @@ page_header('Dashboard');
   <?php endforeach; ?>
 </ul>
 
-<p class="muted">Note: “Unassigned” is computed only for IPv4 and counts only assignable hosts.</p>
 <?php page_footer();

@@ -120,7 +120,9 @@ if ($step === 2) {
         $mapping = $_POST['map'] ?? [];
         if (!is_array($mapping)) $mapping = [];
 
-        if (empty($mapping['ip']) || $mapping['ip'] === 'ignore') {
+        // FIX: do not use empty() because "0" (first column) is considered empty
+        $ipMap = $mapping['ip'] ?? 'ignore';
+        if ($ipMap === 'ignore' || $ipMap === '' || !is_numeric((string)$ipMap)) {
             $err = "You must map an IP column.";
         } else {
             $dupMode = (string)($_POST['dup_mode'] ?? 'skip');
@@ -243,7 +245,9 @@ if ($step === 3) {
     $map = $wiz['mapping'] ?? [];
     $dupMode = (string)($wiz['dup_mode'] ?? 'skip');
 
-    if (!is_array($map) || empty($map['ip']) || $map['ip'] === 'ignore') {
+    // FIX: do not use empty() because "0" is considered empty
+    $ipMap = is_array($map) ? ($map['ip'] ?? 'ignore') : 'ignore';
+    if (!is_array($map) || $ipMap === 'ignore' || $ipMap === '' || !is_numeric((string)$ipMap)) {
         header("Location: import_csv.php?step=2");
         exit;
     }
@@ -439,7 +443,6 @@ if ($step === 3) {
                 "created_subnets=$createdSubnets created_addresses=$createdAddresses updated_addresses=$updatedAddresses skipped_dups=$skippedDuplicates skipped_unknown=$skippedUnknown invalid=$invalid"
             );
 
-            // Cleanup uploaded file after successful import
             if (!empty($wiz['tmp_path']) && is_file($wiz['tmp_path'])) @unlink($wiz['tmp_path']);
             $wiz = [];
 
@@ -504,10 +507,10 @@ if ($step === 3) {
       </div>
 
       <div class="row">
-        <label>Default IPv4 prefix (if CSV provides none)<br>
+        <label>Default IPv4 prefix<br>
           <input name="default_prefix_v4" value="24" inputmode="numeric">
         </label>
-        <label>Default IPv6 prefix (if CSV provides none)<br>
+        <label>Default IPv6 prefix<br>
           <input name="default_prefix_v6" value="64" inputmode="numeric">
         </label>
       </div>

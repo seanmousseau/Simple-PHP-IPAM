@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS addresses (
   hostname TEXT NOT NULL DEFAULT '',
   owner TEXT NOT NULL DEFAULT '',
   note TEXT NOT NULL DEFAULT '',
-  status TEXT NOT NULL DEFAULT 'used',    -- used|reserved|free
+  status TEXT NOT NULL DEFAULT 'used',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(subnet_id, ip),

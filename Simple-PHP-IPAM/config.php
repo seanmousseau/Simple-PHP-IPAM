@@ -15,7 +15,6 @@ return [
     'import_csv_max_mb' => 5,
 
     // Temp upload cleanup (seconds). Files older than this are eligible for cleanup.
-    // Default: 24 hours.
     'tmp_cleanup_ttl_seconds' => 86400,
 
     // Lazy housekeeping: runs on normal site access at most once per interval.

@@ -19,7 +19,6 @@ function ipam_db(string $path): PDO
 
 function ipam_db_init(PDO $db): void
 {
-    // New DB?
     $st = $db->prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'");
     $st->execute();
     $hasUsers = (bool)$st->fetch();
@@ -41,11 +40,9 @@ function ipam_db_init(PDO $db): void
         return;
     }
 
-    // Existing DB: don't exec schema.sql
     ensure_migrations_table($db);
     apply_migrations($db);
 
-    // Ensure at least one user exists
     $st = $db->prepare("SELECT COUNT(*) AS c FROM users");
     $st->execute();
     $count = (int)$st->fetch()['c'];
@@ -59,12 +56,7 @@ function ipam_db_init(PDO $db): void
     }
 }
 
-function e(string $s): string
-{
-    return htmlspecialchars($s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-}
-
-/* ---- CSRF / auth helpers ---- */
+function e(string $s): string { return htmlspecialchars($s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 
 function csrf_token(): string { return $_SESSION['csrf'] ?? ''; }
 
@@ -168,7 +160,6 @@ function ensure_migrations_table(PDO $db): void
 
 function applied_migrations(PDO $db): array
 {
-    ensure_migrations_table($db);
     $st = $db->prepare("SELECT version FROM schema_migrations");
     $st->execute();
     return array_map(fn($r) => (string)$r['version'], $st->fetchAll());
@@ -204,7 +195,71 @@ function apply_migrations(PDO $db): array
     return $appliedNow;
 }
 
-/* ---- IP helpers ---- */
+/* ---- housekeeping ---- */
+
+function housekeeping_state_path(): string
+{
+    return __DIR__ . '/data/housekeeping.json';
+}
+
+function housekeeping_should_run(array $config): bool
+{
+    $hk = $config['housekeeping'] ?? [];
+    if (empty($hk['enabled'])) return false;
+
+    $interval = (int)($hk['interval_seconds'] ?? 86400);
+    if ($interval < 3600) $interval = 3600;
+
+    $path = housekeeping_state_path();
+    if (!is_file($path)) return true;
+
+    $json = file_get_contents($path);
+    if ($json === false) return true;
+
+    $data = json_decode($json, true);
+    $last = (int)($data['last_run'] ?? 0);
+
+    return (time() - $last) >= $interval;
+}
+
+function housekeeping_mark_ran(): void
+{
+    $path = housekeeping_state_path();
+    $dir = dirname($path);
+    if (!is_dir($dir)) mkdir($dir, 0700, true);
+
+    @file_put_contents($path, json_encode(['last_run' => time()], JSON_PRETTY_PRINT));
+    @chmod($path, 0600);
+}
+
+function run_housekeeping_if_due(array $config): void
+{
+    if (!housekeeping_should_run($config)) return;
+
+    $lockPath = __DIR__ . '/data/housekeeping.lock';
+    $lock = @fopen($lockPath, 'c');
+    if (!$lock) return;
+
+    if (!@flock($lock, LOCK_EX | LOCK_NB)) {
+        fclose($lock);
+        return;
+    }
+
+    try {
+        if (!housekeeping_should_run($config)) return;
+
+        $ttl = (int)($config['tmp_cleanup_ttl_seconds'] ?? 86400);
+        if ($ttl < 3600) $ttl = 3600;
+
+        cleanup_tmp_import_files($ttl);
+        housekeeping_mark_ran();
+    } finally {
+        @flock($lock, LOCK_UN);
+        @fclose($lock);
+    }
+}
+
+/* ---- IP + CSV helpers ---- */
 
 function parse_cidr(string $cidr): ?array
 {
@@ -270,199 +325,154 @@ function normalize_ip(string $ip): ?array
     return ['ip' => inet_ntop($bin), 'bin' => $bin, 'version' => (strlen($bin) === 4) ? 4 : 6];
 }
 
-/* ---- Subnet hierarchy + utilization ---- */
-
-function subnet_contains_bin(string $parentNetBin, int $parentPrefix, string $childNetBin): bool
+function normalize_status(?string $s): string
 {
-    return hash_equals(apply_prefix_mask($childNetBin, $parentPrefix), $parentNetBin);
+    $s = strtolower(trim((string)$s));
+    if ($s === '') return 'used';
+    if (in_array($s, ['used','reserved','free'], true)) return $s;
+    if (in_array($s, ['inuse','in-use','active'], true)) return 'used';
+    if (in_array($s, ['res','reservation'], true)) return 'reserved';
+    if (in_array($s, ['avail','available','unused'], true)) return 'free';
+    return 'used';
 }
 
-function build_subnet_tree(array $rows): array
+function import_max_bytes(array $config): int
 {
-    $byId = [];
-    foreach ($rows as $r) $byId[(int)$r['id']] = $r;
+    $mb = (int)($config['import_csv_max_mb'] ?? 5);
+    if ($mb < 5) $mb = 5;
+    if ($mb > 50) $mb = 50;
+    return $mb * 1024 * 1024;
+}
 
-    $ids = array_keys($byId);
-    $parentOf = [];
-    $children = [];
-    $roots = [];
+function tmp_dir(): string { return __DIR__ . '/data/tmp'; }
 
-    foreach ($ids as $childId) {
-        $child = $byId[$childId];
-        $bestParent = null;
-        $bestPrefix = -1;
+function ensure_tmp_dir(): void
+{
+    $d = tmp_dir();
+    if (!is_dir($d)) mkdir($d, 0700, true);
+}
 
-        foreach ($ids as $parentId) {
-            if ($parentId === $childId) continue;
-            $parent = $byId[$parentId];
+function cleanup_tmp_import_files(int $ttlSeconds): int
+{
+    ensure_tmp_dir();
+    $now = time();
+    $deleted = 0;
 
-            if ((int)$parent['ip_version'] !== (int)$child['ip_version']) continue;
-            $pp = (int)$parent['prefix'];
-            $cp = (int)$child['prefix'];
-            if ($pp >= $cp) continue;
-
-            if (subnet_contains_bin($parent['network_bin'], $pp, $child['network_bin']) && $pp > $bestPrefix) {
-                $bestPrefix = $pp;
-                $bestParent = $parentId;
-            }
+    foreach (new DirectoryIterator(tmp_dir()) as $f) {
+        if ($f->isDot() || !$f->isFile()) continue;
+        $name = $f->getFilename();
+        if (!preg_match('~^import-[a-f0-9]{16}\.csv$~', $name)) continue;
+        $age = $now - $f->getMTime();
+        if ($age > $ttlSeconds) {
+            @unlink($f->getPathname());
+            $deleted++;
         }
-        $parentOf[$childId] = $bestParent;
     }
-
-    $cmpFn = function(int $a, int $b) use ($byId): int {
-        $ra = $byId[$a]; $rb = $byId[$b];
-        $va = (int)$ra['ip_version']; $vb = (int)$rb['ip_version'];
-        if ($va !== $vb) return $va <=> $vb;
-        $c = strcmp($ra['network_bin'], $rb['network_bin']);
-        if ($c !== 0) return $c;
-        return (int)$ra['prefix'] <=> (int)$rb['prefix'];
-    };
-
-    foreach ($ids as $id) {
-        $p = $parentOf[$id];
-        if ($p === null) $roots[] = $id;
-        else $children[$p][] = $id;
-    }
-
-    usort($roots, $cmpFn);
-    foreach ($children as $pid => $list) {
-        usort($list, $cmpFn);
-        $children[$pid] = $list;
-    }
-
-    return ['roots' => $roots, 'children' => $children, 'byId' => $byId, 'parentOf' => $parentOf];
+    return $deleted;
 }
 
-function subnet_direct_counts(PDO $db): array
+function detect_csv_delimiter(string $sample): string
 {
-    $st = $db->prepare("SELECT subnet_id, status, COUNT(*) AS c FROM addresses GROUP BY subnet_id, status");
-    $st->execute();
+    $candidates = ["," , ";" , "\t" , "|"];
+    $best = ",";
+    $bestCount = -1;
 
-    $out = [];
-    foreach ($st->fetchAll() as $r) {
-        $sid = (int)$r['subnet_id'];
-        $status = (string)$r['status'];
-        $c = (int)$r['c'];
-        $out[$sid] ??= ['used'=>0,'reserved'=>0,'free'=>0,'total'=>0];
-        if (isset($out[$sid][$status])) $out[$sid][$status] += $c;
-        $out[$sid]['total'] += $c;
-    }
-    return $out;
-}
-
-function subnet_aggregated_counts(array $tree, array $directCounts): array
-{
-    $children = $tree['children'];
-    $agg = [];
-
-    $sumNode = function(int $id) use (&$sumNode, &$agg, $children, $directCounts): array {
-        if (isset($agg[$id])) return $agg[$id];
-
-        $base = $directCounts[$id] ?? ['used'=>0,'reserved'=>0,'free'=>0,'total'=>0];
-        $sum = $base;
-
-        foreach (($children[$id] ?? []) as $cid) {
-            $c = $sumNode((int)$cid);
-            $sum['used']     += $c['used'];
-            $sum['reserved'] += $c['reserved'];
-            $sum['free']     += $c['free'];
-            $sum['total']    += $c['total'];
+    foreach ($candidates as $d) {
+        $lines = preg_split("/\r\n|\n|\r/", $sample);
+        $counts = [];
+        foreach (array_slice($lines, 0, 10) as $line) {
+            if ($line === '') continue;
+            $counts[] = count(str_getcsv($line, $d));
         }
-        return $agg[$id] = $sum;
-    };
-
-    foreach ($tree['byId'] as $id => $_row) $sumNode((int)$id);
-    return $agg;
-}
-
-function fmt_counts(array $c): string
-{
-    return "total {$c['total']} (used {$c['used']}, res {$c['reserved']}, free {$c['free']})";
-}
-
-/* ---- IPv4 unassigned (assignable only) ---- */
-
-function ipv4_assignable_count(int $prefix): int
-{
-    if ($prefix >= 32) return 1;
-    if ($prefix === 31) return 2;
-
-    $hostBits = 32 - $prefix;
-    $total = ($hostBits === 32) ? 4294967296 : (1 << $hostBits);
-    $assignable = $total - 2;
-    return ($assignable > 0) ? (int)$assignable : 0;
-}
-
-function ipv4_broadcast_bin(string $netBin, int $prefix): string
-{
-    $hostBits = 32 - $prefix;
-    if ($hostBits <= 0) return $netBin;
-
-    $n = unpack('N', $netBin)[1];
-    $hostMask = ($hostBits === 32) ? 0xFFFFFFFF : ((1 << $hostBits) - 1);
-    $b = ($n | $hostMask) & 0xFFFFFFFF;
-
-    return pack('N', $b);
-}
-
-/**
- * Returns IPv4-only unassigned summary:
- * [subnet_id => ['assignable_total'=>int,'assigned_assignable'=>int,'unassigned_assignable'=>int]]
- */
-function ipv4_unassigned_summary(PDO $db): array
-{
-    $st = $db->prepare("SELECT id, prefix, network_bin FROM subnets WHERE ip_version = 4");
-    $st->execute();
-    $subs = $st->fetchAll();
-    if (!$subs) return [];
-
-    $st = $db->prepare("
-        SELECT a.subnet_id, a.ip_bin
-        FROM addresses a
-        JOIN subnets s ON s.id = a.subnet_id
-        WHERE s.ip_version = 4
-    ");
-    $st->execute();
-    $addrRows = $st->fetchAll();
-
-    $ipsBySubnet = [];
-    foreach ($addrRows as $r) {
-        $sid = (int)$r['subnet_id'];
-        $ipsBySubnet[$sid] ??= [];
-        $ipsBySubnet[$sid][] = $r['ip_bin'];
+        if (!$counts) continue;
+        $avg = array_sum($counts) / count($counts);
+        if ($avg > $bestCount) {
+            $bestCount = $avg;
+            $best = $d;
+        }
     }
+    return $best;
+}
 
-    $out = [];
-    foreach ($subs as $s) {
-        $sid = (int)$s['id'];
-        $prefix = (int)$s['prefix'];
-        $netBin = $s['network_bin'];
+function csv_read_preview(string $path, string $delimiter, int $maxRows = 20): array
+{
+    $fh = fopen($path, 'rb');
+    if (!$fh) throw new RuntimeException("Cannot open upload");
+    $rows = [];
+    while (!feof($fh) && count($rows) < $maxRows) {
+        $row = fgetcsv($fh, 0, $delimiter);
+        if ($row === false) break;
+        if (count($row) === 1 && trim((string)$row[0]) === '') continue;
+        $rows[] = $row;
+    }
+    fclose($fh);
+    return $rows;
+}
 
-        $assignableTotal = ipv4_assignable_count($prefix);
-        $ips = $ipsBySubnet[$sid] ?? [];
+function netmask_to_prefix(string $mask): ?int
+{
+    $bin = @inet_pton(trim($mask));
+    if ($bin === false || strlen($bin) !== 4) return null;
 
-        if ($prefix <= 30) {
-            $bcast = ipv4_broadcast_bin($netBin, $prefix);
-            $assignedAssignable = 0;
-            foreach ($ips as $ipb) {
-                if (hash_equals($ipb, $netBin) || hash_equals($ipb, $bcast)) continue;
-                $assignedAssignable++;
-            }
+    $n = unpack('N', $bin)[1];
+    $prefix = 0;
+    $seenZero = false;
+
+    for ($i = 31; $i >= 0; $i--) {
+        $bit = ($n >> $i) & 1;
+        if ($bit === 1) {
+            if ($seenZero) return null;
+            $prefix++;
         } else {
-            $assignedAssignable = count($ips);
+            $seenZero = true;
         }
-
-        $unassigned = $assignableTotal - $assignedAssignable;
-        if ($unassigned < 0) $unassigned = 0;
-
-        $out[$sid] = [
-            'assignable_total' => (int)$assignableTotal,
-            'assigned_assignable' => (int)$assignedAssignable,
-            'unassigned_assignable' => (int)$unassigned,
-        ];
     }
+    return $prefix;
+}
 
-    return $out;
+function find_containing_subnet(PDO $db, array $normIp): ?array
+{
+    $ver = (int)$normIp['version'];
+    $st = $db->prepare("SELECT id, network, prefix, ip_version FROM subnets WHERE ip_version = :v ORDER BY prefix ASC");
+    $st->execute([':v' => $ver]);
+    foreach ($st->fetchAll() as $s) {
+        if (ip_in_cidr($normIp['ip'], (string)$s['network'], (int)$s['prefix'])) return $s;
+    }
+    return null;
+}
+
+function ensure_subnet_exists(PDO $db, string $cidr, string $description = ''): int
+{
+    $p = parse_cidr($cidr);
+    if (!$p) throw new RuntimeException("Invalid CIDR to create: $cidr");
+
+    $normalized = $p['network'] . '/' . $p['prefix'];
+
+    $st = $db->prepare("SELECT id FROM subnets WHERE cidr = :c");
+    $st->execute([':c' => $normalized]);
+    $row = $st->fetch();
+    if ($row) return (int)$row['id'];
+
+    $ins = $db->prepare("INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description)
+                         VALUES (:cidr,:ver,:net,:nb,:pre,:d)");
+    $ins->execute([
+        ':cidr' => $normalized,
+        ':ver' => $p['version'],
+        ':net' => $p['network'],
+        ':nb' => $p['net_bin'],
+        ':pre' => $p['prefix'],
+        ':d' => $description,
+    ]);
+
+    return (int)$db->lastInsertId();
+}
+
+function cidr_from_ip_and_prefix(array $normIp, int $prefix): string
+{
+    $max = ($normIp['version'] === 4) ? 32 : 128;
+    if ($prefix < 0 || $prefix > $max) throw new RuntimeException("Bad prefix");
+    $netBin = apply_prefix_mask($normIp['bin'], $prefix);
+    return inet_ntop($netBin) . '/' . $prefix;
 }
 
 /* ---- UI ---- */
@@ -496,7 +506,10 @@ function page_header(string $title): void
         echo "<a href='subnets.php'>Subnets</a>";
         echo "<a href='addresses.php'>Addresses</a>";
         echo "<a href='audit.php'>Audit</a>";
-        if (($role ?? '') === 'admin') echo "<a href='users.php'>Users</a>";
+        if (($role ?? '') === 'admin') {
+            echo "<a href='users.php'>Users</a>";
+            echo "<a href='import_csv.php'>Import CSV</a>";
+        }
         echo "<a href='change_password.php'>Change Password</a>";
         echo "<a href='logout.php'>Logout</a>";
     } else {
