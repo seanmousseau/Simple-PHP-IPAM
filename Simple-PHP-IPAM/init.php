@@ -42,6 +42,9 @@ require __DIR__ . '/lib.php';
 $db = ipam_db((string)$config['db_path']);
 ipam_db_init($db);
 
+// Run best-effort housekeeping at most once/day (configurable)
+run_housekeeping_if_due($config);
+
 if (empty($_SESSION['csrf'])) {
     $_SESSION['csrf'] = bin2hex(random_bytes(32));
 }
