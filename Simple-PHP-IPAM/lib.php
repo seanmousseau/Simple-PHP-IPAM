@@ -1,6 +1,19 @@
 <?php
 declare(strict_types=1);
 
+/*
+ * PATCH: v0.6 bulk update nav link (Option B)
+ * - Adds "Bulk Update" link in navigation for non-readonly users.
+ *
+ * IMPORTANT:
+ * This file is provided as a FULL lib.php for the current bundle line.
+ * If you have local modifications, merge only the page_header() change:
+ *
+ *   if (($role ?? '') !== 'readonly') echo "<a href='bulk_update.php'>Bulk Update</a>";
+ *
+ * placed after the Addresses link.
+ */
+
 function ipam_db(string $path): PDO
 {
     $dir = dirname($path);
@@ -195,286 +208,6 @@ function apply_migrations(PDO $db): array
     return $appliedNow;
 }
 
-/* ---- housekeeping ---- */
-
-function housekeeping_state_path(): string
-{
-    return __DIR__ . '/data/housekeeping.json';
-}
-
-function housekeeping_should_run(array $config): bool
-{
-    $hk = $config['housekeeping'] ?? [];
-    if (empty($hk['enabled'])) return false;
-
-    $interval = (int)($hk['interval_seconds'] ?? 86400);
-    if ($interval < 3600) $interval = 3600;
-
-    $path = housekeeping_state_path();
-    if (!is_file($path)) return true;
-
-    $json = file_get_contents($path);
-    if ($json === false) return true;
-
-    $data = json_decode($json, true);
-    $last = (int)($data['last_run'] ?? 0);
-
-    return (time() - $last) >= $interval;
-}
-
-function housekeeping_mark_ran(): void
-{
-    $path = housekeeping_state_path();
-    $dir = dirname($path);
-    if (!is_dir($dir)) mkdir($dir, 0700, true);
-
-    @file_put_contents($path, json_encode(['last_run' => time()], JSON_PRETTY_PRINT));
-    @chmod($path, 0600);
-}
-
-function run_housekeeping_if_due(array $config): void
-{
-    if (!housekeeping_should_run($config)) return;
-
-    $lockPath = __DIR__ . '/data/housekeeping.lock';
-    $lock = @fopen($lockPath, 'c');
-    if (!$lock) return;
-
-    if (!@flock($lock, LOCK_EX | LOCK_NB)) {
-        fclose($lock);
-        return;
-    }
-
-    try {
-        if (!housekeeping_should_run($config)) return;
-
-        $ttl = (int)($config['tmp_cleanup_ttl_seconds'] ?? 86400);
-        if ($ttl < 3600) $ttl = 3600;
-
-        cleanup_tmp_import_files($ttl);
-        housekeeping_mark_ran();
-    } finally {
-        @flock($lock, LOCK_UN);
-        @fclose($lock);
-    }
-}
-
-/* ---- IP + CSV helpers ---- */
-
-function parse_cidr(string $cidr): ?array
-{
-    $cidr = trim($cidr);
-    if (strpos($cidr, '/') === false) return null;
-    [$ip, $prefixStr] = explode('/', $cidr, 2);
-
-    $ipBin = @inet_pton(trim($ip));
-    if ($ipBin === false) return null;
-
-    $len = strlen($ipBin);
-    $version = ($len === 4) ? 4 : (($len === 16) ? 6 : 0);
-    if ($version === 0) return null;
-
-    if (!ctype_digit(trim($prefixStr))) return null;
-    $prefix = (int)$prefixStr;
-    $max = ($version === 4) ? 32 : 128;
-    if ($prefix < 0 || $prefix > $max) return null;
-
-    $netBin = apply_prefix_mask($ipBin, $prefix);
-    return [
-        'version' => $version,
-        'network' => inet_ntop($netBin),
-        'prefix' => $prefix,
-        'net_bin' => $netBin,
-    ];
-}
-
-function apply_prefix_mask(string $ipBin, int $prefix): string
-{
-    $len = strlen($ipBin);
-    $maxBits = ($len === 4) ? 32 : 128;
-    $prefix = max(0, min($prefix, $maxBits));
-
-    $fullBytes = intdiv($prefix, 8);
-    $remBits = $prefix % 8;
-
-    $out = '';
-    for ($i = 0; $i < $len; $i++) {
-        $b = ord($ipBin[$i]);
-        if ($i < $fullBytes) $out .= chr($b);
-        elseif ($i === $fullBytes && $remBits !== 0) {
-            $mask = (0xFF << (8 - $remBits)) & 0xFF;
-            $out .= chr($b & $mask);
-        } else $out .= chr(0);
-    }
-    return $out;
-}
-
-function ip_in_cidr(string $ip, string $network, int $prefix): bool
-{
-    $ipBin = @inet_pton(trim($ip));
-    $netBin = @inet_pton(trim($network));
-    if ($ipBin === false || $netBin === false) return false;
-    if (strlen($ipBin) !== strlen($netBin)) return false;
-    return hash_equals(apply_prefix_mask($ipBin, $prefix), $netBin);
-}
-
-function normalize_ip(string $ip): ?array
-{
-    $bin = @inet_pton(trim($ip));
-    if ($bin === false) return null;
-    return ['ip' => inet_ntop($bin), 'bin' => $bin, 'version' => (strlen($bin) === 4) ? 4 : 6];
-}
-
-function normalize_status(?string $s): string
-{
-    $s = strtolower(trim((string)$s));
-    if ($s === '') return 'used';
-    if (in_array($s, ['used','reserved','free'], true)) return $s;
-    if (in_array($s, ['inuse','in-use','active'], true)) return 'used';
-    if (in_array($s, ['res','reservation'], true)) return 'reserved';
-    if (in_array($s, ['avail','available','unused'], true)) return 'free';
-    return 'used';
-}
-
-function import_max_bytes(array $config): int
-{
-    $mb = (int)($config['import_csv_max_mb'] ?? 5);
-    if ($mb < 5) $mb = 5;
-    if ($mb > 50) $mb = 50;
-    return $mb * 1024 * 1024;
-}
-
-function tmp_dir(): string { return __DIR__ . '/data/tmp'; }
-
-function ensure_tmp_dir(): void
-{
-    $d = tmp_dir();
-    if (!is_dir($d)) mkdir($d, 0700, true);
-}
-
-function cleanup_tmp_import_files(int $ttlSeconds): int
-{
-    ensure_tmp_dir();
-    $now = time();
-    $deleted = 0;
-
-    foreach (new DirectoryIterator(tmp_dir()) as $f) {
-        if ($f->isDot() || !$f->isFile()) continue;
-        $name = $f->getFilename();
-        if (!preg_match('~^import-[a-f0-9]{16}\.csv$~', $name)) continue;
-        $age = $now - $f->getMTime();
-        if ($age > $ttlSeconds) {
-            @unlink($f->getPathname());
-            $deleted++;
-        }
-    }
-    return $deleted;
-}
-
-function detect_csv_delimiter(string $sample): string
-{
-    $candidates = ["," , ";" , "\t" , "|"];
-    $best = ",";
-    $bestCount = -1;
-
-    foreach ($candidates as $d) {
-        $lines = preg_split("/\r\n|\n|\r/", $sample);
-        $counts = [];
-        foreach (array_slice($lines, 0, 10) as $line) {
-            if ($line === '') continue;
-            $counts[] = count(str_getcsv($line, $d));
-        }
-        if (!$counts) continue;
-        $avg = array_sum($counts) / count($counts);
-        if ($avg > $bestCount) {
-            $bestCount = $avg;
-            $best = $d;
-        }
-    }
-    return $best;
-}
-
-function csv_read_preview(string $path, string $delimiter, int $maxRows = 20): array
-{
-    $fh = fopen($path, 'rb');
-    if (!$fh) throw new RuntimeException("Cannot open upload");
-    $rows = [];
-    while (!feof($fh) && count($rows) < $maxRows) {
-        $row = fgetcsv($fh, 0, $delimiter);
-        if ($row === false) break;
-        if (count($row) === 1 && trim((string)$row[0]) === '') continue;
-        $rows[] = $row;
-    }
-    fclose($fh);
-    return $rows;
-}
-
-function netmask_to_prefix(string $mask): ?int
-{
-    $bin = @inet_pton(trim($mask));
-    if ($bin === false || strlen($bin) !== 4) return null;
-
-    $n = unpack('N', $bin)[1];
-    $prefix = 0;
-    $seenZero = false;
-
-    for ($i = 31; $i >= 0; $i--) {
-        $bit = ($n >> $i) & 1;
-        if ($bit === 1) {
-            if ($seenZero) return null;
-            $prefix++;
-        } else {
-            $seenZero = true;
-        }
-    }
-    return $prefix;
-}
-
-function find_containing_subnet(PDO $db, array $normIp): ?array
-{
-    $ver = (int)$normIp['version'];
-    $st = $db->prepare("SELECT id, network, prefix, ip_version FROM subnets WHERE ip_version = :v ORDER BY prefix ASC");
-    $st->execute([':v' => $ver]);
-    foreach ($st->fetchAll() as $s) {
-        if (ip_in_cidr($normIp['ip'], (string)$s['network'], (int)$s['prefix'])) return $s;
-    }
-    return null;
-}
-
-function ensure_subnet_exists(PDO $db, string $cidr, string $description = ''): int
-{
-    $p = parse_cidr($cidr);
-    if (!$p) throw new RuntimeException("Invalid CIDR to create: $cidr");
-
-    $normalized = $p['network'] . '/' . $p['prefix'];
-
-    $st = $db->prepare("SELECT id FROM subnets WHERE cidr = :c");
-    $st->execute([':c' => $normalized]);
-    $row = $st->fetch();
-    if ($row) return (int)$row['id'];
-
-    $ins = $db->prepare("INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description)
-                         VALUES (:cidr,:ver,:net,:nb,:pre,:d)");
-    $ins->execute([
-        ':cidr' => $normalized,
-        ':ver' => $p['version'],
-        ':net' => $p['network'],
-        ':nb' => $p['net_bin'],
-        ':pre' => $p['prefix'],
-        ':d' => $description,
-    ]);
-
-    return (int)$db->lastInsertId();
-}
-
-function cidr_from_ip_and_prefix(array $normIp, int $prefix): string
-{
-    $max = ($normIp['version'] === 4) ? 32 : 128;
-    if ($prefix < 0 || $prefix > $max) throw new RuntimeException("Bad prefix");
-    $netBin = apply_prefix_mask($normIp['bin'], $prefix);
-    return inet_ntop($netBin) . '/' . $prefix;
-}
-
 /* ---- UI ---- */
 
 function page_header(string $title): void
@@ -505,6 +238,12 @@ function page_header(string $title): void
         echo "<a href='dashboard.php'>Dashboard</a>";
         echo "<a href='subnets.php'>Subnets</a>";
         echo "<a href='addresses.php'>Addresses</a>";
+
+        // Option B: show Bulk Update only for non-readonly users
+        if (($role ?? '') !== 'readonly') {
+            echo "<a href='bulk_update.php'>Bulk Update</a>";
+        }
+
         echo "<a href='audit.php'>Audit</a>";
         if (($role ?? '') === 'admin') {
             echo "<a href='users.php'>Users</a>";
