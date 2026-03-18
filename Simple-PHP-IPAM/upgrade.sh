@@ -107,8 +107,14 @@ if [[ -z "$OLD_VER" && "$FORCE" -ne 1 ]]; then
   confirm "No current version found in target. Proceed anyway?" || die "Aborted."
 elif [[ -n "$OLD_VER" && -n "$NEW_VER" ]]; then
   cmp="$(vercmp "$NEW_VER" "$OLD_VER")"
-  if [[ "$cmp" -eq 0 && "$FORCE" -ne 1 ]]; then die "Same version. Use --force to reinstall."; fi
-  if [[ "$cmp" -lt 0 && "$FORCE_DOWNGRADE" -ne 1 ]]; then die "Refusing downgrade. Use --force-downgrade."; fi
+
+  if [[ "$cmp" -eq 0 && "$FORCE" -ne 1 ]]; then
+    die "Target is already version $OLD_VER and new bundle is $NEW_VER. Refusing. Use --force to reinstall the same version."
+  fi
+
+  if [[ "$cmp" -lt 0 && "$FORCE_DOWNGRADE" -ne 1 ]]; then
+    die "Refusing downgrade attempt ($OLD_VER -> $NEW_VER). Use --force-downgrade to override (not recommended)."
+  fi
 fi
 
 OWNER="$(stat -c '%U' "$TARGET_DIR" 2>/dev/null || stat -f '%Su' "$TARGET_DIR")"
