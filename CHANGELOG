@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+### 0.7
+
+#### New: Global Search (paged)
+- Added `search.php` to search addresses across the system by:
+  - IP, hostname, owner, note
+- Optional filters:
+  - subnet
+  - status (`used`, `reserved`, `free`)
+- Results are paginated (default page size 100).
+
+#### New: Unassigned IPv4 Listing + Quick Add (paged)
+- Added `unassigned.php` to list IPv4 **unassigned** (no row in `addresses`) assignable hosts.
+- Safety limit: unassigned listing is only enabled for subnets with **≤ 4096 assignable hosts**.
+- Paged view (default page size 100).
+- Quick add inline form per IP:
+  - hostname, owner, note
+  - status dropdown (default `used`)
+- Created rows are logged in the audit log.
+
+#### New: Address Change History
+- Added `address_history` table to capture who changed what and when.
+- Added `address_history.php` view per address.
+- History is recorded for:
+  - create/update/delete in `addresses.php`
+  - bulk updates (`bulk_update.php`)
+  - CSV import creates/updates (`import_csv.php`)
+  - unassigned quick-add (`unassigned.php`)
+
+#### DB / Performance
+- Added indexes to support searching and history queries:
+  - `addresses(hostname)`, `addresses(owner)`, `addresses(status)`
+  - history indexes for `address_history(address_id)` and `address_history(subnet_id)`
+
 ## 0.6
 ### Added
 - **Bulk Update tool** (`bulk_update.php`) to bulk update address records within a selected subnet:
