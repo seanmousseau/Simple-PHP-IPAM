@@ -1,12 +1,7 @@
 <?php
 declare(strict_types=1);
 
-/**
- * Full lib.php bundle (includes: DB init, auth/RBAC, CSRF, audit, migrations,
- * housekeeping, CSV helpers, IP helpers, and UI header/footer).
- *
- * Version line is rendered from version.php in page_footer().
- */
+/* ===================== DB ===================== */
 
 function ipam_db(string $path): PDO
 {
@@ -28,7 +23,6 @@ function ipam_db(string $path): PDO
 
 function ipam_db_init(PDO $db): void
 {
-    // New DB?
     $st = $db->prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'");
     $st->execute();
     $hasUsers = (bool)$st->fetch();
@@ -50,11 +44,9 @@ function ipam_db_init(PDO $db): void
         return;
     }
 
-    // Existing DB: do not exec schema.sql; use migrations
     ensure_migrations_table($db);
     apply_migrations($db);
 
-    // Ensure at least one user exists
     $st = $db->prepare("SELECT COUNT(*) AS c FROM users");
     $st->execute();
     $count = (int)$st->fetch()['c'];
@@ -62,26 +54,26 @@ function ipam_db_init(PDO $db): void
         $config = require __DIR__ . '/config.php';
         $u = $config['bootstrap_admin']['username'];
         $p = $config['bootstrap_admin']['password'];
-
         $hash = password_hash($p, PASSWORD_DEFAULT);
         $ins = $db->prepare("INSERT INTO users (username, password_hash, role, is_active) VALUES (:u,:h,'admin',1)");
         $ins->execute([':u' => $u, ':h' => $hash]);
     }
 }
 
+/* ===================== Basics ===================== */
+
 function e(string $s): string
 {
     return htmlspecialchars($s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
-/* ---------------- CSRF ---------------- */
+/* ===================== CSRF ===================== */
 
 function csrf_token(): string { return $_SESSION['csrf'] ?? ''; }
 
 function csrf_require(): void
 {
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') return;
-
     $sent = $_POST['csrf'] ?? '';
     $real = $_SESSION['csrf'] ?? '';
     if (!is_string($sent) || !hash_equals($real, $sent)) {
@@ -90,7 +82,7 @@ function csrf_require(): void
     }
 }
 
-/* ---------------- Auth / RBAC ---------------- */
+/* ===================== Auth / RBAC ===================== */
 
 function is_logged_in(): bool { return !empty($_SESSION['uid']); }
 
@@ -149,12 +141,9 @@ function logout_user(): void
     session_destroy();
 }
 
-/* ---------------- Audit ---------------- */
+/* ===================== Audit ===================== */
 
-function client_ip(): string
-{
-    return (string)($_SERVER['REMOTE_ADDR'] ?? '');
-}
+function client_ip(): string { return (string)($_SERVER['REMOTE_ADDR'] ?? ''); }
 
 function audit(PDO $db, string $action, string $entityType, ?int $entityId, string $details = ''): void
 {
@@ -173,7 +162,32 @@ function audit(PDO $db, string $action, string $entityType, ?int $entityId, stri
     ]);
 }
 
-/* ---------------- Migrations ---------------- */
+/* ===================== History ===================== */
+
+function history_log_address(PDO $db, string $action, int $subnetId, string $ip, ?int $addressId, ?array $before, ?array $after): void
+{
+    $u = current_user();
+    $st = $db->prepare("
+        INSERT INTO address_history
+          (address_id, subnet_id, ip, action, user_id, username, client_ip, user_agent, before_json, after_json)
+        VALUES
+          (:aid, :sid, :ip, :ac, :uid, :un, :cip, :ua, :bj, :aj)
+    ");
+    $st->execute([
+        ':aid' => $addressId,
+        ':sid' => $subnetId,
+        ':ip'  => $ip,
+        ':ac'  => $action,
+        ':uid' => $u['id'] ?: null,
+        ':un'  => $u['username'] ?: null,
+        ':cip' => client_ip() ?: null,
+        ':ua'  => (string)($_SERVER['HTTP_USER_AGENT'] ?? ''),
+        ':bj'  => $before ? json_encode($before, JSON_UNESCAPED_SLASHES) : null,
+        ':aj'  => $after ? json_encode($after, JSON_UNESCAPED_SLASHES) : null,
+    ]);
+}
+
+/* ===================== Migrations ===================== */
 
 function ensure_migrations_table(PDO $db): void
 {
@@ -186,11 +200,9 @@ function ensure_migrations_table(PDO $db): void
 
 function applied_migrations(PDO $db): array
 {
-    ensure_migrations_table($db);
     $st = $db->prepare("SELECT version FROM schema_migrations");
     $st->execute();
-    $rows = $st->fetchAll();
-    return array_map(fn($r) => (string)$r['version'], $rows);
+    return array_map(fn($r) => (string)$r['version'], $st->fetchAll());
 }
 
 function apply_migrations(PDO $db): array
@@ -223,7 +235,7 @@ function apply_migrations(PDO $db): array
     return $appliedNow;
 }
 
-/* ---------------- Housekeeping (lazy daily cleanup) ---------------- */
+/* ===================== Housekeeping ===================== */
 
 function housekeeping_state_path(): string
 {
@@ -287,7 +299,37 @@ function run_housekeeping_if_due(array $config): void
     }
 }
 
-/* ---------------- IP helpers ---------------- */
+/* ===================== Pagination ===================== */
+
+function q_int(string $key, int $default, int $min, int $max): int
+{
+    $v = $_GET[$key] ?? null;
+    if ($v === null || $v === '') return $default;
+    if (!is_scalar($v)) return $default;
+    if (!preg_match('/^-?\d+$/', (string)$v)) return $default;
+    $n = (int)$v;
+    if ($n < $min) return $min;
+    if ($n > $max) return $max;
+    return $n;
+}
+
+function paginate(int $total, int $page, int $pageSize): array
+{
+    $page = max(1, $page);
+    $pageSize = max(1, min(500, $pageSize));
+    $pages = (int)max(1, (int)ceil($total / $pageSize));
+    if ($page > $pages) $page = $pages;
+
+    return [
+        'page' => $page,
+        'page_size' => $pageSize,
+        'pages' => $pages,
+        'offset' => ($page - 1) * $pageSize,
+        'limit' => $pageSize,
+    ];
+}
+
+/* ===================== IP helpers ===================== */
 
 function parse_cidr(string $cidr): ?array
 {
@@ -295,27 +337,22 @@ function parse_cidr(string $cidr): ?array
     if (strpos($cidr, '/') === false) return null;
     [$ip, $prefixStr] = explode('/', $cidr, 2);
 
-    $ip = trim($ip);
-    $prefixStr = trim($prefixStr);
-
-    $ipBin = @inet_pton($ip);
+    $ipBin = @inet_pton(trim($ip));
     if ($ipBin === false) return null;
 
     $len = strlen($ipBin);
     $version = ($len === 4) ? 4 : (($len === 16) ? 6 : 0);
     if ($version === 0) return null;
 
-    if (!ctype_digit($prefixStr)) return null;
+    if (!ctype_digit(trim($prefixStr))) return null;
     $prefix = (int)$prefixStr;
     $max = ($version === 4) ? 32 : 128;
     if ($prefix < 0 || $prefix > $max) return null;
 
     $netBin = apply_prefix_mask($ipBin, $prefix);
-    $network = inet_ntop($netBin);
-
     return [
         'version' => $version,
-        'network' => $network,
+        'network' => inet_ntop($netBin),
         'prefix' => $prefix,
         'net_bin' => $netBin,
     ];
@@ -325,22 +362,19 @@ function apply_prefix_mask(string $ipBin, int $prefix): string
 {
     $len = strlen($ipBin);
     $maxBits = ($len === 4) ? 32 : 128;
-
     $prefix = max(0, min($prefix, $maxBits));
+
     $fullBytes = intdiv($prefix, 8);
     $remBits = $prefix % 8;
 
     $out = '';
     for ($i = 0; $i < $len; $i++) {
         $b = ord($ipBin[$i]);
-        if ($i < $fullBytes) {
-            $out .= chr($b);
-        } elseif ($i === $fullBytes && $remBits !== 0) {
+        if ($i < $fullBytes) $out .= chr($b);
+        elseif ($i === $fullBytes && $remBits !== 0) {
             $mask = (0xFF << (8 - $remBits)) & 0xFF;
             $out .= chr($b & $mask);
-        } else {
-            $out .= chr(0);
-        }
+        } else $out .= chr(0);
     }
     return $out;
 }
@@ -351,33 +385,55 @@ function ip_in_cidr(string $ip, string $network, int $prefix): bool
     $netBin = @inet_pton(trim($network));
     if ($ipBin === false || $netBin === false) return false;
     if (strlen($ipBin) !== strlen($netBin)) return false;
-
-    $ipNet = apply_prefix_mask($ipBin, $prefix);
-    return hash_equals($ipNet, $netBin);
+    return hash_equals(apply_prefix_mask($ipBin, $prefix), $netBin);
 }
 
 function normalize_ip(string $ip): ?array
 {
     $bin = @inet_pton(trim($ip));
     if ($bin === false) return null;
-
-    $text = inet_ntop($bin);
-    $ver = (strlen($bin) === 4) ? 4 : 6;
-    return ['ip' => $text, 'bin' => $bin, 'version' => $ver];
+    return ['ip' => inet_ntop($bin), 'bin' => $bin, 'version' => (strlen($bin) === 4) ? 4 : 6];
 }
 
-function normalize_status(?string $s): string
+/* ===================== IPv4 integer helpers (unassigned listing) ===================== */
+
+function ipv4_bin_to_int(string $bin): int
 {
-    $s = strtolower(trim((string)$s));
-    if ($s === '') return 'used';
-    if (in_array($s, ['used','reserved','free'], true)) return $s;
-    if (in_array($s, ['inuse','in-use','active'], true)) return 'used';
-    if (in_array($s, ['res','reservation'], true)) return 'reserved';
-    if (in_array($s, ['avail','available','unused'], true)) return 'free';
-    return 'used';
+    $n = unpack('N', $bin)[1];
+    // On 64-bit PHP this is safe
+    return (int)($n & 0xFFFFFFFF);
 }
 
-/* ---------------- CSV import helpers ---------------- */
+function ipv4_int_to_bin(int $n): string
+{
+    $n = $n & 0xFFFFFFFF;
+    return pack('N', $n);
+}
+
+function ipv4_int_to_text(int $n): string
+{
+    return inet_ntop(ipv4_int_to_bin($n));
+}
+
+function ipv4_assignable_count(int $prefix): int
+{
+    if ($prefix >= 32) return 1;
+    if ($prefix === 31) return 2;
+    $hostBits = 32 - $prefix;
+    $total = ($hostBits === 32) ? 4294967296 : (1 << $hostBits);
+    $assignable = $total - 2;
+    return ($assignable > 0) ? (int)$assignable : 0;
+}
+
+function ipv4_broadcast_int(int $networkInt, int $prefix): int
+{
+    $hostBits = 32 - $prefix;
+    if ($hostBits <= 0) return $networkInt;
+    $hostMask = ($hostBits === 32) ? 0xFFFFFFFF : ((1 << $hostBits) - 1);
+    return (int)(($networkInt | $hostMask) & 0xFFFFFFFF);
+}
+
+/* ===================== CSV temp helpers ===================== */
 
 function import_max_bytes(array $config): int
 {
@@ -387,10 +443,7 @@ function import_max_bytes(array $config): int
     return $mb * 1024 * 1024;
 }
 
-function tmp_dir(): string
-{
-    return __DIR__ . '/data/tmp';
-}
+function tmp_dir(): string { return __DIR__ . '/data/tmp'; }
 
 function ensure_tmp_dir(): void
 {
@@ -418,112 +471,7 @@ function cleanup_tmp_import_files(int $ttlSeconds): int
     return $deleted;
 }
 
-function detect_csv_delimiter(string $sample): string
-{
-    $candidates = ["," , ";" , "\t" , "|"];
-    $best = ",";
-    $bestCount = -1;
-
-    foreach ($candidates as $d) {
-        $lines = preg_split("/\r\n|\n|\r/", $sample);
-        $counts = [];
-        foreach (array_slice($lines, 0, 10) as $line) {
-            if ($line === '') continue;
-            $counts[] = count(str_getcsv($line, $d));
-        }
-        if (!$counts) continue;
-        $avg = array_sum($counts) / count($counts);
-        if ($avg > $bestCount) {
-            $bestCount = $avg;
-            $best = $d;
-        }
-    }
-    return $best;
-}
-
-function csv_read_preview(string $path, string $delimiter, int $maxRows = 20): array
-{
-    $fh = fopen($path, 'rb');
-    if (!$fh) throw new RuntimeException("Cannot open upload");
-    $rows = [];
-    while (!feof($fh) && count($rows) < $maxRows) {
-        $row = fgetcsv($fh, 0, $delimiter);
-        if ($row === false) break;
-        if (count($row) === 1 && trim((string)$row[0]) === '') continue;
-        $rows[] = $row;
-    }
-    fclose($fh);
-    return $rows;
-}
-
-function netmask_to_prefix(string $mask): ?int
-{
-    $bin = @inet_pton(trim($mask));
-    if ($bin === false || strlen($bin) !== 4) return null;
-
-    $n = unpack('N', $bin)[1];
-    $prefix = 0;
-    $seenZero = false;
-
-    for ($i = 31; $i >= 0; $i--) {
-        $bit = ($n >> $i) & 1;
-        if ($bit === 1) {
-            if ($seenZero) return null;
-            $prefix++;
-        } else {
-            $seenZero = true;
-        }
-    }
-    return $prefix;
-}
-
-function find_containing_subnet(PDO $db, array $normIp): ?array
-{
-    $ver = (int)$normIp['version'];
-    $st = $db->prepare("SELECT id, network, prefix, ip_version FROM subnets WHERE ip_version = :v ORDER BY prefix ASC");
-    $st->execute([':v' => $ver]);
-    foreach ($st->fetchAll() as $s) {
-        if (ip_in_cidr($normIp['ip'], (string)$s['network'], (int)$s['prefix'])) return $s;
-    }
-    return null;
-}
-
-function ensure_subnet_exists(PDO $db, string $cidr, string $description = ''): int
-{
-    $p = parse_cidr($cidr);
-    if (!$p) throw new RuntimeException("Invalid CIDR to create: $cidr");
-
-    $normalized = $p['network'] . '/' . $p['prefix'];
-
-    $st = $db->prepare("SELECT id FROM subnets WHERE cidr = :c");
-    $st->execute([':c' => $normalized]);
-    $row = $st->fetch();
-    if ($row) return (int)$row['id'];
-
-    $ins = $db->prepare("INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description)
-                         VALUES (:cidr,:ver,:net,:nb,:pre,:d)");
-    $ins->execute([
-        ':cidr' => $normalized,
-        ':ver' => $p['version'],
-        ':net' => $p['network'],
-        ':nb' => $p['net_bin'],
-        ':pre' => $p['prefix'],
-        ':d' => $description,
-    ]);
-
-    return (int)$db->lastInsertId();
-}
-
-function cidr_from_ip_and_prefix(array $normIp, int $prefix): string
-{
-    $max = ($normIp['version'] === 4) ? 32 : 128;
-    if ($prefix < 0 || $prefix > $max) throw new RuntimeException("Bad prefix");
-
-    $netBin = apply_prefix_mask($normIp['bin'], $prefix);
-    return inet_ntop($netBin) . '/' . $prefix;
-}
-
-/* ---------------- UI helpers ---------------- */
+/* ===================== UI ===================== */
 
 function page_header(string $title): void
 {
@@ -553,8 +501,9 @@ function page_header(string $title): void
         echo "<a href='dashboard.php'>Dashboard</a>";
         echo "<a href='subnets.php'>Subnets</a>";
         echo "<a href='addresses.php'>Addresses</a>";
+        echo "<a href='search.php'>Search</a>";
+        echo "<a href='unassigned.php'>Unassigned</a>";
 
-        // Option B: show Bulk Update only for non-readonly users
         if (($role ?? '') !== 'readonly') {
             echo "<a href='bulk_update.php'>Bulk Update</a>";
         }

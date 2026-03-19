@@ -4,6 +4,7 @@ declare(strict_types=1);
 function ipam_migrations(): array
 {
     return [
+        // 0.3: adds subnets.network_bin and backfills it
         '0.3' => function(PDO $db) {
             $cols = $db->query("PRAGMA table_info(subnets)")->fetchAll();
             $names = array_map(fn($c) => $c['name'], $cols);
@@ -24,6 +25,33 @@ function ipam_migrations(): array
             }
 
             $db->exec("CREATE INDEX IF NOT EXISTS idx_subnets_ver_prefix_netbin ON subnets(ip_version, prefix, network_bin)");
+        },
+
+        // 0.7: address history + search indexes
+        '0.7' => function(PDO $db) {
+            $db->exec("
+                CREATE TABLE IF NOT EXISTS address_history (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                  address_id INTEGER,
+                  subnet_id INTEGER NOT NULL,
+                  ip TEXT NOT NULL,
+                  action TEXT NOT NULL,                -- create|update|delete|bulk_update|import
+                  user_id INTEGER,
+                  username TEXT,
+                  client_ip TEXT,
+                  user_agent TEXT,
+                  before_json TEXT,
+                  after_json TEXT
+                )
+            ");
+
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_address_history_address_id ON address_history(address_id)");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_address_history_subnet_id ON address_history(subnet_id)");
+
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_addresses_hostname ON addresses(hostname)");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_addresses_owner ON addresses(owner)");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_addresses_status ON addresses(status)");
         },
     ];
 }

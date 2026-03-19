@@ -3,7 +3,9 @@ declare(strict_types=1);
 require __DIR__ . '/init.php';
 require_login();
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    csrf_require();
+}
 
 $err = '';
 $msg = '';
@@ -13,6 +15,8 @@ $st->execute();
 $subnetList = $st->fetchAll();
 
 $selectedSubnetId = (int)($_GET['subnet_id'] ?? ($_POST['subnet_id'] ?? 0));
+$page = q_int('page', 1, 1, 1000000);
+$pageSize = q_int('page_size', 100, 1, 500);
 
 $selectedSubnet = null;
 if ($selectedSubnetId > 0) {
@@ -39,14 +43,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $st->execute([':id' => $subnetId]);
         $sub = $st->fetch();
 
-        if (!$sub) $err = 'Invalid subnet.';
-        else {
+        if (!$sub) {
+            $err = 'Invalid subnet.';
+        } else {
             $norm = normalize_ip($ipInput);
-            if (!$norm) $err = 'Invalid IP (IPv4/IPv6).';
-            elseif ((int)$sub['ip_version'] !== (int)$norm['version']) $err = 'IP version does not match subnet.';
-            elseif (!ip_in_cidr($norm['ip'], (string)$sub['network'], (int)$sub['prefix'])) $err = 'IP is not within selected subnet.';
-            elseif (!in_array($status, ['used','reserved','free'], true)) $err = 'Invalid status.';
-            else {
+            if (!$norm) {
+                $err = 'Invalid IP (IPv4/IPv6).';
+            } elseif ((int)$sub['ip_version'] !== (int)$norm['version']) {
+                $err = 'IP version does not match subnet.';
+            } elseif (!ip_in_cidr($norm['ip'], (string)$sub['network'], (int)$sub['prefix'])) {
+                $err = 'IP is not within selected subnet.';
+            } elseif (!in_array($status, ['used','reserved','free'], true)) {
+                $err = 'Invalid status.';
+            } else {
                 try {
                     $ins = $db->prepare("INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, status)
                                          VALUES (:sid,:ip,:bin,:hn,:ow,:nt,:st)");
@@ -59,7 +68,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ':nt'  => $note,
                         ':st'  => $status,
                     ]);
-                    audit($db, 'address.create', 'address', (int)$db->lastInsertId(), $norm['ip'] . " subnet_id=$subnetId");
+                    $aid = (int)$db->lastInsertId();
+
+                    history_log_address($db, 'create', $subnetId, $norm['ip'], $aid, null, [
+                        'hostname' => $hostname,
+                        'owner' => $owner,
+                        'note' => $note,
+                        'status' => $status,
+                    ]);
+                    audit($db, 'address.create', 'address', $aid, "ip={$norm['ip']} subnet_id=$subnetId");
+
                     header('Location: addresses.php?subnet_id=' . $subnetId);
                     exit;
                 } catch (PDOException $e) {
@@ -67,7 +85,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
         }
-    } elseif ($action === 'update') {
+    }
+
+    if ($action === 'update') {
         require_write_access();
 
         $id = (int)($_POST['id'] ?? 0);
@@ -77,40 +97,102 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $note = trim((string)($_POST['note'] ?? ''));
         $status = (string)($_POST['status'] ?? 'used');
 
-        if (!in_array($status, ['used','reserved','free'], true)) $err = 'Invalid status.';
-        else {
-            $up = $db->prepare("UPDATE addresses
-                                SET hostname=:hn, owner=:ow, note=:nt, status=:st
-                                WHERE id=:id AND subnet_id=:sid");
-            $up->execute([
-                ':hn' => $hostname,
-                ':ow' => $owner,
-                ':nt' => $note,
-                ':st' => $status,
-                ':id' => $id,
-                ':sid' => $subnetId,
-            ]);
-            audit($db, 'address.update', 'address', $id, "subnet_id=$subnetId");
-            $msg = 'Address updated.';
+        if (!in_array($status, ['used','reserved','free'], true)) {
+            $err = 'Invalid status.';
+        } else {
+            // Fetch before
+            $sel = $db->prepare("SELECT id, ip, hostname, owner, note, status FROM addresses WHERE id=:id AND subnet_id=:sid");
+            $sel->execute([':id' => $id, ':sid' => $subnetId]);
+            $before = $sel->fetch();
+
+            if (!$before) {
+                $err = 'Address not found.';
+            } else {
+                $up = $db->prepare("UPDATE addresses
+                                    SET hostname=:hn, owner=:ow, note=:nt, status=:st
+                                    WHERE id=:id AND subnet_id=:sid");
+                $up->execute([
+                    ':hn' => $hostname,
+                    ':ow' => $owner,
+                    ':nt' => $note,
+                    ':st' => $status,
+                    ':id' => $id,
+                    ':sid' => $subnetId,
+                ]);
+
+                history_log_address($db, 'update', $subnetId, (string)$before['ip'], $id,
+                    [
+                        'hostname' => (string)$before['hostname'],
+                        'owner' => (string)$before['owner'],
+                        'note' => (string)$before['note'],
+                        'status' => (string)$before['status'],
+                    ],
+                    [
+                        'hostname' => $hostname,
+                        'owner' => $owner,
+                        'note' => $note,
+                        'status' => $status,
+                    ]
+                );
+
+                audit($db, 'address.update', 'address', $id, "subnet_id=$subnetId");
+                $msg = 'Address updated.';
+            }
         }
-    } elseif ($action === 'delete') {
+    }
+
+    if ($action === 'delete') {
         require_write_access();
 
         $id = (int)($_POST['id'] ?? 0);
         $subnetId = (int)($_POST['subnet_id'] ?? 0);
+
+        $sel = $db->prepare("SELECT id, ip, hostname, owner, note, status FROM addresses WHERE id=:id AND subnet_id=:sid");
+        $sel->execute([':id' => $id, ':sid' => $subnetId]);
+        $before = $sel->fetch();
+
         $del = $db->prepare("DELETE FROM addresses WHERE id = :id AND subnet_id = :sid");
         $del->execute([':id' => $id, ':sid' => $subnetId]);
+
+        if ($before) {
+            history_log_address($db, 'delete', $subnetId, (string)$before['ip'], $id,
+                [
+                    'hostname' => (string)$before['hostname'],
+                    'owner' => (string)$before['owner'],
+                    'note' => (string)$before['note'],
+                    'status' => (string)$before['status'],
+                ],
+                null
+            );
+        }
+
         audit($db, 'address.delete', 'address', $id, "subnet_id=$subnetId");
         header('Location: addresses.php?subnet_id=' . $subnetId);
         exit;
     }
 }
 
+// Load paged addresses
 $addresses = [];
+$total = 0;
+$p = null;
+
 if ($selectedSubnetId > 0) {
-    $st = $db->prepare("SELECT id, ip, hostname, owner, note, status, updated_at
-                        FROM addresses WHERE subnet_id = :sid ORDER BY ip_bin ASC");
+    $st = $db->prepare("SELECT COUNT(*) AS c FROM addresses WHERE subnet_id = :sid");
     $st->execute([':sid' => $selectedSubnetId]);
+    $total = (int)$st->fetch()['c'];
+
+    $p = paginate($total, $page, $pageSize);
+
+    $st = $db->prepare("SELECT id, ip, hostname, owner, note, status, updated_at
+                        FROM addresses
+                        WHERE subnet_id = :sid
+                        ORDER BY ip_bin ASC
+                        LIMIT :lim OFFSET :off");
+    $st->bindValue(':sid', $selectedSubnetId, PDO::PARAM_INT);
+    $st->bindValue(':lim', $p['limit'], PDO::PARAM_INT);
+    $st->bindValue(':off', $p['offset'], PDO::PARAM_INT);
+    $st->execute();
     $addresses = $st->fetchAll();
 }
 
@@ -123,7 +205,7 @@ page_header('Addresses');
 
 <form method="get" action="addresses.php" class="row">
   <label>Subnet<br>
-    <select name="subnet_id" onchange="this.form.submit()">
+    <select name="subnet_id">
       <option value="0">-- Select --</option>
       <?php foreach ($subnetList as $s): ?>
         <option value="<?= (int)$s['id'] ?>" <?= ((int)$s['id'] === $selectedSubnetId) ? 'selected' : '' ?>>
@@ -132,7 +214,16 @@ page_header('Addresses');
       <?php endforeach; ?>
     </select>
   </label>
-  <noscript><button type="submit">Load</button></noscript>
+
+  <label>Page size<br>
+    <select name="page_size">
+      <?php foreach ([50,100,200,500] as $sz): ?>
+        <option value="<?= $sz ?>" <?= $pageSize===$sz?'selected':'' ?>><?= $sz ?></option>
+      <?php endforeach; ?>
+    </select>
+  </label>
+
+  <button type="submit">Load</button>
 </form>
 
 <h2>Add address</h2>
@@ -158,7 +249,8 @@ page_header('Addresses');
   </div>
 
   <p>
-    <button type="submit" <?= ($selectedSubnetId>0 && current_user()['role']!=='readonly') ? '' : 'disabled' ?>>
+    <button type="submit"
+      <?= ($selectedSubnetId>0 && current_user()['role']!=='readonly') ? '' : 'disabled' ?>>
       Add
     </button>
   </p>
@@ -170,6 +262,8 @@ page_header('Addresses');
 <?php if ($selectedSubnetId <= 0): ?>
   <p class="muted">No subnet selected.</p>
 <?php else: ?>
+  <p class="muted">Rows: <b><?= e((string)$total) ?></b> <?php if ($p): ?>| Page <b><?= e((string)$p['page']) ?></b> of <b><?= e((string)$p['pages']) ?></b><?php endif; ?></p>
+
   <table>
     <thead>
       <tr>
@@ -186,7 +280,8 @@ page_header('Addresses');
         <td><?= e($a['note']) ?></td>
         <td class="muted"><?= e($a['updated_at']) ?></td>
         <td>
-          <details>
+          <a href="address_history.php?address_id=<?= (int)$a['id'] ?>">History</a>
+          <details style="margin-top:6px">
             <summary>Edit/Delete</summary>
 
             <form method="post" action="addresses.php" style="margin-top:8px">
@@ -229,6 +324,20 @@ page_header('Addresses');
     <?php endforeach; ?>
     </tbody>
   </table>
+
+  <?php
+    // Pagination links
+    $qsBase = ['subnet_id' => $selectedSubnetId, 'page_size' => $pageSize];
+    $base = 'addresses.php?' . http_build_query($qsBase);
+  ?>
+  <p style="margin-top:12px">
+    <?php if ($p && $p['page'] > 1): ?>
+      <a href="<?= e($base . '&page=' . ($p['page']-1)) ?>">&laquo; Prev</a>
+    <?php endif; ?>
+    <?php if ($p && $p['page'] < $p['pages']): ?>
+      <a style="margin-left:12px" href="<?= e($base . '&page=' . ($p['page']+1)) ?>">Next &raquo;</a>
+    <?php endif; ?>
+  </p>
 <?php endif; ?>
 
 <?php page_footer();

@@ -1,6 +1,11 @@
 Options -Indexes
 
-<FilesMatch "^(config\.php|init\.php|lib\.php|schema\.sql|migrations\.php|migrate\.php|version\.php)$">
+<FilesMatch "^(config\.php|init\.php|lib\.php|schema\.sql|migrations\.php|migrate\.php|version\.php|tmp_cleanup\.php)$">
+  Require all denied
+</FilesMatch>
+
+# Block download of upgrade/build artifacts if they ever land in webroot
+<FilesMatch "(\.sh|SHA256SUMS|\.tar\.gz|\.tgz|\.zip)$">
   Require all denied
 </FilesMatch>
 

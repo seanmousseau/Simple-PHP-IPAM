@@ -366,7 +366,7 @@ if ($step === 3) {
             $existingByCidr = [];
             foreach ($existingSubnets as $s) $existingByCidr[(string)$s['cidr']] = (int)$s['id'];
 
-            $sel = $db->prepare("SELECT id, hostname, owner, note FROM addresses WHERE subnet_id=:sid AND ip=:ip");
+            $sel = $db->prepare("SELECT id, ip, hostname, owner, note, status FROM addresses WHERE subnet_id=:sid AND ip=:ip");
             $ins = $db->prepare("INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, status)
                                  VALUES (:sid,:ip,:bin,:hn,:ow,:nt,:st)");
             $upd = $db->prepare("UPDATE addresses SET hostname=:hn, owner=:ow, note=:nt, status=:st WHERE id=:id");
@@ -412,6 +412,15 @@ if ($step === 3) {
                         ':nt' => $r['note'],
                         ':st' => $r['status'],
                     ]);
+                    $aid = (int)$db->lastInsertId();
+
+                    history_log_address($db, 'import_create', $sid, $r['ip'], $aid, null, [
+                        'hostname' => $r['hostname'],
+                        'owner' => $r['owner'],
+                        'note' => $r['note'],
+                        'status' => $r['status'],
+                    ]);
+
                     $createdAddresses++;
                 } else {
                     if ($dupMode === 'skip') { $skippedDuplicates++; continue; }
@@ -426,6 +435,19 @@ if ($step === 3) {
                         $newNt = ((string)$existing['note'] === '') ? $newNt : (string)$existing['note'];
                     }
 
+                    $before = [
+                        'hostname' => (string)$existing['hostname'],
+                        'owner' => (string)$existing['owner'],
+                        'note' => (string)$existing['note'],
+                        'status' => (string)$existing['status'],
+                    ];
+                    $after = [
+                        'hostname' => $newHn,
+                        'owner' => $newOw,
+                        'note' => $newNt,
+                        'status' => (string)$r['status'],
+                    ];
+
                     $upd->execute([
                         ':hn' => $newHn,
                         ':ow' => $newOw,
@@ -433,6 +455,9 @@ if ($step === 3) {
                         ':st' => $r['status'],
                         ':id' => (int)$existing['id'],
                     ]);
+
+                    history_log_address($db, 'import_update', $sid, (string)$existing['ip'], (int)$existing['id'], $before, $after);
+
                     $updatedAddresses++;
                 }
             }

@@ -78,6 +78,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         try {
             $db->beginTransaction();
 
+            // Load before states for history
+            $in = [];
+            $paramsBefore = [':sid' => $subnetId];
+            foreach ($ids as $i => $id) {
+                $k = ":id$i";
+                $in[] = $k;
+                $paramsBefore[$k] = $id;
+            }
+
+            $sel = $db->prepare("SELECT id, ip, hostname, owner, note, status
+                                 FROM addresses
+                                 WHERE subnet_id=:sid AND id IN (" . implode(',', $in) . ")");
+            $sel->execute($paramsBefore);
+            $beforeRows = $sel->fetchAll();
+            $beforeMap = [];
+            foreach ($beforeRows as $r) $beforeMap[(int)$r['id']] = $r;
+
+            // Build dynamic SET
             $set = [];
             $params = [':sid' => $subnetId];
 
@@ -86,11 +104,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($doStatus)   { $set[] = "status = :st";   $params[':st'] = $newStatus; }
             if ($doNote)     { $set[] = "note = :nt";     $params[':nt'] = $newNote; }
 
-            $in = [];
-            foreach ($ids as $i => $id) {
-                $k = ":id$i";
-                $in[] = $k;
-                $params[$k] = $id;
+            // IN clause (reuse)
+            foreach ($paramsBefore as $k => $v) {
+                if ($k !== ':sid') $params[$k] = $v;
             }
 
             $sql = "UPDATE addresses SET " . implode(', ', $set) .
@@ -98,6 +114,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $st = $db->prepare($sql);
             $st->execute($params);
             $affected = $st->rowCount();
+
+            // Write history per row
+            foreach ($ids as $id) {
+                if (!isset($beforeMap[$id])) continue;
+                $b = $beforeMap[$id];
+
+                $after = [
+                    'hostname' => $doHostname ? $newHostname : (string)$b['hostname'],
+                    'owner'    => $doOwner ? $newOwner : (string)$b['owner'],
+                    'note'     => $doNote ? $newNote : (string)$b['note'],
+                    'status'   => $doStatus ? $newStatus : (string)$b['status'],
+                ];
+
+                history_log_address($db, 'bulk_update', $subnetId, (string)$b['ip'], (int)$b['id'], [
+                    'hostname' => (string)$b['hostname'],
+                    'owner' => (string)$b['owner'],
+                    'note' => (string)$b['note'],
+                    'status' => (string)$b['status'],
+                ], $after);
+            }
 
             audit($db, 'address.bulk_update', 'address', null,
                 "subnet_id=$subnetId selected=" . count($ids) . " affected=$affected fields=" .
