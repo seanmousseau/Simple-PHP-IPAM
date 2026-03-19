@@ -1,11 +1,6 @@
 <?php
 declare(strict_types=1);
 
-/**
- * Full lib.php (v0.8 patch) - includes CSS/JS asset loading + theme toggle buttons in nav.
- * NOTE: This file is long; if you have local modifications, merge only page_header/page_footer changes.
- */
-
 /* ===================== DB ===================== */
 
 function ipam_db(string $path): PDO
@@ -65,7 +60,12 @@ function ipam_db_init(PDO $db): void
     }
 }
 
-function e(string $s): string { return htmlspecialchars($s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
+/* ===================== Basics ===================== */
+
+function e(string $s): string
+{
+    return htmlspecialchars($s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+}
 
 /* ===================== CSRF ===================== */
 
@@ -237,7 +237,10 @@ function apply_migrations(PDO $db): array
 
 /* ===================== Housekeeping ===================== */
 
-function housekeeping_state_path(): string { return __DIR__ . '/data/housekeeping.json'; }
+function housekeeping_state_path(): string
+{
+    return __DIR__ . '/data/housekeeping.json';
+}
 
 function housekeeping_should_run(array $config): bool
 {
@@ -296,7 +299,165 @@ function run_housekeeping_if_due(array $config): void
     }
 }
 
-/* ===================== CSV temp helpers ===================== */
+/* ===================== Pagination ===================== */
+
+function q_int(string $key, int $default, int $min, int $max): int
+{
+    $v = $_GET[$key] ?? null;
+    if ($v === null || $v === '') return $default;
+    if (!is_scalar($v)) return $default;
+    if (!preg_match('/^-?\d+$/', (string)$v)) return $default;
+
+    $n = (int)$v;
+    if ($n < $min) return $min;
+    if ($n > $max) return $max;
+    return $n;
+}
+
+function paginate(int $total, int $page, int $pageSize): array
+{
+    $page = max(1, $page);
+    $pageSize = max(1, min(500, $pageSize));
+    $pages = (int)max(1, (int)ceil($total / $pageSize));
+    if ($page > $pages) $page = $pages;
+
+    return [
+        'page' => $page,
+        'page_size' => $pageSize,
+        'pages' => $pages,
+        'offset' => ($page - 1) * $pageSize,
+        'limit' => $pageSize,
+    ];
+}
+
+/* ===================== IP helpers ===================== */
+
+function parse_cidr(string $cidr): ?array
+{
+    $cidr = trim($cidr);
+    if (strpos($cidr, '/') === false) return null;
+    [$ip, $prefixStr] = explode('/', $cidr, 2);
+
+    $ip = trim($ip);
+    $prefixStr = trim($prefixStr);
+
+    $ipBin = @inet_pton($ip);
+    if ($ipBin === false) return null;
+
+    $len = strlen($ipBin);
+    $version = ($len === 4) ? 4 : (($len === 16) ? 6 : 0);
+    if ($version === 0) return null;
+
+    if (!ctype_digit($prefixStr)) return null;
+    $prefix = (int)$prefixStr;
+    $max = ($version === 4) ? 32 : 128;
+    if ($prefix < 0 || $prefix > $max) return null;
+
+    $netBin = apply_prefix_mask($ipBin, $prefix);
+    $network = inet_ntop($netBin);
+
+    return [
+        'version' => $version,
+        'network' => $network,
+        'prefix' => $prefix,
+        'net_bin' => $netBin,
+    ];
+}
+
+function apply_prefix_mask(string $ipBin, int $prefix): string
+{
+    $len = strlen($ipBin);
+    $maxBits = ($len === 4) ? 32 : 128;
+    $prefix = max(0, min($prefix, $maxBits));
+
+    $fullBytes = intdiv($prefix, 8);
+    $remBits = $prefix % 8;
+
+    $out = '';
+    for ($i = 0; $i < $len; $i++) {
+        $b = ord($ipBin[$i]);
+        if ($i < $fullBytes) $out .= chr($b);
+        elseif ($i === $fullBytes && $remBits !== 0) {
+            $mask = (0xFF << (8 - $remBits)) & 0xFF;
+            $out .= chr($b & $mask);
+        } else $out .= chr(0);
+    }
+    return $out;
+}
+
+function ip_in_cidr(string $ip, string $network, int $prefix): bool
+{
+    $ipBin = @inet_pton(trim($ip));
+    $netBin = @inet_pton(trim($network));
+    if ($ipBin === false || $netBin === false) return false;
+    if (strlen($ipBin) !== strlen($netBin)) return false;
+    return hash_equals(apply_prefix_mask($ipBin, $prefix), $netBin);
+}
+
+function normalize_ip(string $ip): ?array
+{
+    $bin = @inet_pton(trim($ip));
+    if ($bin === false) return null;
+    return ['ip' => inet_ntop($bin), 'bin' => $bin, 'version' => (strlen($bin) === 4) ? 4 : 6];
+}
+
+function normalize_status(?string $s): string
+{
+    $s = strtolower(trim((string)$s));
+    if ($s === '') return 'used';
+    if (in_array($s, ['used','reserved','free'], true)) return $s;
+    if (in_array($s, ['inuse','in-use','active'], true)) return 'used';
+    if (in_array($s, ['res','reservation'], true)) return 'reserved';
+    if (in_array($s, ['avail','available','unused'], true)) return 'free';
+    return 'used';
+}
+
+/* ===================== IPv4 integer helpers ===================== */
+
+function ipv4_bin_to_int(string $bin): int
+{
+    $n = unpack('N', $bin)[1];
+    return (int)($n & 0xFFFFFFFF);
+}
+
+function ipv4_int_to_bin(int $n): string
+{
+    $n = $n & 0xFFFFFFFF;
+    return pack('N', $n);
+}
+
+function ipv4_int_to_text(int $n): string
+{
+    return inet_ntop(ipv4_int_to_bin($n));
+}
+
+function ipv4_assignable_count(int $prefix): int
+{
+    if ($prefix >= 32) return 1;
+    if ($prefix === 31) return 2;
+    $hostBits = 32 - $prefix;
+    $total = ($hostBits === 32) ? 4294967296 : (1 << $hostBits);
+    $assignable = $total - 2;
+    return ($assignable > 0) ? (int)$assignable : 0;
+}
+
+function ipv4_broadcast_int(int $networkInt, int $prefix): int
+{
+    $hostBits = 32 - $prefix;
+    if ($hostBits <= 0) return $networkInt;
+    $hostMask = ($hostBits === 32) ? 0xFFFFFFFF : ((1 << $hostBits) - 1);
+    return (int)(($networkInt | $hostMask) & 0xFFFFFFFF);
+}
+
+/* ===================== CSV helpers ===================== */
+
+function import_max_bytes(array $config): int
+{
+    $mb = (int)($config['import_csv_max_mb'] ?? 5);
+    if ($mb < 5) $mb = 5;
+    if ($mb > 50) $mb = 50;
+    return $mb * 1024 * 1024;
+}
 
 function tmp_dir(): string { return __DIR__ . '/data/tmp'; }
 
@@ -324,6 +485,110 @@ function cleanup_tmp_import_files(int $ttlSeconds): int
         }
     }
     return $deleted;
+}
+
+function detect_csv_delimiter(string $sample): string
+{
+    $candidates = ["," , ";" , "\t" , "|"];
+    $best = ",";
+    $bestCount = -1;
+
+    foreach ($candidates as $d) {
+        $lines = preg_split("/\r\n|\n|\r/", $sample);
+        $counts = [];
+        foreach (array_slice($lines, 0, 10) as $line) {
+            if ($line === '') continue;
+            $counts[] = count(str_getcsv($line, $d));
+        }
+        if (!$counts) continue;
+        $avg = array_sum($counts) / count($counts);
+        if ($avg > $bestCount) {
+            $bestCount = $avg;
+            $best = $d;
+        }
+    }
+    return $best;
+}
+
+function csv_read_preview(string $path, string $delimiter, int $maxRows = 20): array
+{
+    $fh = fopen($path, 'rb');
+    if (!$fh) throw new RuntimeException("Cannot open upload");
+    $rows = [];
+    while (!feof($fh) && count($rows) < $maxRows) {
+        $row = fgetcsv($fh, 0, $delimiter);
+        if ($row === false) break;
+        if (count($row) === 1 && trim((string)$row[0]) === '') continue;
+        $rows[] = $row;
+    }
+    fclose($fh);
+    return $rows;
+}
+
+function netmask_to_prefix(string $mask): ?int
+{
+    $bin = @inet_pton(trim($mask));
+    if ($bin === false || strlen($bin) !== 4) return null;
+
+    $n = unpack('N', $bin)[1];
+    $prefix = 0;
+    $seenZero = false;
+
+    for ($i = 31; $i >= 0; $i--) {
+        $bit = ($n >> $i) & 1;
+        if ($bit === 1) {
+            if ($seenZero) return null;
+            $prefix++;
+        } else {
+            $seenZero = true;
+        }
+    }
+    return $prefix;
+}
+
+function find_containing_subnet(PDO $db, array $normIp): ?array
+{
+    $ver = (int)$normIp['version'];
+    $st = $db->prepare("SELECT id, network, prefix, ip_version FROM subnets WHERE ip_version = :v ORDER BY prefix ASC");
+    $st->execute([':v' => $ver]);
+    foreach ($st->fetchAll() as $s) {
+        if (ip_in_cidr($normIp['ip'], (string)$s['network'], (int)$s['prefix'])) return $s;
+    }
+    return null;
+}
+
+function ensure_subnet_exists(PDO $db, string $cidr, string $description = ''): int
+{
+    $p = parse_cidr($cidr);
+    if (!$p) throw new RuntimeException("Invalid CIDR to create: $cidr");
+
+    $normalized = $p['network'] . '/' . $p['prefix'];
+
+    $st = $db->prepare("SELECT id FROM subnets WHERE cidr = :c");
+    $st->execute([':c' => $normalized]);
+    $row = $st->fetch();
+    if ($row) return (int)$row['id'];
+
+    $ins = $db->prepare("INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description)
+                         VALUES (:cidr,:ver,:net,:nb,:pre,:d)");
+    $ins->execute([
+        ':cidr' => $normalized,
+        ':ver' => $p['version'],
+        ':net' => $p['network'],
+        ':nb' => $p['net_bin'],
+        ':pre' => $p['prefix'],
+        ':d' => $description,
+    ]);
+
+    return (int)$db->lastInsertId();
+}
+
+function cidr_from_ip_and_prefix(array $normIp, int $prefix): string
+{
+    $max = ($normIp['version'] === 4) ? 32 : 128;
+    if ($prefix < 0 || $prefix > $max) throw new RuntimeException("Bad prefix");
+    $netBin = apply_prefix_mask($normIp['bin'], $prefix);
+    return inet_ntop($netBin) . '/' . $prefix;
 }
 
 /* ===================== UI ===================== */
