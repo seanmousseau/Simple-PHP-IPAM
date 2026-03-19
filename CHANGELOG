@@ -35,6 +35,8 @@ All notable changes to this project will be documented in this file.
   - `addresses(hostname)`, `addresses(owner)`, `addresses(status)`
   - history indexes for `address_history(address_id)` and `address_history(subnet_id)`
 
+---
+
 ## 0.6
 ### Added
 - **Bulk Update tool** (`bulk_update.php`) to bulk update address records within a selected subnet:
