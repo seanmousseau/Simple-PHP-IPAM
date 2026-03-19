@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+### 0.8 — Bulk Delete + UI Refresh + Dark Mode
+
+#### New: Bulk Delete in Bulk Update
+- Added **bulk delete** support to `bulk_update.php`
+- Requires users to type **`DELETE`** to confirm before deleting selected IP address rows
+- Deletes are:
+  - transaction-safe
+  - recorded in the audit log (`address.bulk_delete`)
+  - written to per-address history as `bulk_delete`
+
+#### UI / UX Improvements
+- Added a shared stylesheet: `assets/app.css`
+- Improved general usability and readability:
+  - cleaner table styling
+  - improved spacing and form controls
+  - more consistent layout across pages
+- Added support for a dedicated JS file: `assets/app.js`
+
+#### Dark Mode
+- Added **dark mode** support using CSS variables
+- Default behavior follows the user’s **system preference**
+- Added manual theme controls in the navigation bar:
+  - **Toggle theme**
+  - **System** (clear manual override and return to system preference)
+- Theme preference is stored in `localStorage`
+
+#### Navigation / Integration
+- Updated `page_header()` in `lib.php` to load:
+  - `assets/app.css`
+  - `assets/app.js`
+- Added theme controls directly into the nav bar so they are available across the app
+
+---
+
 ### 0.7
 
 #### New: Global Search (paged)
