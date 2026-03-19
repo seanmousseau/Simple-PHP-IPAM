@@ -56,29 +56,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $ids = array_values(array_unique(array_map('intval', $ids)));
     $ids = array_filter($ids, fn($v) => $v > 0);
 
-    $doHostname = !empty($_POST['do_hostname']);
-    $doOwner    = !empty($_POST['do_owner']);
-    $doStatus   = !empty($_POST['do_status']);
-    $doNote     = !empty($_POST['do_note']);
-
-    $newHostname = trim((string)($_POST['hostname'] ?? ''));
-    $newOwner    = trim((string)($_POST['owner'] ?? ''));
-    $newStatus   = (string)($_POST['status'] ?? 'used');
-    $newNote     = trim((string)($_POST['note'] ?? ''));
+    $action = (string)($_POST['bulk_action'] ?? 'update');
 
     if ($subnetId <= 0) {
         $err = "Select a subnet.";
     } elseif (count($ids) === 0) {
         $err = "Select at least one address.";
-    } elseif (!$doHostname && !$doOwner && !$doStatus && !$doNote) {
-        $err = "Select at least one field to update.";
-    } elseif ($doStatus && !in_array($newStatus, ['used','reserved','free'], true)) {
-        $err = "Invalid status.";
     } else {
         try {
             $db->beginTransaction();
 
-            // Load before states for history
             $in = [];
             $paramsBefore = [':sid' => $subnetId];
             foreach ($ids as $i => $id) {
@@ -95,64 +82,108 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $beforeMap = [];
             foreach ($beforeRows as $r) $beforeMap[(int)$r['id']] = $r;
 
-            // Build dynamic SET
-            $set = [];
-            $params = [':sid' => $subnetId];
+            if ($action === 'delete') {
+                $confirm = strtoupper(trim((string)($_POST['confirm_delete'] ?? '')));
+                if ($confirm !== 'DELETE') {
+                    $db->rollBack();
+                    $err = "To delete, type DELETE in the confirmation box.";
+                } else {
+                    $del = $db->prepare("DELETE FROM addresses WHERE subnet_id=:sid AND id IN (" . implode(',', $in) . ")");
+                    $del->execute($paramsBefore);
+                    $affected = $del->rowCount();
 
-            if ($doHostname) { $set[] = "hostname = :hn"; $params[':hn'] = $newHostname; }
-            if ($doOwner)    { $set[] = "owner = :ow";    $params[':ow'] = $newOwner; }
-            if ($doStatus)   { $set[] = "status = :st";   $params[':st'] = $newStatus; }
-            if ($doNote)     { $set[] = "note = :nt";     $params[':nt'] = $newNote; }
+                    foreach ($ids as $id) {
+                        if (!isset($beforeMap[$id])) continue;
+                        $b = $beforeMap[$id];
+                        history_log_address($db, 'bulk_delete', $subnetId, (string)$b['ip'], (int)$b['id'], [
+                            'hostname' => (string)$b['hostname'],
+                            'owner' => (string)$b['owner'],
+                            'note' => (string)$b['note'],
+                            'status' => (string)$b['status'],
+                        ], null);
+                    }
 
-            // IN clause (reuse)
-            foreach ($paramsBefore as $k => $v) {
-                if ($k !== ':sid') $params[$k] = $v;
+                    audit($db, 'address.bulk_delete', 'address', null,
+                        "subnet_id=$subnetId selected=" . count($ids) . " affected=$affected"
+                    );
+
+                    $db->commit();
+                    header('Location: bulk_update.php?subnet_id=' . $subnetId . '&q=' . urlencode($q));
+                    exit;
+                }
+            } else {
+                $doHostname = !empty($_POST['do_hostname']);
+                $doOwner    = !empty($_POST['do_owner']);
+                $doStatus   = !empty($_POST['do_status']);
+                $doNote     = !empty($_POST['do_note']);
+
+                $newHostname = trim((string)($_POST['hostname'] ?? ''));
+                $newOwner    = trim((string)($_POST['owner'] ?? ''));
+                $newStatus   = (string)($_POST['status'] ?? 'used');
+                $newNote     = trim((string)($_POST['note'] ?? ''));
+
+                if (!$doHostname && !$doOwner && !$doStatus && !$doNote) {
+                    $db->rollBack();
+                    $err = "Select at least one field to update.";
+                } elseif ($doStatus && !in_array($newStatus, ['used','reserved','free'], true)) {
+                    $db->rollBack();
+                    $err = "Invalid status.";
+                } else {
+                    $set = [];
+                    $params = [':sid' => $subnetId];
+
+                    if ($doHostname) { $set[] = "hostname = :hn"; $params[':hn'] = $newHostname; }
+                    if ($doOwner)    { $set[] = "owner = :ow";    $params[':ow'] = $newOwner; }
+                    if ($doStatus)   { $set[] = "status = :st";   $params[':st'] = $newStatus; }
+                    if ($doNote)     { $set[] = "note = :nt";     $params[':nt'] = $newNote; }
+
+                    foreach ($paramsBefore as $k => $v) {
+                        if ($k !== ':sid') $params[$k] = $v;
+                    }
+
+                    $sql = "UPDATE addresses SET " . implode(', ', $set) .
+                           " WHERE subnet_id = :sid AND id IN (" . implode(',', $in) . ")";
+                    $st = $db->prepare($sql);
+                    $st->execute($params);
+                    $affected = $st->rowCount();
+
+                    foreach ($ids as $id) {
+                        if (!isset($beforeMap[$id])) continue;
+                        $b = $beforeMap[$id];
+
+                        $after = [
+                            'hostname' => $doHostname ? $newHostname : (string)$b['hostname'],
+                            'owner'    => $doOwner ? $newOwner : (string)$b['owner'],
+                            'note'     => $doNote ? $newNote : (string)$b['note'],
+                            'status'   => $doStatus ? $newStatus : (string)$b['status'],
+                        ];
+
+                        history_log_address($db, 'bulk_update', $subnetId, (string)$b['ip'], (int)$b['id'], [
+                            'hostname' => (string)$b['hostname'],
+                            'owner' => (string)$b['owner'],
+                            'note' => (string)$b['note'],
+                            'status' => (string)$b['status'],
+                        ], $after);
+                    }
+
+                    audit($db, 'address.bulk_update', 'address', null,
+                        "subnet_id=$subnetId selected=" . count($ids) . " affected=$affected fields=" .
+                        implode(',', array_filter([
+                            $doHostname ? 'hostname' : '',
+                            $doOwner ? 'owner' : '',
+                            $doStatus ? 'status' : '',
+                            $doNote ? 'note' : '',
+                        ]))
+                    );
+
+                    $db->commit();
+                    header('Location: bulk_update.php?subnet_id=' . $subnetId . '&q=' . urlencode($q));
+                    exit;
+                }
             }
-
-            $sql = "UPDATE addresses SET " . implode(', ', $set) .
-                   " WHERE subnet_id = :sid AND id IN (" . implode(',', $in) . ")";
-            $st = $db->prepare($sql);
-            $st->execute($params);
-            $affected = $st->rowCount();
-
-            // Write history per row
-            foreach ($ids as $id) {
-                if (!isset($beforeMap[$id])) continue;
-                $b = $beforeMap[$id];
-
-                $after = [
-                    'hostname' => $doHostname ? $newHostname : (string)$b['hostname'],
-                    'owner'    => $doOwner ? $newOwner : (string)$b['owner'],
-                    'note'     => $doNote ? $newNote : (string)$b['note'],
-                    'status'   => $doStatus ? $newStatus : (string)$b['status'],
-                ];
-
-                history_log_address($db, 'bulk_update', $subnetId, (string)$b['ip'], (int)$b['id'], [
-                    'hostname' => (string)$b['hostname'],
-                    'owner' => (string)$b['owner'],
-                    'note' => (string)$b['note'],
-                    'status' => (string)$b['status'],
-                ], $after);
-            }
-
-            audit($db, 'address.bulk_update', 'address', null,
-                "subnet_id=$subnetId selected=" . count($ids) . " affected=$affected fields=" .
-                implode(',', array_filter([
-                    $doHostname ? 'hostname' : '',
-                    $doOwner ? 'owner' : '',
-                    $doStatus ? 'status' : '',
-                    $doNote ? 'note' : '',
-                ]))
-            );
-
-            $db->commit();
-            $msg = "Bulk update complete. Rows affected: $affected";
-
-            header('Location: bulk_update.php?subnet_id=' . $subnetId . '&q=' . urlencode($q));
-            exit;
         } catch (Throwable $e) {
-            $db->rollBack();
-            $err = "Bulk update failed: " . $e->getMessage();
+            if ($db->inTransaction()) $db->rollBack();
+            $err = "Bulk action failed: " . $e->getMessage();
         }
     }
 }
@@ -193,7 +224,7 @@ page_header('Bulk Update');
     <input type="hidden" name="subnet_id" value="<?= (int)$subnetId ?>">
     <input type="hidden" name="q" value="<?= e($q) ?>">
 
-    <h3>Set fields</h3>
+    <h3>Bulk update fields</h3>
     <p class="muted">Tick which fields to change; unticked fields are not modified.</p>
 
     <div class="row">
@@ -217,7 +248,7 @@ page_header('Bulk Update');
     </div>
 
     <h3 style="margin-top:18px">Choose addresses</h3>
-    <p class="muted">Select one or more rows to update.</p>
+    <p class="muted">Select one or more rows to update or delete.</p>
 
     <p>
       <button type="button" onclick="document.querySelectorAll('input.addrbox').forEach(cb=>cb.checked=true)">Select all</button>
@@ -251,12 +282,30 @@ page_header('Bulk Update');
       </tbody>
     </table>
 
-    <p style="margin-top:12px">
+    <h3 style="margin-top:18px">Action</h3>
+
+    <div class="row">
+      <label>Bulk action<br>
+        <select name="bulk_action">
+          <option value="update" selected>Update selected</option>
+          <option value="delete">Delete selected</option>
+        </select>
+      </label>
+
+      <label>Delete confirmation (type DELETE)<br>
+        <input name="confirm_delete" placeholder="DELETE">
+      </label>
+
       <button type="submit" <?= $isReadonly ? 'disabled' : '' ?>
-        onclick="return confirm('Apply bulk update to selected rows?');">
-        Apply Bulk Update
+        onclick="return confirm('Proceed with the selected bulk action?');">
+        Apply
       </button>
+    </div>
+
+    <p class="muted">
+      For deletes, you must type <b>DELETE</b> in the confirmation box.
     </p>
+
   </form>
 <?php else: ?>
   <p class="muted">Select a subnet to begin.</p>

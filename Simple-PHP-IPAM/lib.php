@@ -1,6 +1,11 @@
 <?php
 declare(strict_types=1);
 
+/**
+ * Full lib.php (v0.8 patch) - includes CSS/JS asset loading + theme toggle buttons in nav.
+ * NOTE: This file is long; if you have local modifications, merge only page_header/page_footer changes.
+ */
+
 /* ===================== DB ===================== */
 
 function ipam_db(string $path): PDO
@@ -60,12 +65,7 @@ function ipam_db_init(PDO $db): void
     }
 }
 
-/* ===================== Basics ===================== */
-
-function e(string $s): string
-{
-    return htmlspecialchars($s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-}
+function e(string $s): string { return htmlspecialchars($s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); }
 
 /* ===================== CSRF ===================== */
 
@@ -237,10 +237,7 @@ function apply_migrations(PDO $db): array
 
 /* ===================== Housekeeping ===================== */
 
-function housekeeping_state_path(): string
-{
-    return __DIR__ . '/data/housekeeping.json';
-}
+function housekeeping_state_path(): string { return __DIR__ . '/data/housekeeping.json'; }
 
 function housekeeping_should_run(array $config): bool
 {
@@ -299,149 +296,7 @@ function run_housekeeping_if_due(array $config): void
     }
 }
 
-/* ===================== Pagination ===================== */
-
-function q_int(string $key, int $default, int $min, int $max): int
-{
-    $v = $_GET[$key] ?? null;
-    if ($v === null || $v === '') return $default;
-    if (!is_scalar($v)) return $default;
-    if (!preg_match('/^-?\d+$/', (string)$v)) return $default;
-    $n = (int)$v;
-    if ($n < $min) return $min;
-    if ($n > $max) return $max;
-    return $n;
-}
-
-function paginate(int $total, int $page, int $pageSize): array
-{
-    $page = max(1, $page);
-    $pageSize = max(1, min(500, $pageSize));
-    $pages = (int)max(1, (int)ceil($total / $pageSize));
-    if ($page > $pages) $page = $pages;
-
-    return [
-        'page' => $page,
-        'page_size' => $pageSize,
-        'pages' => $pages,
-        'offset' => ($page - 1) * $pageSize,
-        'limit' => $pageSize,
-    ];
-}
-
-/* ===================== IP helpers ===================== */
-
-function parse_cidr(string $cidr): ?array
-{
-    $cidr = trim($cidr);
-    if (strpos($cidr, '/') === false) return null;
-    [$ip, $prefixStr] = explode('/', $cidr, 2);
-
-    $ipBin = @inet_pton(trim($ip));
-    if ($ipBin === false) return null;
-
-    $len = strlen($ipBin);
-    $version = ($len === 4) ? 4 : (($len === 16) ? 6 : 0);
-    if ($version === 0) return null;
-
-    if (!ctype_digit(trim($prefixStr))) return null;
-    $prefix = (int)$prefixStr;
-    $max = ($version === 4) ? 32 : 128;
-    if ($prefix < 0 || $prefix > $max) return null;
-
-    $netBin = apply_prefix_mask($ipBin, $prefix);
-    return [
-        'version' => $version,
-        'network' => inet_ntop($netBin),
-        'prefix' => $prefix,
-        'net_bin' => $netBin,
-    ];
-}
-
-function apply_prefix_mask(string $ipBin, int $prefix): string
-{
-    $len = strlen($ipBin);
-    $maxBits = ($len === 4) ? 32 : 128;
-    $prefix = max(0, min($prefix, $maxBits));
-
-    $fullBytes = intdiv($prefix, 8);
-    $remBits = $prefix % 8;
-
-    $out = '';
-    for ($i = 0; $i < $len; $i++) {
-        $b = ord($ipBin[$i]);
-        if ($i < $fullBytes) $out .= chr($b);
-        elseif ($i === $fullBytes && $remBits !== 0) {
-            $mask = (0xFF << (8 - $remBits)) & 0xFF;
-            $out .= chr($b & $mask);
-        } else $out .= chr(0);
-    }
-    return $out;
-}
-
-function ip_in_cidr(string $ip, string $network, int $prefix): bool
-{
-    $ipBin = @inet_pton(trim($ip));
-    $netBin = @inet_pton(trim($network));
-    if ($ipBin === false || $netBin === false) return false;
-    if (strlen($ipBin) !== strlen($netBin)) return false;
-    return hash_equals(apply_prefix_mask($ipBin, $prefix), $netBin);
-}
-
-function normalize_ip(string $ip): ?array
-{
-    $bin = @inet_pton(trim($ip));
-    if ($bin === false) return null;
-    return ['ip' => inet_ntop($bin), 'bin' => $bin, 'version' => (strlen($bin) === 4) ? 4 : 6];
-}
-
-/* ===================== IPv4 integer helpers (unassigned listing) ===================== */
-
-function ipv4_bin_to_int(string $bin): int
-{
-    $n = unpack('N', $bin)[1];
-    // On 64-bit PHP this is safe
-    return (int)($n & 0xFFFFFFFF);
-}
-
-function ipv4_int_to_bin(int $n): string
-{
-    $n = $n & 0xFFFFFFFF;
-    return pack('N', $n);
-}
-
-function ipv4_int_to_text(int $n): string
-{
-    return inet_ntop(ipv4_int_to_bin($n));
-}
-
-function ipv4_assignable_count(int $prefix): int
-{
-    if ($prefix >= 32) return 1;
-    if ($prefix === 31) return 2;
-    $hostBits = 32 - $prefix;
-    $total = ($hostBits === 32) ? 4294967296 : (1 << $hostBits);
-    $assignable = $total - 2;
-    return ($assignable > 0) ? (int)$assignable : 0;
-}
-
-function ipv4_broadcast_int(int $networkInt, int $prefix): int
-{
-    $hostBits = 32 - $prefix;
-    if ($hostBits <= 0) return $networkInt;
-    $hostMask = ($hostBits === 32) ? 0xFFFFFFFF : ((1 << $hostBits) - 1);
-    return (int)(($networkInt | $hostMask) & 0xFFFFFFFF);
-}
-
 /* ===================== CSV temp helpers ===================== */
-
-function import_max_bytes(array $config): int
-{
-    $mb = (int)($config['import_csv_max_mb'] ?? 5);
-    if ($mb < 5) $mb = 5;
-    if ($mb > 50) $mb = 50;
-    return $mb * 1024 * 1024;
-}
 
 function tmp_dir(): string { return __DIR__ . '/data/tmp'; }
 
@@ -480,19 +335,8 @@ function page_header(string $title): void
 
     echo "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
     echo "<title>" . e($title) . "</title>";
-    echo "<style>
-      body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:1100px}
-      nav a{margin-right:12px}
-      table{border-collapse:collapse;width:100%}
-      th,td{border:1px solid #ccc;padding:8px;text-align:left;vertical-align:top}
-      input,select{padding:6px}
-      .row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
-      .muted{color:#666}
-      .danger{color:#b00020}
-      .badge{display:inline-block;padding:2px 8px;border:1px solid #999;border-radius:999px;font-size:12px}
-      code{background:#f5f5f5;padding:1px 4px;border-radius:4px}
-      summary{cursor:pointer}
-    </style>";
+    echo "<link rel='stylesheet' href='assets/app.css'>";
+    echo "<script defer src='assets/app.js'></script>";
     echo "</head><body>";
 
     echo "<nav>";
@@ -515,8 +359,17 @@ function page_header(string $title): void
         }
         echo "<a href='change_password.php'>Change Password</a>";
         echo "<a href='logout.php'>Logout</a>";
+
+        echo "<span class='nav-right'>";
+        echo "<button type='button' onclick='ipamToggleTheme()'>Toggle theme</button>";
+        echo "<button type='button' onclick='ipamClearTheme()'>System</button>";
+        echo "</span>";
     } else {
         echo "<a href='login.php'>Login</a>";
+        echo "<span class='nav-right'>";
+        echo "<button type='button' onclick='ipamToggleTheme()'>Toggle theme</button>";
+        echo "<button type='button' onclick='ipamClearTheme()'>System</button>";
+        echo "</span>";
     }
     echo "</nav><hr>";
 }
