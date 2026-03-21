@@ -16,7 +16,7 @@ $subnets = $st->fetchAll();
 
 $subnetId = (int)($_GET['subnet_id'] ?? ($_POST['subnet_id'] ?? 0));
 $page = q_int('page', 1, 1, 1000000);
-$pageSize = q_int('page_size', 100, 1, 500);
+$pageSize = q_int('page_size', 254, 1, 500);
 
 $err = '';
 $msg = '';
@@ -24,6 +24,7 @@ $msg = '';
 $sub = null;
 $items = [];
 $totalUnassigned = 0;
+$p = null;
 
 if ($subnetId > 0) {
     $st = $db->prepare("SELECT id, cidr, ip_version, network, prefix, network_bin FROM subnets WHERE id = :id");
@@ -40,12 +41,10 @@ if ($subnetId > 0) {
         $netInt = ipv4_bin_to_int((string)$sub['network_bin']);
         $bcastInt = ipv4_broadcast_int($netInt, $prefix);
 
-        // Determine assignable range (exclude network/bcast for <=/30)
         if ($prefix <= 30) {
             $first = $netInt + 1;
             $last  = $bcastInt - 1;
         } else {
-            // /31 or /32: both/all are assignable
             $first = $netInt;
             $last  = $bcastInt;
         }
@@ -54,7 +53,6 @@ if ($subnetId > 0) {
         if ($assignable > $MAX_ASSIGNABLE) {
             $err = "Subnet too large to list unassigned safely (assignable hosts: $assignable; limit: $MAX_ASSIGNABLE).";
         } else {
-            // Fetch all assigned IPs in subnet (since small)
             $st = $db->prepare("SELECT ip FROM addresses WHERE subnet_id = :sid");
             $st->execute([':sid' => $subnetId]);
             $assigned = [];
@@ -62,7 +60,6 @@ if ($subnetId > 0) {
                 $assigned[(string)$r['ip']] = true;
             }
 
-            // Build full unassigned list (since small), then paginate in PHP
             $unassigned = [];
             for ($i = $first; $i <= $last; $i++) {
                 $ip = ipv4_int_to_text($i);
@@ -71,16 +68,11 @@ if ($subnetId > 0) {
 
             $totalUnassigned = count($unassigned);
             $p = paginate($totalUnassigned, $page, $pageSize);
-
-            $slice = array_slice($unassigned, $p['offset'], $p['limit']);
-            foreach ($slice as $ip) {
-                $items[] = $ip;
-            }
+            $items = array_slice($unassigned, $p['offset'], $p['limit']);
         }
     }
 }
 
-// Quick-add handler
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add' && $subnetId > 0) {
     $ip = trim((string)($_POST['ip'] ?? ''));
     $hostname = trim((string)($_POST['hostname'] ?? ''));
@@ -103,8 +95,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add' 
             $err = "IP not in subnet.";
         } else {
             try {
-                // Check existing
-                $sel = $db->prepare("SELECT id, hostname, owner, note, status FROM addresses WHERE subnet_id=:sid AND ip=:ip");
+                $sel = $db->prepare("SELECT id FROM addresses WHERE subnet_id=:sid AND ip=:ip");
                 $sel->execute([':sid' => $subnetId, ':ip' => $norm['ip']]);
                 if ($sel->fetch()) {
                     $err = "Address already exists.";
@@ -140,7 +131,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add' 
     }
 }
 
-function build_query_un(array $overrides = []): string {
+function build_query_unassigned(array $overrides = []): string {
     $q = $_GET;
     foreach ($overrides as $k => $v) {
         if ($v === null) unset($q[$k]);
@@ -151,95 +142,112 @@ function build_query_un(array $overrides = []): string {
 
 page_header('Unassigned IPv4');
 ?>
-<h1>Unassigned IPv4</h1>
-<p class="muted">Lists unassigned (no row in addresses) assignable IPv4 hosts for small subnets (≤ <?= e((string)$MAX_ASSIGNABLE) ?>).</p>
+
+<div class="toolbar">
+  <div>
+    <h1>Unassigned IPv4</h1>
+    <div class="muted">List and add assignable IPv4 addresses that do not yet have address rows.</div>
+  </div>
+</div>
+
+<div class="card">
+  <form method="get" action="unassigned.php" class="row">
+    <label>Subnet<br>
+      <select name="subnet_id">
+        <option value="0">-- Select IPv4 subnet --</option>
+        <?php foreach ($subnets as $s): ?>
+          <?php if ((int)$s['ip_version'] !== 4) continue; ?>
+          <option value="<?= (int)$s['id'] ?>" <?= ((int)$s['id'] === $subnetId) ? 'selected' : '' ?>>
+            <?= e($s['cidr']) ?>
+          </option>
+        <?php endforeach; ?>
+      </select>
+    </label>
+
+    <label>Page size<br>
+      <select name="page_size">
+        <?php foreach ([50,100,254,500] as $sz): ?>
+          <option value="<?= $sz ?>" <?= $pageSize===$sz?'selected':'' ?>><?= $sz ?></option>
+        <?php endforeach; ?>
+      </select>
+    </label>
+
+    <button type="submit">Load</button>
+  </form>
+</div>
 
 <?php if ($err): ?><p class="danger"><?= e($err) ?></p><?php endif; ?>
-<?php if ($msg): ?><p><?= e($msg) ?></p><?php endif; ?>
-
-<form method="get" action="unassigned.php" class="row">
-  <label>Subnet<br>
-    <select name="subnet_id">
-      <option value="0">-- Select IPv4 subnet --</option>
-      <?php foreach ($subnets as $s): ?>
-        <?php if ((int)$s['ip_version'] !== 4) continue; ?>
-        <option value="<?= (int)$s['id'] ?>" <?= ((int)$s['id'] === $subnetId) ? 'selected' : '' ?>>
-          <?= e($s['cidr']) ?>
-        </option>
-      <?php endforeach; ?>
-    </select>
-  </label>
-
-  <label>Page size<br>
-    <select name="page_size">
-      <?php foreach ([50,100,200,500] as $sz): ?>
-        <option value="<?= $sz ?>" <?= $pageSize===$sz?'selected':'' ?>><?= $sz ?></option>
-      <?php endforeach; ?>
-    </select>
-  </label>
-
-  <button type="submit">Load</button>
-</form>
+<?php if ($msg): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
 
 <?php if ($sub): ?>
-  <h2>Subnet: <?= e($sub['cidr']) ?></h2>
-  <p class="muted">Unassigned: <b><?= e((string)$totalUnassigned) ?></b></p>
-
-  <?php if ($items): ?>
-    <table>
-      <thead>
-        <tr>
-          <th>IP</th>
-          <th>Add (inline)</th>
-        </tr>
-      </thead>
-      <tbody>
-      <?php foreach ($items as $ip): ?>
-        <tr>
-          <td><b><?= e($ip) ?></b></td>
-          <td>
-            <form method="post" action="unassigned.php?<?= e(build_query_un()) ?>" class="row" style="gap:6px">
-              <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
-              <input type="hidden" name="action" value="add">
-              <input type="hidden" name="subnet_id" value="<?= (int)$subnetId ?>">
-              <input type="hidden" name="ip" value="<?= e($ip) ?>">
-              <label>Hostname<br><input name="hostname" style="width:160px"></label>
-              <label>Owner<br><input name="owner" style="width:140px"></label>
-              <label>Status<br>
-                <select name="status">
-                  <option value="used" selected>used</option>
-                  <option value="reserved">reserved</option>
-                  <option value="free">free</option>
-                </select>
-              </label>
-              <label>Note<br><input name="note" style="width:220px"></label>
-              <button type="submit">Add</button>
-            </form>
-          </td>
-        </tr>
-      <?php endforeach; ?>
-      </tbody>
-    </table>
-
-    <?php
-      // compute pagination for display if we had a valid sub
-      if (isset($p)):
-    ?>
-      <p style="margin-top:12px">
-        <?php if ($p['page'] > 1): ?>
-          <a href="unassigned.php?<?= e(build_query_un(['page' => $p['page'] - 1])) ?>">&laquo; Prev</a>
+  <div class="card" style="margin-top:16px">
+    <div class="toolbar">
+      <div>
+        <h2>Subnet: <?= e($sub['cidr']) ?></h2>
+        <div class="muted">Unassigned: <b><?= e((string)$totalUnassigned) ?></b></div>
+      </div>
+      <div class="spacer"></div>
+      <div class="actions-inline">
+        <a href="addresses.php?subnet_id=<?= (int)$subnetId ?>">View Addresses</a>
+        <?php if (current_user()['role'] !== 'readonly'): ?>
+          <a href="bulk_update.php?subnet_id=<?= (int)$subnetId ?>">Bulk Update</a>
         <?php endif; ?>
-        <?php if ($p['page'] < $p['pages']): ?>
-          <a style="margin-left:12px" href="unassigned.php?<?= e(build_query_un(['page' => $p['page'] + 1])) ?>">Next &raquo;</a>
+      </div>
+    </div>
+
+    <?php if (!$items): ?>
+      <div class="empty-state">No unassigned IPs to show (or subnet too large).</div>
+    <?php else: ?>
+      <table>
+        <thead>
+          <tr>
+            <th>IP</th>
+            <th>Add</th>
+          </tr>
+        </thead>
+        <tbody>
+        <?php foreach ($items as $ip): ?>
+          <tr>
+            <td><b><?= e($ip) ?></b></td>
+            <td>
+              <form method="post" action="unassigned.php?<?= e(build_query_unassigned()) ?>" class="row" style="gap:6px">
+                <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                <input type="hidden" name="action" value="add">
+                <input type="hidden" name="subnet_id" value="<?= (int)$subnetId ?>">
+                <input type="hidden" name="ip" value="<?= e($ip) ?>">
+
+                <label>Hostname<br><input name="hostname" style="width:160px"></label>
+                <label>Owner<br><input name="owner" style="width:140px"></label>
+                <label>Status<br>
+                  <select name="status">
+                    <option value="used" selected>used</option>
+                    <option value="reserved">reserved</option>
+                    <option value="free">free</option>
+                  </select>
+                </label>
+                <label>Note<br><input name="note" style="width:220px"></label>
+                <button type="submit">Add</button>
+              </form>
+            </td>
+          </tr>
+        <?php endforeach; ?>
+        </tbody>
+      </table>
+
+      <p style="margin-top:12px">
+        <?php if ($p && $p['page'] > 1): ?>
+          <a href="unassigned.php?<?= e(build_query_unassigned(['page' => $p['page'] - 1])) ?>">&laquo; Prev</a>
+        <?php endif; ?>
+        <?php if ($p && $p['page'] < $p['pages']): ?>
+          <a style="margin-left:12px" href="unassigned.php?<?= e(build_query_unassigned(['page' => $p['page'] + 1])) ?>">Next &raquo;</a>
         <?php endif; ?>
       </p>
     <?php endif; ?>
-  <?php else: ?>
-    <p class="muted">No unassigned IPs to show (or subnet too large).</p>
-  <?php endif; ?>
-
+  </div>
 <?php else: ?>
-  <p class="muted">Select an IPv4 subnet to list unassigned IPs.</p>
+  <div class="card" style="margin-top:16px">
+    <div class="empty-state">Select an IPv4 subnet to list unassigned IPs.</div>
+  </div>
 <?php endif; ?>
 
 <?php page_footer();

@@ -1,8 +1,6 @@
 <?php
 declare(strict_types=1);
 
-/* ===================== DB ===================== */
-
 function ipam_db(string $path): PDO
 {
     $dir = dirname($path);
@@ -60,14 +58,12 @@ function ipam_db_init(PDO $db): void
     }
 }
 
-/* ===================== Basics ===================== */
-
 function e(string $s): string
 {
     return htmlspecialchars($s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
-/* ===================== CSRF ===================== */
+/* ---------------- CSRF ---------------- */
 
 function csrf_token(): string { return $_SESSION['csrf'] ?? ''; }
 
@@ -82,7 +78,7 @@ function csrf_require(): void
     }
 }
 
-/* ===================== Auth / RBAC ===================== */
+/* ---------------- Auth / RBAC ---------------- */
 
 function is_logged_in(): bool { return !empty($_SESSION['uid']); }
 
@@ -141,7 +137,7 @@ function logout_user(): void
     session_destroy();
 }
 
-/* ===================== Audit ===================== */
+/* ---------------- Audit ---------------- */
 
 function client_ip(): string { return (string)($_SERVER['REMOTE_ADDR'] ?? ''); }
 
@@ -162,7 +158,7 @@ function audit(PDO $db, string $action, string $entityType, ?int $entityId, stri
     ]);
 }
 
-/* ===================== History ===================== */
+/* ---------------- History ---------------- */
 
 function history_log_address(PDO $db, string $action, int $subnetId, string $ip, ?int $addressId, ?array $before, ?array $after): void
 {
@@ -187,7 +183,7 @@ function history_log_address(PDO $db, string $action, int $subnetId, string $ip,
     ]);
 }
 
-/* ===================== Migrations ===================== */
+/* ---------------- Migrations ---------------- */
 
 function ensure_migrations_table(PDO $db): void
 {
@@ -235,7 +231,7 @@ function apply_migrations(PDO $db): array
     return $appliedNow;
 }
 
-/* ===================== Housekeeping ===================== */
+/* ---------------- Housekeeping ---------------- */
 
 function housekeeping_state_path(): string
 {
@@ -299,7 +295,7 @@ function run_housekeeping_if_due(array $config): void
     }
 }
 
-/* ===================== Pagination ===================== */
+/* ---------------- Pagination / perf helpers ---------------- */
 
 function q_int(string $key, int $default, int $min, int $max): int
 {
@@ -330,7 +326,7 @@ function paginate(int $total, int $page, int $pageSize): array
     ];
 }
 
-/* ===================== IP helpers ===================== */
+/* ---------------- IP helpers ---------------- */
 
 function parse_cidr(string $cidr): ?array
 {
@@ -412,7 +408,7 @@ function normalize_status(?string $s): string
     return 'used';
 }
 
-/* ===================== IPv4 integer helpers ===================== */
+/* ---------------- IPv4 integer helpers ---------------- */
 
 function ipv4_bin_to_int(string $bin): int
 {
@@ -449,7 +445,7 @@ function ipv4_broadcast_int(int $networkInt, int $prefix): int
     return (int)(($networkInt | $hostMask) & 0xFFFFFFFF);
 }
 
-/* ===================== CSV helpers ===================== */
+/* ---------------- CSV helpers ---------------- */
 
 function import_max_bytes(array $config): int
 {
@@ -459,7 +455,10 @@ function import_max_bytes(array $config): int
     return $mb * 1024 * 1024;
 }
 
-function tmp_dir(): string { return __DIR__ . '/data/tmp'; }
+function tmp_dir(): string
+{
+    return __DIR__ . '/data/tmp';
+}
 
 function ensure_tmp_dir(): void
 {
@@ -591,7 +590,7 @@ function cidr_from_ip_and_prefix(array $normIp, int $prefix): string
     return inet_ntop($netBin) . '/' . $prefix;
 }
 
-/* ===================== UI ===================== */
+/* ---------------- UI helpers ---------------- */
 
 function page_header(string $title): void
 {
@@ -604,43 +603,39 @@ function page_header(string $title): void
     echo "<script defer src='assets/app.js'></script>";
     echo "</head><body>";
 
-    echo "<nav>";
+    echo "<div class='topbar'><div class='nav-wrap'>";
+    echo "<div class='nav-links'>";
     if ($u) {
-        echo "Logged in as <b>" . e((string)$u) . "</b> <span class='badge'>" . e((string)$role) . "</span> &nbsp;|&nbsp; ";
+        echo "<span>Logged in as <b>" . e((string)$u) . "</b> <span class='badge'>" . e((string)$role) . "</span></span>";
         echo "<a href='dashboard.php'>Dashboard</a>";
         echo "<a href='subnets.php'>Subnets</a>";
         echo "<a href='addresses.php'>Addresses</a>";
         echo "<a href='search.php'>Search</a>";
-        echo "<a href='unassigned.php'>Unassigned</a>";
-
-        if (($role ?? '') !== 'readonly') {
-            echo "<a href='bulk_update.php'>Bulk Update</a>";
-        }
-
         echo "<a href='audit.php'>Audit</a>";
         if (($role ?? '') === 'admin') {
+            echo "<a href='sites.php'>Sites</a>";
             echo "<a href='users.php'>Users</a>";
             echo "<a href='import_csv.php'>Import CSV</a>";
         }
-        echo "<a href='change_password.php'>Change Password</a>";
+        echo "<a href='change_password.php'>Password</a>";
         echo "<a href='logout.php'>Logout</a>";
-
-        echo "<span class='nav-right'>";
-        echo "<button type='button' onclick='ipamToggleTheme()'>Toggle theme</button>";
-        echo "<button type='button' onclick='ipamClearTheme()'>System</button>";
-        echo "</span>";
     } else {
         echo "<a href='login.php'>Login</a>";
-        echo "<span class='nav-right'>";
-        echo "<button type='button' onclick='ipamToggleTheme()'>Toggle theme</button>";
-        echo "<button type='button' onclick='ipamClearTheme()'>System</button>";
-        echo "</span>";
     }
-    echo "</nav><hr>";
+    echo "</div>";
+
+    echo "<div class='nav-right'>";
+    echo "<button type='button' class='button-secondary' onclick='ipamToggleTheme()'>Toggle theme</button>";
+    echo "<button type='button' class='button-secondary' onclick='ipamClearTheme()'>System</button>";
+    echo "</div>";
+
+    echo "</div></div>";
+    echo "<div class='page'>";
 }
 
 function page_footer(): void
 {
     require __DIR__ . '/version.php';
-    echo "<hr><div class='muted'>PHP SQLite IPAM v" . e(IPAM_VERSION) . "</div></body></html>";
+    echo "<hr><div class='muted'>PHP SQLite IPAM v" . e(IPAM_VERSION) . "</div>";
+    echo "</div></body></html>";
 }

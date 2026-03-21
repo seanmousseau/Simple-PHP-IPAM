@@ -16,7 +16,7 @@ $subnetList = $st->fetchAll();
 
 $selectedSubnetId = (int)($_GET['subnet_id'] ?? ($_POST['subnet_id'] ?? 0));
 $page = q_int('page', 1, 1, 1000000);
-$pageSize = q_int('page_size', 100, 1, 500);
+$pageSize = q_int('page_size', 254, 1, 500);
 
 $selectedSubnet = null;
 if ($selectedSubnetId > 0) {
@@ -100,7 +100,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!in_array($status, ['used','reserved','free'], true)) {
             $err = 'Invalid status.';
         } else {
-            // Fetch before
             $sel = $db->prepare("SELECT id, ip, hostname, owner, note, status FROM addresses WHERE id=:id AND subnet_id=:sid");
             $sel->execute([':id' => $id, ':sid' => $subnetId]);
             $before = $sel->fetch();
@@ -172,7 +171,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Load paged addresses
 $addresses = [];
 $total = 0;
 $p = null;
@@ -198,146 +196,184 @@ if ($selectedSubnetId > 0) {
 
 page_header('Addresses');
 ?>
-<h1>Addresses</h1>
 
-<?php if ($err): ?><p class="danger"><?= e($err) ?></p><?php endif; ?>
-<?php if ($msg): ?><p><?= e($msg) ?></p><?php endif; ?>
+<div class="toolbar">
+  <div>
+    <h1>Addresses</h1>
+    <div class="muted">Manage address records within a subnet.</div>
+  </div>
+</div>
 
-<form method="get" action="addresses.php" class="row">
-  <label>Subnet<br>
-    <select name="subnet_id">
-      <option value="0">-- Select --</option>
-      <?php foreach ($subnetList as $s): ?>
-        <option value="<?= (int)$s['id'] ?>" <?= ((int)$s['id'] === $selectedSubnetId) ? 'selected' : '' ?>>
-          <?= e($s['cidr']) ?>
-        </option>
-      <?php endforeach; ?>
-    </select>
-  </label>
-
-  <label>Page size<br>
-    <select name="page_size">
-      <?php foreach ([50,100,200,500] as $sz): ?>
-        <option value="<?= $sz ?>" <?= $pageSize===$sz?'selected':'' ?>><?= $sz ?></option>
-      <?php endforeach; ?>
-    </select>
-  </label>
-
-  <button type="submit">Load</button>
-</form>
-
-<h2>Add address</h2>
-<form method="post" action="addresses.php">
-  <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
-  <input type="hidden" name="action" value="create">
-  <input type="hidden" name="subnet_id" value="<?= (int)$selectedSubnetId ?>">
-
-  <div class="row">
-    <label>IP<br><input name="ip" placeholder="<?= ($selectedSubnet && (int)$selectedSubnet['ip_version']===6) ? '2001:db8::10' : '10.0.0.10' ?>" required></label>
-    <label>Hostname<br><input name="hostname"></label>
-    <label>Owner<br><input name="owner"></label>
-    <label>Status<br>
-      <select name="status">
-        <option value="used">used</option>
-        <option value="reserved">reserved</option>
-        <option value="free">free</option>
+<div class="card">
+  <form method="get" action="addresses.php" class="row">
+    <label>Subnet<br>
+      <select name="subnet_id">
+        <option value="0">-- Select --</option>
+        <?php foreach ($subnetList as $s): ?>
+          <option value="<?= (int)$s['id'] ?>" <?= ((int)$s['id'] === $selectedSubnetId) ? 'selected' : '' ?>>
+            <?= e($s['cidr']) ?>
+          </option>
+        <?php endforeach; ?>
       </select>
     </label>
+
+    <label>Page size<br>
+      <select name="page_size">
+        <?php foreach ([50,100,254,500] as $sz): ?>
+          <option value="<?= $sz ?>" <?= $pageSize===$sz?'selected':'' ?>><?= $sz ?></option>
+        <?php endforeach; ?>
+      </select>
+    </label>
+
+    <button type="submit">Load</button>
+  </form>
+</div>
+
+<?php if ($err): ?><p class="danger"><?= e($err) ?></p><?php endif; ?>
+<?php if ($msg): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
+
+<?php if ($selectedSubnetId > 0): ?>
+  <div class="card" style="margin-top:16px">
+    <div class="toolbar">
+      <div>
+        <h2>Subnet: <?= e((string)($selectedSubnet['cidr'] ?? '')) ?></h2>
+        <div class="muted">Rows: <b><?= e((string)$total) ?></b><?php if ($p): ?> | Page <b><?= e((string)$p['page']) ?></b> of <b><?= e((string)$p['pages']) ?></b><?php endif; ?></div>
+      </div>
+      <div class="spacer"></div>
+      <div class="actions-inline">
+        <?php if (current_user()['role'] !== 'readonly'): ?>
+          <a href="bulk_update.php?subnet_id=<?= (int)$selectedSubnetId ?>">Bulk Update</a>
+        <?php endif; ?>
+        <?php if ($selectedSubnet && (int)$selectedSubnet['ip_version'] === 4): ?>
+          <a href="unassigned.php?subnet_id=<?= (int)$selectedSubnetId ?>">Unassigned</a>
+        <?php endif; ?>
+      </div>
+    </div>
   </div>
-  <div class="row">
-    <label style="flex:1">Note<br><input name="note" style="width:100%"></label>
-  </div>
-
-  <p>
-    <button type="submit"
-      <?= ($selectedSubnetId>0 && current_user()['role']!=='readonly') ? '' : 'disabled' ?>>
-      Add
-    </button>
-  </p>
-  <?php if ($selectedSubnetId <= 0): ?><p class="muted">Select a subnet first.</p><?php endif; ?>
-  <?php if (current_user()['role']==='readonly'): ?><p class="muted">Read-only account.</p><?php endif; ?>
-</form>
-
-<h2>List</h2>
-<?php if ($selectedSubnetId <= 0): ?>
-  <p class="muted">No subnet selected.</p>
-<?php else: ?>
-  <p class="muted">Rows: <b><?= e((string)$total) ?></b> <?php if ($p): ?>| Page <b><?= e((string)$p['page']) ?></b> of <b><?= e((string)$p['pages']) ?></b><?php endif; ?></p>
-
-  <table>
-    <thead>
-      <tr>
-        <th>IP</th><th>Hostname</th><th>Owner</th><th>Status</th><th>Note</th><th>Updated</th><th>Actions</th>
-      </tr>
-    </thead>
-    <tbody>
-    <?php foreach ($addresses as $a): ?>
-      <tr>
-        <td><?= e($a['ip']) ?></td>
-        <td><?= e($a['hostname']) ?></td>
-        <td><?= e($a['owner']) ?></td>
-        <td><?= e($a['status']) ?></td>
-        <td><?= e($a['note']) ?></td>
-        <td class="muted"><?= e($a['updated_at']) ?></td>
-        <td>
-          <a href="address_history.php?address_id=<?= (int)$a['id'] ?>">History</a>
-          <details style="margin-top:6px">
-            <summary>Edit/Delete</summary>
-
-            <form method="post" action="addresses.php" style="margin-top:8px">
-              <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
-              <input type="hidden" name="action" value="update">
-              <input type="hidden" name="subnet_id" value="<?= (int)$selectedSubnetId ?>">
-              <input type="hidden" name="id" value="<?= (int)$a['id'] ?>">
-
-              <div class="row">
-                <label>Hostname<br><input name="hostname" value="<?= e($a['hostname']) ?>"></label>
-                <label>Owner<br><input name="owner" value="<?= e($a['owner']) ?>"></label>
-                <label>Status<br>
-                  <select name="status">
-                    <option value="used" <?= ($a['status']==='used')?'selected':'' ?>>used</option>
-                    <option value="reserved" <?= ($a['status']==='reserved')?'selected':'' ?>>reserved</option>
-                    <option value="free" <?= ($a['status']==='free')?'selected':'' ?>>free</option>
-                  </select>
-                </label>
-              </div>
-
-              <div class="row">
-                <label style="flex:1">Note<br><input name="note" style="width:100%" value="<?= e($a['note']) ?>"></label>
-              </div>
-
-              <button type="submit" <?= (current_user()['role']==='readonly')?'disabled':'' ?>>Save</button>
-            </form>
-
-            <form method="post" action="addresses.php" onsubmit="return confirm('Delete this address?');" style="margin-top:8px">
-              <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
-              <input type="hidden" name="action" value="delete">
-              <input type="hidden" name="subnet_id" value="<?= (int)$selectedSubnetId ?>">
-              <input type="hidden" name="id" value="<?= (int)$a['id'] ?>">
-              <button type="submit" <?= (current_user()['role']==='readonly')?'disabled':'' ?>>Delete</button>
-            </form>
-
-            <?php if (current_user()['role']==='readonly'): ?><p class="muted">Read-only account.</p><?php endif; ?>
-          </details>
-        </td>
-      </tr>
-    <?php endforeach; ?>
-    </tbody>
-  </table>
-
-  <?php
-    // Pagination links
-    $qsBase = ['subnet_id' => $selectedSubnetId, 'page_size' => $pageSize];
-    $base = 'addresses.php?' . http_build_query($qsBase);
-  ?>
-  <p style="margin-top:12px">
-    <?php if ($p && $p['page'] > 1): ?>
-      <a href="<?= e($base . '&page=' . ($p['page']-1)) ?>">&laquo; Prev</a>
-    <?php endif; ?>
-    <?php if ($p && $p['page'] < $p['pages']): ?>
-      <a style="margin-left:12px" href="<?= e($base . '&page=' . ($p['page']+1)) ?>">Next &raquo;</a>
-    <?php endif; ?>
-  </p>
 <?php endif; ?>
+
+<div class="card" style="margin-top:16px">
+  <h2>Add address</h2>
+  <form method="post" action="addresses.php">
+    <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+    <input type="hidden" name="action" value="create">
+    <input type="hidden" name="subnet_id" value="<?= (int)$selectedSubnetId ?>">
+
+    <div class="row">
+      <label>IP<br><input name="ip" placeholder="<?= ($selectedSubnet && (int)$selectedSubnet['ip_version']===6) ? '2001:db8::10' : '10.0.0.10' ?>" required></label>
+      <label>Hostname<br><input name="hostname"></label>
+      <label>Owner<br><input name="owner"></label>
+      <label>Status<br>
+        <select name="status">
+          <option value="used">used</option>
+          <option value="reserved">reserved</option>
+          <option value="free">free</option>
+        </select>
+      </label>
+    </div>
+    <div class="row">
+      <label style="flex:1">Note<br><input name="note" style="width:100%"></label>
+    </div>
+
+    <p>
+      <button type="submit"
+        <?= ($selectedSubnetId>0 && current_user()['role']!=='readonly') ? '' : 'disabled' ?>>
+        Add
+      </button>
+    </p>
+    <?php if ($selectedSubnetId <= 0): ?><p class="muted">Select a subnet first.</p><?php endif; ?>
+    <?php if (current_user()['role']==='readonly'): ?><p class="muted">Read-only account.</p><?php endif; ?>
+  </form>
+</div>
+
+<div class="card" style="margin-top:16px">
+  <h2>List</h2>
+  <?php if ($selectedSubnetId <= 0): ?>
+    <div class="empty-state">No subnet selected.</div>
+  <?php elseif (!$addresses): ?>
+    <div class="empty-state">No addresses in this subnet yet.</div>
+  <?php else: ?>
+    <table>
+      <thead>
+        <tr>
+          <th>IP</th>
+          <th>Hostname</th>
+          <th>Owner</th>
+          <th>Status</th>
+          <th>Note</th>
+          <th>Updated</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+      <?php foreach ($addresses as $a): ?>
+        <tr>
+          <td><?= e($a['ip']) ?></td>
+          <td><?= e($a['hostname']) ?></td>
+          <td><?= e($a['owner']) ?></td>
+          <td><span class="status-<?= e($a['status']) ?>"><?= e($a['status']) ?></span></td>
+          <td><?= e($a['note']) ?></td>
+          <td class="muted"><?= e($a['updated_at']) ?></td>
+          <td>
+            <div class="actions-inline">
+              <a href="address_history.php?address_id=<?= (int)$a['id'] ?>">History</a>
+            </div>
+
+            <details style="margin-top:6px">
+              <summary>Edit/Delete</summary>
+
+              <form method="post" action="addresses.php" style="margin-top:8px">
+                <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                <input type="hidden" name="action" value="update">
+                <input type="hidden" name="subnet_id" value="<?= (int)$selectedSubnetId ?>">
+                <input type="hidden" name="id" value="<?= (int)$a['id'] ?>">
+
+                <div class="row">
+                  <label>Hostname<br><input name="hostname" value="<?= e($a['hostname']) ?>"></label>
+                  <label>Owner<br><input name="owner" value="<?= e($a['owner']) ?>"></label>
+                  <label>Status<br>
+                    <select name="status">
+                      <option value="used" <?= ($a['status']==='used')?'selected':'' ?>>used</option>
+                      <option value="reserved" <?= ($a['status']==='reserved')?'selected':'' ?>>reserved</option>
+                      <option value="free" <?= ($a['status']==='free')?'selected':'' ?>>free</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div class="row">
+                  <label style="flex:1">Note<br><input name="note" style="width:100%" value="<?= e($a['note']) ?>"></label>
+                </div>
+
+                <button type="submit" <?= (current_user()['role']==='readonly')?'disabled':'' ?>>Save</button>
+              </form>
+
+              <form method="post" action="addresses.php" onsubmit="return confirm('Delete this address?');" style="margin-top:8px">
+                <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="subnet_id" value="<?= (int)$selectedSubnetId ?>">
+                <input type="hidden" name="id" value="<?= (int)$a['id'] ?>">
+                <button type="submit" class="button-danger" <?= (current_user()['role']==='readonly')?'disabled':'' ?>>Delete</button>
+              </form>
+            </details>
+          </td>
+        </tr>
+      <?php endforeach; ?>
+      </tbody>
+    </table>
+
+    <?php
+      $qsBase = ['subnet_id' => $selectedSubnetId, 'page_size' => $pageSize];
+      $base = 'addresses.php?' . http_build_query($qsBase);
+    ?>
+    <p style="margin-top:12px">
+      <?php if ($p && $p['page'] > 1): ?>
+        <a href="<?= e($base . '&page=' . ($p['page']-1)) ?>">&laquo; Prev</a>
+      <?php endif; ?>
+      <?php if ($p && $p['page'] < $p['pages']): ?>
+        <a style="margin-left:12px" href="<?= e($base . '&page=' . ($p['page']+1)) ?>">Next &raquo;</a>
+      <?php endif; ?>
+    </p>
+  <?php endif; ?>
+</div>
 
 <?php page_footer();

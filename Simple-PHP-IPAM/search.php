@@ -8,7 +8,7 @@ $status = trim((string)($_GET['status'] ?? ''));
 $subnetId = (int)($_GET['subnet_id'] ?? 0);
 
 $page = q_int('page', 1, 1, 1000000);
-$pageSize = q_int('page_size', 100, 1, 500);
+$pageSize = q_int('page_size', 254, 1, 500);
 
 $allowedStatus = ['' ,'used','reserved','free'];
 if (!in_array($status, $allowedStatus, true)) $status = '';
@@ -60,7 +60,7 @@ $st->bindValue(':off', $p['offset'], PDO::PARAM_INT);
 $st->execute();
 $rows = $st->fetchAll();
 
-function build_query(array $overrides = []): string {
+function build_query_search(array $overrides = []): string {
     $q = $_GET;
     foreach ($overrides as $k => $v) {
         if ($v === null) unset($q[$k]);
@@ -71,91 +71,101 @@ function build_query(array $overrides = []): string {
 
 page_header('Search');
 ?>
-<h1>Search</h1>
 
-<form method="get" action="search.php" class="row">
-  <label>Query<br>
-    <input name="q" value="<?= e($q) ?>" placeholder="ip/hostname/owner/note">
-  </label>
+<div class="toolbar">
+  <div>
+    <h1>Search</h1>
+    <div class="muted">Search address records across the system.</div>
+  </div>
+</div>
 
-  <label>Status<br>
-    <select name="status">
-      <option value="" <?= $status===''?'selected':'' ?>>(any)</option>
-      <option value="used" <?= $status==='used'?'selected':'' ?>>used</option>
-      <option value="reserved" <?= $status==='reserved'?'selected':'' ?>>reserved</option>
-      <option value="free" <?= $status==='free'?'selected':'' ?>>free</option>
-    </select>
-  </label>
+<div class="card">
+  <form method="get" action="search.php" class="row">
+    <label>Query<br>
+      <input name="q" value="<?= e($q) ?>" placeholder="ip/hostname/owner/note">
+    </label>
 
-  <label>Subnet<br>
-    <select name="subnet_id">
-      <option value="0">(any)</option>
-      <?php foreach ($subnets as $s): ?>
-        <option value="<?= (int)$s['id'] ?>" <?= ((int)$s['id']===$subnetId)?'selected':'' ?>>
-          <?= e($s['cidr']) ?>
-        </option>
+    <label>Status<br>
+      <select name="status">
+        <option value="" <?= $status===''?'selected':'' ?>>(any)</option>
+        <option value="used" <?= $status==='used'?'selected':'' ?>>used</option>
+        <option value="reserved" <?= $status==='reserved'?'selected':'' ?>>reserved</option>
+        <option value="free" <?= $status==='free'?'selected':'' ?>>free</option>
+      </select>
+    </label>
+
+    <label>Subnet<br>
+      <select name="subnet_id">
+        <option value="0">(any)</option>
+        <?php foreach ($subnets as $s): ?>
+          <option value="<?= (int)$s['id'] ?>" <?= ((int)$s['id']===$subnetId)?'selected':'' ?>>
+            <?= e($s['cidr']) ?>
+          </option>
+        <?php endforeach; ?>
+      </select>
+    </label>
+
+    <label>Page size<br>
+      <select name="page_size">
+        <?php foreach ([50,100,254,500] as $sz): ?>
+          <option value="<?= $sz ?>" <?= $pageSize===$sz?'selected':'' ?>><?= $sz ?></option>
+        <?php endforeach; ?>
+      </select>
+    </label>
+
+    <button type="submit">Search</button>
+  </form>
+</div>
+
+<div class="card" style="margin-top:16px">
+  <div class="muted">
+    Results: <b><?= e((string)$total) ?></b>
+    <?php if ($total > 0): ?>
+      &nbsp;|&nbsp; Page <b><?= e((string)$p['page']) ?></b> of <b><?= e((string)$p['pages']) ?></b>
+    <?php endif; ?>
+  </div>
+
+  <?php if (!$rows): ?>
+    <div class="empty-state" style="margin-top:12px">No results.</div>
+  <?php else: ?>
+    <table style="margin-top:12px">
+      <thead>
+        <tr>
+          <th>Subnet</th>
+          <th>IP</th>
+          <th>Hostname</th>
+          <th>Owner</th>
+          <th>Status</th>
+          <th>Note</th>
+          <th>Updated</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+      <?php foreach ($rows as $r): ?>
+        <tr>
+          <td><?= e($r['subnet_cidr']) ?></td>
+          <td><?= e($r['ip']) ?></td>
+          <td><?= e($r['hostname']) ?></td>
+          <td><?= e($r['owner']) ?></td>
+          <td><span class="status-<?= e($r['status']) ?>"><?= e($r['status']) ?></span></td>
+          <td><?= e($r['note']) ?></td>
+          <td class="muted"><?= e($r['updated_at']) ?></td>
+          <td><a href="address_history.php?address_id=<?= (int)$r['id'] ?>">History</a></td>
+        </tr>
       <?php endforeach; ?>
-    </select>
-  </label>
+      </tbody>
+    </table>
 
-  <label>Page size<br>
-    <select name="page_size">
-      <?php foreach ([50,100,200,500] as $sz): ?>
-        <option value="<?= $sz ?>" <?= $pageSize===$sz?'selected':'' ?>><?= $sz ?></option>
-      <?php endforeach; ?>
-    </select>
-  </label>
-
-  <button type="submit">Search</button>
-</form>
-
-<p class="muted">
-  Results: <b><?= e((string)$total) ?></b>
-  <?php if ($total > 0): ?>
-    &nbsp;|&nbsp; Page <b><?= e((string)$p['page']) ?></b> of <b><?= e((string)$p['pages']) ?></b>
+    <p style="margin-top:12px">
+      <?php if ($p['page'] > 1): ?>
+        <a href="search.php?<?= e(build_query_search(['page' => $p['page'] - 1])) ?>">&laquo; Prev</a>
+      <?php endif; ?>
+      <?php if ($p['page'] < $p['pages']): ?>
+        <a style="margin-left:12px" href="search.php?<?= e(build_query_search(['page' => $p['page'] + 1])) ?>">Next &raquo;</a>
+      <?php endif; ?>
+    </p>
   <?php endif; ?>
-</p>
-
-<?php if (!$rows): ?>
-  <p class="muted">No results.</p>
-<?php else: ?>
-  <table>
-    <thead>
-      <tr>
-        <th>Subnet</th>
-        <th>IP</th>
-        <th>Hostname</th>
-        <th>Owner</th>
-        <th>Status</th>
-        <th>Note</th>
-        <th>Updated</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-    <?php foreach ($rows as $r): ?>
-      <tr>
-        <td><?= e($r['subnet_cidr']) ?></td>
-        <td><?= e($r['ip']) ?></td>
-        <td><?= e($r['hostname']) ?></td>
-        <td><?= e($r['owner']) ?></td>
-        <td><?= e($r['status']) ?></td>
-        <td><?= e($r['note']) ?></td>
-        <td class="muted"><?= e($r['updated_at']) ?></td>
-        <td><a href="address_history.php?address_id=<?= (int)$r['id'] ?>">History</a></td>
-      </tr>
-    <?php endforeach; ?>
-    </tbody>
-  </table>
-
-  <p style="margin-top:12px">
-    <?php if ($p['page'] > 1): ?>
-      <a href="search.php?<?= e(build_query(['page' => $p['page'] - 1])) ?>">&laquo; Prev</a>
-    <?php endif; ?>
-    <?php if ($p['page'] < $p['pages']): ?>
-      <a style="margin-left:12px" href="search.php?<?= e(build_query(['page' => $p['page'] + 1])) ?>">Next &raquo;</a>
-    <?php endif; ?>
-  </p>
-<?php endif; ?>
+</div>
 
 <?php page_footer();

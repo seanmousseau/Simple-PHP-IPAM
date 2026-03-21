@@ -36,7 +36,7 @@ function ipam_migrations(): array
                   address_id INTEGER,
                   subnet_id INTEGER NOT NULL,
                   ip TEXT NOT NULL,
-                  action TEXT NOT NULL,                -- create|update|delete|bulk_update|import
+                  action TEXT NOT NULL,
                   user_id INTEGER,
                   username TEXT,
                   client_ip TEXT,
@@ -52,6 +52,27 @@ function ipam_migrations(): array
             $db->exec("CREATE INDEX IF NOT EXISTS idx_addresses_hostname ON addresses(hostname)");
             $db->exec("CREATE INDEX IF NOT EXISTS idx_addresses_owner ON addresses(owner)");
             $db->exec("CREATE INDEX IF NOT EXISTS idx_addresses_status ON addresses(status)");
+        },
+
+        // 0.9: sites grouping
+        '0.9' => function(PDO $db) {
+            $db->exec("
+                CREATE TABLE IF NOT EXISTS sites (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  name TEXT NOT NULL UNIQUE,
+                  description TEXT NOT NULL DEFAULT '',
+                  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            ");
+
+            $cols = $db->query("PRAGMA table_info(subnets)")->fetchAll();
+            $names = array_map(fn($c) => $c['name'], $cols);
+
+            if (!in_array('site_id', $names, true)) {
+                $db->exec("ALTER TABLE subnets ADD COLUMN site_id INTEGER");
+            }
+
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_subnets_site_id ON subnets(site_id)");
         },
     ];
 }
