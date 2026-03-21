@@ -143,6 +143,16 @@ function build_query_unassigned(array $overrides = []): string {
 page_header('Unassigned IPv4');
 ?>
 
+<div class="breadcrumbs">
+  <a href="dashboard.php">🏠 Dashboard</a>
+  <?php if ($sub): ?>
+    <span class="sep">›</span><a href="subnets.php">🌐 Subnets</a>
+    <span class="sep">›</span><a href="addresses.php?subnet_id=<?= (int)$subnetId ?>"><?= e($sub['cidr']) ?></a>
+    <span class="sep">›</span>
+  <?php endif; ?>
+  <span>✨ Unassigned IPv4</span>
+</div>
+
 <div class="toolbar">
   <div>
     <h1>Unassigned IPv4</h1>
@@ -150,7 +160,17 @@ page_header('Unassigned IPv4');
   </div>
 </div>
 
-<div class="card">
+<div class="page-actions">
+  <?php if ($subnetId > 0): ?>
+    <a class="action-pill" href="addresses.php?subnet_id=<?= (int)$subnetId ?>">🧾 View Addresses</a>
+    <?php if (current_user()['role'] !== 'readonly'): ?>
+      <a class="action-pill" href="bulk_update.php?subnet_id=<?= (int)$subnetId ?>">✏ Bulk Update</a>
+    <?php endif; ?>
+    <a class="action-pill" href="search.php?subnet_id=<?= (int)$subnetId ?>">🔎 Search in Subnet</a>
+  <?php endif; ?>
+</div>
+
+<div class="card" style="margin-top:16px">
   <form method="get" action="unassigned.php" class="row">
     <label>Subnet<br>
       <select name="subnet_id">
@@ -185,13 +205,6 @@ page_header('Unassigned IPv4');
       <div>
         <h2>Subnet: <?= e($sub['cidr']) ?></h2>
         <div class="muted">Unassigned: <b><?= e((string)$totalUnassigned) ?></b></div>
-      </div>
-      <div class="spacer"></div>
-      <div class="actions-inline">
-        <a href="addresses.php?subnet_id=<?= (int)$subnetId ?>">View Addresses</a>
-        <?php if (current_user()['role'] !== 'readonly'): ?>
-          <a href="bulk_update.php?subnet_id=<?= (int)$subnetId ?>">Bulk Update</a>
-        <?php endif; ?>
       </div>
     </div>
 

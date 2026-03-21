@@ -72,6 +72,10 @@ function build_query_search(array $overrides = []): string {
 page_header('Search');
 ?>
 
+<div class="breadcrumbs">
+  <a href="dashboard.php">🏠 Dashboard</a><span class="sep">›</span><span>🔎 Search</span>
+</div>
+
 <div class="toolbar">
   <div>
     <h1>Search</h1>
@@ -79,7 +83,14 @@ page_header('Search');
   </div>
 </div>
 
-<div class="card">
+<div class="page-actions">
+  <a class="action-pill" href="addresses.php">🧾 Addresses</a>
+  <?php if ($subnetId > 0): ?>
+    <a class="action-pill" href="addresses.php?subnet_id=<?= (int)$subnetId ?>">🌐 View Subnet Addresses</a>
+  <?php endif; ?>
+</div>
+
+<div class="card" style="margin-top:16px">
   <form method="get" action="search.php" class="row">
     <label>Query<br>
       <input name="q" value="<?= e($q) ?>" placeholder="ip/hostname/owner/note">

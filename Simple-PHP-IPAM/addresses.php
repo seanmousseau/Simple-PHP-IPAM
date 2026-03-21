@@ -197,6 +197,18 @@ if ($selectedSubnetId > 0) {
 page_header('Addresses');
 ?>
 
+<div class="breadcrumbs">
+  <a href="dashboard.php">🏠 Dashboard</a>
+  <span class="sep">›</span>
+  <?php if ($selectedSubnet): ?>
+    <a href="subnets.php">🌐 Subnets</a>
+    <span class="sep">›</span>
+    <span><?= e($selectedSubnet['cidr']) ?></span>
+    <span class="sep">›</span>
+  <?php endif; ?>
+  <span>🧾 Addresses</span>
+</div>
+
 <div class="toolbar">
   <div>
     <h1>Addresses</h1>
@@ -204,7 +216,19 @@ page_header('Addresses');
   </div>
 </div>
 
-<div class="card">
+<div class="page-actions">
+  <?php if ($selectedSubnetId > 0): ?>
+    <?php if (current_user()['role'] !== 'readonly'): ?>
+      <a class="action-pill" href="bulk_update.php?subnet_id=<?= (int)$selectedSubnetId ?>">✏ Bulk Update</a>
+    <?php endif; ?>
+    <?php if ($selectedSubnet && (int)$selectedSubnet['ip_version'] === 4): ?>
+      <a class="action-pill" href="unassigned.php?subnet_id=<?= (int)$selectedSubnetId ?>">✨ Unassigned</a>
+    <?php endif; ?>
+    <a class="action-pill" href="search.php?subnet_id=<?= (int)$selectedSubnetId ?>">🔎 Search in Subnet</a>
+  <?php endif; ?>
+</div>
+
+<div class="card" style="margin-top:16px">
   <form method="get" action="addresses.php" class="row">
     <label>Subnet<br>
       <select name="subnet_id">
@@ -238,15 +262,6 @@ page_header('Addresses');
       <div>
         <h2>Subnet: <?= e((string)($selectedSubnet['cidr'] ?? '')) ?></h2>
         <div class="muted">Rows: <b><?= e((string)$total) ?></b><?php if ($p): ?> | Page <b><?= e((string)$p['page']) ?></b> of <b><?= e((string)$p['pages']) ?></b><?php endif; ?></div>
-      </div>
-      <div class="spacer"></div>
-      <div class="actions-inline">
-        <?php if (current_user()['role'] !== 'readonly'): ?>
-          <a href="bulk_update.php?subnet_id=<?= (int)$selectedSubnetId ?>">Bulk Update</a>
-        <?php endif; ?>
-        <?php if ($selectedSubnet && (int)$selectedSubnet['ip_version'] === 4): ?>
-          <a href="unassigned.php?subnet_id=<?= (int)$selectedSubnetId ?>">Unassigned</a>
-        <?php endif; ?>
       </div>
     </div>
   </div>

@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+/* ===================== DB ===================== */
+
 function ipam_db(string $path): PDO
 {
     $dir = dirname($path);
@@ -63,7 +65,7 @@ function e(string $s): string
     return htmlspecialchars($s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
-/* ---------------- CSRF ---------------- */
+/* ===================== CSRF ===================== */
 
 function csrf_token(): string { return $_SESSION['csrf'] ?? ''; }
 
@@ -78,7 +80,7 @@ function csrf_require(): void
     }
 }
 
-/* ---------------- Auth / RBAC ---------------- */
+/* ===================== Auth / RBAC ===================== */
 
 function is_logged_in(): bool { return !empty($_SESSION['uid']); }
 
@@ -137,7 +139,7 @@ function logout_user(): void
     session_destroy();
 }
 
-/* ---------------- Audit ---------------- */
+/* ===================== Audit ===================== */
 
 function client_ip(): string { return (string)($_SERVER['REMOTE_ADDR'] ?? ''); }
 
@@ -158,7 +160,7 @@ function audit(PDO $db, string $action, string $entityType, ?int $entityId, stri
     ]);
 }
 
-/* ---------------- History ---------------- */
+/* ===================== History ===================== */
 
 function history_log_address(PDO $db, string $action, int $subnetId, string $ip, ?int $addressId, ?array $before, ?array $after): void
 {
@@ -183,7 +185,7 @@ function history_log_address(PDO $db, string $action, int $subnetId, string $ip,
     ]);
 }
 
-/* ---------------- Migrations ---------------- */
+/* ===================== Migrations ===================== */
 
 function ensure_migrations_table(PDO $db): void
 {
@@ -231,7 +233,7 @@ function apply_migrations(PDO $db): array
     return $appliedNow;
 }
 
-/* ---------------- Housekeeping ---------------- */
+/* ===================== Housekeeping ===================== */
 
 function housekeeping_state_path(): string
 {
@@ -249,11 +251,8 @@ function housekeeping_should_run(array $config): bool
     $path = housekeeping_state_path();
     if (!is_file($path)) return true;
 
-    $json = file_get_contents($path);
-    if ($json === false) return true;
-
-    $data = json_decode($json, true);
-    $last = (int)($data['last_run'] ?? 0);
+    $last = @filemtime($path);
+    if ($last === false) return true;
 
     return (time() - $last) >= $interval;
 }
@@ -295,7 +294,7 @@ function run_housekeeping_if_due(array $config): void
     }
 }
 
-/* ---------------- Pagination / perf helpers ---------------- */
+/* ===================== Pagination / perf helpers ===================== */
 
 function q_int(string $key, int $default, int $min, int $max): int
 {
@@ -326,7 +325,7 @@ function paginate(int $total, int $page, int $pageSize): array
     ];
 }
 
-/* ---------------- IP helpers ---------------- */
+/* ===================== IP helpers ===================== */
 
 function parse_cidr(string $cidr): ?array
 {
@@ -408,7 +407,7 @@ function normalize_status(?string $s): string
     return 'used';
 }
 
-/* ---------------- IPv4 integer helpers ---------------- */
+/* ===================== IPv4 integer helpers ===================== */
 
 function ipv4_bin_to_int(string $bin): int
 {
@@ -445,7 +444,7 @@ function ipv4_broadcast_int(int $networkInt, int $prefix): int
     return (int)(($networkInt | $hostMask) & 0xFFFFFFFF);
 }
 
-/* ---------------- CSV helpers ---------------- */
+/* ===================== CSV helpers ===================== */
 
 function import_max_bytes(array $config): int
 {
@@ -590,7 +589,7 @@ function cidr_from_ip_and_prefix(array $normIp, int $prefix): string
     return inet_ntop($netBin) . '/' . $prefix;
 }
 
-/* ---------------- UI helpers ---------------- */
+/* ===================== UI helpers ===================== */
 
 function page_header(string $title): void
 {
@@ -599,34 +598,34 @@ function page_header(string $title): void
 
     echo "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
     echo "<title>" . e($title) . "</title>";
-    echo "<link rel='stylesheet' href='assets/app.css'>";
-    echo "<script defer src='assets/app.js'></script>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=0.8.1'>";
+    echo "<script defer src='assets/app.js?v=0.8.1'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
     echo "<div class='nav-links'>";
     if ($u) {
-        echo "<span>Logged in as <b>" . e((string)$u) . "</b> <span class='badge'>" . e((string)$role) . "</span></span>";
-        echo "<a href='dashboard.php'>Dashboard</a>";
-        echo "<a href='subnets.php'>Subnets</a>";
-        echo "<a href='addresses.php'>Addresses</a>";
-        echo "<a href='search.php'>Search</a>";
-        echo "<a href='audit.php'>Audit</a>";
+        echo "<span class='nav-user'>Logged in as <b>" . e((string)$u) . "</b> <span class='badge'>" . e((string)$role) . "</span></span>";
+        echo "<a class='nav-pill' href='dashboard.php'>🏠 Dashboard</a>";
+        echo "<a class='nav-pill' href='subnets.php'>🌐 Subnets</a>";
+        echo "<a class='nav-pill' href='addresses.php'>🧾 Addresses</a>";
+        echo "<a class='nav-pill' href='search.php'>🔎 Search</a>";
+        echo "<a class='nav-pill' href='audit.php'>📜 Audit</a>";
         if (($role ?? '') === 'admin') {
-            echo "<a href='sites.php'>Sites</a>";
-            echo "<a href='users.php'>Users</a>";
-            echo "<a href='import_csv.php'>Import CSV</a>";
+            echo "<a class='nav-pill' href='sites.php'>📍 Sites</a>";
+            echo "<a class='nav-pill' href='users.php'>👤 Users</a>";
+            echo "<a class='nav-pill' href='import_csv.php'>⬆ Import CSV</a>";
         }
-        echo "<a href='change_password.php'>Password</a>";
-        echo "<a href='logout.php'>Logout</a>";
+        echo "<a class='nav-pill' href='change_password.php'>🔐 Password</a>";
+        echo "<a class='nav-pill' href='logout.php'>↩ Logout</a>";
     } else {
-        echo "<a href='login.php'>Login</a>";
+        echo "<a class='nav-pill' href='login.php'>🔐 Login</a>";
     }
     echo "</div>";
 
     echo "<div class='nav-right'>";
-    echo "<button type='button' class='button-secondary' onclick='ipamToggleTheme()'>Toggle theme</button>";
-    echo "<button type='button' class='button-secondary' onclick='ipamClearTheme()'>System</button>";
+    echo "<button type='button' class='button-secondary' onclick='ipamToggleTheme()'>🌓 Theme</button>";
+    echo "<button type='button' class='button-secondary' onclick='ipamClearTheme()'>🖥 System</button>";
     echo "</div>";
 
     echo "</div></div>";

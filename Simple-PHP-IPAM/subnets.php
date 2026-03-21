@@ -103,8 +103,6 @@ $st = $db->prepare("
 $st->execute();
 $list = $st->fetchAll();
 
-/* ---------- Helpers ---------- */
-
 function subnet_contains_bin_local(string $parentNetBin, int $parentPrefix, string $childNetBin): bool
 {
     $masked = apply_prefix_mask($childNetBin, $parentPrefix);
@@ -275,13 +273,12 @@ function ipv4_unassigned_summary_local(PDO $db): array
     return $out;
 }
 
-/* Group roots by site, but keep child nesting under each root */
 $tree = build_subnet_tree_local($list);
 $direct = subnet_direct_counts_local($db);
 $agg = subnet_aggregated_counts_local($tree, $direct);
 $ipv4Unassigned = ipv4_unassigned_summary_local($db);
 
-$siteGroups = []; // key => ['label'=>..., 'roots'=>[]]
+$siteGroups = [];
 foreach ($tree['roots'] as $rid) {
     $siteId = (int)($tree['byId'][$rid]['site_id'] ?? 0);
     $key = $siteId > 0 ? (string)$siteId : 'ungrouped';
@@ -289,19 +286,14 @@ foreach ($tree['roots'] as $rid) {
     $siteGroups[$key] ??= ['label' => $label, 'roots' => []];
     $siteGroups[$key]['roots'][] = $rid;
 }
-
-uasort($siteGroups, function($a, $b){
-    return strcasecmp($a['label'], $b['label']);
-});
+uasort($siteGroups, fn($a, $b) => strcasecmp($a['label'], $b['label']));
 
 function render_subnet_node_local(array $tree, array $direct, array $agg, array $ipv4Unassigned, array $siteMap, array $siteList, int $id, int $depth = 0): void
 {
     $row = $tree['byId'][$id];
     $pad = $depth * 18;
-
     $d = $direct[$id] ?? ['used'=>0,'reserved'=>0,'free'=>0,'total'=>0];
     $a = $agg[$id] ?? $d;
-
     $disabled = (current_user()['role'] === 'readonly') ? "disabled" : "";
     $siteName = '';
     $siteId = (int)($row['site_id'] ?? 0);
@@ -322,18 +314,16 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
              " | Assigned: " . e((string)$u['assigned_assignable']) .
              " | Unassigned: <b>" . e((string)$u['unassigned_assignable']) . "</b></span>";
     }
-
     echo "</summary>";
 
     echo "<div style='margin-top:10px'>";
-    echo "<div class='actions-inline' style='margin-bottom:10px'>";
-    echo "<a href='addresses.php?subnet_id=" . (int)$row['id'] . "'>View Addresses</a>";
-
+    echo "<div class='page-actions' style='margin-bottom:10px'>";
+    echo "<a class='action-pill' href='addresses.php?subnet_id=" . (int)$row['id'] . "'>🧾 View Addresses</a>";
     if ((int)$row['ip_version'] === 4) {
-        echo "<a href='unassigned.php?subnet_id=" . (int)$row['id'] . "'>Unassigned</a>";
+        echo "<a class='action-pill' href='unassigned.php?subnet_id=" . (int)$row['id'] . "'>✨ Unassigned</a>";
     }
     if (current_user()['role'] !== 'readonly') {
-        echo "<a href='bulk_update.php?subnet_id=" . (int)$row['id'] . "'>Bulk Update</a>";
+        echo "<a class='action-pill' href='bulk_update.php?subnet_id=" . (int)$row['id'] . "'>✏ Bulk Update</a>";
     }
     echo "</div>";
 
@@ -373,25 +363,37 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
         render_subnet_node_local($tree, $direct, $agg, $ipv4Unassigned, $siteMap, $siteList, (int)$cid, $depth + 1);
     }
 
-    echo "</div>";
-    echo "</details>";
-    echo "</div>";
+    echo "</div></details></div>";
 }
 
 page_header('Subnets');
 ?>
 
+<div class="breadcrumbs">
+  <a href="dashboard.php">🏠 Dashboard</a><span class="sep">›</span><span>🌐 Subnets</span>
+</div>
+
 <div class="toolbar">
   <div>
     <h1>Subnets</h1>
-    <div class="muted">Grouped by site. Use the action links under each subnet to jump to addresses, unassigned IPs, or bulk updates.</div>
+    <div class="muted">Grouped by site. Use the action links under each subnet to jump to related workflows.</div>
   </div>
+</div>
+
+<div class="page-actions">
+  <?php if (current_user()['role'] !== 'readonly'): ?>
+    <a class="action-pill" href="#add-subnet">➕ Add Subnet</a>
+  <?php endif; ?>
+  <a class="action-pill" href="search.php">🔎 Search Addresses</a>
+  <?php if (current_user()['role'] === 'admin'): ?>
+    <a class="action-pill" href="sites.php">📍 Manage Sites</a>
+  <?php endif; ?>
 </div>
 
 <?php if ($err): ?><p class="danger"><?= e($err) ?></p><?php endif; ?>
 <?php if ($msg): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
 
-<div class="card">
+<div class="card" id="add-subnet" style="margin-top:16px">
   <h2>Add subnet</h2>
   <form method="post" action="subnets.php">
     <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
