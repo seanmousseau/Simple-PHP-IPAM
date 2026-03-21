@@ -1,3 +1,4 @@
+/* Light/Dark theme via CSS variables */
 :root{
   --bg:#ffffff;
   --fg:#111111;
@@ -120,19 +121,22 @@ h3{font-size:1.05rem}
   margin:0 auto;
   padding:12px 20px;
   display:flex;
-  gap:14px;
+  gap:18px;
   align-items:center;
   flex-wrap:wrap;
 }
 .nav-links{
   display:flex;
-  gap:12px;
+  gap:14px;
   flex-wrap:wrap;
   align-items:center;
 }
 .nav-links a{
-  padding:8px 10px;
+  display:inline-flex;
+  align-items:center;
+  padding:8px 12px;
   border-radius:10px;
+  line-height:1.2;
 }
 .nav-links a:hover{
   background:var(--card-2);
@@ -141,7 +145,7 @@ h3{font-size:1.05rem}
 .nav-right{
   margin-left:auto;
   display:flex;
-  gap:8px;
+  gap:10px;
   align-items:center;
   flex-wrap:wrap;
 }
@@ -157,7 +161,7 @@ h3{font-size:1.05rem}
 
 .toolbar{
   display:flex;
-  gap:10px;
+  gap:12px;
   flex-wrap:wrap;
   align-items:center;
   margin-bottom:12px;
@@ -211,7 +215,7 @@ tbody tr:hover td{
 
 .row{
   display:flex;
-  gap:10px;
+  gap:12px;
   flex-wrap:wrap;
   align-items:flex-end;
 }
@@ -292,19 +296,36 @@ details > summary::-webkit-details-marker{display:none}
 .actions-inline{
   display:flex;
   flex-wrap:wrap;
-  gap:8px;
+  gap:12px;
   align-items:center;
+}
+.actions-inline a{
+  display:inline-flex;
+  align-items:center;
+  padding:6px 10px;
+  border-radius:10px;
+  background:color-mix(in srgb, var(--card-2) 70%, transparent);
+}
+.actions-inline a:hover{
+  background:var(--card-2);
+  text-decoration:none;
 }
 
 .site-group{
-  margin-bottom:18px;
+  margin-bottom:22px;
 }
 .site-group > h2{
-  margin-bottom:10px;
+  margin-bottom:12px;
+}
+
+details form + form{
+  margin-top:12px !important;
 }
 
 @media (max-width: 768px){
   .page{padding:14px}
   .nav-wrap{padding:10px 14px}
   th,td{padding:8px}
+  .nav-links{gap:8px}
+  .nav-links a{padding:8px 10px}
 }
