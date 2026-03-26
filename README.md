@@ -324,12 +324,23 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
 ### What's new in 0.10
 
-- **Subnet overlap detection** — when creating or editing a subnet, the app now detects parent/child relationships with existing subnets and shows an informational hierarchy notice. The same check runs in the CSV import dry-run for subnets being auto-created.
-- **Dashboard widgets** — replaced the minimal stat list with a full dashboard: top IPv4 subnet utilization bars, per-site address breakdown, and a recent activity panel.
-- **Search enhancements** — added site filter and IP version filter (IPv4 / IPv6); the site dropdown dynamically narrows the subnet dropdown client-side; a "Clear filters" link appears when any filter is active.
-- **CSV exports** — export addresses, search results, audit log, and unassigned IPs to CSV.
-- **Sites** — group subnets by site with a dedicated management page; subnet hierarchy is grouped by site.
-- **Address history** — full before/after change history per address record.
+**Milestone 1 — Export Foundation**
+- New CSV exports for addresses, search results, audit log, unassigned IPs, and import reports
+- All export actions are recorded in the audit log
+- Shared export helpers added to `lib.php` (`safe_export_filename`, `csv_download_headers`, `csv_out`, etc.)
+
+**Milestone 2 — Import Safety and Dry Run**
+- Import wizard now produces a frozen dry-run plan before applying any changes — row-level and summary reports show exactly what will happen
+- Apply step reads the saved plan rather than re-parsing the CSV, with conflict detection if the DB changes between dry-run and apply
+- Hardening: duplicate row detection within a CSV, CIDR/IP cross-validation, field length checks, clarified `fill_empty` semantics
+
+**Milestone 3 — Subnet Overlap Detection**
+- `detect_subnet_overlaps()` in `lib.php` classifies existing subnets as parents or children of a proposed CIDR using binary network comparison
+- Informational warnings on subnet create and update (never blocks — hierarchy is valid); same check annotates the import dry-run report for subnets being auto-created
+
+**Milestone 4 — Dashboard and Search**
+- Dashboard rebuilt with a six-metric summary strip, top IPv4 subnet utilization bars (colour-coded at 70% / 90%), per-site address breakdown table, and a recent activity panel
+- Search gains a site filter, IP version filter (IPv4 / IPv6), client-side subnet dropdown narrowing, and a "Clear filters" link
 
 ---
 
