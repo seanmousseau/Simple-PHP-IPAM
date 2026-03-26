@@ -2,6 +2,97 @@
 
 All notable changes to this project will be documented in this file.
 
+---
+
+## 0.10 — Exports, Import Safety, Overlap Detection, and Dashboard
+
+### Milestone 1 — Export Foundation
+
+#### New: CSV exports
+- `export_addresses.php` — export all addresses for a selected subnet
+- `export_search.php` — export current filtered search results
+- `export_audit.php` — admin-only export of audit events
+- `export_unassigned.php` — export unassigned IPv4 addresses for supported subnets
+- `export_import_report.php` — export dry-run plan or final import result report
+
+#### UI updates
+- Added **Export CSV** links/buttons to `addresses.php`, `search.php`, `audit.php`, and `unassigned.php`
+
+#### Shared export helpers (`lib.php`)
+- `safe_export_filename()` — sanitised timestamped filename generation
+- `csv_download_headers()` — sets `Content-Type` and `Content-Disposition` headers
+- `csv_output_handle()` — returns a `php://output` file handle
+- `csv_out()` — writes a single row to the CSV stream
+- `audit_export()` — records export actions in the audit log
+
+#### Audit
+- All export actions are written to `audit_log`: `export.addresses`, `export.search`, `export.audit`, `export.unassigned`
+
+---
+
+### Milestone 2 — Import Safety, Dry Run, and Reporting
+
+#### New: Dry-run import analysis
+- Import wizard now analyzes the CSV before applying any changes
+- Dry-run analysis is saved as a frozen JSON plan in `data/tmp/`; the apply step reads the plan rather than re-parsing the CSV
+- Row-level report shows: row number, IP/raw value, planned action, resolved subnet/CIDR, and reason
+- Summary counts: parsed rows, invalid rows, creates, updates, skips, subnets to create
+- Final apply report: created subnets, created addresses, updated addresses, skipped rows, conflicts
+- Reports persist after import for post-import review and CSV export
+
+#### Import plan helpers (`lib.php`)
+- `save_import_plan()`, `load_import_plan()`, `delete_import_plan()`, `cleanup_tmp_import_plans()`
+- `tmp_cleanup.php` updated to clean stale import plan and result files in addition to uploaded CSV files
+
+#### Hardening and correctness (Milestones 2.1 / 2.2)
+- Fixed subnet creation counter inflation — newly created CIDRs are counted only once per import run
+- Added **duplicate row detection within the same CSV** — later duplicate rows (same resolved CIDR + IP) are marked skipped
+- Added **CIDR/IP cross-validation** — a row is invalid if the provided CIDR does not contain the IP
+- Added **field length validation** — hostname (255), owner (255), note (4000) are checked before analysis
+- Dry-run decisions are **frozen in the plan**: final action, resolved CIDR, resolved subnet ID, and whether the address existed at analysis time
+- Added **apply-time conflict detection** — if the DB changes between dry-run and apply, affected rows are flagged as conflicts instead of silently applying unexpected changes
+- Clarified `fill_empty` semantics: fills only empty text fields; never overwrites status
+
+---
+
+### Milestone 3 — Subnet Overlap Detection
+
+#### New: Overlap detection helper (`lib.php`)
+- `detect_subnet_overlaps($db, $cidr, $excludeId)` — compares a proposed CIDR against all existing subnets of the same IP version using binary network comparison
+- Returns `parents` (existing subnets that contain the proposed CIDR) and `children` (existing subnets that would fall inside it)
+- In valid CIDR math, two subnets of different prefix lengths are either in a strict parent/child relationship or completely disjoint — partial overlap is impossible; exact duplicates are blocked by the DB `UNIQUE` constraint
+
+#### Subnet create/update warnings (`subnets.php`)
+- On **create**: overlap check runs before the `INSERT`; if a relationship is detected, a flash warning is stored in the session and displayed after the redirect
+- On **update**: overlap check runs against all other subnets (self excluded); warning displayed inline alongside the success message
+- Operations are never blocked — hierarchical nesting is the intended use-case; the warning prompts the user to confirm intent
+
+#### Import dry-run annotation (`import_csv.php`)
+- Overlap check runs for each unique CIDR flagged for auto-creation during dry-run analysis
+- Results cached per CIDR to avoid redundant queries on bulk imports
+- Hierarchy notice (parents / children) displayed in the Reason column of the dry-run row report
+
+#### Styles (`assets/app.css`)
+- Added `.warning` utility class using the existing `--warn` CSS token (amber, dark-mode aware)
+
+---
+
+### Milestone 4 — Dashboard and Search Enhancement
+
+#### Dashboard (`dashboard.php`) — full rebuild
+- Six-metric summary strip: total subnets, total address rows, used / reserved / free counts, IPv4 vs IPv6 subnet split
+- **Top IPv4 subnets by usage** table (prefix /8–/30) with colour-coded fill bars: green below 70%, amber 70–90%, red above 90%
+- **Addresses by site** — table showing used / reserved / free / total broken down per site
+- **Recent activity panel** — last 10 audit log events with a link to the full audit log
+
+#### Search (`search.php`) — new filters and UX
+- Added **Site filter** dropdown; changing site narrows the subnet dropdown client-side via a small vanilla JS snippet (no page reload)
+- Added **IP version filter** (any / IPv4 / IPv6) — applied via `subnets.ip_version` in the WHERE clause
+- COUNT query now uses the same `JOIN subnets` as the results query, so totals and pagination remain accurate under all filter combinations
+- **Clear filters** link appears whenever any filter (query, status, site, subnet, version) is active
+
+---
+
 ### 0.9 — Site Grouping, UX Refresh, and Performance Tuning
 
 #### New: Site Grouping
