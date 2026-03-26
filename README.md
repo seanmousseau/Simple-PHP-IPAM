@@ -342,8 +342,3 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 - Dashboard rebuilt with a six-metric summary strip, top IPv4 subnet utilization bars (colour-coded at 70% / 90%), per-site address breakdown table, and a recent activity panel
 - Search gains a site filter, IP version filter (IPv4 / IPv6), client-side subnet dropdown narrowing, and a "Clear filters" link
 
----
-
-## License
-
-[MIT](LICENSE)
