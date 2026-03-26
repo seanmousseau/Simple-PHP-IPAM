@@ -73,7 +73,9 @@ page_header('Search');
 ?>
 
 <div class="breadcrumbs">
-  <a href="dashboard.php">🏠 Dashboard</a><span class="sep">›</span><span>🔎 Search</span>
+  <a href="dashboard.php">🏠 Dashboard</a>
+  <span class="sep">›</span>
+  <span>🔎 Search</span>
 </div>
 
 <div class="toolbar">
@@ -84,6 +86,7 @@ page_header('Search');
 </div>
 
 <div class="page-actions">
+  <a class="action-pill" href="export_search.php?<?= e(build_query_search()) ?>">⬇ Export CSV</a>
   <a class="action-pill" href="addresses.php">🧾 Addresses</a>
   <?php if ($subnetId > 0): ?>
     <a class="action-pill" href="addresses.php?subnet_id=<?= (int)$subnetId ?>">🌐 View Subnet Addresses</a>

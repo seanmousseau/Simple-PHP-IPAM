@@ -1,0 +1,4 @@
+IP,Hostname,Owner,Status,Note,CIDR,Prefix,Netmask,Description
+10.50.1.10,new-hostname,NewOwner,reserved,Overwrite candidate,10.50.1.0/24,,,Existing duplicate
+10.50.1.11,fill-hostname,FillOwner,free,Fill empty candidate,10.50.1.0/24,,,Existing duplicate
+10.50.1.12,brand-new,Ops,used,New row,10.50.1.0/24,,,New row

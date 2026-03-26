@@ -17,36 +17,35 @@ set -euo pipefail
 #     bundle2.txt
 #     bundle-foo.txt
 #     anything matching: bundle*.txt
-# - Files are processed in version-sort order.
-#
-# Bundle format:
-#   ===== FILE: path/to/file =====
-#   ...content...
-#   ===== END FILE: path/to/file =====
+# - Files are processed in version-sort order where available.
 
 INPUT_PATH="${1:-.}"
 OUT_DIR="${2:-.}"
 
 mkdir -p "${OUT_DIR}"
 
+# Build bundle file list without mapfile
+BUNDLES=""
+
 if [[ -f "${INPUT_PATH}" ]]; then
-  BUNDLES=("${INPUT_PATH}")
+  BUNDLES="${INPUT_PATH}"
 elif [[ -d "${INPUT_PATH}" ]]; then
-  mapfile -t BUNDLES < <(find "${INPUT_PATH}" -maxdepth 1 -type f -name 'bundle*.txt' | sort -V)
+  BUNDLES="$(find "${INPUT_PATH}" -maxdepth 1 -type f -name 'bundle*.txt' | sort -V 2>/dev/null || find "${INPUT_PATH}" -maxdepth 1 -type f -name 'bundle*.txt' | sort)"
 else
   echo "Input path not found: ${INPUT_PATH}" >&2
   exit 1
 fi
 
-if [[ ${#BUNDLES[@]} -eq 0 ]]; then
+if [[ -z "${BUNDLES}" ]]; then
   echo "No bundle*.txt files found in: ${INPUT_PATH}" >&2
   exit 1
 fi
 
-echo "Found ${#BUNDLES[@]} bundle file(s):" >&2
-printf '  %s\n' "${BUNDLES[@]}" >&2
+echo "Found bundle file(s):" >&2
+printf '%s\n' "${BUNDLES}" | sed 's/^/  /' >&2
 
-for BUNDLE_FILE in "${BUNDLES[@]}"; do
+printf '%s\n' "${BUNDLES}" | while IFS= read -r BUNDLE_FILE; do
+  [[ -n "${BUNDLE_FILE}" ]] || continue
   echo "Processing: ${BUNDLE_FILE}" >&2
 
   awk -v OUT_DIR="${OUT_DIR}" '

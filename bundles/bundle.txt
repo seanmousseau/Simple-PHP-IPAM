@@ -1,0 +1,104 @@
+===== FILE: test-data/sample-valid-import.csv =====
+IP,Hostname,Owner,Status,Note,CIDR,Prefix,Netmask,Description
+10.10.1.10,printer-a,IT,used,Main office printer,10.10.1.0/24,,,Office LAN
+10.10.1.20,laptop-a,Staff,reserved,Loaner laptop,10.10.1.0/24,,,Office LAN
+10.10.2.15,camera-a,Security,used,Front door camera,,24,,Security subnet inferred from IP
+2001:db8:100::10,server-v6,Infra,used,IPv6 app server,2001:db8:100::/64,,,IPv6 server subnet
+2001:db8:200::20,client-v6,Users,free,IPv6 test host,,64,,IPv6 inferred subnet
+===== END FILE: test-data/sample-valid-import.csv =====
+
+
+===== FILE: test-data/sample-duplicate-rows.csv =====
+IP,Hostname,Owner,Status,Note,CIDR,Prefix,Netmask,Description
+10.20.1.10,host-a,Ops,used,First occurrence,10.20.1.0/24,,,Ops LAN
+10.20.1.10,host-a-dup,Ops,reserved,Duplicate row should be skipped,10.20.1.0/24,,,Ops LAN
+10.20.1.11,host-b,Ops,used,Unique row,10.20.1.0/24,,,Ops LAN
+10.20.1.11,host-b-dup,Ops,free,Duplicate row should be skipped,10.20.1.0/24,,,Ops LAN
+===== END FILE: test-data/sample-duplicate-rows.csv =====
+
+
+===== FILE: test-data/sample-cidr-mismatch.csv =====
+IP,Hostname,Owner,Status,Note,CIDR,Prefix,Netmask,Description
+10.30.1.10,valid-a,Ops,used,Correct CIDR,10.30.1.0/24,,,Good row
+10.30.2.10,bad-a,Ops,used,IP does not belong to CIDR,10.30.1.0/24,,,Should fail
+2001:db8:300::10,valid-v6,Infra,used,Correct IPv6 CIDR,2001:db8:300::/64,,,Good IPv6 row
+2001:db8:301::10,bad-v6,Infra,used,IPv6 does not belong to CIDR,2001:db8:300::/64,,,Should fail
+===== END FILE: test-data/sample-cidr-mismatch.csv =====
+
+
+===== FILE: test-data/sample-apply-conflict.csv =====
+IP,Hostname,Owner,Status,Note,CIDR,Prefix,Netmask,Description
+10.40.1.10,conflict-a,Ops,used,Will become conflict before apply,10.40.1.0/24,,,Conflict test
+10.40.1.11,conflict-b,Ops,used,May still import successfully,10.40.1.0/24,,,Conflict test
+===== END FILE: test-data/sample-apply-conflict.csv =====
+
+
+===== FILE: test-data/sample-existing-duplicate-test.csv =====
+IP,Hostname,Owner,Status,Note,CIDR,Prefix,Netmask,Description
+10.50.1.10,new-hostname,NewOwner,reserved,Overwrite candidate,10.50.1.0/24,,,Existing duplicate
+10.50.1.11,fill-hostname,FillOwner,free,Fill empty candidate,10.50.1.0/24,,,Existing duplicate
+10.50.1.12,brand-new,Ops,used,New row,10.50.1.0/24,,,New row
+===== END FILE: test-data/sample-existing-duplicate-test.csv =====
+
+
+===== FILE: test-data/sample-field-validation.csv =====
+IP,Hostname,Owner,Status,Note,CIDR,Prefix,Netmask,Description
+10.60.1.10,normal-host,Ops,used,Normal note,10.60.1.0/24,,,Good row
+10.60.1.11,THIS_HOSTNAME_IS_OK_BUT_YOU_CAN_REPLACE_THIS_WITH_A_300_CHARACTER_VALUE_TO_FORCE_FAILURE,Ops,used,Normal note,10.60.1.0/24,,,Hostname too long test
+10.60.1.12,valid-host,Ops,used,"Replace this note with a very large string over 4000 chars if you want to test note-length validation",10.60.1.0/24,,,Large note test
+===== END FILE: test-data/sample-field-validation.csv =====
+
+
+===== FILE: test-data/README-testing.md =====
+# CSV Import Test Data
+
+This folder contains sample CSV files to validate the import workflow.
+
+## Files
+
+- `sample-valid-import.csv`
+  - Valid IPv4 and IPv6 rows
+  - Existing subnet use + inferred subnet creation
+
+- `sample-duplicate-rows.csv`
+  - Duplicate rows inside the same CSV
+  - Tests duplicate-in-CSV detection
+
+- `sample-cidr-mismatch.csv`
+  - Rows where the IP does not belong to the provided CIDR
+  - Tests CIDR/IP cross-validation
+
+- `sample-apply-conflict.csv`
+  - Use for apply-time conflict testing
+  - Dry run first, then create one IP manually before apply
+
+- `sample-existing-duplicate-test.csv`
+  - Tests duplicate handling against already-existing DB rows
+  - Use with skip / overwrite / fill_empty modes
+
+- `sample-field-validation.csv`
+  - For testing overlong field validation
+  - Replace the placeholder hostname/note with deliberately oversized values
+
+## Suggested test order
+
+1. `sample-valid-import.csv`
+2. `sample-duplicate-rows.csv`
+3. `sample-cidr-mismatch.csv`
+4. `sample-apply-conflict.csv`
+5. `sample-existing-duplicate-test.csv`
+
+## Apply-time conflict test
+
+For `sample-apply-conflict.csv`:
+
+1. Upload CSV
+2. Map fields
+3. Run dry run
+4. Before clicking Apply, manually create one of the IPs in the app
+5. Then click Apply Import
+
+Expected:
+- one row becomes `conflict`
+- the other still imports
+===== END FILE: test-data/README-testing.md =====

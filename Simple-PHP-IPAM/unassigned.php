@@ -167,6 +167,7 @@ page_header('Unassigned IPv4');
       <a class="action-pill" href="bulk_update.php?subnet_id=<?= (int)$subnetId ?>">✏ Bulk Update</a>
     <?php endif; ?>
     <a class="action-pill" href="search.php?subnet_id=<?= (int)$subnetId ?>">🔎 Search in Subnet</a>
+    <a class="action-pill" href="export_unassigned.php?subnet_id=<?= (int)$subnetId ?>">⬇ Export CSV</a>
   <?php endif; ?>
 </div>
 

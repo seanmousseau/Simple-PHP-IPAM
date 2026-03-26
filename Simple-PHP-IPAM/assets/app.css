@@ -1,4 +1,3 @@
-/* Light/Dark theme via CSS variables */
 :root{
   --bg:#ffffff;
   --fg:#111111;
@@ -131,14 +130,19 @@ h3{font-size:1.05rem}
   flex-wrap:wrap;
   align-items:center;
 }
-.nav-links a{
+.nav-user{
+  margin-right:6px;
+}
+.nav-pill{
   display:inline-flex;
   align-items:center;
-  padding:8px 12px;
-  border-radius:10px;
+  gap:6px;
+  padding:9px 13px;
+  border-radius:12px;
   line-height:1.2;
+  background:transparent;
 }
-.nav-links a:hover{
+.nav-pill:hover{
   background:var(--card-2);
   text-decoration:none;
 }
@@ -167,6 +171,43 @@ h3{font-size:1.05rem}
   margin-bottom:12px;
 }
 .toolbar .spacer{margin-left:auto}
+
+.page-actions{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+  align-items:center;
+  margin-top:8px;
+}
+.action-pill{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  padding:8px 12px;
+  border-radius:12px;
+  background:var(--card-2);
+  border:1px solid var(--border);
+}
+.action-pill:hover{
+  text-decoration:none;
+  filter:brightness(1.02);
+}
+
+.breadcrumbs{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px;
+  align-items:center;
+  color:var(--muted);
+  font-size:.94rem;
+  margin-bottom:10px;
+}
+.breadcrumbs a{
+  color:var(--link);
+}
+.breadcrumbs .sep{
+  color:var(--muted);
+}
 
 .grid{
   display:grid;
@@ -311,21 +352,16 @@ details > summary::-webkit-details-marker{display:none}
   text-decoration:none;
 }
 
-.site-group{
-  margin-bottom:22px;
-}
-.site-group > h2{
-  margin-bottom:12px;
-}
-
-details form + form{
-  margin-top:12px !important;
-}
+.report-create{color:var(--success);font-weight:600}
+.report-update{color:var(--link);font-weight:600}
+.report-skip{color:var(--muted);font-weight:600}
+.report-invalid{color:var(--danger);font-weight:600}
+.report-needs-subnet{color:var(--warn);font-weight:600}
 
 @media (max-width: 768px){
   .page{padding:14px}
   .nav-wrap{padding:10px 14px}
   th,td{padding:8px}
   .nav-links{gap:8px}
-  .nav-links a{padding:8px 10px}
+  .nav-pill{padding:8px 10px}
 }

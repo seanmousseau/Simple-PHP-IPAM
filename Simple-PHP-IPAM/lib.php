@@ -1,8 +1,6 @@
 <?php
 declare(strict_types=1);
 
-/* ===================== DB ===================== */
-
 function ipam_db(string $path): PDO
 {
     $dir = dirname($path);
@@ -65,7 +63,7 @@ function e(string $s): string
     return htmlspecialchars($s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
-/* ===================== CSRF ===================== */
+/* ---------------- CSRF ---------------- */
 
 function csrf_token(): string { return $_SESSION['csrf'] ?? ''; }
 
@@ -80,7 +78,7 @@ function csrf_require(): void
     }
 }
 
-/* ===================== Auth / RBAC ===================== */
+/* ---------------- Auth / RBAC ---------------- */
 
 function is_logged_in(): bool { return !empty($_SESSION['uid']); }
 
@@ -139,7 +137,7 @@ function logout_user(): void
     session_destroy();
 }
 
-/* ===================== Audit ===================== */
+/* ---------------- Audit ---------------- */
 
 function client_ip(): string { return (string)($_SERVER['REMOTE_ADDR'] ?? ''); }
 
@@ -160,7 +158,12 @@ function audit(PDO $db, string $action, string $entityType, ?int $entityId, stri
     ]);
 }
 
-/* ===================== History ===================== */
+function audit_export(PDO $db, string $what, string $details = ''): void
+{
+    audit($db, "export.$what", 'system', null, $details);
+}
+
+/* ---------------- History ---------------- */
 
 function history_log_address(PDO $db, string $action, int $subnetId, string $ip, ?int $addressId, ?array $before, ?array $after): void
 {
@@ -185,7 +188,7 @@ function history_log_address(PDO $db, string $action, int $subnetId, string $ip,
     ]);
 }
 
-/* ===================== Migrations ===================== */
+/* ---------------- Migrations ---------------- */
 
 function ensure_migrations_table(PDO $db): void
 {
@@ -233,7 +236,7 @@ function apply_migrations(PDO $db): array
     return $appliedNow;
 }
 
-/* ===================== Housekeeping ===================== */
+/* ---------------- Housekeeping ---------------- */
 
 function housekeeping_state_path(): string
 {
@@ -287,6 +290,7 @@ function run_housekeeping_if_due(array $config): void
         if ($ttl < 3600) $ttl = 3600;
 
         cleanup_tmp_import_files($ttl);
+        cleanup_tmp_import_plans($ttl);
         housekeeping_mark_ran();
     } finally {
         @flock($lock, LOCK_UN);
@@ -294,7 +298,7 @@ function run_housekeeping_if_due(array $config): void
     }
 }
 
-/* ===================== Pagination / perf helpers ===================== */
+/* ---------------- Pagination ---------------- */
 
 function q_int(string $key, int $default, int $min, int $max): int
 {
@@ -325,7 +329,42 @@ function paginate(int $total, int $page, int $pageSize): array
     ];
 }
 
-/* ===================== IP helpers ===================== */
+/* ---------------- CSV export helpers ---------------- */
+
+function safe_export_filename(string $base): string
+{
+    $base = strtolower($base);
+    $base = preg_replace('/[^a-z0-9._-]+/', '-', $base) ?? 'export';
+    $base = trim($base, '-.');
+    if ($base === '') $base = 'export';
+    return $base . '-' . date('Y-m-d-His') . '.csv';
+}
+
+function csv_download_headers(string $filename): void
+{
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
+}
+
+function csv_output_handle()
+{
+    static $fh = null;
+    if ($fh === null) {
+        $fh = fopen('php://output', 'wb');
+        if (!$fh) throw new RuntimeException('Cannot open php://output');
+    }
+    return $fh;
+}
+
+function csv_out(array $row): void
+{
+    $fh = csv_output_handle();
+    fputcsv($fh, $row);
+}
+
+/* ---------------- IP helpers ---------------- */
 
 function parse_cidr(string $cidr): ?array
 {
@@ -407,7 +446,7 @@ function normalize_status(?string $s): string
     return 'used';
 }
 
-/* ===================== IPv4 integer helpers ===================== */
+/* ---------------- IPv4 helpers ---------------- */
 
 function ipv4_bin_to_int(string $bin): int
 {
@@ -444,7 +483,7 @@ function ipv4_broadcast_int(int $networkInt, int $prefix): int
     return (int)(($networkInt | $hostMask) & 0xFFFFFFFF);
 }
 
-/* ===================== CSV helpers ===================== */
+/* ---------------- CSV import helpers ---------------- */
 
 function import_max_bytes(array $config): int
 {
@@ -475,6 +514,63 @@ function cleanup_tmp_import_files(int $ttlSeconds): int
         if ($f->isDot() || !$f->isFile()) continue;
         $name = $f->getFilename();
         if (!preg_match('~^import-[a-f0-9]{16}\.csv$~', $name)) continue;
+
+        $age = $now - $f->getMTime();
+        if ($age > $ttlSeconds) {
+            @unlink($f->getPathname());
+            $deleted++;
+        }
+    }
+    return $deleted;
+}
+
+/* -------- Import plan helpers -------- */
+
+function import_plan_dir(): string
+{
+    return tmp_dir();
+}
+
+function save_import_plan(array $plan): string
+{
+    ensure_tmp_dir();
+    $path = import_plan_dir() . '/import-plan-' . bin2hex(random_bytes(8)) . '.json';
+    $json = json_encode($plan, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    if ($json === false) throw new RuntimeException('Failed to encode import plan');
+    if (file_put_contents($path, $json) === false) {
+        throw new RuntimeException('Failed to write import plan');
+    }
+    @chmod($path, 0600);
+    return $path;
+}
+
+function load_import_plan(string $path): array
+{
+    if (!is_file($path)) throw new RuntimeException('Import plan file not found');
+    $json = file_get_contents($path);
+    if ($json === false) throw new RuntimeException('Failed to read import plan');
+    $data = json_decode($json, true);
+    if (!is_array($data)) throw new RuntimeException('Invalid import plan');
+    return $data;
+}
+
+function delete_import_plan(string $path): void
+{
+    if ($path !== '' && is_file($path)) {
+        @unlink($path);
+    }
+}
+
+function cleanup_tmp_import_plans(int $ttlSeconds): int
+{
+    ensure_tmp_dir();
+    $now = time();
+    $deleted = 0;
+
+    foreach (new DirectoryIterator(tmp_dir()) as $f) {
+        if ($f->isDot() || !$f->isFile()) continue;
+        $name = $f->getFilename();
+        if (!preg_match('~^import-plan-[a-f0-9]{16}\.json$~', $name)) continue;
 
         $age = $now - $f->getMTime();
         if ($age > $ttlSeconds) {
@@ -589,7 +685,7 @@ function cidr_from_ip_and_prefix(array $normIp, int $prefix): string
     return inet_ntop($netBin) . '/' . $prefix;
 }
 
-/* ===================== UI helpers ===================== */
+/* ---------------- UI helpers ---------------- */
 
 function page_header(string $title): void
 {
@@ -598,8 +694,8 @@ function page_header(string $title): void
 
     echo "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
     echo "<title>" . e($title) . "</title>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=0.8.1'>";
-    echo "<script defer src='assets/app.js?v=0.8.1'></script>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=0.9.1'>";
+    echo "<script defer src='assets/app.js?v=0.9.1'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";

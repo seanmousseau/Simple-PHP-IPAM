@@ -1,0 +1,4 @@
+IP,Hostname,Owner,Status,Note,CIDR,Prefix,Netmask,Description
+10.60.1.10,normal-host,Ops,used,Normal note,10.60.1.0/24,,,Good row
+10.60.1.11,THIS_HOSTNAME_IS_OK_BUT_YOU_CAN_REPLACE_THIS_WITH_A_300_CHARACTER_VALUE_TO_FORCE_FAILURE,Ops,used,Normal note,10.60.1.0/24,,,Hostname too long test
+10.60.1.12,valid-host,Ops,used,"Replace this note with a very large string over 4000 chars if you want to test note-length validation",10.60.1.0/24,,,Large note test
