@@ -305,6 +305,7 @@ button:disabled{opacity:.6;cursor:not-allowed}
 .muted{color:var(--muted)}
 .danger{color:var(--danger)}
 .success{color:var(--success)}
+.warning{color:var(--warn)}
 .badge{
   display:inline-block;
   padding:3px 10px;

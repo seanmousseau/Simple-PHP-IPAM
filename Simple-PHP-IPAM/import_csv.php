@@ -116,6 +116,7 @@ function analyze_import(PDO $db, array $wiz): array
     foreach ($existingSubnets as $s) $existingByCidr[(string)$s['cidr']] = (int)$s['id'];
 
     $seenCsvKeys = []; // detect duplicate rows in CSV after resolution
+    $overlapCache = []; // cidr => overlap result, avoid redundant DB queries per unique CIDR
     $maxProcessRows = 200000;
 
     while (!feof($fh) && $rowNum < $maxProcessRows) {
@@ -300,6 +301,16 @@ function analyze_import(PDO $db, array $wiz): array
             $entry['display_action'] = 'create_with_subnet';
             $entry['reason'] = 'Will create subnet and address';
             $summary['create']++;
+
+            // Check if the new subnet would nest inside or contain existing subnets
+            $cidrToCheck = (string)$entry['resolved_cidr'];
+            if (!isset($overlapCache[$cidrToCheck])) {
+                $overlapCache[$cidrToCheck] = detect_subnet_overlaps($db, $cidrToCheck);
+            }
+            $ov = $overlapCache[$cidrToCheck];
+            if (!empty($ov['parents']) || !empty($ov['children'])) {
+                $entry['subnet_overlap_warning'] = $ov;
+            }
         } else {
             if ($entry['existed_at_analysis']) {
                 if ($dupMode === 'skip') {
@@ -626,12 +637,23 @@ if ($step === 3) {
           <tbody>
           <?php foreach ($rows as $r): ?>
             <?php $cls = action_class((string)($r['display_action'] ?? $r['final_action'] ?? '')); ?>
+            <?php $ov = $r['subnet_overlap_warning'] ?? null; ?>
             <tr>
               <td><?= e((string)$r['row_num']) ?></td>
               <td><?= e((string)($r['ip'] ?? $r['ip_raw'] ?? '')) ?></td>
               <td><span class="<?= e($cls) ?>"><?= e((string)($r['display_action'] ?? $r['final_action'] ?? '')) ?></span></td>
               <td><?= e((string)($r['resolved_subnet_id'] ?? $r['resolved_cidr'] ?? '')) ?></td>
-              <td><?= e((string)($r['reason'] ?? '')) ?></td>
+              <td>
+                <?= e((string)($r['reason'] ?? '')) ?>
+                <?php if ($ov): ?>
+                  <?php
+                    $ovParts = [];
+                    if (!empty($ov['parents'])) $ovParts[] = 'nested inside: ' . implode(', ', $ov['parents']);
+                    if (!empty($ov['children'])) $ovParts[] = 'parent of: ' . implode(', ', $ov['children']);
+                  ?>
+                  <br><span class="warning">Hierarchy: <?= e(implode('; ', $ovParts)) ?></span>
+                <?php endif; ?>
+              </td>
             </tr>
           <?php endforeach; ?>
           </tbody>

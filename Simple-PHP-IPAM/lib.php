@@ -685,6 +685,68 @@ function cidr_from_ip_and_prefix(array $normIp, int $prefix): string
     return inet_ntop($netBin) . '/' . $prefix;
 }
 
+/* ---------------- Subnet overlap detection ---------------- */
+
+/**
+ * Detect parent/child relationships for a proposed CIDR against existing subnets.
+ *
+ * In valid CIDR math, two subnets of different prefix lengths either have a strict
+ * parent/child containment relationship or are completely disjoint — partial overlap
+ * is impossible. Exact duplicates are prevented by the DB UNIQUE constraint on cidr.
+ *
+ * Returns:
+ *   'parents'  — existing subnets that contain the proposed CIDR (new is a child)
+ *   'children' — existing subnets that fall inside the proposed CIDR (new is a parent)
+ *
+ * Both are informational warnings; neither case blocks the operation, as hierarchical
+ * nesting is the expected use-case. Pass $excludeId when checking an update so the
+ * subnet being edited is not compared against itself.
+ *
+ * @return array{parents: list<string>, children: list<string>}
+ */
+function detect_subnet_overlaps(PDO $db, string $cidr, ?int $excludeId = null): array
+{
+    $p = parse_cidr($cidr);
+    if (!$p) return ['parents' => [], 'children' => []];
+
+    $ver    = (int)$p['version'];
+    $prefix = (int)$p['prefix'];
+    $netBin = (string)$p['net_bin'];
+
+    $sql    = "SELECT id, cidr, prefix, network_bin FROM subnets WHERE ip_version = :v";
+    $params = [':v' => $ver];
+    if ($excludeId !== null) {
+        $sql .= " AND id != :excl";
+        $params[':excl'] = $excludeId;
+    }
+    $st = $db->prepare($sql);
+    $st->execute($params);
+    $rows = $st->fetchAll();
+
+    $parents  = [];
+    $children = [];
+
+    foreach ($rows as $row) {
+        $rowPrefix = (int)$row['prefix'];
+        $rowNetBin = (string)$row['network_bin'];
+
+        if ($rowPrefix < $prefix) {
+            // Candidate parent: does the existing broader subnet contain our new one?
+            if (hash_equals(apply_prefix_mask($netBin, $rowPrefix), $rowNetBin)) {
+                $parents[] = (string)$row['cidr'];
+            }
+        } elseif ($rowPrefix > $prefix) {
+            // Candidate child: does our new broader subnet contain the existing one?
+            if (hash_equals(apply_prefix_mask($rowNetBin, $prefix), $netBin)) {
+                $children[] = (string)$row['cidr'];
+            }
+        }
+        // Same prefix: exact duplicate — handled by DB UNIQUE constraint on cidr
+    }
+
+    return ['parents' => $parents, 'children' => $children];
+}
+
 /* ---------------- UI helpers ---------------- */
 
 function page_header(string $title): void
