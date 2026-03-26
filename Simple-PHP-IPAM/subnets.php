@@ -7,6 +7,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 
 $err = '';
 $msg = '';
+$warn = '';
+
+// Consume any flash warning left by a create redirect
+if (!empty($_SESSION['ipam_flash_warn'])) {
+    $warn = (string)$_SESSION['ipam_flash_warn'];
+    unset($_SESSION['ipam_flash_warn']);
+}
 
 $st = $db->prepare("SELECT id, name FROM sites ORDER BY name ASC");
 $st->execute();
@@ -32,6 +39,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $err = 'Invalid CIDR. Examples: 192.168.1.0/24 or 2001:db8::/64';
         } else {
             $normalized = $p['network'] . '/' . $p['prefix'];
+            $overlaps = detect_subnet_overlaps($db, $normalized);
             try {
                 $st = $db->prepare("INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, site_id)
                                     VALUES (:cidr,:ver,:net,:nb,:pre,:d,:site)");
@@ -45,6 +53,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ':site' => $siteId,
                 ]);
                 audit($db, 'subnet.create', 'subnet', (int)$db->lastInsertId(), $normalized);
+                if (!empty($overlaps['parents']) || !empty($overlaps['children'])) {
+                    $_SESSION['ipam_flash_warn'] = subnet_overlap_warning_text($overlaps);
+                }
                 header('Location: subnets.php');
                 exit;
             } catch (PDOException $e) {
@@ -64,6 +75,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $err = 'Invalid CIDR.';
         } else {
             $normalized = $p['network'] . '/' . $p['prefix'];
+            $overlaps = detect_subnet_overlaps($db, $normalized, $id);
             try {
                 $st = $db->prepare("UPDATE subnets
                                     SET cidr=:cidr, ip_version=:ver, network=:net, network_bin=:nb, prefix=:pre, description=:d, site_id=:site
@@ -80,6 +92,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ]);
                 audit($db, 'subnet.update', 'subnet', $id, $normalized);
                 $msg = 'Subnet updated.';
+                if (!empty($overlaps['parents']) || !empty($overlaps['children'])) {
+                    $warn = subnet_overlap_warning_text($overlaps);
+                }
             } catch (PDOException $e) {
                 $err = 'Could not update subnet (duplicate?).';
             }
@@ -273,6 +288,20 @@ function ipv4_unassigned_summary_local(PDO $db): array
     return $out;
 }
 
+function subnet_overlap_warning_text(array $overlaps): string
+{
+    $parts = [];
+    if (!empty($overlaps['parents'])) {
+        $list = implode(', ', array_map('e', $overlaps['parents']));
+        $parts[] = 'nested inside: ' . $list;
+    }
+    if (!empty($overlaps['children'])) {
+        $list = implode(', ', array_map('e', $overlaps['children']));
+        $parts[] = 'parent of: ' . $list;
+    }
+    return 'Hierarchy notice — this subnet is ' . implode('; and ', $parts) . '. Verify this nesting is intentional.';
+}
+
 $tree = build_subnet_tree_local($list);
 $direct = subnet_direct_counts_local($db);
 $agg = subnet_aggregated_counts_local($tree, $direct);
@@ -392,6 +421,7 @@ page_header('Subnets');
 
 <?php if ($err): ?><p class="danger"><?= e($err) ?></p><?php endif; ?>
 <?php if ($msg): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
+<?php if ($warn): ?><p class="warning"><?= $warn ?></p><?php endif; ?>
 
 <div class="card" id="add-subnet" style="margin-top:16px">
   <h2>Add subnet</h2>
