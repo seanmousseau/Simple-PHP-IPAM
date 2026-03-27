@@ -5,20 +5,56 @@
     document.documentElement.setAttribute("data-theme", saved);
   }
 
-  window.ipamToggleTheme = function(){
-    const cur = document.documentElement.getAttribute("data-theme");
-    let next;
-    if (cur === "dark") next = "light";
-    else if (cur === "light") next = "dark";
-    else {
-      next = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "light" : "dark";
+  function currentTheme() {
+    return document.documentElement.getAttribute("data-theme") || "auto";
+  }
+
+  function applyTheme(t) {
+    if (t === "auto") {
+      document.documentElement.removeAttribute("data-theme");
+      localStorage.removeItem(key);
+    } else {
+      document.documentElement.setAttribute("data-theme", t);
+      localStorage.setItem(key, t);
     }
-    document.documentElement.setAttribute("data-theme", next);
-    localStorage.setItem(key, next);
+  }
+
+  function updateThemeButton() {
+    const btn = document.getElementById("theme-toggle");
+    if (!btn) return;
+    const labels = { auto: "🖥 System", light: "☀ Light", dark: "🌙 Dark" };
+    btn.textContent = labels[currentTheme()] || "🌓 Theme";
+  }
+
+  window.ipamCycleTheme = function() {
+    const order = ["auto", "light", "dark"];
+    const next = order[(order.indexOf(currentTheme()) + 1) % order.length];
+    applyTheme(next);
+    updateThemeButton();
   };
 
-  window.ipamClearTheme = function(){
-    document.documentElement.removeAttribute("data-theme");
-    localStorage.removeItem(key);
-  };
+  // Keep old names in case anything calls them externally
+  window.ipamToggleTheme = window.ipamCycleTheme;
+  window.ipamClearTheme = function() { applyTheme("auto"); updateThemeButton(); };
+
+  document.addEventListener("DOMContentLoaded", function() {
+    updateThemeButton();
+
+    // Dropdown toggle
+    document.addEventListener("click", function(e) {
+      const toggle = e.target.closest(".nav-dropdown-toggle");
+      if (toggle) {
+        const dropdown = toggle.closest(".nav-dropdown");
+        const isOpen = dropdown.classList.contains("open");
+        // Close all first
+        document.querySelectorAll(".nav-dropdown.open")
+                .forEach(function(d) { d.classList.remove("open"); });
+        if (!isOpen) dropdown.classList.add("open");
+        return;
+      }
+      // Click outside closes all
+      document.querySelectorAll(".nav-dropdown.open")
+              .forEach(function(d) { d.classList.remove("open"); });
+    });
+  });
 })();
