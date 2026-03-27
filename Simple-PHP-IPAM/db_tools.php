@@ -83,19 +83,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                 )->fetchAll(PDO::FETCH_COLUMN);
 
                 foreach ($tables as $tbl) {
-                    $db->exec('DROP TABLE IF EXISTS "' . addslashes((string)$tbl) . '"');
+                    $db->exec('DROP TABLE IF EXISTS "' . str_replace('"', '""', (string)$tbl) . '"');
                 }
 
-                // Execute the dump SQL (split on statement boundaries)
-                $statements = preg_split('/;\s*\n/', $sql ?? '');
+                // Split the dump into individual statements.
+                // Simple preg_split on ";\n" is insufficient because:
+                //   1. Trigger bodies contain ";\n" inside BEGIN...END blocks.
+                //   2. Text values encoded as CAST(X'hex' AS TEXT) are single-line,
+                //      but a plain-text dump could have ";\n" inside string literals.
+                // We use a line-based parser that tracks BEGIN...END depth so that
+                // semicolons inside trigger bodies are never treated as boundaries.
+                $statements = [];
+                $current    = '';
+                $depth      = 0;
+                foreach (explode("\n", $sql ?? '') as $line) {
+                    $trimLine = trim($line);
+                    // A bare BEGIN (no TRANSACTION keyword) opens a trigger body.
+                    if (preg_match('/^BEGIN\s*$/i', $trimLine)) {
+                        $depth++;
+                    }
+                    $current .= $line . "\n";
+                    // END; closes a trigger body.
+                    if ($depth > 0 && preg_match('/^END\s*;\s*$/i', $trimLine)) {
+                        $depth--;
+                    }
+                    // A line ending with ; at depth 0 terminates a complete statement.
+                    if ($depth === 0 && str_ends_with(rtrim($line), ';')) {
+                        $statements[] = $current;
+                        $current = '';
+                    }
+                }
+                if (trim($current) !== '') {
+                    $statements[] = $current;
+                }
+
                 foreach ($statements as $stmt) {
-                    // Strip leading/inline SQL comment lines, then trim
+                    // Strip SQL comment lines, then trim
                     $exec = trim((string)preg_replace('/^--[^\n]*\n?/m', '', $stmt));
                     if ($exec === '') continue;
                     // Skip transaction/pragma statements we manage ourselves
                     if (preg_match('/^PRAGMA\s+foreign_keys\s*=/i', $exec)) continue;
-                    if (preg_match('/^BEGIN(\s+TRANSACTION)?\s*$/i', $exec)) continue;
-                    if (preg_match('/^COMMIT\s*$/i', $exec)) continue;
+                    if (preg_match('/^BEGIN(\s+TRANSACTION)?\s*;?\s*$/i', $exec)) continue;
+                    if (preg_match('/^COMMIT\s*;?\s*$/i', $exec)) continue;
                     $db->exec($exec);
                 }
 

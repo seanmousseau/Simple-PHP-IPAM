@@ -600,23 +600,55 @@ function ipam_db_dump(PDO $db): string
     )->fetchAll();
 
     foreach ($tables as $t) {
-        $name = (string)$t['name'];
+        $name        = (string)$t['name'];
+        $quotedName  = '"' . str_replace('"', '""', $name) . '"';
         $out .= "-- Table: {$name}\n";
         $out .= $t['sql'] . ";\n";
 
-        $rows = $db->query("SELECT * FROM " . '"' . addslashes($name) . '"')->fetchAll();
+        // Dump triggers for this table so they are recreated on import.
+        // (Dropping a table also drops its triggers; they must be re-stated.)
+        $triggers = $db->query(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' AND tbl_name="
+            . $db->quote($name) . " AND sql IS NOT NULL ORDER BY name"
+        )->fetchAll();
+        foreach ($triggers as $trig) {
+            $out .= $trig['sql'] . ";\n";
+        }
+
+        // Identify BLOB columns so we can always hex-encode raw binary data.
+        // mb_check_encoding() is unreliable: many 4-byte IPv4 blobs (e.g. 10.38.83.x)
+        // happen to be valid UTF-8 sequences and would be misclassified as text.
+        $colInfo  = $db->query("PRAGMA table_info({$quotedName})")->fetchAll();
+        $blobCols = [];
+        foreach ($colInfo as $ci) {
+            if (strtoupper((string)$ci['type']) === 'BLOB') {
+                $blobCols[(string)$ci['name']] = true;
+            }
+        }
+
+        $rows = $db->query("SELECT * FROM {$quotedName}")->fetchAll();
         foreach ($rows as $row) {
-            $cols = array_map(fn($c) => '"' . addslashes($c) . '"', array_keys($row));
-            $vals = array_map(function($v) {
-                if ($v === null) return 'NULL';
-                if (is_int($v) || is_float($v)) return (string)$v;
-                // Detect binary blobs (ip_bin, network_bin)
-                if (!mb_check_encoding((string)$v, 'UTF-8')) {
-                    return "X'" . bin2hex((string)$v) . "'";
+            $cols = array_map(
+                fn($c) => '"' . str_replace('"', '""', (string)$c) . '"',
+                array_keys($row)
+            );
+            $vals = [];
+            foreach ($row as $colName => $v) {
+                if ($v === null) {
+                    $vals[] = 'NULL';
+                } elseif (is_int($v) || is_float($v)) {
+                    $vals[] = (string)$v;
+                } elseif (isset($blobCols[$colName])) {
+                    // Binary blob (ip_bin, network_bin): always use hex literal.
+                    $vals[] = "X'" . bin2hex((string)$v) . "'";
+                } else {
+                    // TEXT column: hex-encode via CAST so the value is stored as TEXT.
+                    // This safely handles any content including single quotes, semicolons,
+                    // newlines, and NUL bytes without any SQL injection risk.
+                    $vals[] = "CAST(X'" . bin2hex((string)$v) . "' AS TEXT)";
                 }
-                return "'" . str_replace("'", "''", (string)$v) . "'";
-            }, array_values($row));
-            $out .= "INSERT INTO \"{$name}\" (" . implode(',', $cols) . ") VALUES ("
+            }
+            $out .= "INSERT INTO {$quotedName} (" . implode(',', $cols) . ") VALUES ("
                   . implode(',', $vals) . ");\n";
         }
         $out .= "\n";
