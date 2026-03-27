@@ -382,6 +382,29 @@ button:disabled{opacity:.6;cursor:not-allowed}
 .status-used{color:var(--success);font-weight:600}
 .status-reserved{color:var(--warn);font-weight:600}
 .status-free{color:var(--muted);font-weight:600}
+.badge-update{
+  background:color-mix(in srgb,var(--warn) 12%,var(--badge-bg) 88%);
+  color:var(--warn);
+  border-color:color-mix(in srgb,var(--warn) 40%,var(--border) 60%);
+}
+.util-bar{
+  display:inline-block;
+  width:60px;
+  height:8px;
+  background:var(--border);
+  border-radius:3px;
+  overflow:hidden;
+  vertical-align:middle;
+  margin-left:4px;
+}
+.util-bar-fill{
+  height:100%;
+  background:var(--success);
+  border-radius:3px;
+  transition:width .3s;
+}
+.util-bar-fill--warn{background:var(--warn)}
+.util-bar-fill--crit{background:var(--danger)}
 
 summary{
   cursor:pointer;

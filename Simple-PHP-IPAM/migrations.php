@@ -75,6 +75,15 @@ function ipam_migrations(): array
             $db->exec("CREATE INDEX IF NOT EXISTS idx_subnets_site_id ON subnets(site_id)");
         },
 
+        // 0.14: last_login_at timestamp on users
+        '0.14' => function(PDO $db) {
+            $cols  = $db->query("PRAGMA table_info(users)")->fetchAll();
+            $names = array_map(fn($c) => $c['name'], $cols);
+            if (!in_array('last_login_at', $names, true)) {
+                $db->exec("ALTER TABLE users ADD COLUMN last_login_at TEXT");
+            }
+        },
+
         // 0.13: name + email fields on users
         '0.13' => function(PDO $db) {
             $cols  = $db->query("PRAGMA table_info(users)")->fetchAll();

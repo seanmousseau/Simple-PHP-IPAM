@@ -41,6 +41,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             clear_login_failures($db, $ip);
             login_user((int)$user['id'], (string)$user['username'], (string)$user['role']);
+            $db->prepare("UPDATE users SET last_login_at=datetime('now') WHERE id=:id")
+               ->execute([':id' => (int)$user['id']]);
             audit($db, 'auth.login', 'user', (int)$user['id'], 'login ok');
             header('Location: dashboard.php');
             exit;
@@ -55,9 +57,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // First-run hint: show only if no successful login has ever occurred
 $firstRun = !$db->query("SELECT 1 FROM audit_log WHERE action='auth.login' LIMIT 1")->fetch();
 
-$oidcActive       = oidc_enabled($config);
-$disableLocal     = $oidcActive && !empty($config['oidc']['disable_local_login']);
-$localForceShown  = isset($_GET['local']); // emergency bypass
+$oidcActive              = oidc_enabled($config);
+$disableLocal            = $oidcActive && !empty($config['oidc']['disable_local_login']);
+$disableEmergencyBypass  = $oidcActive && !empty($config['oidc']['disable_emergency_bypass']);
+$hideEmergencyLink       = $oidcActive && !empty($config['oidc']['hide_emergency_link']);
+$localForceShown         = isset($_GET['local']) && !$disableEmergencyBypass;
 
 page_header('Login');
 ?>
@@ -92,7 +96,9 @@ page_header('Login');
 </form>
 <?php elseif ($oidcActive): ?>
   <p class="muted" style="margin-top:16px">Local password login is disabled. Use SSO above.
-    <a href="login.php?local=1" class="muted" style="font-size:.9em">(emergency local access)</a>
+    <?php if (!$hideEmergencyLink && !$disableEmergencyBypass): ?>
+      <a href="login.php?local=1" class="muted" style="font-size:.9em">(emergency local access)</a>
+    <?php endif; ?>
   </p>
 <?php endif; ?>
 <?php page_footer();

@@ -54,18 +54,30 @@ return [
         'interval_seconds' => 86400, // once per day
     ],
 
+    // Subnet utilization thresholds for the colour-coded progress bars.
+    'utilization_warn'     => 80,
+    'utilization_critical' => 95,
+
+    // Update check: shows a footer badge when a newer GitHub release is available.
+    'update_check' => [
+        'enabled'     => true,
+        'ttl_seconds' => 21600,
+    ],
+
     // OIDC single sign-on — see docs/oidc.md for full setup guide.
     'oidc' => [
-        'enabled'             => false,
-        'display_name'        => 'SSO',
-        'client_id'           => '',
-        'client_secret'       => '',
-        'discovery_url'       => '',
-        'redirect_uri'        => '',
-        'scopes'              => 'openid email profile',
-        'auto_provision'      => false,
-        'default_role'        => 'readonly',
-        'disable_local_login' => false,
+        'enabled'                   => false,
+        'display_name'              => 'SSO',
+        'client_id'                 => '',
+        'client_secret'             => '',
+        'discovery_url'             => '',
+        'redirect_uri'              => '',
+        'scopes'                    => 'openid email profile',
+        'auto_provision'            => false,
+        'default_role'              => 'readonly',
+        'disable_local_login'       => false,
+        'hide_emergency_link'       => false,
+        'disable_emergency_bypass'  => false,
     ],
 ];
 ```
@@ -180,9 +192,32 @@ The `oidc` block configures optional OIDC single sign-on. All keys are ignored w
 | `scopes` | `'openid email profile'` | Space-separated scopes |
 | `auto_provision` | `false` | Automatically create or link a local account on first OIDC login |
 | `default_role` | `'readonly'` | Role assigned to auto-provisioned users (`admin` or `readonly`) |
-| `disable_local_login` | `false` | Hide the password form when OIDC is enabled. Emergency bypass at `login.php?local=1` |
+| `disable_local_login` | `false` | Hide the password form when OIDC is enabled |
+| `hide_emergency_link` | `false` | Hide the emergency local access link text (URL still works unless `disable_emergency_bypass` is also set) |
+| `disable_emergency_bypass` | `false` | Make `login.php?local=1` completely ineffective. **Warning:** locks you out if your IdP goes down |
 
 See the [OIDC guide](oidc.md) for IdP setup examples, user provisioning details, and troubleshooting.
+
+---
+
+## `utilization_warn` / `utilization_critical`
+
+**Defaults:** `80` / `95`
+
+Percentage thresholds for the IPv4 subnet utilization progress bars in the subnet list. The bar turns yellow at `utilization_warn` and red at `utilization_critical`.
+
+---
+
+## `update_check`
+
+Controls the automatic update check shown in the page footer.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `true` | Set to `false` to disable the update check entirely |
+| `ttl_seconds` | `21600` | How long to cache the result (default: 6 hours; minimum: 3600) |
+
+The check fetches the GitHub releases API once per TTL period and caches the result in `data/tmp/update-check.json`. Network failures are silently ignored. Drafts and pre-releases are not shown.
 
 ---
 

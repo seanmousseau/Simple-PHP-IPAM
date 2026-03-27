@@ -83,6 +83,20 @@ See the [Installation guide](docs/install.md) for full web server configuration 
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
+### What's new in 0.14
+
+**DHCP pool tool** — Bulk-reserve a contiguous IPv4 range as DHCP pool addresses in one action. Used IPs are never overwritten. Accessible from each subnet's action bar and the Admin menu.
+
+**Update check** — Footer shows an "Update available" badge when a newer GitHub release is published. Result is cached; opt-out in `config.php`.
+
+**User hardening** — Admins can no longer accidentally disable themselves, change their own role, or unlink their own SSO from the users admin page. Last login time now visible per user.
+
+**Utilization badges** — IPv4 subnets show a colour-coded mini progress bar (green/yellow/red) with configurable warn and critical thresholds.
+
+**Emergency access controls** — New `hide_emergency_link` and `disable_emergency_bypass` config options for stricter SSO-only enforcement.
+
+**App rename** — Application renamed to Simple PHP IPAM throughout.
+
 ### What's new in 0.13
 
 **User management** — Name and email fields on every account. Delete users (with guard against removing the last admin). Inline OIDC linking from the admin UI.

@@ -42,15 +42,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     } elseif ($action === 'toggle_active') {
         $id = (int)($_POST['id'] ?? 0);
-        $db->prepare("UPDATE users SET is_active = CASE WHEN is_active=1 THEN 0 ELSE 1 END WHERE id = :id")
-           ->execute([':id' => $id]);
-        audit($db, 'user.toggle_active', 'user', $id, '');
-        $msg = 'User updated.';
+        if ($id === $self['id']) {
+            $err = 'You cannot disable your own account.';
+        } else {
+            $db->prepare("UPDATE users SET is_active = CASE WHEN is_active=1 THEN 0 ELSE 1 END WHERE id = :id")
+               ->execute([':id' => $id]);
+            audit($db, 'user.toggle_active', 'user', $id, '');
+            $msg = 'User updated.';
+        }
 
     } elseif ($action === 'set_role') {
         $id   = (int)($_POST['id']   ?? 0);
         $role = (string)($_POST['role'] ?? '');
-        if (!in_array($role, ['admin', 'readonly'], true)) {
+        if ($id === $self['id']) {
+            $err = 'You cannot change your own role.';
+        } elseif (!in_array($role, ['admin', 'readonly'], true)) {
             $err = 'Invalid role.';
         } else {
             $db->prepare("UPDATE users SET role = :r WHERE id = :id")
@@ -99,10 +105,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     } elseif ($action === 'unlink_oidc') {
         $id = (int)($_POST['id'] ?? 0);
-        $db->prepare("UPDATE users SET oidc_sub = NULL WHERE id = :id")
-           ->execute([':id' => $id]);
-        audit($db, 'user.oidc_unlink', 'user', $id, '');
-        $msg = 'OIDC link removed.';
+        if ($id === $self['id']) {
+            $err = 'You cannot unlink your own SSO account from this page. Use your profile settings.';
+        } else {
+            $db->prepare("UPDATE users SET oidc_sub = NULL WHERE id = :id")
+               ->execute([':id' => $id]);
+            audit($db, 'user.oidc_unlink', 'user', $id, '');
+            $msg = 'OIDC link removed.';
+        }
 
     } elseif ($action === 'delete') {
         $id = (int)($_POST['id'] ?? 0);
@@ -132,7 +142,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $st = $db->prepare(
-    "SELECT id, username, name, email, role, is_active, created_at, updated_at, oidc_sub
+    "SELECT id, username, name, email, role, is_active, created_at, updated_at, oidc_sub, last_login_at
      FROM users ORDER BY username ASC"
 );
 $st->execute();
@@ -173,6 +183,7 @@ page_header('Users');
       <th>Role</th>
       <th>Active</th>
       <th>SSO</th>
+      <th>Last Login</th>
       <th>Created</th>
       <th>Actions</th>
     </tr>
@@ -192,12 +203,14 @@ page_header('Users');
           <span class="muted">—</span>
         <?php endif; ?>
       </td>
+      <td class="muted"><?= $u['last_login_at'] ? e($u['last_login_at']) : '<span class="muted">never</span>' ?></td>
       <td class="muted"><?= e($u['created_at']) ?></td>
       <td>
         <details>
           <summary class="muted" style="cursor:pointer;font-size:.9em">Actions ▾</summary>
           <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
 
+            <?php if ((int)$u['id'] !== $self['id']): ?>
             <form method="post" action="users.php" class="row" style="gap:6px">
               <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
               <input type="hidden" name="id"     value="<?= (int)$u['id'] ?>">
@@ -215,6 +228,7 @@ page_header('Users');
               </select>
               <button type="submit">Set role</button>
             </form>
+            <?php endif; ?>
 
             <form method="post" action="users.php" class="row" style="gap:6px">
               <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
@@ -234,6 +248,7 @@ page_header('Users');
             </form>
 
             <?php if ($u['oidc_sub'] !== null): ?>
+              <?php if ((int)$u['id'] !== $self['id']): ?>
               <form method="post" action="users.php" class="row" style="gap:6px"
                     onsubmit="return confirm('Remove SSO link for <?= e((string)$u['username']) ?>?')">
                 <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
@@ -241,6 +256,9 @@ page_header('Users');
                 <input type="hidden" name="id"     value="<?= (int)$u['id'] ?>">
                 <button type="submit" class="button-secondary">Unlink SSO</button>
               </form>
+              <?php else: ?>
+              <span class="muted" style="font-size:.9em">SSO linked (manage in your own profile)</span>
+              <?php endif; ?>
             <?php else: ?>
               <form method="post" action="users.php" class="row" style="gap:6px">
                 <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">

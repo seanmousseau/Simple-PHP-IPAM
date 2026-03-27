@@ -357,9 +357,22 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
 
     if ((int)$row['ip_version'] === 4 && isset($ipv4Unassigned[$id])) {
         $u = $ipv4Unassigned[$id];
-        echo "<br><span class='muted'>Assignable: " . e((string)$u['assignable_total']) .
-             " | Assigned: " . e((string)$u['assigned_assignable']) .
-             " | Unassigned: <b>" . e((string)$u['unassigned_assignable']) . "</b></span>";
+        $assignable = (int)$u['assignable_total'];
+        $assigned   = (int)$u['assigned_assignable'];
+        $pct = $assignable > 0 ? (int)round($assigned / $assignable * 100) : 0;
+        $cfg = $GLOBALS['config'] ?? [];
+        $warnThreshold = (int)($cfg['utilization_warn']     ?? 80);
+        $critThreshold = (int)($cfg['utilization_critical'] ?? 95);
+        $barClass = $pct >= $critThreshold ? 'util-bar-fill--crit'
+                  : ($pct >= $warnThreshold ? 'util-bar-fill--warn' : '');
+        $pctLabel = $pct >= $critThreshold ? "<span class='danger'>{$pct}%</span>"
+                  : ($pct >= $warnThreshold ? "<span class='warning'>{$pct}%</span>"
+                  : "<span>{$pct}%</span>");
+        echo "<br><span class='muted'>Assignable: " . e((string)$assignable) .
+             " | Assigned: " . e((string)$assigned) .
+             " | Unassigned: <b>" . e((string)$u['unassigned_assignable']) . "</b></span>"
+           . " <span class='util-bar'><span class='util-bar-fill {$barClass}' style='width:{$pct}%'></span></span>"
+           . " {$pctLabel}";
     }
     echo "</summary>";
 
@@ -371,6 +384,9 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
     }
     if (current_user()['role'] !== 'readonly') {
         echo "<a class='action-pill' href='bulk_update.php?subnet_id=" . (int)$row['id'] . "'>✏ Bulk Update</a>";
+        if ((int)$row['ip_version'] === 4) {
+            echo "<a class='action-pill' href='dhcp_pool.php?subnet_id=" . (int)$row['id'] . "'>🔒 DHCP Pool</a>";
+        }
     }
     echo "</div>";
 
