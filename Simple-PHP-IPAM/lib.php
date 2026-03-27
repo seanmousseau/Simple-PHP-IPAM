@@ -845,3 +845,251 @@ function page_footer(): void
     echo "<hr><div class='muted'>PHP SQLite IPAM v" . e(IPAM_VERSION) . "</div>";
     echo "</div></body></html>";
 }
+
+/* ============================================================
+ * OIDC — Authorization Code + PKCE (pure PHP, no dependencies)
+ * ============================================================ */
+
+function oidc_enabled(array $config): bool
+{
+    $o = $config['oidc'] ?? [];
+    return !empty($o['enabled'])
+        && !empty($o['client_id'])
+        && !empty($o['client_secret'])
+        && !empty($o['discovery_url'])
+        && !empty($o['redirect_uri']);
+}
+
+/**
+ * Fetch and cache the IdP's OpenID Connect discovery document.
+ * Appends /.well-known/openid-configuration if the URL doesn't already
+ * contain that path.
+ */
+function oidc_discovery(array $config): array
+{
+    $base = rtrim((string)($config['oidc']['discovery_url'] ?? ''), '/');
+    if ($base === '') throw new RuntimeException('OIDC discovery_url not set');
+
+    $url = (str_contains($base, '.well-known')) ? $base : $base . '/.well-known/openid-configuration';
+
+    ensure_tmp_dir();
+    $cache = tmp_dir() . '/oidc-disc-' . md5($url) . '.json';
+
+    if (is_file($cache) && (time() - (int)filemtime($cache)) < 3600) {
+        $d = json_decode((string)file_get_contents($cache), true);
+        if (is_array($d) && !empty($d['authorization_endpoint'])) return $d;
+    }
+
+    $raw = oidc_http_get($url);
+    $d   = json_decode($raw, true);
+    if (!is_array($d) || empty($d['authorization_endpoint'])) {
+        throw new RuntimeException('Invalid OIDC discovery document from ' . $url);
+    }
+
+    file_put_contents($cache, json_encode($d));
+    @chmod($cache, 0600);
+    return $d;
+}
+
+/**
+ * Fetch and cache the IdP's JSON Web Key Set.
+ * Pass $forceRefresh = true to bypass the cache (used after a verify failure
+ * to handle key rotation).
+ */
+function oidc_jwks(string $jwksUri, bool $forceRefresh = false): array
+{
+    ensure_tmp_dir();
+    $cache = tmp_dir() . '/oidc-jwks-' . md5($jwksUri) . '.json';
+
+    if (!$forceRefresh && is_file($cache) && (time() - (int)filemtime($cache)) < 3600) {
+        $d = json_decode((string)file_get_contents($cache), true);
+        if (is_array($d) && !empty($d['keys'])) return (array)$d['keys'];
+    }
+
+    $raw = oidc_http_get($jwksUri);
+    $d   = json_decode($raw, true);
+    if (!is_array($d) || !isset($d['keys'])) {
+        throw new RuntimeException('Invalid JWKS from ' . $jwksUri);
+    }
+
+    file_put_contents($cache, json_encode($d));
+    @chmod($cache, 0600);
+    return (array)$d['keys'];
+}
+
+/** HTTP GET via file_get_contents with a short timeout. */
+function oidc_http_get(string $url): string
+{
+    $ctx = stream_context_create(['http' => ['timeout' => 10, 'ignore_errors' => true]]);
+    $raw = @file_get_contents($url, false, $ctx);
+    if ($raw === false || $raw === '') {
+        throw new RuntimeException('HTTP GET failed for ' . $url);
+    }
+    return $raw;
+}
+
+/** POST application/x-www-form-urlencoded and return decoded JSON array. */
+function oidc_http_post(string $url, array $params): array
+{
+    $body = http_build_query($params);
+    $ctx  = stream_context_create(['http' => [
+        'method'        => 'POST',
+        'header'        => "Content-Type: application/x-www-form-urlencoded\r\n"
+                         . "Content-Length: " . strlen($body) . "\r\n",
+        'content'       => $body,
+        'timeout'       => 15,
+        'ignore_errors' => true,
+    ]]);
+    $raw = @file_get_contents($url, false, $ctx);
+    if ($raw === false) throw new RuntimeException('Token endpoint request failed');
+    $d = json_decode($raw, true);
+    if (!is_array($d)) throw new RuntimeException('Invalid JSON from token endpoint');
+    if (!empty($d['error'])) {
+        throw new RuntimeException('Token endpoint error: ' . $d['error']
+            . (isset($d['error_description']) ? ' — ' . $d['error_description'] : ''));
+    }
+    return $d;
+}
+
+/* ---- PKCE ---- */
+
+function base64url_encode(string $bytes): string
+{
+    return rtrim(strtr(base64_encode($bytes), '+/', '-_'), '=');
+}
+
+function base64url_decode(string $s): string
+{
+    $s = strtr($s, '-_', '+/');
+    $pad = strlen($s) % 4;
+    if ($pad) $s .= str_repeat('=', 4 - $pad);
+    $result = base64_decode($s, true);
+    if ($result === false) throw new RuntimeException('Invalid base64url string');
+    return $result;
+}
+
+/**
+ * Generate a PKCE verifier and S256 challenge pair.
+ * @return array{verifier: string, challenge: string}
+ */
+function oidc_pkce_pair(): array
+{
+    $verifier  = base64url_encode(random_bytes(32));
+    $challenge = base64url_encode(hash('sha256', $verifier, true));
+    return ['verifier' => $verifier, 'challenge' => $challenge];
+}
+
+/* ---- JWT / JWK verification ---- */
+
+/**
+ * Decode and verify an RS256/RS384/RS512 signed ID token.
+ * Returns the verified payload claims array.
+ *
+ * @param array $jwks    Keys from the IdP's JWKS endpoint
+ * @param array $expect  Claims to validate: iss, aud, nonce
+ */
+function oidc_verify_id_token(string $idToken, array $jwks, array $expect): array
+{
+    $parts = explode('.', $idToken);
+    if (count($parts) !== 3) throw new RuntimeException('Malformed JWT');
+
+    [$hdrB64, $payB64, $sigB64] = $parts;
+
+    $header  = json_decode(base64url_decode($hdrB64), true);
+    $payload = json_decode(base64url_decode($payB64), true);
+    if (!is_array($header) || !is_array($payload)) {
+        throw new RuntimeException('JWT header/payload decoding failed');
+    }
+
+    $alg = (string)($header['alg'] ?? '');
+    $algMap = ['RS256' => OPENSSL_ALGO_SHA256, 'RS384' => OPENSSL_ALGO_SHA384, 'RS512' => OPENSSL_ALGO_SHA512];
+    if (!isset($algMap[$alg])) {
+        throw new RuntimeException("Unsupported JWT alg: $alg");
+    }
+
+    // Find the matching JWK
+    $kid = $header['kid'] ?? null;
+    $jwk = null;
+    foreach ($jwks as $k) {
+        if (!is_array($k) || ($k['kty'] ?? '') !== 'RSA') continue;
+        if ($kid !== null && ($k['kid'] ?? '') !== $kid) continue;
+        $jwk = $k;
+        break;
+    }
+    if ($jwk === null) {
+        throw new RuntimeException('No matching RSA JWK for kid=' . ($kid ?? 'none'));
+    }
+
+    $pem    = jwk_rsa_to_pem($jwk);
+    $pubKey = openssl_pkey_get_public($pem);
+    if ($pubKey === false) throw new RuntimeException('Failed to import JWK public key');
+
+    $sig    = base64url_decode($sigB64);
+    $result = openssl_verify($hdrB64 . '.' . $payB64, $sig, $pubKey, $algMap[$alg]);
+    if ($result !== 1) throw new RuntimeException('JWT signature invalid');
+
+    // Standard claim validation
+    $now = time();
+    if (isset($payload['exp']) && (int)$payload['exp'] < $now - 60) {
+        throw new RuntimeException('ID token has expired');
+    }
+    if (isset($payload['iat']) && (int)$payload['iat'] > $now + 60) {
+        throw new RuntimeException('ID token iat is in the future');
+    }
+    if (isset($expect['iss']) && ($payload['iss'] ?? '') !== $expect['iss']) {
+        throw new RuntimeException('ID token issuer mismatch');
+    }
+    if (isset($expect['aud'])) {
+        $aud   = $payload['aud'] ?? '';
+        $audOk = (is_string($aud) && $aud === $expect['aud'])
+              || (is_array($aud)  && in_array($expect['aud'], $aud, true));
+        if (!$audOk) throw new RuntimeException('ID token audience mismatch');
+    }
+    if (isset($expect['nonce']) && ($payload['nonce'] ?? '') !== $expect['nonce']) {
+        throw new RuntimeException('ID token nonce mismatch');
+    }
+
+    return $payload;
+}
+
+/**
+ * Convert an RSA JWK (n, e fields) to a PEM-encoded public key.
+ * Builds the DER SubjectPublicKeyInfo structure manually so we have
+ * no dependency on ext-gmp or any JOSE library.
+ */
+function jwk_rsa_to_pem(array $jwk): string
+{
+    $n = base64url_decode((string)($jwk['n'] ?? ''));
+    $e = base64url_decode((string)($jwk['e'] ?? ''));
+    if ($n === '' || $e === '') throw new RuntimeException('JWK missing n or e');
+
+    // DER integers must not have a leading 1-bit (would be interpreted as negative)
+    if (ord($n[0]) & 0x80) $n = "\x00" . $n;
+    if (ord($e[0]) & 0x80) $e = "\x00" . $e;
+
+    $intN   = "\x02" . der_len(strlen($n)) . $n;
+    $intE   = "\x02" . der_len(strlen($e)) . $e;
+    $rsaSeq = "\x30" . der_len(strlen($intN) + strlen($intE)) . $intN . $intE;
+
+    // AlgorithmIdentifier for rsaEncryption (OID 1.2.840.113549.1.1.1) with NULL params
+    $oid   = "\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x01\x01\x05\x00";
+    $algId = "\x30" . der_len(strlen($oid)) . $oid;
+
+    // BIT STRING: 0x00 unused-bits prefix + DER RSAPublicKey
+    $bitStr = "\x03" . der_len(strlen($rsaSeq) + 1) . "\x00" . $rsaSeq;
+
+    // SubjectPublicKeyInfo SEQUENCE
+    $spki = "\x30" . der_len(strlen($algId) + strlen($bitStr)) . $algId . $bitStr;
+
+    return "-----BEGIN PUBLIC KEY-----\n"
+         . chunk_split(base64_encode($spki), 64, "\n")
+         . "-----END PUBLIC KEY-----\n";
+}
+
+/** Encode an ASN.1 DER length. */
+function der_len(int $len): string
+{
+    if ($len < 0x80) return chr($len);
+    if ($len < 0x100) return "\x81" . chr($len);
+    return "\x82" . chr($len >> 8) . chr($len & 0xFF);
+}

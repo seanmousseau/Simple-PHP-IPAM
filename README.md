@@ -72,12 +72,19 @@ See the [Installation guide](docs/install.md) for full web server configuration 
 | [Upgrading](docs/upgrading.md) | Using `upgrade.sh`, CLI migration utilities |
 | [Security](docs/security.md) | HTTPS, rate limiting, session hardening, audit log, API keys |
 | [REST API](docs/api.md) | API authentication, endpoints, pagination, examples |
+| [OIDC Authentication](docs/oidc.md) | SSO setup, IdP examples, user provisioning |
 
 ---
 
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
+
+### What's new in 0.12
+
+**User menu** — Username and role moved to the far-right of the nav bar; Password, Logout, and Theme toggle consolidated into a user dropdown.
+
+**OIDC Authentication** — Authorization Code + PKCE single sign-on in pure PHP. Supports any compliant IdP (Google, Azure AD, Okta, Keycloak, etc.). Auto-provisioning optional. Configured entirely in `config.php`.
 
 ### What's new in 0.11
 

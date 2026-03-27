@@ -75,6 +75,20 @@ function ipam_migrations(): array
             $db->exec("CREATE INDEX IF NOT EXISTS idx_subnets_site_id ON subnets(site_id)");
         },
 
+        // 0.12: OIDC subject claim column on users
+        '0.12' => function(PDO $db) {
+            $cols  = $db->query("PRAGMA table_info(users)")->fetchAll();
+            $names = array_map(fn($c) => $c['name'], $cols);
+
+            if (!in_array('oidc_sub', $names, true)) {
+                $db->exec("ALTER TABLE users ADD COLUMN oidc_sub TEXT");
+            }
+
+            // Partial unique index: only enforce uniqueness when oidc_sub is not NULL
+            $db->exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_sub
+                       ON users(oidc_sub) WHERE oidc_sub IS NOT NULL");
+        },
+
         // 0.11: login rate-limiting + REST API keys
         '0.11' => function(PDO $db) {
             $db->exec("
