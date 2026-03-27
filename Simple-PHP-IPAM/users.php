@@ -109,14 +109,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($id === $self['id']) {
             $err = 'You cannot delete your own account.';
         } else {
-            $target = $db->prepare("SELECT role FROM users WHERE id = :id")->execute([':id' => $id])
-                        ? $db->prepare("SELECT role FROM users WHERE id = :id") : null;
-            $tSt = $db->prepare("SELECT role FROM users WHERE id = :id");
+            $tSt = $db->prepare("SELECT role, is_active FROM users WHERE id = :id");
             $tSt->execute([':id' => $id]);
             $target = $tSt->fetch();
-            if ($target && $target['role'] === 'admin') {
-                $cnt = (int)$db->query("SELECT COUNT(*) AS c FROM users WHERE role='admin' AND is_active=1")->fetch()['c'];
-                if ($cnt <= 1) {
+            // Only guard active admins — deleting an inactive admin can never remove the last active one
+            if ($target && $target['role'] === 'admin' && (int)$target['is_active'] === 1) {
+                $cntSt = $db->prepare(
+                    "SELECT COUNT(*) FROM users WHERE role='admin' AND is_active=1 AND id != :id"
+                );
+                $cntSt->execute([':id' => $id]);
+                if ((int)$cntSt->fetchColumn() === 0) {
                     $err = 'Cannot delete the last active admin account.';
                 }
             }
@@ -249,7 +251,7 @@ page_header('Users');
               </form>
             <?php endif; ?>
 
-            <?php if ($u['id'] !== $self['id']): ?>
+            <?php if ((int)$u['id'] !== $self['id']): ?>
               <form method="post" action="users.php"
                     onsubmit="return confirm('Permanently delete user <?= e((string)$u['username']) ?>?')">
                 <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">

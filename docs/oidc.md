@@ -46,15 +46,16 @@ Add the following to your `config.php`:
 
 ```php
 'oidc' => [
-    'enabled'        => true,
-    'display_name'   => 'Okta',          // Label on the login button
-    'client_id'      => 'your-client-id',
-    'client_secret'  => 'your-client-secret',
-    'discovery_url'  => 'https://your-org.okta.com/oauth2/default',
-    'redirect_uri'   => 'https://ipam.example.com/oidc_callback.php',
-    'scopes'         => 'openid email profile',
-    'auto_provision' => false,
-    'default_role'   => 'readonly',
+    'enabled'             => true,
+    'display_name'        => 'Okta',          // Label on the login button
+    'client_id'           => 'your-client-id',
+    'client_secret'       => 'your-client-secret',
+    'discovery_url'       => 'https://your-org.okta.com/oauth2/default',
+    'redirect_uri'        => 'https://ipam.example.com/oidc_callback.php',
+    'scopes'              => 'openid email profile',
+    'auto_provision'      => false,
+    'default_role'        => 'readonly',
+    'disable_local_login' => false,
 ],
 ```
 
@@ -71,6 +72,7 @@ Add the following to your `config.php`:
 | `scopes` | no | Space-separated scopes (default: `openid email profile`) |
 | `auto_provision` | no | Create a local user on first OIDC login if none exists (default: `false`) |
 | `default_role` | no | Role assigned to auto-provisioned users: `admin` or `readonly` (default: `readonly`) |
+| `disable_local_login` | no | Hide the password form when OIDC is enabled (default: `false`). See [Disabling local login](#disabling-local-login) |
 
 ---
 
@@ -133,23 +135,36 @@ Add the following to your `config.php`:
 
 ### Manual linking (recommended for existing installs)
 
-By default, `auto_provision` is `false`. An admin must create or link accounts:
+By default, `auto_provision` is `false`. An admin must create or link accounts before any user can sign in via SSO.
 
-1. Create the local user account in **Admin → Users** as normal
-2. When the user first logs in via OIDC, the callback will fail (no `oidc_sub` match)
-3. Ask the user for their IdP email/username, then have the user log in via OIDC once with `auto_provision = true` temporarily enabled — or manually set `oidc_sub` in the database
+**Option 1 — Link via the admin UI:**
 
-The simplest approach for a small team: enable `auto_provision` for the first login of each user, then disable it again. The `sub` claim is now stored and subsequent logins work without provisioning.
+1. Create or locate the local user account in **Admin → Users**
+2. In the user's Actions panel, paste the IdP `sub` claim value into the **Link SSO** field and submit
+3. The account is now linked; the user can sign in via SSO on their next visit
+
+**Option 2 — Temporary auto_provision:**
+
+Enable `auto_provision` briefly, have the user sign in once via OIDC, then disable it again. The `sub` claim is stored and subsequent logins work without provisioning.
 
 ### Auto-provisioning
 
 With `auto_provision = true`:
 
-1. On the first OIDC login, the `sub` claim is looked up in `users.oidc_sub` — no match
-2. The `email` claim is checked against existing usernames — if a match is found, the account is linked
-3. If no match, a new account is created with `email` as the username, an unusable random password, and `default_role`
+1. On the first OIDC login, the `sub` claim is looked up in `users.oidc_sub` — no match found
+2. An existing unlinked account is sought: first by matching `preferred_username`, then by matching `email` (against both the `username` and `email` columns)
+3. If a match is found, the account is automatically linked to the `sub` claim and name/email are populated from the ID token if they were blank
+4. If no match is found, a new account is created:
+   - Username derived from `preferred_username` claim → `email` local-part → `sub` (fallback)
+   - Name and email populated from the `name` and `email` claims
+   - Unusable random password (account cannot be used for local auth)
+   - Role set to `default_role` (default: `readonly`)
 
 > Auto-provisioned accounts cannot log in with local credentials (the password is a random bcrypt hash). If OIDC becomes unavailable, an admin can set a proper password via **Admin → Users → Reset PW**.
+
+### Name and email sync
+
+On every OIDC login, if a user's **Name** or **Email** fields are blank, they are silently populated from the `name` and `email` claims in the ID token. Fields that have already been set are not overwritten — you can always edit them manually in **Admin → Users**.
 
 ### Unlinking an account
 
@@ -159,10 +174,17 @@ Admins can remove the OIDC link from any user in **Admin → Users** by clicking
 
 ## Disabling local login
 
-There is no built-in option to enforce OIDC-only login. If you want to prevent local password logins:
+Set `'disable_local_login' => true` in the `oidc` config block to hide the username/password form on the login page. Users will only see the SSO button.
 
-- Disable all local user accounts except an emergency break-glass admin account
-- Set unusable passwords on accounts that should only use OIDC (done automatically for auto-provisioned accounts)
+```php
+'oidc' => [
+    'enabled'             => true,
+    // ... other settings ...
+    'disable_local_login' => true,
+],
+```
+
+**Emergency access:** Even with `disable_local_login` enabled, local login is always accessible at `login.php?local=1`. Keep at least one active local admin account as a break-glass fallback in case your IdP becomes unavailable.
 
 ---
 
