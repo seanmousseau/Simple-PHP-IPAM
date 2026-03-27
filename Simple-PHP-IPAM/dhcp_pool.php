@@ -81,8 +81,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             "UPDATE addresses SET status = 'reserved', note = :n WHERE id = :id"
                         );
                         $stIns = $db->prepare(
-                            "INSERT INTO addresses (subnet_id, ip, ip_bin, ip_version, status, note)
-                             VALUES (:sid, :ip, :b, 4, 'reserved', :n)"
+                            "INSERT INTO addresses (subnet_id, ip, ip_bin, status, note)
+                             VALUES (:sid, :ip, :b, 'reserved', :n)"
                         );
 
                         for ($ipInt = $startInt; $ipInt <= $endInt; $ipInt++) {
@@ -102,7 +102,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             } else {
                                 $stIns->execute([
                                     ':sid' => $subnetId, ':ip' => $ipStr,
-                                    ':b' => $ipBin, ':n' => $note,
+                                    ':b'   => $ipBin,    ':n'  => $note,
                                 ]);
                                 $created++;
                             }
