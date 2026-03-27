@@ -1,0 +1,165 @@
+# Configuration Reference
+
+All application settings live in `config.php` in the application root. This file is preserved automatically during upgrades — you will never need to re-apply your settings after an upgrade.
+
+## Contents
+
+- [Full example](#full-example)
+- [Settings reference](#settings-reference)
+- [Behind a reverse proxy](#behind-a-reverse-proxy)
+
+---
+
+## Full example
+
+```php
+return [
+    // Path to the SQLite database file.
+    // The directory must be writable by the web server user.
+    'db_path' => __DIR__ . '/data/ipam.sqlite',
+
+    // Session cookie name.
+    'session_name' => 'IPAMSESSID',
+
+    // Set to true only if the app sits behind a trusted reverse proxy
+    // that sets X-Forwarded-Proto. Leave false if accessed directly.
+    'proxy_trust' => false,
+
+    // Bootstrap admin account — created on first run if no users exist.
+    // CHANGE THIS PASSWORD before exposing the site.
+    'bootstrap_admin' => [
+        'username' => 'admin',
+        'password' => 'ChangeMeNow!12345',
+    ],
+
+    // Session idle timeout (seconds). Users are logged out after this
+    // much inactivity. Default: 1800 (30 minutes).
+    'session_idle_seconds' => 1800,
+
+    // Login rate limiting: lock out an IP after this many consecutive
+    // failed attempts within the lockout window.
+    'login_max_attempts'    => 5,
+    'login_lockout_seconds' => 900,
+
+    // Maximum CSV upload size for the import wizard (MB). Range: 5–50.
+    'import_csv_max_mb' => 5,
+
+    // How long (seconds) to keep uploaded CSV temp files before cleanup.
+    'tmp_cleanup_ttl_seconds' => 86400,
+
+    // Lazy housekeeping: runs on normal site access at most once per interval.
+    'housekeeping' => [
+        'enabled'          => true,
+        'interval_seconds' => 86400, // once per day
+    ],
+];
+```
+
+---
+
+## Settings reference
+
+### `db_path`
+
+**Default:** `__DIR__ . '/data/ipam.sqlite'`
+
+Absolute path to the SQLite database file. The directory must exist and be writable by the web server user. The file is created automatically on first request.
+
+---
+
+### `session_name`
+
+**Default:** `'IPAMSESSID'`
+
+Name of the session cookie. Change this if you run multiple PHP applications on the same domain to avoid session collisions.
+
+---
+
+### `proxy_trust`
+
+**Default:** `false`
+
+Set to `true` if the application is behind a reverse proxy that sets `X-Forwarded-Proto: https`. See [Behind a reverse proxy](#behind-a-reverse-proxy).
+
+---
+
+### `bootstrap_admin`
+
+**Default:** `username: admin`, `password: ChangeMeNow!12345`
+
+Credentials for the initial admin account. This account is created automatically when the database is first initialised (i.e. when no users exist). **Change the password before the site receives any traffic.**
+
+Once any user exists in the database, changes to this setting have no effect.
+
+---
+
+### `session_idle_seconds`
+
+**Default:** `1800` (30 minutes)
+
+How long a session can be idle before the user is automatically logged out. On the next page load after the timeout the user is redirected to the login page with an informational message.
+
+Set to a higher value (e.g. `28800` for 8 hours) if your users work in long sessions.
+
+---
+
+### `login_max_attempts`
+
+**Default:** `5`
+
+Maximum number of consecutive failed login attempts from a single IP address before that IP is locked out. Works together with `login_lockout_seconds`.
+
+---
+
+### `login_lockout_seconds`
+
+**Default:** `900` (15 minutes)
+
+How long an IP address is locked out after exceeding `login_max_attempts`. Stale attempt records are purged automatically — no manual intervention is needed.
+
+Locked-out login attempts are recorded in the audit log as `auth.login_blocked`.
+
+---
+
+### `import_csv_max_mb`
+
+**Default:** `5`
+
+Maximum allowed CSV file size for the import wizard, in megabytes. Accepted range: `5`–`50`.
+
+---
+
+### `tmp_cleanup_ttl_seconds`
+
+**Default:** `86400` (24 hours)
+
+How long uploaded CSV files and import plan files in `data/tmp/` are kept before being eligible for deletion. Cleanup runs automatically via lazy housekeeping and can also be triggered manually with `php tmp_cleanup.php`.
+
+---
+
+### `housekeeping`
+
+Controls lazy background housekeeping (temp file cleanup, stale login attempt purge).
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `true` | Whether housekeeping runs automatically |
+| `interval_seconds` | `86400` | Minimum seconds between housekeeping runs (min: 3600) |
+
+Housekeeping runs at most once per `interval_seconds` on normal web traffic. It does not require a cron job, but you can also run `php tmp_cleanup.php` manually.
+
+---
+
+## Behind a reverse proxy
+
+If HTTPS is terminated at a load balancer or reverse proxy that forwards `X-Forwarded-Proto: https`, set:
+
+```php
+'proxy_trust' => true,
+```
+
+Only do this if:
+- You control the proxy
+- The proxy reliably strips or overwrites the `X-Forwarded-Proto` header from untrusted clients
+
+Setting `proxy_trust` to `true` on a server with no proxy in front of it allows clients to spoof HTTPS detection, which would bypass the HTTP→HTTPS redirect.
