@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## 0.13 — User Management, Site Inheritance, OIDC Improvements
+
+### User management (`users.php`, `migrations.php`)
+- Added **Name** and **Email** fields to every user account; stored in new `name` and `email` DB columns (migration `0.13`)
+- Users table now shows Name and Email columns; inline edit form per-user to update them
+- Added ability to **delete users** with guard: you cannot delete your own account or the last active admin
+- Added ability to **disable/enable** user accounts (previously existed but now surfaced more prominently)
+- Added **manual OIDC linking**: admin can paste an IdP subject ID (`sub` claim) to link any existing account to an SSO identity
+- Actions per user are collapsed in a `<details>` element to keep the table compact
+
+### OIDC improvements (`oidc_callback.php`, `config.php`)
+- Username for auto-provisioned users is now derived from the `preferred_username` claim (falls back to the local-part of `email`, then `sub`)
+- `name` claim is stored as the user's display name; `email` claim is stored as the email address on create or first link
+- Auto-link now tries `preferred_username` first, then `email`/username match against existing local accounts before creating a new account
+- Name and email are silently synced from IdP claims on every login when the fields are blank
+- Username collision during auto-provision is handled by appending a short random suffix
+- New `disable_local_login` config option: when OIDC is enabled and this is `true`, the password form is hidden; emergency local access always available at `login.php?local=1`
+
+### Site inheritance for child subnets (`subnets.php`, `lib.php`)
+- Child subnets automatically inherit the site of their tightest enclosing parent that has a site assigned
+- Site field is replaced with a read-only locked badge (showing the inherited site name) for child subnets in the edit form
+- `find_parent_site_id()` resolves the inherited site by querying the containment tree built by `detect_subnet_overlaps()`
+
+### Login page (`login.php`)
+- First-run hint ("use bootstrap admin…") is now hidden once any successful login has been recorded in the audit log — no migration or extra state needed
+
+---
+
 ## 0.12 — User Menu Redesign and OIDC Authentication
 
 ### Milestone 1 — User Menu & Nav Polish

@@ -52,6 +52,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+// First-run hint: show only if no successful login has ever occurred
+$firstRun = !$db->query("SELECT 1 FROM audit_log WHERE action='auth.login' LIMIT 1")->fetch();
+
+$oidcActive       = oidc_enabled($config);
+$disableLocal     = $oidcActive && !empty($config['oidc']['disable_local_login']);
+$localForceShown  = isset($_GET['local']); // emergency bypass
+
 page_header('Login');
 ?>
 <h1>Login</h1>
@@ -60,15 +67,18 @@ page_header('Login');
 <?php endif; ?>
 <?php if ($error): ?><p class="danger"><?= e($error) ?></p><?php endif; ?>
 
-<?php if (oidc_enabled($config)): ?>
+<?php if ($oidcActive): ?>
 <p>
   <a href="oidc_login.php" style="display:inline-block;padding:10px 18px;border-radius:12px;background:var(--btn);color:var(--btnfg);text-decoration:none;font-weight:600">
     Sign in with <?= e((string)($config['oidc']['display_name'] ?? 'SSO')) ?>
   </a>
 </p>
-<p class="muted" style="margin:14px 0 4px">— or sign in with a local account —</p>
 <?php endif; ?>
 
+<?php if (!$disableLocal || $localForceShown): ?>
+<?php if ($oidcActive): ?>
+  <p class="muted" style="margin:14px 0 4px">— or sign in with a local account —</p>
+<?php endif; ?>
 <form method="post" action="login.php" autocomplete="off">
   <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
   <div class="row">
@@ -76,6 +86,13 @@ page_header('Login');
     <label>Password<br><input type="password" name="password" required></label>
   </div>
   <p><button type="submit">Login</button></p>
-  <p class="muted">First run: use bootstrap admin from <code>config.php</code>, then change it.</p>
+  <?php if ($firstRun): ?>
+    <p class="muted">First run: use bootstrap admin from <code>config.php</code>, then change it.</p>
+  <?php endif; ?>
 </form>
+<?php elseif ($oidcActive): ?>
+  <p class="muted" style="margin-top:16px">Local password login is disabled. Use SSO above.
+    <a href="login.php?local=1" class="muted" style="font-size:.9em">(emergency local access)</a>
+  </p>
+<?php endif; ?>
 <?php page_footer();

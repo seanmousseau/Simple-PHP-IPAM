@@ -40,6 +40,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $normalized = $p['network'] . '/' . $p['prefix'];
             $overlaps = detect_subnet_overlaps($db, $normalized);
+            // Inherit site from tightest parent if one exists
+            $inheritedSiteId = find_parent_site_id($db, $normalized);
+            if ($inheritedSiteId !== null) $siteId = $inheritedSiteId;
             try {
                 $st = $db->prepare("INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, site_id)
                                     VALUES (:cidr,:ver,:net,:nb,:pre,:d,:site)");
@@ -53,9 +56,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ':site' => $siteId,
                 ]);
                 audit($db, 'subnet.create', 'subnet', (int)$db->lastInsertId(), $normalized);
+                $warn = '';
                 if (!empty($overlaps['parents']) || !empty($overlaps['children'])) {
-                    $_SESSION['ipam_flash_warn'] = subnet_overlap_warning_text($overlaps);
+                    $warn = subnet_overlap_warning_text($overlaps);
                 }
+                if ($inheritedSiteId !== null) {
+                    $inheritedName = $siteMap[$inheritedSiteId] ?? "site #$inheritedSiteId";
+                    $siteNote = "Site automatically set to \"{$inheritedName}\" inherited from parent subnet.";
+                    $warn = $warn ? $warn . ' ' . $siteNote : $siteNote;
+                }
+                if ($warn) $_SESSION['ipam_flash_warn'] = $warn;
                 header('Location: subnets.php');
                 exit;
             } catch (PDOException $e) {
@@ -76,6 +86,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $normalized = $p['network'] . '/' . $p['prefix'];
             $overlaps = detect_subnet_overlaps($db, $normalized, $id);
+            // Inherit site from tightest parent if one exists
+            $inheritedSiteId = find_parent_site_id($db, $normalized, $id);
+            if ($inheritedSiteId !== null) $siteId = $inheritedSiteId;
             try {
                 $st = $db->prepare("UPDATE subnets
                                     SET cidr=:cidr, ip_version=:ver, network=:net, network_bin=:nb, prefix=:pre, description=:d, site_id=:site
@@ -94,6 +107,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $msg = 'Subnet updated.';
                 if (!empty($overlaps['parents']) || !empty($overlaps['children'])) {
                     $warn = subnet_overlap_warning_text($overlaps);
+                }
+                if ($inheritedSiteId !== null) {
+                    $inheritedName = $siteMap[$inheritedSiteId] ?? "site #$inheritedSiteId";
+                    $siteNote = "Site set to \"{$inheritedName}\" inherited from parent subnet.";
+                    $warn = $warn ? $warn . ' ' . $siteNote : $siteNote;
                 }
             } catch (PDOException $e) {
                 $err = 'Could not update subnet (duplicate?).';
@@ -365,14 +383,21 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
     echo "<label>CIDR<br><input name='cidr' value='" . e($row['cidr']) . "' required></label>";
     echo "<label>Description<br><input name='description' value='" . e($row['description']) . "'></label>";
 
-    echo "<label>Site<br><select name='site_id'>";
-    echo "<option value='0' " . ($siteId === 0 ? "selected" : "") . ">(none)</option>";
-    foreach ($siteList as $s) {
-        $sid = (int)$s['id'];
-        $sel = ($sid === $siteId) ? "selected" : "";
-        echo "<option value='" . $sid . "' $sel>" . e($s['name']) . "</option>";
+    if ($depth > 0) {
+        // Child subnet: site is inherited from parent and cannot be changed here
+        $lockedSiteName = ($siteId > 0 && isset($siteMap[$siteId])) ? $siteMap[$siteId] : '(none)';
+        echo "<input type='hidden' name='site_id' value='" . $siteId . "'>";
+        echo "<label>Site<br><span class='badge' title='Inherited from parent subnet'>" . e($lockedSiteName) . " ↑</span></label>";
+    } else {
+        echo "<label>Site<br><select name='site_id'>";
+        echo "<option value='0' " . ($siteId === 0 ? "selected" : "") . ">(none)</option>";
+        foreach ($siteList as $s) {
+            $sid = (int)$s['id'];
+            $sel = ($sid === $siteId) ? "selected" : "";
+            echo "<option value='" . $sid . "' $sel>" . e($s['name']) . "</option>";
+        }
+        echo "</select></label>";
     }
-    echo "</select></label>";
 
     echo "<button type='submit' $disabled>Save</button>";
     echo "</form>";

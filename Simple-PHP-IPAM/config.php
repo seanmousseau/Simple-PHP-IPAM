@@ -61,10 +61,16 @@ return [
 
         // auto_provision: if true, a local user is created on first OIDC login
         // when no existing user is linked to the IdP subject (sub) claim.
-        // The email claim is used as the username.
+        // Username is derived from the preferred_username claim (or email local-part).
+        // Name and email are populated from the corresponding ID token claims.
         'auto_provision' => false,
 
         // Role assigned to auto-provisioned users. 'readonly' is recommended.
         'default_role'   => 'readonly',
+
+        // disable_local_login: if true, the username/password form is hidden
+        // when OIDC is enabled. Users must authenticate via SSO.
+        // Emergency local access is always available at login.php?local=1
+        'disable_local_login' => false,
     ],
 ];

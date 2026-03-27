@@ -86,8 +86,10 @@ try {
     }
 }
 
-$sub   = (string)($payload['sub']   ?? '');
-$email = (string)($payload['email'] ?? '');
+$sub              = (string)($payload['sub']                ?? '');
+$claimEmail       = trim((string)($payload['email']           ?? ''));
+$claimName        = trim((string)($payload['name']            ?? ''));
+$claimPrefUsername = trim((string)($payload['preferred_username'] ?? ''));
 
 if ($sub === '') oidc_fail($db, 'id_token missing sub claim');
 
@@ -97,16 +99,24 @@ $st = $db->prepare("SELECT id, username, role, is_active FROM users WHERE oidc_s
 $st->execute([':sub' => $sub]);
 $user = $st->fetch();
 
-if (!$user && !empty($config['oidc']['auto_provision']) && $email !== '') {
-    // Try to link an existing local user whose username matches the email
-    $st2 = $db->prepare("SELECT id, username, role, is_active FROM users WHERE username = :u AND oidc_sub IS NULL");
-    $st2->execute([':u' => $email]);
-    $existing = $st2->fetch();
+if (!$user && !empty($config['oidc']['auto_provision'])) {
+    // Try to link an existing local user by preferred_username then by email
+    $existing = false;
+    if ($claimPrefUsername !== '') {
+        $st2 = $db->prepare("SELECT id, username, role, is_active FROM users WHERE username = :u AND oidc_sub IS NULL");
+        $st2->execute([':u' => $claimPrefUsername]);
+        $existing = $st2->fetch();
+    }
+    if (!$existing && $claimEmail !== '') {
+        $st2 = $db->prepare("SELECT id, username, role, is_active FROM users WHERE (username = :u OR email = :e) AND oidc_sub IS NULL");
+        $st2->execute([':u' => $claimEmail, ':e' => $claimEmail]);
+        $existing = $st2->fetch();
+    }
 
     if ($existing) {
-        // Link the existing account to this OIDC subject
-        $db->prepare("UPDATE users SET oidc_sub = :sub WHERE id = :id")
-           ->execute([':sub' => $sub, ':id' => (int)$existing['id']]);
+        // Link the existing account to this OIDC subject and sync profile
+        $db->prepare("UPDATE users SET oidc_sub = :sub, name = CASE WHEN name='' THEN :n ELSE name END, email = CASE WHEN email='' THEN :e ELSE email END WHERE id = :id")
+           ->execute([':sub' => $sub, ':n' => $claimName, ':e' => $claimEmail, ':id' => (int)$existing['id']]);
         audit($db, 'auth.oidc_link', 'user', (int)$existing['id'], 'sub=' . $sub);
         $user = $existing;
     } else {
@@ -114,20 +124,40 @@ if (!$user && !empty($config['oidc']['auto_provision']) && $email !== '') {
         $role = (string)($config['oidc']['default_role'] ?? 'readonly');
         if (!in_array($role, ['admin', 'readonly'], true)) $role = 'readonly';
 
+        // Derive a username: prefer preferred_username, fall back to email local-part, then sub
+        $newUsername = $claimPrefUsername !== '' ? $claimPrefUsername
+            : ($claimEmail !== '' ? explode('@', $claimEmail)[0] : $sub);
+
         // Set an unusable password hash so the account cannot be used with local auth
         $unusableHash = password_hash(bin2hex(random_bytes(32)), PASSWORD_DEFAULT);
 
-        $ins = $db->prepare(
-            "INSERT INTO users (username, password_hash, role, is_active, oidc_sub)
-             VALUES (:u, :h, :r, 1, :sub)"
-        );
-        $ins->execute([':u' => $email, ':h' => $unusableHash, ':r' => $role, ':sub' => $sub]);
+        try {
+            $ins = $db->prepare(
+                "INSERT INTO users (username, password_hash, role, is_active, oidc_sub, name, email)
+                 VALUES (:u, :h, :r, 1, :sub, :n, :e)"
+            );
+            $ins->execute([':u' => $newUsername, ':h' => $unusableHash, ':r' => $role,
+                           ':sub' => $sub, ':n' => $claimName, ':e' => $claimEmail]);
+        } catch (PDOException $ex) {
+            // username collision — append a short random suffix
+            $newUsername .= '_' . substr(bin2hex(random_bytes(3)), 0, 6);
+            $ins->execute([':u' => $newUsername, ':h' => $unusableHash, ':r' => $role,
+                           ':sub' => $sub, ':n' => $claimName, ':e' => $claimEmail]);
+        }
         $newId = (int)$db->lastInsertId();
-        audit($db, 'auth.oidc_provision', 'user', $newId, 'email=' . $email . ' sub=' . $sub);
+        audit($db, 'auth.oidc_provision', 'user', $newId, 'username=' . $newUsername . ' sub=' . $sub);
 
         $st3 = $db->prepare("SELECT id, username, role, is_active FROM users WHERE id = :id");
         $st3->execute([':id' => $newId]);
         $user = $st3->fetch();
+    }
+}
+
+// For already-linked users: sync name/email from IdP claims if blank
+if ($user) {
+    if (($claimName !== '' || $claimEmail !== '')) {
+        $db->prepare("UPDATE users SET name = CASE WHEN name='' THEN :n ELSE name END, email = CASE WHEN email='' THEN :e ELSE email END WHERE id = :id")
+           ->execute([':n' => $claimName, ':e' => $claimEmail, ':id' => (int)$user['id']]);
     }
 }
 
