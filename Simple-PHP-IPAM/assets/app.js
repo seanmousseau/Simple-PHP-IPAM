@@ -42,6 +42,11 @@
 
     // Dropdown toggle
     document.addEventListener("click", function(e) {
+      // Theme toggle inside user dropdown — cycle theme but keep dropdown open
+      if (e.target.closest("#theme-toggle")) {
+        return;
+      }
+
       const toggle = e.target.closest(".nav-dropdown-toggle");
       if (toggle) {
         const dropdown = toggle.closest(".nav-dropdown");

@@ -186,15 +186,37 @@ h3{font-size:1.05rem}
 .nav-dropdown.open .nav-dropdown-menu{
   display:block;
 }
+.nav-dropdown-menu--right{
+  left:auto;
+  right:0;
+}
+.nav-user-toggle{
+  color:var(--fg);
+}
 .nav-dropdown-item{
   display:block;
+  width:100%;
   padding:9px 16px;
   color:var(--fg);
   white-space:nowrap;
+  /* reset for <button> */
+  background:none;
+  border:none;
+  border-radius:0;
+  text-align:left;
+  cursor:pointer;
+  font:inherit;
+  box-sizing:border-box;
 }
 .nav-dropdown-item:hover{
   background:var(--card-2);
   text-decoration:none;
+  filter:none;
+}
+.nav-dropdown-divider{
+  border:none;
+  border-top:1px solid var(--border);
+  margin:6px 0;
 }
 
 .card{
