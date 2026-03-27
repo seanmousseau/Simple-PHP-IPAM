@@ -92,8 +92,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                 foreach ($statements as $stmt) {
                     $stmt = trim($stmt);
                     if ($stmt === '' || str_starts_with($stmt, '--')) continue;
-                    // Skip PRAGMA foreign_keys lines from the dump; we manage that ourselves
+                    // Skip transaction/pragma statements we manage ourselves
                     if (preg_match('/^PRAGMA\s+foreign_keys\s*=/i', $stmt)) continue;
+                    if (preg_match('/^BEGIN(\s+TRANSACTION)?\s*$/i', $stmt)) continue;
+                    if (preg_match('/^COMMIT\s*$/i', $stmt)) continue;
                     $db->exec($stmt);
                 }
 
