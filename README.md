@@ -36,6 +36,12 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 - **OIDC SSO** — Authorization Code + PKCE in pure PHP; auto-provision and auto-link; optional `disable_local_login`
 - **User management** — name/email fields, per-user enable/disable, delete, manual SSO linking
 
+### Administration
+- **Database Tools** — one-click SQL export, SQL import with pre-import backup, manual backup trigger, backup status panel
+- **Automatic backups** — configurable daily/weekly SQLite snapshots with retention pruning
+- **Config auto-population** — missing config keys appended with defaults on boot; admin notice on first load
+- **Mobile-optimized GUI** — responsive layout works on phones and tablets at 375 px and 768 px
+
 ### REST API
 - Read-only JSON API (`api.php`) authenticated with API keys
 - Resources: subnets, addresses (paginated + filterable), sites
@@ -82,6 +88,18 @@ See the [Installation guide](docs/install.md) for full web server configuration 
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
+
+### What's new in 0.15
+
+**Config auto-population** — Any config keys added in an upgrade are automatically appended to `config.php` with their defaults. Admins see a one-time notice identifying the added keys.
+
+**Automatic backups** — Built-in backup scheduler writes timestamped SQLite snapshots on page load at a configurable interval (`daily`/`weekly`). Older backups beyond the retention count are pruned automatically. Opt in via `'backup' => ['enabled' => true]` in `config.php`.
+
+**Database Tools** — New admin page (⚙ Admin → Database Tools) for one-click SQL export, SQL import with pre-import backup and rollback on error, manual backup trigger, and backup status summary.
+
+**Mobile GUI** — Responsive CSS breakpoints at 768 px and 480 px. Nav, tables, cards, forms, and toolbars all adapt gracefully to phones and tablets.
+
+**Update check enhancements** — Dismissible update banner shown at the top of every admin page. New `notify_prerelease` option surfaces alpha/beta/RC releases. Cache TTL extended to 24 hours.
 
 ### What's new in 0.14
 

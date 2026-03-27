@@ -4,6 +4,44 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## 0.15 — Config Auto-Population, Backups, Database Tools, Mobile GUI, Update Check Enhancements
+
+### Config auto-population
+- Missing top-level keys are automatically appended to `config.php` with their defaults on application boot
+- A one-time notice is shown in the admin panel identifying which keys were added
+- Applies to: `update_check.notify_prerelease`, the new `backup` block, and any future keys added by upgrades
+
+### Automatic database backups (`lib.php`, `config.php`)
+- New `backup` config block: `enabled`, `frequency` (`daily`|`weekly`), `retention`, `dir`
+- Backup runs on page load when the configured interval has elapsed (file-locked, non-blocking)
+- Backup format: WAL-checkpointed SQLite copy with timestamp filename (`ipam-YYYY-MM-DD-HHmmss.sqlite`)
+- Older backups beyond the retention count are pruned automatically
+- Disabled by default — opt in via `'backup' => ['enabled' => true]` in `config.php`
+
+### Database Tools admin page (`db_tools.php`)
+- New **Database Tools** entry in the Admin nav dropdown
+- **Export**: one-click download of a full SQL dump (schema + data + indexes), compatible with SQLite
+- **Import**: upload a `.sql` dump to replace all data; pre-import backup is created automatically; executes in a transaction with rollback on error
+- **Manual backup**: trigger an out-of-schedule backup from the UI
+- Backup status panel: last backup time, last file name, current backup count
+- All export, import, and backup actions are recorded in the audit log
+
+### Mobile-optimized GUI (`assets/app.css`)
+- Responsive CSS breakpoints at **768 px** and **480 px**
+- Tables, cards, forms, toolbars, and metric blocks stack gracefully on narrow viewports
+- Navigation wraps and pills shrink on mobile; all primary CRUD actions remain accessible
+- New `.table-scroll` utility class for horizontally scrollable tables on small screens
+- Admin notice styles for config and update banners
+
+### GitHub update checker enhancements (`lib.php`, `config.php`)
+- New `update_check.notify_prerelease` option (default `false`): opt in to alerts for alpha/beta/RC releases
+- Update check now fetches the `/releases` list (not just `/releases/latest`) to support pre-release detection
+- Cache TTL extended to 24 hours (was 6 hours); configurable via `update_check.ttl_seconds`
+- **Dismissible update banner** shown to admins at the top of every page (separate from the footer badge)
+- Dismiss action stores dismissed version in `localStorage`; banner re-appears for the next release
+
+---
+
 ## 0.14 — DHCP Pools, Update Check, User Hardening, Utilization Badges
 
 ### Application branding

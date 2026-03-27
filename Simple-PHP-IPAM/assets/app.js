@@ -37,8 +37,25 @@
   window.ipamToggleTheme = window.ipamCycleTheme;
   window.ipamClearTheme = function() { applyTheme("auto"); updateThemeButton(); };
 
+  // Dismiss the update-available banner for the current version (stored in localStorage)
+  window.ipamDismissUpdate = function(version) {
+    localStorage.setItem("ipam_dismissed_update", version);
+    var banner = document.getElementById("ipam-update-banner");
+    if (banner) banner.style.display = "none";
+  };
+
   document.addEventListener("DOMContentLoaded", function() {
     updateThemeButton();
+
+    // Hide update banner if the version was already dismissed
+    var banner = document.getElementById("ipam-update-banner");
+    if (banner) {
+      var dismissed = localStorage.getItem("ipam_dismissed_update");
+      var bannerVersion = banner.dataset.version;
+      if (dismissed && bannerVersion && dismissed === bannerVersion) {
+        banner.style.display = "none";
+      }
+    }
 
     // Dropdown toggle
     document.addEventListener("click", function(e) {
