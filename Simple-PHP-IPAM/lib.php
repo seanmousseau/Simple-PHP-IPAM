@@ -88,6 +88,13 @@ function require_login(): void
         header('Location: login.php');
         exit;
     }
+    $idle = (int)(($GLOBALS['config'] ?? [])['session_idle_seconds'] ?? 1800);
+    if (isset($_SESSION['last_active']) && (time() - (int)$_SESSION['last_active']) > $idle) {
+        logout_user();
+        header('Location: login.php?timeout=1');
+        exit;
+    }
+    $_SESSION['last_active'] = time();
 }
 
 function current_user(): array
@@ -123,6 +130,36 @@ function login_user(int $uid, string $username, string $role): void
     $_SESSION['uid'] = $uid;
     $_SESSION['username'] = $username;
     $_SESSION['role'] = $role;
+    $_SESSION['last_active'] = time();
+}
+
+/* ---------------- Login rate limiting ---------------- */
+
+function login_rate_limited(PDO $db, string $ip, int $maxAttempts, int $windowSeconds): bool
+{
+    $cutoff = date('Y-m-d H:i:s', time() - $windowSeconds);
+    $st = $db->prepare("SELECT COUNT(*) AS c FROM login_attempts WHERE ip = :ip AND attempted_at >= :cutoff");
+    $st->execute([':ip' => $ip, ':cutoff' => $cutoff]);
+    return (int)$st->fetch()['c'] >= $maxAttempts;
+}
+
+function record_login_failure(PDO $db, string $ip): void
+{
+    $db->prepare("INSERT INTO login_attempts (ip) VALUES (:ip)")
+       ->execute([':ip' => $ip]);
+}
+
+function clear_login_failures(PDO $db, string $ip): void
+{
+    $db->prepare("DELETE FROM login_attempts WHERE ip = :ip")
+       ->execute([':ip' => $ip]);
+}
+
+function purge_old_login_attempts(PDO $db, int $windowSeconds): void
+{
+    $cutoff = date('Y-m-d H:i:s', time() - $windowSeconds);
+    $db->prepare("DELETE FROM login_attempts WHERE attempted_at < :cutoff")
+       ->execute([':cutoff' => $cutoff]);
 }
 
 function logout_user(): void
@@ -756,8 +793,8 @@ function page_header(string $title): void
 
     echo "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
     echo "<title>" . e($title) . "</title>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=0.9.1'>";
-    echo "<script defer src='assets/app.js?v=0.9.1'></script>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=0.11'>";
+    echo "<script defer src='assets/app.js?v=0.11'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
@@ -770,9 +807,14 @@ function page_header(string $title): void
         echo "<a class='nav-pill' href='search.php'>🔎 Search</a>";
         echo "<a class='nav-pill' href='audit.php'>📜 Audit</a>";
         if (($role ?? '') === 'admin') {
-            echo "<a class='nav-pill' href='sites.php'>📍 Sites</a>";
-            echo "<a class='nav-pill' href='users.php'>👤 Users</a>";
-            echo "<a class='nav-pill' href='import_csv.php'>⬆ Import CSV</a>";
+            echo "<div class='nav-dropdown'>";
+            echo "<button type='button' class='nav-pill nav-dropdown-toggle'>⚙ Admin ▾</button>";
+            echo "<div class='nav-dropdown-menu'>";
+            echo "<a class='nav-dropdown-item' href='sites.php'>📍 Sites</a>";
+            echo "<a class='nav-dropdown-item' href='users.php'>👤 Users</a>";
+            echo "<a class='nav-dropdown-item' href='api_keys.php'>🔑 API Keys</a>";
+            echo "<a class='nav-dropdown-item' href='import_csv.php'>⬆ Import CSV</a>";
+            echo "</div></div>";
         }
         echo "<a class='nav-pill' href='change_password.php'>🔐 Password</a>";
         echo "<a class='nav-pill' href='logout.php'>↩ Logout</a>";
@@ -782,8 +824,7 @@ function page_header(string $title): void
     echo "</div>";
 
     echo "<div class='nav-right'>";
-    echo "<button type='button' class='button-secondary' onclick='ipamToggleTheme()'>🌓 Theme</button>";
-    echo "<button type='button' class='button-secondary' onclick='ipamClearTheme()'>🖥 System</button>";
+    echo "<button type='button' class='button-secondary' id='theme-toggle' onclick='ipamCycleTheme()'>🌓 Theme</button>";
     echo "</div>";
 
     echo "</div></div>";

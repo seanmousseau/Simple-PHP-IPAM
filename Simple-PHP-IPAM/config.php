@@ -11,6 +11,13 @@ return [
         'password' => 'ChangeMeNow!12345',
     ],
 
+    // Session idle timeout (seconds). Users are logged out after this much inactivity.
+    'session_idle_seconds' => 1800,
+
+    // Login rate limiting: lock out an IP after this many failed attempts within the window.
+    'login_max_attempts'    => 5,
+    'login_lockout_seconds' => 900,
+
     // CSV import max upload size (MB). Allowed range: 5..50
     'import_csv_max_mb' => 5,
 

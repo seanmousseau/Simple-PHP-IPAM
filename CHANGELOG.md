@@ -4,6 +4,60 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## 0.11 — Security Hardening, Nav Polish, and REST API
+
+### Milestone 1 — Security Hardening
+
+#### Login rate limiting (`login.php`, `lib.php`, `migrations.php`)
+- New `login_attempts` table (migration `0.11`) tracks failed login attempts per IP with a timestamp
+- Logins from an IP are blocked for a configurable window after too many consecutive failures
+- New `lib.php` functions: `login_rate_limited()`, `record_login_failure()`, `clear_login_failures()`, `purge_old_login_attempts()`
+- Successful login clears the failure counter for that IP
+- Stale attempt records are purged opportunistically on each login page load
+- Blocked attempts are recorded in the audit log as `auth.login_blocked`
+- Configurable via `config.php`: `login_max_attempts` (default 5), `login_lockout_seconds` (default 900)
+
+#### Session idle timeout (`lib.php`)
+- `require_login()` now checks `$_SESSION['last_active']` and logs users out after a configurable inactivity period
+- `login_user()` seeds `last_active` at login time; `require_login()` refreshes it on every authenticated page load
+- Expired sessions redirect to `login.php?timeout=1` with an informational message
+- Configurable via `config.php`: `session_idle_seconds` (default 1800 / 30 min)
+
+---
+
+### Milestone 2 — Nav & UX Polish
+
+#### Admin dropdown menu (`lib.php`, `assets/app.css`, `assets/app.js`)
+- Admin-only nav links (Sites, Users, API Keys, Import CSV) are grouped under a single **⚙ Admin ▾** dropdown
+- Dropdown opens on click and closes when clicking outside, reducing visual clutter for non-admin users
+
+#### Single theme toggle (`lib.php`, `assets/app.js`)
+- Replaced the two separate Theme/System buttons with a single **cycle button**: System → Light → Dark → System
+- Button label updates dynamically to show the current mode (🖥 System / ☀ Light / 🌙 Dark)
+- Legacy `ipamToggleTheme` and `ipamClearTheme` JS functions retained for backward compatibility
+
+---
+
+### Milestone 3 — REST API
+
+#### Read-only JSON API (`api.php`)
+- New stateless endpoint with no session dependency; authenticated via API key
+- API key passed as `Authorization: Bearer <key>` header or `?api_key=` query parameter (header preferred)
+- `last_used_at` timestamp updated on each successful API request
+- Resources:
+  - `GET api.php?resource=subnets` — list all subnets (with site name)
+  - `GET api.php?resource=subnets&id=N` — single subnet by ID
+  - `GET api.php?resource=addresses` — paginated address list; filterable by `subnet_id`, `status`; `page`/`limit` params (max 500 per page)
+  - `GET api.php?resource=sites` — list all sites
+
+#### API key management (`api_keys.php`, `migrations.php`)
+- New `api_keys` table (migration `0.11`): `name`, `key_hash` (SHA-256), `created_at`, `last_used_at`, `is_active`, `created_by`
+- Admin-only `api_keys.php` UI: generate keys (raw key shown once), deactivate, re-activate, delete
+- Key generation uses `random_bytes(32)` encoded as 64-character hex; only the SHA-256 hash is persisted
+- All key lifecycle events (create, deactivate, activate, delete) are written to the audit log
+
+---
+
 ## 0.10 — Exports, Import Safety, Overlap Detection, and Dashboard
 
 ### Milestone 1 — Export Foundation

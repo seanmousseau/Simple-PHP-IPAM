@@ -55,7 +55,7 @@ function ipam_migrations(): array
         },
 
         // 0.9: sites grouping
-        '0.9' => function(PDO $db) {
+        '0.9'  => function(PDO $db) {
             $db->exec("
                 CREATE TABLE IF NOT EXISTS sites (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,6 +73,31 @@ function ipam_migrations(): array
             }
 
             $db->exec("CREATE INDEX IF NOT EXISTS idx_subnets_site_id ON subnets(site_id)");
+        },
+
+        // 0.11: login rate-limiting + REST API keys
+        '0.11' => function(PDO $db) {
+            $db->exec("
+                CREATE TABLE IF NOT EXISTS login_attempts (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ip           TEXT NOT NULL,
+                    attempted_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            ");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_login_attempts_ip_time
+                       ON login_attempts(ip, attempted_at)");
+
+            $db->exec("
+                CREATE TABLE IF NOT EXISTS api_keys (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name         TEXT NOT NULL,
+                    key_hash     TEXT NOT NULL UNIQUE,
+                    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+                    last_used_at TEXT,
+                    is_active    INTEGER NOT NULL DEFAULT 1,
+                    created_by   TEXT NOT NULL DEFAULT ''
+                )
+            ");
         },
     ];
 }
