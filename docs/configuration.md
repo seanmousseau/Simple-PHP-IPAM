@@ -6,6 +6,7 @@ All application settings live in `config.php` in the application root. This file
 
 - [Full example](#full-example)
 - [Settings reference](#settings-reference)
+- [OIDC settings](#oidc-settings)
 - [Behind a reverse proxy](#behind-a-reverse-proxy)
 
 ---
@@ -51,6 +52,20 @@ return [
     'housekeeping' => [
         'enabled'          => true,
         'interval_seconds' => 86400, // once per day
+    ],
+
+    // OIDC single sign-on — see docs/oidc.md for full setup guide.
+    'oidc' => [
+        'enabled'             => false,
+        'display_name'        => 'SSO',
+        'client_id'           => '',
+        'client_secret'       => '',
+        'discovery_url'       => '',
+        'redirect_uri'        => '',
+        'scopes'              => 'openid email profile',
+        'auto_provision'      => false,
+        'default_role'        => 'readonly',
+        'disable_local_login' => false,
     ],
 ];
 ```
@@ -147,6 +162,27 @@ Controls lazy background housekeeping (temp file cleanup, stale login attempt pu
 | `interval_seconds` | `86400` | Minimum seconds between housekeeping runs (min: 3600) |
 
 Housekeeping runs at most once per `interval_seconds` on normal web traffic. It does not require a cron job, but you can also run `php tmp_cleanup.php` manually.
+
+---
+
+## OIDC settings
+
+The `oidc` block configures optional OIDC single sign-on. All keys are ignored when `enabled` is `false`.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Set to `true` to activate OIDC |
+| `display_name` | `'SSO'` | Label on the login page button |
+| `client_id` | `''` | OAuth 2.0 client ID from your IdP |
+| `client_secret` | `''` | OAuth 2.0 client secret from your IdP |
+| `discovery_url` | `''` | IdP base URL (`/.well-known/openid-configuration` appended automatically) |
+| `redirect_uri` | `''` | Callback URL — must match exactly what is registered with the IdP |
+| `scopes` | `'openid email profile'` | Space-separated scopes |
+| `auto_provision` | `false` | Automatically create or link a local account on first OIDC login |
+| `default_role` | `'readonly'` | Role assigned to auto-provisioned users (`admin` or `readonly`) |
+| `disable_local_login` | `false` | Hide the password form when OIDC is enabled. Emergency bypass at `login.php?local=1` |
+
+See the [OIDC guide](oidc.md) for IdP setup examples, user provisioning details, and troubleshooting.
 
 ---
 
