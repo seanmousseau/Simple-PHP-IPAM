@@ -31,6 +31,12 @@ If you terminate TLS at a reverse proxy, set `'proxy_trust' => true` in `config.
 - `session.use_strict_mode` and `session.use_only_cookies` are enabled.
 - The session ID is regenerated on login (`session_regenerate_id(true)`).
 
+### OIDC single sign-on
+
+From v0.12, OIDC Authorization Code + PKCE is supported as an alternative to local passwords. ID token signatures are verified in-process using `openssl` — no network calls beyond the discovery and JWKS fetches.
+
+Auto-provisioned OIDC accounts are assigned an unusable random password and cannot log in locally unless an admin sets one. See the [OIDC guide](oidc.md) for setup and the `disable_local_login` option.
+
 ### Default credentials
 
 Change the bootstrap admin password **before** the site receives any traffic. The default credentials (`admin` / `ChangeMeNow!12345`) are well-known and must not be used in production.

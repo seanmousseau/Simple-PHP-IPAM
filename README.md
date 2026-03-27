@@ -24,6 +24,7 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 
 ### Organisation
 - **Sites** — group subnets by location or network segment
+- Child subnets automatically **inherit the site** of their enclosing parent
 
 ### Security & Access Control
 - HTTPS enforced at the application layer; secure session cookies (`Secure`, `HttpOnly`, `SameSite=Strict`)
@@ -32,6 +33,8 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 - CSRF protection on all POST requests; PDO prepared statements throughout
 - **RBAC roles:** `admin` (full access + user management) and `readonly`
 - Append-only audit log enforced with SQLite triggers
+- **OIDC SSO** — Authorization Code + PKCE in pure PHP; auto-provision and auto-link; optional `disable_local_login`
+- **User management** — name/email fields, per-user enable/disable, delete, manual SSO linking
 
 ### REST API
 - Read-only JSON API (`api.php`) authenticated with API keys
@@ -79,6 +82,14 @@ See the [Installation guide](docs/install.md) for full web server configuration 
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
+
+### What's new in 0.13
+
+**User management** — Name and email fields on every account. Delete users (with guard against removing the last admin). Inline OIDC linking from the admin UI.
+
+**OIDC improvements** — Username derived from `preferred_username` claim; name and email synced from IdP claims. Auto-link tries `preferred_username` then `email` before provisioning. New `disable_local_login` option hides the password form; `?local=1` emergency bypass always available.
+
+**Site inheritance** — Child subnets automatically inherit the site of their tightest enclosing parent. The site field is locked to a read-only badge for child subnets.
 
 ### What's new in 0.12
 
