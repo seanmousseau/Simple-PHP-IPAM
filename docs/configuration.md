@@ -7,6 +7,8 @@ All application settings live in `config.php` in the application root. This file
 - [Full example](#full-example)
 - [Settings reference](#settings-reference)
 - [OIDC settings](#oidc-settings)
+- [`update_check`](#update_check)
+- [`backup`](#backup)
 - [Behind a reverse proxy](#behind-a-reverse-proxy)
 
 ---
@@ -58,10 +60,21 @@ return [
     'utilization_warn'     => 80,
     'utilization_critical' => 95,
 
-    // Update check: shows a footer badge when a newer GitHub release is available.
+    // Update check: fetches GitHub releases and shows a banner/badge when a
+    // newer version is available. notify_prerelease includes alpha/beta/RC builds.
     'update_check' => [
-        'enabled'     => true,
-        'ttl_seconds' => 21600,
+        'enabled'           => true,
+        'ttl_seconds'       => 86400,  // cache 24 hours
+        'notify_prerelease' => false,
+    ],
+
+    // Automatic database backups (opt-in). Backups run on page load when the
+    // interval elapses. Older files beyond retention count are pruned.
+    'backup' => [
+        'enabled'   => false,
+        'frequency' => 'daily',   // 'daily' | 'weekly'
+        'retention' => 7,
+        'dir'       => '',        // empty = data/backups/
     ],
 
     // OIDC single sign-on — see docs/oidc.md for full setup guide.
@@ -210,14 +223,34 @@ Percentage thresholds for the IPv4 subnet utilization progress bars in the subne
 
 ## `update_check`
 
-Controls the automatic update check shown in the page footer.
+Controls the automatic update check shown in the page footer and admin banner.
 
 | Key | Default | Description |
 |-----|---------|-------------|
 | `enabled` | `true` | Set to `false` to disable the update check entirely |
-| `ttl_seconds` | `21600` | How long to cache the result (default: 6 hours; minimum: 3600) |
+| `ttl_seconds` | `86400` | How long to cache the result (default: 24 hours; minimum: 3600) |
+| `notify_prerelease` | `false` | Set to `true` to also alert for alpha/beta/RC releases |
 
-The check fetches the GitHub releases API once per TTL period and caches the result in `data/tmp/update-check.json`. Network failures are silently ignored. Drafts and pre-releases are not shown.
+The check fetches the GitHub releases API once per TTL period, caches the result in `data/tmp/update-check.json`, and shows:
+- A badge in the page footer for all logged-in users
+- A dismissible banner at the top of each page for admins
+
+Network failures are silently ignored. Drafts are never shown.
+
+---
+
+## `backup`
+
+Controls automatic database backups.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Set to `true` to enable automatic backups |
+| `frequency` | `'daily'` | Backup interval: `'daily'` (24 h) or `'weekly'` (7 days) |
+| `retention` | `7` | Number of most-recent backup files to keep; older ones are deleted |
+| `dir` | `''` | Directory for backup files; empty string uses `data/backups/` |
+
+Backups run at most once per interval on normal page load (file-locked, non-blocking). The backup format is a WAL-checkpointed SQLite file copy with a timestamp filename (`ipam-YYYY-MM-DD-HHmmss.sqlite`). You can also trigger a manual backup from the **Database Tools** admin page.
 
 ---
 

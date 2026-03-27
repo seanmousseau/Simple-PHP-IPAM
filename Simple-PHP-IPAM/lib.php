@@ -273,6 +273,120 @@ function apply_migrations(PDO $db): array
     return $appliedNow;
 }
 
+/* ---------------- Config auto-population ---------------- */
+
+/**
+ * Returns the canonical defaults map for all config keys that should exist in
+ * config.php. Each entry: ['default' => mixed, 'comment' => string].
+ * Only top-level keys are tracked; nested sub-keys are managed per-key.
+ */
+function ipam_config_defaults(): array
+{
+    return [
+        'db_path' => [
+            'default' => null, // path-dependent, skip auto-append
+            'comment' => '',
+        ],
+        'session_name' => ['default' => null, 'comment' => ''],
+        'proxy_trust'  => ['default' => null, 'comment' => ''],
+        'bootstrap_admin' => ['default' => null, 'comment' => ''],
+        'session_idle_seconds' => ['default' => null, 'comment' => ''],
+        'login_max_attempts'   => ['default' => null, 'comment' => ''],
+        'login_lockout_seconds'=> ['default' => null, 'comment' => ''],
+        'import_csv_max_mb'    => ['default' => null, 'comment' => ''],
+        'tmp_cleanup_ttl_seconds' => ['default' => null, 'comment' => ''],
+        'housekeeping' => ['default' => null, 'comment' => ''],
+        'utilization_warn'     => ['default' => null, 'comment' => ''],
+        'utilization_critical' => ['default' => null, 'comment' => ''],
+        'update_check' => [
+            'default' => [
+                'enabled'           => true,
+                'ttl_seconds'       => 86400,
+                'notify_prerelease' => false,
+            ],
+            'comment' => 'Update check: fetches releases from GitHub and shows a banner when a newer version is available.',
+        ],
+        'backup' => [
+            'default' => [
+                'enabled'   => false,
+                'frequency' => 'daily',
+                'retention' => 7,
+                'dir'       => '',
+            ],
+            'comment' => "Automatic database backups. frequency: 'daily' | 'weekly'. retention: keep last N backups.",
+        ],
+        'oidc' => ['default' => null, 'comment' => ''],
+    ];
+}
+
+/**
+ * Format a PHP value as clean source code with array [] syntax.
+ */
+function ipam_php_export(mixed $val, int $indent = 1): string
+{
+    if (is_null($val))    return 'null';
+    if (is_bool($val))    return $val ? 'true' : 'false';
+    if (is_int($val))     return (string)$val;
+    if (is_float($val))   return rtrim(number_format($val, 10, '.', ''), '0') ?: '0.0';
+    if (is_string($val))  return "'" . addcslashes($val, "'\\") . "'";
+
+    if (is_array($val)) {
+        if (count($val) === 0) return '[]';
+        $pad = str_repeat('    ', $indent);
+        $outerPad = str_repeat('    ', $indent - 1);
+        $isList = array_keys($val) === range(0, count($val) - 1);
+        $out = "[\n";
+        foreach ($val as $k => $v) {
+            $keyStr = $isList ? '' : "'" . addcslashes((string)$k, "'\\") . "' => ";
+            $out .= $pad . $keyStr . ipam_php_export($v, $indent + 1) . ",\n";
+        }
+        $out .= $outerPad . ']';
+        return $out;
+    }
+
+    return var_export($val, true);
+}
+
+/**
+ * Check config.php for missing top-level keys and append them with defaults.
+ * Returns list of key names that were added (empty if nothing changed).
+ * Only keys whose default is not null are auto-appended.
+ */
+function ipam_config_sync(string $configPath, array $loaded): array
+{
+    $defaults = ipam_config_defaults();
+    $added = [];
+
+    foreach ($defaults as $key => $meta) {
+        if (array_key_exists($key, $loaded)) continue;
+        if ($meta['default'] === null) continue;
+
+        $content = @file_get_contents($configPath);
+        if ($content === false) break;
+
+        // Find the closing ]; of the return array
+        if (!preg_match('/\n\];\s*$/', $content)) break;
+
+        $comment = (string)$meta['comment'];
+        $valuePhp = ipam_php_export($meta['default'], 2);
+
+        $block = '';
+        if ($comment !== '') {
+            $block .= "\n    // " . $comment;
+        }
+        $block .= "\n    '" . addcslashes($key, "'\\") . "' => " . $valuePhp . ",\n";
+
+        $content = preg_replace('/\n\];\s*$/', $block . "\n];", $content);
+        if ($content === null) break;
+
+        if (@file_put_contents($configPath, $content) !== false) {
+            $added[] = $key;
+        }
+    }
+
+    return $added;
+}
+
 /* ---------------- Housekeeping ---------------- */
 
 function housekeeping_state_path(): string
@@ -333,6 +447,197 @@ function run_housekeeping_if_due(array $config): void
         @flock($lock, LOCK_UN);
         @fclose($lock);
     }
+}
+
+/* ---------------- Database Backups ---------------- */
+
+function backup_dir(array $config): string
+{
+    $d = trim((string)($config['backup']['dir'] ?? ''));
+    if ($d === '') {
+        return __DIR__ . '/data/backups';
+    }
+    // Make relative paths relative to the app directory
+    if (!str_starts_with($d, '/')) {
+        $d = __DIR__ . '/' . $d;
+    }
+    return rtrim($d, '/');
+}
+
+function backup_state_path(): string
+{
+    return __DIR__ . '/data/backup-state.json';
+}
+
+function backup_interval_seconds(array $config): int
+{
+    $freq = strtolower(trim((string)($config['backup']['frequency'] ?? 'daily')));
+    return match ($freq) {
+        'weekly' => 604800,
+        default  => 86400,  // 'daily'
+    };
+}
+
+function backup_is_due(array $config): bool
+{
+    $bk = $config['backup'] ?? [];
+    if (empty($bk['enabled'])) return false;
+
+    $path = backup_state_path();
+    if (!is_file($path)) return true;
+
+    $d = @json_decode((string)file_get_contents($path), true);
+    if (!is_array($d) || !isset($d['last_backup'])) return true;
+
+    return (time() - (int)$d['last_backup']) >= backup_interval_seconds($config);
+}
+
+/**
+ * Run a database backup if one is due. Uses WAL checkpoint + file copy for
+ * a consistent snapshot without requiring SQLite3 extension.
+ * Returns true if a backup was written, false otherwise.
+ */
+function run_db_backup_if_due(PDO $db, array $config): bool
+{
+    if (!backup_is_due($config)) return false;
+
+    $lockPath = __DIR__ . '/data/backup.lock';
+    $lock = @fopen($lockPath, 'c');
+    if (!$lock) return false;
+
+    if (!@flock($lock, LOCK_EX | LOCK_NB)) {
+        @fclose($lock);
+        return false;
+    }
+
+    $wrote = false;
+    try {
+        if (!backup_is_due($config)) return false;
+
+        $dbPath = (string)($GLOBALS['config']['db_path'] ?? (__DIR__ . '/data/ipam.sqlite'));
+        if (!is_file($dbPath)) return false;
+
+        $dir = backup_dir($config);
+        if (!is_dir($dir)) {
+            if (!@mkdir($dir, 0700, true)) return false;
+        }
+
+        // Flush WAL to the main database file for a consistent copy
+        try { $db->exec("PRAGMA wal_checkpoint(FULL)"); } catch (Throwable) {}
+
+        $ts   = date('Y-m-d-His');
+        $dest = $dir . '/ipam-' . $ts . '.sqlite';
+
+        if (@copy($dbPath, $dest)) {
+            @chmod($dest, 0600);
+            $wrote = true;
+
+            // Prune old backups according to retention policy
+            $retention = max(1, (int)($config['backup']['retention'] ?? 7));
+            $files = glob($dir . '/ipam-*.sqlite');
+            if (is_array($files)) {
+                rsort($files); // newest first (lexicographic = chronological for our format)
+                foreach (array_slice($files, $retention) as $old) {
+                    @unlink($old);
+                }
+            }
+
+            // Record backup timestamp
+            $state = ['last_backup' => time(), 'last_file' => basename($dest)];
+            @file_put_contents(backup_state_path(), json_encode($state));
+            @chmod(backup_state_path(), 0600);
+        }
+    } finally {
+        @flock($lock, LOCK_UN);
+        @fclose($lock);
+    }
+
+    return $wrote;
+}
+
+/**
+ * Return info about the current backup state for display in the admin panel.
+ * ['last_backup' => timestamp|null, 'last_file' => string|null, 'count' => int, 'dir' => string]
+ */
+function backup_info(array $config): array
+{
+    $dir   = backup_dir($config);
+    $state = backup_state_path();
+    $last  = null;
+    $file  = null;
+
+    if (is_file($state)) {
+        $d = @json_decode((string)file_get_contents($state), true);
+        if (is_array($d)) {
+            $last = isset($d['last_backup']) ? (int)$d['last_backup'] : null;
+            $file = isset($d['last_file'])   ? (string)$d['last_file'] : null;
+        }
+    }
+
+    $files = is_dir($dir) ? (glob($dir . '/ipam-*.sqlite') ?: []) : [];
+
+    return [
+        'last_backup' => $last,
+        'last_file'   => $file,
+        'count'       => count($files),
+        'dir'         => $dir,
+    ];
+}
+
+/**
+ * Generate a full SQL dump of the SQLite database suitable for import.
+ */
+function ipam_db_dump(PDO $db): string
+{
+    $out = "-- Simple PHP IPAM database dump\n";
+    $out .= "-- Generated: " . date('Y-m-d H:i:s') . "\n\n";
+    $out .= "PRAGMA foreign_keys=OFF;\n";
+    $out .= "BEGIN TRANSACTION;\n\n";
+
+    // Tables: schema + data
+    $tables = $db->query(
+        "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+    )->fetchAll();
+
+    foreach ($tables as $t) {
+        $name = (string)$t['name'];
+        $out .= "-- Table: {$name}\n";
+        $out .= $t['sql'] . ";\n";
+
+        $rows = $db->query("SELECT * FROM " . '"' . addslashes($name) . '"')->fetchAll();
+        foreach ($rows as $row) {
+            $cols = array_map(fn($c) => '"' . addslashes($c) . '"', array_keys($row));
+            $vals = array_map(function($v) {
+                if ($v === null) return 'NULL';
+                if (is_int($v) || is_float($v)) return (string)$v;
+                // Detect binary blobs (ip_bin, network_bin)
+                if (!mb_check_encoding((string)$v, 'UTF-8')) {
+                    return "X'" . bin2hex((string)$v) . "'";
+                }
+                return "'" . str_replace("'", "''", (string)$v) . "'";
+            }, array_values($row));
+            $out .= "INSERT INTO \"{$name}\" (" . implode(',', $cols) . ") VALUES ("
+                  . implode(',', $vals) . ");\n";
+        }
+        $out .= "\n";
+    }
+
+    // Indices (non-system)
+    $indices = $db->query(
+        "SELECT sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY name"
+    )->fetchAll();
+    if ($indices) {
+        $out .= "-- Indexes\n";
+        foreach ($indices as $idx) {
+            $out .= $idx['sql'] . ";\n";
+        }
+        $out .= "\n";
+    }
+
+    $out .= "COMMIT;\n";
+    $out .= "PRAGMA foreign_keys=ON;\n";
+
+    return $out;
 }
 
 /* ---------------- Pagination ---------------- */
@@ -793,8 +1098,8 @@ function page_header(string $title): void
 
     echo "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
     echo "<title>" . e($title) . "</title>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=0.14'>";
-    echo "<script defer src='assets/app.js?v=0.14'></script>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=0.15'>";
+    echo "<script defer src='assets/app.js?v=0.15'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
@@ -814,6 +1119,7 @@ function page_header(string $title): void
             echo "<a class='nav-dropdown-item' href='dhcp_pool.php'>🔒 DHCP Pools</a>";
             echo "<a class='nav-dropdown-item' href='api_keys.php'>🔑 API Keys</a>";
             echo "<a class='nav-dropdown-item' href='import_csv.php'>⬆ Import CSV</a>";
+            echo "<a class='nav-dropdown-item' href='db_tools.php'>🗄 Database Tools</a>";
             echo "</div></div>";
         }
     } else {
@@ -838,6 +1144,31 @@ function page_header(string $title): void
 
     echo "</div></div>";
     echo "<div class='page'>";
+
+    // Config auto-population notice (shown once per session, admin only)
+    if (!empty($_SESSION['config_notice']) && ($role ?? '') === 'admin') {
+        $notice = e((string)$_SESSION['config_notice']);
+        echo "<div class='admin-notice admin-notice--info' role='alert'>"
+           . "⚙ Config updated: {$notice} Review and adjust values in config.php."
+           . "</div>";
+        unset($_SESSION['config_notice']);
+    }
+
+    // Update-available dismissible banner (admin only, client-side dismiss via localStorage)
+    if (($role ?? '') === 'admin') {
+        global $config;
+        $update = ipam_update_check($config ?? []);
+        if ($update) {
+            $uv  = e((string)$update['version']);
+            $url = e((string)$update['url']);
+            echo "<div class='admin-notice admin-notice--update' id='ipam-update-banner' data-version='{$uv}' role='alert'>"
+               . "🚀 Simple PHP IPAM v{$uv} is available. "
+               . "<a href='{$url}' target='_blank' rel='noopener'>View release</a>"
+               . " &nbsp;<button type='button' class='button-secondary' style='padding:4px 10px;font-size:.85em' "
+               . "onclick='ipamDismissUpdate(\"{$uv}\")'>Dismiss</button>"
+               . "</div>";
+        }
+    }
 }
 
 function page_footer(): void
@@ -871,7 +1202,8 @@ function ipam_update_check(array $config): ?array
     $uc = $config['update_check'] ?? [];
     if (isset($uc['enabled']) && !(bool)$uc['enabled']) return null;
 
-    $ttl = max(3600, (int)($uc['ttl_seconds'] ?? 21600));
+    $ttl             = max(3600, (int)($uc['ttl_seconds'] ?? 86400));
+    $notifyPrerelease = !empty($uc['notify_prerelease']);
 
     ensure_tmp_dir();
     $cache = tmp_dir() . '/update-check.json';
@@ -887,7 +1219,9 @@ function ipam_update_check(array $config): ?array
     $result = null;
 
     try {
-        $url = 'https://api.github.com/repos/seanmousseau/Simple-PHP-IPAM/releases/latest';
+        // Fetch list of releases (up to 10) so we can honour notify_prerelease.
+        // /releases/latest skips pre-releases entirely, so we use /releases instead.
+        $url = 'https://api.github.com/repos/seanmousseau/Simple-PHP-IPAM/releases?per_page=10';
         $ctx = stream_context_create(['http' => [
             'timeout' => 5,
             'ignore_errors' => true,
@@ -896,11 +1230,23 @@ function ipam_update_check(array $config): ?array
         ]]);
         $raw = @file_get_contents($url, false, $ctx);
         if ($raw !== false && $raw !== '') {
-            $data = json_decode($raw, true);
-            if (is_array($data) && !empty($data['tag_name']) && empty($data['draft']) && empty($data['prerelease'])) {
-                $latest = ltrim((string)$data['tag_name'], 'v');
-                if (version_compare($latest, IPAM_VERSION, '>')) {
-                    $result = ['version' => $latest, 'url' => (string)($data['html_url'] ?? '')];
+            $releases = json_decode($raw, true);
+            if (is_array($releases)) {
+                foreach ($releases as $rel) {
+                    if (!is_array($rel)) continue;
+                    if (!empty($rel['draft'])) continue;
+                    if (!empty($rel['prerelease']) && !$notifyPrerelease) continue;
+                    if (empty($rel['tag_name'])) continue;
+
+                    $latest = ltrim((string)$rel['tag_name'], 'v');
+                    if (version_compare($latest, IPAM_VERSION, '>')) {
+                        $result = [
+                            'version'    => $latest,
+                            'url'        => (string)($rel['html_url'] ?? ''),
+                            'prerelease' => !empty($rel['prerelease']),
+                        ];
+                    }
+                    break; // releases are newest-first; first match wins
                 }
             }
         }

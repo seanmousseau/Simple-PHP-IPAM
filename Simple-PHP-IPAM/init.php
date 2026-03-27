@@ -42,8 +42,21 @@ require __DIR__ . '/lib.php';
 $db = ipam_db((string)$config['db_path']);
 ipam_db_init($db);
 
+// Auto-populate any missing config keys with their defaults
+$_addedConfigKeys = ipam_config_sync(__DIR__ . '/config.php', $config);
+if ($_addedConfigKeys && isset($_SESSION) && ($_SESSION['role'] ?? '') === 'admin') {
+    $_SESSION['config_notice'] = 'New configuration keys were automatically added to config.php: '
+        . implode(', ', array_map(fn($k) => "'{$k}'", $_addedConfigKeys)) . '.';
+}
+unset($_addedConfigKeys);
+
 // Run best-effort housekeeping at most once/day (configurable)
 run_housekeeping_if_due($config);
+
+// Run database backup if due (configurable frequency)
+if (!empty($config['backup']['enabled'])) {
+    run_db_backup_if_due($db, $config);
+}
 
 if (empty($_SESSION['csrf'])) {
     $_SESSION['csrf'] = bin2hex(random_bytes(32));

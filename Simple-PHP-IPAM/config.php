@@ -35,11 +35,23 @@ return [
     'utilization_warn'     => 80,
     'utilization_critical' => 95,
 
-    // Update check: fetches the latest release tag from GitHub and shows a
-    // banner in the footer when a newer version is available.
+    // Update check: fetches releases from GitHub and shows a banner when a newer
+    // version is available. notify_prerelease: also alert for alpha/beta/RC builds.
     'update_check' => [
-        'enabled'     => true,
-        'ttl_seconds' => 21600, // cache result for 6 hours
+        'enabled'           => true,
+        'ttl_seconds'       => 86400, // cache result for 24 hours
+        'notify_prerelease' => false,
+    ],
+
+    // Automatic database backups. Backups are written to 'dir' (default:
+    // data/backups/) on page load when the interval has elapsed.
+    // frequency: 'daily' | 'weekly'
+    // retention: number of most-recent backups to keep (older ones are deleted).
+    'backup' => [
+        'enabled'   => false,
+        'frequency' => 'daily',  // 'daily' | 'weekly'
+        'retention' => 7,
+        'dir'       => '',       // empty = data/backups/ relative to this file
     ],
 
     // -----------------------------------------------------------------------
