@@ -846,6 +846,26 @@ function page_footer(): void
     echo "</div></body></html>";
 }
 
+/**
+ * Find the site_id a subnet should inherit from its tightest parent.
+ * Returns null if no parent exists or no parent has a site assigned.
+ */
+function find_parent_site_id(PDO $db, string $cidr, ?int $excludeId = null): ?int
+{
+    $overlaps = detect_subnet_overlaps($db, $cidr, $excludeId);
+    if (empty($overlaps['parents'])) return null;
+
+    $placeholders = implode(',', array_fill(0, count($overlaps['parents']), '?'));
+    $st = $db->prepare(
+        "SELECT site_id FROM subnets
+         WHERE cidr IN ($placeholders) AND site_id IS NOT NULL
+         ORDER BY prefix DESC LIMIT 1"
+    );
+    $st->execute($overlaps['parents']);
+    $row = $st->fetch();
+    return $row ? (int)$row['site_id'] : null;
+}
+
 /* ============================================================
  * OIDC — Authorization Code + PKCE (pure PHP, no dependencies)
  * ============================================================ */

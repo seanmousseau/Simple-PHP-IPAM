@@ -75,6 +75,19 @@ function ipam_migrations(): array
             $db->exec("CREATE INDEX IF NOT EXISTS idx_subnets_site_id ON subnets(site_id)");
         },
 
+        // 0.13: name + email fields on users
+        '0.13' => function(PDO $db) {
+            $cols  = $db->query("PRAGMA table_info(users)")->fetchAll();
+            $names = array_map(fn($c) => $c['name'], $cols);
+
+            if (!in_array('name', $names, true)) {
+                $db->exec("ALTER TABLE users ADD COLUMN name TEXT NOT NULL DEFAULT ''");
+            }
+            if (!in_array('email', $names, true)) {
+                $db->exec("ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''");
+            }
+        },
+
         // 0.12: OIDC subject claim column on users
         '0.12' => function(PDO $db) {
             $cols  = $db->query("PRAGMA table_info(users)")->fetchAll();
