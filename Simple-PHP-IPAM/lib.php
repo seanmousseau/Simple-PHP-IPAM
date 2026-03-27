@@ -800,7 +800,6 @@ function page_header(string $title): void
     echo "<div class='topbar'><div class='nav-wrap'>";
     echo "<div class='nav-links'>";
     if ($u) {
-        echo "<span class='nav-user'>Logged in as <b>" . e((string)$u) . "</b> <span class='badge'>" . e((string)$role) . "</span></span>";
         echo "<a class='nav-pill' href='dashboard.php'>🏠 Dashboard</a>";
         echo "<a class='nav-pill' href='subnets.php'>🌐 Subnets</a>";
         echo "<a class='nav-pill' href='addresses.php'>🧾 Addresses</a>";
@@ -816,16 +815,25 @@ function page_header(string $title): void
             echo "<a class='nav-dropdown-item' href='import_csv.php'>⬆ Import CSV</a>";
             echo "</div></div>";
         }
-        echo "<a class='nav-pill' href='change_password.php'>🔐 Password</a>";
-        echo "<a class='nav-pill' href='logout.php'>↩ Logout</a>";
     } else {
         echo "<a class='nav-pill' href='login.php'>🔐 Login</a>";
     }
     echo "</div>";
 
-    echo "<div class='nav-right'>";
-    echo "<button type='button' class='button-secondary' id='theme-toggle' onclick='ipamCycleTheme()'>🌓 Theme</button>";
-    echo "</div>";
+    if ($u) {
+        echo "<div class='nav-right'>";
+        echo "<div class='nav-dropdown'>";
+        echo "<button type='button' class='nav-pill nav-dropdown-toggle nav-user-toggle'>";
+        echo e((string)$u) . " <span class='badge'>" . e((string)$role) . "</span> ▾";
+        echo "</button>";
+        echo "<div class='nav-dropdown-menu nav-dropdown-menu--right'>";
+        echo "<button type='button' class='nav-dropdown-item' id='theme-toggle' onclick='ipamCycleTheme()'>🌓 Theme</button>";
+        echo "<hr class='nav-dropdown-divider'>";
+        echo "<a class='nav-dropdown-item' href='change_password.php'>🔐 Password</a>";
+        echo "<a class='nav-dropdown-item' href='logout.php'>↩ Logout</a>";
+        echo "</div></div>";
+        echo "</div>";
+    }
 
     echo "</div></div>";
     echo "<div class='page'>";
