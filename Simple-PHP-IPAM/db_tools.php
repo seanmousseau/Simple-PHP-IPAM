@@ -87,16 +87,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                 }
 
                 // Execute the dump SQL (split on statement boundaries)
-                // Strip comments and split on semicolons cautiously
                 $statements = preg_split('/;\s*\n/', $sql ?? '');
                 foreach ($statements as $stmt) {
-                    $stmt = trim($stmt);
-                    if ($stmt === '' || str_starts_with($stmt, '--')) continue;
+                    // Strip leading/inline SQL comment lines, then trim
+                    $exec = trim((string)preg_replace('/^--[^\n]*\n?/m', '', $stmt));
+                    if ($exec === '') continue;
                     // Skip transaction/pragma statements we manage ourselves
-                    if (preg_match('/^PRAGMA\s+foreign_keys\s*=/i', $stmt)) continue;
-                    if (preg_match('/^BEGIN(\s+TRANSACTION)?\s*$/i', $stmt)) continue;
-                    if (preg_match('/^COMMIT\s*$/i', $stmt)) continue;
-                    $db->exec($stmt);
+                    if (preg_match('/^PRAGMA\s+foreign_keys\s*=/i', $exec)) continue;
+                    if (preg_match('/^BEGIN(\s+TRANSACTION)?\s*$/i', $exec)) continue;
+                    if (preg_match('/^COMMIT\s*$/i', $exec)) continue;
+                    $db->exec($exec);
                 }
 
                 $db->exec("PRAGMA foreign_keys=ON");
