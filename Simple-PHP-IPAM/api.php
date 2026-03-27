@@ -147,7 +147,7 @@ function api_addresses(PDO $db): never
     $total = (int)$cntSt->fetch()['c'];
 
     $sql = "SELECT a.id, a.subnet_id, a.ip, a.hostname, a.owner,
-                   a.status, a.description, a.created_at
+                   a.status, a.note, a.created_at
             FROM addresses a $whereSql
             ORDER BY a.ip_bin
             LIMIT :lim OFFSET :off";
@@ -168,7 +168,7 @@ function api_addresses(PDO $db): never
             'hostname'    => (string)$r['hostname'],
             'owner'       => (string)$r['owner'],
             'status'      => $r['status'],
-            'description' => (string)$r['description'],
+            'note'        => (string)$r['note'],
             'created_at'  => $r['created_at'],
         ];
     }, $st->fetchAll());

@@ -29,4 +29,42 @@ return [
         'enabled' => true,
         'interval_seconds' => 86400, // once per day
     ],
+
+    // -----------------------------------------------------------------------
+    // OIDC — Authorization Code + PKCE single sign-on (optional)
+    // Set 'enabled' => true and fill in the IdP details to activate.
+    // The redirect_uri must be registered with your IdP exactly as written.
+    // -----------------------------------------------------------------------
+    'oidc' => [
+        'enabled'        => false,
+
+        // Label shown on the login page button, e.g. 'Okta', 'Azure AD', 'Google'
+        'display_name'   => 'SSO',
+
+        'client_id'      => '',
+        'client_secret'  => '',
+
+        // Base URL of the IdP (/.well-known/openid-configuration is appended automatically),
+        // or the full discovery document URL if the path differs.
+        // Examples:
+        //   'https://accounts.google.com'
+        //   'https://login.microsoftonline.com/{tenant}/v2.0'
+        //   'https://your-org.okta.com/oauth2/default'
+        'discovery_url'  => '',
+
+        // Must match exactly what is registered in the IdP application settings.
+        'redirect_uri'   => '',   // e.g. 'https://ipam.example.com/oidc_callback.php'
+
+        // Space-separated scopes. 'openid' is required; 'email' is needed for
+        // auto-provisioning. 'profile' is optional.
+        'scopes'         => 'openid email profile',
+
+        // auto_provision: if true, a local user is created on first OIDC login
+        // when no existing user is linked to the IdP subject (sub) claim.
+        // The email claim is used as the username.
+        'auto_provision' => false,
+
+        // Role assigned to auto-provisioned users. 'readonly' is recommended.
+        'default_role'   => 'readonly',
+    ],
 ];

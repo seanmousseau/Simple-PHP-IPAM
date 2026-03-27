@@ -4,6 +4,60 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## 0.12 — User Menu Redesign and OIDC Authentication
+
+### Milestone 1 — User Menu & Nav Polish
+
+#### User dropdown (`lib.php`, `assets/app.css`, `assets/app.js`)
+- Username and role badge moved from the far-left of the nav bar to the far-right
+- Password, Logout, and Theme toggle consolidated into a single user dropdown menu
+- Theme button remains open in the dropdown while cycling so the user can step through modes without re-opening
+- Right-anchored dropdown variant (`.nav-dropdown-menu--right`) prevents off-screen overflow
+- `.nav-dropdown-item` unified to style both `<a>` and `<button>` elements identically; divider between Theme and account links
+
+---
+
+### Milestone 2 — OIDC Authentication
+
+#### Authorization Code + PKCE flow (`oidc_login.php`, `oidc_callback.php`, `lib.php`)
+- Full OIDC Authorization Code + PKCE flow implemented in pure PHP — no Composer packages or external dependencies
+- `oidc_login.php`: generates PKCE verifier/challenge pair and state/nonce, stores them in session, redirects to IdP
+- `oidc_callback.php`: validates state (CSRF guard), exchanges authorization code for tokens, verifies ID token, resolves local user
+- ID token verification supports RS256/RS384/RS512; JWK→PEM conversion is done in-process using PHP's `openssl` extension
+- JWKS are cached in `data/tmp/` for 1 hour; one automatic cache-bust retry handles in-flight key rotation
+- Discovery document (`/.well-known/openid-configuration`) is also cached for 1 hour
+
+#### ID token verification (`lib.php`)
+- `oidc_verify_id_token()`: validates signature, `exp`, `iat`, `iss`, `aud`, and `nonce`
+- `jwk_rsa_to_pem()`: constructs DER SubjectPublicKeyInfo from JWK `n`/`e` fields without `ext-gmp`
+- `oidc_pkce_pair()`: generates RFC 7636 S256 code challenge from a 32-byte random verifier
+
+#### User provisioning and linking
+- On successful OIDC login the `sub` claim is matched against `users.oidc_sub`
+- With `auto_provision = true`: if no linked user is found, an existing local user with a matching username/email is linked; otherwise a new account is created with an unusable password and the configured `default_role`
+- OIDC lifecycle events recorded in audit log: `auth.oidc_login`, `auth.oidc_provision`, `auth.oidc_link`, `auth.oidc_failed`
+
+#### Database migration (`migrations.php`)
+- Migration `0.12` adds `oidc_sub TEXT` column to `users` table
+- Partial unique index enforces that each IdP subject maps to at most one local user
+
+#### Admin UI (`users.php`)
+- SSO column shows "linked" (green, full `sub` on hover) or "—" for each user
+- "Unlink SSO" button lets admins remove the `oidc_sub` association without deleting the account
+
+#### Login page (`login.php`)
+- When OIDC is enabled, a prominent "Sign in with \<display_name\>" button appears above the local login form
+- OIDC error flash messages (set by the callback on failure) are displayed on the login page
+
+#### Configuration (`config.php`)
+- New `oidc` section: `enabled`, `display_name`, `client_id`, `client_secret`, `discovery_url`, `redirect_uri`, `scopes`, `auto_provision`, `default_role`
+- Defaults to disabled; no behaviour change for existing installs
+
+#### Bug fix
+- `api.php`: addresses resource used non-existent `description` column; corrected to `note` to match schema
+
+---
+
 ## 0.11 — Security Hardening, Nav Polish, and REST API
 
 ### Milestone 1 — Security Hardening

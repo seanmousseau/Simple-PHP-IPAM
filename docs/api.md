@@ -174,7 +174,7 @@ Returns a paginated list of address records.
       "hostname": "server01.example.com",
       "owner": "ops-team",
       "status": "used",
-      "description": "Primary web server",
+      "note": "Primary web server",
       "created_at": "2025-02-01 08:15:30"
     }
   ]
@@ -193,7 +193,7 @@ Results are ordered by IP address (binary sort — correct numerical order withi
 | `hostname` | string | Hostname (may be empty) |
 | `owner` | string | Owner/team (may be empty) |
 | `status` | string | `used`, `reserved`, or `free` |
-| `description` | string | Free-text description (may be empty) |
+| `note` | string | Free-text note (may be empty) |
 | `created_at` | string | UTC timestamp (`YYYY-MM-DD HH:MM:SS`) |
 
 ---

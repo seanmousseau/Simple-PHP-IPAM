@@ -11,6 +11,12 @@ $lockoutSeconds = (int)($config['login_lockout_seconds'] ?? 900);
 $error = '';
 $timedOut = !empty($_GET['timeout']);
 
+// Consume any OIDC error flash set by oidc_callback.php or oidc_login.php
+if (!empty($_SESSION['oidc_error'])) {
+    $error = (string)$_SESSION['oidc_error'];
+    unset($_SESSION['oidc_error']);
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $username = trim((string)($_POST['username'] ?? ''));
     $password = (string)($_POST['password'] ?? '');
@@ -53,6 +59,15 @@ page_header('Login');
   <p class="warning">Your session expired due to inactivity. Please log in again.</p>
 <?php endif; ?>
 <?php if ($error): ?><p class="danger"><?= e($error) ?></p><?php endif; ?>
+
+<?php if (oidc_enabled($config)): ?>
+<p>
+  <a href="oidc_login.php" style="display:inline-block;padding:10px 18px;border-radius:12px;background:var(--btn);color:var(--btnfg);text-decoration:none;font-weight:600">
+    Sign in with <?= e((string)($config['oidc']['display_name'] ?? 'SSO')) ?>
+  </a>
+</p>
+<p class="muted" style="margin:14px 0 4px">— or sign in with a local account —</p>
+<?php endif; ?>
 
 <form method="post" action="login.php" autocomplete="off">
   <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">

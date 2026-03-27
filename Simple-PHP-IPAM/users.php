@@ -57,10 +57,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             audit($db, 'user.reset_password', 'user', $id, 'admin reset');
             $msg = 'Password reset.';
         }
+    } elseif ($action === 'unlink_oidc') {
+        $id = (int)($_POST['id'] ?? 0);
+        $db->prepare("UPDATE users SET oidc_sub = NULL WHERE id = :id")
+           ->execute([':id' => $id]);
+        audit($db, 'user.oidc_unlink', 'user', $id, '');
+        $msg = 'OIDC link removed.';
     }
 }
 
-$st = $db->prepare("SELECT id, username, role, is_active, created_at, updated_at FROM users ORDER BY username ASC");
+$st = $db->prepare("SELECT id, username, role, is_active, created_at, updated_at, oidc_sub FROM users ORDER BY username ASC");
 $st->execute();
 $users = $st->fetchAll();
 
@@ -91,7 +97,7 @@ page_header('Users');
 <table>
   <thead>
     <tr>
-      <th>Username</th><th>Role</th><th>Active</th><th>Created</th><th>Updated</th><th>Actions</th>
+      <th>Username</th><th>Role</th><th>Active</th><th>SSO</th><th>Created</th><th>Updated</th><th>Actions</th>
     </tr>
   </thead>
   <tbody>
@@ -100,6 +106,13 @@ page_header('Users');
       <td><?= e($u['username']) ?></td>
       <td><?= e($u['role']) ?></td>
       <td><?= ((int)$u['is_active'] === 1) ? 'yes' : 'no' ?></td>
+      <td>
+        <?php if ($u['oidc_sub'] !== null): ?>
+          <span class="success" title="<?= e((string)$u['oidc_sub']) ?>">linked</span>
+        <?php else: ?>
+          <span class="muted">—</span>
+        <?php endif; ?>
+      </td>
       <td class="muted"><?= e($u['created_at']) ?></td>
       <td class="muted"><?= e($u['updated_at']) ?></td>
       <td>
@@ -128,6 +141,16 @@ page_header('Users');
           <input type="password" name="new_password" placeholder="New password" required>
           <button type="submit">Reset PW</button>
         </form>
+
+        <?php if ($u['oidc_sub'] !== null): ?>
+        <form method="post" action="users.php" class="row" style="gap:6px; margin-top:6px"
+              onsubmit="return confirm('Remove SSO link for <?= e((string)$u['username']) ?>?')">
+          <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+          <input type="hidden" name="action" value="unlink_oidc">
+          <input type="hidden" name="id"     value="<?= (int)$u['id'] ?>">
+          <button type="submit" class="button-secondary">Unlink SSO</button>
+        </form>
+        <?php endif; ?>
       </td>
     </tr>
   <?php endforeach; ?>
