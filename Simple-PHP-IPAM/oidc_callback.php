@@ -172,6 +172,8 @@ if ((int)$user['is_active'] !== 1) {
 
 // ---- All checks passed — log in ----
 login_user((int)$user['id'], (string)$user['username'], (string)$user['role']);
+$db->prepare("UPDATE users SET last_login_at=datetime('now') WHERE id=:id")
+   ->execute([':id' => (int)$user['id']]);
 audit($db, 'auth.oidc_login', 'user', (int)$user['id'], 'sub=' . $sub);
 
 header('Location: dashboard.php');

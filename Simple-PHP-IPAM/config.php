@@ -30,6 +30,18 @@ return [
         'interval_seconds' => 86400, // once per day
     ],
 
+    // Subnet utilization thresholds. Utilization bars in the subnet list turn
+    // yellow at 'warn' percent and red at 'critical' percent.
+    'utilization_warn'     => 80,
+    'utilization_critical' => 95,
+
+    // Update check: fetches the latest release tag from GitHub and shows a
+    // banner in the footer when a newer version is available.
+    'update_check' => [
+        'enabled'     => true,
+        'ttl_seconds' => 21600, // cache result for 6 hours
+    ],
+
     // -----------------------------------------------------------------------
     // OIDC — Authorization Code + PKCE single sign-on (optional)
     // Set 'enabled' => true and fill in the IdP details to activate.
@@ -70,7 +82,17 @@ return [
 
         // disable_local_login: if true, the username/password form is hidden
         // when OIDC is enabled. Users must authenticate via SSO.
-        // Emergency local access is always available at login.php?local=1
         'disable_local_login' => false,
+
+        // hide_emergency_link: hides the "(emergency local access)" link text on
+        // the login page. The URL login.php?local=1 still works unless
+        // disable_emergency_bypass is also true.
+        'hide_emergency_link' => false,
+
+        // disable_emergency_bypass: when true, login.php?local=1 has no effect
+        // and local login is entirely unavailable when disable_local_login is set.
+        // WARNING: if your IdP becomes unavailable you will be locked out.
+        // Only set this after verifying your IdP is reliable.
+        'disable_emergency_bypass' => false,
     ],
 ];

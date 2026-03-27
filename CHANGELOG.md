@@ -4,6 +4,44 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## 0.14 — DHCP Pools, Update Check, User Hardening, Utilization Badges
+
+### Application branding
+- Application renamed from **PHP SQLite IPAM** to **Simple PHP IPAM** throughout
+- Footer app name is now a link to the GitHub repository (opens in new tab)
+
+### Update check
+- Footer shows an **Update available vX.Y** badge when a newer GitHub release exists
+- Fetches the GitHub releases API with a User-Agent header; result cached for 6 hours (configurable)
+- Skips drafts and pre-releases; silently no-ops on network failure
+- Opt-out via `'update_check' => ['enabled' => false]` in `config.php`
+
+### DHCP pool reservation tool (`dhcp_pool.php`)
+- New admin page to bulk-reserve a contiguous IPv4 range within any subnet
+- IPs already marked `used` are always skipped; `reserved`/`free` records are updated
+- Separate **Clear** form removes `reserved` records from a range (leaves `used` untouched)
+- Max 1,024 IPs per operation; linked from each subnet's action bar and the Admin nav dropdown
+- All operations recorded in the audit log
+
+### User management hardening (`users.php`)
+- **Disable**, **Set role**, and **Unlink SSO** are hidden in the UI for the logged-in admin's own row
+- Server-side guards: `toggle_active`, `set_role`, and `unlink_oidc` all reject self-targeting
+- **Last login** column added to the users table; populated on every login (local and OIDC)
+
+### Subnet utilization badges (`subnets.php`, `assets/app.css`)
+- IPv4 subnets show a colour-coded mini progress bar and percentage next to assignable counts
+- Green → yellow (≥ `utilization_warn`, default 80%) → red (≥ `utilization_critical`, default 95%)
+- Thresholds configurable in `config.php`
+
+### OIDC emergency access controls (`login.php`, `config.php`)
+- New `hide_emergency_link` option: hides the emergency link text without disabling the URL
+- New `disable_emergency_bypass` option: makes `login.php?local=1` completely ineffective
+
+### Database migration
+- Migration `0.14`: adds `last_login_at TEXT` column to the `users` table
+
+---
+
 ## 0.13 — User Management, Site Inheritance, OIDC Improvements
 
 ### User management (`users.php`, `migrations.php`)

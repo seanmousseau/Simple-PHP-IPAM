@@ -184,7 +184,27 @@ Set `'disable_local_login' => true` in the `oidc` config block to hide the usern
 ],
 ```
 
-**Emergency access:** Even with `disable_local_login` enabled, local login is always accessible at `login.php?local=1`. Keep at least one active local admin account as a break-glass fallback in case your IdP becomes unavailable.
+**Emergency access:** Even with `disable_local_login` enabled, local login is accessible at `login.php?local=1` by default. Keep at least one active local admin account as a break-glass fallback.
+
+### Hiding the emergency link
+
+If you want SSO-only appearance without advertising the bypass URL, set `hide_emergency_link`:
+
+```php
+'hide_emergency_link' => true,
+```
+
+The `?local=1` URL still works — the link text is simply not shown on the login page.
+
+### Disabling emergency access entirely
+
+To make `login.php?local=1` completely non-functional:
+
+```php
+'disable_emergency_bypass' => true,
+```
+
+> **Warning:** If your IdP becomes unavailable while `disable_emergency_bypass` is `true`, no one can log in. Only set this after verifying your IdP uptime and having an out-of-band admin recovery procedure (e.g. SSH access to reset the DB).
 
 ---
 

@@ -793,8 +793,8 @@ function page_header(string $title): void
 
     echo "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
     echo "<title>" . e($title) . "</title>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=0.11'>";
-    echo "<script defer src='assets/app.js?v=0.11'></script>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=0.14'>";
+    echo "<script defer src='assets/app.js?v=0.14'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
@@ -811,6 +811,7 @@ function page_header(string $title): void
             echo "<div class='nav-dropdown-menu'>";
             echo "<a class='nav-dropdown-item' href='sites.php'>📍 Sites</a>";
             echo "<a class='nav-dropdown-item' href='users.php'>👤 Users</a>";
+            echo "<a class='nav-dropdown-item' href='dhcp_pool.php'>🔒 DHCP Pools</a>";
             echo "<a class='nav-dropdown-item' href='api_keys.php'>🔑 API Keys</a>";
             echo "<a class='nav-dropdown-item' href='import_csv.php'>⬆ Import CSV</a>";
             echo "</div></div>";
@@ -841,9 +842,75 @@ function page_header(string $title): void
 
 function page_footer(): void
 {
+    global $config;
     require __DIR__ . '/version.php';
-    echo "<hr><div class='muted'>PHP SQLite IPAM v" . e(IPAM_VERSION) . "</div>";
-    echo "</div></body></html>";
+
+    echo "<hr><div class='muted' style='display:flex;align-items:center;gap:10px;flex-wrap:wrap'>";
+    echo "<a href='https://github.com/seanmousseau/Simple-PHP-IPAM' target='_blank' rel='noopener' "
+       . "style='color:inherit;text-decoration:none'>Simple PHP IPAM</a> v" . e(IPAM_VERSION);
+
+    $update = ipam_update_check($config ?? []);
+    if ($update) {
+        $uv  = e((string)$update['version']);
+        $url = e((string)$update['url']);
+        echo " <a href='{$url}' target='_blank' rel='noopener' class='badge badge-update'>"
+           . "Update available v{$uv}</a>";
+    }
+
+    echo "</div></div></body></html>";
+}
+
+/**
+ * Check GitHub for a newer release. Results are cached in data/tmp/ for the
+ * configured TTL (default 6 hours). Network failures are silently ignored.
+ *
+ * Returns ['version' => '0.15', 'url' => 'https://...'] if newer, otherwise null.
+ */
+function ipam_update_check(array $config): ?array
+{
+    $uc = $config['update_check'] ?? [];
+    if (isset($uc['enabled']) && !(bool)$uc['enabled']) return null;
+
+    $ttl = max(3600, (int)($uc['ttl_seconds'] ?? 21600));
+
+    ensure_tmp_dir();
+    $cache = tmp_dir() . '/update-check.json';
+
+    if (is_file($cache) && (time() - (int)filemtime($cache)) < $ttl) {
+        $d = json_decode((string)file_get_contents($cache), true);
+        if (is_array($d) && array_key_exists('checked', $d)) {
+            return isset($d['update']) ? (array)$d['update'] : null;
+        }
+    }
+
+    require_once __DIR__ . '/version.php';
+    $result = null;
+
+    try {
+        $url = 'https://api.github.com/repos/seanmousseau/Simple-PHP-IPAM/releases/latest';
+        $ctx = stream_context_create(['http' => [
+            'timeout' => 5,
+            'ignore_errors' => true,
+            'header' => "User-Agent: Simple-PHP-IPAM/" . IPAM_VERSION . "\r\n"
+                      . "Accept: application/vnd.github+json\r\n",
+        ]]);
+        $raw = @file_get_contents($url, false, $ctx);
+        if ($raw !== false && $raw !== '') {
+            $data = json_decode($raw, true);
+            if (is_array($data) && !empty($data['tag_name']) && empty($data['draft']) && empty($data['prerelease'])) {
+                $latest = ltrim((string)$data['tag_name'], 'v');
+                if (version_compare($latest, IPAM_VERSION, '>')) {
+                    $result = ['version' => $latest, 'url' => (string)($data['html_url'] ?? '')];
+                }
+            }
+        }
+    } catch (Throwable) {
+        // Non-critical — silently skip on network failure
+    }
+
+    @file_put_contents($cache, json_encode(['checked' => time(), 'update' => $result]));
+    @chmod($cache, 0600);
+    return $result;
 }
 
 /**
