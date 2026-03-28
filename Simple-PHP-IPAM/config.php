@@ -59,6 +59,21 @@ return [
     ],
 
     // -----------------------------------------------------------------------
+    // Password policy — complexity requirements and rotation.
+    // min_length: minimum number of characters (default 12).
+    // require_*: enforce character classes (uppercase, lowercase, number, symbol).
+    // max_password_age_days: force a password change after N days. 0 = never expires.
+    // -----------------------------------------------------------------------
+    'password_policy' => [
+        'min_length'            => 12,
+        'require_uppercase'     => false,
+        'require_lowercase'     => false,
+        'require_number'        => false,
+        'require_symbol'        => false,
+        'max_password_age_days' => 0,
+    ],
+
+    // -----------------------------------------------------------------------
     // OIDC — Authorization Code + PKCE single sign-on (optional)
     // Set 'enabled' => true and fill in the IdP details to activate.
     // The redirect_uri must be registered with your IdP exactly as written.

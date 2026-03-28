@@ -8,8 +8,9 @@ CREATE TABLE IF NOT EXISTS users (
   is_active     INTEGER NOT NULL DEFAULT 1,        -- 1 active, 0 disabled
   name          TEXT NOT NULL DEFAULT '',
   email         TEXT NOT NULL DEFAULT '',
-  oidc_sub      TEXT,                              -- IdP subject claim (unique when set)
-  last_login_at TEXT,
+  oidc_sub             TEXT,                        -- IdP subject claim (unique when set)
+  last_login_at        TEXT,
+  password_changed_at  TEXT,                        -- updated on every local password change; NULL for SSO-only accounts
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );

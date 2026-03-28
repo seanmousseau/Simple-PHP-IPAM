@@ -75,6 +75,20 @@ function ipam_migrations(): array
             $db->exec("CREATE INDEX IF NOT EXISTS idx_subnets_site_id ON subnets(site_id)");
         },
 
+        // 1.4: password_changed_at timestamp on users (for password rotation policy)
+        '1.4' => function(PDO $db) {
+            $cols  = $db->query("PRAGMA table_info(users)")->fetchAll();
+            $names = array_map(fn($c) => $c['name'], $cols);
+            if (!in_array('password_changed_at', $names, true)) {
+                $db->exec("ALTER TABLE users ADD COLUMN password_changed_at TEXT");
+                // Backfill existing local accounts so they aren't immediately expired.
+                // SSO-only accounts (unusable hash starting with '!') are left NULL
+                // since expiry doesn't apply to them.
+                $db->exec("UPDATE users SET password_changed_at = datetime('now')
+                           WHERE password_hash NOT LIKE '!%'");
+            }
+        },
+
         // 0.14: last_login_at timestamp on users
         '0.14' => function(PDO $db) {
             $cols  = $db->query("PRAGMA table_info(users)")->fetchAll();

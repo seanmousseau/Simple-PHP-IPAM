@@ -382,6 +382,16 @@ button:disabled{opacity:.6;cursor:not-allowed}
 .status-used{color:var(--success);font-weight:600}
 .status-reserved{color:var(--warn);font-weight:600}
 .status-free{color:var(--muted);font-weight:600}
+.badge-role-admin{
+  background:color-mix(in srgb,var(--danger) 12%,var(--badge-bg) 88%);
+  color:var(--danger);
+  border-color:color-mix(in srgb,var(--danger) 40%,var(--border) 60%);
+}
+.badge-role-netops{
+  background:color-mix(in srgb,var(--link) 12%,var(--badge-bg) 88%);
+  color:var(--link);
+  border-color:color-mix(in srgb,var(--link) 40%,var(--border) 60%);
+}
 .badge-update{
   background:color-mix(in srgb,var(--warn) 12%,var(--badge-bg) 88%);
   color:var(--warn);
