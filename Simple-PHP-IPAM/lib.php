@@ -1259,8 +1259,8 @@ function page_header(string $title): void
 
     echo "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
     echo "<title>" . e($title) . "</title>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=1.2'>";
-    echo "<script defer src='assets/app.js?v=1.2'></script>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=1.2.1'>";
+    echo "<script defer src='assets/app.js?v=1.2.1'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";

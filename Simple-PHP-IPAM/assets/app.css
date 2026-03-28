@@ -424,10 +424,9 @@ details > summary::-webkit-details-marker{display:none}
   border-bottom:2px solid var(--border);
   user-select:none;
 }
-.site-group-toggle > summary.site-group-header h2{
-  margin:0;
-  display:inline;
+.site-group-label{
   font-size:1.1rem;
+  font-weight:700;
 }
 .site-group-toggle > summary.site-group-header::before{
   content:'▸';

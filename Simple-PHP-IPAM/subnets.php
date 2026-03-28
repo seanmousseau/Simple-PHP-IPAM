@@ -538,7 +538,7 @@ page_header('Subnets');
     <?php foreach ($siteGroups as $groupKey => $group): ?>
       <details class="site-group-toggle" open data-site-key="<?= e($groupKey) ?>">
         <summary class="site-group-header">
-          <h2><?= e($group['label']) ?></h2>
+          <span class="site-group-label"><?= e($group['label']) ?></span>
           <span class="badge"><?= count($group['roots']) ?> subnet<?= count($group['roots']) !== 1 ? 's' : '' ?></span>
         </summary>
         <?php foreach ($group['roots'] as $rid): ?>
