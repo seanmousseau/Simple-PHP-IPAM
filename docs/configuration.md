@@ -136,6 +136,8 @@ Credentials for the initial admin account. This account is created automatically
 
 Once any user exists in the database, changes to this setting have no effect.
 
+As of v1.1, a security warning banner is displayed to all logged-in users until the password is changed away from the default value (`ChangeMeNow!12345`).
+
 ---
 
 ### `session_idle_seconds`
