@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## 1.2.1 — Patch
+
+### Bug fixes
+- **Fixed:** Site groups on the Subnets page were blank — no subnets or group labels visible. The `<summary>` element contained an `<h2>` (a block-level element), which caused browsers to implicitly close the `<summary>` early and break `<details>` rendering. Replaced with a styled `<span class="site-group-label">` to produce valid, conformant HTML.
+
+---
+
 ## 1.2 — Security Hardening & UX Improvements
 
 ### Bug fixes
