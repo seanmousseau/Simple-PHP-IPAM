@@ -51,7 +51,7 @@ if ($_addedConfigKeys && isset($_SESSION) && ($_SESSION['role'] ?? '') === 'admi
 unset($_addedConfigKeys);
 
 // Run best-effort housekeeping at most once/day (configurable)
-run_housekeeping_if_due($config);
+run_housekeeping_if_due($config, $db);
 
 // Run database backup if due (configurable frequency)
 if (!empty($config['backup']['enabled'])) {

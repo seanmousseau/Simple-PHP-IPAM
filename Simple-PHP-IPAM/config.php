@@ -24,6 +24,10 @@ return [
     // Temp upload cleanup (seconds). Files older than this are eligible for cleanup.
     'tmp_cleanup_ttl_seconds' => 86400,
 
+    // Audit log retention (days). Entries older than this are pruned during housekeeping.
+    // Set to 0 to keep the audit log forever (default).
+    'audit_log_retention_days' => 0,
+
     // Lazy housekeeping: runs on normal site access at most once per interval.
     'housekeeping' => [
         'enabled' => true,

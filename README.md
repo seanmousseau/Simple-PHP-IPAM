@@ -41,6 +41,8 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 - **Automatic backups** — configurable daily/weekly SQLite snapshots with retention pruning
 - **Config auto-population** — missing config keys appended with defaults on boot; admin notice on first load
 - **Mobile-optimized GUI** — responsive layout works on phones and tablets at 375 px and 768 px
+- **Health check endpoint** — unauthenticated `GET /status.php` returns JSON status and version for uptime monitors and container health checks
+- **Audit log retention** — configurable pruning of old audit entries during scheduled housekeeping
 
 ### REST API
 - Read-only JSON API (`api.php`) authenticated with API keys
@@ -88,6 +90,20 @@ See the [Installation guide](docs/install.md) for full web server configuration 
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
+
+### What's new in 1.0
+
+**Production release** — security fixes, schema completeness, and operational polish.
+
+**Security fixes** — HTML output escaping made consistent in Database Tools; OIDC claim values clamped to 255 characters before storage; name and email fields enforce `maxlength` in both the UI and server-side.
+
+**Complete `schema.sql`** — fresh installs now receive the full 1.0 schema (all tables, columns, and indexes) from the first request, including the OIDC partial unique index.
+
+**Audit log retention** — new `audit_log_retention_days` config option prunes old entries during scheduled housekeeping. Defaults to `0` (keep forever).
+
+**Health check endpoint** — `GET /status.php` returns `{"status":"ok","version":"1.0","db":"ok"}` (HTTP 200) or `{"status":"error","db":"error"}` (HTTP 503). No authentication required.
+
+**Cleanup** — removed deprecated `ipamToggleTheme`/`ipamClearTheme` JS aliases.
 
 ### What's new in 0.15
 

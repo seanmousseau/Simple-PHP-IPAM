@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## 1.0 — Production Release
+
+### Security hardening
+- **Fixed:** `db_tools.php` error and message output was not HTML-escaped at the output point; inner `e()` calls were removed and `e()` is now applied consistently at echo time, matching every other page.
+- **Hardened:** OIDC claim values (`name`, `email`, `preferred_username`) are now clamped to 255/255/64 characters respectively before storage, preventing unbounded writes from a misconfigured or malicious IdP.
+- **Hardened:** `users.php` now enforces `maxlength=255` on name and email fields in both the create and profile-edit forms, plus server-side `substr()` clamping, matching the OIDC claim limit.
+
+### Schema improvements
+- **Updated:** `schema.sql` is now the complete canonical schema for v1.0, including all tables, columns, and indexes that were previously only created by migrations. Fresh installs now have a fully functional database from the first request.
+- The partial unique index on `users.oidc_sub WHERE oidc_sub IS NOT NULL` is now present in `schema.sql` (was previously only in migration 0.12).
+
+### Audit log retention
+- New `audit_log_retention_days` config option (default `0` = keep forever). When set, entries older than the specified number of days are pruned during scheduled housekeeping.
+- Pruning is performed safely via a staging table swap that preserves the append-only integrity triggers.
+- The new config key is auto-populated on upgrade via the existing config-sync mechanism.
+
+### Health check endpoint (`status.php`)
+- New unauthenticated `GET /status.php` endpoint for uptime monitors, load balancers, and container health checks.
+- Returns `HTTP 200` with `{"status":"ok","version":"1.0","db":"ok"}` when healthy.
+- Returns `HTTP 503` with `{"status":"error","db":"error"}` when the database is unreachable.
+
+### Code cleanup
+- Removed deprecated `window.ipamToggleTheme` and `window.ipamClearTheme` JavaScript aliases from `assets/app.js`. Only `window.ipamCycleTheme` remains.
+- Asset cache busters updated to `?v=1.0` in `page_header()`.
+
+---
+
 ## 0.15 — Config Auto-Population, Backups, Database Tools, Mobile GUI, Update Check Enhancements
 
 ### Config auto-population

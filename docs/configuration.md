@@ -9,6 +9,7 @@ All application settings live in `config.php` in the application root. This file
 - [OIDC settings](#oidc-settings)
 - [`update_check`](#update_check)
 - [`backup`](#backup)
+- [`audit_log_retention_days`](#audit_log_retention_days)
 - [Behind a reverse proxy](#behind-a-reverse-proxy)
 
 ---
@@ -49,6 +50,10 @@ return [
 
     // How long (seconds) to keep uploaded CSV temp files before cleanup.
     'tmp_cleanup_ttl_seconds' => 86400,
+
+    // Audit log retention (days). Entries older than this are pruned during housekeeping.
+    // Set to 0 to keep the audit log forever (default).
+    'audit_log_retention_days' => 0,
 
     // Lazy housekeeping: runs on normal site access at most once per interval.
     'housekeeping' => [
@@ -177,6 +182,22 @@ How long uploaded CSV files and import plan files in `data/tmp/` are kept before
 
 ---
 
+### `audit_log_retention_days`
+
+**Default:** `0` (keep forever)
+
+When set to a positive integer, audit log entries older than this many days are pruned during the next scheduled housekeeping run. Pruning is performed safely via an internal staging table swap that preserves the append-only integrity triggers.
+
+**Example — keep 90 days of audit history:**
+
+```php
+'audit_log_retention_days' => 90,
+```
+
+Set to `0` (or omit the key) to keep all audit entries indefinitely. Note that the audit log grows unboundedly without retention; for busy installations consider setting a retention period for compliance and storage reasons.
+
+---
+
 ### `housekeeping`
 
 Controls lazy background housekeeping (temp file cleanup, stale login attempt purge).
@@ -251,6 +272,25 @@ Controls automatic database backups.
 | `dir` | `''` | Directory for backup files; empty string uses `data/backups/` |
 
 Backups run at most once per interval on normal page load (file-locked, non-blocking). The backup format is a WAL-checkpointed SQLite file copy with a timestamp filename (`ipam-YYYY-MM-DD-HHmmss.sqlite`). You can also trigger a manual backup from the **Database Tools** admin page.
+
+> **Security note:** If you set a custom `dir` path, ensure it is either outside the webroot or protected by your web server configuration. The default `data/backups/` is inside the webroot but `.htaccess` blocks direct HTTP access to `*.sqlite` files.
+
+---
+
+## `audit_log_retention_days`
+
+See [`audit_log_retention_days`](#audit_log_retention_days) in the settings reference above.
+
+---
+
+## Health check endpoint
+
+The application exposes an unauthenticated health check at `GET /status.php`. No configuration is required. It returns:
+
+- **HTTP 200** with `{"status":"ok","version":"1.0","db":"ok"}` when the app and database are healthy.
+- **HTTP 503** with `{"status":"error","db":"error"}` when the database is unreachable.
+
+Use this URL with uptime monitors, load balancer health probes, or container `HEALTHCHECK` directives.
 
 ---
 
