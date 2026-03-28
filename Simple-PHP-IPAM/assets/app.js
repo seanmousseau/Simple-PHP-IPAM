@@ -53,20 +53,6 @@
       }
     }
 
-    // Site group collapse/expand — persist state in localStorage
-    document.querySelectorAll(".site-group-toggle").forEach(function(el) {
-      var storageKey = "ipam_sg_" + el.dataset.siteKey;
-      var header = el.querySelector(".site-group-header");
-      if (!header) return;
-      if (localStorage.getItem(storageKey) === "closed") {
-        el.classList.add("collapsed");
-      }
-      header.addEventListener("click", function() {
-        el.classList.toggle("collapsed");
-        localStorage.setItem(storageKey, el.classList.contains("collapsed") ? "closed" : "open");
-      });
-    });
-
     // Dropdown toggle
     document.addEventListener("click", function(e) {
       // Theme toggle inside user dropdown — cycle theme but keep dropdown open
