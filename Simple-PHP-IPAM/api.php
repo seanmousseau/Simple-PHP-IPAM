@@ -32,6 +32,20 @@ ipam_db_init($db);
 
 // ---- API key authentication ----
 
+$apiMaxAttempts   = (int)($config['api_max_attempts']   ?? 20);
+$apiLockoutSeconds = (int)($config['api_lockout_seconds'] ?? 300);
+$clientIp = (string)(
+    (!empty($config['proxy_trust']) ? ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? '') : '')
+    ?: ($_SERVER['REMOTE_ADDR'] ?? '')
+);
+
+// Rate-limit by IP before even reading the key
+if (login_rate_limited($db, $clientIp, $apiMaxAttempts, $apiLockoutSeconds)) {
+    http_response_code(429);
+    echo json_encode(['error' => 'Too many failed API key attempts. Try again later.']);
+    exit;
+}
+
 $rawKey = '';
 $authHeader = (string)($_SERVER['HTTP_AUTHORIZATION'] ?? '');
 if (preg_match('/^Bearer\s+(\S+)$/i', $authHeader, $m)) {
@@ -52,10 +66,14 @@ $st->execute([':h' => $keyHash]);
 $apiKey = $st->fetch();
 
 if (!$apiKey) {
+    record_login_failure($db, $clientIp);
     http_response_code(401);
     echo json_encode(['error' => 'Invalid or inactive API key.']);
     exit;
 }
+
+// Successful auth — clear any accumulated failures for this IP
+clear_login_failures($db, $clientIp);
 
 $db->prepare("UPDATE api_keys SET last_used_at = datetime('now') WHERE id = :id")
    ->execute([':id' => (int)$apiKey['id']]);

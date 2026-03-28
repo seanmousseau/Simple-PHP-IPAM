@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## 1.2 — Security Hardening & UX Improvements
+
+### Bug fixes
+- **Fixed #43:** LIKE wildcard characters (`%`, `_`, `\`) in search and filter inputs were passed unescaped to SQLite, causing incorrect or overly broad results. All LIKE queries now use `ESCAPE '\\'` with a new `like_escape()` helper in `lib.php`.
+- **Fixed #45:** OIDC HTTP functions (`oidc_http_get` / `oidc_http_post`) did not explicitly request SSL peer verification in their stream contexts. Added `'ssl' => ['verify_peer' => true, 'verify_peer_name' => true]` to both.
+- **Fixed #46:** Hostname, owner, and note fields in `addresses.php` had no server-side length enforcement. Added `substr()` clamping (253 / 255 / 1000 chars) on both create and update, plus matching `maxlength` attributes on the HTML inputs.
+- **Fixed #42:** SSO-only accounts (those with `oidc_sub` set) shown an empty password change form they could not use. The page now detects SSO-only accounts and displays an informational message instead of the form.
+
+### Security enhancements
+- **#40:** Config upgrade logic (`ipam_config_sync`) now deep-merges missing sub-keys into existing nested config blocks, ensuring new options within existing blocks (e.g. `oidc`) are correctly populated on upgrade.
+- **#44:** The REST API now applies the same IP-based rate limiting used by the web login form. After `api_max_attempts` failures from an IP the endpoint returns HTTP 429 for `api_lockout_seconds`. New config keys `api_max_attempts` (default 20) and `api_lockout_seconds` (default 300) are auto-populated on upgrade.
+
+### Enhancements
+- **#35:** Parent subnet utilization bars in the subnet list now roll up assignable/assigned counts from all descendant subnets. When a parent has children, the bar and IP counts reflect the entire subtree with an *(incl. subnets)* annotation.
+- **#37:** Site groups on the Subnets page are now collapsible. Each group renders as a `<details>` element with a caret indicator; collapse/expand state is persisted per-site-key in `localStorage`.
+
+---
+
 ## 1.1 — Bug Fixes & Enhancements
 
 ### Bug fixes

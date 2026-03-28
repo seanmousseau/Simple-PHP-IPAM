@@ -53,6 +53,17 @@
       }
     }
 
+    // Site group collapse/expand — persist state in localStorage
+    document.querySelectorAll(".site-group-toggle").forEach(function(el) {
+      var siteKey = "ipam_site_" + el.dataset.siteKey;
+      if (localStorage.getItem(siteKey) === "closed") {
+        el.removeAttribute("open");
+      }
+      el.addEventListener("toggle", function() {
+        localStorage.setItem(siteKey, el.open ? "open" : "closed");
+      });
+    });
+
     // Dropdown toggle
     document.addEventListener("click", function(e) {
       // Theme toggle inside user dropdown — cycle theme but keep dropdown open
