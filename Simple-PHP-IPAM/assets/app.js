@@ -55,12 +55,15 @@
 
     // Site group collapse/expand — persist state in localStorage
     document.querySelectorAll(".site-group-toggle").forEach(function(el) {
-      var siteKey = "ipam_site_" + el.dataset.siteKey;
-      if (localStorage.getItem(siteKey) === "closed") {
-        el.removeAttribute("open");
+      var storageKey = "ipam_sg_" + el.dataset.siteKey;
+      var header = el.querySelector(".site-group-header");
+      if (!header) return;
+      if (localStorage.getItem(storageKey) === "closed") {
+        el.classList.add("collapsed");
       }
-      el.addEventListener("toggle", function() {
-        localStorage.setItem(siteKey, el.open ? "open" : "closed");
+      header.addEventListener("click", function() {
+        el.classList.toggle("collapsed");
+        localStorage.setItem(storageKey, el.classList.contains("collapsed") ? "closed" : "open");
       });
     });
 

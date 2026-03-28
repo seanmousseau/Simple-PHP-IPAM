@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## 1.2.2 — Patch
+
+### Bug fixes
+- **Fixed:** Site groups on the Subnets page still not displaying after v1.2.1. The `<details>`/`<summary>` approach had browser-compatibility issues that caused inconsistent rendering. Replaced entirely with a `<div>`-based JS toggle (click handler on header div, CSS `collapsed` class, `display:none` on body). The localStorage key prefix changed to `ipam_sg_*` to clear any stale state written by v1.2/v1.2.1.
+
+---
+
 ## 1.2.1 — Patch
 
 ### Bug fixes

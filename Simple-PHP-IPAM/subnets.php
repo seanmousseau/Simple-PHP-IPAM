@@ -536,15 +536,18 @@ page_header('Subnets');
     <div class="empty-state">No subnets yet.</div>
   <?php else: ?>
     <?php foreach ($siteGroups as $groupKey => $group): ?>
-      <details class="site-group-toggle" open data-site-key="<?= e($groupKey) ?>">
-        <summary class="site-group-header">
+      <div class="site-group-toggle" data-site-key="<?= e($groupKey) ?>">
+        <div class="site-group-header">
+          <span class="site-group-caret">&#9658;</span>
           <span class="site-group-label"><?= e($group['label']) ?></span>
           <span class="badge"><?= count($group['roots']) ?> subnet<?= count($group['roots']) !== 1 ? 's' : '' ?></span>
-        </summary>
-        <?php foreach ($group['roots'] as $rid): ?>
-          <?php render_subnet_node_local($tree, $direct, $agg, $ipv4Unassigned, $ipv4UnassignedAgg, $siteMap, $siteList, (int)$rid, 0); ?>
-        <?php endforeach; ?>
-      </details>
+        </div>
+        <div class="site-group-body">
+          <?php foreach ($group['roots'] as $rid): ?>
+            <?php render_subnet_node_local($tree, $direct, $agg, $ipv4Unassigned, $ipv4UnassignedAgg, $siteMap, $siteList, (int)$rid, 0); ?>
+          <?php endforeach; ?>
+        </div>
+      </div>
     <?php endforeach; ?>
   <?php endif; ?>
 </div>
