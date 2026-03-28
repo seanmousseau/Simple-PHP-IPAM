@@ -87,9 +87,9 @@ try {
 }
 
 $sub              = (string)($payload['sub']                ?? '');
-$claimEmail       = trim((string)($payload['email']           ?? ''));
-$claimName        = trim((string)($payload['name']            ?? ''));
-$claimPrefUsername = trim((string)($payload['preferred_username'] ?? ''));
+$claimEmail       = substr(trim((string)($payload['email']           ?? '')), 0, 255);
+$claimName        = substr(trim((string)($payload['name']            ?? '')), 0, 255);
+$claimPrefUsername = substr(trim((string)($payload['preferred_username'] ?? '')), 0, 64);
 
 if ($sub === '') oidc_fail($db, 'id_token missing sub claim');
 

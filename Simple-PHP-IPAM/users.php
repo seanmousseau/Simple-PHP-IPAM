@@ -16,8 +16,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $username = trim((string)($_POST['username'] ?? ''));
         $password = (string)($_POST['password'] ?? '');
         $role     = (string)($_POST['role']     ?? 'readonly');
-        $name     = trim((string)($_POST['name']  ?? ''));
-        $email    = trim((string)($_POST['email'] ?? ''));
+        $name     = substr(trim((string)($_POST['name']  ?? '')), 0, 255);
+        $email    = substr(trim((string)($_POST['email'] ?? '')), 0, 255);
 
         if ($username === '' || !preg_match('~^[a-zA-Z0-9_.\-@]{3,64}$~', $username)) {
             $err = 'Username must be 3–64 chars (letters, numbers, _ . - @).';
@@ -67,8 +67,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     } elseif ($action === 'update_profile') {
         $id    = (int)($_POST['id']    ?? 0);
-        $name  = trim((string)($_POST['name']  ?? ''));
-        $email = trim((string)($_POST['email'] ?? ''));
+        $name  = substr(trim((string)($_POST['name']  ?? '')), 0, 255);
+        $email = substr(trim((string)($_POST['email'] ?? '')), 0, 255);
         $db->prepare("UPDATE users SET name = :n, email = :e WHERE id = :id")
            ->execute([':n' => $name, ':e' => $email, ':id' => $id]);
         audit($db, 'user.update_profile', 'user', $id, '');
@@ -160,8 +160,8 @@ page_header('Users');
   <input type="hidden" name="action" value="create">
   <div class="row">
     <label>Username<br><input name="username" required></label>
-    <label>Full name<br><input name="name" placeholder="Jane Smith"></label>
-    <label>Email<br><input type="email" name="email" placeholder="jane@example.com"></label>
+    <label>Full name<br><input name="name" placeholder="Jane Smith" maxlength="255"></label>
+    <label>Email<br><input type="email" name="email" placeholder="jane@example.com" maxlength="255"></label>
     <label>Password<br><input type="password" name="password" required></label>
     <label>Role<br>
       <select name="role">
@@ -234,8 +234,8 @@ page_header('Users');
               <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
               <input type="hidden" name="action" value="update_profile">
               <input type="hidden" name="id"     value="<?= (int)$u['id'] ?>">
-              <input name="name"  placeholder="Full name"  value="<?= e((string)$u['name']) ?>">
-              <input type="email" name="email" placeholder="Email" value="<?= e((string)$u['email']) ?>">
+              <input name="name"  placeholder="Full name"  value="<?= e((string)$u['name']) ?>" maxlength="255">
+              <input type="email" name="email" placeholder="Email" value="<?= e((string)$u['email']) ?>" maxlength="255">
               <button type="submit">Save profile</button>
             </form>
 

@@ -33,10 +33,6 @@
     updateThemeButton();
   };
 
-  // Keep old names in case anything calls them externally
-  window.ipamToggleTheme = window.ipamCycleTheme;
-  window.ipamClearTheme = function() { applyTheme("auto"); updateThemeButton(); };
-
   // Dismiss the update-available banner for the current version (stored in localStorage)
   window.ipamDismissUpdate = function(version) {
     localStorage.setItem("ipam_dismissed_update", version);

@@ -133,11 +133,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
 
                 audit($db, 'db.import', 'system', null,
                     'Database import completed; pre-import backup: ' . basename($backupPath));
-                $msg = 'Import successful. A pre-import backup was saved to: ' . e(basename($backupPath));
+                $msg = 'Import successful. A pre-import backup was saved to: ' . basename($backupPath);
             } catch (Throwable $ex) {
                 if ($db->inTransaction()) $db->rollBack();
                 $db->exec("PRAGMA foreign_keys=ON");
-                $err = 'Import failed: ' . e($ex->getMessage())
+                $err = 'Import failed: ' . $ex->getMessage()
                      . ' The database has been restored from the pre-import state.';
                 audit($db, 'db.import_failed', 'system', null,
                     'Import rolled back: ' . $ex->getMessage());
@@ -172,9 +172,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'backu
         $state = ['last_backup' => time(), 'last_file' => basename($dest)];
         @file_put_contents(__DIR__ . '/data/backup-state.json', json_encode($state));
         audit($db, 'db.backup', 'system', null, 'Manual backup: ' . basename($dest));
-        $msg = 'Backup created: ' . e(basename($dest));
+        $msg = 'Backup created: ' . basename($dest);
     } else {
-        $err = 'Backup failed: could not write to ' . e($bdir);
+        $err = 'Backup failed: could not write to ' . $bdir;
     }
 }
 
@@ -189,10 +189,10 @@ page_header('Database Tools');
 <h1>🗄 Database Tools</h1>
 
 <?php if ($err): ?>
-  <p class='danger'><?= $err ?></p>
+  <p class='danger'><?= e($err) ?></p>
 <?php endif; ?>
 <?php if ($msg): ?>
-  <p class='success'><?= $msg ?></p>
+  <p class='success'><?= e($msg) ?></p>
 <?php endif; ?>
 
 <div class='grid cols-2' style='margin-top:16px'>
