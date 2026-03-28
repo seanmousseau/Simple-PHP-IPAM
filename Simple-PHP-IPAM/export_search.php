@@ -3,7 +3,7 @@ declare(strict_types=1);
 require __DIR__ . '/init.php';
 require_login();
 
-$q = trim((string)($_GET['q'] ?? ''));
+$q = substr(trim((string)($_GET['q'] ?? '')), 0, 500);
 $status = trim((string)($_GET['status'] ?? ''));
 $subnetId = (int)($_GET['subnet_id'] ?? 0);
 

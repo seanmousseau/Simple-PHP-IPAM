@@ -53,6 +53,19 @@
       }
     }
 
+    // Site group collapse/expand with localStorage persistence
+    document.querySelectorAll(".site-group-toggle").forEach(function(btn) {
+      var sgKey = btn.dataset.sgKey;
+      if (sgKey && localStorage.getItem("ipam_sg_" + sgKey) === "closed") {
+        btn.setAttribute("aria-expanded", "false");
+      }
+      btn.addEventListener("click", function() {
+        var expanded = btn.getAttribute("aria-expanded") === "true";
+        btn.setAttribute("aria-expanded", expanded ? "false" : "true");
+        if (sgKey) localStorage.setItem("ipam_sg_" + sgKey, expanded ? "closed" : "open");
+      });
+    });
+
     // Dropdown toggle
     document.addEventListener("click", function(e) {
       // Theme toggle inside user dropdown — cycle theme but keep dropdown open

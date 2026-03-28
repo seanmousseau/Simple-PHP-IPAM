@@ -182,7 +182,7 @@ function logout_user(): void
 
 /* ---------------- Audit ---------------- */
 
-function client_ip(): string { return (string)($_SERVER['REMOTE_ADDR'] ?? ''); }
+function client_ip(): string { return (string)($_SERVER['REMOTE_ADDR'] ?? '127.0.0.1'); }
 
 function audit(PDO $db, string $action, string $entityType, ?int $entityId, string $details = ''): void
 {
@@ -1259,8 +1259,8 @@ function page_header(string $title): void
 
     echo "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
     echo "<title>" . e($title) . "</title>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=1.2.3'>";
-    echo "<script defer src='assets/app.js?v=1.2.3'></script>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=1.3'>";
+    echo "<script defer src='assets/app.js?v=1.3'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
@@ -1364,10 +1364,25 @@ function page_footer(): void
 }
 
 /**
+ * Normalise a version string to three dot-separated segments so that
+ * version_compare('1.2', '1.2.0') and version_compare('1.2.1', '1.2') work
+ * as expected regardless of how many segments the installed version has.
+ *
+ * Examples: '1.2' → '1.2.0',  'v1.2.1' → '1.2.1',  '0.15' → '0.15.0'
+ */
+function ipam_normalise_version(string $v): string
+{
+    $v = ltrim($v, 'v');
+    $parts = explode('.', $v);
+    while (count($parts) < 3) $parts[] = '0';
+    return implode('.', $parts);
+}
+
+/**
  * Check GitHub for a newer release. Results are cached in data/tmp/ for the
  * configured TTL (default 6 hours). Network failures are silently ignored.
  *
- * Returns ['version' => '0.15', 'url' => 'https://...'] if newer, otherwise null.
+ * Returns ['version' => '1.2.1', 'url' => 'https://...'] if newer, otherwise null.
  */
 function ipam_update_check(array $config): ?array
 {
@@ -1391,7 +1406,7 @@ function ipam_update_check(array $config): ?array
             // upgraded — invalidate so the next check fetches fresh data from GitHub
             require_once __DIR__ . '/version.php';
             if (isset($d['update']['version'])
-                && version_compare((string)$d['update']['version'], IPAM_VERSION, '<=')) {
+                && version_compare(ipam_normalise_version((string)$d['update']['version']), ipam_normalise_version(IPAM_VERSION), '<=')) {
                 @unlink($cache);
             } else {
                 $memo = isset($d['update']) ? (array)$d['update'] : null;
@@ -1424,7 +1439,7 @@ function ipam_update_check(array $config): ?array
                     if (empty($rel['tag_name'])) continue;
 
                     $latest = ltrim((string)$rel['tag_name'], 'v');
-                    if (version_compare($latest, IPAM_VERSION, '>')) {
+                    if (version_compare(ipam_normalise_version($latest), ipam_normalise_version(IPAM_VERSION), '>')) {
                         $result = [
                             'version'    => $latest,
                             'url'        => (string)($rel['html_url'] ?? ''),

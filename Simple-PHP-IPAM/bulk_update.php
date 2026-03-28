@@ -18,7 +18,7 @@ $st->execute();
 $subnets = $st->fetchAll();
 
 $subnetId = (int)($_GET['subnet_id'] ?? ($_POST['subnet_id'] ?? 0));
-$q = trim((string)($_GET['q'] ?? ($_POST['q'] ?? '')));
+$q = substr(trim((string)($_GET['q'] ?? ($_POST['q'] ?? ''))), 0, 500);
 
 $addresses = [];
 $subnet = null;

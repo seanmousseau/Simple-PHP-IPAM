@@ -406,6 +406,32 @@ button:disabled{opacity:.6;cursor:not-allowed}
 .util-bar-fill--warn{background:var(--warn)}
 .util-bar-fill--crit{background:var(--danger)}
 
+/* Site group collapse/expand */
+.site-group-toggle{
+  display:flex;
+  align-items:center;
+  width:100%;
+  background:none;
+  border:none;
+  border-bottom:2px solid var(--border);
+  padding:0 0 6px 0;
+  margin:0 0 8px 0;
+  cursor:pointer;
+  font-size:1.05em;
+  font-weight:600;
+  color:var(--fg);
+  text-align:left;
+}
+.site-group-toggle:hover{color:var(--link)}
+.site-group-caret{
+  margin-left:auto;
+  font-size:.8em;
+  transition:transform .15s ease;
+  display:inline-block;
+}
+.site-group-toggle[aria-expanded="false"] .site-group-caret{transform:rotate(-90deg)}
+.site-group-toggle[aria-expanded="false"]+.site-group-body{display:none}
+
 summary{
   cursor:pointer;
   padding:4px 0;

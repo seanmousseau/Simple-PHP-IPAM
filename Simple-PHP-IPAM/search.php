@@ -3,7 +3,7 @@ declare(strict_types=1);
 require __DIR__ . '/init.php';
 require_login();
 
-$q          = trim((string)($_GET['q'] ?? ''));
+$q          = substr(trim((string)($_GET['q'] ?? '')), 0, 500);
 $status     = trim((string)($_GET['status'] ?? ''));
 $subnetId   = (int)($_GET['subnet_id'] ?? 0);
 $siteId     = (int)($_GET['site_id'] ?? 0);
@@ -67,9 +67,10 @@ $p = paginate($total, $page, $pageSize);
 
 $st = $db->prepare("
     SELECT a.id, a.subnet_id, a.ip, a.hostname, a.owner, a.status, a.note, a.updated_at,
-           s.cidr AS subnet_cidr
+           s.cidr AS subnet_cidr, si.name AS site_name
     FROM addresses a
     JOIN subnets s ON s.id = a.subnet_id
+    LEFT JOIN sites si ON si.id = s.site_id
     $whereSql
     ORDER BY s.cidr ASC, a.ip_bin ASC
     LIMIT :lim OFFSET :off
@@ -194,6 +195,7 @@ page_header('Search');
     <table style="margin-top:12px">
       <thead>
         <tr>
+          <th>Site</th>
           <th>Subnet</th>
           <th>IP</th>
           <th>Hostname</th>
@@ -207,6 +209,7 @@ page_header('Search');
       <tbody>
       <?php foreach ($rows as $r): ?>
         <tr>
+          <td><?= $r['site_name'] !== null ? e($r['site_name']) : '<span class="muted">—</span>' ?></td>
           <td><?= e($r['subnet_cidr']) ?></td>
           <td><?= e($r['ip']) ?></td>
           <td><?= e($r['hostname']) ?></td>

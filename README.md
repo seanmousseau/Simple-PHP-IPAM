@@ -91,6 +91,16 @@ See the [Installation guide](docs/install.md) for full web server configuration 
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
+### What's new in 1.3
+
+**Site collapse/expand** — Site groups on the Subnets page are now collapsible. Click a site group header to toggle it open or closed. State persists across page loads via `localStorage`.
+
+**Search site column** — The Search results table now shows the site each result belongs to, alongside the subnet CIDR.
+
+**API subnets pagination** — `GET api.php?resource=subnets` is now paginated (`&page=N&limit=N`, max 1000, default 200) with a standard `total`/`page`/`limit` envelope.
+
+**Security & hardening** — XSS fix for inherited site name in subnet warnings; upgrade detection normalises version strings to x.x.x format; rate limiting no longer falls back to an empty IP; search queries capped at 500 chars server-side; subnet deletion now records the address count in the audit log.
+
 ### What's new in 1.1
 
 **Bug fixes** — update-check cache is now invalidated immediately after an upgrade; `ipam_update_check()` is memoised so only one HTTP request is made per page load; fresh installs stamp all migration versions on first run; `find_containing_subnet()` now correctly returns the tightest (most-specific) parent subnet.

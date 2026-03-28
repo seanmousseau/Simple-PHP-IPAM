@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## 1.3 — Hardening, Search & API Improvements
+
+### Security fixes
+- **Fixed #53:** XSS — unescaped site name in `$warn` output on the Subnets page when a site is auto-inherited from a parent subnet. Site name is now passed through `e()` before being embedded in the warning message.
+
+### Bug fixes
+- **Fixed #52:** Upgrade detection did not recognise patch releases when the installed version used a two-part number (e.g. `1.2` vs `1.2.1`). Both the installed version and the GitHub release tag are now normalised to three segments before comparison (`1.2` → `1.2.0`).
+- **Fixed #48:** Rate limiting fell back to an empty string when `REMOTE_ADDR` was absent (unusual SAPI environments). Changed fallback to `127.0.0.1` in both `api.php` and `client_ip()` in `lib.php`.
+- **Fixed #54:** Deleting a subnet did not record how many addresses were cascade-deleted. The `subnet.delete` audit entry now includes `addresses_deleted=N`.
+
+### Hardening
+- **Fixed #47:** Search query `$q` in `search.php`, `bulk_update.php`, and `export_search.php` is now capped at 500 characters server-side before being passed to the SQLite LIKE expression.
+
+### Enhancements
+- **Feature #37:** Site groups on the Subnets → Grouped Hierarchy section are now collapsible/expandable. Click a site group header to toggle. State persists across page loads via `localStorage`. Implemented using `aria-expanded` as the CSS hook so all groups are always fully rendered on initial page load — collapse state is applied after JS runs.
+- **Feature #55:** REST API `?resource=subnets` endpoint now supports pagination (`&page=N&limit=N`, max 1000, default 200). Response includes `total`, `page`, `limit`, and `subnets` fields.
+- **Feature #56:** Search results table now includes a **Site** column, showing which site each result's subnet belongs to (or a dash for ungrouped subnets).
+
+---
+
 ## 1.2.3 — Patch
 
 ### Bug fixes
