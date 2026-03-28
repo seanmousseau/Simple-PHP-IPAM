@@ -382,7 +382,7 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
     echo "<b>" . e($row['cidr']) . "</b> ";
     echo "<span class='muted'>(v" . (int)$row['ip_version'] . ")</span> ";
     if ($siteName !== '') echo " <span class='badge'>" . e($siteName) . "</span>";
-    if ($row['description'] !== '') echo " - " . e($row['description']);
+    if (($row['description'] ?? '') !== '') echo " - " . e((string)$row['description']);
     // Address count badges — direct counts on this subnet, aggregated in parens if children differ
     $countHtml = "<span class='status-used'>" . $d['used'] . " used</span>"
                . " &middot; <span class='status-reserved'>" . $d['reserved'] . " reserved</span>"
