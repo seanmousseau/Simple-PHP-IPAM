@@ -91,6 +91,22 @@ See the [Installation guide](docs/install.md) for full web server configuration 
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
+### What's new in 1.1
+
+**Bug fixes** — update-check cache is now invalidated immediately after an upgrade; `ipam_update_check()` is memoised so only one HTTP request is made per page load; fresh installs stamp all migration versions on first run; `find_containing_subnet()` now correctly returns the tightest (most-specific) parent subnet.
+
+**Utilization accuracy** — free-status addresses are excluded from utilization calculations. Only `used` and `reserved` addresses count toward subnet fill rates and the dashboard Top Subnets table.
+
+**Bulk edit — unconfigured IPs** — for IPv4 subnets with ≤ 4094 assignable IPs, the bulk edit tool now shows every unrecorded host IP as a `free (unconfigured)` row. Selecting them and applying Update inserts new address records in one step.
+
+**Default password warning** — a red banner is shown to all logged-in users until the bootstrap admin password is changed from its default value.
+
+**Address history API** — new REST resource `GET api.php?resource=history&address_id=N` returns the paginated change history for any address record.
+
+**Subnet count badges** — each subnet node header now displays coloured `N used · N reserved · N free` address count badges, with a muted subtree aggregate when child subnets exist.
+
+**Audit log filter** — a category filter dropdown on the audit log page lets administrators narrow events to `auth`, `subnet`, `address`, `user`, `site`, `apikey`, `dhcp_pool`, `export`, or `import`.
+
 ### What's new in 1.0
 
 **Production release** — security fixes, schema completeness, and operational polish.
