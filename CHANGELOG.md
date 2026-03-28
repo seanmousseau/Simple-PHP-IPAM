@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## 1.1 — Bug Fixes & Enhancements
+
+### Bug fixes
+- **Fixed #21:** Update-check cache was not invalidated after an upgrade. The cached version is now compared against `IPAM_VERSION` on load; if the cache is stale (cached version ≤ running version), it is deleted and re-fetched immediately.
+- **Fixed #26:** Fresh installs did not stamp existing migrations as applied. `ipam_db_init()` now inserts all migration version keys into `schema_migrations` when initialising a brand-new database, preventing spurious re-runs of already-incorporated migrations on any future upgrade.
+- **Fixed #27:** `find_containing_subnet()` returned the broadest matching parent instead of the tightest. `ORDER BY prefix ASC` was changed to `ORDER BY prefix DESC` so the most-specific parent is selected.
+
+### Enhancements
+- **#22:** Free-status addresses no longer count towards subnet utilisation. Progress bars and the dashboard Top Subnets table now only include `used` and `reserved` addresses in the numerator.
+- **#23:** Bulk edit tool shows unconfigured IPs. For IPv4 subnets with ≤ 4094 assignable IPs and no active search filter, all IPs not yet in the addresses table appear as dimmed `free (unconfigured)` rows. Selecting them and applying **Update** inserts them with the chosen field values and logs the creation. A "Select unconfigured" button makes batch-configuring new IPs easy.
+- **#25:** `ipam_update_check()` is now memoised; calling it from both `page_header()` and `page_footer()` no longer makes two HTTP requests per page.
+- **#28:** A dismissible danger banner is shown to all logged-in users when the default bootstrap admin password (`ChangeMeNow!12345`) is still in use.
+- **#29:** New REST API resource `GET api.php?resource=history&address_id=<id>` returns the paginated change history for any address record, with decoded `before`/`after` JSON objects.
+- **#30:** Subnet node headers in the subnet list now display coloured address count badges (`N used · N reserved · N free`) with an optional subtree aggregate when child subnets exist.
+- **#31:** Audit log now has an **action category filter** dropdown (`auth`, `subnet`, `address`, `user`, `site`, `apikey`, `dhcp_pool`, `export`, `import`). The filter is preserved across pagination.
+
+---
+
 ## 1.0 — Production Release
 
 ### Security hardening

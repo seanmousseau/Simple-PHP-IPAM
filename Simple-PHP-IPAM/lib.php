@@ -38,7 +38,13 @@ function ipam_db_init(PDO $db): void
         $ins = $db->prepare("INSERT INTO users (username, password_hash, role, is_active) VALUES (:u,:h,'admin',1)");
         $ins->execute([':u' => $u, ':h' => $hash]);
 
+        // Stamp all known migrations as already satisfied by the fresh schema
         ensure_migrations_table($db);
+        require_once __DIR__ . '/migrations.php';
+        $stamp = $db->prepare("INSERT OR IGNORE INTO schema_migrations (version) VALUES (:v)");
+        foreach (array_keys(ipam_migrations()) as $ver) {
+            $stamp->execute([':v' => $ver]);
+        }
         return;
     }
 
@@ -1097,7 +1103,7 @@ function netmask_to_prefix(string $mask): ?int
 function find_containing_subnet(PDO $db, array $normIp): ?array
 {
     $ver = (int)$normIp['version'];
-    $st = $db->prepare("SELECT id, network, prefix, ip_version FROM subnets WHERE ip_version = :v ORDER BY prefix ASC");
+    $st = $db->prepare("SELECT id, network, prefix, ip_version FROM subnets WHERE ip_version = :v ORDER BY prefix DESC");
     $st->execute([':v' => $ver]);
     foreach ($st->fetchAll() as $s) {
         if (ip_in_cidr($normIp['ip'], (string)$s['network'], (int)$s['prefix'])) return $s;
@@ -1210,8 +1216,8 @@ function page_header(string $title): void
 
     echo "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
     echo "<title>" . e($title) . "</title>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=1.0'>";
-    echo "<script defer src='assets/app.js?v=1.0'></script>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=1.1'>";
+    echo "<script defer src='assets/app.js?v=1.1'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
@@ -1256,6 +1262,17 @@ function page_header(string $title): void
 
     echo "</div></div>";
     echo "<div class='page'>";
+
+    // Default bootstrap admin password warning (admin only)
+    if (($role ?? '') === 'admin') {
+        global $config;
+        if (($config['bootstrap_admin']['password'] ?? '') === 'ChangeMeNow!12345') {
+            echo "<div class='admin-notice admin-notice--danger' role='alert'>"
+               . "⚠ <strong>Security warning:</strong> The default bootstrap admin password is still set in <code>config.php</code>. "
+               . "<a href='change_password.php'>Change your password</a> and update <code>config.php</code> before this site receives any traffic."
+               . "</div>";
+        }
+    }
 
     // Config auto-population notice (shown once per session, admin only)
     if (!empty($_SESSION['config_notice']) && ($role ?? '') === 'admin') {
@@ -1311,8 +1328,12 @@ function page_footer(): void
  */
 function ipam_update_check(array $config): ?array
 {
+    // Memoize within a single request — page_header() and page_footer() both call this
+    static $memo = false;
+    if ($memo !== false) return $memo;
+
     $uc = $config['update_check'] ?? [];
-    if (isset($uc['enabled']) && !(bool)$uc['enabled']) return null;
+    if (isset($uc['enabled']) && !(bool)$uc['enabled']) { $memo = null; return null; }
 
     $ttl             = max(3600, (int)($uc['ttl_seconds'] ?? 86400));
     $notifyPrerelease = !empty($uc['notify_prerelease']);
@@ -1323,7 +1344,16 @@ function ipam_update_check(array $config): ?array
     if (is_file($cache) && (time() - (int)filemtime($cache)) < $ttl) {
         $d = json_decode((string)file_get_contents($cache), true);
         if (is_array($d) && array_key_exists('checked', $d)) {
-            return isset($d['update']) ? (array)$d['update'] : null;
+            // If the cached update version is <= the running version, we've already
+            // upgraded — invalidate so the next check fetches fresh data from GitHub
+            require_once __DIR__ . '/version.php';
+            if (isset($d['update']['version'])
+                && version_compare((string)$d['update']['version'], IPAM_VERSION, '<=')) {
+                @unlink($cache);
+            } else {
+                $memo = isset($d['update']) ? (array)$d['update'] : null;
+                return $memo;
+            }
         }
     }
 
@@ -1368,6 +1398,7 @@ function ipam_update_check(array $config): ?array
 
     @file_put_contents($cache, json_encode(['checked' => time(), 'update' => $result]));
     @chmod($cache, 0600);
+    $memo = $result;
     return $result;
 }
 

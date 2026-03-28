@@ -16,6 +16,8 @@ declare(strict_types=1);
  *     optional: &subnet_id=N  &status=used|reserved|free
  *     optional: &page=N  &limit=N (max 500, default 100)
  *   GET api.php?resource=sites              — list all sites
+ *   GET api.php?resource=history&address_id=N — address change history (paginated)
+ *     optional: &page=N  &limit=N (max 200, default 50)
  */
 
 // No session; stateless API request
@@ -66,7 +68,8 @@ match ($resource) {
     'subnets'   => api_subnets($db),
     'addresses' => api_addresses($db),
     'sites'     => api_sites($db),
-    default     => api_error(404, 'Unknown resource. Valid resources: subnets, addresses, sites'),
+    'history'   => api_history($db),
+    default     => api_error(404, 'Unknown resource. Valid resources: subnets, addresses, sites, history'),
 };
 
 // ---- Helpers ----
@@ -193,4 +196,62 @@ function api_sites(PDO $db): never
         ];
     }, $st->fetchAll());
     api_json(['sites' => $rows]);
+}
+
+function api_history(PDO $db): never
+{
+    if (!isset($_GET['address_id'])) {
+        api_error(400, 'address_id is required.');
+    }
+    $addressId = (int)$_GET['address_id'];
+
+    // Verify the address exists
+    $st = $db->prepare("SELECT id, ip FROM addresses WHERE id = :id");
+    $st->execute([':id' => $addressId]);
+    $addr = $st->fetch();
+    if (!$addr) {
+        api_error(404, 'Address not found.');
+    }
+
+    $page   = max(1, (int)($_GET['page']  ?? 1));
+    $limit  = max(1, min(200, (int)($_GET['limit'] ?? 50)));
+    $offset = ($page - 1) * $limit;
+
+    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM address_history WHERE address_id = :id");
+    $cntSt->execute([':id' => $addressId]);
+    $total = (int)$cntSt->fetch()['c'];
+
+    $st = $db->prepare(
+        "SELECT id, action, before_json, after_json, username, created_at
+         FROM address_history
+         WHERE address_id = :id
+         ORDER BY id DESC
+         LIMIT :lim OFFSET :off"
+    );
+    $st->bindValue(':id',  $addressId, PDO::PARAM_INT);
+    $st->bindValue(':lim', $limit,     PDO::PARAM_INT);
+    $st->bindValue(':off', $offset,    PDO::PARAM_INT);
+    $st->execute();
+
+    $rows = array_map(function(array $r): array {
+        $before = $r['before_json'] !== null ? json_decode((string)$r['before_json'], true) : null;
+        $after  = $r['after_json']  !== null ? json_decode((string)$r['after_json'],  true) : null;
+        return [
+            'id'         => (int)$r['id'],
+            'action'     => $r['action'],
+            'before'     => $before,
+            'after'      => $after,
+            'username'   => (string)$r['username'],
+            'created_at' => $r['created_at'],
+        ];
+    }, $st->fetchAll());
+
+    api_json([
+        'address_id' => $addressId,
+        'ip'         => $addr['ip'],
+        'total'      => $total,
+        'page'       => $page,
+        'limit'      => $limit,
+        'history'    => $rows,
+    ]);
 }

@@ -3,30 +3,65 @@ declare(strict_types=1);
 require __DIR__ . '/init.php';
 require_role('admin');
 
-$page = q_int('page', 1, 1, 1000000);
-$limit = q_int('page_size', 100, 1, 500);
-$offset = ($page - 1) * $limit;
+// --- Valid action prefixes (categories) ---
+const AUDIT_PREFIXES = ['auth', 'subnet', 'address', 'user', 'site', 'apikey', 'dhcp_pool', 'export', 'import'];
 
-$st = $db->prepare("SELECT COUNT(*) AS c FROM audit_log");
-$st->execute();
-$total = (int)$st->fetch()['c'];
+$filterPrefix = trim((string)($_GET['prefix'] ?? ''));
+if ($filterPrefix !== '' && !in_array($filterPrefix, AUDIT_PREFIXES, true)) {
+    $filterPrefix = '';
+}
+
+$page  = q_int('page', 1, 1, 1000000);
+$limit = q_int('page_size', 100, 1, 500);
+
+// --- Count with optional filter ---
+if ($filterPrefix !== '') {
+    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM audit_log WHERE action LIKE :p");
+    $cntSt->execute([':p' => $filterPrefix . '.%']);
+} else {
+    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM audit_log");
+    $cntSt->execute();
+}
+$total = (int)$cntSt->fetch()['c'];
 $pages = (int)max(1, ceil($total / $limit));
 
 if ($page > $pages) {
-    $page = $pages;
-    $offset = ($page - 1) * $limit;
+    $page   = $pages;
 }
+$offset = ($page - 1) * $limit;
 
-$st = $db->prepare("
-    SELECT id, created_at, username, action, entity_type, entity_id, ip, details
-    FROM audit_log
-    ORDER BY id DESC
-    LIMIT :lim OFFSET :off
-");
-$st->bindValue(':lim', $limit, PDO::PARAM_INT);
-$st->bindValue(':off', $offset, PDO::PARAM_INT);
+// --- Fetch rows ---
+if ($filterPrefix !== '') {
+    $st = $db->prepare("
+        SELECT id, created_at, username, action, entity_type, entity_id, ip, details
+        FROM audit_log
+        WHERE action LIKE :p
+        ORDER BY id DESC
+        LIMIT :lim OFFSET :off
+    ");
+    $st->bindValue(':p',   $filterPrefix . '.%');
+    $st->bindValue(':lim', $limit,  PDO::PARAM_INT);
+    $st->bindValue(':off', $offset, PDO::PARAM_INT);
+} else {
+    $st = $db->prepare("
+        SELECT id, created_at, username, action, entity_type, entity_id, ip, details
+        FROM audit_log
+        ORDER BY id DESC
+        LIMIT :lim OFFSET :off
+    ");
+    $st->bindValue(':lim', $limit,  PDO::PARAM_INT);
+    $st->bindValue(':off', $offset, PDO::PARAM_INT);
+}
 $st->execute();
 $rows = $st->fetchAll();
+
+// Build a query string preserving filter+page_size across pagination links
+function audit_qs(int $page, int $limit, string $prefix): string
+{
+    $p = ['page' => $page, 'page_size' => $limit];
+    if ($prefix !== '') $p['prefix'] = $prefix;
+    return '?' . http_build_query($p);
+}
 
 page_header('Audit Log');
 ?>
@@ -42,6 +77,9 @@ page_header('Audit Log');
     <h1>Audit Log</h1>
     <div class="muted">
       Events: <b><?= e((string)$total) ?></b>
+      <?php if ($filterPrefix !== ''): ?>
+        <span class="badge"><?= e($filterPrefix) ?></span>
+      <?php endif; ?>
       <?php if ($total > 0): ?>
         &nbsp;|&nbsp; Page <b><?= e((string)$page) ?></b> of <b><?= e((string)$pages) ?></b>
       <?php endif; ?>
@@ -49,13 +87,27 @@ page_header('Audit Log');
   </div>
 </div>
 
-<div class="page-actions">
+<div class="page-actions" style="align-items:center;gap:12px">
   <a class="action-pill" href="export_audit.php">⬇ Export CSV</a>
+  <form method="get" action="audit.php" style="display:flex;gap:8px;align-items:center;margin:0">
+    <label style="margin:0">Filter:
+      <select name="prefix" onchange="this.form.submit()" style="margin-left:4px">
+        <option value=""<?= $filterPrefix === '' ? ' selected' : '' ?>>All actions</option>
+        <?php foreach (AUDIT_PREFIXES as $pfx): ?>
+          <option value="<?= e($pfx) ?>"<?= $filterPrefix === $pfx ? ' selected' : '' ?>><?= e($pfx) ?></option>
+        <?php endforeach; ?>
+      </select>
+    </label>
+    <input type="hidden" name="page_size" value="<?= $limit ?>">
+    <?php if ($filterPrefix !== ''): ?>
+      <a href="audit.php?page_size=<?= $limit ?>">✕ Clear</a>
+    <?php endif; ?>
+  </form>
 </div>
 
 <div class="card" style="margin-top:16px">
   <?php if (!$rows): ?>
-    <div class="empty-state">No audit entries yet.</div>
+    <div class="empty-state">No audit entries<?= $filterPrefix !== '' ? ' for category <b>' . e($filterPrefix) . '</b>' : '' ?>.</div>
   <?php else: ?>
     <table>
       <thead>
@@ -84,10 +136,10 @@ page_header('Audit Log');
 
     <p style="margin-top:12px">
       <?php if ($page > 1): ?>
-        <a href="audit.php?page=<?= $page - 1 ?>&page_size=<?= $limit ?>">&laquo; Prev</a>
+        <a href="<?= e(audit_qs($page - 1, $limit, $filterPrefix)) ?>">&laquo; Prev</a>
       <?php endif; ?>
       <?php if ($page < $pages): ?>
-        <a href="audit.php?page=<?= $page + 1 ?>&page_size=<?= $limit ?>" style="margin-left:12px">Next &raquo;</a>
+        <a href="<?= e(audit_qs($page + 1, $limit, $filterPrefix)) ?>" style="margin-left:12px">Next &raquo;</a>
       <?php endif; ?>
     </p>
   <?php endif; ?>

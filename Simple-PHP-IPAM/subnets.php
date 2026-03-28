@@ -239,10 +239,6 @@ function subnet_aggregated_counts_local(array $tree, array $directCounts): array
     return $agg;
 }
 
-function fmt_counts_local(array $c): string
-{
-    return "total {$c['total']} (used {$c['used']}, res {$c['reserved']}, free {$c['free']})";
-}
 
 function ipv4_broadcast_bin_local(string $netBin, int $prefix): string
 {
@@ -263,7 +259,8 @@ function ipv4_unassigned_summary_local(PDO $db): array
     $subs = $st->fetchAll();
     if (!$subs) return [];
 
-    $st = $db->prepare("SELECT a.subnet_id, a.ip_bin FROM addresses a JOIN subnets s ON s.id=a.subnet_id WHERE s.ip_version=4");
+    // Only count used/reserved — free addresses do not contribute to utilization
+    $st = $db->prepare("SELECT a.subnet_id, a.ip_bin FROM addresses a JOIN subnets s ON s.id=a.subnet_id WHERE s.ip_version=4 AND a.status IN ('used','reserved')");
     $st->execute();
     $addrRows = $st->fetchAll();
 
@@ -353,7 +350,14 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
     echo "<span class='muted'>(v" . (int)$row['ip_version'] . ")</span> ";
     if ($siteName !== '') echo " <span class='badge'>" . e($siteName) . "</span>";
     if ($row['description'] !== '') echo " - " . e($row['description']);
-    echo "<br><span class='muted'>Direct: " . e(fmt_counts_local($d)) . " | With children: " . e(fmt_counts_local($a)) . "</span>";
+    // Address count badges — direct counts on this subnet, aggregated in parens if children differ
+    $countHtml = "<span class='status-used'>" . $d['used'] . " used</span>"
+               . " &middot; <span class='status-reserved'>" . $d['reserved'] . " reserved</span>"
+               . " &middot; <span class='status-free'>" . $d['free'] . " free</span>";
+    if ($a['total'] !== $d['total']) {
+        $countHtml .= " <span class='muted'>(subtree: " . $a['used'] . "u / " . $a['reserved'] . "r / " . $a['free'] . "f)</span>";
+    }
+    echo "<br>" . $countHtml;
 
     if ((int)$row['ip_version'] === 4 && isset($ipv4Unassigned[$id])) {
         $u = $ipv4Unassigned[$id];

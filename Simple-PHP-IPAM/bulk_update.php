@@ -23,8 +23,13 @@ $q = trim((string)($_GET['q'] ?? ($_POST['q'] ?? '')));
 $addresses = [];
 $subnet = null;
 
+// Unconfigured-IP display state (IPv4 only)
+$unconfigured        = [];   // array of IP strings not yet in addresses table
+$unconfiguredCapped  = false;
+$unconfiguredTotal   = 0;    // count when capped
+
 if ($subnetId > 0) {
-    $st = $db->prepare("SELECT id, cidr FROM subnets WHERE id = :id");
+    $st = $db->prepare("SELECT id, cidr, ip_version, prefix, network, network_bin FROM subnets WHERE id = :id");
     $st->execute([':id' => $subnetId]);
     $subnet = $st->fetch() ?: null;
 
@@ -43,6 +48,37 @@ if ($subnetId > 0) {
     $st = $db->prepare($sql);
     $st->execute($params);
     $addresses = $st->fetchAll();
+
+    // --- Enumerate unconfigured IPs for IPv4 subnets (prefix 20–30) when no search ---
+    if ($subnet && (int)$subnet['ip_version'] === 4 && $q === '') {
+        $prefix     = (int)$subnet['prefix'];
+        $assignable = ipv4_assignable_count($prefix);
+
+        if ($assignable > 0 && $assignable <= 4094) {
+            $configuredIps = array_flip(array_column($addresses, 'ip'));
+            $netBin  = $subnet['network_bin'];
+            $netInt  = ipv4_bin_to_int($netBin);
+
+            if ($prefix >= 32) {
+                $ip = (string)inet_ntop($netBin);
+                if (!isset($configuredIps[$ip])) $unconfigured[] = $ip;
+            } elseif ($prefix === 31) {
+                for ($i = 0; $i <= 1; $i++) {
+                    $ip = ipv4_int_to_text($netInt + $i);
+                    if (!isset($configuredIps[$ip])) $unconfigured[] = $ip;
+                }
+            } else {
+                $broadcastInt = $netInt | ((1 << (32 - $prefix)) - 1);
+                for ($i = $netInt + 1; $i < $broadcastInt; $i++) {
+                    $ip = ipv4_int_to_text($i);
+                    if (!isset($configuredIps[$ip])) $unconfigured[] = $ip;
+                }
+            }
+        } elseif ($assignable > 4094) {
+            $unconfiguredCapped = true;
+            $unconfiguredTotal  = max(0, $assignable - count($addresses));
+        }
+    }
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -56,16 +92,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $ids = array_values(array_unique(array_map('intval', $ids)));
     $ids = array_filter($ids, fn($v) => $v > 0);
 
+    $unconfIps = $_POST['unconf_ips'] ?? [];
+    if (!is_array($unconfIps)) $unconfIps = [];
+    $unconfIps = array_values(array_unique(array_map('trim', $unconfIps)));
+
     $action = (string)($_POST['bulk_action'] ?? 'update');
 
     if ($subnetId <= 0) {
         $err = "Select a subnet.";
-    } elseif (count($ids) === 0) {
+    } elseif (count($ids) === 0 && count($unconfIps) === 0) {
         $err = "Select at least one address.";
     } else {
         try {
             $db->beginTransaction();
 
+            // Build IN clause for existing IDs
             $in = [];
             $paramsBefore = [':sid' => $subnetId];
             foreach ($ids as $i => $id) {
@@ -74,42 +115,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $paramsBefore[$k] = $id;
             }
 
-            $sel = $db->prepare("SELECT id, ip, hostname, owner, note, status
-                                 FROM addresses
-                                 WHERE subnet_id=:sid AND id IN (" . implode(',', $in) . ")");
-            $sel->execute($paramsBefore);
-            $beforeRows = $sel->fetchAll();
             $beforeMap = [];
-            foreach ($beforeRows as $r) $beforeMap[(int)$r['id']] = $r;
+            if ($in) {
+                $sel = $db->prepare("SELECT id, ip, hostname, owner, note, status
+                                     FROM addresses
+                                     WHERE subnet_id=:sid AND id IN (" . implode(',', $in) . ")");
+                $sel->execute($paramsBefore);
+                $beforeRows = $sel->fetchAll();
+                foreach ($beforeRows as $r) $beforeMap[(int)$r['id']] = $r;
+            }
 
             if ($action === 'delete') {
-                $confirm = strtoupper(trim((string)($_POST['confirm_delete'] ?? '')));
-                if ($confirm !== 'DELETE') {
+                // Unconfigured IPs have nothing to delete — only process existing IDs
+                if (!$in) {
                     $db->rollBack();
-                    $err = "To delete, type DELETE in the confirmation box.";
+                    $err = "No existing addresses selected to delete.";
                 } else {
-                    $del = $db->prepare("DELETE FROM addresses WHERE subnet_id=:sid AND id IN (" . implode(',', $in) . ")");
-                    $del->execute($paramsBefore);
-                    $affected = $del->rowCount();
+                    $confirm = strtoupper(trim((string)($_POST['confirm_delete'] ?? '')));
+                    if ($confirm !== 'DELETE') {
+                        $db->rollBack();
+                        $err = "To delete, type DELETE in the confirmation box.";
+                    } else {
+                        $del = $db->prepare("DELETE FROM addresses WHERE subnet_id=:sid AND id IN (" . implode(',', $in) . ")");
+                        $del->execute($paramsBefore);
+                        $affected = $del->rowCount();
 
-                    foreach ($ids as $id) {
-                        if (!isset($beforeMap[$id])) continue;
-                        $b = $beforeMap[$id];
-                        history_log_address($db, 'bulk_delete', $subnetId, (string)$b['ip'], (int)$b['id'], [
-                            'hostname' => (string)$b['hostname'],
-                            'owner' => (string)$b['owner'],
-                            'note' => (string)$b['note'],
-                            'status' => (string)$b['status'],
-                        ], null);
+                        foreach ($ids as $id) {
+                            if (!isset($beforeMap[$id])) continue;
+                            $b = $beforeMap[$id];
+                            history_log_address($db, 'bulk_delete', $subnetId, (string)$b['ip'], (int)$b['id'], [
+                                'hostname' => (string)$b['hostname'],
+                                'owner'    => (string)$b['owner'],
+                                'note'     => (string)$b['note'],
+                                'status'   => (string)$b['status'],
+                            ], null);
+                        }
+
+                        audit($db, 'address.bulk_delete', 'address', null,
+                            "subnet_id=$subnetId selected=" . count($ids) . " affected=$affected"
+                        );
+
+                        $db->commit();
+                        header('Location: bulk_update.php?subnet_id=' . $subnetId . '&q=' . urlencode($q));
+                        exit;
                     }
-
-                    audit($db, 'address.bulk_delete', 'address', null,
-                        "subnet_id=$subnetId selected=" . count($ids) . " affected=$affected"
-                    );
-
-                    $db->commit();
-                    header('Location: bulk_update.php?subnet_id=' . $subnetId . '&q=' . urlencode($q));
-                    exit;
                 }
             } else {
                 $doHostname = !empty($_POST['do_hostname']);
@@ -129,50 +178,92 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $db->rollBack();
                     $err = "Invalid status.";
                 } else {
-                    $set = [];
-                    $params = [':sid' => $subnetId];
+                    // --- INSERT unconfigured IPs first ---
+                    $insertedUnconf = 0;
+                    if ($unconfIps && $subnet) {
+                        $subnetNetwork = (string)$subnet['network'];
+                        $subnetPrefix  = (int)$subnet['prefix'];
+                        $insStmt = $db->prepare(
+                            "INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, status, note)
+                             VALUES (:sid, :ip, :ib, :hn, :ow, :st, :nt)"
+                        );
+                        foreach ($unconfIps as $rawIp) {
+                            $norm = normalize_ip($rawIp);
+                            if (!$norm || $norm['version'] !== 4) continue;
+                            if (!ip_in_cidr($norm['ip'], $subnetNetwork, $subnetPrefix)) continue;
+                            // Guard: must not already exist
+                            $chk = $db->prepare("SELECT id FROM addresses WHERE subnet_id=:sid AND ip=:ip");
+                            $chk->execute([':sid' => $subnetId, ':ip' => $norm['ip']]);
+                            if ($chk->fetch()) continue;
 
-                    if ($doHostname) { $set[] = "hostname = :hn"; $params[':hn'] = $newHostname; }
-                    if ($doOwner)    { $set[] = "owner = :ow";    $params[':ow'] = $newOwner; }
-                    if ($doStatus)   { $set[] = "status = :st";   $params[':st'] = $newStatus; }
-                    if ($doNote)     { $set[] = "note = :nt";     $params[':nt'] = $newNote; }
-
-                    foreach ($paramsBefore as $k => $v) {
-                        if ($k !== ':sid') $params[$k] = $v;
+                            $insStmt->execute([
+                                ':sid' => $subnetId,
+                                ':ip'  => $norm['ip'],
+                                ':ib'  => $norm['bin'],
+                                ':hn'  => $doHostname ? $newHostname : '',
+                                ':ow'  => $doOwner    ? $newOwner    : '',
+                                ':st'  => $doStatus   ? $newStatus   : 'used',
+                                ':nt'  => $doNote     ? $newNote     : '',
+                            ]);
+                            $newId = (int)$db->lastInsertId();
+                            $insertedUnconf++;
+                            $after = [
+                                'hostname' => $doHostname ? $newHostname : '',
+                                'owner'    => $doOwner    ? $newOwner    : '',
+                                'note'     => $doNote     ? $newNote     : '',
+                                'status'   => $doStatus   ? $newStatus   : 'used',
+                            ];
+                            history_log_address($db, 'bulk_create', $subnetId, $norm['ip'], $newId, null, $after);
+                        }
                     }
 
-                    $sql = "UPDATE addresses SET " . implode(', ', $set) .
-                           " WHERE subnet_id = :sid AND id IN (" . implode(',', $in) . ")";
-                    $st = $db->prepare($sql);
-                    $st->execute($params);
-                    $affected = $st->rowCount();
+                    // --- UPDATE existing addresses ---
+                    $affected = 0;
+                    if ($in) {
+                        $set = [];
+                        $params = [':sid' => $subnetId];
 
-                    foreach ($ids as $id) {
-                        if (!isset($beforeMap[$id])) continue;
-                        $b = $beforeMap[$id];
+                        if ($doHostname) { $set[] = "hostname = :hn"; $params[':hn'] = $newHostname; }
+                        if ($doOwner)    { $set[] = "owner = :ow";    $params[':ow'] = $newOwner; }
+                        if ($doStatus)   { $set[] = "status = :st";   $params[':st'] = $newStatus; }
+                        if ($doNote)     { $set[] = "note = :nt";     $params[':nt'] = $newNote; }
 
-                        $after = [
-                            'hostname' => $doHostname ? $newHostname : (string)$b['hostname'],
-                            'owner'    => $doOwner ? $newOwner : (string)$b['owner'],
-                            'note'     => $doNote ? $newNote : (string)$b['note'],
-                            'status'   => $doStatus ? $newStatus : (string)$b['status'],
-                        ];
+                        foreach ($paramsBefore as $k => $v) {
+                            if ($k !== ':sid') $params[$k] = $v;
+                        }
 
-                        history_log_address($db, 'bulk_update', $subnetId, (string)$b['ip'], (int)$b['id'], [
-                            'hostname' => (string)$b['hostname'],
-                            'owner' => (string)$b['owner'],
-                            'note' => (string)$b['note'],
-                            'status' => (string)$b['status'],
-                        ], $after);
+                        $sql = "UPDATE addresses SET " . implode(', ', $set) .
+                               " WHERE subnet_id = :sid AND id IN (" . implode(',', $in) . ")";
+                        $st = $db->prepare($sql);
+                        $st->execute($params);
+                        $affected = $st->rowCount();
+
+                        foreach ($ids as $id) {
+                            if (!isset($beforeMap[$id])) continue;
+                            $b = $beforeMap[$id];
+                            $after = [
+                                'hostname' => $doHostname ? $newHostname : (string)$b['hostname'],
+                                'owner'    => $doOwner    ? $newOwner    : (string)$b['owner'],
+                                'note'     => $doNote     ? $newNote     : (string)$b['note'],
+                                'status'   => $doStatus   ? $newStatus   : (string)$b['status'],
+                            ];
+                            history_log_address($db, 'bulk_update', $subnetId, (string)$b['ip'], (int)$b['id'], [
+                                'hostname' => (string)$b['hostname'],
+                                'owner'    => (string)$b['owner'],
+                                'note'     => (string)$b['note'],
+                                'status'   => (string)$b['status'],
+                            ], $after);
+                        }
                     }
 
                     audit($db, 'address.bulk_update', 'address', null,
-                        "subnet_id=$subnetId selected=" . count($ids) . " affected=$affected fields=" .
-                        implode(',', array_filter([
+                        "subnet_id=$subnetId selected=" . count($ids) . " affected=$affected"
+                        . ($insertedUnconf > 0 ? " created=$insertedUnconf" : "")
+                        . " fields=" . implode(',', array_filter([
                             $doHostname ? 'hostname' : '',
-                            $doOwner ? 'owner' : '',
-                            $doStatus ? 'status' : '',
-                            $doNote ? 'note' : '',
+                            $doOwner    ? 'owner'    : '',
+                            $doStatus   ? 'status'   : '',
+                            $doNote     ? 'note'     : '',
                         ]))
                     );
 
@@ -219,6 +310,13 @@ page_header('Bulk Update');
 <?php if ($subnetId > 0): ?>
   <h2>Selected subnet: <?= e((string)($subnet['cidr'] ?? '')) ?></h2>
 
+  <?php if ($unconfiguredCapped && $unconfiguredTotal > 0): ?>
+    <p class="muted">
+      <b><?= e((string)$unconfiguredTotal) ?></b> unconfigured IPs not shown (subnet too large to enumerate).
+      Use <a href="unassigned.php?subnet_id=<?= $subnetId ?>">Unassigned</a> to browse them.
+    </p>
+  <?php endif; ?>
+
   <form method="post" action="bulk_update.php">
     <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
     <input type="hidden" name="subnet_id" value="<?= (int)$subnetId ?>">
@@ -248,11 +346,22 @@ page_header('Bulk Update');
     </div>
 
     <h3 style="margin-top:18px">Choose addresses</h3>
-    <p class="muted">Select one or more rows to update or delete.</p>
+    <p class="muted">Select one or more rows to update or delete.
+      <?php if ($unconfigured): ?>
+        Rows marked <span class="muted">(unconfigured)</span> do not yet have a record — selecting them for
+        <b>Update</b> will create them with the chosen field values.
+      <?php endif; ?>
+    </p>
 
     <p>
       <button type="button" onclick="document.querySelectorAll('input.addrbox').forEach(cb=>cb.checked=true)">Select all</button>
       <button type="button" onclick="document.querySelectorAll('input.addrbox').forEach(cb=>cb.checked=false)">Select none</button>
+      <?php if ($unconfigured): ?>
+        <button type="button"
+          onclick="document.querySelectorAll('input.addrbox[data-unconf]').forEach(cb=>cb.checked=true)">
+          Select unconfigured
+        </button>
+      <?php endif; ?>
     </p>
 
     <table>
@@ -279,6 +388,20 @@ page_header('Bulk Update');
           <td class="muted"><?= e($a['updated_at']) ?></td>
         </tr>
       <?php endforeach; ?>
+      <?php foreach ($unconfigured as $uip): ?>
+        <tr class="muted" style="opacity:.7">
+          <td><input class="addrbox" type="checkbox" name="unconf_ips[]" value="<?= e($uip) ?>" data-unconf="1"></td>
+          <td><?= e($uip) ?></td>
+          <td></td>
+          <td></td>
+          <td><span class="muted"><em>free (unconfigured)</em></span></td>
+          <td></td>
+          <td class="muted">—</td>
+        </tr>
+      <?php endforeach; ?>
+      <?php if (!$addresses && !$unconfigured): ?>
+        <tr><td colspan="7"><div class="empty-state">No addresses found.</div></td></tr>
+      <?php endif; ?>
       </tbody>
     </table>
 
@@ -303,7 +426,7 @@ page_header('Bulk Update');
     </div>
 
     <p class="muted">
-      For deletes, you must type <b>DELETE</b> in the confirmation box.
+      For deletes, you must type <b>DELETE</b> in the confirmation box. Unconfigured rows cannot be deleted.
     </p>
 
   </form>
