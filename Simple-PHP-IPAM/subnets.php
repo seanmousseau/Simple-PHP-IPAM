@@ -62,7 +62,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 if ($inheritedSiteId !== null) {
                     $inheritedName = $siteMap[$inheritedSiteId] ?? "site #$inheritedSiteId";
-                    $siteNote = "Site automatically set to \"{$inheritedName}\" inherited from parent subnet.";
+                    $siteNote = "Site automatically set to &quot;" . e($inheritedName) . "&quot; inherited from parent subnet.";
                     $warn = $warn ? $warn . ' ' . $siteNote : $siteNote;
                 }
                 if ($warn) $_SESSION['ipam_flash_warn'] = $warn;
@@ -110,7 +110,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 if ($inheritedSiteId !== null) {
                     $inheritedName = $siteMap[$inheritedSiteId] ?? "site #$inheritedSiteId";
-                    $siteNote = "Site set to \"{$inheritedName}\" inherited from parent subnet.";
+                    $siteNote = "Site set to &quot;" . e($inheritedName) . "&quot; inherited from parent subnet.";
                     $warn = $warn ? $warn . ' ' . $siteNote : $siteNote;
                 }
             } catch (PDOException $e) {
@@ -120,9 +120,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($action === 'delete') {
         require_write_access();
         $id = (int)($_POST['id'] ?? 0);
+        $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM addresses WHERE subnet_id = :id");
+        $cntSt->execute([':id' => $id]);
+        $addrCount = (int)$cntSt->fetch()['c'];
         $st = $db->prepare("DELETE FROM subnets WHERE id = :id");
         $st->execute([':id' => $id]);
-        audit($db, 'subnet.delete', 'subnet', $id, '');
+        audit($db, 'subnet.delete', 'subnet', $id, "addresses_deleted={$addrCount}");
         header('Location: subnets.php');
         exit;
     }
@@ -535,12 +538,16 @@ page_header('Subnets');
   <?php if (empty($siteGroups)): ?>
     <div class="empty-state">No subnets yet.</div>
   <?php else: ?>
-    <?php foreach ($siteGroups as $group): ?>
+    <?php foreach ($siteGroups as $key => $group): ?>
       <div class="site-group" style="margin-bottom:24px">
-        <h3 style="margin:0 0 8px 0; padding-bottom:6px; border-bottom:2px solid var(--border)"><?= e($group['label']) ?></h3>
-        <?php foreach ($group['roots'] as $rid): ?>
-          <?php render_subnet_node_local($tree, $direct, $agg, $ipv4Unassigned, $ipv4UnassignedAgg, $siteMap, $siteList, (int)$rid, 0); ?>
-        <?php endforeach; ?>
+        <button type="button" class="site-group-toggle" aria-expanded="true" data-sg-key="<?= e((string)$key) ?>">
+          <?= e($group['label']) ?><span class="site-group-caret" aria-hidden="true">&#9660;</span>
+        </button>
+        <div class="site-group-body">
+          <?php foreach ($group['roots'] as $rid): ?>
+            <?php render_subnet_node_local($tree, $direct, $agg, $ipv4Unassigned, $ipv4UnassignedAgg, $siteMap, $siteList, (int)$rid, 0); ?>
+          <?php endforeach; ?>
+        </div>
       </div>
     <?php endforeach; ?>
   <?php endif; ?>

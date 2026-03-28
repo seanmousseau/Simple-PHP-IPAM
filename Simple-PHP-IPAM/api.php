@@ -10,7 +10,8 @@ declare(strict_types=1);
  *   ?api_key=<key>
  *
  * Resources:
- *   GET api.php?resource=subnets            — list all subnets
+ *   GET api.php?resource=subnets            — list subnets (paginated)
+ *     optional: &page=N  &limit=N (max 1000, default 200)
  *   GET api.php?resource=subnets&id=N       — single subnet
  *   GET api.php?resource=addresses          — list addresses (paginated)
  *     optional: &subnet_id=N  &status=used|reserved|free
@@ -36,7 +37,7 @@ $apiMaxAttempts   = (int)($config['api_max_attempts']   ?? 20);
 $apiLockoutSeconds = (int)($config['api_lockout_seconds'] ?? 300);
 $clientIp = (string)(
     (!empty($config['proxy_trust']) ? ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? '') : '')
-    ?: ($_SERVER['REMOTE_ADDR'] ?? '')
+    ?: ($_SERVER['REMOTE_ADDR'] ?? '127.0.0.1')
 );
 
 // Rate-limit by IP before even reading the key
@@ -122,8 +123,23 @@ function api_subnets(PDO $db): never
         api_json(fmt_subnet($row));
     }
 
-    $st = $db->query($baseSql . " ORDER BY s.ip_version, s.network_bin");
-    api_json(['subnets' => array_map('fmt_subnet', $st->fetchAll())]);
+    $page   = max(1, (int)($_GET['page']  ?? 1));
+    $limit  = max(1, min(1000, (int)($_GET['limit'] ?? 200)));
+    $offset = ($page - 1) * $limit;
+
+    $cntSt = $db->query("SELECT COUNT(*) AS c FROM subnets");
+    $total  = (int)$cntSt->fetch()['c'];
+
+    $st = $db->prepare($baseSql . " ORDER BY s.ip_version, s.network_bin LIMIT :lim OFFSET :off");
+    $st->bindValue(':lim', $limit,  PDO::PARAM_INT);
+    $st->bindValue(':off', $offset, PDO::PARAM_INT);
+    $st->execute();
+    api_json([
+        'total'   => $total,
+        'page'    => $page,
+        'limit'   => $limit,
+        'subnets' => array_map('fmt_subnet', $st->fetchAll()),
+    ]);
 }
 
 function fmt_subnet(array $r): array
