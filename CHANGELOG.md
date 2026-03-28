@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## 1.2.3 — Patch
+
+### Bug fixes
+- **Fixed:** Site group collapse feature (issue #37) completely removed from v1.2.x due to persistent rendering issues across multiple approaches (`<details>/<summary>`, div+JS toggle). Site groups are restored to plain static `<div>` sections (matching v1.1 behaviour) to unblock the release. Collapse/expand will be re-implemented as a standalone issue against v1.3.
+
+---
+
+## 1.2.2 — Patch
+
+### Bug fixes
+- **Fixed:** Site groups on the Subnets page still not displaying after v1.2.1. The `<details>`/`<summary>` approach had browser-compatibility issues that caused inconsistent rendering. Replaced entirely with a `<div>`-based JS toggle (click handler on header div, CSS `collapsed` class, `display:none` on body). The localStorage key prefix changed to `ipam_sg_*` to clear any stale state written by v1.2/v1.2.1.
+
+---
+
 ## 1.2.1 — Patch
 
 ### Bug fixes

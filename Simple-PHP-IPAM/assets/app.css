@@ -415,29 +415,6 @@ details > summary{
 }
 details > summary::-webkit-details-marker{display:none}
 
-.site-group-toggle{margin-bottom:16px}
-.site-group-toggle > summary.site-group-header{
-  display:flex;
-  align-items:center;
-  gap:10px;
-  padding:8px 4px;
-  border-bottom:2px solid var(--border);
-  user-select:none;
-}
-.site-group-label{
-  font-size:1.1rem;
-  font-weight:700;
-}
-.site-group-toggle > summary.site-group-header::before{
-  content:'▸';
-  font-size:0.85rem;
-  color:var(--muted);
-  transition:transform 0.15s;
-  display:inline-block;
-}
-.site-group-toggle[open] > summary.site-group-header::before{
-  transform:rotate(90deg);
-}
 
 .empty-state{
   padding:20px;

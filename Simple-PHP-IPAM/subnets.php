@@ -382,7 +382,7 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
     echo "<b>" . e($row['cidr']) . "</b> ";
     echo "<span class='muted'>(v" . (int)$row['ip_version'] . ")</span> ";
     if ($siteName !== '') echo " <span class='badge'>" . e($siteName) . "</span>";
-    if ($row['description'] !== '') echo " - " . e($row['description']);
+    if (($row['description'] ?? '') !== '') echo " - " . e((string)$row['description']);
     // Address count badges — direct counts on this subnet, aggregated in parens if children differ
     $countHtml = "<span class='status-used'>" . $d['used'] . " used</span>"
                . " &middot; <span class='status-reserved'>" . $d['reserved'] . " reserved</span>"
@@ -535,16 +535,13 @@ page_header('Subnets');
   <?php if (empty($siteGroups)): ?>
     <div class="empty-state">No subnets yet.</div>
   <?php else: ?>
-    <?php foreach ($siteGroups as $groupKey => $group): ?>
-      <details class="site-group-toggle" open data-site-key="<?= e($groupKey) ?>">
-        <summary class="site-group-header">
-          <span class="site-group-label"><?= e($group['label']) ?></span>
-          <span class="badge"><?= count($group['roots']) ?> subnet<?= count($group['roots']) !== 1 ? 's' : '' ?></span>
-        </summary>
+    <?php foreach ($siteGroups as $group): ?>
+      <div class="site-group" style="margin-bottom:24px">
+        <h3 style="margin:0 0 8px 0; padding-bottom:6px; border-bottom:2px solid var(--border)"><?= e($group['label']) ?></h3>
         <?php foreach ($group['roots'] as $rid): ?>
           <?php render_subnet_node_local($tree, $direct, $agg, $ipv4Unassigned, $ipv4UnassignedAgg, $siteMap, $siteList, (int)$rid, 0); ?>
         <?php endforeach; ?>
-      </details>
+      </div>
     <?php endforeach; ?>
   <?php endif; ?>
 </div>
