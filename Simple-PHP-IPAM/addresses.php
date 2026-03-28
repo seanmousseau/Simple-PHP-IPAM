@@ -34,9 +34,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $subnetId = (int)($_POST['subnet_id'] ?? 0);
         $ipInput = trim((string)($_POST['ip'] ?? ''));
 
-        $hostname = trim((string)($_POST['hostname'] ?? ''));
-        $owner = trim((string)($_POST['owner'] ?? ''));
-        $note = trim((string)($_POST['note'] ?? ''));
+        $hostname = substr(trim((string)($_POST['hostname'] ?? '')), 0, 253);
+        $owner    = substr(trim((string)($_POST['owner']    ?? '')), 0, 255);
+        $note     = substr(trim((string)($_POST['note']     ?? '')), 0, 1000);
         $status = (string)($_POST['status'] ?? 'used');
 
         $st = $db->prepare("SELECT id, network, prefix, ip_version FROM subnets WHERE id = :id");
@@ -92,9 +92,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $id = (int)($_POST['id'] ?? 0);
         $subnetId = (int)($_POST['subnet_id'] ?? 0);
-        $hostname = trim((string)($_POST['hostname'] ?? ''));
-        $owner = trim((string)($_POST['owner'] ?? ''));
-        $note = trim((string)($_POST['note'] ?? ''));
+        $hostname = substr(trim((string)($_POST['hostname'] ?? '')), 0, 253);
+        $owner    = substr(trim((string)($_POST['owner']    ?? '')), 0, 255);
+        $note     = substr(trim((string)($_POST['note']     ?? '')), 0, 1000);
         $status = (string)($_POST['status'] ?? 'used');
 
         if (!in_array($status, ['used','reserved','free'], true)) {
@@ -277,8 +277,8 @@ page_header('Addresses');
 
     <div class="row">
       <label>IP<br><input name="ip" placeholder="<?= ($selectedSubnet && (int)$selectedSubnet['ip_version']===6) ? '2001:db8::10' : '10.0.0.10' ?>" required></label>
-      <label>Hostname<br><input name="hostname"></label>
-      <label>Owner<br><input name="owner"></label>
+      <label>Hostname<br><input name="hostname" maxlength="253"></label>
+      <label>Owner<br><input name="owner" maxlength="255"></label>
       <label>Status<br>
         <select name="status">
           <option value="used">used</option>
@@ -288,7 +288,7 @@ page_header('Addresses');
       </label>
     </div>
     <div class="row">
-      <label style="flex:1">Note<br><input name="note" style="width:100%"></label>
+      <label style="flex:1">Note<br><input name="note" maxlength="1000" style="width:100%"></label>
     </div>
 
     <p>
@@ -345,8 +345,8 @@ page_header('Addresses');
                 <input type="hidden" name="id" value="<?= (int)$a['id'] ?>">
 
                 <div class="row">
-                  <label>Hostname<br><input name="hostname" value="<?= e($a['hostname']) ?>"></label>
-                  <label>Owner<br><input name="owner" value="<?= e($a['owner']) ?>"></label>
+                  <label>Hostname<br><input name="hostname" maxlength="253" value="<?= e($a['hostname']) ?>"></label>
+                  <label>Owner<br><input name="owner" maxlength="255" value="<?= e($a['owner']) ?>"></label>
                   <label>Status<br>
                     <select name="status">
                       <option value="used" <?= ($a['status']==='used')?'selected':'' ?>>used</option>
@@ -357,7 +357,7 @@ page_header('Addresses');
                 </div>
 
                 <div class="row">
-                  <label style="flex:1">Note<br><input name="note" style="width:100%" value="<?= e($a['note']) ?>"></label>
+                  <label style="flex:1">Note<br><input name="note" maxlength="1000" style="width:100%" value="<?= e($a['note']) ?>"></label>
                 </div>
 
                 <button type="submit" <?= (current_user()['role']==='readonly')?'disabled':'' ?>>Save</button>

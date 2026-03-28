@@ -303,6 +303,38 @@ function ipv4_unassigned_summary_local(PDO $db): array
     return $out;
 }
 
+/**
+ * Aggregate ipv4_unassigned_summary_local() stats up the subnet tree so that
+ * parent subnets show rolled-up utilization across all descendants.
+ */
+function ipv4_unassigned_aggregated_local(array $tree, array $directUnassigned): array
+{
+    $children = $tree['children'];
+    $agg = [];
+
+    $sumNode = function(int $id) use (&$sumNode, &$agg, $children, $directUnassigned, $tree): array {
+        if (isset($agg[$id])) return $agg[$id];
+
+        // Only IPv4 subnets contribute to the util bar
+        $ipVer = (int)($tree['byId'][$id]['ip_version'] ?? 0);
+        $base = ($ipVer === 4 && isset($directUnassigned[$id]))
+            ? $directUnassigned[$id]
+            : ['assignable_total' => 0, 'assigned_assignable' => 0, 'unassigned_assignable' => 0];
+
+        $sum = $base;
+        foreach (($children[$id] ?? []) as $cid) {
+            $c = $sumNode((int)$cid);
+            $sum['assignable_total']      += $c['assignable_total'];
+            $sum['assigned_assignable']   += $c['assigned_assignable'];
+            $sum['unassigned_assignable'] += $c['unassigned_assignable'];
+        }
+        return $agg[$id] = $sum;
+    };
+
+    foreach ($tree['byId'] as $id => $_row) $sumNode((int)$id);
+    return $agg;
+}
+
 function subnet_overlap_warning_text(array $overlaps): string
 {
     $parts = [];
@@ -321,6 +353,7 @@ $tree = build_subnet_tree_local($list);
 $direct = subnet_direct_counts_local($db);
 $agg = subnet_aggregated_counts_local($tree, $direct);
 $ipv4Unassigned = ipv4_unassigned_summary_local($db);
+$ipv4UnassignedAgg = ipv4_unassigned_aggregated_local($tree, $ipv4Unassigned);
 
 $siteGroups = [];
 foreach ($tree['roots'] as $rid) {
@@ -332,7 +365,7 @@ foreach ($tree['roots'] as $rid) {
 }
 uasort($siteGroups, fn($a, $b) => strcasecmp($a['label'], $b['label']));
 
-function render_subnet_node_local(array $tree, array $direct, array $agg, array $ipv4Unassigned, array $siteMap, array $siteList, int $id, int $depth = 0): void
+function render_subnet_node_local(array $tree, array $direct, array $agg, array $ipv4Unassigned, array $ipv4UnassignedAgg, array $siteMap, array $siteList, int $id, int $depth = 0): void
 {
     $row = $tree['byId'][$id];
     $pad = $depth * 18;
@@ -359,24 +392,30 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
     }
     echo "<br>" . $countHtml;
 
-    if ((int)$row['ip_version'] === 4 && isset($ipv4Unassigned[$id])) {
-        $u = $ipv4Unassigned[$id];
-        $assignable = (int)$u['assignable_total'];
-        $assigned   = (int)$u['assigned_assignable'];
-        $pct = $assignable > 0 ? (int)round($assigned / $assignable * 100) : 0;
-        $cfg = $GLOBALS['config'] ?? [];
-        $warnThreshold = (int)($cfg['utilization_warn']     ?? 80);
-        $critThreshold = (int)($cfg['utilization_critical'] ?? 95);
-        $barClass = $pct >= $critThreshold ? 'util-bar-fill--crit'
-                  : ($pct >= $warnThreshold ? 'util-bar-fill--warn' : '');
-        $pctLabel = $pct >= $critThreshold ? "<span class='danger'>{$pct}%</span>"
-                  : ($pct >= $warnThreshold ? "<span class='warning'>{$pct}%</span>"
-                  : "<span>{$pct}%</span>");
-        echo "<br><span class='muted'>Assignable: " . e((string)$assignable) .
-             " | Assigned: " . e((string)$assigned) .
-             " | Unassigned: <b>" . e((string)$u['unassigned_assignable']) . "</b></span>"
-           . " <span class='util-bar'><span class='util-bar-fill {$barClass}' style='width:{$pct}%'></span></span>"
-           . " {$pctLabel}";
+    if ((int)$row['ip_version'] === 4) {
+        $hasChildren = !empty($tree['children'][$id]);
+        // Use aggregated stats for parents so the bar reflects all descendants
+        $u = $hasChildren ? ($ipv4UnassignedAgg[$id] ?? null) : ($ipv4Unassigned[$id] ?? null);
+        if ($u && (int)$u['assignable_total'] > 0) {
+            $assignable = (int)$u['assignable_total'];
+            $assigned   = (int)$u['assigned_assignable'];
+            $pct = (int)round($assigned / $assignable * 100);
+            $cfg = $GLOBALS['config'] ?? [];
+            $warnThreshold = (int)($cfg['utilization_warn']     ?? 80);
+            $critThreshold = (int)($cfg['utilization_critical'] ?? 95);
+            $barClass = $pct >= $critThreshold ? 'util-bar-fill--crit'
+                      : ($pct >= $warnThreshold ? 'util-bar-fill--warn' : '');
+            $pctLabel = $pct >= $critThreshold ? "<span class='danger'>{$pct}%</span>"
+                      : ($pct >= $warnThreshold ? "<span class='warning'>{$pct}%</span>"
+                      : "<span>{$pct}%</span>");
+            $rollupNote = $hasChildren ? " <span class='muted'>(incl. subnets)</span>" : '';
+            echo "<br><span class='muted'>Assignable: " . e((string)$assignable) .
+                 " | Assigned: " . e((string)$assigned) .
+                 " | Unassigned: <b>" . e((string)$u['unassigned_assignable']) . "</b></span>"
+               . $rollupNote
+               . " <span class='util-bar'><span class='util-bar-fill {$barClass}' style='width:{$pct}%'></span></span>"
+               . " {$pctLabel}";
+        }
     }
     echo "</summary>";
 
@@ -434,7 +473,7 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
     }
 
     foreach (($tree['children'][$id] ?? []) as $cid) {
-        render_subnet_node_local($tree, $direct, $agg, $ipv4Unassigned, $siteMap, $siteList, (int)$cid, $depth + 1);
+        render_subnet_node_local($tree, $direct, $agg, $ipv4Unassigned, $ipv4UnassignedAgg, $siteMap, $siteList, (int)$cid, $depth + 1);
     }
 
     echo "</div></details></div>";
@@ -496,13 +535,16 @@ page_header('Subnets');
   <?php if (empty($siteGroups)): ?>
     <div class="empty-state">No subnets yet.</div>
   <?php else: ?>
-    <?php foreach ($siteGroups as $group): ?>
-      <div class="site-group">
-        <h2><?= e($group['label']) ?></h2>
+    <?php foreach ($siteGroups as $groupKey => $group): ?>
+      <details class="site-group-toggle" open data-site-key="<?= e($groupKey) ?>">
+        <summary class="site-group-header">
+          <h2><?= e($group['label']) ?></h2>
+          <span class="badge"><?= count($group['roots']) ?> subnet<?= count($group['roots']) !== 1 ? 's' : '' ?></span>
+        </summary>
         <?php foreach ($group['roots'] as $rid): ?>
-          <?php render_subnet_node_local($tree, $direct, $agg, $ipv4Unassigned, $siteMap, $siteList, (int)$rid, 0); ?>
+          <?php render_subnet_node_local($tree, $direct, $agg, $ipv4Unassigned, $ipv4UnassignedAgg, $siteMap, $siteList, (int)$rid, 0); ?>
         <?php endforeach; ?>
-      </div>
+      </details>
     <?php endforeach; ?>
   <?php endif; ?>
 </div>

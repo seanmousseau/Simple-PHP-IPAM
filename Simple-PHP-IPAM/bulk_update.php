@@ -39,8 +39,8 @@ if ($subnetId > 0) {
     $params = [':sid' => $subnetId];
 
     if ($q !== '') {
-        $sql .= " AND (ip LIKE :q OR hostname LIKE :q OR owner LIKE :q OR note LIKE :q)";
-        $params[':q'] = '%' . $q . '%';
+        $sql .= " AND (ip LIKE :q ESCAPE '\\' OR hostname LIKE :q ESCAPE '\\' OR owner LIKE :q ESCAPE '\\' OR note LIKE :q ESCAPE '\\')";
+        $params[':q'] = '%' . like_escape($q) . '%';
     }
 
     $sql .= " ORDER BY ip_bin ASC";

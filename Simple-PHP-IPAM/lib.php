@@ -299,6 +299,14 @@ function ipam_config_defaults(): array
         'session_idle_seconds' => ['default' => null, 'comment' => ''],
         'login_max_attempts'   => ['default' => null, 'comment' => ''],
         'login_lockout_seconds'=> ['default' => null, 'comment' => ''],
+        'api_max_attempts' => [
+            'default' => 20,
+            'comment' => 'Max failed API key attempts per IP before lockout.',
+        ],
+        'api_lockout_seconds' => [
+            'default' => 300,
+            'comment' => 'Duration (seconds) of API key lockout after too many failed attempts.',
+        ],
         'import_csv_max_mb'    => ['default' => null, 'comment' => ''],
         'tmp_cleanup_ttl_seconds' => ['default' => null, 'comment' => ''],
         'audit_log_retention_days' => [
@@ -358,39 +366,64 @@ function ipam_php_export(mixed $val, int $indent = 1): string
 }
 
 /**
- * Check config.php for missing top-level keys and append them with defaults.
- * Returns list of key names that were added (empty if nothing changed).
+ * Check config.php for missing top-level keys and missing sub-keys within
+ * existing nested blocks, and append them with their defaults.
+ *
+ * Returns list of key names added (top-level as 'key', nested as 'key.subkey').
  * Only keys whose default is not null are auto-appended.
+ * The 'bootstrap_admin' block is never deep-merged (admin sets it intentionally).
  */
 function ipam_config_sync(string $configPath, array $loaded): array
 {
     $defaults = ipam_config_defaults();
-    $added = [];
+    $added    = [];
 
     foreach ($defaults as $key => $meta) {
-        if (array_key_exists($key, $loaded)) continue;
         if ($meta['default'] === null) continue;
 
-        $content = @file_get_contents($configPath);
-        if ($content === false) break;
+        if (!array_key_exists($key, $loaded)) {
+            // --- Top-level key missing: append whole block ---
+            $content = @file_get_contents($configPath);
+            if ($content === false) break;
+            if (!preg_match('/\n\];\s*$/', $content)) break;
 
-        // Find the closing ]; of the return array
-        if (!preg_match('/\n\];\s*$/', $content)) break;
+            $comment  = (string)$meta['comment'];
+            $valuePhp = ipam_php_export($meta['default'], 2);
+            $block    = '';
+            if ($comment !== '') $block .= "\n    // " . $comment;
+            $block .= "\n    '" . addcslashes($key, "'\\") . "' => " . $valuePhp . ",\n";
 
-        $comment = (string)$meta['comment'];
-        $valuePhp = ipam_php_export($meta['default'], 2);
+            $content = preg_replace('/\n\];\s*$/', $block . "\n];", $content);
+            if ($content === null) break;
+            if (@file_put_contents($configPath, $content) !== false) {
+                $added[] = $key;
+            }
+        } elseif ($key !== 'bootstrap_admin'
+               && is_array($meta['default'])
+               && is_array($loaded[$key])) {
+            // --- Nested block exists: deep-merge missing sub-keys ---
+            $missingSubKeys = array_diff_key($meta['default'], $loaded[$key]);
+            foreach ($missingSubKeys as $subKey => $subDefault) {
+                $content = @file_get_contents($configPath);
+                if ($content === false) break 2;
 
-        $block = '';
-        if ($comment !== '') {
-            $block .= "\n    // " . $comment;
-        }
-        $block .= "\n    '" . addcslashes($key, "'\\") . "' => " . $valuePhp . ",\n";
+                $escapedKey = preg_quote($key, '/');
+                $subValuePhp = ipam_php_export($subDefault, 3);
+                $newLine = "\n        '" . addcslashes((string)$subKey, "'\\") . "' => " . $subValuePhp . ",";
 
-        $content = preg_replace('/\n\];\s*$/', $block . "\n];", $content);
-        if ($content === null) break;
+                // Match '    'key' => [  ...content...  \n    ],'
+                $pattern = '/(\n    \'' . $escapedKey . '\'\s*=>\s*\[)(.*?)(\n    \],)/s';
+                if (!preg_match($pattern, $content)) break;
 
-        if (@file_put_contents($configPath, $content) !== false) {
-            $added[] = $key;
+                $content = preg_replace_callback($pattern, static function (array $m) use ($newLine): string {
+                    return $m[1] . $m[2] . $newLine . $m[3];
+                }, $content);
+
+                if ($content === null) break;
+                if (@file_put_contents($configPath, $content) !== false) {
+                    $added[] = $key . '.' . $subKey;
+                }
+            }
         }
     }
 
@@ -771,6 +804,16 @@ function q_int(string $key, int $default, int $min, int $max): int
     if ($n < $min) return $min;
     if ($n > $max) return $max;
     return $n;
+}
+
+/**
+ * Escape SQL LIKE wildcard characters in a user-supplied search string.
+ * Returns the escaped string ready to be wrapped in % delimiters.
+ * Use with LIKE :q ESCAPE '\\' in your SQL.
+ */
+function like_escape(string $q): string
+{
+    return str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $q);
 }
 
 function paginate(int $total, int $page, int $pageSize): array
@@ -1216,8 +1259,8 @@ function page_header(string $title): void
 
     echo "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
     echo "<title>" . e($title) . "</title>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=1.1'>";
-    echo "<script defer src='assets/app.js?v=1.1'></script>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=1.2'>";
+    echo "<script defer src='assets/app.js?v=1.2'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
@@ -1496,7 +1539,10 @@ function oidc_jwks(string $jwksUri, bool $forceRefresh = false): array
 /** HTTP GET via file_get_contents with a short timeout. */
 function oidc_http_get(string $url): string
 {
-    $ctx = stream_context_create(['http' => ['timeout' => 10, 'ignore_errors' => true]]);
+    $ctx = stream_context_create([
+        'http' => ['timeout' => 10, 'ignore_errors' => true],
+        'ssl'  => ['verify_peer' => true, 'verify_peer_name' => true],
+    ]);
     $raw = @file_get_contents($url, false, $ctx);
     if ($raw === false || $raw === '') {
         throw new RuntimeException('HTTP GET failed for ' . $url);
@@ -1508,14 +1554,17 @@ function oidc_http_get(string $url): string
 function oidc_http_post(string $url, array $params): array
 {
     $body = http_build_query($params);
-    $ctx  = stream_context_create(['http' => [
-        'method'        => 'POST',
-        'header'        => "Content-Type: application/x-www-form-urlencoded\r\n"
-                         . "Content-Length: " . strlen($body) . "\r\n",
-        'content'       => $body,
-        'timeout'       => 15,
-        'ignore_errors' => true,
-    ]]);
+    $ctx  = stream_context_create([
+        'http' => [
+            'method'        => 'POST',
+            'header'        => "Content-Type: application/x-www-form-urlencoded\r\n"
+                             . "Content-Length: " . strlen($body) . "\r\n",
+            'content'       => $body,
+            'timeout'       => 15,
+            'ignore_errors' => true,
+        ],
+        'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
+    ]);
     $raw = @file_get_contents($url, false, $ctx);
     if ($raw === false) throw new RuntimeException('Token endpoint request failed');
     $d = json_decode($raw, true);
