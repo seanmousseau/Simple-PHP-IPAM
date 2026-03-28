@@ -30,7 +30,7 @@ $st = $db->prepare("
     SELECT s.id, s.cidr, s.prefix, s.description,
            COUNT(a.id) AS used_count
     FROM subnets s
-    LEFT JOIN addresses a ON a.subnet_id = s.id AND a.status = 'used'
+    LEFT JOIN addresses a ON a.subnet_id = s.id AND a.status IN ('used','reserved')
     WHERE s.ip_version = 4 AND s.prefix BETWEEN 8 AND 30
     GROUP BY s.id
     ORDER BY used_count DESC

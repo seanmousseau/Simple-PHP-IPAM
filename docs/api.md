@@ -12,6 +12,7 @@ Simple-PHP-IPAM exposes a read-only JSON REST API (`api.php`) available from v0.
   - [Subnets](#subnets)
   - [Addresses](#addresses)
   - [Sites](#sites)
+  - [History](#history)
 - [Pagination](#pagination)
 - [Managing API keys](#managing-api-keys)
 - [Examples](#examples)
@@ -232,6 +233,61 @@ Results are ordered alphabetically by name.
 
 ---
 
+### History
+
+```
+GET /api.php?resource=history&address_id=<id>
+```
+
+Returns the paginated change history for a single address record.
+
+**Query parameters**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `address_id` | integer | **required** | ID of the address record |
+| `page` | integer | `1` | Page number (1-based) |
+| `limit` | integer | `50` | Records per page (max `200`) |
+
+**Response**
+
+```json
+{
+  "address_id": 12,
+  "ip": "192.168.1.10",
+  "total": 5,
+  "page": 1,
+  "limit": 50,
+  "history": [
+    {
+      "id": 42,
+      "action": "update",
+      "before": { "hostname": "old-name", "status": "free" },
+      "after":  { "hostname": "server01", "status": "used" },
+      "username": "admin",
+      "created_at": "2025-03-01 14:22:10"
+    }
+  ]
+}
+```
+
+Results are returned newest-first. `before` and `after` are `null` for the initial `create` event.
+
+Returns `400` if `address_id` is missing, `404` if the address does not exist.
+
+**History object fields**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | integer | Internal history record ID |
+| `action` | string | `create`, `update`, or `delete` |
+| `before` | object\|null | Field values before the change (null for creates) |
+| `after` | object\|null | Field values after the change (null for deletes) |
+| `username` | string | Username of the user who made the change |
+| `created_at` | string | UTC timestamp (`YYYY-MM-DD HH:MM:SS`) |
+
+---
+
 ## Pagination
 
 The `addresses` resource supports pagination. Use the `page` and `limit` parameters to page through large result sets.
@@ -292,6 +348,10 @@ curl -H "Authorization: Bearer <key>" \
 
 # List all sites
 curl -H "Authorization: Bearer <key>" https://ipam.example.com/api.php?resource=sites
+
+# Get change history for address ID 12
+curl -H "Authorization: Bearer <key>" \
+  "https://ipam.example.com/api.php?resource=history&address_id=12"
 ```
 
 ### Python

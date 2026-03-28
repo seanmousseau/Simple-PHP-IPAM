@@ -1,4 +1,4 @@
 <?php
 declare(strict_types=1);
 
-const IPAM_VERSION = '1.0';
+const IPAM_VERSION = '1.1';
