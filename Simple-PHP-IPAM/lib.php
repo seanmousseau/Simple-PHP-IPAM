@@ -101,6 +101,58 @@ function require_login(): void
         exit;
     }
     $_SESSION['last_active'] = time();
+
+    // Password expiry check — local accounts only, skip on change_password / logout pages
+    $policy  = (array)(($GLOBALS['config'] ?? [])['password_policy'] ?? []);
+    $maxAge  = (int)($policy['max_password_age_days'] ?? 0);
+    if ($maxAge > 0) {
+        $page = basename((string)($_SERVER['SCRIPT_FILENAME'] ?? ''));
+        if (!in_array($page, ['change_password.php', 'logout.php'], true)) {
+            try {
+                $db = $GLOBALS['db'] ?? null;
+                if ($db instanceof PDO) {
+                    $st = $db->prepare("SELECT oidc_sub, password_changed_at FROM users WHERE id = :id");
+                    $st->execute([':id' => (int)($_SESSION['uid'] ?? 0)]);
+                    $row = $st->fetch();
+                    if ($row && $row['oidc_sub'] === null) {
+                        $changedAt = (string)($row['password_changed_at'] ?? '');
+                        $cutoff    = date('Y-m-d H:i:s', time() - $maxAge * 86400);
+                        if ($changedAt === '' || $changedAt < $cutoff) {
+                            header('Location: change_password.php?expired=1');
+                            exit;
+                        }
+                    }
+                }
+            } catch (Throwable) {
+                // Column may not exist yet on pre-1.4 installs — silently skip
+            }
+        }
+    }
+}
+
+/**
+ * Validate a password against the configured policy.
+ * Returns null on success, or an error string describing the first violation.
+ */
+function validate_password_complexity(string $password, array $policy): ?string
+{
+    $min = max(1, (int)($policy['min_length'] ?? 12));
+    if (strlen($password) < $min) {
+        return "Password must be at least {$min} characters.";
+    }
+    if (!empty($policy['require_uppercase']) && !preg_match('/[A-Z]/', $password)) {
+        return 'Password must contain at least one uppercase letter (A–Z).';
+    }
+    if (!empty($policy['require_lowercase']) && !preg_match('/[a-z]/', $password)) {
+        return 'Password must contain at least one lowercase letter (a–z).';
+    }
+    if (!empty($policy['require_number']) && !preg_match('/[0-9]/', $password)) {
+        return 'Password must contain at least one number (0–9).';
+    }
+    if (!empty($policy['require_symbol']) && !preg_match('/[^A-Za-z0-9]/', $password)) {
+        return 'Password must contain at least one special character.';
+    }
+    return null;
 }
 
 function current_user(): array
@@ -334,6 +386,17 @@ function ipam_config_defaults(): array
             'comment' => "Automatic database backups. frequency: 'daily' | 'weekly'. retention: keep last N backups.",
         ],
         'oidc' => ['default' => null, 'comment' => ''],
+        'password_policy' => [
+            'default' => [
+                'min_length'            => 12,
+                'require_uppercase'     => false,
+                'require_lowercase'     => false,
+                'require_number'        => false,
+                'require_symbol'        => false,
+                'max_password_age_days' => 0,
+            ],
+            'comment' => "Password complexity and rotation policy. min_length: minimum chars. require_*: enforce character classes. max_password_age_days: 0 = never expires.",
+        ],
     ];
 }
 
@@ -1259,8 +1322,8 @@ function page_header(string $title): void
 
     echo "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
     echo "<title>" . e($title) . "</title>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=1.3'>";
-    echo "<script defer src='assets/app.js?v=1.3'></script>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=1.4'>";
+    echo "<script defer src='assets/app.js?v=1.4'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
@@ -1271,13 +1334,16 @@ function page_header(string $title): void
         echo "<a class='nav-pill' href='addresses.php'>🧾 Addresses</a>";
         echo "<a class='nav-pill' href='search.php'>🔎 Search</a>";
         echo "<a class='nav-pill' href='audit.php'>📜 Audit</a>";
+        // DHCP Pools is a write-access feature — show for admin and netops
+        if (in_array($role, ['admin', 'netops'], true)) {
+            echo "<a class='nav-pill' href='dhcp_pool.php'>🔒 DHCP</a>";
+        }
         if (($role ?? '') === 'admin') {
             echo "<div class='nav-dropdown'>";
             echo "<button type='button' class='nav-pill nav-dropdown-toggle'>⚙ Admin ▾</button>";
             echo "<div class='nav-dropdown-menu'>";
             echo "<a class='nav-dropdown-item' href='sites.php'>📍 Sites</a>";
             echo "<a class='nav-dropdown-item' href='users.php'>👤 Users</a>";
-            echo "<a class='nav-dropdown-item' href='dhcp_pool.php'>🔒 DHCP Pools</a>";
             echo "<a class='nav-dropdown-item' href='api_keys.php'>🔑 API Keys</a>";
             echo "<a class='nav-dropdown-item' href='import_csv.php'>⬆ Import CSV</a>";
             echo "<a class='nav-dropdown-item' href='db_tools.php'>🗄 Database Tools</a>";
@@ -1292,7 +1358,7 @@ function page_header(string $title): void
         echo "<div class='nav-right'>";
         echo "<div class='nav-dropdown'>";
         echo "<button type='button' class='nav-pill nav-dropdown-toggle nav-user-toggle'>";
-        echo e((string)$u) . " <span class='badge'>" . e((string)$role) . "</span> ▾";
+        echo e((string)$u) . " <span class='badge badge-role-" . e((string)$role) . "'>" . e((string)$role) . "</span> ▾";
         echo "</button>";
         echo "<div class='nav-dropdown-menu nav-dropdown-menu--right'>";
         echo "<button type='button' class='nav-dropdown-item' id='theme-toggle' onclick='ipamCycleTheme()'>🌓 Theme</button>";

@@ -31,7 +31,7 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 - **Login rate limiting** — IP-based lockout after repeated failed attempts
 - **Session idle timeout** — automatic logout after configurable inactivity period
 - CSRF protection on all POST requests; PDO prepared statements throughout
-- **RBAC roles:** `admin` (full access + user management) and `readonly`
+- **RBAC roles:** `admin` (full access), `netops` (write access, no user/key management), `readonly`
 - Append-only audit log enforced with SQLite triggers
 - **OIDC SSO** — Authorization Code + PKCE in pure PHP; auto-provision and auto-link; optional `disable_local_login`
 - **User management** — name/email fields, per-user enable/disable, delete, manual SSO linking
@@ -90,6 +90,16 @@ See the [Installation guide](docs/install.md) for full web server configuration 
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
+
+### What's new in 1.4
+
+**Netops role** — A new `netops` role sits between `admin` and `readonly`. Netops users can create and edit subnets, addresses, DHCP pools, and sites, but cannot manage users or API keys. DHCP Pools link moves to the main nav for write-access users.
+
+**Password policy** — Configure complexity requirements (`min_length`, uppercase/lowercase/number/symbol) and a rotation interval (`max_password_age_days`) in `config.php`. Users with expired passwords are redirected to the change-password page. The change-password form shows the active policy requirements.
+
+**SSO-only accounts** — Admins can now create accounts that have no usable password and must authenticate via OIDC. An optional OIDC `sub` claim can be pre-linked at creation time.
+
+**Audit log open to all roles** — Previously restricted to admins; now all logged-in users can view the audit log.
 
 ### What's new in 1.3
 

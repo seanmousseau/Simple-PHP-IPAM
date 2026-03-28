@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## 1.4 — Roles, Password Policy & SSO-Only Accounts
+
+### Enhancements
+- **Feature #41:** Added `netops` role — write access to subnets, addresses, DHCP, and sites, without user or API key management. DHCP Pools link moved to the main nav for write-access users. Role badge in the nav uses colour-coded styling per role.
+- **Feature #38:** SSO-only accounts — admins can create user accounts with an unusable password hash (`!`-prefix) that can only log in via OIDC. Optional `oidc_sub` may be set at creation time.
+- **Feature #39:** Password complexity and rotation policy (`password_policy` config block). Configurable `min_length`, `require_uppercase/lowercase/number/symbol`, and `max_password_age_days`. `change_password.php` enforces the policy and updates `password_changed_at` on success. Expired-password redirect loop prevented for `change_password.php` and `logout.php`. Policy hint rendered on the change-password form. New `'1.4'` migration adds `password_changed_at` column and backfills existing local accounts.
+- **Audit log access** — all authenticated roles (including `netops` and `readonly`) can now view the audit log, not just admins.
+
+---
+
 ## 1.3 — Hardening, Search & API Improvements
 
 ### Security fixes

@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/init.php';
-require_role('admin');
+require_login();
 
 // --- Valid action prefixes (categories) ---
 const AUDIT_PREFIXES = ['auth', 'subnet', 'address', 'user', 'site', 'apikey', 'dhcp_pool', 'export', 'import'];

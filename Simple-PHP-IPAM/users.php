@@ -12,28 +12,50 @@ $self = current_user();
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = (string)($_POST['action'] ?? '');
 
+    $validRoles = ['admin', 'netops', 'readonly'];
+    $pwPolicy   = (array)(($config ?? [])['password_policy'] ?? []);
+
     if ($action === 'create') {
         $username = trim((string)($_POST['username'] ?? ''));
-        $password = (string)($_POST['password'] ?? '');
         $role     = (string)($_POST['role']     ?? 'readonly');
         $name     = substr(trim((string)($_POST['name']  ?? '')), 0, 255);
         $email    = substr(trim((string)($_POST['email'] ?? '')), 0, 255);
+        $ssoOnly  = !empty($_POST['sso_only']);
+        $oidcSub  = trim((string)($_POST['oidc_sub'] ?? ''));
 
         if ($username === '' || !preg_match('~^[a-zA-Z0-9_.\-@]{3,64}$~', $username)) {
             $err = 'Username must be 3–64 chars (letters, numbers, _ . - @).';
-        } elseif (strlen($password) < 12) {
-            $err = 'Password must be at least 12 characters.';
-        } elseif (!in_array($role, ['admin', 'readonly'], true)) {
+        } elseif (!in_array($role, $validRoles, true)) {
             $err = 'Invalid role.';
-        } else {
+        } elseif (!$ssoOnly) {
+            $password = (string)($_POST['password'] ?? '');
+            $pwErr = validate_password_complexity($password, $pwPolicy);
+            if ($pwErr !== null) $err = $pwErr;
+        }
+
+        if (!$err) {
             try {
-                $hash = password_hash($password, PASSWORD_DEFAULT);
-                $st = $db->prepare(
-                    "INSERT INTO users (username, password_hash, role, is_active, name, email)
-                     VALUES (:u,:h,:r,1,:n,:e)"
-                );
-                $st->execute([':u' => $username, ':h' => $hash, ':r' => $role, ':n' => $name, ':e' => $email]);
-                audit($db, 'user.create', 'user', (int)$db->lastInsertId(), "username=$username role=$role");
+                if ($ssoOnly) {
+                    // Unusable hash — password_verify() will always return false
+                    $hash    = '!' . bin2hex(random_bytes(16));
+                    $subVal  = $oidcSub !== '' ? $oidcSub : null;
+                    $st = $db->prepare(
+                        "INSERT INTO users (username, password_hash, role, is_active, name, email, oidc_sub)
+                         VALUES (:u,:h,:r,1,:n,:e,:sub)"
+                    );
+                    $st->execute([':u' => $username, ':h' => $hash, ':r' => $role,
+                                  ':n' => $name, ':e' => $email, ':sub' => $subVal]);
+                    $details = "username=$username role=$role sso_only=true" . ($subVal ? " sub=$subVal" : '');
+                } else {
+                    $hash = password_hash($password, PASSWORD_DEFAULT);
+                    $st = $db->prepare(
+                        "INSERT INTO users (username, password_hash, role, is_active, name, email, password_changed_at)
+                         VALUES (:u,:h,:r,1,:n,:e,datetime('now'))"
+                    );
+                    $st->execute([':u' => $username, ':h' => $hash, ':r' => $role, ':n' => $name, ':e' => $email]);
+                    $details = "username=$username role=$role";
+                }
+                audit($db, 'user.create', 'user', (int)$db->lastInsertId(), $details);
                 $msg = 'User created.';
             } catch (PDOException $e) {
                 $err = 'Could not create user (duplicate username?).';
@@ -56,7 +78,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $role = (string)($_POST['role'] ?? '');
         if ($id === $self['id']) {
             $err = 'You cannot change your own role.';
-        } elseif (!in_array($role, ['admin', 'readonly'], true)) {
+        } elseif (!in_array($role, $validRoles, true)) {
             $err = 'Invalid role.';
         } else {
             $db->prepare("UPDATE users SET role = :r WHERE id = :id")
@@ -77,11 +99,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($action === 'reset_password') {
         $id = (int)($_POST['id'] ?? 0);
         $pw = (string)($_POST['new_password'] ?? '');
-        if (strlen($pw) < 12) {
-            $err = 'Password must be at least 12 characters.';
+        $pwErr = validate_password_complexity($pw, $pwPolicy);
+        if ($pwErr !== null) {
+            $err = $pwErr;
         } else {
             $hash = password_hash($pw, PASSWORD_DEFAULT);
-            $db->prepare("UPDATE users SET password_hash = :h WHERE id = :id")
+            $db->prepare("UPDATE users SET password_hash = :h, password_changed_at = datetime('now') WHERE id = :id")
                ->execute([':h' => $hash, ':id' => $id]);
             audit($db, 'user.reset_password', 'user', $id, 'admin reset');
             $msg = 'Password reset.';
@@ -155,23 +178,52 @@ page_header('Users');
 <?php if ($msg): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
 
 <h2>Create user</h2>
-<form method="post" action="users.php">
+<form method="post" action="users.php" id="create-user-form">
   <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
   <input type="hidden" name="action" value="create">
   <div class="row">
     <label>Username<br><input name="username" required></label>
     <label>Full name<br><input name="name" placeholder="Jane Smith" maxlength="255"></label>
     <label>Email<br><input type="email" name="email" placeholder="jane@example.com" maxlength="255"></label>
-    <label>Password<br><input type="password" name="password" required></label>
+    <label id="pw-field">Password<br><input type="password" name="password" id="create-pw-input"></label>
+    <?php if (oidc_enabled($config)): ?>
+    <label id="sub-field" style="display:none">Subject (sub)<br>
+      <input name="oidc_sub" id="create-sub-input" placeholder="IdP sub claim (optional)">
+    </label>
+    <?php endif; ?>
     <label>Role<br>
       <select name="role">
         <option value="readonly">readonly</option>
+        <option value="netops">netops</option>
         <option value="admin">admin</option>
       </select>
     </label>
+    <?php if (oidc_enabled($config)): ?>
+    <label style="align-self:flex-end;padding-bottom:6px">
+      <input type="checkbox" name="sso_only" id="sso-only-toggle" value="1">
+      SSO-only account
+    </label>
+    <?php endif; ?>
     <button type="submit">Create</button>
   </div>
 </form>
+<?php if (oidc_enabled($config)): ?>
+<script>
+(function(){
+  var toggle = document.getElementById('sso-only-toggle');
+  var pwField = document.getElementById('pw-field');
+  var pwInput = document.getElementById('create-pw-input');
+  var subField = document.getElementById('sub-field');
+  if (!toggle) return;
+  toggle.addEventListener('change', function() {
+    var sso = toggle.checked;
+    pwField.style.display = sso ? 'none' : '';
+    pwInput.required = !sso;
+    subField.style.display = sso ? '' : 'none';
+  });
+}());
+</script>
+<?php endif; ?>
 
 <h2 style="margin-top:24px">Existing users</h2>
 <table>
@@ -224,6 +276,7 @@ page_header('Users');
               <input type="hidden" name="id"     value="<?= (int)$u['id'] ?>">
               <select name="role">
                 <option value="readonly" <?= $u['role']==='readonly'?'selected':'' ?>>readonly</option>
+                <option value="netops"   <?= $u['role']==='netops'  ?'selected':'' ?>>netops</option>
                 <option value="admin"    <?= $u['role']==='admin'   ?'selected':'' ?>>admin</option>
               </select>
               <button type="submit">Set role</button>
