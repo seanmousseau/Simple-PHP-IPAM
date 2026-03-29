@@ -91,6 +91,20 @@ See the [Installation guide](docs/install.md) for full web server configuration 
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
+### What's new in 1.6
+
+**CSP-compliant JavaScript** — All inline `onclick`, `onchange`, `onsubmit` handlers and inline `<script>` blocks have been removed. Behaviour is now handled via event delegation in `app.js` using `data-*` attributes, fully compliant with `Content-Security-Policy: script-src 'self'`.
+
+**Bug fixes** — Users admin page error messages no longer silently swallowed after the v1.5 refactor; SSO-only toggle applies on page load for form re-renders; subnet overlap warnings properly escaped; unassigned quick-add no longer leaks raw exception messages.
+
+**OIDC response cap** — HTTP functions for OIDC discovery, JWKS, and token exchange now limit response reads to 1 MB.
+
+**CSV UTF-8 BOM** — CSV exports include a UTF-8 BOM for automatic Excel encoding recognition.
+
+**Address history retention** — New `address_history_retention_days` config option prunes old entries during housekeeping, matching the existing audit log retention pattern.
+
+**Dark mode calendar icon** — Date input calendar picker icons are now visible in dark mode.
+
 ### What's new in 1.5
 
 **Security headers** — All page responses now include `Content-Security-Policy`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, and `Referrer-Policy` headers. The API JSON responses include the same headers (except CSP).

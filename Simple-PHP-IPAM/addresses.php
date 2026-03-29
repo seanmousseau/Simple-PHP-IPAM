@@ -365,7 +365,7 @@ page_header('Addresses');
                 <button type="submit" <?= (current_user()['role']==='readonly')?'disabled':'' ?>>Save</button>
               </form>
 
-              <form method="post" action="addresses.php" onsubmit="return confirm('Delete this address?');" style="margin-top:8px">
+              <form method="post" action="addresses.php" data-confirm="Delete this address?" style="margin-top:8px">
                 <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action" value="delete">
                 <input type="hidden" name="subnet_id" value="<?= (int)$selectedSubnetId ?>">

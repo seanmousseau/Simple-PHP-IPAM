@@ -28,6 +28,10 @@ return [
     // Set to 0 to keep the audit log forever (default).
     'audit_log_retention_days' => 0,
 
+    // Address history retention (days). Entries older than this are pruned during housekeeping.
+    // Set to 0 to keep address history forever (default).
+    'address_history_retention_days' => 0,
+
     // Lazy housekeeping: runs on normal site access at most once per interval.
     'housekeeping' => [
         'enabled' => true,

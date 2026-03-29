@@ -75,7 +75,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($action === 'toggle_active') {
         $id = (int)($_POST['id'] ?? 0);
         if ($id === $self['id']) {
-            $err = 'You cannot disable your own account.';
+            $errors[] = 'You cannot disable your own account.';
         } else {
             $db->prepare("UPDATE users SET is_active = CASE WHEN is_active=1 THEN 0 ELSE 1 END WHERE id = :id")
                ->execute([':id' => $id]);
@@ -87,9 +87,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $id   = (int)($_POST['id']   ?? 0);
         $role = (string)($_POST['role'] ?? '');
         if ($id === $self['id']) {
-            $err = 'You cannot change your own role.';
+            $errors[] = 'You cannot change your own role.';
         } elseif (!in_array($role, $validRoles, true)) {
-            $err = 'Invalid role.';
+            $errors[] = 'Invalid role.';
         } else {
             $db->prepare("UPDATE users SET role = :r WHERE id = :id")
                ->execute([':r' => $role, ':id' => $id]);
@@ -124,7 +124,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $id  = (int)($_POST['id']       ?? 0);
         $sub = trim((string)($_POST['oidc_sub'] ?? ''));
         if ($sub === '') {
-            $err = 'OIDC subject ID is required.';
+            $errors[] = 'OIDC subject ID is required.';
         } else {
             try {
                 $db->prepare("UPDATE users SET oidc_sub = :sub WHERE id = :id")
@@ -132,14 +132,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 audit($db, 'user.oidc_link', 'user', $id, 'manual sub=' . $sub);
                 $msg = 'OIDC subject linked.';
             } catch (PDOException $e) {
-                $err = 'Could not link: subject ID may already be assigned to another user.';
+                $errors[] = 'Could not link: subject ID may already be assigned to another user.';
             }
         }
 
     } elseif ($action === 'unlink_oidc') {
         $id = (int)($_POST['id'] ?? 0);
         if ($id === $self['id']) {
-            $err = 'You cannot unlink your own SSO account from this page. Use your profile settings.';
+            $errors[] = 'You cannot unlink your own SSO account from this page. Use your profile settings.';
         } else {
             $db->prepare("UPDATE users SET oidc_sub = NULL WHERE id = :id")
                ->execute([':id' => $id]);
@@ -150,7 +150,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($action === 'delete') {
         $id = (int)($_POST['id'] ?? 0);
         if ($id === $self['id']) {
-            $err = 'You cannot delete your own account.';
+            $errors[] = 'You cannot delete your own account.';
         } else {
             $tSt = $db->prepare("SELECT role, is_active FROM users WHERE id = :id");
             $tSt->execute([':id' => $id]);
@@ -162,10 +162,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 );
                 $cntSt->execute([':id' => $id]);
                 if ((int)$cntSt->fetchColumn() === 0) {
-                    $err = 'Cannot delete the last active admin account.';
+                    $errors[] = 'Cannot delete the last active admin account.';
                 }
             }
-            if (!$err) {
+            if (!$errors) {
                 $db->prepare("DELETE FROM users WHERE id = :id")->execute([':id' => $id]);
                 audit($db, 'user.delete', 'user', $id, '');
                 $msg = 'User deleted.';
@@ -221,23 +221,6 @@ page_header('Users');
     <button type="submit">Create</button>
   </div>
 </form>
-<?php if (oidc_enabled($config)): ?>
-<script>
-(function(){
-  var toggle = document.getElementById('sso-only-toggle');
-  var pwField = document.getElementById('pw-field');
-  var pwInput = document.getElementById('create-pw-input');
-  var subField = document.getElementById('sub-field');
-  if (!toggle) return;
-  toggle.addEventListener('change', function() {
-    var sso = toggle.checked;
-    pwField.style.display = sso ? 'none' : '';
-    pwInput.required = !sso;
-    subField.style.display = sso ? '' : 'none';
-  });
-}());
-</script>
-<?php endif; ?>
 
 <h2 style="margin-top:24px">Existing users</h2>
 <table>
@@ -317,7 +300,7 @@ page_header('Users');
             <?php if ($u['oidc_sub'] !== null): ?>
               <?php if ((int)$u['id'] !== $self['id']): ?>
               <form method="post" action="users.php" class="row" style="gap:6px"
-                    onsubmit="return confirm('Remove SSO link for <?= e((string)$u['username']) ?>?')">
+                    data-confirm="Remove SSO link for <?= e((string)$u['username']) ?>?">
                 <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action" value="unlink_oidc">
                 <input type="hidden" name="id"     value="<?= (int)$u['id'] ?>">
@@ -338,7 +321,7 @@ page_header('Users');
 
             <?php if ((int)$u['id'] !== $self['id']): ?>
               <form method="post" action="users.php"
-                    onsubmit="return confirm('Permanently delete user <?= e((string)$u['username']) ?>?')">
+                    data-confirm="Permanently delete user <?= e((string)$u['username']) ?>?">
                 <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action" value="delete">
                 <input type="hidden" name="id"     value="<?= (int)$u['id'] ?>">

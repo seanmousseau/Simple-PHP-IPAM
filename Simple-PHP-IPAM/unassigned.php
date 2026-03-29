@@ -125,7 +125,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add' 
                     exit;
                 }
             } catch (Throwable $e) {
-                $err = "Add failed: " . $e->getMessage();
+                $err = str_contains($e->getMessage(), 'UNIQUE')
+                    ? 'Address already exists in this subnet.'
+                    : 'Could not add address. Please try again.';
             }
         }
     }

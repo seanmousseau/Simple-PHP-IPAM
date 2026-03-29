@@ -364,7 +364,7 @@ page_header('Import CSV');
 </div>
 
 <div class="page-actions">
-  <a class="action-pill" href="import_csv.php?reset=1" onclick="return confirm('Reset import wizard?');">↺ Reset Wizard</a>
+  <a class="action-pill" href="import_csv.php?reset=1" data-confirm="Reset import wizard?">↺ Reset Wizard</a>
 </div>
 
 <?php if ($err): ?><p class="danger"><?= e($err) ?></p><?php endif; ?>
@@ -611,7 +611,7 @@ if ($step === 3) {
           <button type="submit" class="button-secondary">Re-run Dry Run</button>
         </form>
 
-        <form method="post" action="import_csv.php?step=4" style="display:inline" onsubmit="return confirm('Apply this import plan?');">
+        <form method="post" action="import_csv.php?step=4" style="display:inline" data-confirm="Apply this import plan?">
           <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
           <input type="hidden" name="action" value="apply">
           <button type="submit">Apply Import</button>

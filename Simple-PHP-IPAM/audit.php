@@ -106,7 +106,7 @@ page_header('Audit Log');
   <a class="action-pill" href="export_audit.php">⬇ Export CSV</a>
   <form method="get" action="audit.php" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0">
     <label style="margin:0">Category:
-      <select name="prefix" onchange="this.form.submit()" style="margin-left:4px">
+      <select name="prefix" data-auto-submit style="margin-left:4px">
         <option value=""<?= $filterPrefix === '' ? ' selected' : '' ?>>All</option>
         <?php foreach (AUDIT_PREFIXES as $pfx): ?>
           <option value="<?= e($pfx) ?>"<?= $filterPrefix === $pfx ? ' selected' : '' ?>><?= e($pfx) ?></option>

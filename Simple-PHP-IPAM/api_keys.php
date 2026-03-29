@@ -140,7 +140,7 @@ page_header('API Keys');
               </form>
             <?php endif; ?>
             <form method="post" action="api_keys.php" style="display:inline"
-                  onsubmit="return confirm('Permanently delete this key?')">
+                  data-confirm="Permanently delete this key?">
               <input type="hidden" name="csrf"     value="<?= e(csrf_token()) ?>">
               <input type="hidden" name="action"   value="delete">
               <input type="hidden" name="key_id"   value="<?= (int)$k['id'] ?>">

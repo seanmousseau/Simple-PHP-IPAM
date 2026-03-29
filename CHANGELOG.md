@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## 1.6 — CSP Compliance, Bug Fixes & Housekeeping
+
+### Bug fixes
+- **Fixed #77:** Error messages in the Users admin page (toggle active, set role, link/unlink SSO, delete) were silently swallowed after the v1.5 refactor changed `$err` to `$errors[]`. All action handlers now correctly populate `$errors[]`.
+- **Fixed #73:** The SSO-only toggle on the user creation form now applies its state on page load, fixing the issue where the password field visibility was wrong after a form re-render.
+- **Fixed #78:** Subnet overlap and site inheritance warning messages in `subnets.php` are now properly escaped on output via `e()`.
+- **Fixed #79:** The unassigned address quick-add error handler no longer leaks raw PDO exception messages. A user-friendly message is shown instead.
+
+### Security fixes
+- **Fixed #74:** All inline JavaScript event handlers (`onclick`, `onchange`, `onsubmit`) and inline `<script>` blocks have been removed from every PHP template. All behaviour is now handled via event delegation in `app.js` using `data-*` attributes (`data-confirm`, `data-auto-submit`, `data-select-addrs`, `data-dismiss-update`). This makes the application fully compliant with `Content-Security-Policy: script-src 'self'`.
+- **Fixed #80:** OIDC HTTP functions (`oidc_http_get`, `oidc_http_post`) now cap response reads to 1 MB to prevent memory exhaustion from oversized or malicious IdP responses.
+
+### Enhancements
+- **Fixed #81:** CSV exports now include a UTF-8 BOM (`\xEF\xBB\xBF`) so Excel correctly recognises the encoding without manual import steps.
+- **Fixed #82:** New `address_history_retention_days` config option prunes old address history entries during scheduled housekeeping. Defaults to `0` (keep forever), matching the existing `audit_log_retention_days` pattern.
+- **Fixed #75:** The calendar picker icon on date inputs is now visible in dark mode (inverted via CSS filter for WebKit browsers and system-dark auto-theme).
+
+---
+
 ## 1.5 — Security Hardening, OIDC Improvements & UX Polish
 
 ### Security fixes

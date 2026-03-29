@@ -208,7 +208,7 @@ page_header('DHCP Pools');
     <input type="hidden" name="action" value="reserve_pool">
     <div class="row" style="flex-wrap:wrap;gap:10px">
       <label>Subnet<br>
-        <select name="subnet_id" onchange="this.form.submit()" style="min-width:200px">
+        <select name="subnet_id" data-auto-submit style="min-width:200px">
           <option value="0">— select subnet —</option>
           <?php foreach ($subnets as $s): ?>
             <option value="<?= (int)$s['id'] ?>" <?= ((int)$s['id'] === $subnetId) ? 'selected' : '' ?>>
@@ -231,7 +231,7 @@ page_header('DHCP Pools');
 <?php if ($subnet): ?>
 <div class="card" style="margin-top:16px">
   <h2>Clear a range <span class="muted" style="font-size:.85em;font-weight:400">(removes <em>reserved</em> records only)</span></h2>
-  <form method="post" action="dhcp_pool.php" onsubmit="return confirm('Delete all reserved records in this range?')">
+  <form method="post" action="dhcp_pool.php" data-confirm="Delete all reserved records in this range?">
     <input type="hidden" name="csrf"      value="<?= e(csrf_token()) ?>">
     <input type="hidden" name="action"    value="clear_pool">
     <input type="hidden" name="subnet_id" value="<?= (int)$subnetId ?>">

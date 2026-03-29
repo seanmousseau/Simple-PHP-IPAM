@@ -234,31 +234,5 @@ page_header('Search');
   <?php endif; ?>
 </div>
 
-<script>
-(function () {
-  var siteEl   = document.getElementById('filter-site');
-  var subnetEl = document.getElementById('filter-subnet');
-  if (!siteEl || !subnetEl) return;
-
-  function filterSubnets() {
-    var selectedSite = siteEl.value;
-    var opts = subnetEl.querySelectorAll('option');
-    var currentVal = subnetEl.value;
-    var currentStillVisible = false;
-
-    opts.forEach(function (opt) {
-      if (opt.value === '0') return; // always show "any"
-      var match = selectedSite === '0' || opt.dataset.site === selectedSite;
-      opt.style.display = match ? '' : 'none';
-      if (match && opt.value === currentVal) currentStillVisible = true;
-    });
-
-    if (!currentStillVisible) subnetEl.value = '0';
-  }
-
-  siteEl.addEventListener('change', filterSubnets);
-  filterSubnets(); // apply on page load to respect pre-selected site
-}());
-</script>
 
 <?php page_footer();

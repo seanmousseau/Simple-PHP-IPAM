@@ -10,6 +10,7 @@ All application settings live in `config.php` in the application root. This file
 - [`update_check`](#update_check)
 - [`backup`](#backup)
 - [`audit_log_retention_days`](#audit_log_retention_days)
+- [`address_history_retention_days`](#address_history_retention_days)
 - [Behind a reverse proxy](#behind-a-reverse-proxy)
 
 ---
@@ -54,6 +55,9 @@ return [
     // Audit log retention (days). Entries older than this are pruned during housekeeping.
     // Set to 0 to keep the audit log forever (default).
     'audit_log_retention_days' => 0,
+
+    // Address history retention (days). 0 = keep forever.
+    'address_history_retention_days' => 0,
 
     // Lazy housekeeping: runs on normal site access at most once per interval.
     'housekeeping' => [
@@ -197,6 +201,18 @@ When set to a positive integer, audit log entries older than this many days are 
 ```
 
 Set to `0` (or omit the key) to keep all audit entries indefinitely. Note that the audit log grows unboundedly without retention; for busy installations consider setting a retention period for compliance and storage reasons.
+
+---
+
+### `address_history_retention_days`
+
+**Default:** `0` (keep forever)
+
+Number of days to retain address change history. Entries older than this are pruned during scheduled housekeeping. Set to `0` to keep all history forever.
+
+```php
+'address_history_retention_days' => 180,
+```
 
 ---
 

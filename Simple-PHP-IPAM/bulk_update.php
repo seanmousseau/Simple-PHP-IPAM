@@ -354,13 +354,10 @@ page_header('Bulk Update');
     </p>
 
     <p>
-      <button type="button" onclick="document.querySelectorAll('input.addrbox').forEach(cb=>cb.checked=true)">Select all</button>
-      <button type="button" onclick="document.querySelectorAll('input.addrbox').forEach(cb=>cb.checked=false)">Select none</button>
+      <button type="button" data-select-addrs="all">Select all</button>
+      <button type="button" data-select-addrs="none">Select none</button>
       <?php if ($unconfigured): ?>
-        <button type="button"
-          onclick="document.querySelectorAll('input.addrbox[data-unconf]').forEach(cb=>cb.checked=true)">
-          Select unconfigured
-        </button>
+        <button type="button" data-select-addrs="unconfigured">Select unconfigured</button>
       <?php endif; ?>
     </p>
 
@@ -420,7 +417,7 @@ page_header('Bulk Update');
       </label>
 
       <button type="submit" <?= $isReadonly ? 'disabled' : '' ?>
-        onclick="return confirm('Proceed with the selected bulk action?');">
+        data-confirm="Proceed with the selected bulk action?">
         Apply
       </button>
     </div>
