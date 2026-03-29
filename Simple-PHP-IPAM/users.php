@@ -229,12 +229,15 @@ page_header('Users');
   var pwInput = document.getElementById('create-pw-input');
   var subField = document.getElementById('sub-field');
   if (!toggle) return;
-  toggle.addEventListener('change', function() {
+  function applySsoState() {
     var sso = toggle.checked;
     pwField.style.display = sso ? 'none' : '';
     pwInput.required = !sso;
     subField.style.display = sso ? '' : 'none';
-  });
+  }
+  toggle.addEventListener('change', applySsoState);
+  // Apply on load so a re-rendered form with sso_only preserved shows correctly
+  applySsoState();
 }());
 </script>
 <?php endif; ?>
