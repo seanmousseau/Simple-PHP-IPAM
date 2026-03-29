@@ -62,7 +62,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 if ($inheritedSiteId !== null) {
                     $inheritedName = $siteMap[$inheritedSiteId] ?? "site #$inheritedSiteId";
-                    $siteNote = "Site automatically set to &quot;" . e($inheritedName) . "&quot; inherited from parent subnet.";
+                    $siteNote = 'Site automatically set to "' . $inheritedName . '" inherited from parent subnet.';
                     $warn = $warn ? $warn . ' ' . $siteNote : $siteNote;
                 }
                 if ($warn) $_SESSION['ipam_flash_warn'] = $warn;
@@ -112,7 +112,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 if ($inheritedSiteId !== null) {
                     $inheritedName = $siteMap[$inheritedSiteId] ?? "site #$inheritedSiteId";
-                    $siteNote = "Site set to &quot;" . e($inheritedName) . "&quot; inherited from parent subnet.";
+                    $siteNote = 'Site set to "' . $inheritedName . '" inherited from parent subnet.';
                     $warn = $warn ? $warn . ' ' . $siteNote : $siteNote;
                 }
             } catch (PDOException $e) {
@@ -344,11 +344,11 @@ function subnet_overlap_warning_text(array $overlaps): string
 {
     $parts = [];
     if (!empty($overlaps['parents'])) {
-        $list = implode(', ', array_map('e', $overlaps['parents']));
+        $list = implode(', ', $overlaps['parents']);
         $parts[] = 'nested inside: ' . $list;
     }
     if (!empty($overlaps['children'])) {
-        $list = implode(', ', array_map('e', $overlaps['children']));
+        $list = implode(', ', $overlaps['children']);
         $parts[] = 'parent of: ' . $list;
     }
     return 'Hierarchy notice — this subnet is ' . implode('; and ', $parts) . '. Verify this nesting is intentional.';
@@ -466,7 +466,7 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
     echo "<button type='submit' $disabled>Save</button>";
     echo "</form>";
 
-    echo "<form method='post' action='subnets.php' onsubmit='return confirm(\"Delete subnet and all its addresses?\");' style='margin-top:8px'>";
+    echo "<form method='post' action='subnets.php' data-confirm='Delete subnet and all its addresses?' style='margin-top:8px'>";
     echo "<input type='hidden' name='csrf' value='" . e(csrf_token()) . "'>";
     echo "<input type='hidden' name='action' value='delete'>";
     echo "<input type='hidden' name='id' value='" . (int)$row['id'] . "'>";
@@ -510,7 +510,7 @@ page_header('Subnets');
 
 <?php if ($err): ?><p class="danger"><?= e($err) ?></p><?php endif; ?>
 <?php if ($msg): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
-<?php if ($warn): ?><p class="warning"><?= $warn ?></p><?php endif; ?>
+<?php if ($warn): ?><p class="warning"><?= e($warn) ?></p><?php endif; ?>
 
 <div class="card" id="add-subnet" style="margin-top:16px">
   <h2>Add subnet</h2>

@@ -376,6 +376,10 @@ function ipam_config_defaults(): array
             'default' => 0,
             'comment' => 'Audit log retention (days). Entries older than this are pruned during housekeeping. 0 = keep forever.',
         ],
+        'address_history_retention_days' => [
+            'default' => 0,
+            'comment' => 'Address history retention (days). Entries older than this are pruned during housekeeping. 0 = keep forever.',
+        ],
         'housekeeping' => ['default' => null, 'comment' => ''],
         'utilization_warn'     => ['default' => null, 'comment' => ''],
         'utilization_critical' => ['default' => null, 'comment' => ''],
@@ -623,6 +627,15 @@ function prune_audit_log(PDO $db, int $retentionDays): int
     }
 }
 
+function prune_address_history(PDO $db, int $retentionDays): int
+{
+    if ($retentionDays <= 0) return 0;
+    $cutoff = date('Y-m-d H:i:s', strtotime("-{$retentionDays} days"));
+    $st = $db->prepare("DELETE FROM address_history WHERE created_at < :cutoff");
+    $st->execute([':cutoff' => $cutoff]);
+    return $st->rowCount();
+}
+
 function run_housekeeping_if_due(array $config, ?PDO $db = null): void
 {
     if (!housekeeping_should_run($config)) return;
@@ -649,6 +662,10 @@ function run_housekeeping_if_due(array $config, ?PDO $db = null): void
             $retentionDays = (int)($config['audit_log_retention_days'] ?? 0);
             if ($retentionDays > 0) {
                 prune_audit_log($db, $retentionDays);
+            }
+            $histRetention = (int)($config['address_history_retention_days'] ?? 0);
+            if ($histRetention > 0) {
+                prune_address_history($db, $histRetention);
             }
         }
 
@@ -940,6 +957,7 @@ function csv_download_headers(string $filename): void
     header('Content-Disposition: attachment; filename="' . $filename . '"');
     header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
     header('Pragma: no-cache');
+    echo "\xEF\xBB\xBF"; // UTF-8 BOM for Excel compatibility
 }
 
 function csv_output_handle()
@@ -1355,8 +1373,8 @@ function page_header(string $title): void
 
     echo "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
     echo "<title>" . e($title) . "</title>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=1.5'>";
-    echo "<script defer src='assets/app.js?v=1.5'></script>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=1.6'>";
+    echo "<script defer src='assets/app.js?v=1.6'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
@@ -1394,7 +1412,7 @@ function page_header(string $title): void
         echo e((string)$u) . " <span class='badge badge-role-" . e((string)$role) . "'>" . e((string)$role) . "</span> ▾";
         echo "</button>";
         echo "<div class='nav-dropdown-menu nav-dropdown-menu--right'>";
-        echo "<button type='button' class='nav-dropdown-item' id='theme-toggle' onclick='ipamCycleTheme()'>🌓 Theme</button>";
+        echo "<button type='button' class='nav-dropdown-item' id='theme-toggle'>🌓 Theme</button>";
         echo "<hr class='nav-dropdown-divider'>";
         echo "<a class='nav-dropdown-item' href='change_password.php'>🔐 Password</a>";
         echo "<a class='nav-dropdown-item' href='logout.php'>↩ Logout</a>";
@@ -1436,7 +1454,7 @@ function page_header(string $title): void
                . "🚀 Simple PHP IPAM v{$uv} is available. "
                . "<a href='{$url}' target='_blank' rel='noopener'>View release</a>"
                . " &nbsp;<button type='button' class='button-secondary' style='padding:4px 10px;font-size:.85em' "
-               . "onclick='ipamDismissUpdate(\"{$uv}\")'>Dismiss</button>"
+               . "data-dismiss-update='{$uv}'>Dismiss</button>"
                . "</div>";
         }
     }
@@ -1657,7 +1675,7 @@ function oidc_http_get(string $url): string
         'http' => ['timeout' => 10, 'ignore_errors' => true],
         'ssl'  => ['verify_peer' => true, 'verify_peer_name' => true],
     ]);
-    $raw = @file_get_contents($url, false, $ctx);
+    $raw = @file_get_contents($url, false, $ctx, 0, 1048576);
     if ($raw === false || $raw === '') {
         throw new RuntimeException('HTTP GET failed for ' . $url);
     }
@@ -1679,7 +1697,7 @@ function oidc_http_post(string $url, array $params): array
         ],
         'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
     ]);
-    $raw = @file_get_contents($url, false, $ctx);
+    $raw = @file_get_contents($url, false, $ctx, 0, 1048576);
     if ($raw === false) throw new RuntimeException('Token endpoint request failed');
     $d = json_decode($raw, true);
     if (!is_array($d)) throw new RuntimeException('Invalid JSON from token endpoint');

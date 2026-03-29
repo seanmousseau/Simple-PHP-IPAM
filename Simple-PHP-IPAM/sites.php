@@ -160,7 +160,7 @@ page_header('Sites');
               </form>
 
               <form method="post" action="sites.php" style="margin-top:8px"
-                    onsubmit="return confirm('Delete this site? Subnets will be ungrouped, not deleted.');">
+                    data-confirm="Delete this site? Subnets will be ungrouped, not deleted.">
                 <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action" value="delete">
                 <input type="hidden" name="id" value="<?= (int)$site['id'] ?>">
