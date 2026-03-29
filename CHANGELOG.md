@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## 1.5 — Security Hardening, OIDC Improvements & UX Polish
+
+### Security fixes
+- **Fixed #64:** `client_ip()` and the API IP-resolution block now validate `X-Forwarded-For` when `proxy_trust` is enabled. The leftmost IP is extracted, checked with `filter_var(FILTER_VALIDATE_IP)`, and the raw multi-value header string can no longer be used to bypass rate limiting.
+- **Fixed #65:** OIDC `error` and `error_description` callback parameters are now sanitised (alphanumeric + safe punctuation, 64/200 char cap) before being written to the audit log.
+- **Fixed #66:** OIDC auto-provision role validation now includes `netops`. Previously, `'default_role' => 'netops'` silently fell back to `readonly`.
+- **Fixed #67:** Standard HTTP security headers added to all page responses: `Content-Security-Policy`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`. Also added to `api.php` JSON responses.
+
+### Bug fixes
+- **Fixed #69:** Creating a subnet or address that already exists now shows a specific _"already exists"_ message instead of a generic error, by inspecting the `UNIQUE` constraint in the PDO exception.
+
+### Enhancements
+- **Feature #59:** `validate_password_complexity()` now collects and returns **all** failing rules at once instead of stopping at the first. All three call sites (self-service change, admin create, admin reset) display the full list.
+- **Feature #60:** The user creation form in admin user management now re-populates username, name, email, and role when validation fails. Password fields remain blank.
+- **Feature #61:** OIDC `auto_link` is now a separate config key from `auto_provision`. `auto_link = true` allows pre-created accounts to self-link on first OIDC login without permitting new account creation. `auto_provision = true` implies `auto_link`. Fully backwards-compatible: installs without `auto_link` fall back to the previous `auto_provision`-only behaviour.
+- **Feature #68:** API `429 Too Many Requests` response now includes `Retry-After` and `X-RateLimit-Limit` headers so clients can back off correctly.
+- **Feature #70:** Audit log now has **From** and **To** date filters. Both are optional, persist in the URL, and work alongside the existing category filter.
+- **Feature #71:** API key list already shows `Created` and `Created by` columns — confirmed present in current codebase; no change needed.
+
+---
+
 ## 1.4 — Roles, Password Policy & SSO-Only Accounts
 
 ### Enhancements

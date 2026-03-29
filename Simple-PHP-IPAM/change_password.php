@@ -5,7 +5,7 @@ require_login();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 
-$err = '';
+$errors = [];
 $msg = '';
 $cur = current_user();
 
@@ -26,13 +26,13 @@ if (!$isSsoOnly && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $new2 = (string)($_POST['new_password2'] ?? '');
 
     if ($new1 !== $new2) {
-        $err = 'New passwords do not match.';
+        $errors[] = 'New passwords do not match.';
     } else {
-        $pwErr = validate_password_complexity($new1, $pwPolicy);
-        if ($pwErr !== null) {
-            $err = $pwErr;
+        $pwErrors = validate_password_complexity($new1, $pwPolicy);
+        if ($pwErrors) {
+            $errors = $pwErrors;
         } elseif (!$userRow || !password_verify($old, $userRow['password_hash'])) {
-            $err = 'Current password is incorrect.';
+            $errors[] = 'Current password is incorrect.';
         } else {
             $hash = password_hash($new1, PASSWORD_DEFAULT);
             $db->prepare("UPDATE users SET password_hash = :h, password_changed_at = datetime('now') WHERE id = :id")
@@ -55,7 +55,11 @@ page_header('Change Password');
   <?php if ($isExpired && !$msg): ?>
     <p class="danger">Your password has expired. Please set a new password to continue.</p>
   <?php endif; ?>
-  <?php if ($err): ?><p class="danger"><?= e($err) ?></p><?php endif; ?>
+  <?php if ($errors): ?>
+    <ul class="danger" style="margin:0 0 12px;padding-left:1.4em">
+      <?php foreach ($errors as $e_msg): ?><li><?= e($e_msg) ?></li><?php endforeach; ?>
+    </ul>
+  <?php endif; ?>
   <?php if ($msg): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
   <form method="post" action="change_password.php">
     <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">

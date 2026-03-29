@@ -11,57 +11,72 @@ if ($filterPrefix !== '' && !in_array($filterPrefix, AUDIT_PREFIXES, true)) {
     $filterPrefix = '';
 }
 
+// --- Date range filter (sanitised through strtotime → Y-m-d) ---
+$filterFrom = '';
+$filterTo   = '';
+$rawFrom = trim((string)($_GET['from'] ?? ''));
+$rawTo   = trim((string)($_GET['to']   ?? ''));
+if ($rawFrom !== '' && ($ts = strtotime($rawFrom)) !== false) {
+    $filterFrom = date('Y-m-d', $ts);
+}
+if ($rawTo !== '' && ($ts = strtotime($rawTo)) !== false) {
+    $filterTo = date('Y-m-d', $ts);
+}
+
 $page  = q_int('page', 1, 1, 1000000);
 $limit = q_int('page_size', 100, 1, 500);
 
-// --- Count with optional filter ---
+// --- Build WHERE clause ---
+$wheres = [];
+$params = [];
 if ($filterPrefix !== '') {
-    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM audit_log WHERE action LIKE :p");
-    $cntSt->execute([':p' => $filterPrefix . '.%']);
-} else {
-    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM audit_log");
-    $cntSt->execute();
+    $wheres[] = 'action LIKE :pfx';
+    $params[':pfx'] = $filterPrefix . '.%';
 }
+if ($filterFrom !== '') {
+    $wheres[] = 'created_at >= :from';
+    $params[':from'] = $filterFrom . ' 00:00:00';
+}
+if ($filterTo !== '') {
+    $wheres[] = 'created_at < :to';
+    $params[':to'] = date('Y-m-d', strtotime($filterTo . ' +1 day')) . ' 00:00:00';
+}
+$where = $wheres ? 'WHERE ' . implode(' AND ', $wheres) : '';
+
+// --- Count ---
+$cntSt = $db->prepare("SELECT COUNT(*) AS c FROM audit_log $where");
+$cntSt->execute($params);
 $total = (int)$cntSt->fetch()['c'];
 $pages = (int)max(1, ceil($total / $limit));
 
-if ($page > $pages) {
-    $page   = $pages;
-}
+if ($page > $pages) $page = $pages;
 $offset = ($page - 1) * $limit;
 
 // --- Fetch rows ---
-if ($filterPrefix !== '') {
-    $st = $db->prepare("
-        SELECT id, created_at, username, action, entity_type, entity_id, ip, details
-        FROM audit_log
-        WHERE action LIKE :p
-        ORDER BY id DESC
-        LIMIT :lim OFFSET :off
-    ");
-    $st->bindValue(':p',   $filterPrefix . '.%');
-    $st->bindValue(':lim', $limit,  PDO::PARAM_INT);
-    $st->bindValue(':off', $offset, PDO::PARAM_INT);
-} else {
-    $st = $db->prepare("
-        SELECT id, created_at, username, action, entity_type, entity_id, ip, details
-        FROM audit_log
-        ORDER BY id DESC
-        LIMIT :lim OFFSET :off
-    ");
-    $st->bindValue(':lim', $limit,  PDO::PARAM_INT);
-    $st->bindValue(':off', $offset, PDO::PARAM_INT);
-}
+$st = $db->prepare("
+    SELECT id, created_at, username, action, entity_type, entity_id, ip, details
+    FROM audit_log
+    $where
+    ORDER BY id DESC
+    LIMIT :lim OFFSET :off
+");
+foreach ($params as $k => $v) $st->bindValue($k, $v);
+$st->bindValue(':lim', $limit,  PDO::PARAM_INT);
+$st->bindValue(':off', $offset, PDO::PARAM_INT);
 $st->execute();
 $rows = $st->fetchAll();
 
-// Build a query string preserving filter+page_size across pagination links
-function audit_qs(int $page, int $limit, string $prefix): string
+// Build a query string preserving all filters across pagination links
+function audit_qs(int $page, int $limit, string $prefix, string $from, string $to): string
 {
     $p = ['page' => $page, 'page_size' => $limit];
     if ($prefix !== '') $p['prefix'] = $prefix;
+    if ($from   !== '') $p['from']   = $from;
+    if ($to     !== '') $p['to']     = $to;
     return '?' . http_build_query($p);
 }
+
+$hasFilter = $filterPrefix !== '' || $filterFrom !== '' || $filterTo !== '';
 
 page_header('Audit Log');
 ?>
@@ -87,19 +102,26 @@ page_header('Audit Log');
   </div>
 </div>
 
-<div class="page-actions" style="align-items:center;gap:12px">
+<div class="page-actions" style="align-items:center;gap:12px;flex-wrap:wrap">
   <a class="action-pill" href="export_audit.php">⬇ Export CSV</a>
-  <form method="get" action="audit.php" style="display:flex;gap:8px;align-items:center;margin:0">
-    <label style="margin:0">Filter:
+  <form method="get" action="audit.php" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0">
+    <label style="margin:0">Category:
       <select name="prefix" onchange="this.form.submit()" style="margin-left:4px">
-        <option value=""<?= $filterPrefix === '' ? ' selected' : '' ?>>All actions</option>
+        <option value=""<?= $filterPrefix === '' ? ' selected' : '' ?>>All</option>
         <?php foreach (AUDIT_PREFIXES as $pfx): ?>
           <option value="<?= e($pfx) ?>"<?= $filterPrefix === $pfx ? ' selected' : '' ?>><?= e($pfx) ?></option>
         <?php endforeach; ?>
       </select>
     </label>
+    <label style="margin:0">From:
+      <input type="date" name="from" value="<?= e($filterFrom) ?>" style="margin-left:4px">
+    </label>
+    <label style="margin:0">To:
+      <input type="date" name="to" value="<?= e($filterTo) ?>" style="margin-left:4px">
+    </label>
+    <button type="submit">Apply</button>
     <input type="hidden" name="page_size" value="<?= $limit ?>">
-    <?php if ($filterPrefix !== ''): ?>
+    <?php if ($hasFilter): ?>
       <a href="audit.php?page_size=<?= $limit ?>">✕ Clear</a>
     <?php endif; ?>
   </form>
@@ -107,7 +129,7 @@ page_header('Audit Log');
 
 <div class="card" style="margin-top:16px">
   <?php if (!$rows): ?>
-    <div class="empty-state">No audit entries<?= $filterPrefix !== '' ? ' for category <b>' . e($filterPrefix) . '</b>' : '' ?>.</div>
+    <div class="empty-state">No audit entries<?= $hasFilter ? ' matching the current filter' : '' ?>.</div>
   <?php else: ?>
     <table>
       <thead>
@@ -136,10 +158,10 @@ page_header('Audit Log');
 
     <p style="margin-top:12px">
       <?php if ($page > 1): ?>
-        <a href="<?= e(audit_qs($page - 1, $limit, $filterPrefix)) ?>">&laquo; Prev</a>
+        <a href="<?= e(audit_qs($page - 1, $limit, $filterPrefix, $filterFrom, $filterTo)) ?>">&laquo; Prev</a>
       <?php endif; ?>
       <?php if ($page < $pages): ?>
-        <a href="<?= e(audit_qs($page + 1, $limit, $filterPrefix)) ?>" style="margin-left:12px">Next &raquo;</a>
+        <a href="<?= e(audit_qs($page + 1, $limit, $filterPrefix, $filterFrom, $filterTo)) ?>" style="margin-left:12px">Next &raquo;</a>
       <?php endif; ?>
     </p>
   <?php endif; ?>

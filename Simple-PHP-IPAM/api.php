@@ -27,6 +27,8 @@ require __DIR__ . '/lib.php';
 
 header('Content-Type: application/json; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
+header('X-Frame-Options: DENY');
+header('Referrer-Policy: strict-origin-when-cross-origin');
 
 $db = ipam_db((string)$config['db_path']);
 ipam_db_init($db);
@@ -35,14 +37,21 @@ ipam_db_init($db);
 
 $apiMaxAttempts   = (int)($config['api_max_attempts']   ?? 20);
 $apiLockoutSeconds = (int)($config['api_lockout_seconds'] ?? 300);
-$clientIp = (string)(
-    (!empty($config['proxy_trust']) ? ($_SERVER['HTTP_X_FORWARDED_FOR'] ?? '') : '')
-    ?: ($_SERVER['REMOTE_ADDR'] ?? '127.0.0.1')
-);
+if (!empty($config['proxy_trust']) && !empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+    $xffParts  = array_map('trim', explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']));
+    $xffFirst  = $xffParts[0] ?? '';
+    $clientIp  = (filter_var($xffFirst, FILTER_VALIDATE_IP) !== false)
+                 ? $xffFirst
+                 : ($_SERVER['REMOTE_ADDR'] ?? '127.0.0.1');
+} else {
+    $clientIp = (string)($_SERVER['REMOTE_ADDR'] ?? '127.0.0.1');
+}
 
 // Rate-limit by IP before even reading the key
 if (login_rate_limited($db, $clientIp, $apiMaxAttempts, $apiLockoutSeconds)) {
     http_response_code(429);
+    header('Retry-After: ' . $apiLockoutSeconds);
+    header('X-RateLimit-Limit: ' . $apiMaxAttempts);
     echo json_encode(['error' => 'Too many failed API key attempts. Try again later.']);
     exit;
 }

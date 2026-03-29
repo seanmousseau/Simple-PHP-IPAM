@@ -132,27 +132,28 @@ function require_login(): void
 
 /**
  * Validate a password against the configured policy.
- * Returns null on success, or an error string describing the first violation.
+ * Returns an empty array on success, or an array of all violation messages.
  */
-function validate_password_complexity(string $password, array $policy): ?string
+function validate_password_complexity(string $password, array $policy): array
 {
+    $errors = [];
     $min = max(1, (int)($policy['min_length'] ?? 12));
     if (strlen($password) < $min) {
-        return "Password must be at least {$min} characters.";
+        $errors[] = "Password must be at least {$min} characters.";
     }
     if (!empty($policy['require_uppercase']) && !preg_match('/[A-Z]/', $password)) {
-        return 'Password must contain at least one uppercase letter (A–Z).';
+        $errors[] = 'Password must contain at least one uppercase letter (A–Z).';
     }
     if (!empty($policy['require_lowercase']) && !preg_match('/[a-z]/', $password)) {
-        return 'Password must contain at least one lowercase letter (a–z).';
+        $errors[] = 'Password must contain at least one lowercase letter (a–z).';
     }
     if (!empty($policy['require_number']) && !preg_match('/[0-9]/', $password)) {
-        return 'Password must contain at least one number (0–9).';
+        $errors[] = 'Password must contain at least one number (0–9).';
     }
     if (!empty($policy['require_symbol']) && !preg_match('/[^A-Za-z0-9]/', $password)) {
-        return 'Password must contain at least one special character.';
+        $errors[] = 'Password must contain at least one special character.';
     }
-    return null;
+    return $errors;
 }
 
 function current_user(): array
@@ -234,7 +235,17 @@ function logout_user(): void
 
 /* ---------------- Audit ---------------- */
 
-function client_ip(): string { return (string)($_SERVER['REMOTE_ADDR'] ?? '127.0.0.1'); }
+function client_ip(): string
+{
+    if (!empty($GLOBALS['config']['proxy_trust']) && !empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+        $parts     = array_map('trim', explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']));
+        $candidate = $parts[0] ?? '';
+        if (filter_var($candidate, FILTER_VALIDATE_IP) !== false) {
+            return $candidate;
+        }
+    }
+    return (string)($_SERVER['REMOTE_ADDR'] ?? '127.0.0.1');
+}
 
 function audit(PDO $db, string $action, string $entityType, ?int $entityId, string $details = ''): void
 {
@@ -385,7 +396,24 @@ function ipam_config_defaults(): array
             ],
             'comment' => "Automatic database backups. frequency: 'daily' | 'weekly'. retention: keep last N backups.",
         ],
-        'oidc' => ['default' => null, 'comment' => ''],
+        'oidc' => [
+            'default' => [
+                'enabled'                  => false,
+                'display_name'             => 'SSO',
+                'client_id'                => '',
+                'client_secret'            => '',
+                'discovery_url'            => '',
+                'redirect_uri'             => '',
+                'scopes'                   => 'openid email profile',
+                'auto_link'                => false,
+                'auto_provision'           => false,
+                'default_role'             => 'readonly',
+                'disable_local_login'      => false,
+                'hide_emergency_link'      => false,
+                'disable_emergency_bypass' => false,
+            ],
+            'comment' => 'OIDC SSO configuration. See docs/oidc.md for full details.',
+        ],
         'password_policy' => [
             'default' => [
                 'min_length'            => 12,
@@ -1320,10 +1348,15 @@ function page_header(string $title): void
     $u = $_SESSION['username'] ?? '';
     $role = $_SESSION['role'] ?? '';
 
+    header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'");
+    header('X-Frame-Options: DENY');
+    header('X-Content-Type-Options: nosniff');
+    header('Referrer-Policy: strict-origin-when-cross-origin');
+
     echo "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
     echo "<title>" . e($title) . "</title>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=1.4'>";
-    echo "<script defer src='assets/app.js?v=1.4'></script>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=1.5'>";
+    echo "<script defer src='assets/app.js?v=1.5'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";

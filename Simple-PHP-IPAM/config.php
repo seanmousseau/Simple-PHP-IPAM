@@ -102,8 +102,14 @@ return [
         // auto-provisioning. 'profile' is optional.
         'scopes'         => 'openid email profile',
 
-        // auto_provision: if true, a local user is created on first OIDC login
-        // when no existing user is linked to the IdP subject (sub) claim.
+        // auto_link: if true, an incoming OIDC login that matches an existing local
+        // account (by preferred_username or email) will have its oidc_sub written
+        // automatically on first login. Set to true to allow pre-created accounts
+        // to self-link without knowing the IdP sub claim in advance.
+        'auto_link' => false,
+
+        // auto_provision: if true, a new local account is created on first OIDC login
+        // when no existing user can be matched. Implies auto_link = true.
         // Username is derived from the preferred_username claim (or email local-part).
         // Name and email are populated from the corresponding ID token claims.
         'auto_provision' => false,
