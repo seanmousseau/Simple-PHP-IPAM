@@ -69,7 +69,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 header('Location: subnets.php');
                 exit;
             } catch (PDOException $e) {
-                $err = 'Could not create subnet (duplicate?).';
+                $err = str_contains($e->getMessage(), 'UNIQUE')
+                    ? 'A subnet with this CIDR already exists.'
+                    : 'Could not create subnet. Please try again.';
             }
         }
     } elseif ($action === 'update') {

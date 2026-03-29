@@ -91,6 +91,24 @@ See the [Installation guide](docs/install.md) for full web server configuration 
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
+### What's new in 1.5
+
+**Security headers** — All page responses now include `Content-Security-Policy`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, and `Referrer-Policy` headers. The API JSON responses include the same headers (except CSP).
+
+**X-Forwarded-For hardening** — When `proxy_trust` is enabled, the `X-Forwarded-For` header is now validated as a proper IP address before use in rate limiting. Comma-separated proxy chains are handled correctly.
+
+**OIDC auto-link** — New `auto_link` config option lets pre-created accounts self-link on first OIDC login without allowing open account creation (`auto_provision = false`). Fully backwards-compatible.
+
+**Password errors all at once** — All unmet password requirements are now shown together in a single response, across self-service change, admin user creation, and admin password reset.
+
+**User creation form preservation** — When user creation fails validation, username, name, email, and role are re-populated in the form.
+
+**Audit log date filter** — Filter audit entries by date range (From / To) alongside the existing category filter.
+
+**Better duplicate errors** — Creating a subnet or address that already exists now shows a specific _"already exists"_ message.
+
+**API rate limit headers** — `429` responses include `Retry-After` and `X-RateLimit-Limit` headers.
+
 ### What's new in 1.4
 
 **Netops role** — A new `netops` role sits between `admin` and `readonly`. Netops users can create and edit subnets, addresses, DHCP pools, and sites, but cannot manage users or API keys. DHCP Pools link moves to the main nav for write-access users.

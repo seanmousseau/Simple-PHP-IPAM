@@ -34,8 +34,11 @@ if ($savedState === '' || !hash_equals($savedState, $returnedState)) {
 
 // ---- IdP error response ----
 if (!empty($_GET['error'])) {
-    oidc_fail($db, 'IdP returned error: ' . $_GET['error']
-        . (isset($_GET['error_description']) ? ' — ' . $_GET['error_description'] : ''));
+    $errorCode = substr(preg_replace('/[^A-Za-z0-9_.:-]/', '', (string)$_GET['error']), 0, 64);
+    $errorDesc = isset($_GET['error_description'])
+        ? ' — ' . substr(trim((string)$_GET['error_description']), 0, 200)
+        : '';
+    oidc_fail($db, "IdP returned error: {$errorCode}{$errorDesc}");
 }
 
 $code = (string)($_GET['code'] ?? '');
@@ -99,7 +102,15 @@ $st = $db->prepare("SELECT id, username, role, is_active FROM users WHERE oidc_s
 $st->execute([':sub' => $sub]);
 $user = $st->fetch();
 
-if (!$user && !empty($config['oidc']['auto_provision'])) {
+// auto_link: link incoming OIDC login to an existing unlinked local account by username/email.
+// auto_provision: create a new account when no match is found (implies auto_link).
+// For backwards compatibility, if auto_link is absent, fall back to auto_provision for both.
+$autoProvision = !empty($config['oidc']['auto_provision']);
+$autoLink      = isset($config['oidc']['auto_link'])
+                 ? !empty($config['oidc']['auto_link'])
+                 : $autoProvision; // BC: old installs without auto_link key
+
+if (!$user && $autoLink) {
     // Try to link an existing local user by preferred_username then by email
     $existing = false;
     if ($claimPrefUsername !== '') {
@@ -119,10 +130,10 @@ if (!$user && !empty($config['oidc']['auto_provision'])) {
            ->execute([':sub' => $sub, ':n' => $claimName, ':e' => $claimEmail, ':id' => (int)$existing['id']]);
         audit($db, 'auth.oidc_link', 'user', (int)$existing['id'], 'sub=' . $sub);
         $user = $existing;
-    } else {
+    } elseif ($autoProvision) {
         // Auto-provision a new local user
         $role = (string)($config['oidc']['default_role'] ?? 'readonly');
-        if (!in_array($role, ['admin', 'readonly'], true)) $role = 'readonly';
+        if (!in_array($role, ['admin', 'netops', 'readonly'], true)) $role = 'readonly';
 
         // Derive a username: prefer preferred_username, fall back to email local-part, then sub
         $newUsername = $claimPrefUsername !== '' ? $claimPrefUsername

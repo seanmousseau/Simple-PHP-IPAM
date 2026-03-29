@@ -81,7 +81,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     header('Location: addresses.php?subnet_id=' . $subnetId);
                     exit;
                 } catch (PDOException $e) {
-                    $err = 'Could not add address (duplicate within that subnet?).';
+                    $err = str_contains($e->getMessage(), 'UNIQUE')
+                        ? 'An address record for this IP already exists in the subnet.'
+                        : 'Could not add address. Please try again.';
                 }
             }
         }

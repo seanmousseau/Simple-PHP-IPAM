@@ -5,9 +5,11 @@ require_role('admin');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 
-$err = '';
-$msg = '';
-$self = current_user();
+$errors = [];
+$msg    = '';
+$self   = current_user();
+// Form data preserved across failed create attempts (non-sensitive fields only)
+$formData = ['username' => '', 'name' => '', 'email' => '', 'role' => 'readonly', 'sso_only' => false, 'oidc_sub' => ''];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = (string)($_POST['action'] ?? '');
@@ -23,17 +25,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $ssoOnly  = !empty($_POST['sso_only']);
         $oidcSub  = trim((string)($_POST['oidc_sub'] ?? ''));
 
+        // Preserve submitted values for re-populating the form on failure
+        $formData = ['username' => $username, 'name' => $name, 'email' => $email,
+                     'role' => $role, 'sso_only' => $ssoOnly, 'oidc_sub' => $oidcSub];
+
         if ($username === '' || !preg_match('~^[a-zA-Z0-9_.\-@]{3,64}$~', $username)) {
-            $err = 'Username must be 3–64 chars (letters, numbers, _ . - @).';
+            $errors[] = 'Username must be 3–64 chars (letters, numbers, _ . - @).';
         } elseif (!in_array($role, $validRoles, true)) {
-            $err = 'Invalid role.';
-        } elseif (!$ssoOnly) {
+            $errors[] = 'Invalid role.';
+        }
+        if (!$ssoOnly && !$errors) {
             $password = (string)($_POST['password'] ?? '');
-            $pwErr = validate_password_complexity($password, $pwPolicy);
-            if ($pwErr !== null) $err = $pwErr;
+            $errors   = array_merge($errors, validate_password_complexity($password, $pwPolicy));
         }
 
-        if (!$err) {
+        if (!$errors) {
             try {
                 if ($ssoOnly) {
                     // Unusable hash — password_verify() will always return false
@@ -57,8 +63,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 audit($db, 'user.create', 'user', (int)$db->lastInsertId(), $details);
                 $msg = 'User created.';
+                // Reset form data after successful creation
+                $formData = ['username' => '', 'name' => '', 'email' => '', 'role' => 'readonly', 'sso_only' => false, 'oidc_sub' => ''];
             } catch (PDOException $e) {
-                $err = 'Could not create user (duplicate username?).';
+                $errors[] = str_contains($e->getMessage(), 'UNIQUE')
+                    ? 'A user with that username already exists.'
+                    : 'Could not create user. Please try again.';
             }
         }
 
@@ -97,11 +107,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $msg = 'Profile updated.';
 
     } elseif ($action === 'reset_password') {
-        $id = (int)($_POST['id'] ?? 0);
-        $pw = (string)($_POST['new_password'] ?? '');
-        $pwErr = validate_password_complexity($pw, $pwPolicy);
-        if ($pwErr !== null) {
-            $err = $pwErr;
+        $id     = (int)($_POST['id'] ?? 0);
+        $pw     = (string)($_POST['new_password'] ?? '');
+        $pwErrs = validate_password_complexity($pw, $pwPolicy);
+        if ($pwErrs) {
+            $errors = $pwErrs;
         } else {
             $hash = password_hash($pw, PASSWORD_DEFAULT);
             $db->prepare("UPDATE users SET password_hash = :h, password_changed_at = datetime('now') WHERE id = :id")
@@ -174,7 +184,11 @@ $users = $st->fetchAll();
 page_header('Users');
 ?>
 <h1>Users</h1>
-<?php if ($err): ?><p class="danger"><?= e($err) ?></p><?php endif; ?>
+<?php if ($errors): ?>
+  <ul class="danger" style="margin:0 0 12px;padding-left:1.4em">
+    <?php foreach ($errors as $e_msg): ?><li><?= e($e_msg) ?></li><?php endforeach; ?>
+  </ul>
+<?php endif; ?>
 <?php if ($msg): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
 
 <h2>Create user</h2>
@@ -182,25 +196,25 @@ page_header('Users');
   <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
   <input type="hidden" name="action" value="create">
   <div class="row">
-    <label>Username<br><input name="username" required></label>
-    <label>Full name<br><input name="name" placeholder="Jane Smith" maxlength="255"></label>
-    <label>Email<br><input type="email" name="email" placeholder="jane@example.com" maxlength="255"></label>
+    <label>Username<br><input name="username" required value="<?= e($formData['username']) ?>"></label>
+    <label>Full name<br><input name="name" placeholder="Jane Smith" maxlength="255" value="<?= e($formData['name']) ?>"></label>
+    <label>Email<br><input type="email" name="email" placeholder="jane@example.com" maxlength="255" value="<?= e($formData['email']) ?>"></label>
     <label id="pw-field">Password<br><input type="password" name="password" id="create-pw-input"></label>
     <?php if (oidc_enabled($config)): ?>
     <label id="sub-field" style="display:none">Subject (sub)<br>
-      <input name="oidc_sub" id="create-sub-input" placeholder="IdP sub claim (optional)">
+      <input name="oidc_sub" id="create-sub-input" placeholder="IdP sub claim (optional)" value="<?= e($formData['oidc_sub']) ?>">
     </label>
     <?php endif; ?>
     <label>Role<br>
       <select name="role">
-        <option value="readonly">readonly</option>
-        <option value="netops">netops</option>
-        <option value="admin">admin</option>
+        <?php foreach (['readonly', 'netops', 'admin'] as $r): ?>
+          <option value="<?= e($r) ?>"<?= $formData['role'] === $r ? ' selected' : '' ?>><?= e($r) ?></option>
+        <?php endforeach; ?>
       </select>
     </label>
     <?php if (oidc_enabled($config)): ?>
     <label style="align-self:flex-end;padding-bottom:6px">
-      <input type="checkbox" name="sso_only" id="sso-only-toggle" value="1">
+      <input type="checkbox" name="sso_only" id="sso-only-toggle" value="1"<?= $formData['sso_only'] ? ' checked' : '' ?>>
       SSO-only account
     </label>
     <?php endif; ?>
