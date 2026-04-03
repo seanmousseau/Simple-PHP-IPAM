@@ -78,6 +78,17 @@ return [
     ],
 
     // -----------------------------------------------------------------------
+    // Demo mode — when enabled, only the 'demo' / 'demo' account can log in,
+    // destructive admin actions are disabled, and the database is reset to
+    // pre-populated seed data nightly at midnight. Useful for public demos.
+    // For public-facing deployments, add an IP allowlist or HTTP Basic Auth
+    // at the web-server level for additional protection.
+    // -----------------------------------------------------------------------
+    'demo_mode' => [
+        'enabled' => false,
+    ],
+
+    // -----------------------------------------------------------------------
     // OIDC — Authorization Code + PKCE single sign-on (optional)
     // Set 'enabled' => true and fill in the IdP details to activate.
     // The redirect_uri must be registered with your IdP exactly as written.

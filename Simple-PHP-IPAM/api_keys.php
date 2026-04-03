@@ -12,6 +12,12 @@ $newKey = null; // raw key shown once after creation
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = (string)($_POST['action'] ?? '');
 
+    // Demo mode: block destructive mutations
+    if (demo_mode_enabled() && in_array($action, ['create', 'deactivate', 'delete'], true)) {
+        $formError = 'This action is disabled in demo mode.';
+        $action = '';
+    }
+
     if ($action === 'create') {
         $name = trim((string)($_POST['name'] ?? ''));
         if ($name === '') {
@@ -57,8 +63,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // ---- List ----
 
+$keySortCols = ['name' => 'name', 'status' => 'is_active', 'created' => 'created_at'];
+$keySort = parse_sort($keySortCols, 'created', 'desc');
+
 $keys = $db->query("SELECT id, name, created_at, last_used_at, is_active, created_by
-                    FROM api_keys ORDER BY created_at DESC")
+                    FROM api_keys ORDER BY {$keySort['sql']}")
            ->fetchAll();
 
 page_header('API Keys');
@@ -100,11 +109,13 @@ page_header('API Keys');
   <table>
     <thead>
       <tr>
-        <th>Name</th>
-        <th>Created</th>
+        <?php $keyQs = '?';
+              echo sort_th('name',    'Name',    $keySort['col'], $keySort['dir'], $keyQs);
+              echo sort_th('created', 'Created', $keySort['col'], $keySort['dir'], $keyQs);
+        ?>
         <th>Created by</th>
         <th>Last used</th>
-        <th>Status</th>
+        <?php echo sort_th('status', 'Status', $keySort['col'], $keySort['dir'], $keyQs); ?>
         <th>Actions</th>
       </tr>
     </thead>

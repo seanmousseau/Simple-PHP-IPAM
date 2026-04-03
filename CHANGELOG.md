@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## 1.7 — Sorting, .htaccess Hardening, Server Config Docs & Demo Mode
+
+### Bug fixes
+- **Fixed #85:** Username and password fields on the user creation form were raised higher than adjacent fields when a browser password manager extension injected an icon into the input box. An explicit `height: 40px` on `input` and `select` elements prevents extension-injected icons from inflating the computed box height.
+- **Fixed #89:** Export CSV pill and Apply filter button on the Audit Log page were vertically misaligned. `.action-pill` vertical padding normalised to `10px` to match button height.
+
+### Enhancements
+- **Feature #86:** Server-side sortable columns on all data tables. Click any column header to sort ascending; click again to reverse. Sort order is preserved across pagination and filter links. IP columns sort numerically via binary blob comparison. Affected pages: Addresses, Audit Log, Search, Users, Sites, API Keys, Address History, Bulk Update.
+- **Feature #87:** `data/.htaccess` hardened with Apache 2.2 fallback directives (`Order deny,allow / Deny from all`) and an explicit `<FilesMatch>` block blocking `.sqlite`, `.sqlite3`, `.db`, `.sql`, `.bak`, `.gz`, `.tar`, `.zip` extensions.
+- **Feature #88:** `docs/install.md` updated with full nginx `server {}` and Caddy `Caddyfile` configuration blocks covering PHP-FPM pass-through, `data/` directory protection, sensitive extension blocking, all security headers, and HTTPS redirect. Requirements table updated to list Apache, LiteSpeed, nginx, and Caddy.
+- **Feature #90:** Opt-in demo mode (`demo_mode.enabled` in `config.php`). When enabled: only `demo`/`demo` can log in; a persistent banner is shown on all pages; destructive admin actions (user create/delete/toggle/role, API key mutations, CSV import apply) are blocked server-side; the database is pre-seeded with realistic data (4 sites, 13 subnets, ~55 addresses, 3 users, 2 API keys, audit log, address history) and resets nightly at midnight. CLI scripts: `demo_seed.php` (seed once) and `demo_reset.php` (cron reset). See `docs/configuration.md#demo_mode` for full details.
+
+---
+
 ## 1.6 — CSP Compliance, Bug Fixes & Housekeeping
 
 ### Bug fixes

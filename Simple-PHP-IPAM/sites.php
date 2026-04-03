@@ -68,11 +68,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+$siteSortCols = ['name' => 's.name', 'created' => 's.created_at'];
+$siteSort = parse_sort($siteSortCols, 'name');
+
 $st = $db->prepare("
     SELECT s.id, s.name, s.description, s.created_at,
            (SELECT COUNT(*) FROM subnets sn WHERE sn.site_id = s.id) AS subnet_count
     FROM sites s
-    ORDER BY s.name ASC
+    ORDER BY {$siteSort['sql']}
 ");
 $st->execute();
 $sites = $st->fetchAll();
@@ -132,10 +135,12 @@ page_header('Sites');
     <table>
       <thead>
         <tr>
-          <th>Name</th>
+          <?php $siteQs = '?';
+                echo sort_th('name',    'Name',    $siteSort['col'], $siteSort['dir'], $siteQs);
+                echo sort_th('created', 'Created', $siteSort['col'], $siteSort['dir'], $siteQs);
+          ?>
           <th>Description</th>
           <th>Subnets</th>
-          <th>Created</th>
           <th>Actions</th>
         </tr>
       </thead>
@@ -143,9 +148,9 @@ page_header('Sites');
       <?php foreach ($sites as $site): ?>
         <tr>
           <td><b><?= e($site['name']) ?></b></td>
+          <td class="muted"><?= e($site['created_at']) ?></td>
           <td><?= e($site['description']) ?></td>
           <td><?= e((string)$site['subnet_count']) ?></td>
-          <td class="muted"><?= e($site['created_at']) ?></td>
           <td>
             <details>
               <summary>Edit/Delete</summary>

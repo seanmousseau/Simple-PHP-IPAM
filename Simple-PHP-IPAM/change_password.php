@@ -5,6 +5,14 @@ require_login();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 
+if (demo_mode_enabled()) {
+    page_header('Change Password');
+    echo "<h1>Change Password</h1>";
+    echo "<p class='warning'>Password changes are disabled in demo mode.</p>";
+    page_footer();
+    exit;
+}
+
 $errors = [];
 $msg = '';
 $cur = current_user();

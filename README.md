@@ -56,7 +56,7 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 |---|---|
 | **PHP** | 8.2 or later (8.3 recommended) |
 | **PHP extensions** | `pdo`, `pdo_sqlite`, `openssl` |
-| **Web server** | Apache or LiteSpeed (`.htaccess` required); Nginx needs manual rule translation |
+| **Web server** | Apache, LiteSpeed, nginx, or Caddy (see [install.md](docs/install.md)) |
 | **SQLite** | 3.x via PDO SQLite |
 | **HTTPS** | Required — HTTP is redirected to HTTPS |
 | **Writable `data/` dir** | Web server user needs read/write access to `data/` |
@@ -70,7 +70,7 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 3. Edit `config.php` — **change the default admin password**
 4. Open the site in a browser; you will be redirected to the login page
 
-See the [Installation guide](docs/install.md) for full web server configuration examples (Apache, Nginx), file permission setup, and first-login steps.
+See the [Installation guide](docs/install.md) for full web server configuration examples (Apache, nginx, Caddy), file permission setup, and first-login steps.
 
 ---
 
@@ -90,6 +90,18 @@ See the [Installation guide](docs/install.md) for full web server configuration 
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
+
+### What's new in 1.7
+
+**Sortable columns** — Click any column header on Addresses, Audit Log, Search, Users, Sites, API Keys, Address History, or Bulk Update to sort by that column. Click again to reverse direction. Sort state is preserved across pagination.
+
+**UI alignment fixes** — Input fields on the user creation form no longer shift when a browser password manager injects an icon. Export CSV and Apply buttons on the Audit page are now vertically aligned with filter inputs.
+
+**.htaccess hardening** — `data/.htaccess` now includes Apache 2.2 fallback directives and explicitly blocks common backup and database file extensions.
+
+**nginx and Caddy config docs** — `docs/install.md` now includes complete nginx and Caddy configuration blocks covering PHP-FPM, data directory protection, security headers, and HTTPS redirect.
+
+**Demo mode** — Opt-in `demo_mode` in `config.php`. When enabled: only `demo`/`demo` can log in, destructive actions are blocked, a banner is shown, and the database resets nightly to pre-seeded realistic data.
 
 ### What's new in 1.6
 
