@@ -17,6 +17,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $validRoles = ['admin', 'netops', 'readonly'];
     $pwPolicy   = (array)(($config ?? [])['password_policy'] ?? []);
 
+    // Demo mode: block all mutations
+    if (demo_mode_enabled() && in_array($action, ['create', 'delete', 'toggle_active', 'set_role'], true)) {
+        $errors[] = 'This action is disabled in demo mode.';
+        $action = '';
+    }
+
     if ($action === 'create') {
         $username = trim((string)($_POST['username'] ?? ''));
         $role     = (string)($_POST['role']     ?? 'readonly');
@@ -174,9 +180,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+$userSortCols = ['username' => 'username', 'role' => 'role', 'last_login' => 'last_login_at'];
+$userSort = parse_sort($userSortCols, 'username');
+
 $st = $db->prepare(
     "SELECT id, username, name, email, role, is_active, created_at, updated_at, oidc_sub, last_login_at
-     FROM users ORDER BY username ASC"
+     FROM users ORDER BY {$userSort['sql']}"
 );
 $st->execute();
 $users = $st->fetchAll();
@@ -226,13 +235,15 @@ page_header('Users');
 <table>
   <thead>
     <tr>
-      <th>Username</th>
+      <?php $usrQs = '?';
+            echo sort_th('username',   'Username',   $userSort['col'], $userSort['dir'], '?');
+      ?>
       <th>Name</th>
       <th>Email</th>
-      <th>Role</th>
+      <?php echo sort_th('role',       'Role',       $userSort['col'], $userSort['dir'], '?'); ?>
       <th>Active</th>
       <th>SSO</th>
-      <th>Last Login</th>
+      <?php echo sort_th('last_login', 'Last Login', $userSort['col'], $userSort['dir'], '?'); ?>
       <th>Created</th>
       <th>Actions</th>
     </tr>

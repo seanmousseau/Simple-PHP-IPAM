@@ -26,6 +26,10 @@ if ($rawTo !== '' && ($ts = strtotime($rawTo)) !== false) {
 $page  = q_int('page', 1, 1, 1000000);
 $limit = q_int('page_size', 100, 1, 500);
 
+$auditSortCols = ['time' => 'created_at', 'user' => 'username',
+                  'action' => 'action', 'entity' => 'entity_type'];
+$auditSort = parse_sort($auditSortCols, 'time', 'desc');
+
 // --- Build WHERE clause ---
 $wheres = [];
 $params = [];
@@ -57,7 +61,7 @@ $st = $db->prepare("
     SELECT id, created_at, username, action, entity_type, entity_id, ip, details
     FROM audit_log
     $where
-    ORDER BY id DESC
+    ORDER BY {$auditSort['sql']}
     LIMIT :lim OFFSET :off
 ");
 foreach ($params as $k => $v) $st->bindValue($k, $v);
@@ -67,9 +71,10 @@ $st->execute();
 $rows = $st->fetchAll();
 
 // Build a query string preserving all filters across pagination links
-function audit_qs(int $page, int $limit, string $prefix, string $from, string $to): string
+function audit_qs(int $page, int $limit, string $prefix, string $from, string $to,
+                  string $sort = 'time', string $dir = 'desc'): string
 {
-    $p = ['page' => $page, 'page_size' => $limit];
+    $p = ['page' => $page, 'page_size' => $limit, 'sort' => $sort, 'dir' => $dir];
     if ($prefix !== '') $p['prefix'] = $prefix;
     if ($from   !== '') $p['from']   = $from;
     if ($to     !== '') $p['to']     = $to;
@@ -134,10 +139,18 @@ page_header('Audit Log');
     <table>
       <thead>
         <tr>
-          <th>Time</th>
-          <th>User</th>
-          <th>Action</th>
-          <th>Entity</th>
+          <?php $auditQs = audit_qs(1, $limit, $filterPrefix, $filterFrom, $filterTo, $auditSort['col'], $auditSort['dir']);
+                $auditQsBase = '?' . http_build_query(array_filter([
+                    'page_size' => $limit,
+                    'prefix'    => $filterPrefix !== '' ? $filterPrefix : null,
+                    'from'      => $filterFrom !== '' ? $filterFrom : null,
+                    'to'        => $filterTo !== '' ? $filterTo : null,
+                ], fn($v) => $v !== null));
+                echo sort_th('time',   'Time',      $auditSort['col'], $auditSort['dir'], $auditQsBase);
+                echo sort_th('user',   'User',      $auditSort['col'], $auditSort['dir'], $auditQsBase);
+                echo sort_th('action', 'Action',    $auditSort['col'], $auditSort['dir'], $auditQsBase);
+                echo sort_th('entity', 'Entity',    $auditSort['col'], $auditSort['dir'], $auditQsBase);
+          ?>
           <th>Client IP</th>
           <th>Details</th>
         </tr>
@@ -158,10 +171,10 @@ page_header('Audit Log');
 
     <p style="margin-top:12px">
       <?php if ($page > 1): ?>
-        <a href="<?= e(audit_qs($page - 1, $limit, $filterPrefix, $filterFrom, $filterTo)) ?>">&laquo; Prev</a>
+        <a href="<?= e(audit_qs($page - 1, $limit, $filterPrefix, $filterFrom, $filterTo, $auditSort['col'], $auditSort['dir'])) ?>">&laquo; Prev</a>
       <?php endif; ?>
       <?php if ($page < $pages): ?>
-        <a href="<?= e(audit_qs($page + 1, $limit, $filterPrefix, $filterFrom, $filterTo)) ?>" style="margin-left:12px">Next &raquo;</a>
+        <a href="<?= e(audit_qs($page + 1, $limit, $filterPrefix, $filterFrom, $filterTo, $auditSort['col'], $auditSort['dir'])) ?>" style="margin-left:12px">Next &raquo;</a>
       <?php endif; ?>
     </p>
   <?php endif; ?>

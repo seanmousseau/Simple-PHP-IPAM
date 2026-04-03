@@ -45,6 +45,9 @@ if (!$addr) {
 $page = q_int('page', 1, 1, 1000000);
 $pageSize = q_int('page_size', 100, 1, 500);
 
+$histSortCols = ['time' => 'created_at', 'action' => 'action', 'user' => 'username'];
+$histSort = parse_sort($histSortCols, 'time', 'desc');
+
 $st = $db->prepare("SELECT COUNT(*) AS c FROM address_history WHERE address_id = :aid");
 $st->execute([':aid' => $addressId]);
 $total = (int)$st->fetch()['c'];
@@ -55,7 +58,7 @@ $st = $db->prepare("
     SELECT id, created_at, action, username, client_ip, before_json, after_json
     FROM address_history
     WHERE address_id = :aid
-    ORDER BY id DESC
+    ORDER BY {$histSort['sql']}
     LIMIT :lim OFFSET :off
 ");
 $st->bindValue(':aid', $addressId, PDO::PARAM_INT);
@@ -119,9 +122,11 @@ page_header('Address History');
     <table style="margin-top:12px">
       <thead>
         <tr>
-          <th>Time</th>
-          <th>Action</th>
-          <th>User</th>
+          <?php $histQsBase = '?address_id=' . $addressId . '&page_size=' . $pageSize;
+                echo sort_th('time',   'Time',   $histSort['col'], $histSort['dir'], $histQsBase);
+                echo sort_th('action', 'Action', $histSort['col'], $histSort['dir'], $histQsBase);
+                echo sort_th('user',   'User',   $histSort['col'], $histSort['dir'], $histQsBase);
+          ?>
           <th>Client IP</th>
           <th>Before</th>
           <th>After</th>

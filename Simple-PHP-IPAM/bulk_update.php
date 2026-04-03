@@ -33,7 +33,10 @@ if ($subnetId > 0) {
     $st->execute([':id' => $subnetId]);
     $subnet = $st->fetch() ?: null;
 
-    $sql = "SELECT id, ip, hostname, owner, status, note, updated_at
+    $bulkSortCols = ['ip' => 'ip_bin', 'hostname' => 'hostname', 'status' => 'status'];
+    $bulkSort = parse_sort($bulkSortCols, 'ip');
+
+    $sql = "SELECT id, ip, ip_bin, hostname, owner, status, note, updated_at
             FROM addresses
             WHERE subnet_id = :sid";
     $params = [':sid' => $subnetId];
@@ -43,7 +46,7 @@ if ($subnetId > 0) {
         $params[':q'] = '%' . like_escape($q) . '%';
     }
 
-    $sql .= " ORDER BY ip_bin ASC";
+    $sql .= " ORDER BY {$bulkSort['sql']}";
 
     $st = $db->prepare($sql);
     $st->execute($params);
@@ -365,10 +368,12 @@ page_header('Bulk Update');
       <thead>
         <tr>
           <th>Select</th>
-          <th>IP</th>
-          <th>Hostname</th>
+          <?php $bulkQs = '?subnet_id=' . $subnetId . ($q !== '' ? '&q=' . urlencode($q) : '');
+                echo sort_th('ip',       'IP',       $bulkSort['col'], $bulkSort['dir'], $bulkQs);
+                echo sort_th('hostname', 'Hostname', $bulkSort['col'], $bulkSort['dir'], $bulkQs);
+          ?>
           <th>Owner</th>
-          <th>Status</th>
+          <?php echo sort_th('status', 'Status', $bulkSort['col'], $bulkSort['dir'], $bulkQs); ?>
           <th>Note</th>
           <th>Updated</th>
         </tr>
