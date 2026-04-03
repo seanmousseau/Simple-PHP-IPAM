@@ -53,6 +53,11 @@ unset($_addedConfigKeys);
 // Run best-effort housekeeping at most once/day (configurable)
 run_housekeeping_if_due($config, $db);
 
+// Demo nightly reset — independent of housekeeping schedule; never crashes the page
+if (!empty($config['demo_mode']['enabled'])) {
+    run_demo_reset_if_due($db);
+}
+
 // Run database backup if due (configurable frequency)
 if (!empty($config['backup']['enabled'])) {
     run_db_backup_if_due($db, $config);
