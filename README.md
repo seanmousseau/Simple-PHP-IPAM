@@ -50,6 +50,15 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 
 ---
 
+## Demo
+
+- https://seanmousseau.com/ipam-demo/
+- Username: demo
+- Password: demo
+
+
+---
+
 ## Requirements
 
 | Requirement | Details |
@@ -60,14 +69,6 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 | **SQLite** | 3.x via PDO SQLite |
 | **HTTPS** | Required — HTTP is redirected to HTTPS |
 | **Writable `data/` dir** | Web server user needs read/write access to `data/` |
-
----
-
-## Demo
-
-https://seanmousseau.com/ipam-demo/
-Username: demo
-Password: demo
 
 ---
 
