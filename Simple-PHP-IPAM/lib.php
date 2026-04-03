@@ -1234,29 +1234,36 @@ function demo_seed_data(PDO $db): void
     }
 
     // --- Address history ---
+    // Columns: address_id, subnet_id, ip, action, username, client_ip, before_json, after_json, offset
     $hist = $db->prepare(
-        "INSERT INTO address_history (address_id, action, username, client_ip, before_json, after_json, created_at)
-         VALUES (?,?,?,?,?,?,datetime('now',?))"
+        "INSERT INTO address_history (address_id, subnet_id, ip, action, username, client_ip, before_json, after_json, created_at)
+         VALUES (?,?,?,?,?,?,?,?,datetime('now',?))"
     );
     $histEntries = [
-        [1, 'create', 'demo', '192.168.1.100', null,
+        // address_id=1  → subnet 3, 10.10.1.1  (gw-lon-mgmt)
+        [1,  3, '10.10.1.1',  'create', 'demo', '192.168.1.100', null,
          '{"hostname":"gw-lon-mgmt","owner":"NetOps","status":"used","note":"Default gateway"}', '-28 days'],
-        [10, 'create', 'demo', '192.168.1.100', null,
+        // address_id=11 → subnet 4, 10.10.2.10 (web-lon-01)
+        [11, 4, '10.10.2.10', 'create', 'demo', '192.168.1.100', null,
          '{"hostname":"","owner":"WebTeam","status":"used","note":""}', '-28 days'],
-        [10, 'update', 'demo', '192.168.1.100',
+        [11, 4, '10.10.2.10', 'update', 'demo', '192.168.1.100',
          '{"hostname":"","owner":"WebTeam","status":"used","note":""}',
          '{"hostname":"web-lon-01","owner":"WebTeam","status":"used","note":"Web frontend 1"}', '-25 days'],
-        [30, 'create', 'demo', '192.168.1.100', null,
+        // address_id=13 → subnet 4, 10.10.2.12 (web-lon-03)
+        [13, 4, '10.10.2.12', 'create', 'demo', '192.168.1.100', null,
+         '{"hostname":"web-lon-03","owner":"WebTeam","status":"used","note":"Web frontend 3"}', '-28 days'],
+        // address_id=14 → subnet 4, 10.10.2.20 (app-lon-01)
+        [14, 4, '10.10.2.20', 'create', 'demo', '192.168.1.100', null,
+         '{"hostname":"app-lon-01","owner":"AppTeam","status":"used","note":"Application server 1"}', '-28 days'],
+        // address_id=28 → subnet 5, 10.10.3.1  (fw-lon-dmz)
+        [28, 5, '10.10.3.1',  'create', 'demo', '192.168.1.100', null,
+         '{"hostname":"fw-lon-dmz","owner":"Security","status":"used","note":"DMZ firewall inside"}', '-23 days'],
+        // address_id=35 → subnet 5, 10.10.3.20 (reserved — Future load balancer)
+        [35, 5, '10.10.3.20', 'create', 'demo', '192.168.1.100', null,
          '{"hostname":"","owner":"","status":"free","note":""}', '-23 days'],
-        [30, 'update', 'demo', '192.168.1.100',
+        [35, 5, '10.10.3.20', 'update', 'demo', '192.168.1.100',
          '{"hostname":"","owner":"","status":"free","note":""}',
          '{"hostname":"","owner":"","status":"reserved","note":"Future load balancer"}', '-10 days'],
-        [13, 'create', 'demo', '192.168.1.100', null,
-         '{"hostname":"web-lon-03","owner":"WebTeam","status":"used","note":"Web frontend 3"}', '-28 days'],
-        [20, 'create', 'demo', '192.168.1.100', null,
-         '{"hostname":"app-lon-01","owner":"AppTeam","status":"used","note":"Application server 1"}', '-28 days'],
-        [29, 'create', 'demo', '192.168.1.100', null,
-         '{"hostname":"fw-lon-dmz","owner":"Security","status":"used","note":"DMZ firewall inside"}', '-23 days'],
     ];
     foreach ($histEntries as $h) {
         $hist->execute($h);
