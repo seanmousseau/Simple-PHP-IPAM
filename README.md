@@ -63,6 +63,14 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 
 ---
 
+## Demo
+
+https://seanmousseau.com/ipam-demo/
+Username: demo
+Password: demo
+
+---
+
 ## Quick start
 
 1. Download and extract a [release](../../releases), or clone this repo
