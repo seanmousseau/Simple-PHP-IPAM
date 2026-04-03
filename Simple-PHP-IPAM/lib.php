@@ -674,11 +674,25 @@ function run_housekeeping_if_due(array $config, ?PDO $db = null): void
         @flock($lock, LOCK_UN);
         @fclose($lock);
     }
+}
 
-    // Demo mode nightly reset (runs outside the housekeeping interval lock)
-    if ($db !== null && demo_mode_enabled() && demo_require_reset()) {
+/**
+ * Demo nightly reset — runs independently of the housekeeping schedule.
+ * Called directly from init.php, wrapped in try-catch so a seed failure
+ * never crashes the page load (which would leave $_SESSION without a
+ * CSRF token and cause "Bad CSRF token" on all subsequent requests).
+ */
+function run_demo_reset_if_due(PDO $db): void
+{
+    if (!demo_mode_enabled() || !demo_require_reset()) return;
+
+    $marker = __DIR__ . '/data/demo_last_reset.txt';
+    try {
         demo_reset_db($db);
-        file_put_contents(__DIR__ . '/data/demo_last_reset.txt', (string)time());
+        file_put_contents($marker, (string)time());
+    } catch (Throwable $e) {
+        // Log but do not re-throw — page must continue so CSRF is initialised
+        error_log('Simple PHP IPAM demo reset failed: ' . $e->getMessage());
     }
 }
 
