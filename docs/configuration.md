@@ -229,6 +229,48 @@ Housekeeping runs at most once per `interval_seconds` on normal web traffic. It 
 
 ---
 
+## `demo_mode`
+
+Enables an opt-in public demo mode suitable for showcasing the application without risking real data.
+
+```php
+'demo_mode' => [
+    'enabled' => false,
+],
+```
+
+When `enabled` is `true`:
+
+- **Only the `demo` / `demo` account can log in.** All other credentials are rejected.
+- **Destructive admin actions are disabled:** user create/delete/toggle/role-change, API key create/deactivate/delete, and CSV import apply are all blocked server-side.
+- **A banner** is displayed on every page informing visitors they are in demo mode.
+- **The database is reset nightly at midnight** to pre-populated seed data (realistic sites, subnets, addresses, users, audit log, API keys). This happens automatically on the next page load after midnight, or you can force a reset with `php demo_reset.php`.
+- **OIDC login is hidden** — only local form login is available.
+
+### Seed data
+
+The seed database includes:
+- 4 sites (London HQ, New York DC, Sydney Office, AWS eu-west-1)
+- 10 IPv4 subnets + 3 IPv6 subnets across the sites
+- ~55 address records with realistic hostnames, owners, and statuses
+- 3 users: `demo` (admin), `readonly-user` (readonly), `netops-user` (netops)
+- 2 API keys (one active, one inactive)
+- ~30 audit log entries and ~8 address history entries (backdated)
+
+### Nightly reset cron (optional)
+
+For a guaranteed reset at midnight (independent of web traffic), add a cron entry:
+
+```cron
+0 0 * * * php /path/to/Simple-PHP-IPAM/demo_reset.php
+```
+
+### Security note
+
+Demo mode does not restrict read access. Any visitor can browse all IPAM data. For public-facing demo instances, strongly consider adding an IP allowlist or HTTP Basic Auth at the web-server level to limit exposure.
+
+---
+
 ## OIDC settings
 
 The `oidc` block configures optional OIDC single sign-on. All keys are ignored when `enabled` is `false`.

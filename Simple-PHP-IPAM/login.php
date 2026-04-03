@@ -22,42 +22,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $password = (string)($_POST['password'] ?? '');
     $ip = client_ip();
 
-    // Purge stale attempts opportunistically (keep rows 2× the lockout window)
-    purge_old_login_attempts($db, $lockoutSeconds * 2);
-
-    if (login_rate_limited($db, $ip, $maxAttempts, $lockoutSeconds)) {
-        $error = 'Too many failed login attempts. Please try again later.';
-        audit($db, 'auth.login_blocked', 'user', null, 'ip=' . $ip);
-    } else {
-        $st = $db->prepare("SELECT id, username, password_hash, role, is_active FROM users WHERE username = :u");
-        $st->execute([':u' => $username]);
-        $user = $st->fetch();
-
-        if ($user && (int)$user['is_active'] === 1 && password_verify($password, $user['password_hash'])) {
-            if (password_needs_rehash($user['password_hash'], PASSWORD_DEFAULT)) {
-                $new = password_hash($password, PASSWORD_DEFAULT);
-                $up = $db->prepare("UPDATE users SET password_hash = :h WHERE id = :id");
-                $up->execute([':h' => $new, ':id' => $user['id']]);
+    if (demo_mode_enabled()) {
+        // Demo mode: only demo/demo is accepted
+        if ($username === 'demo' && $password === 'demo') {
+            $st = $db->prepare("SELECT id, username, role FROM users WHERE username = 'demo' AND is_active = 1");
+            $st->execute();
+            $demoUser = $st->fetch();
+            if ($demoUser) {
+                login_user((int)$demoUser['id'], (string)$demoUser['username'], (string)$demoUser['role']);
+                $db->prepare("UPDATE users SET last_login_at=datetime('now') WHERE id=:id")
+                   ->execute([':id' => (int)$demoUser['id']]);
+                audit($db, 'auth.login', 'user', (int)$demoUser['id'], 'demo login');
+                header('Location: dashboard.php');
+                exit;
             }
-            clear_login_failures($db, $ip);
-            login_user((int)$user['id'], (string)$user['username'], (string)$user['role']);
-            $db->prepare("UPDATE users SET last_login_at=datetime('now') WHERE id=:id")
-               ->execute([':id' => (int)$user['id']]);
-            audit($db, 'auth.login', 'user', (int)$user['id'], 'login ok');
-            header('Location: dashboard.php');
-            exit;
         }
+        $error = 'Only the demo account (demo / demo) is available in demo mode.';
+    } else {
+        // Purge stale attempts opportunistically (keep rows 2× the lockout window)
+        purge_old_login_attempts($db, $lockoutSeconds * 2);
 
-        record_login_failure($db, $ip);
-        $error = 'Invalid username or password.';
-        audit($db, 'auth.login_failed', 'user', null, 'username=' . $username);
+        if (login_rate_limited($db, $ip, $maxAttempts, $lockoutSeconds)) {
+            $error = 'Too many failed login attempts. Please try again later.';
+            audit($db, 'auth.login_blocked', 'user', null, 'ip=' . $ip);
+        } else {
+            $st = $db->prepare("SELECT id, username, password_hash, role, is_active FROM users WHERE username = :u");
+            $st->execute([':u' => $username]);
+            $user = $st->fetch();
+
+            if ($user && (int)$user['is_active'] === 1 && password_verify($password, $user['password_hash'])) {
+                if (password_needs_rehash($user['password_hash'], PASSWORD_DEFAULT)) {
+                    $new = password_hash($password, PASSWORD_DEFAULT);
+                    $up = $db->prepare("UPDATE users SET password_hash = :h WHERE id = :id");
+                    $up->execute([':h' => $new, ':id' => $user['id']]);
+                }
+                clear_login_failures($db, $ip);
+                login_user((int)$user['id'], (string)$user['username'], (string)$user['role']);
+                $db->prepare("UPDATE users SET last_login_at=datetime('now') WHERE id=:id")
+                   ->execute([':id' => (int)$user['id']]);
+                audit($db, 'auth.login', 'user', (int)$user['id'], 'login ok');
+                header('Location: dashboard.php');
+                exit;
+            }
+
+            record_login_failure($db, $ip);
+            $error = 'Invalid username or password.';
+            audit($db, 'auth.login_failed', 'user', null, 'username=' . $username);
+        }
     }
 }
 
 // First-run hint: show only if no successful login has ever occurred
 $firstRun = !$db->query("SELECT 1 FROM audit_log WHERE action='auth.login' LIMIT 1")->fetch();
 
-$oidcActive              = oidc_enabled($config);
+$oidcActive              = oidc_enabled($config) && !demo_mode_enabled();
 $disableLocal            = $oidcActive && !empty($config['oidc']['disable_local_login']);
 $disableEmergencyBypass  = $oidcActive && !empty($config['oidc']['disable_emergency_bypass']);
 $hideEmergencyLink       = $oidcActive && !empty($config['oidc']['hide_emergency_link']);

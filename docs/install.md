@@ -19,7 +19,7 @@
 |---|---|
 | **PHP** | 8.2 or later (8.3 recommended) |
 | **PHP extensions** | `pdo`, `pdo_sqlite`, `openssl` |
-| **Web server** | Apache or LiteSpeed (`.htaccess` support required); Nginx requires manual translation of `.htaccess` rules |
+| **Web server** | Apache, LiteSpeed, nginx, or Caddy (see [Step 4](#step-4--configure-your-web-server)) |
 | **SQLite** | 3.x via PDO SQLite |
 | **HTTPS** | Required — the app redirects all HTTP traffic to HTTPS |
 | **Writable `data/` dir** | The web server user needs read/write access to `data/` (and `data/tmp/` for CSV import) |
@@ -110,13 +110,99 @@ a2enmod rewrite headers
 systemctl reload apache2
 ```
 
-### Nginx
+### nginx
 
-Nginx does not process `.htaccess` files. You must replicate the security rules manually. Key rules to translate:
+nginx does not process `.htaccess` files. Use a server block like the following:
 
-- Deny access to `data/` and `*.sqlite` / `*.db` files
-- Deny access to `*.sh`, `*.sql`, `*.json`, `*.tar.gz`, `*.zip`, `*.bundle.txt`, `SHA256SUMS`
-- Pass all `.php` requests through PHP-FPM
+```nginx
+server {
+    listen 80;
+    server_name ipam.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name ipam.example.com;
+
+    ssl_certificate     /etc/ssl/certs/ipam.crt;
+    ssl_certificate_key /etc/ssl/private/ipam.key;
+
+    root /var/www/ipam;
+    index index.php;
+
+    autoindex off;
+
+    # Security headers
+    add_header X-Frame-Options           "SAMEORIGIN"             always;
+    add_header X-Content-Type-Options    "nosniff"                always;
+    add_header X-XSS-Protection          "1; mode=block"          always;
+    add_header Referrer-Policy           "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy        "interest-cohort=()"     always;
+    add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+
+    # Block access to the data directory (DB, backups, temp files)
+    location ^~ /data/ {
+        deny all;
+        return 403;
+    }
+
+    # Block sensitive file extensions
+    location ~* \.(sqlite|sqlite3|db|sql|bak|gz|tar|zip|sh|json|bundle\.txt)$ {
+        deny all;
+        return 403;
+    }
+
+    # Block SHA256SUMS and other checksum files
+    location ~* ^/(SHA256SUMS|CHANGELOG\.md|README\.md)$ {
+        deny all;
+        return 403;
+    }
+
+    # PHP via FPM
+    location ~ \.php$ {
+        include        fastcgi_params;
+        fastcgi_pass   unix:/run/php/php8.2-fpm.sock;  # adjust socket path
+        fastcgi_param  SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    }
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}
+```
+
+### Caddy
+
+```caddyfile
+ipam.example.com {
+    root * /var/www/ipam
+    php_fastcgi unix//run/php/php8.2-fpm.sock  # adjust socket path
+
+    # Block access to data directory
+    @data path /data/*
+    respond @data 403
+
+    # Block sensitive file extensions
+    @sensitive {
+        path_regexp \.(sqlite|sqlite3|db|sql|bak|gz|tar|zip|sh|json)$
+        path /SHA256SUMS
+    }
+    respond @sensitive 403
+
+    # Security headers
+    header {
+        X-Frame-Options           "SAMEORIGIN"
+        X-Content-Type-Options    "nosniff"
+        X-XSS-Protection          "1; mode=block"
+        Referrer-Policy           "strict-origin-when-cross-origin"
+        Permissions-Policy        "interest-cohort=()"
+        Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+    }
+
+    file_server
+}
+```
 
 ---
 

@@ -12,6 +12,10 @@ $ipVersion  = (int)($_GET['ip_version'] ?? 0);
 $page     = q_int('page', 1, 1, 1000000);
 $pageSize = q_int('page_size', 254, 1, 500);
 
+$searchSortCols = ['ip' => 'a.ip_bin', 'hostname' => 'a.hostname', 'owner' => 'a.owner',
+                   'status' => 'a.status', 'subnet' => 's.cidr'];
+$searchSort = parse_sort($searchSortCols, 'ip');
+
 $allowedStatus = ['', 'used', 'reserved', 'free'];
 if (!in_array($status, $allowedStatus, true)) $status = '';
 if (!in_array($ipVersion, [0, 4, 6], true)) $ipVersion = 0;
@@ -72,7 +76,7 @@ $st = $db->prepare("
     JOIN subnets s ON s.id = a.subnet_id
     LEFT JOIN sites si ON si.id = s.site_id
     $whereSql
-    ORDER BY s.cidr ASC, a.ip_bin ASC
+    ORDER BY {$searchSort['sql']}
     LIMIT :lim OFFSET :off
 ");
 foreach ($params as $k => $v) $st->bindValue($k, $v);
@@ -196,11 +200,17 @@ page_header('Search');
       <thead>
         <tr>
           <th>Site</th>
-          <th>Subnet</th>
-          <th>IP</th>
-          <th>Hostname</th>
-          <th>Owner</th>
-          <th>Status</th>
+          <?php $srchQs = '?page_size=' . $pageSize . '&q=' . urlencode($q)
+                        . ($status ? '&status=' . urlencode($status) : '')
+                        . ($subnetId ? '&subnet_id=' . $subnetId : '')
+                        . ($siteId ? '&site_id=' . $siteId : '')
+                        . ($ipVersion ? '&ip_version=' . $ipVersion : '');
+                echo sort_th('subnet',   'Subnet',   $searchSort['col'], $searchSort['dir'], $srchQs);
+                echo sort_th('ip',       'IP',       $searchSort['col'], $searchSort['dir'], $srchQs);
+                echo sort_th('hostname', 'Hostname', $searchSort['col'], $searchSort['dir'], $srchQs);
+                echo sort_th('owner',    'Owner',    $searchSort['col'], $searchSort['dir'], $srchQs);
+                echo sort_th('status',   'Status',   $searchSort['col'], $searchSort['dir'], $srchQs);
+          ?>
           <th>Note</th>
           <th>Updated</th>
           <th></th>

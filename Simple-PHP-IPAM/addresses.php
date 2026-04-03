@@ -18,6 +18,10 @@ $selectedSubnetId = (int)($_GET['subnet_id'] ?? ($_POST['subnet_id'] ?? 0));
 $page = q_int('page', 1, 1, 1000000);
 $pageSize = q_int('page_size', 254, 1, 500);
 
+$addrSortCols = ['ip' => 'ip_bin', 'hostname' => 'hostname', 'owner' => 'owner',
+                 'status' => 'status', 'updated' => 'updated_at'];
+$addrSort = parse_sort($addrSortCols, 'ip');
+
 $selectedSubnet = null;
 if ($selectedSubnetId > 0) {
     $st = $db->prepare("SELECT id, cidr, network, prefix, ip_version FROM subnets WHERE id = :id");
@@ -187,7 +191,7 @@ if ($selectedSubnetId > 0) {
     $st = $db->prepare("SELECT id, ip, hostname, owner, note, status, updated_at
                         FROM addresses
                         WHERE subnet_id = :sid
-                        ORDER BY ip_bin ASC
+                        ORDER BY {$addrSort['sql']}
                         LIMIT :lim OFFSET :off");
     $st->bindValue(':sid', $selectedSubnetId, PDO::PARAM_INT);
     $st->bindValue(':lim', $p['limit'], PDO::PARAM_INT);
@@ -314,12 +318,14 @@ page_header('Addresses');
     <table>
       <thead>
         <tr>
-          <th>IP</th>
-          <th>Hostname</th>
-          <th>Owner</th>
-          <th>Status</th>
+          <?php $addrQs = '?subnet_id=' . $selectedSubnetId . '&page_size=' . $pageSize;
+                echo sort_th('ip',       'IP',       $addrSort['col'], $addrSort['dir'], $addrQs);
+                echo sort_th('hostname', 'Hostname', $addrSort['col'], $addrSort['dir'], $addrQs);
+                echo sort_th('owner',    'Owner',    $addrSort['col'], $addrSort['dir'], $addrQs);
+                echo sort_th('status',   'Status',   $addrSort['col'], $addrSort['dir'], $addrQs);
+          ?>
           <th>Note</th>
-          <th>Updated</th>
+          <?php echo sort_th('updated', 'Updated', $addrSort['col'], $addrSort['dir'], $addrQs); ?>
           <th>Actions</th>
         </tr>
       </thead>
@@ -380,7 +386,8 @@ page_header('Addresses');
     </table>
 
     <?php
-      $qsBase = ['subnet_id' => $selectedSubnetId, 'page_size' => $pageSize];
+      $qsBase = ['subnet_id' => $selectedSubnetId, 'page_size' => $pageSize,
+                 'sort' => $addrSort['col'], 'dir' => $addrSort['dir']];
       $base = 'addresses.php?' . http_build_query($qsBase);
     ?>
     <p style="margin-top:12px">

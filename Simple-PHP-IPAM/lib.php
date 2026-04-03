@@ -674,6 +674,12 @@ function run_housekeeping_if_due(array $config, ?PDO $db = null): void
         @flock($lock, LOCK_UN);
         @fclose($lock);
     }
+
+    // Demo mode nightly reset (runs outside the housekeeping interval lock)
+    if ($db !== null && demo_mode_enabled() && demo_require_reset()) {
+        demo_reset_db($db);
+        file_put_contents(__DIR__ . '/data/demo_last_reset.txt', (string)time());
+    }
 }
 
 /* ---------------- Database Backups ---------------- */
@@ -924,6 +930,54 @@ function like_escape(string $q): string
     return str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $q);
 }
 
+/**
+ * Parse and validate ?sort=col&dir=asc|desc from $_GET.
+ *
+ * @param array<string,string> $allowed  Map of GET param value → SQL column expression (whitelisted)
+ * @param string $defaultCol  Key in $allowed to use when no valid sort param is provided
+ * @param string $defaultDir  'asc' or 'desc'
+ * @return array{col: string, dir: string, sql: string}
+ */
+function parse_sort(array $allowed, string $defaultCol, string $defaultDir = 'asc'): array
+{
+    $col = (string)($_GET['sort'] ?? $defaultCol);
+    $dir = strtolower((string)($_GET['dir'] ?? $defaultDir));
+    if (!isset($allowed[$col])) $col = $defaultCol;
+    if (!in_array($dir, ['asc', 'desc'], true)) $dir = $defaultDir;
+    return ['col' => $col, 'dir' => $dir, 'sql' => $allowed[$col] . ' ' . strtoupper($dir)];
+}
+
+/**
+ * Render a sortable <th> element linking to the current page with sort params applied.
+ * $baseQs should be the query string prefix for the page (e.g. '?subnet_id=3&page_size=50').
+ */
+function sort_th(string $col, string $label, string $currentCol, string $currentDir, string $baseQs): string
+{
+    $isActive = $col === $currentCol;
+    $nextDir  = ($isActive && $currentDir === 'asc') ? 'desc' : 'asc';
+    $arrow    = $isActive ? ($currentDir === 'asc' ? ' ▲' : ' ▼') : '';
+    $sep      = str_contains($baseQs, '?') ? '&' : '?';
+    $qs       = $baseQs . $sep . 'sort=' . urlencode($col) . '&dir=' . $nextDir;
+    $cls      = $isActive ? ' class="sort-active"' : '';
+    return "<th{$cls}><a href='" . e($qs) . "'>" . e($label) . $arrow . '</a></th>';
+}
+
+/* ---------------- Demo mode ---------------- */
+
+function demo_mode_enabled(): bool
+{
+    return !empty(($GLOBALS['config'] ?? [])['demo_mode']['enabled']);
+}
+
+function demo_require_reset(): bool
+{
+    $marker = __DIR__ . '/data/demo_last_reset.txt';
+    if (!is_file($marker)) return true;
+    $lastReset = (int)file_get_contents($marker);
+    $midnight  = mktime(0, 0, 0);
+    return $lastReset < $midnight;
+}
+
 function paginate(int $total, int $page, int $pageSize): array
 {
     $page = max(1, $page);
@@ -974,6 +1028,239 @@ function csv_out(array $row): void
 {
     $fh = csv_output_handle();
     fputcsv($fh, $row);
+}
+
+/* ---------------- Demo mode seed/reset ---------------- */
+
+function demo_reset_db(PDO $db): void
+{
+    $tables = ['address_history', 'audit_log', 'login_attempts', 'api_keys',
+               'addresses', 'subnets', 'sites', 'users', 'schema_migrations'];
+    foreach ($tables as $t) {
+        $db->exec("DELETE FROM $t");
+        $db->exec("DELETE FROM sqlite_sequence WHERE name='$t'");
+    }
+    apply_migrations($db);
+    demo_seed_data($db);
+}
+
+function demo_seed_data(PDO $db): void
+{
+    // --- Sites ---
+    $sites = [
+        [1, 'London HQ',       'Primary headquarters'],
+        [2, 'New York DC',     'East coast data centre'],
+        [3, 'Sydney Office',   'APAC regional office'],
+        [4, 'AWS eu-west-1',   'Cloud infrastructure'],
+    ];
+    $si = $db->prepare("INSERT INTO sites (id, name, description) VALUES (?,?,?)");
+    foreach ($sites as $s) $si->execute($s);
+
+    // --- Subnets (IPv4) ---
+    $subnets4 = [
+        // [id, cidr, site_id, description]
+        [1,  '10.0.0.0/8',    null, 'RFC-1918 supernet (informational)'],
+        [2,  '10.10.0.0/16',  1,    'London HQ corporate'],
+        [3,  '10.10.1.0/24',  1,    'London management'],
+        [4,  '10.10.2.0/24',  1,    'London servers'],
+        [5,  '10.10.3.0/27',  1,    'London DMZ'],
+        [6,  '10.20.0.0/16',  2,    'New York DC corporate'],
+        [7,  '10.20.1.0/24',  2,    'New York servers'],
+        [8,  '10.20.2.0/24',  2,    'New York management'],
+        [9,  '172.16.0.0/16', 3,    'Sydney corporate'],
+        [10, '172.16.1.0/24', 3,    'Sydney servers'],
+    ];
+    $sn = $db->prepare(
+        "INSERT INTO subnets (id, cidr, ip_version, network, network_bin, prefix, description, site_id)
+         VALUES (?,?,4,?,?,?,?,?)"
+    );
+    foreach ($subnets4 as [$id, $cidr, $siteId, $desc]) {
+        [$net, $pfx] = explode('/', $cidr);
+        $netNorm = inet_ntop(apply_prefix_mask(inet_pton($net), (int)$pfx));
+        $netBin  = inet_pton($netNorm);
+        $sn->execute([$id, $cidr, $netNorm, $netBin, (int)$pfx, $desc, $siteId]);
+    }
+
+    // --- Subnets (IPv6) ---
+    $subnets6 = [
+        [11, '2001:db8::/32',     1,    'London HQ IPv6 allocation'],
+        [12, '2001:db8:1::/48',   1,    'London servers IPv6'],
+        [13, '2001:db8:2::/64',   2,    'New York IPv6 segment'],
+    ];
+    $sn6 = $db->prepare(
+        "INSERT INTO subnets (id, cidr, ip_version, network, network_bin, prefix, description, site_id)
+         VALUES (?,?,6,?,?,?,?,?)"
+    );
+    foreach ($subnets6 as [$id, $cidr, $siteId, $desc]) {
+        [$net, $pfx] = explode('/', $cidr);
+        $netNorm = inet_ntop(apply_prefix_mask(inet_pton($net), (int)$pfx));
+        $netBin  = inet_pton($netNorm);
+        $sn6->execute([$id, $cidr, $netNorm, $netBin, (int)$pfx, $desc, $siteId]);
+    }
+
+    // --- Users ---
+    // demo: admin, password 'demo'
+    // readonly-user: readonly, unusable hash
+    // netops-user: netops, unusable hash
+    $users = [
+        ['demo',          password_hash('demo', PASSWORD_DEFAULT), 'admin',    1, 'Demo Admin',    'demo@example.com'],
+        ['readonly-user', '!disabled',                              'readonly', 1, 'Read Only',     'readonly@example.com'],
+        ['netops-user',   '!disabled',                              'netops',   1, 'NetOps User',   'netops@example.com'],
+    ];
+    $us = $db->prepare(
+        "INSERT INTO users (username, password_hash, role, is_active, name, email) VALUES (?,?,?,?,?,?)"
+    );
+    foreach ($users as $u) $us->execute($u);
+
+    // --- Addresses ---
+    $addresses = [
+        // subnet_id, ip, hostname, owner, status, note
+        // 10.10.1.0/24 (London management) — /24 = 254 assignable
+        [3, '10.10.1.1',  'gw-lon-mgmt',    'NetOps',    'used',     'Default gateway'],
+        [3, '10.10.1.2',  'sw-lon-core-01', 'NetOps',    'used',     'Core switch'],
+        [3, '10.10.1.3',  'sw-lon-core-02', 'NetOps',    'used',     'Core switch redundant'],
+        [3, '10.10.1.10', 'mon-lon-01',     'NetOps',    'used',     'Monitoring server'],
+        [3, '10.10.1.20', 'ntp-lon-01',     'NetOps',    'used',     'NTP server'],
+        [3, '10.10.1.30', 'dns-lon-01',     'NetOps',    'used',     'Primary DNS'],
+        [3, '10.10.1.31', 'dns-lon-02',     'NetOps',    'used',     'Secondary DNS'],
+        [3, '10.10.1.50', '',               '',          'reserved', 'Reserved for IPMI'],
+        [3, '10.10.1.51', '',               '',          'reserved', 'Reserved for IPMI'],
+        // 10.10.2.0/24 (London servers) — heavily used
+        [4, '10.10.2.1',  'gw-lon-srv',     'NetOps',    'used',     'Server gateway'],
+        [4, '10.10.2.10', 'web-lon-01',     'WebTeam',   'used',     'Web frontend 1'],
+        [4, '10.10.2.11', 'web-lon-02',     'WebTeam',   'used',     'Web frontend 2'],
+        [4, '10.10.2.12', 'web-lon-03',     'WebTeam',   'used',     'Web frontend 3'],
+        [4, '10.10.2.20', 'app-lon-01',     'AppTeam',   'used',     'Application server 1'],
+        [4, '10.10.2.21', 'app-lon-02',     'AppTeam',   'used',     'Application server 2'],
+        [4, '10.10.2.22', 'app-lon-03',     'AppTeam',   'used',     'Application server 3'],
+        [4, '10.10.2.30', 'db-lon-01',      'DBA',       'used',     'Primary database'],
+        [4, '10.10.2.31', 'db-lon-02',      'DBA',       'used',     'Replica database'],
+        [4, '10.10.2.32', 'db-lon-03',      'DBA',       'used',     'Backup database'],
+        [4, '10.10.2.40', 'cache-lon-01',   'AppTeam',   'used',     'Redis cache 1'],
+        [4, '10.10.2.41', 'cache-lon-02',   'AppTeam',   'used',     'Redis cache 2'],
+        [4, '10.10.2.50', 'storage-lon-01', 'Infra',     'used',     'NFS storage'],
+        [4, '10.10.2.51', 'storage-lon-02', 'Infra',     'used',     'NFS storage replica'],
+        [4, '10.10.2.100','backup-lon-01',  'Infra',     'used',     'Backup server'],
+        [4, '10.10.2.200','',               '',          'free',     ''],
+        [4, '10.10.2.201','',               '',          'free',     ''],
+        [4, '10.10.2.202','',               '',          'free',     ''],
+        // 10.10.3.0/27 (London DMZ) — /27 = 30 assignable, mostly used
+        [5, '10.10.3.1',  'fw-lon-dmz',     'Security',  'used',     'DMZ firewall inside'],
+        [5, '10.10.3.2',  'proxy-lon-01',   'Security',  'used',     'Squid proxy'],
+        [5, '10.10.3.3',  'proxy-lon-02',   'Security',  'used',     'Squid proxy standby'],
+        [5, '10.10.3.4',  'waf-lon-01',     'Security',  'used',     'WAF node 1'],
+        [5, '10.10.3.5',  'waf-lon-02',     'Security',  'used',     'WAF node 2'],
+        [5, '10.10.3.6',  'mailgw-lon-01',  'Infra',     'used',     'Mail gateway'],
+        [5, '10.10.3.10', 'vpn-lon-01',     'NetOps',    'used',     'VPN concentrator'],
+        [5, '10.10.3.20', '',               '',          'reserved', 'Future load balancer'],
+        [5, '10.10.3.21', '',               '',          'reserved', 'Future load balancer'],
+        [5, '10.10.3.30', '',               '',          'free',     ''],
+        // 10.20.1.0/24 (New York servers)
+        [7, '10.20.1.1',  'gw-nyc-srv',     'NetOps',    'used',     'NY server gateway'],
+        [7, '10.20.1.10', 'web-nyc-01',     'WebTeam',   'used',     'Web server NY 1'],
+        [7, '10.20.1.11', 'web-nyc-02',     'WebTeam',   'used',     'Web server NY 2'],
+        [7, '10.20.1.20', 'app-nyc-01',     'AppTeam',   'used',     'App server NY 1'],
+        [7, '10.20.1.21', 'app-nyc-02',     'AppTeam',   'used',     'App server NY 2'],
+        [7, '10.20.1.30', 'db-nyc-01',      'DBA',       'used',     'NY database'],
+        [7, '10.20.1.40', 'backup-nyc-01',  'Infra',     'used',     'NY backup server'],
+        [7, '10.20.1.200','',               '',          'free',     ''],
+        // 10.20.2.0/24 (New York management)
+        [8, '10.20.2.1',  'gw-nyc-mgmt',   'NetOps',    'used',     'NY mgmt gateway'],
+        [8, '10.20.2.10', 'mon-nyc-01',     'NetOps',    'used',     'NY monitoring'],
+        [8, '10.20.2.20', 'ntp-nyc-01',     'NetOps',    'used',     'NY NTP'],
+        [8, '10.20.2.30', 'dns-nyc-01',     'NetOps',    'used',     'NY DNS primary'],
+        // 172.16.1.0/24 (Sydney servers)
+        [10, '172.16.1.1', 'gw-syd-srv',    'NetOps',    'used',     'Sydney server gateway'],
+        [10, '172.16.1.10','web-syd-01',    'WebTeam',   'used',     'Sydney web server'],
+        [10, '172.16.1.20','app-syd-01',    'AppTeam',   'used',     'Sydney app server'],
+        [10, '172.16.1.30','db-syd-01',     'DBA',       'used',     'Sydney database'],
+        [10, '172.16.1.100','',             '',          'free',     ''],
+    ];
+    $ai = $db->prepare(
+        "INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, status, note)
+         VALUES (?,?,?,?,?,?,?)"
+    );
+    foreach ($addresses as [$sid, $ip, $hn, $ow, $st, $nt]) {
+        $bin = inet_pton($ip);
+        $ai->execute([$sid, $ip, $bin, $hn, $ow, $st, $nt]);
+    }
+
+    // --- API Keys ---
+    $ak = $db->prepare(
+        "INSERT INTO api_keys (name, key_hash, is_active, created_by) VALUES (?,?,?,?)"
+    );
+    $ak->execute(['Monitoring (active)',  hash('sha256', 'demo-api-key-monitoring-1234567890abcdef'), 1, 'demo']);
+    $ak->execute(['Old script (inactive)', hash('sha256', 'demo-api-key-old-script-0987654321fedcba'), 0, 'demo']);
+
+    // --- Audit log (backdated) ---
+    $al = $db->prepare(
+        "INSERT INTO audit_log (action, entity_type, entity_id, username, ip, details, created_at)
+         VALUES (?,?,?,?,?,?,datetime('now',?))"
+    );
+    $auditEntries = [
+        ['auth.login',      'user', 1, 'demo',        '192.168.1.100', 'login ok',                         '-30 days'],
+        ['subnet.create',   'subnet', 3, 'demo',      '192.168.1.100', 'cidr=10.10.1.0/24',                '-29 days'],
+        ['subnet.create',   'subnet', 4, 'demo',      '192.168.1.100', 'cidr=10.10.2.0/24',                '-29 days'],
+        ['address.create',  'address', 1, 'demo',     '192.168.1.100', 'ip=10.10.1.1 subnet_id=3',         '-28 days'],
+        ['address.create',  'address', 2, 'demo',     '192.168.1.100', 'ip=10.10.1.2 subnet_id=3',         '-28 days'],
+        ['user.create',     'user', 2, 'demo',        '192.168.1.100', 'username=readonly-user role=readonly', '-27 days'],
+        ['user.create',     'user', 3, 'demo',        '192.168.1.100', 'username=netops-user role=netops',  '-27 days'],
+        ['auth.login',      'user', 2, 'readonly-user','10.10.1.55',   'login ok',                         '-26 days'],
+        ['address.update',  'address', 10, 'demo',    '192.168.1.100', 'hostname=web-lon-01',               '-25 days'],
+        ['address.update',  'address', 11, 'demo',    '192.168.1.100', 'hostname=web-lon-02',               '-25 days'],
+        ['subnet.create',   'subnet', 5, 'demo',      '192.168.1.100', 'cidr=10.10.3.0/27',                '-24 days'],
+        ['address.create',  'address', 29, 'demo',    '192.168.1.100', 'ip=10.10.3.1 subnet_id=5',         '-23 days'],
+        ['apikey.create',   'api_key', 1, 'demo',     '192.168.1.100', 'name=Monitoring (active)',          '-22 days'],
+        ['apikey.create',   'api_key', 2, 'demo',     '192.168.1.100', 'name=Old script (inactive)',        '-22 days'],
+        ['apikey.deactivate','api_key', 2, 'demo',    '192.168.1.100', '',                                  '-21 days'],
+        ['site.create',     'site', 2, 'demo',        '192.168.1.100', 'name=New York DC',                  '-20 days'],
+        ['site.create',     'site', 3, 'demo',        '192.168.1.100', 'name=Sydney Office',                '-20 days'],
+        ['auth.login',      'user', 3, 'netops-user', '10.20.1.55',   'login ok',                          '-19 days'],
+        ['address.create',  'address', 41, 'demo',    '192.168.1.100', 'ip=10.20.1.1 subnet_id=7',         '-18 days'],
+        ['address.create',  'address', 49, 'demo',    '192.168.1.100', 'ip=172.16.1.1 subnet_id=10',       '-17 days'],
+        ['auth.login_failed','user', null, '',        '203.0.113.50',  'username=hacker',                   '-15 days'],
+        ['auth.login_failed','user', null, '',        '203.0.113.50',  'username=hacker',                   '-15 days'],
+        ['auth.login_blocked','user', null, '',       '203.0.113.50',  'ip=203.0.113.50',                   '-15 days'],
+        ['address.update',  'address', 30, 'demo',    '192.168.1.100', 'status=reserved',                   '-10 days'],
+        ['export.csv',      'address', null, 'demo',  '192.168.1.100', 'subnet_id=4',                       '-8 days'],
+        ['address.create',  'address', 50, 'demo',    '192.168.1.100', 'ip=172.16.1.10 subnet_id=10',      '-5 days'],
+        ['auth.login',      'user', 1, 'demo',        '192.168.1.100', 'login ok',                         '-3 days'],
+        ['address.bulk_update','address', null, 'demo','192.168.1.100','subnet_id=4 selected=3 affected=3', '-2 days'],
+        ['auth.login',      'user', 1, 'demo',        '192.168.1.100', 'login ok',                         '-1 day'],
+        ['auth.login',      'user', 1, 'demo',        '192.168.1.100', 'login ok',                         '-0 seconds'],
+    ];
+    foreach ($auditEntries as $e) {
+        $al->execute($e);
+    }
+
+    // --- Address history ---
+    $hist = $db->prepare(
+        "INSERT INTO address_history (address_id, action, username, client_ip, before_json, after_json, created_at)
+         VALUES (?,?,?,?,?,?,datetime('now',?))"
+    );
+    $histEntries = [
+        [1, 'create', 'demo', '192.168.1.100', null,
+         '{"hostname":"gw-lon-mgmt","owner":"NetOps","status":"used","note":"Default gateway"}', '-28 days'],
+        [10, 'create', 'demo', '192.168.1.100', null,
+         '{"hostname":"","owner":"WebTeam","status":"used","note":""}', '-28 days'],
+        [10, 'update', 'demo', '192.168.1.100',
+         '{"hostname":"","owner":"WebTeam","status":"used","note":""}',
+         '{"hostname":"web-lon-01","owner":"WebTeam","status":"used","note":"Web frontend 1"}', '-25 days'],
+        [30, 'create', 'demo', '192.168.1.100', null,
+         '{"hostname":"","owner":"","status":"free","note":""}', '-23 days'],
+        [30, 'update', 'demo', '192.168.1.100',
+         '{"hostname":"","owner":"","status":"free","note":""}',
+         '{"hostname":"","owner":"","status":"reserved","note":"Future load balancer"}', '-10 days'],
+        [13, 'create', 'demo', '192.168.1.100', null,
+         '{"hostname":"web-lon-03","owner":"WebTeam","status":"used","note":"Web frontend 3"}', '-28 days'],
+        [20, 'create', 'demo', '192.168.1.100', null,
+         '{"hostname":"app-lon-01","owner":"AppTeam","status":"used","note":"Application server 1"}', '-28 days'],
+        [29, 'create', 'demo', '192.168.1.100', null,
+         '{"hostname":"fw-lon-dmz","owner":"Security","status":"used","note":"DMZ firewall inside"}', '-23 days'],
+    ];
+    foreach ($histEntries as $h) {
+        $hist->execute($h);
+    }
 }
 
 /* ---------------- IP helpers ---------------- */
@@ -1373,8 +1660,8 @@ function page_header(string $title): void
 
     echo "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
     echo "<title>" . e($title) . "</title>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=1.6'>";
-    echo "<script defer src='assets/app.js?v=1.6'></script>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=1.7'>";
+    echo "<script defer src='assets/app.js?v=1.7'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
@@ -1422,6 +1709,13 @@ function page_header(string $title): void
 
     echo "</div></div>";
     echo "<div class='page'>";
+
+    // Demo mode banner (non-dismissible)
+    if (demo_mode_enabled()) {
+        echo "<div class='admin-notice admin-notice--info' role='alert' style='text-align:center'>"
+           . "🧪 <strong>Demo mode</strong> — Explore freely. Destructive actions are disabled. Data resets nightly at midnight."
+           . "</div>";
+    }
 
     // Default bootstrap admin password warning (admin only)
     if (($role ?? '') === 'admin') {
