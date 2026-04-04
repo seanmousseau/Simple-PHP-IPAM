@@ -1054,12 +1054,18 @@ function csv_out(array $row): void
 
 function demo_reset_db(PDO $db): void
 {
-    $tables = ['address_history', 'audit_log', 'login_attempts', 'api_keys',
+    // audit_log has append-only triggers that block DELETE, so handle it separately
+    // via a rename+drop approach (same technique as prune_audit_log).
+    $db->exec("ALTER TABLE audit_log RENAME TO audit_log_old");
+    $db->exec("DROP TABLE audit_log_old");
+
+    $tables = ['address_history', 'login_attempts', 'api_keys',
                'addresses', 'subnets', 'sites', 'users', 'schema_migrations'];
     foreach ($tables as $t) {
         $db->exec("DELETE FROM $t");
         $db->exec("DELETE FROM sqlite_sequence WHERE name='$t'");
     }
+    $db->exec("DELETE FROM sqlite_sequence WHERE name='audit_log'");
     apply_migrations($db);
     demo_seed_data($db);
 }
