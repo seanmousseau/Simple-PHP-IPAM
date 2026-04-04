@@ -110,19 +110,19 @@ page_header('Audit Log');
 <div class="page-actions align-center gap-12 flex-wrap">
   <a class="action-pill" href="export_audit.php">⬇ Export CSV</a>
   <form method="get" action="audit.php" class="row gap-8 m-0 align-center">
-    <label class="m-0">Category:
-      <select name="prefix" data-auto-submit class="ml-4">
+    <label class="m-0 label-inline">Category:
+      <select name="prefix" data-auto-submit>
         <option value=""<?= $filterPrefix === '' ? ' selected' : '' ?>>All</option>
         <?php foreach (AUDIT_PREFIXES as $pfx): ?>
           <option value="<?= e($pfx) ?>"<?= $filterPrefix === $pfx ? ' selected' : '' ?>><?= e($pfx) ?></option>
         <?php endforeach; ?>
       </select>
     </label>
-    <label class="m-0">From:
-      <input type="date" name="from" value="<?= e($filterFrom) ?>" class="ml-4">
+    <label class="m-0 label-inline">From:
+      <input type="date" name="from" value="<?= e($filterFrom) ?>">
     </label>
-    <label class="m-0">To:
-      <input type="date" name="to" value="<?= e($filterTo) ?>" class="ml-4">
+    <label class="m-0 label-inline">To:
+      <input type="date" name="to" value="<?= e($filterTo) ?>">
     </label>
     <button type="submit">Apply</button>
     <input type="hidden" name="page_size" value="<?= $limit ?>">
