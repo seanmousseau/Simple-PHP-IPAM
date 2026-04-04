@@ -113,7 +113,12 @@ page_header('Login', array_filter([
     'extra_script_src' => $lpCsp['script_src'],
     'extra_frame_src'  => $lpCsp['frame_src'],
 ]));
+$appName = trim((string)($config['app_name'] ?? '')) ?: 'Simple PHP IPAM';
 ?>
+<div class="login-logo">
+  <img src="assets/logo.svg" alt="<?= e($appName) ?>" style="height:72px;width:auto;display:block;margin:0 auto 8px;">
+  <p class="muted text-center" style="margin:0 0 16px;"><?= e($appName) ?></p>
+</div>
 <h1>Login</h1>
 <?php if ($timedOut && !$error): ?>
   <p class="warning">Your session expired due to inactivity. Please log in again.</p>
@@ -152,5 +157,15 @@ page_header('Login', array_filter([
       <a href="login.php?local=1" class="muted font-sm">(emergency local access)</a>
     <?php endif; ?>
   </p>
+<?php endif; ?>
+<?php
+$idleSeconds = (int)($config['session_idle_seconds'] ?? 1800);
+if ($idleSeconds > 0):
+    $idleMins = (int)round($idleSeconds / 60);
+    $idleLabel = $idleMins >= 60
+        ? round($idleMins / 60, 1) . ' hr'
+        : $idleMins . ' min';
+?>
+  <p class="muted text-center" style="font-size:.82rem;margin-top:12px;">Sessions expire after <?= e($idleLabel) ?> of inactivity.</p>
 <?php endif; ?>
 <?php page_footer();

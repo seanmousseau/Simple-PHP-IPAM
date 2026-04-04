@@ -35,7 +35,7 @@ $where  = [];
 $params = [];
 
 if ($q !== '') {
-    $where[]       = "(a.ip LIKE :q ESCAPE '\\' OR a.hostname LIKE :q ESCAPE '\\' OR a.owner LIKE :q ESCAPE '\\' OR a.note LIKE :q ESCAPE '\\')";
+    $where[]       = "(a.ip LIKE :q ESCAPE '\\' OR a.hostname LIKE :q ESCAPE '\\' OR a.owner LIKE :q ESCAPE '\\' OR a.note LIKE :q ESCAPE '\\' OR a.grp LIKE :q ESCAPE '\\')";
     $params[':q']  = '%' . like_escape($q) . '%';
 }
 if ($status !== '') {
@@ -70,7 +70,7 @@ $total = (int)$st->fetch()['c'];
 $p = paginate($total, $page, $pageSize);
 
 $st = $db->prepare("
-    SELECT a.id, a.subnet_id, a.ip, a.hostname, a.owner, a.status, a.note, a.updated_at,
+    SELECT a.id, a.subnet_id, a.ip, a.hostname, a.owner, a.grp, a.status, a.note, a.updated_at,
            s.cidr AS subnet_cidr, si.name AS site_name
     FROM addresses a
     JOIN subnets s ON s.id = a.subnet_id
@@ -211,6 +211,7 @@ page_header('Search');
                 echo sort_th('owner',    'Owner',    $searchSort['col'], $searchSort['dir'], $srchQs);
                 echo sort_th('status',   'Status',   $searchSort['col'], $searchSort['dir'], $srchQs);
           ?>
+          <th>Group</th>
           <th>Note</th>
           <th>Updated</th>
           <th></th>
@@ -225,6 +226,7 @@ page_header('Search');
           <td><?= e($r['hostname']) ?></td>
           <td><?= e($r['owner']) ?></td>
           <td><span class="status-<?= e($r['status']) ?>"><?= e($r['status']) ?></span></td>
+          <td><?= $r['grp'] !== '' ? '<span class="badge">' . e($r['grp']) . '</span>' : '' ?></td>
           <td><?= e($r['note']) ?></td>
           <td class="muted"><?= e($r['updated_at']) ?></td>
           <td><a href="address_history.php?address_id=<?= (int)$r['id'] ?>">History</a></td>

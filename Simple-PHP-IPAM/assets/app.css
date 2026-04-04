@@ -132,6 +132,19 @@ h3{font-size:1.05rem}
   align-items:center;
   flex-wrap:wrap;
 }
+.nav-brand{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  font-weight:600;
+  font-size:1rem;
+  color:var(--fg);
+  text-decoration:none;
+  white-space:nowrap;
+  flex-shrink:0;
+}
+.nav-brand:hover{opacity:.8;text-decoration:none}
+.nav-logo{height:24px;width:auto}
 .nav-links{
   display:flex;
   gap:14px;

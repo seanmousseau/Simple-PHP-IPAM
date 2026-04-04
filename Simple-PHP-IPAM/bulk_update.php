@@ -36,13 +36,13 @@ if ($subnetId > 0) {
     $bulkSortCols = ['ip' => 'ip_bin', 'hostname' => 'hostname', 'status' => 'status'];
     $bulkSort = parse_sort($bulkSortCols, 'ip');
 
-    $sql = "SELECT id, ip, ip_bin, hostname, owner, status, note, updated_at
+    $sql = "SELECT id, ip, ip_bin, hostname, owner, status, note, grp, updated_at
             FROM addresses
             WHERE subnet_id = :sid";
     $params = [':sid' => $subnetId];
 
     if ($q !== '') {
-        $sql .= " AND (ip LIKE :q ESCAPE '\\' OR hostname LIKE :q ESCAPE '\\' OR owner LIKE :q ESCAPE '\\' OR note LIKE :q ESCAPE '\\')";
+        $sql .= " AND (ip LIKE :q ESCAPE '\\' OR hostname LIKE :q ESCAPE '\\' OR owner LIKE :q ESCAPE '\\' OR note LIKE :q ESCAPE '\\' OR grp LIKE :q ESCAPE '\\')";
         $params[':q'] = '%' . like_escape($q) . '%';
     }
 
@@ -168,13 +168,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $doOwner    = !empty($_POST['do_owner']);
                 $doStatus   = !empty($_POST['do_status']);
                 $doNote     = !empty($_POST['do_note']);
+                $doGrp      = !empty($_POST['do_grp']);
 
                 $newHostname = trim((string)($_POST['hostname'] ?? ''));
                 $newOwner    = trim((string)($_POST['owner'] ?? ''));
                 $newStatus   = (string)($_POST['status'] ?? 'used');
                 $newNote     = trim((string)($_POST['note'] ?? ''));
+                $newGrp      = trim((string)($_POST['grp'] ?? ''));
 
-                if (!$doHostname && !$doOwner && !$doStatus && !$doNote) {
+                if (!$doHostname && !$doOwner && !$doStatus && !$doNote && !$doGrp) {
                     $db->rollBack();
                     $err = "Select at least one field to update.";
                 } elseif ($doStatus && !in_array($newStatus, ['used','reserved','free'], true)) {
@@ -187,8 +189,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $subnetNetwork = (string)$subnet['network'];
                         $subnetPrefix  = (int)$subnet['prefix'];
                         $insStmt = $db->prepare(
-                            "INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, status, note)
-                             VALUES (:sid, :ip, :ib, :hn, :ow, :st, :nt)"
+                            "INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, status, note, grp)
+                             VALUES (:sid, :ip, :ib, :hn, :ow, :st, :nt, :grp)"
                         );
                         foreach ($unconfIps as $rawIp) {
                             $norm = normalize_ip($rawIp);
@@ -200,13 +202,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             if ($chk->fetch()) continue;
 
                             $insStmt->execute([
-                                ':sid' => $subnetId,
-                                ':ip'  => $norm['ip'],
-                                ':ib'  => $norm['bin'],
-                                ':hn'  => $doHostname ? $newHostname : '',
-                                ':ow'  => $doOwner    ? $newOwner    : '',
-                                ':st'  => $doStatus   ? $newStatus   : 'used',
-                                ':nt'  => $doNote     ? $newNote     : '',
+                                ':sid'  => $subnetId,
+                                ':ip'   => $norm['ip'],
+                                ':ib'   => $norm['bin'],
+                                ':hn'   => $doHostname ? $newHostname : '',
+                                ':ow'   => $doOwner    ? $newOwner    : '',
+                                ':st'   => $doStatus   ? $newStatus   : 'used',
+                                ':nt'   => $doNote     ? $newNote     : '',
+                                ':grp'  => $doGrp      ? $newGrp      : '',
                             ]);
                             $newId = (int)$db->lastInsertId();
                             $insertedUnconf++;
@@ -214,6 +217,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 'hostname' => $doHostname ? $newHostname : '',
                                 'owner'    => $doOwner    ? $newOwner    : '',
                                 'note'     => $doNote     ? $newNote     : '',
+                                'grp'      => $doGrp      ? $newGrp      : '',
                                 'status'   => $doStatus   ? $newStatus   : 'used',
                             ];
                             history_log_address($db, 'bulk_create', $subnetId, $norm['ip'], $newId, null, $after);
@@ -230,6 +234,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         if ($doOwner)    { $set[] = "owner = :ow";    $params[':ow'] = $newOwner; }
                         if ($doStatus)   { $set[] = "status = :st";   $params[':st'] = $newStatus; }
                         if ($doNote)     { $set[] = "note = :nt";     $params[':nt'] = $newNote; }
+                        if ($doGrp)      { $set[] = "grp = :grp";     $params[':grp'] = $newGrp; }
 
                         foreach ($paramsBefore as $k => $v) {
                             if ($k !== ':sid') $params[$k] = $v;
@@ -248,12 +253,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 'hostname' => $doHostname ? $newHostname : (string)$b['hostname'],
                                 'owner'    => $doOwner    ? $newOwner    : (string)$b['owner'],
                                 'note'     => $doNote     ? $newNote     : (string)$b['note'],
+                                'grp'      => $doGrp      ? $newGrp      : (string)($b['grp'] ?? ''),
                                 'status'   => $doStatus   ? $newStatus   : (string)$b['status'],
                             ];
                             history_log_address($db, 'bulk_update', $subnetId, (string)$b['ip'], (int)$b['id'], [
                                 'hostname' => (string)$b['hostname'],
                                 'owner'    => (string)$b['owner'],
                                 'note'     => (string)$b['note'],
+                                'grp'      => (string)($b['grp'] ?? ''),
                                 'status'   => (string)$b['status'],
                             ], $after);
                         }
@@ -267,6 +274,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $doOwner    ? 'owner'    : '',
                             $doStatus   ? 'status'   : '',
                             $doNote     ? 'note'     : '',
+                            $doGrp      ? 'grp'      : '',
                         ]))
                     );
 
@@ -346,6 +354,9 @@ page_header('Bulk Update');
 
       <label><input type="checkbox" name="do_note" value="1"> Note</label>
       <input name="note" class="mw-420" placeholder="new note">
+
+      <label><input type="checkbox" name="do_grp" value="1"> Group</label>
+      <input name="grp" maxlength="100" placeholder="new group">
     </div>
 
     <h3 class="mt-18">Choose addresses</h3>

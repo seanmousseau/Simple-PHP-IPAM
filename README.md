@@ -45,8 +45,9 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 - **Audit log retention** — configurable pruning of old audit entries during scheduled housekeeping
 
 ### REST API
-- Read-only JSON API (`api.php`) authenticated with API keys
-- Resources: subnets, addresses (paginated + filterable), sites
+- JSON REST API (`api.php`) authenticated with API keys
+- Read: subnets, addresses (paginated + filterable), sites, address history
+- Write: create / update / delete subnets and addresses (POST / PUT / DELETE)
 
 ---
 
@@ -90,6 +91,22 @@ See the [Installation guide](docs/install.md) for full web server configuration 
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
+
+### What's new in 1.11
+
+**Branding & UX** — Configurable application name (`app_name` in `config.php`) shown in the browser tab, nav bar brand link, login page, and demo gate. Logo and favicons (`assets/logo.svg`, `favicon-32.png`, `apple-touch-icon.png`) displayed on every page. Browser tab title now reads `{AppName} — {Page}`.
+
+**Group field on addresses** — All address records now carry an optional `group` text field. Shown as a badge in the address list and address tables; included in all CSV exports and the import wizard column mapper; searchable; exposed in the REST API as `group`.
+
+**VLAN ID on subnets** — Subnets now have an optional VLAN ID (1–4094), displayed as a badge in the subnet hierarchy and returned in the REST API.
+
+**REST API write support** — `POST`, `PUT`, and `DELETE` are now supported for `subnets` and `addresses`. All writes require a valid API key and are recorded in the audit log as `api:{key-name}`. See [REST API reference](docs/api.md).
+
+**Per-user theme persistence** — The selected theme (light / dark / auto) is stored in the database and restored on next login, preventing the theme-flash on first page load.
+
+**Session timeout notice** — Login page now shows a human-readable inactivity timeout notice derived from `session_idle_seconds`.
+
+**DHCP pool improvements** — The reserved address table now shows hostname, owner, and note columns. Each row has inline Edit and Delete actions. Contiguous IP blocks are grouped under range headers.
 
 ### What's new in 1.10
 

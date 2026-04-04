@@ -8,6 +8,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 $err     = '';
 $msg     = '';
 $results = null;
+$editId  = (int)($_GET['edit_id'] ?? 0);
 
 // Load all IPv4 subnets for the selector
 $st = $db->prepare(
@@ -124,6 +125,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
         }
+    } elseif ($action === 'edit_address') {
+        $addressId = (int)($_POST['address_id'] ?? 0);
+        $hostname  = trim((string)($_POST['hostname'] ?? ''));
+        $owner     = trim((string)($_POST['owner']    ?? ''));
+        $note      = trim((string)($_POST['note']     ?? ''));
+
+        if (!$subnet) {
+            $err = 'Subnet not found.';
+        } elseif ($addressId <= 0) {
+            $err = 'Invalid address.';
+        } else {
+            $stChk = $db->prepare(
+                "SELECT id FROM addresses WHERE id = :id AND subnet_id = :sid AND status = 'reserved'"
+            );
+            $stChk->execute([':id' => $addressId, ':sid' => $subnetId]);
+            if (!$stChk->fetch()) {
+                $err = 'Address not found or not a reserved address in this subnet.';
+            } else {
+                $db->prepare(
+                    "UPDATE addresses SET hostname = :hn, owner = :ow, note = :nt WHERE id = :id"
+                )->execute([':hn' => $hostname, ':ow' => $owner, ':nt' => $note, ':id' => $addressId]);
+                audit($db, 'dhcp_pool.edit_address', 'address', $addressId,
+                    "subnet_id={$subnetId} hostname={$hostname} owner={$owner}");
+                $msg = 'Address updated.';
+            }
+        }
+    } elseif ($action === 'delete_address') {
+        $addressId = (int)($_POST['address_id'] ?? 0);
+
+        if (!$subnet) {
+            $err = 'Subnet not found.';
+        } elseif ($addressId <= 0) {
+            $err = 'Invalid address.';
+        } else {
+            $stChk = $db->prepare(
+                "SELECT id FROM addresses WHERE id = :id AND subnet_id = :sid AND status = 'reserved'"
+            );
+            $stChk->execute([':id' => $addressId, ':sid' => $subnetId]);
+            if (!$stChk->fetch()) {
+                $err = 'Address not found or not a reserved address in this subnet.';
+            } else {
+                $db->prepare("DELETE FROM addresses WHERE id = :id")->execute([':id' => $addressId]);
+                audit($db, 'dhcp_pool.delete_address', 'address', $addressId,
+                    "subnet_id={$subnetId}");
+                $msg = 'Reserved address deleted.';
+                $editId = 0;
+            }
+        }
     } elseif ($action === 'clear_pool') {
         if (!$subnet) {
             $err = 'Subnet not found.';
@@ -178,7 +227,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $reserved = [];
 if ($subnet) {
     $stR = $db->prepare(
-        "SELECT ip, note FROM addresses WHERE subnet_id = :sid AND status = 'reserved'
+        "SELECT id, ip, ip_bin, hostname, owner, note FROM addresses
+         WHERE subnet_id = :sid AND status = 'reserved'
          ORDER BY ip_bin ASC"
     );
     $stR->execute([':sid' => $subnetId]);
@@ -250,14 +300,86 @@ page_header('DHCP Pools');
   <?php if (empty($reserved)): ?>
     <div class="empty-state">No reserved addresses in this subnet.</div>
   <?php else: ?>
+    <?php
+    // Build contiguous range groups
+    $groups = [];
+    $curGroup = null;
+    foreach ($reserved as $r) {
+        $ipInt = ipv4_bin_to_int((string)$r['ip_bin']);
+        if ($curGroup === null || $ipInt !== $curGroup['end_int'] + 1) {
+            if ($curGroup !== null) $groups[] = $curGroup;
+            $curGroup = ['start_ip' => $r['ip'], 'end_ip' => $r['ip'],
+                         'start_int' => $ipInt, 'end_int' => $ipInt, 'rows' => []];
+        } else {
+            $curGroup['end_ip']  = $r['ip'];
+            $curGroup['end_int'] = $ipInt;
+        }
+        $curGroup['rows'][] = $r;
+    }
+    if ($curGroup !== null) $groups[] = $curGroup;
+    ?>
     <table>
-      <thead><tr><th>IP</th><th>Note</th></tr></thead>
+      <thead><tr><th>IP</th><th>Hostname</th><th>Owner</th><th>Note</th><th></th></tr></thead>
       <tbody>
-      <?php foreach ($reserved as $r): ?>
-        <tr>
-          <td><?= e($r['ip']) ?></td>
-          <td class="muted"><?= e((string)$r['note']) ?></td>
+      <?php foreach ($groups as $g): ?>
+        <?php if (count($g['rows']) > 1 || count($groups) > 1): ?>
+        <tr class="dhcp-range-header">
+          <td colspan="5" class="muted" style="font-size:.82rem;padding:4px 6px;background:var(--card);">
+            <?php if ($g['start_ip'] === $g['end_ip']): ?>
+              <?= e($g['start_ip']) ?>
+            <?php else: ?>
+              <?= e($g['start_ip']) ?> &ndash; <?= e($g['end_ip']) ?>
+              &middot; <?= count($g['rows']) ?> addresses
+            <?php endif; ?>
+          </td>
         </tr>
+        <?php endif; ?>
+        <?php foreach ($g['rows'] as $r): ?>
+          <?php if ($editId === (int)$r['id']): ?>
+          <tr>
+            <td colspan="5">
+              <form method="post" action="dhcp_pool.php" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+                <input type="hidden" name="csrf"       value="<?= e(csrf_token()) ?>">
+                <input type="hidden" name="action"     value="edit_address">
+                <input type="hidden" name="subnet_id"  value="<?= (int)$subnetId ?>">
+                <input type="hidden" name="address_id" value="<?= (int)$r['id'] ?>">
+                <span style="font-weight:600;align-self:center;"><?= e($r['ip']) ?></span>
+                <label style="display:flex;flex-direction:column;font-size:.85rem;">Hostname<br>
+                  <input name="hostname" value="<?= e((string)$r['hostname']) ?>" class="mw-160">
+                </label>
+                <label style="display:flex;flex-direction:column;font-size:.85rem;">Owner<br>
+                  <input name="owner" value="<?= e((string)$r['owner']) ?>" class="mw-140">
+                </label>
+                <label style="display:flex;flex-direction:column;font-size:.85rem;">Note<br>
+                  <input name="note" value="<?= e((string)$r['note']) ?>" class="mw-160">
+                </label>
+                <div style="align-self:flex-end;display:flex;gap:6px;">
+                  <button type="submit">Save</button>
+                  <a class="action-pill" href="dhcp_pool.php?subnet_id=<?= (int)$subnetId ?>">Cancel</a>
+                </div>
+              </form>
+            </td>
+          </tr>
+          <?php else: ?>
+          <tr>
+            <td><?= e($r['ip']) ?></td>
+            <td><?= e((string)$r['hostname']) ?></td>
+            <td><?= e((string)$r['owner']) ?></td>
+            <td class="muted"><?= e((string)$r['note']) ?></td>
+            <td style="white-space:nowrap;">
+              <a class="action-pill" href="dhcp_pool.php?subnet_id=<?= (int)$subnetId ?>&edit_id=<?= (int)$r['id'] ?>">Edit</a>
+              <form method="post" action="dhcp_pool.php" style="display:inline;"
+                    data-confirm="Delete reserved address <?= e($r['ip']) ?>?">
+                <input type="hidden" name="csrf"       value="<?= e(csrf_token()) ?>">
+                <input type="hidden" name="action"     value="delete_address">
+                <input type="hidden" name="subnet_id"  value="<?= (int)$subnetId ?>">
+                <input type="hidden" name="address_id" value="<?= (int)$r['id'] ?>">
+                <button type="submit" class="action-pill button-danger" style="border:none;cursor:pointer;">Delete</button>
+              </form>
+            </td>
+          </tr>
+          <?php endif; ?>
+        <?php endforeach; ?>
       <?php endforeach; ?>
       </tbody>
     </table>

@@ -41,6 +41,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $hostname = substr(trim((string)($_POST['hostname'] ?? '')), 0, 253);
         $owner    = substr(trim((string)($_POST['owner']    ?? '')), 0, 255);
         $note     = substr(trim((string)($_POST['note']     ?? '')), 0, 1000);
+        $grp      = substr(trim((string)($_POST['grp']      ?? '')), 0, 100);
         $status = (string)($_POST['status'] ?? 'used');
 
         $st = $db->prepare("SELECT id, network, prefix, ip_version FROM subnets WHERE id = :id");
@@ -61,8 +62,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $err = 'Invalid status.';
             } else {
                 try {
-                    $ins = $db->prepare("INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, status)
-                                         VALUES (:sid,:ip,:bin,:hn,:ow,:nt,:st)");
+                    $ins = $db->prepare("INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, grp, status)
+                                         VALUES (:sid,:ip,:bin,:hn,:ow,:nt,:grp,:st)");
                     $ins->execute([
                         ':sid' => $subnetId,
                         ':ip'  => $norm['ip'],
@@ -70,6 +71,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ':hn'  => $hostname,
                         ':ow'  => $owner,
                         ':nt'  => $note,
+                        ':grp' => $grp,
                         ':st'  => $status,
                     ]);
                     $aid = (int)$db->lastInsertId();
@@ -78,6 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'hostname' => $hostname,
                         'owner' => $owner,
                         'note' => $note,
+                        'grp' => $grp,
                         'status' => $status,
                     ]);
                     audit($db, 'address.create', 'address', $aid, "ip={$norm['ip']} subnet_id=$subnetId");
@@ -101,12 +104,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $hostname = substr(trim((string)($_POST['hostname'] ?? '')), 0, 253);
         $owner    = substr(trim((string)($_POST['owner']    ?? '')), 0, 255);
         $note     = substr(trim((string)($_POST['note']     ?? '')), 0, 1000);
+        $grp      = substr(trim((string)($_POST['grp']      ?? '')), 0, 100);
         $status = (string)($_POST['status'] ?? 'used');
 
         if (!in_array($status, ['used','reserved','free'], true)) {
             $err = 'Invalid status.';
         } else {
-            $sel = $db->prepare("SELECT id, ip, hostname, owner, note, status FROM addresses WHERE id=:id AND subnet_id=:sid");
+            $sel = $db->prepare("SELECT id, ip, hostname, owner, note, grp, status FROM addresses WHERE id=:id AND subnet_id=:sid");
             $sel->execute([':id' => $id, ':sid' => $subnetId]);
             $before = $sel->fetch();
 
@@ -114,12 +118,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $err = 'Address not found.';
             } else {
                 $up = $db->prepare("UPDATE addresses
-                                    SET hostname=:hn, owner=:ow, note=:nt, status=:st
+                                    SET hostname=:hn, owner=:ow, note=:nt, grp=:grp, status=:st
                                     WHERE id=:id AND subnet_id=:sid");
                 $up->execute([
                     ':hn' => $hostname,
                     ':ow' => $owner,
                     ':nt' => $note,
+                    ':grp' => $grp,
                     ':st' => $status,
                     ':id' => $id,
                     ':sid' => $subnetId,
@@ -130,12 +135,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'hostname' => (string)$before['hostname'],
                         'owner' => (string)$before['owner'],
                         'note' => (string)$before['note'],
+                        'grp' => (string)$before['grp'],
                         'status' => (string)$before['status'],
                     ],
                     [
                         'hostname' => $hostname,
                         'owner' => $owner,
                         'note' => $note,
+                        'grp' => $grp,
                         'status' => $status,
                     ]
                 );
@@ -152,7 +159,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $id = (int)($_POST['id'] ?? 0);
         $subnetId = (int)($_POST['subnet_id'] ?? 0);
 
-        $sel = $db->prepare("SELECT id, ip, hostname, owner, note, status FROM addresses WHERE id=:id AND subnet_id=:sid");
+        $sel = $db->prepare("SELECT id, ip, hostname, owner, note, grp, status FROM addresses WHERE id=:id AND subnet_id=:sid");
         $sel->execute([':id' => $id, ':sid' => $subnetId]);
         $before = $sel->fetch();
 
@@ -165,6 +172,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'hostname' => (string)$before['hostname'],
                     'owner' => (string)$before['owner'],
                     'note' => (string)$before['note'],
+                    'grp' => (string)$before['grp'],
                     'status' => (string)$before['status'],
                 ],
                 null
@@ -188,7 +196,7 @@ if ($selectedSubnetId > 0) {
 
     $p = paginate($total, $page, $pageSize);
 
-    $st = $db->prepare("SELECT id, ip, hostname, owner, note, status, updated_at
+    $st = $db->prepare("SELECT id, ip, hostname, owner, note, grp, status, updated_at
                         FROM addresses
                         WHERE subnet_id = :sid
                         ORDER BY {$addrSort['sql']}
@@ -285,6 +293,7 @@ page_header('Addresses');
       <label>IP<br><input name="ip" placeholder="<?= ($selectedSubnet && (int)$selectedSubnet['ip_version']===6) ? '2001:db8::10' : '10.0.0.10' ?>" required></label>
       <label>Hostname<br><input name="hostname" maxlength="253"></label>
       <label>Owner<br><input name="owner" maxlength="255"></label>
+      <label>Group<br><input name="grp" maxlength="100" placeholder="e.g. web-tier" class="mw-160"></label>
       <label>Status<br>
         <select name="status">
           <option value="used">used</option>
@@ -324,6 +333,7 @@ page_header('Addresses');
                 echo sort_th('owner',    'Owner',    $addrSort['col'], $addrSort['dir'], $addrQs);
                 echo sort_th('status',   'Status',   $addrSort['col'], $addrSort['dir'], $addrQs);
           ?>
+          <th>Group</th>
           <th>Note</th>
           <?php echo sort_th('updated', 'Updated', $addrSort['col'], $addrSort['dir'], $addrQs); ?>
           <th>Actions</th>
@@ -336,6 +346,7 @@ page_header('Addresses');
           <td><?= e($a['hostname']) ?></td>
           <td><?= e($a['owner']) ?></td>
           <td><span class="status-<?= e($a['status']) ?>"><?= e($a['status']) ?></span></td>
+          <td><?php if ($a['grp'] !== ''): ?><span class="badge"><?= e($a['grp']) ?></span><?php endif; ?></td>
           <td><?= e($a['note']) ?></td>
           <td class="muted"><?= e($a['updated_at']) ?></td>
           <td>
@@ -355,6 +366,7 @@ page_header('Addresses');
                 <div class="row">
                   <label>Hostname<br><input name="hostname" maxlength="253" value="<?= e($a['hostname']) ?>"></label>
                   <label>Owner<br><input name="owner" maxlength="255" value="<?= e($a['owner']) ?>"></label>
+                  <label>Group<br><input name="grp" value="<?= e($a['grp'] ?? '') ?>" maxlength="100" placeholder="e.g. web-tier" class="mw-160"></label>
                   <label>Status<br>
                     <select name="status">
                       <option value="used" <?= ($a['status']==='used')?'selected':'' ?>>used</option>

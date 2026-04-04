@@ -14,7 +14,7 @@ $where = [];
 $params = [];
 
 if ($q !== '') {
-    $where[] = "(a.ip LIKE :q ESCAPE '\\' OR a.hostname LIKE :q ESCAPE '\\' OR a.owner LIKE :q ESCAPE '\\' OR a.note LIKE :q ESCAPE '\\')";
+    $where[] = "(a.ip LIKE :q ESCAPE '\\' OR a.hostname LIKE :q ESCAPE '\\' OR a.owner LIKE :q ESCAPE '\\' OR a.note LIKE :q ESCAPE '\\' OR a.grp LIKE :q ESCAPE '\\')";
     $params[':q'] = '%' . like_escape($q) . '%';
 }
 if ($status !== '') {
@@ -30,10 +30,10 @@ $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
 
 $filename = safe_export_filename('ipam-search-results');
 csv_download_headers($filename);
-csv_out(['subnet_cidr', 'ip', 'hostname', 'owner', 'status', 'note', 'updated_at']);
+csv_out(['subnet_cidr', 'ip', 'hostname', 'owner', 'group', 'status', 'note', 'updated_at']);
 
 $st = $db->prepare("
-    SELECT s.cidr AS subnet_cidr, a.ip, a.hostname, a.owner, a.status, a.note, a.updated_at
+    SELECT s.cidr AS subnet_cidr, a.ip, a.hostname, a.owner, a.grp AS grp, a.status, a.note, a.updated_at
     FROM addresses a
     JOIN subnets s ON s.id = a.subnet_id
     $whereSql
@@ -47,6 +47,7 @@ foreach ($st as $r) {
         (string)$r['ip'],
         (string)$r['hostname'],
         (string)$r['owner'],
+        (string)$r['grp'],
         (string)$r['status'],
         (string)$r['note'],
         (string)$r['updated_at'],

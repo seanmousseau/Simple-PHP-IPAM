@@ -1,6 +1,6 @@
 # REST API Reference
 
-Simple-PHP-IPAM exposes a read-only JSON REST API (`api.php`) available from v0.11.
+Simple-PHP-IPAM exposes a JSON REST API (`api.php`). Read endpoints are available from v0.11; write support (POST/PUT/DELETE) was added in v1.11.
 
 ## Contents
 
@@ -13,6 +13,13 @@ Simple-PHP-IPAM exposes a read-only JSON REST API (`api.php`) available from v0.
   - [Addresses](#addresses)
   - [Sites](#sites)
   - [History](#history)
+- [Write endpoints](#write-endpoints)
+  - [Create a subnet](#create-a-subnet)
+  - [Update a subnet](#update-a-subnet)
+  - [Delete a subnet](#delete-a-subnet)
+  - [Create an address](#create-an-address)
+  - [Update an address](#update-an-address)
+  - [Delete an address](#delete-an-address)
 - [Pagination](#pagination)
 - [Managing API keys](#managing-api-keys)
 - [Examples](#examples)
@@ -47,7 +54,7 @@ SHA-256 hash of the key is stored — if you lose the key, delete it and generat
 https://<your-host>/api.php
 ```
 
-All requests use `GET`. The `resource` query parameter selects which resource to read.
+The `resource` query parameter selects the resource. Use `GET` for reads; `POST`, `PUT`, and `DELETE` for writes (see [Write endpoints](#write-endpoints)).
 
 ---
 
@@ -67,8 +74,12 @@ Error responses return an appropriate HTTP status code and a JSON body:
 
 | Status | Meaning |
 |--------|---------|
+| `400`  | Bad request — missing or invalid parameter |
 | `401`  | Missing, invalid, or inactive API key |
-| `404`  | Resource not found (e.g. unknown `resource=` value, or subnet/site `id=` not found) |
+| `404`  | Resource not found (e.g. unknown `resource=` value, or subnet/address `id=` not found) |
+| `405`  | HTTP method not allowed for this resource |
+| `409`  | Conflict — duplicate CIDR/IP, or attempted subnet delete while addresses exist |
+| `429`  | Too many failed API key attempts — rate-limited |
 
 ---
 
@@ -138,6 +149,7 @@ Returns `404` if the ID does not exist.
 | `network` | string | Network address, e.g. `10.0.0.0` |
 | `prefix` | integer | Prefix length, e.g. `8` |
 | `description` | string | Free-text description (may be empty) |
+| `vlan_id` | integer\|null | VLAN ID (1–4094), or `null` if not set |
 | `site` | string\|null | Site name if assigned, otherwise `null` |
 | `created_at` | string | UTC timestamp (`YYYY-MM-DD HH:MM:SS`) |
 
@@ -195,6 +207,7 @@ Results are ordered by IP address (binary sort — correct numerical order withi
 | `owner` | string | Owner/team (may be empty) |
 | `status` | string | `used`, `reserved`, or `free` |
 | `note` | string | Free-text note (may be empty) |
+| `group` | string | Group/tag label (may be empty) |
 | `created_at` | string | UTC timestamp (`YYYY-MM-DD HH:MM:SS`) |
 
 ---
@@ -285,6 +298,160 @@ Returns `400` if `address_id` is missing. If the address has been deleted, the e
 | `after` | object\|null | Field values after the change (null for deletes) |
 | `username` | string | Username of the user who made the change |
 | `created_at` | string | UTC timestamp (`YYYY-MM-DD HH:MM:SS`) |
+
+---
+
+---
+
+## Write endpoints
+
+Write endpoints require a valid API key (same `Authorization: Bearer <key>` header). All writes are recorded in the audit log as `api:{key-name}`.
+
+Request bodies must be JSON with `Content-Type: application/json`.
+
+### Create a subnet
+
+```
+POST /api.php?resource=subnets
+```
+
+**Request body**
+
+```json
+{
+  "cidr": "10.1.0.0/24",
+  "description": "Office LAN",
+  "site_id": 2,
+  "vlan_id": 100
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `cidr` | yes | CIDR notation; must be unique |
+| `description` | no | Free-text description |
+| `site_id` | no | Integer ID of an existing site, or `null` |
+| `vlan_id` | no | Integer 1–4094, or `null` |
+
+**Response** — HTTP `201`
+
+```json
+{ "id": 42 }
+```
+
+Returns `400` on invalid CIDR, `404` if site not found, `409` if CIDR already exists.
+
+---
+
+### Update a subnet
+
+```
+PUT /api.php?resource=subnets&id=<id>
+```
+
+Only supply the fields you want to change. `cidr` and `ip_version` cannot be changed after creation.
+
+**Request body**
+
+```json
+{
+  "description": "Updated description",
+  "vlan_id": 200
+}
+```
+
+**Response** — HTTP `200`
+
+```json
+{ "id": 42 }
+```
+
+---
+
+### Delete a subnet
+
+```
+DELETE /api.php?resource=subnets&id=<id>
+```
+
+**Response** — HTTP `204` (no body)
+
+Returns `409` if the subnet has any address records. Delete addresses first.
+
+---
+
+### Create an address
+
+```
+POST /api.php?resource=addresses
+```
+
+**Request body**
+
+```json
+{
+  "subnet_id": 3,
+  "ip": "10.1.0.10",
+  "hostname": "server01.example.com",
+  "owner": "ops",
+  "status": "used",
+  "note": "Primary web server",
+  "group": "web"
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `subnet_id` | yes | ID of an existing subnet |
+| `ip` | yes | IP address (must be within the subnet) |
+| `hostname` | no | Hostname string |
+| `owner` | no | Owner/team string |
+| `status` | no | `used` (default), `reserved`, or `free` |
+| `note` | no | Free-text note |
+| `group` | no | Group/tag label |
+
+**Response** — HTTP `201`
+
+```json
+{ "id": 99 }
+```
+
+Returns `400` on invalid IP or mismatched IP version, `404` if subnet not found, `409` if a record for this IP already exists in the subnet.
+
+---
+
+### Update an address
+
+```
+PUT /api.php?resource=addresses&id=<id>
+```
+
+Only supply the fields you want to change. `ip` and `subnet_id` cannot be changed.
+
+**Request body**
+
+```json
+{
+  "hostname": "server01-new.example.com",
+  "status": "reserved"
+}
+```
+
+**Response** — HTTP `200`
+
+```json
+{ "id": 99 }
+```
+
+---
+
+### Delete an address
+
+```
+DELETE /api.php?resource=addresses&id=<id>
+```
+
+**Response** — HTTP `204` (no body)
 
 ---
 

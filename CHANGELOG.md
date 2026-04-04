@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## 1.11 — Branding, Group Field, VLAN IDs, API Write Support & Theme Persistence
+
+### New features
+- **#133 — Group field on addresses:** All address records now carry an optional free-text `group` field. Shown as a badge in the address list, searchable, included in all CSV exports/imports, and exposed in the REST API.
+- **#134 — Browser tab title prefix:** Page `<title>` now reads `{AppName} — {Page}` (e.g. `Simple PHP IPAM — Dashboard`).
+- **#135 — Configurable app name:** New `app_name` key in `config.php`. Appears in the browser tab, nav bar brand link, login page heading, and demo gate.
+- **#136 — App name in login & nav:** Nav bar now shows the logo and app name as a branded home link. Login page displays the logo and app name above the login form.
+- **#138 — VLAN ID on subnets:** Subnets now have an optional VLAN ID (1–4094). Displayed as a badge in the subnet list and returned in the REST API `subnets` resource.
+- **#139 — REST API write support:** The REST API now accepts `POST`, `PUT`, and `DELETE` for both `addresses` and `subnets` resources. Authentication uses the existing `Authorization: Bearer <key>` scheme. All writes are recorded in the audit log as `api:{key-name}`.
+- **#140 — Per-user theme persistence:** Selected theme (light/dark/auto) is now stored in `users.theme` and restored on next login, preventing the theme-flash problem on page load.
+- **#141 — Session idle timeout notice:** Login page now shows a human-readable inactivity timeout notice (e.g. "Sessions expire after 30 min of inactivity") derived from the existing `session_idle_seconds` config key.
+- **#142 — DHCP pool view/edit:** Reserved address table now shows hostname, owner, and note columns. Each row has inline Edit and Delete actions. Contiguous address blocks are grouped under range headers.
+- **#143 — Logo and favicon:** Application logo (`assets/logo.svg`) and favicon files (`favicon-32.png`, `apple-touch-icon.png`) added. Favicons are linked on every page.
+
+---
+
 ## 1.10 — PHP 8.4 Compatibility & Layout Fixes
 
 ### Bug fixes

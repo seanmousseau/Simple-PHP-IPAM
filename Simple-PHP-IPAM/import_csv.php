@@ -152,6 +152,7 @@ function analyze_import(PDO $db, array $wiz): array
 
             'hostname' => trim((string)($get('hostname') ?? '')),
             'owner' => trim((string)($get('owner') ?? '')),
+            'grp' => trim((string)($get('group') ?? '')),
             'note' => trim((string)($get('note') ?? '')),
             'status' => normalize_status($get('status')),
 
@@ -532,6 +533,7 @@ if ($step === 2) {
             'ip' => 'IP (required)',
             'hostname' => 'Hostname',
             'owner' => 'Owner',
+            'group' => 'Group',
             'status' => 'Status (used/reserved/free)',
             'note' => 'Note',
             'cidr' => 'Subnet CIDR (optional)',
@@ -693,10 +695,10 @@ if ($step === 4) {
 
             $db->beginTransaction();
 
-            $sel = $db->prepare("SELECT id, ip, hostname, owner, note, status FROM addresses WHERE subnet_id=:sid AND ip=:ip");
-            $ins = $db->prepare("INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, status)
-                                 VALUES (:sid,:ip,:bin,:hn,:ow,:nt,:st)");
-            $upd = $db->prepare("UPDATE addresses SET hostname=:hn, owner=:ow, note=:nt, status=:st WHERE id=:id");
+            $sel = $db->prepare("SELECT id, ip, hostname, owner, note, grp, status FROM addresses WHERE subnet_id=:sid AND ip=:ip");
+            $ins = $db->prepare("INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, grp, status)
+                                 VALUES (:sid,:ip,:bin,:hn,:ow,:nt,:grp,:st)");
+            $upd = $db->prepare("UPDATE addresses SET hostname=:hn, owner=:ow, note=:nt, grp=:grp, status=:st WHERE id=:id");
 
             foreach ($rows as $r) {
                 $result = [
@@ -784,13 +786,14 @@ if ($step === 4) {
                     }
 
                     $ins->execute([
-                        ':sid' => $subnetId,
-                        ':ip' => $ip,
-                        ':bin' => $norm['bin'],
-                        ':hn' => (string)($r['hostname'] ?? ''),
-                        ':ow' => (string)($r['owner'] ?? ''),
-                        ':nt' => (string)($r['note'] ?? ''),
-                        ':st' => (string)($r['status'] ?? 'used'),
+                        ':sid'  => $subnetId,
+                        ':ip'   => $ip,
+                        ':bin'  => $norm['bin'],
+                        ':hn'   => (string)($r['hostname'] ?? ''),
+                        ':ow'   => (string)($r['owner'] ?? ''),
+                        ':nt'   => (string)($r['note'] ?? ''),
+                        ':grp'  => (string)($r['grp'] ?? ''),
+                        ':st'   => (string)($r['status'] ?? 'used'),
                     ]);
                     $aid = (int)$db->lastInsertId();
 
@@ -798,6 +801,7 @@ if ($step === 4) {
                         'hostname' => (string)($r['hostname'] ?? ''),
                         'owner' => (string)($r['owner'] ?? ''),
                         'note' => (string)($r['note'] ?? ''),
+                        'grp' => (string)($r['grp'] ?? ''),
                         'status' => (string)($r['status'] ?? 'used'),
                     ]);
                     $createdAddresses++;
@@ -820,6 +824,7 @@ if ($step === 4) {
                     $newHn = (string)($r['hostname'] ?? '');
                     $newOw = (string)($r['owner'] ?? '');
                     $newNt = (string)($r['note'] ?? '');
+                    $newGrp = (string)($r['grp'] ?? '');
                     $newSt = (string)($r['status'] ?? 'used');
 
                     // Fix semantics: fill_empty does NOT overwrite status
@@ -827,6 +832,7 @@ if ($step === 4) {
                         $newHn = ((string)$existing['hostname'] === '') ? $newHn : (string)$existing['hostname'];
                         $newOw = ((string)$existing['owner'] === '') ? $newOw : (string)$existing['owner'];
                         $newNt = ((string)$existing['note'] === '') ? $newNt : (string)$existing['note'];
+                        $newGrp = ((string)$existing['grp'] === '') ? $newGrp : (string)$existing['grp'];
                         $newSt = (string)$existing['status'];
                     }
 
@@ -834,21 +840,24 @@ if ($step === 4) {
                         'hostname' => (string)$existing['hostname'],
                         'owner' => (string)$existing['owner'],
                         'note' => (string)$existing['note'],
+                        'grp' => (string)$existing['grp'],
                         'status' => (string)$existing['status'],
                     ];
                     $after = [
                         'hostname' => $newHn,
                         'owner' => $newOw,
                         'note' => $newNt,
+                        'grp' => $newGrp,
                         'status' => $newSt,
                     ];
 
                     $upd->execute([
-                        ':hn' => $newHn,
-                        ':ow' => $newOw,
-                        ':nt' => $newNt,
-                        ':st' => $newSt,
-                        ':id' => (int)$existing['id'],
+                        ':hn'  => $newHn,
+                        ':ow'  => $newOw,
+                        ':nt'  => $newNt,
+                        ':grp' => $newGrp,
+                        ':st'  => $newSt,
+                        ':id'  => (int)$existing['id'],
                     ]);
 
                     history_log_address($db, 'import_update', $subnetId, $ip, (int)$existing['id'], $before, $after);

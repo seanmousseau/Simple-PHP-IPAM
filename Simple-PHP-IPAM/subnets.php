@@ -33,19 +33,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $desc = trim((string)($_POST['description'] ?? ''));
         $siteId = (int)($_POST['site_id'] ?? 0);
         if ($siteId <= 0) $siteId = null;
+        $vlanIdRaw = trim((string)($_POST['vlan_id'] ?? ''));
+        $vlanId = $vlanIdRaw !== '' ? (int)$vlanIdRaw : null;
+        if ($vlanId !== null && ($vlanId < 1 || $vlanId > 4094)) {
+            $err = 'VLAN ID must be between 1 and 4094.';
+        }
 
-        $p = parse_cidr($cidr);
-        if (!$p) {
+        $p = $err ? null : parse_cidr($cidr);
+        if (!$err && !$p) {
             $err = 'Invalid CIDR. Examples: 192.168.1.0/24 or 2001:db8::/64';
-        } else {
+        }
+        if (!$err) {
             $normalized = $p['network'] . '/' . $p['prefix'];
             $overlaps = detect_subnet_overlaps($db, $normalized);
             // Inherit site from tightest parent if one exists
             $inheritedSiteId = find_parent_site_id($db, $normalized);
             if ($inheritedSiteId !== null) $siteId = $inheritedSiteId;
             try {
-                $st = $db->prepare("INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, site_id)
-                                    VALUES (:cidr,:ver,:net,:nb,:pre,:d,:site)");
+                $st = $db->prepare("INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, site_id, vlan_id)
+                                    VALUES (:cidr,:ver,:net,:nb,:pre,:d,:site,:vlan)");
                 $st->execute([
                     ':cidr' => $normalized,
                     ':ver' => $p['version'],
@@ -54,6 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ':pre' => $p['prefix'],
                     ':d' => $desc,
                     ':site' => $siteId,
+                    ':vlan' => $vlanId,
                 ]);
                 audit($db, 'subnet.create', 'subnet', (int)$db->lastInsertId(), $normalized);
                 $warn = '';
@@ -81,11 +88,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $desc = trim((string)($_POST['description'] ?? ''));
         $siteId = (int)($_POST['site_id'] ?? 0);
         if ($siteId <= 0) $siteId = null;
+        $vlanIdRaw = trim((string)($_POST['vlan_id'] ?? ''));
+        $vlanId = $vlanIdRaw !== '' ? (int)$vlanIdRaw : null;
+        if ($vlanId !== null && ($vlanId < 1 || $vlanId > 4094)) {
+            $err = 'VLAN ID must be between 1 and 4094.';
+        }
 
-        $p = parse_cidr($cidr);
-        if (!$p) {
+        $p = $err ? null : parse_cidr($cidr);
+        if (!$err && !$p) {
             $err = 'Invalid CIDR.';
-        } else {
+        }
+        if (!$err) {
             $normalized = $p['network'] . '/' . $p['prefix'];
             $overlaps = detect_subnet_overlaps($db, $normalized, $id);
             // Inherit site from tightest parent if one exists
@@ -93,7 +106,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($inheritedSiteId !== null) $siteId = $inheritedSiteId;
             try {
                 $st = $db->prepare("UPDATE subnets
-                                    SET cidr=:cidr, ip_version=:ver, network=:net, network_bin=:nb, prefix=:pre, description=:d, site_id=:site
+                                    SET cidr=:cidr, ip_version=:ver, network=:net, network_bin=:nb, prefix=:pre, description=:d, site_id=:site, vlan_id=:vlan
                                     WHERE id=:id");
                 $st->execute([
                     ':cidr' => $normalized,
@@ -103,6 +116,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ':pre' => $p['prefix'],
                     ':d' => $desc,
                     ':site' => $siteId,
+                    ':vlan' => $vlanId,
                     ':id' => $id
                 ]);
                 audit($db, 'subnet.update', 'subnet', $id, $normalized);
@@ -134,7 +148,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $st = $db->prepare("
-    SELECT id, cidr, ip_version, network, network_bin, prefix, description, updated_at, site_id
+    SELECT id, cidr, ip_version, network, network_bin, prefix, description, updated_at, site_id, vlan_id
     FROM subnets
     ORDER BY ip_version ASC, prefix ASC, network_bin ASC
 ");
@@ -387,6 +401,7 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
     echo "<b>" . e($row['cidr']) . "</b> ";
     echo "<span class='muted'>(v" . (int)$row['ip_version'] . ")</span> ";
     if ($siteName !== '') echo " <span class='badge'>" . e($siteName) . "</span>";
+    if (!empty($row['vlan_id'])) echo " <span class='badge'>VLAN " . (int)$row['vlan_id'] . "</span>";
     if (($row['description'] ?? '') !== '') echo " - " . e((string)$row['description']);
     // Address count badges — direct counts on this subnet, aggregated in parens if children differ
     $countHtml = "<span class='status-used'>" . $d['used'] . " used</span>"
@@ -446,6 +461,8 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
     echo "<input type='hidden' name='id' value='" . (int)$row['id'] . "'>";
     echo "<label>CIDR<br><input name='cidr' value='" . e($row['cidr']) . "' required></label>";
     echo "<label>Description<br><input name='description' value='" . e($row['description']) . "'></label>";
+    $vlanVal = ($row['vlan_id'] !== null && $row['vlan_id'] !== '') ? (int)$row['vlan_id'] : '';
+    echo "<label>VLAN ID<br><input name='vlan_id' type='number' min='1' max='4094' value='" . e((string)$vlanVal) . "' placeholder='1–4094' class='mw-80'></label>";
 
     if ($depth > 0) {
         // Child subnet: site is inherited from parent and cannot be changed here
@@ -520,6 +537,7 @@ page_header('Subnets');
     <div class="row">
       <label>CIDR<br><input name="cidr" placeholder="10.0.0.0/24 or 2001:db8::/64" required></label>
       <label>Description<br><input name="description" placeholder="Office LAN"></label>
+      <label>VLAN ID<br><input name="vlan_id" type="number" min="1" max="4094" placeholder="1–4094" class="mw-80"></label>
       <label>Site<br>
         <select name="site_id">
           <option value="0">(none)</option>

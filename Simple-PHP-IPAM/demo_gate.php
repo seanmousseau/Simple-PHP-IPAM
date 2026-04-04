@@ -60,18 +60,25 @@ header('X-Content-Type-Options: nosniff');
 header('Referrer-Policy: strict-origin-when-cross-origin');
 
 require_once __DIR__ . '/version.php';
+$appName = trim((string)($config['app_name'] ?? '')) ?: 'Simple PHP IPAM';
 ?>
 <!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Access Check</title>
-  <link rel="stylesheet" href="assets/app.css?v=1.9">
-  <script defer src="assets/app.js?v=1.9"></script>
+  <title><?= e($appName) ?> — Access Check</title>
+  <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
+  <link rel="stylesheet" href="assets/app.css?v=1.11">
+  <script defer src="assets/app.js?v=1.11"></script>
 </head>
 <body>
 <div class="gate-wrap">
+  <div style="text-align:center;margin-bottom:12px;">
+    <img src="assets/logo.svg" alt="<?= e($appName) ?>" style="height:56px;width:auto;">
+    <p class="muted" style="margin:4px 0 0;"><?= e($appName) ?></p>
+  </div>
   <h1>Almost there…</h1>
   <p class="muted">Please complete the check below to continue to the demo.</p>
 

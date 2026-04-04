@@ -91,13 +91,39 @@ $db->prepare("UPDATE api_keys SET last_used_at = datetime('now') WHERE id = :id"
 // ---- Route ----
 
 $resource = strtolower(trim((string)($_GET['resource'] ?? '')));
+$method   = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+
+// Parse JSON body for write requests
+$body = [];
+if (in_array($method, ['POST', 'PUT', 'PATCH'], true)) {
+    $raw = (string)file_get_contents('php://input');
+    if ($raw !== '') {
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded)) {
+            api_error(400, 'Invalid JSON body.');
+        }
+        $body = $decoded;
+    }
+}
 
 match ($resource) {
-    'subnets'   => api_subnets($db),
-    'addresses' => api_addresses($db),
-    'sites'     => api_sites($db),
-    'history'   => api_history($db),
-    default     => api_error(404, 'Unknown resource. Valid resources: subnets, addresses, sites, history'),
+    'subnets' => match ($method) {
+        'GET'    => api_subnets($db),
+        'POST'   => api_subnets_create($db, $apiKey, $body),
+        'PUT'    => api_subnets_update($db, $apiKey, (int)($_GET['id'] ?? 0), $body),
+        'DELETE' => api_subnets_delete($db, $apiKey, (int)($_GET['id'] ?? 0)),
+        default  => api_error(405, 'Method not allowed.'),
+    },
+    'addresses' => match ($method) {
+        'GET'    => api_addresses($db),
+        'POST'   => api_addresses_create($db, $apiKey, $body),
+        'PUT'    => api_addresses_update($db, $apiKey, (int)($_GET['id'] ?? 0), $body),
+        'DELETE' => api_addresses_delete($db, $apiKey, (int)($_GET['id'] ?? 0)),
+        default  => api_error(405, 'Method not allowed.'),
+    },
+    'sites'   => $method === 'GET' ? api_sites($db)   : api_error(405, 'Method not allowed.'),
+    'history' => $method === 'GET' ? api_history($db) : api_error(405, 'Method not allowed.'),
+    default   => api_error(404, 'Unknown resource. Valid resources: subnets, addresses, sites, history'),
 };
 
 // ---- Helpers ----
@@ -119,7 +145,7 @@ function api_error(int $code, string $message): never
 function api_subnets(PDO $db): never
 {
     $baseSql = "SELECT s.id, s.cidr, s.ip_version, s.network, s.prefix,
-                       s.description, s.created_at, si.name AS site
+                       s.description, s.vlan_id, s.created_at, si.name AS site
                 FROM subnets s
                 LEFT JOIN sites si ON si.id = s.site_id";
 
@@ -160,6 +186,7 @@ function fmt_subnet(array $r): array
         'network'     => $r['network'],
         'prefix'      => (int)$r['prefix'],
         'description' => (string)$r['description'],
+        'vlan_id'     => $r['vlan_id'] !== null ? (int)$r['vlan_id'] : null,
         'site'        => $r['site'],
         'created_at'  => $r['created_at'],
     ];
@@ -193,7 +220,7 @@ function api_addresses(PDO $db): never
     $total = (int)$cntSt->fetch()['c'];
 
     $sql = "SELECT a.id, a.subnet_id, a.ip, a.hostname, a.owner,
-                   a.status, a.note, a.created_at
+                   a.status, a.note, a.grp, a.created_at
             FROM addresses a $whereSql
             ORDER BY a.ip_bin
             LIMIT :lim OFFSET :off";
@@ -215,6 +242,7 @@ function api_addresses(PDO $db): never
             'owner'       => (string)$r['owner'],
             'status'      => $r['status'],
             'note'        => (string)$r['note'],
+            'group'       => (string)$r['grp'],
             'created_at'  => $r['created_at'],
         ];
     }, $st->fetchAll());
@@ -293,5 +321,237 @@ function api_history(PDO $db): never
         'page'       => $page,
         'limit'      => $limit,
         'history'    => $rows,
+    ]);
+}
+
+// ---- Write: Addresses ----
+
+function api_addresses_create(PDO $db, array $apiKey, array $body): never
+{
+    $subnetId = isset($body['subnet_id']) ? (int)$body['subnet_id'] : 0;
+    $ip       = trim((string)($body['ip'] ?? ''));
+    $hostname = trim((string)($body['hostname'] ?? ''));
+    $owner    = trim((string)($body['owner']    ?? ''));
+    $note     = trim((string)($body['note']     ?? ''));
+    $grp      = trim((string)($body['group']    ?? ''));
+    $status   = strtolower(trim((string)($body['status'] ?? 'used')));
+
+    if ($subnetId <= 0)  api_error(400, 'subnet_id is required.');
+    if ($ip === '')      api_error(400, 'ip is required.');
+    if (!in_array($status, ['used', 'reserved', 'free'], true)) {
+        api_error(400, 'status must be used, reserved, or free.');
+    }
+
+    $subnetSt = $db->prepare("SELECT id, cidr, ip_version FROM subnets WHERE id = :id");
+    $subnetSt->execute([':id' => $subnetId]);
+    $subnet = $subnetSt->fetch();
+    if (!$subnet) api_error(404, 'Subnet not found.');
+
+    $n = normalize_ip($ip);
+    if (!$n) api_error(400, 'Invalid IP address.');
+    if ((int)$n['version'] !== (int)$subnet['ip_version']) {
+        api_error(400, 'IP version does not match subnet.');
+    }
+
+    $p = parse_cidr((string)$subnet['cidr']);
+    if (!ip_in_cidr($n['ip'], (string)$p['network'], (int)$p['prefix'])) {
+        api_error(400, 'IP is not within the specified subnet (' . $subnet['cidr'] . ').');
+    }
+
+    // Check for duplicate
+    $dupSt = $db->prepare("SELECT id FROM addresses WHERE subnet_id = :sid AND ip_bin = :b");
+    $dupSt->execute([':sid' => $subnetId, ':b' => $n['bin']]);
+    if ($dupSt->fetch()) api_error(409, 'An address record for this IP already exists in the subnet.');
+
+    $db->prepare(
+        "INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, grp, status)
+         VALUES (:sid, :ip, :b, :hn, :ow, :nt, :grp, :st)"
+    )->execute([
+        ':sid' => $subnetId, ':ip' => $n['ip'], ':b' => $n['bin'],
+        ':hn'  => $hostname,  ':ow' => $owner,   ':nt' => $note,
+        ':grp' => $grp,       ':st' => $status,
+    ]);
+    $newId = (int)$db->lastInsertId();
+
+    api_audit($db, $apiKey, 'address.create', 'address', $newId,
+        "ip={$n['ip']} subnet_id={$subnetId} status={$status}");
+
+    http_response_code(201);
+    api_json(['id' => $newId]);
+}
+
+function api_addresses_update(PDO $db, array $apiKey, int $id, array $body): never
+{
+    if ($id <= 0) api_error(400, 'id is required as a query parameter.');
+
+    $st = $db->prepare("SELECT id, ip, subnet_id, hostname, owner, note, grp, status FROM addresses WHERE id = :id");
+    $st->execute([':id' => $id]);
+    $addr = $st->fetch();
+    if (!$addr) api_error(404, 'Address not found.');
+
+    $hostname = array_key_exists('hostname', $body) ? trim((string)$body['hostname']) : (string)$addr['hostname'];
+    $owner    = array_key_exists('owner',    $body) ? trim((string)$body['owner'])    : (string)$addr['owner'];
+    $note     = array_key_exists('note',     $body) ? trim((string)$body['note'])     : (string)$addr['note'];
+    $grp      = array_key_exists('group',    $body) ? trim((string)$body['group'])    : (string)$addr['grp'];
+    $status   = array_key_exists('status',   $body) ? strtolower(trim((string)$body['status'])) : (string)$addr['status'];
+
+    if (!in_array($status, ['used', 'reserved', 'free'], true)) {
+        api_error(400, 'status must be used, reserved, or free.');
+    }
+
+    $db->prepare(
+        "UPDATE addresses SET hostname = :hn, owner = :ow, note = :nt, grp = :grp, status = :st WHERE id = :id"
+    )->execute([':hn' => $hostname, ':ow' => $owner, ':nt' => $note, ':grp' => $grp, ':st' => $status, ':id' => $id]);
+
+    api_audit($db, $apiKey, 'address.update', 'address', $id,
+        "ip={$addr['ip']} status={$status}");
+
+    api_json(['id' => $id]);
+}
+
+function api_addresses_delete(PDO $db, array $apiKey, int $id): never
+{
+    if ($id <= 0) api_error(400, 'id is required as a query parameter.');
+
+    $st = $db->prepare("SELECT id, ip FROM addresses WHERE id = :id");
+    $st->execute([':id' => $id]);
+    $addr = $st->fetch();
+    if (!$addr) api_error(404, 'Address not found.');
+
+    $db->prepare("DELETE FROM addresses WHERE id = :id")->execute([':id' => $id]);
+
+    api_audit($db, $apiKey, 'address.delete', 'address', $id, "ip={$addr['ip']}");
+
+    http_response_code(204);
+    exit;
+}
+
+// ---- Write: Subnets ----
+
+function api_subnets_create(PDO $db, array $apiKey, array $body): never
+{
+    $cidr        = trim((string)($body['cidr']        ?? ''));
+    $description = trim((string)($body['description'] ?? ''));
+    $siteId      = isset($body['site_id']) && $body['site_id'] !== null ? (int)$body['site_id'] : null;
+    $vlanId      = isset($body['vlan_id']) && $body['vlan_id'] !== null ? (int)$body['vlan_id'] : null;
+
+    if ($cidr === '') api_error(400, 'cidr is required.');
+
+    $p = parse_cidr($cidr);
+    if (!$p) api_error(400, 'Invalid CIDR notation.');
+
+    if ($vlanId !== null && ($vlanId < 1 || $vlanId > 4094)) {
+        api_error(400, 'vlan_id must be between 1 and 4094.');
+    }
+
+    if ($siteId !== null) {
+        $siteSt = $db->prepare("SELECT id FROM sites WHERE id = :id");
+        $siteSt->execute([':id' => $siteId]);
+        if (!$siteSt->fetch()) api_error(404, 'Site not found.');
+    }
+
+    // Check duplicate CIDR
+    $dupSt = $db->prepare("SELECT id FROM subnets WHERE cidr = :cidr");
+    $dupSt->execute([':cidr' => $p['network'] . '/' . $p['prefix']]);
+    if ($dupSt->fetch()) api_error(409, 'A subnet with this CIDR already exists.');
+
+    $db->prepare(
+        "INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, site_id, vlan_id)
+         VALUES (:cidr, :ver, :net, :nbin, :pfx, :desc, :sid, :vlan)"
+    )->execute([
+        ':cidr' => $p['network'] . '/' . $p['prefix'],
+        ':ver'  => $p['version'],
+        ':net'  => $p['network'],
+        ':nbin' => $p['net_bin'],
+        ':pfx'  => $p['prefix'],
+        ':desc' => $description,
+        ':sid'  => $siteId,
+        ':vlan' => $vlanId,
+    ]);
+    $newId = (int)$db->lastInsertId();
+
+    api_audit($db, $apiKey, 'subnet.create', 'subnet', $newId,
+        "cidr={$p['network']}/{$p['prefix']}");
+
+    http_response_code(201);
+    api_json(['id' => $newId]);
+}
+
+function api_subnets_update(PDO $db, array $apiKey, int $id, array $body): never
+{
+    if ($id <= 0) api_error(400, 'id is required as a query parameter.');
+
+    $st = $db->prepare("SELECT id, cidr, description, site_id, vlan_id FROM subnets WHERE id = :id");
+    $st->execute([':id' => $id]);
+    $subnet = $st->fetch();
+    if (!$subnet) api_error(404, 'Subnet not found.');
+
+    $description = array_key_exists('description', $body) ? trim((string)$body['description']) : (string)$subnet['description'];
+    $siteId = array_key_exists('site_id', $body)
+        ? ($body['site_id'] !== null ? (int)$body['site_id'] : null)
+        : ($subnet['site_id'] !== null ? (int)$subnet['site_id'] : null);
+    $vlanId = array_key_exists('vlan_id', $body)
+        ? ($body['vlan_id'] !== null ? (int)$body['vlan_id'] : null)
+        : ($subnet['vlan_id'] !== null ? (int)$subnet['vlan_id'] : null);
+
+    if ($vlanId !== null && ($vlanId < 1 || $vlanId > 4094)) {
+        api_error(400, 'vlan_id must be between 1 and 4094.');
+    }
+
+    if ($siteId !== null) {
+        $siteSt = $db->prepare("SELECT id FROM sites WHERE id = :id");
+        $siteSt->execute([':id' => $siteId]);
+        if (!$siteSt->fetch()) api_error(404, 'Site not found.');
+    }
+
+    $db->prepare(
+        "UPDATE subnets SET description = :desc, site_id = :sid, vlan_id = :vlan WHERE id = :id"
+    )->execute([':desc' => $description, ':sid' => $siteId, ':vlan' => $vlanId, ':id' => $id]);
+
+    api_audit($db, $apiKey, 'subnet.update', 'subnet', $id, "cidr={$subnet['cidr']}");
+
+    api_json(['id' => $id]);
+}
+
+function api_subnets_delete(PDO $db, array $apiKey, int $id): never
+{
+    if ($id <= 0) api_error(400, 'id is required as a query parameter.');
+
+    $st = $db->prepare("SELECT id, cidr FROM subnets WHERE id = :id");
+    $st->execute([':id' => $id]);
+    $subnet = $st->fetch();
+    if (!$subnet) api_error(404, 'Subnet not found.');
+
+    // Block deletion if subnet has addresses
+    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM addresses WHERE subnet_id = :id");
+    $cntSt->execute([':id' => $id]);
+    $count = (int)$cntSt->fetch()['c'];
+    if ($count > 0) {
+        api_error(409, "Cannot delete subnet with {$count} address record(s). Delete addresses first.");
+    }
+
+    $db->prepare("DELETE FROM subnets WHERE id = :id")->execute([':id' => $id]);
+
+    api_audit($db, $apiKey, 'subnet.delete', 'subnet', $id, "cidr={$subnet['cidr']}");
+
+    http_response_code(204);
+    exit;
+}
+
+// ---- Audit helper for API writes ----
+
+function api_audit(PDO $db, array $apiKey, string $action, string $entityType, int $entityId, string $details): void
+{
+    $username = 'api:' . $apiKey['name'];
+    $db->prepare(
+        "INSERT INTO audit_log (action, entity_type, entity_id, user_id, username, ip, details)
+         VALUES (:act, :et, :eid, NULL, :un, :ip, :det)"
+    )->execute([
+        ':act' => $action,
+        ':et'  => $entityType,
+        ':eid' => $entityId,
+        ':un'  => $username,
+        ':ip'  => $_SERVER['REMOTE_ADDR'] ?? '',
+        ':det' => $details,
     ]);
 }
