@@ -205,7 +205,7 @@ function require_write_access(): void
     }
 }
 
-function login_user(int $uid, string $username, string $role, PDO $db = null): void
+function login_user(int $uid, string $username, string $role, ?PDO $db = null): void
 {
     session_regenerate_id(true);
     $_SESSION['uid'] = $uid;
