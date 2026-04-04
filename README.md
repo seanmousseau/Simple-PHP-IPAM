@@ -91,6 +91,20 @@ See the [Installation guide](docs/install.md) for full web server configuration 
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
+### What's new in 1.8
+
+**CSRF error recovery** — Stale-tab CSRF mismatches now redirect to the login page instead of showing a plain-text error with no navigation. HTTP 403 is returned so browser history works correctly.
+
+**Open redirect hardening** — A new optional `base_url` config key (`'base_url' => 'https://ipam.example.com'`) pins the HTTP→HTTPS redirect to your canonical URL, preventing a spoofed `Host:` header from redirecting users to an attacker-controlled domain.
+
+**PHP 9 compatibility** — `IPAM_VERSION` is now defined with a `defined()` guard to prevent fatal constant-redefinition errors when `version.php` is included more than once.
+
+**Demo mode completeness** — `dhcp_pool.php` now correctly blocks reserve and clear operations in demo mode, matching the protection already on other admin pages.
+
+**OpenLiteSpeed .htaccess compatibility** — Both `data/.htaccess` and the root `.htaccess` now use `mod_rewrite RewriteRule` directives for file blocking instead of `<FilesMatch>` / `Require all denied`, which OpenLiteSpeed ignores entirely.
+
+**Upgrade .htaccess propagation** — `upgrade.sh` now always overwrites `data/.htaccess` from the new bundle, ensuring security improvements reach existing installs.
+
 ### What's new in 1.7
 
 **Sortable columns** — Click any column header on Addresses, Audit Log, Search, Users, Sites, API Keys, Address History, or Bulk Update to sort by that column. Click again to reverse direction. Sort state is preserved across pagination.

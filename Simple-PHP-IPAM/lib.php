@@ -79,8 +79,9 @@ function csrf_require(): void
     $sent = $_POST['csrf'] ?? '';
     $real = $_SESSION['csrf'] ?? '';
     if (!is_string($sent) || !hash_equals($real, $sent)) {
-        http_response_code(400);
-        exit('Bad CSRF token');
+        http_response_code(403);
+        header('Location: login.php');
+        exit;
     }
 }
 
@@ -357,6 +358,11 @@ function ipam_config_defaults(): array
             'comment' => '',
         ],
         'session_name' => ['default' => null, 'comment' => ''],
+        'base_url'     => [
+            'default' => null,
+            'comment' => "Canonical HTTPS base URL (e.g. 'https://ipam.example.com'). "
+                       . "Used for the HTTP→HTTPS redirect. If null, falls back to HTTP_HOST.",
+        ],
         'proxy_trust'  => ['default' => null, 'comment' => ''],
         'bootstrap_admin' => ['default' => null, 'comment' => ''],
         'session_idle_seconds' => ['default' => null, 'comment' => ''],
@@ -1778,7 +1784,7 @@ function page_header(string $title): void
 function page_footer(): void
 {
     global $config;
-    require __DIR__ . '/version.php';
+    require_once __DIR__ . '/version.php';
 
     echo "<hr><div class='muted' style='display:flex;align-items:center;gap:10px;flex-wrap:wrap'>";
     echo "<a href='https://github.com/seanmousseau/Simple-PHP-IPAM' target='_blank' rel='noopener' "

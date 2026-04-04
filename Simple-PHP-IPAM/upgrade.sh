@@ -147,7 +147,8 @@ rsync -a --delete \
 if [[ ! -f "$TARGET_DIR/config.php" && -f "$NEW_DIR/config.php" ]]; then
   cp -a "$NEW_DIR/config.php" "$TARGET_DIR/config.php"
 fi
-if [[ ! -f "$TARGET_DIR/data/.htaccess" && -f "$NEW_DIR/data/.htaccess" ]]; then
+# Always update data/.htaccess so security improvements are applied on upgrade
+if [[ -f "$NEW_DIR/data/.htaccess" ]]; then
   cp -a "$NEW_DIR/data/.htaccess" "$TARGET_DIR/data/.htaccess"
 fi
 

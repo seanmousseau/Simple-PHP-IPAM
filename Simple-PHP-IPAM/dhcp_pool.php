@@ -41,7 +41,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ((int)$s['id'] === $subnetId) { $subnet = $s; break; }
     }
 
-    if ($action === 'reserve_pool') {
+    if (demo_mode_enabled()) {
+        $err = 'This action is disabled in demo mode.';
+    } elseif ($action === 'reserve_pool') {
         if (!$subnet) {
             $err = 'Subnet not found.';
         } elseif ($startIp === '' || $endIp === '') {
