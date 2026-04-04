@@ -149,5 +149,31 @@ function ipam_migrations(): array
                 )
             ");
         },
+
+        // 1.9: ensure audit_log exists — it was only in schema.sql, not a migration,
+        // so a botched demo reset that dropped it would leave it permanently missing.
+        // Using CREATE TABLE IF NOT EXISTS makes this safe to run on any existing install.
+        '1.9' => function(PDO $db) {
+            $db->exec("
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                    user_id     INTEGER,
+                    username    TEXT,
+                    action      TEXT NOT NULL,
+                    entity_type TEXT NOT NULL,
+                    entity_id   INTEGER,
+                    ip          TEXT,
+                    user_agent  TEXT,
+                    details     TEXT
+                )
+            ");
+            $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_update
+                BEFORE UPDATE ON audit_log
+                BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
+            $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
+                BEFORE DELETE ON audit_log
+                BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
+        },
     ];
 }
