@@ -120,7 +120,7 @@ function analyze_import(PDO $db, array $wiz): array
     $maxProcessRows = 200000;
 
     while (!feof($fh) && $rowNum < $maxProcessRows) {
-        $row = fgetcsv($fh, 0, $delimiter);
+        $row = fgetcsv($fh, 0, $delimiter, '"', '');
         if ($row === false) break;
         if (count($row) === 1 && trim((string)$row[0]) === '') continue;
 

@@ -1763,7 +1763,7 @@ function detect_csv_delimiter(string $sample): string
         $counts = [];
         foreach (array_slice($lines, 0, 10) as $line) {
             if ($line === '') continue;
-            $counts[] = count(str_getcsv($line, $d));
+            $counts[] = count(str_getcsv($line, $d, '"', ''));
         }
         if (!$counts) continue;
         $avg = array_sum($counts) / count($counts);
@@ -1781,7 +1781,7 @@ function csv_read_preview(string $path, string $delimiter, int $maxRows = 20): a
     if (!$fh) throw new RuntimeException("Cannot open upload");
     $rows = [];
     while (!feof($fh) && count($rows) < $maxRows) {
-        $row = fgetcsv($fh, 0, $delimiter);
+        $row = fgetcsv($fh, 0, $delimiter, '"', '');
         if ($row === false) break;
         if (count($row) === 1 && trim((string)$row[0]) === '') continue;
         $rows[] = $row;
