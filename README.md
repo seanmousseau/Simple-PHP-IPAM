@@ -91,6 +91,16 @@ See the [Installation guide](docs/install.md) for full web server configuration 
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
+### What's new in 1.10
+
+**PHP 8.4 compatibility** — `str_getcsv()` and `fgetcsv()` now explicitly pass `''` as the escape argument, silencing the PHP 8.4 deprecation warning that broke the CSV import wizard. This also adopts RFC 4180-compliant quote-doubling behaviour throughout.
+
+**Layout fixes** — The "Add Subnet" card on the Subnets page now has correct top spacing (duplicate `class` attribute bug); the Audit Log filter bar now shows Category / From / To labels inline with their controls instead of stacked above them.
+
+**CSP / CAPTCHA fix** — The global `Content-Security-Policy` header in `.htaccess` has been removed. PHP sets a per-page CSP that correctly extends `script-src` and `frame-src` for active CAPTCHA providers; the `.htaccess` header was enforced simultaneously by browsers as a separate, more restrictive policy, silently blocking widget scripts and iframes.
+
+**Sample dataset** — A 4,522-row CSV (`docs/samples/sample_dataset.csv`) is included for comprehensive import testing, covering six sites, all IPv4 prefix sizes from /23 to /32, IPv6 /64 and /128 subnets, P2P links, loopbacks, and all three address statuses.
+
 ### What's new in 1.9
 
 **CSP `unsafe-inline` removed** — All 122 inline `style="..."` attributes across 15 PHP files have been replaced with utility CSS classes or `data-attribute` + JavaScript setters. `Content-Security-Policy: style-src` no longer includes `'unsafe-inline'`.
