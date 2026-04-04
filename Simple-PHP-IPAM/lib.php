@@ -1151,17 +1151,22 @@ function login_protection_widget_html(array $config): string
             }
             return ''; // no visible widget
         case 'turnstile':
-            return "<div class='cf-turnstile' data-sitekey='{$siteKey}'></div>";
+            return "<script src='https://challenges.cloudflare.com/turnstile/v0/api.js' async defer></script>"
+                 . "<div class='cf-turnstile' data-sitekey='{$siteKey}'></div>";
         case 'hcaptcha':
-            return "<div class='h-captcha' data-sitekey='{$siteKey}'></div>";
+            return "<script src='https://js.hcaptcha.com/1/api.js' async defer></script>"
+                 . "<div class='h-captcha' data-sitekey='{$siteKey}'></div>";
         case 'recaptcha':
             $ver = (int)($cfg['version'] ?? 2);
             if ($ver === 3) {
-                return "<input type='hidden' name='g-recaptcha-response' id='g-recaptcha-response' data-recaptcha-v3-key='{$siteKey}'>";
+                return "<script src='https://www.google.com/recaptcha/api.js?render={$siteKey}' async defer></script>"
+                     . "<input type='hidden' name='g-recaptcha-response' id='g-recaptcha-response' data-recaptcha-v3-key='{$siteKey}'>";
             }
-            return "<div class='g-recaptcha' data-sitekey='{$siteKey}'></div>";
+            return "<script src='https://www.google.com/recaptcha/api.js' async defer></script>"
+                 . "<div class='g-recaptcha' data-sitekey='{$siteKey}'></div>";
         case 'friendly_captcha':
-            return "<div class='frc-captcha' data-sitekey='{$siteKey}'></div>";
+            return "<script src='https://cdn.jsdelivr.net/npm/friendly-challenge@latest/widget.module.min.js' async defer></script>"
+                 . "<div class='frc-captcha' data-sitekey='{$siteKey}'></div>";
         default:
             return '';
     }
