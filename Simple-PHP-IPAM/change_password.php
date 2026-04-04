@@ -64,7 +64,7 @@ page_header('Change Password');
     <p class="danger">Your password has expired. Please set a new password to continue.</p>
   <?php endif; ?>
   <?php if ($errors): ?>
-    <ul class="danger" style="margin:0 0 12px;padding-left:1.4em">
+    <ul class="danger list-indent">
       <?php foreach ($errors as $e_msg): ?><li><?= e($e_msg) ?></li><?php endforeach; ?>
     </ul>
   <?php endif; ?>

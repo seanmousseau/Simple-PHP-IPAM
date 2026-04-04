@@ -118,7 +118,7 @@ page_header('Search');
   <?php endif; ?>
 </div>
 
-<div class="card" style="margin-top:16px">
+<div class="card mt-16">
   <form method="get" action="search.php" class="row">
 
     <label>Query<br>
@@ -185,7 +185,7 @@ page_header('Search');
   </form>
 </div>
 
-<div class="card" style="margin-top:16px">
+<div class="card mt-16">
   <div class="muted">
     Results: <b><?= e((string)$total) ?></b>
     <?php if ($total > 0): ?>
@@ -194,9 +194,9 @@ page_header('Search');
   </div>
 
   <?php if (!$rows): ?>
-    <div class="empty-state" style="margin-top:12px">No results.</div>
+    <div class="empty-state mt-12">No results.</div>
   <?php else: ?>
-    <table style="margin-top:12px">
+    <table class="mt-12">
       <thead>
         <tr>
           <th>Site</th>
@@ -233,12 +233,12 @@ page_header('Search');
       </tbody>
     </table>
 
-    <p style="margin-top:12px">
+    <p class="mt-12">
       <?php if ($p['page'] > 1): ?>
         <a href="search.php?<?= e(build_query_search(['page' => $p['page'] - 1])) ?>">&laquo; Prev</a>
       <?php endif; ?>
       <?php if ($p['page'] < $p['pages']): ?>
-        <a style="margin-left:12px" href="search.php?<?= e(build_query_search(['page' => $p['page'] + 1])) ?>">Next &raquo;</a>
+        <a class="ml-12" href="search.php?<?= e(build_query_search(['page' => $p['page'] + 1])) ?>">Next &raquo;</a>
       <?php endif; ?>
     </p>
   <?php endif; ?>

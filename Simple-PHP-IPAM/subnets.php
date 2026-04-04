@@ -381,7 +381,7 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
     $siteId = (int)($row['site_id'] ?? 0);
     if ($siteId > 0) $siteName = $siteMap[$siteId] ?? '';
 
-    echo "<div style='margin-left: {$pad}px; border-left: 2px solid var(--border); padding-left: 10px; margin-top:8px'>";
+    echo "<div class='subnet-node' data-indent='{$pad}'>";
     echo "<details " . ($depth < 1 ? "open" : "") . ">";
     echo "<summary>";
     echo "<b>" . e($row['cidr']) . "</b> ";
@@ -418,14 +418,14 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
                  " | Assigned: " . e((string)$assigned) .
                  " | Unassigned: <b>" . e((string)$u['unassigned_assignable']) . "</b></span>"
                . $rollupNote
-               . " <span class='util-bar'><span class='util-bar-fill {$barClass}' style='width:{$pct}%'></span></span>"
+               . " <span class='util-bar'><span class='util-bar-fill {$barClass}' data-pct='{$pct}'></span></span>"
                . " {$pctLabel}";
         }
     }
     echo "</summary>";
 
-    echo "<div style='margin-top:10px'>";
-    echo "<div class='page-actions' style='margin-bottom:10px'>";
+    echo "<div class='mt-10'>";
+    echo "<div class='page-actions mb-10'>";
     echo "<a class='action-pill' href='addresses.php?subnet_id=" . (int)$row['id'] . "'>🧾 View Addresses</a>";
     if ((int)$row['ip_version'] === 4) {
         echo "<a class='action-pill' href='unassigned.php?subnet_id=" . (int)$row['id'] . "'>✨ Unassigned</a>";
@@ -440,7 +440,7 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
 
     echo "<div class='muted'>Updated " . e($row['updated_at']) . "</div>";
 
-    echo "<form method='post' action='subnets.php' class='row' style='margin-top:8px'>";
+    echo "<form method='post' action='subnets.php' class='row mt-8'>";
     echo "<input type='hidden' name='csrf' value='" . e(csrf_token()) . "'>";
     echo "<input type='hidden' name='action' value='update'>";
     echo "<input type='hidden' name='id' value='" . (int)$row['id'] . "'>";
@@ -466,7 +466,7 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
     echo "<button type='submit' $disabled>Save</button>";
     echo "</form>";
 
-    echo "<form method='post' action='subnets.php' data-confirm='Delete subnet and all its addresses?' style='margin-top:8px'>";
+    echo "<form method='post' action='subnets.php' data-confirm='Delete subnet and all its addresses?' class='mt-8'>";
     echo "<input type='hidden' name='csrf' value='" . e(csrf_token()) . "'>";
     echo "<input type='hidden' name='action' value='delete'>";
     echo "<input type='hidden' name='id' value='" . (int)$row['id'] . "'>";
@@ -512,7 +512,7 @@ page_header('Subnets');
 <?php if ($msg): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
 <?php if ($warn): ?><p class="warning"><?= e($warn) ?></p><?php endif; ?>
 
-<div class="card" id="add-subnet" style="margin-top:16px">
+<div class="card" id="add-subnet" class="mt-16">
   <h2>Add subnet</h2>
   <form method="post" action="subnets.php">
     <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
@@ -534,14 +534,14 @@ page_header('Subnets');
   </form>
 </div>
 
-<div class="card" style="margin-top:16px">
+<div class="card mt-16">
   <h2>Grouped Hierarchy</h2>
 
   <?php if (empty($siteGroups)): ?>
     <div class="empty-state">No subnets yet.</div>
   <?php else: ?>
     <?php foreach ($siteGroups as $key => $group): ?>
-      <div class="site-group" style="margin-bottom:24px">
+      <div class="site-group mb-24">
         <button type="button" class="site-group-toggle" aria-expanded="true" data-sg-key="<?= e((string)$key) ?>">
           <?= e($group['label']) ?><span class="site-group-caret" aria-hidden="true">&#9660;</span>
         </button>

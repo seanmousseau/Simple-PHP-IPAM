@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## 1.9 — Security Hardening, CSP & Bot Protection
+
+### Security fixes
+- **Fixed #107:** OIDC auto-link email fallback used `WHERE (username = :u OR email = :e)` with the email as both values, potentially linking to an account whose username happened to match the email address of a different user. Email fallback is now email-only.
+- **Fixed #109:** Login response time differed measurably between valid and invalid usernames, enabling username enumeration via timing. A dummy `password_verify()` call is now made when no user record is found.
+- **Fixed #111:** `preferred_username` and fallback username candidates from OIDC ID token claims were not sanitised before use as local usernames. Characters outside `[a-zA-Z0-9._@\-]` are now stripped.
+- **Fixed #112:** `Content-Security-Policy` `style-src` included `'unsafe-inline'`, allowing arbitrary inline styles to execute. All 122 inline `style="..."` attributes across 15 PHP files have been replaced with utility CSS classes or data-attribute + JS setters. `unsafe-inline` is removed from `style-src`.
+- **Fixed #113:** `backup_dir()` accepted relative paths from config without canonicalisation, allowing `../../tmp` to resolve outside the application root. Path segments are now normalised (`.` and `..` resolved) without requiring the target directory to exist yet.
+- **Fixed #117:** Failed login audit log entries recorded the submitted username in `details`, risking logging a mistyped password. The details field is now always empty for `auth.login_failed` events.
+
+### Bug fixes
+- **Fixed #108:** `validate_password_complexity()` used `strlen()` to check the minimum length, incorrectly counting bytes instead of characters for multi-byte passwords. Changed to `mb_strlen()`.
+- **Fixed #118:** Dashboard "Top IPv4 Subnets" query excluded `/31` and `/32` subnets (`BETWEEN 8 AND 30`). Range widened to `BETWEEN 8 AND 32`.
+- **Fixed #120:** `prune_audit_log()` built its SQL query using `$db->quote()` instead of a prepared statement. Rewritten to use a parameterised query.
+- **Fixed #122:** `demo_reset_db()` issued `DELETE FROM audit_log`, which was blocked by the append-only trigger, crashing the nightly reset. Now uses `ALTER TABLE RENAME` + `DROP TABLE` (same pattern as `prune_audit_log()`).
+
+### Performance
+- **Fixed #116:** `find_containing_subnet()` performed a full table scan for every address during CSV import. A per-request static cache keyed on IP version eliminates redundant queries for large imports.
+
+### Enhancements
+- **Fixed #114:** REST API `GET /api.php?resource=history&address_id=N` returned HTTP 404 when the address had been deleted. The endpoint now returns 200 with the history rows (or an empty array) for any address that ever existed.
+- **Fixed #115:** Demo mode login had no rate limiting. `login_rate_limited()` and `record_login_failure()` are now applied to the demo login path.
+- **Fixed #119:** `ipam_config_sync()` silently ignored write failures when `config.php` was not writable. Admins now see a persistent danger notice in the page header when new config keys could not be saved.
+- **Feature #124:** Optional login form bot protection. Set `login_protection.method` in `config.php` to one of: `honeypot`, `time_check`, `turnstile`, `hcaptcha`, `recaptcha`, or `friendly_captcha`. Widget-based methods extend the `script-src` CSP on the login page only.
+- **Feature #125:** Optional pre-login challenge gate for demo mode (`demo_mode.gate`). When configured, first-time visitors are redirected to `demo_gate.php` and must pass a bot check before reaching the login page. Supported methods: `honeypot`, `turnstile`, `hcaptcha`, `recaptcha`, `friendly_captcha`. The gate session flag is cleared on logout.
+
+---
+
 ## 1.8 — Security & Compatibility
 
 ### Security fixes

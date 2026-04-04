@@ -2,10 +2,15 @@
 
 All application settings live in `config.php` in the application root. This file is preserved automatically during upgrades — you will never need to re-apply your settings after an upgrade.
 
+New configuration keys are added automatically when you upgrade: on the first page load after an upgrade, any missing keys are appended to `config.php` with their default values. An admin notice is shown once to confirm what was added.
+
 ## Contents
 
 - [Full example](#full-example)
 - [Settings reference](#settings-reference)
+- [`login_protection`](#login_protection)
+- [`demo_mode`](#demo_mode)
+- [`password_policy`](#password_policy)
 - [OIDC settings](#oidc-settings)
 - [`update_check`](#update_check)
 - [`backup`](#backup)
@@ -86,6 +91,33 @@ return [
         'dir'       => '',        // empty = data/backups/
     ],
 
+    // Login form bot protection (opt-in). See login_protection section below.
+    'login_protection' => [
+        'method'      => null,
+        'site_key'    => '',
+        'secret_key'  => '',
+        'min_seconds' => 3,
+        'version'     => 2,
+    ],
+
+    // Demo mode (opt-in). See demo_mode section below.
+    'demo_mode' => [
+        'enabled'    => false,
+        'gate'       => null,
+        'site_key'   => '',
+        'secret_key' => '',
+    ],
+
+    // Password complexity policy.
+    'password_policy' => [
+        'min_length'            => 12,
+        'require_uppercase'     => false,
+        'require_lowercase'     => false,
+        'require_number'        => false,
+        'require_symbol'        => false,
+        'max_password_age_days' => 0,
+    ],
+
     // OIDC single sign-on — see docs/oidc.md for full setup guide.
     'oidc' => [
         'enabled'                   => false,
@@ -95,6 +127,7 @@ return [
         'discovery_url'             => '',
         'redirect_uri'              => '',
         'scopes'                    => 'openid email profile',
+        'auto_link'                 => false,
         'auto_provision'            => false,
         'default_role'              => 'readonly',
         'disable_local_login'       => false,
@@ -154,7 +187,7 @@ Credentials for the initial admin account. This account is created automatically
 
 Once any user exists in the database, changes to this setting have no effect.
 
-As of v1.1, a security warning banner is displayed to all logged-in users until the password is changed away from the default value (`ChangeMeNow!12345`).
+A security warning banner is displayed to all logged-in admins until the password is changed away from the default value.
 
 ---
 
@@ -163,8 +196,6 @@ As of v1.1, a security warning banner is displayed to all logged-in users until 
 **Default:** `1800` (30 minutes)
 
 How long a session can be idle before the user is automatically logged out. On the next page load after the timeout the user is redirected to the login page with an informational message.
-
-Set to a higher value (e.g. `28800` for 8 hours) if your users work in long sessions.
 
 ---
 
@@ -180,7 +211,7 @@ Maximum number of consecutive failed login attempts from a single IP address bef
 
 **Default:** `900` (15 minutes)
 
-How long an IP address is locked out after exceeding `login_max_attempts`. Stale attempt records are purged automatically — no manual intervention is needed.
+How long an IP address is locked out after exceeding `login_max_attempts`. Stale attempt records are purged automatically.
 
 Locked-out login attempts are recorded in the audit log as `auth.login_blocked`.
 
@@ -198,7 +229,7 @@ Maximum allowed CSV file size for the import wizard, in megabytes. Accepted rang
 
 **Default:** `86400` (24 hours)
 
-How long uploaded CSV files and import plan files in `data/tmp/` are kept before being eligible for deletion. Cleanup runs automatically via lazy housekeeping and can also be triggered manually with `php tmp_cleanup.php`.
+How long uploaded CSV files and import plan files in `data/tmp/` are kept before being eligible for deletion. Cleanup runs automatically via lazy housekeeping.
 
 ---
 
@@ -208,13 +239,9 @@ How long uploaded CSV files and import plan files in `data/tmp/` are kept before
 
 When set to a positive integer, audit log entries older than this many days are pruned during the next scheduled housekeeping run. Pruning is performed safely via an internal staging table swap that preserves the append-only integrity triggers.
 
-**Example — keep 90 days of audit history:**
-
 ```php
 'audit_log_retention_days' => 90,
 ```
-
-Set to `0` (or omit the key) to keep all audit entries indefinitely. Note that the audit log grows unboundedly without retention; for busy installations consider setting a retention period for compliance and storage reasons.
 
 ---
 
@@ -222,7 +249,7 @@ Set to `0` (or omit the key) to keep all audit entries indefinitely. Note that t
 
 **Default:** `0` (keep forever)
 
-Number of days to retain address change history. Entries older than this are pruned during scheduled housekeeping. Set to `0` to keep all history forever.
+Number of days to retain address change history. Entries older than this are pruned during scheduled housekeeping.
 
 ```php
 'address_history_retention_days' => 180,
@@ -239,17 +266,72 @@ Controls lazy background housekeeping (temp file cleanup, stale login attempt pu
 | `enabled` | `true` | Whether housekeeping runs automatically |
 | `interval_seconds` | `86400` | Minimum seconds between housekeeping runs (min: 3600) |
 
-Housekeeping runs at most once per `interval_seconds` on normal web traffic. It does not require a cron job, but you can also run `php tmp_cleanup.php` manually.
+---
+
+### `utilization_warn` / `utilization_critical`
+
+**Defaults:** `80` / `95`
+
+Percentage thresholds for the IPv4 subnet utilization progress bars. The bar turns yellow at `utilization_warn` and red at `utilization_critical`.
+
+---
+
+## `login_protection`
+
+*(Added in v1.9)*
+
+Optional bot/abuse mitigation on the login form. Disabled by default (`method: null`).
+
+```php
+'login_protection' => [
+    'method'      => null,   // see methods below
+    'site_key'    => '',     // required for widget-based methods
+    'secret_key'  => '',     // required for widget-based methods
+    'min_seconds' => 3,      // time_check only: min seconds between page load and submit
+    'version'     => 2,      // recaptcha only: 2 (checkbox) or 3 (invisible)
+],
+```
+
+### Methods
+
+| `method` | Description |
+|----------|-------------|
+| `null` | Disabled (default) |
+| `'honeypot'` | Hidden field that bots fill in — filled submissions are silently discarded |
+| `'time_check'` | Rejects submissions faster than `min_seconds` after page load — catches naive bots |
+| `'turnstile'` | [Cloudflare Turnstile](https://www.cloudflare.com/products/turnstile/) (privacy-preserving) |
+| `'hcaptcha'` | [hCaptcha](https://www.hcaptcha.com/) |
+| `'recaptcha'` | [Google reCAPTCHA](https://www.google.com/recaptcha/) v2 (checkbox) or v3 (invisible) |
+| `'friendly_captcha'` | [Friendly Captcha](https://friendlycaptcha.com/) (privacy-preserving, GDPR-friendly) |
+
+### Widget-based setup
+
+For `turnstile`, `hcaptcha`, `recaptcha`, and `friendly_captcha`:
+
+1. Register your site with the provider and obtain a `site_key` and `secret_key`.
+2. Set `method` to the provider name, and fill in both keys.
+3. The widget is rendered inside the login form automatically.
+
+The `Content-Security-Policy` `script-src` directive is extended on the login page only to include the provider's domain. Other pages are unaffected.
+
+### Fail-open behaviour
+
+If the provider's verification endpoint is unreachable (network error), the login attempt is **allowed through**. Bot protection never locks out legitimate users due to a third-party outage.
 
 ---
 
 ## `demo_mode`
 
+*(Available since v1.7; `gate` added in v1.9)*
+
 Enables an opt-in public demo mode suitable for showcasing the application without risking real data.
 
 ```php
 'demo_mode' => [
-    'enabled' => false,
+    'enabled'    => false,
+    'gate'       => null,   // optional pre-login bot challenge — see below
+    'site_key'   => '',
+    'secret_key' => '',
 ],
 ```
 
@@ -258,8 +340,9 @@ When `enabled` is `true`:
 - **Only the `demo` / `demo` account can log in.** All other credentials are rejected.
 - **Destructive admin actions are disabled:** user create/delete/toggle/role-change, API key create/deactivate/delete, and CSV import apply are all blocked server-side.
 - **A banner** is displayed on every page informing visitors they are in demo mode.
-- **The database is reset nightly at midnight** to pre-populated seed data (realistic sites, subnets, addresses, users, audit log, API keys). This happens automatically on the next page load after midnight, or you can force a reset with `php demo_reset.php`.
+- **The database is reset nightly at midnight** to pre-populated seed data (realistic sites, subnets, addresses, users, audit log, API keys). This happens automatically on the next page load after midnight.
 - **OIDC login is hidden** — only local form login is available.
+- **Rate limiting applies** to the demo login form (same `login_max_attempts` / `login_lockout_seconds` settings as normal mode).
 
 ### Seed data
 
@@ -271,6 +354,25 @@ The seed database includes:
 - 2 API keys (one active, one inactive)
 - ~30 audit log entries and ~8 address history entries (backdated)
 
+### Demo gate
+
+*(Added in v1.9)*
+
+The optional `gate` key adds a mandatory bot challenge at `demo_gate.php` that visitors must pass **before reaching the login page**. This is useful for public demo instances to reduce automated scraping and abuse.
+
+```php
+'demo_mode' => [
+    'enabled'    => true,
+    'gate'       => 'turnstile',          // challenge method
+    'site_key'   => 'your-site-key',
+    'secret_key' => 'your-secret-key',
+],
+```
+
+Supported gate methods: `honeypot`, `turnstile`, `hcaptcha`, `recaptcha`, `friendly_captcha`.
+
+Once a visitor passes the gate their session is marked and they are not challenged again until they log out. The gate session flag is cleared on logout.
+
 ### Nightly reset cron (optional)
 
 For a guaranteed reset at midnight (independent of web traffic), add a cron entry:
@@ -281,7 +383,35 @@ For a guaranteed reset at midnight (independent of web traffic), add a cron entr
 
 ### Security note
 
-Demo mode does not restrict read access. Any visitor can browse all IPAM data. For public-facing demo instances, strongly consider adding an IP allowlist or HTTP Basic Auth at the web-server level to limit exposure.
+Demo mode does not restrict read access. Any visitor can browse all IPAM data. For public-facing demo instances, strongly consider adding an IP allowlist or HTTP Basic Auth at the web-server level to limit exposure. The demo gate provides bot protection but not access control.
+
+---
+
+## `password_policy`
+
+Controls password complexity requirements and optional rotation.
+
+```php
+'password_policy' => [
+    'min_length'            => 12,
+    'require_uppercase'     => false,
+    'require_lowercase'     => false,
+    'require_number'        => false,
+    'require_symbol'        => false,
+    'max_password_age_days' => 0,
+],
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `min_length` | `12` | Minimum number of characters (multi-byte safe) |
+| `require_uppercase` | `false` | Require at least one uppercase letter |
+| `require_lowercase` | `false` | Require at least one lowercase letter |
+| `require_number` | `false` | Require at least one digit |
+| `require_symbol` | `false` | Require at least one non-alphanumeric character |
+| `max_password_age_days` | `0` | Force change after N days; `0` = never expires |
+
+All failing rules are reported at once rather than one at a time.
 
 ---
 
@@ -298,21 +428,14 @@ The `oidc` block configures optional OIDC single sign-on. All keys are ignored w
 | `discovery_url` | `''` | IdP base URL (`/.well-known/openid-configuration` appended automatically) |
 | `redirect_uri` | `''` | Callback URL — must match exactly what is registered with the IdP |
 | `scopes` | `'openid email profile'` | Space-separated scopes |
-| `auto_provision` | `false` | Automatically create or link a local account on first OIDC login |
-| `default_role` | `'readonly'` | Role assigned to auto-provisioned users (`admin` or `readonly`) |
+| `auto_link` | `false` | Auto-link existing local accounts to an OIDC identity on first SSO login |
+| `auto_provision` | `false` | Auto-create a new local account on first OIDC login (implies `auto_link`) |
+| `default_role` | `'readonly'` | Role assigned to auto-provisioned users |
 | `disable_local_login` | `false` | Hide the password form when OIDC is enabled |
-| `hide_emergency_link` | `false` | Hide the emergency local access link text (URL still works unless `disable_emergency_bypass` is also set) |
+| `hide_emergency_link` | `false` | Hide the emergency local access link text |
 | `disable_emergency_bypass` | `false` | Make `login.php?local=1` completely ineffective. **Warning:** locks you out if your IdP goes down |
 
 See the [OIDC guide](oidc.md) for IdP setup examples, user provisioning details, and troubleshooting.
-
----
-
-## `utilization_warn` / `utilization_critical`
-
-**Defaults:** `80` / `95`
-
-Percentage thresholds for the IPv4 subnet utilization progress bars in the subnet list. The bar turns yellow at `utilization_warn` and red at `utilization_critical`.
 
 ---
 
@@ -345,26 +468,20 @@ Controls automatic database backups.
 | `retention` | `7` | Number of most-recent backup files to keep; older ones are deleted |
 | `dir` | `''` | Directory for backup files; empty string uses `data/backups/` |
 
-Backups run at most once per interval on normal page load (file-locked, non-blocking). The backup format is a WAL-checkpointed SQLite file copy with a timestamp filename (`ipam-YYYY-MM-DD-HHmmss.sqlite`). You can also trigger a manual backup from the **Database Tools** admin page.
+Backups run at most once per interval on normal page load. The backup format is a WAL-checkpointed SQLite file copy with a timestamp filename (`ipam-YYYY-MM-DD-HHmmss.sqlite`). You can also trigger a manual backup from the **Database Tools** admin page.
 
-> **Security note:** If you set a custom `dir` path, ensure it is either outside the webroot or protected by your web server configuration. The default `data/backups/` is inside the webroot but `.htaccess` blocks direct HTTP access to `*.sqlite` files.
-
----
-
-## `audit_log_retention_days`
-
-See [`audit_log_retention_days`](#audit_log_retention_days) in the settings reference above.
+> **Security note:** If you set a custom `dir` path, ensure it is either outside the webroot or protected by your web server configuration.
 
 ---
 
 ## Health check endpoint
 
-The application exposes an unauthenticated health check at `GET /status.php`. No configuration is required. It returns:
+The application exposes an unauthenticated health check at `GET /status.php`. Returns:
 
-- **HTTP 200** with `{"status":"ok","version":"1.0","db":"ok"}` when the app and database are healthy.
+- **HTTP 200** with `{"status":"ok","version":"1.9","db":"ok"}` when healthy.
 - **HTTP 503** with `{"status":"error","db":"error"}` when the database is unreachable.
 
-Use this URL with uptime monitors, load balancer health probes, or container `HEALTHCHECK` directives.
+Use this with uptime monitors, load balancer health probes, or container `HEALTHCHECK` directives.
 
 ---
 
@@ -379,5 +496,3 @@ If HTTPS is terminated at a load balancer or reverse proxy that forwards `X-Forw
 Only do this if:
 - You control the proxy
 - The proxy reliably strips or overwrites the `X-Forwarded-Proto` header from untrusted clients
-
-Setting `proxy_trust` to `true` on a server with no proxy in front of it allows clients to spoof HTTPS detection, which would bypass the HTTP→HTTPS redirect.

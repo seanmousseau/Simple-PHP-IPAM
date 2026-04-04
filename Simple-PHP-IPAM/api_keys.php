@@ -77,9 +77,9 @@ page_header('API Keys');
   Each key is shown <strong>once</strong> at creation — copy it before navigating away.</p>
 
 <?php if (!empty($newKey)): ?>
-<div class="card" style="border-color:var(--success)">
+<div class="card card--success">
   <strong>New API key created — copy it now, it will not be shown again:</strong><br>
-  <code style="word-break:break-all;font-size:1.05rem"><?= e($newKey) ?></code>
+  <code class="key-display"><?= e($newKey) ?></code>
 </div>
 <?php endif; ?>
 
@@ -94,9 +94,9 @@ page_header('API Keys');
     <input type="hidden" name="action" value="create">
     <div class="row">
       <label>Key name / description
-        <input name="name" required placeholder="e.g. Monitoring script" style="min-width:260px">
+        <input name="name" required placeholder="e.g. Monitoring script" class="mw-260">
       </label>
-      <div style="align-self:flex-end">
+      <div class="flex-self-end">
         <button type="submit">Generate key</button>
       </div>
     </div>
@@ -104,7 +104,7 @@ page_header('API Keys');
 </div>
 
 <?php if ($keys): ?>
-<div class="card" style="margin-top:16px">
+<div class="card mt-16">
   <h2>Existing keys</h2>
   <table>
     <thead>
@@ -136,21 +136,21 @@ page_header('API Keys');
         <td>
           <div class="actions-inline">
             <?php if ((int)$k['is_active']): ?>
-              <form method="post" action="api_keys.php" style="display:inline">
+              <form method="post" action="api_keys.php" class="d-inline">
                 <input type="hidden" name="csrf"     value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action"   value="deactivate">
                 <input type="hidden" name="key_id"   value="<?= (int)$k['id'] ?>">
                 <button type="submit" class="button-secondary">Deactivate</button>
               </form>
             <?php else: ?>
-              <form method="post" action="api_keys.php" style="display:inline">
+              <form method="post" action="api_keys.php" class="d-inline">
                 <input type="hidden" name="csrf"     value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action"   value="activate">
                 <input type="hidden" name="key_id"   value="<?= (int)$k['id'] ?>">
                 <button type="submit" class="button-secondary">Activate</button>
               </form>
             <?php endif; ?>
-            <form method="post" action="api_keys.php" style="display:inline"
+            <form method="post" action="api_keys.php" class="d-inline"
                   data-confirm="Permanently delete this key?">
               <input type="hidden" name="csrf"     value="<?= e(csrf_token()) ?>">
               <input type="hidden" name="action"   value="delete">
@@ -165,7 +165,7 @@ page_header('API Keys');
   </table>
 </div>
 <?php else: ?>
-  <p class="muted" style="margin-top:16px">No API keys yet.</p>
+  <p class="muted mt-16">No API keys yet.</p>
 <?php endif; ?>
 
 <?php page_footer(); ?>

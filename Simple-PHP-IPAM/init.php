@@ -63,6 +63,19 @@ if (!empty($config['demo_mode']['enabled'])) {
     run_demo_reset_if_due($db);
 }
 
+// Demo gate (#125): redirect to challenge page if gate is configured and not yet passed
+if (!empty($config['demo_mode']['enabled'])
+    && !empty($config['demo_mode']['gate'])
+    && empty($_SESSION['demo_gate_passed'])
+) {
+    $gateExempt = ['demo_gate.php', 'status.php', 'api.php'];
+    $thisScript = basename($_SERVER['SCRIPT_FILENAME'] ?? '');
+    if (!in_array($thisScript, $gateExempt, true)) {
+        header('Location: demo_gate.php');
+        exit;
+    }
+}
+
 // Run database backup if due (configurable frequency)
 if (!empty($config['backup']['enabled'])) {
     run_db_backup_if_due($db, $config);

@@ -68,7 +68,7 @@ Error responses return an appropriate HTTP status code and a JSON body:
 | Status | Meaning |
 |--------|---------|
 | `401`  | Missing, invalid, or inactive API key |
-| `404`  | Resource not found (e.g. unknown `resource=` value, or `id=` not found) |
+| `404`  | Resource not found (e.g. unknown `resource=` value, or subnet/site `id=` not found) |
 
 ---
 
@@ -273,7 +273,7 @@ Returns the paginated change history for a single address record.
 
 Results are returned newest-first. `before` and `after` are `null` for the initial `create` event.
 
-Returns `400` if `address_id` is missing, `404` if the address does not exist.
+Returns `400` if `address_id` is missing. If the address has been deleted, the endpoint returns `200` with the history rows and `"ip": null` (rather than `404`) so history is accessible even after deletion.
 
 **History object fields**
 

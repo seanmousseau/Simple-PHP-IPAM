@@ -336,7 +336,7 @@ page_header('Bulk Update');
       <input name="owner" placeholder="new owner">
     </div>
 
-    <div class="row" style="margin-top:8px">
+    <div class="row mt-8">
       <label><input type="checkbox" name="do_status" value="1"> Status</label>
       <select name="status">
         <option value="used">used</option>
@@ -345,10 +345,10 @@ page_header('Bulk Update');
       </select>
 
       <label><input type="checkbox" name="do_note" value="1"> Note</label>
-      <input name="note" style="min-width:420px" placeholder="new note">
+      <input name="note" class="mw-420" placeholder="new note">
     </div>
 
-    <h3 style="margin-top:18px">Choose addresses</h3>
+    <h3 class="mt-18">Choose addresses</h3>
     <p class="muted">Select one or more rows to update or delete.
       <?php if ($unconfigured): ?>
         Rows marked <span class="muted">(unconfigured)</span> do not yet have a record — selecting them for
@@ -391,7 +391,7 @@ page_header('Bulk Update');
         </tr>
       <?php endforeach; ?>
       <?php foreach ($unconfigured as $uip): ?>
-        <tr class="muted" style="opacity:.7">
+        <tr class="muted opacity-70">
           <td><input class="addrbox" type="checkbox" name="unconf_ips[]" value="<?= e($uip) ?>" data-unconf="1"></td>
           <td><?= e($uip) ?></td>
           <td></td>
@@ -407,7 +407,7 @@ page_header('Bulk Update');
       </tbody>
     </table>
 
-    <h3 style="margin-top:18px">Action</h3>
+    <h3 class="mt-18">Action</h3>
 
     <div class="row">
       <label>Bulk action<br>

@@ -99,6 +99,20 @@ See the [Installation guide](docs/install.md) for full web server configuration 
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
+### What's new in 1.9
+
+**CSP `unsafe-inline` removed** — All 122 inline `style="..."` attributes across 15 PHP files have been replaced with utility CSS classes or `data-attribute` + JavaScript setters. `Content-Security-Policy: style-src` no longer includes `'unsafe-inline'`.
+
+**Login bot protection** — Optional bot mitigation on the login form: `honeypot`, `time_check`, Cloudflare Turnstile, hCaptcha, Google reCAPTCHA (v2 and v3), or Friendly Captcha. Configure via `login_protection` in `config.php`. Widget-based methods extend `script-src` on the login page only and do not affect other pages.
+
+**Demo gate** — When running in demo mode, an optional pre-login challenge page (`demo_gate.php`) can be configured to block bots before they reach the login form. Supports the same widget methods as login protection.
+
+**Security hardening** — OIDC auto-link email fallback is now email-only (fixes cross-account link via username=email coincidence); `preferred_username` from ID tokens is sanitised before use as a local username; login timing is normalised to prevent username enumeration; failed login audit entries no longer record the submitted username.
+
+**Bug fixes** — Password minimum-length check now uses `mb_strlen()` for multi-byte characters; dashboard top-subnets includes `/31` and `/32`; API history endpoint returns 200 (not 404) for deleted addresses; `prune_audit_log()` uses a prepared statement; `backup_dir()` canonicalises relative paths.
+
+**Performance** — `find_containing_subnet()` uses a per-request static cache, eliminating redundant full table scans during large CSV imports.
+
 ### What's new in 1.8
 
 **CSRF error recovery** — Stale-tab CSRF mismatches now redirect to the login page instead of showing a plain-text error with no navigation. HTTP 403 is returned so browser history works correctly.

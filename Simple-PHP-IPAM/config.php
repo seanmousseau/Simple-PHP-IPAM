@@ -78,14 +78,36 @@ return [
     ],
 
     // -----------------------------------------------------------------------
+    // Login form protection — optional bot/abuse mitigation on the login form.
+    // method: null (off) | 'honeypot' | 'time_check' | 'turnstile' | 'hcaptcha'
+    //         | 'recaptcha' | 'friendly_captcha'
+    // site_key / secret_key: required for widget-based methods.
+    // min_seconds: minimum seconds between page load and submit (time_check only).
+    // version: reCAPTCHA version, 2 (checkbox widget) or 3 (invisible) (recaptcha only).
+    // -----------------------------------------------------------------------
+    'login_protection' => [
+        'method'      => null,
+        'site_key'    => '',
+        'secret_key'  => '',
+        'min_seconds' => 3,
+        'version'     => 2,
+    ],
+
+    // -----------------------------------------------------------------------
     // Demo mode — when enabled, only the 'demo' / 'demo' account can log in,
     // destructive admin actions are disabled, and the database is reset to
     // pre-populated seed data nightly at midnight. Useful for public demos.
     // For public-facing deployments, add an IP allowlist or HTTP Basic Auth
     // at the web-server level for additional protection.
+    // gate: present a bot-challenge before the login page.
+    //   null (off) | 'honeypot' | 'turnstile' | 'hcaptcha' | 'recaptcha' | 'friendly_captcha'
+    // site_key / secret_key: required for widget-based gate methods.
     // -----------------------------------------------------------------------
     'demo_mode' => [
-        'enabled' => false,
+        'enabled'    => false,
+        'gate'       => null,
+        'site_key'   => '',
+        'secret_key' => '',
     ],
 
     // -----------------------------------------------------------------------

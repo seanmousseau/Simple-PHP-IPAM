@@ -8,8 +8,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 $maxAttempts   = (int)($config['login_max_attempts']   ?? 5);
 $lockoutSeconds = (int)($config['login_lockout_seconds'] ?? 900);
 
-$error = '';
+$error    = '';
 $timedOut = !empty($_GET['timeout']);
+
+// Login protection setup (#124) — widget HTML also sets time_check session ts on GET
+$lpMethod     = (string)(($config['login_protection'] ?? [])['method'] ?? '');
+$lpWidgetHtml = login_protection_widget_html($config);
+$lpCsp        = login_protection_extra_csp($config);
 
 // Consume any OIDC error flash set by oidc_callback.php or oidc_login.php
 if (!empty($_SESSION['oidc_error'])) {
@@ -17,14 +22,38 @@ if (!empty($_SESSION['oidc_error'])) {
     unset($_SESSION['oidc_error']);
 }
 
+// Render-prep variables (needed even when goto jumps past POST block)
+try {
+    $firstRun = !$db->query("SELECT 1 FROM audit_log WHERE action='auth.login' LIMIT 1")->fetch();
+} catch (Throwable $e) {
+    $firstRun = true; // treat as first-run if audit_log is temporarily unavailable
+}
+$oidcActive            = oidc_enabled($config) && !demo_mode_enabled();
+$disableLocal          = $oidcActive && !empty($config['oidc']['disable_local_login']);
+$disableEmergencyBypass= $oidcActive && !empty($config['oidc']['disable_emergency_bypass']);
+$hideEmergencyLink     = $oidcActive && !empty($config['oidc']['hide_emergency_link']);
+$localForceShown       = isset($_GET['local']) && !$disableEmergencyBypass;
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $username = trim((string)($_POST['username'] ?? ''));
     $password = (string)($_POST['password'] ?? '');
     $ip = client_ip();
 
+    // Login protection verification (#124) — before rate limiting / DB checks
+    if ($lpMethod !== '') {
+        $lpResult = login_protection_verify($config, $_POST);
+        if ($lpResult !== null) {
+            // '' = silent honeypot rejection (no error); non-empty = show error
+            if ($lpResult !== '') $error = $lpResult;
+            goto render_page;
+        }
+    }
+
     if (demo_mode_enabled()) {
-        // Demo mode: only demo/demo is accepted
-        if ($username === 'demo' && $password === 'demo') {
+        // Demo mode: only demo/demo is accepted; rate limiting still applies (#115)
+        if (login_rate_limited($db, $ip, $maxAttempts, $lockoutSeconds)) {
+            $error = 'Too many failed login attempts. Please try again later.';
+        } elseif ($username === 'demo' && $password === 'demo') {
             $st = $db->prepare("SELECT id, username, role FROM users WHERE username = 'demo' AND is_active = 1");
             $st->execute();
             $demoUser = $st->fetch();
@@ -36,8 +65,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 header('Location: dashboard.php');
                 exit;
             }
+        } else {
+            record_login_failure($db, $ip);
+            $error = 'Only the demo account (demo / demo) is available in demo mode.';
         }
-        $error = 'Only the demo account (demo / demo) is available in demo mode.';
     } else {
         // Purge stale attempts opportunistically (keep rows 2× the lockout window)
         purge_old_login_attempts($db, $lockoutSeconds * 2);
@@ -65,23 +96,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit;
             }
 
+            // Normalise response time to prevent username enumeration via timing (#109)
+            if (!$user || (int)($user['is_active'] ?? 0) !== 1) {
+                password_verify($password, '$2y$12$' . str_repeat('a', 53));
+            }
+
             record_login_failure($db, $ip);
             $error = 'Invalid username or password.';
-            audit($db, 'auth.login_failed', 'user', null, 'username=' . $username);
+            audit($db, 'auth.login_failed', 'user', null, ''); // #117: do not log submitted username
         }
     }
 }
 
-// First-run hint: show only if no successful login has ever occurred
-$firstRun = !$db->query("SELECT 1 FROM audit_log WHERE action='auth.login' LIMIT 1")->fetch();
-
-$oidcActive              = oidc_enabled($config) && !demo_mode_enabled();
-$disableLocal            = $oidcActive && !empty($config['oidc']['disable_local_login']);
-$disableEmergencyBypass  = $oidcActive && !empty($config['oidc']['disable_emergency_bypass']);
-$hideEmergencyLink       = $oidcActive && !empty($config['oidc']['hide_emergency_link']);
-$localForceShown         = isset($_GET['local']) && !$disableEmergencyBypass;
-
-page_header('Login');
+render_page:
+page_header('Login', array_filter([
+    'extra_script_src' => $lpCsp['script_src'],
+    'extra_frame_src'  => $lpCsp['frame_src'],
+]));
 ?>
 <h1>Login</h1>
 <?php if ($timedOut && !$error): ?>
@@ -91,7 +122,7 @@ page_header('Login');
 
 <?php if ($oidcActive): ?>
 <p>
-  <a href="oidc_login.php" style="display:inline-block;padding:10px 18px;border-radius:12px;background:var(--btn);color:var(--btnfg);text-decoration:none;font-weight:600">
+  <a href="oidc_login.php" class="btn-sso">
     Sign in with <?= e((string)($config['oidc']['display_name'] ?? 'SSO')) ?>
   </a>
 </p>
@@ -99,7 +130,7 @@ page_header('Login');
 
 <?php if (!$disableLocal || $localForceShown): ?>
 <?php if ($oidcActive): ?>
-  <p class="muted" style="margin:14px 0 4px">— or sign in with a local account —</p>
+  <p class="muted mt-12">— or sign in with a local account —</p>
 <?php endif; ?>
 <form method="post" action="login.php" autocomplete="off">
   <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
@@ -107,15 +138,18 @@ page_header('Login');
     <label>Username<br><input name="username" required></label>
     <label>Password<br><input type="password" name="password" required></label>
   </div>
+  <?php if ($lpWidgetHtml !== ''): ?>
+    <div class="mt-10"><?= $lpWidgetHtml ?></div>
+  <?php endif; ?>
   <p><button type="submit">Login</button></p>
   <?php if ($firstRun): ?>
     <p class="muted">First run: use bootstrap admin from <code>config.php</code>, then change it.</p>
   <?php endif; ?>
 </form>
 <?php elseif ($oidcActive): ?>
-  <p class="muted" style="margin-top:16px">Local password login is disabled. Use SSO above.
+  <p class="muted mt-16">Local password login is disabled. Use SSO above.
     <?php if (!$hideEmergencyLink && !$disableEmergencyBypass): ?>
-      <a href="login.php?local=1" class="muted" style="font-size:.9em">(emergency local access)</a>
+      <a href="login.php?local=1" class="muted font-sm">(emergency local access)</a>
     <?php endif; ?>
   </p>
 <?php endif; ?>

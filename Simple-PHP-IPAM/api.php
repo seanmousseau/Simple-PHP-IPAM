@@ -248,13 +248,10 @@ function api_history(PDO $db): never
     }
     $addressId = (int)$_GET['address_id'];
 
-    // Verify the address exists
-    $st = $db->prepare("SELECT id, ip FROM addresses WHERE id = :id");
-    $st->execute([':id' => $addressId]);
-    $addr = $st->fetch();
-    if (!$addr) {
-        api_error(404, 'Address not found.');
-    }
+    // Fetch current address if it still exists (deleted addresses may still have history)
+    $addrSt = $db->prepare("SELECT ip FROM addresses WHERE id = :id");
+    $addrSt->execute([':id' => $addressId]);
+    $addr = $addrSt->fetch();
 
     $page   = max(1, (int)($_GET['page']  ?? 1));
     $limit  = max(1, min(200, (int)($_GET['limit'] ?? 50)));
@@ -291,7 +288,7 @@ function api_history(PDO $db): never
 
     api_json([
         'address_id' => $addressId,
-        'ip'         => $addr['ip'],
+        'ip'         => $addr ? (string)$addr['ip'] : null,
         'total'      => $total,
         'page'       => $page,
         'limit'      => $limit,
