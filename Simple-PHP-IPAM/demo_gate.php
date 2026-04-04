@@ -70,8 +70,8 @@ $appName = trim((string)($config['app_name'] ?? '')) ?: 'Simple PHP IPAM';
   <title><?= e($appName) ?> — Access Check</title>
   <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
   <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
-  <link rel="stylesheet" href="assets/app.css?v=1.11a">
-  <script defer src="assets/app.js?v=1.11a"></script>
+  <link rel="stylesheet" href="assets/app.css?v=1.11b">
+  <script defer src="assets/app.js?v=1.11b"></script>
 </head>
 <body>
 <div class="gate-wrap">

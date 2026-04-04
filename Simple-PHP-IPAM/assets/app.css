@@ -144,10 +144,12 @@ h3{font-size:1.05rem}
   flex-shrink:0;
 }
 .nav-brand:hover{opacity:.8;text-decoration:none}
-.nav-logo{height:32px;width:32px}
-.login-wrap{max-width:440px;margin:40px auto 0;padding:0 4px}
-.login-logo{text-align:center;margin-bottom:20px}
-.login-logo img{height:80px;width:80px;display:block;margin:0 auto 8px}
+.nav-logo{height:40px;width:40px}
+.login-wrap{max-width:420px;margin:24px auto 0;padding:0 4px}
+.login-logo{text-align:center;margin-bottom:16px}
+.login-logo img{height:80px;width:80px;display:block;margin:0 auto 6px}
+.login-logo p{margin:0 0 4px}
+.login-wrap h1{margin-top:.1em;margin-bottom:.4em}
 .nav-links{
   display:flex;
   gap:14px;
