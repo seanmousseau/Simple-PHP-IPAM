@@ -446,7 +446,7 @@ page_header('Import CSV');
 if ($step === 1) {
     ?>
 
-    <div class="card">
+    <div class="card mt-16">
       <h2>Step 1 — Upload</h2>
       <form method="post" enctype="multipart/form-data" action="import_csv.php?step=1">
         <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
@@ -488,7 +488,7 @@ if ($step === 2) {
     $dupMode = $wiz['dup_mode'] ?? 'skip';
     ?>
 
-    <div class="card">
+    <div class="card mt-16">
       <h2>Step 2 — CSV settings + column mapping</h2>
 
       <h3>Preview</h3>
@@ -591,7 +591,7 @@ if ($step === 3) {
     $rows = $plan['rows'] ?? [];
     ?>
 
-    <div class="card">
+    <div class="card mt-16">
       <h2>Step 3 — Dry Run / Analysis</h2>
 
       <div class="grid cols-3">
@@ -908,7 +908,7 @@ if ($step === 4) {
     }
 
     ?>
-    <div class="card">
+    <div class="card mt-16">
       <h2>Step 4 — Import Result</h2>
       <?php if ($err): ?><p class="danger"><?= e($err) ?></p><?php endif; ?>
       <?php if ($msg): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
