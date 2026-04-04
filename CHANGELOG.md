@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## 1.10 — PHP 8.4 Compatibility & Layout Fixes
+
+### Bug fixes
+- **Fixed #130:** CSV import and delimiter-detection functions (`str_getcsv`, `fgetcsv`) did not pass the `$escape` parameter explicitly, triggering a PHP 8.4 deprecation warning that broke the import wizard. All three call sites now pass `''` (empty string), adopting RFC 4180-compliant behaviour (quote-doubling, no backslash escape).
+- **Fixed #127:** "Add Subnet" card on `subnets.php` had two `class` attributes on the same element (`class="card"` and `class="mt-16"`). Browsers honour only the first, so the top margin was silently ignored and the card appeared flush against the action pills. Merged into a single attribute.
+- **Fixed #128:** Audit log filter controls (Category / From / To) stacked the label text above each input due to the global `label { display:flex; flex-direction:column }` rule. Added a `.label-inline` utility class and applied it to the three filter labels so text and control appear side-by-side.
+
+### Infrastructure fix
+- **`.htaccess`:** Removed the global `Content-Security-Policy` header from `.htaccess`. PHP already emits a complete, per-page CSP (including `script-src` and `frame-src` extensions for active CAPTCHA providers). Having both caused browsers to enforce the intersection of all CSP headers simultaneously, silently blocking Turnstile, hCaptcha, and reCAPTCHA scripts and iframes.
+
+### Testing
+- Added `docs/samples/sample_dataset.csv` — 4,522-row import dataset covering all subnet prefix sizes (/23–/32 IPv4, /64 and /128 IPv6), all address statuses, IPv4 and IPv6 subnets across six sites, P2P /30 and /31 links, loopbacks, parent/child nesting, and guest WiFi pools.
+- Added `docs/samples/gen_sample_dataset.py` — reproducible generator script.
+
+---
+
 ## 1.9 — Security Hardening, CSP & Bot Protection
 
 ### Security fixes

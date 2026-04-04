@@ -1267,7 +1267,7 @@ function csv_output_handle()
 function csv_out(array $row): void
 {
     $fh = csv_output_handle();
-    fputcsv($fh, $row);
+    fputcsv($fh, $row, ',', '"', '');
 }
 
 /* ---------------- Demo mode seed/reset ---------------- */
@@ -1763,7 +1763,7 @@ function detect_csv_delimiter(string $sample): string
         $counts = [];
         foreach (array_slice($lines, 0, 10) as $line) {
             if ($line === '') continue;
-            $counts[] = count(str_getcsv($line, $d));
+            $counts[] = count(str_getcsv($line, $d, '"', ''));
         }
         if (!$counts) continue;
         $avg = array_sum($counts) / count($counts);
@@ -1781,7 +1781,7 @@ function csv_read_preview(string $path, string $delimiter, int $maxRows = 20): a
     if (!$fh) throw new RuntimeException("Cannot open upload");
     $rows = [];
     while (!feof($fh) && count($rows) < $maxRows) {
-        $row = fgetcsv($fh, 0, $delimiter);
+        $row = fgetcsv($fh, 0, $delimiter, '"', '');
         if ($row === false) break;
         if (count($row) === 1 && trim((string)$row[0]) === '') continue;
         $rows[] = $row;
@@ -1938,8 +1938,8 @@ function page_header(string $title, array $opts = []): void
 
     echo "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
     echo "<title>" . e($title) . "</title>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=1.9'>";
-    echo "<script defer src='assets/app.js?v=1.9'></script>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=1.10'>";
+    echo "<script defer src='assets/app.js?v=1.10'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";

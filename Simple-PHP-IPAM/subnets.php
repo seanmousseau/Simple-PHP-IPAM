@@ -512,7 +512,7 @@ page_header('Subnets');
 <?php if ($msg): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
 <?php if ($warn): ?><p class="warning"><?= e($warn) ?></p><?php endif; ?>
 
-<div class="card" id="add-subnet" class="mt-16">
+<div class="card mt-16" id="add-subnet">
   <h2>Add subnet</h2>
   <form method="post" action="subnets.php">
     <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
