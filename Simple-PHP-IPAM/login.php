@@ -23,7 +23,11 @@ if (!empty($_SESSION['oidc_error'])) {
 }
 
 // Render-prep variables (needed even when goto jumps past POST block)
-$firstRun              = !$db->query("SELECT 1 FROM audit_log WHERE action='auth.login' LIMIT 1")->fetch();
+try {
+    $firstRun = !$db->query("SELECT 1 FROM audit_log WHERE action='auth.login' LIMIT 1")->fetch();
+} catch (Throwable $e) {
+    $firstRun = true; // treat as first-run if audit_log is temporarily unavailable
+}
 $oidcActive            = oidc_enabled($config) && !demo_mode_enabled();
 $disableLocal          = $oidcActive && !empty($config['oidc']['disable_local_login']);
 $disableEmergencyBypass= $oidcActive && !empty($config['oidc']['disable_emergency_bypass']);

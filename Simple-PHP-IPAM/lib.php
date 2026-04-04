@@ -1234,10 +1234,29 @@ function csv_out(array $row): void
 
 function demo_reset_db(PDO $db): void
 {
-    // audit_log has append-only triggers that block DELETE, so handle it separately
-    // via a rename+drop approach (same technique as prune_audit_log).
+    // audit_log has append-only triggers that block DELETE, so bypass via rename+drop,
+    // then immediately recreate the table and triggers (like prune_audit_log does).
     $db->exec("ALTER TABLE audit_log RENAME TO audit_log_old");
     $db->exec("DROP TABLE audit_log_old");
+    $db->exec("
+        CREATE TABLE audit_log (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          user_id INTEGER, username TEXT, action TEXT NOT NULL,
+          entity_type TEXT NOT NULL, entity_id INTEGER,
+          ip TEXT, user_agent TEXT, details TEXT
+        )
+    ");
+    $db->exec("
+        CREATE TRIGGER IF NOT EXISTS audit_log_no_update
+        BEFORE UPDATE ON audit_log
+        BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END
+    ");
+    $db->exec("
+        CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
+        BEFORE DELETE ON audit_log
+        BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END
+    ");
 
     $tables = ['address_history', 'login_attempts', 'api_keys',
                'addresses', 'subnets', 'sites', 'users', 'schema_migrations'];
