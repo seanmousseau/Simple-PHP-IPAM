@@ -3,8 +3,10 @@
 ## Contents
 
 - [HTTPS](#https)
+- [Content Security Policy](#content-security-policy)
 - [Authentication](#authentication)
 - [Login rate limiting](#login-rate-limiting)
+- [Login form protection](#login-form-protection)
 - [Session management](#session-management)
 - [CSRF protection](#csrf-protection)
 - [Database access](#database-access)
@@ -23,6 +25,35 @@ If you terminate TLS at a reverse proxy, set `'proxy_trust' => true` in `config.
 
 ---
 
+## Content Security Policy
+
+Every page response includes a strict `Content-Security-Policy` header:
+
+```
+Content-Security-Policy:
+  default-src 'self';
+  script-src 'self';
+  style-src 'self';
+  img-src 'self' data:;
+  frame-ancestors 'none'
+```
+
+Key points:
+
+- **No `unsafe-inline`** in either `script-src` or `style-src`. All JavaScript uses event delegation via `data-*` attributes in `app.js`. All styling uses external CSS classes — no inline `style=""` attributes remain in any template (v1.6 removed inline scripts; v1.9 removed inline styles).
+- **`frame-ancestors 'none'`** prevents the app from being embedded in an iframe (equivalent to `X-Frame-Options: DENY`).
+- **Login page extension:** when a widget-based `login_protection` method (Turnstile, hCaptcha, reCAPTCHA, Friendly Captcha) is active, `script-src` is extended on `login.php` only to include the provider's domain. All other pages remain unaffected.
+
+Additional headers set on every response:
+
+| Header | Value |
+|--------|-------|
+| `X-Frame-Options` | `DENY` |
+| `X-Content-Type-Options` | `nosniff` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+
+---
+
 ## Authentication
 
 - Passwords are stored using PHP's `password_hash()` with `PASSWORD_DEFAULT` (bcrypt).
@@ -30,12 +61,16 @@ If you terminate TLS at a reverse proxy, set `'proxy_trust' => true` in `config.
 - Session cookies are set with `Secure`, `HttpOnly`, and `SameSite=Strict`.
 - `session.use_strict_mode` and `session.use_only_cookies` are enabled.
 - The session ID is regenerated on login (`session_regenerate_id(true)`).
+- **Timing normalisation:** when a username is not found or the account is inactive, a dummy `password_verify()` call is made so that response time does not reveal whether the username exists (v1.9).
 
 ### OIDC single sign-on
 
-From v0.12, OIDC Authorization Code + PKCE is supported as an alternative to local passwords. ID token signatures are verified in-process using `openssl` — no network calls beyond the discovery and JWKS fetches.
+OIDC Authorization Code + PKCE is supported as an alternative to local passwords. ID token signatures are verified in-process using `openssl` — no network calls beyond the discovery and JWKS fetches.
 
-Auto-provisioned OIDC accounts are assigned an unusable random password and cannot log in locally unless an admin sets one. See the [OIDC guide](oidc.md) for setup and the `disable_local_login` option.
+- `preferred_username` and other claims are sanitised (characters outside `[a-zA-Z0-9._@\-]` stripped) before use as local usernames (v1.9).
+- Email-based auto-link uses an email-only query — a username that happens to match another user's email cannot trigger a cross-account link (v1.9).
+
+Auto-provisioned OIDC accounts are assigned an unusable random password and cannot log in locally unless an admin sets one. See the [OIDC guide](oidc.md).
 
 ### Default credentials
 
@@ -45,14 +80,24 @@ Change the bootstrap admin password **before** the site receives any traffic. Th
 
 ## Login rate limiting
 
-From v0.11, failed login attempts are tracked per IP address in the `login_attempts` table.
+Failed login attempts are tracked per IP address in the `login_attempts` table.
 
 - After `login_max_attempts` consecutive failures (default: **5**) within the lockout window, the IP is blocked for `login_lockout_seconds` (default: **15 minutes**).
 - A successful login clears the failure counter for that IP.
 - Blocked attempts are recorded in the audit log as `auth.login_blocked`.
+- Rate limiting applies in demo mode as well as normal mode.
 - Stale records are purged automatically — no cron job or manual cleanup is required.
+- **Audit log privacy:** failed login entries record the IP address but not the submitted username, preventing mistyped passwords from appearing in logs (v1.9).
 
-These defaults can be tuned in `config.php`. See the [configuration reference](configuration.md#login_max_attempts).
+---
+
+## Login form protection
+
+*(Added in v1.9)*
+
+Optional bot mitigation on the login form is available via the `login_protection` config block. This is separate from and complementary to IP-based rate limiting.
+
+See [`login_protection`](configuration.md#login_protection) in the configuration reference for available methods and setup instructions.
 
 ---
 
@@ -66,7 +111,7 @@ These defaults can be tuned in `config.php`. See the [configuration reference](c
 
 ## CSRF protection
 
-All POST endpoints call `csrf_require()`, which validates a per-session token stored in `$_SESSION['csrf']`. Requests with a missing or mismatched token are rejected with HTTP 400.
+All POST endpoints call `csrf_require()`, which validates a per-session token stored in `$_SESSION['csrf']`. Requests with a missing or mismatched token are rejected with HTTP 403 and redirected to the login page so users with stale tabs can recover gracefully.
 
 ---
 
