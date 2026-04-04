@@ -1173,18 +1173,32 @@ function login_protection_widget_html(array $config): string
 }
 
 /**
- * Return the extra script-src domains needed for the active login protection method,
- * or empty string if none required.
+ * Return extra CSP directives needed for the active login protection method.
+ * Returns ['script_src' => '...', 'frame_src' => '...'] — either may be empty.
+ * Turnstile, hCaptcha, and reCAPTCHA render inside an iframe so frame_src must
+ * be explicitly allowed; Friendly Captcha uses Web Components (no iframe needed).
  */
-function login_protection_extra_csp(array $config): string
+function login_protection_extra_csp(array $config): array
 {
     $method = (string)(($config['login_protection'] ?? [])['method'] ?? '');
     return match ($method) {
-        'turnstile'        => 'https://challenges.cloudflare.com',
-        'hcaptcha'         => 'https://hcaptcha.com https://assets.hcaptcha.com',
-        'recaptcha'        => 'https://www.google.com https://www.gstatic.com',
-        'friendly_captcha' => 'https://cdn.jsdelivr.net',
-        default            => '',
+        'turnstile'        => [
+            'script_src' => 'https://challenges.cloudflare.com',
+            'frame_src'  => 'https://challenges.cloudflare.com',
+        ],
+        'hcaptcha'         => [
+            'script_src' => 'https://hcaptcha.com https://assets.hcaptcha.com',
+            'frame_src'  => 'https://newassets.hcaptcha.com',
+        ],
+        'recaptcha'        => [
+            'script_src' => 'https://www.google.com https://www.gstatic.com',
+            'frame_src'  => 'https://www.google.com',
+        ],
+        'friendly_captcha' => [
+            'script_src' => 'https://cdn.jsdelivr.net',
+            'frame_src'  => '',
+        ],
+        default            => ['script_src' => '', 'frame_src' => ''],
     };
 }
 
@@ -1915,8 +1929,9 @@ function page_header(string $title, array $opts = []): void
     $u = $_SESSION['username'] ?? '';
     $role = $_SESSION['role'] ?? '';
 
-    $extraScriptSrc = isset($opts['extra_script_src']) ? ' ' . $opts['extra_script_src'] : '';
-    header("Content-Security-Policy: default-src 'self'; script-src 'self'{$extraScriptSrc}; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'");
+    $extraScriptSrc = isset($opts['extra_script_src']) && $opts['extra_script_src'] !== '' ? ' ' . $opts['extra_script_src'] : '';
+    $frameSrc       = isset($opts['extra_frame_src'])  && $opts['extra_frame_src']  !== '' ? " frame-src 'self' " . $opts['extra_frame_src'] . ';' : '';
+    header("Content-Security-Policy: default-src 'self'; script-src 'self'{$extraScriptSrc}; style-src 'self'; img-src 'self' data:;{$frameSrc} frame-ancestors 'none'");
     header('X-Frame-Options: DENY');
     header('X-Content-Type-Options: nosniff');
     header('Referrer-Policy: strict-origin-when-cross-origin');

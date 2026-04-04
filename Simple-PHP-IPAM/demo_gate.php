@@ -50,10 +50,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $_SESSION['gate_csrf'] = bin2hex(random_bytes(16));
 
 $widgetHtml = login_protection_widget_html($gateConfig);
-$cspExtra   = login_protection_extra_csp($gateConfig);
+$gateCsp    = login_protection_extra_csp($gateConfig);
 
-$extraScriptSrc = $cspExtra !== '' ? ' ' . $cspExtra : '';
-header("Content-Security-Policy: default-src 'self'; script-src 'self'{$extraScriptSrc}; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'");
+$extraScriptSrc = $gateCsp['script_src'] !== '' ? ' ' . $gateCsp['script_src'] : '';
+$extraFrameSrc  = $gateCsp['frame_src']  !== '' ? " frame-src 'self' " . $gateCsp['frame_src'] . ';' : '';
+header("Content-Security-Policy: default-src 'self'; script-src 'self'{$extraScriptSrc}; style-src 'self'; img-src 'self' data:;{$extraFrameSrc} frame-ancestors 'none'");
 header('X-Frame-Options: DENY');
 header('X-Content-Type-Options: nosniff');
 header('Referrer-Policy: strict-origin-when-cross-origin');

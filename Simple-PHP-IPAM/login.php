@@ -14,7 +14,7 @@ $timedOut = !empty($_GET['timeout']);
 // Login protection setup (#124) — widget HTML also sets time_check session ts on GET
 $lpMethod     = (string)(($config['login_protection'] ?? [])['method'] ?? '');
 $lpWidgetHtml = login_protection_widget_html($config);
-$lpCspExtra   = login_protection_extra_csp($config);
+$lpCsp        = login_protection_extra_csp($config);
 
 // Consume any OIDC error flash set by oidc_callback.php or oidc_login.php
 if (!empty($_SESSION['oidc_error'])) {
@@ -109,7 +109,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 render_page:
-page_header('Login', $lpCspExtra !== '' ? ['extra_script_src' => $lpCspExtra] : []);
+page_header('Login', array_filter([
+    'extra_script_src' => $lpCsp['script_src'],
+    'extra_frame_src'  => $lpCsp['frame_src'],
+]));
 ?>
 <h1>Login</h1>
 <?php if ($timedOut && !$error): ?>
