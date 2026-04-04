@@ -73,7 +73,14 @@ timestamp="$(date +%Y%m%d-%H%M%S)"
 extract_php_const_version() {
   local file="$1"
   [[ -f "$file" ]] || return 1
-  sed -n "s/^[[:space:]]*const[[:space:]]\+IPAM_VERSION[[:space:]]*=[[:space:]]*['\"]\([^'\"]\+\)['\"][[:space:]]*;[[:space:]]*$/\1/p" "$file" | head -n 1
+  # Match: const IPAM_VERSION = '1.x';
+  local ver
+  ver="$(sed -n "s/^[[:space:]]*const[[:space:]]\+IPAM_VERSION[[:space:]]*=[[:space:]]*['\"]\([^'\"]\+\)['\"][[:space:]]*;[[:space:]]*$/\1/p" "$file" | head -n 1)"
+  # Match: define('IPAM_VERSION', '1.x');
+  if [[ -z "$ver" ]]; then
+    ver="$(sed -n "s/^[[:space:]]*define(['\"]IPAM_VERSION['\"][[:space:]]*,[[:space:]]*['\"]\([^'\"]\+\)['\"])[[:space:]]*;[[:space:]]*$/\1/p" "$file" | head -n 1)"
+  fi
+  printf '%s' "$ver"
 }
 
 vercmp() {
