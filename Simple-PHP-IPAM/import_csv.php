@@ -349,6 +349,77 @@ function analyze_import(PDO $db, array $wiz): array
     ];
 }
 
+// ── Pre-render: all POST handlers and guards that may redirect ────────────────
+// header() cannot be called after page_header() emits HTML, so every redirect
+// path must complete (or set $err and fall through) before any output is sent.
+
+if ($step === 1 && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'upload') {
+    if (empty($_FILES['csv']['tmp_name']) || !is_uploaded_file($_FILES['csv']['tmp_name'])) {
+        $err = 'No file uploaded.';
+    } else {
+        $maxBytes = import_max_bytes($config);
+        $size = (int)($_FILES['csv']['size'] ?? 0);
+        if ($size > $maxBytes) {
+            $err = 'File too large (max ' . (int)round($maxBytes / 1024 / 1024) . 'MB).';
+        } else {
+            ensure_tmp_dir();
+            $dest = tmp_dir() . '/import-' . bin2hex(random_bytes(8)) . '.csv';
+            if (!move_uploaded_file($_FILES['csv']['tmp_name'], $dest)) {
+                $err = 'Failed to store uploaded file.';
+            } else {
+                @chmod($dest, 0600);
+                $sample = file_get_contents($dest, false, null, 0, 4096);
+                if ($sample === false) $sample = '';
+                $wiz = ['tmp_path' => $dest, 'delimiter' => detect_csv_delimiter($sample), 'has_header' => 'yes'];
+                header('Location: import_csv.php?step=2');
+                exit;
+            }
+        }
+    }
+}
+
+if ($step === 2) {
+    if (empty($wiz['tmp_path']) || !is_file($wiz['tmp_path'])) {
+        header('Location: import_csv.php?step=1');
+        exit;
+    }
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'set_mapping') {
+        $d = (string)($_POST['delimiter'] ?? ',');
+        if (!in_array($d, [',', ';', "\\t", '|'], true)) $d = ',';
+        if ($d === "\\t") $d = "\t";
+        $hdr = (string)($_POST['has_header'] ?? 'yes');
+        if (!in_array($hdr, ['yes', 'no'], true)) $hdr = 'yes';
+        $mapping = $_POST['map'] ?? [];
+        if (!is_array($mapping)) $mapping = [];
+        $ipMap = $mapping['ip'] ?? 'ignore';
+        if ($ipMap === 'ignore' || $ipMap === '' || !is_numeric((string)$ipMap)) {
+            $err = 'You must map an IP column.';
+            // Preserve submitted values so the form re-renders with user's choices
+            $wiz['delimiter'] = $d;
+            $wiz['has_header'] = $hdr;
+        } else {
+            $dupMode = (string)($_POST['dup_mode'] ?? 'skip');
+            if (!in_array($dupMode, ['skip', 'overwrite', 'fill_empty'], true)) $dupMode = 'skip';
+            $wiz['delimiter'] = $d;
+            $wiz['has_header'] = $hdr;
+            $wiz['mapping'] = $mapping;
+            $wiz['dup_mode'] = $dupMode;
+            header('Location: import_csv.php?step=3');
+            exit;
+        }
+    }
+}
+
+if ($step === 3 && (empty($wiz['tmp_path']) || !is_file($wiz['tmp_path']))) {
+    header('Location: import_csv.php?step=1');
+    exit;
+}
+
+if ($step === 4 && ($_SERVER['REQUEST_METHOD'] !== 'POST' || ($_POST['action'] ?? '') !== 'apply')) {
+    header('Location: import_csv.php?step=3');
+    exit;
+}
+
 page_header('Import CSV');
 ?>
 
@@ -373,40 +444,6 @@ page_header('Import CSV');
 <?php
 /* Step 1 */
 if ($step === 1) {
-    if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'upload') {
-        if (empty($_FILES['csv']['tmp_name']) || !is_uploaded_file($_FILES['csv']['tmp_name'])) {
-            $err = "No file uploaded.";
-        } else {
-            $maxBytes = import_max_bytes($config);
-            $size = (int)($_FILES['csv']['size'] ?? 0);
-            if ($size > $maxBytes) {
-                $mb = (int)round($maxBytes / 1024 / 1024);
-                $err = "File too large (max {$mb}MB).";
-            } else {
-                ensure_tmp_dir();
-                $dest = tmp_dir() . '/import-' . bin2hex(random_bytes(8)) . '.csv';
-
-                if (!move_uploaded_file($_FILES['csv']['tmp_name'], $dest)) {
-                    $err = "Failed to store uploaded file.";
-                } else {
-                    @chmod($dest, 0600);
-
-                    $sample = file_get_contents($dest, false, null, 0, 4096);
-                    if ($sample === false) $sample = '';
-                    $delim = detect_csv_delimiter($sample);
-
-                    $wiz = [
-                        'tmp_path' => $dest,
-                        'delimiter' => $delim,
-                        'has_header' => 'yes',
-                    ];
-
-                    header("Location: import_csv.php?step=2");
-                    exit;
-                }
-            }
-        }
-    }
     ?>
 
     <div class="card">
@@ -427,41 +464,8 @@ if ($step === 1) {
 
 /* Step 2 */
 if ($step === 2) {
-    if (empty($wiz['tmp_path']) || !is_file($wiz['tmp_path'])) {
-        header("Location: import_csv.php?step=1");
-        exit;
-    }
-
     $delimiter = (string)($wiz['delimiter'] ?? ',');
     $hasHeader = (string)($wiz['has_header'] ?? 'yes');
-
-    if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'set_mapping') {
-        $delimiter = (string)($_POST['delimiter'] ?? ',');
-        if (!in_array($delimiter, [',',';',"\\t",'|'], true)) $delimiter = ',';
-        if ($delimiter === "\\t") $delimiter = "\t";
-
-        $hasHeader = (string)($_POST['has_header'] ?? 'yes');
-        if (!in_array($hasHeader, ['yes','no'], true)) $hasHeader = 'yes';
-
-        $mapping = $_POST['map'] ?? [];
-        if (!is_array($mapping)) $mapping = [];
-
-        $ipMap = $mapping['ip'] ?? 'ignore';
-        if ($ipMap === 'ignore' || $ipMap === '' || !is_numeric((string)$ipMap)) {
-            $err = "You must map an IP column.";
-        } else {
-            $dupMode = (string)($_POST['dup_mode'] ?? 'skip');
-            if (!in_array($dupMode, ['skip','overwrite','fill_empty'], true)) $dupMode = 'skip';
-
-            $wiz['delimiter'] = $delimiter;
-            $wiz['has_header'] = $hasHeader;
-            $wiz['mapping'] = $mapping;
-            $wiz['dup_mode'] = $dupMode;
-
-            header("Location: import_csv.php?step=3");
-            exit;
-        }
-    }
 
     $preview = csv_read_preview($wiz['tmp_path'], $delimiter, 15);
 
@@ -560,11 +564,6 @@ if ($step === 2) {
 
 /* Step 3 - Dry run / analyze */
 if ($step === 3) {
-    if (empty($wiz['tmp_path']) || !is_file($wiz['tmp_path'])) {
-        header("Location: import_csv.php?step=1");
-        exit;
-    }
-
     $rebuildPlan = empty($wiz['plan_path']) || !is_file($wiz['plan_path']) || ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'analyze');
 
     if ($rebuildPlan) {
@@ -667,11 +666,6 @@ if ($step === 3) {
 
 /* Step 4 - Apply import from saved plan */
 if ($step === 4) {
-    if ($_SERVER['REQUEST_METHOD'] !== 'POST' || ($_POST['action'] ?? '') !== 'apply') {
-        header("Location: import_csv.php?step=3");
-        exit;
-    }
-
     if (demo_mode_enabled()) {
         $err = "Import apply is disabled in demo mode.";
         $step = 3; // Fall back to dry-run results display
