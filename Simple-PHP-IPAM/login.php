@@ -115,9 +115,10 @@ page_header('Login', array_filter([
 ]));
 $appName = trim((string)($config['app_name'] ?? '')) ?: 'Simple PHP IPAM';
 ?>
+<div class="login-wrap">
 <div class="login-logo">
-  <img src="assets/logo.svg" alt="<?= e($appName) ?>" style="height:72px;width:auto;display:block;margin:0 auto 8px;">
-  <p class="muted text-center" style="margin:0 0 16px;"><?= e($appName) ?></p>
+  <img src="assets/logo.svg" alt="<?= e($appName) ?>">
+  <p class="muted"><?= e($appName) ?></p>
 </div>
 <h1>Login</h1>
 <?php if ($timedOut && !$error): ?>
@@ -168,4 +169,5 @@ if ($idleSeconds > 0):
 ?>
   <p class="muted text-center" style="font-size:.82rem;margin-top:12px;">Sessions expire after <?= e($idleLabel) ?> of inactivity.</p>
 <?php endif; ?>
+</div><!-- /.login-wrap -->
 <?php page_footer();
