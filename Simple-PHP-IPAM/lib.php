@@ -51,6 +51,27 @@ function ipam_db_init(PDO $db): void
     ensure_migrations_table($db);
     apply_migrations($db);
 
+    // Self-healing: audit_log is created by schema.sql, not a migration, so it can
+    // go missing after a botched demo reset. Recreate it (and its triggers) if absent.
+    $auditExists = $db->query("SELECT name FROM sqlite_master WHERE type='table' AND name='audit_log'")->fetch();
+    if (!$auditExists) {
+        $db->exec("
+            CREATE TABLE IF NOT EXISTS audit_log (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              created_at TEXT NOT NULL DEFAULT (datetime('now')),
+              user_id INTEGER, username TEXT, action TEXT NOT NULL,
+              entity_type TEXT NOT NULL, entity_id INTEGER,
+              ip TEXT, user_agent TEXT, details TEXT
+            )
+        ");
+        $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_update
+            BEFORE UPDATE ON audit_log
+            BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
+        $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
+            BEFORE DELETE ON audit_log
+            BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
+    }
+
     $st = $db->prepare("SELECT COUNT(*) AS c FROM users");
     $st->execute();
     $count = (int)$st->fetch()['c'];
