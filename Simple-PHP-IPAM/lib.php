@@ -1954,13 +1954,13 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/svg+xml' href='assets/logo.svg'>";
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=1.11b'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=1.11c'>";
     // Prime localStorage with server-side theme before deferred app.js runs (prevents flash)
     $userTheme = $_SESSION['user_theme'] ?? 'auto';
     if (in_array($userTheme, ['light', 'dark'], true)) {
         echo "<script>localStorage.setItem('ipam_theme'," . json_encode($userTheme) . ");</script>";
     }
-    echo "<script defer src='assets/app.js?v=1.11b'></script>";
+    echo "<script defer src='assets/app.js?v=1.11c'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";

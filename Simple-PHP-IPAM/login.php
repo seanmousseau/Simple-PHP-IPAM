@@ -116,49 +116,45 @@ page_header('Login', array_filter([
 $appName = trim((string)($config['app_name'] ?? '')) ?: 'Simple PHP IPAM';
 ?>
 <div class="login-wrap">
-<div class="login-logo">
-  <img src="assets/logo.svg" alt="<?= e($appName) ?>">
-  <p class="muted"><?= e($appName) ?></p>
-</div>
-<h1>Login</h1>
-<?php if ($timedOut && !$error): ?>
-  <p class="warning">Your session expired due to inactivity. Please log in again.</p>
-<?php endif; ?>
-<?php if ($error): ?><p class="danger"><?= e($error) ?></p><?php endif; ?>
-
-<?php if ($oidcActive): ?>
-<p>
-  <a href="oidc_login.php" class="btn-sso">
-    Sign in with <?= e((string)($config['oidc']['display_name'] ?? 'SSO')) ?>
-  </a>
-</p>
-<?php endif; ?>
-
-<?php if (!$disableLocal || $localForceShown): ?>
-<?php if ($oidcActive): ?>
-  <p class="muted mt-12">— or sign in with a local account —</p>
-<?php endif; ?>
-<form method="post" action="login.php" autocomplete="off">
-  <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
-  <div class="row">
-    <label>Username<br><input name="username" required></label>
-    <label>Password<br><input type="password" name="password" required></label>
+<div class="login-card">
+  <div class="login-logo">
+    <img src="assets/logo.svg" alt="<?= e($appName) ?>">
+    <p class="muted"><?= e($appName) ?></p>
   </div>
-  <?php if ($lpWidgetHtml !== ''): ?>
-    <div class="mt-10"><?= $lpWidgetHtml ?></div>
+  <h1>Login</h1>
+  <?php if ($timedOut && !$error): ?>
+    <p class="warning">Your session expired due to inactivity. Please log in again.</p>
   <?php endif; ?>
-  <p><button type="submit">Login</button></p>
-  <?php if ($firstRun): ?>
-    <p class="muted">First run: use bootstrap admin from <code>config.php</code>, then change it.</p>
+  <?php if ($error): ?><p class="danger"><?= e($error) ?></p><?php endif; ?>
+
+  <?php if ($oidcActive): ?>
+  <p><a href="oidc_login.php" class="btn-sso">Sign in with <?= e((string)($config['oidc']['display_name'] ?? 'SSO')) ?></a></p>
   <?php endif; ?>
-</form>
-<?php elseif ($oidcActive): ?>
-  <p class="muted mt-16">Local password login is disabled. Use SSO above.
-    <?php if (!$hideEmergencyLink && !$disableEmergencyBypass): ?>
-      <a href="login.php?local=1" class="muted font-sm">(emergency local access)</a>
+
+  <?php if (!$disableLocal || $localForceShown): ?>
+  <?php if ($oidcActive): ?><p class="muted mt-12">— or sign in with a local account —</p><?php endif; ?>
+  <form method="post" action="login.php" autocomplete="off">
+    <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+    <div class="row">
+      <label>Username<br><input name="username" required></label>
+      <label>Password<br><input type="password" name="password" required></label>
+    </div>
+    <?php if ($lpWidgetHtml !== ''): ?>
+      <div class="mt-10"><?= $lpWidgetHtml ?></div>
     <?php endif; ?>
-  </p>
-<?php endif; ?>
+    <p><button type="submit">Login</button></p>
+    <?php if ($firstRun): ?>
+      <p class="muted" style="margin-top:10px;">First run: use bootstrap admin from <code>config.php</code>, then change it.</p>
+    <?php endif; ?>
+  </form>
+  <?php elseif ($oidcActive): ?>
+    <p class="muted mt-16">Local password login is disabled. Use SSO above.
+      <?php if (!$hideEmergencyLink && !$disableEmergencyBypass): ?>
+        <a href="login.php?local=1" class="muted font-sm">(emergency local access)</a>
+      <?php endif; ?>
+    </p>
+  <?php endif; ?>
+</div><!-- /.login-card -->
 <?php
 $idleSeconds = (int)($config['session_idle_seconds'] ?? 1800);
 if ($idleSeconds > 0):
@@ -167,7 +163,7 @@ if ($idleSeconds > 0):
         ? round($idleMins / 60, 1) . ' hr'
         : $idleMins . ' min';
 ?>
-  <p class="muted text-center" style="font-size:.82rem;margin-top:12px;">Sessions expire after <?= e($idleLabel) ?> of inactivity.</p>
+  <p class="muted text-center" style="font-size:.82rem;margin-top:14px;">Sessions expire after <?= e($idleLabel) ?> of inactivity.</p>
 <?php endif; ?>
 </div><!-- /.login-wrap -->
 <?php page_footer();
