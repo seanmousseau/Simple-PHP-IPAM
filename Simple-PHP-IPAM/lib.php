@@ -1267,7 +1267,7 @@ function csv_output_handle()
 function csv_out(array $row): void
 {
     $fh = csv_output_handle();
-    fputcsv($fh, $row);
+    fputcsv($fh, $row, ',', '"', '');
 }
 
 /* ---------------- Demo mode seed/reset ---------------- */
