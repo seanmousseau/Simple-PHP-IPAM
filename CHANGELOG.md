@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## 1.8 — Security & Compatibility
+
+### Security fixes
+- **Fixed #104:** `csrf_require()` returned a plain-text `Bad CSRF token` response with no navigation on token mismatch. Now returns HTTP 403 and redirects to `login.php`, allowing users with stale tabs to recover gracefully.
+- **Fixed #106:** The HTTP→HTTPS redirect in `init.php` used `$_SERVER['HTTP_HOST']` directly, allowing a spoofed `Host:` header to redirect to an attacker-controlled domain. A new optional `base_url` config key can be set to the canonical application URL; when set, it is used for the redirect instead of `HTTP_HOST`. Falls back to `HTTP_HOST` when unset (backwards-compatible).
+
+### Bug fixes
+- **Fixed #98:** `IPAM_VERSION` was defined with a bare `const` in `version.php` and `require`d (not `require_once`) inside `page_footer()`. Any request path that triggered both includes caused a PHP Warning (fatal in PHP 9). `version.php` now uses a `defined()` guard with `define()`, and `page_footer()` uses `require_once`.
+- **Fixed #103:** `dhcp_pool.php` was missing the demo mode guard. The `reserve_pool` and `clear_pool` actions could be executed by the `demo` account, mutating pool data until the nightly reset. Both actions are now blocked when demo mode is enabled.
+
+### Compatibility fixes
+- **Fixed #99:** `data/.htaccess` used `<FilesMatch>` and `<IfModule mod_authz_core.c>` blocks, which OpenLiteSpeed ignores entirely, leaving the `data/` directory unprotected on OLS installs. Replaced with `mod_rewrite` `RewriteRule` directives that OLS honours. Apache 2.4+ and 2.2 fallback blocks retained for servers without `mod_rewrite`.
+- **Fixed #100:** Root `.htaccess` used `<FilesMatch>` with `Require all denied` for file blocking, which OLS ignores. Replaced with `RewriteRule` directives for all sensitive file and extension blocking. Security headers and HTTPS redirect are unchanged.
+- **Fixed #101:** `upgrade.sh` only copied `data/.htaccess` if it did not already exist (`! -f` guard), so security improvements to that file were never applied to existing installs. The guard has been removed; `data/.htaccess` is now always overwritten from the new bundle on upgrade.
+
+---
+
 ## 1.7 — Sorting, .htaccess Hardening, Server Config Docs & Demo Mode
 
 ### Bug fixes

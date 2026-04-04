@@ -1,4 +1,6 @@
 <?php
 declare(strict_types=1);
 
-const IPAM_VERSION = '1.7';
+if (!defined('IPAM_VERSION')) {
+    define('IPAM_VERSION', '1.8');
+}

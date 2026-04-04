@@ -1,31 +1,31 @@
+# Options -Indexes works for Apache.
+# Note: OpenLiteSpeed ignores this. For OLS, disable "Auto Index" in the WebAdmin Console.
 Options -Indexes
 
-<FilesMatch "^(config\.php|init\.php|lib\.php|schema\.sql|migrations\.php|migrate\.php|version\.php|tmp_cleanup\.php)$">
-  Require all denied
-</FilesMatch>
+<IfModule mod_rewrite.c>
+RewriteEngine On
 
-# Block download of upgrade/build artifacts if they ever land in webroot
-<FilesMatch "(\.sh|SHA256SUMS|\.tar\.gz|\.tgz|\.zip)$">
-  Require all denied
-</FilesMatch>
+# Force HTTPS redirect
+# Skip if already HTTPS, or if a trusted proxy has already terminated TLS
+RewriteCond %{HTTPS} !=on
+RewriteCond %{HTTP:X-Forwarded-Proto} !=https
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
 
-<FilesMatch "\.(sqlite|db)$">
-  Require all denied
-</FilesMatch>
+# Block direct access to specific PHP and SQL files
+RewriteRule ^(config\.php|init\.php|lib\.php|schema\.sql|migrations\.php|migrate\.php|version\.php|tmp_cleanup\.php)$ - [F,L,NC]
 
-<IfModule mod_headers.c>
-  Header always set X-Frame-Options "DENY"
-  Header always set X-Content-Type-Options "nosniff"
-  Header always set Referrer-Policy "strict-origin-when-cross-origin"
-  Header always set Permissions-Policy "geolocation=(), microphone=(), camera=()"
-  Header always set Content-Security-Policy "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'"
-
-  # Only enable HSTS if you're sure you will keep HTTPS
-  Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains" env=HTTPS
+# Block download of upgrade/build artifacts, scripts, and databases
+RewriteRule \.(sh|tar\.gz|tgz|zip|sqlite|db|txt|tar|sql)$ - [F,L,NC]
+RewriteRule (^|/)SHA256SUMS$ - [F,L,NC]
 </IfModule>
 
-<IfModule mod_rewrite.c>
-  RewriteEngine On
-  RewriteCond %{HTTPS} !=on
-  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+<IfModule mod_headers.c>
+Header always set X-Frame-Options "DENY"
+Header always set X-Content-Type-Options "nosniff"
+Header always set Referrer-Policy "strict-origin-when-cross-origin"
+Header always set Permissions-Policy "geolocation=(), microphone=(), camera=()"
+Header always set Content-Security-Policy "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; object-src 'none'"
+
+# Only enable HSTS if you're sure you will keep HTTPS
+Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains" env=HTTPS
 </IfModule>

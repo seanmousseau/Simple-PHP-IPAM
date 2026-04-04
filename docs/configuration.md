@@ -124,6 +124,20 @@ Name of the session cookie. Change this if you run multiple PHP applications on 
 
 ---
 
+### `base_url`
+
+**Default:** `null`
+
+Set to your application's canonical HTTPS URL (without trailing slash) to harden the HTTP→HTTPS redirect against `Host:` header spoofing:
+
+```php
+'base_url' => 'https://ipam.example.com',
+```
+
+When set, the redirect in `init.php` uses this value instead of `$_SERVER['HTTP_HOST']`. If `null` (default), the redirect falls back to `HTTP_HOST`, which is safe when behind a trusted reverse proxy that enforces the correct hostname.
+
+---
+
 ### `proxy_trust`
 
 **Default:** `false`

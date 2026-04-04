@@ -16,9 +16,14 @@ function request_is_https(array $server, bool $trustProxyHeaders): bool
 
 $isHttps = request_is_https($_SERVER, (bool)($config['proxy_trust'] ?? false));
 if (!$isHttps) {
-    $host = $_SERVER['HTTP_HOST'] ?? '';
+    $base = rtrim((string)($config['base_url'] ?? ''), '/');
     $uri  = $_SERVER['REQUEST_URI'] ?? '/';
-    header('Location: https://' . $host . $uri, true, 301);
+    if ($base !== '') {
+        header('Location: ' . $base . $uri, true, 301);
+    } else {
+        $host = $_SERVER['HTTP_HOST'] ?? '';
+        header('Location: https://' . $host . $uri, true, 301);
+    }
     exit;
 }
 

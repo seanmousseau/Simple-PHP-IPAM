@@ -79,8 +79,9 @@ function csrf_require(): void
     $sent = $_POST['csrf'] ?? '';
     $real = $_SESSION['csrf'] ?? '';
     if (!is_string($sent) || !hash_equals($real, $sent)) {
-        http_response_code(400);
-        exit('Bad CSRF token');
+        http_response_code(403);
+        header('Location: login.php');
+        exit;
     }
 }
 
@@ -357,6 +358,11 @@ function ipam_config_defaults(): array
             'comment' => '',
         ],
         'session_name' => ['default' => null, 'comment' => ''],
+        'base_url'     => [
+            'default' => null,
+            'comment' => "Canonical HTTPS base URL (e.g. 'https://ipam.example.com'). "
+                       . "Used for the HTTP→HTTPS redirect. If null, falls back to HTTP_HOST.",
+        ],
         'proxy_trust'  => ['default' => null, 'comment' => ''],
         'bootstrap_admin' => ['default' => null, 'comment' => ''],
         'session_idle_seconds' => ['default' => null, 'comment' => ''],
@@ -1048,12 +1054,18 @@ function csv_out(array $row): void
 
 function demo_reset_db(PDO $db): void
 {
-    $tables = ['address_history', 'audit_log', 'login_attempts', 'api_keys',
+    // audit_log has append-only triggers that block DELETE, so handle it separately
+    // via a rename+drop approach (same technique as prune_audit_log).
+    $db->exec("ALTER TABLE audit_log RENAME TO audit_log_old");
+    $db->exec("DROP TABLE audit_log_old");
+
+    $tables = ['address_history', 'login_attempts', 'api_keys',
                'addresses', 'subnets', 'sites', 'users', 'schema_migrations'];
     foreach ($tables as $t) {
         $db->exec("DELETE FROM $t");
         $db->exec("DELETE FROM sqlite_sequence WHERE name='$t'");
     }
+    $db->exec("DELETE FROM sqlite_sequence WHERE name='audit_log'");
     apply_migrations($db);
     demo_seed_data($db);
 }
@@ -1778,7 +1790,7 @@ function page_header(string $title): void
 function page_footer(): void
 {
     global $config;
-    require __DIR__ . '/version.php';
+    require_once __DIR__ . '/version.php';
 
     echo "<hr><div class='muted' style='display:flex;align-items:center;gap:10px;flex-wrap:wrap'>";
     echo "<a href='https://github.com/seanmousseau/Simple-PHP-IPAM' target='_blank' rel='noopener' "
