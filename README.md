@@ -50,6 +50,14 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 
 ---
 
+## Demo Site
+
+- https://dev.seanmousseau.com/ipam-demo/
+- Username: demo
+- Password: demo
+
+---
+
 ## Requirements
 
 | Requirement | Details |
