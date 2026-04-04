@@ -490,7 +490,7 @@ if ($step === 2) {
       <h3>Preview</h3>
       <?php render_preview_table($preview); ?>
 
-      <form method="post" action="import_csv.php?step=2" style="margin-top:16px">
+      <form method="post" action="import_csv.php?step=2" class="mt-16">
         <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
         <input type="hidden" name="action" value="set_mapping">
 
@@ -520,7 +520,7 @@ if ($step === 2) {
           </label>
         </div>
 
-        <h3 style="margin-top:18px">Map columns</h3>
+        <h3 class="mt-18">Map columns</h3>
         <p class="muted">Map CSV columns to fields. IP is required. Others can be ignored.</p>
 
         <?php
@@ -549,7 +549,7 @@ if ($step === 2) {
         echo "</tbody></table>";
         ?>
 
-        <p style="margin-top:12px"><button type="submit">Continue to Dry Run</button></p>
+        <p class="mt-12"><button type="submit">Continue to Dry Run</button></p>
       </form>
     </div>
 
@@ -604,14 +604,14 @@ if ($step === 3) {
         <div class="metric"><div class="label">Subnets to create</div><div class="value"><?= e((string)$summary['needs_subnet_create']) ?></div></div>
       </div>
 
-      <div class="page-actions" style="margin-top:16px">
-        <form method="post" action="import_csv.php?step=3" style="display:inline">
+      <div class="page-actions mt-16">
+        <form method="post" action="import_csv.php?step=3" class="d-inline">
           <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
           <input type="hidden" name="action" value="analyze">
           <button type="submit" class="button-secondary">Re-run Dry Run</button>
         </form>
 
-        <form method="post" action="import_csv.php?step=4" style="display:inline" data-confirm="Apply this import plan?">
+        <form method="post" action="import_csv.php?step=4" class="d-inline" data-confirm="Apply this import plan?">
           <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
           <input type="hidden" name="action" value="apply">
           <button type="submit">Apply Import</button>
@@ -620,7 +620,7 @@ if ($step === 3) {
         <a class="action-pill" href="export_import_report.php?mode=plan">⬇ Export Dry Run Report</a>
       </div>
 
-      <h3 style="margin-top:18px">Row Report</h3>
+      <h3 class="mt-18">Row Report</h3>
       <?php if (!$rows): ?>
         <div class="empty-state">No rows analyzed.</div>
       <?php else: ?>
@@ -929,7 +929,7 @@ if ($step === 4) {
         </div>
       <?php endif; ?>
 
-      <div class="page-actions" style="margin-top:16px">
+      <div class="page-actions mt-16">
         <a class="action-pill" href="import_csv.php">⬆ Start New Import</a>
         <?php if (!empty($wiz['result_path']) && is_file($wiz['result_path'])): ?>
           <a class="action-pill" href="export_import_report.php?mode=result">⬇ Export Result Report</a>
@@ -937,7 +937,7 @@ if ($step === 4) {
       </div>
 
       <?php if ($resultRows): ?>
-        <h3 style="margin-top:18px">Row Results</h3>
+        <h3 class="mt-18">Row Results</h3>
         <table>
           <thead>
             <tr>

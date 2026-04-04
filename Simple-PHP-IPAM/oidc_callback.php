@@ -93,6 +93,8 @@ $sub              = (string)($payload['sub']                ?? '');
 $claimEmail       = substr(trim((string)($payload['email']           ?? '')), 0, 255);
 $claimName        = substr(trim((string)($payload['name']            ?? '')), 0, 255);
 $claimPrefUsername = substr(trim((string)($payload['preferred_username'] ?? '')), 0, 64);
+// Sanitise: strip characters not allowed in local usernames (#111)
+$claimPrefUsername = preg_replace('/[^a-zA-Z0-9._@\-]/', '', $claimPrefUsername);
 
 if ($sub === '') oidc_fail($db, 'id_token missing sub claim');
 
@@ -119,8 +121,9 @@ if (!$user && $autoLink) {
         $existing = $st2->fetch();
     }
     if (!$existing && $claimEmail !== '') {
-        $st2 = $db->prepare("SELECT id, username, role, is_active FROM users WHERE (username = :u OR email = :e) AND oidc_sub IS NULL");
-        $st2->execute([':u' => $claimEmail, ':e' => $claimEmail]);
+        // Email-only match — do NOT match username here to prevent cross-account linking (#107)
+        $st2 = $db->prepare("SELECT id, username, role, is_active FROM users WHERE email = :e AND oidc_sub IS NULL");
+        $st2->execute([':e' => $claimEmail]);
         $existing = $st2->fetch();
     }
 
@@ -136,8 +139,11 @@ if (!$user && $autoLink) {
         if (!in_array($role, ['admin', 'netops', 'readonly'], true)) $role = 'readonly';
 
         // Derive a username: prefer preferred_username, fall back to email local-part, then sub
+        // Sanitise each candidate the same way as preferred_username (#111)
+        $emailLocalPart = $claimEmail !== '' ? preg_replace('/[^a-zA-Z0-9._@\-]/', '', explode('@', $claimEmail)[0]) : '';
+        $subSanitised   = preg_replace('/[^a-zA-Z0-9._@\-]/', '', substr($sub, 0, 64));
         $newUsername = $claimPrefUsername !== '' ? $claimPrefUsername
-            : ($claimEmail !== '' ? explode('@', $claimEmail)[0] : $sub);
+            : ($emailLocalPart !== '' ? $emailLocalPart : ($subSanitised !== '' ? $subSanitised : 'oidcuser'));
 
         // Set an unusable password hash so the account cannot be used with local auth
         $unusableHash = password_hash(bin2hex(random_bytes(32)), PASSWORD_DEFAULT);

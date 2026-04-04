@@ -107,22 +107,22 @@ page_header('Audit Log');
   </div>
 </div>
 
-<div class="page-actions" style="align-items:center;gap:12px;flex-wrap:wrap">
+<div class="page-actions align-center gap-12 flex-wrap">
   <a class="action-pill" href="export_audit.php">⬇ Export CSV</a>
-  <form method="get" action="audit.php" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0">
-    <label style="margin:0">Category:
-      <select name="prefix" data-auto-submit style="margin-left:4px">
+  <form method="get" action="audit.php" class="row gap-8 m-0 align-center">
+    <label class="m-0">Category:
+      <select name="prefix" data-auto-submit class="ml-4">
         <option value=""<?= $filterPrefix === '' ? ' selected' : '' ?>>All</option>
         <?php foreach (AUDIT_PREFIXES as $pfx): ?>
           <option value="<?= e($pfx) ?>"<?= $filterPrefix === $pfx ? ' selected' : '' ?>><?= e($pfx) ?></option>
         <?php endforeach; ?>
       </select>
     </label>
-    <label style="margin:0">From:
-      <input type="date" name="from" value="<?= e($filterFrom) ?>" style="margin-left:4px">
+    <label class="m-0">From:
+      <input type="date" name="from" value="<?= e($filterFrom) ?>" class="ml-4">
     </label>
-    <label style="margin:0">To:
-      <input type="date" name="to" value="<?= e($filterTo) ?>" style="margin-left:4px">
+    <label class="m-0">To:
+      <input type="date" name="to" value="<?= e($filterTo) ?>" class="ml-4">
     </label>
     <button type="submit">Apply</button>
     <input type="hidden" name="page_size" value="<?= $limit ?>">
@@ -132,7 +132,7 @@ page_header('Audit Log');
   </form>
 </div>
 
-<div class="card" style="margin-top:16px">
+<div class="card mt-16">
   <?php if (!$rows): ?>
     <div class="empty-state">No audit entries<?= $hasFilter ? ' matching the current filter' : '' ?>.</div>
   <?php else: ?>
@@ -169,12 +169,12 @@ page_header('Audit Log');
       </tbody>
     </table>
 
-    <p style="margin-top:12px">
+    <p class="mt-12">
       <?php if ($page > 1): ?>
         <a href="<?= e(audit_qs($page - 1, $limit, $filterPrefix, $filterFrom, $filterTo, $auditSort['col'], $auditSort['dir'])) ?>">&laquo; Prev</a>
       <?php endif; ?>
       <?php if ($page < $pages): ?>
-        <a href="<?= e(audit_qs($page + 1, $limit, $filterPrefix, $filterFrom, $filterTo, $auditSort['col'], $auditSort['dir'])) ?>" style="margin-left:12px">Next &raquo;</a>
+        <a href="<?= e(audit_qs($page + 1, $limit, $filterPrefix, $filterFrom, $filterTo, $auditSort['col'], $auditSort['dir'])) ?>" class="ml-12">Next &raquo;</a>
       <?php endif; ?>
     </p>
   <?php endif; ?>

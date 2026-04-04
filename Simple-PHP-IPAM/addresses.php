@@ -235,7 +235,7 @@ page_header('Addresses');
   <?php endif; ?>
 </div>
 
-<div class="card" style="margin-top:16px">
+<div class="card mt-16">
   <form method="get" action="addresses.php" class="row">
     <label>Subnet<br>
       <select name="subnet_id">
@@ -264,7 +264,7 @@ page_header('Addresses');
 <?php if ($msg): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
 
 <?php if ($selectedSubnetId > 0): ?>
-  <div class="card" style="margin-top:16px">
+  <div class="card mt-16">
     <div class="toolbar">
       <div>
         <h2>Subnet: <?= e((string)($selectedSubnet['cidr'] ?? '')) ?></h2>
@@ -274,7 +274,7 @@ page_header('Addresses');
   </div>
 <?php endif; ?>
 
-<div class="card" style="margin-top:16px">
+<div class="card mt-16">
   <h2>Add address</h2>
   <form method="post" action="addresses.php">
     <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
@@ -294,7 +294,7 @@ page_header('Addresses');
       </label>
     </div>
     <div class="row">
-      <label style="flex:1">Note<br><input name="note" maxlength="1000" style="width:100%"></label>
+      <label class="flex-1">Note<br><input name="note" maxlength="1000" class="w-full"></label>
     </div>
 
     <p>
@@ -308,7 +308,7 @@ page_header('Addresses');
   </form>
 </div>
 
-<div class="card" style="margin-top:16px">
+<div class="card mt-16">
   <h2>List</h2>
   <?php if ($selectedSubnetId <= 0): ?>
     <div class="empty-state">No subnet selected.</div>
@@ -343,10 +343,10 @@ page_header('Addresses');
               <a href="address_history.php?address_id=<?= (int)$a['id'] ?>">History</a>
             </div>
 
-            <details style="margin-top:6px">
+            <details class="mt-6">
               <summary>Edit/Delete</summary>
 
-              <form method="post" action="addresses.php" style="margin-top:8px">
+              <form method="post" action="addresses.php" class="mt-8">
                 <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action" value="update">
                 <input type="hidden" name="subnet_id" value="<?= (int)$selectedSubnetId ?>">
@@ -365,13 +365,13 @@ page_header('Addresses');
                 </div>
 
                 <div class="row">
-                  <label style="flex:1">Note<br><input name="note" maxlength="1000" style="width:100%" value="<?= e($a['note']) ?>"></label>
+                  <label class="flex-1">Note<br><input name="note" maxlength="1000" class="w-full" value="<?= e($a['note']) ?>"></label>
                 </div>
 
                 <button type="submit" <?= (current_user()['role']==='readonly')?'disabled':'' ?>>Save</button>
               </form>
 
-              <form method="post" action="addresses.php" data-confirm="Delete this address?" style="margin-top:8px">
+              <form method="post" action="addresses.php" data-confirm="Delete this address?" class="mt-8">
                 <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action" value="delete">
                 <input type="hidden" name="subnet_id" value="<?= (int)$selectedSubnetId ?>">
@@ -390,12 +390,12 @@ page_header('Addresses');
                  'sort' => $addrSort['col'], 'dir' => $addrSort['dir']];
       $base = 'addresses.php?' . http_build_query($qsBase);
     ?>
-    <p style="margin-top:12px">
+    <p class="mt-12">
       <?php if ($p && $p['page'] > 1): ?>
         <a href="<?= e($base . '&page=' . ($p['page']-1)) ?>">&laquo; Prev</a>
       <?php endif; ?>
       <?php if ($p && $p['page'] < $p['pages']): ?>
-        <a style="margin-left:12px" href="<?= e($base . '&page=' . ($p['page']+1)) ?>">Next &raquo;</a>
+        <a class="ml-12" href="<?= e($base . '&page=' . ($p['page']+1)) ?>">Next &raquo;</a>
       <?php endif; ?>
     </p>
   <?php endif; ?>

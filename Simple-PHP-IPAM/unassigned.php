@@ -173,7 +173,7 @@ page_header('Unassigned IPv4');
   <?php endif; ?>
 </div>
 
-<div class="card" style="margin-top:16px">
+<div class="card mt-16">
   <form method="get" action="unassigned.php" class="row">
     <label>Subnet<br>
       <select name="subnet_id">
@@ -203,7 +203,7 @@ page_header('Unassigned IPv4');
 <?php if ($msg): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
 
 <?php if ($sub): ?>
-  <div class="card" style="margin-top:16px">
+  <div class="card mt-16">
     <div class="toolbar">
       <div>
         <h2>Subnet: <?= e($sub['cidr']) ?></h2>
@@ -226,14 +226,14 @@ page_header('Unassigned IPv4');
           <tr>
             <td><b><?= e($ip) ?></b></td>
             <td>
-              <form method="post" action="unassigned.php?<?= e(build_query_unassigned()) ?>" class="row" style="gap:6px">
+              <form method="post" action="unassigned.php?<?= e(build_query_unassigned()) ?>" class="row gap-6">
                 <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action" value="add">
                 <input type="hidden" name="subnet_id" value="<?= (int)$subnetId ?>">
                 <input type="hidden" name="ip" value="<?= e($ip) ?>">
 
-                <label>Hostname<br><input name="hostname" style="width:160px"></label>
-                <label>Owner<br><input name="owner" style="width:140px"></label>
+                <label>Hostname<br><input name="hostname" class="w-160"></label>
+                <label>Owner<br><input name="owner" class="w-140"></label>
                 <label>Status<br>
                   <select name="status">
                     <option value="used" selected>used</option>
@@ -241,7 +241,7 @@ page_header('Unassigned IPv4');
                     <option value="free">free</option>
                   </select>
                 </label>
-                <label>Note<br><input name="note" style="width:220px"></label>
+                <label>Note<br><input name="note" class="w-220"></label>
                 <button type="submit">Add</button>
               </form>
             </td>
@@ -250,18 +250,18 @@ page_header('Unassigned IPv4');
         </tbody>
       </table>
 
-      <p style="margin-top:12px">
+      <p class="mt-12">
         <?php if ($p && $p['page'] > 1): ?>
           <a href="unassigned.php?<?= e(build_query_unassigned(['page' => $p['page'] - 1])) ?>">&laquo; Prev</a>
         <?php endif; ?>
         <?php if ($p && $p['page'] < $p['pages']): ?>
-          <a style="margin-left:12px" href="unassigned.php?<?= e(build_query_unassigned(['page' => $p['page'] + 1])) ?>">Next &raquo;</a>
+          <a class="ml-12" href="unassigned.php?<?= e(build_query_unassigned(['page' => $p['page'] + 1])) ?>">Next &raquo;</a>
         <?php endif; ?>
       </p>
     <?php endif; ?>
   </div>
 <?php else: ?>
-  <div class="card" style="margin-top:16px">
+  <div class="card mt-16">
     <div class="empty-state">Select an IPv4 subnet to list unassigned IPs.</div>
   </div>
 <?php endif; ?>

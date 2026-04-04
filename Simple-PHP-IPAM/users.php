@@ -194,7 +194,7 @@ page_header('Users');
 ?>
 <h1>Users</h1>
 <?php if ($errors): ?>
-  <ul class="danger" style="margin:0 0 12px;padding-left:1.4em">
+  <ul class="danger list-indent">
     <?php foreach ($errors as $e_msg): ?><li><?= e($e_msg) ?></li><?php endforeach; ?>
   </ul>
 <?php endif; ?>
@@ -210,7 +210,7 @@ page_header('Users');
     <label>Email<br><input type="email" name="email" placeholder="jane@example.com" maxlength="255" value="<?= e($formData['email']) ?>"></label>
     <label id="pw-field">Password<br><input type="password" name="password" id="create-pw-input"></label>
     <?php if (oidc_enabled($config)): ?>
-    <label id="sub-field" style="display:none">Subject (sub)<br>
+    <label id="sub-field" class="hidden">Subject (sub)<br>
       <input name="oidc_sub" id="create-sub-input" placeholder="IdP sub claim (optional)" value="<?= e($formData['oidc_sub']) ?>">
     </label>
     <?php endif; ?>
@@ -222,7 +222,7 @@ page_header('Users');
       </select>
     </label>
     <?php if (oidc_enabled($config)): ?>
-    <label style="align-self:flex-end;padding-bottom:6px">
+    <label class="flex-self-end pb-6">
       <input type="checkbox" name="sso_only" id="sso-only-toggle" value="1"<?= $formData['sso_only'] ? ' checked' : '' ?>>
       SSO-only account
     </label>
@@ -231,7 +231,7 @@ page_header('Users');
   </div>
 </form>
 
-<h2 style="margin-top:24px">Existing users</h2>
+<h2 class="mt-24">Existing users</h2>
 <table>
   <thead>
     <tr>
@@ -267,18 +267,18 @@ page_header('Users');
       <td class="muted"><?= e($u['created_at']) ?></td>
       <td>
         <details>
-          <summary class="muted" style="cursor:pointer;font-size:.9em">Actions ▾</summary>
-          <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+          <summary class="muted cursor-pointer font-sm">Actions ▾</summary>
+          <div class="flex-col gap-8 mt-8">
 
             <?php if ((int)$u['id'] !== $self['id']): ?>
-            <form method="post" action="users.php" class="row" style="gap:6px">
+            <form method="post" action="users.php" class="row gap-6">
               <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
               <input type="hidden" name="id"     value="<?= (int)$u['id'] ?>">
               <input type="hidden" name="action" value="toggle_active">
               <button type="submit"><?= ((int)$u['is_active'] === 1) ? 'Disable' : 'Enable' ?></button>
             </form>
 
-            <form method="post" action="users.php" class="row" style="gap:6px">
+            <form method="post" action="users.php" class="row gap-6">
               <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
               <input type="hidden" name="action" value="set_role">
               <input type="hidden" name="id"     value="<?= (int)$u['id'] ?>">
@@ -291,7 +291,7 @@ page_header('Users');
             </form>
             <?php endif; ?>
 
-            <form method="post" action="users.php" class="row" style="gap:6px">
+            <form method="post" action="users.php" class="row gap-6">
               <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
               <input type="hidden" name="action" value="update_profile">
               <input type="hidden" name="id"     value="<?= (int)$u['id'] ?>">
@@ -300,7 +300,7 @@ page_header('Users');
               <button type="submit">Save profile</button>
             </form>
 
-            <form method="post" action="users.php" class="row" style="gap:6px">
+            <form method="post" action="users.php" class="row gap-6">
               <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
               <input type="hidden" name="action" value="reset_password">
               <input type="hidden" name="id"     value="<?= (int)$u['id'] ?>">
@@ -310,7 +310,7 @@ page_header('Users');
 
             <?php if ($u['oidc_sub'] !== null): ?>
               <?php if ((int)$u['id'] !== $self['id']): ?>
-              <form method="post" action="users.php" class="row" style="gap:6px"
+              <form method="post" action="users.php" class="row gap-6"
                     data-confirm="Remove SSO link for <?= e((string)$u['username']) ?>?">
                 <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action" value="unlink_oidc">
@@ -318,14 +318,14 @@ page_header('Users');
                 <button type="submit" class="button-secondary">Unlink SSO</button>
               </form>
               <?php else: ?>
-              <span class="muted" style="font-size:.9em">SSO linked (manage in your own profile)</span>
+              <span class="muted font-sm">SSO linked (manage in your own profile)</span>
               <?php endif; ?>
             <?php else: ?>
-              <form method="post" action="users.php" class="row" style="gap:6px">
+              <form method="post" action="users.php" class="row gap-6">
                 <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action" value="link_oidc">
                 <input type="hidden" name="id"     value="<?= (int)$u['id'] ?>">
-                <input name="oidc_sub" placeholder="IdP subject ID (sub claim)" style="min-width:220px">
+                <input name="oidc_sub" placeholder="IdP subject ID (sub claim)" class="mw-220">
                 <button type="submit" class="button-secondary">Link SSO</button>
               </form>
             <?php endif; ?>

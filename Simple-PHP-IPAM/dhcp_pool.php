@@ -203,14 +203,14 @@ page_header('DHCP Pools');
 <?php if ($err): ?><p class="danger"><?= e($err) ?></p><?php endif; ?>
 <?php if ($msg): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
 
-<div class="card" style="margin-top:16px">
+<div class="card mt-16">
   <h2>Reserve a range</h2>
   <form method="post" action="dhcp_pool.php">
     <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
     <input type="hidden" name="action" value="reserve_pool">
-    <div class="row" style="flex-wrap:wrap;gap:10px">
+    <div class="row gap-10">
       <label>Subnet<br>
-        <select name="subnet_id" data-auto-submit style="min-width:200px">
+        <select name="subnet_id" data-auto-submit class="mw-200">
           <option value="0">— select subnet —</option>
           <?php foreach ($subnets as $s): ?>
             <option value="<?= (int)$s['id'] ?>" <?= ((int)$s['id'] === $subnetId) ? 'selected' : '' ?>>
@@ -221,32 +221,32 @@ page_header('DHCP Pools');
         </select>
       </label>
       <?php if ($subnet): ?>
-      <label>Start IP<br><input name="start_ip" placeholder="e.g. <?= e(explode('/', $subnet['cidr'])[0]) ?>" required style="min-width:140px"></label>
-      <label>End IP<br><input name="end_ip" placeholder="e.g. <?= e(explode('/', $subnet['cidr'])[0]) ?>" required style="min-width:140px"></label>
-      <label>Note<br><input name="note" placeholder="DHCP pool" value="DHCP pool" style="min-width:160px"></label>
-      <label style="align-self:flex-end"><br><button type="submit">Reserve</button></label>
+      <label>Start IP<br><input name="start_ip" placeholder="e.g. <?= e(explode('/', $subnet['cidr'])[0]) ?>" required class="mw-140"></label>
+      <label>End IP<br><input name="end_ip" placeholder="e.g. <?= e(explode('/', $subnet['cidr'])[0]) ?>" required class="mw-140"></label>
+      <label>Note<br><input name="note" placeholder="DHCP pool" value="DHCP pool" class="mw-160"></label>
+      <label class="flex-self-end"><br><button type="submit">Reserve</button></label>
       <?php endif; ?>
     </div>
   </form>
 </div>
 
 <?php if ($subnet): ?>
-<div class="card" style="margin-top:16px">
-  <h2>Clear a range <span class="muted" style="font-size:.85em;font-weight:400">(removes <em>reserved</em> records only)</span></h2>
+<div class="card mt-16">
+  <h2>Clear a range <span class="muted font-xs">(removes <em>reserved</em> records only)</span></h2>
   <form method="post" action="dhcp_pool.php" data-confirm="Delete all reserved records in this range?">
     <input type="hidden" name="csrf"      value="<?= e(csrf_token()) ?>">
     <input type="hidden" name="action"    value="clear_pool">
     <input type="hidden" name="subnet_id" value="<?= (int)$subnetId ?>">
-    <div class="row" style="gap:10px">
-      <label>Start IP<br><input name="start_ip" required style="min-width:140px"></label>
-      <label>End IP<br><input name="end_ip"   required style="min-width:140px"></label>
-      <label style="align-self:flex-end"><br><button type="submit" class="button-danger">Clear</button></label>
+    <div class="row gap-10">
+      <label>Start IP<br><input name="start_ip" required class="mw-140"></label>
+      <label>End IP<br><input name="end_ip"   required class="mw-140"></label>
+      <label class="flex-self-end"><br><button type="submit" class="button-danger">Clear</button></label>
     </div>
   </form>
 </div>
 
-<div class="card" style="margin-top:16px">
-  <h2>Reserved addresses in <?= e($subnet['cidr']) ?> <span class="muted" style="font-size:.85em;font-weight:400">(<?= count($reserved) ?>)</span></h2>
+<div class="card mt-16">
+  <h2>Reserved addresses in <?= e($subnet['cidr']) ?> <span class="muted font-xs">(<?= count($reserved) ?>)</span></h2>
   <?php if (empty($reserved)): ?>
     <div class="empty-state">No reserved addresses in this subnet.</div>
   <?php else: ?>
@@ -261,7 +261,7 @@ page_header('DHCP Pools');
       <?php endforeach; ?>
       </tbody>
     </table>
-    <p style="margin-top:8px"><a href="addresses.php?subnet_id=<?= (int)$subnetId ?>">View all addresses →</a></p>
+    <p class="mt-8"><a href="addresses.php?subnet_id=<?= (int)$subnetId ?>">View all addresses →</a></p>
   <?php endif; ?>
 </div>
 <?php endif; ?>

@@ -104,7 +104,7 @@ page_header('Sites');
         <label>Site name<br><input name="name" required></label>
       </div>
       <div class="row">
-        <label style="flex:1">Description<br><input name="description" style="width:100%"></label>
+        <label class="flex-1">Description<br><input name="description" class="w-full"></label>
       </div>
 
       <p><button type="submit">Create Site</button></p>
@@ -126,7 +126,7 @@ page_header('Sites');
   </div>
 </div>
 
-<div class="card" style="margin-top:16px">
+<div class="card mt-16">
   <h2>Existing Sites</h2>
 
   <?php if (!$sites): ?>
@@ -155,7 +155,7 @@ page_header('Sites');
             <details>
               <summary>Edit/Delete</summary>
 
-              <form method="post" action="sites.php" class="row" style="margin-top:8px">
+              <form method="post" action="sites.php" class="row mt-8">
                 <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action" value="update">
                 <input type="hidden" name="id" value="<?= (int)$site['id'] ?>">
@@ -164,7 +164,7 @@ page_header('Sites');
                 <button type="submit">Save</button>
               </form>
 
-              <form method="post" action="sites.php" style="margin-top:8px"
+              <form method="post" action="sites.php" class="mt-8"
                     data-confirm="Delete this site? Subnets will be ungrouped, not deleted.">
                 <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action" value="delete">

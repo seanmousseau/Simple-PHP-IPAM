@@ -108,7 +108,7 @@ page_header('Address History');
   <a class="action-pill" href="search.php?q=<?= urlencode($addr['ip']) ?>">🔎 Search this IP</a>
 </div>
 
-<div class="card" style="margin-top:16px">
+<div class="card mt-16">
   <div class="muted">
     Events: <b><?= e((string)$total) ?></b>
     <?php if ($total > 0): ?>
@@ -117,9 +117,9 @@ page_header('Address History');
   </div>
 
   <?php if (!$rows): ?>
-    <div class="empty-state" style="margin-top:12px">No history entries yet.</div>
+    <div class="empty-state mt-12">No history entries yet.</div>
   <?php else: ?>
-    <table style="margin-top:12px">
+    <table class="mt-12">
       <thead>
         <tr>
           <?php $histQsBase = '?address_id=' . $addressId . '&page_size=' . $pageSize;
@@ -139,19 +139,19 @@ page_header('Address History');
           <td><?= e($r['action']) ?></td>
           <td><?= e((string)($r['username'] ?? '')) ?></td>
           <td class="muted"><?= e((string)($r['client_ip'] ?? '')) ?></td>
-          <td><pre style="white-space:pre-wrap;margin:0"><?= e(j_pretty_hist($r['before_json'])) ?></pre></td>
-          <td><pre style="white-space:pre-wrap;margin:0"><?= e(j_pretty_hist($r['after_json'])) ?></pre></td>
+          <td><pre class="pre-wrap"><?= e(j_pretty_hist($r['before_json'])) ?></pre></td>
+          <td><pre class="pre-wrap"><?= e(j_pretty_hist($r['after_json'])) ?></pre></td>
         </tr>
       <?php endforeach; ?>
       </tbody>
     </table>
 
-    <p style="margin-top:12px">
+    <p class="mt-12">
       <?php if ($p['page'] > 1): ?>
         <a href="address_history.php?<?= e(build_query_hist(['page' => $p['page'] - 1])) ?>">&laquo; Prev</a>
       <?php endif; ?>
       <?php if ($p['page'] < $p['pages']): ?>
-        <a style="margin-left:12px" href="address_history.php?<?= e(build_query_hist(['page' => $p['page'] + 1])) ?>">Next &raquo;</a>
+        <a class="ml-12" href="address_history.php?<?= e(build_query_hist(['page' => $p['page'] + 1])) ?>">Next &raquo;</a>
       <?php endif; ?>
     </p>
   <?php endif; ?>

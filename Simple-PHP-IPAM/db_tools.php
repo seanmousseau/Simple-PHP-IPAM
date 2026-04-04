@@ -195,7 +195,7 @@ page_header('Database Tools');
   <p class='success'><?= e($msg) ?></p>
 <?php endif; ?>
 
-<div class='grid cols-2' style='margin-top:16px'>
+<div class='grid cols-2 mt-16'>
 
   <!-- Export -->
   <div class='card'>
@@ -211,15 +211,15 @@ page_header('Database Tools');
   <!-- Import -->
   <div class='card'>
     <h2>Import Database</h2>
-    <p class='danger' style='font-weight:600'>⚠ This will <strong>replace</strong> all current data. A pre-import backup is created automatically.</p>
+    <p class='danger fw-600'>⚠ This will <strong>replace</strong> all current data. A pre-import backup is created automatically.</p>
     <form method='post' enctype='multipart/form-data'>
       <input type='hidden' name='csrf' value='<?= e(csrf_token()) ?>'>
       <input type='hidden' name='action' value='import'>
-      <div class='row' style='flex-direction:column;gap:10px'>
+      <div class='flex-col gap-10'>
         <label>SQL file (.sql)
           <input type='file' name='sql_file' accept='.sql,text/plain' required>
         </label>
-        <label style='flex-direction:row;align-items:center;gap:8px;cursor:pointer'>
+        <label class='d-flex align-center gap-8 cursor-pointer'>
           <input type='checkbox' name='confirmed' value='1' required>
           I understand this will overwrite all existing data
         </label>
@@ -233,7 +233,7 @@ page_header('Database Tools');
 </div>
 
 <!-- Backups -->
-<div class='card' style='margin-top:16px'>
+<div class='card mt-16'>
   <h2>Automatic Backups</h2>
   <?php if (!$backupEnabled): ?>
     <p class='muted'>Automatic backups are <strong>disabled</strong>. Enable them by setting <code>'backup' => ['enabled' => true, ...]</code> in config.php.</p>
@@ -245,7 +245,7 @@ page_header('Database Tools');
     </p>
   <?php endif; ?>
 
-  <table style='margin-top:10px'>
+  <table class='mt-10'>
     <tr><th>Stat</th><th>Value</th></tr>
     <tr>
       <td>Last backup</td>
@@ -261,7 +261,7 @@ page_header('Database Tools');
     </tr>
   </table>
 
-  <form method='post' style='margin-top:14px'>
+  <form method='post' class='mt-14'>
     <input type='hidden' name='csrf' value='<?= e(csrf_token()) ?>'>
     <input type='hidden' name='action' value='backup_now'>
     <button type='submit' class='button-secondary'>💾 Run Backup Now</button>

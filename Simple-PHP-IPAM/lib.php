@@ -139,7 +139,7 @@ function validate_password_complexity(string $password, array $policy): array
 {
     $errors = [];
     $min = max(1, (int)($policy['min_length'] ?? 12));
-    if (strlen($password) < $min) {
+    if (mb_strlen($password) < $min) {
         $errors[] = "Password must be at least {$min} characters.";
     }
     if (!empty($policy['require_uppercase']) && !preg_match('/[A-Z]/', $password)) {
@@ -435,6 +435,25 @@ function ipam_config_defaults(): array
             ],
             'comment' => "Password complexity and rotation policy. min_length: minimum chars. require_*: enforce character classes. max_password_age_days: 0 = never expires.",
         ],
+        'login_protection' => [
+            'default' => [
+                'method'      => null,
+                'site_key'    => '',
+                'secret_key'  => '',
+                'min_seconds' => 3,
+                'version'     => 2,
+            ],
+            'comment' => "Login form bot protection. method: null | 'honeypot' | 'time_check' | 'turnstile' | 'hcaptcha' | 'recaptcha' | 'friendly_captcha'. site_key/secret_key required for widget methods.",
+        ],
+        'demo_mode' => [
+            'default' => [
+                'enabled'    => false,
+                'gate'       => null,
+                'site_key'   => '',
+                'secret_key' => '',
+            ],
+            'comment' => "Demo mode: only demo/demo can log in; data resets nightly. gate: optional pre-login bot challenge (null | 'honeypot' | 'turnstile' | 'hcaptcha' | 'recaptcha' | 'friendly_captcha').",
+        ],
     ];
 }
 
@@ -498,6 +517,9 @@ function ipam_config_sync(string $configPath, array $loaded): array
             if ($content === null) break;
             if (@file_put_contents($configPath, $content) !== false) {
                 $added[] = $key;
+            } else {
+                $_SESSION['config_unwritable'] = true; // #119: surface in page_header()
+                break;
             }
         } elseif ($key !== 'bootstrap_admin'
                && is_array($meta['default'])
@@ -523,6 +545,9 @@ function ipam_config_sync(string $configPath, array $loaded): array
                 if ($content === null) break;
                 if (@file_put_contents($configPath, $content) !== false) {
                     $added[] = $key . '.' . $subKey;
+                } else {
+                    $_SESSION['config_unwritable'] = true; // #119: surface in page_header()
+                    break 2;
                 }
             }
         }
@@ -581,9 +606,8 @@ function prune_audit_log(PDO $db, int $retentionDays): int
     $db->beginTransaction();
     try {
         // Collect IDs of rows to keep (newer than cutoff)
-        $st = $db->query(
-            "SELECT id FROM audit_log WHERE created_at >= " . $db->quote($cutoff)
-        );
+        $st = $db->prepare("SELECT id FROM audit_log WHERE created_at >= :cutoff");
+        $st->execute([':cutoff' => $cutoff]);
         $keepIds = array_column($st->fetchAll(), 'id');
 
         // Rename, recreate, copy kept rows, drop old
@@ -714,7 +738,13 @@ function backup_dir(array $config): string
     if (!str_starts_with($d, '/')) {
         $d = __DIR__ . '/' . $d;
     }
-    return rtrim($d, '/');
+    // Canonicalize: resolve .. segments without requiring the directory to exist (#113)
+    $parts = [];
+    foreach (explode('/', $d) as $segment) {
+        if ($segment === '..') { array_pop($parts); }
+        elseif ($segment !== '' && $segment !== '.') { $parts[] = $segment; }
+    }
+    return '/' . implode('/', $parts);
 }
 
 function backup_state_path(): string
@@ -980,6 +1010,156 @@ function sort_th(string $col, string $label, string $currentCol, string $current
     $qs       = $baseQs . $sep . 'sort=' . urlencode($col) . '&dir=' . $nextDir;
     $cls      = $isActive ? ' class="sort-active"' : '';
     return "<th{$cls}><a href='" . e($qs) . "'>" . e($label) . $arrow . '</a></th>';
+}
+
+/* ---------------- Login protection (#124) ---------------- */
+
+/**
+ * Verify the login form protection token/field for the current POST request.
+ *
+ * Returns null on pass, '' for a silent honeypot rejection (no error shown),
+ * or a non-empty error string that should be shown to the user.
+ * Fails open on network errors so a broken CAPTCHA provider never blocks login.
+ */
+function login_protection_verify(array $config, array $post): ?string
+{
+    $cfg    = $config['login_protection'] ?? [];
+    $method = (string)($cfg['method'] ?? '');
+    if ($method === '' || $method === 'null') return null;
+
+    if ($method === 'honeypot') {
+        return ($post['website'] ?? '') !== '' ? '' : null;
+    }
+
+    if ($method === 'time_check') {
+        $min = max(1, (int)($cfg['min_seconds'] ?? 3));
+        $ts  = (int)($_SESSION['login_form_at'] ?? 0);
+        unset($_SESSION['login_form_at']);
+        if ($ts === 0 || (time() - $ts) < $min) {
+            return 'Form submission was too fast. Please wait a moment and try again.';
+        }
+        return null;
+    }
+
+    $secretKey = (string)($cfg['secret_key'] ?? '');
+
+    if ($method === 'turnstile') {
+        $token = (string)($post['cf-turnstile-response'] ?? '');
+        if ($token === '') return 'Please complete the security check.';
+        try {
+            $resp = oidc_http_post('https://challenges.cloudflare.com/turnstile/v0/siteverify', [
+                'secret'   => $secretKey,
+                'response' => $token,
+                'remoteip' => client_ip(),
+            ]);
+        } catch (Throwable $e) {
+            error_log('Turnstile verify error: ' . $e->getMessage());
+            return null; // fail open
+        }
+        return !empty($resp['success']) ? null : 'Security check failed. Please try again.';
+    }
+
+    if ($method === 'hcaptcha') {
+        $token = (string)($post['h-captcha-response'] ?? '');
+        if ($token === '') return 'Please complete the security check.';
+        try {
+            $resp = oidc_http_post('https://hcaptcha.com/siteverify', [
+                'secret'   => $secretKey,
+                'response' => $token,
+                'remoteip' => client_ip(),
+            ]);
+        } catch (Throwable $e) {
+            error_log('hCaptcha verify error: ' . $e->getMessage());
+            return null; // fail open
+        }
+        return !empty($resp['success']) ? null : 'Security check failed. Please try again.';
+    }
+
+    if ($method === 'recaptcha') {
+        $token = (string)($post['g-recaptcha-response'] ?? '');
+        if ($token === '') return 'Please complete the security check.';
+        try {
+            $resp = oidc_http_post('https://www.google.com/recaptcha/api/siteverify', [
+                'secret'   => $secretKey,
+                'response' => $token,
+                'remoteip' => client_ip(),
+            ]);
+        } catch (Throwable $e) {
+            error_log('reCAPTCHA verify error: ' . $e->getMessage());
+            return null; // fail open
+        }
+        return !empty($resp['success']) ? null : 'Security check failed. Please try again.';
+    }
+
+    if ($method === 'friendly_captcha') {
+        $token = (string)($post['frc-captcha-solution'] ?? '');
+        if ($token === '' || $token === '.UNSTARTED') return 'Please complete the security check.';
+        if ($token === '.FETCHING') return null; // in-progress, fail open
+        try {
+            $resp = oidc_http_post('https://api.friendlycaptcha.com/api/v1/siteverify', [
+                'secret'  => $secretKey,
+                'solution'=> $token,
+                'sitekey' => (string)($cfg['site_key'] ?? ''),
+            ]);
+        } catch (Throwable $e) {
+            error_log('FriendlyCaptcha verify error: ' . $e->getMessage());
+            return null; // fail open
+        }
+        return !empty($resp['success']) ? null : 'Security check failed. Please try again.';
+    }
+
+    return null; // unknown method — pass through
+}
+
+/**
+ * Return the HTML widget snippet to embed in the login/gate form.
+ * For time_check, also sets the session timestamp on GET requests.
+ */
+function login_protection_widget_html(array $config): string
+{
+    $cfg     = $config['login_protection'] ?? [];
+    $method  = (string)($cfg['method'] ?? '');
+    $siteKey = e((string)($cfg['site_key'] ?? ''));
+
+    switch ($method) {
+        case 'honeypot':
+            return "<input type='text' name='website' autocomplete='off' tabindex='-1' aria-hidden='true' class='hidden'>";
+        case 'time_check':
+            if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+                $_SESSION['login_form_at'] = time();
+            }
+            return ''; // no visible widget
+        case 'turnstile':
+            return "<div class='cf-turnstile' data-sitekey='{$siteKey}'></div>";
+        case 'hcaptcha':
+            return "<div class='h-captcha' data-sitekey='{$siteKey}'></div>";
+        case 'recaptcha':
+            $ver = (int)($cfg['version'] ?? 2);
+            if ($ver === 3) {
+                return "<input type='hidden' name='g-recaptcha-response' id='g-recaptcha-response' data-recaptcha-v3-key='{$siteKey}'>";
+            }
+            return "<div class='g-recaptcha' data-sitekey='{$siteKey}'></div>";
+        case 'friendly_captcha':
+            return "<div class='frc-captcha' data-sitekey='{$siteKey}'></div>";
+        default:
+            return '';
+    }
+}
+
+/**
+ * Return the extra script-src domains needed for the active login protection method,
+ * or empty string if none required.
+ */
+function login_protection_extra_csp(array $config): string
+{
+    $method = (string)(($config['login_protection'] ?? [])['method'] ?? '');
+    return match ($method) {
+        'turnstile'        => 'https://challenges.cloudflare.com',
+        'hcaptcha'         => 'https://hcaptcha.com https://assets.hcaptcha.com',
+        'recaptcha'        => 'https://www.google.com https://www.gstatic.com',
+        'friendly_captcha' => 'https://cdn.jsdelivr.net',
+        default            => '',
+    };
 }
 
 /* ---------------- Demo mode ---------------- */
@@ -1574,10 +1754,14 @@ function netmask_to_prefix(string $mask): ?int
 
 function find_containing_subnet(PDO $db, array $normIp): ?array
 {
+    static $cache = [];
     $ver = (int)$normIp['version'];
-    $st = $db->prepare("SELECT id, network, prefix, ip_version FROM subnets WHERE ip_version = :v ORDER BY prefix DESC");
-    $st->execute([':v' => $ver]);
-    foreach ($st->fetchAll() as $s) {
+    if (!isset($cache[$ver])) {
+        $st = $db->prepare("SELECT id, network, prefix, ip_version FROM subnets WHERE ip_version = :v ORDER BY prefix DESC");
+        $st->execute([':v' => $ver]);
+        $cache[$ver] = $st->fetchAll();
+    }
+    foreach ($cache[$ver] as $s) {
         if (ip_in_cidr($normIp['ip'], (string)$s['network'], (int)$s['prefix'])) return $s;
     }
     return null;
@@ -1681,20 +1865,21 @@ function detect_subnet_overlaps(PDO $db, string $cidr, ?int $excludeId = null): 
 
 /* ---------------- UI helpers ---------------- */
 
-function page_header(string $title): void
+function page_header(string $title, array $opts = []): void
 {
     $u = $_SESSION['username'] ?? '';
     $role = $_SESSION['role'] ?? '';
 
-    header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'");
+    $extraScriptSrc = isset($opts['extra_script_src']) ? ' ' . $opts['extra_script_src'] : '';
+    header("Content-Security-Policy: default-src 'self'; script-src 'self'{$extraScriptSrc}; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'");
     header('X-Frame-Options: DENY');
     header('X-Content-Type-Options: nosniff');
     header('Referrer-Policy: strict-origin-when-cross-origin');
 
     echo "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
     echo "<title>" . e($title) . "</title>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=1.7'>";
-    echo "<script defer src='assets/app.js?v=1.7'></script>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=1.9'>";
+    echo "<script defer src='assets/app.js?v=1.9'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
@@ -1745,7 +1930,7 @@ function page_header(string $title): void
 
     // Demo mode banner (non-dismissible)
     if (demo_mode_enabled()) {
-        echo "<div class='admin-notice admin-notice--info' role='alert' style='text-align:center'>"
+        echo "<div class='admin-notice admin-notice--info text-center' role='alert'>"
            . "🧪 <strong>Demo mode</strong> — Explore freely. Destructive actions are disabled. Data resets nightly at midnight."
            . "</div>";
     }
@@ -1770,6 +1955,15 @@ function page_header(string $title): void
         unset($_SESSION['config_notice']);
     }
 
+    // Config write failure notice — shown when config.php is not writable (#119)
+    if (!empty($_SESSION['config_unwritable']) && ($role ?? '') === 'admin') {
+        echo "<div class='admin-notice admin-notice--danger' role='alert'>"
+           . "&#9888; config.php is not writable — new configuration keys could not be saved. "
+           . "Check file permissions."
+           . "</div>";
+        unset($_SESSION['config_unwritable']);
+    }
+
     // Update-available dismissible banner (admin only, client-side dismiss via localStorage)
     if (($role ?? '') === 'admin') {
         global $config;
@@ -1780,7 +1974,7 @@ function page_header(string $title): void
             echo "<div class='admin-notice admin-notice--update' id='ipam-update-banner' data-version='{$uv}' role='alert'>"
                . "🚀 Simple PHP IPAM v{$uv} is available. "
                . "<a href='{$url}' target='_blank' rel='noopener'>View release</a>"
-               . " &nbsp;<button type='button' class='button-secondary' style='padding:4px 10px;font-size:.85em' "
+               . " &nbsp;<button type='button' class='button-secondary btn-sm' "
                . "data-dismiss-update='{$uv}'>Dismiss</button>"
                . "</div>";
         }
@@ -1792,9 +1986,9 @@ function page_footer(): void
     global $config;
     require_once __DIR__ . '/version.php';
 
-    echo "<hr><div class='muted' style='display:flex;align-items:center;gap:10px;flex-wrap:wrap'>";
+    echo "<hr><div class='muted footer-meta'>";
     echo "<a href='https://github.com/seanmousseau/Simple-PHP-IPAM' target='_blank' rel='noopener' "
-       . "style='color:inherit;text-decoration:none'>Simple PHP IPAM</a> v" . e(IPAM_VERSION);
+       . "class='link-plain'>Simple PHP IPAM</a> v" . e(IPAM_VERSION);
 
     $update = ipam_update_check($config ?? []);
     if ($update) {

@@ -25,13 +25,13 @@ $st->execute();
 $verCounts = [4 => 0, 6 => 0];
 foreach ($st->fetchAll() as $r) $verCounts[(int)$r['ip_version']] = (int)$r['c'];
 
-/* --- Top IPv4 subnets by used-address count (/8–/30 only, avoids huge/tiny edge cases) --- */
+/* --- Top IPv4 subnets by used-address count (/8–/32 only, avoids huge edge cases) --- */
 $st = $db->prepare("
     SELECT s.id, s.cidr, s.prefix, s.description,
            COUNT(a.id) AS used_count
     FROM subnets s
     LEFT JOIN addresses a ON a.subnet_id = s.id AND a.status IN ('used','reserved')
-    WHERE s.ip_version = 4 AND s.prefix BETWEEN 8 AND 30
+    WHERE s.ip_version = 4 AND s.prefix BETWEEN 8 AND 32
     GROUP BY s.id
     ORDER BY used_count DESC
     LIMIT 10
@@ -79,7 +79,7 @@ page_header('Dashboard');
   </div>
 </div>
 
-<div class="grid cols-3" style="margin-top:16px">
+<div class="grid cols-3 mt-16">
   <div class="metric"><div class="label">Subnets</div><div class="value"><?= e((string)$totalSubnets) ?></div></div>
   <div class="metric"><div class="label">Addresses (rows)</div><div class="value"><?= e((string)$totalAddrs) ?></div></div>
   <div class="metric"><div class="label">Used</div><div class="value status-used"><?= e((string)$statusMap['used']) ?></div></div>
@@ -88,7 +88,7 @@ page_header('Dashboard');
   <div class="metric"><div class="label">IPv4 / IPv6 Subnets</div><div class="value"><?= e((string)$verCounts[4]) ?> / <?= e((string)$verCounts[6]) ?></div></div>
 </div>
 
-<div class="grid cols-2" style="margin-top:16px">
+<div class="grid cols-2 mt-16">
 
   <div class="card">
     <h2>Top IPv4 Subnets by Usage</h2>
@@ -104,25 +104,25 @@ page_header('Dashboard');
             $cap  = ipv4_assignable_count((int)$s['prefix']);
             $used = (int)$s['used_count'];
             $pct  = $cap > 0 ? min(100, (int)round($used / $cap * 100)) : 0;
-            $bar  = $pct >= 90 ? 'var(--danger)' : ($pct >= 70 ? 'var(--warn)' : 'var(--success)');
+            $barClass = $pct >= 90 ? 'util-bar-fill--crit' : ($pct >= 70 ? 'util-bar-fill--warn' : '');
         ?>
           <tr>
             <td><a href="addresses.php?subnet_id=<?= (int)$s['id'] ?>"><?= e($s['cidr']) ?></a></td>
             <td class="muted"><?= e((string)$s['description']) ?></td>
             <td><?= e((string)$used) ?></td>
             <td><?= e((string)$cap) ?></td>
-            <td style="min-width:90px">
-              <div style="background:var(--border);border-radius:4px;height:8px;overflow:hidden">
-                <div style="width:<?= $pct ?>%;background:<?= $bar ?>;height:100%"></div>
+            <td class="mw-90">
+              <div class="util-bar-block">
+                <div class="util-bar-fill <?= $barClass ?>" data-pct="<?= $pct ?>"></div>
               </div>
-              <span class="muted" style="font-size:.85rem"><?= $pct ?>%</span>
+              <span class="muted font-xs"><?= $pct ?>%</span>
             </td>
           </tr>
         <?php endforeach; ?>
         </tbody>
       </table>
     <?php endif; ?>
-    <div style="margin-top:10px"><a class="action-pill" href="subnets.php">🌐 All Subnets</a></div>
+    <div class="mt-10"><a class="action-pill" href="subnets.php">🌐 All Subnets</a></div>
   </div>
 
   <div class="card">
@@ -148,13 +148,13 @@ page_header('Dashboard');
       </table>
     <?php endif; ?>
     <?php if (current_user()['role'] === 'admin'): ?>
-      <div style="margin-top:10px"><a class="action-pill" href="sites.php">📍 Manage Sites</a></div>
+      <div class="mt-10"><a class="action-pill" href="sites.php">📍 Manage Sites</a></div>
     <?php endif; ?>
   </div>
 
 </div>
 
-<div class="card" style="margin-top:16px">
+<div class="card mt-16">
   <h2>Recent Activity</h2>
   <?php if (!$recentAudit): ?>
     <div class="empty-state">No audit events yet.</div>
@@ -166,7 +166,7 @@ page_header('Dashboard');
       <tbody>
       <?php foreach ($recentAudit as $r): ?>
         <tr>
-          <td class="muted" style="white-space:nowrap"><?= e((string)$r['created_at']) ?></td>
+          <td class="muted nowrap"><?= e((string)$r['created_at']) ?></td>
           <td><?= e((string)$r['username']) ?></td>
           <td><?= e((string)$r['action']) ?></td>
           <td class="muted"><?= e((string)$r['details']) ?></td>
@@ -174,7 +174,7 @@ page_header('Dashboard');
       <?php endforeach; ?>
       </tbody>
     </table>
-    <div style="margin-top:10px"><a class="action-pill" href="audit.php">📜 Full Audit Log</a></div>
+    <div class="mt-10"><a class="action-pill" href="audit.php">📜 Full Audit Log</a></div>
   <?php endif; ?>
 </div>
 

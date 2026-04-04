@@ -1,0 +1,90 @@
+<?php
+declare(strict_types=1);
+require __DIR__ . '/init.php';
+
+// Already passed the gate — go straight to login
+if (!empty($_SESSION['demo_gate_passed'])) {
+    header('Location: login.php');
+    exit;
+}
+
+// Gate not configured — nothing to do
+if (empty($config['demo_mode']['enabled']) || empty($config['demo_mode']['gate'])) {
+    header('Location: login.php');
+    exit;
+}
+
+// Build a config stub that maps demo_mode gate settings to the login_protection format
+// so we can reuse login_protection_verify() and login_protection_widget_html().
+$gateConfig = [
+    'login_protection' => [
+        'method'      => (string)($config['demo_mode']['gate'] ?? ''),
+        'site_key'    => (string)($config['demo_mode']['site_key']   ?? ''),
+        'secret_key'  => (string)($config['demo_mode']['secret_key'] ?? ''),
+        'min_seconds' => 3,
+        'version'     => 2,
+    ],
+];
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $token = (string)($_POST['_gate_csrf'] ?? '');
+    if (!hash_equals((string)($_SESSION['gate_csrf'] ?? ''), $token) || $token === '') {
+        header('Location: demo_gate.php');
+        exit;
+    }
+    unset($_SESSION['gate_csrf']);
+
+    $result = login_protection_verify($gateConfig, $_POST);
+    if ($result === null) {
+        // Passed
+        $_SESSION['demo_gate_passed'] = true;
+        header('Location: login.php');
+        exit;
+    }
+    $gateError = $result !== '' ? $result : ''; // '' = honeypot (silent — re-render)
+} else {
+    $gateError = '';
+}
+
+// Generate a one-time CSRF token for the gate form
+$_SESSION['gate_csrf'] = bin2hex(random_bytes(16));
+
+$widgetHtml = login_protection_widget_html($gateConfig);
+$cspExtra   = login_protection_extra_csp($gateConfig);
+
+$extraScriptSrc = $cspExtra !== '' ? ' ' . $cspExtra : '';
+header("Content-Security-Policy: default-src 'self'; script-src 'self'{$extraScriptSrc}; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'");
+header('X-Frame-Options: DENY');
+header('X-Content-Type-Options: nosniff');
+header('Referrer-Policy: strict-origin-when-cross-origin');
+
+require_once __DIR__ . '/version.php';
+?>
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Access Check</title>
+  <link rel="stylesheet" href="assets/app.css?v=1.9">
+  <script defer src="assets/app.js?v=1.9"></script>
+</head>
+<body>
+<div class="gate-wrap">
+  <h1>Almost there…</h1>
+  <p class="muted">Please complete the check below to continue to the demo.</p>
+
+  <?php if ($gateError !== ''): ?>
+    <p class="danger"><?= e($gateError) ?></p>
+  <?php endif; ?>
+
+  <form method="post" action="demo_gate.php">
+    <input type="hidden" name="_gate_csrf" value="<?= e($_SESSION['gate_csrf']) ?>">
+    <?php if ($widgetHtml !== ''): ?>
+      <div class="mt-10"><?= $widgetHtml ?></div>
+    <?php endif; ?>
+    <p class="mt-10"><button type="submit">Continue</button></p>
+  </form>
+</div>
+</body>
+</html>

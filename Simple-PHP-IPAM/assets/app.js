@@ -140,12 +140,40 @@
       if (pwField && pwInput && subField) {
         function applySsoState() {
           var sso = ssoToggle.checked;
-          pwField.style.display = sso ? "none" : "";
+          pwField.classList.toggle("hidden", sso);
           pwInput.required = !sso;
-          subField.style.display = sso ? "" : "none";
+          subField.classList.toggle("hidden", !sso);
         }
         ssoToggle.addEventListener("change", applySsoState);
         applySsoState(); // Apply on load for re-rendered forms (#73)
+      }
+    }
+
+    // --- Utilization bar fill widths from data-pct (replaces inline style width) ---
+    document.querySelectorAll(".util-bar-fill[data-pct]").forEach(function(el) {
+      el.style.width = el.dataset.pct + "%";
+    });
+
+    // --- Subnet hierarchy node indentation from data-indent (replaces inline margin-left) ---
+    document.querySelectorAll(".subnet-node[data-indent]").forEach(function(el) {
+      el.style.marginLeft = el.dataset.indent + "px";
+    });
+
+    // --- reCAPTCHA v3: submit form after obtaining token ---
+    var rv3 = document.getElementById("g-recaptcha-response");
+    if (rv3 && rv3.dataset.recaptchaV3Key && typeof grecaptcha !== "undefined") {
+      var rv3Form = rv3.closest("form");
+      if (rv3Form) {
+        rv3Form.addEventListener("submit", function(e) {
+          if (rv3.value) return; // already have token
+          e.preventDefault();
+          grecaptcha.ready(function() {
+            grecaptcha.execute(rv3.dataset.recaptchaV3Key, {action: "login"}).then(function(token) {
+              rv3.value = token;
+              rv3Form.submit();
+            });
+          });
+        });
       }
     }
 
