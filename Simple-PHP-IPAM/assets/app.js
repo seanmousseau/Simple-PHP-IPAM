@@ -17,6 +17,11 @@
       document.documentElement.setAttribute("data-theme", t);
       localStorage.setItem(key, t);
     }
+    fetch("set_theme.php", {
+      method: "POST",
+      headers: {"Content-Type": "application/x-www-form-urlencoded"},
+      body: "theme=" + encodeURIComponent(t)
+    }).catch(function() {});
   }
 
   function updateThemeButton() {

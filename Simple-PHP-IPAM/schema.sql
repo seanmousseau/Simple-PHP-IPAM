@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
   oidc_sub             TEXT,                        -- IdP subject claim (unique when set)
   last_login_at        TEXT,
   password_changed_at  TEXT,                        -- updated on every local password change; NULL for SSO-only accounts
+  theme         TEXT NOT NULL DEFAULT 'auto',       -- persisted UI theme: auto|light|dark
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -42,6 +43,7 @@ CREATE TABLE IF NOT EXISTS subnets (
   prefix      INTEGER NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   site_id     INTEGER,
+  vlan_id     INTEGER,                              -- 802.1Q VLAN ID (1–4094), NULL means unassigned
   created_at  TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -64,6 +66,7 @@ CREATE TABLE IF NOT EXISTS addresses (
   hostname   TEXT NOT NULL DEFAULT '',
   owner      TEXT NOT NULL DEFAULT '',
   note       TEXT NOT NULL DEFAULT '',
+  grp        TEXT NOT NULL DEFAULT '',              -- group label (group is a SQL reserved word)
   status     TEXT NOT NULL DEFAULT 'used',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -75,6 +78,7 @@ CREATE INDEX IF NOT EXISTS idx_addresses_subnet_ipbin ON addresses(subnet_id, ip
 CREATE INDEX IF NOT EXISTS idx_addresses_hostname ON addresses(hostname);
 CREATE INDEX IF NOT EXISTS idx_addresses_owner ON addresses(owner);
 CREATE INDEX IF NOT EXISTS idx_addresses_status ON addresses(status);
+CREATE INDEX IF NOT EXISTS idx_addresses_grp ON addresses(grp);
 
 CREATE TRIGGER IF NOT EXISTS addresses_updated_at
 AFTER UPDATE ON addresses

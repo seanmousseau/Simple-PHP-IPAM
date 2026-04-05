@@ -157,6 +157,18 @@ Name of the session cookie. Change this if you run multiple PHP applications on 
 
 ---
 
+### `app_name`
+
+**Default:** `'Simple PHP IPAM'`
+
+Sets the application display name shown in the browser tab title, navigation bar brand link, login page heading, and demo gate page.
+
+```php
+'app_name' => 'Acme IPAM',
+```
+
+---
+
 ### `base_url`
 
 **Default:** `null`

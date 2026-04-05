@@ -150,6 +150,28 @@ function ipam_migrations(): array
             ");
         },
 
+        // 1.11: addresses.grp (group field), subnets.vlan_id, users.theme
+        '1.11' => function(PDO $db) {
+            // addresses.grp — SQL reserved word, stored as grp, exposed as group in UI/API/CSV
+            $cols = array_column($db->query("PRAGMA table_info(addresses)")->fetchAll(), 'name');
+            if (!in_array('grp', $cols, true)) {
+                $db->exec("ALTER TABLE addresses ADD COLUMN grp TEXT NOT NULL DEFAULT ''");
+            }
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_addresses_grp ON addresses(grp)");
+
+            // subnets.vlan_id — nullable integer, 1–4094, NULL means unassigned
+            $cols = array_column($db->query("PRAGMA table_info(subnets)")->fetchAll(), 'name');
+            if (!in_array('vlan_id', $cols, true)) {
+                $db->exec("ALTER TABLE subnets ADD COLUMN vlan_id INTEGER");
+            }
+
+            // users.theme — persisted theme preference: 'auto'|'light'|'dark'
+            $cols = array_column($db->query("PRAGMA table_info(users)")->fetchAll(), 'name');
+            if (!in_array('theme', $cols, true)) {
+                $db->exec("ALTER TABLE users ADD COLUMN theme TEXT NOT NULL DEFAULT 'auto'");
+            }
+        },
+
         // 1.9: ensure audit_log exists — it was only in schema.sql, not a migration,
         // so a botched demo reset that dropped it would leave it permanently missing.
         // Using CREATE TABLE IF NOT EXISTS makes this safe to run on any existing install.

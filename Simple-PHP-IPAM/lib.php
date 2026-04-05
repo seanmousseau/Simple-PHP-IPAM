@@ -205,13 +205,20 @@ function require_write_access(): void
     }
 }
 
-function login_user(int $uid, string $username, string $role): void
+function login_user(int $uid, string $username, string $role, ?PDO $db = null): void
 {
     session_regenerate_id(true);
     $_SESSION['uid'] = $uid;
     $_SESSION['username'] = $username;
     $_SESSION['role'] = $role;
     $_SESSION['last_active'] = time();
+    // Load persisted theme preference so page_header() can prime localStorage
+    if ($db !== null) {
+        $st = $db->prepare("SELECT theme FROM users WHERE id = :id");
+        $st->execute([':id' => $uid]);
+        $theme = (string)($st->fetchColumn() ?: 'auto');
+        $_SESSION['user_theme'] = in_array($theme, ['light', 'dark', 'auto'], true) ? $theme : 'auto';
+    }
 }
 
 /* ---------------- Login rate limiting ---------------- */
@@ -385,6 +392,10 @@ function ipam_config_defaults(): array
                        . "Used for the HTTP→HTTPS redirect. If null, falls back to HTTP_HOST.",
         ],
         'proxy_trust'  => ['default' => null, 'comment' => ''],
+        'app_name' => [
+            'default' => 'Simple PHP IPAM',
+            'comment' => "Application display name shown in the browser tab, nav bar, and login page. Default: 'Simple PHP IPAM'.",
+        ],
         'bootstrap_admin' => ['default' => null, 'comment' => ''],
         'session_idle_seconds' => ['default' => null, 'comment' => ''],
         'login_max_attempts'   => ['default' => null, 'comment' => ''],
@@ -1926,8 +1937,10 @@ function detect_subnet_overlaps(PDO $db, string $cidr, ?int $excludeId = null): 
 
 function page_header(string $title, array $opts = []): void
 {
+    global $config;
     $u = $_SESSION['username'] ?? '';
     $role = $_SESSION['role'] ?? '';
+    $appName = trim((string)($config['app_name'] ?? '')) ?: 'Simple PHP IPAM';
 
     $extraScriptSrc = isset($opts['extra_script_src']) && $opts['extra_script_src'] !== '' ? ' ' . $opts['extra_script_src'] : '';
     $frameSrc       = isset($opts['extra_frame_src'])  && $opts['extra_frame_src']  !== '' ? " frame-src 'self' " . $opts['extra_frame_src'] . ';' : '';
@@ -1937,12 +1950,22 @@ function page_header(string $title, array $opts = []): void
     header('Referrer-Policy: strict-origin-when-cross-origin');
 
     echo "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
-    echo "<title>" . e($title) . "</title>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=1.10'>";
-    echo "<script defer src='assets/app.js?v=1.10'></script>";
+    echo "<title>" . e($appName) . " \u{2014} " . e($title) . "</title>";
+    echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
+    echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=1.11j'>";
+    // Prime localStorage with server-side theme before deferred app.js runs (prevents flash)
+    $userTheme = $_SESSION['user_theme'] ?? 'auto';
+    if (in_array($userTheme, ['light', 'dark'], true)) {
+        echo "<script>localStorage.setItem('ipam_theme'," . json_encode($userTheme) . ");</script>";
+    }
+    echo "<script defer src='assets/app.js?v=1.11j'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
+    echo "<a href='dashboard.php' class='nav-brand'>"
+       . "<img src='assets/logo_rectangle.svg?v=2' alt='' class='nav-logo' aria-hidden='true'>"
+       . "</a>";
     echo "<div class='nav-links'>";
     if ($u) {
         echo "<a class='nav-pill' href='dashboard.php'>🏠 Dashboard</a>";
@@ -2047,8 +2070,9 @@ function page_footer(): void
     require_once __DIR__ . '/version.php';
 
     echo "<hr><div class='muted footer-meta'>";
-    echo "<a href='https://github.com/seanmousseau/Simple-PHP-IPAM' target='_blank' rel='noopener' "
-       . "class='link-plain'>Simple PHP IPAM</a> v" . e(IPAM_VERSION);
+    echo "<a href='https://github.com/seanmousseau/Simple-PHP-IPAM' target='_blank' rel='noopener' class='link-plain'>"
+       . "<img src='assets/logo_rectangle.svg?v=2' alt='Simple PHP IPAM' width='161' height='24' style='vertical-align:middle;opacity:.7;'>"
+       . "</a> v" . e(IPAM_VERSION);
 
     $update = ipam_update_check($config ?? []);
     if ($update) {

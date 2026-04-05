@@ -6,6 +6,9 @@ return [
     'session_name' => 'IPAMSESSID',
     'proxy_trust' => false,
 
+    // Application display name shown in the browser tab, nav bar, and login page.
+    'app_name' => 'Simple PHP IPAM',
+
     'bootstrap_admin' => [
         'username' => 'admin',
         'password' => 'ChangeMeNow!12345',
