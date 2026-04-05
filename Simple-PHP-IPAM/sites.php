@@ -24,15 +24,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $st = $db->prepare("INSERT INTO sites (name, description) VALUES (:n, :d)");
                 $st->execute([':n' => $name, ':d' => $desc]);
                 audit($db, 'site.create', 'site', (int)$db->lastInsertId(), "name=$name");
+                flash_set('Site created.');
                 header('Location: sites.php');
                 exit;
             } catch (PDOException $e) {
                 $err = 'Could not create site (duplicate name?).';
             }
         }
-    }
-
-    if ($action === 'update') {
+    } elseif ($action === 'update') {
         $id = (int)($_POST['id'] ?? 0);
         $name = trim((string)($_POST['name'] ?? ''));
         $desc = trim((string)($_POST['description'] ?? ''));
@@ -49,9 +48,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $err = 'Could not update site (duplicate name?).';
             }
         }
-    }
-
-    if ($action === 'delete') {
+    } elseif ($action === 'delete') {
         $id = (int)($_POST['id'] ?? 0);
         if ($id > 0) {
             // First, detach subnets from this site
@@ -62,6 +59,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $st->execute([':id' => $id]);
 
             audit($db, 'site.delete', 'site', $id, '');
+            flash_set('Site deleted.');
             header('Location: sites.php');
             exit;
         }

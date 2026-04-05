@@ -376,6 +376,11 @@ function api_addresses_create(PDO $db, array $apiKey, array $body): never
     api_audit($db, $apiKey, 'address.create', 'address', $newId,
         "ip={$n['ip']} subnet_id={$subnetId} status={$status}");
 
+    api_history_log_address($db, $apiKey, 'create', $subnetId, $n['ip'], $newId, null, [
+        'hostname' => $hostname, 'owner' => $owner, 'note' => $note,
+        'grp' => $grp, 'status' => $status,
+    ]);
+
     http_response_code(201);
     api_json(['id' => $newId]);
 }
@@ -406,6 +411,13 @@ function api_addresses_update(PDO $db, array $apiKey, int $id, array $body): nev
     api_audit($db, $apiKey, 'address.update', 'address', $id,
         "ip={$addr['ip']} status={$status}");
 
+    api_history_log_address($db, $apiKey, 'update', (int)$addr['subnet_id'], (string)$addr['ip'], $id,
+        ['hostname' => (string)$addr['hostname'], 'owner' => (string)$addr['owner'],
+         'note' => (string)$addr['note'], 'grp' => (string)$addr['grp'], 'status' => (string)$addr['status']],
+        ['hostname' => $hostname, 'owner' => $owner, 'note' => $note,
+         'grp' => $grp, 'status' => $status]
+    );
+
     api_json(['id' => $id]);
 }
 
@@ -413,7 +425,7 @@ function api_addresses_delete(PDO $db, array $apiKey, int $id): never
 {
     if ($id <= 0) api_error(400, 'id is required as a query parameter.');
 
-    $st = $db->prepare("SELECT id, ip FROM addresses WHERE id = :id");
+    $st = $db->prepare("SELECT id, ip, subnet_id, hostname, owner, note, grp, status FROM addresses WHERE id = :id");
     $st->execute([':id' => $id]);
     $addr = $st->fetch();
     if (!$addr) api_error(404, 'Address not found.');
@@ -421,6 +433,12 @@ function api_addresses_delete(PDO $db, array $apiKey, int $id): never
     $db->prepare("DELETE FROM addresses WHERE id = :id")->execute([':id' => $id]);
 
     api_audit($db, $apiKey, 'address.delete', 'address', $id, "ip={$addr['ip']}");
+
+    api_history_log_address($db, $apiKey, 'delete', (int)$addr['subnet_id'], (string)$addr['ip'], $id,
+        ['hostname' => (string)$addr['hostname'], 'owner' => (string)$addr['owner'],
+         'note' => (string)$addr['note'], 'grp' => (string)$addr['grp'], 'status' => (string)$addr['status']],
+        null
+    );
 
     http_response_code(204);
     exit;
@@ -451,9 +469,14 @@ function api_subnets_create(PDO $db, array $apiKey, array $body): never
     }
 
     // Check duplicate CIDR
+    $normalized = $p['network'] . '/' . $p['prefix'];
     $dupSt = $db->prepare("SELECT id FROM subnets WHERE cidr = :cidr");
-    $dupSt->execute([':cidr' => $p['network'] . '/' . $p['prefix']]);
+    $dupSt->execute([':cidr' => $normalized]);
     if ($dupSt->fetch()) api_error(409, 'A subnet with this CIDR already exists.');
+
+    // Inherit site from tightest parent if one exists
+    $inheritedSiteId = find_parent_site_id($db, $normalized);
+    if ($inheritedSiteId !== null) $siteId = $inheritedSiteId;
 
     $db->prepare(
         "INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, site_id, vlan_id)
@@ -473,8 +496,17 @@ function api_subnets_create(PDO $db, array $apiKey, array $body): never
     api_audit($db, $apiKey, 'subnet.create', 'subnet', $newId,
         "cidr={$p['network']}/{$p['prefix']}");
 
+    // Non-blocking overlap warnings
+    $overlaps = detect_subnet_overlaps($db, $normalized);
+    $warnings = [];
+    if (!empty($overlaps['parents']) || !empty($overlaps['children'])) {
+        $warnings[] = subnet_overlap_warning_text($overlaps);
+    }
+
     http_response_code(201);
-    api_json(['id' => $newId]);
+    $resp = ['id' => $newId];
+    if ($warnings) $resp['warnings'] = $warnings;
+    api_json($resp);
 }
 
 function api_subnets_update(PDO $db, array $apiKey, int $id, array $body): never
@@ -540,6 +572,27 @@ function api_subnets_delete(PDO $db, array $apiKey, int $id): never
 
 // ---- Audit helper for API writes ----
 
+function api_history_log_address(PDO $db, array $apiKey, string $action, int $subnetId, string $ip, ?int $addressId, ?array $before, ?array $after): void
+{
+    $st = $db->prepare("
+        INSERT INTO address_history
+          (address_id, subnet_id, ip, action, user_id, username, client_ip, user_agent, before_json, after_json)
+        VALUES
+          (:aid, :sid, :ip, :ac, NULL, :un, :cip, :ua, :bj, :aj)
+    ");
+    $st->execute([
+        ':aid' => $addressId,
+        ':sid' => $subnetId,
+        ':ip'  => $ip,
+        ':ac'  => $action,
+        ':un'  => 'api:' . $apiKey['name'],
+        ':cip' => client_ip(),
+        ':ua'  => (string)($_SERVER['HTTP_USER_AGENT'] ?? ''),
+        ':bj'  => $before ? json_encode($before, JSON_UNESCAPED_SLASHES) : null,
+        ':aj'  => $after ? json_encode($after, JSON_UNESCAPED_SLASHES) : null,
+    ]);
+}
+
 function api_audit(PDO $db, array $apiKey, string $action, string $entityType, int $entityId, string $details): void
 {
     $username = 'api:' . $apiKey['name'];
@@ -551,7 +604,7 @@ function api_audit(PDO $db, array $apiKey, string $action, string $entityType, i
         ':et'  => $entityType,
         ':eid' => $entityId,
         ':un'  => $username,
-        ':ip'  => $_SERVER['REMOTE_ADDR'] ?? '',
+        ':ip'  => client_ip(),
         ':det' => $details,
     ]);
 }

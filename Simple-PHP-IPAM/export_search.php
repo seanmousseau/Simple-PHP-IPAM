@@ -5,7 +5,10 @@ require_login();
 
 $q = substr(trim((string)($_GET['q'] ?? '')), 0, 500);
 $status = trim((string)($_GET['status'] ?? ''));
-$subnetId = (int)($_GET['subnet_id'] ?? 0);
+$subnetId  = (int)($_GET['subnet_id'] ?? 0);
+$siteId    = (int)($_GET['site_id'] ?? 0);
+$ipVersion = (int)($_GET['ip_version'] ?? 0);
+if (!in_array($ipVersion, [0, 4, 6], true)) $ipVersion = 0;
 
 $allowedStatus = ['','used','reserved','free'];
 if (!in_array($status, $allowedStatus, true)) $status = '';
@@ -24,6 +27,14 @@ if ($status !== '') {
 if ($subnetId > 0) {
     $where[] = "a.subnet_id = :sid";
     $params[':sid'] = $subnetId;
+}
+if ($siteId > 0) {
+    $where[] = "s.site_id = :site_id";
+    $params[':site_id'] = $siteId;
+}
+if ($ipVersion > 0) {
+    $where[] = "s.ip_version = :ipver";
+    $params[':ipver'] = $ipVersion;
 }
 
 $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
@@ -54,5 +65,5 @@ foreach ($st as $r) {
     ]);
 }
 
-audit_export($db, 'search', "q=$q status=$status subnet_id=$subnetId");
+audit_export($db, 'search', "q=$q status=$status subnet_id=$subnetId site_id=$siteId ip_version=$ipVersion");
 exit;

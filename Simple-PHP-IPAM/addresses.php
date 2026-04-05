@@ -85,6 +85,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ]);
                     audit($db, 'address.create', 'address', $aid, "ip={$norm['ip']} subnet_id=$subnetId");
 
+                    flash_set('Address created.');
                     header('Location: addresses.php?subnet_id=' . $subnetId);
                     exit;
                 } catch (PDOException $e) {
@@ -94,9 +95,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
         }
-    }
-
-    if ($action === 'update') {
+    } elseif ($action === 'update') {
         require_write_access();
 
         $id = (int)($_POST['id'] ?? 0);
@@ -151,9 +150,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $msg = 'Address updated.';
             }
         }
-    }
-
-    if ($action === 'delete') {
+    } elseif ($action === 'delete') {
         require_write_access();
 
         $id = (int)($_POST['id'] ?? 0);
@@ -180,6 +177,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         audit($db, 'address.delete', 'address', $id, "subnet_id=$subnetId");
+        flash_set('Address deleted.');
         header('Location: addresses.php?subnet_id=' . $subnetId);
         exit;
     }

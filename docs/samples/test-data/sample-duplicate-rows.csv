@@ -1,0 +1,5 @@
+IP,Hostname,Owner,Status,Note,CIDR,Prefix,Netmask,Description
+10.20.1.10,host-a,Ops,used,First occurrence,10.20.1.0/24,,,Ops LAN
+10.20.1.10,host-a-dup,Ops,reserved,Duplicate row should be skipped,10.20.1.0/24,,,Ops LAN
+10.20.1.11,host-b,Ops,used,Unique row,10.20.1.0/24,,,Ops LAN
+10.20.1.11,host-b-dup,Ops,free,Duplicate row should be skipped,10.20.1.0/24,,,Ops LAN

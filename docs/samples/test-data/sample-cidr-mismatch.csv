@@ -1,0 +1,5 @@
+IP,Hostname,Owner,Status,Note,CIDR,Prefix,Netmask,Description
+10.30.1.10,valid-a,Ops,used,Correct CIDR,10.30.1.0/24,,,Good row
+10.30.2.10,bad-a,Ops,used,IP does not belong to CIDR,10.30.1.0/24,,,Should fail
+2001:db8:300::10,valid-v6,Infra,used,Correct IPv6 CIDR,2001:db8:300::/64,,,Good IPv6 row
+2001:db8:301::10,bad-v6,Infra,used,IPv6 does not belong to CIDR,2001:db8:300::/64,,,Should fail

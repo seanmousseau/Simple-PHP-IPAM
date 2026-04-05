@@ -1,0 +1,3 @@
+IP,Hostname,Owner,Status,Note,CIDR,Prefix,Netmask,Description
+10.40.1.10,conflict-a,Ops,used,Will become conflict before apply,10.40.1.0/24,,,Conflict test
+10.40.1.11,conflict-b,Ops,used,May still import successfully,10.40.1.0/24,,,Conflict test

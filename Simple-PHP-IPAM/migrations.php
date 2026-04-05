@@ -175,6 +175,29 @@ function ipam_migrations(): array
         // 1.9: ensure audit_log exists — it was only in schema.sql, not a migration,
         // so a botched demo reset that dropped it would leave it permanently missing.
         // Using CREATE TABLE IF NOT EXISTS makes this safe to run on any existing install.
+        // 1.12: add indexes on audit_log + normalize audit action names
+        '1.12' => function(PDO $db) {
+            // Indexes for audit_log queries
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action)");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at)");
+
+            // Normalize audit action names: api_key.* → apikey.*, user.password_change → user.change_password
+            // Must temporarily drop append-only triggers to allow UPDATE
+            $db->exec("DROP TRIGGER IF EXISTS audit_log_no_update");
+            $db->exec("DROP TRIGGER IF EXISTS audit_log_no_delete");
+
+            $db->exec("UPDATE audit_log SET action = REPLACE(action, 'api_key.', 'apikey.') WHERE action LIKE 'api\_key.%' ESCAPE '\'");
+            $db->exec("UPDATE audit_log SET action = 'user.change_password' WHERE action = 'user.password_change'");
+
+            // Recreate append-only triggers
+            $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_update
+                BEFORE UPDATE ON audit_log
+                BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
+            $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
+                BEFORE DELETE ON audit_log
+                BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
+        },
+
         '1.9' => function(PDO $db) {
             $db->exec("
                 CREATE TABLE IF NOT EXISTS audit_log (

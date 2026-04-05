@@ -83,10 +83,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($id === $self['id']) {
             $errors[] = 'You cannot disable your own account.';
         } else {
-            $db->prepare("UPDATE users SET is_active = CASE WHEN is_active=1 THEN 0 ELSE 1 END WHERE id = :id")
-               ->execute([':id' => $id]);
-            audit($db, 'user.toggle_active', 'user', $id, '');
-            $msg = 'User updated.';
+            // Last-active-admin guard: prevent disabling the last active admin
+            $tSt = $db->prepare("SELECT role, is_active FROM users WHERE id = :id");
+            $tSt->execute([':id' => $id]);
+            $target = $tSt->fetch();
+            if ($target && $target['role'] === 'admin' && (int)$target['is_active'] === 1) {
+                $cntSt = $db->prepare(
+                    "SELECT COUNT(*) FROM users WHERE role='admin' AND is_active=1 AND id != :id"
+                );
+                $cntSt->execute([':id' => $id]);
+                if ((int)$cntSt->fetchColumn() === 0) {
+                    $errors[] = 'Cannot disable the last active admin account.';
+                }
+            }
+            if (!$errors) {
+                $db->prepare("UPDATE users SET is_active = CASE WHEN is_active=1 THEN 0 ELSE 1 END WHERE id = :id")
+                   ->execute([':id' => $id]);
+                audit($db, 'user.toggle_active', 'user', $id, '');
+                $msg = 'User updated.';
+            }
         }
 
     } elseif ($action === 'set_role') {
@@ -97,10 +112,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif (!in_array($role, $validRoles, true)) {
             $errors[] = 'Invalid role.';
         } else {
-            $db->prepare("UPDATE users SET role = :r WHERE id = :id")
-               ->execute([':r' => $role, ':id' => $id]);
-            audit($db, 'user.set_role', 'user', $id, "role=$role");
-            $msg = 'Role updated.';
+            // Last-active-admin guard: prevent demoting the last active admin
+            if ($role !== 'admin') {
+                $tSt = $db->prepare("SELECT role, is_active FROM users WHERE id = :id");
+                $tSt->execute([':id' => $id]);
+                $target = $tSt->fetch();
+                if ($target && $target['role'] === 'admin' && (int)$target['is_active'] === 1) {
+                    $cntSt = $db->prepare(
+                        "SELECT COUNT(*) FROM users WHERE role='admin' AND is_active=1 AND id != :id"
+                    );
+                    $cntSt->execute([':id' => $id]);
+                    if ((int)$cntSt->fetchColumn() === 0) {
+                        $errors[] = 'Cannot demote the last active admin account.';
+                    }
+                }
+            }
+            if (!$errors) {
+                $db->prepare("UPDATE users SET role = :r WHERE id = :id")
+                   ->execute([':r' => $role, ':id' => $id]);
+                audit($db, 'user.set_role', 'user', $id, "role=$role");
+                $msg = 'Role updated.';
+            }
         }
 
     } elseif ($action === 'update_profile') {
