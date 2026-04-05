@@ -36,29 +36,46 @@ if ($subnetId > 0) {
     $bulkSortCols = ['ip' => 'ip_bin', 'hostname' => 'hostname', 'status' => 'status'];
     $bulkSort = parse_sort($bulkSortCols, 'ip');
 
-    $sql = "SELECT id, ip, ip_bin, hostname, owner, status, note, grp, updated_at
-            FROM addresses
-            WHERE subnet_id = :sid";
+    $whereClause = "WHERE subnet_id = :sid";
     $params = [':sid' => $subnetId];
 
     if ($q !== '') {
-        $sql .= " AND (ip LIKE :q ESCAPE '\\' OR hostname LIKE :q ESCAPE '\\' OR owner LIKE :q ESCAPE '\\' OR note LIKE :q ESCAPE '\\' OR grp LIKE :q ESCAPE '\\')";
+        $whereClause .= " AND (ip LIKE :q ESCAPE '\\' OR hostname LIKE :q ESCAPE '\\' OR owner LIKE :q ESCAPE '\\' OR note LIKE :q ESCAPE '\\' OR grp LIKE :q ESCAPE '\\')";
         $params[':q'] = '%' . like_escape($q) . '%';
     }
 
-    $sql .= " ORDER BY {$bulkSort['sql']}";
+    // Pagination
+    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM addresses {$whereClause}");
+    $cntSt->execute($params);
+    $bulkTotal = (int)$cntSt->fetch()['c'];
+
+    $bulkPage     = q_int('page', 1, 1, 1000000);
+    $bulkPageSize = q_int('page_size', 254, 1, 500);
+    $bulkPag      = paginate($bulkTotal, $bulkPage, $bulkPageSize);
+
+    $sql = "SELECT id, ip, ip_bin, hostname, owner, status, note, grp, updated_at
+            FROM addresses
+            {$whereClause}
+            ORDER BY {$bulkSort['sql']}
+            LIMIT :lim OFFSET :off";
 
     $st = $db->prepare($sql);
-    $st->execute($params);
+    foreach ($params as $k => $v) $st->bindValue($k, $v);
+    $st->bindValue(':lim', $bulkPag['limit'], PDO::PARAM_INT);
+    $st->bindValue(':off', $bulkPag['offset'], PDO::PARAM_INT);
+    $st->execute();
     $addresses = $st->fetchAll();
 
-    // --- Enumerate unconfigured IPs for IPv4 subnets (prefix 20–30) when no search ---
-    if ($subnet && (int)$subnet['ip_version'] === 4 && $q === '') {
+    // --- Enumerate unconfigured IPs for IPv4 subnets (prefix 20–30) when no search, page 1 ---
+    if ($subnet && (int)$subnet['ip_version'] === 4 && $q === '' && $bulkPage === 1) {
         $prefix     = (int)$subnet['prefix'];
         $assignable = ipv4_assignable_count($prefix);
 
         if ($assignable > 0 && $assignable <= 4094) {
-            $configuredIps = array_flip(array_column($addresses, 'ip'));
+            // Fetch all IPs in this subnet (lightweight: just ip text, not full rows)
+            $ipSt = $db->prepare("SELECT ip FROM addresses WHERE subnet_id = :sid");
+            $ipSt->execute([':sid' => $subnetId]);
+            $configuredIps = array_flip(array_column($ipSt->fetchAll(), 'ip'));
             $netBin  = $subnet['network_bin'];
             $netInt  = ipv4_bin_to_int($netBin);
 
@@ -417,6 +434,24 @@ page_header('Bulk Update');
       <?php endif; ?>
       </tbody>
     </table>
+
+    <?php if ($bulkPag['total_pages'] > 1): ?>
+      <p class="muted mt-8">
+        Page <?= $bulkPag['page'] ?> of <?= $bulkPag['total_pages'] ?>
+        (<?= $bulkTotal ?> addresses)
+        <?php
+          $pqs = 'subnet_id=' . $subnetId . ($q !== '' ? '&q=' . urlencode($q) : '')
+               . '&sort=' . urlencode($bulkSort['col']) . '&dir=' . urlencode($bulkSort['dir'])
+               . '&page_size=' . $bulkPageSize;
+        ?>
+        <?php if ($bulkPag['page'] > 1): ?>
+          <a href="bulk_update.php?<?= e($pqs) ?>&page=<?= $bulkPag['page'] - 1 ?>">← Prev</a>
+        <?php endif; ?>
+        <?php if ($bulkPag['page'] < $bulkPag['total_pages']): ?>
+          <a href="bulk_update.php?<?= e($pqs) ?>&page=<?= $bulkPag['page'] + 1 ?>">Next →</a>
+        <?php endif; ?>
+      </p>
+    <?php endif; ?>
 
     <h3 class="mt-18">Action</h3>
 

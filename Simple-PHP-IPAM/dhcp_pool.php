@@ -137,10 +137,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $err = 'Invalid address.';
         } else {
             $stChk = $db->prepare(
-                "SELECT id FROM addresses WHERE id = :id AND subnet_id = :sid AND status = 'reserved'"
+                "SELECT id, ip, hostname, owner, note, grp, status FROM addresses WHERE id = :id AND subnet_id = :sid AND status = 'reserved'"
             );
             $stChk->execute([':id' => $addressId, ':sid' => $subnetId]);
-            if (!$stChk->fetch()) {
+            $beforeAddr = $stChk->fetch();
+            if (!$beforeAddr) {
                 $err = 'Address not found or not a reserved address in this subnet.';
             } else {
                 $db->prepare(
@@ -148,6 +149,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 )->execute([':hn' => $hostname, ':ow' => $owner, ':nt' => $note, ':id' => $addressId]);
                 audit($db, 'dhcp_pool.edit_address', 'address', $addressId,
                     "subnet_id={$subnetId} hostname={$hostname} owner={$owner}");
+                history_log_address($db, 'update', $subnetId, (string)$beforeAddr['ip'], $addressId,
+                    ['hostname' => (string)$beforeAddr['hostname'], 'owner' => (string)$beforeAddr['owner'],
+                     'note' => (string)$beforeAddr['note'], 'grp' => (string)$beforeAddr['grp'],
+                     'status' => (string)$beforeAddr['status']],
+                    ['hostname' => $hostname, 'owner' => $owner, 'note' => $note,
+                     'grp' => (string)$beforeAddr['grp'], 'status' => (string)$beforeAddr['status']]
+                );
                 $msg = 'Address updated.';
             }
         }
@@ -160,15 +168,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $err = 'Invalid address.';
         } else {
             $stChk = $db->prepare(
-                "SELECT id FROM addresses WHERE id = :id AND subnet_id = :sid AND status = 'reserved'"
+                "SELECT id, ip, hostname, owner, note, grp, status FROM addresses WHERE id = :id AND subnet_id = :sid AND status = 'reserved'"
             );
             $stChk->execute([':id' => $addressId, ':sid' => $subnetId]);
-            if (!$stChk->fetch()) {
+            $beforeAddr = $stChk->fetch();
+            if (!$beforeAddr) {
                 $err = 'Address not found or not a reserved address in this subnet.';
             } else {
                 $db->prepare("DELETE FROM addresses WHERE id = :id")->execute([':id' => $addressId]);
                 audit($db, 'dhcp_pool.delete_address', 'address', $addressId,
                     "subnet_id={$subnetId}");
+                history_log_address($db, 'delete', $subnetId, (string)$beforeAddr['ip'], $addressId,
+                    ['hostname' => (string)$beforeAddr['hostname'], 'owner' => (string)$beforeAddr['owner'],
+                     'note' => (string)$beforeAddr['note'], 'grp' => (string)$beforeAddr['grp'],
+                     'status' => (string)$beforeAddr['status']],
+                    null
+                );
                 $msg = 'Reserved address deleted.';
                 $editId = 0;
             }

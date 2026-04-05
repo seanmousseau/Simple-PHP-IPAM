@@ -13,13 +13,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'expor
     csrf_require();
     audit($db, 'db.export', 'system', null, 'Manual database export initiated');
 
-    $sql = ipam_db_dump($db);
-
     $filename = 'ipam-export-' . date('Y-m-d-His') . '.sql';
     header('Content-Type: application/sql; charset=utf-8');
     header('Content-Disposition: attachment; filename="' . $filename . '"');
     header('Cache-Control: no-store');
-    echo $sql;
+    ipam_db_dump_stream($db, function(string $chunk) { echo $chunk; });
     exit;
 }
 
@@ -125,6 +123,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                     if (preg_match('/^PRAGMA\s+foreign_keys\s*=/i', $exec)) continue;
                     if (preg_match('/^BEGIN(\s+TRANSACTION)?\s*;?\s*$/i', $exec)) continue;
                     if (preg_match('/^COMMIT\s*;?\s*$/i', $exec)) continue;
+                    // Whitelist: only allow safe DDL/DML statements
+                    $firstWord = strtoupper((string)strtok(ltrim($exec), " \t\r\n("));
+                    $allowed = ['INSERT', 'CREATE', 'DROP', 'DELETE'];
+                    if (!in_array($firstWord, $allowed, true)) {
+                        throw new RuntimeException(
+                            'Blocked disallowed SQL statement type: ' . $firstWord
+                        );
+                    }
+                    // Block dangerous SQLite constructs even inside allowed statements
+                    $upper = strtoupper($exec);
+                    if (str_contains($upper, 'LOAD_EXTENSION') || str_contains($upper, 'ATTACH') || str_contains($upper, 'DETACH')) {
+                        throw new RuntimeException(
+                            'Blocked dangerous SQL construct in: ' . substr($exec, 0, 80)
+                        );
+                    }
                     $db->exec($exec);
                 }
 

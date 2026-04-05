@@ -276,6 +276,19 @@ function client_ip(): string
     return (string)($_SERVER['REMOTE_ADDR'] ?? '127.0.0.1');
 }
 
+function flash_set(string $message, string $type = 'success'): void
+{
+    $_SESSION['ipam_flash'] = ['msg' => $message, 'type' => $type];
+}
+
+function flash_get(): ?array
+{
+    if (empty($_SESSION['ipam_flash'])) return null;
+    $flash = $_SESSION['ipam_flash'];
+    unset($_SESSION['ipam_flash']);
+    return $flash;
+}
+
 function audit(PDO $db, string $action, string $entityType, ?int $entityId, string $details = ''): void
 {
     $u = current_user();
@@ -900,14 +913,15 @@ function backup_info(array $config): array
 }
 
 /**
- * Generate a full SQL dump of the SQLite database suitable for import.
+ * Stream a full SQL dump of the SQLite database to a callable.
+ * Each call to $write receives a chunk of SQL text.
  */
-function ipam_db_dump(PDO $db): string
+function ipam_db_dump_stream(PDO $db, callable $write): void
 {
-    $out = "-- Simple PHP IPAM database dump\n";
-    $out .= "-- Generated: " . date('Y-m-d H:i:s') . "\n\n";
-    $out .= "PRAGMA foreign_keys=OFF;\n";
-    $out .= "BEGIN TRANSACTION;\n\n";
+    $write("-- Simple PHP IPAM database dump\n");
+    $write("-- Generated: " . date('Y-m-d H:i:s') . "\n\n");
+    $write("PRAGMA foreign_keys=OFF;\n");
+    $write("BEGIN TRANSACTION;\n\n");
 
     // Tables: schema + data
     $tables = $db->query(
@@ -917,22 +931,19 @@ function ipam_db_dump(PDO $db): string
     foreach ($tables as $t) {
         $name        = (string)$t['name'];
         $quotedName  = '"' . str_replace('"', '""', $name) . '"';
-        $out .= "-- Table: {$name}\n";
-        $out .= $t['sql'] . ";\n";
+        $write("-- Table: {$name}\n");
+        $write($t['sql'] . ";\n");
 
         // Dump triggers for this table so they are recreated on import.
-        // (Dropping a table also drops its triggers; they must be re-stated.)
         $triggers = $db->query(
             "SELECT sql FROM sqlite_master WHERE type='trigger' AND tbl_name="
             . $db->quote($name) . " AND sql IS NOT NULL ORDER BY name"
         )->fetchAll();
         foreach ($triggers as $trig) {
-            $out .= $trig['sql'] . ";\n";
+            $write($trig['sql'] . ";\n");
         }
 
         // Identify BLOB columns so we can always hex-encode raw binary data.
-        // mb_check_encoding() is unreliable: many 4-byte IPv4 blobs (e.g. 10.38.83.x)
-        // happen to be valid UTF-8 sequences and would be misclassified as text.
         $colInfo  = $db->query("PRAGMA table_info({$quotedName})")->fetchAll();
         $blobCols = [];
         foreach ($colInfo as $ci) {
@@ -954,19 +965,15 @@ function ipam_db_dump(PDO $db): string
                 } elseif (is_int($v) || is_float($v)) {
                     $vals[] = (string)$v;
                 } elseif (isset($blobCols[$colName])) {
-                    // Binary blob (ip_bin, network_bin): always use hex literal.
                     $vals[] = "X'" . bin2hex((string)$v) . "'";
                 } else {
-                    // TEXT column: hex-encode via CAST so the value is stored as TEXT.
-                    // This safely handles any content including single quotes, semicolons,
-                    // newlines, and NUL bytes without any SQL injection risk.
                     $vals[] = "CAST(X'" . bin2hex((string)$v) . "' AS TEXT)";
                 }
             }
-            $out .= "INSERT INTO {$quotedName} (" . implode(',', $cols) . ") VALUES ("
-                  . implode(',', $vals) . ");\n";
+            $write("INSERT INTO {$quotedName} (" . implode(',', $cols) . ") VALUES ("
+                  . implode(',', $vals) . ");\n");
         }
-        $out .= "\n";
+        $write("\n");
     }
 
     // Indices (non-system)
@@ -974,16 +981,27 @@ function ipam_db_dump(PDO $db): string
         "SELECT sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY name"
     )->fetchAll();
     if ($indices) {
-        $out .= "-- Indexes\n";
+        $write("-- Indexes\n");
         foreach ($indices as $idx) {
-            $out .= $idx['sql'] . ";\n";
+            $write($idx['sql'] . ";\n");
         }
-        $out .= "\n";
+        $write("\n");
     }
 
-    $out .= "COMMIT;\n";
-    $out .= "PRAGMA foreign_keys=ON;\n";
+    $write("COMMIT;\n");
+    $write("PRAGMA foreign_keys=ON;\n");
+}
 
+/**
+ * Generate a full SQL dump of the SQLite database suitable for import.
+ * Backwards-compatible wrapper around ipam_db_dump_stream().
+ */
+function ipam_db_dump(PDO $db): string
+{
+    $out = '';
+    ipam_db_dump_stream($db, function(string $chunk) use (&$out) {
+        $out .= $chunk;
+    });
     return $out;
 }
 
@@ -1953,13 +1971,13 @@ function page_header(string $title, array $opts = []): void
     echo "<title>" . e($appName) . " \u{2014} " . e($title) . "</title>";
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=1.11j'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=1.12'>";
     // Prime localStorage with server-side theme before deferred app.js runs (prevents flash)
     $userTheme = $_SESSION['user_theme'] ?? 'auto';
     if (in_array($userTheme, ['light', 'dark'], true)) {
         echo "<script>localStorage.setItem('ipam_theme'," . json_encode($userTheme) . ");</script>";
     }
-    echo "<script defer src='assets/app.js?v=1.11j'></script>";
+    echo "<script defer src='assets/app.js?v=1.12'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
@@ -2045,6 +2063,18 @@ function page_header(string $title, array $opts = []): void
            . "Check file permissions."
            . "</div>";
         unset($_SESSION['config_unwritable']);
+    }
+
+    // General flash messages (success, warning, danger)
+    $flash = flash_get();
+    if ($flash) {
+        $flashClass = match ($flash['type']) {
+            'success' => 'success',
+            'warning' => 'warning',
+            'error', 'danger' => 'danger',
+            default => 'success',
+        };
+        echo "<p class='{$flashClass}'>" . e($flash['msg']) . "</p>";
     }
 
     // Update-available dismissible banner (admin only, client-side dismiss via localStorage)

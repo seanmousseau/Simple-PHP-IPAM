@@ -118,6 +118,9 @@ CREATE TABLE IF NOT EXISTS audit_log (
   details     TEXT
 );
 
+CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
+CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at);
+
 CREATE TRIGGER IF NOT EXISTS audit_log_no_update
 BEFORE UPDATE ON audit_log
 BEGIN

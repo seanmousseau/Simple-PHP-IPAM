@@ -9,11 +9,7 @@ $err = '';
 $msg = '';
 $warn = '';
 
-// Consume any flash warning left by a create redirect
-if (!empty($_SESSION['ipam_flash_warn'])) {
-    $warn = (string)$_SESSION['ipam_flash_warn'];
-    unset($_SESSION['ipam_flash_warn']);
-}
+// Flash warnings are now rendered by page_header() via flash_get()
 
 $st = $db->prepare("SELECT id, name FROM sites ORDER BY name ASC");
 $st->execute();
@@ -49,36 +45,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Inherit site from tightest parent if one exists
             $inheritedSiteId = find_parent_site_id($db, $normalized);
             if ($inheritedSiteId !== null) $siteId = $inheritedSiteId;
-            try {
-                $st = $db->prepare("INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, site_id, vlan_id)
-                                    VALUES (:cidr,:ver,:net,:nb,:pre,:d,:site,:vlan)");
-                $st->execute([
-                    ':cidr' => $normalized,
-                    ':ver' => $p['version'],
-                    ':net' => $p['network'],
-                    ':nb'  => $p['net_bin'],
-                    ':pre' => $p['prefix'],
-                    ':d' => $desc,
-                    ':site' => $siteId,
-                    ':vlan' => $vlanId,
-                ]);
-                audit($db, 'subnet.create', 'subnet', (int)$db->lastInsertId(), $normalized);
-                $warn = '';
-                if (!empty($overlaps['parents']) || !empty($overlaps['children'])) {
-                    $warn = subnet_overlap_warning_text($overlaps);
+
+            // Pre-save overlap confirmation
+            $hasOverlaps = !empty($overlaps['parents']) || !empty($overlaps['children']);
+            if ($hasOverlaps && empty($_POST['confirm_overlap'])) {
+                $overlapWarning = subnet_overlap_warning_text($overlaps);
+                $pendingAction = 'create';
+                $pendingData = [
+                    'cidr' => $cidr, 'description' => $desc,
+                    'site_id' => $siteId ?? 0, 'vlan_id' => $vlanIdRaw,
+                ];
+            } else {
+                try {
+                    $st = $db->prepare("INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, site_id, vlan_id)
+                                        VALUES (:cidr,:ver,:net,:nb,:pre,:d,:site,:vlan)");
+                    $st->execute([
+                        ':cidr' => $normalized,
+                        ':ver' => $p['version'],
+                        ':net' => $p['network'],
+                        ':nb'  => $p['net_bin'],
+                        ':pre' => $p['prefix'],
+                        ':d' => $desc,
+                        ':site' => $siteId,
+                        ':vlan' => $vlanId,
+                    ]);
+                    audit($db, 'subnet.create', 'subnet', (int)$db->lastInsertId(), $normalized);
+                    $flashMsg = '';
+                    if ($inheritedSiteId !== null) {
+                        $inheritedName = $siteMap[$inheritedSiteId] ?? "site #$inheritedSiteId";
+                        $flashMsg = 'Site automatically set to "' . $inheritedName . '" inherited from parent subnet.';
+                    }
+                    if ($flashMsg) flash_set($flashMsg, 'warning');
+                    else flash_set('Subnet created.');
+                    header('Location: subnets.php');
+                    exit;
+                } catch (PDOException $e) {
+                    $err = str_contains($e->getMessage(), 'UNIQUE')
+                        ? 'A subnet with this CIDR already exists.'
+                        : 'Could not create subnet. Please try again.';
                 }
-                if ($inheritedSiteId !== null) {
-                    $inheritedName = $siteMap[$inheritedSiteId] ?? "site #$inheritedSiteId";
-                    $siteNote = 'Site automatically set to "' . $inheritedName . '" inherited from parent subnet.';
-                    $warn = $warn ? $warn . ' ' . $siteNote : $siteNote;
-                }
-                if ($warn) $_SESSION['ipam_flash_warn'] = $warn;
-                header('Location: subnets.php');
-                exit;
-            } catch (PDOException $e) {
-                $err = str_contains($e->getMessage(), 'UNIQUE')
-                    ? 'A subnet with this CIDR already exists.'
-                    : 'Could not create subnet. Please try again.';
             }
         }
     } elseif ($action === 'update') {
@@ -104,33 +109,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Inherit site from tightest parent if one exists
             $inheritedSiteId = find_parent_site_id($db, $normalized, $id);
             if ($inheritedSiteId !== null) $siteId = $inheritedSiteId;
-            try {
-                $st = $db->prepare("UPDATE subnets
-                                    SET cidr=:cidr, ip_version=:ver, network=:net, network_bin=:nb, prefix=:pre, description=:d, site_id=:site, vlan_id=:vlan
-                                    WHERE id=:id");
-                $st->execute([
-                    ':cidr' => $normalized,
-                    ':ver' => $p['version'],
-                    ':net' => $p['network'],
-                    ':nb'  => $p['net_bin'],
-                    ':pre' => $p['prefix'],
-                    ':d' => $desc,
-                    ':site' => $siteId,
-                    ':vlan' => $vlanId,
-                    ':id' => $id
-                ]);
-                audit($db, 'subnet.update', 'subnet', $id, $normalized);
-                $msg = 'Subnet updated.';
-                if (!empty($overlaps['parents']) || !empty($overlaps['children'])) {
-                    $warn = subnet_overlap_warning_text($overlaps);
+
+            // Pre-save overlap confirmation
+            $hasOverlaps = !empty($overlaps['parents']) || !empty($overlaps['children']);
+            if ($hasOverlaps && empty($_POST['confirm_overlap'])) {
+                $overlapWarning = subnet_overlap_warning_text($overlaps);
+                $pendingAction = 'update';
+                $pendingData = [
+                    'id' => $id, 'cidr' => $cidr, 'description' => $desc,
+                    'site_id' => $siteId ?? 0, 'vlan_id' => $vlanIdRaw,
+                ];
+            } else {
+                try {
+                    $st = $db->prepare("UPDATE subnets
+                                        SET cidr=:cidr, ip_version=:ver, network=:net, network_bin=:nb, prefix=:pre, description=:d, site_id=:site, vlan_id=:vlan
+                                        WHERE id=:id");
+                    $st->execute([
+                        ':cidr' => $normalized,
+                        ':ver' => $p['version'],
+                        ':net' => $p['network'],
+                        ':nb'  => $p['net_bin'],
+                        ':pre' => $p['prefix'],
+                        ':d' => $desc,
+                        ':site' => $siteId,
+                        ':vlan' => $vlanId,
+                        ':id' => $id
+                    ]);
+                    audit($db, 'subnet.update', 'subnet', $id, $normalized);
+                    $msg = 'Subnet updated.';
+                    if ($inheritedSiteId !== null) {
+                        $inheritedName = $siteMap[$inheritedSiteId] ?? "site #$inheritedSiteId";
+                        $warn = 'Site set to "' . $inheritedName . '" inherited from parent subnet.';
+                    }
+                } catch (PDOException $e) {
+                    $err = 'Could not update subnet (duplicate?).';
                 }
-                if ($inheritedSiteId !== null) {
-                    $inheritedName = $siteMap[$inheritedSiteId] ?? "site #$inheritedSiteId";
-                    $siteNote = 'Site set to "' . $inheritedName . '" inherited from parent subnet.';
-                    $warn = $warn ? $warn . ' ' . $siteNote : $siteNote;
-                }
-            } catch (PDOException $e) {
-                $err = 'Could not update subnet (duplicate?).';
             }
         }
     } elseif ($action === 'delete') {
@@ -166,31 +179,50 @@ function build_subnet_tree_local(array $rows): array
     $byId = [];
     foreach ($rows as $r) $byId[(int)$r['id']] = $r;
 
-    $ids = array_keys($byId);
-    $parentOf = [];
+    // Sort by ip_version ASC, prefix ASC (broadest first), network_bin ASC
+    $sorted = $byId;
+    uasort($sorted, function(array $a, array $b): int {
+        $va = (int)$a['ip_version']; $vb = (int)$b['ip_version'];
+        if ($va !== $vb) return $va <=> $vb;
+        $pa = (int)$a['prefix']; $pb = (int)$b['prefix'];
+        if ($pa !== $pb) return $pa <=> $pb;
+        return strcmp($a['network_bin'], $b['network_bin']);
+    });
+
     $children = [];
     $roots = [];
 
-    foreach ($ids as $childId) {
-        $child = $byId[$childId];
-        $bestParent = null;
-        $bestPrefix = -1;
+    // O(N log N) stack-based parent lookup: process broadest-first,
+    // maintain a stack of candidate parents, pop until top contains child.
+    $stack = [];
 
-        foreach ($ids as $parentId) {
-            if ($parentId === $childId) continue;
-            $parent = $byId[$parentId];
+    foreach ($sorted as $id => $row) {
+        $ver    = (int)$row['ip_version'];
+        $prefix = (int)$row['prefix'];
+        $netBin = $row['network_bin'];
 
-            if ((int)$parent['ip_version'] !== (int)$child['ip_version']) continue;
-            $pp = (int)$parent['prefix'];
-            $cp = (int)$child['prefix'];
-            if ($pp >= $cp) continue;
-
-            if (subnet_contains_bin_local($parent['network_bin'], $pp, $child['network_bin']) && $pp > $bestPrefix) {
-                $bestPrefix = $pp;
-                $bestParent = $parentId;
+        // Pop entries that cannot be a parent of this subnet
+        while (!empty($stack)) {
+            $top = end($stack);
+            if ((int)$top['ip_version'] !== $ver) {
+                $stack = [];
+                break;
             }
+            if ((int)$top['prefix'] < $prefix
+                && subnet_contains_bin_local($top['network_bin'], (int)$top['prefix'], $netBin)) {
+                break;
+            }
+            array_pop($stack);
         }
-        $parentOf[$childId] = $bestParent;
+
+        if (!empty($stack)) {
+            $parent = end($stack);
+            $children[(int)$parent['id']][] = $id;
+        } else {
+            $roots[] = $id;
+        }
+
+        $stack[] = ['id' => $id, 'ip_version' => $ver, 'prefix' => $prefix, 'network_bin' => $netBin];
     }
 
     $cmpFn = function(int $a, int $b) use ($byId): int {
@@ -201,12 +233,6 @@ function build_subnet_tree_local(array $rows): array
         if ($c !== 0) return $c;
         return (int)$ra['prefix'] <=> (int)$rb['prefix'];
     };
-
-    foreach ($ids as $id) {
-        $p = $parentOf[$id];
-        if ($p === null) $roots[] = $id;
-        else $children[$p][] = $id;
-    }
 
     usort($roots, $cmpFn);
     foreach ($children as $pid => $arr) {
@@ -278,44 +304,50 @@ function ipv4_unassigned_summary_local(PDO $db): array
     $subs = $st->fetchAll();
     if (!$subs) return [];
 
-    // Only count used/reserved — free addresses do not contribute to utilization
-    $st = $db->prepare("SELECT a.subnet_id, a.ip_bin FROM addresses a JOIN subnets s ON s.id=a.subnet_id WHERE s.ip_version=4 AND a.status IN ('used','reserved')");
-    $st->execute();
-    $addrRows = $st->fetchAll();
-
-    $ipsBySubnet = [];
-    foreach ($addrRows as $r) {
-        $sid = (int)$r['subnet_id'];
-        $ipsBySubnet[$sid] ??= [];
-        $ipsBySubnet[$sid][] = $r['ip_bin'];
+    // Aggregate used/reserved counts per subnet instead of loading all blobs
+    $cntSt = $db->prepare(
+        "SELECT a.subnet_id, COUNT(*) AS c
+         FROM addresses a JOIN subnets s ON s.id = a.subnet_id
+         WHERE s.ip_version = 4 AND a.status IN ('used','reserved')
+         GROUP BY a.subnet_id"
+    );
+    $cntSt->execute();
+    $countBySubnet = [];
+    foreach ($cntSt->fetchAll() as $r) {
+        $countBySubnet[(int)$r['subnet_id']] = (int)$r['c'];
     }
 
     $out = [];
     foreach ($subs as $s) {
-        $sid = (int)$s['id'];
+        $sid    = (int)$s['id'];
         $prefix = (int)$s['prefix'];
         $netBin = $s['network_bin'];
 
         $assignableTotal = ipv4_assignable_count($prefix);
-        $ips = $ipsBySubnet[$sid] ?? [];
+        $assignedCount   = $countBySubnet[$sid] ?? 0;
 
-        if ($prefix <= 30) {
+        if ($prefix <= 30 && $assignedCount > 0) {
+            // Exclude network/broadcast addresses from the count
             $bcast = ipv4_broadcast_bin_local($netBin, $prefix);
-            $assignedAssignable = 0;
-            foreach ($ips as $ipb) {
-                if (hash_equals($ipb, $netBin) || hash_equals($ipb, $bcast)) continue;
-                $assignedAssignable++;
-            }
+            $exclSt = $db->prepare(
+                "SELECT COUNT(*) AS c FROM addresses
+                 WHERE subnet_id = :sid AND status IN ('used','reserved')
+                   AND (ip_bin = :net OR ip_bin = :bcast)"
+            );
+            $exclSt->execute([':sid' => $sid, ':net' => $netBin, ':bcast' => $bcast]);
+            $excluded = (int)$exclSt->fetch()['c'];
+            $assignedAssignable = $assignedCount - $excluded;
         } else {
-            $assignedAssignable = count($ips);
+            $assignedAssignable = $assignedCount;
         }
 
+        if ($assignedAssignable < 0) $assignedAssignable = 0;
         $unassigned = $assignableTotal - $assignedAssignable;
         if ($unassigned < 0) $unassigned = 0;
 
         $out[$sid] = [
-            'assignable_total' => (int)$assignableTotal,
-            'assigned_assignable' => (int)$assignedAssignable,
+            'assignable_total'      => (int)$assignableTotal,
+            'assigned_assignable'   => (int)$assignedAssignable,
             'unassigned_assignable' => (int)$unassigned,
         ];
     }
@@ -528,6 +560,27 @@ page_header('Subnets');
 <?php if ($err): ?><p class="danger"><?= e($err) ?></p><?php endif; ?>
 <?php if ($msg): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
 <?php if ($warn): ?><p class="warning"><?= e($warn) ?></p><?php endif; ?>
+
+<?php if (!empty($overlapWarning) && !empty($pendingAction) && !empty($pendingData)): ?>
+  <div class="card mt-16 warning" style="border-left:4px solid var(--warn)">
+    <h2>⚠ Overlap Warning</h2>
+    <p><?= e($overlapWarning) ?></p>
+    <form method="post" action="subnets.php" style="display:inline">
+      <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+      <input type="hidden" name="action" value="<?= e($pendingAction) ?>">
+      <?php if (($pendingData['id'] ?? 0) > 0): ?>
+        <input type="hidden" name="id" value="<?= (int)$pendingData['id'] ?>">
+      <?php endif; ?>
+      <input type="hidden" name="cidr" value="<?= e((string)$pendingData['cidr']) ?>">
+      <input type="hidden" name="description" value="<?= e((string)$pendingData['description']) ?>">
+      <input type="hidden" name="site_id" value="<?= (int)$pendingData['site_id'] ?>">
+      <input type="hidden" name="vlan_id" value="<?= e((string)($pendingData['vlan_id'] ?? '')) ?>">
+      <input type="hidden" name="confirm_overlap" value="1">
+      <button type="submit">Save anyway</button>
+      <a class="action-pill" href="subnets.php">Cancel</a>
+    </form>
+  </div>
+<?php endif; ?>
 
 <div class="card mt-16" id="add-subnet">
   <h2>Add subnet</h2>

@@ -4,6 +4,41 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## 1.12 — Security Hardening, Performance & API Completeness
+
+### Security fixes
+- **#146 — Last-admin protection on toggle/demote:** Disabling or demoting the last active admin account is now blocked with a clear error message, matching the existing delete guard.
+- **#155 — SQL import whitelist:** Database import now only allows `INSERT`, `CREATE`, `DROP`, and `DELETE` statements. `ATTACH`, `DETACH`, and `LOAD_EXTENSION` are explicitly blocked.
+- **#156 — Host header validation:** When `base_url` is not configured, the `Host` header is validated against a strict regex before use in the HTTPS redirect, preventing open-redirect via spoofed headers.
+
+### Bug fixes
+- **#158 — Dashboard empty-state text:** Corrected subnet range description from "/8–/30" to "/8–/32".
+- **#159 — Audit action name consistency:** Normalised `api_key.*` → `apikey.*` and `user.password_change` → `user.change_password` in all code paths. Migration updates existing audit rows. Added missing `db` prefix to audit filter.
+- **#161 — POST action fall-through:** Changed `if`→`elseif` chains in `addresses.php` and `sites.php` to prevent a single POST from matching multiple action branches.
+
+### Performance
+- **#149 — O(N log N) subnet tree:** Replaced the O(N²) nested-loop tree builder with a sorted-stack algorithm that processes subnets broadest-first.
+- **#150 — GROUP BY utilization:** Replaced per-subnet blob loading with a single `GROUP BY` aggregate query plus a lightweight network/broadcast correction pass.
+- **#152 — Streaming database export:** Refactored `ipam_db_dump()` into a streaming `ipam_db_dump_stream()` that writes chunks directly to output, eliminating unbounded string concatenation for large databases.
+- **#160 — Bulk update pagination:** Added pagination to the bulk update page, preventing memory exhaustion on large subnets.
+
+### API fixes
+- **#147 — API audit uses client_ip():** API audit logging now uses `client_ip()` (respects proxy trust config) instead of raw `REMOTE_ADDR`.
+- **#148 — API address history logging:** API address create/update/delete now record entries in `address_history`, using `api:{key-name}` as the username. DHCP pool edit/delete also log history.
+- **#153 — API subnet site inheritance:** API subnet creation now inherits `site_id` from the tightest enclosing parent subnet, matching web UI behaviour.
+
+### UX improvements
+- **#154 — Flash messages on redirect:** Success/warning messages now survive POST-redirect-GET via `flash_set()`/`flash_get()`. Applied to sites, addresses, API keys, and subnet overlap warnings.
+- **#157 — Search export filters:** CSV export of search results now respects site and IP version filters.
+
+### Features
+- **#137 — Subnet overlap confirmation:** Creating or updating a subnet that overlaps existing subnets now shows a confirmation page before saving. API responses include a non-blocking `warnings` array.
+
+### Infrastructure
+- **#151 — Audit log indexes:** Added indexes on `audit_log(action)` and `audit_log(created_at)` for faster filtering and date-range queries.
+
+---
+
 ## 1.11 — Branding, Group Field, VLAN IDs, API Write Support & Theme Persistence
 
 ### New features

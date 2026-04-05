@@ -100,6 +100,18 @@ See the [Installation guide](docs/install.md) for full web server configuration 
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
+### What's new in 1.12
+
+**Security hardening** — Last-admin protection extended to toggle-active and set-role actions (#146). SQL import now whitelists statement types and blocks `ATTACH`/`LOAD_EXTENSION` (#155). Host header validated before HTTPS redirect when `base_url` is not configured (#156).
+
+**Performance** — Subnet tree builder rewritten from O(N²) to O(N log N) using a sorted-stack algorithm (#149). IPv4 utilization calculation replaced with a single `GROUP BY` aggregate query (#150). Database export streams chunks instead of building an unbounded string (#152). Bulk update page is now paginated (#160).
+
+**API completeness** — API address mutations now log to `address_history` (#148). API audit uses `client_ip()` for proxy-aware logging (#147). API subnet creation inherits site from parent (#153). Subnet create responses include overlap warnings (#137).
+
+**UX** — Flash messages survive POST-redirect-GET across sites, addresses, API keys, and subnets (#154). Search CSV export respects site and IP version filters (#157). Subnet overlap detection now shows a confirmation page before saving (#137).
+
+**Bug fixes** — Dashboard empty-state text corrected to /8–/32 (#158). Audit action names normalised (`apikey.*`, `user.change_password`) with migration (#159). POST action fall-through fixed in addresses and sites (#161).
+
 ### What's new in 1.11
 
 **Branding & UX** — Configurable application name (`app_name` in `config.php`) shown in the browser tab, nav bar brand link, login page, and demo gate. Logo and favicons (`assets/logo.svg`, `favicon-32.png`, `apple-touch-icon.png`) displayed on every page. Browser tab title now reads `{AppName} — {Page}`.

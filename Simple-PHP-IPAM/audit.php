@@ -4,7 +4,7 @@ require __DIR__ . '/init.php';
 require_login();
 
 // --- Valid action prefixes (categories) ---
-const AUDIT_PREFIXES = ['auth', 'subnet', 'address', 'user', 'site', 'apikey', 'dhcp_pool', 'export', 'import'];
+const AUDIT_PREFIXES = ['auth', 'subnet', 'address', 'user', 'site', 'apikey', 'dhcp_pool', 'db', 'export', 'import'];
 
 $filterPrefix = trim((string)($_GET['prefix'] ?? ''));
 if ($filterPrefix !== '' && !in_array($filterPrefix, AUDIT_PREFIXES, true)) {

@@ -22,6 +22,11 @@ if (!$isHttps) {
         header('Location: ' . $base . $uri, true, 301);
     } else {
         $host = $_SERVER['HTTP_HOST'] ?? '';
+        if ($host === '' || !preg_match('/^[a-zA-Z0-9.\-]+(:\d+)?$/', $host)) {
+            http_response_code(400);
+            echo 'Invalid request: base_url is not configured and Host header is not valid.';
+            exit;
+        }
         header('Location: https://' . $host . $uri, true, 301);
     }
     exit;
