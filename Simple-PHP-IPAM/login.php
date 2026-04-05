@@ -118,8 +118,7 @@ $appName = trim((string)($config['app_name'] ?? '')) ?: 'Simple PHP IPAM';
 <div class="login-wrap">
 <div class="login-card">
   <div class="login-logo">
-    <img src="assets/logo.svg" alt="<?= e($appName) ?>">
-    <p class="muted"><?= e($appName) ?></p>
+    <p><?= e($appName) ?></p>
   </div>
   <h1>Login</h1>
   <?php if ($timedOut && !$error): ?>
