@@ -100,6 +100,22 @@ See the [Installation guide](docs/install.md) for full web server configuration 
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
+### What's new in 1.13
+
+**API expansion** — New `search` endpoint for text search across addresses, `audit` endpoint for paginated audit log access, and full CRUD for sites. Address responses now include `updated_at`. API key via query parameter emits a deprecation header (#174, #170).
+
+**Dashboard refresh** — Quick action links, weekly/monthly growth trend metrics. Top subnets sorted by utilization percentage instead of absolute count (#176, #165).
+
+**Next available IP** — Addresses page shows the first unassigned IPv4 host address with a one-click "Use" link to pre-fill the add form (#168).
+
+**Subnet search & export** — Search page now also matches subnets by CIDR/description. New subnet CSV export with site and IP version filters (#162, #164).
+
+**Address history diffs** — Before/after changes rendered as a field-by-field diff table with highlighting instead of raw JSON (#167).
+
+**Bug fixes** — Host header regex widened for underscores and IPv6 (#186). OIDC username collision retry now loops up to 5 attempts (#178). DHCP pool page accessible to readonly users (#177). CSP inline script violation fixed (#173). Audit log pruning rewritten to avoid SQLite placeholder limit (#171).
+
+**Client-side validation** — CIDR and IP inputs validated on blur via JavaScript with inline error feedback (#175).
+
 ### What's new in 1.12
 
 **Security hardening** — Last-admin protection extended to toggle-active and set-role actions (#146). SQL import now whitelists statement types and blocks `ATTACH`/`LOAD_EXTENSION` (#155). Host header validated before HTTPS redirect when `base_url` is not configured (#156).

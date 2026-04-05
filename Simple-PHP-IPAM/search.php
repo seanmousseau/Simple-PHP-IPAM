@@ -85,6 +85,39 @@ $st->bindValue(':off', $p['offset'], PDO::PARAM_INT);
 $st->execute();
 $rows = $st->fetchAll();
 
+/* --- Subnet search (always runs when $q is non-empty) --- */
+$subnetResults = [];
+if ($q !== '') {
+    $subWhere  = [];
+    $subParams = [];
+    $subWhere[]       = "(s.cidr LIKE :sq ESCAPE '\\' OR s.description LIKE :sq ESCAPE '\\')";
+    $subParams[':sq'] = '%' . like_escape($q) . '%';
+    if ($siteId > 0) {
+        $subWhere[]          = "s.site_id = :site_id";
+        $subParams[':site_id'] = $siteId;
+    }
+    if ($ipVersion > 0) {
+        $subWhere[]           = "s.ip_version = :ipver";
+        $subParams[':ipver']  = $ipVersion;
+    }
+    $subWhereSql = 'WHERE ' . implode(' AND ', $subWhere);
+    $st = $db->prepare("
+        SELECT s.id, s.cidr, s.ip_version, s.description, s.vlan_id,
+               COALESCE(si.name, '') AS site_name,
+               COUNT(a.id) AS addr_count
+        FROM subnets s
+        LEFT JOIN sites si ON si.id = s.site_id
+        LEFT JOIN addresses a ON a.subnet_id = s.id
+        $subWhereSql
+        GROUP BY s.id
+        ORDER BY s.ip_version ASC, s.cidr ASC
+        LIMIT 50
+    ");
+    foreach ($subParams as $k => $v) $st->bindValue($k, $v);
+    $st->execute();
+    $subnetResults = $st->fetchAll();
+}
+
 function build_query_search(array $overrides = []): string {
     $q = $_GET;
     foreach ($overrides as $k => $v) {
@@ -196,6 +229,7 @@ page_header('Search');
   <?php if (!$rows): ?>
     <div class="empty-state mt-12">No results.</div>
   <?php else: ?>
+    <div class="table-wrap">
     <table class="mt-12">
       <thead>
         <tr>
@@ -229,11 +263,12 @@ page_header('Search');
           <td><?= $r['grp'] !== '' ? '<span class="badge">' . e($r['grp']) . '</span>' : '' ?></td>
           <td><?= e($r['note']) ?></td>
           <td class="muted"><?= e($r['updated_at']) ?></td>
-          <td><a href="address_history.php?address_id=<?= (int)$r['id'] ?>">History</a></td>
+          <td><a href="addresses.php?subnet_id=<?= (int)$r['subnet_id'] ?>&highlight=<?= (int)$r['id'] ?>">View</a> <a href="address_history.php?address_id=<?= (int)$r['id'] ?>">History</a></td>
         </tr>
       <?php endforeach; ?>
       </tbody>
     </table>
+    </div>
 
     <p class="mt-12">
       <?php if ($p['page'] > 1): ?>
@@ -246,5 +281,30 @@ page_header('Search');
   <?php endif; ?>
 </div>
 
+<?php if ($subnetResults): ?>
+<div class="card mt-16">
+  <h2>Matching Subnets (<?= count($subnetResults) ?>)</h2>
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>CIDR</th><th>Description</th><th>IP Version</th><th>VLAN</th><th>Site</th><th>Addresses</th><th></th></tr>
+    </thead>
+    <tbody>
+    <?php foreach ($subnetResults as $sr): ?>
+      <tr>
+        <td><a href="addresses.php?subnet_id=<?= (int)$sr['id'] ?>"><?= e($sr['cidr']) ?></a></td>
+        <td><?= e((string)$sr['description']) ?></td>
+        <td>IPv<?= (int)$sr['ip_version'] ?></td>
+        <td><?= $sr['vlan_id'] !== null ? e((string)$sr['vlan_id']) : '<span class="muted">—</span>' ?></td>
+        <td><?= $sr['site_name'] !== '' ? e($sr['site_name']) : '<span class="muted">—</span>' ?></td>
+        <td><?= (int)$sr['addr_count'] ?></td>
+        <td><a href="addresses.php?subnet_id=<?= (int)$sr['id'] ?>">View</a></td>
+      </tr>
+    <?php endforeach; ?>
+    </tbody>
+  </table>
+  </div>
+</div>
+<?php endif; ?>
 
 <?php page_footer();

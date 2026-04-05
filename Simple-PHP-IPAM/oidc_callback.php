@@ -148,18 +148,22 @@ if (!$user && $autoLink) {
         // Set an unusable password hash so the account cannot be used with local auth
         $unusableHash = password_hash(bin2hex(random_bytes(32)), PASSWORD_DEFAULT);
 
-        try {
-            $ins = $db->prepare(
-                "INSERT INTO users (username, password_hash, role, is_active, oidc_sub, name, email)
-                 VALUES (:u, :h, :r, 1, :sub, :n, :e)"
-            );
-            $ins->execute([':u' => $newUsername, ':h' => $unusableHash, ':r' => $role,
-                           ':sub' => $sub, ':n' => $claimName, ':e' => $claimEmail]);
-        } catch (PDOException $ex) {
-            // username collision — append a short random suffix
-            $newUsername .= '_' . substr(bin2hex(random_bytes(3)), 0, 6);
-            $ins->execute([':u' => $newUsername, ':h' => $unusableHash, ':r' => $role,
-                           ':sub' => $sub, ':n' => $claimName, ':e' => $claimEmail]);
+        $ins = $db->prepare(
+            "INSERT INTO users (username, password_hash, role, is_active, oidc_sub, name, email)
+             VALUES (:u, :h, :r, 1, :sub, :n, :e)"
+        );
+        $baseUsername = $newUsername;
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            try {
+                $ins->execute([':u' => $newUsername, ':h' => $unusableHash, ':r' => $role,
+                               ':sub' => $sub, ':n' => $claimName, ':e' => $claimEmail]);
+                break;
+            } catch (PDOException $ex) {
+                if ($attempt >= 4) {
+                    oidc_fail('Unable to provision account — username collision after 5 attempts.');
+                }
+                $newUsername = $baseUsername . '_' . ($attempt + 2);
+            }
         }
         $newId = (int)$db->lastInsertId();
         audit($db, 'auth.oidc_provision', 'user', $newId, 'username=' . $newUsername . ' sub=' . $sub);

@@ -29,8 +29,11 @@ try {
 $status = $dbOk ? 'ok' : 'error';
 http_response_code($dbOk ? 200 : 503);
 
-echo json_encode([
-    'status'  => $status,
-    'version' => IPAM_VERSION,
-    'db'      => $dbOk ? 'ok' : 'error',
-], JSON_UNESCAPED_SLASHES);
+$response = [
+    'status' => $status,
+    'db'     => $dbOk ? 'ok' : 'error',
+];
+if (empty($config['status_hide_version'])) {
+    $response['version'] = IPAM_VERSION;
+}
+echo json_encode($response, JSON_UNESCAPED_SLASHES);

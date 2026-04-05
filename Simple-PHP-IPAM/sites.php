@@ -80,6 +80,10 @@ $sites = $st->fetchAll();
 
 page_header('Sites');
 ?>
+<div class="breadcrumbs">
+  <a href="dashboard.php">🏠 Dashboard</a><span class="sep">›</span>
+  <span>🏢 Sites</span>
+</div>
 
 <div class="toolbar">
   <div>
@@ -130,6 +134,7 @@ page_header('Sites');
   <?php if (!$sites): ?>
     <div class="empty-state">No sites yet.</div>
   <?php else: ?>
+    <div class="table-wrap">
     <table>
       <thead>
         <tr>
@@ -175,6 +180,7 @@ page_header('Sites');
       <?php endforeach; ?>
       </tbody>
     </table>
+    </div>
   <?php endif; ?>
 </div>
 

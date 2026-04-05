@@ -552,6 +552,7 @@ page_header('Subnets');
     <a class="action-pill" href="#add-subnet">➕ Add Subnet</a>
   <?php endif; ?>
   <a class="action-pill" href="search.php">🔎 Search Addresses</a>
+  <a class="action-pill" href="export_subnets.php">⬇ Export CSV</a>
   <?php if (current_user()['role'] === 'admin'): ?>
     <a class="action-pill" href="sites.php">📍 Manage Sites</a>
   <?php endif; ?>
@@ -588,7 +589,7 @@ page_header('Subnets');
     <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
     <input type="hidden" name="action" value="create">
     <div class="row">
-      <label>CIDR<br><input name="cidr" placeholder="10.0.0.0/24 or 2001:db8::/64" required></label>
+      <label>CIDR<br><input name="cidr" placeholder="10.0.0.0/24 or 2001:db8::/64" required data-validate="cidr"></label>
       <label>Description<br><input name="description" placeholder="Office LAN"></label>
       <label>VLAN ID<br><input name="vlan_id" type="number" min="1" max="4094" placeholder="1–4094" class="mw-80"></label>
       <label>Site<br>

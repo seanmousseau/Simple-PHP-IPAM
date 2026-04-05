@@ -19,8 +19,46 @@ function ipam_db(string $path): PDO
     return $pdo;
 }
 
+/**
+ * Create the audit_log table and its append-only triggers (idempotent).
+ * Centralises DDL that was previously duplicated in 4 places.
+ */
+function ensure_audit_log_table(PDO $db): void
+{
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS audit_log (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+          user_id     INTEGER, username TEXT, action TEXT NOT NULL,
+          entity_type TEXT NOT NULL, entity_id INTEGER,
+          ip TEXT, user_agent TEXT, details TEXT
+        )
+    ");
+    $db->exec("CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action)");
+    $db->exec("CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at)");
+    $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_update
+        BEFORE UPDATE ON audit_log
+        BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
+    $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
+        BEFORE DELETE ON audit_log
+        BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
+}
+
 function ipam_db_init(PDO $db): void
 {
+    // Skip bootstrap checks if sentinel exists and DB file hasn't changed since
+    $sentinelPath = __DIR__ . '/data/.db_initialized';
+    $dbFilePath   = __DIR__ . '/data/ipam.sqlite';
+    if (is_file($sentinelPath) && is_file($dbFilePath)) {
+        $sentinelTime = (int)filemtime($sentinelPath);
+        $dbTime       = (int)filemtime($dbFilePath);
+        if ($sentinelTime >= $dbTime) {
+            ensure_migrations_table($db);
+            apply_migrations($db);
+            return;
+        }
+    }
+
     $st = $db->prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'");
     $st->execute();
     $hasUsers = (bool)$st->fetch();
@@ -53,24 +91,7 @@ function ipam_db_init(PDO $db): void
 
     // Self-healing: audit_log is created by schema.sql, not a migration, so it can
     // go missing after a botched demo reset. Recreate it (and its triggers) if absent.
-    $auditExists = $db->query("SELECT name FROM sqlite_master WHERE type='table' AND name='audit_log'")->fetch();
-    if (!$auditExists) {
-        $db->exec("
-            CREATE TABLE IF NOT EXISTS audit_log (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              created_at TEXT NOT NULL DEFAULT (datetime('now')),
-              user_id INTEGER, username TEXT, action TEXT NOT NULL,
-              entity_type TEXT NOT NULL, entity_id INTEGER,
-              ip TEXT, user_agent TEXT, details TEXT
-            )
-        ");
-        $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_update
-            BEFORE UPDATE ON audit_log
-            BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
-        $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
-            BEFORE DELETE ON audit_log
-            BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
-    }
+    ensure_audit_log_table($db);
 
     $st = $db->prepare("SELECT COUNT(*) AS c FROM users");
     $st->execute();
@@ -83,6 +104,9 @@ function ipam_db_init(PDO $db): void
         $ins = $db->prepare("INSERT INTO users (username, password_hash, role, is_active) VALUES (:u,:h,'admin',1)");
         $ins->execute([':u' => $u, ':h' => $hash]);
     }
+
+    // Write sentinel so subsequent requests skip bootstrap queries
+    @touch($sentinelPath);
 }
 
 function e(string $s): string
@@ -650,51 +674,20 @@ function prune_audit_log(PDO $db, int $retentionDays): int
     // row-level triggers. The canonical safe approach: use a staging table.
     $db->beginTransaction();
     try {
-        // Collect IDs of rows to keep (newer than cutoff)
-        $st = $db->prepare("SELECT id FROM audit_log WHERE created_at >= :cutoff");
-        $st->execute([':cutoff' => $cutoff]);
-        $keepIds = array_column($st->fetchAll(), 'id');
+        $oldCount = (int)$db->query("SELECT COUNT(*) FROM audit_log")->fetchColumn();
 
-        // Rename, recreate, copy kept rows, drop old
+        // Rename, recreate, copy kept rows via subquery (avoids placeholder limit)
         $db->exec("ALTER TABLE audit_log RENAME TO audit_log_old");
-        $db->exec("
-            CREATE TABLE audit_log (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              created_at TEXT NOT NULL DEFAULT (datetime('now')),
-              user_id INTEGER, username TEXT, action TEXT NOT NULL,
-              entity_type TEXT NOT NULL, entity_id INTEGER,
-              ip TEXT, user_agent TEXT, details TEXT
-            )
-        ");
+        ensure_audit_log_table($db);
 
-        if (!empty($keepIds)) {
-            $placeholders = implode(',', array_fill(0, count($keepIds), '?'));
-            $db->prepare(
-                "INSERT INTO audit_log SELECT * FROM audit_log_old WHERE id IN ($placeholders)"
-            )->execute($keepIds);
-        }
-
-        $countSt = $db->query("SELECT COUNT(*) FROM audit_log_old");
-        $oldCount = (int)$countSt->fetchColumn();
-        $newCount = count($keepIds);
-        $pruned   = $oldCount - $newCount;
+        $st = $db->prepare("INSERT INTO audit_log SELECT * FROM audit_log_old WHERE created_at >= :cutoff");
+        $st->execute([':cutoff' => $cutoff]);
+        $newCount = (int)$db->query("SELECT COUNT(*) FROM audit_log")->fetchColumn();
 
         $db->exec("DROP TABLE audit_log_old");
 
-        // Re-add the append-only triggers
-        $db->exec("
-            CREATE TRIGGER IF NOT EXISTS audit_log_no_update
-            BEFORE UPDATE ON audit_log
-            BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END
-        ");
-        $db->exec("
-            CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
-            BEFORE DELETE ON audit_log
-            BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END
-        ");
-
         $db->commit();
-        return $pruned;
+        return $oldCount - $newCount;
     } catch (Throwable $e) {
         $db->rollBack();
         error_log('audit_log prune failed: ' . $e->getMessage());
@@ -1304,28 +1297,10 @@ function csv_out(array $row): void
 function demo_reset_db(PDO $db): void
 {
     // audit_log has append-only triggers that block DELETE, so bypass via rename+drop,
-    // then immediately recreate the table and triggers (like prune_audit_log does).
+    // then immediately recreate the table and triggers.
     $db->exec("ALTER TABLE audit_log RENAME TO audit_log_old");
     $db->exec("DROP TABLE audit_log_old");
-    $db->exec("
-        CREATE TABLE audit_log (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          created_at TEXT NOT NULL DEFAULT (datetime('now')),
-          user_id INTEGER, username TEXT, action TEXT NOT NULL,
-          entity_type TEXT NOT NULL, entity_id INTEGER,
-          ip TEXT, user_agent TEXT, details TEXT
-        )
-    ");
-    $db->exec("
-        CREATE TRIGGER IF NOT EXISTS audit_log_no_update
-        BEFORE UPDATE ON audit_log
-        BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END
-    ");
-    $db->exec("
-        CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
-        BEFORE DELETE ON audit_log
-        BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END
-    ");
+    ensure_audit_log_table($db);
 
     $tables = ['address_history', 'login_attempts', 'api_keys',
                'addresses', 'subnets', 'sites', 'users', 'schema_migrations'];
@@ -1675,6 +1650,31 @@ function ipv4_assignable_count(int $prefix): int
     return ($assignable > 0) ? (int)$assignable : 0;
 }
 
+/**
+ * Find the first unassigned IPv4 host address in a subnet.
+ * Returns the IP as text, or null if none available.
+ */
+function find_next_available_ipv4(PDO $db, int $subnetId, string $network, int $prefix): ?string
+{
+    if ($prefix > 32 || $prefix < 8) return null;
+    $netInt = ipv4_bin_to_int(inet_pton($network));
+    $first  = ($prefix >= 31) ? $netInt : $netInt + 1;
+    $last   = ($prefix >= 31) ? $netInt + ((1 << (32 - $prefix)) - 1)
+                              : $netInt + ((1 << (32 - $prefix)) - 1) - 1;
+
+    // Fetch all used IPs in this subnet as a set
+    $st = $db->prepare("SELECT ip FROM addresses WHERE subnet_id = :sid");
+    $st->execute([':sid' => $subnetId]);
+    $used = [];
+    foreach ($st as $r) $used[$r['ip']] = true;
+
+    for ($i = $first; $i <= $last; $i++) {
+        $ip = ipv4_int_to_text($i);
+        if (!isset($used[$ip])) return $ip;
+    }
+    return null;
+}
+
 function ipv4_broadcast_int(int $networkInt, int $prefix): int
 {
     $hostBits = 32 - $prefix;
@@ -1971,13 +1971,11 @@ function page_header(string $title, array $opts = []): void
     echo "<title>" . e($appName) . " \u{2014} " . e($title) . "</title>";
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=1.12'>";
-    // Prime localStorage with server-side theme before deferred app.js runs (prevents flash)
+    echo "<link rel='stylesheet' href='assets/app.css?v=1.13'>";
+    // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = $_SESSION['user_theme'] ?? 'auto';
-    if (in_array($userTheme, ['light', 'dark'], true)) {
-        echo "<script>localStorage.setItem('ipam_theme'," . json_encode($userTheme) . ");</script>";
-    }
-    echo "<script defer src='assets/app.js?v=1.12'></script>";
+    echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
+    echo "<script defer src='assets/app.js?v=1.13'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
@@ -1991,10 +1989,7 @@ function page_header(string $title, array $opts = []): void
         echo "<a class='nav-pill' href='addresses.php'>🧾 Addresses</a>";
         echo "<a class='nav-pill' href='search.php'>🔎 Search</a>";
         echo "<a class='nav-pill' href='audit.php'>📜 Audit</a>";
-        // DHCP Pools is a write-access feature — show for admin and netops
-        if (in_array($role, ['admin', 'netops'], true)) {
-            echo "<a class='nav-pill' href='dhcp_pool.php'>🔒 DHCP</a>";
-        }
+        echo "<a class='nav-pill' href='dhcp_pool.php'>🔒 DHCP</a>";
         if (($role ?? '') === 'admin') {
             echo "<div class='nav-dropdown'>";
             echo "<button type='button' class='nav-pill nav-dropdown-toggle'>⚙ Admin ▾</button>";
@@ -2038,7 +2033,6 @@ function page_header(string $title, array $opts = []): void
 
     // Default bootstrap admin password warning (admin only)
     if (($role ?? '') === 'admin') {
-        global $config;
         if (($config['bootstrap_admin']['password'] ?? '') === 'ChangeMeNow!12345') {
             echo "<div class='admin-notice admin-notice--danger' role='alert'>"
                . "⚠ <strong>Security warning:</strong> The default bootstrap admin password is still set in <code>config.php</code>. "
@@ -2079,7 +2073,6 @@ function page_header(string $title, array $opts = []): void
 
     // Update-available dismissible banner (admin only, client-side dismiss via localStorage)
     if (($role ?? '') === 'admin') {
-        global $config;
         $update = ipam_update_check($config ?? []);
         if ($update) {
             $uv  = e((string)$update['version']);

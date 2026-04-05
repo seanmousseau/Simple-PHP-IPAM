@@ -6,6 +6,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 
 $u = current_user();
 $newKey = null; // raw key shown once after creation
+$formError = '';
 
 // ---- Actions ----
 
@@ -109,6 +110,7 @@ page_header('API Keys');
 <?php if ($keys): ?>
 <div class="card mt-16">
   <h2>Existing keys</h2>
+  <div class="table-wrap">
   <table>
     <thead>
       <tr>
@@ -166,6 +168,7 @@ page_header('API Keys');
     <?php endforeach; ?>
     </tbody>
   </table>
+  </div>
 </div>
 <?php else: ?>
   <p class="muted mt-16">No API keys yet.</p>

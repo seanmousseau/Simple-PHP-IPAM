@@ -1,5 +1,13 @@
 (function(){
   var key = "ipam_theme";
+  // Seed localStorage from server-side theme meta tag (CSP-safe, replaces inline script)
+  var metaTheme = document.querySelector("meta[name='ipam-server-theme']");
+  if (metaTheme) {
+    var serverTheme = metaTheme.getAttribute("content");
+    if (serverTheme === "light" || serverTheme === "dark") {
+      localStorage.setItem(key, serverTheme);
+    }
+  }
   var saved = localStorage.getItem(key);
   if (saved === "light" || saved === "dark") {
     document.documentElement.setAttribute("data-theme", saved);
@@ -201,6 +209,45 @@
       }
       filterSite.addEventListener("change", filterSubnets);
       filterSubnets();
+    }
+    // --- Client-side IP/CIDR validation (data-validate) ---
+    var ipv4Re = /^(\d{1,3}\.){3}\d{1,3}$/;
+    var ipv6Re = /^[0-9a-fA-F:]+$/;
+    var cidrRe = /^(.+)\/(\d{1,3})$/;
+
+    function validateInput(el) {
+      var type = el.dataset.validate;
+      var val = el.value.trim();
+      if (val === "") { el.setCustomValidity(""); return; }
+
+      if (type === "ip") {
+        if (!ipv4Re.test(val) && !ipv6Re.test(val)) {
+          el.setCustomValidity("Enter a valid IPv4 or IPv6 address.");
+        } else { el.setCustomValidity(""); }
+      } else if (type === "cidr") {
+        var m = val.match(cidrRe);
+        if (!m) {
+          el.setCustomValidity("Enter a valid CIDR (e.g. 10.0.0.0/24 or 2001:db8::/64).");
+        } else if (!ipv4Re.test(m[1]) && !ipv6Re.test(m[1])) {
+          el.setCustomValidity("Network address is not a valid IP.");
+        } else { el.setCustomValidity(""); }
+      }
+    }
+
+    document.querySelectorAll("[data-validate]").forEach(function(el) {
+      el.addEventListener("blur", function() { validateInput(el); });
+      el.addEventListener("input", function() { el.setCustomValidity(""); });
+    });
+
+    // --- Import spinner overlay (data-import-form) ---
+    var importForm = document.querySelector("[data-import-form]");
+    if (importForm) {
+      importForm.addEventListener("submit", function() {
+        var overlay = document.createElement("div");
+        overlay.className = "spinner-overlay";
+        overlay.innerHTML = '<div class="spinner"></div><div>Importing database, please wait\u2026</div>';
+        document.body.appendChild(overlay);
+      });
     }
   });
 })();

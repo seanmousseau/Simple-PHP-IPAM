@@ -1,9 +1,12 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/init.php';
-require_write_access();
+require_login();
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    require_write_access();
+    csrf_require();
+}
 
 $err     = '';
 $msg     = '';
@@ -120,7 +123,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $msg = "{$created} reserved (new), {$updated} updated, {$skipped} skipped (already used).";
                     } catch (Throwable $e) {
                         $db->rollBack();
-                        $err = 'Failed to reserve pool: ' . $e->getMessage();
+                        error_log('DHCP pool reserve error: ' . $e->getMessage());
+                        $err = 'An unexpected database error occurred while reserving the pool.';
                     }
                 }
             }
@@ -230,7 +234,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $msg = "{$deleted} reserved address record(s) removed from the range.";
                     } catch (Throwable $e) {
                         $db->rollBack();
-                        $err = 'Failed to clear pool: ' . $e->getMessage();
+                        error_log('DHCP pool clear error: ' . $e->getMessage());
+                        $err = 'An unexpected database error occurred while clearing the pool.';
                     }
                 }
             }
@@ -257,6 +262,8 @@ page_header('DHCP Pools');
   <a href="subnets.php">🌐 Subnets</a><span class="sep">›</span>
   <span>🔒 DHCP Pools</span>
 </div>
+
+<p class="muted" style="margin:8px 0 0">DHCP pool management is available for IPv4 subnets only.</p>
 
 <div class="toolbar">
   <div>
@@ -333,6 +340,7 @@ page_header('DHCP Pools');
     }
     if ($curGroup !== null) $groups[] = $curGroup;
     ?>
+    <div class="table-wrap">
     <table>
       <thead><tr><th>IP</th><th>Hostname</th><th>Owner</th><th>Note</th><th></th></tr></thead>
       <tbody>
@@ -398,6 +406,7 @@ page_header('DHCP Pools');
       <?php endforeach; ?>
       </tbody>
     </table>
+    </div>
     <p class="mt-8"><a href="addresses.php?subnet_id=<?= (int)$subnetId ?>">View all addresses →</a></p>
   <?php endif; ?>
 </div>

@@ -74,6 +74,33 @@ function j_pretty_hist(?string $json): string {
     return json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
 }
 
+function render_history_diff(?string $beforeJson, ?string $afterJson): string {
+    $before = ($beforeJson !== null && trim($beforeJson) !== '') ? json_decode($beforeJson, true) : null;
+    $after  = ($afterJson  !== null && trim($afterJson)  !== '') ? json_decode($afterJson,  true) : null;
+    if ($before === null && $after === null) return '<span class="muted">—</span>';
+
+    $allKeys = array_unique(array_merge(
+        $before !== null ? array_keys($before) : [],
+        $after  !== null ? array_keys($after)  : []
+    ));
+    sort($allKeys);
+
+    $html = '<table class="diff-table"><thead><tr><th>Field</th><th>Before</th><th>After</th></tr></thead><tbody>';
+    foreach ($allKeys as $key) {
+        $bVal = $before[$key] ?? '';
+        $aVal = $after[$key]  ?? '';
+        $changed = (string)$bVal !== (string)$aVal;
+        $cls = $changed ? ' class="diff-changed"' : '';
+        $html .= '<tr' . $cls . '>'
+               . '<td><b>' . e($key) . '</b></td>'
+               . '<td>' . ($bVal !== '' ? e((string)$bVal) : '<span class="muted">—</span>') . '</td>'
+               . '<td>' . ($aVal !== '' ? e((string)$aVal) : '<span class="muted">—</span>') . '</td>'
+               . '</tr>';
+    }
+    $html .= '</tbody></table>';
+    return $html;
+}
+
 function build_query_hist(array $overrides = []): string {
     $q = $_GET;
     foreach ($overrides as $k => $v) {
@@ -119,6 +146,7 @@ page_header('Address History');
   <?php if (!$rows): ?>
     <div class="empty-state mt-12">No history entries yet.</div>
   <?php else: ?>
+    <div class="table-wrap">
     <table class="mt-12">
       <thead>
         <tr>
@@ -128,8 +156,7 @@ page_header('Address History');
                 echo sort_th('user',   'User',   $histSort['col'], $histSort['dir'], $histQsBase);
           ?>
           <th>Client IP</th>
-          <th>Before</th>
-          <th>After</th>
+          <th>Changes</th>
         </tr>
       </thead>
       <tbody>
@@ -139,12 +166,12 @@ page_header('Address History');
           <td><?= e($r['action']) ?></td>
           <td><?= e((string)($r['username'] ?? '')) ?></td>
           <td class="muted"><?= e((string)($r['client_ip'] ?? '')) ?></td>
-          <td><pre class="pre-wrap"><?= e(j_pretty_hist($r['before_json'])) ?></pre></td>
-          <td><pre class="pre-wrap"><?= e(j_pretty_hist($r['after_json'])) ?></pre></td>
+          <td><?= render_history_diff($r['before_json'], $r['after_json']) ?></td>
         </tr>
       <?php endforeach; ?>
       </tbody>
     </table>
+    </div>
 
     <p class="mt-12">
       <?php if ($p['page'] > 1): ?>
