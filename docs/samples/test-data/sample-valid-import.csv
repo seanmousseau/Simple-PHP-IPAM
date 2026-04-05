@@ -1,0 +1,6 @@
+IP,Hostname,Owner,Status,Note,CIDR,Prefix,Netmask,Description
+10.10.1.10,printer-a,IT,used,Main office printer,10.10.1.0/24,,,Office LAN
+10.10.1.20,laptop-a,Staff,reserved,Loaner laptop,10.10.1.0/24,,,Office LAN
+10.10.2.15,camera-a,Security,used,Front door camera,,24,,Security subnet inferred from IP
+2001:db8:100::10,server-v6,Infra,used,IPv6 app server,2001:db8:100::/64,,,IPv6 server subnet
+2001:db8:200::20,client-v6,Users,free,IPv6 test host,,64,,IPv6 inferred subnet

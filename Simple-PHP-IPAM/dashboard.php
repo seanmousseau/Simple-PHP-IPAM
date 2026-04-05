@@ -93,7 +93,7 @@ page_header('Dashboard');
   <div class="card">
     <h2>Top IPv4 Subnets by Usage</h2>
     <?php if (!$topSubnets): ?>
-      <div class="empty-state">No IPv4 subnets in /8–/30 range.</div>
+      <div class="empty-state">No IPv4 subnets in /8–/32 range.</div>
     <?php else: ?>
       <table>
         <thead>

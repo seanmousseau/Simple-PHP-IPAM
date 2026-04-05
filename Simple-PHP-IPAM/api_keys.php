@@ -28,7 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $keyHash = hash('sha256', $rawKey);
             $st = $db->prepare("INSERT INTO api_keys (name, key_hash, created_by) VALUES (:n,:h,:by)");
             $st->execute([':n' => $name, ':h' => $keyHash, ':by' => $u['username']]);
-            audit($db, 'api_key.create', 'api_key', (int)$db->lastInsertId(), 'name=' . $name);
+            audit($db, 'apikey.create', 'apikey', (int)$db->lastInsertId(), 'name=' . $name);
             $newKey = $rawKey; // shown once only
         }
     }
@@ -37,7 +37,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $kid = (int)($_POST['key_id'] ?? 0);
         $db->prepare("UPDATE api_keys SET is_active = 0 WHERE id = :id")
            ->execute([':id' => $kid]);
-        audit($db, 'api_key.deactivate', 'api_key', $kid, '');
+        audit($db, 'apikey.deactivate', 'apikey', $kid, '');
+        flash_set('API key deactivated.');
         header('Location: api_keys.php');
         exit;
     }
@@ -46,7 +47,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $kid = (int)($_POST['key_id'] ?? 0);
         $db->prepare("UPDATE api_keys SET is_active = 1 WHERE id = :id")
            ->execute([':id' => $kid]);
-        audit($db, 'api_key.activate', 'api_key', $kid, '');
+        audit($db, 'apikey.activate', 'apikey', $kid, '');
+        flash_set('API key activated.');
         header('Location: api_keys.php');
         exit;
     }
@@ -55,7 +57,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $kid = (int)($_POST['key_id'] ?? 0);
         $db->prepare("DELETE FROM api_keys WHERE id = :id")
            ->execute([':id' => $kid]);
-        audit($db, 'api_key.delete', 'api_key', $kid, '');
+        audit($db, 'apikey.delete', 'apikey', $kid, '');
+        flash_set('API key deleted.');
         header('Location: api_keys.php');
         exit;
     }
