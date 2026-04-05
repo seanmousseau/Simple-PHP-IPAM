@@ -75,7 +75,7 @@ $appName = trim((string)($config['app_name'] ?? '')) ?: 'Simple PHP IPAM';
 <body>
 <div class="gate-wrap">
   <div style="text-align:center;margin-bottom:12px;">
-    <img src="assets/logo.svg" alt="<?= e($appName) ?>" style="height:56px;width:auto;">
+    <img src="assets/logo_rectangle.svg" alt="<?= e($appName) ?>" style="height:56px;width:auto;max-width:220px;">
     <p class="muted" style="margin:4px 0 0;"><?= e($appName) ?></p>
   </div>
   <h1>Almost there…</h1>
