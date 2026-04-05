@@ -1,3 +1,7 @@
+# Increase upload limits for db_tools.php SQL import
+php_value upload_max_filesize 20M
+php_value post_max_size 25M
+
 # Options -Indexes works for Apache.
 # Note: OpenLiteSpeed ignores this. For OLS, disable "Auto Index" in the WebAdmin Console.
 Options -Indexes
