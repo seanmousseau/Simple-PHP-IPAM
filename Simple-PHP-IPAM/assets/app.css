@@ -598,6 +598,7 @@ details > summary::-webkit-details-marker{display:none}
 .card--success{border-color:var(--success)}
 /* Footer metadata bar */
 .footer-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.footer-meta img{height:24px;width:auto;flex-shrink:0}
 /* Full-width utilization bar (dashboard top-subnets table) */
 .util-bar-block{background:var(--border);border-radius:4px;height:8px;overflow:hidden}
 .util-bar-block>.util-bar-fill{border-radius:0;width:0}
