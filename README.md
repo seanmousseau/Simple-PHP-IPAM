@@ -100,6 +100,10 @@ See the [Installation guide](docs/install.md) for full web server configuration 
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
+### What's new in 1.14
+
+**Code review hardening** — OIDC callback crash on username collision fixed (#193). Bulk update pagination controls now render (#194). SQL import CREATE TRIGGER restricted to RAISE(ABORT) patterns (#195). Audit log pruning rewritten for SQLite transaction safety (#196). Upgrade script dependency checks and path guards fixed (#197). API subnet update enforces site inheritance (#198). API sites duplicate check and transactional delete (#199).
+
 ### What's new in 1.13
 
 **API expansion** — New `search` endpoint for text search across addresses, `audit` endpoint for paginated audit log access, and full CRUD for sites. Address responses now include `updated_at`. API key via query parameter emits a deprecation header (#174, #170).

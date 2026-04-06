@@ -141,6 +141,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                             'Blocked dangerous SQL construct in: ' . substr($exec, 0, 80)
                         );
                     }
+                    // CREATE TRIGGER bodies can contain arbitrary SQL. Only allow
+                    // triggers that match known safe patterns (append-only guards).
+                    if (preg_match('/^CREATE\s+TRIGGER/i', $exec)) {
+                        if (!preg_match('/RAISE\s*\(\s*ABORT/i', $exec)) {
+                            throw new RuntimeException(
+                                'Blocked CREATE TRIGGER with non-RAISE body: ' . substr($exec, 0, 80)
+                            );
+                        }
+                    }
                     $db->exec($exec);
                     $stmtCount++;
                 }

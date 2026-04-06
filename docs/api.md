@@ -13,6 +13,8 @@ Simple-PHP-IPAM exposes a JSON REST API (`api.php`). Read endpoints are availabl
   - [Addresses](#addresses)
   - [Sites](#sites)
   - [History](#history)
+  - [Search](#search)
+  - [Audit Log](#audit-log)
 - [Write endpoints](#write-endpoints)
   - [Create a subnet](#create-a-subnet)
   - [Update a subnet](#update-a-subnet)
@@ -20,6 +22,9 @@ Simple-PHP-IPAM exposes a JSON REST API (`api.php`). Read endpoints are availabl
   - [Create an address](#create-an-address)
   - [Update an address](#update-an-address)
   - [Delete an address](#delete-an-address)
+  - [Create a site](#create-a-site)
+  - [Update a site](#update-a-site)
+  - [Delete a site](#delete-a-site)
 - [Pagination](#pagination)
 - [Managing API keys](#managing-api-keys)
 - [Examples](#examples)
@@ -41,6 +46,8 @@ Authorization: Bearer <key>
 ```
 GET /api.php?resource=subnets&api_key=<key>
 ```
+
+> **Note:** Query parameter authentication is deprecated and will be removed in a future release. When used, the response includes `Deprecation: true` and `X-Deprecation-Reason` headers.
 
 API keys are created by administrators at **Admin → API Keys** (`api_keys.php`).
 Each key is a 64-character hex string generated with `random_bytes(32)`. Only a
@@ -188,7 +195,8 @@ Returns a paginated list of address records.
       "owner": "ops-team",
       "status": "used",
       "note": "Primary web server",
-      "created_at": "2025-02-01 08:15:30"
+      "created_at": "2025-02-01 08:15:30",
+      "updated_at": "2025-03-15 11:00:00"
     }
   ]
 }
@@ -209,6 +217,7 @@ Results are ordered by IP address (binary sort — correct numerical order withi
 | `note` | string | Free-text note (may be empty) |
 | `group` | string | Group/tag label (may be empty) |
 | `created_at` | string | UTC timestamp (`YYYY-MM-DD HH:MM:SS`) |
+| `updated_at` | string | UTC timestamp of last modification |
 
 ---
 
@@ -301,6 +310,95 @@ Returns `400` if `address_id` is missing. If the address has been deleted, the e
 
 ---
 
+### Search
+
+```
+GET /api.php?resource=search&q=<query>
+```
+
+Search addresses by IP, hostname, owner, note, or group.
+
+**Query parameters**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `q` | string | **required** | Search query (max 500 chars) |
+| `status` | string | — | Filter by status: `used`, `reserved`, or `free` |
+| `site_id` | integer | — | Filter to addresses in subnets belonging to this site |
+| `ip_version` | integer | — | Filter by IP version: `4` or `6` |
+| `page` | integer | `1` | Page number |
+| `limit` | integer | `100` | Records per page (max `500`) |
+
+**Response**
+
+```json
+{
+  "total": 12,
+  "page": 1,
+  "limit": 100,
+  "results": [
+    {
+      "id": 99,
+      "subnet_id": 3,
+      "ip": "10.1.0.10",
+      "hostname": "server01.example.com",
+      "owner": "ops",
+      "status": "used",
+      "note": "Primary web server",
+      "group": "web",
+      "subnet_cidr": "10.1.0.0/24",
+      "site_name": "HQ",
+      "created_at": "2025-02-01 08:15:30",
+      "updated_at": "2025-03-15 11:00:00"
+    }
+  ]
+}
+```
+
+---
+
+### Audit Log
+
+```
+GET /api.php?resource=audit
+```
+
+Returns paginated audit log entries.
+
+**Query parameters**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `action` | string | — | Filter by action prefix (e.g. `subnet.create`, `auth.login`) |
+| `from` | string | — | Start date (ISO 8601: `YYYY-MM-DD` or `YYYY-MM-DD HH:MM:SS`) |
+| `to` | string | — | End date |
+| `page` | integer | `1` | Page number |
+| `limit` | integer | `100` | Records per page (max `500`) |
+
+**Response**
+
+```json
+{
+  "total": 5280,
+  "page": 1,
+  "limit": 100,
+  "entries": [
+    {
+      "id": 1234,
+      "action": "address.create",
+      "entity_type": "address",
+      "entity_id": 99,
+      "username": "admin",
+      "ip": "192.168.1.50",
+      "details": "ip=10.1.0.10 subnet=10.1.0.0/24",
+      "created_at": "2025-03-15 11:00:00"
+    }
+  ]
+}
+```
+
+---
+
 ---
 
 ## Write endpoints
@@ -338,6 +436,13 @@ POST /api.php?resource=subnets
 ```json
 { "id": 42 }
 ```
+
+> If the new subnet overlaps existing subnets (nests inside a parent or contains children), the response includes a `warnings` array:
+> ```json
+> { "id": 42, "warnings": ["Hierarchy notice — this subnet is nested inside: 10.0.0.0/8. Verify this nesting is intentional."] }
+> ```
+
+> If the subnet is a child of another subnet that has a `site_id`, the child automatically inherits the parent's site. The `site_id` field in the request is overridden.
 
 Returns `400` on invalid CIDR, `404` if site not found, `409` if CIDR already exists.
 
@@ -455,9 +560,76 @@ DELETE /api.php?resource=addresses&id=<id>
 
 ---
 
+### Create a site
+
+```
+POST /api.php?resource=sites
+```
+
+**Request body**
+
+```json
+{
+  "name": "DC-Chicago",
+  "description": "Chicago data center"
+}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | yes | Site name (must be unique) |
+| `description` | no | Free-text description |
+
+**Response** — HTTP `201`
+
+```json
+{ "id": 5 }
+```
+
+Returns `409` if a site with this name already exists.
+
+---
+
+### Update a site
+
+```
+PUT /api.php?resource=sites&id=<id>
+```
+
+**Request body**
+
+```json
+{
+  "name": "DC-Chicago-Primary",
+  "description": "Updated description"
+}
+```
+
+**Response** — HTTP `200`
+
+```json
+{ "id": 5 }
+```
+
+Returns `409` if name conflicts with another site.
+
+---
+
+### Delete a site
+
+```
+DELETE /api.php?resource=sites&id=<id>
+```
+
+Subnets assigned to this site will have their `site_id` set to `null`.
+
+**Response** — HTTP `204` (no body)
+
+---
+
 ## Pagination
 
-The `addresses` resource supports pagination. Use the `page` and `limit` parameters to page through large result sets.
+The `addresses`, `subnets`, `search`, and `audit` resources support pagination. Use the `page` and `limit` parameters to page through large result sets.
 
 ```
 GET /api.php?resource=addresses&subnet_id=5&page=2&limit=50

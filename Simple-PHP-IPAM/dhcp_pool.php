@@ -46,7 +46,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ((int)$s['id'] === $subnetId) { $subnet = $s; break; }
     }
 
-    if ($action !== '' && !in_array(current_user()['role'] ?? '', ['admin', 'netops'], true)) {
+    if ($action !== '' && (current_user()['role'] ?? '') === 'readonly') {
         $err = 'This account is read-only. DHCP pool modifications are disabled.';
         $action = '';
     } elseif (demo_mode_enabled()) {
@@ -298,7 +298,7 @@ page_header('DHCP Pools');
   </form>
 </div>
 
-<?php $isWriteUser = in_array(current_user()['role'] ?? '', ['admin', 'netops'], true); ?>
+<?php $isWriteUser = (current_user()['role'] ?? '') !== 'readonly'; ?>
 
 <?php if ($subnet && $isWriteUser): ?>
 <div class="card mt-16">

@@ -55,6 +55,7 @@ function ipam_db_init(PDO $db): void
         if ($sentinelTime >= $dbTime) {
             ensure_migrations_table($db);
             apply_migrations($db);
+            ensure_audit_log_table($db); // self-heal if table was dropped
             return;
         }
     }
@@ -664,32 +665,38 @@ function prune_audit_log(PDO $db, int $retentionDays): int
     if ($retentionDays <= 0) return 0;
     $cutoff = date('Y-m-d H:i:s', strtotime("-{$retentionDays} days"));
 
-    // The audit_log triggers block DELETE, so we bypass them via a shadow table swap.
-    // Instead, we use a workaround: recreate the table without the old rows.
-    // Actually, the triggers only fire on the audit_log table — use a direct DELETE
-    // after temporarily dropping and re-adding them.
-    //
-    // SQLite doesn't support DROP TRIGGER IF EXISTS inside a transaction on all versions,
-    // so we track deletable rows and remove via the internal rowid trick which bypasses
-    // row-level triggers. The canonical safe approach: use a staging table.
-    $db->beginTransaction();
+    // The audit_log triggers block DELETE. Drop triggers, DELETE directly, recreate.
+    // This avoids ALTER TABLE RENAME (which can implicitly commit in SQLite)
+    // and SELECT * column-ordering risks.
     try {
         $oldCount = (int)$db->query("SELECT COUNT(*) FROM audit_log")->fetchColumn();
 
-        // Rename, recreate, copy kept rows via subquery (avoids placeholder limit)
-        $db->exec("ALTER TABLE audit_log RENAME TO audit_log_old");
-        ensure_audit_log_table($db);
+        $db->exec("DROP TRIGGER IF EXISTS audit_log_no_update");
+        $db->exec("DROP TRIGGER IF EXISTS audit_log_no_delete");
 
-        $st = $db->prepare("INSERT INTO audit_log SELECT * FROM audit_log_old WHERE created_at >= :cutoff");
+        $st = $db->prepare("DELETE FROM audit_log WHERE created_at < :cutoff");
         $st->execute([':cutoff' => $cutoff]);
-        $newCount = (int)$db->query("SELECT COUNT(*) FROM audit_log")->fetchColumn();
+        $pruned = $st->rowCount();
 
-        $db->exec("DROP TABLE audit_log_old");
+        // Recreate append-only triggers
+        $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_update
+            BEFORE UPDATE ON audit_log
+            BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
+        $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
+            BEFORE DELETE ON audit_log
+            BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
 
-        $db->commit();
-        return $oldCount - $newCount;
+        return $pruned;
     } catch (Throwable $e) {
-        $db->rollBack();
+        // Attempt to restore triggers even on failure
+        try {
+            $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_update
+                BEFORE UPDATE ON audit_log
+                BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
+            $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
+                BEFORE DELETE ON audit_log
+                BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
+        } catch (Throwable) {}
         error_log('audit_log prune failed: ' . $e->getMessage());
         return 0;
     }
@@ -1985,11 +1992,11 @@ function page_header(string $title, array $opts = []): void
     echo "<title>" . e($appName) . " \u{2014} " . e($title) . "</title>";
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=1.13'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=1.14'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = $_SESSION['user_theme'] ?? 'auto';
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=1.13'></script>";
+    echo "<script defer src='assets/app.js?v=1.14'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";

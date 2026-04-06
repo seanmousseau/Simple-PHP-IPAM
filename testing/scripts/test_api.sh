@@ -17,7 +17,8 @@ set -euo pipefail
 #
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-APP_DIR="$SCRIPT_DIR/Simple-PHP-IPAM"
+REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+APP_DIR="$REPO_DIR/Simple-PHP-IPAM"
 DB_PATH="$APP_DIR/data/ipam.sqlite"
 
 # Disable proxy for local testing
@@ -229,6 +230,18 @@ SITE_COUNT=$(jq_len sites)
 if [[ -n "${SITE_ID:-}" && "$SITE_ID" != "None" ]]; then
     call_api PUT "sites&id=$SITE_ID" '{"description":"Updated by test_api.sh"}'
     assert_http 200 "Update site"
+
+    # Duplicate site name on update
+    call_api PUT "sites&id=$SITE_ID" "{\"name\":\"$TEST_SITE_NAME\"}"
+    assert_http 200 "Update site same name (no conflict)"
+    # Create a second site, then try to rename it to the first site's name
+    call_api POST sites '{"name":"API-Conflict-Site","description":"conflict test"}'
+    CONFLICT_SITE_ID=$(jq_val id)
+    if [[ -n "$CONFLICT_SITE_ID" && "$CONFLICT_SITE_ID" != "None" ]]; then
+        call_api PUT "sites&id=$CONFLICT_SITE_ID" "{\"name\":\"$TEST_SITE_NAME\"}"
+        assert_http 409 "Duplicate site name on update → 409"
+        call_api DELETE "sites&id=$CONFLICT_SITE_ID"
+    fi
 fi
 
 # ====================================================================

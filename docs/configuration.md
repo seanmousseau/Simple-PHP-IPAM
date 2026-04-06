@@ -16,6 +16,7 @@ New configuration keys are added automatically when you upgrade: on the first pa
 - [`backup`](#backup)
 - [`audit_log_retention_days`](#audit_log_retention_days)
 - [`address_history_retention_days`](#address_history_retention_days)
+- [`status_hide_version`](#status_hide_version)
 - [Behind a reverse proxy](#behind-a-reverse-proxy)
 
 ---
@@ -234,6 +235,18 @@ Locked-out login attempts are recorded in the audit log as `auth.login_blocked`.
 **Default:** `5`
 
 Maximum allowed CSV file size for the import wizard, in megabytes. Accepted range: `5`–`50`.
+
+---
+
+### `import_sql_max_mb`
+
+**Default:** `200`
+
+Maximum file size in megabytes for SQL database imports via the Database Tools page. The PHP `upload_max_filesize` and `post_max_size` directives in `.htaccess` must also be set to at least this value.
+
+```php
+'import_sql_max_mb' => 200,
+```
 
 ---
 
@@ -483,6 +496,18 @@ Controls automatic database backups.
 Backups run at most once per interval on normal page load. The backup format is a WAL-checkpointed SQLite file copy with a timestamp filename (`ipam-YYYY-MM-DD-HHmmss.sqlite`). You can also trigger a manual backup from the **Database Tools** admin page.
 
 > **Security note:** If you set a custom `dir` path, ensure it is either outside the webroot or protected by your web server configuration.
+
+---
+
+### `status_hide_version`
+
+**Default:** `false`
+
+When set to `true`, the health check endpoint (`status.php`) omits the `version` field from its JSON response. Use this to prevent unauthenticated version discovery.
+
+```php
+'status_hide_version' => true,
+```
 
 ---
 

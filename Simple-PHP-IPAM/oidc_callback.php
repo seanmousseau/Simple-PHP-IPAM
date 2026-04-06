@@ -160,7 +160,7 @@ if (!$user && $autoLink) {
                 break;
             } catch (PDOException $ex) {
                 if ($attempt >= 4) {
-                    oidc_fail('Unable to provision account — username collision after 5 attempts.');
+                    oidc_fail($db, 'Unable to provision account — username collision after 5 attempts.');
                 }
                 $newUsername = $baseUsername . '_' . ($attempt + 2);
             }

@@ -629,8 +629,8 @@ details > summary::-webkit-details-marker{display:none}
 .gate-wrap{max-width:480px;margin:60px auto;padding:0 16px}
 
 /* Highlight row — used when linking to a specific address row */
-.highlight-row{background:var(--warn) !important;animation:highlight-fade 3s ease-out forwards}
-@keyframes highlight-fade{from{background:var(--warn)}to{background:transparent}}
+.highlight-row{animation:highlight-fade 3s ease-out}
+@keyframes highlight-fade{from{background:var(--warn)}to{background:inherit}}
 
 /* DHCP pool inline-edit form */
 .dhcp-edit-form{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}

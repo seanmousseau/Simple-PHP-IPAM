@@ -1,847 +1,343 @@
-# CHANGELOG
+# Changelog
 
 All notable changes to this project will be documented in this file.
 
----
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
+as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
-## 1.13 — API Expansion, Dashboard Refresh & Code Quality
+## [1.14] - 2026-04-06
 
-### Bug fixes
+### Fixed
+- **#193** — `oidc_fail()` in OIDC callback was missing required `$db` parameter, causing a TypeError crash on username collision after 5 retries.
+- **#194** — Bulk update pagination referenced non-existent `total_pages` key (correct key: `pages`), so pagination controls never rendered.
+- **#197** — `upgrade.sh` utility functions moved above first call site; `/home/*` path guard relaxed to allow subdirectories.
+- **#198** — API subnet update now calls `find_parent_site_id()` to enforce site inheritance (matching web UI).
+- **#199** — API sites update checks for duplicate name (409); sites delete wrapped in transaction; `api_audit()` now records `user_agent`.
+- **#200** — `ipam_db_init()` sentinel path now calls `ensure_audit_log_table()` for self-healing; highlight-row CSS animation preserves zebra stripes.
+
+### Security
+- **#195** — SQL import `CREATE TRIGGER` now restricted to `RAISE(ABORT)` patterns only, preventing arbitrary SQL injection via crafted trigger bodies.
+- **#196** — `prune_audit_log()` rewritten to drop triggers + DELETE + recreate (instead of `ALTER TABLE RENAME` + `SELECT *` which is unsafe in SQLite transactions).
+
+## [1.13] - 2026-04-05
+
+### Added
+- **#174** — REST API `resource=search` endpoint (text search across addresses), `resource=audit` endpoint (paginated audit log with action/date filters), sites write API (POST/PUT/DELETE), `updated_at` field in address responses.
+- **#176** — Dashboard quick action links, weekly/monthly growth trend metrics, responsive grid layout.
+- **#168** — "Next available IP" shown on the addresses page for IPv4 subnets with a one-click "Use" link.
+- **#162** — Search page now also searches subnets by CIDR and description.
+- **#164** — Subnet CSV export (`export_subnets.php`) with optional site and IP version filters.
+- **#167** — Address history renders before/after changes as a field-by-field diff table instead of raw JSON.
+- **#175** — Client-side CIDR and IP validation via `data-validate` attributes with JavaScript validation on blur.
+- **#181** — Database import shows a CSS spinner overlay during processing and reports statement count and elapsed time on completion.
+
+### Changed
+- **#182** — Export/Import cards on Database Tools page now stretch to equal height via CSS Grid `align-items: stretch`.
+- **#166** — All data tables wrapped in `.table-wrap` for horizontal scroll on mobile. Subnet tree indentation collapses on small screens.
+- **#165** — Dashboard "Top IPv4 Subnets" now sorted by utilization percentage instead of absolute address count.
+- **#163** — Search results include "Edit" link that navigates to the address with the row highlighted.
+- **#183** — SQL import file size limit now configurable via `import_sql_max_mb` in config.php (default 200 MB).
+- **#171** — `prune_audit_log()` rewritten with subquery approach. Audit log DDL extracted into `ensure_audit_log_table()` helper (deduplicated from 4 locations).
+
+### Fixed
 - **#186** — Host header validation regex too strict (v1.12 regression). Widened to accept underscores in hostnames and IPv6 bracket notation.
-- **#179** — Six code quality cleanups: removed redundant config.php load in import_csv.php, removed duplicate `global $config` in page_header(), initialised `$formError` in api_keys.php, removed dead `$auditQs` variable in audit.php, replaced exposed PDO exception messages with generic errors in bulk_update.php and dhcp_pool.php, added sentinel file to skip bootstrap queries after first init.
-- **#178** — OIDC username collision retry now loops up to 5 attempts with incrementing suffix instead of failing on the second collision.
-- **#177** — DHCP pool page is now accessible to readonly users (view-only); write-access check moved inside POST handlers. Added IPv4-only informational note.
-- **#173** — Inline theme-priming script replaced with a `<meta>` tag + app.js reader, eliminating the CSP `script-src` violation that blocked flash-free theme application.
+- **#179** — Six code quality cleanups: removed redundant config.php load, duplicate `global $config`, uninitialised `$formError`, dead `$auditQs` variable, exposed PDO exceptions, added sentinel file for bootstrap queries.
+- **#178** — OIDC username collision retry now loops up to 5 attempts with incrementing suffix.
+- **#177** — DHCP pool page accessible to readonly users (view-only); write-access check moved inside POST handlers.
+- **#173** — Inline theme-priming script replaced with a `<meta>` tag + app.js reader, fixing CSP `script-src` violation.
 - **#169** — Added breadcrumb navigation to bulk_update.php and sites.php.
 
 ### Security
 - **#170** — Status endpoint version field now conditional on `status_hide_version` config. API key via query parameter emits `Deprecation` response header.
 
-### Performance
-- **#171** — `prune_audit_log()` rewritten to use subquery-based copy instead of `IN(?)` with potentially thousands of placeholders. Audit log DDL extracted into `ensure_audit_log_table()` helper (deduplicated from 4 locations).
-- **#172** — SVG logo optimization noted (requires manual tooling; asset is an embedded raster image).
+## [1.12] - 2026-04-05
 
-### UI/UX improvements
-- **#182** — Export/Import cards on Database Tools page now stretch to equal height via CSS Grid `align-items: stretch`.
-- **#166** — All data tables wrapped in `.table-wrap` for horizontal scroll on mobile.
-- **#165** — Dashboard "Top IPv4 Subnets" now sorted by utilization percentage instead of absolute address count.
-- **#163** — Search results include "View" link that navigates to the address in its subnet with the row highlighted and edit form expanded.
-
-### Database Tools
-- **#183** — SQL import file size limit now configurable via `import_sql_max_mb` in config.php (default 200 MB, previously hard-coded 50 MB).
-- **#181** — Database import shows a CSS spinner overlay during processing and reports statement count and elapsed time on completion.
-
-### Search & Export
-- **#162** — Search page now also searches subnets by CIDR and description, showing matching subnets in a separate results table.
-- **#164** — New subnet CSV export (`export_subnets.php`) with optional site and IP version filters. Export button added to subnets page action bar.
-
-### Dashboard & Addresses
-- **#176** — Dashboard now shows quick action links, weekly/monthly growth trend metrics, and all metrics in a responsive grid.
-- **#168** — "Next available IP" shown on the addresses page for IPv4 subnets with a one-click "Use" link that pre-fills the add form.
-- **#167** — Address history renders before/after changes as a field-by-field diff table instead of raw JSON.
-
-### API
-- **#174** — Added `resource=search` endpoint (text search across addresses), `resource=audit` endpoint (paginated audit log with action/date filters), sites write API (POST/PUT/DELETE), `updated_at` field in address responses. Fixed stale "Read-only" docblock.
-
-### Client-side validation
-- **#175** — CIDR and IP inputs now have `data-validate` attributes with JavaScript validation on blur. Inline error messages via HTML5 `setCustomValidity()`.
-
----
-
-## 1.12 — Security Hardening, Performance & API Completeness
-
-### Security fixes
-- **#146 — Last-admin protection on toggle/demote:** Disabling or demoting the last active admin account is now blocked with a clear error message, matching the existing delete guard.
-- **#155 — SQL import whitelist:** Database import now only allows `INSERT`, `CREATE`, `DROP`, and `DELETE` statements. `ATTACH`, `DETACH`, and `LOAD_EXTENSION` are explicitly blocked.
-- **#156 — Host header validation:** When `base_url` is not configured, the `Host` header is validated against a strict regex before use in the HTTPS redirect, preventing open-redirect via spoofed headers.
-
-### Bug fixes
-- **#158 — Dashboard empty-state text:** Corrected subnet range description from "/8–/30" to "/8–/32".
-- **#159 — Audit action name consistency:** Normalised `api_key.*` → `apikey.*` and `user.password_change` → `user.change_password` in all code paths. Migration updates existing audit rows. Added missing `db` prefix to audit filter.
-- **#161 — POST action fall-through:** Changed `if`→`elseif` chains in `addresses.php` and `sites.php` to prevent a single POST from matching multiple action branches.
-
-### Performance
-- **#149 — O(N log N) subnet tree:** Replaced the O(N²) nested-loop tree builder with a sorted-stack algorithm that processes subnets broadest-first.
-- **#150 — GROUP BY utilization:** Replaced per-subnet blob loading with a single `GROUP BY` aggregate query plus a lightweight network/broadcast correction pass.
-- **#152 — Streaming database export:** Refactored `ipam_db_dump()` into a streaming `ipam_db_dump_stream()` that writes chunks directly to output, eliminating unbounded string concatenation for large databases.
-- **#160 — Bulk update pagination:** Added pagination to the bulk update page, preventing memory exhaustion on large subnets.
-
-### API fixes
-- **#147 — API audit uses client_ip():** API audit logging now uses `client_ip()` (respects proxy trust config) instead of raw `REMOTE_ADDR`.
-- **#148 — API address history logging:** API address create/update/delete now record entries in `address_history`, using `api:{key-name}` as the username. DHCP pool edit/delete also log history.
-- **#153 — API subnet site inheritance:** API subnet creation now inherits `site_id` from the tightest enclosing parent subnet, matching web UI behaviour.
-
-### UX improvements
-- **#154 — Flash messages on redirect:** Success/warning messages now survive POST-redirect-GET via `flash_set()`/`flash_get()`. Applied to sites, addresses, API keys, and subnet overlap warnings.
-- **#157 — Search export filters:** CSV export of search results now respects site and IP version filters.
-
-### Features
-- **#137 — Subnet overlap confirmation:** Creating or updating a subnet that overlaps existing subnets now shows a confirmation page before saving. API responses include a non-blocking `warnings` array.
-
-### Infrastructure
-- **#151 — Audit log indexes:** Added indexes on `audit_log(action)` and `audit_log(created_at)` for faster filtering and date-range queries.
-
----
-
-## 1.11 — Branding, Group Field, VLAN IDs, API Write Support & Theme Persistence
-
-### New features
-- **#133 — Group field on addresses:** All address records now carry an optional free-text `group` field. Shown as a badge in the address list, searchable, included in all CSV exports/imports, and exposed in the REST API.
-- **#134 — Browser tab title prefix:** Page `<title>` now reads `{AppName} — {Page}` (e.g. `Simple PHP IPAM — Dashboard`).
-- **#135 — Configurable app name:** New `app_name` key in `config.php`. Appears in the browser tab, nav bar brand link, login page heading, and demo gate.
-- **#136 — App name in login & nav:** Nav bar now shows the logo and app name as a branded home link. Login page displays the logo and app name above the login form.
-- **#138 — VLAN ID on subnets:** Subnets now have an optional VLAN ID (1–4094). Displayed as a badge in the subnet list and returned in the REST API `subnets` resource.
-- **#139 — REST API write support:** The REST API now accepts `POST`, `PUT`, and `DELETE` for both `addresses` and `subnets` resources. Authentication uses the existing `Authorization: Bearer <key>` scheme. All writes are recorded in the audit log as `api:{key-name}`.
-- **#140 — Per-user theme persistence:** Selected theme (light/dark/auto) is now stored in `users.theme` and restored on next login, preventing the theme-flash problem on page load.
-- **#141 — Session idle timeout notice:** Login page now shows a human-readable inactivity timeout notice (e.g. "Sessions expire after 30 min of inactivity") derived from the existing `session_idle_seconds` config key.
-- **#142 — DHCP pool view/edit:** Reserved address table now shows hostname, owner, and note columns. Each row has inline Edit and Delete actions. Contiguous address blocks are grouped under range headers.
-- **#143 — Logo and favicon:** Application logo (`assets/logo.svg`) and favicon files (`favicon-32.png`, `apple-touch-icon.png`) added. Favicons are linked on every page.
-
----
-
-## 1.10 — PHP 8.4 Compatibility & Layout Fixes
-
-### Bug fixes
-- **Fixed #130:** CSV import and delimiter-detection functions (`str_getcsv`, `fgetcsv`) did not pass the `$escape` parameter explicitly, triggering a PHP 8.4 deprecation warning that broke the import wizard. All three call sites now pass `''` (empty string), adopting RFC 4180-compliant behaviour (quote-doubling, no backslash escape).
-- **Fixed #127:** "Add Subnet" card on `subnets.php` had two `class` attributes on the same element (`class="card"` and `class="mt-16"`). Browsers honour only the first, so the top margin was silently ignored and the card appeared flush against the action pills. Merged into a single attribute.
-- **Fixed #128:** Audit log filter controls (Category / From / To) stacked the label text above each input due to the global `label { display:flex; flex-direction:column }` rule. Added a `.label-inline` utility class and applied it to the three filter labels so text and control appear side-by-side.
-
-### Infrastructure fix
-- **`.htaccess`:** Removed the global `Content-Security-Policy` header from `.htaccess`. PHP already emits a complete, per-page CSP (including `script-src` and `frame-src` extensions for active CAPTCHA providers). Having both caused browsers to enforce the intersection of all CSP headers simultaneously, silently blocking Turnstile, hCaptcha, and reCAPTCHA scripts and iframes.
-
-### Testing
-- Added `docs/samples/sample_dataset.csv` — 4,522-row import dataset covering all subnet prefix sizes (/23–/32 IPv4, /64 and /128 IPv6), all address statuses, IPv4 and IPv6 subnets across six sites, P2P /30 and /31 links, loopbacks, parent/child nesting, and guest WiFi pools.
-- Added `docs/samples/gen_sample_dataset.py` — reproducible generator script.
-
----
-
-## 1.9 — Security Hardening, CSP & Bot Protection
-
-### Security fixes
-- **Fixed #107:** OIDC auto-link email fallback used `WHERE (username = :u OR email = :e)` with the email as both values, potentially linking to an account whose username happened to match the email address of a different user. Email fallback is now email-only.
-- **Fixed #109:** Login response time differed measurably between valid and invalid usernames, enabling username enumeration via timing. A dummy `password_verify()` call is now made when no user record is found.
-- **Fixed #111:** `preferred_username` and fallback username candidates from OIDC ID token claims were not sanitised before use as local usernames. Characters outside `[a-zA-Z0-9._@\-]` are now stripped.
-- **Fixed #112:** `Content-Security-Policy` `style-src` included `'unsafe-inline'`, allowing arbitrary inline styles to execute. All 122 inline `style="..."` attributes across 15 PHP files have been replaced with utility CSS classes or data-attribute + JS setters. `unsafe-inline` is removed from `style-src`.
-- **Fixed #113:** `backup_dir()` accepted relative paths from config without canonicalisation, allowing `../../tmp` to resolve outside the application root. Path segments are now normalised (`.` and `..` resolved) without requiring the target directory to exist yet.
-- **Fixed #117:** Failed login audit log entries recorded the submitted username in `details`, risking logging a mistyped password. The details field is now always empty for `auth.login_failed` events.
-
-### Bug fixes
-- **Fixed #108:** `validate_password_complexity()` used `strlen()` to check the minimum length, incorrectly counting bytes instead of characters for multi-byte passwords. Changed to `mb_strlen()`.
-- **Fixed #118:** Dashboard "Top IPv4 Subnets" query excluded `/31` and `/32` subnets (`BETWEEN 8 AND 30`). Range widened to `BETWEEN 8 AND 32`.
-- **Fixed #120:** `prune_audit_log()` built its SQL query using `$db->quote()` instead of a prepared statement. Rewritten to use a parameterised query.
-- **Fixed #122:** `demo_reset_db()` issued `DELETE FROM audit_log`, which was blocked by the append-only trigger, crashing the nightly reset. Now uses `ALTER TABLE RENAME` + `DROP TABLE` (same pattern as `prune_audit_log()`).
-
-### Performance
-- **Fixed #116:** `find_containing_subnet()` performed a full table scan for every address during CSV import. A per-request static cache keyed on IP version eliminates redundant queries for large imports.
-
-### Enhancements
-- **Fixed #114:** REST API `GET /api.php?resource=history&address_id=N` returned HTTP 404 when the address had been deleted. The endpoint now returns 200 with the history rows (or an empty array) for any address that ever existed.
-- **Fixed #115:** Demo mode login had no rate limiting. `login_rate_limited()` and `record_login_failure()` are now applied to the demo login path.
-- **Fixed #119:** `ipam_config_sync()` silently ignored write failures when `config.php` was not writable. Admins now see a persistent danger notice in the page header when new config keys could not be saved.
-- **Feature #124:** Optional login form bot protection. Set `login_protection.method` in `config.php` to one of: `honeypot`, `time_check`, `turnstile`, `hcaptcha`, `recaptcha`, or `friendly_captcha`. Widget-based methods extend the `script-src` CSP on the login page only.
-- **Feature #125:** Optional pre-login challenge gate for demo mode (`demo_mode.gate`). When configured, first-time visitors are redirected to `demo_gate.php` and must pass a bot check before reaching the login page. Supported methods: `honeypot`, `turnstile`, `hcaptcha`, `recaptcha`, `friendly_captcha`. The gate session flag is cleared on logout.
-
----
-
-## 1.8 — Security & Compatibility
-
-### Security fixes
-- **Fixed #104:** `csrf_require()` returned a plain-text `Bad CSRF token` response with no navigation on token mismatch. Now returns HTTP 403 and redirects to `login.php`, allowing users with stale tabs to recover gracefully.
-- **Fixed #106:** The HTTP→HTTPS redirect in `init.php` used `$_SERVER['HTTP_HOST']` directly, allowing a spoofed `Host:` header to redirect to an attacker-controlled domain. A new optional `base_url` config key can be set to the canonical application URL; when set, it is used for the redirect instead of `HTTP_HOST`. Falls back to `HTTP_HOST` when unset (backwards-compatible).
-
-### Bug fixes
-- **Fixed #98:** `IPAM_VERSION` was defined with a bare `const` in `version.php` and `require`d (not `require_once`) inside `page_footer()`. Any request path that triggered both includes caused a PHP Warning (fatal in PHP 9). `version.php` now uses a `defined()` guard with `define()`, and `page_footer()` uses `require_once`.
-- **Fixed #103:** `dhcp_pool.php` was missing the demo mode guard. The `reserve_pool` and `clear_pool` actions could be executed by the `demo` account, mutating pool data until the nightly reset. Both actions are now blocked when demo mode is enabled.
-
-### Compatibility fixes
-- **Fixed #99:** `data/.htaccess` used `<FilesMatch>` and `<IfModule mod_authz_core.c>` blocks, which OpenLiteSpeed ignores entirely, leaving the `data/` directory unprotected on OLS installs. Replaced with `mod_rewrite` `RewriteRule` directives that OLS honours. Apache 2.4+ and 2.2 fallback blocks retained for servers without `mod_rewrite`.
-- **Fixed #100:** Root `.htaccess` used `<FilesMatch>` with `Require all denied` for file blocking, which OLS ignores. Replaced with `RewriteRule` directives for all sensitive file and extension blocking. Security headers and HTTPS redirect are unchanged.
-- **Fixed #101:** `upgrade.sh` only copied `data/.htaccess` if it did not already exist (`! -f` guard), so security improvements to that file were never applied to existing installs. The guard has been removed; `data/.htaccess` is now always overwritten from the new bundle on upgrade.
-
----
-
-## 1.7 — Sorting, .htaccess Hardening, Server Config Docs & Demo Mode
-
-### Bug fixes
-- **Fixed #85:** Username and password fields on the user creation form were raised higher than adjacent fields when a browser password manager extension injected an icon into the input box. An explicit `height: 40px` on `input` and `select` elements prevents extension-injected icons from inflating the computed box height.
-- **Fixed #89:** Export CSV pill and Apply filter button on the Audit Log page were vertically misaligned. `.action-pill` vertical padding normalised to `10px` to match button height.
-
-### Enhancements
-- **Feature #86:** Server-side sortable columns on all data tables. Click any column header to sort ascending; click again to reverse. Sort order is preserved across pagination and filter links. IP columns sort numerically via binary blob comparison. Affected pages: Addresses, Audit Log, Search, Users, Sites, API Keys, Address History, Bulk Update.
-- **Feature #87:** `data/.htaccess` hardened with Apache 2.2 fallback directives (`Order deny,allow / Deny from all`) and an explicit `<FilesMatch>` block blocking `.sqlite`, `.sqlite3`, `.db`, `.sql`, `.bak`, `.gz`, `.tar`, `.zip` extensions.
-- **Feature #88:** `docs/install.md` updated with full nginx `server {}` and Caddy `Caddyfile` configuration blocks covering PHP-FPM pass-through, `data/` directory protection, sensitive extension blocking, all security headers, and HTTPS redirect. Requirements table updated to list Apache, LiteSpeed, nginx, and Caddy.
-- **Feature #90:** Opt-in demo mode (`demo_mode.enabled` in `config.php`). When enabled: only `demo`/`demo` can log in; a persistent banner is shown on all pages; destructive admin actions (user create/delete/toggle/role, API key mutations, CSV import apply) are blocked server-side; the database is pre-seeded with realistic data (4 sites, 13 subnets, ~55 addresses, 3 users, 2 API keys, audit log, address history) and resets nightly at midnight. CLI scripts: `demo_seed.php` (seed once) and `demo_reset.php` (cron reset). See `docs/configuration.md#demo_mode` for full details.
-
----
-
-## 1.6 — CSP Compliance, Bug Fixes & Housekeeping
-
-### Bug fixes
-- **Fixed #77:** Error messages in the Users admin page (toggle active, set role, link/unlink SSO, delete) were silently swallowed after the v1.5 refactor changed `$err` to `$errors[]`. All action handlers now correctly populate `$errors[]`.
-- **Fixed #73:** The SSO-only toggle on the user creation form now applies its state on page load, fixing the issue where the password field visibility was wrong after a form re-render.
-- **Fixed #78:** Subnet overlap and site inheritance warning messages in `subnets.php` are now properly escaped on output via `e()`.
-- **Fixed #79:** The unassigned address quick-add error handler no longer leaks raw PDO exception messages. A user-friendly message is shown instead.
-
-### Security fixes
-- **Fixed #74:** All inline JavaScript event handlers (`onclick`, `onchange`, `onsubmit`) and inline `<script>` blocks have been removed from every PHP template. All behaviour is now handled via event delegation in `app.js` using `data-*` attributes (`data-confirm`, `data-auto-submit`, `data-select-addrs`, `data-dismiss-update`). This makes the application fully compliant with `Content-Security-Policy: script-src 'self'`.
-- **Fixed #80:** OIDC HTTP functions (`oidc_http_get`, `oidc_http_post`) now cap response reads to 1 MB to prevent memory exhaustion from oversized or malicious IdP responses.
-
-### Enhancements
-- **Fixed #81:** CSV exports now include a UTF-8 BOM (`\xEF\xBB\xBF`) so Excel correctly recognises the encoding without manual import steps.
-- **Fixed #82:** New `address_history_retention_days` config option prunes old address history entries during scheduled housekeeping. Defaults to `0` (keep forever), matching the existing `audit_log_retention_days` pattern.
-- **Fixed #75:** The calendar picker icon on date inputs is now visible in dark mode (inverted via CSS filter for WebKit browsers and system-dark auto-theme).
-
----
-
-## 1.5 — Security Hardening, OIDC Improvements & UX Polish
-
-### Security fixes
-- **Fixed #64:** `client_ip()` and the API IP-resolution block now validate `X-Forwarded-For` when `proxy_trust` is enabled. The leftmost IP is extracted, checked with `filter_var(FILTER_VALIDATE_IP)`, and the raw multi-value header string can no longer be used to bypass rate limiting.
-- **Fixed #65:** OIDC `error` and `error_description` callback parameters are now sanitised (alphanumeric + safe punctuation, 64/200 char cap) before being written to the audit log.
-- **Fixed #66:** OIDC auto-provision role validation now includes `netops`. Previously, `'default_role' => 'netops'` silently fell back to `readonly`.
-- **Fixed #67:** Standard HTTP security headers added to all page responses: `Content-Security-Policy`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`. Also added to `api.php` JSON responses.
-
-### Bug fixes
-- **Fixed #69:** Creating a subnet or address that already exists now shows a specific _"already exists"_ message instead of a generic error, by inspecting the `UNIQUE` constraint in the PDO exception.
-
-### Enhancements
-- **Feature #59:** `validate_password_complexity()` now collects and returns **all** failing rules at once instead of stopping at the first. All three call sites (self-service change, admin create, admin reset) display the full list.
-- **Feature #60:** The user creation form in admin user management now re-populates username, name, email, and role when validation fails. Password fields remain blank.
-- **Feature #61:** OIDC `auto_link` is now a separate config key from `auto_provision`. `auto_link = true` allows pre-created accounts to self-link on first OIDC login without permitting new account creation. `auto_provision = true` implies `auto_link`. Fully backwards-compatible: installs without `auto_link` fall back to the previous `auto_provision`-only behaviour.
-- **Feature #68:** API `429 Too Many Requests` response now includes `Retry-After` and `X-RateLimit-Limit` headers so clients can back off correctly.
-- **Feature #70:** Audit log now has **From** and **To** date filters. Both are optional, persist in the URL, and work alongside the existing category filter.
-- **Feature #71:** API key list already shows `Created` and `Created by` columns — confirmed present in current codebase; no change needed.
-
----
-
-## 1.4 — Roles, Password Policy & SSO-Only Accounts
-
-### Enhancements
-- **Feature #41:** Added `netops` role — write access to subnets, addresses, DHCP, and sites, without user or API key management. DHCP Pools link moved to the main nav for write-access users. Role badge in the nav uses colour-coded styling per role.
-- **Feature #38:** SSO-only accounts — admins can create user accounts with an unusable password hash (`!`-prefix) that can only log in via OIDC. Optional `oidc_sub` may be set at creation time.
-- **Feature #39:** Password complexity and rotation policy (`password_policy` config block). Configurable `min_length`, `require_uppercase/lowercase/number/symbol`, and `max_password_age_days`. `change_password.php` enforces the policy and updates `password_changed_at` on success. Expired-password redirect loop prevented for `change_password.php` and `logout.php`. Policy hint rendered on the change-password form. New `'1.4'` migration adds `password_changed_at` column and backfills existing local accounts.
-- **Audit log access** — all authenticated roles (including `netops` and `readonly`) can now view the audit log, not just admins.
-
----
-
-## 1.3 — Hardening, Search & API Improvements
-
-### Security fixes
-- **Fixed #53:** XSS — unescaped site name in `$warn` output on the Subnets page when a site is auto-inherited from a parent subnet. Site name is now passed through `e()` before being embedded in the warning message.
-
-### Bug fixes
-- **Fixed #52:** Upgrade detection did not recognise patch releases when the installed version used a two-part number (e.g. `1.2` vs `1.2.1`). Both the installed version and the GitHub release tag are now normalised to three segments before comparison (`1.2` → `1.2.0`).
-- **Fixed #48:** Rate limiting fell back to an empty string when `REMOTE_ADDR` was absent (unusual SAPI environments). Changed fallback to `127.0.0.1` in both `api.php` and `client_ip()` in `lib.php`.
-- **Fixed #54:** Deleting a subnet did not record how many addresses were cascade-deleted. The `subnet.delete` audit entry now includes `addresses_deleted=N`.
-
-### Hardening
-- **Fixed #47:** Search query `$q` in `search.php`, `bulk_update.php`, and `export_search.php` is now capped at 500 characters server-side before being passed to the SQLite LIKE expression.
-
-### Enhancements
-- **Feature #37:** Site groups on the Subnets → Grouped Hierarchy section are now collapsible/expandable. Click a site group header to toggle. State persists across page loads via `localStorage`. Implemented using `aria-expanded` as the CSS hook so all groups are always fully rendered on initial page load — collapse state is applied after JS runs.
-- **Feature #55:** REST API `?resource=subnets` endpoint now supports pagination (`&page=N&limit=N`, max 1000, default 200). Response includes `total`, `page`, `limit`, and `subnets` fields.
-- **Feature #56:** Search results table now includes a **Site** column, showing which site each result's subnet belongs to (or a dash for ungrouped subnets).
-
----
-
-## 1.2.3 — Patch
-
-### Bug fixes
-- **Fixed:** Site group collapse feature (issue #37) completely removed from v1.2.x due to persistent rendering issues across multiple approaches (`<details>/<summary>`, div+JS toggle). Site groups are restored to plain static `<div>` sections (matching v1.1 behaviour) to unblock the release. Collapse/expand will be re-implemented as a standalone issue against v1.3.
-
----
-
-## 1.2.2 — Patch
-
-### Bug fixes
-- **Fixed:** Site groups on the Subnets page still not displaying after v1.2.1. The `<details>`/`<summary>` approach had browser-compatibility issues that caused inconsistent rendering. Replaced entirely with a `<div>`-based JS toggle (click handler on header div, CSS `collapsed` class, `display:none` on body). The localStorage key prefix changed to `ipam_sg_*` to clear any stale state written by v1.2/v1.2.1.
-
----
-
-## 1.2.1 — Patch
-
-### Bug fixes
-- **Fixed:** Site groups on the Subnets page were blank — no subnets or group labels visible. The `<summary>` element contained an `<h2>` (a block-level element), which caused browsers to implicitly close the `<summary>` early and break `<details>` rendering. Replaced with a styled `<span class="site-group-label">` to produce valid, conformant HTML.
-
----
-
-## 1.2 — Security Hardening & UX Improvements
-
-### Bug fixes
-- **Fixed #43:** LIKE wildcard characters (`%`, `_`, `\`) in search and filter inputs were passed unescaped to SQLite, causing incorrect or overly broad results. All LIKE queries now use `ESCAPE '\\'` with a new `like_escape()` helper in `lib.php`.
-- **Fixed #45:** OIDC HTTP functions (`oidc_http_get` / `oidc_http_post`) did not explicitly request SSL peer verification in their stream contexts. Added `'ssl' => ['verify_peer' => true, 'verify_peer_name' => true]` to both.
-- **Fixed #46:** Hostname, owner, and note fields in `addresses.php` had no server-side length enforcement. Added `substr()` clamping (253 / 255 / 1000 chars) on both create and update, plus matching `maxlength` attributes on the HTML inputs.
-- **Fixed #42:** SSO-only accounts (those with `oidc_sub` set) shown an empty password change form they could not use. The page now detects SSO-only accounts and displays an informational message instead of the form.
-
-### Security enhancements
-- **#40:** Config upgrade logic (`ipam_config_sync`) now deep-merges missing sub-keys into existing nested config blocks, ensuring new options within existing blocks (e.g. `oidc`) are correctly populated on upgrade.
-- **#44:** The REST API now applies the same IP-based rate limiting used by the web login form. After `api_max_attempts` failures from an IP the endpoint returns HTTP 429 for `api_lockout_seconds`. New config keys `api_max_attempts` (default 20) and `api_lockout_seconds` (default 300) are auto-populated on upgrade.
-
-### Enhancements
-- **#35:** Parent subnet utilization bars in the subnet list now roll up assignable/assigned counts from all descendant subnets. When a parent has children, the bar and IP counts reflect the entire subtree with an *(incl. subnets)* annotation.
-- **#37:** Site groups on the Subnets page are now collapsible. Each group renders as a `<details>` element with a caret indicator; collapse/expand state is persisted per-site-key in `localStorage`.
-
----
-
-## 1.1 — Bug Fixes & Enhancements
-
-### Bug fixes
-- **Fixed #21:** Update-check cache was not invalidated after an upgrade. The cached version is now compared against `IPAM_VERSION` on load; if the cache is stale (cached version ≤ running version), it is deleted and re-fetched immediately.
-- **Fixed #26:** Fresh installs did not stamp existing migrations as applied. `ipam_db_init()` now inserts all migration version keys into `schema_migrations` when initialising a brand-new database, preventing spurious re-runs of already-incorporated migrations on any future upgrade.
-- **Fixed #27:** `find_containing_subnet()` returned the broadest matching parent instead of the tightest. `ORDER BY prefix ASC` was changed to `ORDER BY prefix DESC` so the most-specific parent is selected.
-
-### Enhancements
-- **#22:** Free-status addresses no longer count towards subnet utilisation. Progress bars and the dashboard Top Subnets table now only include `used` and `reserved` addresses in the numerator.
-- **#23:** Bulk edit tool shows unconfigured IPs. For IPv4 subnets with ≤ 4094 assignable IPs and no active search filter, all IPs not yet in the addresses table appear as dimmed `free (unconfigured)` rows. Selecting them and applying **Update** inserts them with the chosen field values and logs the creation. A "Select unconfigured" button makes batch-configuring new IPs easy.
-- **#25:** `ipam_update_check()` is now memoised; calling it from both `page_header()` and `page_footer()` no longer makes two HTTP requests per page.
-- **#28:** A dismissible danger banner is shown to all logged-in users when the default bootstrap admin password (`ChangeMeNow!12345`) is still in use.
-- **#29:** New REST API resource `GET api.php?resource=history&address_id=<id>` returns the paginated change history for any address record, with decoded `before`/`after` JSON objects.
-- **#30:** Subnet node headers in the subnet list now display coloured address count badges (`N used · N reserved · N free`) with an optional subtree aggregate when child subnets exist.
-- **#31:** Audit log now has an **action category filter** dropdown (`auth`, `subnet`, `address`, `user`, `site`, `apikey`, `dhcp_pool`, `export`, `import`). The filter is preserved across pagination.
-
----
-
-## 1.0 — Production Release
-
-### Security hardening
-- **Fixed:** `db_tools.php` error and message output was not HTML-escaped at the output point; inner `e()` calls were removed and `e()` is now applied consistently at echo time, matching every other page.
-- **Hardened:** OIDC claim values (`name`, `email`, `preferred_username`) are now clamped to 255/255/64 characters respectively before storage, preventing unbounded writes from a misconfigured or malicious IdP.
-- **Hardened:** `users.php` now enforces `maxlength=255` on name and email fields in both the create and profile-edit forms, plus server-side `substr()` clamping, matching the OIDC claim limit.
-
-### Schema improvements
-- **Updated:** `schema.sql` is now the complete canonical schema for v1.0, including all tables, columns, and indexes that were previously only created by migrations. Fresh installs now have a fully functional database from the first request.
-- The partial unique index on `users.oidc_sub WHERE oidc_sub IS NOT NULL` is now present in `schema.sql` (was previously only in migration 0.12).
-
-### Audit log retention
-- New `audit_log_retention_days` config option (default `0` = keep forever). When set, entries older than the specified number of days are pruned during scheduled housekeeping.
-- Pruning is performed safely via a staging table swap that preserves the append-only integrity triggers.
-- The new config key is auto-populated on upgrade via the existing config-sync mechanism.
-
-### Health check endpoint (`status.php`)
-- New unauthenticated `GET /status.php` endpoint for uptime monitors, load balancers, and container health checks.
-- Returns `HTTP 200` with `{"status":"ok","version":"1.0","db":"ok"}` when healthy.
-- Returns `HTTP 503` with `{"status":"error","db":"error"}` when the database is unreachable.
-
-### Code cleanup
-- Removed deprecated `window.ipamToggleTheme` and `window.ipamClearTheme` JavaScript aliases from `assets/app.js`. Only `window.ipamCycleTheme` remains.
-- Asset cache busters updated to `?v=1.0` in `page_header()`.
-
----
-
-## 0.15 — Config Auto-Population, Backups, Database Tools, Mobile GUI, Update Check Enhancements
-
-### Config auto-population
-- Missing top-level keys are automatically appended to `config.php` with their defaults on application boot
-- A one-time notice is shown in the admin panel identifying which keys were added
-- Applies to: `update_check.notify_prerelease`, the new `backup` block, and any future keys added by upgrades
-
-### Automatic database backups (`lib.php`, `config.php`)
-- New `backup` config block: `enabled`, `frequency` (`daily`|`weekly`), `retention`, `dir`
-- Backup runs on page load when the configured interval has elapsed (file-locked, non-blocking)
-- Backup format: WAL-checkpointed SQLite copy with timestamp filename (`ipam-YYYY-MM-DD-HHmmss.sqlite`)
-- Older backups beyond the retention count are pruned automatically
-- Disabled by default — opt in via `'backup' => ['enabled' => true]` in `config.php`
-
-### Database Tools admin page (`db_tools.php`)
-- New **Database Tools** entry in the Admin nav dropdown
-- **Export**: one-click download of a full SQL dump (schema + data + indexes), compatible with SQLite
-- **Import**: upload a `.sql` dump to replace all data; pre-import backup is created automatically; executes in a transaction with rollback on error
-- **Manual backup**: trigger an out-of-schedule backup from the UI
-- Backup status panel: last backup time, last file name, current backup count
-- All export, import, and backup actions are recorded in the audit log
-
-### Mobile-optimized GUI (`assets/app.css`)
-- Responsive CSS breakpoints at **768 px** and **480 px**
-- Tables, cards, forms, toolbars, and metric blocks stack gracefully on narrow viewports
-- Navigation wraps and pills shrink on mobile; all primary CRUD actions remain accessible
-- New `.table-scroll` utility class for horizontally scrollable tables on small screens
-- Admin notice styles for config and update banners
-
-### GitHub update checker enhancements (`lib.php`, `config.php`)
-- New `update_check.notify_prerelease` option (default `false`): opt in to alerts for alpha/beta/RC releases
-- Update check now fetches the `/releases` list (not just `/releases/latest`) to support pre-release detection
-- Cache TTL extended to 24 hours (was 6 hours); configurable via `update_check.ttl_seconds`
-- **Dismissible update banner** shown to admins at the top of every page (separate from the footer badge)
-- Dismiss action stores dismissed version in `localStorage`; banner re-appears for the next release
-
----
-
-## 0.14 — DHCP Pools, Update Check, User Hardening, Utilization Badges
-
-### Application branding
-- Application renamed from **PHP SQLite IPAM** to **Simple PHP IPAM** throughout
-- Footer app name is now a link to the GitHub repository (opens in new tab)
-
-### Update check
-- Footer shows an **Update available vX.Y** badge when a newer GitHub release exists
-- Fetches the GitHub releases API with a User-Agent header; result cached for 6 hours (configurable)
-- Skips drafts and pre-releases; silently no-ops on network failure
-- Opt-out via `'update_check' => ['enabled' => false]` in `config.php`
-
-### DHCP pool reservation tool (`dhcp_pool.php`)
-- New admin page to bulk-reserve a contiguous IPv4 range within any subnet
-- IPs already marked `used` are always skipped; `reserved`/`free` records are updated
-- Separate **Clear** form removes `reserved` records from a range (leaves `used` untouched)
-- Max 1,024 IPs per operation; linked from each subnet's action bar and the Admin nav dropdown
-- All operations recorded in the audit log
-
-### User management hardening (`users.php`)
-- **Disable**, **Set role**, and **Unlink SSO** are hidden in the UI for the logged-in admin's own row
-- Server-side guards: `toggle_active`, `set_role`, and `unlink_oidc` all reject self-targeting
-- **Last login** column added to the users table; populated on every login (local and OIDC)
-
-### Subnet utilization badges (`subnets.php`, `assets/app.css`)
-- IPv4 subnets show a colour-coded mini progress bar and percentage next to assignable counts
-- Green → yellow (≥ `utilization_warn`, default 80%) → red (≥ `utilization_critical`, default 95%)
-- Thresholds configurable in `config.php`
-
-### OIDC emergency access controls (`login.php`, `config.php`)
-- New `hide_emergency_link` option: hides the emergency link text without disabling the URL
-- New `disable_emergency_bypass` option: makes `login.php?local=1` completely ineffective
-
-### Database migration
-- Migration `0.14`: adds `last_login_at TEXT` column to the `users` table
-
----
-
-## 0.13 — User Management, Site Inheritance, OIDC Improvements
-
-### User management (`users.php`, `migrations.php`)
-- Added **Name** and **Email** fields to every user account; stored in new `name` and `email` DB columns (migration `0.13`)
-- Users table now shows Name and Email columns; inline edit form per-user to update them
-- Added ability to **delete users** with guard: you cannot delete your own account or the last active admin
-- Added ability to **disable/enable** user accounts (previously existed but now surfaced more prominently)
-- Added **manual OIDC linking**: admin can paste an IdP subject ID (`sub` claim) to link any existing account to an SSO identity
-- Actions per user are collapsed in a `<details>` element to keep the table compact
-
-### OIDC improvements (`oidc_callback.php`, `config.php`)
-- Username for auto-provisioned users is now derived from the `preferred_username` claim (falls back to the local-part of `email`, then `sub`)
-- `name` claim is stored as the user's display name; `email` claim is stored as the email address on create or first link
-- Auto-link now tries `preferred_username` first, then `email`/username match against existing local accounts before creating a new account
-- Name and email are silently synced from IdP claims on every login when the fields are blank
-- Username collision during auto-provision is handled by appending a short random suffix
-- New `disable_local_login` config option: when OIDC is enabled and this is `true`, the password form is hidden; emergency local access always available at `login.php?local=1`
-
-### Site inheritance for child subnets (`subnets.php`, `lib.php`)
-- Child subnets automatically inherit the site of their tightest enclosing parent that has a site assigned
-- Site field is replaced with a read-only locked badge (showing the inherited site name) for child subnets in the edit form
-- `find_parent_site_id()` resolves the inherited site by querying the containment tree built by `detect_subnet_overlaps()`
-
-### Login page (`login.php`)
-- First-run hint ("use bootstrap admin…") is now hidden once any successful login has been recorded in the audit log — no migration or extra state needed
-
----
-
-## 0.12 — User Menu Redesign and OIDC Authentication
-
-### Milestone 1 — User Menu & Nav Polish
-
-#### User dropdown (`lib.php`, `assets/app.css`, `assets/app.js`)
-- Username and role badge moved from the far-left of the nav bar to the far-right
-- Password, Logout, and Theme toggle consolidated into a single user dropdown menu
-- Theme button remains open in the dropdown while cycling so the user can step through modes without re-opening
-- Right-anchored dropdown variant (`.nav-dropdown-menu--right`) prevents off-screen overflow
-- `.nav-dropdown-item` unified to style both `<a>` and `<button>` elements identically; divider between Theme and account links
-
----
-
-### Milestone 2 — OIDC Authentication
-
-#### Authorization Code + PKCE flow (`oidc_login.php`, `oidc_callback.php`, `lib.php`)
-- Full OIDC Authorization Code + PKCE flow implemented in pure PHP — no Composer packages or external dependencies
-- `oidc_login.php`: generates PKCE verifier/challenge pair and state/nonce, stores them in session, redirects to IdP
-- `oidc_callback.php`: validates state (CSRF guard), exchanges authorization code for tokens, verifies ID token, resolves local user
-- ID token verification supports RS256/RS384/RS512; JWK→PEM conversion is done in-process using PHP's `openssl` extension
-- JWKS are cached in `data/tmp/` for 1 hour; one automatic cache-bust retry handles in-flight key rotation
-- Discovery document (`/.well-known/openid-configuration`) is also cached for 1 hour
-
-#### ID token verification (`lib.php`)
-- `oidc_verify_id_token()`: validates signature, `exp`, `iat`, `iss`, `aud`, and `nonce`
-- `jwk_rsa_to_pem()`: constructs DER SubjectPublicKeyInfo from JWK `n`/`e` fields without `ext-gmp`
-- `oidc_pkce_pair()`: generates RFC 7636 S256 code challenge from a 32-byte random verifier
-
-#### User provisioning and linking
-- On successful OIDC login the `sub` claim is matched against `users.oidc_sub`
-- With `auto_provision = true`: if no linked user is found, an existing local user with a matching username/email is linked; otherwise a new account is created with an unusable password and the configured `default_role`
-- OIDC lifecycle events recorded in audit log: `auth.oidc_login`, `auth.oidc_provision`, `auth.oidc_link`, `auth.oidc_failed`
-
-#### Database migration (`migrations.php`)
-- Migration `0.12` adds `oidc_sub TEXT` column to `users` table
-- Partial unique index enforces that each IdP subject maps to at most one local user
-
-#### Admin UI (`users.php`)
-- SSO column shows "linked" (green, full `sub` on hover) or "—" for each user
-- "Unlink SSO" button lets admins remove the `oidc_sub` association without deleting the account
-
-#### Login page (`login.php`)
-- When OIDC is enabled, a prominent "Sign in with \<display_name\>" button appears above the local login form
-- OIDC error flash messages (set by the callback on failure) are displayed on the login page
-
-#### Configuration (`config.php`)
-- New `oidc` section: `enabled`, `display_name`, `client_id`, `client_secret`, `discovery_url`, `redirect_uri`, `scopes`, `auto_provision`, `default_role`
-- Defaults to disabled; no behaviour change for existing installs
-
-#### Bug fix
-- `api.php`: addresses resource used non-existent `description` column; corrected to `note` to match schema
-
----
-
-## 0.11 — Security Hardening, Nav Polish, and REST API
-
-### Milestone 1 — Security Hardening
-
-#### Login rate limiting (`login.php`, `lib.php`, `migrations.php`)
-- New `login_attempts` table (migration `0.11`) tracks failed login attempts per IP with a timestamp
-- Logins from an IP are blocked for a configurable window after too many consecutive failures
-- New `lib.php` functions: `login_rate_limited()`, `record_login_failure()`, `clear_login_failures()`, `purge_old_login_attempts()`
-- Successful login clears the failure counter for that IP
-- Stale attempt records are purged opportunistically on each login page load
-- Blocked attempts are recorded in the audit log as `auth.login_blocked`
-- Configurable via `config.php`: `login_max_attempts` (default 5), `login_lockout_seconds` (default 900)
-
-#### Session idle timeout (`lib.php`)
-- `require_login()` now checks `$_SESSION['last_active']` and logs users out after a configurable inactivity period
-- `login_user()` seeds `last_active` at login time; `require_login()` refreshes it on every authenticated page load
-- Expired sessions redirect to `login.php?timeout=1` with an informational message
-- Configurable via `config.php`: `session_idle_seconds` (default 1800 / 30 min)
-
----
-
-### Milestone 2 — Nav & UX Polish
-
-#### Admin dropdown menu (`lib.php`, `assets/app.css`, `assets/app.js`)
-- Admin-only nav links (Sites, Users, API Keys, Import CSV) are grouped under a single **⚙ Admin ▾** dropdown
-- Dropdown opens on click and closes when clicking outside, reducing visual clutter for non-admin users
-
-#### Single theme toggle (`lib.php`, `assets/app.js`)
-- Replaced the two separate Theme/System buttons with a single **cycle button**: System → Light → Dark → System
-- Button label updates dynamically to show the current mode (🖥 System / ☀ Light / 🌙 Dark)
-- Legacy `ipamToggleTheme` and `ipamClearTheme` JS functions retained for backward compatibility
-
----
-
-### Milestone 3 — REST API
-
-#### Read-only JSON API (`api.php`)
-- New stateless endpoint with no session dependency; authenticated via API key
-- API key passed as `Authorization: Bearer <key>` header or `?api_key=` query parameter (header preferred)
-- `last_used_at` timestamp updated on each successful API request
-- Resources:
-  - `GET api.php?resource=subnets` — list all subnets (with site name)
-  - `GET api.php?resource=subnets&id=N` — single subnet by ID
-  - `GET api.php?resource=addresses` — paginated address list; filterable by `subnet_id`, `status`; `page`/`limit` params (max 500 per page)
-  - `GET api.php?resource=sites` — list all sites
-
-#### API key management (`api_keys.php`, `migrations.php`)
-- New `api_keys` table (migration `0.11`): `name`, `key_hash` (SHA-256), `created_at`, `last_used_at`, `is_active`, `created_by`
-- Admin-only `api_keys.php` UI: generate keys (raw key shown once), deactivate, re-activate, delete
-- Key generation uses `random_bytes(32)` encoded as 64-character hex; only the SHA-256 hash is persisted
-- All key lifecycle events (create, deactivate, activate, delete) are written to the audit log
-
----
-
-## 0.10 — Exports, Import Safety, Overlap Detection, and Dashboard
-
-### Milestone 1 — Export Foundation
-
-#### New: CSV exports
-- `export_addresses.php` — export all addresses for a selected subnet
-- `export_search.php` — export current filtered search results
-- `export_audit.php` — admin-only export of audit events
-- `export_unassigned.php` — export unassigned IPv4 addresses for supported subnets
-- `export_import_report.php` — export dry-run plan or final import result report
-
-#### UI updates
-- Added **Export CSV** links/buttons to `addresses.php`, `search.php`, `audit.php`, and `unassigned.php`
-
-#### Shared export helpers (`lib.php`)
-- `safe_export_filename()` — sanitised timestamped filename generation
-- `csv_download_headers()` — sets `Content-Type` and `Content-Disposition` headers
-- `csv_output_handle()` — returns a `php://output` file handle
-- `csv_out()` — writes a single row to the CSV stream
-- `audit_export()` — records export actions in the audit log
-
-#### Audit
-- All export actions are written to `audit_log`: `export.addresses`, `export.search`, `export.audit`, `export.unassigned`
-
----
-
-### Milestone 2 — Import Safety, Dry Run, and Reporting
-
-#### New: Dry-run import analysis
-- Import wizard now analyzes the CSV before applying any changes
-- Dry-run analysis is saved as a frozen JSON plan in `data/tmp/`; the apply step reads the plan rather than re-parsing the CSV
-- Row-level report shows: row number, IP/raw value, planned action, resolved subnet/CIDR, and reason
-- Summary counts: parsed rows, invalid rows, creates, updates, skips, subnets to create
-- Final apply report: created subnets, created addresses, updated addresses, skipped rows, conflicts
-- Reports persist after import for post-import review and CSV export
-
-#### Import plan helpers (`lib.php`)
-- `save_import_plan()`, `load_import_plan()`, `delete_import_plan()`, `cleanup_tmp_import_plans()`
-- `tmp_cleanup.php` updated to clean stale import plan and result files in addition to uploaded CSV files
-
-#### Hardening and correctness (Milestones 2.1 / 2.2)
-- Fixed subnet creation counter inflation — newly created CIDRs are counted only once per import run
-- Added **duplicate row detection within the same CSV** — later duplicate rows (same resolved CIDR + IP) are marked skipped
-- Added **CIDR/IP cross-validation** — a row is invalid if the provided CIDR does not contain the IP
-- Added **field length validation** — hostname (255), owner (255), note (4000) are checked before analysis
-- Dry-run decisions are **frozen in the plan**: final action, resolved CIDR, resolved subnet ID, and whether the address existed at analysis time
-- Added **apply-time conflict detection** — if the DB changes between dry-run and apply, affected rows are flagged as conflicts instead of silently applying unexpected changes
-- Clarified `fill_empty` semantics: fills only empty text fields; never overwrites status
-
----
-
-### Milestone 3 — Subnet Overlap Detection
-
-#### New: Overlap detection helper (`lib.php`)
-- `detect_subnet_overlaps($db, $cidr, $excludeId)` — compares a proposed CIDR against all existing subnets of the same IP version using binary network comparison
-- Returns `parents` (existing subnets that contain the proposed CIDR) and `children` (existing subnets that would fall inside it)
-- In valid CIDR math, two subnets of different prefix lengths are either in a strict parent/child relationship or completely disjoint — partial overlap is impossible; exact duplicates are blocked by the DB `UNIQUE` constraint
-
-#### Subnet create/update warnings (`subnets.php`)
-- On **create**: overlap check runs before the `INSERT`; if a relationship is detected, a flash warning is stored in the session and displayed after the redirect
-- On **update**: overlap check runs against all other subnets (self excluded); warning displayed inline alongside the success message
-- Operations are never blocked — hierarchical nesting is the intended use-case; the warning prompts the user to confirm intent
-
-#### Import dry-run annotation (`import_csv.php`)
-- Overlap check runs for each unique CIDR flagged for auto-creation during dry-run analysis
-- Results cached per CIDR to avoid redundant queries on bulk imports
-- Hierarchy notice (parents / children) displayed in the Reason column of the dry-run row report
-
-#### Styles (`assets/app.css`)
-- Added `.warning` utility class using the existing `--warn` CSS token (amber, dark-mode aware)
-
----
-
-### Milestone 4 — Dashboard and Search Enhancement
-
-#### Dashboard (`dashboard.php`) — full rebuild
-- Six-metric summary strip: total subnets, total address rows, used / reserved / free counts, IPv4 vs IPv6 subnet split
-- **Top IPv4 subnets by usage** table (prefix /8–/30) with colour-coded fill bars: green below 70%, amber 70–90%, red above 90%
-- **Addresses by site** — table showing used / reserved / free / total broken down per site
-- **Recent activity panel** — last 10 audit log events with a link to the full audit log
-
-#### Search (`search.php`) — new filters and UX
-- Added **Site filter** dropdown; changing site narrows the subnet dropdown client-side via a small vanilla JS snippet (no page reload)
-- Added **IP version filter** (any / IPv4 / IPv6) — applied via `subnets.ip_version` in the WHERE clause
-- COUNT query now uses the same `JOIN subnets` as the results query, so totals and pagination remain accurate under all filter combinations
-- **Clear filters** link appears whenever any filter (query, status, site, subnet, version) is active
-
----
-
-### 0.9 — Site Grouping, UX Refresh, and Performance Tuning
-
-#### New: Site Grouping
-- Added a proper **Sites** data model:
-  - new `sites` table
-  - `subnets.site_id`
-- Added **Sites** management page (`sites.php`) for admins
-- Subnets can now be assigned to a site during create/update
-- Subnets page now groups subnet hierarchies by **site**
-- Unassigned subnets are shown under an **Ungrouped** section
-
-#### UX / Navigation Improvements
-- Cleaner top navigation with improved organization
-- Added **Sites** to the nav for admins
-- Moved task-specific workflows closer to where they are used
-- Added contextual links on subnet cards:
-  - **View Addresses**
-  - **Unassigned** (IPv4 only)
-  - **Bulk Update**
-- Addresses and Unassigned pages now include contextual links to related workflows
-
-#### UI Refresh / Dark Mode Polish
-- Refreshed styling with improved layout, spacing, cards, metrics, and tables
-- Improved form readability and table legibility
-- Enhanced dark mode styling while keeping:
-  - system preference default
-  - manual toggle
-  - reset to system mode
-
-#### Performance / Memory Improvements
-- Default page size increased to **254** to match a typical `/24`
-- Applied `254` default page size to:
-  - addresses
-  - search
-  - unassigned IPv4 listing
-- Reduced unnecessary work on several pages by:
-  - keeping paginated queries consistent
-  - avoiding larger-than-needed result loading in common views
-  - keeping housekeeping checks lightweight
-- Added/used query patterns that reduce extra lookups in common UI flows
-
-#### Notes
-- This release lays the groundwork for future site-based filtering and permission scoping.
-- Existing subnets remain valid after upgrade; newly added `site_id` is optional and can be assigned later.
-
-### 0.8 — Bulk Delete + UI Refresh + Dark Mode
-
-#### New: Bulk Delete in Bulk Update
-- Added **bulk delete** support to `bulk_update.php`
-- Requires users to type **`DELETE`** to confirm before deleting selected IP address rows
-- Deletes are:
-  - transaction-safe
-  - recorded in the audit log (`address.bulk_delete`)
-  - written to per-address history as `bulk_delete`
-
-#### UI / UX Improvements
-- Added a shared stylesheet: `assets/app.css`
-- Improved general usability and readability:
-  - cleaner table styling
-  - improved spacing and form controls
-  - more consistent layout across pages
-- Added support for a dedicated JS file: `assets/app.js`
-
-#### Dark Mode
-- Added **dark mode** support using CSS variables
-- Default behavior follows the user’s **system preference**
-- Added manual theme controls in the navigation bar:
-  - **Toggle theme**
-  - **System** (clear manual override and return to system preference)
-- Theme preference is stored in `localStorage`
-
-#### Navigation / Integration
-- Updated `page_header()` in `lib.php` to load:
-  - `assets/app.css`
-  - `assets/app.js`
-- Added theme controls directly into the nav bar so they are available across the app
-
----
-
-### 0.7
-
-#### New: Global Search (paged)
-- Added `search.php` to search addresses across the system by:
-  - IP, hostname, owner, note
-- Optional filters:
-  - subnet
-  - status (`used`, `reserved`, `free`)
-- Results are paginated (default page size 100).
-
-#### New: Unassigned IPv4 Listing + Quick Add (paged)
-- Added `unassigned.php` to list IPv4 **unassigned** (no row in `addresses`) assignable hosts.
-- Safety limit: unassigned listing is only enabled for subnets with **≤ 4096 assignable hosts**.
-- Paged view (default page size 100).
-- Quick add inline form per IP:
-  - hostname, owner, note
-  - status dropdown (default `used`)
-- Created rows are logged in the audit log.
-
-#### New: Address Change History
-- Added `address_history` table to capture who changed what and when.
-- Added `address_history.php` view per address.
-- History is recorded for:
-  - create/update/delete in `addresses.php`
-  - bulk updates (`bulk_update.php`)
-  - CSV import creates/updates (`import_csv.php`)
-  - unassigned quick-add (`unassigned.php`)
-
-#### DB / Performance
-- Added indexes to support searching and history queries:
-  - `addresses(hostname)`, `addresses(owner)`, `addresses(status)`
-  - history indexes for `address_history(address_id)` and `address_history(subnet_id)`
-
----
-
-## 0.6
 ### Added
-- **Bulk Update tool** (`bulk_update.php`) to bulk update address records within a selected subnet:
-  - Bulk update supports updating any combination of **Hostname**, **Owner**, **Status** (`used|reserved|free`), and **Note**
-  - Subnet filter + optional text search + multi-select with “select all/none”
-  - Changes applied in a transaction and recorded in the audit log (`address.bulk_update`)
-- **Navigation link** to Bulk Update for **non-readonly** users.
+- **#137** — Subnet overlap confirmation: creating or updating a subnet that overlaps existing subnets shows a confirmation page. API responses include a non-blocking `warnings` array.
+- **#154** — Flash messages survive POST-redirect-GET via `flash_set()`/`flash_get()`. Applied to sites, addresses, API keys, and subnet overlap warnings.
+- **#157** — CSV export of search results now respects site and IP version filters.
+- **#151** — Indexes on `audit_log(action)` and `audit_log(created_at)` for faster filtering and date-range queries.
+
+### Changed
+- **#149** — Subnet tree builder rewritten from O(N²) to O(N log N) using a sorted-stack algorithm.
+- **#150** — IPv4 utilization replaced with single `GROUP BY` aggregate query.
+- **#152** — Database export refactored into streaming `ipam_db_dump_stream()`.
+- **#160** — Bulk update page paginated to prevent memory exhaustion on large subnets.
+- **#147** — API audit logging now uses `client_ip()` (respects proxy trust config).
+- **#148** — API address create/update/delete now record entries in `address_history`.
+- **#153** — API subnet creation inherits `site_id` from the tightest enclosing parent subnet.
 
 ### Fixed
-- CSV import column mapping validation when mapping IP to the **first column** (index `0`):
-  - Replaced `empty()` checks with numeric-index validation to avoid `empty("0")` pitfalls.
-- `upgrade.sh` message for same-version reinstall:
-  - Now correctly instructs using `--force` (not `--force-reinstall`).
+- **#158** — Dashboard empty-state text corrected from "/8–/30" to "/8–/32".
+- **#159** — Audit action names normalised: `api_key.*` → `apikey.*`, `user.password_change` → `user.change_password`. Migration updates existing rows.
+- **#161** — POST action fall-through in `addresses.php` and `sites.php` fixed with `if`→`elseif` chains.
 
----
+### Security
+- **#146** — Disabling or demoting the last active admin account is now blocked.
+- **#155** — SQL import whitelist: only `INSERT`, `CREATE`, `DROP`, `DELETE` allowed. `ATTACH`, `DETACH`, `LOAD_EXTENSION` blocked.
+- **#156** — Host header validated before HTTPS redirect when `base_url` is not configured.
 
-## 0.5
+## [1.11] - 2026-03-15
+
 ### Added
-- **CSV Import Wizard** (admin-only) (`import_csv.php`):
-  - Upload CSV
-  - Confirm delimiter + whether CSV has headers
-  - Map detected columns to IPAM fields (IP required; others optional/ignorable)
-  - Select duplicate handling mode per import run:
-    - skip existing
-    - update/overwrite
-    - update only empty fields
-  - Supports importing **IPv4 and IPv6**
-- Subnet resolution/creation during import:
-  - If CSV provides CIDR values: can create missing subnets from CIDR.
-  - If IP does not match existing subnets and CSV does not provide CIDR:
-    - can create subnets based on IP + prefix length
-    - prefix can come from CSV prefix column, IPv4 netmask column, or defaults (IPv4 `/24`, IPv6 `/64`).
-- **Configurable CSV upload size limit** `import_csv_max_mb` (allowed range **5–50MB**, default **5MB**).
-- Upload temp storage under `data/tmp/` with restrictive permissions.
-- **Temp cleanup CLI utility** (`tmp_cleanup.php`) to remove old uploaded CSV files.
-- **Daily housekeeping (lazy cleanup)**:
-  - Controlled by `housekeeping.enabled` and `housekeeping.interval_seconds`
-  - Runs on normal site access at most once per interval
-  - Removes stale CSV temp files based on `tmp_cleanup_ttl_seconds`
-  - Uses a lock file to prevent concurrent runs.
+- **#133** — Group field on addresses: optional free-text `group` field shown as badge, searchable, in CSV exports/imports, and REST API.
+- **#134** — Browser tab title now reads `{AppName} — {Page}`.
+- **#135** — Configurable `app_name` in config.php.
+- **#136** — App name in nav bar brand link and login page.
+- **#138** — VLAN ID (1–4094) on subnets with badge in subnet list and REST API.
+- **#139** — REST API write support: POST/PUT/DELETE for addresses and subnets.
+- **#140** — Per-user theme persistence in `users.theme`.
+- **#141** — Session idle timeout notice on login page.
+- **#142** — DHCP pool view/edit: hostname, owner, note columns; inline Edit/Delete; range headers.
+- **#143** — Application logo and favicons.
 
-### Security / Hardening
-- `.htaccess` blocks downloading common upgrade/build artifacts (`*.sh`, `SHA256SUMS`, `*.tar.gz`, `*.tgz`, `*.zip`).
-- Import is admin-only and protected by CSRF.
-- Import runs logged to audit log (`import.csv`) with summary counts.
+## [1.10] - 2026-02-20
 
----
+### Fixed
+- **#130** — CSV import PHP 8.4 deprecation: `str_getcsv`/`fgetcsv` now pass `''` as escape argument.
+- **#127** — "Add Subnet" card duplicate `class` attribute merged.
+- **#128** — Audit log filter labels now inline with controls.
+- **`.htaccess`** — Removed global CSP header that conflicted with PHP per-page CSP.
 
-## 0.4
+## [1.9] - 2026-02-01
+
 ### Added
-- Initial public bundle release (consolidated features up to this point).
+- **#124** — Optional login form bot protection (`honeypot`, `time_check`, `turnstile`, `hcaptcha`, `recaptcha`, `friendly_captcha`).
+- **#125** — Optional demo mode pre-login challenge gate.
+- **#114** — API history endpoint returns 200 (not 404) for deleted addresses.
+- **#115** — Demo mode login rate limiting.
+- **#119** — Admin notice when config keys could not be auto-saved.
 
-### Security / Hardening
-- HTTPS enforced at application layer; secure session cookies (`Secure`, `HttpOnly`, `SameSite=Strict`).
-- Optional reverse-proxy HTTPS detection via `proxy_trust`.
-- CSRF tokens on all POSTs.
-- Prepared statements throughout (PDO).
-- Password hashing via `password_hash()` / `password_verify()` (`PASSWORD_DEFAULT`) + rehash support.
-- Security headers via `.htaccess` (CSP, frame deny, nosniff, etc.) and optional HSTS.
-- Denied web access to internal files and SQLite database files.
-- **Append-only audit log** enforced with SQLite triggers (no UPDATE/DELETE).
+### Changed
+- **#116** — `find_containing_subnet()` uses per-request static cache for large CSV imports.
 
-### Authentication / Authorization
-- Local authentication with sessions.
-- RBAC roles: `admin` and `readonly`.
-- User management UI (admin-only): create users, enable/disable, set role, reset passwords.
-- Self-service password change page.
+### Fixed
+- **#107** — OIDC auto-link email fallback was matching usernames.
+- **#109** — Login timing side-channel for username enumeration.
+- **#111** — OIDC username claims not sanitised.
+- **#108** — `validate_password_complexity()` used `strlen()` instead of `mb_strlen()`.
+- **#118** — Dashboard top subnets excluded /31 and /32.
+- **#120** — `prune_audit_log()` used `$db->quote()` instead of prepared statement.
+- **#122** — `demo_reset_db()` blocked by append-only trigger.
 
-### IPAM Features
-- Subnet management (IPv4 + IPv6): create/update/delete with CIDR validation and normalization.
-- Address management: create/update/delete with status (`used|reserved|free`).
-- IP normalization and “IP belongs to subnet” enforcement.
-- Correct IP sorting using packed binary IP (`ip_bin`) index.
+### Security
+- **#112** — CSP `style-src 'unsafe-inline'` removed; all 122 inline styles replaced with CSS classes.
+- **#113** — `backup_dir()` path traversal via relative paths.
+- **#117** — Failed login audit no longer logs submitted username.
 
-### Subnet Hierarchy UI
-- Added `subnets.network_bin` with migration/backfill support.
-- Nested subnet hierarchy view (IPv4 + IPv6) with expand/collapse.
-- Utilization counts per subnet:
-  - direct counts (subnet only)
-  - aggregated counts (includes children)
+## [1.8] - 2026-01-15
 
-### IPv4 Unassigned (Assignable Hosts)
-- Added IPv4-only “Unassigned” calculation:
-  - Unassigned = assignable IPv4 hosts within subnet that do **not** have a row in `addresses`.
-  - Counts only assignable hosts (excludes network/broadcast where applicable; RFC 3021 `/31` supported).
-  - Not shown for IPv6.
+### Fixed
+- **#104** — CSRF mismatch now redirects to login instead of plain-text error.
+- **#106** — HTTP→HTTPS redirect used `HTTP_HOST` directly; new `base_url` config option.
+- **#98** — `IPAM_VERSION` double-include fatal error.
+- **#103** — DHCP pool missing demo mode guard.
+- **#99** — `data/.htaccess` OLS compatibility (RewriteRule instead of FilesMatch).
+- **#100** — Root `.htaccess` OLS compatibility.
+- **#101** — `upgrade.sh` now always overwrites `data/.htaccess`.
 
-### Upgrade / Release Tooling
-- Added `version.php` and version-aware upgrade behavior.
-- Included `upgrade.sh`:
-  - prevents downgrades by default
-  - creates backups (including SQLite + WAL/SHM)
-  - preserves `config.php` and `data/`
-  - fixes permissions and attempts ownership alignment based on existing install
-  - runs DB migrations via `migrate.php` (if PHP CLI available)
-  - cleans up common artifacts in webroot
-  - defaults to removing `upgrade.sh` from target webroot after upgrade
-- Migration framework:
-  - `schema_migrations` table
-  - `migrations.php`
-  - `migrate.php`
-- Improved DB initialization so existing DBs are upgraded via migrations rather than re-applying `schema.sql`.
+## [1.7] - 2025-12-20
+
+### Added
+- **#86** — Server-side sortable columns on all data tables.
+- **#87** — `data/.htaccess` hardened with extension blocking.
+- **#88** — nginx and Caddy configuration docs.
+- **#90** — Opt-in demo mode with nightly reset and realistic seed data.
+
+### Fixed
+- **#85** — User creation form field alignment with password managers.
+- **#89** — Audit page Export/Apply button alignment.
+
+## [1.6] - 2025-12-01
+
+### Added
+- **#82** — `address_history_retention_days` config option.
+- **#81** — CSV exports include UTF-8 BOM for Excel.
+- **#75** — Dark mode calendar picker icon visibility.
+
+### Fixed
+- **#77** — Users admin page error messages swallowed after v1.5 refactor.
+- **#73** — SSO-only toggle state on page load.
+- **#78** — Subnet overlap warnings XSS.
+- **#79** — Unassigned quick-add raw PDO exception leak.
+
+### Security
+- **#74** — All inline JS event handlers removed; CSP `script-src 'self'` compliance.
+- **#80** — OIDC HTTP response reads capped at 1 MB.
+
+## [1.5] - 2025-11-15
+
+### Added
+- **#59** — Password complexity returns all failing rules at once.
+- **#60** — User creation form re-populates on validation failure.
+- **#61** — OIDC `auto_link` separated from `auto_provision`.
+- **#68** — API 429 includes `Retry-After` and `X-RateLimit-Limit` headers.
+- **#70** — Audit log date filters (From / To).
+- **#67** — Security headers on all responses (CSP, X-Frame-Options, etc.).
+
+### Fixed
+- **#69** — Duplicate subnet/address shows specific "already exists" message.
+
+### Security
+- **#64** — `X-Forwarded-For` validated when `proxy_trust` enabled.
+- **#65** — OIDC callback error parameters sanitised.
+- **#66** — OIDC auto-provision validates `netops` role.
+
+## [1.4] - 2025-11-01
+
+### Added
+- **#41** — `netops` role with write access but no user/key management.
+- **#38** — SSO-only accounts with unusable password hash.
+- **#39** — Password complexity and rotation policy.
+- Audit log access opened to all roles.
+
+## [1.3] - 2025-10-15
+
+### Added
+- **#37** — Collapsible site groups on Subnets page with localStorage persistence.
+- **#55** — API subnets pagination.
+- **#56** — Search results Site column.
+
+### Fixed
+- **#53** — XSS in inherited site name warning.
+- **#52** — Version comparison for patch releases.
+- **#48** — Rate limiting empty IP fallback.
+- **#54** — Subnet delete now records cascade-deleted address count.
+- **#47** — Search query capped at 500 characters.
+
+## [1.2.3] - 2025-10-05
+
+### Fixed
+- Site group collapse removed from v1.2.x due to rendering issues; restored to static divs.
+
+## [1.2.2] - 2025-10-04
+
+### Fixed
+- Site groups replaced with div-based JS toggle after `<details>` browser issues.
+
+## [1.2.1] - 2025-10-03
+
+### Fixed
+- Site groups blank due to `<h2>` inside `<summary>` breaking `<details>` rendering.
+
+## [1.2] - 2025-10-01
+
+### Added
+- **#35** — Parent subnet utilization bars roll up descendant counts.
+- **#37** — Collapsible site groups with `<details>` elements.
+- **#40** — Config deep-merge for nested blocks on upgrade.
+- **#44** — API rate limiting.
+
+### Fixed
+- **#43** — LIKE wildcard escaping in search/filter queries.
+- **#45** — OIDC SSL peer verification.
+- **#46** — Hostname/owner/note length enforcement.
+- **#42** — SSO-only accounts no longer shown password change form.
+
+## [1.1] - 2025-09-15
+
+### Added
+- **#22** — Free-status addresses excluded from utilization.
+- **#23** — Bulk edit shows unconfigured IPs with quick-add.
+- **#25** — `ipam_update_check()` memoised.
+- **#28** — Default password warning banner.
+- **#29** — API address history endpoint.
+- **#30** — Subnet node address count badges.
+- **#31** — Audit log category filter.
+
+### Fixed
+- **#21** — Update-check cache not invalidated after upgrade.
+- **#26** — Fresh installs now stamp all migrations.
+- **#27** — `find_containing_subnet()` returned broadest instead of tightest parent.
+
+## [1.0] - 2025-09-01
+
+### Added
+- Audit log retention (`audit_log_retention_days` config option).
+- Health check endpoint (`status.php`).
+
+### Fixed
+- HTML escaping in Database Tools.
+- OIDC claim values capped at 255 characters.
+
+### Security
+- Name/email `maxlength` enforced in UI and server-side.
+
+## [0.15] - 2025-08-15
+
+### Added
+- Config auto-population of missing keys on boot.
+- Automatic database backups (daily/weekly, configurable retention).
+- Database Tools admin page (export, import, manual backup).
+- Mobile-responsive CSS (768px and 480px breakpoints).
+- Dismissible update banner; `notify_prerelease` option; 24-hour cache TTL.
+
+## [0.14] - 2025-08-01
+
+### Added
+- DHCP pool reservation tool (bulk reserve/clear IPv4 ranges).
+- Update check badge in footer.
+- User management: disable self-targeting guards, last login column.
+- Subnet utilization colour-coded progress bars.
+- OIDC emergency access controls (`hide_emergency_link`, `disable_emergency_bypass`).
+- Application renamed to Simple PHP IPAM.
+
+## [0.13] - 2025-07-15
+
+### Added
+- User management: name/email fields, delete users, disable/enable, manual OIDC linking.
+- OIDC: `preferred_username` claim, name/email sync, auto-link by username then email.
+- `disable_local_login` config option.
+- Child subnets inherit site from tightest parent.
+
+## [0.12] - 2025-07-01
+
+### Added
+- User dropdown menu (username + role badge on far-right of nav).
+- OIDC Authorization Code + PKCE authentication (pure PHP, no Composer).
+- Auto-provisioning and auto-linking of OIDC users.
+
+### Fixed
+- `api.php` addresses resource used `description` instead of `note`.
+
+## [0.11] - 2025-06-15
+
+### Added
+- Login rate limiting (IP-based lockout).
+- Session idle timeout.
+- Admin dropdown menu.
+- Single theme cycle button.
+- Read-only JSON REST API with Bearer token auth.
+- API key management admin page.
+
+## [0.10] - 2025-06-01
+
+### Added
+- CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
+- CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
+
+[1.14]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.13...v1.14
+[1.13]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.12...v1.13
+[1.12]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.11...v1.12
+[1.11]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.10...v1.11
+[1.10]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.9...v1.10
+[1.9]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.8...v1.9
+[1.8]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.7...v1.8
+[1.7]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.6...v1.7
+[1.6]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.5...v1.6
+[1.5]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.4...v1.5
+[1.4]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.3...v1.4
+[1.3]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.2.3...v1.3
+[1.2.3]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.2.2...v1.2.3
+[1.2.2]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.2.1...v1.2.2
+[1.2.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.2...v1.2.1
+[1.2]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.1...v1.2
+[1.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.0...v1.1
+[1.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v0.15...v1.0
+[0.15]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v0.14...v0.15
+[0.14]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v0.13...v0.14
+[0.13]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v0.12...v0.13
+[0.12]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v0.11...v0.12
+[0.11]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v0.10...v0.11
+[0.10]: https://github.com/seanmousseau/Simple-PHP-IPAM/releases/tag/v0.10
