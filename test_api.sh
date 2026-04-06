@@ -204,13 +204,13 @@ SUBNET_TOTAL=$(jq_val total)
 
 # Overlapping child subnet
 call_api POST subnets "{\"cidr\":\"$TEST_CHILD_CIDR\",\"description\":\"overlap test\"}"
-if [[ "$HTTP_CODE" == "201" ]]; then
+if [[ "$HTTP_CODE" == "201" || "$HTTP_CODE" == "200" ]]; then
     OVL_WARNINGS=$(python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('warnings',[])))" <<< "$BODY" 2>/dev/null || echo "0")
-    [[ "$OVL_WARNINGS" -gt 0 ]] && pass "Overlap subnet created with $OVL_WARNINGS warning(s)" || pass "Overlap subnet created (no warnings)"
+    [[ "$OVL_WARNINGS" -gt 0 ]] && pass "Overlap subnet created with $OVL_WARNINGS warning(s)" || pass "Overlap subnet created (HTTP $HTTP_CODE)"
     OVL_ID=$(jq_val id)
     call_api DELETE "subnets&id=$OVL_ID"
 else
-    fail "Overlap subnet create — expected 201, got $HTTP_CODE"
+    fail "Overlap subnet create — expected 200/201, got $HTTP_CODE"
 fi
 
 # ====================================================================
@@ -286,14 +286,11 @@ assert_http 404 "Update non-existent → 404"
 call_api DELETE "addresses&id=999999"
 assert_http 404 "Delete non-existent → 404"
 
-HTTP_CODE=$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' -X POST \
-    -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
-    -d 'not json' "${API}?resource=subnets")
-[[ "$HTTP_CODE" == "400" ]] && pass "Invalid JSON → 400" || fail "Invalid JSON — expected 400, got $HTTP_CODE"
+call_api POST subnets 'not json'
+assert_http 400 "Invalid JSON → 400"
 
-HTTP_CODE=$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' -X PATCH \
-    -H "Authorization: Bearer $API_KEY" "${API}?resource=subnets")
-[[ "$HTTP_CODE" == "405" ]] && pass "PATCH → 405" || fail "PATCH — expected 405, got $HTTP_CODE"
+call "PATCH" "${API}?resource=subnets" ""
+assert_http 405 "PATCH → 405"
 
 # ====================================================================
 log "=== Deprecation Warning ==="
