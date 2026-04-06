@@ -26,7 +26,7 @@ if (!$isHttps) {
         if ($host === '' || !preg_match('/^(\[[:0-9a-fA-F]+\]|[a-zA-Z0-9._\-]+)(:\d+)?$/', $host)) {
             http_response_code(400);
             echo 'Invalid request: base_url is not configured and Host header is not valid.';
-            exit;
+            exit(1);
         }
         header('Location: https://' . $host . $uri, true, 301);
     }
