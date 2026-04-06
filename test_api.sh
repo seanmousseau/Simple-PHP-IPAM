@@ -13,6 +13,7 @@ set -euo pipefail
 #   ./test_api.sh                                          # auto-start local server
 #   ./test_api.sh https://ipam.example.com                 # test remote instance
 #   API_KEY=abc123 ./test_api.sh https://ipam.example.com  # with explicit key
+#   AUTH_MODE=query API_KEY=abc123 ./test_api.sh https://ipam.example.com  # query param auth (proxy strips headers)
 #
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -94,13 +95,21 @@ fi
 
 HTTP_CODE=""; BODY=""
 
+# Auth mode: header (default) or query param (for proxies that strip Authorization)
+AUTH_MODE="${AUTH_MODE:-header}"
+
 # call METHOD URL [JSON_BODY]
 call() {
     local method="$1" url="$2" body="${3:-}"
     local tmp; tmp=$(mktemp)
     local args=(-s --noproxy '*' -o "$tmp" -w '%{http_code}' -X "$method"
-                -H "Authorization: Bearer $API_KEY"
                 -H "Content-Type: application/json")
+    if [[ "$AUTH_MODE" == "query" ]]; then
+        # Append api_key as query parameter (for proxies that strip Authorization header)
+        [[ "$url" == *"?"* ]] && url="${url}&api_key=$API_KEY" || url="${url}?api_key=$API_KEY"
+    else
+        args+=(-H "Authorization: Bearer $API_KEY")
+    fi
     [[ -n "$body" ]] && args+=(-d "$body")
     args+=("$url")
     HTTP_CODE=$(curl "${args[@]}")
@@ -137,6 +146,11 @@ HTTP_CODE=$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' -H "Authorizati
 [[ "$HTTP_CODE" == "401" ]] && pass "Bad key → 401" || fail "Bad key → expected 401, got $HTTP_CODE"
 
 call_api GET subnets
+if [[ "$HTTP_CODE" == "401" && "$AUTH_MODE" == "header" ]]; then
+    log "Header auth returned 401 — proxy may strip Authorization. Switching to AUTH_MODE=query"
+    AUTH_MODE="query"
+    call_api GET subnets
+fi
 assert_http 200 "Valid key → 200"
 
 call_api GET nonexistent
