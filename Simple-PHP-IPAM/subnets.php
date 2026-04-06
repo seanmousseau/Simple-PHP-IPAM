@@ -386,20 +386,6 @@ function ipv4_unassigned_aggregated_local(array $tree, array $directUnassigned):
     return $agg;
 }
 
-function subnet_overlap_warning_text(array $overlaps): string
-{
-    $parts = [];
-    if (!empty($overlaps['parents'])) {
-        $list = implode(', ', $overlaps['parents']);
-        $parts[] = 'nested inside: ' . $list;
-    }
-    if (!empty($overlaps['children'])) {
-        $list = implode(', ', $overlaps['children']);
-        $parts[] = 'parent of: ' . $list;
-    }
-    return 'Hierarchy notice — this subnet is ' . implode('; and ', $parts) . '. Verify this nesting is intentional.';
-}
-
 $tree = build_subnet_tree_local($list);
 $direct = subnet_direct_counts_local($db);
 $agg = subnet_aggregated_counts_local($tree, $direct);

@@ -1951,6 +1951,20 @@ function detect_subnet_overlaps(PDO $db, string $cidr, ?int $excludeId = null): 
     return ['parents' => $parents, 'children' => $children];
 }
 
+function subnet_overlap_warning_text(array $overlaps): string
+{
+    $parts = [];
+    if (!empty($overlaps['parents'])) {
+        $list = implode(', ', $overlaps['parents']);
+        $parts[] = 'nested inside: ' . $list;
+    }
+    if (!empty($overlaps['children'])) {
+        $list = implode(', ', $overlaps['children']);
+        $parts[] = 'parent of: ' . $list;
+    }
+    return 'Hierarchy notice — this subnet is ' . implode('; and ', $parts) . '. Verify this nesting is intentional.';
+}
+
 /* ---------------- UI helpers ---------------- */
 
 function page_header(string $title, array $opts = []): void
