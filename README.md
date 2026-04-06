@@ -116,6 +116,8 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
 **Client-side validation** — CIDR and IP inputs validated on blur via JavaScript with inline error feedback (#175).
 
+**Code review hardening** — OIDC callback crash on username collision fixed (#193). Bulk update pagination controls now render (#194). SQL import CREATE TRIGGER restricted to RAISE(ABORT) patterns (#195). Audit log pruning rewritten for SQLite transaction safety (#196). Upgrade script dependency checks and path guards fixed (#197). API subnet update enforces site inheritance (#198). API sites duplicate check and transactional delete (#199).
+
 ### What's new in 1.12
 
 **Security hardening** — Last-admin protection extended to toggle-active and set-role actions (#146). SQL import now whitelists statement types and blocks `ATTACH`/`LOAD_EXTENSION` (#155). Host header validated before HTTPS redirect when `base_url` is not configured (#156).

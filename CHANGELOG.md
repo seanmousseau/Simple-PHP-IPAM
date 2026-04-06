@@ -78,6 +78,16 @@ All notable changes to this project will be documented in this file.
 ### Features
 - **#137 — Subnet overlap confirmation:** Creating or updating a subnet that overlaps existing subnets now shows a confirmation page before saving. API responses include a non-blocking `warnings` array.
 
+### Code review fixes
+- **#193** — `oidc_fail()` in OIDC callback was missing required `$db` parameter, causing a TypeError crash on username collision after 5 retries.
+- **#194** — Bulk update pagination referenced non-existent `total_pages` key (correct key: `pages`), so pagination controls never rendered.
+- **#195** — SQL import `CREATE TRIGGER` now restricted to `RAISE(ABORT)` patterns only, preventing arbitrary SQL injection via crafted trigger bodies.
+- **#196** — `prune_audit_log()` rewritten to drop triggers + DELETE + recreate (instead of `ALTER TABLE RENAME` + `SELECT *` which is unsafe in SQLite transactions).
+- **#197** — `upgrade.sh` utility functions moved above first call; `/home/*` path guard relaxed to allow subdirectories.
+- **#198** — API subnet update now calls `find_parent_site_id()` to enforce site inheritance (matching web UI).
+- **#199** — API sites update checks for duplicate name (409); sites delete wrapped in transaction; `api_audit()` now records `user_agent`.
+- **#200** — `ipam_db_init()` sentinel path now calls `ensure_audit_log_table()` for self-healing; highlight-row CSS animation preserves zebra stripes.
+
 ### Infrastructure
 - **#151 — Audit log indexes:** Added indexes on `audit_log(action)` and `audit_log(created_at)` for faster filtering and date-range queries.
 
