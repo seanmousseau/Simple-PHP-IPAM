@@ -1,0 +1,11 @@
+# Runtime data
+Simple-PHP-IPAM/data/ipam.sqlite
+Simple-PHP-IPAM/data/ipam.sqlite-wal
+Simple-PHP-IPAM/data/ipam.sqlite-shm
+Simple-PHP-IPAM/data/.db_initialized
+Simple-PHP-IPAM/data/tmp/
+Simple-PHP-IPAM/data/backups/
+
+# OS
+.DS_Store
+Thumbs.db
