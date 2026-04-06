@@ -476,6 +476,11 @@ function api_sites_update(PDO $db, array $apiKey, int $id, array $body): never
     $desc = array_key_exists('description', $body) ? trim((string)$body['description']) : (string)$site['description'];
     if ($name === '') api_error(400, 'name cannot be empty.');
 
+    // Check for duplicate name (excluding self)
+    $dupSt = $db->prepare("SELECT id FROM sites WHERE name = :n AND id != :id");
+    $dupSt->execute([':n' => $name, ':id' => $id]);
+    if ($dupSt->fetch()) api_error(409, 'A site with this name already exists.');
+
     $db->prepare("UPDATE sites SET name = :n, description = :d WHERE id = :id")
        ->execute([':n' => $name, ':d' => $desc, ':id' => $id]);
     api_audit($db, $apiKey, 'site.update', 'site', $id, "name=$name");
@@ -490,8 +495,10 @@ function api_sites_delete(PDO $db, array $apiKey, int $id): never
     $site = $st->fetch();
     if (!$site) api_error(404, 'Site not found.');
 
+    $db->beginTransaction();
     $db->prepare("UPDATE subnets SET site_id = NULL WHERE site_id = :id")->execute([':id' => $id]);
     $db->prepare("DELETE FROM sites WHERE id = :id")->execute([':id' => $id]);
+    $db->commit();
     api_audit($db, $apiKey, 'site.delete', 'site', $id, "name={$site['name']}");
     http_response_code(204);
     exit;
@@ -709,6 +716,10 @@ function api_subnets_update(PDO $db, array $apiKey, int $id, array $body): never
         if (!$siteSt->fetch()) api_error(404, 'Site not found.');
     }
 
+    // Inherit site from tightest parent if one exists
+    $inheritedSiteId = find_parent_site_id($db, $subnet['cidr'], $id);
+    if ($inheritedSiteId !== null) $siteId = $inheritedSiteId;
+
     $db->prepare(
         "UPDATE subnets SET description = :desc, site_id = :sid, vlan_id = :vlan WHERE id = :id"
     )->execute([':desc' => $description, ':sid' => $siteId, ':vlan' => $vlanId, ':id' => $id]);
@@ -770,14 +781,15 @@ function api_audit(PDO $db, array $apiKey, string $action, string $entityType, i
 {
     $username = 'api:' . $apiKey['name'];
     $db->prepare(
-        "INSERT INTO audit_log (action, entity_type, entity_id, user_id, username, ip, details)
-         VALUES (:act, :et, :eid, NULL, :un, :ip, :det)"
+        "INSERT INTO audit_log (action, entity_type, entity_id, user_id, username, ip, user_agent, details)
+         VALUES (:act, :et, :eid, NULL, :un, :ip, :ua, :det)"
     )->execute([
         ':act' => $action,
         ':et'  => $entityType,
         ':eid' => $entityId,
         ':un'  => $username,
         ':ip'  => client_ip(),
+        ':ua'  => (string)($_SERVER['HTTP_USER_AGENT'] ?? ''),
         ':det' => $details,
     ]);
 }

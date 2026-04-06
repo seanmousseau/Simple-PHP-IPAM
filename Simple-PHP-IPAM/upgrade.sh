@@ -102,6 +102,36 @@ else
   fi
 fi
 
+# ---- Utility functions ----
+
+timestamp="$(date +%Y%m%d-%H%M%S)"
+
+extract_php_const_version() {
+  local file="$1"
+  [[ -f "$file" ]] || return 1
+  local ver
+  ver="$(sed -n "s/^[[:space:]]*const[[:space:]]\+IPAM_VERSION[[:space:]]*=[[:space:]]*['\"]\([^'\"]\+\)['\"][[:space:]]*;[[:space:]]*$/\1/p" "$file" | head -n 1)"
+  if [[ -z "$ver" ]]; then
+    ver="$(sed -n "s/^[[:space:]]*define(['\"]IPAM_VERSION['\"][[:space:]]*,[[:space:]]*['\"]\([^'\"]\+\)['\"])[[:space:]]*;[[:space:]]*$/\1/p" "$file" | head -n 1)"
+  fi
+  printf '%s' "$ver"
+}
+
+vercmp() {
+  local a="$1" b="$2"
+  if [[ "$a" == "$b" ]]; then echo 0; return 0; fi
+  local first
+  first="$(printf "%s\n%s\n" "$a" "$b" | sort -V | head -n1)"
+  if [[ "$first" == "$a" ]]; then echo -1; else echo 1; fi
+}
+
+confirm() {
+  local prompt="$1"
+  if [[ "$YES" -eq 1 ]]; then log "$prompt --yes set; proceeding."; return 0; fi
+  read -r -p "$prompt [y/N]: " ans
+  case "${ans,,}" in y|yes) return 0 ;; *) return 1 ;; esac
+}
+
 # ---- Disk space check ----
 # Estimate: need at least 2x the target size (backup + new files)
 if command -v df >/dev/null 2>&1 && command -v du >/dev/null 2>&1; then
@@ -123,37 +153,6 @@ fi
 if [[ ! -w "$(dirname "$TARGET_DIR")" ]]; then
   die "Parent directory is not writable (needed for backup): $(dirname "$TARGET_DIR")"
 fi
-
-timestamp="$(date +%Y%m%d-%H%M%S)"
-
-extract_php_const_version() {
-  local file="$1"
-  [[ -f "$file" ]] || return 1
-  # Match: const IPAM_VERSION = '1.x';
-  local ver
-  ver="$(sed -n "s/^[[:space:]]*const[[:space:]]\+IPAM_VERSION[[:space:]]*=[[:space:]]*['\"]\([^'\"]\+\)['\"][[:space:]]*;[[:space:]]*$/\1/p" "$file" | head -n 1)"
-  # Match: define('IPAM_VERSION', '1.x');
-  if [[ -z "$ver" ]]; then
-    ver="$(sed -n "s/^[[:space:]]*define(['\"]IPAM_VERSION['\"][[:space:]]*,[[:space:]]*['\"]\([^'\"]\+\)['\"])[[:space:]]*;[[:space:]]*$/\1/p" "$file" | head -n 1)"
-  fi
-  printf '%s' "$ver"
-}
-
-vercmp() {
-  local a="$1"
-  local b="$2"
-  if [[ "$a" == "$b" ]]; then echo 0; return 0; fi
-  local first
-  first="$(printf "%s\n%s\n" "$a" "$b" | sort -V | head -n1)"
-  if [[ "$first" == "$a" ]]; then echo -1; else echo 1; fi
-}
-
-confirm() {
-  local prompt="$1"
-  if [[ "$YES" -eq 1 ]]; then log "$prompt --yes set; proceeding."; return 0; fi
-  read -r -p "$prompt [y/N]: " ans
-  case "${ans,,}" in y|yes) return 0 ;; *) return 1 ;; esac
-}
 
 NEW_VER="$(extract_php_const_version "$NEW_DIR/version.php" || true)"
 OLD_VER="$(extract_php_const_version "$TARGET_DIR/version.php" || true)"
@@ -183,7 +182,14 @@ fi
 OWNER="$(stat -c '%U' "$TARGET_DIR" 2>/dev/null || stat -f '%Su' "$TARGET_DIR")"
 GROUP="$(stat -c '%G' "$TARGET_DIR" 2>/dev/null || stat -f '%Sg' "$TARGET_DIR")"
 
-case "$TARGET_DIR" in /|/root|/home|/home/*) die "Refusing dangerous target dir: $TARGET_DIR" ;; esac
+# Block bare system directories but allow subdirs under /home (e.g. /home/user/public_html/ipam)
+case "$TARGET_DIR" in
+  /|/root|/home) die "Refusing dangerous target dir: $TARGET_DIR" ;;
+esac
+# Block home directories themselves (e.g. /home/user) but not their subdirs
+if [[ "$TARGET_DIR" =~ ^/home/[^/]+$ ]]; then
+  die "Refusing dangerous target dir (home directory): $TARGET_DIR"
+fi
 
 PARENT_DIR="$(dirname "$TARGET_DIR")"
 BASE_NAME="$(basename "$TARGET_DIR")"
