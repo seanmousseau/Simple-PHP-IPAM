@@ -273,11 +273,12 @@ When implementing a new version:
 
 ### Pre-release checklist
 Before building a release bundle, **always** complete these steps in order:
-1. Update `testing/gen_large_db.php` and sample datasets if schema or data model changed
-2. Update `testing/test_api.sh` if API endpoints were added or changed
-3. Run `php -l` on every changed PHP file
-4. Run the API test suite (`bash testing/test_api.sh`) and confirm **all tests pass**
-5. Only then build the release bundle
+1. Update `docs/` (api.md, configuration.md, etc.) for any changed features or config keys
+2. Update `testing/gen_large_db.php` and sample datasets if schema or data model changed
+3. Update `testing/test_api.sh` if API endpoints were added or changed
+4. Run `php -l` on every changed PHP file
+5. Run the API test suite (`bash testing/test_api.sh`) and confirm **all tests pass**
+6. Only then build the release bundle
 
 ### Building a release bundle
 Use `releases/make_releases.sh` when `rsync` is available:
