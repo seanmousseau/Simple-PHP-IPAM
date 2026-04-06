@@ -327,6 +327,7 @@ tr.highlight{
 .grid > .card{
   display:flex;
   flex-direction:column;
+  margin-top:0;
 }
 .grid.cols-2{
   grid-template-columns:repeat(auto-fit,minmax(320px,1fr));
