@@ -100,7 +100,7 @@ See the [Installation guide](docs/install.md) for full web server configuration 
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
-### What's new in 1.13
+### What's new in 1.14
 
 **API expansion** — New `search` endpoint for text search across addresses, `audit` endpoint for paginated audit log access, and full CRUD for sites. Address responses now include `updated_at`. API key via query parameter emits a deprecation header (#174, #170).
 

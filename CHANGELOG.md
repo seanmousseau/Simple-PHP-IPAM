@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ---
 
-## 1.13 — API Expansion, Dashboard Refresh & Code Quality
+## 1.14 — API Expansion, Dashboard Refresh & Code Quality
 
 ### Bug fixes
 - **#186** — Host header validation regex too strict (v1.12 regression). Widened to accept underscores in hostnames and IPv6 bracket notation.
