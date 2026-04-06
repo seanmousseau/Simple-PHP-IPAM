@@ -9,6 +9,10 @@ Options -Indexes
 <IfModule mod_rewrite.c>
 RewriteEngine On
 
+# Pass Authorization header to PHP (Apache strips it by default for CGI/FastCGI)
+RewriteCond %{HTTP:Authorization} .+
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
 # Force HTTPS redirect
 # Skip if already HTTPS, or if a trusted proxy has already terminated TLS
 RewriteCond %{HTTPS} !=on
