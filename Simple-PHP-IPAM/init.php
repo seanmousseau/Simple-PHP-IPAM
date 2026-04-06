@@ -14,7 +14,8 @@ function request_is_https(array $server, bool $trustProxyHeaders): bool
     return false;
 }
 
-$isHttps = request_is_https($_SERVER, (bool)($config['proxy_trust'] ?? false));
+// Skip HTTPS redirect for CLI (migrate.php, tmp_cleanup.php)
+$isHttps = php_sapi_name() === 'cli' || request_is_https($_SERVER, (bool)($config['proxy_trust'] ?? false));
 if (!$isHttps) {
     $base = rtrim((string)($config['base_url'] ?? ''), '/');
     $uri  = $_SERVER['REQUEST_URI'] ?? '/';
