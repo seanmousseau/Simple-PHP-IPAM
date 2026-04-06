@@ -17,7 +17,8 @@ set -euo pipefail
 #
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-APP_DIR="$SCRIPT_DIR/Simple-PHP-IPAM"
+REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+APP_DIR="$REPO_DIR/Simple-PHP-IPAM"
 DB_PATH="$APP_DIR/data/ipam.sqlite"
 
 # Disable proxy for local testing
