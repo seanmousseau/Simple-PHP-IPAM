@@ -135,6 +135,58 @@ assert_http() {
     [[ "$HTTP_CODE" == "$expected" ]] && pass "$label (HTTP $HTTP_CODE)" || fail "$label — expected $expected, got $HTTP_CODE. Body: ${BODY:0:200}"
 }
 
+# ---- Pre-test cleanup via API ----
+# Remove stale test data from previous runs that may not have cleaned up.
+# Uses the API so it works for both local and remote testing.
+cleanup_stale_data() {
+    log "Cleaning up stale test data..."
+    # Find and delete test subnets (203.0.113.x)
+    call_api GET "subnets&limit=1000"
+    if [[ "$HTTP_CODE" == "200" ]]; then
+        local stale_ids
+        stale_ids=$(python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+for s in d.get('subnets', []):
+    if s['cidr'].startswith('203.0.113.'):
+        print(s['id'])
+" <<< "$BODY" 2>/dev/null || true)
+        for sid in $stale_ids; do
+            # Delete addresses in the subnet first
+            call_api GET "addresses&subnet_id=$sid&limit=1000"
+            local addr_ids
+            addr_ids=$(python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+for a in d.get('addresses', []):
+    print(a['id'])
+" <<< "$BODY" 2>/dev/null || true)
+            for aid in $addr_ids; do
+                call_api DELETE "addresses&id=$aid"
+            done
+            call_api DELETE "subnets&id=$sid"
+        done
+        [[ -n "$stale_ids" ]] && log "  Removed stale test subnets" || true
+    fi
+
+    # Find and delete test sites (API-Test-Site-*)
+    call_api GET sites
+    if [[ "$HTTP_CODE" == "200" ]]; then
+        local stale_site_ids
+        stale_site_ids=$(python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+for s in d.get('sites', []):
+    if s['name'].startswith('API-Test-Site-'):
+        print(s['id'])
+" <<< "$BODY" 2>/dev/null || true)
+        for sid in $stale_site_ids; do
+            call_api DELETE "sites&id=$sid"
+        done
+        [[ -n "$stale_site_ids" ]] && log "  Removed stale test sites" || true
+    fi
+}
+
 # ====================================================================
 log "=== Authentication ==="
 # ====================================================================
@@ -155,6 +207,9 @@ assert_http 200 "Valid key → 200"
 
 call_api GET nonexistent
 assert_http 404 "Unknown resource → 404"
+
+# Now that auth is established, clean up stale data from prior runs
+cleanup_stale_data
 
 # ====================================================================
 log "=== Sites CRUD ==="
