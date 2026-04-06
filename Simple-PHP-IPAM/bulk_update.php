@@ -444,9 +444,9 @@ page_header('Bulk Update');
     </table>
     </div>
 
-    <?php if ($bulkPag['total_pages'] > 1): ?>
+    <?php if ($bulkPag['pages'] > 1): ?>
       <p class="muted mt-8">
-        Page <?= $bulkPag['page'] ?> of <?= $bulkPag['total_pages'] ?>
+        Page <?= $bulkPag['page'] ?> of <?= $bulkPag['pages'] ?>
         (<?= $bulkTotal ?> addresses)
         <?php
           $pqs = 'subnet_id=' . $subnetId . ($q !== '' ? '&q=' . urlencode($q) : '')
@@ -456,7 +456,7 @@ page_header('Bulk Update');
         <?php if ($bulkPag['page'] > 1): ?>
           <a href="bulk_update.php?<?= e($pqs) ?>&page=<?= $bulkPag['page'] - 1 ?>">← Prev</a>
         <?php endif; ?>
-        <?php if ($bulkPag['page'] < $bulkPag['total_pages']): ?>
+        <?php if ($bulkPag['page'] < $bulkPag['pages']): ?>
           <a href="bulk_update.php?<?= e($pqs) ?>&page=<?= $bulkPag['page'] + 1 ?>">Next →</a>
         <?php endif; ?>
       </p>
