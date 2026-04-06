@@ -28,6 +28,22 @@ Simple-PHP-IPAM/          ← web root (document root for web server)
     ipam.sqlite           ← SQLite database
     tmp/                  ← OIDC cache, update-check cache, import temp files
   upgrade.sh              ← upgrade script (rsync + backup + migrate)
+testing/
+  scripts/
+    test_api.sh           ← API integration test suite (40 tests, local + remote)
+  samples/
+    data-sample/          ← sample dataset generators and CSV/SQL seed data
+      gen_sample_dataset.py
+      gen_sample_db.py
+      sample_dataset.csv
+      sample_dataset.sql
+    large-db-sample/      ← large DB generator for export/performance testing
+      gen_large_db.php
+      ipam-large-test.sqlite
+    test-data/            ← CSV import test fixtures (conflict, mismatch, validation, etc.)
+releases/
+  make_releases.sh        ← release bundle builder (tar.gz + SHA256SUMS)
+  ipam-X.Y/              ← built release artifacts
 docs/
   api.md                  ← REST API reference
   configuration.md        ← config.php reference
@@ -274,10 +290,10 @@ When implementing a new version:
 ### Pre-release checklist
 Before building a release bundle, **always** complete these steps in order:
 1. Update `docs/` (api.md, configuration.md, etc.) for any changed features or config keys
-2. Update `testing/gen_large_db.php` and sample datasets if schema or data model changed
-3. Update `testing/test_api.sh` if API endpoints were added or changed
+2. Update `testing/samples/large-db-sample/gen_large_db.php` and sample datasets if schema or data model changed
+3. Update `testing/scripts/test_api.sh` if API endpoints were added or changed
 4. Run `php -l` on every changed PHP file
-5. Run the API test suite (`bash testing/test_api.sh`) and confirm **all tests pass**
+5. Run the API test suite (`bash testing/scripts/test_api.sh`) and confirm **all tests pass**
 6. Only then build the release bundle
 
 ### Building a release bundle
