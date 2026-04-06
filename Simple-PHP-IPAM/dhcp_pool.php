@@ -263,7 +263,7 @@ page_header('DHCP Pools');
   <span>🔒 DHCP Pools</span>
 </div>
 
-<p class="muted" style="margin:8px 0 0">DHCP pool management is available for IPv4 subnets only.</p>
+<p class="muted mt-8 m-0">DHCP pool management is available for IPv4 subnets only.</p>
 
 <div class="toolbar">
   <div>
@@ -347,7 +347,7 @@ page_header('DHCP Pools');
       <?php foreach ($groups as $g): ?>
         <?php if (count($g['rows']) > 1 || count($groups) > 1): ?>
         <tr class="dhcp-range-header">
-          <td colspan="5" class="muted" style="font-size:.82rem;padding:4px 6px;background:var(--card);">
+          <td colspan="5" class="muted">
             <?php if ($g['start_ip'] === $g['end_ip']): ?>
               <?= e($g['start_ip']) ?>
             <?php else: ?>
@@ -361,22 +361,22 @@ page_header('DHCP Pools');
           <?php if ($editId === (int)$r['id']): ?>
           <tr>
             <td colspan="5">
-              <form method="post" action="dhcp_pool.php" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+              <form method="post" action="dhcp_pool.php" class="dhcp-edit-form">
                 <input type="hidden" name="csrf"       value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action"     value="edit_address">
                 <input type="hidden" name="subnet_id"  value="<?= (int)$subnetId ?>">
                 <input type="hidden" name="address_id" value="<?= (int)$r['id'] ?>">
-                <span style="font-weight:600;align-self:center;"><?= e($r['ip']) ?></span>
-                <label style="display:flex;flex-direction:column;font-size:.85rem;">Hostname<br>
+                <span class="ip-label"><?= e($r['ip']) ?></span>
+                <label>Hostname<br>
                   <input name="hostname" value="<?= e((string)$r['hostname']) ?>" class="mw-160">
                 </label>
-                <label style="display:flex;flex-direction:column;font-size:.85rem;">Owner<br>
+                <label>Owner<br>
                   <input name="owner" value="<?= e((string)$r['owner']) ?>" class="mw-140">
                 </label>
-                <label style="display:flex;flex-direction:column;font-size:.85rem;">Note<br>
+                <label>Note<br>
                   <input name="note" value="<?= e((string)$r['note']) ?>" class="mw-160">
                 </label>
-                <div style="align-self:flex-end;display:flex;gap:6px;">
+                <div class="btn-group">
                   <button type="submit">Save</button>
                   <a class="action-pill" href="dhcp_pool.php?subnet_id=<?= (int)$subnetId ?>">Cancel</a>
                 </div>
@@ -389,15 +389,15 @@ page_header('DHCP Pools');
             <td><?= e((string)$r['hostname']) ?></td>
             <td><?= e((string)$r['owner']) ?></td>
             <td class="muted"><?= e((string)$r['note']) ?></td>
-            <td style="white-space:nowrap;">
+            <td class="nowrap">
               <a class="action-pill" href="dhcp_pool.php?subnet_id=<?= (int)$subnetId ?>&edit_id=<?= (int)$r['id'] ?>">Edit</a>
-              <form method="post" action="dhcp_pool.php" style="display:inline;"
+              <form method="post" action="dhcp_pool.php" class="d-inline-form"
                     data-confirm="Delete reserved address <?= e($r['ip']) ?>?">
                 <input type="hidden" name="csrf"       value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action"     value="delete_address">
                 <input type="hidden" name="subnet_id"  value="<?= (int)$subnetId ?>">
                 <input type="hidden" name="address_id" value="<?= (int)$r['id'] ?>">
-                <button type="submit" class="action-pill button-danger" style="border:none;cursor:pointer;">Delete</button>
+                <button type="submit" class="action-pill button-danger">Delete</button>
               </form>
             </td>
           </tr>

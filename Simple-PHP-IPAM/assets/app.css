@@ -628,6 +628,18 @@ details > summary::-webkit-details-marker{display:none}
 /* Demo gate standalone page */
 .gate-wrap{max-width:480px;margin:60px auto;padding:0 16px}
 
+/* Highlight row — used when linking to a specific address row */
+.highlight-row{background:var(--warn) !important;animation:highlight-fade 3s ease-out forwards}
+@keyframes highlight-fade{from{background:var(--warn)}to{background:transparent}}
+
+/* DHCP pool inline-edit form */
+.dhcp-edit-form{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
+.dhcp-edit-form .ip-label{font-weight:600;align-self:center}
+.dhcp-edit-form label{display:flex;flex-direction:column;font-size:.85rem}
+.dhcp-edit-form .btn-group{align-self:flex-end;display:flex;gap:6px}
+.dhcp-range-header td{font-size:.82rem;padding:4px 6px;background:var(--card)}
+.d-inline-form{display:inline}
+
 /* Mobile — 768px breakpoint */
 @media (max-width: 768px){
   .page{padding:14px}
@@ -652,6 +664,8 @@ details > summary::-webkit-details-marker{display:none}
   table{font-size:.88rem}
   /* Prevent nav-right from jumping to new row; keep it inline */
   .nav-right{margin-left:auto}
+  /* Reduce subnet tree indentation on small screens */
+  .subnet-node{margin-left:0 !important;padding-left:8px;border-left:2px solid var(--border)}
 }
 
 /* Mobile — 480px breakpoint (small phones) */

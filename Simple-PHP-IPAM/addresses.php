@@ -353,7 +353,7 @@ page_header('Addresses');
       </thead>
       <tbody>
       <?php foreach ($addresses as $a): $isHighlighted = $highlightId > 0 && (int)$a['id'] === $highlightId; ?>
-        <tr id="addr-<?= (int)$a['id'] ?>"<?= $isHighlighted ? ' class="highlight"' : '' ?>>
+        <tr id="addr-<?= (int)$a['id'] ?>"<?= $isHighlighted ? ' class="highlight-row"' : '' ?>>
           <td><?= e($a['ip']) ?></td>
           <td><?= e($a['hostname']) ?></td>
           <td><?= e($a['owner']) ?></td>

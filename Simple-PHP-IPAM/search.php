@@ -263,7 +263,7 @@ page_header('Search');
           <td><?= $r['grp'] !== '' ? '<span class="badge">' . e($r['grp']) . '</span>' : '' ?></td>
           <td><?= e($r['note']) ?></td>
           <td class="muted"><?= e($r['updated_at']) ?></td>
-          <td><a href="addresses.php?subnet_id=<?= (int)$r['subnet_id'] ?>&highlight=<?= (int)$r['id'] ?>">View</a> <a href="address_history.php?address_id=<?= (int)$r['id'] ?>">History</a></td>
+          <td><a href="addresses.php?subnet_id=<?= (int)$r['subnet_id'] ?>&highlight=<?= (int)$r['id'] ?>#addr-<?= (int)$r['id'] ?>">Edit</a> <a href="address_history.php?address_id=<?= (int)$r['id'] ?>">History</a></td>
         </tr>
       <?php endforeach; ?>
       </tbody>
