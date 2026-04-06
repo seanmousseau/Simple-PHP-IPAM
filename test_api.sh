@@ -65,6 +65,11 @@ API="$BASE_URL/api.php"
 
 # ---- API Key ----
 if [[ -z "${API_KEY:-}" ]]; then
+    if [[ -n "$BASE_URL" && ! -f "$DB_PATH" ]]; then
+        echo "ERROR: API_KEY is required for remote testing." >&2
+        echo "Usage: API_KEY=your-key ./test_api.sh $BASE_URL" >&2
+        exit 1
+    fi
     [[ -f "$DB_PATH" ]] || { echo "ERROR: No database at $DB_PATH" >&2; exit 1; }
     # Clean up any stale test data from previous runs
     php -r "
