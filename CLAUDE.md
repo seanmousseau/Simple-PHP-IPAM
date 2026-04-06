@@ -157,7 +157,7 @@ function ipam_migrations(): array {
 
 `apply_migrations()` in `lib.php` runs `ksort($migs, SORT_NATURAL)` before iterating, so **array order does not matter** — migrations always execute in natural version order. Each migration runs in a transaction and is recorded in `schema_migrations`. Always guard `ALTER TABLE` with `PRAGMA table_info()` checks to make new migrations idempotent.
 
-**When adding a new version:** add the migration closure, bump `version.php`, update `CHANGELOG.md`.
+**When adding a new version:** add the migration closure, bump `version.php`, update `CHANGELOG.md` (keepachangelog format).
 
 ---
 
@@ -282,7 +282,10 @@ export.*            import.*
 When implementing a new version:
 1. Add migration closure to `migrations.php` (guard `ALTER TABLE` with `PRAGMA table_info()` check)
 2. Bump `IPAM_VERSION` in `version.php`
-3. Update `CHANGELOG.md` with a `## X.Y — Title` section
+3. Update `CHANGELOG.md` following [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format:
+   - Header: `## [X.Y] - YYYY-MM-DD`
+   - Categories: **Added**, **Changed**, **Deprecated**, **Removed**, **Fixed**, **Security** (only include categories with entries)
+   - Add a version comparison link at the bottom of the file
 4. Update `README.md` "What's new" section
 5. Update relevant `docs/` files
 6. Bump asset cache-buster `?v=X.Y` in `page_header()` if CSS/JS changed
