@@ -102,6 +102,10 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
 ### What's new in 1.14
 
+**Code review hardening** — OIDC callback crash on username collision fixed (#193). Bulk update pagination controls now render (#194). SQL import CREATE TRIGGER restricted to RAISE(ABORT) patterns (#195). Audit log pruning rewritten for SQLite transaction safety (#196). Upgrade script dependency checks and path guards fixed (#197). API subnet update enforces site inheritance (#198). API sites duplicate check and transactional delete (#199).
+
+### What's new in 1.13
+
 **API expansion** — New `search` endpoint for text search across addresses, `audit` endpoint for paginated audit log access, and full CRUD for sites. Address responses now include `updated_at`. API key via query parameter emits a deprecation header (#174, #170).
 
 **Dashboard refresh** — Quick action links, weekly/monthly growth trend metrics. Top subnets sorted by utilization percentage instead of absolute count (#176, #165).
@@ -115,8 +119,6 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 **Bug fixes** — Host header regex widened for underscores and IPv6 (#186). OIDC username collision retry now loops up to 5 attempts (#178). DHCP pool page accessible to readonly users (#177). CSP inline script violation fixed (#173). Audit log pruning rewritten to avoid SQLite placeholder limit (#171).
 
 **Client-side validation** — CIDR and IP inputs validated on blur via JavaScript with inline error feedback (#175).
-
-**Code review hardening** — OIDC callback crash on username collision fixed (#193). Bulk update pagination controls now render (#194). SQL import CREATE TRIGGER restricted to RAISE(ABORT) patterns (#195). Audit log pruning rewritten for SQLite transaction safety (#196). Upgrade script dependency checks and path guards fixed (#197). API subnet update enforces site inheritance (#198). API sites duplicate check and transactional delete (#199).
 
 ### What's new in 1.12
 
