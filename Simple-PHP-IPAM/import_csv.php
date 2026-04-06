@@ -3,8 +3,6 @@ declare(strict_types=1);
 require __DIR__ . '/init.php';
 require_role('admin');
 
-$config = require __DIR__ . '/config.php';
-
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_require();
 }

@@ -264,6 +264,7 @@ page_header('Users');
 </form>
 
 <h2 class="mt-24">Existing users</h2>
+<div class="table-wrap">
 <table>
   <thead>
     <tr>
@@ -379,4 +380,5 @@ page_header('Users');
   <?php endforeach; ?>
   </tbody>
 </table>
+</div>
 <?php page_footer();

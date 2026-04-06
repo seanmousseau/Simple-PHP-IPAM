@@ -136,11 +136,11 @@ page_header('Audit Log');
   <?php if (!$rows): ?>
     <div class="empty-state">No audit entries<?= $hasFilter ? ' matching the current filter' : '' ?>.</div>
   <?php else: ?>
+    <div class="table-wrap">
     <table>
       <thead>
         <tr>
-          <?php $auditQs = audit_qs(1, $limit, $filterPrefix, $filterFrom, $filterTo, $auditSort['col'], $auditSort['dir']);
-                $auditQsBase = '?' . http_build_query(array_filter([
+          <?php $auditQsBase = '?' . http_build_query(array_filter([
                     'page_size' => $limit,
                     'prefix'    => $filterPrefix !== '' ? $filterPrefix : null,
                     'from'      => $filterFrom !== '' ? $filterFrom : null,
@@ -168,6 +168,7 @@ page_header('Audit Log');
       <?php endforeach; ?>
       </tbody>
     </table>
+    </div>
 
     <p class="mt-12">
       <?php if ($page > 1): ?>

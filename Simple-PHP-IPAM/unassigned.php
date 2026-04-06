@@ -214,6 +214,7 @@ page_header('Unassigned IPv4');
     <?php if (!$items): ?>
       <div class="empty-state">No unassigned IPs to show (or subnet too large).</div>
     <?php else: ?>
+      <div class="table-wrap">
       <table>
         <thead>
           <tr>
@@ -249,6 +250,7 @@ page_header('Unassigned IPv4');
         <?php endforeach; ?>
         </tbody>
       </table>
+      </div>
 
       <p class="mt-12">
         <?php if ($p && $p['page'] > 1): ?>

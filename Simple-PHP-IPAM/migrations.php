@@ -190,35 +190,11 @@ function ipam_migrations(): array
             $db->exec("UPDATE audit_log SET action = 'user.change_password' WHERE action = 'user.password_change'");
 
             // Recreate append-only triggers
-            $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_update
-                BEFORE UPDATE ON audit_log
-                BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
-            $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
-                BEFORE DELETE ON audit_log
-                BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
+            ensure_audit_log_table($db);
         },
 
         '1.9' => function(PDO $db) {
-            $db->exec("
-                CREATE TABLE IF NOT EXISTS audit_log (
-                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-                    user_id     INTEGER,
-                    username    TEXT,
-                    action      TEXT NOT NULL,
-                    entity_type TEXT NOT NULL,
-                    entity_id   INTEGER,
-                    ip          TEXT,
-                    user_agent  TEXT,
-                    details     TEXT
-                )
-            ");
-            $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_update
-                BEFORE UPDATE ON audit_log
-                BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
-            $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
-                BEFORE DELETE ON audit_log
-                BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
+            ensure_audit_log_table($db);
         },
     ];
 }

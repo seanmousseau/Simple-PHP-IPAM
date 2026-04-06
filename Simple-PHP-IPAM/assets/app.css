@@ -259,6 +259,20 @@ h3{font-size:1.05rem}
 }
 .card + .card{margin-top:16px}
 
+.table-wrap{
+  overflow-x:auto;
+  -webkit-overflow-scrolling:touch;
+}
+.diff-table{font-size:.85rem;border-collapse:collapse;width:auto;min-width:200px}
+.diff-table th,.diff-table td{padding:3px 8px;border:1px solid var(--border)}
+.diff-table tr.diff-changed{background:var(--warn-bg, rgba(255,193,7,.12))}
+
+tr.highlight{
+  background:var(--warn-bg, rgba(255,193,7,.12));
+  outline:2px solid var(--warn, #e6a817);
+  outline-offset:-2px;
+}
+
 .toolbar{
   display:flex;
   gap:12px;
@@ -308,6 +322,11 @@ h3{font-size:1.05rem}
 .grid{
   display:grid;
   gap:16px;
+  align-items:stretch;
+}
+.grid > .card{
+  display:flex;
+  flex-direction:column;
 }
 .grid.cols-2{
   grid-template-columns:repeat(auto-fit,minmax(320px,1fr));
@@ -609,6 +628,18 @@ details > summary::-webkit-details-marker{display:none}
 /* Demo gate standalone page */
 .gate-wrap{max-width:480px;margin:60px auto;padding:0 16px}
 
+/* Highlight row — used when linking to a specific address row */
+.highlight-row{background:var(--warn) !important;animation:highlight-fade 3s ease-out forwards}
+@keyframes highlight-fade{from{background:var(--warn)}to{background:transparent}}
+
+/* DHCP pool inline-edit form */
+.dhcp-edit-form{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
+.dhcp-edit-form .ip-label{font-weight:600;align-self:center}
+.dhcp-edit-form label{display:flex;flex-direction:column;font-size:.85rem}
+.dhcp-edit-form .btn-group{align-self:flex-end;display:flex;gap:6px}
+.dhcp-range-header td{font-size:.82rem;padding:4px 6px;background:var(--card)}
+.d-inline-form{display:inline}
+
 /* Mobile — 768px breakpoint */
 @media (max-width: 768px){
   .page{padding:14px}
@@ -633,6 +664,8 @@ details > summary::-webkit-details-marker{display:none}
   table{font-size:.88rem}
   /* Prevent nav-right from jumping to new row; keep it inline */
   .nav-right{margin-left:auto}
+  /* Reduce subnet tree indentation on small screens */
+  .subnet-node{margin-left:0 !important;padding-left:8px;border-left:2px solid var(--border)}
 }
 
 /* Mobile — 480px breakpoint (small phones) */
@@ -645,3 +678,17 @@ details > summary::-webkit-details-marker{display:none}
   .metric{padding:10px 12px}
   th,td{padding:6px 8px;font-size:.85rem}
 }
+
+/* Import spinner overlay */
+.spinner-overlay{
+  position:fixed;top:0;left:0;width:100%;height:100%;
+  background:rgba(0,0,0,.55);z-index:9999;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  color:#fff;font-size:1.2rem;gap:16px;
+}
+.spinner-overlay .spinner{
+  width:48px;height:48px;border:5px solid rgba(255,255,255,.3);
+  border-top-color:#fff;border-radius:50%;
+  animation:spin .8s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}

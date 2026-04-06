@@ -42,10 +42,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
     } else {
         $tmpPath  = (string)$upload['tmp_name'];
         $fileSize = filesize($tmpPath);
-        $maxBytes = 50 * 1024 * 1024; // 50 MB hard cap
+        $maxMb    = (int)($config['import_sql_max_mb'] ?? 200);
+        $maxBytes = $maxMb * 1024 * 1024;
 
         if ($fileSize === false || $fileSize > $maxBytes) {
-            $err = 'Import file must be under 50 MB.';
+            $err = "Import file must be under {$maxMb} MB.";
         } else {
             $sql = file_get_contents($tmpPath);
             if ($sql === false || trim($sql) === '') {
@@ -115,6 +116,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                     $statements[] = $current;
                 }
 
+                $importStart = microtime(true);
+                $stmtCount = 0;
                 foreach ($statements as $stmt) {
                     // Strip SQL comment lines, then trim
                     $exec = trim((string)preg_replace('/^--[^\n]*\n?/m', '', $stmt));
@@ -139,14 +142,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                         );
                     }
                     $db->exec($exec);
+                    $stmtCount++;
                 }
 
                 $db->exec("PRAGMA foreign_keys=ON");
                 $db->commit();
 
+                $elapsed = round(microtime(true) - $importStart, 1);
                 audit($db, 'db.import', 'system', null,
-                    'Database import completed; pre-import backup: ' . basename($backupPath));
-                $msg = 'Import successful. A pre-import backup was saved to: ' . basename($backupPath);
+                    "Database import completed ({$stmtCount} statements, {$elapsed}s); pre-import backup: " . basename($backupPath));
+                $msg = "Import successful — {$stmtCount} statements executed in {$elapsed}s. Pre-import backup: " . basename($backupPath);
+                // Invalidate db_initialized sentinel so ipam_db_init re-checks on next request
+                @unlink(__DIR__ . '/data/.db_initialized');
             } catch (Throwable $ex) {
                 if ($db->inTransaction()) $db->rollBack();
                 $db->exec("PRAGMA foreign_keys=ON");
@@ -225,7 +232,7 @@ page_header('Database Tools');
   <div class='card'>
     <h2>Import Database</h2>
     <p class='danger fw-600'>⚠ This will <strong>replace</strong> all current data. A pre-import backup is created automatically.</p>
-    <form method='post' enctype='multipart/form-data'>
+    <form method='post' enctype='multipart/form-data' data-import-form>
       <input type='hidden' name='csrf' value='<?= e(csrf_token()) ?>'>
       <input type='hidden' name='action' value='import'>
       <div class='flex-col gap-10'>
