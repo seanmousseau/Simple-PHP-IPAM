@@ -257,8 +257,10 @@ export.*            import.*
 
 ## Development workflow
 
-### Branching convention
-Feature branches follow: `claude/v{VERSION}-dev` (e.g. `claude/v0.14-dev`).
+### Branching & PRs
+- **All development happens on the `dev` branch** (or feature branches off `dev`).
+- **Never commit directly to `main`.**
+- **Pull requests go `dev` → `main`** only. Do not create PRs targeting any other branch unless explicitly instructed.
 
 ### Version bump checklist
 When implementing a new version:
@@ -268,6 +270,27 @@ When implementing a new version:
 4. Update `README.md` "What's new" section
 5. Update relevant `docs/` files
 6. Bump asset cache-buster `?v=X.Y` in `page_header()` if CSS/JS changed
+
+### Pre-release checklist
+Before building a release bundle, **always** complete these steps in order:
+1. Update `docs/` (api.md, configuration.md, etc.) for any changed features or config keys
+2. Update `testing/gen_large_db.php` and sample datasets if schema or data model changed
+3. Update `testing/test_api.sh` if API endpoints were added or changed
+4. Run `php -l` on every changed PHP file
+5. Run the API test suite (`bash testing/test_api.sh`) and confirm **all tests pass**
+6. Only then build the release bundle
+
+### Building a release bundle
+Use `releases/make_releases.sh` when `rsync` is available:
+```bash
+./releases/make_releases.sh Simple-PHP-IPAM X.Y
+```
+If `rsync` is not available, replicate the same logic with `cp -a` (copy dotfiles with `cp -a src/. dest/`), permission sanitisation, and `tar --numeric-owner --owner=0 --group=0`.
+
+Verify the bundle contains:
+- `upgrade.sh` with execute permission (`-rwxr-xr-x` in `tar tvf`)
+- Both `.htaccess` files (root and `data/`)
+- No `data/ipam.sqlite` or `data/.db_initialized`
 
 ### Linting
 Always run `php -l` on every changed PHP file before committing:
