@@ -302,13 +302,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         } catch (Throwable $e) {
             if ($db->inTransaction()) $db->rollBack();
-            $err = "Bulk action failed: " . $e->getMessage();
+            error_log('Bulk update error: ' . $e->getMessage());
+            $err = 'An unexpected database error occurred during bulk update.';
         }
     }
 }
 
 page_header('Bulk Update');
 ?>
+<div class="breadcrumbs">
+  <a href="dashboard.php">🏠 Dashboard</a><span class="sep">›</span>
+  <a href="addresses.php">🧾 Addresses</a><span class="sep">›</span>
+  <span>Bulk Update</span>
+</div>
+
 <h1>Bulk Update Addresses</h1>
 
 <?php if ($isReadonly): ?>
@@ -392,6 +399,7 @@ page_header('Bulk Update');
       <?php endif; ?>
     </p>
 
+    <div class="table-wrap">
     <table>
       <thead>
         <tr>
@@ -434,6 +442,7 @@ page_header('Bulk Update');
       <?php endif; ?>
       </tbody>
     </table>
+    </div>
 
     <?php if ($bulkPag['total_pages'] > 1): ?>
       <p class="muted mt-8">

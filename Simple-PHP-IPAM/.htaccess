@@ -1,6 +1,6 @@
 # Increase upload limits for db_tools.php SQL import
-php_value upload_max_filesize 20M
-php_value post_max_size 25M
+php_value upload_max_filesize 200M
+php_value post_max_size 210M
 
 # Options -Indexes works for Apache.
 # Note: OpenLiteSpeed ignores this. For OLS, disable "Auto Index" in the WebAdmin Console.
@@ -8,6 +8,10 @@ Options -Indexes
 
 <IfModule mod_rewrite.c>
 RewriteEngine On
+
+# Pass Authorization header to PHP (Apache strips it by default for CGI/FastCGI)
+RewriteCond %{HTTP:Authorization} .+
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
 
 # Force HTTPS redirect
 # Skip if already HTTPS, or if a trusted proxy has already terminated TLS

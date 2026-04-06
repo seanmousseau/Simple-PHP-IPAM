@@ -386,20 +386,6 @@ function ipv4_unassigned_aggregated_local(array $tree, array $directUnassigned):
     return $agg;
 }
 
-function subnet_overlap_warning_text(array $overlaps): string
-{
-    $parts = [];
-    if (!empty($overlaps['parents'])) {
-        $list = implode(', ', $overlaps['parents']);
-        $parts[] = 'nested inside: ' . $list;
-    }
-    if (!empty($overlaps['children'])) {
-        $list = implode(', ', $overlaps['children']);
-        $parts[] = 'parent of: ' . $list;
-    }
-    return 'Hierarchy notice — this subnet is ' . implode('; and ', $parts) . '. Verify this nesting is intentional.';
-}
-
 $tree = build_subnet_tree_local($list);
 $direct = subnet_direct_counts_local($db);
 $agg = subnet_aggregated_counts_local($tree, $direct);
@@ -552,6 +538,7 @@ page_header('Subnets');
     <a class="action-pill" href="#add-subnet">➕ Add Subnet</a>
   <?php endif; ?>
   <a class="action-pill" href="search.php">🔎 Search Addresses</a>
+  <a class="action-pill" href="export_subnets.php">⬇ Export CSV</a>
   <?php if (current_user()['role'] === 'admin'): ?>
     <a class="action-pill" href="sites.php">📍 Manage Sites</a>
   <?php endif; ?>
@@ -588,7 +575,7 @@ page_header('Subnets');
     <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
     <input type="hidden" name="action" value="create">
     <div class="row">
-      <label>CIDR<br><input name="cidr" placeholder="10.0.0.0/24 or 2001:db8::/64" required></label>
+      <label>CIDR<br><input name="cidr" placeholder="10.0.0.0/24 or 2001:db8::/64" required data-validate="cidr"></label>
       <label>Description<br><input name="description" placeholder="Office LAN"></label>
       <label>VLAN ID<br><input name="vlan_id" type="number" min="1" max="4094" placeholder="1–4094" class="mw-80"></label>
       <label>Site<br>

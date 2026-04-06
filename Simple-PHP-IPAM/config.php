@@ -24,6 +24,10 @@ return [
     // CSV import max upload size (MB). Allowed range: 5..50
     'import_csv_max_mb' => 5,
 
+    // Maximum SQL import file size (MB). Increase if you need to restore large databases.
+    // Note: also update upload_max_filesize and post_max_size in .htaccess or php.ini.
+    'import_sql_max_mb' => 200,
+
     // Temp upload cleanup (seconds). Files older than this are eligible for cleanup.
     'tmp_cleanup_ttl_seconds' => 86400,
 

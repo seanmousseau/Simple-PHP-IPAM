@@ -4,6 +4,50 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## 1.13 — API Expansion, Dashboard Refresh & Code Quality
+
+### Bug fixes
+- **#186** — Host header validation regex too strict (v1.12 regression). Widened to accept underscores in hostnames and IPv6 bracket notation.
+- **#179** — Six code quality cleanups: removed redundant config.php load in import_csv.php, removed duplicate `global $config` in page_header(), initialised `$formError` in api_keys.php, removed dead `$auditQs` variable in audit.php, replaced exposed PDO exception messages with generic errors in bulk_update.php and dhcp_pool.php, added sentinel file to skip bootstrap queries after first init.
+- **#178** — OIDC username collision retry now loops up to 5 attempts with incrementing suffix instead of failing on the second collision.
+- **#177** — DHCP pool page is now accessible to readonly users (view-only); write-access check moved inside POST handlers. Added IPv4-only informational note.
+- **#173** — Inline theme-priming script replaced with a `<meta>` tag + app.js reader, eliminating the CSP `script-src` violation that blocked flash-free theme application.
+- **#169** — Added breadcrumb navigation to bulk_update.php and sites.php.
+
+### Security
+- **#170** — Status endpoint version field now conditional on `status_hide_version` config. API key via query parameter emits `Deprecation` response header.
+
+### Performance
+- **#171** — `prune_audit_log()` rewritten to use subquery-based copy instead of `IN(?)` with potentially thousands of placeholders. Audit log DDL extracted into `ensure_audit_log_table()` helper (deduplicated from 4 locations).
+- **#172** — SVG logo optimization noted (requires manual tooling; asset is an embedded raster image).
+
+### UI/UX improvements
+- **#182** — Export/Import cards on Database Tools page now stretch to equal height via CSS Grid `align-items: stretch`.
+- **#166** — All data tables wrapped in `.table-wrap` for horizontal scroll on mobile.
+- **#165** — Dashboard "Top IPv4 Subnets" now sorted by utilization percentage instead of absolute address count.
+- **#163** — Search results include "View" link that navigates to the address in its subnet with the row highlighted and edit form expanded.
+
+### Database Tools
+- **#183** — SQL import file size limit now configurable via `import_sql_max_mb` in config.php (default 200 MB, previously hard-coded 50 MB).
+- **#181** — Database import shows a CSS spinner overlay during processing and reports statement count and elapsed time on completion.
+
+### Search & Export
+- **#162** — Search page now also searches subnets by CIDR and description, showing matching subnets in a separate results table.
+- **#164** — New subnet CSV export (`export_subnets.php`) with optional site and IP version filters. Export button added to subnets page action bar.
+
+### Dashboard & Addresses
+- **#176** — Dashboard now shows quick action links, weekly/monthly growth trend metrics, and all metrics in a responsive grid.
+- **#168** — "Next available IP" shown on the addresses page for IPv4 subnets with a one-click "Use" link that pre-fills the add form.
+- **#167** — Address history renders before/after changes as a field-by-field diff table instead of raw JSON.
+
+### API
+- **#174** — Added `resource=search` endpoint (text search across addresses), `resource=audit` endpoint (paginated audit log with action/date filters), sites write API (POST/PUT/DELETE), `updated_at` field in address responses. Fixed stale "Read-only" docblock.
+
+### Client-side validation
+- **#175** — CIDR and IP inputs now have `data-validate` attributes with JavaScript validation on blur. Inline error messages via HTML5 `setCustomValidity()`.
+
+---
+
 ## 1.12 — Security Hardening, Performance & API Completeness
 
 ### Security fixes

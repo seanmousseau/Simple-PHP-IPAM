@@ -15,6 +15,7 @@ $st->execute();
 $subnetList = $st->fetchAll();
 
 $selectedSubnetId = (int)($_GET['subnet_id'] ?? ($_POST['subnet_id'] ?? 0));
+$highlightId = (int)($_GET['highlight'] ?? 0);
 $page = q_int('page', 1, 1, 1000000);
 $pageSize = q_int('page_size', 254, 1, 500);
 
@@ -206,6 +207,13 @@ if ($selectedSubnetId > 0) {
     $addresses = $st->fetchAll();
 }
 
+// Next available IP (IPv4 only, for subnets with room)
+$nextAvailableIp = null;
+if ($selectedSubnet && (int)$selectedSubnet['ip_version'] === 4) {
+    $nextAvailableIp = find_next_available_ipv4($db, $selectedSubnetId,
+        (string)$selectedSubnet['network'], (int)$selectedSubnet['prefix']);
+}
+
 page_header('Addresses');
 ?>
 
@@ -282,13 +290,18 @@ page_header('Addresses');
 
 <div class="card mt-16">
   <h2>Add address</h2>
-  <form method="post" action="addresses.php">
+  <?php if ($nextAvailableIp): ?>
+    <p class="muted">Next available: <b><?= e($nextAvailableIp) ?></b>
+      <a class="action-pill" href="addresses.php?subnet_id=<?= (int)$selectedSubnetId ?>&next_ip=<?= urlencode($nextAvailableIp) ?>#add-address">Use</a>
+    </p>
+  <?php endif; ?>
+  <form method="post" action="addresses.php" id="add-address">
     <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
     <input type="hidden" name="action" value="create">
     <input type="hidden" name="subnet_id" value="<?= (int)$selectedSubnetId ?>">
-
+    <?php $prefillIp = trim((string)($_GET['next_ip'] ?? '')); ?>
     <div class="row">
-      <label>IP<br><input name="ip" placeholder="<?= ($selectedSubnet && (int)$selectedSubnet['ip_version']===6) ? '2001:db8::10' : '10.0.0.10' ?>" required></label>
+      <label>IP<br><input name="ip" value="<?= e($prefillIp) ?>" placeholder="<?= ($selectedSubnet && (int)$selectedSubnet['ip_version']===6) ? '2001:db8::10' : '10.0.0.10' ?>" required data-validate="ip"></label>
       <label>Hostname<br><input name="hostname" maxlength="253"></label>
       <label>Owner<br><input name="owner" maxlength="255"></label>
       <label>Group<br><input name="grp" maxlength="100" placeholder="e.g. web-tier" class="mw-160"></label>
@@ -322,6 +335,7 @@ page_header('Addresses');
   <?php elseif (!$addresses): ?>
     <div class="empty-state">No addresses in this subnet yet.</div>
   <?php else: ?>
+    <div class="table-wrap">
     <table>
       <thead>
         <tr>
@@ -338,8 +352,8 @@ page_header('Addresses');
         </tr>
       </thead>
       <tbody>
-      <?php foreach ($addresses as $a): ?>
-        <tr>
+      <?php foreach ($addresses as $a): $isHighlighted = $highlightId > 0 && (int)$a['id'] === $highlightId; ?>
+        <tr id="addr-<?= (int)$a['id'] ?>"<?= $isHighlighted ? ' class="highlight-row"' : '' ?>>
           <td><?= e($a['ip']) ?></td>
           <td><?= e($a['hostname']) ?></td>
           <td><?= e($a['owner']) ?></td>
@@ -352,7 +366,7 @@ page_header('Addresses');
               <a href="address_history.php?address_id=<?= (int)$a['id'] ?>">History</a>
             </div>
 
-            <details class="mt-6">
+            <details class="mt-6"<?= $isHighlighted ? ' open' : '' ?>>
               <summary>Edit/Delete</summary>
 
               <form method="post" action="addresses.php" class="mt-8">
@@ -394,6 +408,7 @@ page_header('Addresses');
       <?php endforeach; ?>
       </tbody>
     </table>
+    </div>
 
     <?php
       $qsBase = ['subnet_id' => $selectedSubnetId, 'page_size' => $pageSize,

@@ -2,23 +2,23 @@
 declare(strict_types=1);
 
 /**
- * Simple-PHP-IPAM — Read-only REST API
+ * Simple-PHP-IPAM — REST API
  *
  * Authentication: pass your API key via the Authorization header
  *   Authorization: Bearer <key>
- * or as a query parameter (less secure, avoid in logs):
- *   ?api_key=<key>
  *
- * Resources:
- *   GET api.php?resource=subnets            — list subnets (paginated)
- *     optional: &page=N  &limit=N (max 1000, default 200)
- *   GET api.php?resource=subnets&id=N       — single subnet
- *   GET api.php?resource=addresses          — list addresses (paginated)
- *     optional: &subnet_id=N  &status=used|reserved|free
- *     optional: &page=N  &limit=N (max 500, default 100)
- *   GET api.php?resource=sites              — list all sites
- *   GET api.php?resource=history&address_id=N — address change history (paginated)
- *     optional: &page=N  &limit=N (max 200, default 50)
+ * Resources (read):
+ *   GET  ?resource=subnets             — list subnets (paginated)
+ *   GET  ?resource=addresses           — list addresses (paginated, filterable)
+ *   GET  ?resource=sites               — list all sites
+ *   GET  ?resource=history&address_id= — address change history (paginated)
+ *   GET  ?resource=search&q=           — search addresses by IP/hostname/owner/note
+ *   GET  ?resource=audit               — audit log (paginated, filterable by action/date)
+ *
+ * Resources (write):
+ *   POST/PUT/DELETE ?resource=subnets  — create/update/delete subnets
+ *   POST/PUT/DELETE ?resource=addresses — create/update/delete addresses
+ *   POST/PUT/DELETE ?resource=sites    — create/update/delete sites
  */
 
 // No session; stateless API request
@@ -62,6 +62,8 @@ if (preg_match('/^Bearer\s+(\S+)$/i', $authHeader, $m)) {
     $rawKey = $m[1];
 } elseif (!empty($_GET['api_key'])) {
     $rawKey = (string)$_GET['api_key'];
+    header('Deprecation: true');
+    header('X-Deprecation-Reason: API key via query parameter is deprecated. Use Authorization: Bearer header.');
 }
 
 if ($rawKey === '') {
@@ -121,9 +123,17 @@ match ($resource) {
         'DELETE' => api_addresses_delete($db, $apiKey, (int)($_GET['id'] ?? 0)),
         default  => api_error(405, 'Method not allowed.'),
     },
-    'sites'   => $method === 'GET' ? api_sites($db)   : api_error(405, 'Method not allowed.'),
-    'history' => $method === 'GET' ? api_history($db) : api_error(405, 'Method not allowed.'),
-    default   => api_error(404, 'Unknown resource. Valid resources: subnets, addresses, sites, history'),
+    'sites' => match ($method) {
+        'GET'    => api_sites($db),
+        'POST'   => api_sites_create($db, $apiKey, $body),
+        'PUT'    => api_sites_update($db, $apiKey, (int)($_GET['id'] ?? 0), $body),
+        'DELETE' => api_sites_delete($db, $apiKey, (int)($_GET['id'] ?? 0)),
+        default  => api_error(405, 'Method not allowed.'),
+    },
+    'history' => $method === 'GET' ? api_history($db)    : api_error(405, 'Method not allowed.'),
+    'search'  => $method === 'GET' ? api_search($db)     : api_error(405, 'Method not allowed.'),
+    'audit'   => $method === 'GET' ? api_audit_log($db)  : api_error(405, 'Method not allowed.'),
+    default   => api_error(404, 'Unknown resource. Valid: subnets, addresses, sites, history, search, audit'),
 };
 
 // ---- Helpers ----
@@ -220,7 +230,7 @@ function api_addresses(PDO $db): never
     $total = (int)$cntSt->fetch()['c'];
 
     $sql = "SELECT a.id, a.subnet_id, a.ip, a.hostname, a.owner,
-                   a.status, a.note, a.grp, a.created_at
+                   a.status, a.note, a.grp, a.created_at, a.updated_at
             FROM addresses a $whereSql
             ORDER BY a.ip_bin
             LIMIT :lim OFFSET :off";
@@ -244,6 +254,7 @@ function api_addresses(PDO $db): never
             'note'        => (string)$r['note'],
             'group'       => (string)$r['grp'],
             'created_at'  => $r['created_at'],
+            'updated_at'  => $r['updated_at'],
         ];
     }, $st->fetchAll());
 
@@ -322,6 +333,168 @@ function api_history(PDO $db): never
         'limit'      => $limit,
         'history'    => $rows,
     ]);
+}
+
+// ---- Search endpoint ----
+
+function api_search(PDO $db): never
+{
+    $q = substr(trim((string)($_GET['q'] ?? '')), 0, 500);
+    if ($q === '') api_error(400, 'q parameter is required.');
+
+    $where  = ["(a.ip LIKE :q ESCAPE '\\' OR a.hostname LIKE :q ESCAPE '\\' OR a.owner LIKE :q ESCAPE '\\' OR a.note LIKE :q ESCAPE '\\' OR a.grp LIKE :q ESCAPE '\\')"];
+    $params = [':q' => '%' . like_escape($q) . '%'];
+
+    if (isset($_GET['status'])) {
+        $s = strtolower(trim((string)$_GET['status']));
+        if (in_array($s, ['used', 'reserved', 'free'], true)) {
+            $where[] = 'a.status = :st'; $params[':st'] = $s;
+        }
+    }
+    if (isset($_GET['site_id'])) {
+        $where[] = 's.site_id = :site_id'; $params[':site_id'] = (int)$_GET['site_id'];
+    }
+    if (isset($_GET['ip_version'])) {
+        $v = (int)$_GET['ip_version'];
+        if (in_array($v, [4, 6], true)) {
+            $where[] = 's.ip_version = :ipver'; $params[':ipver'] = $v;
+        }
+    }
+
+    $whereSql = 'WHERE ' . implode(' AND ', $where);
+    $page   = max(1, (int)($_GET['page']  ?? 1));
+    $limit  = max(1, min(500, (int)($_GET['limit'] ?? 100)));
+    $offset = ($page - 1) * $limit;
+
+    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM addresses a JOIN subnets s ON s.id = a.subnet_id $whereSql");
+    $cntSt->execute($params);
+    $total = (int)$cntSt->fetch()['c'];
+
+    $st = $db->prepare("
+        SELECT a.id, a.subnet_id, a.ip, a.hostname, a.owner, a.status, a.note, a.grp,
+               a.created_at, a.updated_at, s.cidr AS subnet_cidr
+        FROM addresses a
+        JOIN subnets s ON s.id = a.subnet_id
+        $whereSql
+        ORDER BY a.ip_bin
+        LIMIT :lim OFFSET :off
+    ");
+    foreach ($params as $k => $v) $st->bindValue($k, $v);
+    $st->bindValue(':lim', $limit, PDO::PARAM_INT);
+    $st->bindValue(':off', $offset, PDO::PARAM_INT);
+    $st->execute();
+
+    $rows = array_map(fn(array $r) => [
+        'id' => (int)$r['id'], 'subnet_id' => (int)$r['subnet_id'],
+        'subnet_cidr' => $r['subnet_cidr'], 'ip' => $r['ip'],
+        'hostname' => (string)$r['hostname'], 'owner' => (string)$r['owner'],
+        'status' => $r['status'], 'note' => (string)$r['note'],
+        'group' => (string)$r['grp'],
+        'created_at' => $r['created_at'], 'updated_at' => $r['updated_at'],
+    ], $st->fetchAll());
+
+    api_json(['total' => $total, 'page' => $page, 'limit' => $limit, 'results' => $rows]);
+}
+
+// ---- Audit log endpoint ----
+
+function api_audit_log(PDO $db): never
+{
+    $where  = [];
+    $params = [];
+
+    if (isset($_GET['action'])) {
+        $where[] = 'action LIKE :act'; $params[':act'] = '%' . like_escape(trim((string)$_GET['action'])) . '%';
+    }
+    if (isset($_GET['from'])) {
+        $where[] = 'created_at >= :from_dt'; $params[':from_dt'] = trim((string)$_GET['from']);
+    }
+    if (isset($_GET['to'])) {
+        $where[] = 'created_at <= :to_dt'; $params[':to_dt'] = trim((string)$_GET['to']);
+    }
+
+    $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
+    $page   = max(1, (int)($_GET['page']  ?? 1));
+    $limit  = max(1, min(500, (int)($_GET['limit'] ?? 100)));
+    $offset = ($page - 1) * $limit;
+
+    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM audit_log $whereSql");
+    $cntSt->execute($params);
+    $total = (int)$cntSt->fetch()['c'];
+
+    $st = $db->prepare("
+        SELECT id, created_at, username, action, entity_type, entity_id, ip, details
+        FROM audit_log $whereSql
+        ORDER BY id DESC
+        LIMIT :lim OFFSET :off
+    ");
+    foreach ($params as $k => $v) $st->bindValue($k, $v);
+    $st->bindValue(':lim', $limit, PDO::PARAM_INT);
+    $st->bindValue(':off', $offset, PDO::PARAM_INT);
+    $st->execute();
+
+    $rows = array_map(fn(array $r) => [
+        'id' => (int)$r['id'], 'created_at' => $r['created_at'],
+        'username' => (string)$r['username'], 'action' => $r['action'],
+        'entity_type' => $r['entity_type'],
+        'entity_id' => $r['entity_id'] !== null ? (int)$r['entity_id'] : null,
+        'ip' => (string)($r['ip'] ?? ''), 'details' => (string)($r['details'] ?? ''),
+    ], $st->fetchAll());
+
+    api_json(['total' => $total, 'page' => $page, 'limit' => $limit, 'entries' => $rows]);
+}
+
+// ---- Write: Sites ----
+
+function api_sites_create(PDO $db, array $apiKey, array $body): never
+{
+    $name = trim((string)($body['name'] ?? ''));
+    $desc = trim((string)($body['description'] ?? ''));
+    if ($name === '') api_error(400, 'name is required.');
+
+    $dup = $db->prepare("SELECT id FROM sites WHERE name = :n");
+    $dup->execute([':n' => $name]);
+    if ($dup->fetch()) api_error(409, 'A site with this name already exists.');
+
+    $db->prepare("INSERT INTO sites (name, description) VALUES (:n, :d)")
+       ->execute([':n' => $name, ':d' => $desc]);
+    $newId = (int)$db->lastInsertId();
+    api_audit($db, $apiKey, 'site.create', 'site', $newId, "name=$name");
+    http_response_code(201);
+    api_json(['id' => $newId]);
+}
+
+function api_sites_update(PDO $db, array $apiKey, int $id, array $body): never
+{
+    if ($id <= 0) api_error(400, 'id is required as a query parameter.');
+    $st = $db->prepare("SELECT id, name, description FROM sites WHERE id = :id");
+    $st->execute([':id' => $id]);
+    $site = $st->fetch();
+    if (!$site) api_error(404, 'Site not found.');
+
+    $name = array_key_exists('name', $body) ? trim((string)$body['name']) : (string)$site['name'];
+    $desc = array_key_exists('description', $body) ? trim((string)$body['description']) : (string)$site['description'];
+    if ($name === '') api_error(400, 'name cannot be empty.');
+
+    $db->prepare("UPDATE sites SET name = :n, description = :d WHERE id = :id")
+       ->execute([':n' => $name, ':d' => $desc, ':id' => $id]);
+    api_audit($db, $apiKey, 'site.update', 'site', $id, "name=$name");
+    api_json(['id' => $id]);
+}
+
+function api_sites_delete(PDO $db, array $apiKey, int $id): never
+{
+    if ($id <= 0) api_error(400, 'id is required as a query parameter.');
+    $st = $db->prepare("SELECT id, name FROM sites WHERE id = :id");
+    $st->execute([':id' => $id]);
+    $site = $st->fetch();
+    if (!$site) api_error(404, 'Site not found.');
+
+    $db->prepare("UPDATE subnets SET site_id = NULL WHERE site_id = :id")->execute([':id' => $id]);
+    $db->prepare("DELETE FROM sites WHERE id = :id")->execute([':id' => $id]);
+    api_audit($db, $apiKey, 'site.delete', 'site', $id, "name={$site['name']}");
+    http_response_code(204);
+    exit;
 }
 
 // ---- Write: Addresses ----

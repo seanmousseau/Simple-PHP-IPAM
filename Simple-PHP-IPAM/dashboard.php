@@ -25,7 +25,7 @@ $st->execute();
 $verCounts = [4 => 0, 6 => 0];
 foreach ($st->fetchAll() as $r) $verCounts[(int)$r['ip_version']] = (int)$r['c'];
 
-/* --- Top IPv4 subnets by used-address count (/8–/32 only, avoids huge edge cases) --- */
+/* --- Top IPv4 subnets by utilization % (/8–/32 only) --- */
 $st = $db->prepare("
     SELECT s.id, s.cidr, s.prefix, s.description,
            COUNT(a.id) AS used_count
@@ -33,11 +33,21 @@ $st = $db->prepare("
     LEFT JOIN addresses a ON a.subnet_id = s.id AND a.status IN ('used','reserved')
     WHERE s.ip_version = 4 AND s.prefix BETWEEN 8 AND 32
     GROUP BY s.id
+    HAVING used_count > 0
     ORDER BY used_count DESC
-    LIMIT 10
+    LIMIT 50
 ");
 $st->execute();
 $topSubnets = $st->fetchAll();
+// Sort by utilization percentage (highest first)
+usort($topSubnets, function (array $a, array $b): int {
+    $capA = ipv4_assignable_count((int)$a['prefix']);
+    $capB = ipv4_assignable_count((int)$b['prefix']);
+    $pctA = $capA > 0 ? (int)$a['used_count'] / $capA : 0;
+    $pctB = $capB > 0 ? (int)$b['used_count'] / $capB : 0;
+    return $pctB <=> $pctA;
+});
+$topSubnets = array_slice($topSubnets, 0, 10);
 
 /* --- Address counts grouped by site --- */
 $st = $db->prepare("
@@ -54,6 +64,10 @@ $st = $db->prepare("
 ");
 $st->execute();
 $bySite = $st->fetchAll();
+
+/* --- Growth trend: addresses added in last 7 and 30 days --- */
+$growthWeek = (int)$db->query("SELECT COUNT(*) FROM addresses WHERE created_at >= datetime('now', '-7 days')")->fetchColumn();
+$growthMonth = (int)$db->query("SELECT COUNT(*) FROM addresses WHERE created_at >= datetime('now', '-30 days')")->fetchColumn();
 
 /* --- Recent audit events --- */
 $st = $db->prepare("
@@ -79,6 +93,15 @@ page_header('Dashboard');
   </div>
 </div>
 
+<div class="page-actions">
+  <a class="action-pill" href="subnets.php#add-subnet">➕ Add Subnet</a>
+  <a class="action-pill" href="search.php">🔎 Search</a>
+  <a class="action-pill" href="subnets.php">🌐 Subnets</a>
+  <?php if (current_user()['role'] === 'admin'): ?>
+    <a class="action-pill" href="import_csv.php">📥 Import CSV</a>
+  <?php endif; ?>
+</div>
+
 <div class="grid cols-3 mt-16">
   <div class="metric"><div class="label">Subnets</div><div class="value"><?= e((string)$totalSubnets) ?></div></div>
   <div class="metric"><div class="label">Addresses (rows)</div><div class="value"><?= e((string)$totalAddrs) ?></div></div>
@@ -86,6 +109,8 @@ page_header('Dashboard');
   <div class="metric"><div class="label">Reserved</div><div class="value status-reserved"><?= e((string)$statusMap['reserved']) ?></div></div>
   <div class="metric"><div class="label">Free</div><div class="value status-free"><?= e((string)$statusMap['free']) ?></div></div>
   <div class="metric"><div class="label">IPv4 / IPv6 Subnets</div><div class="value"><?= e((string)$verCounts[4]) ?> / <?= e((string)$verCounts[6]) ?></div></div>
+  <div class="metric"><div class="label">Added (7 days)</div><div class="value"><?= e((string)$growthWeek) ?></div></div>
+  <div class="metric"><div class="label">Added (30 days)</div><div class="value"><?= e((string)$growthMonth) ?></div></div>
 </div>
 
 <div class="grid cols-2 mt-16">
