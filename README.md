@@ -152,7 +152,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
 **CSP / CAPTCHA fix** — The global `Content-Security-Policy` header in `.htaccess` has been removed. PHP sets a per-page CSP that correctly extends `script-src` and `frame-src` for active CAPTCHA providers; the `.htaccess` header was enforced simultaneously by browsers as a separate, more restrictive policy, silently blocking widget scripts and iframes.
 
-**Sample dataset** — A 4,522-row CSV (`docs/samples/sample_dataset.csv`) is included for comprehensive import testing, covering six sites, all IPv4 prefix sizes from /23 to /32, IPv6 /64 and /128 subnets, P2P links, loopbacks, and all three address statuses.
+**Sample dataset** — A 4,522-row CSV (`testing/samples/data-sample/sample_dataset.csv`) is included for comprehensive import testing, covering six sites, all IPv4 prefix sizes from /23 to /32, IPv6 /64 and /128 subnets, P2P links, loopbacks, and all three address statuses.
 
 ### What's new in 1.9
 

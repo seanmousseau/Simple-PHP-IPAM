@@ -9,7 +9,7 @@
  */
 declare(strict_types=1);
 
-$dbPath = __DIR__ . '/../Simple-PHP-IPAM/data/ipam.sqlite';
+$dbPath = __DIR__ . '/../../../Simple-PHP-IPAM/data/ipam.sqlite';
 
 // Ensure data dir exists
 @mkdir(dirname($dbPath), 0755, true);
@@ -31,7 +31,7 @@ $db->exec('PRAGMA synchronous = NORMAL');
 $db->exec('PRAGMA foreign_keys = ON');
 
 // Load schema
-$schema = file_get_contents(__DIR__ . '/../Simple-PHP-IPAM/schema.sql');
+$schema = file_get_contents(__DIR__ . '/../../../Simple-PHP-IPAM/schema.sql');
 $db->exec($schema);
 
 echo "Schema loaded.\n";
