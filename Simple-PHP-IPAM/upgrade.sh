@@ -68,6 +68,62 @@ need_cmd rm
 CHOWN_BIN="$(command -v chown || true)"
 PHP_BIN="$(command -v php || true)"
 
+# ---- PHP dependency checks ----
+# Migrations require PHP CLI with pdo_sqlite. Check early so we fail before
+# touching any files, not after rsync has already modified the target.
+
+if [[ -z "$PHP_BIN" ]]; then
+  log "WARNING: php not found in PATH. Database migrations will be skipped."
+  log "         Run 'php migrate.php' manually after upgrade."
+else
+  log "PHP:     $("$PHP_BIN" -r 'echo PHP_VERSION;' 2>/dev/null || echo 'unknown')"
+
+  # Check PHP version >= 8.2
+  php_version_ok="$("$PHP_BIN" -r 'echo version_compare(PHP_VERSION, "8.2.0", ">=") ? "1" : "0";' 2>/dev/null || echo '0')"
+  if [[ "$php_version_ok" != "1" ]]; then
+    die "PHP 8.2+ is required. Found: $("$PHP_BIN" -r 'echo PHP_VERSION;' 2>/dev/null || echo 'unknown')"
+  fi
+
+  # Check required PHP extensions
+  missing_exts=()
+  for ext in pdo pdo_sqlite; do
+    if ! "$PHP_BIN" -m 2>/dev/null | grep -qi "^${ext}$"; then
+      missing_exts+=("$ext")
+    fi
+  done
+  if [[ ${#missing_exts[@]} -gt 0 ]]; then
+    die "Missing required PHP extensions: ${missing_exts[*]}
+  Install them (e.g. apt install php-sqlite3) and retry."
+  fi
+
+  # Quick smoke test: can PHP open a SQLite database?
+  if ! "$PHP_BIN" -r "new PDO('sqlite::memory:');" 2>/dev/null; then
+    die "PHP PDO SQLite smoke test failed. Verify pdo_sqlite is working."
+  fi
+fi
+
+# ---- Disk space check ----
+# Estimate: need at least 2x the target size (backup + new files)
+if command -v df >/dev/null 2>&1 && command -v du >/dev/null 2>&1; then
+  target_kb="$(du -sk "$TARGET_DIR" 2>/dev/null | awk '{print $1}')"
+  parent_avail_kb="$(df -k "$(dirname "$TARGET_DIR")" 2>/dev/null | awk 'NR==2{print $4}')"
+  if [[ -n "$target_kb" && -n "$parent_avail_kb" ]]; then
+    needed_kb=$((target_kb * 3))
+    if [[ "$parent_avail_kb" -lt "$needed_kb" ]]; then
+      log "WARNING: Low disk space. Available: $((parent_avail_kb/1024))MB, estimated need: $((needed_kb/1024))MB"
+      confirm "Continue anyway?" || die "Aborted due to low disk space."
+    fi
+  fi
+fi
+
+# ---- Target directory checks ----
+if [[ ! -w "$TARGET_DIR" ]]; then
+  die "Target directory is not writable: $TARGET_DIR"
+fi
+if [[ ! -w "$(dirname "$TARGET_DIR")" ]]; then
+  die "Parent directory is not writable (needed for backup): $(dirname "$TARGET_DIR")"
+fi
+
 timestamp="$(date +%Y%m%d-%H%M%S)"
 
 extract_php_const_version() {
