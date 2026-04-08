@@ -102,6 +102,7 @@ mkdir -p "$PAYLOAD"
 rsync -a \
   --exclude '*.sqlite' --exclude '*.db' \
   --exclude 'data/ipam.sqlite' --exclude 'data/ipam.sqlite-wal' --exclude 'data/ipam.sqlite-shm' \
+  --exclude 'data/.db_initialized' \
   --exclude '.git/' --exclude '.github/' --exclude '.DS_Store' \
   "$RELEASE_DIR/" "$PAYLOAD/"
 

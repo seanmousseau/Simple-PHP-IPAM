@@ -10,10 +10,15 @@ set -euo pipefail
 # If BASE_URL is omitted, creates a temp API key in SQLite and uses PHP built-in server.
 #
 # Examples:
-#   ./test_api.sh                                          # auto-start local server
-#   ./test_api.sh https://ipam.example.com                 # test remote instance
-#   API_KEY=abc123 ./test_api.sh https://ipam.example.com  # with explicit key
-#   AUTH_MODE=query API_KEY=abc123 ./test_api.sh https://ipam.example.com  # query param auth (proxy strips headers)
+#   ./test_api.sh                                                              # auto-start local server
+#   ./test_api.sh https://ipam.example.com                                     # test remote instance
+#   API_KEY=abc123 ./test_api.sh https://ipam.example.com                      # with explicit key
+#   AUTH_MODE=query API_KEY=abc123 ./test_api.sh https://ipam.example.com      # query param auth
+#   BASIC_AUTH=user:pass AUTH_MODE=query ./test_api.sh https://ipam.example.com # behind HTTP Basic Auth
+#
+# For the dev server, source ~/.claude/dev-secrets.env first:
+#   source ~/.claude/dev-secrets.env
+#   BASIC_AUTH="$IPAM_BASIC_USER:$IPAM_BASIC_PASS" AUTH_MODE=query ./test_api.sh https://dev-direct.seanmousseau.com:8343/claude/ipam
 #
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -99,12 +104,16 @@ HTTP_CODE=""; BODY=""
 # Auth mode: header (default) or query param (for proxies that strip Authorization)
 AUTH_MODE="${AUTH_MODE:-header}"
 
+# Optional HTTP Basic Auth for servers behind a gateway (e.g. BASIC_AUTH=user:pass)
+BASIC_AUTH="${BASIC_AUTH:-}"
+
 # call METHOD URL [JSON_BODY]
 call() {
     local method="$1" url="$2" body="${3:-}"
     local tmp; tmp=$(mktemp)
     local args=(-s --noproxy '*' -o "$tmp" -w '%{http_code}' -X "$method"
                 -H "Content-Type: application/json")
+    [[ -n "$BASIC_AUTH" ]] && args+=(-u "$BASIC_AUTH")
     if [[ "$AUTH_MODE" == "query" ]]; then
         # Append api_key as query parameter (for proxies that strip Authorization header)
         [[ "$url" == *"?"* ]] && url="${url}&api_key=$API_KEY" || url="${url}?api_key=$API_KEY"
@@ -192,10 +201,11 @@ for s in d.get('sites', []):
 log "=== Authentication ==="
 # ====================================================================
 
-HTTP_CODE=$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' "${API}?resource=subnets")
+_ba_args=(); [[ -n "$BASIC_AUTH" ]] && _ba_args=(-u "$BASIC_AUTH")
+HTTP_CODE=$(curl -s --noproxy '*' "${_ba_args[@]}" -o /dev/null -w '%{http_code}' "${API}?resource=subnets")
 [[ "$HTTP_CODE" == "401" ]] && pass "No auth → 401" || fail "No auth → expected 401, got $HTTP_CODE"
 
-HTTP_CODE=$(curl -s --noproxy '*' -o /dev/null -w '%{http_code}' -H "Authorization: Bearer bad-key" "${API}?resource=subnets")
+HTTP_CODE=$(curl -s --noproxy '*' "${_ba_args[@]}" -o /dev/null -w '%{http_code}' -H "Authorization: Bearer bad-key" "${API}?resource=subnets")
 [[ "$HTTP_CODE" == "401" ]] && pass "Bad key → 401" || fail "Bad key → expected 401, got $HTTP_CODE"
 
 call_api GET subnets
@@ -364,7 +374,7 @@ assert_http 405 "PATCH → 405"
 log "=== Deprecation Warning ==="
 # ====================================================================
 
-DEP_HEADER=$(curl -s --noproxy '*' -D - -o /dev/null "${API}?resource=subnets&api_key=$API_KEY" 2>/dev/null | grep -i 'deprecation' || echo "")
+DEP_HEADER=$(curl -s --noproxy '*' "${_ba_args[@]}" -D - -o /dev/null "${API}?resource=subnets&api_key=$API_KEY" 2>/dev/null | grep -i 'deprecation' || echo "")
 [[ -n "$DEP_HEADER" ]] && pass "Query param API key sends Deprecation header" || skip "Deprecation header not found (may need header-only auth)"
 
 # ====================================================================

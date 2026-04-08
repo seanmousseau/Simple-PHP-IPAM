@@ -39,7 +39,7 @@ $apiMaxAttempts   = (int)($config['api_max_attempts']   ?? 20);
 $apiLockoutSeconds = (int)($config['api_lockout_seconds'] ?? 300);
 if (!empty($config['proxy_trust']) && !empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
     $xffParts  = array_map('trim', explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']));
-    $xffFirst  = $xffParts[0] ?? '';
+    $xffFirst  = $xffParts[0];
     $clientIp  = (filter_var($xffFirst, FILTER_VALIDATE_IP) !== false)
                  ? $xffFirst
                  : ($_SERVER['REMOTE_ADDR'] ?? '127.0.0.1');
@@ -630,8 +630,8 @@ function api_subnets_create(PDO $db, array $apiKey, array $body): never
 {
     $cidr        = trim((string)($body['cidr']        ?? ''));
     $description = trim((string)($body['description'] ?? ''));
-    $siteId      = isset($body['site_id']) && $body['site_id'] !== null ? (int)$body['site_id'] : null;
-    $vlanId      = isset($body['vlan_id']) && $body['vlan_id'] !== null ? (int)$body['vlan_id'] : null;
+    $siteId      = isset($body['site_id']) ? (int)$body['site_id'] : null;
+    $vlanId      = isset($body['vlan_id']) ? (int)$body['vlan_id'] : null;
 
     if ($cidr === '') api_error(400, 'cidr is required.');
 

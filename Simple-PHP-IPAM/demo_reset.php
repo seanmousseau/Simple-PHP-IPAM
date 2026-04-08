@@ -24,7 +24,7 @@ if (!($config['demo_mode']['enabled'] ?? false)) {
 }
 
 $db = ipam_db($config);
-ipam_db_init($db, $config);
+ipam_db_init($db);
 
 demo_reset_db($db);
 file_put_contents(__DIR__ . '/data/demo_last_reset.txt', (string)time());

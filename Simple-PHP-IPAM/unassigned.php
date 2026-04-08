@@ -200,7 +200,6 @@ page_header('Unassigned IPv4');
 </div>
 
 <?php if ($err): ?><p class="danger"><?= e($err) ?></p><?php endif; ?>
-<?php if ($msg): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
 
 <?php if ($sub): ?>
   <div class="card mt-16">

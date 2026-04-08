@@ -323,7 +323,6 @@ page_header('Bulk Update');
 <?php endif; ?>
 
 <?php if ($err): ?><p class="danger"><?= e($err) ?></p><?php endif; ?>
-<?php if ($msg): ?><p><?= e($msg) ?></p><?php endif; ?>
 
 <form method="get" action="bulk_update.php" class="row">
   <label>Subnet<br>

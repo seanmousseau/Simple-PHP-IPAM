@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [1.15.0] - 2026-04-08
+
+### Fixed
+- **#204** — `demo_reset.php` and `demo_seed.php` passed an extra `$config` argument to `ipam_db_init()`, which takes only one parameter; removed the stray arg.
+- **#205** — `import_csv.php` had an unreachable `page_footer()` call after the step dispatcher; all code paths exit before reaching it; removed the dead call.
+- **#206** — `bulk_update.php` had a dead `if ($msg)` template block; `$msg` is initialised to `''` and never reassigned on that path; block removed.
+- **#207** — `unassigned.php` same dead `if ($msg)` block removed.
+- **#208** — `lib.php` and `api.php`: removed redundant `?? ''` guards on `explode()[0]` (offset 0 always exists) and removed redundant `!== null` after `isset()`.
+- **#209** — `lib.php`: removed redundant `?? ''` on `$role` in `page_header()` (assigned unconditionally at function entry); added `@phpstan-impure` annotations to `housekeeping_should_run()` and `backup_is_due()`.
+- **#182** — Card `margin-top` inside CSS Grid containers zeroed out; the `.card + .card` adjacency margin was reducing card height by 16 px in the Database Tools grid despite `gap` already providing the spacing.
+
 ## [1.14] - 2026-04-06
 
 ### Fixed
@@ -317,6 +328,7 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[1.15.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.14...v1.15.0
 [1.14]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.13...v1.14
 [1.13]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.12...v1.13
 [1.12]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.11...v1.12
