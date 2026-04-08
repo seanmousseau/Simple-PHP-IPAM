@@ -2004,7 +2004,7 @@ function page_header(string $title, array $opts = []): void
 
     echo "<div class='topbar'><div class='nav-wrap'>";
     echo "<a href='dashboard.php' class='nav-brand'>"
-       . "<img src='assets/logo_rectangle.svg?v=2' alt='' class='nav-logo' aria-hidden='true'>"
+       . "<picture><source srcset='assets/logo.webp' type='image/webp'><img src='assets/logo.png' alt='' class='nav-logo' aria-hidden='true' width='161' height='48'></picture>"
        . "</a>";
     echo "<div class='nav-links'>";
     if ($u) {
@@ -2118,7 +2118,7 @@ function page_footer(): void
 
     echo "<hr><div class='muted footer-meta'>";
     echo "<a href='https://github.com/seanmousseau/Simple-PHP-IPAM' target='_blank' rel='noopener' class='link-plain'>"
-       . "<img src='assets/logo_rectangle.svg?v=2' alt='Simple PHP IPAM' width='161' height='24' style='vertical-align:middle;opacity:.7;'>"
+       . "<picture><source srcset='assets/logo.webp' type='image/webp'><img src='assets/logo.png' alt='Simple PHP IPAM' width='81' height='24' style='vertical-align:middle;opacity:.7;'></picture>"
        . "</a> v" . e(IPAM_VERSION);
 
     $update = ipam_update_check($config ?? []);

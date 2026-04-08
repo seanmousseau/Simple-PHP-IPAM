@@ -244,6 +244,9 @@ if [[ -n "$PHP_BIN" && -f "$TARGET_DIR/migrate.php" ]]; then
 fi
 
 if [[ "$CLEANUP_ARTIFACTS" == "1" ]]; then
+  # Remove assets superseded in v1.15.0: SVG logo replaced by WebP+PNG
+  rm -f -- "$TARGET_DIR/assets/logo_rectangle.svg" 2>/dev/null || true
+
   rm -f -- \
     "$TARGET_DIR/SHA256SUMS" \
     "$TARGET_DIR/"*.tar.gz \
