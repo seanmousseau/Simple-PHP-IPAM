@@ -68,14 +68,19 @@ $appName = trim((string)($config['app_name'] ?? '')) ?: 'Simple PHP IPAM';
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title><?= e($appName) ?> — Access Check</title>
+  <link rel="icon" type="image/webp" sizes="32x32" href="assets/favicon-32.webp">
   <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
-  <link rel="stylesheet" href="assets/app.css?v=1.11j">
-  <script defer src="assets/app.js?v=1.11j"></script>
+  <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
+  <link rel="stylesheet" href="assets/app.css?v=1.15.1">
+  <script defer src="assets/app.js?v=1.15.1"></script>
 </head>
 <body>
 <div class="gate-wrap">
   <div style="text-align:center;margin-bottom:12px;">
-    <img src="assets/logo_rectangle.svg" alt="<?= e($appName) ?>" style="height:56px;width:auto;max-width:220px;">
+    <picture>
+      <source srcset="assets/logo.webp" type="image/webp">
+      <img src="assets/logo.png" alt="<?= e($appName) ?>" width="300" style="max-width:100%;height:auto;">
+    </picture>
     <p class="muted" style="margin:4px 0 0;"><?= e($appName) ?></p>
   </div>
   <h1>Almost there…</h1>
