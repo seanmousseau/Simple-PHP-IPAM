@@ -14,7 +14,9 @@ Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application bu
 
 The web root is `Simple-PHP-IPAM/` (subdirectory, not the repo root). Key files in it: `init.php` (bootstrap), `lib.php` (all shared functions), `migrations.php` (schema migrations), `schema.sql` (fresh-install schema), `version.php` (`IPAM_VERSION` constant), `config.php` (user-editable config), `assets/app.css` + `assets/app.js` (all CSS/JS), `upgrade.sh` (upgrade script). Runtime data lives in `data/` (gitignored): `data/ipam.sqlite` and `data/tmp/` (caches, temp uploads).
 
-Other top-level directories: `testing/` (API test suite and sample datasets), `releases/` (release bundle builder), `docs/` (api.md, configuration.md, install.md, oidc.md, security.md, upgrading.md).
+Other top-level directories: `testing/` (API test suite and sample datasets), `releases/` (release bundle builder), `docs/` (api.md, configuration.md, install.md, oidc.md, security.md, upgrading.md), `tests/` (PHPUnit unit tests).
+
+Dev tooling at the repo root (not deployed): `composer.json`, `composer.lock`, `phpstan.neon`, `phpstan-baseline.neon`, `.phpcs.xml`, `phpunit.xml`. Run `composer install` once to install tools into `vendor/` (gitignored).
 
 ---
 
@@ -248,13 +250,58 @@ When implementing a new version:
 5. Update relevant `docs/` files
 6. Bump asset cache-buster `?v=X.Y.Z` in `page_header()` if CSS/JS changed
 
+### Static analysis & testing
+
+The project uses three dev tools managed via Composer (dev-only; never deployed):
+
+| Tool | Config | Purpose |
+|------|--------|---------|
+| **PHPStan** | `phpstan.neon` | Static analysis — level 5, analyses `Simple-PHP-IPAM/` |
+| **PHP_CodeSniffer** | `.phpcs.xml` | Style checking — PSR-12 with exclusions for K&R brace and inline control structure style |
+| **PHPUnit** | `phpunit.xml` | Unit tests for pure utility functions in `lib.php` |
+
+**Running the tools:**
+```bash
+vendor/bin/phpstan analyse          # static analysis
+vendor/bin/phpcs                    # style check
+vendor/bin/phpunit                  # unit tests
+php -l Simple-PHP-IPAM/changed.php  # syntax check individual files
+```
+
+**PHPStan baseline (`phpstan-baseline.neon`):** Pre-existing errors are acknowledged in the baseline so CI only fails on *new* errors. The baseline is almost entirely `Variable $db/$config might not be defined` false-positives caused by PHPStan not being able to see variables injected by `require 'init.php'`. Fix baseline errors incrementally; do not add new entries to suppress real bugs.
+
+**PHPUnit tests (`tests/UtilTest.php`):** 50 tests covering the pure utility functions that have no DB or session dependencies: `e()`, `parse_cidr()`, `apply_prefix_mask()`, `ip_in_cidr()`, `normalize_ip()`, `ipv4_bin_to_int()`, `ipv4_int_to_bin()`, `ipam_normalise_version()`, `normalize_status()`. Bootstrap is `tests/bootstrap.php` which requires `lib.php` directly.
+
+**PHPCS style exclusions** (see `.phpcs.xml` comments for rationale):
+- Inline control structures without braces — established codebase style
+- K&R function brace placement (`function foo() {`) — established codebase style
+- Column-aligned `=>` arrays — intentional for readability
+- `<?php\ndeclare(strict_types=1);` without blank line — established codebase style
+- Line length — SQL and HTML strings are legitimately long
+
+**CI:** `.github/workflows/php-qa.yml` runs lint → PHPStan → PHPCS → PHPUnit on every push to `dev`/`main` and every PR targeting `main`.
+
+### Linting
+Always run `php -l` on every changed PHP file before committing:
+```bash
+php -l Simple-PHP-IPAM/lib.php
+php -l Simple-PHP-IPAM/users.php
+# etc.
+```
+
 ### Pre-release checklist
 Before building a release bundle, **always** complete these steps in order:
 1. Update `docs/` (api.md, configuration.md, etc.) for any changed features or config keys
 2. Update `testing/samples/large-db-sample/gen_large_db.php` and sample datasets if schema or data model changed
 3. Update `testing/scripts/test_api.sh` if API endpoints were added or changed
 4. Run `php -l` on every changed PHP file
-5. Run the API test suite (`bash testing/scripts/test_api.sh`) and confirm **all tests pass**
+5. Run the full QA suite and confirm **all checks pass**:
+   ```bash
+   vendor/bin/phpstan analyse
+   vendor/bin/phpcs
+   vendor/bin/phpunit
+   bash testing/scripts/test_api.sh https://dev-direct.seanmousseau.com:8343/claude/ipam
+   ```
 6. Only then build the release bundle
 
 ### Building a release bundle
@@ -269,14 +316,6 @@ Verify the bundle contains:
 - Both `.htaccess` files (root and `data/`)
 - No `data/ipam.sqlite` or `data/.db_initialized`
 
-### Linting
-Always run `php -l` on every changed PHP file before committing:
-```bash
-php -l Simple-PHP-IPAM/lib.php
-php -l Simple-PHP-IPAM/users.php
-# etc.
-```
-
 ### Commit style
 ```
 feat(scope): short description
@@ -289,7 +328,7 @@ Include `https://claude.ai/code/session_...` in commit body.
 
 ## Key constraints and gotchas
 
-- **No Composer, no npm** — zero external dependencies. Everything must be implemented in vanilla PHP using only standard extensions (`pdo`, `pdo_sqlite`, `openssl`).
+- **No Composer, no npm in production** — the application itself has zero runtime dependencies. Everything must be implemented in vanilla PHP using only standard extensions (`pdo`, `pdo_sqlite`, `openssl`). Composer is used for *dev tooling only* (`vendor/` is gitignored and never deployed).
 - **`addresses` has no `ip_version`** — that column exists only on `subnets`. Do not add it to address INSERTs.
 - **`addresses.grp` is a SQL reserved word** — stored as `grp` in the DB, exposed as `group` in the UI, API responses, and CSV headers.
 - **Migration order is by `ksort(SORT_NATURAL)`** — array order in `migrations.php` does not matter.

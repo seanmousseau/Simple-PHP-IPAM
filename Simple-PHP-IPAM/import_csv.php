@@ -669,9 +669,7 @@ if ($step === 4) {
     if (demo_mode_enabled()) {
         $err = "Import apply is disabled in demo mode.";
         $step = 3; // Fall back to dry-run results display
-    } else
-
-    if (empty($wiz['plan_path']) || !is_file($wiz['plan_path'])) {
+    } elseif (empty($wiz['plan_path']) || !is_file($wiz['plan_path'])) {
         $err = "No import plan found. Run dry run first.";
     } else {
         try {

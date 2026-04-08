@@ -1,0 +1,80 @@
+<?xml version="1.0"?>
+<ruleset name="Simple-PHP-IPAM">
+    <description>Code style for Simple PHP IPAM</description>
+
+    <file>Simple-PHP-IPAM</file>
+    <exclude-pattern>Simple-PHP-IPAM/data/*</exclude-pattern>
+    <exclude-pattern>Simple-PHP-IPAM/vendor/*</exclude-pattern>
+
+    <arg name="extensions" value="php"/>
+
+    <rule ref="PSR12">
+        <!--
+            The codebase uses inline control structures (no braces).
+            The following rules all fire as a consequence of that style.
+        -->
+        <exclude name="Generic.ControlStructures.InlineControlStructure"/>
+        <exclude name="Squiz.ControlStructures.ControlSignature.SpaceAfterCloseParenthesis"/>
+        <exclude name="Squiz.ControlStructures.ControlSignature.NewlineAfterOpenBrace"/>
+        <exclude name="Squiz.ControlStructures.ControlSignature.SpaceAfterKeyword"/>
+        <exclude name="Squiz.ControlStructures.ControlSignature.SpaceAfterCloseBrace"/>
+        <exclude name="Squiz.WhiteSpace.ScopeClosingBrace.ContentBefore"/>
+        <exclude name="Squiz.WhiteSpace.ControlStructureSpacing.SpacingBeforeClose"/>
+        <exclude name="Generic.Formatting.DisallowMultipleStatements.SameLine"/>
+        <exclude name="Generic.WhiteSpace.ScopeIndent.Incorrect"/>
+        <exclude name="Generic.WhiteSpace.ScopeIndent.IncorrectExact"/>
+
+        <!--
+            The codebase uses K&R brace style for functions: function foo() {
+            PSR-12 requires Allman style (brace on its own line).
+        -->
+        <exclude name="Squiz.Functions.MultiLineFunctionDeclaration.BraceOnSameLine"/>
+        <exclude name="Squiz.Functions.MultiLineFunctionDeclaration.ContentAfterBrace"/>
+        <exclude name="Squiz.Functions.MultiLineFunctionDeclaration.SpaceAfterFunction"/>
+        <exclude name="Squiz.Functions.MultiLineFunctionDeclaration.NewlineBeforeOpenBrace"/>
+        <exclude name="Squiz.Functions.MultiLineFunctionDeclaration.OneParamPerLine"/>
+        <exclude name="Squiz.Functions.MultiLineFunctionDeclaration.Indent"/>
+        <exclude name="Squiz.Functions.MultiLineFunctionDeclaration.FirstParamSpacing"/>
+        <exclude name="Squiz.Functions.MultiLineFunctionDeclaration.CloseBracketLine"/>
+
+        <!--
+            Function arguments are intentionally column-aligned for readability,
+            and multi-line calls may put multiple arguments per line with custom indent.
+        -->
+        <exclude name="Generic.Functions.FunctionCallArgumentSpacing.TooMuchSpaceAfterComma"/>
+        <exclude name="PSR2.Methods.FunctionCallSignature.ContentAfterOpenBracket"/>
+        <exclude name="PSR2.Methods.FunctionCallSignature.MultipleArguments"/>
+        <exclude name="PSR2.Methods.FunctionCallSignature.CloseBracketLine"/>
+        <exclude name="PSR2.Methods.FunctionCallSignature.Indent"/>
+
+        <!--
+            Array keys use aligned => without surrounding spaces for column alignment.
+        -->
+        <exclude name="PSR12.Operators.OperatorSpacing.NoSpaceBefore"/>
+        <exclude name="PSR12.Operators.OperatorSpacing.NoSpaceAfter"/>
+
+        <!--
+            Multi-line control structure conditions are compact (first expression
+            on the opening line, closing paren on last expression line).
+        -->
+        <exclude name="PSR12.ControlStructures.ControlStructureSpacing.FirstExpressionLine"/>
+        <exclude name="PSR12.ControlStructures.ControlStructureSpacing.CloseParenthesisLine"/>
+
+        <!--
+            Files open with <?php\ndeclare(strict_types=1); (no blank line between).
+            Some files place a file-level docblock after declare(), not before it.
+        -->
+        <exclude name="PSR12.Files.FileHeader.SpacingAfterBlock"/>
+        <exclude name="PSR12.Files.FileHeader.IncorrectOrder"/>
+
+        <!--
+            PHP page scripts intentionally both define helper functions and execute code.
+        -->
+        <exclude name="PSR1.Files.SideEffects.FoundWithSymbols"/>
+
+        <!--
+            Line length is not enforced; SQL and HTML strings are legitimately long.
+        -->
+        <exclude name="Generic.Files.LineLength"/>
+    </rule>
+</ruleset>
