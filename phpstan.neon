@@ -1,0 +1,12 @@
+includes:
+    - phpstan-baseline.neon
+
+parameters:
+    phpVersion: 80200
+    level: 5
+    paths:
+        - Simple-PHP-IPAM
+    excludePaths:
+        - Simple-PHP-IPAM/data
+    bootstrapFiles:
+        - Simple-PHP-IPAM/version.php

@@ -6,6 +6,16 @@ Simple-PHP-IPAM/data/.db_initialized
 Simple-PHP-IPAM/data/tmp/
 Simple-PHP-IPAM/data/backups/
 
+# Composer / dev tools
+vendor/
+
+# PHPStan cache
+.phpstan/
+
+# PHPUnit cache
+.phpunit.cache/
+.phpunit.result.cache
+
 # OS
 .DS_Store
 Thumbs.db
