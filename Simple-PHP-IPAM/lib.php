@@ -293,7 +293,7 @@ function client_ip(): string
 {
     if (!empty($GLOBALS['config']['proxy_trust']) && !empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
         $parts     = array_map('trim', explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']));
-        $candidate = $parts[0] ?? '';
+        $candidate = $parts[0];
         if (filter_var($candidate, FILTER_VALIDATE_IP) !== false) {
             return $candidate;
         }
@@ -633,6 +633,7 @@ function housekeeping_state_path(): string
     return __DIR__ . '/data/housekeeping.json';
 }
 
+/** @phpstan-impure */
 function housekeeping_should_run(array $config): bool
 {
     $hk = $config['housekeeping'] ?? [];
@@ -806,6 +807,7 @@ function backup_interval_seconds(array $config): int
     };
 }
 
+/** @phpstan-impure */
 function backup_is_due(array $config): bool
 {
     $bk = $config['backup'] ?? [];
@@ -1992,11 +1994,11 @@ function page_header(string $title, array $opts = []): void
     echo "<title>" . e($appName) . " \u{2014} " . e($title) . "</title>";
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=1.14'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=1.15'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = $_SESSION['user_theme'] ?? 'auto';
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=1.14'></script>";
+    echo "<script defer src='assets/app.js?v=1.15'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
@@ -2011,7 +2013,7 @@ function page_header(string $title, array $opts = []): void
         echo "<a class='nav-pill' href='search.php'>🔎 Search</a>";
         echo "<a class='nav-pill' href='audit.php'>📜 Audit</a>";
         echo "<a class='nav-pill' href='dhcp_pool.php'>🔒 DHCP</a>";
-        if (($role ?? '') === 'admin') {
+        if ($role === 'admin') {
             echo "<div class='nav-dropdown'>";
             echo "<button type='button' class='nav-pill nav-dropdown-toggle'>⚙ Admin ▾</button>";
             echo "<div class='nav-dropdown-menu'>";
@@ -2053,7 +2055,7 @@ function page_header(string $title, array $opts = []): void
     }
 
     // Default bootstrap admin password warning (admin only)
-    if (($role ?? '') === 'admin') {
+    if ($role === 'admin') {
         if (($config['bootstrap_admin']['password'] ?? '') === 'ChangeMeNow!12345') {
             echo "<div class='admin-notice admin-notice--danger' role='alert'>"
                . "⚠ <strong>Security warning:</strong> The default bootstrap admin password is still set in <code>config.php</code>. "
@@ -2063,7 +2065,7 @@ function page_header(string $title, array $opts = []): void
     }
 
     // Config auto-population notice (shown once per session, admin only)
-    if (!empty($_SESSION['config_notice']) && ($role ?? '') === 'admin') {
+    if (!empty($_SESSION['config_notice']) && $role === 'admin') {
         $notice = e((string)$_SESSION['config_notice']);
         echo "<div class='admin-notice admin-notice--info' role='alert'>"
            . "⚙ Config updated: {$notice} Review and adjust values in config.php."
@@ -2072,7 +2074,7 @@ function page_header(string $title, array $opts = []): void
     }
 
     // Config write failure notice — shown when config.php is not writable (#119)
-    if (!empty($_SESSION['config_unwritable']) && ($role ?? '') === 'admin') {
+    if (!empty($_SESSION['config_unwritable']) && $role === 'admin') {
         echo "<div class='admin-notice admin-notice--danger' role='alert'>"
            . "&#9888; config.php is not writable — new configuration keys could not be saved. "
            . "Check file permissions."
@@ -2093,7 +2095,7 @@ function page_header(string $title, array $opts = []): void
     }
 
     // Update-available dismissible banner (admin only, client-side dismiss via localStorage)
-    if (($role ?? '') === 'admin') {
+    if ($role === 'admin') {
         $update = ipam_update_check($config ?? []);
         if ($update) {
             $uv  = e((string)$update['version']);

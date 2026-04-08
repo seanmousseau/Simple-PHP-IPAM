@@ -966,5 +966,3 @@ if ($step === 4) {
     page_footer();
     exit;
 }
-
-page_footer();
