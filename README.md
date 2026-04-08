@@ -1,5 +1,7 @@
 [logo]: https://github.com/seanmousseau/Simple-PHP-IPAM/blob/main/logo/logo.webp
 
+![Simple PHP IPAM Logo][logo]
+
 # Simple-PHP-IPAM
 
 A lightweight **IP Address Management (IPAM)** web application built with PHP 8.2+ and SQLite. Designed for small to mid-sized environments that need straightforward subnet and address tracking without the complexity of a full enterprise IPAM platform.
