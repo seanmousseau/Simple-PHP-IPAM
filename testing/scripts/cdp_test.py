@@ -3,7 +3,7 @@
 CDP browser test suite for Simple PHP IPAM.
 Covers: auth, CRUD (subnets/addresses), search, API, audit, access control, exports.
 """
-import asyncio, json, base64, urllib.request, urllib.parse, re, os, sys
+import asyncio, json, base64, urllib.request, urllib.parse, os, sys
 import websockets
 
 CHROME_HOST = "192.168.80.15"
@@ -11,6 +11,15 @@ CHROME_PORT = 9224
 APP         = "https://dev-direct.seanmousseau.com/claude/ipam"
 OUT         = "/tmp/ipam-screenshots"
 os.makedirs(OUT, exist_ok=True)
+
+# HTTP Basic Auth protecting the /claude/ gateway
+BASIC_USER  = "claude"
+BASIC_PASS  = "ClaudeDevArea!94953fff"
+# Encoded for use in URLs and fetch headers
+_basic_b64  = base64.b64encode(f"{BASIC_USER}:{BASIC_PASS}".encode()).decode()
+BASIC_HEADER = f"Basic {_basic_b64}"
+# Credentials embedded in URL for Chrome navigation (avoids auth prompt)
+APP_AUTH    = APP.replace("https://", f"https://{BASIC_USER}:{BASIC_PASS}@")
 
 ADMIN_USER  = "admin"
 ADMIN_PASS  = "ChangeMeNow!12345"
@@ -58,7 +67,9 @@ async def run():
                 if data.get("id") == _id: return data
 
         async def navigate(url, wait=2.0):
-            await send("Page.navigate", {"url": url})
+            # Embed Basic Auth credentials in URL so Chrome handles the gateway auth
+            auth_url = url.replace("https://", f"https://{BASIC_USER}:{BASIC_PASS}@")
+            await send("Page.navigate", {"url": auth_url})
             await asyncio.sleep(wait)
 
         async def js(expr):
@@ -94,7 +105,10 @@ async def run():
                 (async () => {{
                     const r = await fetch({json.dumps(url)}, {{
                         method: 'POST',
-                        headers: {{'Content-Type': 'application/x-www-form-urlencoded'}},
+                        headers: {{
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                            'Authorization': {json.dumps('Basic ' + _basic_b64)}
+                        }},
                         body: {json.dumps(qs)},
                         credentials: 'same-origin'
                     }});
@@ -414,11 +428,6 @@ async def run():
         # ── 10: REST API ──────────────────────────────────────────────────────
         print("\n[10] REST API")
 
-        status_unauth = await js(
-            f"fetch({json.dumps(APP+'/api.php?resource=subnets')}).then(r=>r.status)"
-        )
-        check("api: unauthenticated returns 401", status_unauth == 401, f"got {status_unauth}")
-
         # Create API key — submit the form so the browser navigates to the result page
         # (fetch_post can't query the redirected DOM; form.submit() can)
         await navigate(f"{APP}/api_keys.php")
@@ -442,12 +451,21 @@ async def run():
         await navigate(f"{APP}/api_keys.php")
         await screenshot("13b_api_keys_list")
 
+        # unauthenticated API check still needs Basic Auth for the gateway
+        status_unauth = await js(
+            f"""fetch({json.dumps(APP+'/api.php?resource=subnets')},
+                {{headers:{{'Authorization':{json.dumps(BASIC_HEADER)}}}}}).then(r=>r.status)"""
+        )
+        check("api: unauthenticated returns 401", status_unauth == 401, f"got {status_unauth}")
+
         if state.get('api_key'):
-            k       = state['api_key']
-            headers = json.dumps({"Authorization": f"Bearer {k}"})
+            k = state['api_key']
+            # Basic Auth satisfies the Apache gateway; api_key query param satisfies the app
+            ba = json.dumps(BASIC_HEADER)
 
             subnets_r = await js(
-                f"fetch({json.dumps(APP+'/api.php?resource=subnets')},{{headers:{headers}}}).then(r=>r.json())"
+                f"fetch({json.dumps(APP+f'/api.php?resource=subnets&api_key={k}')}"
+                f",{{headers:{{'Authorization':{ba}}}}}).then(r=>r.json())"
             )
             subnets = subnets_r.get('subnets') if isinstance(subnets_r, dict) else subnets_r
             check("api GET subnets: returns list",
@@ -459,8 +477,8 @@ async def run():
 
             if sid2:
                 addrs_r = await js(
-                    f"fetch({json.dumps(APP+f'/api.php?resource=addresses&subnet_id={sid2}')}"
-                    f",{{headers:{headers}}}).then(r=>r.json())"
+                    f"fetch({json.dumps(APP+f'/api.php?resource=addresses&subnet_id={sid2}&api_key={k}')}"
+                    f",{{headers:{{'Authorization':{ba}}}}}).then(r=>r.json())"
                 )
                 addrs = addrs_r.get('addresses') if isinstance(addrs_r, dict) else addrs_r
                 check("api GET addresses: returns list", isinstance(addrs, list))
@@ -469,8 +487,8 @@ async def run():
                     check("api GET addresses: test IP present", TEST_IP in ips)
 
             search_r = await js(
-                f"fetch({json.dumps(APP+'/api.php?resource=search&q='+urllib.parse.quote(TEST_IP[:7]))}"
-                f",{{headers:{headers}}}).then(r=>r.json())"
+                f"fetch({json.dumps(APP+'/api.php?resource=search&q='+urllib.parse.quote(TEST_IP[:7])+f'&api_key={k}')}"
+                f",{{headers:{{'Authorization':{ba}}}}}).then(r=>r.json())"
             )
             check("api GET search: returns results",
                   isinstance(search_r, dict) and 'results' in search_r)
@@ -546,10 +564,12 @@ async def run():
         # ── 13: CSV Exports ───────────────────────────────────────────────────
         print("\n[13] CSV Exports")
 
+        _ba = json.dumps(BASIC_HEADER)
         exp = await js(f"""
             (async () => {{
                 const r = await fetch({json.dumps(APP+'/export_subnets.php')},
-                                      {{credentials:'same-origin'}});
+                                      {{credentials:'same-origin',
+                                        headers:{{'Authorization':{_ba}}}}});
                 return {{status: r.status, type: r.headers.get('content-type'),
                          body: await r.text()}};
             }})()
@@ -565,7 +585,8 @@ async def run():
                 (async () => {{
                     const r = await fetch(
                         {json.dumps(APP+f'/export_addresses.php?subnet_id={sid2}')},
-                        {{credentials:'same-origin'}});
+                        {{credentials:'same-origin',
+                          headers:{{'Authorization':{_ba}}}}});
                     return {{status: r.status, body: await r.text()}};
                 }})()
             """)
@@ -575,7 +596,8 @@ async def run():
         exp = await js(f"""
             (async () => {{
                 const r = await fetch({json.dumps(APP+'/export_audit.php')},
-                                      {{credentials:'same-origin'}});
+                                      {{credentials:'same-origin',
+                                        headers:{{'Authorization':{_ba}}}}});
                 return {{status: r.status, type: r.headers.get('content-type')}};
             }})()
         """)
