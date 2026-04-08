@@ -12,48 +12,9 @@ Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application bu
 
 ## Repository layout
 
-```
-Simple-PHP-IPAM/          ← web root (document root for web server)
-  init.php                ← bootstraps every page: config, HTTPS redirect, session, DB, CSRF
-  lib.php                 ← all shared functions (DB, auth, CSRF, IP helpers, UI, OIDC, etc.)
-  migrations.php          ← versioned schema migrations (one closure per version key)
-  schema.sql              ← initial DB schema for fresh installs
-  version.php             ← defines IPAM_VERSION constant
-  config.php              ← user-editable runtime configuration (preserved on upgrade)
-  *.php                   ← individual page/endpoint files (see page inventory below)
-  assets/
-    app.css               ← all CSS, CSS custom properties for theming
-    app.js                ← theme cycling, nav dropdown toggle
-  data/                   ← runtime data (gitignored); created on first request
-    ipam.sqlite           ← SQLite database
-    tmp/                  ← OIDC cache, update-check cache, import temp files
-  upgrade.sh              ← upgrade script (rsync + backup + migrate)
-testing/
-  scripts/
-    test_api.sh           ← API integration test suite (40 tests, local + remote)
-  samples/
-    data-sample/          ← sample dataset generators and CSV/SQL seed data
-      gen_sample_dataset.py
-      gen_sample_db.py
-      sample_dataset.csv
-      sample_dataset.sql
-    large-db-sample/      ← large DB generator for export/performance testing
-      gen_large_db.php
-      ipam-large-test.sqlite
-    test-data/            ← CSV import test fixtures (conflict, mismatch, validation, etc.)
-releases/
-  make_releases.sh        ← release bundle builder (tar.gz + SHA256SUMS)
-  ipam-X.Y/              ← built release artifacts
-docs/
-  api.md                  ← REST API reference
-  configuration.md        ← config.php reference
-  install.md              ← installation guide
-  oidc.md                 ← OIDC SSO setup guide
-  security.md             ← security notes
-  upgrading.md            ← upgrade guide
-CHANGELOG.md
-README.md
-```
+The web root is `Simple-PHP-IPAM/` (subdirectory, not the repo root). Key files in it: `init.php` (bootstrap), `lib.php` (all shared functions), `migrations.php` (schema migrations), `schema.sql` (fresh-install schema), `version.php` (`IPAM_VERSION` constant), `config.php` (user-editable config), `assets/app.css` + `assets/app.js` (all CSS/JS), `upgrade.sh` (upgrade script). Runtime data lives in `data/` (gitignored): `data/ipam.sqlite` and `data/tmp/` (caches, temp uploads).
+
+Other top-level directories: `testing/` (API test suite and sample datasets), `releases/` (release bundle builder), `docs/` (api.md, configuration.md, install.md, oidc.md, security.md, upgrading.md).
 
 ---
 
@@ -82,7 +43,14 @@ README.md
 | `api.php` | — | — | Stateless read-only REST API |
 | `migrate.php` | CLI | — | Applies pending DB migrations |
 | `tmp_cleanup.php` | CLI | — | Deletes stale temp files |
+| `demo_reset.php` | CLI | — | Resets demo database to seed data (nightly cron) |
+| `demo_seed.php` | CLI | — | Seeds demo data into database |
 | export_*.php | yes | any | CSV export endpoints |
+| `index.php` | — | — | Redirects to dashboard (if logged in) or login |
+| `status.php` | — | — | Health check JSON endpoint (`{"status":"ok"}`) for load balancers/uptime monitors |
+| `set_theme.php` | yes | any | AJAX POST: persists theme preference to `users.theme` |
+| `db_tools.php` | yes | admin | Database SQL export and import |
+| `demo_gate.php` | — | — | Demo mode bot challenge gate (pre-login) |
 
 ---
 
@@ -100,7 +68,7 @@ Every web page starts with `require __DIR__ . '/init.php'`, which:
 8. Runs lazy housekeeping if due (temp file cleanup, stale login attempt purge)
 9. Initialises CSRF token
 
-`api.php` does **not** use `init.php` (no session); it loads `config.php` and `lib.php` directly.
+`api.php` and `status.php` do **not** use `init.php` (no session); they load `config.php` and `lib.php` directly.
 
 ---
 
@@ -114,14 +82,14 @@ Every web page starts with `require __DIR__ . '/init.php'`, which:
 
 | Table | Key columns |
 |-------|------------|
-| `users` | `id`, `username`, `password_hash`, `role` (admin\|readonly), `is_active`, `oidc_sub`, `name`, `email`, `last_login_at` |
-| `subnets` | `id`, `cidr`, `ip_version`, `network`, `network_bin` (BLOB), `prefix`, `description`, `site_id` |
-| `addresses` | `id`, `subnet_id`, `ip`, `ip_bin` (BLOB), `hostname`, `owner`, `note`, `status` (used\|reserved\|free) |
-| `audit_log` | `id`, `action`, `entity_type`, `entity_id`, `user_id`, `username`, `ip`, `details` |
-| `sites` | `id`, `name`, `description` |
-| `api_keys` | `id`, `name`, `key_hash` (SHA-256), `is_active`, `created_by` |
+| `users` | `id`, `username`, `password_hash`, `role` (admin\|readonly), `is_active`, `oidc_sub`, `name`, `email`, `last_login_at`, `password_changed_at`, `theme` (auto\|light\|dark), `created_at`, `updated_at` |
+| `subnets` | `id`, `cidr`, `ip_version`, `network`, `network_bin` (BLOB), `prefix`, `description`, `site_id`, `vlan_id` (1–4094, nullable), `created_at`, `updated_at` |
+| `addresses` | `id`, `subnet_id`, `ip`, `ip_bin` (BLOB), `hostname`, `owner`, `note`, `grp`, `status` (used\|reserved\|free), `created_at`, `updated_at` |
+| `audit_log` | `id`, `action`, `entity_type`, `entity_id`, `user_id`, `username`, `ip`, `user_agent`, `details`, `created_at` |
+| `sites` | `id`, `name`, `description`, `created_at` |
+| `api_keys` | `id`, `name`, `key_hash` (SHA-256), `is_active`, `created_by`, `created_at`, `last_used_at` |
 | `login_attempts` | `id`, `ip`, `attempted_at` |
-| `address_history` | `id`, `address_id`, `action`, `before_json`, `after_json` |
+| `address_history` | `id`, `address_id`, `subnet_id`, `ip`, `action`, `user_id`, `username`, `client_ip`, `user_agent`, `before_json`, `after_json`, `created_at` |
 | `schema_migrations` | `id`, `version`, `applied_at` |
 
 **Important:** The `addresses` table does **not** have an `ip_version` column — that lives only on `subnets`.
@@ -143,19 +111,7 @@ Key helpers in `lib.php`:
 
 ## Schema migrations
 
-Migrations live in `migrations.php` as an associative array keyed by version string:
-
-```php
-function ipam_migrations(): array {
-    return [
-        '0.11' => function(PDO $db) { /* ... */ },
-        '0.12' => function(PDO $db) { /* ... */ },
-        // ...
-    ];
-}
-```
-
-`apply_migrations()` in `lib.php` runs `ksort($migs, SORT_NATURAL)` before iterating, so **array order does not matter** — migrations always execute in natural version order. Each migration runs in a transaction and is recorded in `schema_migrations`. Always guard `ALTER TABLE` with `PRAGMA table_info()` checks to make new migrations idempotent.
+Migrations live in `migrations.php` as an associative array of version string → closure returned by `ipam_migrations()`. `apply_migrations()` in `lib.php` calls `ksort($migs, SORT_NATURAL)` before iterating, so **array order does not matter** — migrations always execute in natural version order. Each migration runs in a transaction and is recorded in `schema_migrations`. Always guard `ALTER TABLE` with `PRAGMA table_info()` checks to make new migrations idempotent.
 
 **When adding a new version:** add the migration closure, bump `version.php`, update `CHANGELOG.md` (keepachangelog format).
 
@@ -173,7 +129,7 @@ function ipam_migrations(): array {
 - `require_role('admin'): void` — 403 if not admin
 - `require_write_access(): void` — 403 if readonly
 - `current_user(): array` — returns `['id', 'username', 'role']` from session
-- `login_user(int $uid, string $username, string $role): void` — sets session, regenerates ID
+- `login_user(int $uid, string $username, string $role, ?PDO $db = null): void` — sets session, regenerates ID, loads persisted theme if `$db` provided
 
 After calling `login_user()`, always update `last_login_at`:
 ```php
@@ -236,7 +192,7 @@ Asset cache-buster: update `?v=X.Y` in the `<link>` and `<script>` tags in `page
 ### Nav structure
 - Left: nav-links (Dashboard, Subnets, Addresses, Search, Audit, ⚙ Admin dropdown)
 - Right: user dropdown (username + role badge → Theme, Password, Logout)
-- Admin dropdown items: Sites, Users, DHCP Pools, API Keys, Import CSV
+- Admin dropdown items: Sites, Users, DHCP Pools, API Keys, Import CSV, Database Tools
 
 ---
 
@@ -255,19 +211,11 @@ user.oidc_link      user.oidc_unlink
 site.create         site.update             site.delete
 apikey.create       apikey.deactivate       apikey.activate      apikey.delete
 dhcp_pool.reserve   dhcp_pool.clear
+db.export           db.import               db.import_failed
 export.*            import.*
 ```
 
 ---
-
-## Update check
-
-`ipam_update_check(array $config): ?array` in `lib.php`:
-- Fetches `https://api.github.com/repos/seanmousseau/Simple-PHP-IPAM/releases/latest`
-- Caches result in `data/tmp/update-check.json` for 6 hours (configurable)
-- Returns `['version' => '0.15', 'url' => '...']` if newer, otherwise `null`
-- Silently skips on network failure; ignores drafts and pre-releases
-- Called by `page_footer()` and uses `global $config`
 
 ---
 
@@ -343,6 +291,7 @@ Include `https://claude.ai/code/session_...` in commit body.
 
 - **No Composer, no npm** — zero external dependencies. Everything must be implemented in vanilla PHP using only standard extensions (`pdo`, `pdo_sqlite`, `openssl`).
 - **`addresses` has no `ip_version`** — that column exists only on `subnets`. Do not add it to address INSERTs.
+- **`addresses.grp` is a SQL reserved word** — stored as `grp` in the DB, exposed as `group` in the UI, API responses, and CSV headers.
 - **Migration order is by `ksort(SORT_NATURAL)`** — array order in `migrations.php` does not matter.
 - **`fetch()` returns `false` on no rows**, never `null` — always check with `if ($row)` not `if ($row !== null)`.
 - **CSRF on every POST** — `csrf_require()` at top of every POST handler; hidden `csrf` field in every form.
