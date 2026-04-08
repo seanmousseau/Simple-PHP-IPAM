@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [1.16.0] - 2026-04-08
+
+### Added
+- **#216** — `apple-touch-icon.webp` added to `assets/`; `page_header()` now emits a WebP `<link rel="apple-touch-icon">` before the existing PNG fallback, matching the favicon WebP+PNG pattern.
+
+### Fixed
+- **#217** — `import_csv.php`: dead `if ($msg)` success block at the top of the rendered page removed; `$msg` is only assigned inside the Step 4 processing block that follows, so this check could never be true.
+- **#218** — `import_csv.php`: redundant `if ($step === 4)` wrapper around the Step 4 block removed; Steps 1–3 each `exit` before reaching that point, so the condition is always true.
+- **#219** — `import_csv.php`: dead `if ($entry['resolved_cidr'] === null)` guard removed; every non-`continue` code path assigns a `string` to `resolved_cidr` before line 266, making the null check unreachable.
+
 ## [1.15.0] - 2026-04-08
 
 ### Fixed
@@ -328,6 +338,7 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[1.16.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.14...v1.15.0
 [1.14]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.13...v1.14
 [1.13]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.12...v1.13

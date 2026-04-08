@@ -263,15 +263,6 @@ function analyze_import(PDO $db, array $wiz): array
             }
         }
 
-        if ($entry['resolved_cidr'] === null) {
-            $entry['final_action'] = 'invalid';
-            $entry['display_action'] = 'invalid';
-            $entry['reason'] = 'Could not resolve subnet';
-            $summary['invalid']++;
-            $planRows[] = $entry;
-            continue;
-        }
-
         // Detect duplicate rows inside same CSV using resolved CIDR + IP
         $csvKey = $entry['resolved_cidr'] . '|' . $entry['ip'];
         if (isset($seenCsvKeys[$csvKey])) {
@@ -438,7 +429,6 @@ page_header('Import CSV');
 </div>
 
 <?php if ($err): ?><p class="danger"><?= e($err) ?></p><?php endif; ?>
-<?php if ($msg): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
 
 <?php
 /* Step 1 */
@@ -665,302 +655,300 @@ if ($step === 3) {
 }
 
 /* Step 4 - Apply import from saved plan */
-if ($step === 4) {
-    if (demo_mode_enabled()) {
-        $err = "Import apply is disabled in demo mode.";
-        $step = 3; // Fall back to dry-run results display
-    } elseif (empty($wiz['plan_path']) || !is_file($wiz['plan_path'])) {
-        $err = "No import plan found. Run dry run first.";
-    } else {
-        try {
-            $plan = load_import_plan((string)$wiz['plan_path']);
-            $rows = $plan['rows'] ?? [];
-            $dupMode = (string)($plan['meta']['dup_mode'] ?? 'skip');
+if (demo_mode_enabled()) {
+    $err = "Import apply is disabled in demo mode.";
+    $step = 3; // Fall back to dry-run results display
+} elseif (empty($wiz['plan_path']) || !is_file($wiz['plan_path'])) {
+    $err = "No import plan found. Run dry run first.";
+} else {
+    try {
+        $plan = load_import_plan((string)$wiz['plan_path']);
+        $rows = $plan['rows'] ?? [];
+        $dupMode = (string)($plan['meta']['dup_mode'] ?? 'skip');
 
-            $createdSubnets = 0;
-            $createdAddresses = 0;
-            $updatedAddresses = 0;
-            $skippedRows = 0;
-            $conflicts = 0;
-            $resultRows = [];
+        $createdSubnets = 0;
+        $createdAddresses = 0;
+        $updatedAddresses = 0;
+        $skippedRows = 0;
+        $conflicts = 0;
+        $resultRows = [];
 
-            // preload current subnets map
-            $existingSubnets = $db->query("SELECT id, cidr FROM subnets")->fetchAll();
-            $existingByCidr = [];
-            foreach ($existingSubnets as $s) $existingByCidr[(string)$s['cidr']] = (int)$s['id'];
+        // preload current subnets map
+        $existingSubnets = $db->query("SELECT id, cidr FROM subnets")->fetchAll();
+        $existingByCidr = [];
+        foreach ($existingSubnets as $s) $existingByCidr[(string)$s['cidr']] = (int)$s['id'];
 
-            $db->beginTransaction();
+        $db->beginTransaction();
 
-            $sel = $db->prepare("SELECT id, ip, hostname, owner, note, grp, status FROM addresses WHERE subnet_id=:sid AND ip=:ip");
-            $ins = $db->prepare("INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, grp, status)
-                                 VALUES (:sid,:ip,:bin,:hn,:ow,:nt,:grp,:st)");
-            $upd = $db->prepare("UPDATE addresses SET hostname=:hn, owner=:ow, note=:nt, grp=:grp, status=:st WHERE id=:id");
+        $sel = $db->prepare("SELECT id, ip, hostname, owner, note, grp, status FROM addresses WHERE subnet_id=:sid AND ip=:ip");
+        $ins = $db->prepare("INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, grp, status)
+                             VALUES (:sid,:ip,:bin,:hn,:ow,:nt,:grp,:st)");
+        $upd = $db->prepare("UPDATE addresses SET hostname=:hn, owner=:ow, note=:nt, grp=:grp, status=:st WHERE id=:id");
 
-            foreach ($rows as $r) {
-                $result = [
-                    'row_num' => $r['row_num'] ?? '',
-                    'ip' => $r['ip'] ?? ($r['ip_raw'] ?? ''),
-                    'final_result' => '',
-                    'reason' => '',
-                ];
+        foreach ($rows as $r) {
+            $result = [
+                'row_num' => $r['row_num'] ?? '',
+                'ip' => $r['ip'] ?? ($r['ip_raw'] ?? ''),
+                'final_result' => '',
+                'reason' => '',
+            ];
 
-                $finalAction = (string)($r['final_action'] ?? 'skip');
+            $finalAction = (string)($r['final_action'] ?? 'skip');
 
-                if (in_array($finalAction, ['invalid','skip'], true)) {
-                    $result['final_result'] = $finalAction;
-                    $result['reason'] = (string)($r['reason'] ?? '');
-                    $skippedRows++;
-                    $resultRows[] = $result;
-                    continue;
-                }
-
-                $ip = (string)($r['ip'] ?? '');
-                $version = (int)($r['version'] ?? 0);
-                if ($ip === '' || !in_array($version, [4,6], true)) {
-                    $result['final_result'] = 'invalid';
-                    $result['reason'] = 'Invalid planned IP/version';
-                    $skippedRows++;
-                    $resultRows[] = $result;
-                    continue;
-                }
-
-                $norm = normalize_ip($ip);
-                if (!$norm) {
-                    $result['final_result'] = 'invalid';
-                    $result['reason'] = 'Invalid IP during apply';
-                    $skippedRows++;
-                    $resultRows[] = $result;
-                    continue;
-                }
-
-                // Resolve subnet from frozen plan
-                $resolvedCidr = (string)($r['resolved_cidr'] ?? '');
-                if ($resolvedCidr === '') {
-                    $result['final_result'] = 'conflict';
-                    $result['reason'] = 'Missing resolved CIDR in plan';
-                    $conflicts++;
-                    $resultRows[] = $result;
-                    continue;
-                }
-
-                if (!isset($existingByCidr[$resolvedCidr])) {
-                    if (!empty($r['subnet_must_be_created'])) {
-                        $subnetId = ensure_subnet_exists($db, $resolvedCidr, (string)($r['subnet_description'] ?? ''));
-                        $existingByCidr[$resolvedCidr] = $subnetId;
-                        $createdSubnets++;
-                    } else {
-                        $result['final_result'] = 'conflict';
-                        $result['reason'] = 'Resolved subnet missing at apply time';
-                        $conflicts++;
-                        $resultRows[] = $result;
-                        continue;
-                    }
-                }
-                $subnetId = (int)$existingByCidr[$resolvedCidr];
-
-                // Detect DB drift vs analysis
-                $sel->execute([':sid' => $subnetId, ':ip' => $ip]);
-                $existing = $sel->fetch();
-                $existsNow = $existing ? true : false;
-                $existedAtAnalysis = (bool)($r['existed_at_analysis'] ?? false);
-
-                if ($existsNow !== $existedAtAnalysis) {
-                    $result['final_result'] = 'conflict';
-                    $result['reason'] = 'DB changed since dry run';
-                    $conflicts++;
-                    $resultRows[] = $result;
-                    continue;
-                }
-
-                if ($finalAction === 'create') {
-                    if ($existsNow) {
-                        $result['final_result'] = 'conflict';
-                        $result['reason'] = 'Address now exists';
-                        $conflicts++;
-                        $resultRows[] = $result;
-                        continue;
-                    }
-
-                    $ins->execute([
-                        ':sid'  => $subnetId,
-                        ':ip'   => $ip,
-                        ':bin'  => $norm['bin'],
-                        ':hn'   => (string)($r['hostname'] ?? ''),
-                        ':ow'   => (string)($r['owner'] ?? ''),
-                        ':nt'   => (string)($r['note'] ?? ''),
-                        ':grp'  => (string)($r['grp'] ?? ''),
-                        ':st'   => (string)($r['status'] ?? 'used'),
-                    ]);
-                    $aid = (int)$db->lastInsertId();
-
-                    history_log_address($db, 'import_create', $subnetId, $ip, $aid, null, [
-                        'hostname' => (string)($r['hostname'] ?? ''),
-                        'owner' => (string)($r['owner'] ?? ''),
-                        'note' => (string)($r['note'] ?? ''),
-                        'grp' => (string)($r['grp'] ?? ''),
-                        'status' => (string)($r['status'] ?? 'used'),
-                    ]);
-                    $createdAddresses++;
-
-                    $result['final_result'] = 'created';
-                    $result['reason'] = 'Address created';
-                    $resultRows[] = $result;
-                    continue;
-                }
-
-                if ($finalAction === 'update') {
-                    if (!$existing) {
-                        $result['final_result'] = 'conflict';
-                        $result['reason'] = 'Address missing at apply time';
-                        $conflicts++;
-                        $resultRows[] = $result;
-                        continue;
-                    }
-
-                    $newHn = (string)($r['hostname'] ?? '');
-                    $newOw = (string)($r['owner'] ?? '');
-                    $newNt = (string)($r['note'] ?? '');
-                    $newGrp = (string)($r['grp'] ?? '');
-                    $newSt = (string)($r['status'] ?? 'used');
-
-                    // Fix semantics: fill_empty does NOT overwrite status
-                    if ($dupMode === 'fill_empty') {
-                        $newHn = ((string)$existing['hostname'] === '') ? $newHn : (string)$existing['hostname'];
-                        $newOw = ((string)$existing['owner'] === '') ? $newOw : (string)$existing['owner'];
-                        $newNt = ((string)$existing['note'] === '') ? $newNt : (string)$existing['note'];
-                        $newGrp = ((string)$existing['grp'] === '') ? $newGrp : (string)$existing['grp'];
-                        $newSt = (string)$existing['status'];
-                    }
-
-                    $before = [
-                        'hostname' => (string)$existing['hostname'],
-                        'owner' => (string)$existing['owner'],
-                        'note' => (string)$existing['note'],
-                        'grp' => (string)$existing['grp'],
-                        'status' => (string)$existing['status'],
-                    ];
-                    $after = [
-                        'hostname' => $newHn,
-                        'owner' => $newOw,
-                        'note' => $newNt,
-                        'grp' => $newGrp,
-                        'status' => $newSt,
-                    ];
-
-                    $upd->execute([
-                        ':hn'  => $newHn,
-                        ':ow'  => $newOw,
-                        ':nt'  => $newNt,
-                        ':grp' => $newGrp,
-                        ':st'  => $newSt,
-                        ':id'  => (int)$existing['id'],
-                    ]);
-
-                    history_log_address($db, 'import_update', $subnetId, $ip, (int)$existing['id'], $before, $after);
-                    $updatedAddresses++;
-
-                    $result['final_result'] = 'updated';
-                    $result['reason'] = 'Address updated';
-                    $resultRows[] = $result;
-                    continue;
-                }
-
-                $result['final_result'] = 'skip';
-                $result['reason'] = 'Unhandled action';
+            if (in_array($finalAction, ['invalid','skip'], true)) {
+                $result['final_result'] = $finalAction;
+                $result['reason'] = (string)($r['reason'] ?? '');
                 $skippedRows++;
                 $resultRows[] = $result;
+                continue;
             }
 
-            $db->commit();
+            $ip = (string)($r['ip'] ?? '');
+            $version = (int)($r['version'] ?? 0);
+            if ($ip === '' || !in_array($version, [4,6], true)) {
+                $result['final_result'] = 'invalid';
+                $result['reason'] = 'Invalid planned IP/version';
+                $skippedRows++;
+                $resultRows[] = $result;
+                continue;
+            }
 
-            audit($db, 'import.csv', 'system', null,
-                "created_subnets=$createdSubnets created_addresses=$createdAddresses updated_addresses=$updatedAddresses skipped=$skippedRows conflicts=$conflicts"
-            );
+            $norm = normalize_ip($ip);
+            if (!$norm) {
+                $result['final_result'] = 'invalid';
+                $result['reason'] = 'Invalid IP during apply';
+                $skippedRows++;
+                $resultRows[] = $result;
+                continue;
+            }
 
-            $resultFile = save_import_result([
-                'summary' => [
-                    'created_subnets' => $createdSubnets,
-                    'created_addresses' => $createdAddresses,
-                    'updated_addresses' => $updatedAddresses,
-                    'skipped_rows' => $skippedRows,
-                    'conflicts' => $conflicts,
-                ],
-                'rows' => $resultRows,
-            ]);
-            $wiz['result_path'] = $resultFile;
+            // Resolve subnet from frozen plan
+            $resolvedCidr = (string)($r['resolved_cidr'] ?? '');
+            if ($resolvedCidr === '') {
+                $result['final_result'] = 'conflict';
+                $result['reason'] = 'Missing resolved CIDR in plan';
+                $conflicts++;
+                $resultRows[] = $result;
+                continue;
+            }
 
-            if (!empty($wiz['tmp_path']) && is_file($wiz['tmp_path'])) @unlink($wiz['tmp_path']);
-            if (!empty($wiz['plan_path']) && is_file($wiz['plan_path'])) @unlink($wiz['plan_path']);
-            unset($wiz['tmp_path'], $wiz['plan_path']);
+            if (!isset($existingByCidr[$resolvedCidr])) {
+                if (!empty($r['subnet_must_be_created'])) {
+                    $subnetId = ensure_subnet_exists($db, $resolvedCidr, (string)($r['subnet_description'] ?? ''));
+                    $existingByCidr[$resolvedCidr] = $subnetId;
+                    $createdSubnets++;
+                } else {
+                    $result['final_result'] = 'conflict';
+                    $result['reason'] = 'Resolved subnet missing at apply time';
+                    $conflicts++;
+                    $resultRows[] = $result;
+                    continue;
+                }
+            }
+            $subnetId = (int)$existingByCidr[$resolvedCidr];
 
-            $msg = "Import complete. Created subnets: $createdSubnets, created addresses: $createdAddresses, updated addresses: $updatedAddresses, skipped rows: $skippedRows, conflicts: $conflicts.";
-        } catch (Throwable $e) {
-            if ($db->inTransaction()) $db->rollBack();
-            $err = "Import failed: " . $e->getMessage();
+            // Detect DB drift vs analysis
+            $sel->execute([':sid' => $subnetId, ':ip' => $ip]);
+            $existing = $sel->fetch();
+            $existsNow = $existing ? true : false;
+            $existedAtAnalysis = (bool)($r['existed_at_analysis'] ?? false);
+
+            if ($existsNow !== $existedAtAnalysis) {
+                $result['final_result'] = 'conflict';
+                $result['reason'] = 'DB changed since dry run';
+                $conflicts++;
+                $resultRows[] = $result;
+                continue;
+            }
+
+            if ($finalAction === 'create') {
+                if ($existsNow) {
+                    $result['final_result'] = 'conflict';
+                    $result['reason'] = 'Address now exists';
+                    $conflicts++;
+                    $resultRows[] = $result;
+                    continue;
+                }
+
+                $ins->execute([
+                    ':sid'  => $subnetId,
+                    ':ip'   => $ip,
+                    ':bin'  => $norm['bin'],
+                    ':hn'   => (string)($r['hostname'] ?? ''),
+                    ':ow'   => (string)($r['owner'] ?? ''),
+                    ':nt'   => (string)($r['note'] ?? ''),
+                    ':grp'  => (string)($r['grp'] ?? ''),
+                    ':st'   => (string)($r['status'] ?? 'used'),
+                ]);
+                $aid = (int)$db->lastInsertId();
+
+                history_log_address($db, 'import_create', $subnetId, $ip, $aid, null, [
+                    'hostname' => (string)($r['hostname'] ?? ''),
+                    'owner' => (string)($r['owner'] ?? ''),
+                    'note' => (string)($r['note'] ?? ''),
+                    'grp' => (string)($r['grp'] ?? ''),
+                    'status' => (string)($r['status'] ?? 'used'),
+                ]);
+                $createdAddresses++;
+
+                $result['final_result'] = 'created';
+                $result['reason'] = 'Address created';
+                $resultRows[] = $result;
+                continue;
+            }
+
+            if ($finalAction === 'update') {
+                if (!$existing) {
+                    $result['final_result'] = 'conflict';
+                    $result['reason'] = 'Address missing at apply time';
+                    $conflicts++;
+                    $resultRows[] = $result;
+                    continue;
+                }
+
+                $newHn = (string)($r['hostname'] ?? '');
+                $newOw = (string)($r['owner'] ?? '');
+                $newNt = (string)($r['note'] ?? '');
+                $newGrp = (string)($r['grp'] ?? '');
+                $newSt = (string)($r['status'] ?? 'used');
+
+                // Fix semantics: fill_empty does NOT overwrite status
+                if ($dupMode === 'fill_empty') {
+                    $newHn = ((string)$existing['hostname'] === '') ? $newHn : (string)$existing['hostname'];
+                    $newOw = ((string)$existing['owner'] === '') ? $newOw : (string)$existing['owner'];
+                    $newNt = ((string)$existing['note'] === '') ? $newNt : (string)$existing['note'];
+                    $newGrp = ((string)$existing['grp'] === '') ? $newGrp : (string)$existing['grp'];
+                    $newSt = (string)$existing['status'];
+                }
+
+                $before = [
+                    'hostname' => (string)$existing['hostname'],
+                    'owner' => (string)$existing['owner'],
+                    'note' => (string)$existing['note'],
+                    'grp' => (string)$existing['grp'],
+                    'status' => (string)$existing['status'],
+                ];
+                $after = [
+                    'hostname' => $newHn,
+                    'owner' => $newOw,
+                    'note' => $newNt,
+                    'grp' => $newGrp,
+                    'status' => $newSt,
+                ];
+
+                $upd->execute([
+                    ':hn'  => $newHn,
+                    ':ow'  => $newOw,
+                    ':nt'  => $newNt,
+                    ':grp' => $newGrp,
+                    ':st'  => $newSt,
+                    ':id'  => (int)$existing['id'],
+                ]);
+
+                history_log_address($db, 'import_update', $subnetId, $ip, (int)$existing['id'], $before, $after);
+                $updatedAddresses++;
+
+                $result['final_result'] = 'updated';
+                $result['reason'] = 'Address updated';
+                $resultRows[] = $result;
+                continue;
+            }
+
+            $result['final_result'] = 'skip';
+            $result['reason'] = 'Unhandled action';
+            $skippedRows++;
+            $resultRows[] = $result;
         }
+
+        $db->commit();
+
+        audit($db, 'import.csv', 'system', null,
+            "created_subnets=$createdSubnets created_addresses=$createdAddresses updated_addresses=$updatedAddresses skipped=$skippedRows conflicts=$conflicts"
+        );
+
+        $resultFile = save_import_result([
+            'summary' => [
+                'created_subnets' => $createdSubnets,
+                'created_addresses' => $createdAddresses,
+                'updated_addresses' => $updatedAddresses,
+                'skipped_rows' => $skippedRows,
+                'conflicts' => $conflicts,
+            ],
+            'rows' => $resultRows,
+        ]);
+        $wiz['result_path'] = $resultFile;
+
+        if (!empty($wiz['tmp_path']) && is_file($wiz['tmp_path'])) @unlink($wiz['tmp_path']);
+        if (!empty($wiz['plan_path']) && is_file($wiz['plan_path'])) @unlink($wiz['plan_path']);
+        unset($wiz['tmp_path'], $wiz['plan_path']);
+
+        $msg = "Import complete. Created subnets: $createdSubnets, created addresses: $createdAddresses, updated addresses: $updatedAddresses, skipped rows: $skippedRows, conflicts: $conflicts.";
+    } catch (Throwable $e) {
+        if ($db->inTransaction()) $db->rollBack();
+        $err = "Import failed: " . $e->getMessage();
     }
-
-    $resultRows = [];
-    $summary = [];
-    if (!empty($wiz['result_path']) && is_file($wiz['result_path'])) {
-        try {
-            $res = load_result_file($wiz['result_path']);
-            $resultRows = $res['rows'] ?? [];
-            $summary = $res['summary'] ?? [];
-        } catch (Throwable $e) {
-            // ignore
-        }
-    }
-
-    ?>
-    <div class="card mt-16">
-      <h2>Step 4 — Import Result</h2>
-      <?php if ($err): ?><p class="danger"><?= e($err) ?></p><?php endif; ?>
-      <?php if ($msg): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
-
-      <?php if ($summary): ?>
-        <div class="grid cols-3">
-          <div class="metric"><div class="label">Created subnets</div><div class="value"><?= e((string)$summary['created_subnets']) ?></div></div>
-          <div class="metric"><div class="label">Created addresses</div><div class="value"><?= e((string)$summary['created_addresses']) ?></div></div>
-          <div class="metric"><div class="label">Updated addresses</div><div class="value"><?= e((string)$summary['updated_addresses']) ?></div></div>
-          <div class="metric"><div class="label">Skipped rows</div><div class="value"><?= e((string)$summary['skipped_rows']) ?></div></div>
-          <div class="metric"><div class="label">Conflicts</div><div class="value"><?= e((string)$summary['conflicts']) ?></div></div>
-        </div>
-      <?php endif; ?>
-
-      <div class="page-actions mt-16">
-        <a class="action-pill" href="import_csv.php">⬆ Start New Import</a>
-        <?php if (!empty($wiz['result_path']) && is_file($wiz['result_path'])): ?>
-          <a class="action-pill" href="export_import_report.php?mode=result">⬇ Export Result Report</a>
-        <?php endif; ?>
-      </div>
-
-      <?php if ($resultRows): ?>
-        <h3 class="mt-18">Row Results</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Row #</th>
-              <th>IP</th>
-              <th>Result</th>
-              <th>Reason</th>
-            </tr>
-          </thead>
-          <tbody>
-          <?php foreach ($resultRows as $r): ?>
-            <?php $cls = action_class((string)($r['final_result'] ?? '')); ?>
-            <tr>
-              <td><?= e((string)$r['row_num']) ?></td>
-              <td><?= e((string)$r['ip']) ?></td>
-              <td><span class="<?= e($cls) ?>"><?= e((string)$r['final_result']) ?></span></td>
-              <td><?= e((string)$r['reason']) ?></td>
-            </tr>
-          <?php endforeach; ?>
-          </tbody>
-        </table>
-      <?php endif; ?>
-    </div>
-    <?php
-    page_footer();
-    exit;
 }
+
+$resultRows = [];
+$summary = [];
+if (!empty($wiz['result_path']) && is_file($wiz['result_path'])) {
+    try {
+        $res = load_result_file($wiz['result_path']);
+        $resultRows = $res['rows'] ?? [];
+        $summary = $res['summary'] ?? [];
+    } catch (Throwable $e) {
+        // ignore
+    }
+}
+
+?>
+<div class="card mt-16">
+  <h2>Step 4 — Import Result</h2>
+  <?php if ($err): ?><p class="danger"><?= e($err) ?></p><?php endif; ?>
+  <?php if ($msg): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
+
+  <?php if ($summary): ?>
+    <div class="grid cols-3">
+      <div class="metric"><div class="label">Created subnets</div><div class="value"><?= e((string)$summary['created_subnets']) ?></div></div>
+      <div class="metric"><div class="label">Created addresses</div><div class="value"><?= e((string)$summary['created_addresses']) ?></div></div>
+      <div class="metric"><div class="label">Updated addresses</div><div class="value"><?= e((string)$summary['updated_addresses']) ?></div></div>
+      <div class="metric"><div class="label">Skipped rows</div><div class="value"><?= e((string)$summary['skipped_rows']) ?></div></div>
+      <div class="metric"><div class="label">Conflicts</div><div class="value"><?= e((string)$summary['conflicts']) ?></div></div>
+    </div>
+  <?php endif; ?>
+
+  <div class="page-actions mt-16">
+    <a class="action-pill" href="import_csv.php">⬆ Start New Import</a>
+    <?php if (!empty($wiz['result_path']) && is_file($wiz['result_path'])): ?>
+      <a class="action-pill" href="export_import_report.php?mode=result">⬇ Export Result Report</a>
+    <?php endif; ?>
+  </div>
+
+  <?php if ($resultRows): ?>
+    <h3 class="mt-18">Row Results</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Row #</th>
+          <th>IP</th>
+          <th>Result</th>
+          <th>Reason</th>
+        </tr>
+      </thead>
+      <tbody>
+      <?php foreach ($resultRows as $r): ?>
+        <?php $cls = action_class((string)($r['final_result'] ?? '')); ?>
+        <tr>
+          <td><?= e((string)$r['row_num']) ?></td>
+          <td><?= e((string)$r['ip']) ?></td>
+          <td><span class="<?= e($cls) ?>"><?= e((string)$r['final_result']) ?></span></td>
+          <td><?= e((string)$r['reason']) ?></td>
+        </tr>
+      <?php endforeach; ?>
+      </tbody>
+    </table>
+  <?php endif; ?>
+</div>
+<?php
+page_footer();
+exit;
