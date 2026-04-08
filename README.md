@@ -1,4 +1,4 @@
-[logo]: https://github.com/seanmousseau/Simple-PHP-IPAM/blob/main/logo/logo_readme.webp
+[logo]:https://github.com/seanmousseau/Simple-PHP-IPAM/blob/main/logo/logo_readme.webp
 
 ![Simple PHP IPAM Logo][logo]
 
