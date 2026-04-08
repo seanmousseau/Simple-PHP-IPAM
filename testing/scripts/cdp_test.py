@@ -8,7 +8,7 @@ import websockets
 
 CHROME_HOST = "192.168.80.15"
 CHROME_PORT = 9224
-APP         = "https://dev-direct.seanmousseau.com/claude/ipam"
+APP         = "https://dev-direct.seanmousseau.com:8343/claude/ipam"
 OUT         = "/tmp/ipam-screenshots"
 os.makedirs(OUT, exist_ok=True)
 
