@@ -12,17 +12,22 @@ APP         = "https://dev-direct.seanmousseau.com/claude/ipam"
 OUT         = "/tmp/ipam-screenshots"
 os.makedirs(OUT, exist_ok=True)
 
+def _require_env(name):
+    val = os.environ.get(name)
+    if not val:
+        print(f"ERROR: {name} env var is required. Source ~/.claude/dev-secrets.env first.", file=sys.stderr)
+        sys.exit(1)
+    return val
+
 # HTTP Basic Auth protecting the /claude/ gateway
-BASIC_USER  = "claude"
-BASIC_PASS  = "ClaudeDevArea!94953fff"
+BASIC_USER  = _require_env("IPAM_BASIC_USER")
+BASIC_PASS  = _require_env("IPAM_BASIC_PASS")
 # Encoded for use in URLs and fetch headers
 _basic_b64  = base64.b64encode(f"{BASIC_USER}:{BASIC_PASS}".encode()).decode()
 BASIC_HEADER = f"Basic {_basic_b64}"
-# Credentials embedded in URL for Chrome navigation (avoids auth prompt)
-APP_AUTH    = APP.replace("https://", f"https://{BASIC_USER}:{BASIC_PASS}@")
 
-ADMIN_USER  = "admin"
-ADMIN_PASS  = "ChangeMeNow!12345"
+ADMIN_USER  = _require_env("IPAM_ADMIN_USER")
+ADMIN_PASS  = _require_env("IPAM_ADMIN_PASS")
 CIDR_1      = "10.99.0.0/24"   # subnet CRUD
 CIDR_2      = "10.88.0.0/24"   # address / unassigned tests
 TEST_IP     = "10.88.0.10"

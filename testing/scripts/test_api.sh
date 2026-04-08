@@ -10,10 +10,15 @@ set -euo pipefail
 # If BASE_URL is omitted, creates a temp API key in SQLite and uses PHP built-in server.
 #
 # Examples:
-#   ./test_api.sh                                          # auto-start local server
-#   ./test_api.sh https://ipam.example.com                 # test remote instance
-#   API_KEY=abc123 ./test_api.sh https://ipam.example.com  # with explicit key
-#   AUTH_MODE=query API_KEY=abc123 ./test_api.sh https://ipam.example.com  # query param auth (proxy strips headers)
+#   ./test_api.sh                                                              # auto-start local server
+#   ./test_api.sh https://ipam.example.com                                     # test remote instance
+#   API_KEY=abc123 ./test_api.sh https://ipam.example.com                      # with explicit key
+#   AUTH_MODE=query API_KEY=abc123 ./test_api.sh https://ipam.example.com      # query param auth
+#   BASIC_AUTH=user:pass AUTH_MODE=query ./test_api.sh https://ipam.example.com # behind HTTP Basic Auth
+#
+# For the dev server, source ~/.claude/dev-secrets.env first:
+#   source ~/.claude/dev-secrets.env
+#   BASIC_AUTH="$IPAM_BASIC_USER:$IPAM_BASIC_PASS" AUTH_MODE=query ./test_api.sh https://dev-direct.seanmousseau.com:8343/claude/ipam
 #
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
