@@ -153,7 +153,7 @@ When `?counts=1` is passed, each subnet object also includes an `address_counts`
 }
 ```
 
-`utilization_pct` is `(used + reserved) / total × 100`, rounded to 2 decimal places. Returns `0.0` when there are no address records.
+`utilization_pct` is `(used + reserved) / host_capacity × 100` against the actual usable host count of the subnet (e.g. 254 for a /24), rounded to 2 decimal places. `null` for IPv6 subnets (address space too large for a meaningful percentage). `total` is the count of tracked address records in the database.
 
 #### Get a single subnet
 

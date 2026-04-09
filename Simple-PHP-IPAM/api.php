@@ -161,17 +161,29 @@ function api_subnets(PDO $db): never
 {
     $withCounts = isset($_GET['counts']) && $_GET['counts'] !== '0';
 
-    $countsSql = $withCounts
-        ? ", (SELECT COUNT(*) FROM addresses WHERE subnet_id = s.id AND status = 'used')     AS used_count,
-              (SELECT COUNT(*) FROM addresses WHERE subnet_id = s.id AND status = 'reserved') AS reserved_count,
-              (SELECT COUNT(*) FROM addresses WHERE subnet_id = s.id AND status = 'free')     AS free_count"
+    $countsSelect = $withCounts
+        ? ", COALESCE(ac.used_count, 0) AS used_count,
+              COALESCE(ac.reserved_count, 0) AS reserved_count,
+              COALESCE(ac.free_count, 0) AS free_count"
+        : '';
+
+    $countsJoin = $withCounts
+        ? "LEFT JOIN (
+               SELECT subnet_id,
+                      SUM(status = 'used')     AS used_count,
+                      SUM(status = 'reserved') AS reserved_count,
+                      SUM(status = 'free')     AS free_count
+               FROM addresses
+               GROUP BY subnet_id
+           ) ac ON ac.subnet_id = s.id"
         : '';
 
     $baseSql = "SELECT s.id, s.cidr, s.ip_version, s.network, s.prefix,
                        s.description, s.vlan_id, s.site_id, s.created_at,
-                       si.name AS site$countsSql
+                       si.name AS site$countsSelect
                 FROM subnets s
-                LEFT JOIN sites si ON si.id = s.site_id";
+                LEFT JOIN sites si ON si.id = s.site_id
+                $countsJoin";
 
     if (isset($_GET['id'])) {
         $id = (int)$_GET['id'];
@@ -252,13 +264,23 @@ function fmt_subnet(array $r, bool $withCounts = false): array
         $used     = (int)$r['used_count'];
         $reserved = (int)$r['reserved_count'];
         $free     = (int)$r['free_count'];
-        $total    = $used + $reserved + $free;
+        $prefix   = (int)$r['prefix'];
+        $ipVer    = (int)$r['ip_version'];
+
+        if ($ipVer === 4) {
+            $rawHosts = (int)(2 ** (32 - $prefix));
+            $capacity = $prefix >= 31 ? $rawHosts : max(1, $rawHosts - 2);
+            $utilPct  = round(($used + $reserved) / $capacity * 100, 2);
+        } else {
+            $utilPct = null; // IPv6 — subnet too large for meaningful percentage
+        }
+
         $out['address_counts'] = [
             'used'            => $used,
             'reserved'        => $reserved,
             'free'            => $free,
-            'total'           => $total,
-            'utilization_pct' => $total > 0 ? round(($used + $reserved) / $total * 100, 2) : 0.0,
+            'total'           => $used + $reserved + $free,
+            'utilization_pct' => $utilPct,
         ];
     }
     return $out;

@@ -253,7 +253,7 @@ When implementing a new version:
 
 ### Static analysis & testing
 
-The project uses three dev tools managed via Composer (dev-only; never deployed):
+The project uses four dev tools (three Composer-managed, one standalone):
 
 | Tool | Config | Purpose |
 |------|--------|---------|
@@ -268,6 +268,7 @@ vendor/bin/phpstan analyse          # static analysis
 vendor/bin/phpcs                    # style check
 vendor/bin/phpunit                  # unit tests
 php -l Simple-PHP-IPAM/changed.php  # syntax check individual files
+semgrep --config=.semgrep/rules.yml Simple-PHP-IPAM/   # security rules (standalone, not via Composer)
 ```
 
 **PHPStan baseline (`phpstan-baseline.neon`):** Pre-existing errors are acknowledged in the baseline so CI only fails on *new* errors. The baseline is almost entirely `Variable $db/$config might not be defined` false-positives caused by PHPStan not being able to see variables injected by `require 'init.php'`. Fix baseline errors incrementally; do not add new entries to suppress real bugs.

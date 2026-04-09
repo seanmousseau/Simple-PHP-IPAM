@@ -9,7 +9,7 @@ csv_download_headers($filename);
 csv_out(['cidr', 'description', 'site', 'ip_version', 'vlan_id', 'used', 'reserved', 'free', 'total', 'utilization_pct']);
 
 $st = $db->query("
-    SELECT s.cidr, s.description, s.ip_version, s.vlan_id,
+    SELECT s.cidr, s.description, s.ip_version, s.prefix, s.vlan_id,
            COALESCE(si.name, '') AS site_name,
            COALESCE(SUM(a.status = 'used'),     0) AS used_count,
            COALESCE(SUM(a.status = 'reserved'), 0) AS reserved_count,
@@ -27,7 +27,16 @@ foreach ($st as $r) {
     $reserved = (int)$r['reserved_count'];
     $free     = (int)$r['free_count'];
     $total    = (int)$r['total_count'];
-    $pct      = $total > 0 ? round(($used + $reserved) / $total * 100, 2) : 0.0;
+    $prefix   = (int)$r['prefix'];
+    $ipVer    = (int)$r['ip_version'];
+
+    if ($ipVer === 4) {
+        $rawHosts = (int)(2 ** (32 - $prefix));
+        $capacity = $prefix >= 31 ? $rawHosts : max(1, $rawHosts - 2);
+        $pct      = round(($used + $reserved) / $capacity * 100, 2);
+    } else {
+        $pct = 0.0; // IPv6 — subnet too large for meaningful percentage
+    }
 
     csv_out([
         (string)$r['cidr'],
