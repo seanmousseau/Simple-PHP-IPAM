@@ -93,7 +93,13 @@ parameters:
 		-
 			message: '#^Variable \$db might not be defined\.$#'
 			identifier: variable.undefined
-			count: 3
+			count: 4
+			path: Simple-PHP-IPAM/export_address_history.php
+
+		-
+			message: '#^Variable \$db might not be defined\.$#'
+			identifier: variable.undefined
+			count: 5
 			path: Simple-PHP-IPAM/export_addresses.php
 
 		-
@@ -113,6 +119,12 @@ parameters:
 			identifier: variable.undefined
 			count: 2
 			path: Simple-PHP-IPAM/export_search.php
+
+		-
+			message: '#^Variable \$db might not be defined\.$#'
+			identifier: variable.undefined
+			count: 2
+			path: Simple-PHP-IPAM/export_subnet_utilization.php
 
 		-
 			message: '#^Variable \$db might not be defined\.$#'
@@ -161,6 +173,12 @@ parameters:
 			identifier: variable.undefined
 			count: 1
 			path: Simple-PHP-IPAM/migrate.php
+
+		-
+			message: '#^Cannot call method fetchAll\(\) on PDOStatement\|false\.$#'
+			identifier: method.nonObject
+			count: 10
+			path: Simple-PHP-IPAM/migrations.php
 
 		-
 			message: '#^Variable \$config might not be defined\.$#'

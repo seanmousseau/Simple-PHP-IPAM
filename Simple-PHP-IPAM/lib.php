@@ -284,7 +284,7 @@ function logout_user(): void
     $_SESSION = [];
     if (ini_get("session.use_cookies")) {
         $params = session_get_cookie_params();
-        setcookie(session_name(), '', time() - 42000,
+        setcookie((string)session_name(), '', time() - 42000,
             $params["path"], $params["domain"], $params["secure"], $params["httponly"]
         );
     }
@@ -386,7 +386,7 @@ function applied_migrations(PDO $db): array
 {
     $st = $db->prepare("SELECT version FROM schema_migrations");
     $st->execute();
-    return array_map(fn($r) => (string)$r['version'], $st->fetchAll());
+    return array_values(array_map(fn($r) => (string)$r['version'], $st->fetchAll()));
 }
 
 /** @return list<string> */
@@ -683,13 +683,14 @@ function housekeeping_mark_ran(): void
 function prune_audit_log(PDO $db, int $retentionDays): int
 {
     if ($retentionDays <= 0) return 0;
-    $cutoff = date('Y-m-d H:i:s', strtotime("-{$retentionDays} days"));
+    $cutoff = date('Y-m-d H:i:s', (int)strtotime("-{$retentionDays} days"));
 
     // The audit_log triggers block DELETE. Drop triggers, DELETE directly, recreate.
     // This avoids ALTER TABLE RENAME (which can implicitly commit in SQLite)
     // and SELECT * column-ordering risks.
     try {
-        $oldCount = (int)$db->query("SELECT COUNT(*) FROM audit_log")->fetchColumn();
+        $oldCount = (int)($db->query("SELECT COUNT(*) FROM audit_log")
+            ?: throw new \RuntimeException('Query failed'))->fetchColumn();
 
         $db->exec("DROP TRIGGER IF EXISTS audit_log_no_update");
         $db->exec("DROP TRIGGER IF EXISTS audit_log_no_delete");
@@ -725,7 +726,7 @@ function prune_audit_log(PDO $db, int $retentionDays): int
 function prune_address_history(PDO $db, int $retentionDays): int
 {
     if ($retentionDays <= 0) return 0;
-    $cutoff = date('Y-m-d H:i:s', strtotime("-{$retentionDays} days"));
+    $cutoff = date('Y-m-d H:i:s', (int)strtotime("-{$retentionDays} days"));
     $st = $db->prepare("DELETE FROM address_history WHERE created_at < :cutoff");
     $st->execute([':cutoff' => $cutoff]);
     return $st->rowCount();
@@ -954,9 +955,9 @@ function ipam_db_dump_stream(PDO $db, callable $write): void
     $write("BEGIN TRANSACTION;\n\n");
 
     // Tables: schema + data
-    $tables = $db->query(
+    $tables = ($db->query(
         "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
-    )->fetchAll();
+    ) ?: throw new \RuntimeException('Query failed'))->fetchAll();
 
     foreach ($tables as $t) {
         $name        = (string)$t['name'];
@@ -965,16 +966,17 @@ function ipam_db_dump_stream(PDO $db, callable $write): void
         $write($t['sql'] . ";\n");
 
         // Dump triggers for this table so they are recreated on import.
-        $triggers = $db->query(
+        $triggers = ($db->query(
             "SELECT sql FROM sqlite_master WHERE type='trigger' AND tbl_name="
             . $db->quote($name) . " AND sql IS NOT NULL ORDER BY name"
-        )->fetchAll();
+        ) ?: throw new \RuntimeException('Query failed'))->fetchAll();
         foreach ($triggers as $trig) {
             $write($trig['sql'] . ";\n");
         }
 
         // Identify BLOB columns so we can always hex-encode raw binary data.
-        $colInfo  = $db->query("PRAGMA table_info({$quotedName})")->fetchAll();
+        $colInfo  = ($db->query("PRAGMA table_info({$quotedName})")
+            ?: throw new \RuntimeException('Query failed'))->fetchAll();
         $blobCols = [];
         foreach ($colInfo as $ci) {
             if (strtoupper((string)$ci['type']) === 'BLOB') {
@@ -982,7 +984,8 @@ function ipam_db_dump_stream(PDO $db, callable $write): void
             }
         }
 
-        $rows = $db->query("SELECT * FROM {$quotedName}")->fetchAll();
+        $rows = ($db->query("SELECT * FROM {$quotedName}")
+            ?: throw new \RuntimeException('Query failed'))->fetchAll();
         foreach ($rows as $row) {
             $cols = array_map(
                 fn($c) => '"' . str_replace('"', '""', (string)$c) . '"',
@@ -1007,9 +1010,9 @@ function ipam_db_dump_stream(PDO $db, callable $write): void
     }
 
     // Indices (non-system)
-    $indices = $db->query(
+    $indices = ($db->query(
         "SELECT sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY name"
-    )->fetchAll();
+    ) ?: throw new \RuntimeException('Query failed'))->fetchAll();
     if ($indices) {
         $write("-- Indexes\n");
         foreach ($indices as $idx) {
@@ -1341,6 +1344,42 @@ function csv_out(array $row): void
     fputcsv($fh, $row, ',', '"', '');
 }
 
+/* ---------------- Security warning banner ---------------- */
+
+/**
+ * Render a dismissible per-session security warning banner.
+ *
+ * Call this immediately after page_header() on sensitive admin pages.
+ * The banner is hidden for the rest of the session once the user dismisses it.
+ *
+ * @param string $context  Short identifier for this banner, e.g. 'db_tools', 'import_csv'
+ * @param string $message  Warning text to display (HTML-escaped before output)
+ */
+function render_security_banner(string $context, string $message): void
+{
+    // Handle dismiss: clicking the link adds ?dismiss_warning=<context> to the URL.
+    // We process it here (before any HTML output from this function) and store in session.
+    if (isset($_GET['dismiss_warning']) && $_GET['dismiss_warning'] === $context) {
+        if (!isset($_SESSION['dismissed_warnings'])) {
+            $_SESSION['dismissed_warnings'] = [];
+        }
+        $_SESSION['dismissed_warnings'][$context] = true;
+    }
+
+    if (!empty($_SESSION['dismissed_warnings'][$context])) {
+        return;
+    }
+
+    // Build dismiss URL: current URL with dismiss_warning param added, page reset removed
+    $params = array_merge($_GET, ['dismiss_warning' => $context]);
+    $dismissUrl = '?' . http_build_query($params);
+
+    echo '<div class="security-banner">'
+       . '<span>⚠ <strong>Security notice:</strong> ' . e($message) . '</span>'
+       . '<a class="dismiss-link" href="' . e($dismissUrl) . '">Dismiss</a>'
+       . '</div>';
+}
+
 /* ---------------- Demo mode seed/reset ---------------- */
 
 function demo_reset_db(PDO $db): void
@@ -1394,8 +1433,9 @@ function demo_seed_data(PDO $db): void
     );
     foreach ($subnets4 as [$id, $cidr, $siteId, $desc]) {
         [$net, $pfx] = explode('/', $cidr);
-        $netNorm = inet_ntop(apply_prefix_mask(inet_pton($net), (int)$pfx));
-        $netBin  = inet_pton($netNorm);
+        $rawBin  = inet_pton($net) ?: throw new \RuntimeException("Invalid IP: $net");
+        $netNorm = inet_ntop(apply_prefix_mask($rawBin, (int)$pfx)) ?: throw new \RuntimeException("inet_ntop failed");
+        $netBin  = inet_pton($netNorm) ?: throw new \RuntimeException("inet_pton failed on $netNorm");
         $sn->execute([$id, $cidr, $netNorm, $netBin, (int)$pfx, $desc, $siteId]);
     }
 
@@ -1411,9 +1451,10 @@ function demo_seed_data(PDO $db): void
     );
     foreach ($subnets6 as [$id, $cidr, $siteId, $desc]) {
         [$net, $pfx] = explode('/', $cidr);
-        $netNorm = inet_ntop(apply_prefix_mask(inet_pton($net), (int)$pfx));
-        $netBin  = inet_pton($netNorm);
-        $sn6->execute([$id, $cidr, $netNorm, $netBin, (int)$pfx, $desc, $siteId]);
+        $rawBin6  = inet_pton($net) ?: throw new \RuntimeException("Invalid IP: $net");
+        $netNorm6 = inet_ntop(apply_prefix_mask($rawBin6, (int)$pfx)) ?: throw new \RuntimeException("inet_ntop failed");
+        $netBin6  = inet_pton($netNorm6) ?: throw new \RuntimeException("inet_pton failed on $netNorm6");
+        $sn6->execute([$id, $cidr, $netNorm6, $netBin6, (int)$pfx, $desc, $siteId]);
     }
 
     // --- Users ---
@@ -1614,6 +1655,7 @@ function parse_cidr(string $cidr): ?array
 
     $netBin = apply_prefix_mask($ipBin, $prefix);
     $network = inet_ntop($netBin);
+    if ($network === false) return null;
 
     return [
         'version' => $version,
@@ -1658,7 +1700,9 @@ function normalize_ip(string $ip): ?array
 {
     $bin = @inet_pton(trim($ip));
     if ($bin === false) return null;
-    return ['ip' => inet_ntop($bin), 'bin' => $bin, 'version' => (strlen($bin) === 4) ? 4 : 6];
+    $normalized = inet_ntop($bin);
+    if ($normalized === false) return null;
+    return ['ip' => $normalized, 'bin' => $bin, 'version' => (strlen($bin) === 4) ? 4 : 6];
 }
 
 function normalize_status(?string $s): string
@@ -1676,7 +1720,8 @@ function normalize_status(?string $s): string
 
 function ipv4_bin_to_int(string $bin): int
 {
-    $n = unpack('N', $bin)[1];
+    $unpacked = unpack('N', $bin);
+    $n = $unpacked !== false ? $unpacked[1] : 0;
     return (int)($n & 0xFFFFFFFF);
 }
 
@@ -1688,7 +1733,7 @@ function ipv4_int_to_bin(int $n): string
 
 function ipv4_int_to_text(int $n): string
 {
-    return inet_ntop(ipv4_int_to_bin($n));
+    return inet_ntop(ipv4_int_to_bin($n)) ?: '';
 }
 
 function ipv4_assignable_count(int $prefix): int
@@ -1708,7 +1753,9 @@ function ipv4_assignable_count(int $prefix): int
 function find_next_available_ipv4(PDO $db, int $subnetId, string $network, int $prefix): ?string
 {
     if ($prefix > 32 || $prefix < 8) return null;
-    $netInt = ipv4_bin_to_int(inet_pton($network));
+    $networkBin = inet_pton($network);
+    if ($networkBin === false) return null;
+    $netInt = ipv4_bin_to_int($networkBin);
     $first  = ($prefix >= 31) ? $netInt : $netInt + 1;
     $last   = ($prefix >= 31) ? $netInt + ((1 << (32 - $prefix)) - 1)
                               : $netInt + ((1 << (32 - $prefix)) - 1) - 1;
@@ -1842,7 +1889,7 @@ function detect_csv_delimiter(string $sample): string
     $bestCount = -1;
 
     foreach ($candidates as $d) {
-        $lines = preg_split("/\r\n|\n|\r/", $sample);
+        $lines = preg_split("/\r\n|\n|\r/", $sample) ?: [];
         $counts = [];
         foreach (array_slice($lines, 0, 10) as $line) {
             if ($line === '') continue;
@@ -1879,7 +1926,8 @@ function netmask_to_prefix(string $mask): ?int
     $bin = @inet_pton(trim($mask));
     if ($bin === false || strlen($bin) !== 4) return null;
 
-    $n = unpack('N', $bin)[1];
+    $unpacked = unpack('N', $bin);
+    $n = $unpacked !== false ? $unpacked[1] : 0;
     $prefix = 0;
     $seenZero = false;
 
@@ -2049,11 +2097,11 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=1.17.0'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=1.18.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = $_SESSION['user_theme'] ?? 'auto';
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=1.17.0'></script>";
+    echo "<script defer src='assets/app.js?v=1.18.0'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
@@ -2237,7 +2285,10 @@ function ipam_update_check(array $config): ?array
                 && version_compare(ipam_normalise_version((string)$d['update']['version']), ipam_normalise_version(IPAM_VERSION), '<=')) {
                 @unlink($cache);
             } else {
-                $memo = isset($d['update']) ? (array)$d['update'] : null;
+                $u = isset($d['update']) && is_array($d['update']) ? $d['update'] : null;
+                $memo = ($u !== null && isset($u['version'], $u['url']))
+                    ? ['version' => (string)$u['version'], 'url' => (string)$u['url']]
+                    : null;
                 return $memo;
             }
         }
@@ -2371,7 +2422,7 @@ function oidc_jwks(string $jwksUri, bool $forceRefresh = false): array
 
     if (!$forceRefresh && is_file($cache) && (time() - (int)filemtime($cache)) < 3600) {
         $d = json_decode((string)file_get_contents($cache), true);
-        if (is_array($d) && !empty($d['keys'])) return (array)$d['keys'];
+        if (is_array($d) && !empty($d['keys'])) return array_values((array)$d['keys']);
     }
 
     $raw = oidc_http_get($jwksUri);
@@ -2382,7 +2433,7 @@ function oidc_jwks(string $jwksUri, bool $forceRefresh = false): array
 
     file_put_contents($cache, json_encode($d));
     @chmod($cache, 0600);
-    return (array)$d['keys'];
+    return array_values((array)$d['keys']);
 }
 
 /** HTTP GET via file_get_contents with a short timeout. */

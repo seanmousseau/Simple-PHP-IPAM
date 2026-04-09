@@ -21,9 +21,10 @@ $dbOk = false;
 $schemaVersion = null;
 try {
     $pdo = ipam_db((string)$config['db_path']);
-    $pdo->query('SELECT 1')->fetch();
+    ($pdo->query('SELECT 1') ?: throw new \RuntimeException('Query failed'))->fetch();
     $dbOk = true;
-    $row = $pdo->query("SELECT MAX(version) AS v FROM schema_migrations")->fetch();
+    $row = ($pdo->query("SELECT MAX(version) AS v FROM schema_migrations")
+        ?: throw new \RuntimeException('Query failed'))->fetch();
     if ($row && $row['v'] !== null) {
         $schemaVersion = (string)$row['v'];
     }

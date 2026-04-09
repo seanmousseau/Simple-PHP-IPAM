@@ -43,7 +43,7 @@ if ($filterFrom !== '') {
 }
 if ($filterTo !== '') {
     $wheres[] = 'created_at < :to';
-    $params[':to'] = date('Y-m-d', strtotime($filterTo . ' +1 day')) . ' 00:00:00';
+    $params[':to'] = date('Y-m-d', (int)strtotime($filterTo . ' +1 day')) . ' 00:00:00';
 }
 $where = $wheres ? 'WHERE ' . implode(' AND ', $wheres) : '';
 

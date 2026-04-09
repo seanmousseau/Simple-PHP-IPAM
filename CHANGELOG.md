@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [1.18.0] - 2026-04-09
+
+### Added
+- **#232** — API subnets: `site_id` integer field now included in GET subnet response objects alongside the existing `site` name field.
+- **#258** — API subnets: `?counts=1` opt-in adds an `address_counts` object (`used`, `reserved`, `free`, `total`, `utilization_pct`) to each subnet in the GET response.
+- **#231** — API addresses: `?site_id=` filter on GET addresses; returns addresses in subnets belonging to the specified site.
+- **#260** — API: new `resource=unassigned` endpoint returns paginated unassigned IPv4 host IPs for a subnet; requires `?subnet_id=`; limited to /24 or smaller (≤256 assignable IPs).
+- **#227** — Address history CSV export (`export_address_history.php`): per-address change history download linked from the Address History page.
+- **#259** — Subnet utilization summary CSV export (`export_subnet_utilization.php`): one row per subnet with used/reserved/free/total/utilization% columns.
+- **#261** — Cross-subnet all-addresses CSV export: `export_addresses.php` now supports omitting `subnet_id` (write-role users), producing a full export across all subnets with site column prepended.
+- **#241** — Dismissible security warning banners on `db_tools.php`, `import_csv.php`, and `demo_gate.php`; dismissed per-session via `?dismiss_warning=<context>`.
+- **#234** — `status.php` health-check response now includes `schema_version` (latest applied migration version); hidden when `status_hide_version` is set in config.
+
+### Changed
+- **#233** — Audit log UI (`audit.php`): Client IP column now displays `—` for null values instead of an empty cell.
+- **#242** — DHCP Pools moved from the main navigation bar into the Admin dropdown.
+- **#229** — PHPStan static analysis level raised from 6 to 7; all new type errors resolved (proper handling of `string|false` from `inet_pton`, `json_encode`, `unpack`, `PDO::query`; proper list typing for `applied_migrations` and `oidc_jwks`; `strtotime` casts).
+
+### Fixed
+- **#276** — `demo_gate.php` asset cache-buster URLs updated to match the running version (was stuck at `v=1.15.1`).
+- **#240** — `addresses.php`: empty state when no subnet is selected now shows a navigation link to Subnets instead of a bare "No subnet selected." message.
+- **#239** — `address_history.php`: missing or invalid `address_id` now renders a styled error page via `page_header()`/`page_footer()` instead of a bare HTTP response.
+
 ## [1.17.0] - 2026-04-08
 
 ### Added
@@ -348,6 +371,7 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[1.18.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.17.0...v1.18.0
 [1.17.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.16.0...v1.17.0
 [1.16.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.14...v1.15.0

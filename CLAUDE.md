@@ -47,7 +47,10 @@ Dev tooling at the repo root (not deployed): `composer.json`, `composer.lock`, `
 | `tmp_cleanup.php` | CLI | — | Deletes stale temp files |
 | `demo_reset.php` | CLI | — | Resets demo database to seed data (nightly cron) |
 | `demo_seed.php` | CLI | — | Seeds demo data into database |
-| export_*.php | yes | any | CSV export endpoints |
+| `export_addresses.php` | yes | any/write | CSV export: single subnet (any role) or all subnets cross-subnet (write role) |
+| `export_address_history.php` | yes | any | CSV export: per-address change history |
+| `export_subnet_utilization.php` | yes | any | CSV export: subnet utilization summary across all subnets |
+| export_audit.php, export_search.php, export_subnets.php, export_unassigned.php, export_import_report.php | yes | any | Other CSV export endpoints |
 | `index.php` | — | — | Redirects to dashboard (if logged in) or login |
 | `status.php` | — | — | Health check JSON endpoint (`{"status":"ok"}`) for load balancers/uptime monitors |
 | `set_theme.php` | yes | any | AJAX POST: persists theme preference to `users.theme` |
@@ -254,7 +257,7 @@ The project uses three dev tools managed via Composer (dev-only; never deployed)
 
 | Tool | Config | Purpose |
 |------|--------|---------|
-| **PHPStan** | `phpstan.neon` | Static analysis — level 6, analyses `Simple-PHP-IPAM/` |
+| **PHPStan** | `phpstan.neon` | Static analysis — level 7, analyses `Simple-PHP-IPAM/` |
 | **PHP_CodeSniffer** | `.phpcs.xml` | Style checking — PSR-12 with exclusions for K&R brace and inline control structure style |
 | **PHPUnit** | `phpunit.xml` | Unit tests for pure utility functions in `lib.php` |
 | **Semgrep** | `.semgrep/rules.yml` | Security taint rules — XSS, path traversal, SQLi, open redirect. Recognises `e()` as an HTML sanitizer. |

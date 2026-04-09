@@ -15,6 +15,7 @@ Simple-PHP-IPAM exposes a JSON REST API (`api.php`). Read endpoints are availabl
   - [History](#history)
   - [Search](#search)
   - [Audit Log](#audit-log)
+  - [Unassigned IPs](#unassigned-ips)
 - [Write endpoints](#write-endpoints)
   - [Create a subnet](#create-a-subnet)
   - [Update a subnet](#update-a-subnet)
@@ -83,6 +84,7 @@ Error responses return an appropriate HTTP status code and a JSON body:
 |--------|---------|
 | `400`  | Bad request — missing or invalid parameter |
 | `401`  | Missing, invalid, or inactive API key |
+| `403`  | Forbidden — read-only API key attempted a write operation (POST/PUT/DELETE) |
 | `404`  | Resource not found (e.g. unknown `resource=` value, or subnet/address `id=` not found) |
 | `405`  | HTTP method not allowed for this resource |
 | `409`  | Conflict — duplicate CIDR/IP, or attempted subnet delete while addresses exist |
@@ -100,10 +102,24 @@ Error responses return an appropriate HTTP status code and a JSON body:
 GET /api.php?resource=subnets
 ```
 
+**Query parameters**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `ip_version` | integer | — | Filter by IP version: `4` or `6` |
+| `vlan_id` | integer | — | Filter by VLAN ID (1–4094) |
+| `site_id` | integer | — | Filter to subnets assigned to this site |
+| `counts` | flag | — | Include address count fields in each subnet object (any non-empty value enables, e.g. `?counts=1`) |
+| `page` | integer | `1` | Page number (1-based) |
+| `limit` | integer | `200` | Records per page (max `1000`) |
+
 **Response**
 
 ```json
 {
+  "total": 10,
+  "page": 1,
+  "limit": 200,
   "subnets": [
     {
       "id": 1,
@@ -112,6 +128,8 @@ GET /api.php?resource=subnets
       "network": "10.0.0.0",
       "prefix": 8,
       "description": "RFC 1918 private range",
+      "vlan_id": null,
+      "site_id": 1,
       "site": "HQ",
       "created_at": "2025-01-15 10:23:44"
     }
@@ -121,13 +139,29 @@ GET /api.php?resource=subnets
 
 Results are ordered by IP version, then by network address (binary sort — correct numerical order).
 
-`site` is `null` when the subnet is not assigned to a site.
+`site` and `site_id` are `null` when the subnet is not assigned to a site.
+
+When `?counts=1` is passed, each subnet object also includes an `address_counts` object:
+
+```json
+"address_counts": {
+  "used": 12,
+  "reserved": 3,
+  "free": 5,
+  "total": 20,
+  "utilization_pct": 75.0
+}
+```
+
+`utilization_pct` is `(used + reserved) / total × 100`, rounded to 2 decimal places. Returns `0.0` when there are no address records.
 
 #### Get a single subnet
 
 ```
 GET /api.php?resource=subnets&id=<id>
 ```
+
+Accepts `?counts=1` (same as the list endpoint).
 
 **Response** — same object shape as a single element from the list, not wrapped in an array.
 
@@ -139,6 +173,8 @@ GET /api.php?resource=subnets&id=<id>
   "network": "10.0.0.0",
   "prefix": 8,
   "description": "RFC 1918 private range",
+  "vlan_id": null,
+  "site_id": 1,
   "site": "HQ",
   "created_at": "2025-01-15 10:23:44"
 }
@@ -157,8 +193,10 @@ Returns `404` if the ID does not exist.
 | `prefix` | integer | Prefix length, e.g. `8` |
 | `description` | string | Free-text description (may be empty) |
 | `vlan_id` | integer\|null | VLAN ID (1–4094), or `null` if not set |
+| `site_id` | integer\|null | Site database ID, or `null` if not assigned |
 | `site` | string\|null | Site name if assigned, otherwise `null` |
 | `created_at` | string | UTC timestamp (`YYYY-MM-DD HH:MM:SS`) |
+| `address_counts` | object\|— | Present only when `?counts=1` — see above |
 
 ---
 
@@ -175,6 +213,7 @@ Returns a paginated list of address records.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `subnet_id` | integer | — | Filter to a single subnet |
+| `site_id` | integer | — | Filter to addresses in subnets belonging to this site |
 | `status` | string | — | Filter by status: `used`, `reserved`, or `free` |
 | `page` | integer | `1` | Page number (1-based) |
 | `limit` | integer | `100` | Records per page (max `500`) |
@@ -398,6 +437,40 @@ Returns paginated audit log entries.
 ```
 
 ---
+
+### Unassigned IPs
+
+```
+GET /api.php?resource=unassigned&subnet_id=<id>
+```
+
+Returns a paginated list of unassigned IPv4 host addresses within a subnet. IPv6 subnets are not supported.
+
+**Query parameters**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `subnet_id` | integer | **required** | Subnet ID (IPv4 only) |
+| `page` | integer | `1` | Page number (1-based) |
+| `limit` | integer | `100` | Records per page (max `256`) |
+
+**Response**
+
+```json
+{
+  "subnet_id": 3,
+  "cidr": "10.1.0.0/24",
+  "total_unassigned": 230,
+  "page": 1,
+  "pages": 3,
+  "limit": 100,
+  "unassigned": ["10.1.0.3", "10.1.0.4", "..."]
+}
+```
+
+Returns `400` if `subnet_id` is missing, the subnet is IPv6, or the subnet is larger than /24 (more than 256 assignable IPs).
+
+Returns `404` if the subnet does not exist.
 
 ---
 
@@ -650,9 +723,14 @@ API keys are managed through the web UI at **Admin → API Keys** (`api_keys.php
 **Creating a key**
 
 1. Navigate to **Admin → API Keys**
-2. Enter a descriptive name (e.g. `Monitoring script`, `Grafana`)
-3. Click **Generate key**
-4. Copy the key immediately — it is shown **only once**. The server stores only a SHA-256 hash.
+2. Enter a descriptive name (e.g. `Monitoring script`, `Grafana`) and an optional description
+3. Check **Read-only** if the key should be restricted to GET requests only
+4. Click **Generate key**
+5. Copy the key immediately — it is shown **only once**. The server stores only a SHA-256 hash.
+
+**Read-only keys**
+
+A key marked as read-only can perform any GET request but will receive HTTP `403 Forbidden` on any write operation (POST, PUT, DELETE). Use read-only keys for monitoring integrations, dashboards, and any consumer that should not be able to modify data.
 
 **Deactivating a key**
 

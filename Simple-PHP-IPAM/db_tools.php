@@ -224,6 +224,7 @@ $backupEnabled = !empty($config['backup']['enabled']);
 $bInfo         = backup_info($config);
 
 page_header('Database Tools');
+render_security_banner('db_tools', 'Database import will overwrite all existing data. Only import files from trusted sources.');
 ?>
 <h1>🗄 Database Tools</h1>
 
