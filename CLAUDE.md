@@ -256,7 +256,7 @@ The project uses three dev tools managed via Composer (dev-only; never deployed)
 
 | Tool | Config | Purpose |
 |------|--------|---------|
-| **PHPStan** | `phpstan.neon` | Static analysis — level 5, analyses `Simple-PHP-IPAM/` |
+| **PHPStan** | `phpstan.neon` | Static analysis — level 6, analyses `Simple-PHP-IPAM/` |
 | **PHP_CodeSniffer** | `.phpcs.xml` | Style checking — PSR-12 with exclusions for K&R brace and inline control structure style |
 | **PHPUnit** | `phpunit.xml` | Unit tests for pure utility functions in `lib.php` |
 

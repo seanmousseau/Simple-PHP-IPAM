@@ -18,7 +18,13 @@ set -euo pipefail
 #
 # For the dev server, source ~/.claude/dev-secrets.env first:
 #   source ~/.claude/dev-secrets.env
-#   BASIC_AUTH="$IPAM_BASIC_USER:$IPAM_BASIC_PASS" AUTH_MODE=query ./test_api.sh https://dev-direct.seanmousseau.com:8343/claude/ipam
+#   SSH_HOST=root@192.168.80.15 \
+#   SSH_DB_PATH=/opt/container_data/dev.seanmousseau.com/html/claude/ipam/data/ipam.sqlite \
+#   BASIC_AUTH="$IPAM_BASIC_USER:$IPAM_BASIC_PASS" AUTH_MODE=query \
+#   ./test_api.sh https://dev-direct.seanmousseau.com:8343/claude/ipam
+#
+# SSH_HOST and SSH_DB_PATH are required when testing a remote server without a pre-existing
+# API_KEY — the script will create and clean up temp keys in the remote SQLite via SSH.
 #
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -46,16 +52,32 @@ skip() { SKIP=$((SKIP+1)); echo -e "  ${Y}⊘${N} $1"; }
 # ---- Setup ----
 
 BASE_URL="${1:-}"
+# Set when user passed an explicit URL (remote server — different SQLite than local $DB_PATH)
+IS_REMOTE=0
+[[ -n "$BASE_URL" ]] && IS_REMOTE=1
+
+# SSH access to remote server's SQLite (required for auto key creation in remote mode)
+SSH_HOST="${SSH_HOST:-}"       # e.g. root@192.168.80.15
+SSH_DB_PATH="${SSH_DB_PATH:-}" # e.g. /opt/container_data/.../data/ipam.sqlite
+
+# Helper: run PHP to manipulate the correct DB (local or remote via SSH)
+db_php() {
+    local code="$1"
+    if [[ "$IS_REMOTE" -eq 1 && -n "$SSH_HOST" && -n "$SSH_DB_PATH" ]]; then
+        ssh -o BatchMode=yes "$SSH_HOST" "php -r $(printf '%q' "$code")"
+    elif [[ "$IS_REMOTE" -eq 0 ]]; then
+        php -r "$code"
+    fi
+}
+
 PHP_PID=""
 cleanup() {
     [[ -n "$PHP_PID" ]] && kill "$PHP_PID" 2>/dev/null || true
-    if [[ -z "${1:-}" && -f "$DB_PATH" ]]; then
-        php -r "\$db = new PDO('sqlite:$DB_PATH'); \$db->exec(\"DELETE FROM api_keys WHERE name = 'test-runner'\");" 2>/dev/null || true
-    fi
+    db_php "\$db = new PDO('sqlite:${SSH_DB_PATH:-$DB_PATH}'); \$db->exec(\"DELETE FROM api_keys WHERE name IN ('test-runner','test-readonly')\");" 2>/dev/null || true
 }
 trap cleanup EXIT
 
-if [[ -z "$BASE_URL" ]]; then
+if [[ "$IS_REMOTE" -eq 0 ]]; then
     PORT=$(( RANDOM % 1000 + 9000 ))
     log "Starting PHP built-in server on port $PORT..."
     php -S "127.0.0.1:$PORT" -t "$APP_DIR" >/dev/null 2>&1 &
@@ -72,29 +94,37 @@ API="$BASE_URL/api.php"
 
 # ---- API Key ----
 if [[ -z "${API_KEY:-}" ]]; then
-    if [[ -n "$BASE_URL" && ! -f "$DB_PATH" ]]; then
-        echo "ERROR: API_KEY is required for remote testing." >&2
-        echo "Usage: API_KEY=your-key ./test_api.sh $BASE_URL" >&2
+    if [[ "$IS_REMOTE" -eq 1 && ( -z "$SSH_HOST" || -z "$SSH_DB_PATH" ) ]]; then
+        echo "ERROR: Set API_KEY, or set SSH_HOST + SSH_DB_PATH to auto-create keys on the remote server." >&2
+        echo "  API_KEY=your-key ./test_api.sh $BASE_URL" >&2
+        echo "  SSH_HOST=root@host SSH_DB_PATH=/path/to/ipam.sqlite ./test_api.sh $BASE_URL" >&2
         exit 1
     fi
-    [[ -f "$DB_PATH" ]] || { echo "ERROR: No database at $DB_PATH" >&2; exit 1; }
-    # Clean up any stale test data from previous runs
-    php -r "
-        \$db = new PDO('sqlite:$DB_PATH');
-        \$db->exec(\"DELETE FROM api_keys WHERE name = 'test-runner'\");
-        \$db->exec(\"DELETE FROM addresses WHERE hostname LIKE 'api-test-%'\");
-        \$db->exec(\"DELETE FROM subnets WHERE description LIKE 'API test%' OR description LIKE 'overlap%' OR description = 'duplicate'\");
-        \$db->exec(\"DELETE FROM sites WHERE name LIKE 'API-Test-Site-%'\");
-    " 2>/dev/null || true
+
+    local_db="${SSH_DB_PATH:-$DB_PATH}"
+    [[ "$IS_REMOTE" -eq 0 ]] && { [[ -f "$DB_PATH" ]] || { echo "ERROR: No database at $DB_PATH" >&2; exit 1; }; }
+
+    # Clean up any stale test keys from previous runs
+    db_php "\$db = new PDO('sqlite:$local_db'); \$db->exec(\"DELETE FROM api_keys WHERE name IN ('test-runner','test-readonly')\");" 2>/dev/null || true
 
     API_KEY="test-key-$(date +%s)-$$"
-    php -r "
-        \$db = new PDO('sqlite:$DB_PATH');
+    db_php "
+        \$db = new PDO('sqlite:$local_db');
         \$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         \$h = hash('sha256', '$API_KEY');
         \$db->prepare(\"INSERT INTO api_keys (name, key_hash, is_active, created_by) VALUES ('test-runner', :h, 1, 'test_api.sh')\")->execute([':h' => \$h]);
     "
     log "Created temp API key"
+
+    # Create a read-only key for permission tests
+    READONLY_KEY="test-readonly-$(date +%s)-$$"
+    db_php "
+        \$db = new PDO('sqlite:$local_db');
+        \$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        \$h = hash('sha256', '$READONLY_KEY');
+        \$db->prepare(\"INSERT INTO api_keys (name, description, is_readonly, key_hash, is_active, created_by) VALUES ('test-readonly', 'test suite readonly key', 1, :h, 1, 'test_api.sh')\")->execute([':h' => \$h]);
+    "
+    log "Created temp read-only API key"
 fi
 
 # ---- Helpers ----
@@ -143,6 +173,14 @@ jq_len() {
 assert_http() {
     local expected="$1" label="$2"
     [[ "$HTTP_CODE" == "$expected" ]] && pass "$label (HTTP $HTTP_CODE)" || fail "$label — expected $expected, got $HTTP_CODE. Body: ${BODY:0:200}"
+}
+
+# Call API with the read-only key instead of the main key
+call_api_ro() {
+    local saved_key="$API_KEY"
+    API_KEY="${READONLY_KEY:-}"
+    call_api "$@"
+    API_KEY="$saved_key"
 }
 
 # ---- Pre-test cleanup via API ----
@@ -292,6 +330,48 @@ else
 fi
 
 # ====================================================================
+log "=== Subnet Filters ==="
+# ====================================================================
+
+# Create a second test subnet (IPv4 with VLAN) for filter tests
+TEST_VLAN=999
+VLAN_SUBNET_CIDR="203.0.113.192/28"
+call_api POST subnets "{\"cidr\":\"$VLAN_SUBNET_CIDR\",\"description\":\"API test vlan subnet\",\"vlan_id\":$TEST_VLAN}"
+if [[ "$HTTP_CODE" == "201" || "$HTTP_CODE" == "200" ]]; then
+    VLAN_SUBNET_ID=$(jq_val id)
+    pass "Created VLAN test subnet ($VLAN_SUBNET_CIDR vlan=$TEST_VLAN)"
+else
+    fail "Create VLAN subnet — expected 201, got $HTTP_CODE"
+    VLAN_SUBNET_ID=""
+fi
+
+# ip_version filter
+call_api GET "subnets&ip_version=4"
+assert_http 200 "Filter subnets by ip_version=4"
+V4_COUNT=$(python3 -c "import sys,json; d=json.load(sys.stdin); bad=[s for s in d.get('subnets',[]) if s.get('ip_version')!=4]; print(len(bad))" <<< "$BODY" 2>/dev/null || echo "1")
+[[ "$V4_COUNT" -eq 0 ]] && pass "ip_version=4 filter: all results are IPv4" || fail "ip_version=4 filter: $V4_COUNT non-IPv4 results"
+
+call_api GET "subnets&ip_version=6"
+assert_http 200 "Filter subnets by ip_version=6"
+
+call_api GET "subnets&ip_version=5"
+assert_http 400 "Invalid ip_version=5 → 400"
+
+# vlan_id filter
+if [[ -n "${VLAN_SUBNET_ID:-}" && "$VLAN_SUBNET_ID" != "None" && "$VLAN_SUBNET_ID" != "" ]]; then
+    call_api GET "subnets&vlan_id=$TEST_VLAN"
+    assert_http 200 "Filter subnets by vlan_id=$TEST_VLAN"
+    VLAN_MATCH=$(python3 -c "import sys,json; d=json.load(sys.stdin); ids=[s['id'] for s in d.get('subnets',[]) if s.get('vlan_id')==$TEST_VLAN]; print(len(ids))" <<< "$BODY" 2>/dev/null || echo "0")
+    [[ "$VLAN_MATCH" -ge 1 ]] && pass "vlan_id filter: found $VLAN_MATCH matching subnet(s)" || fail "vlan_id filter: no matching subnets"
+
+    call_api DELETE "subnets&id=$VLAN_SUBNET_ID"
+    [[ "$HTTP_CODE" == "204" ]] && pass "Deleted VLAN test subnet" || fail "Delete VLAN subnet — got $HTTP_CODE"
+fi
+
+call_api GET "subnets&vlan_id=9999"
+assert_http 400 "Invalid vlan_id=9999 → 400"
+
+# ====================================================================
 log "=== Addresses CRUD ==="
 # ====================================================================
 
@@ -376,6 +456,35 @@ log "=== Deprecation Warning ==="
 
 DEP_HEADER=$(curl -s --noproxy '*' "${_ba_args[@]}" -D - -o /dev/null "${API}?resource=subnets&api_key=$API_KEY" 2>/dev/null | grep -i 'deprecation' || echo "")
 [[ -n "$DEP_HEADER" ]] && pass "Query param API key sends Deprecation header" || skip "Deprecation header not found (may need header-only auth)"
+
+# ====================================================================
+log "=== Read-only Key Enforcement ==="
+# ====================================================================
+
+if [[ -n "${READONLY_KEY:-}" ]]; then
+    call_api_ro GET subnets
+    assert_http 200 "Readonly key: GET subnets allowed"
+
+    call_api_ro GET addresses
+    assert_http 200 "Readonly key: GET addresses allowed"
+
+    call_api_ro GET sites
+    assert_http 200 "Readonly key: GET sites allowed"
+
+    call_api_ro POST subnets '{"cidr":"203.0.113.0/28","description":"should be blocked"}'
+    assert_http 403 "Readonly key: POST subnets → 403"
+
+    call_api_ro POST addresses '{"subnet_id":1,"ip":"10.0.0.1","status":"used"}'
+    assert_http 403 "Readonly key: POST addresses → 403"
+
+    call_api_ro DELETE "subnets&id=1"
+    assert_http 403 "Readonly key: DELETE subnets → 403"
+
+    call_api_ro POST sites '{"name":"should-fail"}'
+    assert_http 403 "Readonly key: POST sites → 403"
+else
+    skip "Read-only key tests — READONLY_KEY not set (remote mode)"
+fi
 
 # ====================================================================
 log "=== Cleanup ==="

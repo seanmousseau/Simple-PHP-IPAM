@@ -8,7 +8,7 @@ declare(strict_types=1);
  *   Authorization: Bearer <key>
  *
  * Resources (read):
- *   GET  ?resource=subnets             — list subnets (paginated)
+ *   GET  ?resource=subnets             — list subnets (paginated, filterable by ip_version, vlan_id)
  *   GET  ?resource=addresses           — list addresses (paginated, filterable)
  *   GET  ?resource=sites               — list all sites
  *   GET  ?resource=history&address_id= — address change history (paginated)
@@ -73,7 +73,7 @@ if ($rawKey === '') {
 }
 
 $keyHash = hash('sha256', $rawKey);
-$st = $db->prepare("SELECT id, name FROM api_keys WHERE key_hash = :h AND is_active = 1");
+$st = $db->prepare("SELECT id, name, is_readonly FROM api_keys WHERE key_hash = :h AND is_active = 1");
 $st->execute([':h' => $keyHash]);
 $apiKey = $st->fetch();
 
@@ -94,6 +94,10 @@ $db->prepare("UPDATE api_keys SET last_used_at = datetime('now') WHERE id = :id"
 
 $resource = strtolower(trim((string)($_GET['resource'] ?? '')));
 $method   = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+
+if ((int)($apiKey['is_readonly'] ?? 0) === 1 && in_array($method, ['POST', 'PUT', 'DELETE'], true)) {
+    api_error(403, 'This API key is read-only.');
+}
 
 // Parse JSON body for write requests
 $body = [];
@@ -172,10 +176,33 @@ function api_subnets(PDO $db): never
     $limit  = max(1, min(1000, (int)($_GET['limit'] ?? 200)));
     $offset = ($page - 1) * $limit;
 
-    $cntSt = $db->query("SELECT COUNT(*) AS c FROM subnets");
+    $where  = [];
+    $params = [];
+
+    if (isset($_GET['ip_version'])) {
+        $v = (int)$_GET['ip_version'];
+        if (!in_array($v, [4, 6], true)) api_error(400, 'ip_version must be 4 or 6.');
+        $where[]          = 's.ip_version = :ipver';
+        $params[':ipver'] = $v;
+    }
+
+    if (isset($_GET['vlan_id'])) {
+        $v = (int)$_GET['vlan_id'];
+        if ($v < 1 || $v > 4094) api_error(400, 'vlan_id must be between 1 and 4094.');
+        $where[]         = 's.vlan_id = :vlan';
+        $params[':vlan'] = $v;
+    }
+
+    $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
+
+    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM subnets s $whereSql");
+    $cntSt->execute($params);
     $total  = (int)$cntSt->fetch()['c'];
 
-    $st = $db->prepare($baseSql . " ORDER BY s.ip_version, s.network_bin LIMIT :lim OFFSET :off");
+    $st = $db->prepare($baseSql . " $whereSql ORDER BY s.ip_version, s.network_bin LIMIT :lim OFFSET :off");
+    foreach ($params as $k => $v) {
+        $st->bindValue($k, $v, PDO::PARAM_INT);
+    }
     $st->bindValue(':lim', $limit,  PDO::PARAM_INT);
     $st->bindValue(':off', $offset, PDO::PARAM_INT);
     $st->execute();
@@ -187,6 +214,10 @@ function api_subnets(PDO $db): never
     ]);
 }
 
+/**
+ * @param array<string, mixed> $r
+ * @return array<string, mixed>
+ */
 function fmt_subnet(array $r): array
 {
     return [
@@ -446,6 +477,10 @@ function api_audit_log(PDO $db): never
 
 // ---- Write: Sites ----
 
+/**
+ * @param array{id: int, name: string, is_readonly: int} $apiKey
+ * @param array<string, mixed> $body
+ */
 function api_sites_create(PDO $db, array $apiKey, array $body): never
 {
     $name = trim((string)($body['name'] ?? ''));
@@ -464,6 +499,10 @@ function api_sites_create(PDO $db, array $apiKey, array $body): never
     api_json(['id' => $newId]);
 }
 
+/**
+ * @param array{id: int, name: string, is_readonly: int} $apiKey
+ * @param array<string, mixed> $body
+ */
 function api_sites_update(PDO $db, array $apiKey, int $id, array $body): never
 {
     if ($id <= 0) api_error(400, 'id is required as a query parameter.');
@@ -487,6 +526,7 @@ function api_sites_update(PDO $db, array $apiKey, int $id, array $body): never
     api_json(['id' => $id]);
 }
 
+/** @param array{id: int, name: string, is_readonly: int} $apiKey */
 function api_sites_delete(PDO $db, array $apiKey, int $id): never
 {
     if ($id <= 0) api_error(400, 'id is required as a query parameter.');
@@ -506,6 +546,10 @@ function api_sites_delete(PDO $db, array $apiKey, int $id): never
 
 // ---- Write: Addresses ----
 
+/**
+ * @param array{id: int, name: string, is_readonly: int} $apiKey
+ * @param array<string, mixed> $body
+ */
 function api_addresses_create(PDO $db, array $apiKey, array $body): never
 {
     $subnetId = isset($body['subnet_id']) ? (int)$body['subnet_id'] : 0;
@@ -565,6 +609,10 @@ function api_addresses_create(PDO $db, array $apiKey, array $body): never
     api_json(['id' => $newId]);
 }
 
+/**
+ * @param array{id: int, name: string, is_readonly: int} $apiKey
+ * @param array<string, mixed> $body
+ */
 function api_addresses_update(PDO $db, array $apiKey, int $id, array $body): never
 {
     if ($id <= 0) api_error(400, 'id is required as a query parameter.');
@@ -601,6 +649,7 @@ function api_addresses_update(PDO $db, array $apiKey, int $id, array $body): nev
     api_json(['id' => $id]);
 }
 
+/** @param array{id: int, name: string, is_readonly: int} $apiKey */
 function api_addresses_delete(PDO $db, array $apiKey, int $id): never
 {
     if ($id <= 0) api_error(400, 'id is required as a query parameter.');
@@ -626,6 +675,10 @@ function api_addresses_delete(PDO $db, array $apiKey, int $id): never
 
 // ---- Write: Subnets ----
 
+/**
+ * @param array{id: int, name: string, is_readonly: int} $apiKey
+ * @param array<string, mixed> $body
+ */
 function api_subnets_create(PDO $db, array $apiKey, array $body): never
 {
     $cidr        = trim((string)($body['cidr']        ?? ''));
@@ -689,6 +742,10 @@ function api_subnets_create(PDO $db, array $apiKey, array $body): never
     api_json($resp);
 }
 
+/**
+ * @param array{id: int, name: string, is_readonly: int} $apiKey
+ * @param array<string, mixed> $body
+ */
 function api_subnets_update(PDO $db, array $apiKey, int $id, array $body): never
 {
     if ($id <= 0) api_error(400, 'id is required as a query parameter.');
@@ -729,6 +786,7 @@ function api_subnets_update(PDO $db, array $apiKey, int $id, array $body): never
     api_json(['id' => $id]);
 }
 
+/** @param array{id: int, name: string, is_readonly: int} $apiKey */
 function api_subnets_delete(PDO $db, array $apiKey, int $id): never
 {
     if ($id <= 0) api_error(400, 'id is required as a query parameter.');
@@ -756,6 +814,11 @@ function api_subnets_delete(PDO $db, array $apiKey, int $id): never
 
 // ---- Audit helper for API writes ----
 
+/**
+ * @param array{id: int, name: string, is_readonly: int} $apiKey
+ * @param array<string, mixed>|null $before
+ * @param array<string, mixed>|null $after
+ */
 function api_history_log_address(PDO $db, array $apiKey, string $action, int $subnetId, string $ip, ?int $addressId, ?array $before, ?array $after): void
 {
     $st = $db->prepare("
@@ -777,6 +840,7 @@ function api_history_log_address(PDO $db, array $apiKey, string $action, int $su
     ]);
 }
 
+/** @param array{id: int, name: string, is_readonly: int} $apiKey */
 function api_audit(PDO $db, array $apiKey, string $action, string $entityType, int $entityId, string $details): void
 {
     $username = 'api:' . $apiKey['name'];

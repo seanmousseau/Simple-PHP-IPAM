@@ -133,6 +133,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add' 
     }
 }
 
+/** @param array<string, mixed> $overrides */
 function build_query_unassigned(array $overrides = []): string {
     $q = $_GET;
     foreach ($overrides as $k => $v) {

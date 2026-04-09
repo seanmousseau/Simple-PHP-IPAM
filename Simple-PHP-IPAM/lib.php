@@ -180,6 +180,9 @@ function require_login(): void
 /**
  * Validate a password against the configured policy.
  * Returns an empty array on success, or an array of all violation messages.
+ *
+ * @param array<string, mixed> $policy
+ * @return list<string>
  */
 function validate_password_complexity(string $password, array $policy): array
 {
@@ -203,6 +206,7 @@ function validate_password_complexity(string $password, array $policy): array
     return $errors;
 }
 
+/** @return array<string, mixed> */
 function current_user(): array
 {
     return [
@@ -306,6 +310,7 @@ function flash_set(string $message, string $type = 'success'): void
     $_SESSION['ipam_flash'] = ['msg' => $message, 'type' => $type];
 }
 
+/** @return array{msg: string, type: string}|null */
 function flash_get(): ?array
 {
     if (empty($_SESSION['ipam_flash'])) return null;
@@ -338,6 +343,10 @@ function audit_export(PDO $db, string $what, string $details = ''): void
 
 /* ---------------- History ---------------- */
 
+/**
+ * @param array<string, mixed>|null $before
+ * @param array<string, mixed>|null $after
+ */
 function history_log_address(PDO $db, string $action, int $subnetId, string $ip, ?int $addressId, ?array $before, ?array $after): void
 {
     $u = current_user();
@@ -372,6 +381,7 @@ function ensure_migrations_table(PDO $db): void
     )");
 }
 
+/** @return list<string> */
 function applied_migrations(PDO $db): array
 {
     $st = $db->prepare("SELECT version FROM schema_migrations");
@@ -379,6 +389,7 @@ function applied_migrations(PDO $db): array
     return array_map(fn($r) => (string)$r['version'], $st->fetchAll());
 }
 
+/** @return list<string> */
 function apply_migrations(PDO $db): array
 {
     ensure_migrations_table($db);
@@ -416,6 +427,7 @@ function apply_migrations(PDO $db): array
  * config.php. Each entry: ['default' => mixed, 'comment' => string].
  * Only top-level keys are tracked; nested sub-keys are managed per-key.
  */
+/** @return array<string, array{default: mixed, comment: string}> */
 function ipam_config_defaults(): array
 {
     return [
@@ -563,6 +575,10 @@ function ipam_php_export(mixed $val, int $indent = 1): string
  * Only keys whose default is not null are auto-appended.
  * The 'bootstrap_admin' block is never deep-merged (admin sets it intentionally).
  */
+/**
+ * @param array<string, mixed> $loaded
+ * @return list<string>
+ */
 function ipam_config_sync(string $configPath, array $loaded): array
 {
     $defaults = ipam_config_defaults();
@@ -633,7 +649,10 @@ function housekeeping_state_path(): string
     return __DIR__ . '/data/housekeeping.json';
 }
 
-/** @phpstan-impure */
+/**
+ * @phpstan-impure
+ * @param array<string, mixed> $config
+ */
 function housekeeping_should_run(array $config): bool
 {
     $hk = $config['housekeeping'] ?? [];
@@ -712,6 +731,7 @@ function prune_address_history(PDO $db, int $retentionDays): int
     return $st->rowCount();
 }
 
+/** @param array<string, mixed> $config */
 function run_housekeeping_if_due(array $config, ?PDO $db = null): void
 {
     if (!housekeeping_should_run($config)) return;
@@ -774,6 +794,7 @@ function run_demo_reset_if_due(PDO $db): void
 
 /* ---------------- Database Backups ---------------- */
 
+/** @param array<string, mixed> $config */
 function backup_dir(array $config): string
 {
     $d = trim((string)($config['backup']['dir'] ?? ''));
@@ -798,6 +819,7 @@ function backup_state_path(): string
     return __DIR__ . '/data/backup-state.json';
 }
 
+/** @param array<string, mixed> $config */
 function backup_interval_seconds(array $config): int
 {
     $freq = strtolower(trim((string)($config['backup']['frequency'] ?? 'daily')));
@@ -807,7 +829,10 @@ function backup_interval_seconds(array $config): int
     };
 }
 
-/** @phpstan-impure */
+/**
+ * @phpstan-impure
+ * @param array<string, mixed> $config
+ */
 function backup_is_due(array $config): bool
 {
     $bk = $config['backup'] ?? [];
@@ -827,6 +852,7 @@ function backup_is_due(array $config): bool
  * a consistent snapshot without requiring SQLite3 extension.
  * Returns true if a backup was written, false otherwise.
  */
+/** @param array<string, mixed> $config */
 function run_db_backup_if_due(PDO $db, array $config): bool
 {
     if (!backup_is_due($config)) return false;
@@ -887,7 +913,9 @@ function run_db_backup_if_due(PDO $db, array $config): bool
 
 /**
  * Return info about the current backup state for display in the admin panel.
- * ['last_backup' => timestamp|null, 'last_file' => string|null, 'count' => int, 'dir' => string]
+ *
+ * @param array<string, mixed> $config
+ * @return array{last_backup: int|null, last_file: string|null, count: int, dir: string}
  */
 function backup_info(array $config): array
 {
@@ -1073,6 +1101,10 @@ function sort_th(string $col, string $label, string $currentCol, string $current
  * or a non-empty error string that should be shown to the user.
  * Fails open on network errors so a broken CAPTCHA provider never blocks login.
  */
+/**
+ * @param array<string, mixed> $config
+ * @param array<string, mixed> $post
+ */
 function login_protection_verify(array $config, array $post): ?string
 {
     $cfg    = $config['login_protection'] ?? [];
@@ -1167,6 +1199,7 @@ function login_protection_verify(array $config, array $post): ?string
  * Return the HTML widget snippet to embed in the login/gate form.
  * For time_check, also sets the session timestamp on GET requests.
  */
+/** @param array<string, mixed> $config */
 function login_protection_widget_html(array $config): string
 {
     $cfg     = $config['login_protection'] ?? [];
@@ -1209,6 +1242,10 @@ function login_protection_widget_html(array $config): string
  * Turnstile, hCaptcha, and reCAPTCHA render inside an iframe so frame_src must
  * be explicitly allowed; Friendly Captcha uses Web Components (no iframe needed).
  */
+/**
+ * @param array<string, mixed> $config
+ * @return array{script_src: string, frame_src: string}
+ */
 function login_protection_extra_csp(array $config): array
 {
     $method = (string)(($config['login_protection'] ?? [])['method'] ?? '');
@@ -1249,6 +1286,7 @@ function demo_require_reset(): bool
     return $lastReset < $midnight;
 }
 
+/** @return array<string, int> */
 function paginate(int $total, int $page, int $pageSize): array
 {
     $page = max(1, $page);
@@ -1285,6 +1323,7 @@ function csv_download_headers(string $filename): void
     echo "\xEF\xBB\xBF"; // UTF-8 BOM for Excel compatibility
 }
 
+/** @return resource */
 function csv_output_handle()
 {
     static $fh = null;
@@ -1295,6 +1334,7 @@ function csv_output_handle()
     return $fh;
 }
 
+/** @param list<string> $row */
 function csv_out(array $row): void
 {
     $fh = csv_output_handle();
@@ -1550,6 +1590,7 @@ function demo_seed_data(PDO $db): void
 
 /* ---------------- IP helpers ---------------- */
 
+/** @return array{version: int, network: string, prefix: int, net_bin: string}|null */
 function parse_cidr(string $cidr): ?array
 {
     $cidr = trim($cidr);
@@ -1612,6 +1653,7 @@ function ip_in_cidr(string $ip, string $network, int $prefix): bool
     return hash_equals(apply_prefix_mask($ipBin, $prefix), $netBin);
 }
 
+/** @return array{ip: string, bin: string, version: int}|null */
 function normalize_ip(string $ip): ?array
 {
     $bin = @inet_pton(trim($ip));
@@ -1694,6 +1736,7 @@ function ipv4_broadcast_int(int $networkInt, int $prefix): int
 
 /* ---------------- CSV import helpers ---------------- */
 
+/** @param array<string, mixed> $config */
 function import_max_bytes(array $config): int
 {
     $mb = (int)($config['import_csv_max_mb'] ?? 5);
@@ -1740,6 +1783,7 @@ function import_plan_dir(): string
     return tmp_dir();
 }
 
+/** @param array<string, mixed> $plan */
 function save_import_plan(array $plan): string
 {
     ensure_tmp_dir();
@@ -1753,6 +1797,7 @@ function save_import_plan(array $plan): string
     return $path;
 }
 
+/** @return array<string, mixed> */
 function load_import_plan(string $path): array
 {
     if (!is_file($path)) throw new RuntimeException('Import plan file not found');
@@ -1813,6 +1858,7 @@ function detect_csv_delimiter(string $sample): string
     return $best;
 }
 
+/** @return list<list<string>> */
 function csv_read_preview(string $path, string $delimiter, int $maxRows = 20): array
 {
     $fh = fopen($path, 'rb');
@@ -1849,6 +1895,10 @@ function netmask_to_prefix(string $mask): ?int
     return $prefix;
 }
 
+/**
+ * @param array{ip: string, bin: string, version: int} $normIp
+ * @return array<string, mixed>|null
+ */
 function find_containing_subnet(PDO $db, array $normIp): ?array
 {
     static $cache = [];
@@ -1890,6 +1940,7 @@ function ensure_subnet_exists(PDO $db, string $cidr, string $description = ''): 
     return (int)$db->lastInsertId();
 }
 
+/** @param array{ip: string, bin: string, version: int} $normIp */
 function cidr_from_ip_and_prefix(array $normIp, int $prefix): string
 {
     $max = ($normIp['version'] === 4) ? 32 : 128;
@@ -1960,6 +2011,7 @@ function detect_subnet_overlaps(PDO $db, string $cidr, ?int $excludeId = null): 
     return ['parents' => $parents, 'children' => $children];
 }
 
+/** @param array{parents: list<string>, children: list<string>} $overlaps */
 function subnet_overlap_warning_text(array $overlaps): string
 {
     $parts = [];
@@ -1976,6 +2028,7 @@ function subnet_overlap_warning_text(array $overlaps): string
 
 /* ---------------- UI helpers ---------------- */
 
+/** @param array<string, string> $opts */
 function page_header(string $title, array $opts = []): void
 {
     global $config;
@@ -1996,11 +2049,11 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=1.15.1'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=1.17.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = $_SESSION['user_theme'] ?? 'auto';
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=1.15.1'></script>";
+    echo "<script defer src='assets/app.js?v=1.17.0'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
@@ -2154,6 +2207,10 @@ function ipam_normalise_version(string $v): string
  *
  * Returns ['version' => '1.2.1', 'url' => 'https://...'] if newer, otherwise null.
  */
+/**
+ * @param array<string, mixed> $config
+ * @return array{version: string, url: string}|null
+ */
 function ipam_update_check(array $config): ?array
 {
     // Memoize within a single request — page_header() and page_footer() both call this
@@ -2254,6 +2311,7 @@ function find_parent_site_id(PDO $db, string $cidr, ?int $excludeId = null): ?in
  * OIDC — Authorization Code + PKCE (pure PHP, no dependencies)
  * ============================================================ */
 
+/** @param array<string, mixed> $config */
 function oidc_enabled(array $config): bool
 {
     $o = $config['oidc'] ?? [];
@@ -2268,6 +2326,10 @@ function oidc_enabled(array $config): bool
  * Fetch and cache the IdP's OpenID Connect discovery document.
  * Appends /.well-known/openid-configuration if the URL doesn't already
  * contain that path.
+ */
+/**
+ * @param array<string, mixed> $config
+ * @return array<string, mixed>
  */
 function oidc_discovery(array $config): array
 {
@@ -2300,6 +2362,7 @@ function oidc_discovery(array $config): array
  * Pass $forceRefresh = true to bypass the cache (used after a verify failure
  * to handle key rotation).
  */
+/** @return list<mixed> */
 function oidc_jwks(string $jwksUri, bool $forceRefresh = false): array
 {
     ensure_tmp_dir();
@@ -2335,7 +2398,12 @@ function oidc_http_get(string $url): string
     return $raw;
 }
 
-/** POST application/x-www-form-urlencoded and return decoded JSON array. */
+/**
+ * POST application/x-www-form-urlencoded and return decoded JSON array.
+ *
+ * @param array<string, string> $params
+ * @return array<string, mixed>
+ */
 function oidc_http_post(string $url, array $params): array
 {
     $body = http_build_query($params);
@@ -2395,8 +2463,9 @@ function oidc_pkce_pair(): array
  * Decode and verify an RS256/RS384/RS512 signed ID token.
  * Returns the verified payload claims array.
  *
- * @param array $jwks    Keys from the IdP's JWKS endpoint
- * @param array $expect  Claims to validate: iss, aud, nonce
+ * @param list<mixed> $jwks                  Keys from the IdP's JWKS endpoint
+ * @param array<string, string> $expect       Claims to validate: iss, aud, nonce
+ * @return array<string, mixed>
  */
 function oidc_verify_id_token(string $idToken, array $jwks, array $expect): array
 {
@@ -2467,6 +2536,7 @@ function oidc_verify_id_token(string $idToken, array $jwks, array $expect): arra
  * Builds the DER SubjectPublicKeyInfo structure manually so we have
  * no dependency on ext-gmp or any JOSE library.
  */
+/** @param array<string, mixed> $jwk */
 function jwk_rsa_to_pem(array $jwk): string
 {
     $n = base64url_decode((string)($jwk['n'] ?? ''));

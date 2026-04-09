@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 $config = require __DIR__ . '/config.php';
 
+/** @param array<string, mixed> $server */
 function request_is_https(array $server, bool $trustProxyHeaders): bool
 {
     if (!empty($server['HTTPS']) && $server['HTTPS'] !== 'off') return true;

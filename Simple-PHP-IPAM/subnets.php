@@ -174,6 +174,10 @@ function subnet_contains_bin_local(string $parentNetBin, int $parentPrefix, stri
     return hash_equals($masked, $parentNetBin);
 }
 
+/**
+ * @param array<int, array<string, mixed>> $rows
+ * @return array{roots: list<int>, children: array<int, list<int>>, byId: array<int, array<string, mixed>>}
+ */
 function build_subnet_tree_local(array $rows): array
 {
     $byId = [];
@@ -243,6 +247,7 @@ function build_subnet_tree_local(array $rows): array
     return ['roots' => $roots, 'children' => $children, 'byId' => $byId];
 }
 
+/** @return array<int, array{used: int, reserved: int, free: int, total: int}> */
 function subnet_direct_counts_local(PDO $db): array
 {
     $st = $db->prepare("SELECT subnet_id, status, COUNT(*) AS c FROM addresses GROUP BY subnet_id, status");
@@ -259,6 +264,11 @@ function subnet_direct_counts_local(PDO $db): array
     return $out;
 }
 
+/**
+ * @param array{roots: list<int>, children: array<int, list<int>>, byId: array<int, array<string, mixed>>} $tree
+ * @param array<int, array{used: int, reserved: int, free: int, total: int}> $directCounts
+ * @return array<int, array{used: int, reserved: int, free: int, total: int}>
+ */
 function subnet_aggregated_counts_local(array $tree, array $directCounts): array
 {
     $children = $tree['children'];
@@ -297,6 +307,7 @@ function ipv4_broadcast_bin_local(string $netBin, int $prefix): string
     return pack('N', $b);
 }
 
+/** @return array<int, array{assignable_total: int, assigned_assignable: int, unassigned_assignable: int}> */
 function ipv4_unassigned_summary_local(PDO $db): array
 {
     $st = $db->prepare("SELECT id, prefix, network_bin FROM subnets WHERE ip_version=4");
@@ -358,6 +369,11 @@ function ipv4_unassigned_summary_local(PDO $db): array
  * Aggregate ipv4_unassigned_summary_local() stats up the subnet tree so that
  * parent subnets show rolled-up utilization across all descendants.
  */
+/**
+ * @param array{roots: list<int>, children: array<int, list<int>>, byId: array<int, array<string, mixed>>} $tree
+ * @param array<int, array{assignable_total: int, assigned_assignable: int, unassigned_assignable: int}> $directUnassigned
+ * @return array<int, array{assignable_total: int, assigned_assignable: int, unassigned_assignable: int}>
+ */
 function ipv4_unassigned_aggregated_local(array $tree, array $directUnassigned): array
 {
     $children = $tree['children'];
@@ -402,6 +418,15 @@ foreach ($tree['roots'] as $rid) {
 }
 uasort($siteGroups, fn($a, $b) => strcasecmp($a['label'], $b['label']));
 
+/**
+ * @param array{roots: list<int>, children: array<int, list<int>>, byId: array<int, array<string, mixed>>} $tree
+ * @param array<int, array{used: int, reserved: int, free: int, total: int}> $direct
+ * @param array<int, array{used: int, reserved: int, free: int, total: int}> $agg
+ * @param array<int, array{assignable_total: int, assigned_assignable: int, unassigned_assignable: int}> $ipv4Unassigned
+ * @param array<int, array{assignable_total: int, assigned_assignable: int, unassigned_assignable: int}> $ipv4UnassignedAgg
+ * @param array<int, string> $siteMap
+ * @param list<array<string, mixed>> $siteList
+ */
 function render_subnet_node_local(array $tree, array $direct, array $agg, array $ipv4Unassigned, array $ipv4UnassignedAgg, array $siteMap, array $siteList, int $id, int $depth = 0): void
 {
     $row = $tree['byId'][$id];

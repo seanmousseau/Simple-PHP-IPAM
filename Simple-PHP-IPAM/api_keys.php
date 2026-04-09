@@ -14,7 +14,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = (string)($_POST['action'] ?? '');
 
     // Demo mode: block destructive mutations
-    if (demo_mode_enabled() && in_array($action, ['create', 'deactivate', 'delete'], true)) {
+    if (demo_mode_enabled() && in_array($action, ['create', 'deactivate', 'delete', 'set_readonly', 'set_readwrite'], true)) {
         $formError = 'This action is disabled in demo mode.';
         $action = '';
     }
@@ -24,11 +24,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($name === '') {
             $formError = 'Key name is required.';
         } else {
+            $desc       = trim((string)($_POST['description'] ?? ''));
+            $isReadonly = isset($_POST['is_readonly']) ? 1 : 0;
             // Generate a 32-byte random key, encode as hex (64 chars)
             $rawKey  = bin2hex(random_bytes(32));
             $keyHash = hash('sha256', $rawKey);
-            $st = $db->prepare("INSERT INTO api_keys (name, key_hash, created_by) VALUES (:n,:h,:by)");
-            $st->execute([':n' => $name, ':h' => $keyHash, ':by' => $u['username']]);
+            $st = $db->prepare("INSERT INTO api_keys (name, description, is_readonly, key_hash, created_by) VALUES (:n,:d,:ro,:h,:by)");
+            $st->execute([':n' => $name, ':d' => $desc, ':ro' => $isReadonly, ':h' => $keyHash, ':by' => $u['username']]);
             audit($db, 'apikey.create', 'apikey', (int)$db->lastInsertId(), 'name=' . $name);
             $newKey = $rawKey; // shown once only
         }
@@ -54,6 +56,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
+    if ($action === 'set_readonly') {
+        $kid = (int)($_POST['key_id'] ?? 0);
+        $db->prepare("UPDATE api_keys SET is_readonly = 1 WHERE id = :id")
+           ->execute([':id' => $kid]);
+        audit($db, 'apikey.set_readonly', 'apikey', $kid, '');
+        flash_set('API key set to read-only.');
+        header('Location: api_keys.php');
+        exit;
+    }
+
+    if ($action === 'set_readwrite') {
+        $kid = (int)($_POST['key_id'] ?? 0);
+        $db->prepare("UPDATE api_keys SET is_readonly = 0 WHERE id = :id")
+           ->execute([':id' => $kid]);
+        audit($db, 'apikey.set_readwrite', 'apikey', $kid, '');
+        flash_set('API key set to read-write.');
+        header('Location: api_keys.php');
+        exit;
+    }
+
     if ($action === 'delete') {
         $kid = (int)($_POST['key_id'] ?? 0);
         $db->prepare("DELETE FROM api_keys WHERE id = :id")
@@ -70,15 +92,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $keySortCols = ['name' => 'name', 'status' => 'is_active', 'created' => 'created_at'];
 $keySort = parse_sort($keySortCols, 'created', 'desc');
 
-$keys = $db->query("SELECT id, name, created_at, last_used_at, is_active, created_by
+$keys = $db->query("SELECT id, name, description, is_readonly, created_at, last_used_at, is_active, created_by
                     FROM api_keys ORDER BY {$keySort['sql']}")
            ->fetchAll();
 
 page_header('API Keys');
 ?>
 <h1>API Keys</h1>
-<p class="muted">API keys grant read-only access to the <a href="api.php">REST API</a>.
-  Each key is shown <strong>once</strong> at creation — copy it before navigating away.</p>
+<p class="muted">API keys grant access to the <a href="api.php">REST API</a>.
+  Read-only keys can only perform GET requests. Each key is shown <strong>once</strong> at creation — copy it before navigating away.</p>
 
 <?php if (!empty($newKey)): ?>
 <div class="card card--success">
@@ -97,8 +119,14 @@ page_header('API Keys');
     <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
     <input type="hidden" name="action" value="create">
     <div class="row">
-      <label>Key name / description
+      <label>Key name
         <input name="name" required placeholder="e.g. Monitoring script" class="mw-260">
+      </label>
+      <label>Description
+        <input name="description" placeholder="Optional note (purpose, owner…)" class="mw-260">
+      </label>
+      <label class="flex-self-end">
+        <input type="checkbox" name="is_readonly"> Read-only (GET only)
       </label>
       <div class="flex-self-end">
         <button type="submit">Generate key</button>
@@ -120,6 +148,8 @@ page_header('API Keys');
         ?>
         <th>Created by</th>
         <th>Last used</th>
+        <th>Description</th>
+        <th>Access</th>
         <?php echo sort_th('status', 'Status', $keySort['col'], $keySort['dir'], $keyQs); ?>
         <th>Actions</th>
       </tr>
@@ -131,6 +161,14 @@ page_header('API Keys');
         <td><?= e((string)$k['created_at']) ?></td>
         <td><?= e((string)$k['created_by']) ?></td>
         <td><?= $k['last_used_at'] ? e((string)$k['last_used_at']) : '<span class="muted">Never</span>' ?></td>
+        <td><?= $k['description'] !== '' ? e((string)$k['description']) : '<span class="muted">—</span>' ?></td>
+        <td>
+          <?php if ((int)$k['is_readonly']): ?>
+            <span class="badge">Read-only</span>
+          <?php else: ?>
+            <span class="muted">Read-write</span>
+          <?php endif; ?>
+        </td>
         <td>
           <?php if ((int)$k['is_active']): ?>
             <span class="success">Active</span>
@@ -153,6 +191,21 @@ page_header('API Keys');
                 <input type="hidden" name="action"   value="activate">
                 <input type="hidden" name="key_id"   value="<?= (int)$k['id'] ?>">
                 <button type="submit" class="button-secondary">Activate</button>
+              </form>
+            <?php endif; ?>
+            <?php if ((int)$k['is_readonly']): ?>
+              <form method="post" action="api_keys.php" class="d-inline">
+                <input type="hidden" name="csrf"     value="<?= e(csrf_token()) ?>">
+                <input type="hidden" name="action"   value="set_readwrite">
+                <input type="hidden" name="key_id"   value="<?= (int)$k['id'] ?>">
+                <button type="submit" class="button-secondary">Make read-write</button>
+              </form>
+            <?php else: ?>
+              <form method="post" action="api_keys.php" class="d-inline">
+                <input type="hidden" name="csrf"     value="<?= e(csrf_token()) ?>">
+                <input type="hidden" name="action"   value="set_readonly">
+                <input type="hidden" name="key_id"   value="<?= (int)$k['id'] ?>">
+                <button type="submit" class="button-secondary">Make read-only</button>
               </form>
             <?php endif; ?>
             <form method="post" action="api_keys.php" class="d-inline"
