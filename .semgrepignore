@@ -1,0 +1,15 @@
+# Semgrep ignore file — paths excluded from all scans
+
+# Dev tooling — never deployed
+vendor/
+releases/
+testing/
+tests/
+
+# Runtime data
+Simple-PHP-IPAM/data/
+
+# Build artifacts
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

@@ -279,6 +279,12 @@ php -l Simple-PHP-IPAM/changed.php  # syntax check individual files
 
 **CI:** `.github/workflows/php-qa.yml` runs lint → PHPStan → PHPCS → PHPUnit on every push to `dev`/`main` and every PR targeting `main`.
 
+**Semgrep:** Custom security rules live in `.semgrep/rules.yml`. Run locally with:
+```bash
+semgrep --config=.semgrep/rules.yml Simple-PHP-IPAM/
+```
+Rules cover XSS (`ipam-xss-unsanitized-echo`), path traversal (`ipam-unlink-user-path`), SQL injection (`ipam-sqli-raw-concat`), and open redirect (`ipam-open-redirect`). The `e()` function is registered as an XSS sanitizer so it is never flagged as a false positive. Path exclusions are in `.semgrepignore`.
+
 ### Linting
 Always run `php -l` on every changed PHP file before committing:
 ```bash
