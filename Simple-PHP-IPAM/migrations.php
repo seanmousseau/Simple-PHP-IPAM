@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 
+/** @return array<string, \Closure> */
 function ipam_migrations(): array
 {
     return [
@@ -195,6 +196,17 @@ function ipam_migrations(): array
 
         '1.9' => function(PDO $db) {
             ensure_audit_log_table($db);
+        },
+
+        // 1.13: api_keys.is_readonly + api_keys.description
+        '1.13' => function(PDO $db): void {
+            $cols = array_column($db->query("PRAGMA table_info(api_keys)")->fetchAll(), 'name');
+            if (!in_array('is_readonly', $cols, true)) {
+                $db->exec("ALTER TABLE api_keys ADD COLUMN is_readonly INTEGER NOT NULL DEFAULT 0");
+            }
+            if (!in_array('description', $cols, true)) {
+                $db->exec("ALTER TABLE api_keys ADD COLUMN description TEXT NOT NULL DEFAULT ''");
+            }
         },
     ];
 }

@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [1.17.0] - 2026-04-08
+
+### Added
+- **#225** — Read-only API keys: new `is_readonly` flag on API keys blocks write operations (`POST`/`PUT`/`DELETE`) with a 403 response; toggle button in the admin UI lets admins flip any key between read-only and read-write without deactivating it.
+- **#225** — API key description field: optional free-text description stored alongside the key name; shown in the keys table for documentation purposes.
+- **#226** — Subnets API filter params: `GET /api.php?resource=subnets` now accepts `ip_version=4|6` and `vlan_id=1–4094` query parameters; both params validate on input (400 for invalid values) and can be combined with each other and the existing `site_id` filter.
+
+### Changed
+- **#224** — PHPStan static analysis level raised from 5 to 6; all 99 `missingType.iterableValue` errors resolved with `@param`/`@return` PHPDoc annotations across `lib.php`, `api.php`, `subnets.php`, `import_csv.php`, `migrations.php`, `init.php`, `address_history.php`, `search.php`, and `unassigned.php`.
+
 ## [1.16.0] - 2026-04-08
 
 ### Added
@@ -338,6 +348,7 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[1.17.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.16.0...v1.17.0
 [1.16.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.15.0...v1.16.0
 [1.15.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.14...v1.15.0
 [1.14]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.13...v1.14

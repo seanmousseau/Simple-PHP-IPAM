@@ -25,6 +25,7 @@ if (isset($_GET['reset'])) {
     exit;
 }
 
+/** @param array<string, mixed> $wiz */
 function wiz_require_file(array $wiz): void {
     if (empty($wiz['tmp_path']) || !is_file($wiz['tmp_path'])) {
         header('Location: import_csv.php?step=1');
@@ -32,6 +33,7 @@ function wiz_require_file(array $wiz): void {
     }
 }
 
+/** @param list<list<string>> $rows */
 function render_preview_table(array $rows): void {
     if (!$rows) {
         echo "<div class='empty-state'>No preview rows.</div>";
@@ -63,6 +65,7 @@ function import_plan_result_path(): string
     return tmp_dir() . '/import-result-' . bin2hex(random_bytes(8)) . '.json';
 }
 
+/** @param array<string, mixed> $result */
 function save_import_result(array $result): string
 {
     ensure_tmp_dir();
@@ -76,6 +79,7 @@ function save_import_result(array $result): string
     return $path;
 }
 
+/** @return array<string, mixed> */
 function load_result_file(string $path): array
 {
     if (!is_file($path)) throw new RuntimeException('Import result file not found');
@@ -86,6 +90,10 @@ function load_result_file(string $path): array
     return $data;
 }
 
+/**
+ * @param array<string, mixed> $wiz
+ * @return array<string, mixed>
+ */
 function analyze_import(PDO $db, array $wiz): array
 {
     $delimiter = (string)$wiz['delimiter'];

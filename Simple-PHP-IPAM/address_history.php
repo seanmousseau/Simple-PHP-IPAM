@@ -101,6 +101,7 @@ function render_history_diff(?string $beforeJson, ?string $afterJson): string {
     return $html;
 }
 
+/** @param array<string, mixed> $overrides */
 function build_query_hist(array $overrides = []): string {
     $q = $_GET;
     foreach ($overrides as $k => $v) {

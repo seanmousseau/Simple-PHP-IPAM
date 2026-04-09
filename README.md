@@ -48,8 +48,10 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 
 ### REST API
 - JSON REST API (`api.php`) authenticated with API keys
-- Read: subnets, addresses (paginated + filterable), sites, address history
-- Write: create / update / delete subnets and addresses (POST / PUT / DELETE)
+- **Read-only API keys** — admin-toggleable flag restricts a key to GET-only access; write attempts return 403
+- **API key descriptions** — optional free-text field to document what each key is for
+- Read: subnets (filterable by `ip_version`, `vlan_id`, `site_id`), addresses (paginated + filterable), sites, address history
+- Write: create / update / delete subnets, addresses, and sites (POST / PUT / DELETE)
 
 ---
 

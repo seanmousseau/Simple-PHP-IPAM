@@ -118,6 +118,7 @@ if ($q !== '') {
     $subnetResults = $st->fetchAll();
 }
 
+/** @param array<string, mixed> $overrides */
 function build_query_search(array $overrides = []): string {
     $q = $_GET;
     foreach ($overrides as $k => $v) {

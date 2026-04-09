@@ -148,7 +148,9 @@ CREATE TABLE IF NOT EXISTS api_keys (
   created_at   TEXT NOT NULL DEFAULT (datetime('now')),
   last_used_at TEXT,
   is_active    INTEGER NOT NULL DEFAULT 1,
-  created_by   TEXT NOT NULL DEFAULT ''
+  created_by   TEXT NOT NULL DEFAULT '',
+  is_readonly  INTEGER NOT NULL DEFAULT 0,
+  description  TEXT    NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS schema_migrations (
