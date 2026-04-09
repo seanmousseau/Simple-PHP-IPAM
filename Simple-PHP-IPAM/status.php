@@ -18,10 +18,15 @@ require __DIR__ . '/lib.php';
 require __DIR__ . '/version.php';
 
 $dbOk = false;
+$schemaVersion = null;
 try {
     $pdo = ipam_db((string)$config['db_path']);
     $pdo->query('SELECT 1')->fetch();
     $dbOk = true;
+    $row = $pdo->query("SELECT MAX(version) AS v FROM schema_migrations")->fetch();
+    if ($row && $row['v'] !== null) {
+        $schemaVersion = (string)$row['v'];
+    }
 } catch (Throwable) {
     // DB unavailable
 }
@@ -35,5 +40,8 @@ $response = [
 ];
 if (empty($config['status_hide_version'])) {
     $response['version'] = IPAM_VERSION;
+    if ($schemaVersion !== null) {
+        $response['schema_version'] = $schemaVersion;
+    }
 }
 echo json_encode($response, JSON_UNESCAPED_SLASHES);

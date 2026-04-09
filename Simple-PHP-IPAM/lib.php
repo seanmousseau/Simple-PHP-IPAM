@@ -2067,11 +2067,12 @@ function page_header(string $title, array $opts = []): void
         echo "<a class='nav-pill' href='addresses.php'>🧾 Addresses</a>";
         echo "<a class='nav-pill' href='search.php'>🔎 Search</a>";
         echo "<a class='nav-pill' href='audit.php'>📜 Audit</a>";
-        echo "<a class='nav-pill' href='dhcp_pool.php'>🔒 DHCP</a>";
         if ($role === 'admin') {
             echo "<div class='nav-dropdown'>";
             echo "<button type='button' class='nav-pill nav-dropdown-toggle'>⚙ Admin ▾</button>";
             echo "<div class='nav-dropdown-menu'>";
+            echo "<a class='nav-dropdown-item' href='dhcp_pool.php'>🔒 DHCP Pools</a>";
+            echo "<hr class='nav-dropdown-divider'>";
             echo "<a class='nav-dropdown-item' href='sites.php'>📍 Sites</a>";
             echo "<a class='nav-dropdown-item' href='users.php'>👤 Users</a>";
             echo "<a class='nav-dropdown-item' href='api_keys.php'>🔑 API Keys</a>";

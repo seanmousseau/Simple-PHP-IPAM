@@ -162,7 +162,7 @@ page_header('Audit Log');
           <td><?= e((string)($r['username'] ?? '')) ?></td>
           <td><?= e($r['action']) ?></td>
           <td><?= e($r['entity_type']) ?>#<?= e((string)($r['entity_id'] ?? '')) ?></td>
-          <td class="muted"><?= e((string)($r['ip'] ?? '')) ?></td>
+          <td class="muted"><?= $r['ip'] !== null ? e((string)$r['ip']) : '—' ?></td>
           <td class="muted"><?= e((string)($r['details'] ?? '')) ?></td>
         </tr>
       <?php endforeach; ?>
