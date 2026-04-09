@@ -89,7 +89,7 @@ Every web page starts with `require __DIR__ . '/init.php'`, which:
 | `addresses` | `id`, `subnet_id`, `ip`, `ip_bin` (BLOB), `hostname`, `owner`, `note`, `grp`, `status` (used\|reserved\|free), `created_at`, `updated_at` |
 | `audit_log` | `id`, `action`, `entity_type`, `entity_id`, `user_id`, `username`, `ip`, `user_agent`, `details`, `created_at` |
 | `sites` | `id`, `name`, `description`, `created_at` |
-| `api_keys` | `id`, `name`, `key_hash` (SHA-256), `is_active`, `created_by`, `created_at`, `last_used_at` |
+| `api_keys` | `id`, `name`, `key_hash` (SHA-256), `is_active`, `is_readonly`, `description`, `created_by`, `created_at`, `last_used_at` |
 | `login_attempts` | `id`, `ip`, `attempted_at` |
 | `address_history` | `id`, `address_id`, `subnet_id`, `ip`, `action`, `user_id`, `username`, `client_ip`, `user_agent`, `before_json`, `after_json`, `created_at` |
 | `schema_migrations` | `id`, `version`, `applied_at` |
@@ -189,7 +189,7 @@ Located in `assets/app.css`. Uses CSS custom properties for theming (light/dark/
 
 Key utility classes: `.muted`, `.danger`, `.success`, `.warning`, `.badge`, `.badge-update`, `.status-used`, `.status-reserved`, `.status-free`, `.util-bar`, `.util-bar-fill`, `.util-bar-fill--warn`, `.util-bar-fill--crit`, `.row`, `.card`, `.action-pill`, `.button-danger`, `.button-secondary`.
 
-Asset cache-buster: update `?v=X.Y` in the `<link>` and `<script>` tags in `page_header()` when changing CSS/JS.
+Asset cache-buster: update `?v=X.Y.Z` in the `<link>` and `<script>` tags in `page_header()` when changing CSS/JS.
 
 ### Nav structure
 - Left: nav-links (Dashboard, Subnets, Addresses, Search, Audit, ⚙ Admin dropdown)
@@ -216,8 +216,6 @@ dhcp_pool.reserve   dhcp_pool.clear
 db.export           db.import               db.import_failed
 export.*            import.*
 ```
-
----
 
 ---
 
@@ -307,7 +305,7 @@ Before building a release bundle, **always** complete these steps in order:
 ### Building a release bundle
 Use `releases/make_releases.sh` when `rsync` is available:
 ```bash
-./releases/make_releases.sh Simple-PHP-IPAM X.Y
+./releases/make_releases.sh Simple-PHP-IPAM X.Y.Z
 ```
 If `rsync` is not available, replicate the same logic with `cp -a` (copy dotfiles with `cp -a src/. dest/`), permission sanitisation, and `tar --numeric-owner --owner=0 --group=0`.
 
