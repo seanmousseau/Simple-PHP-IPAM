@@ -5,8 +5,11 @@ require_login();
 
 $addressId = (int)($_GET['address_id'] ?? 0);
 if ($addressId <= 0) {
-    http_response_code(400);
-    exit('Missing address_id');
+    page_header('Address History');
+    echo '<div class="card"><p class="danger">Missing or invalid <code>address_id</code> parameter. '
+       . '<a href="addresses.php">Go to Addresses</a> to find an address.</p></div>';
+    page_footer();
+    exit;
 }
 
 $st = $db->prepare("SELECT a.id, a.ip, a.subnet_id, s.cidr AS subnet_cidr
