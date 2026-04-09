@@ -23,6 +23,7 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 - **Global search** across IP / hostname / owner / note with filters for status, site, and IP version
 - **Bulk update** — update hostname / owner / status / note across multiple addresses at once, with bulk delete
 - **CSV import wizard** (admin-only) — upload, map columns, dry-run preview, then apply; supports auto-create missing subnets
+- **CSV exports** — addresses per subnet, all addresses cross-subnet, subnet utilization summary, address change history, search results, unassigned IPs, audit log
 
 ### Organisation
 - **Sites** — group subnets by location or network segment
@@ -50,7 +51,7 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 - JSON REST API (`api.php`) authenticated with API keys
 - **Read-only API keys** — admin-toggleable flag restricts a key to GET-only access; write attempts return 403
 - **API key descriptions** — optional free-text field to document what each key is for
-- Read: subnets (filterable by `ip_version`, `vlan_id`, `site_id`), addresses (paginated + filterable), sites, address history
+- Read: subnets (filterable by `ip_version`, `vlan_id`, `site_id`; optional address count/utilization per subnet), addresses (filterable by `subnet_id`, `site_id`, `status`), sites, address history, unassigned IPs
 - Write: create / update / delete subnets, addresses, and sites (POST / PUT / DELETE)
 
 ---

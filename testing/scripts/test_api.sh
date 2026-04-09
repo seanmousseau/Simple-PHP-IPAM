@@ -371,6 +371,18 @@ fi
 call_api GET "subnets&vlan_id=9999"
 assert_http 400 "Invalid vlan_id=9999 → 400"
 
+# site_id filter on subnets
+if [[ -n "${SITE_ID:-}" && "$SITE_ID" != "None" ]]; then
+    call_api GET "subnets&site_id=$SITE_ID"
+    assert_http 200 "Filter subnets by site_id"
+fi
+
+# address counts (?counts=1)
+call_api GET "subnets&counts=1&page=1&limit=5"
+assert_http 200 "Subnets with ?counts=1"
+HAS_COUNTS=$(python3 -c "import sys,json; d=json.load(sys.stdin); subs=d.get('subnets',[]); ok=all('address_counts' in s for s in subs) if subs else True; print('yes' if ok else 'no')" <<< "$BODY" 2>/dev/null || echo "no")
+[[ "$HAS_COUNTS" == "yes" ]] && pass "Subnet ?counts=1: address_counts present" || fail "Subnet ?counts=1: address_counts missing"
+
 # ====================================================================
 log "=== Addresses CRUD ==="
 # ====================================================================
@@ -418,6 +430,23 @@ AUDIT_N=$(jq_len entries)
 
 call_api GET "audit&action=subnet.create&limit=5"
 assert_http 200 "Audit log with action filter"
+
+# site_id filter on addresses
+if [[ -n "${SITE_ID:-}" && "$SITE_ID" != "None" ]]; then
+    call_api GET "addresses&site_id=$SITE_ID"
+    assert_http 200 "Filter addresses by site_id"
+fi
+
+# unassigned endpoint
+if [[ -n "${SUBNET_ID:-}" && "$SUBNET_ID" != "None" ]]; then
+    call_api GET "unassigned&subnet_id=$SUBNET_ID"
+    assert_http 200 "Unassigned IPs for subnet"
+    HAS_LIST=$(python3 -c "import sys,json; d=json.load(sys.stdin); print('yes' if 'unassigned' in d else 'no')" <<< "$BODY" 2>/dev/null || echo "no")
+    [[ "$HAS_LIST" == "yes" ]] && pass "Unassigned: response has unassigned array" || fail "Unassigned: missing unassigned field"
+fi
+
+call_api GET "unassigned"
+assert_http 400 "Unassigned missing subnet_id → 400"
 
 # ====================================================================
 log "=== Pagination ==="

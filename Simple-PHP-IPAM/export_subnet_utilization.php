@@ -1,0 +1,56 @@
+<?php
+declare(strict_types=1);
+require __DIR__ . '/init.php';
+require_login();
+
+$filename = safe_export_filename('ipam-subnet-utilization');
+csv_download_headers($filename);
+
+csv_out(['cidr', 'description', 'site', 'ip_version', 'vlan_id', 'used', 'reserved', 'free', 'total', 'utilization_pct']);
+
+$st = $db->query("
+    SELECT s.cidr, s.description, s.ip_version, s.prefix, s.vlan_id,
+           COALESCE(si.name, '') AS site_name,
+           COALESCE(SUM(a.status = 'used'),     0) AS used_count,
+           COALESCE(SUM(a.status = 'reserved'), 0) AS reserved_count,
+           COALESCE(SUM(a.status = 'free'),     0) AS free_count,
+           COUNT(a.id) AS total_count
+    FROM subnets s
+    LEFT JOIN sites si ON si.id = s.site_id
+    LEFT JOIN addresses a ON a.subnet_id = s.id
+    GROUP BY s.id
+    ORDER BY s.ip_version, s.network_bin
+");
+
+foreach ($st as $r) {
+    $used     = (int)$r['used_count'];
+    $reserved = (int)$r['reserved_count'];
+    $free     = (int)$r['free_count'];
+    $total    = (int)$r['total_count'];
+    $prefix   = (int)$r['prefix'];
+    $ipVer    = (int)$r['ip_version'];
+
+    if ($ipVer === 4) {
+        $rawHosts = (int)(2 ** (32 - $prefix));
+        $capacity = $prefix >= 31 ? $rawHosts : max(1, $rawHosts - 2);
+        $pct      = round(($used + $reserved) / $capacity * 100, 2);
+    } else {
+        $pct = 0.0; // IPv6 — subnet too large for meaningful percentage
+    }
+
+    csv_out([
+        (string)$r['cidr'],
+        (string)$r['description'],
+        (string)$r['site_name'],
+        (string)$r['ip_version'],
+        $r['vlan_id'] !== null ? (string)$r['vlan_id'] : '',
+        (string)$used,
+        (string)$reserved,
+        (string)$free,
+        (string)$total,
+        number_format($pct, 2),
+    ]);
+}
+
+audit_export($db, 'subnet_utilization', 'all subnets');
+exit;

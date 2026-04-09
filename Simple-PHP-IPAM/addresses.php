@@ -331,7 +331,7 @@ page_header('Addresses');
 <div class="card mt-16">
   <h2>List</h2>
   <?php if ($selectedSubnetId <= 0): ?>
-    <div class="empty-state">No subnet selected.</div>
+    <div class="empty-state">No subnet selected. <a href="subnets.php">Go to Subnets</a> to create or select one.</div>
   <?php elseif (!$addresses): ?>
     <div class="empty-state">No addresses in this subnet yet.</div>
   <?php else: ?>

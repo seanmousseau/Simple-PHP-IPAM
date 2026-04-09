@@ -602,7 +602,83 @@ async def run():
               "subnet" in body.lower() or "10.99" in body or "10.88" in body)
         check("audit: address.create logged",
               "address" in body.lower() or TEST_IP in body)
+
+        # Audit log: Client IP column header present
+        headers = await js("Array.from(document.querySelectorAll('table thead th')).map(h=>h.innerText)")
+        ip_col = any("ip" in (h or "").lower() for h in (headers or []))
+        check("audit: Client IP column present", ip_col, f"headers={headers}")
         await screenshot("14_audit")
+
+        # ── 11b: v1.18.0 feature checks ──────────────────────────────────────
+        print("\n[11b] v1.18.0 checks")
+
+        # status.php: schema_version present
+        _ba = json.dumps(BASIC_HEADER)
+        st_resp = await js(f"""
+            (async () => {{
+                const r = await fetch({json.dumps(APP+'/status.php')},
+                                      {{credentials:'same-origin',
+                                        headers:{{'Authorization':{_ba}}}}});
+                return await r.json();
+            }})()
+        """)
+        check("status.php: schema_version field present",
+              'schema_version' in (st_resp or {}),
+              f"response={st_resp}")
+
+        # DHCP Pools in admin dropdown, not main nav
+        await navigate(f"{APP}/dashboard.php")
+        # Only select direct .nav-pill links (excludes .nav-dropdown-item elements inside dropdown)
+        nav_pills_text = await js("Array.from(document.querySelectorAll('.nav-links > a.nav-pill, .nav-links > .nav-pill:not(.nav-dropdown-toggle)')).map(a=>a.innerText).join(' ')") or ""
+        admin_dd_text  = await js("Array.from(document.querySelectorAll('.nav-dropdown-item')).map(a=>a.innerText).join(' ')") or ""
+        check("nav: DHCP Pools in admin dropdown",
+              "DHCP" in admin_dd_text,
+              f"dropdown={admin_dd_text!r}")
+        check("nav: DHCP Pools not in top nav links",
+              "DHCP" not in nav_pills_text,
+              f"nav_pills={nav_pills_text!r}")
+
+        # addresses.php empty state: navigation link present
+        await navigate(f"{APP}/addresses.php")
+        empty_body = await js("document.body.innerText") or ""
+        check("addresses.php: no-subnet empty state has nav link",
+              "subnets.php" in (await js("document.body.innerHTML") or "") or
+              "Go to Subnets" in empty_body,
+              f"body snippet={empty_body[:200]!r}")
+
+        # address_history.php: missing address_id shows error page (not blank)
+        await navigate(f"{APP}/address_history.php")
+        await asyncio.sleep(0.5)
+        err_body = await js("document.body.innerText") or ""
+        err_title = await js("document.title") or ""
+        check("address_history.php: missing address_id shows styled error page",
+              ("Address History" in err_title or "address_id" in err_body.lower() or
+               "addresses.php" in (await js("document.body.innerHTML") or "")),
+              f"title={err_title!r}")
+
+        # Security banner on db_tools.php
+        await navigate(f"{APP}/db_tools.php")
+        banner = await js("document.querySelector('.security-banner')")
+        check("db_tools.php: security warning banner present", banner is not None)
+
+        # Security banner dismiss works
+        if banner:
+            dismiss_link = await js("document.querySelector('.security-banner .dismiss-link')")
+            if dismiss_link:
+                await js("document.querySelector('.security-banner .dismiss-link').click()")
+                await asyncio.sleep(0.5)
+                await navigate(f"{APP}/db_tools.php")
+                await asyncio.sleep(0.5)
+                banner_after = await js("document.querySelector('.security-banner')")
+                check("db_tools.php: security banner dismisses", banner_after is None)
+
+        # Address history CSV export link present
+        if state.get('addr_id'):
+            await navigate(f"{APP}/address_history.php?address_id={state['addr_id']}")
+            links_text = await js("Array.from(document.querySelectorAll('a')).map(a=>a.href).join(' ')") or ""
+            check("address_history.php: Export CSV link present",
+                  "export_address_history.php" in links_text,
+                  f"links={links_text[:300]!r}")
 
         # ── 12: Access Control ────────────────────────────────────────────────
         print("\n[12] Access Control")
@@ -700,6 +776,39 @@ async def run():
         """)
         check("export audit: 200 response",          (exp or {}).get('status') == 200)
         check("export audit: text/csv content-type", 'text' in ((exp or {}).get('type') or ''))
+
+        # Subnet utilization CSV export
+        exp = await js(f"""
+            (async () => {{
+                const r = await fetch({json.dumps(APP+'/export_subnet_utilization.php')},
+                                      {{credentials:'same-origin',
+                                        headers:{{'Authorization':{_ba}}}}});
+                return {{status: r.status, type: r.headers.get('content-type'),
+                         body: await r.text()}};
+            }})()
+        """)
+        check("export subnet utilization: 200 response",  (exp or {}).get('status') == 200)
+        check("export subnet utilization: text/csv",       'text' in ((exp or {}).get('type') or ''))
+        check("export subnet utilization: has header row",
+              'utilization_pct' in ((exp or {}).get('body') or ''))
+
+        # Address history CSV export
+        if state.get('addr_id'):
+            exp = await js(f"""
+                (async () => {{
+                    const r = await fetch(
+                        {json.dumps(APP+f"/export_address_history.php?address_id={state['addr_id']}")},
+                        {{credentials:'same-origin',
+                          headers:{{'Authorization':{_ba}}}}});
+                    return {{status: r.status, type: r.headers.get('content-type'),
+                             body: await r.text()}};
+                }})()
+            """)
+            check("export address history: 200 response",  (exp or {}).get('status') == 200)
+            check("export address history: text/csv",       'text' in ((exp or {}).get('type') or ''))
+            check("export address history: contains action column",
+                  'action' in ((exp or {}).get('body') or ''))
+
         await screenshot("16_after_exports")
 
         # ── 14: Cleanup ───────────────────────────────────────────────────────

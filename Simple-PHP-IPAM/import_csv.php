@@ -117,7 +117,8 @@ function analyze_import(PDO $db, array $wiz): array
         'duplicate_in_csv' => 0,
     ];
 
-    $existingSubnets = $db->query("SELECT id, cidr FROM subnets")->fetchAll();
+    $existingSubnets = ($db->query("SELECT id, cidr FROM subnets")
+        ?: throw new \RuntimeException('Query failed'))->fetchAll();
     $existingByCidr = [];
     foreach ($existingSubnets as $s) $existingByCidr[(string)$s['cidr']] = (int)$s['id'];
 
@@ -419,6 +420,7 @@ if ($step === 4 && ($_SERVER['REQUEST_METHOD'] !== 'POST' || ($_POST['action'] ?
 }
 
 page_header('Import CSV');
+render_security_banner('import_csv', 'CSV import will create or update address records. Review the preview carefully before applying.');
 ?>
 
 <div class="breadcrumbs">
@@ -682,7 +684,8 @@ if (demo_mode_enabled()) {
         $resultRows = [];
 
         // preload current subnets map
-        $existingSubnets = $db->query("SELECT id, cidr FROM subnets")->fetchAll();
+        $existingSubnets = ($db->query("SELECT id, cidr FROM subnets")
+            ?: throw new \RuntimeException('Query failed'))->fetchAll();
         $existingByCidr = [];
         foreach ($existingSubnets as $s) $existingByCidr[(string)$s['cidr']] = (int)$s['id'];
 

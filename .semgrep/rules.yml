@@ -1,0 +1,136 @@
+rules:
+
+  # ---------------------------------------------------------------------------
+  # XSS: echo of unsanitized user input
+  #
+  # Taint sources: $_GET, $_POST, $_REQUEST, $_COOKIE
+  # Sanitizers:    e() [project wrapper for htmlspecialchars], htmlspecialchars(),
+  #                (int)/(float)/(bool) casts, intval(), floatval()
+  # Sinks:         echo, print, inline <?= ... ?>
+  #
+  # Replaces the registry rule `taint-unsafe-echo-tag` which does not know
+  # about the project-specific e() sanitizer.
+  # ---------------------------------------------------------------------------
+  - id: ipam-xss-unsanitized-echo
+    mode: taint
+    pattern-sources:
+      - pattern: $_GET[...]
+      - pattern: $_POST[...]
+      - pattern: $_REQUEST[...]
+      - pattern: $_COOKIE[...]
+    pattern-sanitizers:
+      - pattern: e(...)
+      - pattern: htmlspecialchars(...)
+      - pattern: htmlentities(...)
+      - pattern: (int)$X
+      - pattern: (float)$X
+      - pattern: (bool)$X
+      - pattern: intval(...)
+      - pattern: floatval(...)
+      - pattern: strip_tags(...)
+    pattern-sinks:
+      - pattern: print($SINK)
+      - pattern: echo("...$SINK...")
+      - pattern: 'echo "...$SINK..."'
+      - pattern: "echo '...' . $SINK"
+    message: >
+      Unsanitized user input ($SOURCE) echoed without e() or htmlspecialchars().
+      Wrap the value in e() before output: <?= e($value) ?>
+    languages: [php]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: CWE-79
+      confidence: HIGH
+
+  # ---------------------------------------------------------------------------
+  # Path traversal: unlink() with user-controlled filename
+  #
+  # Flags unlink() calls where the path derives directly from GET/POST/REQUEST/
+  # COOKIE without validation. Session-stored paths and glob()-derived paths
+  # are NOT flagged (they are considered application-controlled).
+  # ---------------------------------------------------------------------------
+  - id: ipam-unlink-user-path
+    mode: taint
+    pattern-sources:
+      - pattern: $_GET[...]
+      - pattern: $_POST[...]
+      - pattern: $_REQUEST[...]
+      - pattern: $_COOKIE[...]
+    pattern-sanitizers:
+      - pattern: basename(...)
+      - pattern: $DIR . '/' . basename(...)
+      - pattern: realpath(...)
+      - pattern: (int)$X
+      - pattern: (bool)$X
+    pattern-sinks:
+      - pattern: unlink($SINK)
+      - pattern: "@unlink($SINK)"
+    message: >
+      unlink() called with a path derived from user input ($SOURCE).
+      Validate the path is within an allowed directory before deletion.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: CWE-22
+      confidence: HIGH
+
+  # ---------------------------------------------------------------------------
+  # SQL injection: PDO query built by string concatenation from user input
+  #
+  # The project uses prepared statements throughout, but this rule catches any
+  # accidental raw concatenation into exec() or query().
+  # ---------------------------------------------------------------------------
+  - id: ipam-sqli-raw-concat
+    mode: taint
+    pattern-sources:
+      - pattern: $_GET[...]
+      - pattern: $_POST[...]
+      - pattern: $_REQUEST[...]
+      - pattern: $_COOKIE[...]
+    pattern-sanitizers:
+      - pattern: (int)$X
+      - pattern: (float)$X
+      - pattern: intval(...)
+      - pattern: $db->quote(...)
+    pattern-sinks:
+      - pattern: $db->exec($SINK)
+      - pattern: $db->query($SINK)
+    message: >
+      Raw user input ($SOURCE) concatenated into a PDO exec()/query() call.
+      Use a prepared statement with ->prepare() and ->execute().
+    languages: [php]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: CWE-89
+      confidence: HIGH
+
+  # ---------------------------------------------------------------------------
+  # Open redirect: header('Location: ...') with unvalidated user input
+  # ---------------------------------------------------------------------------
+  - id: ipam-open-redirect
+    mode: taint
+    pattern-sources:
+      - pattern: $_GET[...]
+      - pattern: $_POST[...]
+      - pattern: $_REQUEST[...]
+    pattern-sanitizers:
+      - pattern: ltrim($X, '/')
+      - pattern: parse_url(...)
+      - pattern: "\"...\""
+      - pattern: "'...'"
+    pattern-sinks:
+      - pattern: 'header("Location: " . $SINK)'
+      - pattern: "header('Location: ' . $SINK)"
+      - pattern: 'header("Location: $SINK")'
+    message: >
+      header('Location: ...') constructed with user input ($SOURCE) without validation.
+      Restrict redirects to known-good paths or validate with parse_url().
+    languages: [php]
+    severity: WARNING
+    metadata:
+      category: security
+      cwe: CWE-601
+      confidence: MEDIUM

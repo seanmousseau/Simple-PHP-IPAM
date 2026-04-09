@@ -134,10 +134,11 @@ match ($resource) {
         'DELETE' => api_sites_delete($db, $apiKey, (int)($_GET['id'] ?? 0)),
         default  => api_error(405, 'Method not allowed.'),
     },
-    'history' => $method === 'GET' ? api_history($db)    : api_error(405, 'Method not allowed.'),
-    'search'  => $method === 'GET' ? api_search($db)     : api_error(405, 'Method not allowed.'),
-    'audit'   => $method === 'GET' ? api_audit_log($db)  : api_error(405, 'Method not allowed.'),
-    default   => api_error(404, 'Unknown resource. Valid: subnets, addresses, sites, history, search, audit'),
+    'history'    => $method === 'GET' ? api_history($db)      : api_error(405, 'Method not allowed.'),
+    'search'     => $method === 'GET' ? api_search($db)       : api_error(405, 'Method not allowed.'),
+    'audit'      => $method === 'GET' ? api_audit_log($db)    : api_error(405, 'Method not allowed.'),
+    'unassigned' => $method === 'GET' ? api_unassigned($db)   : api_error(405, 'Method not allowed.'),
+    default      => api_error(404, 'Unknown resource. Valid: subnets, addresses, sites, history, search, audit, unassigned'),
 };
 
 // ---- Helpers ----
@@ -158,10 +159,31 @@ function api_error(int $code, string $message): never
 
 function api_subnets(PDO $db): never
 {
+    $withCounts = isset($_GET['counts']) && $_GET['counts'] !== '0';
+
+    $countsSelect = $withCounts
+        ? ", COALESCE(ac.used_count, 0) AS used_count,
+              COALESCE(ac.reserved_count, 0) AS reserved_count,
+              COALESCE(ac.free_count, 0) AS free_count"
+        : '';
+
+    $countsJoin = $withCounts
+        ? "LEFT JOIN (
+               SELECT subnet_id,
+                      SUM(status = 'used')     AS used_count,
+                      SUM(status = 'reserved') AS reserved_count,
+                      SUM(status = 'free')     AS free_count
+               FROM addresses
+               GROUP BY subnet_id
+           ) ac ON ac.subnet_id = s.id"
+        : '';
+
     $baseSql = "SELECT s.id, s.cidr, s.ip_version, s.network, s.prefix,
-                       s.description, s.vlan_id, s.created_at, si.name AS site
+                       s.description, s.vlan_id, s.site_id, s.created_at,
+                       si.name AS site$countsSelect
                 FROM subnets s
-                LEFT JOIN sites si ON si.id = s.site_id";
+                LEFT JOIN sites si ON si.id = s.site_id
+                $countsJoin";
 
     if (isset($_GET['id'])) {
         $id = (int)$_GET['id'];
@@ -169,7 +191,7 @@ function api_subnets(PDO $db): never
         $st->execute([':id' => $id]);
         $row = $st->fetch();
         if (!$row) api_error(404, 'Subnet not found.');
-        api_json(fmt_subnet($row));
+        api_json(fmt_subnet($row, $withCounts));
     }
 
     $page   = max(1, (int)($_GET['page']  ?? 1));
@@ -193,6 +215,12 @@ function api_subnets(PDO $db): never
         $params[':vlan'] = $v;
     }
 
+    if (isset($_GET['site_id'])) {
+        $v = (int)$_GET['site_id'];
+        $where[]          = 's.site_id = :site_id';
+        $params[':site_id'] = $v;
+    }
+
     $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
 
     $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM subnets s $whereSql");
@@ -210,7 +238,7 @@ function api_subnets(PDO $db): never
         'total'   => $total,
         'page'    => $page,
         'limit'   => $limit,
-        'subnets' => array_map('fmt_subnet', $st->fetchAll()),
+        'subnets' => array_map(fn($r) => fmt_subnet($r, $withCounts), $st->fetchAll()),
     ]);
 }
 
@@ -218,9 +246,9 @@ function api_subnets(PDO $db): never
  * @param array<string, mixed> $r
  * @return array<string, mixed>
  */
-function fmt_subnet(array $r): array
+function fmt_subnet(array $r, bool $withCounts = false): array
 {
-    return [
+    $out = [
         'id'          => (int)$r['id'],
         'cidr'        => $r['cidr'],
         'ip_version'  => (int)$r['ip_version'],
@@ -228,15 +256,41 @@ function fmt_subnet(array $r): array
         'prefix'      => (int)$r['prefix'],
         'description' => (string)$r['description'],
         'vlan_id'     => $r['vlan_id'] !== null ? (int)$r['vlan_id'] : null,
+        'site_id'     => $r['site_id'] !== null ? (int)$r['site_id'] : null,
         'site'        => $r['site'],
         'created_at'  => $r['created_at'],
     ];
+    if ($withCounts) {
+        $used     = (int)$r['used_count'];
+        $reserved = (int)$r['reserved_count'];
+        $free     = (int)$r['free_count'];
+        $prefix   = (int)$r['prefix'];
+        $ipVer    = (int)$r['ip_version'];
+
+        if ($ipVer === 4) {
+            $rawHosts = (int)(2 ** (32 - $prefix));
+            $capacity = $prefix >= 31 ? $rawHosts : max(1, $rawHosts - 2);
+            $utilPct  = round(($used + $reserved) / $capacity * 100, 2);
+        } else {
+            $utilPct = null; // IPv6 — subnet too large for meaningful percentage
+        }
+
+        $out['address_counts'] = [
+            'used'            => $used,
+            'reserved'        => $reserved,
+            'free'            => $free,
+            'total'           => $used + $reserved + $free,
+            'utilization_pct' => $utilPct,
+        ];
+    }
+    return $out;
 }
 
 function api_addresses(PDO $db): never
 {
     $where  = [];
     $params = [];
+    $joinSite = false;
 
     if (isset($_GET['subnet_id'])) {
         $where[] = 'a.subnet_id = :sid';
@@ -249,20 +303,26 @@ function api_addresses(PDO $db): never
             $params[':st']   = $s;
         }
     }
+    if (isset($_GET['site_id'])) {
+        $joinSite = true;
+        $where[]            = 's.site_id = :site_id';
+        $params[':site_id'] = (int)$_GET['site_id'];
+    }
 
+    $joinSql  = $joinSite ? ' JOIN subnets s ON s.id = a.subnet_id' : '';
     $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
 
     $page   = max(1, (int)($_GET['page']  ?? 1));
     $limit  = max(1, min(500, (int)($_GET['limit'] ?? 100)));
     $offset = ($page - 1) * $limit;
 
-    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM addresses a $whereSql");
+    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM addresses a$joinSql $whereSql");
     $cntSt->execute($params);
     $total = (int)$cntSt->fetch()['c'];
 
     $sql = "SELECT a.id, a.subnet_id, a.ip, a.hostname, a.owner,
                    a.status, a.note, a.grp, a.created_at, a.updated_at
-            FROM addresses a $whereSql
+            FROM addresses a$joinSql $whereSql
             ORDER BY a.ip_bin
             LIMIT :lim OFFSET :off";
 
@@ -299,7 +359,8 @@ function api_addresses(PDO $db): never
 
 function api_sites(PDO $db): never
 {
-    $st = $db->query("SELECT id, name, description, created_at FROM sites ORDER BY name");
+    $st = $db->query("SELECT id, name, description, created_at FROM sites ORDER BY name")
+        ?: throw new \RuntimeException('Query failed');
     $rows = array_map(function(array $r): array {
         return [
             'id'          => (int)$r['id'],
@@ -473,6 +534,73 @@ function api_audit_log(PDO $db): never
     ], $st->fetchAll());
 
     api_json(['total' => $total, 'page' => $page, 'limit' => $limit, 'entries' => $rows]);
+}
+
+// ---- Unassigned IPs endpoint ----
+
+function api_unassigned(PDO $db): never
+{
+    if (!isset($_GET['subnet_id'])) {
+        api_error(400, 'subnet_id is required.');
+    }
+    $subnetId = (int)$_GET['subnet_id'];
+
+    $st = $db->prepare("SELECT id, cidr, ip_version, network_bin, prefix FROM subnets WHERE id = :id");
+    $st->execute([':id' => $subnetId]);
+    $subnet = $st->fetch();
+    if (!$subnet) api_error(404, 'Subnet not found.');
+    if ((int)$subnet['ip_version'] !== 4) api_error(400, 'Unassigned endpoint only supports IPv4 subnets.');
+
+    $prefix     = (int)$subnet['prefix'];
+    $networkInt = ipv4_bin_to_int((string)$subnet['network_bin']);
+    $bcastInt   = ipv4_broadcast_int($networkInt, $prefix);
+    $assignable = ipv4_assignable_count($prefix);
+
+    $maxIPs = 256;
+    if ($assignable > $maxIPs) {
+        api_error(400, "Subnet is too large ($assignable assignable IPs; limit is $maxIPs). Use a /24 or smaller.");
+    }
+
+    // Determine host range
+    if ($prefix <= 30) {
+        $first = $networkInt + 1;
+        $last  = $bcastInt - 1;
+    } else {
+        $first = $networkInt;
+        $last  = $bcastInt;
+    }
+
+    // Fetch assigned IPs as integers
+    $ipSt = $db->prepare("SELECT ip_bin FROM addresses WHERE subnet_id = :sid");
+    $ipSt->execute([':sid' => $subnetId]);
+    $assigned = [];
+    foreach ($ipSt->fetchAll() as $row) {
+        $assigned[ipv4_bin_to_int((string)$row['ip_bin'])] = true;
+    }
+
+    $all = [];
+    for ($i = $first; $i <= $last; $i++) {
+        if (!isset($assigned[$i])) {
+            $all[] = ipv4_int_to_text($i);
+        }
+    }
+
+    $total  = count($all);
+    $page   = max(1, (int)($_GET['page']  ?? 1));
+    $limit  = max(1, min(256, (int)($_GET['limit'] ?? 100)));
+    $pages  = (int)max(1, ceil($total / $limit));
+    if ($page > $pages) $page = $pages;
+    $offset = ($page - 1) * $limit;
+
+    api_json([
+        'subnet_id'        => $subnetId,
+        'cidr'             => $subnet['cidr'],
+        'total_unassigned' => $total,
+        'page'             => $page,
+        'pages'            => $pages,
+        'limit'            => $limit,
+        'unassigned'       => array_slice($all, $offset, $limit),
+    ]);
 }
 
 // ---- Write: Sites ----

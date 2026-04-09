@@ -71,8 +71,8 @@ $appName = trim((string)($config['app_name'] ?? '')) ?: 'Simple PHP IPAM';
   <link rel="icon" type="image/webp" sizes="32x32" href="assets/favicon-32.webp">
   <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
   <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
-  <link rel="stylesheet" href="assets/app.css?v=1.15.1">
-  <script defer src="assets/app.js?v=1.15.1"></script>
+  <link rel="stylesheet" href="assets/app.css?v=1.18.0">
+  <script defer src="assets/app.js?v=1.18.0"></script>
 </head>
 <body>
 <div class="gate-wrap">
@@ -84,6 +84,7 @@ $appName = trim((string)($config['app_name'] ?? '')) ?: 'Simple PHP IPAM';
     <p class="muted" style="margin:4px 0 0;"><?= e($appName) ?></p>
   </div>
   <h1>Almost there…</h1>
+  <?php render_security_banner('demo_gate', 'This is a demo environment. Do not enter real IP data or credentials.'); ?>
   <p class="muted">Please complete the check below to continue to the demo.</p>
 
   <?php if ($gateError !== ''): ?>

@@ -47,7 +47,10 @@ Dev tooling at the repo root (not deployed): `composer.json`, `composer.lock`, `
 | `tmp_cleanup.php` | CLI | — | Deletes stale temp files |
 | `demo_reset.php` | CLI | — | Resets demo database to seed data (nightly cron) |
 | `demo_seed.php` | CLI | — | Seeds demo data into database |
-| export_*.php | yes | any | CSV export endpoints |
+| `export_addresses.php` | yes | any/write | CSV export: single subnet (any role) or all subnets cross-subnet (write role) |
+| `export_address_history.php` | yes | any | CSV export: per-address change history |
+| `export_subnet_utilization.php` | yes | any | CSV export: subnet utilization summary across all subnets |
+| export_audit.php, export_search.php, export_subnets.php, export_unassigned.php, export_import_report.php | yes | any | Other CSV export endpoints |
 | `index.php` | — | — | Redirects to dashboard (if logged in) or login |
 | `status.php` | — | — | Health check JSON endpoint (`{"status":"ok"}`) for load balancers/uptime monitors |
 | `set_theme.php` | yes | any | AJAX POST: persists theme preference to `users.theme` |
@@ -189,7 +192,7 @@ Located in `assets/app.css`. Uses CSS custom properties for theming (light/dark/
 
 Key utility classes: `.muted`, `.danger`, `.success`, `.warning`, `.badge`, `.badge-update`, `.status-used`, `.status-reserved`, `.status-free`, `.util-bar`, `.util-bar-fill`, `.util-bar-fill--warn`, `.util-bar-fill--crit`, `.row`, `.card`, `.action-pill`, `.button-danger`, `.button-secondary`.
 
-Asset cache-buster: update `?v=X.Y.Z` in the `<link>` and `<script>` tags in `page_header()` when changing CSS/JS.
+Asset cache-buster: update `?v=X.Y.Z` in the `<link>` and `<script>` tags in `page_header()` **and** in `demo_gate.php` (lines 74–75) when changing CSS/JS. `demo_gate.php` has its own `<head>` block and does not call `page_header()`, so it must be updated separately.
 
 ### Nav structure
 - Left: nav-links (Dashboard, Subnets, Addresses, Search, Audit, ⚙ Admin dropdown)
@@ -246,17 +249,18 @@ When implementing a new version:
    - Add a version comparison link at the bottom of the file
 4. Update `README.md` "What's new" section
 5. Update relevant `docs/` files
-6. Bump asset cache-buster `?v=X.Y.Z` in `page_header()` if CSS/JS changed
+6. Bump asset cache-buster `?v=X.Y.Z` in `page_header()` **and** `demo_gate.php:74–75` if CSS/JS changed
 
 ### Static analysis & testing
 
-The project uses three dev tools managed via Composer (dev-only; never deployed):
+The project uses four dev tools (three Composer-managed, one standalone):
 
 | Tool | Config | Purpose |
 |------|--------|---------|
-| **PHPStan** | `phpstan.neon` | Static analysis — level 6, analyses `Simple-PHP-IPAM/` |
+| **PHPStan** | `phpstan.neon` | Static analysis — level 7, analyses `Simple-PHP-IPAM/` |
 | **PHP_CodeSniffer** | `.phpcs.xml` | Style checking — PSR-12 with exclusions for K&R brace and inline control structure style |
 | **PHPUnit** | `phpunit.xml` | Unit tests for pure utility functions in `lib.php` |
+| **Semgrep** | `.semgrep/rules.yml` | Security taint rules — XSS, path traversal, SQLi, open redirect. Recognises `e()` as an HTML sanitizer. |
 
 **Running the tools:**
 ```bash
@@ -264,6 +268,7 @@ vendor/bin/phpstan analyse          # static analysis
 vendor/bin/phpcs                    # style check
 vendor/bin/phpunit                  # unit tests
 php -l Simple-PHP-IPAM/changed.php  # syntax check individual files
+semgrep --config=.semgrep/rules.yml Simple-PHP-IPAM/   # security rules (standalone, not via Composer)
 ```
 
 **PHPStan baseline (`phpstan-baseline.neon`):** Pre-existing errors are acknowledged in the baseline so CI only fails on *new* errors. The baseline is almost entirely `Variable $db/$config might not be defined` false-positives caused by PHPStan not being able to see variables injected by `require 'init.php'`. Fix baseline errors incrementally; do not add new entries to suppress real bugs.
@@ -279,6 +284,12 @@ php -l Simple-PHP-IPAM/changed.php  # syntax check individual files
 
 **CI:** `.github/workflows/php-qa.yml` runs lint → PHPStan → PHPCS → PHPUnit on every push to `dev`/`main` and every PR targeting `main`.
 
+**Semgrep:** Custom security rules live in `.semgrep/rules.yml`. Run locally with:
+```bash
+semgrep --config=.semgrep/rules.yml Simple-PHP-IPAM/
+```
+Rules cover XSS (`ipam-xss-unsanitized-echo`), path traversal (`ipam-unlink-user-path`), SQL injection (`ipam-sqli-raw-concat`), and open redirect (`ipam-open-redirect`). The `e()` function is registered as an XSS sanitizer so it is never flagged as a false positive. Path exclusions are in `.semgrepignore`.
+
 ### Linting
 Always run `php -l` on every changed PHP file before committing:
 ```bash
@@ -292,15 +303,22 @@ Before building a release bundle, **always** complete these steps in order:
 1. Update `docs/` (api.md, configuration.md, etc.) for any changed features or config keys
 2. Update `testing/samples/large-db-sample/gen_large_db.php` and sample datasets if schema or data model changed
 3. Update `testing/scripts/test_api.sh` if API endpoints were added or changed
-4. Run `php -l` on every changed PHP file
-5. Run the full QA suite and confirm **all checks pass**:
+4. Update `testing/scripts/cdp_test.py` if UI features were added or changed
+5. Run `php -l` on every changed PHP file
+6. Run the full QA suite and confirm **all checks pass**:
    ```bash
    vendor/bin/phpstan analyse
    vendor/bin/phpcs
    vendor/bin/phpunit
+   semgrep --config=.semgrep/rules.yml Simple-PHP-IPAM/
    bash testing/scripts/test_api.sh https://dev-direct.seanmousseau.com:8343/claude/ipam
+   bash -c 'set -a; source ~/.claude/dev-secrets.env; set +a; python3 testing/scripts/cdp_test.py'
    ```
-6. Only then build the release bundle
+7. Run CodeRabbit review and address any Critical findings:
+   ```bash
+   coderabbit review --plain -t all
+   ```
+8. Only then build the release bundle
 
 ### Building a release bundle
 Use `releases/make_releases.sh` when `rsync` is available:

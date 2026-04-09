@@ -5,8 +5,11 @@ require_login();
 
 $addressId = (int)($_GET['address_id'] ?? 0);
 if ($addressId <= 0) {
-    http_response_code(400);
-    exit('Missing address_id');
+    page_header('Address History');
+    echo '<div class="card"><p class="danger">Missing or invalid <code>address_id</code> parameter. '
+       . '<a href="addresses.php">Go to Addresses</a> to find an address.</p></div>';
+    page_footer();
+    exit;
 }
 
 $st = $db->prepare("SELECT a.id, a.ip, a.subnet_id, s.cidr AS subnet_cidr
@@ -71,7 +74,7 @@ function j_pretty_hist(?string $json): string {
     if ($json === null || trim($json) === '') return '';
     $data = json_decode($json, true);
     if ($data === null) return $json;
-    return json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    return json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) ?: $json;
 }
 
 function render_history_diff(?string $beforeJson, ?string $afterJson): string {
@@ -92,9 +95,9 @@ function render_history_diff(?string $beforeJson, ?string $afterJson): string {
         $changed = (string)$bVal !== (string)$aVal;
         $cls = $changed ? ' class="diff-changed"' : '';
         $html .= '<tr' . $cls . '>'
-               . '<td><b>' . e($key) . '</b></td>'
-               . '<td>' . ($bVal !== '' ? e((string)$bVal) : '<span class="muted">—</span>') . '</td>'
-               . '<td>' . ($aVal !== '' ? e((string)$aVal) : '<span class="muted">—</span>') . '</td>'
+               . '<td><b>' . e((string)$key) . '</b></td>'
+               . '<td>' . ($bVal !== '' ? e(is_string($bVal) ? $bVal : (string)$bVal) : '<span class="muted">—</span>') . '</td>'
+               . '<td>' . ($aVal !== '' ? e(is_string($aVal) ? $aVal : (string)$aVal) : '<span class="muted">—</span>') . '</td>'
                . '</tr>';
     }
     $html .= '</tbody></table>';
@@ -134,6 +137,7 @@ page_header('Address History');
 <div class="page-actions">
   <a class="action-pill" href="addresses.php?subnet_id=<?= (int)$addr['subnet_id'] ?>">🧾 Back to Addresses</a>
   <a class="action-pill" href="search.php?q=<?= urlencode($addr['ip']) ?>">🔎 Search this IP</a>
+  <a class="action-pill" href="export_address_history.php?address_id=<?= (int)$addr['id'] ?>">⬇ Export CSV</a>
 </div>
 
 <div class="card mt-16">

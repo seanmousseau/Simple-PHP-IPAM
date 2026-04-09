@@ -300,7 +300,8 @@ function ipv4_broadcast_bin_local(string $netBin, int $prefix): string
     $hostBits = 32 - $prefix;
     if ($hostBits <= 0) return $netBin;
 
-    $n = unpack('N', $netBin)[1];
+    $unpacked = unpack('N', $netBin);
+    $n = $unpacked !== false ? $unpacked[1] : 0;
     $hostMask = ($hostBits === 32) ? 0xFFFFFFFF : ((1 << $hostBits) - 1);
     $b = ($n | $hostMask) & 0xFFFFFFFF;
 

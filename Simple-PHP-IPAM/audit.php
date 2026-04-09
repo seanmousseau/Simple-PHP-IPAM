@@ -43,7 +43,7 @@ if ($filterFrom !== '') {
 }
 if ($filterTo !== '') {
     $wheres[] = 'created_at < :to';
-    $params[':to'] = date('Y-m-d', strtotime($filterTo . ' +1 day')) . ' 00:00:00';
+    $params[':to'] = date('Y-m-d', (int)strtotime($filterTo . ' +1 day')) . ' 00:00:00';
 }
 $where = $wheres ? 'WHERE ' . implode(' AND ', $wheres) : '';
 
@@ -162,7 +162,7 @@ page_header('Audit Log');
           <td><?= e((string)($r['username'] ?? '')) ?></td>
           <td><?= e($r['action']) ?></td>
           <td><?= e($r['entity_type']) ?>#<?= e((string)($r['entity_id'] ?? '')) ?></td>
-          <td class="muted"><?= e((string)($r['ip'] ?? '')) ?></td>
+          <td class="muted"><?= $r['ip'] !== null ? e((string)$r['ip']) : '—' ?></td>
           <td class="muted"><?= e((string)($r['details'] ?? '')) ?></td>
         </tr>
       <?php endforeach; ?>
