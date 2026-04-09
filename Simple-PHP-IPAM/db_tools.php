@@ -142,9 +142,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                         );
                     }
                     // CREATE TRIGGER bodies can contain arbitrary SQL. Only allow
-                    // triggers that match known safe patterns (append-only guards).
+                    // triggers that match one of two known-safe patterns:
+                    //   1. RAISE(ABORT, ...) — append-only guards on audit_log
+                    //   2. UPDATE <table> SET updated_at = datetime('now') WHERE id = OLD.id
+                    //      — the timestamp maintenance triggers on users/subnets/addresses
+                    // Pattern 2 is matched strictly: the entire trigger body must be that
+                    // single UPDATE statement with no other statements before or after it.
                     if (preg_match('/^CREATE\s+TRIGGER/i', $exec)) {
-                        if (!preg_match('/RAISE\s*\(\s*ABORT/i', $exec)) {
+                        $isRaise     = preg_match('/RAISE\s*\(\s*ABORT/i', $exec);
+                        $isTimestamp = preg_match(
+                            '/\bBEGIN\s+UPDATE\s+\w+\s+SET\s+updated_at\s*=\s*datetime\s*\(\s*\'now\'\s*\)\s+WHERE\s+id\s*=\s*OLD\.id\s*;\s*END\b/is',
+                            $exec
+                        );
+                        if (!$isRaise && !$isTimestamp) {
                             throw new RuntimeException(
                                 'Blocked CREATE TRIGGER with non-RAISE body: ' . substr($exec, 0, 80)
                             );

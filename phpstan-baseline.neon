@@ -127,24 +127,6 @@ parameters:
 			path: Simple-PHP-IPAM/export_unassigned.php
 
 		-
-			message: '#^If condition is always false\.$#'
-			identifier: if.alwaysFalse
-			count: 1
-			path: Simple-PHP-IPAM/import_csv.php
-
-		-
-			message: '#^Strict comparison using \=\=\= between 4 and 4 will always evaluate to true\.$#'
-			identifier: identical.alwaysTrue
-			count: 1
-			path: Simple-PHP-IPAM/import_csv.php
-
-		-
-			message: '#^Strict comparison using \=\=\= between string and null will always evaluate to false\.$#'
-			identifier: identical.alwaysFalse
-			count: 1
-			path: Simple-PHP-IPAM/import_csv.php
-
-		-
 			message: '#^Variable \$config might not be defined\.$#'
 			identifier: variable.undefined
 			count: 2

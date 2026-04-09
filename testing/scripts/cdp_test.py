@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
 CDP browser test suite for Simple PHP IPAM.
-Covers: auth, CRUD (subnets/addresses), search, API, audit, access control, exports.
+Covers: auth, CRUD (subnets/addresses), search, API, audit, access control, exports, DB import/export.
 """
 import asyncio, json, base64, urllib.request, urllib.parse, os, sys
 import websockets
 
 CHROME_HOST = "192.168.80.15"
 CHROME_PORT = 9224
-APP         = "https://dev-direct.seanmousseau.com/claude/ipam"
+APP         = "https://dev-direct.seanmousseau.com:8343/claude/ipam"
 OUT         = "/tmp/ipam-screenshots"
 os.makedirs(OUT, exist_ok=True)
 
@@ -429,6 +429,98 @@ async def run():
         else:
             check("db_tools: found .grid > .card elements", False, f"found={heights}")
         await screenshot("12_db_tools")
+
+        # Export — POST via fetch so we capture the SQL body
+        _ba = json.dumps(BASIC_HEADER)
+        export_r = await js(f"""
+            (async () => {{
+                const csrf = document.querySelector('[name=csrf]')?.value || '';
+                const r = await fetch({json.dumps(APP+'/db_tools.php')}, {{
+                    method: 'POST',
+                    headers: {{
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'Authorization': {_ba}
+                    }},
+                    body: 'action=export&csrf=' + encodeURIComponent(csrf),
+                    credentials: 'same-origin'
+                }});
+                const body = await r.text();
+                return {{ status: r.status, ct: r.headers.get('content-type'), body }};
+            }})()
+        """)
+        export_sql = (export_r or {}).get('body', '')
+        check("db export: returns 200",
+              (export_r or {}).get('status') == 200)
+        check("db export: content-type is sql",
+              'sql' in ((export_r or {}).get('ct') or '').lower())
+        # The dump encodes text values as CAST(X'hex' AS TEXT), so check for the hex form
+        cidr1_hex = CIDR_1.encode().hex()
+        check("db export: contains test subnet CIDR",
+              cidr1_hex in export_sql.lower())
+        check("db export: contains updated_at triggers",
+              'addresses_updated_at' in export_sql and 'users_updated_at' in export_sql)
+        check("db export: contains audit_log triggers",
+              'audit_log_no_update' in export_sql and 'audit_log_no_delete' in export_sql)
+
+        # Import without confirmation checkbox — must be rejected
+        await navigate(f"{APP}/db_tools.php")
+        no_confirm_r = await js(f"""
+            (async () => {{
+                const csrf = document.querySelector('[name=csrf]')?.value || '';
+                const blob = new Blob(['-- dummy'], {{type: 'application/sql'}});
+                const fd = new FormData();
+                fd.append('action', 'import');
+                fd.append('csrf', csrf);
+                fd.append('sql_file', blob, 'dummy.sql');
+                const r = await fetch({json.dumps(APP+'/db_tools.php')}, {{
+                    method: 'POST',
+                    headers: {{'Authorization': {_ba}}},
+                    body: fd,
+                    credentials: 'same-origin'
+                }});
+                const body = await r.text();
+                return {{ status: r.status, body }};
+            }})()
+        """)
+        check("db import: rejects missing confirmation",
+              'confirmation' in ((no_confirm_r or {}).get('body') or '').lower(),
+              f"status={(no_confirm_r or {}).get('status')}")
+
+        # Import round-trip — re-import the just-exported dump
+        if export_sql:
+            await navigate(f"{APP}/db_tools.php")
+            import_r = await js(f"""
+                (async () => {{
+                    const csrf = document.querySelector('[name=csrf]')?.value || '';
+                    const blob = new Blob([{json.dumps(export_sql)}], {{type: 'application/sql'}});
+                    const fd = new FormData();
+                    fd.append('action', 'import');
+                    fd.append('confirmed', '1');
+                    fd.append('csrf', csrf);
+                    fd.append('sql_file', blob, 'test-roundtrip.sql');
+                    const r = await fetch({json.dumps(APP+'/db_tools.php')}, {{
+                        method: 'POST',
+                        headers: {{'Authorization': {_ba}}},
+                        body: fd,
+                        credentials: 'same-origin'
+                    }});
+                    const body = await r.text();
+                    const success = body.includes('Import successful');
+                    const failMatch = body.match(/Import failed[^<]*/);
+                    return {{ status: r.status, success, fail: failMatch ? failMatch[0] : null }};
+                }})()
+            """)
+            check("db import: round-trip succeeds",
+                  bool((import_r or {}).get('success')),
+                  (import_r or {}).get('fail') or f"status={(import_r or {}).get('status')}")
+
+            # Verify the app still works and data survived
+            await navigate(f"{APP}/subnets.php")
+            check("db import: test subnet survives round-trip",
+                  CIDR_1 in (await js("document.body.innerText") or ""))
+            await screenshot("12b_db_import_roundtrip")
+        else:
+            check("db import: round-trip succeeds", False, "export body was empty")
 
         # ── 10: REST API ──────────────────────────────────────────────────────
         print("\n[10] REST API")

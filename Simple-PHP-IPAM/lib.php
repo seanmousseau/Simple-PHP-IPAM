@@ -1994,6 +1994,7 @@ function page_header(string $title, array $opts = []): void
     echo "<title>" . e($appName) . " \u{2014} " . e($title) . "</title>";
     echo "<link rel='icon' type='image/webp' sizes='32x32' href='assets/favicon-32.webp'>";
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
+    echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
     echo "<link rel='stylesheet' href='assets/app.css?v=1.15.1'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
