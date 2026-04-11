@@ -49,7 +49,8 @@ reviews:
     - path: "Simple-PHP-IPAM/api.php"
       instructions: |
         api.php is a stateless REST endpoint — it does not use init.php or sessions.
-        All authentication is via API key (SHA-256 hash comparison with hash_equals).
+        All authentication is via API key: the raw key is hashed with hash('sha256', $rawKey)
+        and looked up in api_keys.key_hash via a prepared statement (SQL comparison, not hash_equals).
         Ensure every response sets Content-Type: application/json and returns consistent
         JSON shape: {"data": ..., "meta": ...} or {"error": "..."}.
 

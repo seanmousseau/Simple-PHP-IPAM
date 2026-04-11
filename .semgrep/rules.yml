@@ -10,7 +10,7 @@ rules:
   #                as a taint sink (echo is a language construct, not an
   #                expression). The project convention is <?= e($val) ?> anyway.
   # ---------------------------------------------------------------------------
-  - id: ipam-xss-unsanitized-echo
+  - id: ipam-xss-unsanitized-print
     mode: taint
     pattern-sources:
       - pattern: $_GET[...]
