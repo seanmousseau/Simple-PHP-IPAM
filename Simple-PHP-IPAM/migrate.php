@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require __DIR__ . '/init.php';
+/** @var \PDO $db */
 
 if (php_sapi_name() !== 'cli') {
     http_response_code(403);

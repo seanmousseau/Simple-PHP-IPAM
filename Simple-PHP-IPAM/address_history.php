@@ -1,9 +1,10 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/init.php';
+/** @var \PDO $db */
 require_login();
 
-$addressId = (int)($_GET['address_id'] ?? 0);
+$addressId = to_int($_GET['address_id'] ?? 0);
 if ($addressId <= 0) {
     page_header('Address History');
     echo '<div class="card"><p class="danger">Missing or invalid <code>address_id</code> parameter. '
@@ -17,6 +18,7 @@ $st = $db->prepare("SELECT a.id, a.ip, a.subnet_id, s.cidr AS subnet_cidr
                     JOIN subnets s ON s.id = a.subnet_id
                     WHERE a.id = :id");
 $st->execute([':id' => $addressId]);
+/** @var array<string, mixed>|false $addr */
 $addr = $st->fetch();
 
 if (!$addr) {
@@ -27,6 +29,7 @@ if (!$addr) {
                         ORDER BY id DESC
                         LIMIT 1");
     $st->execute([':id' => $addressId]);
+    /** @var array<string, mixed>|false $fallback */
     $fallback = $st->fetch();
     if (!$fallback) {
         http_response_code(404);
@@ -34,14 +37,15 @@ if (!$addr) {
     }
 
     $st = $db->prepare("SELECT cidr FROM subnets WHERE id = :sid");
-    $st->execute([':sid' => (int)$fallback['subnet_id']]);
+    $st->execute([':sid' => to_int($fallback['subnet_id'])]);
+    /** @var array<string, mixed>|false $sub */
     $sub = $st->fetch();
 
     $addr = [
-        'id' => (int)$fallback['id'],
-        'ip' => (string)$fallback['ip'],
-        'subnet_id' => (int)$fallback['subnet_id'],
-        'subnet_cidr' => (string)($sub['cidr'] ?? 'unknown'),
+        'id' => to_int($fallback['id']),
+        'ip' => to_str($fallback['ip']),
+        'subnet_id' => to_int($fallback['subnet_id']),
+        'subnet_cidr' => to_str($sub['cidr'] ?? 'unknown'),
     ];
 }
 
@@ -53,7 +57,11 @@ $histSort = parse_sort($histSortCols, 'time', 'desc');
 
 $st = $db->prepare("SELECT COUNT(*) AS c FROM address_history WHERE address_id = :aid");
 $st->execute([':aid' => $addressId]);
-$total = (int)$st->fetch()['c'];
+/** @var array<string, mixed>|false $cntRow */
+
+$cntRow = $st->fetch();
+
+$total = is_array($cntRow) ? to_int($cntRow['c']) : 0;
 
 $p = paginate($total, $page, $pageSize);
 
@@ -68,6 +76,7 @@ $st->bindValue(':aid', $addressId, PDO::PARAM_INT);
 $st->bindValue(':lim', $p['limit'], PDO::PARAM_INT);
 $st->bindValue(':off', $p['offset'], PDO::PARAM_INT);
 $st->execute();
+/** @var list<array<string, mixed>> $rows */
 $rows = $st->fetchAll();
 
 function j_pretty_hist(?string $json): string {
@@ -78,26 +87,26 @@ function j_pretty_hist(?string $json): string {
 }
 
 function render_history_diff(?string $beforeJson, ?string $afterJson): string {
-    $before = ($beforeJson !== null && trim($beforeJson) !== '') ? json_decode($beforeJson, true) : null;
-    $after  = ($afterJson  !== null && trim($afterJson)  !== '') ? json_decode($afterJson,  true) : null;
-    if ($before === null && $after === null) return '<span class="muted">—</span>';
+    $beforeRaw = ($beforeJson !== null && trim($beforeJson) !== '') ? json_decode($beforeJson, true) : null;
+    $afterRaw  = ($afterJson  !== null && trim($afterJson)  !== '') ? json_decode($afterJson,  true) : null;
+    if ($beforeRaw === null && $afterRaw === null) return '<span class="muted">—</span>';
 
-    $allKeys = array_unique(array_merge(
-        $before !== null ? array_keys($before) : [],
-        $after  !== null ? array_keys($after)  : []
-    ));
+    $before = is_array($beforeRaw) ? $beforeRaw : [];
+    $after  = is_array($afterRaw)  ? $afterRaw  : [];
+
+    $allKeys = array_unique(array_merge(array_keys($before), array_keys($after)));
     sort($allKeys);
 
     $html = '<table class="diff-table"><thead><tr><th>Field</th><th>Before</th><th>After</th></tr></thead><tbody>';
     foreach ($allKeys as $key) {
         $bVal = $before[$key] ?? '';
         $aVal = $after[$key]  ?? '';
-        $changed = (string)$bVal !== (string)$aVal;
+        $changed = to_str($bVal) !== to_str($aVal);
         $cls = $changed ? ' class="diff-changed"' : '';
         $html .= '<tr' . $cls . '>'
-               . '<td><b>' . e((string)$key) . '</b></td>'
-               . '<td>' . ($bVal !== '' ? e(is_string($bVal) ? $bVal : (string)$bVal) : '<span class="muted">—</span>') . '</td>'
-               . '<td>' . ($aVal !== '' ? e(is_string($aVal) ? $aVal : (string)$aVal) : '<span class="muted">—</span>') . '</td>'
+               . '<td><b>' . e($key) . '</b></td>'
+               . '<td>' . ($bVal !== '' ? e(to_str($bVal)) : '<span class="muted">—</span>') . '</td>'
+               . '<td>' . ($aVal !== '' ? e(to_str($aVal)) : '<span class="muted">—</span>') . '</td>'
                . '</tr>';
     }
     $html .= '</tbody></table>';
@@ -120,9 +129,9 @@ page_header('Address History');
 <div class="breadcrumbs">
   <a href="dashboard.php">🏠 Dashboard</a>
   <span class="sep">›</span>
-  <a href="addresses.php?subnet_id=<?= (int)$addr['subnet_id'] ?>">🧾 Addresses</a>
+  <a href="addresses.php?subnet_id=<?= to_int($addr['subnet_id']) ?>">🧾 Addresses</a>
   <span class="sep">›</span>
-  <span><?= e($addr['ip']) ?></span>
+  <span><?= e(to_str($addr['ip'])) ?></span>
   <span class="sep">›</span>
   <span>📜 History</span>
 </div>
@@ -130,21 +139,21 @@ page_header('Address History');
 <div class="toolbar">
   <div>
     <h1>Address History</h1>
-    <div class="muted">Address: <b><?= e($addr['ip']) ?></b> in subnet <b><?= e($addr['subnet_cidr']) ?></b></div>
+    <div class="muted">Address: <b><?= e(to_str($addr['ip'])) ?></b> in subnet <b><?= e(to_str($addr['subnet_cidr'])) ?></b></div>
   </div>
 </div>
 
 <div class="page-actions">
-  <a class="action-pill" href="addresses.php?subnet_id=<?= (int)$addr['subnet_id'] ?>">🧾 Back to Addresses</a>
-  <a class="action-pill" href="search.php?q=<?= urlencode($addr['ip']) ?>">🔎 Search this IP</a>
-  <a class="action-pill" href="export_address_history.php?address_id=<?= (int)$addr['id'] ?>">⬇ Export CSV</a>
+  <a class="action-pill" href="addresses.php?subnet_id=<?= to_int($addr['subnet_id']) ?>">🧾 Back to Addresses</a>
+  <a class="action-pill" href="search.php?q=<?= urlencode(to_str($addr['ip'])) ?>">🔎 Search this IP</a>
+  <a class="action-pill" href="export_address_history.php?address_id=<?= to_int($addr['id']) ?>">⬇ Export CSV</a>
 </div>
 
 <div class="card mt-16">
   <div class="muted">
     Events: <b><?= e((string)$total) ?></b>
     <?php if ($total > 0): ?>
-      &nbsp;|&nbsp; Page <b><?= e((string)$p['page']) ?></b> of <b><?= e((string)$p['pages']) ?></b>
+      &nbsp;|&nbsp; Page <b><?= e(to_str($p['page'])) ?></b> of <b><?= e(to_str($p['pages'])) ?></b>
     <?php endif; ?>
   </div>
 
@@ -167,11 +176,11 @@ page_header('Address History');
       <tbody>
       <?php foreach ($rows as $r): ?>
         <tr>
-          <td class="muted"><?= e($r['created_at']) ?></td>
-          <td><?= e($r['action']) ?></td>
-          <td><?= e((string)($r['username'] ?? '')) ?></td>
-          <td class="muted"><?= e((string)($r['client_ip'] ?? '')) ?></td>
-          <td><?= render_history_diff($r['before_json'], $r['after_json']) ?></td>
+          <td class="muted"><?= e(to_str($r['created_at'])) ?></td>
+          <td><?= e(to_str($r['action'])) ?></td>
+          <td><?= e(to_str($r['username'] ?? '')) ?></td>
+          <td class="muted"><?= e(to_str($r['client_ip'] ?? '')) ?></td>
+          <td><?= render_history_diff(is_string($r['before_json']) ? $r['before_json'] : null, is_string($r['after_json']) ? $r['after_json'] : null) ?></td>
         </tr>
       <?php endforeach; ?>
       </tbody>

@@ -7,8 +7,8 @@ function ipam_migrations(): array
     return [
         // 0.3: adds subnets.network_bin and backfills it
         '0.3' => function(PDO $db) {
-            $cols = $db->query("PRAGMA table_info(subnets)")->fetchAll();
-            $names = array_map(fn($c) => $c['name'], $cols);
+            $cols = ($db->query("PRAGMA table_info(subnets)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+            $names = array_map(fn($c) => to_str($c['name']), $cols);
 
             if (!in_array('network_bin', $names, true)) {
                 $db->exec("ALTER TABLE subnets ADD COLUMN network_bin BLOB");
@@ -20,9 +20,9 @@ function ipam_migrations(): array
 
             $up = $db->prepare("UPDATE subnets SET network_bin = :b WHERE id = :id");
             foreach ($rows as $r) {
-                $bin = @inet_pton((string)$r['network']);
+                $bin = @inet_pton(to_str($r['network']));
                 if ($bin === false) continue;
-                $up->execute([':b' => $bin, ':id' => (int)$r['id']]);
+                $up->execute([':b' => $bin, ':id' => to_int($r['id'])]);
             }
 
             $db->exec("CREATE INDEX IF NOT EXISTS idx_subnets_ver_prefix_netbin ON subnets(ip_version, prefix, network_bin)");
@@ -66,8 +66,8 @@ function ipam_migrations(): array
                 )
             ");
 
-            $cols = $db->query("PRAGMA table_info(subnets)")->fetchAll();
-            $names = array_map(fn($c) => $c['name'], $cols);
+            $cols = ($db->query("PRAGMA table_info(subnets)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+            $names = array_map(fn($c) => to_str($c['name']), $cols);
 
             if (!in_array('site_id', $names, true)) {
                 $db->exec("ALTER TABLE subnets ADD COLUMN site_id INTEGER");
@@ -78,8 +78,8 @@ function ipam_migrations(): array
 
         // 1.4: password_changed_at timestamp on users (for password rotation policy)
         '1.4' => function(PDO $db) {
-            $cols  = $db->query("PRAGMA table_info(users)")->fetchAll();
-            $names = array_map(fn($c) => $c['name'], $cols);
+            $cols  = ($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+            $names = array_map(fn($c) => to_str($c['name']), $cols);
             if (!in_array('password_changed_at', $names, true)) {
                 $db->exec("ALTER TABLE users ADD COLUMN password_changed_at TEXT");
                 // Backfill existing local accounts so they aren't immediately expired.
@@ -92,8 +92,8 @@ function ipam_migrations(): array
 
         // 0.14: last_login_at timestamp on users
         '0.14' => function(PDO $db) {
-            $cols  = $db->query("PRAGMA table_info(users)")->fetchAll();
-            $names = array_map(fn($c) => $c['name'], $cols);
+            $cols  = ($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+            $names = array_map(fn($c) => to_str($c['name']), $cols);
             if (!in_array('last_login_at', $names, true)) {
                 $db->exec("ALTER TABLE users ADD COLUMN last_login_at TEXT");
             }
@@ -101,8 +101,8 @@ function ipam_migrations(): array
 
         // 0.13: name + email fields on users
         '0.13' => function(PDO $db) {
-            $cols  = $db->query("PRAGMA table_info(users)")->fetchAll();
-            $names = array_map(fn($c) => $c['name'], $cols);
+            $cols  = ($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+            $names = array_map(fn($c) => to_str($c['name']), $cols);
 
             if (!in_array('name', $names, true)) {
                 $db->exec("ALTER TABLE users ADD COLUMN name TEXT NOT NULL DEFAULT ''");
@@ -114,8 +114,8 @@ function ipam_migrations(): array
 
         // 0.12: OIDC subject claim column on users
         '0.12' => function(PDO $db) {
-            $cols  = $db->query("PRAGMA table_info(users)")->fetchAll();
-            $names = array_map(fn($c) => $c['name'], $cols);
+            $cols  = ($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+            $names = array_map(fn($c) => to_str($c['name']), $cols);
 
             if (!in_array('oidc_sub', $names, true)) {
                 $db->exec("ALTER TABLE users ADD COLUMN oidc_sub TEXT");
@@ -154,20 +154,20 @@ function ipam_migrations(): array
         // 1.11: addresses.grp (group field), subnets.vlan_id, users.theme
         '1.11' => function(PDO $db) {
             // addresses.grp — SQL reserved word, stored as grp, exposed as group in UI/API/CSV
-            $cols = array_column($db->query("PRAGMA table_info(addresses)")->fetchAll(), 'name');
+            $cols = array_column(($db->query("PRAGMA table_info(addresses)") ?: throw new \RuntimeException('Query failed'))->fetchAll(), 'name');
             if (!in_array('grp', $cols, true)) {
                 $db->exec("ALTER TABLE addresses ADD COLUMN grp TEXT NOT NULL DEFAULT ''");
             }
             $db->exec("CREATE INDEX IF NOT EXISTS idx_addresses_grp ON addresses(grp)");
 
             // subnets.vlan_id — nullable integer, 1–4094, NULL means unassigned
-            $cols = array_column($db->query("PRAGMA table_info(subnets)")->fetchAll(), 'name');
+            $cols = array_column(($db->query("PRAGMA table_info(subnets)") ?: throw new \RuntimeException('Query failed'))->fetchAll(), 'name');
             if (!in_array('vlan_id', $cols, true)) {
                 $db->exec("ALTER TABLE subnets ADD COLUMN vlan_id INTEGER");
             }
 
             // users.theme — persisted theme preference: 'auto'|'light'|'dark'
-            $cols = array_column($db->query("PRAGMA table_info(users)")->fetchAll(), 'name');
+            $cols = array_column(($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll(), 'name');
             if (!in_array('theme', $cols, true)) {
                 $db->exec("ALTER TABLE users ADD COLUMN theme TEXT NOT NULL DEFAULT 'auto'");
             }
@@ -200,12 +200,26 @@ function ipam_migrations(): array
 
         // 1.13: api_keys.is_readonly + api_keys.description
         '1.13' => function(PDO $db): void {
-            $cols = array_column($db->query("PRAGMA table_info(api_keys)")->fetchAll(), 'name');
+            $cols = array_column(($db->query("PRAGMA table_info(api_keys)") ?: throw new \RuntimeException('Query failed'))->fetchAll(), 'name');
             if (!in_array('is_readonly', $cols, true)) {
                 $db->exec("ALTER TABLE api_keys ADD COLUMN is_readonly INTEGER NOT NULL DEFAULT 0");
             }
             if (!in_array('description', $cols, true)) {
                 $db->exec("ALTER TABLE api_keys ADD COLUMN description TEXT NOT NULL DEFAULT ''");
+            }
+        },
+
+        // 1.19.0: addresses.mac + addresses.expires_at
+        '1.19.0' => function(PDO $db): void {
+            $cols = array_column(
+                ($db->query("PRAGMA table_info(addresses)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                'name'
+            );
+            if (!in_array('mac', $cols, true)) {
+                $db->exec("ALTER TABLE addresses ADD COLUMN mac TEXT NOT NULL DEFAULT ''");
+            }
+            if (!in_array('expires_at', $cols, true)) {
+                $db->exec("ALTER TABLE addresses ADD COLUMN expires_at TEXT");
             }
         },
     ];

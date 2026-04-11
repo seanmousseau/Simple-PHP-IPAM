@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/init.php';
+/** @var \PDO $db */
+/** @var IpamConfig $config */
 
 if (is_logged_in())         { header('Location: dashboard.php'); exit; }
 if (!oidc_enabled($config)) { header('Location: login.php');     exit; }
@@ -20,10 +22,10 @@ function oidc_fail(PDO $db, string $logMsg): never
 
 // ---- State validation (CSRF guard) ----
 
-$returnedState = (string)($_GET['state'] ?? '');
-$savedState    = (string)($_SESSION['oidc_state']    ?? '');
-$nonce         = (string)($_SESSION['oidc_nonce']    ?? '');
-$verifier      = (string)($_SESSION['oidc_verifier'] ?? '');
+$returnedState = to_str($_GET['state'] ?? '');
+$savedState    = to_str($_SESSION['oidc_state']    ?? '');
+$nonce         = to_str($_SESSION['oidc_nonce']    ?? '');
+$verifier      = to_str($_SESSION['oidc_verifier'] ?? '');
 
 // Always clear OIDC session keys regardless of outcome
 unset($_SESSION['oidc_state'], $_SESSION['oidc_nonce'], $_SESSION['oidc_verifier']);
@@ -34,14 +36,14 @@ if ($savedState === '' || !hash_equals($savedState, $returnedState)) {
 
 // ---- IdP error response ----
 if (!empty($_GET['error'])) {
-    $errorCode = substr(preg_replace('/[^A-Za-z0-9_.:-]/', '', (string)$_GET['error']), 0, 64);
+    $errorCode = substr(to_str(preg_replace('/[^A-Za-z0-9_.:-]/', '', to_str($_GET['error']))), 0, 64);
     $errorDesc = isset($_GET['error_description'])
-        ? ' — ' . substr(trim((string)$_GET['error_description']), 0, 200)
+        ? ' — ' . substr(trim(to_str($_GET['error_description'])), 0, 200)
         : '';
     oidc_fail($db, "IdP returned error: {$errorCode}{$errorDesc}");
 }
 
-$code = (string)($_GET['code'] ?? '');
+$code = to_str($_GET['code'] ?? '');
 if ($code === '') oidc_fail($db, 'no authorization code in callback');
 
 // ---- Fetch discovery document ----
@@ -53,12 +55,12 @@ try {
 
 // ---- Exchange code for tokens ----
 try {
-    $tokens = oidc_http_post($discovery['token_endpoint'], [
+    $tokens = oidc_http_post(to_str($discovery['token_endpoint']), [
         'grant_type'    => 'authorization_code',
         'code'          => $code,
-        'redirect_uri'  => (string)$config['oidc']['redirect_uri'],
-        'client_id'     => (string)$config['oidc']['client_id'],
-        'client_secret' => (string)$config['oidc']['client_secret'],
+        'redirect_uri'  => to_str($config['oidc']['redirect_uri']),
+        'client_id'     => to_str($config['oidc']['client_id']),
+        'client_secret' => to_str($config['oidc']['client_secret']),
         'code_verifier' => $verifier,
     ]);
 } catch (Throwable $e) {
@@ -71,28 +73,28 @@ if (empty($tokens['id_token'])) {
 
 // ---- Verify ID token (with one JWKS cache-bust retry for key rotation) ----
 $expect = [
-    'iss'   => (string)($discovery['issuer'] ?? ''),
-    'aud'   => (string)$config['oidc']['client_id'],
+    'iss'   => to_str($discovery['issuer'] ?? ''),
+    'aud'   => to_str($config['oidc']['client_id']),
     'nonce' => $nonce,
 ];
 
 try {
-    $jwks    = oidc_jwks((string)$discovery['jwks_uri']);
-    $payload = oidc_verify_id_token((string)$tokens['id_token'], $jwks, $expect);
+    $jwks    = oidc_jwks(to_str($discovery['jwks_uri']));
+    $payload = oidc_verify_id_token(to_str($tokens['id_token']), $jwks, $expect);
 } catch (Throwable $e) {
     // One retry with a fresh JWKS in case the IdP rotated keys
     try {
-        $jwks    = oidc_jwks((string)$discovery['jwks_uri'], forceRefresh: true);
-        $payload = oidc_verify_id_token((string)$tokens['id_token'], $jwks, $expect);
+        $jwks    = oidc_jwks(to_str($discovery['jwks_uri']), forceRefresh: true);
+        $payload = oidc_verify_id_token(to_str($tokens['id_token']), $jwks, $expect);
     } catch (Throwable $e2) {
         oidc_fail($db, 'id_token verification: ' . $e2->getMessage());
     }
 }
 
-$sub              = (string)($payload['sub']                ?? '');
-$claimEmail       = substr(trim((string)($payload['email']           ?? '')), 0, 255);
-$claimName        = substr(trim((string)($payload['name']            ?? '')), 0, 255);
-$claimPrefUsername = substr(trim((string)($payload['preferred_username'] ?? '')), 0, 64);
+$sub              = to_str($payload['sub']                ?? '');
+$claimEmail       = substr(trim(to_str($payload['email']           ?? '')), 0, 255);
+$claimName        = substr(trim(to_str($payload['name']            ?? '')), 0, 255);
+$claimPrefUsername = substr(trim(to_str($payload['preferred_username'] ?? '')), 0, 64);
 // Sanitise: strip characters not allowed in local usernames (#111)
 $claimPrefUsername = preg_replace('/[^a-zA-Z0-9._@\-]/', '', $claimPrefUsername);
 
@@ -102,15 +104,14 @@ if ($sub === '') oidc_fail($db, 'id_token missing sub claim');
 
 $st = $db->prepare("SELECT id, username, role, is_active FROM users WHERE oidc_sub = :sub");
 $st->execute([':sub' => $sub]);
+/** @var array<string, mixed>|false $user */
 $user = $st->fetch();
 
 // auto_link: link incoming OIDC login to an existing unlinked local account by username/email.
 // auto_provision: create a new account when no match is found (implies auto_link).
 // For backwards compatibility, if auto_link is absent, fall back to auto_provision for both.
 $autoProvision = !empty($config['oidc']['auto_provision']);
-$autoLink      = isset($config['oidc']['auto_link'])
-                 ? !empty($config['oidc']['auto_link'])
-                 : $autoProvision; // BC: old installs without auto_link key
+$autoLink      = !empty($config['oidc']['auto_link']);
 
 if (!$user && $autoLink) {
     // Try to link an existing local user by preferred_username then by email
@@ -118,24 +119,26 @@ if (!$user && $autoLink) {
     if ($claimPrefUsername !== '') {
         $st2 = $db->prepare("SELECT id, username, role, is_active FROM users WHERE username = :u AND oidc_sub IS NULL");
         $st2->execute([':u' => $claimPrefUsername]);
+        /** @var array<string, mixed>|false $existing */
         $existing = $st2->fetch();
     }
     if (!$existing && $claimEmail !== '') {
         // Email-only match — do NOT match username here to prevent cross-account linking (#107)
         $st2 = $db->prepare("SELECT id, username, role, is_active FROM users WHERE email = :e AND oidc_sub IS NULL");
         $st2->execute([':e' => $claimEmail]);
+        /** @var array<string, mixed>|false $existing */
         $existing = $st2->fetch();
     }
 
     if ($existing) {
         // Link the existing account to this OIDC subject and sync profile
         $db->prepare("UPDATE users SET oidc_sub = :sub, name = CASE WHEN name='' THEN :n ELSE name END, email = CASE WHEN email='' THEN :e ELSE email END WHERE id = :id")
-           ->execute([':sub' => $sub, ':n' => $claimName, ':e' => $claimEmail, ':id' => (int)$existing['id']]);
-        audit($db, 'auth.oidc_link', 'user', (int)$existing['id'], 'sub=' . $sub);
+           ->execute([':sub' => $sub, ':n' => $claimName, ':e' => $claimEmail, ':id' => to_int($existing['id'])]);
+        audit($db, 'auth.oidc_link', 'user', to_int($existing['id']), 'sub=' . $sub);
         $user = $existing;
     } elseif ($autoProvision) {
         // Auto-provision a new local user
-        $role = (string)($config['oidc']['default_role'] ?? 'readonly');
+        $role = to_str($config['oidc']['default_role']);
         if (!in_array($role, ['admin', 'netops', 'readonly'], true)) $role = 'readonly';
 
         // Derive a username: prefer preferred_username, fall back to email local-part, then sub
@@ -170,6 +173,7 @@ if (!$user && $autoLink) {
 
         $st3 = $db->prepare("SELECT id, username, role, is_active FROM users WHERE id = :id");
         $st3->execute([':id' => $newId]);
+        /** @var array<string, mixed>|false $user */
         $user = $st3->fetch();
     }
 }
@@ -178,7 +182,7 @@ if (!$user && $autoLink) {
 if ($user) {
     if (($claimName !== '' || $claimEmail !== '')) {
         $db->prepare("UPDATE users SET name = CASE WHEN name='' THEN :n ELSE name END, email = CASE WHEN email='' THEN :e ELSE email END WHERE id = :id")
-           ->execute([':n' => $claimName, ':e' => $claimEmail, ':id' => (int)$user['id']]);
+           ->execute([':n' => $claimName, ':e' => $claimEmail, ':id' => to_int($user['id'])]);
     }
 }
 
@@ -187,15 +191,15 @@ if (!$user) {
         . '. An admin must create or link an account.');
 }
 
-if ((int)$user['is_active'] !== 1) {
-    oidc_fail($db, 'user account is inactive: ' . $user['username']);
+if (to_int($user['is_active']) !== 1) {
+    oidc_fail($db, 'user account is inactive: ' . to_str($user['username']));
 }
 
 // ---- All checks passed — log in ----
-login_user((int)$user['id'], (string)$user['username'], (string)$user['role']);
+login_user(to_int($user['id']), to_str($user['username']), to_str($user['role']));
 $db->prepare("UPDATE users SET last_login_at=datetime('now') WHERE id=:id")
-   ->execute([':id' => (int)$user['id']]);
-audit($db, 'auth.oidc_login', 'user', (int)$user['id'], 'sub=' . $sub);
+   ->execute([':id' => to_int($user['id'])]);
+audit($db, 'auth.oidc_login', 'user', to_int($user['id']), 'sub=' . $sub);
 
 header('Location: dashboard.php');
 exit;

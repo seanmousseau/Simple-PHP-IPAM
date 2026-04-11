@@ -1,12 +1,13 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/init.php';
+/** @var \PDO $db */
 require_login();
 
 // --- Valid action prefixes (categories) ---
 const AUDIT_PREFIXES = ['auth', 'subnet', 'address', 'user', 'site', 'apikey', 'dhcp_pool', 'db', 'export', 'import'];
 
-$filterPrefix = trim((string)($_GET['prefix'] ?? ''));
+$filterPrefix = trim(to_str($_GET['prefix'] ?? ''));
 if ($filterPrefix !== '' && !in_array($filterPrefix, AUDIT_PREFIXES, true)) {
     $filterPrefix = '';
 }
@@ -14,8 +15,8 @@ if ($filterPrefix !== '' && !in_array($filterPrefix, AUDIT_PREFIXES, true)) {
 // --- Date range filter (sanitised through strtotime → Y-m-d) ---
 $filterFrom = '';
 $filterTo   = '';
-$rawFrom = trim((string)($_GET['from'] ?? ''));
-$rawTo   = trim((string)($_GET['to']   ?? ''));
+$rawFrom = trim(to_str($_GET['from'] ?? ''));
+$rawTo   = trim(to_str($_GET['to']   ?? ''));
 if ($rawFrom !== '' && ($ts = strtotime($rawFrom)) !== false) {
     $filterFrom = date('Y-m-d', $ts);
 }
@@ -24,7 +25,7 @@ if ($rawTo !== '' && ($ts = strtotime($rawTo)) !== false) {
 }
 
 $page  = q_int('page', 1, 1, 1000000);
-$limit = q_int('page_size', 100, 1, 500);
+$limit = q_int('page_size', 50, 1, 500);
 
 $auditSortCols = ['time' => 'created_at', 'user' => 'username',
                   'action' => 'action', 'entity' => 'entity_type'];
@@ -50,7 +51,11 @@ $where = $wheres ? 'WHERE ' . implode(' AND ', $wheres) : '';
 // --- Count ---
 $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM audit_log $where");
 $cntSt->execute($params);
-$total = (int)$cntSt->fetch()['c'];
+/** @var array<string, mixed>|false $cntRow */
+
+$cntRow = $cntSt->fetch();
+
+$total = is_array($cntRow) ? to_int($cntRow['c']) : 0;
 $pages = (int)max(1, ceil($total / $limit));
 
 if ($page > $pages) $page = $pages;
@@ -68,6 +73,7 @@ foreach ($params as $k => $v) $st->bindValue($k, $v);
 $st->bindValue(':lim', $limit,  PDO::PARAM_INT);
 $st->bindValue(':off', $offset, PDO::PARAM_INT);
 $st->execute();
+/** @var list<array<string, mixed>> $rows */
 $rows = $st->fetchAll();
 
 // Build a query string preserving all filters across pagination links
@@ -134,7 +140,7 @@ page_header('Audit Log');
 
 <div class="card mt-16">
   <?php if (!$rows): ?>
-    <div class="empty-state">No audit entries<?= $hasFilter ? ' matching the current filter' : '' ?>.</div>
+    <div class="empty-state">No audit entries<?= $hasFilter ? ' matching the current filter' : '' ?>.<?= $hasFilter ? ' <a class="action-pill" href="audit.php">Clear filters</a>' : '' ?></div>
   <?php else: ?>
     <div class="table-wrap">
     <table>
@@ -158,12 +164,12 @@ page_header('Audit Log');
       <tbody>
       <?php foreach ($rows as $r): ?>
         <tr>
-          <td class="muted"><?= e($r['created_at']) ?></td>
-          <td><?= e((string)($r['username'] ?? '')) ?></td>
-          <td><?= e($r['action']) ?></td>
-          <td><?= e($r['entity_type']) ?>#<?= e((string)($r['entity_id'] ?? '')) ?></td>
-          <td class="muted"><?= $r['ip'] !== null ? e((string)$r['ip']) : '—' ?></td>
-          <td class="muted"><?= e((string)($r['details'] ?? '')) ?></td>
+          <td class="muted"><?= e(to_str($r['created_at'])) ?></td>
+          <td><?= e(to_str($r['username'] ?? '')) ?></td>
+          <td><?= e(to_str($r['action'])) ?></td>
+          <td><?= e(to_str($r['entity_type'])) ?>#<?= e(to_str($r['entity_id'] ?? '')) ?></td>
+          <td class="muted"><?= $r['ip'] !== null ? e(to_str($r['ip'])) : '—' ?></td>
+          <td class="muted"><span class="audit-details" title="<?= e(to_str($r['details'] ?? '')) ?>"><?= e(to_str($r['details'] ?? '')) ?></span></td>
         </tr>
       <?php endforeach; ?>
       </tbody>

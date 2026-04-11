@@ -18,17 +18,17 @@ if (empty($config['demo_mode']['enabled']) || empty($config['demo_mode']['gate']
 // so we can reuse login_protection_verify() and login_protection_widget_html().
 $gateConfig = [
     'login_protection' => [
-        'method'      => (string)($config['demo_mode']['gate'] ?? ''),
-        'site_key'    => (string)($config['demo_mode']['site_key']   ?? ''),
-        'secret_key'  => (string)($config['demo_mode']['secret_key'] ?? ''),
+        'method'      => to_str($config['demo_mode']['gate'] ?? ''),
+        'site_key'    => to_str($config['demo_mode']['site_key']   ?? ''),
+        'secret_key'  => to_str($config['demo_mode']['secret_key'] ?? ''),
         'min_seconds' => 3,
         'version'     => 2,
     ],
 ];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $token = (string)($_POST['_gate_csrf'] ?? '');
-    if (!hash_equals((string)($_SESSION['gate_csrf'] ?? ''), $token) || $token === '') {
+    $token = to_str($_POST['_gate_csrf'] ?? '');
+    if (!hash_equals(to_str($_SESSION['gate_csrf'] ?? ''), $token) || $token === '') {
         header('Location: demo_gate.php');
         exit;
     }
@@ -60,7 +60,7 @@ header('X-Content-Type-Options: nosniff');
 header('Referrer-Policy: strict-origin-when-cross-origin');
 
 require_once __DIR__ . '/version.php';
-$appName = trim((string)($config['app_name'] ?? '')) ?: 'Simple PHP IPAM';
+$appName = trim(to_str($config['app_name'] ?? '')) ?: 'Simple PHP IPAM';
 ?>
 <!doctype html>
 <html>
@@ -71,8 +71,8 @@ $appName = trim((string)($config['app_name'] ?? '')) ?: 'Simple PHP IPAM';
   <link rel="icon" type="image/webp" sizes="32x32" href="assets/favicon-32.webp">
   <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
   <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
-  <link rel="stylesheet" href="assets/app.css?v=1.18.0">
-  <script defer src="assets/app.js?v=1.18.0"></script>
+  <link rel="stylesheet" href="assets/app.css?v=1.19.0">
+  <script defer src="assets/app.js?v=1.19.0"></script>
 </head>
 <body>
 <div class="gate-wrap">
@@ -92,7 +92,7 @@ $appName = trim((string)($config['app_name'] ?? '')) ?: 'Simple PHP IPAM';
   <?php endif; ?>
 
   <form method="post" action="demo_gate.php">
-    <input type="hidden" name="_gate_csrf" value="<?= e($_SESSION['gate_csrf']) ?>">
+    <input type="hidden" name="_gate_csrf" value="<?= e(to_str($_SESSION['gate_csrf'])) ?>">
     <?php if ($widgetHtml !== ''): ?>
       <div class="mt-10"><?= $widgetHtml ?></div>
     <?php endif; ?>

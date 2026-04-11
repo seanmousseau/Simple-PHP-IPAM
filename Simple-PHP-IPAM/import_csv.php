@@ -1,13 +1,15 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/init.php';
+/** @var \PDO $db */
+/** @var IpamConfig $config */
 require_role('admin');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_require();
 }
 
-$step = (int)($_GET['step'] ?? 1);
+$step = to_int($_GET['step'] ?? 1);
 if ($step < 1 || $step > 4) $step = 1;
 
 $err = '';
@@ -15,11 +17,12 @@ $msg = '';
 
 $_SESSION['csv_import'] ??= [];
 $wiz =& $_SESSION['csv_import'];
+/** @var array<string, mixed> $wiz */
 
 if (isset($_GET['reset'])) {
-    if (!empty($wiz['tmp_path']) && is_file($wiz['tmp_path'])) @unlink($wiz['tmp_path']);
-    if (!empty($wiz['plan_path']) && is_file($wiz['plan_path'])) @unlink($wiz['plan_path']);
-    if (!empty($wiz['result_path']) && is_file($wiz['result_path'])) @unlink($wiz['result_path']);
+    if (!empty($wiz['tmp_path']) && is_file(to_str($wiz['tmp_path']))) @unlink(to_str($wiz['tmp_path']));
+    if (!empty($wiz['plan_path']) && is_file(to_str($wiz['plan_path']))) @unlink(to_str($wiz['plan_path']));
+    if (!empty($wiz['result_path']) && is_file(to_str($wiz['result_path']))) @unlink(to_str($wiz['result_path']));
     $wiz = [];
     header('Location: import_csv.php');
     exit;
@@ -27,7 +30,7 @@ if (isset($_GET['reset'])) {
 
 /** @param array<string, mixed> $wiz */
 function wiz_require_file(array $wiz): void {
-    if (empty($wiz['tmp_path']) || !is_file($wiz['tmp_path'])) {
+    if (empty($wiz['tmp_path']) || !is_file(to_str($wiz['tmp_path']))) {
         header('Location: import_csv.php?step=1');
         exit;
     }
@@ -87,6 +90,7 @@ function load_result_file(string $path): array
     if ($json === false) throw new RuntimeException('Failed to read import result');
     $data = json_decode($json, true);
     if (!is_array($data)) throw new RuntimeException('Invalid import result');
+    /** @var array<string, mixed> $data */
     return $data;
 }
 
@@ -96,12 +100,12 @@ function load_result_file(string $path): array
  */
 function analyze_import(PDO $db, array $wiz): array
 {
-    $delimiter = (string)$wiz['delimiter'];
-    $hasHeader = (string)$wiz['has_header'];
-    $map = $wiz['mapping'] ?? [];
-    $dupMode = (string)($wiz['dup_mode'] ?? 'skip');
+    $delimiter = to_str($wiz['delimiter']);
+    $hasHeader = to_str($wiz['has_header']);
+    $map = is_array($wiz['mapping']) ? $wiz['mapping'] : [];
+    $dupMode = to_str($wiz['dup_mode'] ?? 'skip');
 
-    $fh = fopen($wiz['tmp_path'], 'rb');
+    $fh = fopen(to_str($wiz['tmp_path']), 'rb');
     if (!$fh) throw new RuntimeException("Cannot open uploaded file");
 
     $rowNum = 0;
@@ -117,10 +121,11 @@ function analyze_import(PDO $db, array $wiz): array
         'duplicate_in_csv' => 0,
     ];
 
+    /** @var list<array<string, mixed>> $existingSubnets */
     $existingSubnets = ($db->query("SELECT id, cidr FROM subnets")
         ?: throw new \RuntimeException('Query failed'))->fetchAll();
     $existingByCidr = [];
-    foreach ($existingSubnets as $s) $existingByCidr[(string)$s['cidr']] = (int)$s['id'];
+    foreach ($existingSubnets as $s) $existingByCidr[to_str($s['cidr'])] = to_int($s['id']);
 
     $seenCsvKeys = []; // detect duplicate rows in CSV after resolution
     $overlapCache = []; // cidr => overlap result, avoid redundant DB queries per unique CIDR
@@ -129,7 +134,7 @@ function analyze_import(PDO $db, array $wiz): array
     while (!feof($fh) && $rowNum < $maxProcessRows) {
         $row = fgetcsv($fh, 0, $delimiter, '"', '');
         if ($row === false) break;
-        if (count($row) === 1 && trim((string)$row[0]) === '') continue;
+        if (count($row) === 1 && trim(to_str($row[0])) === '') continue;
 
         $rowNum++;
         if ($rowNum === 1 && $hasHeader === 'yes') continue;
@@ -138,9 +143,9 @@ function analyze_import(PDO $db, array $wiz): array
 
         $get = function(string $key) use ($map, $row): ?string {
             $idx = $map[$key] ?? 'ignore';
-            if ($idx === 'ignore' || $idx === '' || !is_numeric((string)$idx)) return null;
-            $i = (int)$idx;
-            return isset($row[$i]) ? (string)$row[$i] : null;
+            if ($idx === 'ignore' || $idx === '' || !is_numeric(to_str($idx))) return null;
+            $i = to_int($idx);
+            return isset($row[$i]) ? to_str($row[$i]) : null;
         };
 
         $entry = [
@@ -149,7 +154,7 @@ function analyze_import(PDO $db, array $wiz): array
             'display_action' => 'invalid',
             'reason' => '',
             'ip' => null,
-            'ip_raw' => (string)($get('ip') ?? ''),
+            'ip_raw' => to_str($get('ip') ?? ''),
             'version' => null,
 
             'resolved_cidr' => null,
@@ -157,16 +162,23 @@ function analyze_import(PDO $db, array $wiz): array
             'subnet_must_be_created' => false,
             'existed_at_analysis' => null,
 
-            'hostname' => trim((string)($get('hostname') ?? '')),
-            'owner' => trim((string)($get('owner') ?? '')),
-            'grp' => trim((string)($get('group') ?? '')),
-            'note' => trim((string)($get('note') ?? '')),
+            'hostname' => trim(to_str($get('hostname') ?? '')),
+            'owner' => trim(to_str($get('owner') ?? '')),
+            'grp' => trim(to_str($get('group') ?? '')),
+            'mac' => substr(trim(to_str($get('mac') ?? '')), 0, 64),
+            'expires_at' => null,
+            'note' => trim(to_str($get('note') ?? '')),
             'status' => normalize_status($get('status')),
 
-            'subnet_description' => trim((string)($get('description') ?? '')),
-            'prefix_hint' => trim((string)($get('prefix') ?? '')),
-            'netmask_hint' => trim((string)($get('netmask') ?? '')),
+            'subnet_description' => trim(to_str($get('description') ?? '')),
+            'prefix_hint' => trim(to_str($get('prefix') ?? '')),
+            'netmask_hint' => trim(to_str($get('netmask') ?? '')),
         ];
+
+        $rawExpires = trim(to_str($get('expires_at') ?? ''));
+        if ($rawExpires !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $rawExpires)) {
+            $entry['expires_at'] = $rawExpires;
+        }
 
         // Field length validation
         if (strlen($entry['hostname']) > 255) {
@@ -199,7 +211,7 @@ function analyze_import(PDO $db, array $wiz): array
         $entry['ip'] = $norm['ip'];
         $entry['version'] = $norm['version'];
 
-        $cidrHint = trim((string)($get('cidr') ?? ''));
+        $cidrHint = trim(to_str($get('cidr') ?? ''));
 
         if ($cidrHint !== '') {
             $p = parse_cidr($cidrHint);
@@ -233,18 +245,19 @@ function analyze_import(PDO $db, array $wiz): array
         } else {
             $s = find_containing_subnet($db, $norm);
             if ($s) {
-                $entry['resolved_subnet_id'] = (int)$s['id'];
+                $entry['resolved_subnet_id'] = to_int($s['id']);
 
                 $st = $db->prepare("SELECT cidr FROM subnets WHERE id = :id");
-                $st->execute([':id' => (int)$s['id']]);
+                $st->execute([':id' => to_int($s['id'])]);
+                /** @var array<string, mixed>|false $cidrRow */
                 $cidrRow = $st->fetch();
-                $entry['resolved_cidr'] = (string)($cidrRow['cidr'] ?? '');
+                $entry['resolved_cidr'] = to_str($cidrRow['cidr'] ?? '');
             } else {
                 // Determine inferred CIDR from hints/defaults now so plan is frozen
                 $prefix = null;
                 if ($entry['version'] === 4) {
                     if ($entry['prefix_hint'] !== '' && ctype_digit($entry['prefix_hint'])) {
-                        $prefix = (int)$entry['prefix_hint'];
+                        $prefix = to_int($entry['prefix_hint']);
                         if ($prefix < 0 || $prefix > 32) $prefix = null;
                     } elseif ($entry['netmask_hint'] !== '') {
                         $pfx = netmask_to_prefix($entry['netmask_hint']);
@@ -253,7 +266,7 @@ function analyze_import(PDO $db, array $wiz): array
                     if ($prefix === null) $prefix = 24;
                 } else {
                     if ($entry['prefix_hint'] !== '' && ctype_digit($entry['prefix_hint'])) {
-                        $prefix = (int)$entry['prefix_hint'];
+                        $prefix = to_int($entry['prefix_hint']);
                         if ($prefix < 0 || $prefix > 128) $prefix = null;
                     }
                     if ($prefix === null) $prefix = 64;
@@ -289,6 +302,7 @@ function analyze_import(PDO $db, array $wiz): array
         if ($entry['resolved_subnet_id'] !== null) {
             $sel = $db->prepare("SELECT id FROM addresses WHERE subnet_id=:sid AND ip=:ip");
             $sel->execute([':sid' => $entry['resolved_subnet_id'], ':ip' => $entry['ip']]);
+            /** @var array<string, mixed>|false $existing */
             $existing = $sel->fetch();
             $entry['existed_at_analysis'] = $existing ? true : false;
         } else {
@@ -302,7 +316,7 @@ function analyze_import(PDO $db, array $wiz): array
             $summary['create']++;
 
             // Check if the new subnet would nest inside or contain existing subnets
-            $cidrToCheck = (string)$entry['resolved_cidr'];
+            $cidrToCheck = to_str($entry['resolved_cidr']);
             if (!isset($overlapCache[$cidrToCheck])) {
                 $overlapCache[$cidrToCheck] = detect_subnet_overlaps($db, $cidrToCheck);
             }
@@ -353,17 +367,19 @@ function analyze_import(PDO $db, array $wiz): array
 // path must complete (or set $err and fall through) before any output is sent.
 
 if ($step === 1 && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'upload') {
-    if (empty($_FILES['csv']['tmp_name']) || !is_uploaded_file($_FILES['csv']['tmp_name'])) {
+    $uploadRaw = $_FILES['csv'] ?? null;
+    $upload = is_array($uploadRaw) ? $uploadRaw : null;
+    if ($upload === null || empty($upload['tmp_name']) || !is_uploaded_file(to_str($upload['tmp_name']))) {
         $err = 'No file uploaded.';
     } else {
         $maxBytes = import_max_bytes($config);
-        $size = (int)($_FILES['csv']['size'] ?? 0);
+        $size = to_int($upload['size'] ?? 0);
         if ($size > $maxBytes) {
             $err = 'File too large (max ' . (int)round($maxBytes / 1024 / 1024) . 'MB).';
         } else {
             ensure_tmp_dir();
             $dest = tmp_dir() . '/import-' . bin2hex(random_bytes(8)) . '.csv';
-            if (!move_uploaded_file($_FILES['csv']['tmp_name'], $dest)) {
+            if (!move_uploaded_file(to_str($upload['tmp_name']), $dest)) {
                 $err = 'Failed to store uploaded file.';
             } else {
                 @chmod($dest, 0600);
@@ -378,26 +394,26 @@ if ($step === 1 && $_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ??
 }
 
 if ($step === 2) {
-    if (empty($wiz['tmp_path']) || !is_file($wiz['tmp_path'])) {
+    if (empty($wiz['tmp_path']) || !is_file(to_str($wiz['tmp_path']))) {
         header('Location: import_csv.php?step=1');
         exit;
     }
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'set_mapping') {
-        $d = (string)($_POST['delimiter'] ?? ',');
+        $d = to_str($_POST['delimiter'] ?? ',');
         if (!in_array($d, [',', ';', "\\t", '|'], true)) $d = ',';
         if ($d === "\\t") $d = "\t";
-        $hdr = (string)($_POST['has_header'] ?? 'yes');
+        $hdr = to_str($_POST['has_header'] ?? 'yes');
         if (!in_array($hdr, ['yes', 'no'], true)) $hdr = 'yes';
         $mapping = $_POST['map'] ?? [];
         if (!is_array($mapping)) $mapping = [];
-        $ipMap = $mapping['ip'] ?? 'ignore';
-        if ($ipMap === 'ignore' || $ipMap === '' || !is_numeric((string)$ipMap)) {
+        $ipMap = to_str($mapping['ip'] ?? 'ignore');
+        if ($ipMap === 'ignore' || $ipMap === '' || !is_numeric($ipMap)) {
             $err = 'You must map an IP column.';
             // Preserve submitted values so the form re-renders with user's choices
             $wiz['delimiter'] = $d;
             $wiz['has_header'] = $hdr;
         } else {
-            $dupMode = (string)($_POST['dup_mode'] ?? 'skip');
+            $dupMode = to_str($_POST['dup_mode'] ?? 'skip');
             if (!in_array($dupMode, ['skip', 'overwrite', 'fill_empty'], true)) $dupMode = 'skip';
             $wiz['delimiter'] = $d;
             $wiz['has_header'] = $hdr;
@@ -409,7 +425,7 @@ if ($step === 2) {
     }
 }
 
-if ($step === 3 && (empty($wiz['tmp_path']) || !is_file($wiz['tmp_path']))) {
+if ($step === 3 && (empty($wiz['tmp_path']) || !is_file(to_str($wiz['tmp_path'])))) {
     header('Location: import_csv.php?step=1');
     exit;
 }
@@ -463,10 +479,10 @@ if ($step === 1) {
 
 /* Step 2 */
 if ($step === 2) {
-    $delimiter = (string)($wiz['delimiter'] ?? ',');
-    $hasHeader = (string)($wiz['has_header'] ?? 'yes');
+    $delimiter = to_str($wiz['delimiter'] ?? ',');
+    $hasHeader = to_str($wiz['has_header'] ?? 'yes');
 
-    $preview = csv_read_preview($wiz['tmp_path'], $delimiter, 15);
+    $preview = csv_read_preview(to_str($wiz['tmp_path']), $delimiter, 15);
 
     $colCount = 0;
     foreach ($preview as $r) $colCount = max($colCount, count($r));
@@ -474,7 +490,7 @@ if ($step === 2) {
     $headerRow = $preview[0] ?? [];
     $headerNames = [];
     for ($i = 0; $i < $colCount; $i++) {
-        $name = trim((string)($headerRow[$i] ?? ''));
+        $name = trim(to_str($headerRow[$i] ?? ''));
         $headerNames[$i] = ($name !== '') ? $name : ("Column " . ($i+1));
     }
 
@@ -483,7 +499,7 @@ if ($step === 2) {
         $colOptions[(string)$i] = $headerNames[$i] . " (col " . ($i+1) . ")";
     }
 
-    $map = $wiz['mapping'] ?? [];
+    $map = is_array($wiz['mapping']) ? $wiz['mapping'] : [];
     $dupMode = $wiz['dup_mode'] ?? 'skip';
     ?>
 
@@ -532,6 +548,8 @@ if ($step === 2) {
             'hostname' => 'Hostname',
             'owner' => 'Owner',
             'group' => 'Group',
+            'mac' => 'MAC address',
+            'expires_at' => 'Expires (YYYY-MM-DD)',
             'status' => 'Status (used/reserved/free)',
             'note' => 'Note',
             'cidr' => 'Subnet CIDR (optional)',
@@ -545,7 +563,7 @@ if ($step === 2) {
             echo "<tr><th>" . e($label) . "</th><td><select name='map[" . e($k) . "]'>";
             echo "<option value='ignore'>-- ignore --</option>";
             foreach ($colOptions as $idx => $name) {
-                $sel = (isset($map[$k]) && (string)$map[$k] === (string)$idx) ? "selected" : "";
+                $sel = (isset($map[$k]) && to_str($map[$k]) === (string)$idx) ? "selected" : "";
                 echo "<option value='" . e((string)$idx) . "' $sel>" . e($name) . "</option>";
             }
             echo "</select></td></tr>";
@@ -564,11 +582,11 @@ if ($step === 2) {
 
 /* Step 3 - Dry run / analyze */
 if ($step === 3) {
-    $rebuildPlan = empty($wiz['plan_path']) || !is_file($wiz['plan_path']) || ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'analyze');
+    $rebuildPlan = empty($wiz['plan_path']) || !is_file(to_str($wiz['plan_path'])) || ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'analyze');
 
     if ($rebuildPlan) {
         try {
-            if (!empty($wiz['plan_path'])) delete_import_plan((string)$wiz['plan_path']);
+            if (!empty($wiz['plan_path'])) delete_import_plan(to_str($wiz['plan_path']));
             $plan = analyze_import($db, $wiz);
             $wiz['plan_path'] = save_import_plan($plan);
         } catch (Throwable $e) {
@@ -577,17 +595,19 @@ if ($step === 3) {
         }
     } else {
         try {
-            $plan = load_import_plan((string)$wiz['plan_path']);
+            $plan = load_import_plan(to_str($wiz['plan_path']));
         } catch (Throwable $e) {
             $err = "Could not load dry run plan: " . $e->getMessage();
             $plan = ['summary' => [], 'rows' => []];
         }
     }
 
-    $summary = $plan['summary'] ?? [
+    $planSummary = $plan['summary'] ?? null;
+    $summary = is_array($planSummary) ? $planSummary : [
         'parsed' => 0, 'invalid' => 0, 'create' => 0, 'update' => 0, 'skip' => 0,
         'needs_subnet_create' => 0, 'unknown_subnet_rows' => 0, 'duplicate_in_csv' => 0
     ];
+    /** @var list<array<string, mixed>> $rows */
     $rows = $plan['rows'] ?? [];
     ?>
 
@@ -595,12 +615,12 @@ if ($step === 3) {
       <h2>Step 3 — Dry Run / Analysis</h2>
 
       <div class="grid cols-3">
-        <div class="metric"><div class="label">Parsed rows</div><div class="value"><?= e((string)$summary['parsed']) ?></div></div>
-        <div class="metric"><div class="label">Invalid rows</div><div class="value"><?= e((string)$summary['invalid']) ?></div></div>
-        <div class="metric"><div class="label">Creates</div><div class="value"><?= e((string)$summary['create']) ?></div></div>
-        <div class="metric"><div class="label">Updates</div><div class="value"><?= e((string)$summary['update']) ?></div></div>
-        <div class="metric"><div class="label">Skips</div><div class="value"><?= e((string)$summary['skip']) ?></div></div>
-        <div class="metric"><div class="label">Subnets to create</div><div class="value"><?= e((string)$summary['needs_subnet_create']) ?></div></div>
+        <div class="metric"><div class="label">Parsed rows</div><div class="value"><?= e(to_str($summary['parsed'])) ?></div></div>
+        <div class="metric"><div class="label">Invalid rows</div><div class="value"><?= e(to_str($summary['invalid'])) ?></div></div>
+        <div class="metric"><div class="label">Creates</div><div class="value"><?= e(to_str($summary['create'])) ?></div></div>
+        <div class="metric"><div class="label">Updates</div><div class="value"><?= e(to_str($summary['update'])) ?></div></div>
+        <div class="metric"><div class="label">Skips</div><div class="value"><?= e(to_str($summary['skip'])) ?></div></div>
+        <div class="metric"><div class="label">Subnets to create</div><div class="value"><?= e(to_str($summary['needs_subnet_create'])) ?></div></div>
       </div>
 
       <div class="page-actions mt-16">
@@ -635,20 +655,22 @@ if ($step === 3) {
           </thead>
           <tbody>
           <?php foreach ($rows as $r): ?>
-            <?php $cls = action_class((string)($r['display_action'] ?? $r['final_action'] ?? '')); ?>
+            <?php $cls = action_class(to_str($r['display_action'] ?? $r['final_action'] ?? '')); ?>
             <?php $ov = $r['subnet_overlap_warning'] ?? null; ?>
             <tr>
-              <td><?= e((string)$r['row_num']) ?></td>
-              <td><?= e((string)($r['ip'] ?? $r['ip_raw'] ?? '')) ?></td>
-              <td><span class="<?= e($cls) ?>"><?= e((string)($r['display_action'] ?? $r['final_action'] ?? '')) ?></span></td>
-              <td><?= e((string)($r['resolved_subnet_id'] ?? $r['resolved_cidr'] ?? '')) ?></td>
+              <td><?= e(to_str($r['row_num'])) ?></td>
+              <td><?= e(to_str($r['ip'] ?? $r['ip_raw'] ?? '')) ?></td>
+              <td><span class="<?= e($cls) ?>"><?= e(to_str($r['display_action'] ?? $r['final_action'] ?? '')) ?></span></td>
+              <td><?= e(to_str($r['resolved_subnet_id'] ?? $r['resolved_cidr'] ?? '')) ?></td>
               <td>
-                <?= e((string)($r['reason'] ?? '')) ?>
-                <?php if ($ov): ?>
+                <?= e(to_str($r['reason'] ?? '')) ?>
+                <?php if (is_array($ov)): ?>
                   <?php
                     $ovParts = [];
-                    if (!empty($ov['parents'])) $ovParts[] = 'nested inside: ' . implode(', ', $ov['parents']);
-                    if (!empty($ov['children'])) $ovParts[] = 'parent of: ' . implode(', ', $ov['children']);
+                    $ovParents = $ov['parents'] ?? null;
+                    $ovChildren = $ov['children'] ?? null;
+                    if (is_array($ovParents) && !empty($ovParents)) $ovParts[] = 'nested inside: ' . implode(', ', array_map(static fn(mixed $v): string => to_str($v), $ovParents));
+                    if (is_array($ovChildren) && !empty($ovChildren)) $ovParts[] = 'parent of: ' . implode(', ', array_map(static fn(mixed $v): string => to_str($v), $ovChildren));
                   ?>
                   <br><span class="warning">Hierarchy: <?= e(implode('; ', $ovParts)) ?></span>
                 <?php endif; ?>
@@ -668,13 +690,15 @@ if ($step === 3) {
 if (demo_mode_enabled()) {
     $err = "Import apply is disabled in demo mode.";
     $step = 3; // Fall back to dry-run results display
-} elseif (empty($wiz['plan_path']) || !is_file($wiz['plan_path'])) {
+} elseif (empty($wiz['plan_path']) || !is_file(to_str($wiz['plan_path']))) {
     $err = "No import plan found. Run dry run first.";
 } else {
     try {
-        $plan = load_import_plan((string)$wiz['plan_path']);
+        $plan = load_import_plan(to_str($wiz['plan_path']));
+        /** @var list<array<string, mixed>> $rows */
         $rows = $plan['rows'] ?? [];
-        $dupMode = (string)($plan['meta']['dup_mode'] ?? 'skip');
+        $planMeta = is_array($plan['meta']) ? $plan['meta'] : [];
+        $dupMode = to_str($planMeta['dup_mode'] ?? 'skip');
 
         $createdSubnets = 0;
         $createdAddresses = 0;
@@ -684,17 +708,18 @@ if (demo_mode_enabled()) {
         $resultRows = [];
 
         // preload current subnets map
+        /** @var list<array<string, mixed>> $existingSubnets */
         $existingSubnets = ($db->query("SELECT id, cidr FROM subnets")
             ?: throw new \RuntimeException('Query failed'))->fetchAll();
         $existingByCidr = [];
-        foreach ($existingSubnets as $s) $existingByCidr[(string)$s['cidr']] = (int)$s['id'];
+        foreach ($existingSubnets as $s) $existingByCidr[to_str($s['cidr'])] = to_int($s['id']);
 
         $db->beginTransaction();
 
-        $sel = $db->prepare("SELECT id, ip, hostname, owner, note, grp, status FROM addresses WHERE subnet_id=:sid AND ip=:ip");
-        $ins = $db->prepare("INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, grp, status)
-                             VALUES (:sid,:ip,:bin,:hn,:ow,:nt,:grp,:st)");
-        $upd = $db->prepare("UPDATE addresses SET hostname=:hn, owner=:ow, note=:nt, grp=:grp, status=:st WHERE id=:id");
+        $sel = $db->prepare("SELECT id, ip, hostname, owner, note, grp, mac, expires_at, status FROM addresses WHERE subnet_id=:sid AND ip=:ip");
+        $ins = $db->prepare("INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, grp, mac, expires_at, status)
+                             VALUES (:sid,:ip,:bin,:hn,:ow,:nt,:grp,:mac,:exp,:st)");
+        $upd = $db->prepare("UPDATE addresses SET hostname=:hn, owner=:ow, note=:nt, grp=:grp, mac=:mac, expires_at=:exp, status=:st WHERE id=:id");
 
         foreach ($rows as $r) {
             $result = [
@@ -704,18 +729,18 @@ if (demo_mode_enabled()) {
                 'reason' => '',
             ];
 
-            $finalAction = (string)($r['final_action'] ?? 'skip');
+            $finalAction = to_str($r['final_action'] ?? 'skip');
 
             if (in_array($finalAction, ['invalid','skip'], true)) {
                 $result['final_result'] = $finalAction;
-                $result['reason'] = (string)($r['reason'] ?? '');
+                $result['reason'] = to_str($r['reason'] ?? '');
                 $skippedRows++;
                 $resultRows[] = $result;
                 continue;
             }
 
-            $ip = (string)($r['ip'] ?? '');
-            $version = (int)($r['version'] ?? 0);
+            $ip = to_str($r['ip'] ?? '');
+            $version = to_int($r['version'] ?? 0);
             if ($ip === '' || !in_array($version, [4,6], true)) {
                 $result['final_result'] = 'invalid';
                 $result['reason'] = 'Invalid planned IP/version';
@@ -734,7 +759,7 @@ if (demo_mode_enabled()) {
             }
 
             // Resolve subnet from frozen plan
-            $resolvedCidr = (string)($r['resolved_cidr'] ?? '');
+            $resolvedCidr = to_str($r['resolved_cidr'] ?? '');
             if ($resolvedCidr === '') {
                 $result['final_result'] = 'conflict';
                 $result['reason'] = 'Missing resolved CIDR in plan';
@@ -745,7 +770,7 @@ if (demo_mode_enabled()) {
 
             if (!isset($existingByCidr[$resolvedCidr])) {
                 if (!empty($r['subnet_must_be_created'])) {
-                    $subnetId = ensure_subnet_exists($db, $resolvedCidr, (string)($r['subnet_description'] ?? ''));
+                    $subnetId = ensure_subnet_exists($db, $resolvedCidr, to_str($r['subnet_description'] ?? ''));
                     $existingByCidr[$resolvedCidr] = $subnetId;
                     $createdSubnets++;
                 } else {
@@ -760,6 +785,7 @@ if (demo_mode_enabled()) {
 
             // Detect DB drift vs analysis
             $sel->execute([':sid' => $subnetId, ':ip' => $ip]);
+            /** @var array<string, mixed>|false $existing */
             $existing = $sel->fetch();
             $existsNow = $existing ? true : false;
             $existedAtAnalysis = (bool)($r['existed_at_analysis'] ?? false);
@@ -781,24 +807,29 @@ if (demo_mode_enabled()) {
                     continue;
                 }
 
+                $insExpAt = isset($r['expires_at']) && to_str($r['expires_at']) !== '' ? to_str($r['expires_at']) : null;
                 $ins->execute([
                     ':sid'  => $subnetId,
                     ':ip'   => $ip,
                     ':bin'  => $norm['bin'],
-                    ':hn'   => (string)($r['hostname'] ?? ''),
-                    ':ow'   => (string)($r['owner'] ?? ''),
-                    ':nt'   => (string)($r['note'] ?? ''),
-                    ':grp'  => (string)($r['grp'] ?? ''),
-                    ':st'   => (string)($r['status'] ?? 'used'),
+                    ':hn'   => to_str($r['hostname'] ?? ''),
+                    ':ow'   => to_str($r['owner'] ?? ''),
+                    ':nt'   => to_str($r['note'] ?? ''),
+                    ':grp'  => to_str($r['grp'] ?? ''),
+                    ':mac'  => to_str($r['mac'] ?? ''),
+                    ':exp'  => $insExpAt,
+                    ':st'   => to_str($r['status'] ?? 'used'),
                 ]);
                 $aid = (int)$db->lastInsertId();
 
                 history_log_address($db, 'import_create', $subnetId, $ip, $aid, null, [
-                    'hostname' => (string)($r['hostname'] ?? ''),
-                    'owner' => (string)($r['owner'] ?? ''),
-                    'note' => (string)($r['note'] ?? ''),
-                    'grp' => (string)($r['grp'] ?? ''),
-                    'status' => (string)($r['status'] ?? 'used'),
+                    'hostname' => to_str($r['hostname'] ?? ''),
+                    'owner' => to_str($r['owner'] ?? ''),
+                    'note' => to_str($r['note'] ?? ''),
+                    'grp' => to_str($r['grp'] ?? ''),
+                    'mac' => to_str($r['mac'] ?? ''),
+                    'expires_at' => $insExpAt,
+                    'status' => to_str($r['status'] ?? 'used'),
                 ]);
                 $createdAddresses++;
 
@@ -817,33 +848,41 @@ if (demo_mode_enabled()) {
                     continue;
                 }
 
-                $newHn = (string)($r['hostname'] ?? '');
-                $newOw = (string)($r['owner'] ?? '');
-                $newNt = (string)($r['note'] ?? '');
-                $newGrp = (string)($r['grp'] ?? '');
-                $newSt = (string)($r['status'] ?? 'used');
+                $newHn = to_str($r['hostname'] ?? '');
+                $newOw = to_str($r['owner'] ?? '');
+                $newNt = to_str($r['note'] ?? '');
+                $newGrp = to_str($r['grp'] ?? '');
+                $newMac = to_str($r['mac'] ?? '');
+                $newExpAt = isset($r['expires_at']) && to_str($r['expires_at']) !== '' ? to_str($r['expires_at']) : null;
+                $newSt = to_str($r['status'] ?? 'used');
 
                 // Fix semantics: fill_empty does NOT overwrite status
                 if ($dupMode === 'fill_empty') {
-                    $newHn = ((string)$existing['hostname'] === '') ? $newHn : (string)$existing['hostname'];
-                    $newOw = ((string)$existing['owner'] === '') ? $newOw : (string)$existing['owner'];
-                    $newNt = ((string)$existing['note'] === '') ? $newNt : (string)$existing['note'];
-                    $newGrp = ((string)$existing['grp'] === '') ? $newGrp : (string)$existing['grp'];
-                    $newSt = (string)$existing['status'];
+                    $newHn = (to_str($existing['hostname']) === '') ? $newHn : to_str($existing['hostname']);
+                    $newOw = (to_str($existing['owner']) === '') ? $newOw : to_str($existing['owner']);
+                    $newNt = (to_str($existing['note']) === '') ? $newNt : to_str($existing['note']);
+                    $newGrp = (to_str($existing['grp']) === '') ? $newGrp : to_str($existing['grp']);
+                    $newMac = (to_str($existing['mac']) === '') ? $newMac : to_str($existing['mac']);
+                    $newExpAt = ($existing['expires_at'] === null) ? $newExpAt : to_str($existing['expires_at']);
+                    $newSt = to_str($existing['status']);
                 }
 
                 $before = [
-                    'hostname' => (string)$existing['hostname'],
-                    'owner' => (string)$existing['owner'],
-                    'note' => (string)$existing['note'],
-                    'grp' => (string)$existing['grp'],
-                    'status' => (string)$existing['status'],
+                    'hostname' => to_str($existing['hostname']),
+                    'owner' => to_str($existing['owner']),
+                    'note' => to_str($existing['note']),
+                    'grp' => to_str($existing['grp']),
+                    'mac' => to_str($existing['mac']),
+                    'expires_at' => $existing['expires_at'] !== null ? to_str($existing['expires_at']) : null,
+                    'status' => to_str($existing['status']),
                 ];
                 $after = [
                     'hostname' => $newHn,
                     'owner' => $newOw,
                     'note' => $newNt,
                     'grp' => $newGrp,
+                    'mac' => $newMac,
+                    'expires_at' => $newExpAt,
                     'status' => $newSt,
                 ];
 
@@ -852,11 +891,13 @@ if (demo_mode_enabled()) {
                     ':ow'  => $newOw,
                     ':nt'  => $newNt,
                     ':grp' => $newGrp,
+                    ':mac' => $newMac,
+                    ':exp' => $newExpAt,
                     ':st'  => $newSt,
-                    ':id'  => (int)$existing['id'],
+                    ':id'  => to_int($existing['id']),
                 ]);
 
-                history_log_address($db, 'import_update', $subnetId, $ip, (int)$existing['id'], $before, $after);
+                history_log_address($db, 'import_update', $subnetId, $ip, to_int($existing['id']), $before, $after);
                 $updatedAddresses++;
 
                 $result['final_result'] = 'updated';
@@ -889,8 +930,8 @@ if (demo_mode_enabled()) {
         ]);
         $wiz['result_path'] = $resultFile;
 
-        if (!empty($wiz['tmp_path']) && is_file($wiz['tmp_path'])) @unlink($wiz['tmp_path']);
-        if (!empty($wiz['plan_path']) && is_file($wiz['plan_path'])) @unlink($wiz['plan_path']);
+        if (!empty($wiz['tmp_path']) && is_file(to_str($wiz['tmp_path']))) @unlink(to_str($wiz['tmp_path']));
+        if (is_file(to_str($wiz['plan_path']))) @unlink(to_str($wiz['plan_path']));
         unset($wiz['tmp_path'], $wiz['plan_path']);
 
         $msg = "Import complete. Created subnets: $createdSubnets, created addresses: $createdAddresses, updated addresses: $updatedAddresses, skipped rows: $skippedRows, conflicts: $conflicts.";
@@ -902,11 +943,14 @@ if (demo_mode_enabled()) {
 
 $resultRows = [];
 $summary = [];
-if (!empty($wiz['result_path']) && is_file($wiz['result_path'])) {
+if (!empty($wiz['result_path']) && is_file(to_str($wiz['result_path']))) {
     try {
-        $res = load_result_file($wiz['result_path']);
-        $resultRows = $res['rows'] ?? [];
-        $summary = $res['summary'] ?? [];
+        $res = load_result_file(to_str($wiz['result_path']));
+        $resRows = $res['rows'] ?? null;
+        /** @var list<array<string, mixed>> $resultRows */
+        $resultRows = is_array($resRows) ? $resRows : [];
+        $resSummary = $res['summary'] ?? null;
+        $summary = is_array($resSummary) ? $resSummary : [];
     } catch (Throwable $e) {
         // ignore
     }
@@ -920,17 +964,17 @@ if (!empty($wiz['result_path']) && is_file($wiz['result_path'])) {
 
   <?php if ($summary): ?>
     <div class="grid cols-3">
-      <div class="metric"><div class="label">Created subnets</div><div class="value"><?= e((string)$summary['created_subnets']) ?></div></div>
-      <div class="metric"><div class="label">Created addresses</div><div class="value"><?= e((string)$summary['created_addresses']) ?></div></div>
-      <div class="metric"><div class="label">Updated addresses</div><div class="value"><?= e((string)$summary['updated_addresses']) ?></div></div>
-      <div class="metric"><div class="label">Skipped rows</div><div class="value"><?= e((string)$summary['skipped_rows']) ?></div></div>
-      <div class="metric"><div class="label">Conflicts</div><div class="value"><?= e((string)$summary['conflicts']) ?></div></div>
+      <div class="metric"><div class="label">Created subnets</div><div class="value"><?= e(to_str($summary['created_subnets'])) ?></div></div>
+      <div class="metric"><div class="label">Created addresses</div><div class="value"><?= e(to_str($summary['created_addresses'])) ?></div></div>
+      <div class="metric"><div class="label">Updated addresses</div><div class="value"><?= e(to_str($summary['updated_addresses'])) ?></div></div>
+      <div class="metric"><div class="label">Skipped rows</div><div class="value"><?= e(to_str($summary['skipped_rows'])) ?></div></div>
+      <div class="metric"><div class="label">Conflicts</div><div class="value"><?= e(to_str($summary['conflicts'])) ?></div></div>
     </div>
   <?php endif; ?>
 
   <div class="page-actions mt-16">
     <a class="action-pill" href="import_csv.php">⬆ Start New Import</a>
-    <?php if (!empty($wiz['result_path']) && is_file($wiz['result_path'])): ?>
+    <?php if (!empty($wiz['result_path']) && is_file(to_str($wiz['result_path']))): ?>
       <a class="action-pill" href="export_import_report.php?mode=result">⬇ Export Result Report</a>
     <?php endif; ?>
   </div>
@@ -948,12 +992,12 @@ if (!empty($wiz['result_path']) && is_file($wiz['result_path'])) {
       </thead>
       <tbody>
       <?php foreach ($resultRows as $r): ?>
-        <?php $cls = action_class((string)($r['final_result'] ?? '')); ?>
+        <?php $cls = action_class(to_str($r['final_result'] ?? '')); ?>
         <tr>
-          <td><?= e((string)$r['row_num']) ?></td>
-          <td><?= e((string)$r['ip']) ?></td>
-          <td><span class="<?= e($cls) ?>"><?= e((string)$r['final_result']) ?></span></td>
-          <td><?= e((string)$r['reason']) ?></td>
+          <td><?= e(to_str($r['row_num'])) ?></td>
+          <td><?= e(to_str($r['ip'])) ?></td>
+          <td><span class="<?= e($cls) ?>"><?= e(to_str($r['final_result'])) ?></span></td>
+          <td><?= e(to_str($r['reason'])) ?></td>
         </tr>
       <?php endforeach; ?>
       </tbody>

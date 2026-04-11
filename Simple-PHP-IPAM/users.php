@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/init.php';
+/** @var \PDO $db */
+/** @var IpamConfig $config */
 require_role('admin');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
@@ -12,10 +14,10 @@ $self   = current_user();
 $formData = ['username' => '', 'name' => '', 'email' => '', 'role' => 'readonly', 'sso_only' => false, 'oidc_sub' => ''];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $action = (string)($_POST['action'] ?? '');
+    $action = to_str($_POST['action'] ?? '');
 
     $validRoles = ['admin', 'netops', 'readonly'];
-    $pwPolicy   = (array)(($config ?? [])['password_policy'] ?? []);
+    $pwPolicy   = (array)$config['password_policy'];
 
     // Demo mode: block all mutations
     if (demo_mode_enabled() && in_array($action, ['create', 'delete', 'toggle_active', 'set_role'], true)) {
@@ -24,12 +26,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'create') {
-        $username = trim((string)($_POST['username'] ?? ''));
-        $role     = (string)($_POST['role']     ?? 'readonly');
-        $name     = substr(trim((string)($_POST['name']  ?? '')), 0, 255);
-        $email    = substr(trim((string)($_POST['email'] ?? '')), 0, 255);
+        $username = trim(to_str($_POST['username'] ?? ''));
+        $role     = to_str($_POST['role']     ?? 'readonly');
+        $name     = substr(trim(to_str($_POST['name']  ?? '')), 0, 255);
+        $email    = substr(trim(to_str($_POST['email'] ?? '')), 0, 255);
         $ssoOnly  = !empty($_POST['sso_only']);
-        $oidcSub  = trim((string)($_POST['oidc_sub'] ?? ''));
+        $oidcSub  = trim(to_str($_POST['oidc_sub'] ?? ''));
 
         // Preserve submitted values for re-populating the form on failure
         $formData = ['username' => $username, 'name' => $name, 'email' => $email,
@@ -40,8 +42,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif (!in_array($role, $validRoles, true)) {
             $errors[] = 'Invalid role.';
         }
+        $password = '';
         if (!$ssoOnly && !$errors) {
-            $password = (string)($_POST['password'] ?? '');
+            $password = to_str($_POST['password'] ?? '');
             $errors   = array_merge($errors, validate_password_complexity($password, $pwPolicy));
         }
 
@@ -79,15 +82,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
     } elseif ($action === 'toggle_active') {
-        $id = (int)($_POST['id'] ?? 0);
+        $id = to_int($_POST['id'] ?? 0);
         if ($id === $self['id']) {
             $errors[] = 'You cannot disable your own account.';
         } else {
             // Last-active-admin guard: prevent disabling the last active admin
             $tSt = $db->prepare("SELECT role, is_active FROM users WHERE id = :id");
             $tSt->execute([':id' => $id]);
+            /** @var array<string, mixed>|false $target */
             $target = $tSt->fetch();
-            if ($target && $target['role'] === 'admin' && (int)$target['is_active'] === 1) {
+            if ($target && $target['role'] === 'admin' && to_int($target['is_active']) === 1) {
                 $cntSt = $db->prepare(
                     "SELECT COUNT(*) FROM users WHERE role='admin' AND is_active=1 AND id != :id"
                 );
@@ -105,8 +109,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
     } elseif ($action === 'set_role') {
-        $id   = (int)($_POST['id']   ?? 0);
-        $role = (string)($_POST['role'] ?? '');
+        $id   = to_int($_POST['id']   ?? 0);
+        $role = to_str($_POST['role'] ?? '');
         if ($id === $self['id']) {
             $errors[] = 'You cannot change your own role.';
         } elseif (!in_array($role, $validRoles, true)) {
@@ -116,8 +120,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($role !== 'admin') {
                 $tSt = $db->prepare("SELECT role, is_active FROM users WHERE id = :id");
                 $tSt->execute([':id' => $id]);
+                /** @var array<string, mixed>|false $target */
                 $target = $tSt->fetch();
-                if ($target && $target['role'] === 'admin' && (int)$target['is_active'] === 1) {
+                if ($target && $target['role'] === 'admin' && to_int($target['is_active']) === 1) {
                     $cntSt = $db->prepare(
                         "SELECT COUNT(*) FROM users WHERE role='admin' AND is_active=1 AND id != :id"
                     );
@@ -136,17 +141,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
     } elseif ($action === 'update_profile') {
-        $id    = (int)($_POST['id']    ?? 0);
-        $name  = substr(trim((string)($_POST['name']  ?? '')), 0, 255);
-        $email = substr(trim((string)($_POST['email'] ?? '')), 0, 255);
+        $id    = to_int($_POST['id']    ?? 0);
+        $name  = substr(trim(to_str($_POST['name']  ?? '')), 0, 255);
+        $email = substr(trim(to_str($_POST['email'] ?? '')), 0, 255);
         $db->prepare("UPDATE users SET name = :n, email = :e WHERE id = :id")
            ->execute([':n' => $name, ':e' => $email, ':id' => $id]);
         audit($db, 'user.update_profile', 'user', $id, '');
         $msg = 'Profile updated.';
 
     } elseif ($action === 'reset_password') {
-        $id     = (int)($_POST['id'] ?? 0);
-        $pw     = (string)($_POST['new_password'] ?? '');
+        $id     = to_int($_POST['id'] ?? 0);
+        $pw     = to_str($_POST['new_password'] ?? '');
         $pwErrs = validate_password_complexity($pw, $pwPolicy);
         if ($pwErrs) {
             $errors = $pwErrs;
@@ -159,8 +164,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
     } elseif ($action === 'link_oidc') {
-        $id  = (int)($_POST['id']       ?? 0);
-        $sub = trim((string)($_POST['oidc_sub'] ?? ''));
+        $id  = to_int($_POST['id']       ?? 0);
+        $sub = trim(to_str($_POST['oidc_sub'] ?? ''));
         if ($sub === '') {
             $errors[] = 'OIDC subject ID is required.';
         } else {
@@ -175,7 +180,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
     } elseif ($action === 'unlink_oidc') {
-        $id = (int)($_POST['id'] ?? 0);
+        $id = to_int($_POST['id'] ?? 0);
         if ($id === $self['id']) {
             $errors[] = 'You cannot unlink your own SSO account from this page. Use your profile settings.';
         } else {
@@ -186,15 +191,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
     } elseif ($action === 'delete') {
-        $id = (int)($_POST['id'] ?? 0);
+        $id = to_int($_POST['id'] ?? 0);
         if ($id === $self['id']) {
             $errors[] = 'You cannot delete your own account.';
         } else {
             $tSt = $db->prepare("SELECT role, is_active FROM users WHERE id = :id");
             $tSt->execute([':id' => $id]);
+            /** @var array<string, mixed>|false $target */
             $target = $tSt->fetch();
             // Only guard active admins — deleting an inactive admin can never remove the last active one
-            if ($target && $target['role'] === 'admin' && (int)$target['is_active'] === 1) {
+            if ($target && $target['role'] === 'admin' && to_int($target['is_active']) === 1) {
                 $cntSt = $db->prepare(
                     "SELECT COUNT(*) FROM users WHERE role='admin' AND is_active=1 AND id != :id"
                 );
@@ -220,6 +226,7 @@ $st = $db->prepare(
      FROM users ORDER BY {$userSort['sql']}"
 );
 $st->execute();
+/** @var list<array<string, mixed>> $users */
 $users = $st->fetchAll();
 
 page_header('Users');
@@ -227,7 +234,7 @@ page_header('Users');
 <h1>Users</h1>
 <?php if ($errors): ?>
   <ul class="danger list-indent">
-    <?php foreach ($errors as $e_msg): ?><li><?= e($e_msg) ?></li><?php endforeach; ?>
+    <?php foreach ($errors as $e_msg): ?><li><?= e(to_str($e_msg)) ?></li><?php endforeach; ?>
   </ul>
 <?php endif; ?>
 <?php if ($msg): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
@@ -237,13 +244,13 @@ page_header('Users');
   <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
   <input type="hidden" name="action" value="create">
   <div class="row">
-    <label>Username<br><input name="username" required value="<?= e($formData['username']) ?>"></label>
-    <label>Full name<br><input name="name" placeholder="Jane Smith" maxlength="255" value="<?= e($formData['name']) ?>"></label>
-    <label>Email<br><input type="email" name="email" placeholder="jane@example.com" maxlength="255" value="<?= e($formData['email']) ?>"></label>
+    <label>Username<br><input name="username" required value="<?= e(to_str($formData['username'])) ?>"></label>
+    <label>Full name<br><input name="name" placeholder="Jane Smith" maxlength="255" value="<?= e(to_str($formData['name'])) ?>"></label>
+    <label>Email<br><input type="email" name="email" placeholder="jane@example.com" maxlength="255" value="<?= e(to_str($formData['email'])) ?>"></label>
     <label id="pw-field">Password<br><input type="password" name="password" id="create-pw-input"></label>
     <?php if (oidc_enabled($config)): ?>
     <label id="sub-field" class="hidden">Subject (sub)<br>
-      <input name="oidc_sub" id="create-sub-input" placeholder="IdP sub claim (optional)" value="<?= e($formData['oidc_sub']) ?>">
+      <input name="oidc_sub" id="create-sub-input" placeholder="IdP sub claim (optional)" value="<?= e(to_str($formData['oidc_sub'])) ?>">
     </label>
     <?php endif; ?>
     <label>Role<br>
@@ -284,37 +291,37 @@ page_header('Users');
   <tbody>
   <?php foreach ($users as $u): ?>
     <tr>
-      <td><?= e($u['username']) ?></td>
-      <td><?= e((string)$u['name']) ?></td>
-      <td><?= e((string)$u['email']) ?></td>
-      <td><?= e($u['role']) ?></td>
-      <td><?= ((int)$u['is_active'] === 1) ? 'yes' : 'no' ?></td>
+      <td><?= e(to_str($u['username'])) ?></td>
+      <td><?= e(to_str($u['name'])) ?></td>
+      <td><?= e(to_str($u['email'])) ?></td>
+      <td><?= e(to_str($u['role'])) ?></td>
+      <td><?= (to_int($u['is_active']) === 1) ? 'yes' : 'no' ?></td>
       <td>
         <?php if ($u['oidc_sub'] !== null): ?>
-          <span class="success" title="<?= e((string)$u['oidc_sub']) ?>">linked</span>
+          <span class="success" title="<?= e(to_str($u['oidc_sub'])) ?>">linked</span>
         <?php else: ?>
           <span class="muted">—</span>
         <?php endif; ?>
       </td>
-      <td class="muted"><?= $u['last_login_at'] ? e($u['last_login_at']) : '<span class="muted">never</span>' ?></td>
-      <td class="muted"><?= e($u['created_at']) ?></td>
+      <td class="muted"><?= $u['last_login_at'] ? e(to_str($u['last_login_at'])) : '<span class="muted">never</span>' ?></td>
+      <td class="muted"><?= e(to_str($u['created_at'])) ?></td>
       <td>
         <details>
           <summary class="muted cursor-pointer font-sm">Actions ▾</summary>
           <div class="flex-col gap-8 mt-8">
 
-            <?php if ((int)$u['id'] !== $self['id']): ?>
+            <?php if (to_int($u['id']) !== $self['id']): ?>
             <form method="post" action="users.php" class="row gap-6">
               <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
-              <input type="hidden" name="id"     value="<?= (int)$u['id'] ?>">
+              <input type="hidden" name="id"     value="<?= to_int($u['id']) ?>">
               <input type="hidden" name="action" value="toggle_active">
-              <button type="submit"><?= ((int)$u['is_active'] === 1) ? 'Disable' : 'Enable' ?></button>
+              <button type="submit"><?= (to_int($u['is_active']) === 1) ? 'Disable' : 'Enable' ?></button>
             </form>
 
             <form method="post" action="users.php" class="row gap-6">
               <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
               <input type="hidden" name="action" value="set_role">
-              <input type="hidden" name="id"     value="<?= (int)$u['id'] ?>">
+              <input type="hidden" name="id"     value="<?= to_int($u['id']) ?>">
               <select name="role">
                 <option value="readonly" <?= $u['role']==='readonly'?'selected':'' ?>>readonly</option>
                 <option value="netops"   <?= $u['role']==='netops'  ?'selected':'' ?>>netops</option>
@@ -327,27 +334,27 @@ page_header('Users');
             <form method="post" action="users.php" class="row gap-6">
               <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
               <input type="hidden" name="action" value="update_profile">
-              <input type="hidden" name="id"     value="<?= (int)$u['id'] ?>">
-              <input name="name"  placeholder="Full name"  value="<?= e((string)$u['name']) ?>" maxlength="255">
-              <input type="email" name="email" placeholder="Email" value="<?= e((string)$u['email']) ?>" maxlength="255">
+              <input type="hidden" name="id"     value="<?= to_int($u['id']) ?>">
+              <input name="name"  placeholder="Full name"  value="<?= e(to_str($u['name'])) ?>" maxlength="255">
+              <input type="email" name="email" placeholder="Email" value="<?= e(to_str($u['email'])) ?>" maxlength="255">
               <button type="submit">Save profile</button>
             </form>
 
             <form method="post" action="users.php" class="row gap-6">
               <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
               <input type="hidden" name="action" value="reset_password">
-              <input type="hidden" name="id"     value="<?= (int)$u['id'] ?>">
+              <input type="hidden" name="id"     value="<?= to_int($u['id']) ?>">
               <input type="password" name="new_password" placeholder="New password (12+ chars)" required>
               <button type="submit">Reset PW</button>
             </form>
 
             <?php if ($u['oidc_sub'] !== null): ?>
-              <?php if ((int)$u['id'] !== $self['id']): ?>
+              <?php if (to_int($u['id']) !== $self['id']): ?>
               <form method="post" action="users.php" class="row gap-6"
-                    data-confirm="Remove SSO link for <?= e((string)$u['username']) ?>?">
+                    data-confirm="Remove SSO link for <?= e(to_str($u['username'])) ?>?">
                 <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action" value="unlink_oidc">
-                <input type="hidden" name="id"     value="<?= (int)$u['id'] ?>">
+                <input type="hidden" name="id"     value="<?= to_int($u['id']) ?>">
                 <button type="submit" class="button-secondary">Unlink SSO</button>
               </form>
               <?php else: ?>
@@ -357,18 +364,18 @@ page_header('Users');
               <form method="post" action="users.php" class="row gap-6">
                 <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action" value="link_oidc">
-                <input type="hidden" name="id"     value="<?= (int)$u['id'] ?>">
+                <input type="hidden" name="id"     value="<?= to_int($u['id']) ?>">
                 <input name="oidc_sub" placeholder="IdP subject ID (sub claim)" class="mw-220">
                 <button type="submit" class="button-secondary">Link SSO</button>
               </form>
             <?php endif; ?>
 
-            <?php if ((int)$u['id'] !== $self['id']): ?>
+            <?php if (to_int($u['id']) !== $self['id']): ?>
               <form method="post" action="users.php"
-                    data-confirm="Permanently delete user <?= e((string)$u['username']) ?>?">
+                    data-confirm="Permanently delete user <?= e(to_str($u['username'])) ?>?">
                 <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action" value="delete">
-                <input type="hidden" name="id"     value="<?= (int)$u['id'] ?>">
+                <input type="hidden" name="id"     value="<?= to_int($u['id']) ?>">
                 <button type="submit" class="button-danger">Delete user</button>
               </form>
             <?php endif; ?>

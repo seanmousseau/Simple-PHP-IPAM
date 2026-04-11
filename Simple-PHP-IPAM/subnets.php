@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/init.php';
+/** @var \PDO $db */
 require_login();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
@@ -13,23 +14,24 @@ $warn = '';
 
 $st = $db->prepare("SELECT id, name FROM sites ORDER BY name ASC");
 $st->execute();
+/** @var list<array<string, mixed>> $siteList */
 $siteList = $st->fetchAll();
 
 $siteMap = [];
 foreach ($siteList as $s) {
-    $siteMap[(int)$s['id']] = $s['name'];
+    $siteMap[to_int($s['id'])] = to_str($s['name']);
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $action = (string)($_POST['action'] ?? '');
+    $action = to_str($_POST['action'] ?? '');
 
     if ($action === 'create') {
         require_write_access();
-        $cidr = trim((string)($_POST['cidr'] ?? ''));
-        $desc = trim((string)($_POST['description'] ?? ''));
-        $siteId = (int)($_POST['site_id'] ?? 0);
+        $cidr = trim(to_str($_POST['cidr'] ?? ''));
+        $desc = trim(to_str($_POST['description'] ?? ''));
+        $siteId = to_int($_POST['site_id'] ?? 0);
         if ($siteId <= 0) $siteId = null;
-        $vlanIdRaw = trim((string)($_POST['vlan_id'] ?? ''));
+        $vlanIdRaw = trim(to_str($_POST['vlan_id'] ?? ''));
         $vlanId = $vlanIdRaw !== '' ? (int)$vlanIdRaw : null;
         if ($vlanId !== null && ($vlanId < 1 || $vlanId > 4094)) {
             $err = 'VLAN ID must be between 1 and 4094.';
@@ -88,12 +90,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     } elseif ($action === 'update') {
         require_write_access();
-        $id = (int)($_POST['id'] ?? 0);
-        $cidr = trim((string)($_POST['cidr'] ?? ''));
-        $desc = trim((string)($_POST['description'] ?? ''));
-        $siteId = (int)($_POST['site_id'] ?? 0);
+        $id = to_int($_POST['id'] ?? 0);
+        $cidr = trim(to_str($_POST['cidr'] ?? ''));
+        $desc = trim(to_str($_POST['description'] ?? ''));
+        $siteId = to_int($_POST['site_id'] ?? 0);
         if ($siteId <= 0) $siteId = null;
-        $vlanIdRaw = trim((string)($_POST['vlan_id'] ?? ''));
+        $vlanIdRaw = trim(to_str($_POST['vlan_id'] ?? ''));
         $vlanId = $vlanIdRaw !== '' ? (int)$vlanIdRaw : null;
         if ($vlanId !== null && ($vlanId < 1 || $vlanId > 4094)) {
             $err = 'VLAN ID must be between 1 and 4094.';
@@ -148,10 +150,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     } elseif ($action === 'delete') {
         require_write_access();
-        $id = (int)($_POST['id'] ?? 0);
+        $id = to_int($_POST['id'] ?? 0);
         $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM addresses WHERE subnet_id = :id");
         $cntSt->execute([':id' => $id]);
-        $addrCount = (int)$cntSt->fetch()['c'];
+        /** @var array<string, mixed>|false $cntRow */
+
+        $cntRow = $cntSt->fetch();
+
+        $addrCount = is_array($cntRow) ? to_int($cntRow['c']) : 0;
         $st = $db->prepare("DELETE FROM subnets WHERE id = :id");
         $st->execute([':id' => $id]);
         audit($db, 'subnet.delete', 'subnet', $id, "addresses_deleted={$addrCount}");
@@ -166,6 +172,7 @@ $st = $db->prepare("
     ORDER BY ip_version ASC, prefix ASC, network_bin ASC
 ");
 $st->execute();
+/** @var list<array<string, mixed>> $list */
 $list = $st->fetchAll();
 
 function subnet_contains_bin_local(string $parentNetBin, int $parentPrefix, string $childNetBin): bool
@@ -181,16 +188,16 @@ function subnet_contains_bin_local(string $parentNetBin, int $parentPrefix, stri
 function build_subnet_tree_local(array $rows): array
 {
     $byId = [];
-    foreach ($rows as $r) $byId[(int)$r['id']] = $r;
+    foreach ($rows as $r) $byId[to_int($r['id'])] = $r;
 
     // Sort by ip_version ASC, prefix ASC (broadest first), network_bin ASC
     $sorted = $byId;
     uasort($sorted, function(array $a, array $b): int {
-        $va = (int)$a['ip_version']; $vb = (int)$b['ip_version'];
+        $va = to_int($a['ip_version']); $vb = to_int($b['ip_version']);
         if ($va !== $vb) return $va <=> $vb;
-        $pa = (int)$a['prefix']; $pb = (int)$b['prefix'];
+        $pa = to_int($a['prefix']); $pb = to_int($b['prefix']);
         if ($pa !== $pb) return $pa <=> $pb;
-        return strcmp($a['network_bin'], $b['network_bin']);
+        return strcmp(to_str($a['network_bin']), to_str($b['network_bin']));
     });
 
     $children = [];
@@ -201,19 +208,19 @@ function build_subnet_tree_local(array $rows): array
     $stack = [];
 
     foreach ($sorted as $id => $row) {
-        $ver    = (int)$row['ip_version'];
-        $prefix = (int)$row['prefix'];
-        $netBin = $row['network_bin'];
+        $ver    = to_int($row['ip_version']);
+        $prefix = to_int($row['prefix']);
+        $netBin = to_str($row['network_bin']);
 
         // Pop entries that cannot be a parent of this subnet
         while (!empty($stack)) {
             $top = end($stack);
-            if ((int)$top['ip_version'] !== $ver) {
+            if (to_int($top['ip_version']) !== $ver) {
                 $stack = [];
                 break;
             }
-            if ((int)$top['prefix'] < $prefix
-                && subnet_contains_bin_local($top['network_bin'], (int)$top['prefix'], $netBin)) {
+            if (to_int($top['prefix']) < $prefix
+                && subnet_contains_bin_local(to_str($top['network_bin']), to_int($top['prefix']), $netBin)) {
                 break;
             }
             array_pop($stack);
@@ -221,7 +228,7 @@ function build_subnet_tree_local(array $rows): array
 
         if (!empty($stack)) {
             $parent = end($stack);
-            $children[(int)$parent['id']][] = $id;
+            $children[to_int($parent['id'])][] = $id;
         } else {
             $roots[] = $id;
         }
@@ -231,11 +238,11 @@ function build_subnet_tree_local(array $rows): array
 
     $cmpFn = function(int $a, int $b) use ($byId): int {
         $ra = $byId[$a]; $rb = $byId[$b];
-        $va = (int)$ra['ip_version']; $vb = (int)$rb['ip_version'];
+        $va = to_int($ra['ip_version']); $vb = to_int($rb['ip_version']);
         if ($va !== $vb) return $va <=> $vb;
-        $c = strcmp($ra['network_bin'], $rb['network_bin']);
+        $c = strcmp(to_str($ra['network_bin']), to_str($rb['network_bin']));
         if ($c !== 0) return $c;
-        return (int)$ra['prefix'] <=> (int)$rb['prefix'];
+        return to_int($ra['prefix']) <=> to_int($rb['prefix']);
     };
 
     usort($roots, $cmpFn);
@@ -254,9 +261,9 @@ function subnet_direct_counts_local(PDO $db): array
     $st->execute();
     $out = [];
     foreach ($st->fetchAll() as $r) {
-        $sid = (int)$r['subnet_id'];
-        $status = (string)$r['status'];
-        $c = (int)$r['c'];
+        $sid = to_int($r['subnet_id']);
+        $status = to_str($r['status']);
+        $c = to_int($r['c']);
         $out[$sid] ??= ['used'=>0,'reserved'=>0,'free'=>0,'total'=>0];
         if (isset($out[$sid][$status])) $out[$sid][$status] += $c;
         $out[$sid]['total'] += $c;
@@ -313,6 +320,7 @@ function ipv4_unassigned_summary_local(PDO $db): array
 {
     $st = $db->prepare("SELECT id, prefix, network_bin FROM subnets WHERE ip_version=4");
     $st->execute();
+    /** @var list<array<string, mixed>> $subs */
     $subs = $st->fetchAll();
     if (!$subs) return [];
 
@@ -326,14 +334,14 @@ function ipv4_unassigned_summary_local(PDO $db): array
     $cntSt->execute();
     $countBySubnet = [];
     foreach ($cntSt->fetchAll() as $r) {
-        $countBySubnet[(int)$r['subnet_id']] = (int)$r['c'];
+        $countBySubnet[to_int($r['subnet_id'])] = to_int($r['c']);
     }
 
     $out = [];
     foreach ($subs as $s) {
-        $sid    = (int)$s['id'];
-        $prefix = (int)$s['prefix'];
-        $netBin = $s['network_bin'];
+        $sid    = to_int($s['id']);
+        $prefix = to_int($s['prefix']);
+        $netBin = to_str($s['network_bin']);
 
         $assignableTotal = ipv4_assignable_count($prefix);
         $assignedCount   = $countBySubnet[$sid] ?? 0;
@@ -347,7 +355,11 @@ function ipv4_unassigned_summary_local(PDO $db): array
                    AND (ip_bin = :net OR ip_bin = :bcast)"
             );
             $exclSt->execute([':sid' => $sid, ':net' => $netBin, ':bcast' => $bcast]);
-            $excluded = (int)$exclSt->fetch()['c'];
+            /** @var array<string, mixed>|false $cntRow */
+
+            $cntRow = $exclSt->fetch();
+
+            $excluded = is_array($cntRow) ? to_int($cntRow['c']) : 0;
             $assignedAssignable = $assignedCount - $excluded;
         } else {
             $assignedAssignable = $assignedCount;
@@ -384,7 +396,7 @@ function ipv4_unassigned_aggregated_local(array $tree, array $directUnassigned):
         if (isset($agg[$id])) return $agg[$id];
 
         // Only IPv4 subnets contribute to the util bar
-        $ipVer = (int)($tree['byId'][$id]['ip_version'] ?? 0);
+        $ipVer = to_int($tree['byId'][$id]['ip_version'] ?? 0);
         $base = ($ipVer === 4 && isset($directUnassigned[$id]))
             ? $directUnassigned[$id]
             : ['assignable_total' => 0, 'assigned_assignable' => 0, 'unassigned_assignable' => 0];
@@ -411,7 +423,7 @@ $ipv4UnassignedAgg = ipv4_unassigned_aggregated_local($tree, $ipv4Unassigned);
 
 $siteGroups = [];
 foreach ($tree['roots'] as $rid) {
-    $siteId = (int)($tree['byId'][$rid]['site_id'] ?? 0);
+    $siteId = to_int($tree['byId'][$rid]['site_id'] ?? 0);
     $key = $siteId > 0 ? (string)$siteId : 'ungrouped';
     $label = $siteId > 0 ? ($siteMap[$siteId] ?? "Site #$siteId") : 'Ungrouped';
     $siteGroups[$key] ??= ['label' => $label, 'roots' => []];
@@ -426,7 +438,7 @@ uasort($siteGroups, fn($a, $b) => strcasecmp($a['label'], $b['label']));
  * @param array<int, array{assignable_total: int, assigned_assignable: int, unassigned_assignable: int}> $ipv4Unassigned
  * @param array<int, array{assignable_total: int, assigned_assignable: int, unassigned_assignable: int}> $ipv4UnassignedAgg
  * @param array<int, string> $siteMap
- * @param list<array<string, mixed>> $siteList
+ * @param array<int, array<string, mixed>> $siteList
  */
 function render_subnet_node_local(array $tree, array $direct, array $agg, array $ipv4Unassigned, array $ipv4UnassignedAgg, array $siteMap, array $siteList, int $id, int $depth = 0): void
 {
@@ -436,17 +448,17 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
     $a = $agg[$id] ?? $d;
     $disabled = (current_user()['role'] === 'readonly') ? "disabled" : "";
     $siteName = '';
-    $siteId = (int)($row['site_id'] ?? 0);
+    $siteId = to_int($row['site_id'] ?? 0);
     if ($siteId > 0) $siteName = $siteMap[$siteId] ?? '';
 
     echo "<div class='subnet-node' data-indent='{$pad}'>";
     echo "<details " . ($depth < 1 ? "open" : "") . ">";
     echo "<summary>";
-    echo "<b>" . e($row['cidr']) . "</b> ";
-    echo "<span class='muted'>(v" . (int)$row['ip_version'] . ")</span> ";
+    echo "<b><a href='addresses.php?subnet_id=" . to_int($row['id']) . "'>" . e(to_str($row['cidr'])) . "</a></b> ";
+    echo "<span class='muted'>(v" . to_int($row['ip_version']) . ")</span> ";
     if ($siteName !== '') echo " <span class='badge'>" . e($siteName) . "</span>";
-    if (!empty($row['vlan_id'])) echo " <span class='badge'>VLAN " . (int)$row['vlan_id'] . "</span>";
-    if (($row['description'] ?? '') !== '') echo " - " . e((string)$row['description']);
+    if (!empty($row['vlan_id'])) echo " <span class='badge'>VLAN " . to_int($row['vlan_id']) . "</span>";
+    if (($row['description'] ?? '') !== '') echo " - " . e(to_str($row['description']));
     // Address count badges — direct counts on this subnet, aggregated in parens if children differ
     $countHtml = "<span class='status-used'>" . $d['used'] . " used</span>"
                . " &middot; <span class='status-reserved'>" . $d['reserved'] . " reserved</span>"
@@ -456,17 +468,17 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
     }
     echo "<br>" . $countHtml;
 
-    if ((int)$row['ip_version'] === 4) {
+    if (to_int($row['ip_version']) === 4) {
         $hasChildren = !empty($tree['children'][$id]);
         // Use aggregated stats for parents so the bar reflects all descendants
         $u = $hasChildren ? ($ipv4UnassignedAgg[$id] ?? null) : ($ipv4Unassigned[$id] ?? null);
-        if ($u && (int)$u['assignable_total'] > 0) {
-            $assignable = (int)$u['assignable_total'];
-            $assigned   = (int)$u['assigned_assignable'];
+        if ($u && to_int($u['assignable_total']) > 0) {
+            $assignable = to_int($u['assignable_total']);
+            $assigned   = to_int($u['assigned_assignable']);
             $pct = (int)round($assigned / $assignable * 100);
-            $cfg = $GLOBALS['config'] ?? [];
-            $warnThreshold = (int)($cfg['utilization_warn']     ?? 80);
-            $critThreshold = (int)($cfg['utilization_critical'] ?? 95);
+            $globalCfg = $GLOBALS['config'];
+            $warnThreshold = is_array($globalCfg) ? to_int($globalCfg['utilization_warn'] ?? 80) : 80;
+            $critThreshold = is_array($globalCfg) ? to_int($globalCfg['utilization_critical'] ?? 95) : 95;
             $barClass = $pct >= $critThreshold ? 'util-bar-fill--crit'
                       : ($pct >= $warnThreshold ? 'util-bar-fill--warn' : '');
             $pctLabel = $pct >= $critThreshold ? "<span class='danger'>{$pct}%</span>"
@@ -475,7 +487,7 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
             $rollupNote = $hasChildren ? " <span class='muted'>(incl. subnets)</span>" : '';
             echo "<br><span class='muted'>Assignable: " . e((string)$assignable) .
                  " | Assigned: " . e((string)$assigned) .
-                 " | Unassigned: <b>" . e((string)$u['unassigned_assignable']) . "</b></span>"
+                 " | Unassigned: <b>" . e(to_str($u['unassigned_assignable'])) . "</b></span>"
                . $rollupNote
                . " <span class='util-bar'><span class='util-bar-fill {$barClass}' data-pct='{$pct}'></span></span>"
                . " {$pctLabel}";
@@ -485,27 +497,27 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
 
     echo "<div class='mt-10'>";
     echo "<div class='page-actions mb-10'>";
-    echo "<a class='action-pill' href='addresses.php?subnet_id=" . (int)$row['id'] . "'>🧾 View Addresses</a>";
-    if ((int)$row['ip_version'] === 4) {
-        echo "<a class='action-pill' href='unassigned.php?subnet_id=" . (int)$row['id'] . "'>✨ Unassigned</a>";
+    echo "<a class='action-pill' href='addresses.php?subnet_id=" . to_int($row['id']) . "'>🧾 View Addresses</a>";
+    if (to_int($row['ip_version']) === 4) {
+        echo "<a class='action-pill' href='unassigned.php?subnet_id=" . to_int($row['id']) . "'>✨ Unassigned</a>";
     }
     if (current_user()['role'] !== 'readonly') {
-        echo "<a class='action-pill' href='bulk_update.php?subnet_id=" . (int)$row['id'] . "'>✏ Bulk Update</a>";
-        if ((int)$row['ip_version'] === 4) {
-            echo "<a class='action-pill' href='dhcp_pool.php?subnet_id=" . (int)$row['id'] . "'>🔒 DHCP Pool</a>";
+        echo "<a class='action-pill' href='bulk_update.php?subnet_id=" . to_int($row['id']) . "'>✏ Bulk Update</a>";
+        if (to_int($row['ip_version']) === 4) {
+            echo "<a class='action-pill' href='dhcp_pool.php?subnet_id=" . to_int($row['id']) . "'>🔒 DHCP Pool</a>";
         }
     }
     echo "</div>";
 
-    echo "<div class='muted'>Updated " . e($row['updated_at']) . "</div>";
+    echo "<div class='muted'>Updated " . e(to_str($row['updated_at'])) . "</div>";
 
     echo "<form method='post' action='subnets.php' class='row mt-8'>";
     echo "<input type='hidden' name='csrf' value='" . e(csrf_token()) . "'>";
     echo "<input type='hidden' name='action' value='update'>";
-    echo "<input type='hidden' name='id' value='" . (int)$row['id'] . "'>";
-    echo "<label>CIDR<br><input name='cidr' value='" . e($row['cidr']) . "' required></label>";
-    echo "<label>Description<br><input name='description' value='" . e($row['description']) . "'></label>";
-    $vlanVal = ($row['vlan_id'] !== null && $row['vlan_id'] !== '') ? (int)$row['vlan_id'] : '';
+    echo "<input type='hidden' name='id' value='" . to_int($row['id']) . "'>";
+    echo "<label>CIDR<br><input name='cidr' value='" . e(to_str($row['cidr'])) . "' required></label>";
+    echo "<label>Description<br><input name='description' value='" . e(to_str($row['description'])) . "'></label>";
+    $vlanVal = ($row['vlan_id'] !== null && $row['vlan_id'] !== '') ? to_int($row['vlan_id']) : '';
     echo "<label>VLAN ID<br><input name='vlan_id' type='number' min='1' max='4094' value='" . e((string)$vlanVal) . "' placeholder='1–4094' class='mw-80'></label>";
 
     if ($depth > 0) {
@@ -517,9 +529,9 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
         echo "<label>Site<br><select name='site_id'>";
         echo "<option value='0' " . ($siteId === 0 ? "selected" : "") . ">(none)</option>";
         foreach ($siteList as $s) {
-            $sid = (int)$s['id'];
+            $sid = to_int($s['id']);
             $sel = ($sid === $siteId) ? "selected" : "";
-            echo "<option value='" . $sid . "' $sel>" . e($s['name']) . "</option>";
+            echo "<option value='" . $sid . "' $sel>" . e(to_str($s['name'])) . "</option>";
         }
         echo "</select></label>";
     }
@@ -530,7 +542,7 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
     echo "<form method='post' action='subnets.php' data-confirm='Delete subnet and all its addresses?' class='mt-8'>";
     echo "<input type='hidden' name='csrf' value='" . e(csrf_token()) . "'>";
     echo "<input type='hidden' name='action' value='delete'>";
-    echo "<input type='hidden' name='id' value='" . (int)$row['id'] . "'>";
+    echo "<input type='hidden' name='id' value='" . to_int($row['id']) . "'>";
     echo "<button type='submit' class='button-danger' $disabled>Delete</button>";
     echo "</form>";
 
@@ -582,12 +594,12 @@ page_header('Subnets');
       <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
       <input type="hidden" name="action" value="<?= e($pendingAction) ?>">
       <?php if (($pendingData['id'] ?? 0) > 0): ?>
-        <input type="hidden" name="id" value="<?= (int)$pendingData['id'] ?>">
+        <input type="hidden" name="id" value="<?= to_int($pendingData['id']) ?>">
       <?php endif; ?>
-      <input type="hidden" name="cidr" value="<?= e((string)$pendingData['cidr']) ?>">
-      <input type="hidden" name="description" value="<?= e((string)$pendingData['description']) ?>">
-      <input type="hidden" name="site_id" value="<?= (int)$pendingData['site_id'] ?>">
-      <input type="hidden" name="vlan_id" value="<?= e((string)($pendingData['vlan_id'] ?? '')) ?>">
+      <input type="hidden" name="cidr" value="<?= e(to_str($pendingData['cidr'])) ?>">
+      <input type="hidden" name="description" value="<?= e(to_str($pendingData['description'])) ?>">
+      <input type="hidden" name="site_id" value="<?= to_int($pendingData['site_id']) ?>">
+      <input type="hidden" name="vlan_id" value="<?= e(to_str($pendingData['vlan_id'] ?? '')) ?>">
       <input type="hidden" name="confirm_overlap" value="1">
       <button type="submit">Save anyway</button>
       <a class="action-pill" href="subnets.php">Cancel</a>
@@ -608,7 +620,7 @@ page_header('Subnets');
         <select name="site_id">
           <option value="0">(none)</option>
           <?php foreach ($siteList as $site): ?>
-            <option value="<?= (int)$site['id'] ?>"><?= e($site['name']) ?></option>
+            <option value="<?= to_int($site['id']) ?>"><?= e(to_str($site['name'])) ?></option>
           <?php endforeach; ?>
         </select>
       </label>
@@ -622,12 +634,12 @@ page_header('Subnets');
   <h2>Grouped Hierarchy</h2>
 
   <?php if (empty($siteGroups)): ?>
-    <div class="empty-state">No subnets yet.</div>
+    <div class="empty-state">No subnets yet. <a class="action-pill" href="#add-subnet">+ Add Subnet</a></div>
   <?php else: ?>
     <?php foreach ($siteGroups as $key => $group): ?>
       <div class="site-group mb-24">
         <button type="button" class="site-group-toggle" aria-expanded="true" data-sg-key="<?= e((string)$key) ?>">
-          <?= e($group['label']) ?><span class="site-group-caret" aria-hidden="true">&#9660;</span>
+          <?= e(to_str($group['label'])) ?><span class="site-group-caret" aria-hidden="true">&#9660;</span>
         </button>
         <div class="site-group-body">
           <?php foreach ($group['roots'] as $rid): ?>

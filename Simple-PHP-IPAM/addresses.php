@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/init.php';
+/** @var \PDO $db */
 require_login();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -12,10 +13,11 @@ $msg = '';
 
 $st = $db->prepare("SELECT id, cidr, network, prefix, ip_version FROM subnets ORDER BY ip_version ASC, cidr ASC");
 $st->execute();
+/** @var list<array<string, mixed>> $subnetList */
 $subnetList = $st->fetchAll();
 
-$selectedSubnetId = (int)($_GET['subnet_id'] ?? ($_POST['subnet_id'] ?? 0));
-$highlightId = (int)($_GET['highlight'] ?? 0);
+$selectedSubnetId = to_int($_GET['subnet_id'] ?? ($_POST['subnet_id'] ?? 0));
+$highlightId = to_int($_GET['highlight'] ?? 0);
 $page = q_int('page', 1, 1, 1000000);
 $pageSize = q_int('page_size', 254, 1, 500);
 
@@ -27,26 +29,34 @@ $selectedSubnet = null;
 if ($selectedSubnetId > 0) {
     $st = $db->prepare("SELECT id, cidr, network, prefix, ip_version FROM subnets WHERE id = :id");
     $st->execute([':id' => $selectedSubnetId]);
-    $selectedSubnet = $st->fetch() ?: null;
+    /** @var array<string, mixed>|false $selRow */
+    $selRow = $st->fetch();
+    $selectedSubnet = $selRow ?: null;
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $action = (string)($_POST['action'] ?? '');
+    $action = to_str($_POST['action'] ?? '');
 
     if ($action === 'create') {
         require_write_access();
 
-        $subnetId = (int)($_POST['subnet_id'] ?? 0);
-        $ipInput = trim((string)($_POST['ip'] ?? ''));
+        $subnetId = to_int($_POST['subnet_id'] ?? 0);
+        $ipInput = trim(to_str($_POST['ip'] ?? ''));
 
-        $hostname = substr(trim((string)($_POST['hostname'] ?? '')), 0, 253);
-        $owner    = substr(trim((string)($_POST['owner']    ?? '')), 0, 255);
-        $note     = substr(trim((string)($_POST['note']     ?? '')), 0, 1000);
-        $grp      = substr(trim((string)($_POST['grp']      ?? '')), 0, 100);
-        $status = (string)($_POST['status'] ?? 'used');
+        $hostname  = substr(trim(to_str($_POST['hostname']   ?? '')), 0, 253);
+        $owner     = substr(trim(to_str($_POST['owner']     ?? '')), 0, 255);
+        $note      = substr(trim(to_str($_POST['note']      ?? '')), 0, 1000);
+        $grp       = substr(trim(to_str($_POST['grp']       ?? '')), 0, 100);
+        $mac       = substr(trim(to_str($_POST['mac']       ?? '')), 0, 64);
+        $expiresAt = trim(to_str($_POST['expires_at'] ?? ''));
+        if ($expiresAt !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $expiresAt)) {
+            $expiresAt = '';
+        }
+        $status = to_str($_POST['status'] ?? 'used');
 
         $st = $db->prepare("SELECT id, network, prefix, ip_version FROM subnets WHERE id = :id");
         $st->execute([':id' => $subnetId]);
+        /** @var array<string, mixed>|false $sub */
         $sub = $st->fetch();
 
         if (!$sub) {
@@ -55,16 +65,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $norm = normalize_ip($ipInput);
             if (!$norm) {
                 $err = 'Invalid IP (IPv4/IPv6).';
-            } elseif ((int)$sub['ip_version'] !== (int)$norm['version']) {
+            } elseif (to_int($sub['ip_version']) !== to_int($norm['version'])) {
                 $err = 'IP version does not match subnet.';
-            } elseif (!ip_in_cidr($norm['ip'], (string)$sub['network'], (int)$sub['prefix'])) {
+            } elseif (!ip_in_cidr($norm['ip'], to_str($sub['network']), to_int($sub['prefix']))) {
                 $err = 'IP is not within selected subnet.';
             } elseif (!in_array($status, ['used','reserved','free'], true)) {
                 $err = 'Invalid status.';
             } else {
                 try {
-                    $ins = $db->prepare("INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, grp, status)
-                                         VALUES (:sid,:ip,:bin,:hn,:ow,:nt,:grp,:st)");
+                    $ins = $db->prepare("INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, grp, mac, expires_at, status)
+                                         VALUES (:sid,:ip,:bin,:hn,:ow,:nt,:grp,:mac,:exp,:st)");
                     $ins->execute([
                         ':sid' => $subnetId,
                         ':ip'  => $norm['ip'],
@@ -73,16 +83,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ':ow'  => $owner,
                         ':nt'  => $note,
                         ':grp' => $grp,
+                        ':mac' => $mac,
+                        ':exp' => $expiresAt !== '' ? $expiresAt : null,
                         ':st'  => $status,
                     ]);
                     $aid = (int)$db->lastInsertId();
 
                     history_log_address($db, 'create', $subnetId, $norm['ip'], $aid, null, [
-                        'hostname' => $hostname,
-                        'owner' => $owner,
-                        'note' => $note,
-                        'grp' => $grp,
-                        'status' => $status,
+                        'hostname'   => $hostname,
+                        'owner'      => $owner,
+                        'note'       => $note,
+                        'grp'        => $grp,
+                        'mac'        => $mac,
+                        'expires_at' => $expiresAt !== '' ? $expiresAt : null,
+                        'status'     => $status,
                     ]);
                     audit($db, 'address.create', 'address', $aid, "ip={$norm['ip']} subnet_id=$subnetId");
 
@@ -99,51 +113,63 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($action === 'update') {
         require_write_access();
 
-        $id = (int)($_POST['id'] ?? 0);
-        $subnetId = (int)($_POST['subnet_id'] ?? 0);
-        $hostname = substr(trim((string)($_POST['hostname'] ?? '')), 0, 253);
-        $owner    = substr(trim((string)($_POST['owner']    ?? '')), 0, 255);
-        $note     = substr(trim((string)($_POST['note']     ?? '')), 0, 1000);
-        $grp      = substr(trim((string)($_POST['grp']      ?? '')), 0, 100);
-        $status = (string)($_POST['status'] ?? 'used');
+        $id = to_int($_POST['id'] ?? 0);
+        $subnetId = to_int($_POST['subnet_id'] ?? 0);
+        $hostname  = substr(trim(to_str($_POST['hostname']   ?? '')), 0, 253);
+        $owner     = substr(trim(to_str($_POST['owner']     ?? '')), 0, 255);
+        $note      = substr(trim(to_str($_POST['note']      ?? '')), 0, 1000);
+        $grp       = substr(trim(to_str($_POST['grp']       ?? '')), 0, 100);
+        $mac       = substr(trim(to_str($_POST['mac']       ?? '')), 0, 64);
+        $expiresAt = trim(to_str($_POST['expires_at'] ?? ''));
+        if ($expiresAt !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $expiresAt)) {
+            $expiresAt = '';
+        }
+        $status = to_str($_POST['status'] ?? 'used');
 
         if (!in_array($status, ['used','reserved','free'], true)) {
             $err = 'Invalid status.';
         } else {
-            $sel = $db->prepare("SELECT id, ip, hostname, owner, note, grp, status FROM addresses WHERE id=:id AND subnet_id=:sid");
+            $sel = $db->prepare("SELECT id, ip, hostname, owner, note, grp, mac, expires_at, status FROM addresses WHERE id=:id AND subnet_id=:sid");
             $sel->execute([':id' => $id, ':sid' => $subnetId]);
+            /** @var array<string, mixed>|false $before */
             $before = $sel->fetch();
 
             if (!$before) {
                 $err = 'Address not found.';
             } else {
                 $up = $db->prepare("UPDATE addresses
-                                    SET hostname=:hn, owner=:ow, note=:nt, grp=:grp, status=:st
+                                    SET hostname=:hn, owner=:ow, note=:nt, grp=:grp, mac=:mac, expires_at=:exp, status=:st
                                     WHERE id=:id AND subnet_id=:sid");
                 $up->execute([
-                    ':hn' => $hostname,
-                    ':ow' => $owner,
-                    ':nt' => $note,
+                    ':hn'  => $hostname,
+                    ':ow'  => $owner,
+                    ':nt'  => $note,
                     ':grp' => $grp,
-                    ':st' => $status,
-                    ':id' => $id,
+                    ':mac' => $mac,
+                    ':exp' => $expiresAt !== '' ? $expiresAt : null,
+                    ':st'  => $status,
+                    ':id'  => $id,
                     ':sid' => $subnetId,
                 ]);
 
-                history_log_address($db, 'update', $subnetId, (string)$before['ip'], $id,
+                history_log_address($db, 'update', $subnetId, to_str($before['ip']), $id,
                     [
-                        'hostname' => (string)$before['hostname'],
-                        'owner' => (string)$before['owner'],
-                        'note' => (string)$before['note'],
-                        'grp' => (string)$before['grp'],
-                        'status' => (string)$before['status'],
+                        'hostname'   => to_str($before['hostname']),
+                        'owner'      => to_str($before['owner']),
+                        'note'       => to_str($before['note']),
+                        'grp'        => to_str($before['grp']),
+                        'mac'        => to_str($before['mac']),
+                        'expires_at' => isset($before['expires_at']) ? to_str($before['expires_at']) : null,
+                        'status'     => to_str($before['status']),
                     ],
                     [
-                        'hostname' => $hostname,
-                        'owner' => $owner,
-                        'note' => $note,
-                        'grp' => $grp,
-                        'status' => $status,
+                        'hostname'   => $hostname,
+                        'owner'      => $owner,
+                        'note'       => $note,
+                        'grp'        => $grp,
+                        'mac'        => $mac,
+                        'expires_at' => $expiresAt !== '' ? $expiresAt : null,
+                        'status'     => $status,
                     ]
                 );
 
@@ -154,24 +180,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($action === 'delete') {
         require_write_access();
 
-        $id = (int)($_POST['id'] ?? 0);
-        $subnetId = (int)($_POST['subnet_id'] ?? 0);
+        $id = to_int($_POST['id'] ?? 0);
+        $subnetId = to_int($_POST['subnet_id'] ?? 0);
 
-        $sel = $db->prepare("SELECT id, ip, hostname, owner, note, grp, status FROM addresses WHERE id=:id AND subnet_id=:sid");
+        $sel = $db->prepare("SELECT id, ip, hostname, owner, note, grp, mac, expires_at, status FROM addresses WHERE id=:id AND subnet_id=:sid");
         $sel->execute([':id' => $id, ':sid' => $subnetId]);
+        /** @var array<string, mixed>|false $before */
         $before = $sel->fetch();
 
         $del = $db->prepare("DELETE FROM addresses WHERE id = :id AND subnet_id = :sid");
         $del->execute([':id' => $id, ':sid' => $subnetId]);
 
         if ($before) {
-            history_log_address($db, 'delete', $subnetId, (string)$before['ip'], $id,
+            history_log_address($db, 'delete', $subnetId, to_str($before['ip']), $id,
                 [
-                    'hostname' => (string)$before['hostname'],
-                    'owner' => (string)$before['owner'],
-                    'note' => (string)$before['note'],
-                    'grp' => (string)$before['grp'],
-                    'status' => (string)$before['status'],
+                    'hostname'   => to_str($before['hostname']),
+                    'owner'      => to_str($before['owner']),
+                    'note'       => to_str($before['note']),
+                    'grp'        => to_str($before['grp']),
+                    'mac'        => to_str($before['mac']),
+                    'expires_at' => isset($before['expires_at']) ? to_str($before['expires_at']) : null,
+                    'status'     => to_str($before['status']),
                 ],
                 null
             );
@@ -191,11 +220,15 @@ $p = null;
 if ($selectedSubnetId > 0) {
     $st = $db->prepare("SELECT COUNT(*) AS c FROM addresses WHERE subnet_id = :sid");
     $st->execute([':sid' => $selectedSubnetId]);
-    $total = (int)$st->fetch()['c'];
+    /** @var array<string, mixed>|false $cntRow */
+
+    $cntRow = $st->fetch();
+
+    $total = is_array($cntRow) ? to_int($cntRow['c']) : 0;
 
     $p = paginate($total, $page, $pageSize);
 
-    $st = $db->prepare("SELECT id, ip, hostname, owner, note, grp, status, updated_at
+    $st = $db->prepare("SELECT id, ip, hostname, owner, note, grp, mac, expires_at, status, updated_at
                         FROM addresses
                         WHERE subnet_id = :sid
                         ORDER BY {$addrSort['sql']}
@@ -204,14 +237,15 @@ if ($selectedSubnetId > 0) {
     $st->bindValue(':lim', $p['limit'], PDO::PARAM_INT);
     $st->bindValue(':off', $p['offset'], PDO::PARAM_INT);
     $st->execute();
+    /** @var list<array<string, mixed>> $addresses */
     $addresses = $st->fetchAll();
 }
 
 // Next available IP (IPv4 only, for subnets with room)
 $nextAvailableIp = null;
-if ($selectedSubnet && (int)$selectedSubnet['ip_version'] === 4) {
+if ($selectedSubnet && to_int($selectedSubnet['ip_version']) === 4) {
     $nextAvailableIp = find_next_available_ipv4($db, $selectedSubnetId,
-        (string)$selectedSubnet['network'], (int)$selectedSubnet['prefix']);
+        to_str($selectedSubnet['network']), to_int($selectedSubnet['prefix']));
 }
 
 page_header('Addresses');
@@ -223,7 +257,7 @@ page_header('Addresses');
   <?php if ($selectedSubnet): ?>
     <a href="subnets.php">🌐 Subnets</a>
     <span class="sep">›</span>
-    <span><?= e($selectedSubnet['cidr']) ?></span>
+    <span><?= e(to_str($selectedSubnet['cidr'])) ?></span>
     <span class="sep">›</span>
   <?php endif; ?>
   <span>🧾 Addresses</span>
@@ -241,7 +275,7 @@ page_header('Addresses');
     <?php if (current_user()['role'] !== 'readonly'): ?>
       <a class="action-pill" href="bulk_update.php?subnet_id=<?= (int)$selectedSubnetId ?>">✏ Bulk Update</a>
     <?php endif; ?>
-    <?php if ($selectedSubnet && (int)$selectedSubnet['ip_version'] === 4): ?>
+    <?php if ($selectedSubnet && to_int($selectedSubnet['ip_version']) === 4): ?>
       <a class="action-pill" href="unassigned.php?subnet_id=<?= (int)$selectedSubnetId ?>">✨ Unassigned</a>
     <?php endif; ?>
     <a class="action-pill" href="search.php?subnet_id=<?= (int)$selectedSubnetId ?>">🔎 Search in Subnet</a>
@@ -255,8 +289,8 @@ page_header('Addresses');
       <select name="subnet_id">
         <option value="0">-- Select --</option>
         <?php foreach ($subnetList as $s): ?>
-          <option value="<?= (int)$s['id'] ?>" <?= ((int)$s['id'] === $selectedSubnetId) ? 'selected' : '' ?>>
-            <?= e($s['cidr']) ?>
+          <option value="<?= to_int($s['id']) ?>" <?= (to_int($s['id']) === $selectedSubnetId) ? 'selected' : '' ?>>
+            <?= e(to_str($s['cidr'])) ?>
           </option>
         <?php endforeach; ?>
       </select>
@@ -281,8 +315,8 @@ page_header('Addresses');
   <div class="card mt-16">
     <div class="toolbar">
       <div>
-        <h2>Subnet: <?= e((string)($selectedSubnet['cidr'] ?? '')) ?></h2>
-        <div class="muted">Rows: <b><?= e((string)$total) ?></b><?php if ($p): ?> | Page <b><?= e((string)$p['page']) ?></b> of <b><?= e((string)$p['pages']) ?></b><?php endif; ?></div>
+        <h2>Subnet: <?= e(to_str($selectedSubnet['cidr'] ?? '')) ?></h2>
+        <div class="muted">Rows: <b><?= e((string)$total) ?></b><?php if ($p): ?> | Page <b><?= e(to_str($p['page'])) ?></b> of <b><?= e(to_str($p['pages'])) ?></b><?php endif; ?></div>
       </div>
     </div>
   </div>
@@ -299,12 +333,14 @@ page_header('Addresses');
     <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
     <input type="hidden" name="action" value="create">
     <input type="hidden" name="subnet_id" value="<?= (int)$selectedSubnetId ?>">
-    <?php $prefillIp = trim((string)($_GET['next_ip'] ?? '')); ?>
+    <?php $prefillIp = trim(to_str($_GET['next_ip'] ?? '')); ?>
     <div class="row">
-      <label>IP<br><input name="ip" value="<?= e($prefillIp) ?>" placeholder="<?= ($selectedSubnet && (int)$selectedSubnet['ip_version']===6) ? '2001:db8::10' : '10.0.0.10' ?>" required data-validate="ip"></label>
+      <label>IP<br><input name="ip" value="<?= e($prefillIp) ?>" placeholder="<?= ($selectedSubnet && to_int($selectedSubnet['ip_version'])===6) ? '2001:db8::10' : '10.0.0.10' ?>" required data-validate="ip"></label>
       <label>Hostname<br><input name="hostname" maxlength="253"></label>
       <label>Owner<br><input name="owner" maxlength="255"></label>
       <label>Group<br><input name="grp" maxlength="100" placeholder="e.g. web-tier" class="mw-160"></label>
+      <label>MAC<br><input name="mac" maxlength="64" placeholder="e.g. aa:bb:cc:dd:ee:ff" class="mw-160"></label>
+      <label>Expires<br><input name="expires_at" type="date" class="mw-160"></label>
       <label>Status<br>
         <select name="status">
           <option value="used">used</option>
@@ -333,7 +369,7 @@ page_header('Addresses');
   <?php if ($selectedSubnetId <= 0): ?>
     <div class="empty-state">No subnet selected. <a href="subnets.php">Go to Subnets</a> to create or select one.</div>
   <?php elseif (!$addresses): ?>
-    <div class="empty-state">No addresses in this subnet yet.</div>
+    <div class="empty-state">No addresses in this subnet yet. <a class="action-pill" href="#add-address">+ Add Address</a></div>
   <?php else: ?>
     <div class="table-wrap">
     <table>
@@ -346,24 +382,28 @@ page_header('Addresses');
                 echo sort_th('status',   'Status',   $addrSort['col'], $addrSort['dir'], $addrQs);
           ?>
           <th>Group</th>
+          <th>MAC</th>
+          <th>Expires</th>
           <th>Note</th>
           <?php echo sort_th('updated', 'Updated', $addrSort['col'], $addrSort['dir'], $addrQs); ?>
           <th>Actions</th>
         </tr>
       </thead>
       <tbody>
-      <?php foreach ($addresses as $a): $isHighlighted = $highlightId > 0 && (int)$a['id'] === $highlightId; ?>
-        <tr id="addr-<?= (int)$a['id'] ?>"<?= $isHighlighted ? ' class="highlight-row"' : '' ?>>
-          <td><?= e($a['ip']) ?></td>
-          <td><?= e($a['hostname']) ?></td>
-          <td><?= e($a['owner']) ?></td>
-          <td><span class="status-<?= e($a['status']) ?>"><?= e($a['status']) ?></span></td>
-          <td><?php if ($a['grp'] !== ''): ?><span class="badge"><?= e($a['grp']) ?></span><?php endif; ?></td>
-          <td><?= e($a['note']) ?></td>
-          <td class="muted"><?= e($a['updated_at']) ?></td>
+      <?php foreach ($addresses as $a): $isHighlighted = $highlightId > 0 && to_int($a['id']) === $highlightId; ?>
+        <tr id="addr-<?= to_int($a['id']) ?>"<?= $isHighlighted ? ' class="highlight-row"' : '' ?>>
+          <td><?= e(to_str($a['ip'])) ?></td>
+          <td><?= e(to_str($a['hostname'])) ?></td>
+          <td><?= e(to_str($a['owner'])) ?></td>
+          <td><span class="status-<?= e(to_str($a['status'])) ?>"><?= e(to_str($a['status'])) ?></span></td>
+          <td><?php if ($a['grp'] !== ''): ?><span class="badge"><?= e(to_str($a['grp'])) ?></span><?php endif; ?></td>
+          <td class="muted"><?= e(to_str($a['mac'])) ?></td>
+          <td class="muted"><?= e(to_str($a['expires_at'] ?? '')) ?></td>
+          <td><?= e(to_str($a['note'])) ?></td>
+          <td class="muted"><?= e(to_str($a['updated_at'])) ?></td>
           <td>
             <div class="actions-inline">
-              <a href="address_history.php?address_id=<?= (int)$a['id'] ?>">History</a>
+              <a href="address_history.php?address_id=<?= to_int($a['id']) ?>">History</a>
             </div>
 
             <details class="mt-6"<?= $isHighlighted ? ' open' : '' ?>>
@@ -373,12 +413,14 @@ page_header('Addresses');
                 <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action" value="update">
                 <input type="hidden" name="subnet_id" value="<?= (int)$selectedSubnetId ?>">
-                <input type="hidden" name="id" value="<?= (int)$a['id'] ?>">
+                <input type="hidden" name="id" value="<?= to_int($a['id']) ?>">
 
                 <div class="row">
-                  <label>Hostname<br><input name="hostname" maxlength="253" value="<?= e($a['hostname']) ?>"></label>
-                  <label>Owner<br><input name="owner" maxlength="255" value="<?= e($a['owner']) ?>"></label>
-                  <label>Group<br><input name="grp" value="<?= e($a['grp'] ?? '') ?>" maxlength="100" placeholder="e.g. web-tier" class="mw-160"></label>
+                  <label>Hostname<br><input name="hostname" maxlength="253" value="<?= e(to_str($a['hostname'])) ?>"></label>
+                  <label>Owner<br><input name="owner" maxlength="255" value="<?= e(to_str($a['owner'])) ?>"></label>
+                  <label>Group<br><input name="grp" value="<?= e(to_str($a['grp'] ?? '')) ?>" maxlength="100" placeholder="e.g. web-tier" class="mw-160"></label>
+                  <label>MAC<br><input name="mac" maxlength="64" value="<?= e(to_str($a['mac'])) ?>" placeholder="e.g. aa:bb:cc:dd:ee:ff" class="mw-160"></label>
+                  <label>Expires<br><input name="expires_at" type="date" value="<?= e(to_str($a['expires_at'] ?? '')) ?>" class="mw-160"></label>
                   <label>Status<br>
                     <select name="status">
                       <option value="used" <?= ($a['status']==='used')?'selected':'' ?>>used</option>
@@ -389,7 +431,7 @@ page_header('Addresses');
                 </div>
 
                 <div class="row">
-                  <label class="flex-1">Note<br><input name="note" maxlength="1000" class="w-full" value="<?= e($a['note']) ?>"></label>
+                  <label class="flex-1">Note<br><input name="note" maxlength="1000" class="w-full" value="<?= e(to_str($a['note'])) ?>"></label>
                 </div>
 
                 <button type="submit" <?= (current_user()['role']==='readonly')?'disabled':'' ?>>Save</button>
@@ -399,7 +441,7 @@ page_header('Addresses');
                 <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action" value="delete">
                 <input type="hidden" name="subnet_id" value="<?= (int)$selectedSubnetId ?>">
-                <input type="hidden" name="id" value="<?= (int)$a['id'] ?>">
+                <input type="hidden" name="id" value="<?= to_int($a['id']) ?>">
                 <button type="submit" class="button-danger" <?= (current_user()['role']==='readonly')?'disabled':'' ?>>Delete</button>
               </form>
             </details>

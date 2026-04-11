@@ -447,6 +447,7 @@ button:disabled{opacity:.6;cursor:not-allowed}
 .status-used{color:var(--success);font-weight:600}
 .status-reserved{color:var(--warn);font-weight:600}
 .status-free{color:var(--muted);font-weight:600}
+.audit-details{display:inline-block;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom}
 .badge-role-admin{
   background:color-mix(in srgb,var(--danger) 12%,var(--badge-bg) 88%);
   color:var(--danger);

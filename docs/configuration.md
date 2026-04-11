@@ -297,7 +297,15 @@ Controls lazy background housekeeping (temp file cleanup, stale login attempt pu
 
 **Defaults:** `80` / `95`
 
-Percentage thresholds for the IPv4 subnet utilization progress bars. The bar turns yellow at `utilization_warn` and red at `utilization_critical`.
+Percentage thresholds for the subnet utilization progress bars on the dashboard and subnets list. The bar turns yellow at `utilization_warn` and red at `utilization_critical`.
+
+---
+
+### `api_bulk_limit`
+
+**Default:** `500`
+
+Maximum number of records accepted per bulk API write request (`POST ?resource=addresses&bulk=1` or `POST ?resource=subnets&bulk=1`). Requests exceeding this limit receive HTTP `400`. Range: 1–500.
 
 ---
 
@@ -397,6 +405,42 @@ The optional `gate` key adds a mandatory bot challenge at `demo_gate.php` that v
 Supported gate methods: `honeypot`, `turnstile`, `hcaptcha`, `recaptcha`, `friendly_captcha`.
 
 Once a visitor passes the gate their session is marked and they are not challenged again until they log out. The gate session flag is cleared on logout.
+
+---
+
+## `recaptcha_enterprise`
+
+*(Added in v1.19.0)*
+
+Optional upgrade to Google reCAPTCHA Enterprise for server-side token verification. When enabled, the standard reCAPTCHA v2/v3 widget is used on the front-end (no HTML changes required), but backend verification uses the Enterprise Assessment API instead of `siteverify`.
+
+```php
+'recaptcha_enterprise' => [
+    'enabled'          => false,
+    'project_id'       => '',    // GCP project ID
+    'api_key'          => '',    // Server-side API key (Restricted API key from GCP Console)
+    'expected_action'  => 'LOGIN',
+    'score_threshold'  => 0.5,
+],
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Set to `true` to use the Enterprise API |
+| `project_id` | `''` | GCP project ID where reCAPTCHA Enterprise is enabled |
+| `api_key` | `''` | Server-side restricted API key (not the site key) |
+| `expected_action` | `'LOGIN'` | Action name registered in your reCAPTCHA Enterprise key |
+| `score_threshold` | `0.5` | Minimum score to pass (0.0–1.0; higher = stricter) |
+
+### Setup
+
+1. Enable the **reCAPTCHA Enterprise API** in your GCP project.
+2. Create a reCAPTCHA Enterprise key (type: **website**, integration type: **score** for v3).
+3. Create a **restricted API key** in GCP Credentials scoped to the reCAPTCHA Enterprise API.
+4. Set `login_protection.method = 'recaptcha'` and `login_protection.site_key` to your Enterprise site key.
+5. Set `recaptcha_enterprise.enabled = true`, `project_id`, `api_key`, and `expected_action`.
+
+When `enabled` is `false` (default), the standard `https://www.google.com/recaptcha/api/siteverify` endpoint is used instead.
 
 ### Nightly reset cron (optional)
 

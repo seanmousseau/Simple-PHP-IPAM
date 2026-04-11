@@ -1,30 +1,33 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/init.php';
+/** @var \PDO $db */
+/** @var IpamConfig $config */
 
 if (is_logged_in()) { header('Location: dashboard.php'); exit; }
 if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 
-$maxAttempts   = (int)($config['login_max_attempts']   ?? 5);
-$lockoutSeconds = (int)($config['login_lockout_seconds'] ?? 900);
+$maxAttempts   = to_int($config['login_max_attempts']);
+$lockoutSeconds = to_int($config['login_lockout_seconds']);
 
 $error    = '';
 $timedOut = !empty($_GET['timeout']);
 
 // Login protection setup (#124) — widget HTML also sets time_check session ts on GET
-$lpMethod     = (string)(($config['login_protection'] ?? [])['method'] ?? '');
+$lpMethod     = to_str($config['login_protection']['method'] ?? '');
 $lpWidgetHtml = login_protection_widget_html($config);
 $lpCsp        = login_protection_extra_csp($config);
 
 // Consume any OIDC error flash set by oidc_callback.php or oidc_login.php
 if (!empty($_SESSION['oidc_error'])) {
-    $error = (string)$_SESSION['oidc_error'];
+    $error = to_str($_SESSION['oidc_error']);
     unset($_SESSION['oidc_error']);
 }
 
 // Render-prep variables (needed even when goto jumps past POST block)
 try {
-    $firstRun = !$db->query("SELECT 1 FROM audit_log WHERE action='auth.login' LIMIT 1")->fetch();
+    $firstRunSt = $db->query("SELECT 1 FROM audit_log WHERE action='auth.login' LIMIT 1");
+    $firstRun = $firstRunSt !== false ? !$firstRunSt->fetch() : false;
 } catch (Throwable $e) {
     $firstRun = true; // treat as first-run if audit_log is temporarily unavailable
 }
@@ -35,8 +38,8 @@ $hideEmergencyLink     = $oidcActive && !empty($config['oidc']['hide_emergency_l
 $localForceShown       = isset($_GET['local']) && !$disableEmergencyBypass;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $username = trim((string)($_POST['username'] ?? ''));
-    $password = (string)($_POST['password'] ?? '');
+    $username = trim(to_str($_POST['username'] ?? ''));
+    $password = to_str($_POST['password'] ?? '');
     $ip = client_ip();
 
     // Login protection verification (#124) — before rate limiting / DB checks
@@ -56,12 +59,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($username === 'demo' && $password === 'demo') {
             $st = $db->prepare("SELECT id, username, role FROM users WHERE username = 'demo' AND is_active = 1");
             $st->execute();
+            /** @var array<string, mixed>|false $demoUser */
             $demoUser = $st->fetch();
             if ($demoUser) {
-                login_user((int)$demoUser['id'], (string)$demoUser['username'], (string)$demoUser['role']);
+                login_user(to_int($demoUser['id']), to_str($demoUser['username']), to_str($demoUser['role']));
                 $db->prepare("UPDATE users SET last_login_at=datetime('now') WHERE id=:id")
-                   ->execute([':id' => (int)$demoUser['id']]);
-                audit($db, 'auth.login', 'user', (int)$demoUser['id'], 'demo login');
+                   ->execute([':id' => to_int($demoUser['id'])]);
+                audit($db, 'auth.login', 'user', to_int($demoUser['id']), 'demo login');
                 header('Location: dashboard.php');
                 exit;
             }
@@ -79,25 +83,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $st = $db->prepare("SELECT id, username, password_hash, role, is_active FROM users WHERE username = :u");
             $st->execute([':u' => $username]);
+            /** @var array<string, mixed>|false $user */
             $user = $st->fetch();
 
-            if ($user && (int)$user['is_active'] === 1 && password_verify($password, $user['password_hash'])) {
-                if (password_needs_rehash($user['password_hash'], PASSWORD_DEFAULT)) {
+            if ($user && to_int($user['is_active']) === 1 && password_verify($password, to_str($user['password_hash']))) {
+                if (password_needs_rehash(to_str($user['password_hash']), PASSWORD_DEFAULT)) {
                     $new = password_hash($password, PASSWORD_DEFAULT);
                     $up = $db->prepare("UPDATE users SET password_hash = :h WHERE id = :id");
                     $up->execute([':h' => $new, ':id' => $user['id']]);
                 }
                 clear_login_failures($db, $ip);
-                login_user((int)$user['id'], (string)$user['username'], (string)$user['role']);
+                login_user(to_int($user['id']), to_str($user['username']), to_str($user['role']));
                 $db->prepare("UPDATE users SET last_login_at=datetime('now') WHERE id=:id")
-                   ->execute([':id' => (int)$user['id']]);
-                audit($db, 'auth.login', 'user', (int)$user['id'], 'login ok');
+                   ->execute([':id' => to_int($user['id'])]);
+                audit($db, 'auth.login', 'user', to_int($user['id']), 'login ok');
                 header('Location: dashboard.php');
                 exit;
             }
 
             // Normalise response time to prevent username enumeration via timing (#109)
-            if (!$user || (int)($user['is_active'] ?? 0) !== 1) {
+            if (!$user || to_int($user['is_active'] ?? 0) !== 1) {
                 password_verify($password, '$2y$12$' . str_repeat('a', 53));
             }
 
@@ -113,7 +118,7 @@ page_header('Login', array_filter([
     'extra_script_src' => $lpCsp['script_src'],
     'extra_frame_src'  => $lpCsp['frame_src'],
 ]));
-$appName = trim((string)($config['app_name'] ?? '')) ?: 'Simple PHP IPAM';
+$appName = trim(to_str($config['app_name'])) ?: 'Simple PHP IPAM';
 ?>
 <div class="login-wrap">
 <div class="login-card">
@@ -130,7 +135,7 @@ $appName = trim((string)($config['app_name'] ?? '')) ?: 'Simple PHP IPAM';
   <?php if ($error): ?><p class="danger"><?= e($error) ?></p><?php endif; ?>
 
   <?php if ($oidcActive): ?>
-  <p><a href="oidc_login.php" class="btn-sso">Sign in with <?= e((string)($config['oidc']['display_name'] ?? 'SSO')) ?></a></p>
+  <p><a href="oidc_login.php" class="btn-sso">Sign in with <?= e(to_str($config['oidc']['display_name'])) ?></a></p>
   <?php endif; ?>
 
   <?php if (!$disableLocal || $localForceShown): ?>
@@ -158,7 +163,7 @@ $appName = trim((string)($config['app_name'] ?? '')) ?: 'Simple PHP IPAM';
   <?php endif; ?>
 </div><!-- /.login-card -->
 <?php
-$idleSeconds = (int)($config['session_idle_seconds'] ?? 1800);
+$idleSeconds = to_int($config['session_idle_seconds']);
 if ($idleSeconds > 0):
     $idleMins = (int)round($idleSeconds / 60);
     $idleLabel = $idleMins >= 60

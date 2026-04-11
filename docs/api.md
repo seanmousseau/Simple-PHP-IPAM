@@ -26,6 +26,9 @@ Simple-PHP-IPAM exposes a JSON REST API (`api.php`). Read endpoints are availabl
   - [Create a site](#create-a-site)
   - [Update a site](#update-a-site)
   - [Delete a site](#delete-a-site)
+- [Bulk write](#bulk-write)
+  - [Bulk create addresses](#bulk-create-addresses)
+  - [Bulk create subnets](#bulk-create-subnets)
 - [Pagination](#pagination)
 - [Managing API keys](#managing-api-keys)
 - [Examples](#examples)
@@ -89,6 +92,7 @@ Error responses return an appropriate HTTP status code and a JSON body:
 | `405`  | HTTP method not allowed for this resource |
 | `409`  | Conflict — duplicate CIDR/IP, or attempted subnet delete while addresses exist |
 | `429`  | Too many failed API key attempts — rate-limited |
+| `207`  | Multi-status — bulk write completed with partial success (some items failed) |
 
 ---
 
@@ -215,6 +219,7 @@ Returns a paginated list of address records.
 | `subnet_id` | integer | — | Filter to a single subnet |
 | `site_id` | integer | — | Filter to addresses in subnets belonging to this site |
 | `status` | string | — | Filter by status: `used`, `reserved`, or `free` |
+| `expired` | flag | — | Pass `?expired=1` to return only addresses where `expires_at` is in the past |
 | `page` | integer | `1` | Page number (1-based) |
 | `limit` | integer | `100` | Records per page (max `500`) |
 
@@ -234,6 +239,9 @@ Returns a paginated list of address records.
       "owner": "ops-team",
       "status": "used",
       "note": "Primary web server",
+      "group": "web",
+      "mac": "aa:bb:cc:dd:ee:ff",
+      "expires_at": "2026-12-31",
       "created_at": "2025-02-01 08:15:30",
       "updated_at": "2025-03-15 11:00:00"
     }
@@ -255,6 +263,8 @@ Results are ordered by IP address (binary sort — correct numerical order withi
 | `status` | string | `used`, `reserved`, or `free` |
 | `note` | string | Free-text note (may be empty) |
 | `group` | string | Group/tag label (may be empty) |
+| `mac` | string | MAC address (free-form, max 64 chars, may be empty) |
+| `expires_at` | string\|null | Lease expiry date (`YYYY-MM-DD`), or `null` if not set |
 | `created_at` | string | UTC timestamp (`YYYY-MM-DD HH:MM:SS`) |
 | `updated_at` | string | UTC timestamp of last modification |
 
@@ -444,13 +454,13 @@ Returns paginated audit log entries.
 GET /api.php?resource=unassigned&subnet_id=<id>
 ```
 
-Returns a paginated list of unassigned IPv4 host addresses within a subnet. IPv6 subnets are not supported.
+Returns a paginated list of unassigned host addresses within a subnet. Both IPv4 and IPv6 subnets are supported.
 
 **Query parameters**
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `subnet_id` | integer | **required** | Subnet ID (IPv4 only) |
+| `subnet_id` | integer | **required** | Subnet ID |
 | `page` | integer | `1` | Page number (1-based) |
 | `limit` | integer | `100` | Records per page (max `256`) |
 
@@ -468,9 +478,11 @@ Returns a paginated list of unassigned IPv4 host addresses within a subnet. IPv6
 }
 ```
 
-Returns `400` if `subnet_id` is missing, the subnet is IPv6, or the subnet is larger than /24 (more than 256 assignable IPs).
+**IPv4 subnets:** Returns `400` if the subnet is larger than /24 (more than 256 assignable IPs).
 
-Returns `404` if the subnet does not exist.
+**IPv6 subnets:** Enumerates the first 256 unassigned addresses starting from the network address + 1. The `total_unassigned` reflects only the IPs checked (up to the cap) — not the full address space.
+
+Returns `400` if `subnet_id` is missing. Returns `404` if the subnet does not exist.
 
 ---
 
@@ -587,6 +599,8 @@ POST /api.php?resource=addresses
 | `status` | no | `used` (default), `reserved`, or `free` |
 | `note` | no | Free-text note |
 | `group` | no | Group/tag label |
+| `mac` | no | MAC address (free-form, max 64 chars) |
+| `expires_at` | no | Lease expiry date (`YYYY-MM-DD`), or omit/`null` to clear |
 
 **Response** — HTTP `201`
 
@@ -697,6 +711,78 @@ DELETE /api.php?resource=sites&id=<id>
 Subnets assigned to this site will have their `site_id` set to `null`.
 
 **Response** — HTTP `204` (no body)
+
+---
+
+## Bulk write
+
+Bulk endpoints let you create multiple records in a single request. Add `?bulk=1` to any `POST ?resource=addresses` or `POST ?resource=subnets` request and pass a JSON **array** as the body instead of a single object.
+
+- Up to **500 items per request** (configurable via `api_bulk_limit` in `config.php`)
+- **Partial success**: items that fail validation or conflict do not abort the entire batch — successful inserts are committed regardless
+- Each item in the result array has `"success": true` with the new `"id"`, or `"success": false` with an `"error"` string
+
+### Bulk create addresses
+
+```
+POST /api.php?resource=addresses&bulk=1
+```
+
+**Request body**
+
+```json
+[
+  { "subnet_id": 3, "ip": "10.1.0.10", "hostname": "web01", "status": "used" },
+  { "subnet_id": 3, "ip": "10.1.0.11", "hostname": "web02", "status": "used", "mac": "aa:bb:cc:00:00:01", "expires_at": "2026-12-31" },
+  { "subnet_id": 3, "ip": "10.1.0.10" }
+]
+```
+
+**Response** — HTTP `201` (all succeeded), `207` (partial), or `400` (all failed)
+
+```json
+{
+  "created": 2,
+  "failed": 1,
+  "results": [
+    { "success": true, "id": 101 },
+    { "success": true, "id": 102 },
+    { "success": false, "error": "Address already exists in this subnet." }
+  ]
+}
+```
+
+---
+
+### Bulk create subnets
+
+```
+POST /api.php?resource=subnets&bulk=1
+```
+
+**Request body**
+
+```json
+[
+  { "cidr": "10.2.0.0/24", "description": "DC-LAN-1", "site_id": 2 },
+  { "cidr": "10.2.1.0/24", "description": "DC-LAN-2", "vlan_id": 200 }
+]
+```
+
+**Response** — HTTP `201` (all succeeded), `207` (partial), or `400` (all failed)
+
+```json
+{
+  "created": 2,
+  "failed": 0,
+  "results": [
+    { "success": true, "id": 43 },
+    { "success": true, "id": 44 }
+  ]
+}
+```
+
+Each item accepts the same fields as the single-record [Create a subnet](#create-a-subnet) endpoint. Overlap warnings are not returned per-item in bulk mode.
 
 ---
 

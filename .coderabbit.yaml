@@ -70,6 +70,16 @@ reviews:
         PHPUnit tests cover pure utility functions in lib.php only (no DB, no session).
         Do not add tests that require database connections or HTTP calls.
 
+    - path: "testing/playwright/**"
+      instructions: |
+        Playwright tests use @playwright/test with TypeScript. Key conventions:
+        - Workers are set to 1 (sequential) — tests share a single SQLite DB; avoid state leakage.
+        - Use expect() assertions; avoid hard waits (waitForTimeout) — prefer waitForSelector/locator.
+        - Fixtures and helpers live in testing/playwright/fixtures/; reuse them rather than duplicating login logic.
+        - Test data created by a test must be cleaned up in the same test (afterEach or try/finally).
+        - The base URL comes from the IPAM_BASE_URL env var; never hardcode URLs.
+        - Screenshots on failure are configured in playwright.config.ts — do not add manual screenshot calls.
+
   tools:
     github-checks:
       enabled: true

@@ -31,7 +31,7 @@ Dev tooling at the repo root (not deployed): `composer.json`, `composer.lock`, `
 | `addresses.php` | yes | any/write | Address CRUD per subnet |
 | `search.php` | yes | any | Global IP/hostname/owner search |
 | `audit.php` | yes | any | Audit log viewer |
-| `unassigned.php` | yes | any | IPv4 unassigned host tracker |
+| `unassigned.php` | yes | any | IPv4/IPv6 unassigned host tracker |
 | `bulk_update.php` | yes | write | Bulk address update/delete |
 | `dhcp_pool.php` | yes | write | DHCP pool reservation tool |
 | `import_csv.php` | yes | admin | CSV import wizard |
@@ -89,7 +89,7 @@ Every web page starts with `require __DIR__ . '/init.php'`, which:
 |-------|------------|
 | `users` | `id`, `username`, `password_hash`, `role` (admin\|readonly), `is_active`, `oidc_sub`, `name`, `email`, `last_login_at`, `password_changed_at`, `theme` (auto\|light\|dark), `created_at`, `updated_at` |
 | `subnets` | `id`, `cidr`, `ip_version`, `network`, `network_bin` (BLOB), `prefix`, `description`, `site_id`, `vlan_id` (1–4094, nullable), `created_at`, `updated_at` |
-| `addresses` | `id`, `subnet_id`, `ip`, `ip_bin` (BLOB), `hostname`, `owner`, `note`, `grp`, `status` (used\|reserved\|free), `created_at`, `updated_at` |
+| `addresses` | `id`, `subnet_id`, `ip`, `ip_bin` (BLOB), `hostname`, `owner`, `note`, `grp`, `status` (used\|reserved\|free), `mac` (free-form, default ''), `expires_at` (YYYY-MM-DD, nullable), `created_at`, `updated_at` |
 | `audit_log` | `id`, `action`, `entity_type`, `entity_id`, `user_id`, `username`, `ip`, `user_agent`, `details`, `created_at` |
 | `sites` | `id`, `name`, `description`, `created_at` |
 | `api_keys` | `id`, `name`, `key_hash` (SHA-256), `is_active`, `is_readonly`, `description`, `created_by`, `created_at`, `last_used_at` |
@@ -111,6 +111,8 @@ Key helpers in `lib.php`:
 - `ip_in_cidr(string $ip, string $network, int $prefix): bool`
 - `apply_prefix_mask(string $ipBin, int $prefix): string`
 - `ipv4_bin_to_int(string $bin): int` / `ipv4_int_to_bin(int $n): string`
+- `ipv6_bin_increment(string $bin): string` — pure-PHP 16-byte carry increment (no GMP)
+- `ipv6_enumerate_first_n(PDO $db, int $subnetId, string $networkBin, int $prefix, int $n): array` — returns first N unassigned IPv6 addresses in a subnet (scans from network+1, skips assigned)
 
 ---
 
@@ -257,7 +259,7 @@ The project uses four dev tools (three Composer-managed, one standalone):
 
 | Tool | Config | Purpose |
 |------|--------|---------|
-| **PHPStan** | `phpstan.neon` | Static analysis — level 7, analyses `Simple-PHP-IPAM/` |
+| **PHPStan** | `phpstan.neon` | Static analysis — level 9, analyses `Simple-PHP-IPAM/` |
 | **PHP_CodeSniffer** | `.phpcs.xml` | Style checking — PSR-12 with exclusions for K&R brace and inline control structure style |
 | **PHPUnit** | `phpunit.xml` | Unit tests for pure utility functions in `lib.php` |
 | **Semgrep** | `.semgrep/rules.yml` | Security taint rules — XSS, path traversal, SQLi, open redirect. Recognises `e()` as an HTML sanitizer. |
@@ -273,7 +275,7 @@ semgrep --config=.semgrep/rules.yml Simple-PHP-IPAM/   # security rules (standal
 
 **PHPStan baseline (`phpstan-baseline.neon`):** Pre-existing errors are acknowledged in the baseline so CI only fails on *new* errors. The baseline is almost entirely `Variable $db/$config might not be defined` false-positives caused by PHPStan not being able to see variables injected by `require 'init.php'`. Fix baseline errors incrementally; do not add new entries to suppress real bugs.
 
-**PHPUnit tests (`tests/UtilTest.php`):** 50 tests covering the pure utility functions that have no DB or session dependencies: `e()`, `parse_cidr()`, `apply_prefix_mask()`, `ip_in_cidr()`, `normalize_ip()`, `ipv4_bin_to_int()`, `ipv4_int_to_bin()`, `ipam_normalise_version()`, `normalize_status()`. Bootstrap is `tests/bootstrap.php` which requires `lib.php` directly.
+**PHPUnit tests (`tests/UtilTest.php`):** Tests covering the pure utility functions that have no DB or session dependencies: `e()`, `parse_cidr()`, `apply_prefix_mask()`, `ip_in_cidr()`, `normalize_ip()`, `ipv4_bin_to_int()`, `ipv4_int_to_bin()`, `ipam_normalise_version()`, `normalize_status()`, `ipv6_bin_increment()`. Bootstrap is `tests/bootstrap.php` which requires `lib.php` directly.
 
 **PHPCS style exclusions** (see `.phpcs.xml` comments for rationale):
 - Inline control structures without braces — established codebase style
@@ -347,6 +349,8 @@ Include `https://claude.ai/code/session_...` in commit body.
 - **No Composer, no npm in production** — the application itself has zero runtime dependencies. Everything must be implemented in vanilla PHP using only standard extensions (`pdo`, `pdo_sqlite`, `openssl`). Composer is used for *dev tooling only* (`vendor/` is gitignored and never deployed).
 - **`addresses` has no `ip_version`** — that column exists only on `subnets`. Do not add it to address INSERTs.
 - **`addresses.grp` is a SQL reserved word** — stored as `grp` in the DB, exposed as `group` in the UI, API responses, and CSV headers.
+- **`addresses.mac`** — free-form MAC address string, `NOT NULL DEFAULT ''`. Never validate the format server-side; users may enter any notation.
+- **`addresses.expires_at`** — nullable YYYY-MM-DD lease expiry date. Rows where `expires_at < date('now')` are highlighted in the UI. The API supports `?expired=1` to filter these rows.
 - **Migration order is by `ksort(SORT_NATURAL)`** — array order in `migrations.php` does not matter.
 - **`fetch()` returns `false` on no rows**, never `null` — always check with `if ($row)` not `if ($row !== null)`.
 - **CSRF on every POST** — `csrf_require()` at top of every POST handler; hidden `csrf` field in every form.

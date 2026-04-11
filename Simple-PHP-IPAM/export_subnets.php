@@ -1,10 +1,11 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/init.php';
+/** @var \PDO $db */
 require_login();
 
-$siteId    = (int)($_GET['site_id'] ?? 0);
-$ipVersion = (int)($_GET['ip_version'] ?? 0);
+$siteId    = to_int($_GET['site_id'] ?? 0);
+$ipVersion = to_int($_GET['ip_version'] ?? 0);
 if (!in_array($ipVersion, [0, 4, 6], true)) $ipVersion = 0;
 
 $where = [];
@@ -39,16 +40,16 @@ $st = $db->prepare("
 ");
 $st->execute($params);
 
-foreach ($st as $r) {
+foreach ($st->fetchAll() as $r) {
     csv_out([
-        (string)$r['cidr'],
-        (string)$r['description'],
-        (string)$r['ip_version'],
-        (string)($r['vlan_id'] ?? ''),
-        (string)$r['site_name'],
-        (string)$r['addr_count'],
-        (string)$r['created_at'],
-        (string)$r['updated_at'],
+        to_str($r['cidr']),
+        to_str($r['description']),
+        to_str($r['ip_version']),
+        to_str($r['vlan_id'] ?? ''),
+        to_str($r['site_name']),
+        to_str($r['addr_count']),
+        to_str($r['created_at']),
+        to_str($r['updated_at']),
     ]);
 }
 
