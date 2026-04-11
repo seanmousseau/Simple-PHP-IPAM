@@ -63,8 +63,12 @@
         <!--
             Files open with <?php\ndeclare(strict_types=1); (no blank line between).
             Some files place a file-level docblock after declare(), not before it.
+            PHPCS 4.0 split SpacingAfterBlock into three specific sniff names.
         -->
         <exclude name="PSR12.Files.FileHeader.SpacingAfterBlock"/>
+        <exclude name="PSR12.Files.FileHeader.SpacingAfterTagBlock"/>
+        <exclude name="PSR12.Files.FileHeader.SpacingAfterDeclareBlock"/>
+        <exclude name="PSR12.Files.FileHeader.SpacingAfterDocblockBlock"/>
         <exclude name="PSR12.Files.FileHeader.IncorrectOrder"/>
 
         <!--
