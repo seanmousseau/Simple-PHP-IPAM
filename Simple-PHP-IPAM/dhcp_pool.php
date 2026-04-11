@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/init.php';
+/** @var \PDO $db */
 require_login();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -12,7 +13,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $err     = '';
 $msg     = '';
 $results = null;
-$editId  = (int)($_GET['edit_id'] ?? 0);
+$editId  = to_int($_GET['edit_id'] ?? 0);
 
 // Load all IPv4 subnets for the selector
 $st = $db->prepare(
@@ -23,27 +24,28 @@ $st = $db->prepare(
      ORDER BY s.network_bin ASC"
 );
 $st->execute();
+/** @var list<array<string, mixed>> $subnets */
 $subnets = $st->fetchAll();
 
 // Selected subnet from query string or POST
-$subnetId = (int)($_GET['subnet_id'] ?? $_POST['subnet_id'] ?? 0);
+$subnetId = to_int($_GET['subnet_id'] ?? $_POST['subnet_id'] ?? 0);
 
 $subnet = null;
 foreach ($subnets as $s) {
-    if ((int)$s['id'] === $subnetId) { $subnet = $s; break; }
+    if (to_int($s['id']) === $subnetId) { $subnet = $s; break; }
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $action   = (string)($_POST['action']   ?? '');
-    $subnetId = (int)($_POST['subnet_id']   ?? 0);
-    $startIp  = trim((string)($_POST['start_ip'] ?? ''));
-    $endIp    = trim((string)($_POST['end_ip']   ?? ''));
-    $note     = trim((string)($_POST['note']     ?? ''));
+    $action   = to_str($_POST['action']   ?? '');
+    $subnetId = to_int($_POST['subnet_id']   ?? 0);
+    $startIp  = trim(to_str($_POST['start_ip'] ?? ''));
+    $endIp    = trim(to_str($_POST['end_ip']   ?? ''));
+    $note     = trim(to_str($_POST['note']     ?? ''));
 
     // Re-resolve subnet from POST in case it changed
     $subnet = null;
     foreach ($subnets as $s) {
-        if ((int)$s['id'] === $subnetId) { $subnet = $s; break; }
+        if (to_int($s['id']) === $subnetId) { $subnet = $s; break; }
     }
 
     if ($action !== '' && (current_user()['role'] ?? '') === 'readonly') {
@@ -57,21 +59,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($startIp === '' || $endIp === '') {
             $err = 'Start and end IPs are required.';
         } else {
-            $p      = parse_cidr($subnet['cidr']);
+            $p      = parse_cidr(to_str($subnet['cidr']));
             $startN = normalize_ip($startIp);
             $endN   = normalize_ip($endIp);
 
-            if (!$startN || $startN['version'] !== 4) {
+            if (!$p) {
+                $err = 'Invalid subnet CIDR.';
+            } elseif (!$startN || $startN['version'] !== 4) {
                 $err = 'Invalid start IP.';
             } elseif (!$endN || $endN['version'] !== 4) {
                 $err = 'Invalid end IP.';
-            } elseif (!ip_in_cidr($startN['ip'], (string)$p['network'], (int)$p['prefix'])) {
-                $err = 'Start IP is not within the selected subnet (' . $subnet['cidr'] . ').';
-            } elseif (!ip_in_cidr($endN['ip'], (string)$p['network'], (int)$p['prefix'])) {
-                $err = 'End IP is not within the selected subnet (' . $subnet['cidr'] . ').';
+            } elseif (!ip_in_cidr($startN['ip'], to_str($p['network']), to_int($p['prefix']))) {
+                $err = 'Start IP is not within the selected subnet (' . to_str($subnet['cidr']) . ').';
+            } elseif (!ip_in_cidr($endN['ip'], to_str($p['network']), to_int($p['prefix']))) {
+                $err = 'End IP is not within the selected subnet (' . to_str($subnet['cidr']) . ').';
             } else {
-                $startInt = ipv4_bin_to_int($startN['bin']);
-                $endInt   = ipv4_bin_to_int($endN['bin']);
+                $startInt = ipv4_bin_to_int(to_str($startN['bin']));
+                $endInt   = ipv4_bin_to_int(to_str($endN['bin']));
 
                 if ($startInt > $endInt) {
                     $err = 'Start IP must be less than or equal to End IP.';
@@ -100,6 +104,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $ipStr = (string)inet_ntop($ipBin);
 
                             $stCheck->execute([':sid' => $subnetId, ':b' => $ipBin]);
+                            /** @var array<string, mixed>|false $existing */
                             $existing = $stCheck->fetch();
 
                             if ($existing) {
@@ -134,10 +139,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     } elseif ($action === 'edit_address') {
-        $addressId = (int)($_POST['address_id'] ?? 0);
-        $hostname  = trim((string)($_POST['hostname'] ?? ''));
-        $owner     = trim((string)($_POST['owner']    ?? ''));
-        $note      = trim((string)($_POST['note']     ?? ''));
+        $addressId = to_int($_POST['address_id'] ?? 0);
+        $hostname  = trim(to_str($_POST['hostname'] ?? ''));
+        $owner     = trim(to_str($_POST['owner']    ?? ''));
+        $note      = trim(to_str($_POST['note']     ?? ''));
 
         if (!$subnet) {
             $err = 'Subnet not found.';
@@ -148,6 +153,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 "SELECT id, ip, hostname, owner, note, grp, status FROM addresses WHERE id = :id AND subnet_id = :sid AND status = 'reserved'"
             );
             $stChk->execute([':id' => $addressId, ':sid' => $subnetId]);
+            /** @var array<string, mixed>|false $beforeAddr */
             $beforeAddr = $stChk->fetch();
             if (!$beforeAddr) {
                 $err = 'Address not found or not a reserved address in this subnet.';
@@ -157,18 +163,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 )->execute([':hn' => $hostname, ':ow' => $owner, ':nt' => $note, ':id' => $addressId]);
                 audit($db, 'dhcp_pool.edit_address', 'address', $addressId,
                     "subnet_id={$subnetId} hostname={$hostname} owner={$owner}");
-                history_log_address($db, 'update', $subnetId, (string)$beforeAddr['ip'], $addressId,
-                    ['hostname' => (string)$beforeAddr['hostname'], 'owner' => (string)$beforeAddr['owner'],
-                     'note' => (string)$beforeAddr['note'], 'grp' => (string)$beforeAddr['grp'],
-                     'status' => (string)$beforeAddr['status']],
+                history_log_address($db, 'update', $subnetId, to_str($beforeAddr['ip']), $addressId,
+                    ['hostname' => to_str($beforeAddr['hostname']), 'owner' => to_str($beforeAddr['owner']),
+                     'note' => to_str($beforeAddr['note']), 'grp' => to_str($beforeAddr['grp']),
+                     'status' => to_str($beforeAddr['status'])],
                     ['hostname' => $hostname, 'owner' => $owner, 'note' => $note,
-                     'grp' => (string)$beforeAddr['grp'], 'status' => (string)$beforeAddr['status']]
+                     'grp' => to_str($beforeAddr['grp']), 'status' => to_str($beforeAddr['status'])]
                 );
                 $msg = 'Address updated.';
             }
         }
     } elseif ($action === 'delete_address') {
-        $addressId = (int)($_POST['address_id'] ?? 0);
+        $addressId = to_int($_POST['address_id'] ?? 0);
 
         if (!$subnet) {
             $err = 'Subnet not found.';
@@ -179,6 +185,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 "SELECT id, ip, hostname, owner, note, grp, status FROM addresses WHERE id = :id AND subnet_id = :sid AND status = 'reserved'"
             );
             $stChk->execute([':id' => $addressId, ':sid' => $subnetId]);
+            /** @var array<string, mixed>|false $beforeAddr */
             $beforeAddr = $stChk->fetch();
             if (!$beforeAddr) {
                 $err = 'Address not found or not a reserved address in this subnet.';
@@ -186,10 +193,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $db->prepare("DELETE FROM addresses WHERE id = :id")->execute([':id' => $addressId]);
                 audit($db, 'dhcp_pool.delete_address', 'address', $addressId,
                     "subnet_id={$subnetId}");
-                history_log_address($db, 'delete', $subnetId, (string)$beforeAddr['ip'], $addressId,
-                    ['hostname' => (string)$beforeAddr['hostname'], 'owner' => (string)$beforeAddr['owner'],
-                     'note' => (string)$beforeAddr['note'], 'grp' => (string)$beforeAddr['grp'],
-                     'status' => (string)$beforeAddr['status']],
+                history_log_address($db, 'delete', $subnetId, to_str($beforeAddr['ip']), $addressId,
+                    ['hostname' => to_str($beforeAddr['hostname']), 'owner' => to_str($beforeAddr['owner']),
+                     'note' => to_str($beforeAddr['note']), 'grp' => to_str($beforeAddr['grp']),
+                     'status' => to_str($beforeAddr['status'])],
                     null
                 );
                 $msg = 'Reserved address deleted.';
@@ -202,18 +209,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($startIp === '' || $endIp === '') {
             $err = 'Start and end IPs are required.';
         } else {
-            $p      = parse_cidr($subnet['cidr']);
+            $p      = parse_cidr(to_str($subnet['cidr']));
             $startN = normalize_ip($startIp);
             $endN   = normalize_ip($endIp);
 
-            if (!$startN || $startN['version'] !== 4 || !$endN || $endN['version'] !== 4) {
+            if (!$p) {
+                $err = 'Invalid subnet CIDR.';
+            } elseif (!$startN || $startN['version'] !== 4 || !$endN || $endN['version'] !== 4) {
                 $err = 'Invalid IP address.';
-            } elseif (!ip_in_cidr($startN['ip'], (string)$p['network'], (int)$p['prefix'])
-                   || !ip_in_cidr($endN['ip'], (string)$p['network'], (int)$p['prefix'])) {
+            } elseif (!ip_in_cidr($startN['ip'], to_str($p['network']), to_int($p['prefix']))
+                   || !ip_in_cidr($endN['ip'], to_str($p['network']), to_int($p['prefix']))) {
                 $err = 'IPs are not within the selected subnet.';
             } else {
-                $startInt = ipv4_bin_to_int($startN['bin']);
-                $endInt   = ipv4_bin_to_int($endN['bin']);
+                $startInt = ipv4_bin_to_int(to_str($startN['bin']));
+                $endInt   = ipv4_bin_to_int(to_str($endN['bin']));
 
                 if ($startInt > $endInt) {
                     $err = 'Start IP must be less than or equal to End IP.';
@@ -256,6 +265,7 @@ if ($subnet) {
          ORDER BY ip_bin ASC"
     );
     $stR->execute([':sid' => $subnetId]);
+    /** @var list<array<string, mixed>> $reserved */
     $reserved = $stR->fetchAll();
 }
 
@@ -287,9 +297,9 @@ page_header('DHCP Pools');
         <select name="subnet_id" data-auto-submit class="mw-200">
           <option value="0">— select subnet —</option>
           <?php foreach ($subnets as $s): ?>
-            <option value="<?= (int)$s['id'] ?>" <?= ((int)$s['id'] === $subnetId) ? 'selected' : '' ?>>
-              <?= e($s['cidr']) ?><?= $s['description'] ? ' — ' . e($s['description']) : '' ?>
-              <?= $s['site_name'] ? ' [' . e($s['site_name']) . ']' : '' ?>
+            <option value="<?= to_int($s['id']) ?>" <?= (to_int($s['id']) === $subnetId) ? 'selected' : '' ?>>
+              <?= e(to_str($s['cidr'])) ?><?= $s['description'] ? ' — ' . e(to_str($s['description'])) : '' ?>
+              <?= $s['site_name'] ? ' [' . e(to_str($s['site_name'])) . ']' : '' ?>
             </option>
           <?php endforeach; ?>
         </select>
@@ -308,8 +318,8 @@ page_header('DHCP Pools');
     <input type="hidden" name="action" value="reserve_pool">
     <input type="hidden" name="subnet_id" value="<?= (int)$subnetId ?>">
     <div class="row gap-10">
-      <label>Start IP<br><input name="start_ip" placeholder="e.g. <?= e(explode('/', $subnet['cidr'])[0]) ?>" required class="mw-140"></label>
-      <label>End IP<br><input name="end_ip" placeholder="e.g. <?= e(explode('/', $subnet['cidr'])[0]) ?>" required class="mw-140"></label>
+      <label>Start IP<br><input name="start_ip" placeholder="e.g. <?= e(explode('/', to_str($subnet['cidr']))[0]) ?>" required class="mw-140"></label>
+      <label>End IP<br><input name="end_ip" placeholder="e.g. <?= e(explode('/', to_str($subnet['cidr']))[0]) ?>" required class="mw-140"></label>
       <label>Note<br><input name="note" placeholder="DHCP pool" value="DHCP pool" class="mw-160"></label>
       <label class="flex-self-end"><br><button type="submit">Reserve</button></label>
     </div>
@@ -335,7 +345,7 @@ page_header('DHCP Pools');
 
 <?php if ($subnet): ?>
 <div class="card mt-16">
-  <h2>Reserved addresses in <?= e($subnet['cidr']) ?> <span class="muted font-xs">(<?= count($reserved) ?>)</span></h2>
+  <h2>Reserved addresses in <?= e(to_str($subnet['cidr'])) ?> <span class="muted font-xs">(<?= count($reserved) ?>)</span></h2>
   <?php if (empty($reserved)): ?>
     <div class="empty-state">No reserved addresses in this subnet.</div>
   <?php else: ?>
@@ -344,7 +354,7 @@ page_header('DHCP Pools');
     $groups = [];
     $curGroup = null;
     foreach ($reserved as $r) {
-        $ipInt = ipv4_bin_to_int((string)$r['ip_bin']);
+        $ipInt = ipv4_bin_to_int(to_str($r['ip_bin']));
         if ($curGroup === null || $ipInt !== $curGroup['end_int'] + 1) {
             if ($curGroup !== null) $groups[] = $curGroup;
             $curGroup = ['start_ip' => $r['ip'], 'end_ip' => $r['ip'],
@@ -355,7 +365,7 @@ page_header('DHCP Pools');
         }
         $curGroup['rows'][] = $r;
     }
-    if ($curGroup !== null) $groups[] = $curGroup;
+    $groups[] = $curGroup; // $reserved is non-empty (we're inside else), so $curGroup is always set
     ?>
     <div class="table-wrap">
     <table>
@@ -366,32 +376,32 @@ page_header('DHCP Pools');
         <tr class="dhcp-range-header">
           <td colspan="5" class="muted">
             <?php if ($g['start_ip'] === $g['end_ip']): ?>
-              <?= e($g['start_ip']) ?>
+              <?= e(to_str($g['start_ip'])) ?>
             <?php else: ?>
-              <?= e($g['start_ip']) ?> &ndash; <?= e($g['end_ip']) ?>
+              <?= e(to_str($g['start_ip'])) ?> &ndash; <?= e(to_str($g['end_ip'])) ?>
               &middot; <?= count($g['rows']) ?> addresses
             <?php endif; ?>
           </td>
         </tr>
         <?php endif; ?>
         <?php foreach ($g['rows'] as $r): ?>
-          <?php if ($isWriteUser && $editId === (int)$r['id']): ?>
+          <?php if ($isWriteUser && $editId === to_int($r['id'])): ?>
           <tr>
             <td colspan="5">
               <form method="post" action="dhcp_pool.php" class="dhcp-edit-form">
                 <input type="hidden" name="csrf"       value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action"     value="edit_address">
                 <input type="hidden" name="subnet_id"  value="<?= (int)$subnetId ?>">
-                <input type="hidden" name="address_id" value="<?= (int)$r['id'] ?>">
-                <span class="ip-label"><?= e($r['ip']) ?></span>
+                <input type="hidden" name="address_id" value="<?= to_int($r['id']) ?>">
+                <span class="ip-label"><?= e(to_str($r['ip'])) ?></span>
                 <label>Hostname<br>
-                  <input name="hostname" value="<?= e((string)$r['hostname']) ?>" class="mw-160">
+                  <input name="hostname" value="<?= e(to_str($r['hostname'])) ?>" class="mw-160">
                 </label>
                 <label>Owner<br>
-                  <input name="owner" value="<?= e((string)$r['owner']) ?>" class="mw-140">
+                  <input name="owner" value="<?= e(to_str($r['owner'])) ?>" class="mw-140">
                 </label>
                 <label>Note<br>
-                  <input name="note" value="<?= e((string)$r['note']) ?>" class="mw-160">
+                  <input name="note" value="<?= e(to_str($r['note'])) ?>" class="mw-160">
                 </label>
                 <div class="btn-group">
                   <button type="submit">Save</button>
@@ -402,19 +412,19 @@ page_header('DHCP Pools');
           </tr>
           <?php else: ?>
           <tr>
-            <td><?= e($r['ip']) ?></td>
-            <td><?= e((string)$r['hostname']) ?></td>
-            <td><?= e((string)$r['owner']) ?></td>
-            <td class="muted"><?= e((string)$r['note']) ?></td>
+            <td><?= e(to_str($r['ip'])) ?></td>
+            <td><?= e(to_str($r['hostname'])) ?></td>
+            <td><?= e(to_str($r['owner'])) ?></td>
+            <td class="muted"><?= e(to_str($r['note'])) ?></td>
             <?php if ($isWriteUser): ?>
             <td class="nowrap">
-              <a class="action-pill" href="dhcp_pool.php?subnet_id=<?= (int)$subnetId ?>&edit_id=<?= (int)$r['id'] ?>">Edit</a>
+              <a class="action-pill" href="dhcp_pool.php?subnet_id=<?= (int)$subnetId ?>&edit_id=<?= to_int($r['id']) ?>">Edit</a>
               <form method="post" action="dhcp_pool.php" class="d-inline-form"
-                    data-confirm="Delete reserved address <?= e($r['ip']) ?>?">
+                    data-confirm="Delete reserved address <?= e(to_str($r['ip'])) ?>?">
                 <input type="hidden" name="csrf"       value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action"     value="delete_address">
                 <input type="hidden" name="subnet_id"  value="<?= (int)$subnetId ?>">
-                <input type="hidden" name="address_id" value="<?= (int)$r['id'] ?>">
+                <input type="hidden" name="address_id" value="<?= to_int($r['id']) ?>">
                 <button type="submit" class="action-pill button-danger">Delete</button>
               </form>
             </td>

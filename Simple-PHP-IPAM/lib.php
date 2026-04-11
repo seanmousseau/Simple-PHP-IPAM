@@ -96,7 +96,9 @@ function ipam_db_init(PDO $db): void
 
     $st = $db->prepare("SELECT COUNT(*) AS c FROM users");
     $st->execute();
-    $count = (int)$st->fetch()['c'];
+    /** @var array<string, mixed>|false $countRow */
+    $countRow = $st->fetch();
+    $count = is_array($countRow) ? to_int($countRow['c']) : 0;
     if ($count === 0) {
         $config = require __DIR__ . '/config.php';
         $u = $config['bootstrap_admin']['username'];
@@ -115,15 +117,50 @@ function e(string $s): string
     return htmlspecialchars($s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
+/**
+ * Safely coerce a mixed value (e.g. PDO fetch result or superglobal) to int.
+ * Needed at PHPStan level 9 where (int) casts on mixed are disallowed.
+ */
+function to_int(mixed $value): int
+{
+    if (is_int($value)) return $value;
+    if (is_float($value)) return (int)$value;
+    if (is_string($value)) return (int)$value;
+    if (is_bool($value)) return $value ? 1 : 0;
+    return 0;
+}
+
+/**
+ * Safely coerce a mixed value (e.g. PDO fetch result or superglobal) to string.
+ * Needed at PHPStan level 9 where (string) casts on mixed are disallowed.
+ * Defined here for api.php/status.php which load lib.php directly without init.php.
+ * init.php defines this function earlier so pages that use init.php see it immediately;
+ * the function_exists guard prevents a fatal redefinition error.
+ */
+if (!function_exists('to_str')) {
+    function to_str(mixed $value): string
+    {
+        if (is_string($value)) return $value;
+        if (is_int($value) || is_float($value)) return (string)$value;
+        if (is_bool($value)) return $value ? '1' : '';
+        if ($value === null) return '';
+        return '';
+    }
+}
+
 /* ---------------- CSRF ---------------- */
 
-function csrf_token(): string { return $_SESSION['csrf'] ?? ''; }
+function csrf_token(): string
+{
+    $t = $_SESSION['csrf'] ?? null;
+    return is_string($t) ? $t : '';
+}
 
 function csrf_require(): void
 {
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') return;
-    $sent = $_POST['csrf'] ?? '';
-    $real = $_SESSION['csrf'] ?? '';
+    $sent = $_POST['csrf'] ?? null;
+    $real = csrf_token();
     if (!is_string($sent) || !hash_equals($real, $sent)) {
         http_response_code(403);
         header('Location: login.php');
@@ -141,8 +178,10 @@ function require_login(): void
         header('Location: login.php');
         exit;
     }
-    $idle = (int)(($GLOBALS['config'] ?? [])['session_idle_seconds'] ?? 1800);
-    if (isset($_SESSION['last_active']) && (time() - (int)$_SESSION['last_active']) > $idle) {
+    /** @var IpamConfig $gConf */
+    $gConf = $GLOBALS['config'];
+    $idle = $gConf['session_idle_seconds'];
+    if (isset($_SESSION['last_active']) && (time() - to_int($_SESSION['last_active'])) > $idle) {
         logout_user();
         header('Location: login.php?timeout=1');
         exit;
@@ -150,19 +189,20 @@ function require_login(): void
     $_SESSION['last_active'] = time();
 
     // Password expiry check — local accounts only, skip on change_password / logout pages
-    $policy  = (array)(($GLOBALS['config'] ?? [])['password_policy'] ?? []);
-    $maxAge  = (int)($policy['max_password_age_days'] ?? 0);
+    $policy  = $gConf['password_policy'];
+    $maxAge  = $policy['max_password_age_days'];
     if ($maxAge > 0) {
-        $page = basename((string)($_SERVER['SCRIPT_FILENAME'] ?? ''));
+        $page = basename(to_str($_SERVER['SCRIPT_FILENAME'] ?? ''));
         if (!in_array($page, ['change_password.php', 'logout.php'], true)) {
             try {
                 $db = $GLOBALS['db'] ?? null;
                 if ($db instanceof PDO) {
                     $st = $db->prepare("SELECT oidc_sub, password_changed_at FROM users WHERE id = :id");
-                    $st->execute([':id' => (int)($_SESSION['uid'] ?? 0)]);
+                    $st->execute([':id' => to_int($_SESSION['uid'] ?? 0)]);
+                    /** @var array<string, mixed>|false $row */
                     $row = $st->fetch();
                     if ($row && $row['oidc_sub'] === null) {
-                        $changedAt = (string)($row['password_changed_at'] ?? '');
+                        $changedAt = to_str($row['password_changed_at'] ?? '');
                         $cutoff    = date('Y-m-d H:i:s', time() - $maxAge * 86400);
                         if ($changedAt === '' || $changedAt < $cutoff) {
                             header('Location: change_password.php?expired=1');
@@ -187,7 +227,7 @@ function require_login(): void
 function validate_password_complexity(string $password, array $policy): array
 {
     $errors = [];
-    $min = max(1, (int)($policy['min_length'] ?? 12));
+    $min = max(1, to_int($policy['min_length'] ?? 12));
     if (mb_strlen($password) < $min) {
         $errors[] = "Password must be at least {$min} characters.";
     }
@@ -210,9 +250,9 @@ function validate_password_complexity(string $password, array $policy): array
 function current_user(): array
 {
     return [
-        'id' => (int)($_SESSION['uid'] ?? 0),
-        'username' => (string)($_SESSION['username'] ?? ''),
-        'role' => (string)($_SESSION['role'] ?? ''),
+        'id' => to_int($_SESSION['uid'] ?? 0),
+        'username' => to_str($_SESSION['username'] ?? ''),
+        'role' => to_str($_SESSION['role'] ?? ''),
     ];
 }
 
@@ -245,7 +285,7 @@ function login_user(int $uid, string $username, string $role, ?PDO $db = null): 
     if ($db !== null) {
         $st = $db->prepare("SELECT theme FROM users WHERE id = :id");
         $st->execute([':id' => $uid]);
-        $theme = (string)($st->fetchColumn() ?: 'auto');
+        $theme = to_str($st->fetchColumn() ?: 'auto');
         $_SESSION['user_theme'] = in_array($theme, ['light', 'dark', 'auto'], true) ? $theme : 'auto';
     }
 }
@@ -257,7 +297,9 @@ function login_rate_limited(PDO $db, string $ip, int $maxAttempts, int $windowSe
     $cutoff = date('Y-m-d H:i:s', time() - $windowSeconds);
     $st = $db->prepare("SELECT COUNT(*) AS c FROM login_attempts WHERE ip = :ip AND attempted_at >= :cutoff");
     $st->execute([':ip' => $ip, ':cutoff' => $cutoff]);
-    return (int)$st->fetch()['c'] >= $maxAttempts;
+    /** @var array<string, mixed>|false $countRow */
+    $countRow = $st->fetch();
+    return (is_array($countRow) ? to_int($countRow['c']) : 0) >= $maxAttempts;
 }
 
 function record_login_failure(PDO $db, string $ip): void
@@ -295,14 +337,16 @@ function logout_user(): void
 
 function client_ip(): string
 {
-    if (!empty($GLOBALS['config']['proxy_trust']) && !empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
-        $parts     = array_map('trim', explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']));
+    /** @var IpamConfig $gConf */
+    $gConf = $GLOBALS['config'];
+    if (!empty($gConf['proxy_trust']) && !empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+        $parts     = array_map('trim', explode(',', to_str($_SERVER['HTTP_X_FORWARDED_FOR'])));
         $candidate = $parts[0];
         if (filter_var($candidate, FILTER_VALIDATE_IP) !== false) {
             return $candidate;
         }
     }
-    return (string)($_SERVER['REMOTE_ADDR'] ?? '127.0.0.1');
+    return to_str($_SERVER['REMOTE_ADDR'] ?? '127.0.0.1');
 }
 
 function flash_set(string $message, string $type = 'success'): void
@@ -316,7 +360,10 @@ function flash_get(): ?array
     if (empty($_SESSION['ipam_flash'])) return null;
     $flash = $_SESSION['ipam_flash'];
     unset($_SESSION['ipam_flash']);
-    return $flash;
+    if (!is_array($flash)) return null;
+    $msg  = is_string($flash['msg']  ?? null) ? $flash['msg']  : '';
+    $type = is_string($flash['type'] ?? null) ? $flash['type'] : 'info';
+    return ['msg' => $msg, 'type' => $type];
 }
 
 function audit(PDO $db, string $action, string $entityType, ?int $entityId, string $details = ''): void
@@ -331,7 +378,7 @@ function audit(PDO $db, string $action, string $entityType, ?int $entityId, stri
         ':et'  => $entityType,
         ':eid' => $entityId,
         ':ip'  => client_ip() ?: null,
-        ':ua'  => (string)($_SERVER['HTTP_USER_AGENT'] ?? ''),
+        ':ua'  => to_str($_SERVER['HTTP_USER_AGENT'] ?? ''),
         ':dt'  => $details,
     ]);
 }
@@ -364,7 +411,7 @@ function history_log_address(PDO $db, string $action, int $subnetId, string $ip,
         ':uid' => $u['id'] ?: null,
         ':un'  => $u['username'] ?: null,
         ':cip' => client_ip() ?: null,
-        ':ua'  => (string)($_SERVER['HTTP_USER_AGENT'] ?? ''),
+        ':ua'  => to_str($_SERVER['HTTP_USER_AGENT'] ?? ''),
         ':bj'  => $before ? json_encode($before, JSON_UNESCAPED_SLASHES) : null,
         ':aj'  => $after ? json_encode($after, JSON_UNESCAPED_SLASHES) : null,
     ]);
@@ -386,7 +433,9 @@ function applied_migrations(PDO $db): array
 {
     $st = $db->prepare("SELECT version FROM schema_migrations");
     $st->execute();
-    return array_values(array_map(fn($r) => (string)$r['version'], $st->fetchAll()));
+    /** @var list<array<string, mixed>> $rows */
+    $rows = $st->fetchAll();
+    return array_map(fn(array $r): string => to_str($r['version']), $rows);
 }
 
 /** @return list<string> */
@@ -457,6 +506,20 @@ function ipam_config_defaults(): array
         'api_lockout_seconds' => [
             'default' => 300,
             'comment' => 'Duration (seconds) of API key lockout after too many failed attempts.',
+        ],
+        'api_bulk_limit' => [
+            'default' => 500,
+            'comment' => 'Maximum number of records per bulk API write request (POST ?resource=addresses&bulk=1).',
+        ],
+        'recaptcha_enterprise' => [
+            'default' => [
+                'enabled'          => false,
+                'project_id'       => '',
+                'api_key'          => '',
+                'expected_action'  => 'LOGIN',
+                'score_threshold'  => 0.5,
+            ],
+            'comment' => "reCAPTCHA Enterprise (v3). Set login_protection.method = 'recaptcha' and enable this block to use the Enterprise API for backend verification. project_id: GCP project ID. api_key: server-side API key. expected_action: action name from widget. score_threshold: 0.0–1.0 (default 0.5).",
         ],
         'import_csv_max_mb'    => ['default' => null, 'comment' => ''],
         'tmp_cleanup_ttl_seconds' => ['default' => null, 'comment' => ''],
@@ -593,7 +656,7 @@ function ipam_config_sync(string $configPath, array $loaded): array
             if ($content === false) break;
             if (!preg_match('/\n\];\s*$/', $content)) break;
 
-            $comment  = (string)$meta['comment'];
+            $comment  = to_str($meta['comment']);
             $valuePhp = ipam_php_export($meta['default'], 2);
             $block    = '';
             if ($comment !== '') $block .= "\n    // " . $comment;
@@ -642,6 +705,52 @@ function ipam_config_sync(string $configPath, array $loaded): array
     return $added;
 }
 
+/**
+ * Validate loaded config values and return a list of human-readable warning strings.
+ * Logs each warning to the PHP error log as well.
+ *
+ * @param IpamConfig $config
+ * @return list<string>
+ */
+function ipam_validate_config(array $config): array
+{
+    $warnings = [];
+
+    $sessionIdle = to_int($config['session_idle_seconds']);
+    if ($sessionIdle < 60) {
+        $warnings[] = "session_idle_seconds is {$sessionIdle}; minimum is 60.";
+    }
+
+    $loginMax = to_int($config['login_max_attempts']);
+    if ($loginMax < 1) {
+        $warnings[] = "login_max_attempts is {$loginMax}; minimum is 1.";
+    }
+
+    $lockout = to_int($config['login_lockout_seconds']);
+    if ($lockout < 1) {
+        $warnings[] = "login_lockout_seconds is {$lockout}; minimum is 1.";
+    }
+
+    $auditRetention = to_int($config['audit_log_retention_days']);
+    if ($auditRetention < 0) {
+        $warnings[] = "audit_log_retention_days is {$auditRetention}; must be 0 or greater.";
+    }
+
+    $backup = $config['backup'];
+    if (!empty($backup['enabled'])) {
+        $retention = to_int($backup['retention']);
+        if ($retention < 1) {
+            $warnings[] = "backup.retention is {$retention}; minimum is 1.";
+        }
+    }
+
+    foreach ($warnings as $w) {
+        error_log("Simple PHP IPAM config warning: {$w}");
+    }
+
+    return $warnings;
+}
+
 /* ---------------- Housekeeping ---------------- */
 
 function housekeeping_state_path(): string
@@ -651,14 +760,14 @@ function housekeeping_state_path(): string
 
 /**
  * @phpstan-impure
- * @param array<string, mixed> $config
+ * @param IpamConfig $config
  */
 function housekeeping_should_run(array $config): bool
 {
-    $hk = $config['housekeeping'] ?? [];
+    $hk = $config['housekeeping'];
     if (empty($hk['enabled'])) return false;
 
-    $interval = (int)($hk['interval_seconds'] ?? 86400);
+    $interval = to_int($hk['interval_seconds']);
     if ($interval < 3600) $interval = 3600;
 
     $path = housekeeping_state_path();
@@ -689,8 +798,8 @@ function prune_audit_log(PDO $db, int $retentionDays): int
     // This avoids ALTER TABLE RENAME (which can implicitly commit in SQLite)
     // and SELECT * column-ordering risks.
     try {
-        $oldCount = (int)($db->query("SELECT COUNT(*) FROM audit_log")
-            ?: throw new \RuntimeException('Query failed'))->fetchColumn();
+        $oldCount = to_int(($db->query("SELECT COUNT(*) FROM audit_log")
+            ?: throw new \RuntimeException('Query failed'))->fetchColumn());
 
         $db->exec("DROP TRIGGER IF EXISTS audit_log_no_update");
         $db->exec("DROP TRIGGER IF EXISTS audit_log_no_delete");
@@ -732,7 +841,7 @@ function prune_address_history(PDO $db, int $retentionDays): int
     return $st->rowCount();
 }
 
-/** @param array<string, mixed> $config */
+/** @param IpamConfig $config */
 function run_housekeeping_if_due(array $config, ?PDO $db = null): void
 {
     if (!housekeeping_should_run($config)) return;
@@ -749,18 +858,18 @@ function run_housekeeping_if_due(array $config, ?PDO $db = null): void
     try {
         if (!housekeeping_should_run($config)) return;
 
-        $ttl = (int)($config['tmp_cleanup_ttl_seconds'] ?? 86400);
+        $ttl = to_int($config['tmp_cleanup_ttl_seconds']);
         if ($ttl < 3600) $ttl = 3600;
 
         cleanup_tmp_import_files($ttl);
         cleanup_tmp_import_plans($ttl);
 
         if ($db !== null) {
-            $retentionDays = (int)($config['audit_log_retention_days'] ?? 0);
+            $retentionDays = to_int($config['audit_log_retention_days']);
             if ($retentionDays > 0) {
                 prune_audit_log($db, $retentionDays);
             }
-            $histRetention = (int)($config['address_history_retention_days'] ?? 0);
+            $histRetention = to_int($config['address_history_retention_days']);
             if ($histRetention > 0) {
                 prune_address_history($db, $histRetention);
             }
@@ -795,10 +904,10 @@ function run_demo_reset_if_due(PDO $db): void
 
 /* ---------------- Database Backups ---------------- */
 
-/** @param array<string, mixed> $config */
+/** @param IpamConfig $config */
 function backup_dir(array $config): string
 {
-    $d = trim((string)($config['backup']['dir'] ?? ''));
+    $d = trim($config['backup']['dir']);
     if ($d === '') {
         return __DIR__ . '/data/backups';
     }
@@ -820,10 +929,10 @@ function backup_state_path(): string
     return __DIR__ . '/data/backup-state.json';
 }
 
-/** @param array<string, mixed> $config */
+/** @param IpamConfig $config */
 function backup_interval_seconds(array $config): int
 {
-    $freq = strtolower(trim((string)($config['backup']['frequency'] ?? 'daily')));
+    $freq = strtolower(trim($config['backup']['frequency']));
     return match ($freq) {
         'weekly' => 604800,
         default  => 86400,  // 'daily'
@@ -832,11 +941,11 @@ function backup_interval_seconds(array $config): int
 
 /**
  * @phpstan-impure
- * @param array<string, mixed> $config
+ * @param IpamConfig $config
  */
 function backup_is_due(array $config): bool
 {
-    $bk = $config['backup'] ?? [];
+    $bk = $config['backup'];
     if (empty($bk['enabled'])) return false;
 
     $path = backup_state_path();
@@ -845,7 +954,7 @@ function backup_is_due(array $config): bool
     $d = @json_decode((string)file_get_contents($path), true);
     if (!is_array($d) || !isset($d['last_backup'])) return true;
 
-    return (time() - (int)$d['last_backup']) >= backup_interval_seconds($config);
+    return (time() - to_int($d['last_backup'])) >= backup_interval_seconds($config);
 }
 
 /**
@@ -853,7 +962,7 @@ function backup_is_due(array $config): bool
  * a consistent snapshot without requiring SQLite3 extension.
  * Returns true if a backup was written, false otherwise.
  */
-/** @param array<string, mixed> $config */
+/** @param IpamConfig $config */
 function run_db_backup_if_due(PDO $db, array $config): bool
 {
     if (!backup_is_due($config)) return false;
@@ -871,7 +980,9 @@ function run_db_backup_if_due(PDO $db, array $config): bool
     try {
         if (!backup_is_due($config)) return false;
 
-        $dbPath = (string)($GLOBALS['config']['db_path'] ?? (__DIR__ . '/data/ipam.sqlite'));
+        /** @var IpamConfig $gConf */
+        $gConf = $GLOBALS['config'];
+        $dbPath = $gConf['db_path'] !== '' ? $gConf['db_path'] : (__DIR__ . '/data/ipam.sqlite');
         if (!is_file($dbPath)) return false;
 
         $dir = backup_dir($config);
@@ -890,7 +1001,7 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             $wrote = true;
 
             // Prune old backups according to retention policy
-            $retention = max(1, (int)($config['backup']['retention'] ?? 7));
+            $retention = max(1, $config['backup']['retention']);
             $files = glob($dir . '/ipam-*.sqlite');
             if (is_array($files)) {
                 rsort($files); // newest first (lexicographic = chronological for our format)
@@ -915,7 +1026,7 @@ function run_db_backup_if_due(PDO $db, array $config): bool
 /**
  * Return info about the current backup state for display in the admin panel.
  *
- * @param array<string, mixed> $config
+ * @param IpamConfig $config
  * @return array{last_backup: int|null, last_file: string|null, count: int, dir: string}
  */
 function backup_info(array $config): array
@@ -928,8 +1039,8 @@ function backup_info(array $config): array
     if (is_file($state)) {
         $d = @json_decode((string)file_get_contents($state), true);
         if (is_array($d)) {
-            $last = isset($d['last_backup']) ? (int)$d['last_backup'] : null;
-            $file = isset($d['last_file'])   ? (string)$d['last_file'] : null;
+            $last = isset($d['last_backup']) ? to_int($d['last_backup']) : null;
+            $file = isset($d['last_file'])   ? to_str($d['last_file']) : null;
         }
     }
 
@@ -960,10 +1071,10 @@ function ipam_db_dump_stream(PDO $db, callable $write): void
     ) ?: throw new \RuntimeException('Query failed'))->fetchAll();
 
     foreach ($tables as $t) {
-        $name        = (string)$t['name'];
+        $name        = to_str($t['name']);
         $quotedName  = '"' . str_replace('"', '""', $name) . '"';
         $write("-- Table: {$name}\n");
-        $write($t['sql'] . ";\n");
+        $write(to_str($t['sql']) . ";\n");
 
         // Dump triggers for this table so they are recreated on import.
         $triggers = ($db->query(
@@ -971,7 +1082,7 @@ function ipam_db_dump_stream(PDO $db, callable $write): void
             . $db->quote($name) . " AND sql IS NOT NULL ORDER BY name"
         ) ?: throw new \RuntimeException('Query failed'))->fetchAll();
         foreach ($triggers as $trig) {
-            $write($trig['sql'] . ";\n");
+            $write(to_str($trig['sql']) . ";\n");
         }
 
         // Identify BLOB columns so we can always hex-encode raw binary data.
@@ -979,8 +1090,8 @@ function ipam_db_dump_stream(PDO $db, callable $write): void
             ?: throw new \RuntimeException('Query failed'))->fetchAll();
         $blobCols = [];
         foreach ($colInfo as $ci) {
-            if (strtoupper((string)$ci['type']) === 'BLOB') {
-                $blobCols[(string)$ci['name']] = true;
+            if (strtoupper(to_str($ci['type'])) === 'BLOB') {
+                $blobCols[to_str($ci['name'])] = true;
             }
         }
 
@@ -998,9 +1109,9 @@ function ipam_db_dump_stream(PDO $db, callable $write): void
                 } elseif (is_int($v) || is_float($v)) {
                     $vals[] = (string)$v;
                 } elseif (isset($blobCols[$colName])) {
-                    $vals[] = "X'" . bin2hex((string)$v) . "'";
+                    $vals[] = "X'" . bin2hex(to_str($v)) . "'";
                 } else {
-                    $vals[] = "CAST(X'" . bin2hex((string)$v) . "' AS TEXT)";
+                    $vals[] = "CAST(X'" . bin2hex(to_str($v)) . "' AS TEXT)";
                 }
             }
             $write("INSERT INTO {$quotedName} (" . implode(',', $cols) . ") VALUES ("
@@ -1016,7 +1127,7 @@ function ipam_db_dump_stream(PDO $db, callable $write): void
     if ($indices) {
         $write("-- Indexes\n");
         foreach ($indices as $idx) {
-            $write($idx['sql'] . ";\n");
+            $write(to_str($idx['sql']) . ";\n");
         }
         $write("\n");
     }
@@ -1073,8 +1184,8 @@ function like_escape(string $q): string
  */
 function parse_sort(array $allowed, string $defaultCol, string $defaultDir = 'asc'): array
 {
-    $col = (string)($_GET['sort'] ?? $defaultCol);
-    $dir = strtolower((string)($_GET['dir'] ?? $defaultDir));
+    $col = to_str($_GET['sort'] ?? $defaultCol);
+    $dir = strtolower(to_str($_GET['dir'] ?? $defaultDir));
     if (!isset($allowed[$col])) $col = $defaultCol;
     if (!in_array($dir, ['asc', 'desc'], true)) $dir = $defaultDir;
     return ['col' => $col, 'dir' => $dir, 'sql' => $allowed[$col] . ' ' . strtoupper($dir)];
@@ -1098,20 +1209,78 @@ function sort_th(string $col, string $label, string $currentCol, string $current
 /* ---------------- Login protection (#124) ---------------- */
 
 /**
+ * Verify a reCAPTCHA token against the Enterprise Assessment API.
+ * Returns null on pass, error string on fail, null on network error (fail-open).
+ *
+ * @param array{enabled: bool, project_id: string, api_key: string, expected_action: string, score_threshold: float} $cfg
+ */
+function recaptcha_enterprise_verify(string $token, string $siteKey, array $cfg): ?string
+{
+    $projectId      = to_str($cfg['project_id']);
+    $apiKey         = to_str($cfg['api_key']);
+    $expectedAction = to_str($cfg['expected_action']);
+    $threshold      = (float)$cfg['score_threshold'];
+
+    if ($projectId === '' || $apiKey === '') {
+        error_log('reCAPTCHA Enterprise: project_id and api_key must be configured.');
+        return null; // fail open — misconfiguration should not block users
+    }
+
+    $url     = 'https://recaptchaenterprise.googleapis.com/v1/projects/' . rawurlencode($projectId) . '/assessments?key=' . rawurlencode($apiKey);
+    $payload = (string)json_encode(['event' => ['token' => $token, 'expectedAction' => $expectedAction, 'siteKey' => $siteKey]]);
+    $ctx = stream_context_create([
+        'http' => [
+            'method'        => 'POST',
+            'header'        => "Content-Type: application/json\r\nContent-Length: " . strlen($payload) . "\r\n",
+            'content'       => $payload,
+            'timeout'       => 10,
+            'ignore_errors' => true,
+        ],
+        'ssl' => ['verify_peer' => true, 'verify_peer_name' => true],
+    ]);
+
+    try {
+        $raw = @file_get_contents($url, false, $ctx, 0, 1048576);
+        if ($raw === false) {
+            error_log('reCAPTCHA Enterprise: HTTP request failed.');
+            return null;
+        }
+        $resp = json_decode($raw, true);
+        if (!is_array($resp)) {
+            error_log('reCAPTCHA Enterprise: Invalid JSON response.');
+            return null;
+        }
+        /** @var array<string, mixed> $resp */
+        $tokenProps  = is_array($resp['tokenProperties'] ?? null) ? $resp['tokenProperties'] : [];
+        $riskAnalysis = is_array($resp['riskAnalysis'] ?? null)   ? $resp['riskAnalysis']   : [];
+
+        if (!empty($tokenProps['invalid'])) return 'Security check failed. Please try again.';
+        if ($expectedAction !== '' && isset($tokenProps['action']) && to_str($tokenProps['action']) !== $expectedAction) {
+            return 'Security check failed. Please try again.';
+        }
+
+        $score = (isset($riskAnalysis['score']) && is_numeric($riskAnalysis['score'])) ? (float)$riskAnalysis['score'] : 0.0;
+        return $score >= $threshold ? null : 'Security check failed. Please try again.';
+    } catch (Throwable $e) {
+        error_log('reCAPTCHA Enterprise verify error: ' . $e->getMessage());
+        return null;
+    }
+}
+
+/**
  * Verify the login form protection token/field for the current POST request.
  *
  * Returns null on pass, '' for a silent honeypot rejection (no error shown),
  * or a non-empty error string that should be shown to the user.
  * Fails open on network errors so a broken CAPTCHA provider never blocks login.
- */
-/**
- * @param array<string, mixed> $config
+ *
+ * @param LoginProtectionConfig $config
  * @param array<string, mixed> $post
  */
 function login_protection_verify(array $config, array $post): ?string
 {
-    $cfg    = $config['login_protection'] ?? [];
-    $method = (string)($cfg['method'] ?? '');
+    $cfg    = $config['login_protection'];
+    $method = to_str($cfg['method'] ?? '');
     if ($method === '' || $method === 'null') return null;
 
     if ($method === 'honeypot') {
@@ -1119,8 +1288,8 @@ function login_protection_verify(array $config, array $post): ?string
     }
 
     if ($method === 'time_check') {
-        $min = max(1, (int)($cfg['min_seconds'] ?? 3));
-        $ts  = (int)($_SESSION['login_form_at'] ?? 0);
+        $min = max(1, $cfg['min_seconds']);
+        $ts  = to_int($_SESSION['login_form_at'] ?? 0);
         unset($_SESSION['login_form_at']);
         if ($ts === 0 || (time() - $ts) < $min) {
             return 'Form submission was too fast. Please wait a moment and try again.';
@@ -1128,10 +1297,10 @@ function login_protection_verify(array $config, array $post): ?string
         return null;
     }
 
-    $secretKey = (string)($cfg['secret_key'] ?? '');
+    $secretKey = $cfg['secret_key'];
 
     if ($method === 'turnstile') {
-        $token = (string)($post['cf-turnstile-response'] ?? '');
+        $token = to_str($post['cf-turnstile-response'] ?? '');
         if ($token === '') return 'Please complete the security check.';
         try {
             $resp = oidc_http_post('https://challenges.cloudflare.com/turnstile/v0/siteverify', [
@@ -1147,7 +1316,7 @@ function login_protection_verify(array $config, array $post): ?string
     }
 
     if ($method === 'hcaptcha') {
-        $token = (string)($post['h-captcha-response'] ?? '');
+        $token = to_str($post['h-captcha-response'] ?? '');
         if ($token === '') return 'Please complete the security check.';
         try {
             $resp = oidc_http_post('https://hcaptcha.com/siteverify', [
@@ -1163,8 +1332,17 @@ function login_protection_verify(array $config, array $post): ?string
     }
 
     if ($method === 'recaptcha') {
-        $token = (string)($post['g-recaptcha-response'] ?? '');
+        $token = to_str($post['g-recaptcha-response'] ?? '');
         if ($token === '') return 'Please complete the security check.';
+
+        // Use Enterprise API if configured; fall back to standard reCAPTCHA API
+        /** @var IpamConfig $gConfig */
+        $gConfig    = $GLOBALS['config'] ?? [];
+        $enterprise = $gConfig['recaptcha_enterprise'];
+        if (!empty($enterprise['enabled'])) {
+            return recaptcha_enterprise_verify($token, $cfg['site_key'], $enterprise);
+        }
+
         try {
             $resp = oidc_http_post('https://www.google.com/recaptcha/api/siteverify', [
                 'secret'   => $secretKey,
@@ -1179,14 +1357,14 @@ function login_protection_verify(array $config, array $post): ?string
     }
 
     if ($method === 'friendly_captcha') {
-        $token = (string)($post['frc-captcha-solution'] ?? '');
+        $token = to_str($post['frc-captcha-solution'] ?? '');
         if ($token === '' || $token === '.UNSTARTED') return 'Please complete the security check.';
         if ($token === '.FETCHING') return null; // in-progress, fail open
         try {
             $resp = oidc_http_post('https://api.friendlycaptcha.com/api/v1/siteverify', [
                 'secret'  => $secretKey,
                 'solution'=> $token,
-                'sitekey' => (string)($cfg['site_key'] ?? ''),
+                'sitekey' => $cfg['site_key'],
             ]);
         } catch (Throwable $e) {
             error_log('FriendlyCaptcha verify error: ' . $e->getMessage());
@@ -1202,12 +1380,12 @@ function login_protection_verify(array $config, array $post): ?string
  * Return the HTML widget snippet to embed in the login/gate form.
  * For time_check, also sets the session timestamp on GET requests.
  */
-/** @param array<string, mixed> $config */
+/** @param LoginProtectionConfig $config */
 function login_protection_widget_html(array $config): string
 {
-    $cfg     = $config['login_protection'] ?? [];
-    $method  = (string)($cfg['method'] ?? '');
-    $siteKey = e((string)($cfg['site_key'] ?? ''));
+    $cfg     = $config['login_protection'];
+    $method  = to_str($cfg['method'] ?? '');
+    $siteKey = e($cfg['site_key']);
 
     switch ($method) {
         case 'honeypot':
@@ -1224,7 +1402,7 @@ function login_protection_widget_html(array $config): string
             return "<script src='https://js.hcaptcha.com/1/api.js' async defer></script>"
                  . "<div class='h-captcha' data-sitekey='{$siteKey}'></div>";
         case 'recaptcha':
-            $ver = (int)($cfg['version'] ?? 2);
+            $ver = $cfg['version'];
             if ($ver === 3) {
                 return "<script src='https://www.google.com/recaptcha/api.js?render={$siteKey}' async defer></script>"
                      . "<input type='hidden' name='g-recaptcha-response' id='g-recaptcha-response' data-recaptcha-v3-key='{$siteKey}'>";
@@ -1246,12 +1424,12 @@ function login_protection_widget_html(array $config): string
  * be explicitly allowed; Friendly Captcha uses Web Components (no iframe needed).
  */
 /**
- * @param array<string, mixed> $config
+ * @param LoginProtectionConfig $config
  * @return array{script_src: string, frame_src: string}
  */
 function login_protection_extra_csp(array $config): array
 {
-    $method = (string)(($config['login_protection'] ?? [])['method'] ?? '');
+    $method = to_str($config['login_protection']['method'] ?? '');
     return match ($method) {
         'turnstile'        => [
             'script_src' => 'https://challenges.cloudflare.com',
@@ -1277,7 +1455,9 @@ function login_protection_extra_csp(array $config): array
 
 function demo_mode_enabled(): bool
 {
-    return !empty(($GLOBALS['config'] ?? [])['demo_mode']['enabled']);
+    /** @var IpamConfig $gConf */
+    $gConf = $GLOBALS['config'];
+    return !empty($gConf['demo_mode']['enabled']);
 }
 
 function demo_require_reset(): bool
@@ -1360,13 +1540,13 @@ function render_security_banner(string $context, string $message): void
     // Handle dismiss: clicking the link adds ?dismiss_warning=<context> to the URL.
     // We process it here (before any HTML output from this function) and store in session.
     if (isset($_GET['dismiss_warning']) && $_GET['dismiss_warning'] === $context) {
-        if (!isset($_SESSION['dismissed_warnings'])) {
-            $_SESSION['dismissed_warnings'] = [];
-        }
-        $_SESSION['dismissed_warnings'][$context] = true;
+        $dw = is_array($_SESSION['dismissed_warnings'] ?? null) ? $_SESSION['dismissed_warnings'] : [];
+        $dw[$context] = true;
+        $_SESSION['dismissed_warnings'] = $dw;
     }
 
-    if (!empty($_SESSION['dismissed_warnings'][$context])) {
+    $dw = is_array($_SESSION['dismissed_warnings'] ?? null) ? $_SESSION['dismissed_warnings'] : [];
+    if (!empty($dw[$context])) {
         return;
     }
 
@@ -1722,7 +1902,7 @@ function ipv4_bin_to_int(string $bin): int
 {
     $unpacked = unpack('N', $bin);
     $n = $unpacked !== false ? $unpacked[1] : 0;
-    return (int)($n & 0xFFFFFFFF);
+    return to_int($n & 0xFFFFFFFF);
 }
 
 function ipv4_int_to_bin(int $n): string
@@ -1764,7 +1944,7 @@ function find_next_available_ipv4(PDO $db, int $subnetId, string $network, int $
     $st = $db->prepare("SELECT ip FROM addresses WHERE subnet_id = :sid");
     $st->execute([':sid' => $subnetId]);
     $used = [];
-    foreach ($st as $r) $used[$r['ip']] = true;
+    foreach ($st->fetchAll() as $r) $used[to_str($r['ip'])] = true;
 
     for ($i = $first; $i <= $last; $i++) {
         $ip = ipv4_int_to_text($i);
@@ -1778,15 +1958,70 @@ function ipv4_broadcast_int(int $networkInt, int $prefix): int
     $hostBits = 32 - $prefix;
     if ($hostBits <= 0) return $networkInt;
     $hostMask = ($hostBits === 32) ? 0xFFFFFFFF : ((1 << $hostBits) - 1);
-    return (int)(($networkInt | $hostMask) & 0xFFFFFFFF);
+    return to_int(($networkInt | $hostMask) & 0xFFFFFFFF);
+}
+
+/* ---------------- IPv6 enumeration helpers ---------------- */
+
+/**
+ * Increment a 16-byte IPv6 binary address by 1.
+ * Returns all-zeros if the address overflows (all-0xFF).
+ */
+function ipv6_bin_increment(string $bin): string
+{
+    /** @var array<int, int> $bytes */
+    $bytes = array_values(unpack('C16', $bin) ?: []);
+    for ($i = 15; $i >= 0; $i--) {
+        if ($bytes[$i] < 255) {
+            $bytes[$i]++;
+            return pack('C16', ...$bytes);
+        }
+        $bytes[$i] = 0;
+    }
+    return pack('C16', ...array_fill(0, 16, 0));
+}
+
+/**
+ * Return the first $n unassigned IPv6 host addresses in a subnet.
+ * Scans at most ($n + count(assigned) + 1) candidates from the first host address.
+ *
+ * @return list<string>
+ */
+function ipv6_enumerate_first_n(PDO $db, int $subnetId, string $networkBin, int $prefix, int $n): array
+{
+    if ($prefix >= 128) {
+        $ip = inet_ntop($networkBin) ?: '';
+        $st = $db->prepare("SELECT id FROM addresses WHERE subnet_id = :sid AND ip = :ip LIMIT 1");
+        $st->execute([':sid' => $subnetId, ':ip' => $ip]);
+        return ($ip !== '' && $st->fetch() === false) ? [$ip] : [];
+    }
+
+    $st = $db->prepare("SELECT ip FROM addresses WHERE subnet_id = :sid");
+    $st->execute([':sid' => $subnetId]);
+    $assigned = [];
+    foreach ($st->fetchAll() as $r) $assigned[to_str($r['ip'])] = true;
+
+    $current = ipv6_bin_increment($networkBin);
+    $scanLimit = $n + count($assigned) + 1;
+    $result = [];
+
+    for ($i = 0; $i < $scanLimit && count($result) < $n; $i++) {
+        $ip = inet_ntop($current) ?: '';
+        if ($ip !== '' && !isset($assigned[$ip])) {
+            $result[] = $ip;
+        }
+        $current = ipv6_bin_increment($current);
+    }
+
+    return $result;
 }
 
 /* ---------------- CSV import helpers ---------------- */
 
-/** @param array<string, mixed> $config */
+/** @param IpamConfig $config */
 function import_max_bytes(array $config): int
 {
-    $mb = (int)($config['import_csv_max_mb'] ?? 5);
+    $mb = to_int($config['import_csv_max_mb']);
     if ($mb < 5) $mb = 5;
     if ($mb > 50) $mb = 50;
     return $mb * 1024 * 1024;
@@ -1852,6 +2087,7 @@ function load_import_plan(string $path): array
     if ($json === false) throw new RuntimeException('Failed to read import plan');
     $data = json_decode($json, true);
     if (!is_array($data)) throw new RuntimeException('Invalid import plan');
+    /** @var array<string, mixed> $data */
     return $data;
 }
 
@@ -1914,7 +2150,8 @@ function csv_read_preview(string $path, string $delimiter, int $maxRows = 20): a
     while (!feof($fh) && count($rows) < $maxRows) {
         $row = fgetcsv($fh, 0, $delimiter, '"', '');
         if ($row === false) break;
-        if (count($row) === 1 && trim((string)$row[0]) === '') continue;
+        $row = array_map('strval', $row);
+        if (count($row) === 1 && trim($row[0]) === '') continue;
         $rows[] = $row;
     }
     fclose($fh);
@@ -1950,14 +2187,14 @@ function netmask_to_prefix(string $mask): ?int
 function find_containing_subnet(PDO $db, array $normIp): ?array
 {
     static $cache = [];
-    $ver = (int)$normIp['version'];
+    $ver = to_int($normIp['version']);
     if (!isset($cache[$ver])) {
         $st = $db->prepare("SELECT id, network, prefix, ip_version FROM subnets WHERE ip_version = :v ORDER BY prefix DESC");
         $st->execute([':v' => $ver]);
         $cache[$ver] = $st->fetchAll();
     }
     foreach ($cache[$ver] as $s) {
-        if (ip_in_cidr($normIp['ip'], (string)$s['network'], (int)$s['prefix'])) return $s;
+        if (ip_in_cidr($normIp['ip'], to_str($s['network']), to_int($s['prefix']))) return $s;
     }
     return null;
 }
@@ -1971,8 +2208,9 @@ function ensure_subnet_exists(PDO $db, string $cidr, string $description = ''): 
 
     $st = $db->prepare("SELECT id FROM subnets WHERE cidr = :c");
     $st->execute([':c' => $normalized]);
+    /** @var array<string, mixed>|false $row */
     $row = $st->fetch();
-    if ($row) return (int)$row['id'];
+    if ($row) return to_int($row['id']);
 
     $ins = $db->prepare("INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description)
                          VALUES (:cidr,:ver,:net,:nb,:pre,:d)");
@@ -2021,9 +2259,9 @@ function detect_subnet_overlaps(PDO $db, string $cidr, ?int $excludeId = null): 
     $p = parse_cidr($cidr);
     if (!$p) return ['parents' => [], 'children' => []];
 
-    $ver    = (int)$p['version'];
-    $prefix = (int)$p['prefix'];
-    $netBin = (string)$p['net_bin'];
+    $ver    = to_int($p['version']);
+    $prefix = to_int($p['prefix']);
+    $netBin = to_str($p['net_bin']);
 
     $sql    = "SELECT id, cidr, prefix, network_bin FROM subnets WHERE ip_version = :v";
     $params = [':v' => $ver];
@@ -2033,24 +2271,25 @@ function detect_subnet_overlaps(PDO $db, string $cidr, ?int $excludeId = null): 
     }
     $st = $db->prepare($sql);
     $st->execute($params);
+    /** @var list<array<string, mixed>> $rows */
     $rows = $st->fetchAll();
 
     $parents  = [];
     $children = [];
 
     foreach ($rows as $row) {
-        $rowPrefix = (int)$row['prefix'];
-        $rowNetBin = (string)$row['network_bin'];
+        $rowPrefix = to_int($row['prefix']);
+        $rowNetBin = to_str($row['network_bin']);
 
         if ($rowPrefix < $prefix) {
             // Candidate parent: does the existing broader subnet contain our new one?
             if (hash_equals(apply_prefix_mask($netBin, $rowPrefix), $rowNetBin)) {
-                $parents[] = (string)$row['cidr'];
+                $parents[] = to_str($row['cidr']);
             }
         } elseif ($rowPrefix > $prefix) {
             // Candidate child: does our new broader subnet contain the existing one?
             if (hash_equals(apply_prefix_mask($rowNetBin, $prefix), $netBin)) {
-                $children[] = (string)$row['cidr'];
+                $children[] = to_str($row['cidr']);
             }
         }
         // Same prefix: exact duplicate — handled by DB UNIQUE constraint on cidr
@@ -2080,9 +2319,9 @@ function subnet_overlap_warning_text(array $overlaps): string
 function page_header(string $title, array $opts = []): void
 {
     global $config;
-    $u = $_SESSION['username'] ?? '';
-    $role = $_SESSION['role'] ?? '';
-    $appName = trim((string)($config['app_name'] ?? '')) ?: 'Simple PHP IPAM';
+    $u = to_str($_SESSION['username'] ?? '');
+    $role = to_str($_SESSION['role'] ?? '');
+    $appName = trim($config['app_name']) ?: 'Simple PHP IPAM';
 
     $extraScriptSrc = isset($opts['extra_script_src']) && $opts['extra_script_src'] !== '' ? ' ' . $opts['extra_script_src'] : '';
     $frameSrc       = isset($opts['extra_frame_src'])  && $opts['extra_frame_src']  !== '' ? " frame-src 'self' " . $opts['extra_frame_src'] . ';' : '';
@@ -2097,11 +2336,11 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=1.18.0'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=1.19.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
-    $userTheme = $_SESSION['user_theme'] ?? 'auto';
+    $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=1.18.0'></script>";
+    echo "<script defer src='assets/app.js?v=1.19.0'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
@@ -2137,7 +2376,7 @@ function page_header(string $title, array $opts = []): void
         echo "<div class='nav-right'>";
         echo "<div class='nav-dropdown'>";
         echo "<button type='button' class='nav-pill nav-dropdown-toggle nav-user-toggle'>";
-        echo e((string)$u) . " <span class='badge badge-role-" . e((string)$role) . "'>" . e((string)$role) . "</span> ▾";
+        echo e($u) . " <span class='badge badge-role-" . e($role) . "'>" . e($role) . "</span> ▾";
         echo "</button>";
         echo "<div class='nav-dropdown-menu nav-dropdown-menu--right'>";
         echo "<button type='button' class='nav-dropdown-item' id='theme-toggle'>🌓 Theme</button>";
@@ -2170,7 +2409,7 @@ function page_header(string $title, array $opts = []): void
 
     // Config auto-population notice (shown once per session, admin only)
     if (!empty($_SESSION['config_notice']) && $role === 'admin') {
-        $notice = e((string)$_SESSION['config_notice']);
+        $notice = e(to_str($_SESSION['config_notice']));
         echo "<div class='admin-notice admin-notice--info' role='alert'>"
            . "⚙ Config updated: {$notice} Review and adjust values in config.php."
            . "</div>";
@@ -2184,6 +2423,16 @@ function page_header(string $title, array $opts = []): void
            . "Check file permissions."
            . "</div>";
         unset($_SESSION['config_unwritable']);
+    }
+
+    // Config validation warnings — shown to admins when config.php has invalid values (#236)
+    if ($role === 'admin' && !empty($GLOBALS['config_warnings']) && is_array($GLOBALS['config_warnings'])) {
+        foreach ($GLOBALS['config_warnings'] as $cfgWarn) {
+            echo "<div class='admin-notice admin-notice--danger' role='alert'>"
+               . "&#9888; <strong>Config warning:</strong> " . e(to_str($cfgWarn))
+               . " Review <code>config.php</code>."
+               . "</div>";
+        }
     }
 
     // General flash messages (success, warning, danger)
@@ -2202,8 +2451,8 @@ function page_header(string $title, array $opts = []): void
     if ($role === 'admin') {
         $update = ipam_update_check($config ?? []);
         if ($update) {
-            $uv  = e((string)$update['version']);
-            $url = e((string)$update['url']);
+            $uv  = e(to_str($update['version']));
+            $url = e(to_str($update['url']));
             echo "<div class='admin-notice admin-notice--update' id='ipam-update-banner' data-version='{$uv}' role='alert'>"
                . "🚀 Simple PHP IPAM v{$uv} is available. "
                . "<a href='{$url}' target='_blank' rel='noopener'>View release</a>"
@@ -2226,8 +2475,8 @@ function page_footer(): void
 
     $update = ipam_update_check($config ?? []);
     if ($update) {
-        $uv  = e((string)$update['version']);
-        $url = e((string)$update['url']);
+        $uv  = e(to_str($update['version']));
+        $url = e(to_str($update['url']));
         echo " <a href='{$url}' target='_blank' rel='noopener' class='badge badge-update'>"
            . "Update available v{$uv}</a>";
     }
@@ -2257,7 +2506,7 @@ function ipam_normalise_version(string $v): string
  * Returns ['version' => '1.2.1', 'url' => 'https://...'] if newer, otherwise null.
  */
 /**
- * @param array<string, mixed> $config
+ * @param IpamConfig $config
  * @return array{version: string, url: string}|null
  */
 function ipam_update_check(array $config): ?array
@@ -2266,10 +2515,10 @@ function ipam_update_check(array $config): ?array
     static $memo = false;
     if ($memo !== false) return $memo;
 
-    $uc = $config['update_check'] ?? [];
-    if (isset($uc['enabled']) && !(bool)$uc['enabled']) { $memo = null; return null; }
+    $uc = $config['update_check'];
+    if (!(bool)$uc['enabled']) { $memo = null; return null; }
 
-    $ttl             = max(3600, (int)($uc['ttl_seconds'] ?? 86400));
+    $ttl             = max(3600, to_int($uc['ttl_seconds']));
     $notifyPrerelease = !empty($uc['notify_prerelease']);
 
     ensure_tmp_dir();
@@ -2282,12 +2531,12 @@ function ipam_update_check(array $config): ?array
             // upgraded — invalidate so the next check fetches fresh data from GitHub
             require_once __DIR__ . '/version.php';
             if (isset($d['update']['version'])
-                && version_compare(ipam_normalise_version((string)$d['update']['version']), ipam_normalise_version(IPAM_VERSION), '<=')) {
+                && version_compare(ipam_normalise_version(to_str($d['update']['version'])), ipam_normalise_version(IPAM_VERSION), '<=')) {
                 @unlink($cache);
             } else {
                 $u = isset($d['update']) && is_array($d['update']) ? $d['update'] : null;
                 $memo = ($u !== null && isset($u['version'], $u['url']))
-                    ? ['version' => (string)$u['version'], 'url' => (string)$u['url']]
+                    ? ['version' => to_str($u['version']), 'url' => to_str($u['url'])]
                     : null;
                 return $memo;
             }
@@ -2317,11 +2566,11 @@ function ipam_update_check(array $config): ?array
                     if (!empty($rel['prerelease']) && !$notifyPrerelease) continue;
                     if (empty($rel['tag_name'])) continue;
 
-                    $latest = ltrim((string)$rel['tag_name'], 'v');
+                    $latest = ltrim(to_str($rel['tag_name']), 'v');
                     if (version_compare(ipam_normalise_version($latest), ipam_normalise_version(IPAM_VERSION), '>')) {
                         $result = [
                             'version'    => $latest,
-                            'url'        => (string)($rel['html_url'] ?? ''),
+                            'url'        => to_str($rel['html_url'] ?? ''),
                             'prerelease' => !empty($rel['prerelease']),
                         ];
                     }
@@ -2355,18 +2604,19 @@ function find_parent_site_id(PDO $db, string $cidr, ?int $excludeId = null): ?in
          ORDER BY prefix DESC LIMIT 1"
     );
     $st->execute($overlaps['parents']);
+    /** @var array<string, mixed>|false $row */
     $row = $st->fetch();
-    return $row ? (int)$row['site_id'] : null;
+    return $row ? to_int($row['site_id']) : null;
 }
 
 /* ============================================================
  * OIDC — Authorization Code + PKCE (pure PHP, no dependencies)
  * ============================================================ */
 
-/** @param array<string, mixed> $config */
+/** @param IpamConfig $config */
 function oidc_enabled(array $config): bool
 {
-    $o = $config['oidc'] ?? [];
+    $o = $config['oidc'];
     return !empty($o['enabled'])
         && !empty($o['client_id'])
         && !empty($o['client_secret'])
@@ -2380,12 +2630,12 @@ function oidc_enabled(array $config): bool
  * contain that path.
  */
 /**
- * @param array<string, mixed> $config
+ * @param IpamConfig $config
  * @return array<string, mixed>
  */
 function oidc_discovery(array $config): array
 {
-    $base = rtrim((string)($config['oidc']['discovery_url'] ?? ''), '/');
+    $base = rtrim($config['oidc']['discovery_url'], '/');
     if ($base === '') throw new RuntimeException('OIDC discovery_url not set');
 
     $url = (str_contains($base, '.well-known')) ? $base : $base . '/.well-known/openid-configuration';
@@ -2395,7 +2645,10 @@ function oidc_discovery(array $config): array
 
     if (is_file($cache) && (time() - (int)filemtime($cache)) < 3600) {
         $d = json_decode((string)file_get_contents($cache), true);
-        if (is_array($d) && !empty($d['authorization_endpoint'])) return $d;
+        if (is_array($d) && !empty($d['authorization_endpoint'])) {
+            /** @var array<string, mixed> $d */
+            return $d;
+        }
     }
 
     $raw = oidc_http_get($url);
@@ -2403,6 +2656,7 @@ function oidc_discovery(array $config): array
     if (!is_array($d) || empty($d['authorization_endpoint'])) {
         throw new RuntimeException('Invalid OIDC discovery document from ' . $url);
     }
+    /** @var array<string, mixed> $d */
 
     file_put_contents($cache, json_encode($d));
     @chmod($cache, 0600);
@@ -2474,9 +2728,10 @@ function oidc_http_post(string $url, array $params): array
     if ($raw === false) throw new RuntimeException('Token endpoint request failed');
     $d = json_decode($raw, true);
     if (!is_array($d)) throw new RuntimeException('Invalid JSON from token endpoint');
+    /** @var array<string, mixed> $d */
     if (!empty($d['error'])) {
-        throw new RuntimeException('Token endpoint error: ' . $d['error']
-            . (isset($d['error_description']) ? ' — ' . $d['error_description'] : ''));
+        throw new RuntimeException('Token endpoint error: ' . to_str($d['error'])
+            . (isset($d['error_description']) ? ' — ' . to_str($d['error_description']) : ''));
     }
     return $d;
 }
@@ -2532,7 +2787,7 @@ function oidc_verify_id_token(string $idToken, array $jwks, array $expect): arra
         throw new RuntimeException('JWT header/payload decoding failed');
     }
 
-    $alg = (string)($header['alg'] ?? '');
+    $alg = to_str($header['alg'] ?? '');
     $algMap = ['RS256' => OPENSSL_ALGO_SHA256, 'RS384' => OPENSSL_ALGO_SHA384, 'RS512' => OPENSSL_ALGO_SHA512];
     if (!isset($algMap[$alg])) {
         throw new RuntimeException("Unsupported JWT alg: $alg");
@@ -2548,7 +2803,7 @@ function oidc_verify_id_token(string $idToken, array $jwks, array $expect): arra
         break;
     }
     if ($jwk === null) {
-        throw new RuntimeException('No matching RSA JWK for kid=' . ($kid ?? 'none'));
+        throw new RuntimeException('No matching RSA JWK for kid=' . to_str($kid ?? 'none'));
     }
 
     $pem    = jwk_rsa_to_pem($jwk);
@@ -2561,10 +2816,10 @@ function oidc_verify_id_token(string $idToken, array $jwks, array $expect): arra
 
     // Standard claim validation
     $now = time();
-    if (isset($payload['exp']) && (int)$payload['exp'] < $now - 60) {
+    if (isset($payload['exp']) && to_int($payload['exp']) < $now - 60) {
         throw new RuntimeException('ID token has expired');
     }
-    if (isset($payload['iat']) && (int)$payload['iat'] > $now + 60) {
+    if (isset($payload['iat']) && to_int($payload['iat']) > $now + 60) {
         throw new RuntimeException('ID token iat is in the future');
     }
     if (isset($expect['iss']) && ($payload['iss'] ?? '') !== $expect['iss']) {
@@ -2591,8 +2846,8 @@ function oidc_verify_id_token(string $idToken, array $jwks, array $expect): arra
 /** @param array<string, mixed> $jwk */
 function jwk_rsa_to_pem(array $jwk): string
 {
-    $n = base64url_decode((string)($jwk['n'] ?? ''));
-    $e = base64url_decode((string)($jwk['e'] ?? ''));
+    $n = base64url_decode(to_str($jwk['n'] ?? ''));
+    $e = base64url_decode(to_str($jwk['e'] ?? ''));
     if ($n === '' || $e === '') throw new RuntimeException('JWK missing n or e');
 
     // DER integers must not have a leading 1-bit (would be interpreted as negative)

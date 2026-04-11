@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/init.php';
+/** @var \PDO $db */
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -16,14 +17,14 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-$theme = strtolower(trim((string)($_POST['theme'] ?? '')));
+$theme = strtolower(trim(to_str($_POST['theme'] ?? '')));
 if (!in_array($theme, ['light', 'dark', 'auto'], true)) {
     http_response_code(400);
     echo '{"ok":false}';
     exit;
 }
 
-$uid = (int)(current_user()['id'] ?? 0);
+$uid = to_int(current_user()['id'] ?? 0);
 if ($uid > 0) {
     $db->prepare("UPDATE users SET theme = :t WHERE id = :id")
        ->execute([':t' => $theme, ':id' => $uid]);

@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/init.php';
+/** @var \PDO $db */
 require_role('admin');
 if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 
@@ -11,7 +12,7 @@ $formError = '';
 // ---- Actions ----
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $action = (string)($_POST['action'] ?? '');
+    $action = to_str($_POST['action'] ?? '');
 
     // Demo mode: block destructive mutations
     if (demo_mode_enabled() && in_array($action, ['create', 'deactivate', 'delete', 'set_readonly', 'set_readwrite'], true)) {
@@ -20,11 +21,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'create') {
-        $name = trim((string)($_POST['name'] ?? ''));
+        $name = trim(to_str($_POST['name'] ?? ''));
         if ($name === '') {
             $formError = 'Key name is required.';
         } else {
-            $desc       = trim((string)($_POST['description'] ?? ''));
+            $desc       = trim(to_str($_POST['description'] ?? ''));
             $isReadonly = isset($_POST['is_readonly']) ? 1 : 0;
             // Generate a 32-byte random key, encode as hex (64 chars)
             $rawKey  = bin2hex(random_bytes(32));
@@ -37,7 +38,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'deactivate') {
-        $kid = (int)($_POST['key_id'] ?? 0);
+        $kid = to_int($_POST['key_id'] ?? 0);
         $db->prepare("UPDATE api_keys SET is_active = 0 WHERE id = :id")
            ->execute([':id' => $kid]);
         audit($db, 'apikey.deactivate', 'apikey', $kid, '');
@@ -47,7 +48,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'activate') {
-        $kid = (int)($_POST['key_id'] ?? 0);
+        $kid = to_int($_POST['key_id'] ?? 0);
         $db->prepare("UPDATE api_keys SET is_active = 1 WHERE id = :id")
            ->execute([':id' => $kid]);
         audit($db, 'apikey.activate', 'apikey', $kid, '');
@@ -57,7 +58,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'set_readonly') {
-        $kid = (int)($_POST['key_id'] ?? 0);
+        $kid = to_int($_POST['key_id'] ?? 0);
         $db->prepare("UPDATE api_keys SET is_readonly = 1 WHERE id = :id")
            ->execute([':id' => $kid]);
         audit($db, 'apikey.set_readonly', 'apikey', $kid, '');
@@ -67,7 +68,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'set_readwrite') {
-        $kid = (int)($_POST['key_id'] ?? 0);
+        $kid = to_int($_POST['key_id'] ?? 0);
         $db->prepare("UPDATE api_keys SET is_readonly = 0 WHERE id = :id")
            ->execute([':id' => $kid]);
         audit($db, 'apikey.set_readwrite', 'apikey', $kid, '');
@@ -77,7 +78,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'delete') {
-        $kid = (int)($_POST['key_id'] ?? 0);
+        $kid = to_int($_POST['key_id'] ?? 0);
         $db->prepare("DELETE FROM api_keys WHERE id = :id")
            ->execute([':id' => $kid]);
         audit($db, 'apikey.delete', 'apikey', $kid, '');
@@ -92,8 +93,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $keySortCols = ['name' => 'name', 'status' => 'is_active', 'created' => 'created_at'];
 $keySort = parse_sort($keySortCols, 'created', 'desc');
 
-$keys = $db->query("SELECT id, name, description, is_readonly, created_at, last_used_at, is_active, created_by
-                    FROM api_keys ORDER BY {$keySort['sql']}")
+$keys = ($db->query("SELECT id, name, description, is_readonly, created_at, last_used_at, is_active, created_by
+                    FROM api_keys ORDER BY {$keySort['sql']}") ?: throw new \RuntimeException('Query failed'))
            ->fetchAll();
 
 page_header('API Keys');
@@ -157,20 +158,20 @@ page_header('API Keys');
     <tbody>
     <?php foreach ($keys as $k): ?>
       <tr>
-        <td><?= e((string)$k['name']) ?></td>
-        <td><?= e((string)$k['created_at']) ?></td>
-        <td><?= e((string)$k['created_by']) ?></td>
-        <td><?= $k['last_used_at'] ? e((string)$k['last_used_at']) : '<span class="muted">Never</span>' ?></td>
-        <td><?= $k['description'] !== '' ? e((string)$k['description']) : '<span class="muted">—</span>' ?></td>
+        <td><?= e(to_str($k['name'])) ?></td>
+        <td><?= e(to_str($k['created_at'])) ?></td>
+        <td><?= e(to_str($k['created_by'])) ?></td>
+        <td><?= $k['last_used_at'] ? e(to_str($k['last_used_at'])) : '<span class="muted">Never</span>' ?></td>
+        <td><?= $k['description'] !== '' ? e(to_str($k['description'])) : '<span class="muted">—</span>' ?></td>
         <td>
-          <?php if ((int)$k['is_readonly']): ?>
+          <?php if (to_int($k['is_readonly'])): ?>
             <span class="badge">Read-only</span>
           <?php else: ?>
             <span class="muted">Read-write</span>
           <?php endif; ?>
         </td>
         <td>
-          <?php if ((int)$k['is_active']): ?>
+          <?php if (to_int($k['is_active'])): ?>
             <span class="success">Active</span>
           <?php else: ?>
             <span class="muted">Inactive</span>
@@ -178,33 +179,33 @@ page_header('API Keys');
         </td>
         <td>
           <div class="actions-inline">
-            <?php if ((int)$k['is_active']): ?>
+            <?php if (to_int($k['is_active'])): ?>
               <form method="post" action="api_keys.php" class="d-inline">
                 <input type="hidden" name="csrf"     value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action"   value="deactivate">
-                <input type="hidden" name="key_id"   value="<?= (int)$k['id'] ?>">
+                <input type="hidden" name="key_id"   value="<?= to_int($k['id']) ?>">
                 <button type="submit" class="button-secondary">Deactivate</button>
               </form>
             <?php else: ?>
               <form method="post" action="api_keys.php" class="d-inline">
                 <input type="hidden" name="csrf"     value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action"   value="activate">
-                <input type="hidden" name="key_id"   value="<?= (int)$k['id'] ?>">
+                <input type="hidden" name="key_id"   value="<?= to_int($k['id']) ?>">
                 <button type="submit" class="button-secondary">Activate</button>
               </form>
             <?php endif; ?>
-            <?php if ((int)$k['is_readonly']): ?>
+            <?php if (to_int($k['is_readonly'])): ?>
               <form method="post" action="api_keys.php" class="d-inline">
                 <input type="hidden" name="csrf"     value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action"   value="set_readwrite">
-                <input type="hidden" name="key_id"   value="<?= (int)$k['id'] ?>">
+                <input type="hidden" name="key_id"   value="<?= to_int($k['id']) ?>">
                 <button type="submit" class="button-secondary">Make read-write</button>
               </form>
             <?php else: ?>
               <form method="post" action="api_keys.php" class="d-inline">
                 <input type="hidden" name="csrf"     value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action"   value="set_readonly">
-                <input type="hidden" name="key_id"   value="<?= (int)$k['id'] ?>">
+                <input type="hidden" name="key_id"   value="<?= to_int($k['id']) ?>">
                 <button type="submit" class="button-secondary">Make read-only</button>
               </form>
             <?php endif; ?>
@@ -212,7 +213,7 @@ page_header('API Keys');
                   data-confirm="Permanently delete this key?">
               <input type="hidden" name="csrf"     value="<?= e(csrf_token()) ?>">
               <input type="hidden" name="action"   value="delete">
-              <input type="hidden" name="key_id"   value="<?= (int)$k['id'] ?>">
+              <input type="hidden" name="key_id"   value="<?= to_int($k['id']) ?>">
               <button type="submit" class="button-danger">Delete</button>
             </form>
           </div>

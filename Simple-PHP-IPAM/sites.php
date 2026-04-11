@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/init.php';
+/** @var \PDO $db */
 require_role('admin');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -11,11 +12,11 @@ $err = '';
 $msg = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $action = (string)($_POST['action'] ?? '');
+    $action = to_str($_POST['action'] ?? '');
 
     if ($action === 'create') {
-        $name = trim((string)($_POST['name'] ?? ''));
-        $desc = trim((string)($_POST['description'] ?? ''));
+        $name = trim(to_str($_POST['name'] ?? ''));
+        $desc = trim(to_str($_POST['description'] ?? ''));
 
         if ($name === '') {
             $err = 'Site name is required.';
@@ -32,9 +33,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     } elseif ($action === 'update') {
-        $id = (int)($_POST['id'] ?? 0);
-        $name = trim((string)($_POST['name'] ?? ''));
-        $desc = trim((string)($_POST['description'] ?? ''));
+        $id = to_int($_POST['id'] ?? 0);
+        $name = trim(to_str($_POST['name'] ?? ''));
+        $desc = trim(to_str($_POST['description'] ?? ''));
 
         if ($id <= 0 || $name === '') {
             $err = 'Valid site id and name are required.';
@@ -49,7 +50,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     } elseif ($action === 'delete') {
-        $id = (int)($_POST['id'] ?? 0);
+        $id = to_int($_POST['id'] ?? 0);
         if ($id > 0) {
             // First, detach subnets from this site
             $st = $db->prepare("UPDATE subnets SET site_id = NULL WHERE site_id = :id");
@@ -76,6 +77,7 @@ $st = $db->prepare("
     ORDER BY {$siteSort['sql']}
 ");
 $st->execute();
+/** @var list<array<string, mixed>> $sites */
 $sites = $st->fetchAll();
 
 page_header('Sites');
@@ -96,7 +98,7 @@ page_header('Sites');
 <?php if ($msg): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
 
 <div class="grid cols-2">
-  <div class="card">
+  <div class="card" id="add-site">
     <h2>Add Site</h2>
     <form method="post" action="sites.php">
       <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
@@ -122,7 +124,7 @@ page_header('Sites');
       </div>
       <div class="metric">
         <div class="label">Subnets grouped</div>
-        <div class="value"><?= e((string)array_sum(array_map(fn($s) => (int)$s['subnet_count'], $sites))) ?></div>
+        <div class="value"><?= e((string)array_sum(array_map(fn($s) => to_int($s['subnet_count']), $sites))) ?></div>
       </div>
     </div>
   </div>
@@ -132,7 +134,7 @@ page_header('Sites');
   <h2>Existing Sites</h2>
 
   <?php if (!$sites): ?>
-    <div class="empty-state">No sites yet.</div>
+    <div class="empty-state">No sites yet. <a class="action-pill" href="#add-site">+ Add Site</a></div>
   <?php else: ?>
     <div class="table-wrap">
     <table>
@@ -150,10 +152,10 @@ page_header('Sites');
       <tbody>
       <?php foreach ($sites as $site): ?>
         <tr>
-          <td><b><?= e($site['name']) ?></b></td>
-          <td class="muted"><?= e($site['created_at']) ?></td>
-          <td><?= e($site['description']) ?></td>
-          <td><?= e((string)$site['subnet_count']) ?></td>
+          <td><b><?= e(to_str($site['name'])) ?></b></td>
+          <td class="muted"><?= e(to_str($site['created_at'])) ?></td>
+          <td><?= e(to_str($site['description'])) ?></td>
+          <td><?= e(to_str($site['subnet_count'])) ?></td>
           <td>
             <details>
               <summary>Edit/Delete</summary>
@@ -161,9 +163,9 @@ page_header('Sites');
               <form method="post" action="sites.php" class="row mt-8">
                 <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action" value="update">
-                <input type="hidden" name="id" value="<?= (int)$site['id'] ?>">
-                <label>Name<br><input name="name" value="<?= e($site['name']) ?>" required></label>
-                <label>Description<br><input name="description" value="<?= e($site['description']) ?>"></label>
+                <input type="hidden" name="id" value="<?= to_int($site['id']) ?>">
+                <label>Name<br><input name="name" value="<?= e(to_str($site['name'])) ?>" required></label>
+                <label>Description<br><input name="description" value="<?= e(to_str($site['description'])) ?>"></label>
                 <button type="submit">Save</button>
               </form>
 
@@ -171,7 +173,7 @@ page_header('Sites');
                     data-confirm="Delete this site? Subnets will be ungrouped, not deleted.">
                 <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action" value="delete">
-                <input type="hidden" name="id" value="<?= (int)$site['id'] ?>">
+                <input type="hidden" name="id" value="<?= to_int($site['id']) ?>">
                 <button type="submit" class="button-danger">Delete</button>
               </form>
             </details>

@@ -388,7 +388,7 @@ log "=== Addresses CRUD ==="
 # ====================================================================
 
 if [[ -n "${SUBNET_ID:-}" && "$SUBNET_ID" != "None" ]]; then
-    call_api POST addresses "{\"subnet_id\":$SUBNET_ID,\"ip\":\"$TEST_IP\",\"hostname\":\"api-test-host\",\"owner\":\"tester\",\"status\":\"used\"}"
+    call_api POST addresses "{\"subnet_id\":$SUBNET_ID,\"ip\":\"$TEST_IP\",\"hostname\":\"api-test-host\",\"owner\":\"tester\",\"status\":\"used\",\"mac\":\"AA:BB:CC:DD:EE:FF\",\"expires_at\":\"2099-12-31\"}"
     assert_http 201 "Create address"
     ADDR_ID=$(jq_val id)
     [[ -n "$ADDR_ID" && "$ADDR_ID" != "None" && "$ADDR_ID" != "" ]] && pass "Address ID: $ADDR_ID" || fail "No address ID returned"
@@ -400,10 +400,14 @@ if [[ -n "${SUBNET_ID:-}" && "$SUBNET_ID" != "None" ]]; then
     assert_http 200 "List addresses by subnet"
     ADDR_COUNT=$(jq_len addresses)
     [[ "$ADDR_COUNT" -gt 0 ]] && pass "Addresses: $ADDR_COUNT in subnet" || fail "Address list empty"
+    HAS_MAC=$(python3 -c "import sys,json; d=json.load(sys.stdin); a=d.get('addresses',[{}])[0]; print('yes' if 'mac' in a else 'no')" <<< "$BODY" 2>/dev/null || echo "no")
+    [[ "$HAS_MAC" == "yes" ]] && pass "Address response includes mac field" || fail "Address response missing mac field"
+    HAS_EXP=$(python3 -c "import sys,json; d=json.load(sys.stdin); a=d.get('addresses',[{}])[0]; print('yes' if 'expires_at' in a else 'no')" <<< "$BODY" 2>/dev/null || echo "no")
+    [[ "$HAS_EXP" == "yes" ]] && pass "Address response includes expires_at field" || fail "Address response missing expires_at field"
 
     if [[ -n "${ADDR_ID:-}" && "$ADDR_ID" != "None" ]]; then
-        call_api PUT "addresses&id=$ADDR_ID" '{"hostname":"api-test-updated","status":"reserved"}'
-        assert_http 200 "Update address"
+        call_api PUT "addresses&id=$ADDR_ID" '{"hostname":"api-test-updated","status":"reserved","mac":"11:22:33:44:55:66","expires_at":"2099-06-30"}'
+        assert_http 200 "Update address (with mac/expires_at)"
     fi
 else
     skip "Addresses CRUD — no subnet ID"
@@ -447,6 +451,22 @@ fi
 
 call_api GET "unassigned"
 assert_http 400 "Unassigned missing subnet_id → 400"
+
+# ?expired=1 filter — create an address with a past expiry, verify filter returns it
+if [[ -n "${SUBNET_ID:-}" && "$SUBNET_ID" != "None" ]]; then
+    call_api POST addresses "{\"subnet_id\":$SUBNET_ID,\"ip\":\"203.0.113.11\",\"hostname\":\"api-test-expired\",\"status\":\"used\",\"expires_at\":\"2020-01-01\"}"
+    if [[ "$HTTP_CODE" == "201" ]]; then
+        EXPIRED_ADDR_ID=$(jq_val id)
+        call_api GET "addresses&subnet_id=$SUBNET_ID&expired=1"
+        assert_http 200 "Expired addresses filter (?expired=1)"
+        EXP_COUNT=$(jq_len addresses)
+        [[ "$EXP_COUNT" -ge 1 ]] && pass "Expired filter: $EXP_COUNT expired address(es)" || fail "Expired filter: no expired addresses found"
+        call_api DELETE "addresses&id=$EXPIRED_ADDR_ID"
+        [[ "$HTTP_CODE" == "204" ]] && pass "Deleted expired test address" || fail "Delete expired test address — got $HTTP_CODE"
+    else
+        skip "Expired filter test — could not create test address (HTTP $HTTP_CODE)"
+    fi
+fi
 
 # ====================================================================
 log "=== Pagination ==="
@@ -513,6 +533,98 @@ if [[ -n "${READONLY_KEY:-}" ]]; then
     assert_http 403 "Readonly key: POST sites → 403"
 else
     skip "Read-only key tests — READONLY_KEY not set (remote mode)"
+fi
+
+# ====================================================================
+log "=== IPv6 Unassigned ==="
+# ====================================================================
+
+call_api POST subnets '{"cidr":"2001:db8::/120","description":"API test IPv6 subnet"}'
+if [[ "$HTTP_CODE" == "201" || "$HTTP_CODE" == "200" ]]; then
+    IPV6_SUBNET_ID=$(jq_val id)
+    pass "Created IPv6 test subnet (2001:db8::/120, id=$IPV6_SUBNET_ID)"
+
+    call_api GET "unassigned&subnet_id=$IPV6_SUBNET_ID"
+    assert_http 200 "Unassigned IPs for IPv6 subnet"
+    HAS_V6_LIST=$(python3 -c "import sys,json; d=json.load(sys.stdin); print('yes' if 'unassigned' in d else 'no')" <<< "$BODY" 2>/dev/null || echo "no")
+    [[ "$HAS_V6_LIST" == "yes" ]] && pass "IPv6 unassigned: response has unassigned array" || fail "IPv6 unassigned: missing unassigned field"
+    V6_UNASSIGNED_COUNT=$(python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('unassigned',[])))" <<< "$BODY" 2>/dev/null || echo "0")
+    [[ "$V6_UNASSIGNED_COUNT" -ge 1 ]] && pass "IPv6 unassigned: $V6_UNASSIGNED_COUNT address(es) listed" || fail "IPv6 unassigned: expected at least 1 address, got $V6_UNASSIGNED_COUNT"
+
+    call_api DELETE "subnets&id=$IPV6_SUBNET_ID"
+    [[ "$HTTP_CODE" == "204" ]] && pass "Deleted IPv6 test subnet" || fail "Delete IPv6 subnet — got $HTTP_CODE"
+else
+    skip "IPv6 unassigned test — could not create IPv6 subnet (HTTP $HTTP_CODE)"
+fi
+
+# ====================================================================
+log "=== Bulk Write ==="
+# ====================================================================
+
+BULK_CIDR1="203.0.113.208/30"
+BULK_CIDR2="203.0.113.212/30"
+
+# Pre-cleanup in case of prior runs
+call_api GET "subnets&limit=1000" 2>/dev/null || true
+for bc in "$BULK_CIDR1" "$BULK_CIDR2" "203.0.113.216/30"; do
+    stale_id=$(python3 -c "import sys,json; d=json.load(sys.stdin); r=[s['id'] for s in d.get('subnets',[]) if s['cidr']=='$bc']; print(r[0] if r else '')" <<< "$BODY" 2>/dev/null || echo "")
+    [[ -n "$stale_id" ]] && call_api DELETE "subnets&id=$stale_id" 2>/dev/null || true
+done
+
+# Bulk create subnets — all success → 201
+call_api POST "subnets&bulk=1" "[{\"cidr\":\"$BULK_CIDR1\",\"description\":\"bulk test 1\"},{\"cidr\":\"$BULK_CIDR2\",\"description\":\"bulk test 2\"}]"
+assert_http 201 "Bulk create subnets → 201"
+BULK_CREATED=$(python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('created',0))" <<< "$BODY" 2>/dev/null || echo "0")
+[[ "$BULK_CREATED" -eq 2 ]] && pass "Bulk create: $BULK_CREATED subnets created" || fail "Bulk create: expected 2, got $BULK_CREATED"
+BULK_SUBNET_IDS=$(python3 -c "import sys,json; d=json.load(sys.stdin); print(' '.join(str(r['id']) for r in d.get('results',[]) if r.get('success')))" <<< "$BODY" 2>/dev/null || echo "")
+
+# Bulk partial success — one duplicate, one new → 207
+call_api POST "subnets&bulk=1" "[{\"cidr\":\"$BULK_CIDR1\",\"description\":\"dup\"},{\"cidr\":\"203.0.113.216/30\",\"description\":\"new\"}]"
+[[ "$HTTP_CODE" == "207" ]] && pass "Bulk partial success → 207" || fail "Bulk partial — expected 207, got $HTTP_CODE"
+EXTRA_BULK_ID=$(python3 -c "import sys,json; d=json.load(sys.stdin); ids=[str(r['id']) for r in d.get('results',[]) if r.get('success')]; print(ids[0] if ids else '')" <<< "$BODY" 2>/dev/null || echo "")
+[[ -n "$EXTRA_BULK_ID" ]] && call_api DELETE "subnets&id=$EXTRA_BULK_ID"
+
+# Empty array → 400
+call_api POST "subnets&bulk=1" "[]"
+assert_http 400 "Bulk create empty array → 400"
+
+# Non-array → 400
+call_api POST "subnets&bulk=1" '{"cidr":"203.0.113.0/24"}'
+assert_http 400 "Bulk create non-array body → 400"
+
+# Bulk create addresses
+if [[ -n "${SUBNET_ID:-}" && "$SUBNET_ID" != "None" ]]; then
+    call_api POST "addresses&bulk=1" "[{\"subnet_id\":$SUBNET_ID,\"ip\":\"203.0.113.20\",\"hostname\":\"bulk-1\",\"status\":\"used\"},{\"subnet_id\":$SUBNET_ID,\"ip\":\"203.0.113.21\",\"hostname\":\"bulk-2\",\"status\":\"free\"}]"
+    assert_http 201 "Bulk create addresses → 201"
+    BULK_ADDR_CREATED=$(python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('created',0))" <<< "$BODY" 2>/dev/null || echo "0")
+    [[ "$BULK_ADDR_CREATED" -eq 2 ]] && pass "Bulk create: $BULK_ADDR_CREATED addresses created" || fail "Bulk create: expected 2, got $BULK_ADDR_CREATED"
+    BULK_ADDR_IDS=$(python3 -c "import sys,json; d=json.load(sys.stdin); print(' '.join(str(r['id']) for r in d.get('results',[]) if r.get('success')))" <<< "$BODY" 2>/dev/null || echo "")
+    for aid in $BULK_ADDR_IDS; do
+        call_api DELETE "addresses&id=$aid"
+    done
+fi
+
+# Readonly key: bulk POST must be forbidden
+if [[ -n "${READONLY_KEY:-}" ]]; then
+    call_api_ro POST "subnets&bulk=1" "[{\"cidr\":\"203.0.113.228/30\"}]"
+    assert_http 403 "Readonly key: bulk POST subnets → 403"
+fi
+
+# Cleanup bulk subnets
+for bid in $BULK_SUBNET_IDS; do
+    call_api DELETE "subnets&id=$bid"
+done
+
+# ====================================================================
+log "=== Health Check ==="
+# ====================================================================
+
+STATUS_HTTP=$(curl -s --noproxy '*' "${_ba_args[@]}" -o /tmp/_ipam_status.json -w '%{http_code}' "$BASE_URL/status.php")
+if [[ "$STATUS_HTTP" == "200" ]]; then
+    STATUS_VAL=$(python3 -c "import json; d=json.load(open('/tmp/_ipam_status.json')); print(d.get('status',''))" 2>/dev/null || echo "")
+    [[ "$STATUS_VAL" == "ok" ]] && pass "status.php: {\"status\":\"ok\"}" || fail "status.php: unexpected body (status=$STATUS_VAL)"
+else
+    skip "status.php: HTTP $STATUS_HTTP (may be behind extra auth layer)"
 fi
 
 # ====================================================================

@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/init.php';
+/** @var \PDO $db */
 require_login();
 
 $filename = safe_export_filename('ipam-subnet-utilization');
@@ -21,17 +22,18 @@ $st = $db->query("
     GROUP BY s.id
     ORDER BY s.ip_version, s.network_bin
 ");
+if ($st === false) exit;
 
-foreach ($st as $r) {
-    $used     = (int)$r['used_count'];
-    $reserved = (int)$r['reserved_count'];
-    $free     = (int)$r['free_count'];
-    $total    = (int)$r['total_count'];
-    $prefix   = (int)$r['prefix'];
-    $ipVer    = (int)$r['ip_version'];
+foreach ($st->fetchAll() as $r) {
+    $used     = to_int($r['used_count']);
+    $reserved = to_int($r['reserved_count']);
+    $free     = to_int($r['free_count']);
+    $total    = to_int($r['total_count']);
+    $prefix   = to_int($r['prefix']);
+    $ipVer    = to_int($r['ip_version']);
 
     if ($ipVer === 4) {
-        $rawHosts = (int)(2 ** (32 - $prefix));
+        $rawHosts = to_int(2 ** (32 - $prefix));
         $capacity = $prefix >= 31 ? $rawHosts : max(1, $rawHosts - 2);
         $pct      = round(($used + $reserved) / $capacity * 100, 2);
     } else {
@@ -39,11 +41,11 @@ foreach ($st as $r) {
     }
 
     csv_out([
-        (string)$r['cidr'],
-        (string)$r['description'],
-        (string)$r['site_name'],
-        (string)$r['ip_version'],
-        $r['vlan_id'] !== null ? (string)$r['vlan_id'] : '',
+        to_str($r['cidr']),
+        to_str($r['description']),
+        to_str($r['site_name']),
+        to_str($r['ip_version']),
+        $r['vlan_id'] !== null ? to_str($r['vlan_id']) : '',
         (string)$used,
         (string)$reserved,
         (string)$free,

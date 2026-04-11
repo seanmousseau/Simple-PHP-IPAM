@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/init.php';
+/** @var \PDO $db */
 require_login();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -8,13 +9,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     require_write_access();
 }
 
-$MAX_ASSIGNABLE = 4096;
+$MAX_ASSIGNABLE     = 4096;
+$MAX_UNASSIGNED_IPV6 = 256;
 
 $st = $db->prepare("SELECT id, cidr, ip_version, network, prefix, network_bin FROM subnets ORDER BY ip_version ASC, cidr ASC");
 $st->execute();
+/** @var list<array<string, mixed>> $subnets */
 $subnets = $st->fetchAll();
 
-$subnetId = (int)($_GET['subnet_id'] ?? ($_POST['subnet_id'] ?? 0));
+$subnetId = to_int($_GET['subnet_id'] ?? ($_POST['subnet_id'] ?? 0));
 $page = q_int('page', 1, 1, 1000000);
 $pageSize = q_int('page_size', 254, 1, 500);
 
@@ -29,69 +32,76 @@ $p = null;
 if ($subnetId > 0) {
     $st = $db->prepare("SELECT id, cidr, ip_version, network, prefix, network_bin FROM subnets WHERE id = :id");
     $st->execute([':id' => $subnetId]);
-    $sub = $st->fetch() ?: null;
-
-    if ($sub && (int)$sub['ip_version'] !== 4) {
-        $err = "Unassigned listing is IPv4-only.";
-        $sub = null;
-    }
+    /** @var array<string, mixed>|false $subRow */
+    $subRow = $st->fetch();
+    $sub = $subRow ?: null;
 
     if ($sub) {
-        $prefix = (int)$sub['prefix'];
-        $netInt = ipv4_bin_to_int((string)$sub['network_bin']);
-        $bcastInt = ipv4_broadcast_int($netInt, $prefix);
+        $prefix  = to_int($sub['prefix']);
+        $version = to_int($sub['ip_version']);
 
-        if ($prefix <= 30) {
-            $first = $netInt + 1;
-            $last  = $bcastInt - 1;
-        } else {
-            $first = $netInt;
-            $last  = $bcastInt;
-        }
+        if ($version === 4) {
+            $netInt   = ipv4_bin_to_int(to_str($sub['network_bin']));
+            $bcastInt = ipv4_broadcast_int($netInt, $prefix);
 
-        $assignable = ipv4_assignable_count($prefix);
-        if ($assignable > $MAX_ASSIGNABLE) {
-            $err = "Subnet too large to list unassigned safely (assignable hosts: $assignable; limit: $MAX_ASSIGNABLE).";
-        } else {
-            $st = $db->prepare("SELECT ip FROM addresses WHERE subnet_id = :sid");
-            $st->execute([':sid' => $subnetId]);
-            $assigned = [];
-            foreach ($st->fetchAll() as $r) {
-                $assigned[(string)$r['ip']] = true;
+            if ($prefix <= 30) {
+                $first = $netInt + 1;
+                $last  = $bcastInt - 1;
+            } else {
+                $first = $netInt;
+                $last  = $bcastInt;
             }
 
-            $unassigned = [];
-            for ($i = $first; $i <= $last; $i++) {
-                $ip = ipv4_int_to_text($i);
-                if (!isset($assigned[$ip])) $unassigned[] = $ip;
-            }
+            $assignable = ipv4_assignable_count($prefix);
+            if ($assignable > $MAX_ASSIGNABLE) {
+                $err = "Subnet too large to list unassigned safely (assignable hosts: $assignable; limit: $MAX_ASSIGNABLE).";
+            } else {
+                $st = $db->prepare("SELECT ip FROM addresses WHERE subnet_id = :sid");
+                $st->execute([':sid' => $subnetId]);
+                $assigned = [];
+                foreach ($st->fetchAll() as $r) $assigned[to_str($r['ip'])] = true;
 
+                $unassigned = [];
+                for ($i = $first; $i <= $last; $i++) {
+                    $ip = ipv4_int_to_text($i);
+                    if (!isset($assigned[$ip])) $unassigned[] = $ip;
+                }
+
+                $totalUnassigned = count($unassigned);
+                $p = paginate($totalUnassigned, $page, $pageSize);
+                $items = array_slice($unassigned, $p['offset'], $p['limit']);
+            }
+        } else {
+            // IPv6 — enumerate first N unassigned addresses (capped)
+            $unassigned      = ipv6_enumerate_first_n($db, $subnetId, to_str($sub['network_bin']), $prefix, $MAX_UNASSIGNED_IPV6);
             $totalUnassigned = count($unassigned);
-            $p = paginate($totalUnassigned, $page, $pageSize);
-            $items = array_slice($unassigned, $p['offset'], $p['limit']);
+            $p               = paginate($totalUnassigned, $page, $pageSize);
+            $items           = array_slice($unassigned, $p['offset'], $p['limit']);
         }
     }
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add' && $subnetId > 0) {
-    $ip = trim((string)($_POST['ip'] ?? ''));
-    $hostname = trim((string)($_POST['hostname'] ?? ''));
-    $owner = trim((string)($_POST['owner'] ?? ''));
-    $note = trim((string)($_POST['note'] ?? ''));
-    $status = (string)($_POST['status'] ?? 'used');
+    $ip = trim(to_str($_POST['ip'] ?? ''));
+    $hostname = trim(to_str($_POST['hostname'] ?? ''));
+    $owner = trim(to_str($_POST['owner'] ?? ''));
+    $note = trim(to_str($_POST['note'] ?? ''));
+    $status = to_str($_POST['status'] ?? 'used');
     if (!in_array($status, ['used','reserved','free'], true)) $status = 'used';
 
     $st = $db->prepare("SELECT id, cidr, network, prefix, ip_version FROM subnets WHERE id = :id");
     $st->execute([':id' => $subnetId]);
+    /** @var array<string, mixed>|false $subCheck */
     $subCheck = $st->fetch();
 
     if (!$subCheck) {
         $err = "Invalid subnet.";
     } else {
+        $subVersion = to_int($subCheck['ip_version']);
         $norm = normalize_ip($ip);
-        if (!$norm || $norm['version'] !== 4) {
-            $err = "Invalid IPv4 address.";
-        } elseif (!ip_in_cidr($norm['ip'], (string)$subCheck['network'], (int)$subCheck['prefix'])) {
+        if (!$norm || $norm['version'] !== $subVersion) {
+            $err = $subVersion === 4 ? "Invalid IPv4 address." : "Invalid IPv6 address.";
+        } elseif (!ip_in_cidr($norm['ip'], to_str($subCheck['network']), to_int($subCheck['prefix']))) {
             $err = "IP not in subnet.";
         } else {
             try {
@@ -143,23 +153,23 @@ function build_query_unassigned(array $overrides = []): string {
     return http_build_query($q);
 }
 
-page_header('Unassigned IPv4');
+page_header('Unassigned IPs');
 ?>
 
 <div class="breadcrumbs">
   <a href="dashboard.php">🏠 Dashboard</a>
   <?php if ($sub): ?>
     <span class="sep">›</span><a href="subnets.php">🌐 Subnets</a>
-    <span class="sep">›</span><a href="addresses.php?subnet_id=<?= (int)$subnetId ?>"><?= e($sub['cidr']) ?></a>
+    <span class="sep">›</span><a href="addresses.php?subnet_id=<?= (int)$subnetId ?>"><?= e(to_str($sub['cidr'])) ?></a>
     <span class="sep">›</span>
   <?php endif; ?>
-  <span>✨ Unassigned IPv4</span>
+  <span>✨ Unassigned IPs</span>
 </div>
 
 <div class="toolbar">
   <div>
-    <h1>Unassigned IPv4</h1>
-    <div class="muted">List and add assignable IPv4 addresses that do not yet have address rows.</div>
+    <h1>Unassigned IPs</h1>
+    <div class="muted">List and add assignable addresses that do not yet have address rows.</div>
   </div>
 </div>
 
@@ -178,11 +188,10 @@ page_header('Unassigned IPv4');
   <form method="get" action="unassigned.php" class="row">
     <label>Subnet<br>
       <select name="subnet_id">
-        <option value="0">-- Select IPv4 subnet --</option>
+        <option value="0">-- Select subnet --</option>
         <?php foreach ($subnets as $s): ?>
-          <?php if ((int)$s['ip_version'] !== 4) continue; ?>
-          <option value="<?= (int)$s['id'] ?>" <?= ((int)$s['id'] === $subnetId) ? 'selected' : '' ?>>
-            <?= e($s['cidr']) ?>
+          <option value="<?= to_int($s['id']) ?>" <?= (to_int($s['id']) === $subnetId) ? 'selected' : '' ?>>
+            <?= e(to_str($s['cidr'])) ?><?= to_int($s['ip_version']) === 6 ? ' (IPv6)' : '' ?>
           </option>
         <?php endforeach; ?>
       </select>
@@ -206,8 +215,12 @@ page_header('Unassigned IPv4');
   <div class="card mt-16">
     <div class="toolbar">
       <div>
-        <h2>Subnet: <?= e($sub['cidr']) ?></h2>
-        <div class="muted">Unassigned: <b><?= e((string)$totalUnassigned) ?></b></div>
+        <h2>Subnet: <?= e(to_str($sub['cidr'])) ?></h2>
+        <div class="muted">Unassigned: <b><?= e((string)$totalUnassigned) ?></b>
+        <?php if (to_int($sub['ip_version']) === 6): ?>
+          <span class="muted"> (showing first <?= (int)$MAX_UNASSIGNED_IPV6 ?> unassigned)</span>
+        <?php endif; ?>
+      </div>
       </div>
     </div>
 
@@ -264,7 +277,7 @@ page_header('Unassigned IPv4');
   </div>
 <?php else: ?>
   <div class="card mt-16">
-    <div class="empty-state">Select an IPv4 subnet to list unassigned IPs.</div>
+    <div class="empty-state">Select a subnet to list unassigned IPs.</div>
   </div>
 <?php endif; ?>
 

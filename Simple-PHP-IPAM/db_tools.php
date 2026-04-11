@@ -1,10 +1,13 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/init.php';
+/** @var \PDO $db */
+/** @var IpamConfig $config */
 require_role('admin');
 
 $err = '';
 $msg = '';
+$backupPath = '';
 
 /* ------------------------------------------------------------------ *
  * POST: export                                                         *
@@ -28,21 +31,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
     csrf_require();
 
     $confirmed = !empty($_POST['confirmed']);
-    $upload    = $_FILES['sql_file'] ?? null;
+    $uploadRaw = $_FILES['sql_file'] ?? null;
+    $upload    = is_array($uploadRaw) ? $uploadRaw : null;
 
     if (!$confirmed) {
         $err = 'You must check the confirmation box before importing.';
-    } elseif (!$upload || $upload['error'] !== UPLOAD_ERR_OK) {
-        $errCode = $upload['error'] ?? -1;
-        $err = match ((int)$errCode) {
+    } elseif ($upload === null || to_int($upload['error']) !== UPLOAD_ERR_OK) {
+        $errCode = $upload !== null ? to_int($upload['error']) : UPLOAD_ERR_NO_FILE;
+        $err = match ($errCode) {
             UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => 'Uploaded file exceeds the allowed size limit.',
             UPLOAD_ERR_NO_FILE                        => 'No file was uploaded.',
             default                                   => "Upload error (code {$errCode}).",
         };
     } else {
-        $tmpPath  = (string)$upload['tmp_name'];
+        $tmpPath  = to_str($upload['tmp_name']);
         $fileSize = filesize($tmpPath);
-        $maxMb    = (int)($config['import_sql_max_mb'] ?? 200);
+        $maxMb    = to_int($config['import_sql_max_mb']);
         $maxBytes = $maxMb * 1024 * 1024;
 
         if ($fileSize === false || $fileSize > $maxBytes) {
@@ -61,7 +65,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
 
         if (!$err) {
             // Back up the current database before import
-            $dbPath = (string)($config['db_path'] ?? (__DIR__ . '/data/ipam.sqlite'));
+            $dbPath = to_str($config['db_path']);
             $backupPath = $dbPath . '.pre-import-' . date('YmdHis') . '.bak';
             try { $db->exec("PRAGMA wal_checkpoint(FULL)"); } catch (Throwable) {}
             if (!@copy($dbPath, $backupPath)) {
@@ -77,9 +81,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                 $db->beginTransaction();
 
                 // Drop all user tables (except sqlite_sequence which is auto-managed)
-                $tables = $db->query(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-                )->fetchAll(PDO::FETCH_COLUMN);
+                $tablesSt = $db->query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'");
+                $tables = $tablesSt !== false ? $tablesSt->fetchAll(PDO::FETCH_COLUMN) : [];
 
                 foreach ($tables as $tbl) {
                     $db->exec('DROP TABLE IF EXISTS "' . str_replace('"', '""', (string)$tbl) . '"');
@@ -191,7 +194,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'backup_now') {
     csrf_require();
     // Force a backup regardless of schedule
-    $dbPath = (string)($config['db_path'] ?? (__DIR__ . '/data/ipam.sqlite'));
+    $dbPath = to_str($config['db_path']);
     $bdir   = backup_dir($config);
     if (!is_dir($bdir)) @mkdir($bdir, 0700, true);
 
@@ -202,7 +205,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'backu
 
     if (@copy($dbPath, $dest)) {
         @chmod($dest, 0600);
-        $retention = max(1, (int)($config['backup']['retention'] ?? 7));
+        $retention = max(1, to_int($config['backup']['retention']));
         $files = glob($bdir . '/ipam-*.sqlite');
         if (is_array($files)) {
             rsort($files);
@@ -279,9 +282,9 @@ render_security_banner('db_tools', 'Database import will overwrite all existing 
     <p class='muted'>Automatic backups are <strong>disabled</strong>. Enable them by setting <code>'backup' => ['enabled' => true, ...]</code> in config.php.</p>
   <?php else: ?>
     <p>
-      Frequency: <strong><?= e(ucfirst((string)($config['backup']['frequency'] ?? 'daily'))) ?></strong>
-      &nbsp;|&nbsp; Retention: <strong><?= e((string)($config['backup']['retention'] ?? 7)) ?> backups</strong>
-      &nbsp;|&nbsp; Directory: <code><?= e($bInfo['dir']) ?></code>
+      Frequency: <strong><?= e(ucfirst(to_str($config['backup']['frequency']))) ?></strong>
+      &nbsp;|&nbsp; Retention: <strong><?= e(to_str($config['backup']['retention'])) ?> backups</strong>
+      &nbsp;|&nbsp; Directory: <code><?= e(to_str($bInfo['dir'])) ?></code>
     </p>
   <?php endif; ?>
 
@@ -293,11 +296,11 @@ render_security_banner('db_tools', 'Database import will overwrite all existing 
     </tr>
     <tr>
       <td>Last backup file</td>
-      <td><?= $bInfo['last_file'] ? e((string)$bInfo['last_file']) : '<span class=\'muted\'>—</span>' ?></td>
+      <td><?= $bInfo['last_file'] ? e(to_str($bInfo['last_file'])) : '<span class=\'muted\'>—</span>' ?></td>
     </tr>
     <tr>
       <td>Backup count</td>
-      <td><?= (int)$bInfo['count'] ?></td>
+      <td><?= to_int($bInfo['count']) ?></td>
     </tr>
   </table>
 

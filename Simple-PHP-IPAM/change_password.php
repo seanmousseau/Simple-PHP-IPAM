@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/init.php';
+/** @var \PDO $db */
 require_login();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
@@ -20,18 +21,19 @@ $cur = current_user();
 // Fetch the full user row to check for SSO-only account
 $st = $db->prepare("SELECT password_hash, oidc_sub FROM users WHERE id = :id");
 $st->execute([':id' => $cur['id']]);
+/** @var array<string, mixed>|false $userRow */
 $userRow = $st->fetch();
 
 // SSO-only: unusable hash starts with '!' (password_verify always returns false)
-$isSsoOnly = $userRow && str_starts_with((string)$userRow['password_hash'], '!');
+$isSsoOnly = $userRow && str_starts_with(to_str($userRow['password_hash']), '!');
 
 $pwPolicy  = (array)(($config ?? [])['password_policy'] ?? []);
 $isExpired = isset($_GET['expired']);
 
 if (!$isSsoOnly && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    $old  = (string)($_POST['old_password']  ?? '');
-    $new1 = (string)($_POST['new_password']  ?? '');
-    $new2 = (string)($_POST['new_password2'] ?? '');
+    $old  = to_str($_POST['old_password']  ?? '');
+    $new1 = to_str($_POST['new_password']  ?? '');
+    $new2 = to_str($_POST['new_password2'] ?? '');
 
     if ($new1 !== $new2) {
         $errors[] = 'New passwords do not match.';
@@ -39,20 +41,47 @@ if (!$isSsoOnly && $_SERVER['REQUEST_METHOD'] === 'POST') {
         $pwErrors = validate_password_complexity($new1, $pwPolicy);
         if ($pwErrors) {
             $errors = $pwErrors;
-        } elseif (!$userRow || !password_verify($old, $userRow['password_hash'])) {
+        } elseif (!$userRow || !password_verify($old, to_str($userRow['password_hash']))) {
             $errors[] = 'Current password is incorrect.';
         } else {
             $hash = password_hash($new1, PASSWORD_DEFAULT);
             $db->prepare("UPDATE users SET password_hash = :h, password_changed_at = datetime('now') WHERE id = :id")
                ->execute([':h' => $hash, ':id' => $cur['id']]);
-            audit($db, 'user.change_password', 'user', $cur['id'], 'self');
+            audit($db, 'user.change_password', 'user', to_int($cur['id']), 'self');
             $msg = 'Password updated.';
             $isExpired = false;
         }
     }
 }
 
-$minLen = max(1, (int)($pwPolicy['min_length'] ?? 12));
+$minLen = max(1, to_int($pwPolicy['min_length'] ?? 12));
+
+// Session activity: admins may view any user; others see only their own
+$viewUserId = $cur['id'];
+$viewUsername = to_str($cur['username']);
+if ($cur['role'] === 'admin' && to_int($_GET['user_id'] ?? 0) > 0) {
+    $targetId = to_int($_GET['user_id']);
+    $uRow = $db->prepare("SELECT id, username FROM users WHERE id = :id");
+    $uRow->execute([':id' => $targetId]);
+    /** @var array<string, mixed>|false $targetUser */
+    $targetUser = $uRow->fetch();
+    if ($targetUser) {
+        $viewUserId   = to_int($targetUser['id']);
+        $viewUsername = to_str($targetUser['username']);
+    }
+}
+
+$actSt = $db->prepare("
+    SELECT created_at, action, ip, user_agent
+    FROM audit_log
+    WHERE user_id = :uid
+      AND action IN ('auth.login', 'auth.logout', 'auth.oidc_login', 'auth.login_failed')
+    ORDER BY id DESC
+    LIMIT 10
+");
+$actSt->execute([':uid' => $viewUserId]);
+/** @var list<array<string, mixed>> $activityRows */
+$activityRows = $actSt->fetchAll();
 
 page_header('Change Password');
 ?>
@@ -89,4 +118,33 @@ page_header('Change Password');
     <p><button type="submit">Update</button></p>
   </form>
 <?php endif; ?>
+
+<div class="card mt-16">
+  <h2>Recent Login Activity<?php if ($viewUserId !== $cur['id']): ?> — <?= e($viewUsername) ?><?php endif; ?></h2>
+  <?php if ($cur['role'] === 'admin' && $viewUserId === $cur['id']): ?>
+    <p class="muted">Admins: append <code>?user_id=N</code> to view another user's activity.</p>
+  <?php endif; ?>
+  <?php if (!$activityRows): ?>
+    <div class="empty-state">No login activity recorded yet.</div>
+  <?php else: ?>
+    <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Time</th><th>Action</th><th>IP</th><th>User Agent</th></tr>
+      </thead>
+      <tbody>
+      <?php foreach ($activityRows as $act): ?>
+        <tr>
+          <td class="muted"><?= e(to_str($act['created_at'])) ?></td>
+          <td><?= e(to_str($act['action'])) ?></td>
+          <td class="muted"><?= $act['ip'] !== null ? e(to_str($act['ip'])) : '—' ?></td>
+          <td class="muted"><span class="audit-details" title="<?= e(to_str($act['user_agent'] ?? '')) ?>"><?= e(to_str($act['user_agent'] ?? '')) ?></span></td>
+        </tr>
+      <?php endforeach; ?>
+      </tbody>
+    </table>
+    </div>
+  <?php endif; ?>
+</div>
+
 <?php page_footer();

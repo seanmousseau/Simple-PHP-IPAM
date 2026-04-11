@@ -1,13 +1,14 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/init.php';
+/** @var \PDO $db */
 require_login();
 
-$q          = substr(trim((string)($_GET['q'] ?? '')), 0, 500);
-$status     = trim((string)($_GET['status'] ?? ''));
-$subnetId   = (int)($_GET['subnet_id'] ?? 0);
-$siteId     = (int)($_GET['site_id'] ?? 0);
-$ipVersion  = (int)($_GET['ip_version'] ?? 0);
+$q          = substr(trim(to_str($_GET['q'] ?? '')), 0, 500);
+$status     = trim(to_str($_GET['status'] ?? ''));
+$subnetId   = to_int($_GET['subnet_id'] ?? 0);
+$siteId     = to_int($_GET['site_id'] ?? 0);
+$ipVersion  = to_int($_GET['ip_version'] ?? 0);
 
 $page     = q_int('page', 1, 1, 1000000);
 $pageSize = q_int('page_size', 254, 1, 500);
@@ -23,11 +24,13 @@ if (!in_array($ipVersion, [0, 4, 6], true)) $ipVersion = 0;
 /* Fetch sites for filter dropdown */
 $st = $db->prepare("SELECT id, name FROM sites ORDER BY name ASC");
 $st->execute();
+/** @var list<array<string, mixed>> $siteList */
 $siteList = $st->fetchAll();
 
 /* Fetch subnets for filter dropdown (include site_id for JS filtering) */
 $st = $db->prepare("SELECT id, cidr, ip_version, site_id FROM subnets ORDER BY ip_version ASC, cidr ASC");
 $st->execute();
+/** @var list<array<string, mixed>> $subnets */
 $subnets = $st->fetchAll();
 
 /* Build WHERE clause — all conditions reference `a` or `s` (subnets already joined) */
@@ -35,7 +38,7 @@ $where  = [];
 $params = [];
 
 if ($q !== '') {
-    $where[]       = "(a.ip LIKE :q ESCAPE '\\' OR a.hostname LIKE :q ESCAPE '\\' OR a.owner LIKE :q ESCAPE '\\' OR a.note LIKE :q ESCAPE '\\' OR a.grp LIKE :q ESCAPE '\\')";
+    $where[]       = "(a.ip LIKE :q ESCAPE '\\' OR a.hostname LIKE :q ESCAPE '\\' OR a.owner LIKE :q ESCAPE '\\' OR a.note LIKE :q ESCAPE '\\' OR a.grp LIKE :q ESCAPE '\\' OR a.mac LIKE :q ESCAPE '\\')";
     $params[':q']  = '%' . like_escape($q) . '%';
 }
 if ($status !== '') {
@@ -65,12 +68,16 @@ $st = $db->prepare("
     $whereSql
 ");
 $st->execute($params);
-$total = (int)$st->fetch()['c'];
+/** @var array<string, mixed>|false $cntRow */
+
+$cntRow = $st->fetch();
+
+$total = is_array($cntRow) ? to_int($cntRow['c']) : 0;
 
 $p = paginate($total, $page, $pageSize);
 
 $st = $db->prepare("
-    SELECT a.id, a.subnet_id, a.ip, a.hostname, a.owner, a.grp, a.status, a.note, a.updated_at,
+    SELECT a.id, a.subnet_id, a.ip, a.hostname, a.owner, a.grp, a.mac, a.expires_at, a.status, a.note, a.updated_at,
            s.cidr AS subnet_cidr, si.name AS site_name
     FROM addresses a
     JOIN subnets s ON s.id = a.subnet_id
@@ -83,6 +90,7 @@ foreach ($params as $k => $v) $st->bindValue($k, $v);
 $st->bindValue(':lim', $p['limit'], PDO::PARAM_INT);
 $st->bindValue(':off', $p['offset'], PDO::PARAM_INT);
 $st->execute();
+/** @var list<array<string, mixed>> $rows */
 $rows = $st->fetchAll();
 
 /* --- Subnet search (always runs when $q is non-empty) --- */
@@ -115,6 +123,7 @@ if ($q !== '') {
     ");
     foreach ($subParams as $k => $v) $st->bindValue($k, $v);
     $st->execute();
+    /** @var list<array<string, mixed>> $subnetResults */
     $subnetResults = $st->fetchAll();
 }
 
@@ -181,8 +190,8 @@ page_header('Search');
       <select name="site_id" id="filter-site">
         <option value="0">(any site)</option>
         <?php foreach ($siteList as $site): ?>
-          <option value="<?= (int)$site['id'] ?>" <?= ((int)$site['id']===$siteId)?'selected':'' ?>>
-            <?= e($site['name']) ?>
+          <option value="<?= to_int($site['id']) ?>" <?= (to_int($site['id'])===$siteId)?'selected':'' ?>>
+            <?= e(to_str($site['name'])) ?>
           </option>
         <?php endforeach; ?>
       </select>
@@ -193,11 +202,11 @@ page_header('Search');
       <select name="subnet_id" id="filter-subnet">
         <option value="0">(any)</option>
         <?php foreach ($subnets as $s): ?>
-          <option value="<?= (int)$s['id'] ?>"
-                  data-site="<?= (int)($s['site_id'] ?? 0) ?>"
-                  data-ver="<?= (int)$s['ip_version'] ?>"
-                  <?= ((int)$s['id']===$subnetId)?'selected':'' ?>>
-            <?= e($s['cidr']) ?>
+          <option value="<?= to_int($s['id']) ?>"
+                  data-site="<?= to_int($s['site_id'] ?? 0) ?>"
+                  data-ver="<?= to_int($s['ip_version']) ?>"
+                  <?= (to_int($s['id'])===$subnetId)?'selected':'' ?>>
+            <?= e(to_str($s['cidr'])) ?>
           </option>
         <?php endforeach; ?>
       </select>
@@ -223,12 +232,12 @@ page_header('Search');
   <div class="muted">
     Results: <b><?= e((string)$total) ?></b>
     <?php if ($total > 0): ?>
-      &nbsp;|&nbsp; Page <b><?= e((string)$p['page']) ?></b> of <b><?= e((string)$p['pages']) ?></b>
+      &nbsp;|&nbsp; Page <b><?= e(to_str($p['page'])) ?></b> of <b><?= e(to_str($p['pages'])) ?></b>
     <?php endif; ?>
   </div>
 
   <?php if (!$rows): ?>
-    <div class="empty-state mt-12">No results.</div>
+    <div class="empty-state mt-12">No results. <a class="action-pill" href="search.php">Clear filters</a></div>
   <?php else: ?>
     <div class="table-wrap">
     <table class="mt-12">
@@ -247,6 +256,8 @@ page_header('Search');
                 echo sort_th('status',   'Status',   $searchSort['col'], $searchSort['dir'], $srchQs);
           ?>
           <th>Group</th>
+          <th>MAC</th>
+          <th>Expires</th>
           <th>Note</th>
           <th>Updated</th>
           <th></th>
@@ -255,16 +266,18 @@ page_header('Search');
       <tbody>
       <?php foreach ($rows as $r): ?>
         <tr>
-          <td><?= $r['site_name'] !== null ? e($r['site_name']) : '<span class="muted">—</span>' ?></td>
-          <td><?= e($r['subnet_cidr']) ?></td>
-          <td><?= e($r['ip']) ?></td>
-          <td><?= e($r['hostname']) ?></td>
-          <td><?= e($r['owner']) ?></td>
-          <td><span class="status-<?= e($r['status']) ?>"><?= e($r['status']) ?></span></td>
-          <td><?= $r['grp'] !== '' ? '<span class="badge">' . e($r['grp']) . '</span>' : '' ?></td>
-          <td><?= e($r['note']) ?></td>
-          <td class="muted"><?= e($r['updated_at']) ?></td>
-          <td><a href="addresses.php?subnet_id=<?= (int)$r['subnet_id'] ?>&highlight=<?= (int)$r['id'] ?>#addr-<?= (int)$r['id'] ?>">Edit</a> <a href="address_history.php?address_id=<?= (int)$r['id'] ?>">History</a></td>
+          <td><?= $r['site_name'] !== null ? e(to_str($r['site_name'])) : '<span class="muted">—</span>' ?></td>
+          <td><?= e(to_str($r['subnet_cidr'])) ?></td>
+          <td><?= e(to_str($r['ip'])) ?></td>
+          <td><?= e(to_str($r['hostname'])) ?></td>
+          <td><?= e(to_str($r['owner'])) ?></td>
+          <td><span class="status-<?= e(to_str($r['status'])) ?>"><?= e(to_str($r['status'])) ?></span></td>
+          <td><?= $r['grp'] !== '' ? '<span class="badge">' . e(to_str($r['grp'])) . '</span>' : '' ?></td>
+          <td class="muted"><?= e(to_str($r['mac'])) ?></td>
+          <td class="muted"><?= e(to_str($r['expires_at'] ?? '')) ?></td>
+          <td><?= e(to_str($r['note'])) ?></td>
+          <td class="muted"><?= e(to_str($r['updated_at'])) ?></td>
+          <td><a href="addresses.php?subnet_id=<?= to_int($r['subnet_id']) ?>&highlight=<?= to_int($r['id']) ?>#addr-<?= to_int($r['id']) ?>">Edit</a> <a href="address_history.php?address_id=<?= to_int($r['id']) ?>">History</a></td>
         </tr>
       <?php endforeach; ?>
       </tbody>
@@ -293,13 +306,13 @@ page_header('Search');
     <tbody>
     <?php foreach ($subnetResults as $sr): ?>
       <tr>
-        <td><a href="addresses.php?subnet_id=<?= (int)$sr['id'] ?>"><?= e($sr['cidr']) ?></a></td>
-        <td><?= e((string)$sr['description']) ?></td>
-        <td>IPv<?= (int)$sr['ip_version'] ?></td>
-        <td><?= $sr['vlan_id'] !== null ? e((string)$sr['vlan_id']) : '<span class="muted">—</span>' ?></td>
-        <td><?= $sr['site_name'] !== '' ? e($sr['site_name']) : '<span class="muted">—</span>' ?></td>
-        <td><?= (int)$sr['addr_count'] ?></td>
-        <td><a href="addresses.php?subnet_id=<?= (int)$sr['id'] ?>">View</a></td>
+        <td><a href="addresses.php?subnet_id=<?= to_int($sr['id']) ?>"><?= e(to_str($sr['cidr'])) ?></a></td>
+        <td><?= e(to_str($sr['description'])) ?></td>
+        <td>IPv<?= to_int($sr['ip_version']) ?></td>
+        <td><?= $sr['vlan_id'] !== null ? e(to_str($sr['vlan_id'])) : '<span class="muted">—</span>' ?></td>
+        <td><?= $sr['site_name'] !== '' ? e(to_str($sr['site_name'])) : '<span class="muted">—</span>' ?></td>
+        <td><?= to_int($sr['addr_count']) ?></td>
+        <td><a href="addresses.php?subnet_id=<?= to_int($sr['id']) ?>">View</a></td>
       </tr>
     <?php endforeach; ?>
     </tbody>

@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/init.php';
+/** @var IpamConfig $config */
 
 if (is_logged_in())      { header('Location: dashboard.php'); exit; }
 if (!oidc_enabled($config)) { header('Location: login.php');     exit; }
@@ -24,14 +25,14 @@ $_SESSION['oidc_verifier'] = $pkce['verifier'];
 
 $params = [
     'response_type'         => 'code',
-    'client_id'             => (string)$config['oidc']['client_id'],
-    'redirect_uri'          => (string)$config['oidc']['redirect_uri'],
-    'scope'                 => (string)($config['oidc']['scopes'] ?? 'openid email profile'),
+    'client_id'             => to_str($config['oidc']['client_id']),
+    'redirect_uri'          => to_str($config['oidc']['redirect_uri']),
+    'scope'                 => to_str($config['oidc']['scopes']),
     'state'                 => $state,
     'nonce'                 => $nonce,
     'code_challenge'        => $pkce['challenge'],
     'code_challenge_method' => 'S256',
 ];
 
-header('Location: ' . $discovery['authorization_endpoint'] . '?' . http_build_query($params));
+header('Location: ' . to_str($discovery['authorization_endpoint']) . '?' . http_build_query($params));
 exit;

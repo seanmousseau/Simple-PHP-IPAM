@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require __DIR__ . '/init.php';
+/** @var \PDO $db */
 require_role('admin');
 
 $filename = safe_export_filename('ipam-audit-log');
@@ -14,15 +15,15 @@ $st = $db->prepare("
 ");
 $st->execute();
 
-foreach ($st as $r) {
+foreach ($st->fetchAll() as $r) {
     csv_out([
-        (string)$r['created_at'],
-        (string)($r['username'] ?? ''),
-        (string)$r['action'],
-        (string)$r['entity_type'],
-        (string)($r['entity_id'] ?? ''),
-        (string)($r['ip'] ?? ''),
-        (string)($r['details'] ?? ''),
+        to_str($r['created_at']),
+        to_str($r['username'] ?? ''),
+        to_str($r['action']),
+        to_str($r['entity_type']),
+        to_str($r['entity_id'] ?? ''),
+        to_str($r['ip'] ?? ''),
+        to_str($r['details'] ?? ''),
     ]);
 }
 

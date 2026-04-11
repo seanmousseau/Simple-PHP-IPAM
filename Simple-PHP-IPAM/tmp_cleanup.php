@@ -9,7 +9,7 @@ if (php_sapi_name() !== 'cli') {
 }
 
 $config = require __DIR__ . '/config.php';
-$ttl = (int)($config['tmp_cleanup_ttl_seconds'] ?? 86400);
+$ttl = to_int($config['tmp_cleanup_ttl_seconds'] ?? 86400);
 if ($ttl < 3600) $ttl = 3600;
 
 $deletedCsv = cleanup_tmp_import_files($ttl);

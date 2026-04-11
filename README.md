@@ -15,13 +15,13 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 - Manage **address records** with hostname, owner, status (`used` / `reserved` / `free`), and notes
 - Subnet **hierarchy view** — parent/child nesting with expand/collapse for both IPv4 and IPv6
 - **Subnet overlap detection** — warns when a new subnet nests inside or contains existing ones
-- IPv4 **unassigned host tracking** — lists assignable IPs with no address record and a quick-add form
+- **Unassigned IP tracking** — lists assignable IPs (IPv4 and IPv6, capped at 256) with no address record and a quick-add form
 - Correct IP sorting using packed binary storage (`ip_bin`, `network_bin`)
 
 ### Search & Productivity
 - **Dashboard** — utilization bars for top subnets, per-site address breakdown, recent audit activity
 - **Global search** across IP / hostname / owner / note with filters for status, site, and IP version
-- **Bulk update** — update hostname / owner / status / note across multiple addresses at once, with bulk delete
+- **Bulk update** — update hostname / owner / status / note / MAC / expiry across multiple addresses at once, with bulk delete
 - **CSV import wizard** (admin-only) — upload, map columns, dry-run preview, then apply; supports auto-create missing subnets
 - **CSV exports** — addresses per subnet, all addresses cross-subnet, subnet utilization summary, address change history, search results, unassigned IPs, audit log
 
@@ -51,8 +51,9 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 - JSON REST API (`api.php`) authenticated with API keys
 - **Read-only API keys** — admin-toggleable flag restricts a key to GET-only access; write attempts return 403
 - **API key descriptions** — optional free-text field to document what each key is for
-- Read: subnets (filterable by `ip_version`, `vlan_id`, `site_id`; optional address count/utilization per subnet), addresses (filterable by `subnet_id`, `site_id`, `status`), sites, address history, unassigned IPs
+- Read: subnets, addresses (filterable; `?expired=1` for expiry-due), sites, address history, search, audit log, unassigned IPs (IPv4 and IPv6)
 - Write: create / update / delete subnets, addresses, and sites (POST / PUT / DELETE)
+- **Bulk write** — `POST ?resource=addresses&bulk=1` / `POST ?resource=subnets&bulk=1` with JSON array; partial success returns HTTP 207
 
 ---
 

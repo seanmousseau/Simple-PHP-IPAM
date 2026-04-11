@@ -67,6 +67,8 @@ CREATE TABLE IF NOT EXISTS addresses (
   owner      TEXT NOT NULL DEFAULT '',
   note       TEXT NOT NULL DEFAULT '',
   grp        TEXT NOT NULL DEFAULT '',              -- group label (group is a SQL reserved word)
+  mac        TEXT NOT NULL DEFAULT '',              -- MAC address (optional, free-form)
+  expires_at TEXT,                                  -- optional expiration date (YYYY-MM-DD), NULL = no expiry
   status     TEXT NOT NULL DEFAULT 'used',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),

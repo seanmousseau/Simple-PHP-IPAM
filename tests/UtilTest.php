@@ -356,4 +356,54 @@ class UtilTest extends TestCase
     {
         $this->assertSame('used', normalize_status('whatever'));
     }
+
+    // -----------------------------------------------------------------------
+    // ipv6_bin_increment()
+    // -----------------------------------------------------------------------
+
+    public function testIpv6BinIncrementBasic(): void
+    {
+        // ::1 + 1 = ::2
+        $input    = (string)inet_pton('::1');
+        $expected = (string)inet_pton('::2');
+        $this->assertSame($expected, ipv6_bin_increment($input));
+    }
+
+    public function testIpv6BinIncrementLowByteCarry(): void
+    {
+        // ::ff + 1 = ::100
+        $input    = (string)inet_pton('::ff');
+        $expected = (string)inet_pton('::100');
+        $this->assertSame($expected, ipv6_bin_increment($input));
+    }
+
+    public function testIpv6BinIncrementGroupCarry(): void
+    {
+        // ::ffff + 1 = ::1:0
+        $input    = (string)inet_pton('::ffff');
+        $expected = (string)inet_pton('::1:0');
+        $this->assertSame($expected, ipv6_bin_increment($input));
+    }
+
+    public function testIpv6BinIncrementKnownSubnet(): void
+    {
+        // 2001:db8:: + 1 = 2001:db8::1
+        $input    = (string)inet_pton('2001:db8::');
+        $expected = (string)inet_pton('2001:db8::1');
+        $this->assertSame($expected, ipv6_bin_increment($input));
+    }
+
+    public function testIpv6BinIncrementMaxWrapsToZero(): void
+    {
+        // ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff + 1 = ::
+        $input    = (string)inet_pton('ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff');
+        $expected = (string)inet_pton('::');
+        $this->assertSame($expected, ipv6_bin_increment($input));
+    }
+
+    public function testIpv6BinIncrementProducesCorrectLength(): void
+    {
+        $input = (string)inet_pton('2001:db8::1');
+        $this->assertSame(16, strlen(ipv6_bin_increment($input)));
+    }
 }

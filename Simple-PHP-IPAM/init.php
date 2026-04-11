@@ -1,7 +1,21 @@
 <?php
 declare(strict_types=1);
 
+/** @var IpamConfig $config */
 $config = require __DIR__ . '/config.php';
+
+/**
+ * Convert a mixed value to string. Defined early in init.php so it is available
+ * before lib.php is loaded; lib.php guards against redefinition with function_exists().
+ */
+function to_str(mixed $value): string
+{
+    if (is_string($value)) return $value;
+    if (is_int($value) || is_float($value)) return (string)$value;
+    if (is_bool($value)) return $value ? '1' : '';
+    if ($value === null) return '';
+    return '';
+}
 
 /** @param array<string, mixed> $server */
 function request_is_https(array $server, bool $trustProxyHeaders): bool
@@ -9,21 +23,21 @@ function request_is_https(array $server, bool $trustProxyHeaders): bool
     if (!empty($server['HTTPS']) && $server['HTTPS'] !== 'off') return true;
 
     if ($trustProxyHeaders) {
-        if (!empty($server['HTTP_X_FORWARDED_PROTO']) && strtolower($server['HTTP_X_FORWARDED_PROTO']) === 'https') return true;
-        if (!empty($server['HTTP_X_FORWARDED_SSL']) && strtolower($server['HTTP_X_FORWARDED_SSL']) === 'on') return true;
+        if (!empty($server['HTTP_X_FORWARDED_PROTO']) && strtolower(to_str($server['HTTP_X_FORWARDED_PROTO'])) === 'https') return true;
+        if (!empty($server['HTTP_X_FORWARDED_SSL']) && strtolower(to_str($server['HTTP_X_FORWARDED_SSL'])) === 'on') return true;
     }
     return false;
 }
 
 // Skip HTTPS redirect for CLI (migrate.php, tmp_cleanup.php)
-$isHttps = php_sapi_name() === 'cli' || request_is_https($_SERVER, (bool)($config['proxy_trust'] ?? false));
+$isHttps = php_sapi_name() === 'cli' || request_is_https($_SERVER, (bool)$config['proxy_trust']);
 if (!$isHttps) {
-    $base = rtrim((string)($config['base_url'] ?? ''), '/');
-    $uri  = $_SERVER['REQUEST_URI'] ?? '/';
+    $base = rtrim(to_str($config['base_url'] ?? ''), '/');
+    $uri  = to_str($_SERVER['REQUEST_URI'] ?? '/');
     if ($base !== '') {
         header('Location: ' . $base . $uri, true, 301);
     } else {
-        $host = $_SERVER['HTTP_HOST'] ?? '';
+        $host = to_str($_SERVER['HTTP_HOST'] ?? '');
         if ($host === '' || !preg_match('/^(\[[:0-9a-fA-F]+\]|[a-zA-Z0-9._\-]+)(:\d+)?$/', $host)) {
             http_response_code(400);
             echo 'Invalid request: base_url is not configured and Host header is not valid.';
@@ -34,7 +48,7 @@ if (!$isHttps) {
     exit;
 }
 
-session_name((string)$config['session_name']);
+session_name(to_str($config['session_name']));
 session_set_cookie_params([
     'lifetime' => 0,
     'path' => '/',
@@ -51,7 +65,7 @@ session_start();
 
 require __DIR__ . '/lib.php';
 
-$db = ipam_db((string)$config['db_path']);
+$db = ipam_db(to_str($config['db_path']));
 ipam_db_init($db);
 
 // Auto-populate any missing config keys with their defaults
@@ -61,6 +75,13 @@ if ($_addedConfigKeys && isset($_SESSION) && ($_SESSION['role'] ?? '') === 'admi
         . implode(', ', array_map(fn($k) => "'{$k}'", $_addedConfigKeys)) . '.';
 }
 unset($_addedConfigKeys);
+
+// Validate config values on every boot; surface warnings to admins in the UI
+$_configWarnings = ipam_validate_config($config);
+if ($_configWarnings) {
+    $GLOBALS['config_warnings'] = $_configWarnings;
+}
+unset($_configWarnings);
 
 // Run best-effort housekeeping at most once/day (configurable)
 run_housekeeping_if_due($config, $db);
@@ -76,7 +97,7 @@ if (!empty($config['demo_mode']['enabled'])
     && empty($_SESSION['demo_gate_passed'])
 ) {
     $gateExempt = ['demo_gate.php', 'status.php', 'api.php'];
-    $thisScript = basename($_SERVER['SCRIPT_FILENAME'] ?? '');
+    $thisScript = basename(to_str($_SERVER['SCRIPT_FILENAME'] ?? ''));
     if (!in_array($thisScript, $gateExempt, true)) {
         header('Location: demo_gate.php');
         exit;

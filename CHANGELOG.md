@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [1.19.0] - 2026-04-11
+
+### Added
+- **#264** — Address `mac` field: free-form MAC address (max 64 chars) stored per address; shown and editable in addresses, search, bulk update, and CSV import/export.
+- **#262** — Address `expires_at` field: optional lease expiry date (`YYYY-MM-DD`); rows with a past expiry date are highlighted in the addresses table; filterable via `?expired=1` in the API.
+- **#235** — Session activity log on user profile (`change_password.php`): last 10 auth events (login, logout, OIDC login, failed login) with IP and user agent; admins can view any user's activity via `?user_id=N`.
+- **#236** — Config validation on boot: `ipam_validate_config()` checks key settings on every page load; admins see a dismissible banner for each invalid value.
+- **#237** — Configurable utilization warn/critical thresholds: `utilization_warn` and `utilization_critical` config keys replace the previous hardcoded values (80/95); applied on dashboard and subnets list.
+- **#265** — API bulk write endpoints: `POST ?resource=addresses&bulk=1` and `POST ?resource=subnets&bulk=1` accept a JSON array of up to 500 items; partial success returns HTTP 207; each item reports `{success, id?, error?}`.
+- **#263** — IPv6 unassigned IP tracking: `unassigned.php` and `export_unassigned.php` now support IPv6 subnets (capped at 256 addresses); API `resource=unassigned` also supports IPv6.
+- **#284** — reCAPTCHA Enterprise API support: new `recaptcha_enterprise` config block enables the GCP Enterprise Assessment API for backend token verification when `login_protection.method = 'recaptcha'`.
+- **#246** — Subnet list deep-link: CIDR in the subnets table now links directly to the addresses view for that subnet.
+- **#245** — Empty state CTA buttons: all empty-state divs across subnets, addresses, sites, audit, and search pages now include contextual action buttons.
+
+### Changed
+- **#238** / **#230** — PHPStan static analysis raised to level 9 (strictest); zero errors; empty baseline.
+- **#243** — Audit log default page size changed from 20 to 50 rows.
+- **#244** — Audit log Details column truncated with ellipsis (`max-width: 300px`); full text shown on hover via `title` attribute.
+
 ## [1.18.0] - 2026-04-09
 
 ### Added
