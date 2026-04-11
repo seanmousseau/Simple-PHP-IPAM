@@ -1,0 +1,91 @@
+version: "2"
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  high_level_summary_placeholder: "@coderabbitai summary"
+  auto_title_placeholder: "@coderabbitai"
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  changed_files_summary: true
+  sequence_diagrams: false
+  assess_linked_issues: true
+  related_issues: true
+  related_prs: true
+  suggested_labels: false
+  auto_apply_labels: false
+  suggested_reviewers: false
+  auto_assign_reviewers: false
+  abort_on_close: true
+
+  path_filters:
+    - "!vendor/**"
+    - "!releases/**"
+    - "!Simple-PHP-IPAM/data/**"
+    - "!*.sqlite"
+    - "!*.sqlite-wal"
+    - "!*.sqlite-shm"
+    - "!composer.lock"
+
+  path_instructions:
+    - path: "Simple-PHP-IPAM/**/*.php"
+      instructions: |
+        This is a PHP 8.2+ application with no Composer runtime dependencies.
+        Key conventions:
+        - All HTML output must go through e() (wraps htmlspecialchars) — never echo user data raw.
+        - Every POST handler must call csrf_require() at the top and include a hidden csrf field.
+        - Use PDO prepared statements; never concatenate user input into SQL.
+        - ip_bin/network_bin columns are raw binary blobs (inet_pton output), not UTF-8 strings.
+        - The addresses table has no ip_version column — that lives only on subnets.
+        - addresses.grp is a SQL reserved word — stored as grp, exposed as group in UI/API.
+        - fetch() returns false on no rows, not null — always check with if ($row).
+        - Audit every significant action with the audit() helper.
+        - page_footer() does not call exit — never output after it.
+        - $config is a global set by init.php; access via global $config inside functions.
+        - All migrations must be idempotent — guard ALTER TABLE with PRAGMA table_info() checks.
+
+    - path: "Simple-PHP-IPAM/api.php"
+      instructions: |
+        api.php is a stateless REST endpoint — it does not use init.php or sessions.
+        All authentication is via API key (SHA-256 hash comparison with hash_equals).
+        Ensure every response sets Content-Type: application/json and returns consistent
+        JSON shape: {"data": ..., "meta": ...} or {"error": "..."}.
+
+    - path: "Simple-PHP-IPAM/migrations.php"
+      instructions: |
+        Migrations must be idempotent. Every ALTER TABLE must check PRAGMA table_info()
+        first. Migration keys must sort correctly under ksort(SORT_NATURAL). New migrations
+        must have a corresponding version bump in version.php and CHANGELOG.md entry.
+
+    - path: ".github/workflows/**"
+      instructions: |
+        Workflows must pin third-party actions to a full commit SHA, not a mutable tag.
+        Ensure PHP QA jobs test PHP 8.2 (minimum supported version).
+
+    - path: "tests/**"
+      instructions: |
+        PHPUnit tests cover pure utility functions in lib.php only (no DB, no session).
+        Do not add tests that require database connections or HTTP calls.
+
+  tools:
+    github-checks:
+      enabled: true
+      timeout_ms: 90000
+    semgrep:
+      enabled: true
+
+chat:
+  auto_reply: true
+
+code_generation:
+  docstrings:
+    language: en-US
+
+language: en-US
+tone_instructions: |
+  Be direct and concise. Focus on correctness, security, and adherence to the project
+  conventions documented in CLAUDE.md. Skip style nits that are already permitted by
+  .phpcs.xml exclusions (inline control structures, K&R braces, column-aligned arrays,
+  line length). Flag any XSS, SQLi, CSRF, or path-traversal risk as a blocking issue.
