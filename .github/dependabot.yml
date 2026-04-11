@@ -8,6 +8,10 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
+    allow:
+      - dependency-name: "phpstan/phpstan"
+      - dependency-name: "squizlabs/php_codesniffer"
+      - dependency-name: "phpunit/phpunit"
 
   - package-ecosystem: "github-actions"
     directory: "/"
