@@ -1,0 +1,14 @@
+{
+  "name": "simple-php-ipam-playwright",
+  "private": true,
+  "description": "Playwright end-to-end test suite for Simple PHP IPAM",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0",
+    "@types/node": "^25.6.0"
+  }
+}

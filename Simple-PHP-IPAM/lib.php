@@ -133,14 +133,19 @@ function to_int(mixed $value): int
 /**
  * Safely coerce a mixed value (e.g. PDO fetch result or superglobal) to string.
  * Needed at PHPStan level 9 where (string) casts on mixed are disallowed.
+ * Defined here for api.php/status.php which load lib.php directly without init.php.
+ * init.php defines this function earlier so pages that use init.php see it immediately;
+ * the function_exists guard prevents a fatal redefinition error.
  */
-function to_str(mixed $value): string
-{
-    if (is_string($value)) return $value;
-    if (is_int($value) || is_float($value)) return (string)$value;
-    if (is_bool($value)) return $value ? '1' : '';
-    if ($value === null) return '';
-    return '';
+if (!function_exists('to_str')) {
+    function to_str(mixed $value): string
+    {
+        if (is_string($value)) return $value;
+        if (is_int($value) || is_float($value)) return (string)$value;
+        if (is_bool($value)) return $value ? '1' : '';
+        if ($value === null) return '';
+        return '';
+    }
 }
 
 /* ---------------- CSRF ---------------- */

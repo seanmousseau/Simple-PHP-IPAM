@@ -4,6 +4,19 @@ declare(strict_types=1);
 /** @var IpamConfig $config */
 $config = require __DIR__ . '/config.php';
 
+/**
+ * Convert a mixed value to string. Defined early in init.php so it is available
+ * before lib.php is loaded; lib.php guards against redefinition with function_exists().
+ */
+function to_str(mixed $value): string
+{
+    if (is_string($value)) return $value;
+    if (is_int($value) || is_float($value)) return (string)$value;
+    if (is_bool($value)) return $value ? '1' : '';
+    if ($value === null) return '';
+    return '';
+}
+
 /** @param array<string, mixed> $server */
 function request_is_https(array $server, bool $trustProxyHeaders): bool
 {
