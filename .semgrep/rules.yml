@@ -1,17 +1,16 @@
 rules:
 
   # ---------------------------------------------------------------------------
-  # XSS: echo of unsanitized user input
+  # XSS: print() of unsanitized user input
   #
   # Taint sources: $_GET, $_POST, $_REQUEST, $_COOKIE
   # Sanitizers:    e() [project wrapper for htmlspecialchars], htmlspecialchars(),
   #                (int)/(float)/(bool) casts, intval(), floatval()
-  # Sinks:         echo, print, inline <?= ... ?>
-  #
-  # Replaces the registry rule `taint-unsafe-echo-tag` which does not know
-  # about the project-specific e() sanitizer.
+  # Sinks:         print() — semgrep's PHP taint parser does not support echo
+  #                as a taint sink (echo is a language construct, not an
+  #                expression). The project convention is <?= e($val) ?> anyway.
   # ---------------------------------------------------------------------------
-  - id: ipam-xss-unsanitized-echo
+  - id: ipam-xss-unsanitized-print
     mode: taint
     pattern-sources:
       - pattern: $_GET[...]
@@ -30,11 +29,8 @@ rules:
       - pattern: strip_tags(...)
     pattern-sinks:
       - pattern: print($SINK)
-      - pattern: echo("...$SINK...")
-      - pattern: 'echo "...$SINK..."'
-      - pattern: "echo '...' . $SINK"
     message: >
-      Unsanitized user input ($SOURCE) echoed without e() or htmlspecialchars().
+      Unsanitized user input ($SOURCE) passed to print() without e() or htmlspecialchars().
       Wrap the value in e() before output: <?= e($value) ?>
     languages: [php]
     severity: ERROR

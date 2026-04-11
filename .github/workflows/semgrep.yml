@@ -1,0 +1,18 @@
+name: Semgrep
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  semgrep:
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Run custom security rules
+        run: semgrep --config=.semgrep/rules.yml --error Simple-PHP-IPAM/
