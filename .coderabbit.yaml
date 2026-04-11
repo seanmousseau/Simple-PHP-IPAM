@@ -84,8 +84,4 @@ code_generation:
     language: en-US
 
 language: en-US
-tone_instructions: |
-  Be direct and concise. Focus on correctness, security, and adherence to the project
-  conventions documented in CLAUDE.md. Skip style nits that are already permitted by
-  .phpcs.xml exclusions (inline control structures, K&R braces, column-aligned arrays,
-  line length). Flag any XSS, SQLi, CSRF, or path-traversal risk as a blocking issue.
+tone_instructions: "Be direct and concise. Focus on security and correctness. Skip style nits allowed by .phpcs.xml. Flag XSS, SQLi, CSRF, or path-traversal as blocking."
