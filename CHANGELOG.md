@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [2.1.1] - 2026-04-12
+
+### Fixed
+- Nav bar ⌘K search shortcut was rendered as a duplicate nav item showing literal `\u2318K` text (PHP does not interpret `\u` escapes without curly braces). The standalone button and Search link are now merged into a single `🔎 Search ⌘K` nav link; clicking it opens the quick-search overlay (keyboard shortcut unchanged).
+
 ## [2.1.0] - 2026-04-12
 
 ### Added
@@ -432,6 +437,7 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[2.1.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.19.1...v2.0.0
 [1.19.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.19.0...v1.19.1
