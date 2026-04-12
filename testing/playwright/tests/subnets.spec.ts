@@ -166,3 +166,27 @@ test('subnets: form drawer opens on Add Subnet click', async () => {
   await drawerTrigger.click();
   await expect(page.locator('#form-drawer')).toBeVisible();
 });
+
+// ── v2.3.0 scan schedule section ─────────────────────────────────────────────
+
+test('subnets: scan schedule details element is present for admin', async () => {
+  if (!subnetId) { test.skip(); return; }
+  await page.goto('subnets.php');
+  // The scan schedule <details> should exist in the subnet row for admin users
+  const scheduleDetails = page.locator('details').filter({ hasText: /Scan Schedule/i });
+  await expect(scheduleDetails.first()).toBeAttached();
+});
+
+test('subnets: scan schedule form has method, interval, active fields', async () => {
+  if (!subnetId) { test.skip(); return; }
+  await page.goto('subnets.php');
+  // Open the scan schedule details to reveal the form
+  const scheduleDetails = page.locator('details').filter({ hasText: /Scan Schedule/i }).first();
+  if (await scheduleDetails.count() === 0) {
+    test.skip(true, 'Scan schedule details not found — may not be implemented yet');
+    return;
+  }
+  await scheduleDetails.evaluate((el: HTMLDetailsElement) => { el.open = true; });
+  await expect(page.locator('select[name="scan_method"]').first()).toBeAttached();
+  await expect(page.locator('input[name="scan_interval"]').first()).toBeAttached();
+});

@@ -55,6 +55,8 @@ export const TEST_VRF_CIDR = '10.66.0.0/24';
 
 export const TEST_DHCP_CIDR = '10.55.0.0/24';
 
+export const TEST_SCAN_CIDR = '10.44.0.0/28'; // /28 = 16 IPs; satisfies scan_run API limit
+
 export const TEST_CIDR1     = '10.99.0.0/24';
 export const TEST_CIDR2     = '10.88.0.0/24';
 export const TEST_CIDR_V6   = '2001:db8:1::/120';

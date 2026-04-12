@@ -1004,6 +1004,102 @@ Each item accepts the same fields as the single-record [Create a subnet](#create
 
 ---
 
+## Scan endpoints (v2.3.0)
+
+### Get scan results for a subnet
+
+```
+GET /api.php?resource=scan_results&subnet_id=N
+Authorization: Bearer <key>
+```
+
+Returns the results of the most recent scan run for the subnet as an array. Each element contains `ip`, `is_up` (1/0), `latency_ms` (null if down), and `scanned_at`.
+
+Returns an empty array `[]` if no scans have run.
+
+---
+
+### Get scan history for a subnet
+
+```
+GET /api.php?resource=scan_history&subnet_id=N[&limit=50]
+Authorization: Bearer <key>
+```
+
+Returns paginated scan history rows, newest first. `limit` defaults to 50.
+
+---
+
+### Trigger an immediate scan
+
+```
+POST /api.php?resource=scan_run&subnet_id=N
+Authorization: Bearer <key>
+```
+
+Triggers a synchronous scan of the subnet and returns a stats object:
+
+```json
+{ "scanned": 14, "up": 11, "down": 3, "stale_updated": 0, "method": "icmp" }
+```
+
+**Requires write API key.** Capped at /28 (16 IPs) — larger subnets return HTTP 400. Use the CLI runner (`scan_run.php --all`) for larger subnets.
+
+---
+
+### List all scan schedules
+
+```
+GET /api.php?resource=scan_schedules
+Authorization: Bearer <key>
+```
+
+Returns an array of all configured scan schedules with `subnet_id`, `method`, `interval_minutes`, `is_active`, and `last_run_at`.
+
+---
+
+### Get scan schedule for a subnet
+
+```
+GET /api.php?resource=scan_schedules&subnet_id=N
+Authorization: Bearer <key>
+```
+
+Returns the schedule object for the given subnet, or `null` if no schedule exists.
+
+---
+
+### Create or update a scan schedule
+
+```
+POST /api.php?resource=scan_schedules
+Authorization: Bearer <key>
+Content-Type: application/json
+
+{
+  "subnet_id": 5,
+  "method": "icmp",
+  "interval_minutes": 60,
+  "is_active": 1,
+  "tcp_port": null
+}
+```
+
+**Requires write API key.** Upserts the schedule (creates or replaces). Returns HTTP 200 or 201 with the saved schedule object.
+
+---
+
+### Delete a scan schedule
+
+```
+DELETE /api.php?resource=scan_schedules&subnet_id=N
+Authorization: Bearer <key>
+```
+
+**Requires write API key.** Returns HTTP 204 on success, 404 if no schedule exists.
+
+---
+
 ## Pagination
 
 The `addresses`, `subnets`, `search`, and `audit` resources support pagination. Use the `page` and `limit` parameters to page through large result sets.

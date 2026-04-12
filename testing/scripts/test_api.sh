@@ -883,6 +883,74 @@ fi
 }
 
 # ====================================================================
+log "=== Scan API (v2.3.0) ==="
+# ====================================================================
+
+# Use the test subnet created in Subnets CRUD section (SUBNET_ID)
+if [[ -n "${SUBNET_ID:-}" && "$SUBNET_ID" != "None" ]]; then
+    # GET scan_results — expect 200 with empty array (no scans run)
+    call_api GET "scan_results&subnet_id=$SUBNET_ID"
+    assert_http 200 "GET scan_results (empty)"
+    SCAN_IS_ARR=$(python3 -c "import sys,json; d=json.load(sys.stdin); print('yes' if isinstance(d,list) else 'no')" <<< "$BODY" 2>/dev/null || echo "no")
+    [[ "$SCAN_IS_ARR" == "yes" ]] && pass "scan_results is array" || fail "scan_results expected array"
+
+    # GET scan_history — expect 200 with empty array
+    call_api GET "scan_history&subnet_id=$SUBNET_ID"
+    assert_http 200 "GET scan_history (empty)"
+    HIST_IS_ARR=$(python3 -c "import sys,json; d=json.load(sys.stdin); print('yes' if isinstance(d,list) else 'no')" <<< "$BODY" 2>/dev/null || echo "no")
+    [[ "$HIST_IS_ARR" == "yes" ]] && pass "scan_history is array" || fail "scan_history expected array"
+
+    # GET scan_schedules — expect 200 with array (may be empty)
+    call_api GET "scan_schedules"
+    assert_http 200 "GET scan_schedules list"
+    SCHED_IS_ARR=$(python3 -c "import sys,json; d=json.load(sys.stdin); print('yes' if isinstance(d,list) else 'no')" <<< "$BODY" 2>/dev/null || echo "no")
+    [[ "$SCHED_IS_ARR" == "yes" ]] && pass "scan_schedules is array" || fail "scan_schedules expected array"
+
+    # GET scan_schedules?subnet_id=N — no schedule yet, expect 200 with null
+    call_api GET "scan_schedules&subnet_id=$SUBNET_ID"
+    assert_http 200 "GET scan_schedules by subnet_id (none)"
+    SCHED_VAL=$(python3 -c "import sys,json; d=json.load(sys.stdin); print('null' if d is None else 'present')" <<< "$BODY" 2>/dev/null || echo "null")
+    [[ "$SCHED_VAL" == "null" ]] && pass "scan_schedule absent before creation" || skip "scan_schedule already exists for test subnet"
+
+    # POST scan_schedules — create schedule
+    call_api POST "scan_schedules" "{\"subnet_id\":$SUBNET_ID,\"method\":\"icmp\",\"interval_minutes\":60,\"is_active\":1}"
+    if [[ "$HTTP_CODE" == "200" || "$HTTP_CODE" == "201" ]]; then
+        pass "POST scan_schedules create (HTTP $HTTP_CODE)"
+    else
+        fail "POST scan_schedules create — expected 200/201, got $HTTP_CODE. Body: ${BODY:0:200}"
+    fi
+
+    # GET scan_schedules?subnet_id=N — should now return the schedule
+    call_api GET "scan_schedules&subnet_id=$SUBNET_ID"
+    assert_http 200 "GET scan_schedules by subnet_id (after create)"
+    SCHED_METHOD=$(python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('method','') if d else '')" <<< "$BODY" 2>/dev/null || echo "")
+    [[ "$SCHED_METHOD" == "icmp" ]] && pass "scan_schedule method=icmp" || fail "scan_schedule method expected icmp, got: $SCHED_METHOD"
+
+    # scan_schedules shows up in list
+    call_api GET "scan_schedules"
+    SCHED_COUNT=$(python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)" <<< "$BODY" 2>/dev/null || echo "0")
+    [[ "$SCHED_COUNT" -ge 1 ]] && pass "scan_schedules list has ≥1 entry" || fail "scan_schedules list empty after create"
+
+    # scan_run on large subnet should return 400 (cap enforced) or 404 for unknown
+    call_api POST "scan_run&subnet_id=999999"
+    [[ "$HTTP_CODE" == "400" || "$HTTP_CODE" == "404" || "$HTTP_CODE" == "403" ]] \
+        && pass "scan_run rejects non-existent subnet (HTTP $HTTP_CODE)" \
+        || fail "scan_run unexpected status $HTTP_CODE for non-existent subnet"
+
+    # DELETE scan_schedules — remove schedule
+    call_api DELETE "scan_schedules&subnet_id=$SUBNET_ID"
+    assert_http 204 "DELETE scan_schedule"
+
+    # GET scan_schedules?subnet_id=N — should now return null again
+    call_api GET "scan_schedules&subnet_id=$SUBNET_ID"
+    assert_http 200 "GET scan_schedules after delete"
+    SCHED_GONE=$(python3 -c "import sys,json; d=json.load(sys.stdin); print('null' if d is None else 'present')" <<< "$BODY" 2>/dev/null || echo "present")
+    [[ "$SCHED_GONE" == "null" ]] && pass "scan_schedule absent after delete" || fail "scan_schedule still present after delete"
+else
+    skip "Scan API tests — no test subnet available (SUBNET_ID not set)"
+fi
+
+# ====================================================================
 log "=== Health Check ==="
 # ====================================================================
 

@@ -295,6 +295,24 @@ test('visual audit — all pages', async ({ page }) => {
   await page.goto('db_tools.php');
   await shot(page, '19_db_tools');
 
+  // ── Scan History (v2.3.0) ──────────────────────────────────────────────────
+  await page.goto('scan_history.php');
+  await shot(page, '19b_scan_history');
+  allIssues.push(...await checkLiteralUnicode(page, 'scan_history'));
+  const scanHistTitle = await page.title();
+  if (!scanHistTitle.toLowerCase().includes('scan')) {
+    allIssues.push('[scan_history] Page title does not contain "scan"');
+  }
+
+  // ── ARP Import (v2.3.0) ───────────────────────────────────────────────────
+  await page.goto('import_arp.php');
+  await shot(page, '19c_import_arp');
+  allIssues.push(...await checkLiteralUnicode(page, 'import_arp'));
+  const arpTitle = await page.title();
+  if (!arpTitle.toLowerCase().includes('arp')) {
+    allIssues.push('[import_arp] Page title does not contain "arp"');
+  }
+
   // ── Change Password ───────────────────────────────────────────────────────
   await page.goto('change_password.php');
   await shot(page, '20_change_password');

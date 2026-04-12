@@ -434,6 +434,61 @@ function ipam_migrations(): array
                 ");
         },
 
+        // 2.3.0-scanning: network discovery & scanning tables
+        '2.3.0-scanning' => function(PDO $db): void {
+            $tables = array_column(
+                ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                'name'
+            );
+
+            // scan_schedules: per-subnet scan configuration
+            if (!in_array('scan_schedules', $tables, true)) {
+                $db->exec("CREATE TABLE scan_schedules (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    subnet_id        INTEGER NOT NULL REFERENCES subnets(id) ON DELETE CASCADE,
+                    method           TEXT NOT NULL DEFAULT 'icmp' CHECK(method IN ('icmp','tcp','both')),
+                    tcp_port         INTEGER,
+                    interval_minutes INTEGER NOT NULL DEFAULT 60 CHECK(interval_minutes >= 1),
+                    is_active        INTEGER NOT NULL DEFAULT 1,
+                    last_run_at      TEXT,
+                    created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE(subnet_id)
+                )");
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_scan_schedules_active ON scan_schedules(is_active, last_run_at)");
+            }
+
+            // scan_results: one row per IP per scan run
+            if (!in_array('scan_results', $tables, true)) {
+                $db->exec("CREATE TABLE scan_results (
+                    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    subnet_id  INTEGER NOT NULL REFERENCES subnets(id) ON DELETE CASCADE,
+                    address_id INTEGER REFERENCES addresses(id) ON DELETE SET NULL,
+                    ip         TEXT NOT NULL,
+                    method     TEXT NOT NULL,
+                    is_up      INTEGER NOT NULL DEFAULT 0,
+                    latency_ms INTEGER,
+                    scanned_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )");
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_scan_results_subnet_time ON scan_results(subnet_id, scanned_at DESC)");
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_scan_results_address ON scan_results(address_id, scanned_at DESC)");
+            }
+
+            // addresses.last_seen_at — timestamp of last successful scan response
+            $addrCols = array_column(
+                ($db->query("PRAGMA table_info(addresses)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                'name'
+            );
+            if (!in_array('last_seen_at', $addrCols, true)) {
+                $db->exec("ALTER TABLE addresses ADD COLUMN last_seen_at TEXT");
+            }
+            // addresses.is_stale — auto-stale flag set by scanner after N missed scans
+            if (!in_array('is_stale', $addrCols, true)) {
+                $db->exec("ALTER TABLE addresses ADD COLUMN is_stale INTEGER NOT NULL DEFAULT 0");
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_addresses_is_stale ON addresses(is_stale)");
+            }
+        },
+
         // 2.1.0-contacts: contacts as first-class objects
         '2.1.0-contacts' => function(PDO $db): void {
             $tables = array_column(

@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [2.3.0] - 2026-04-12
+
+### Added
+- **#319** — Ping sweep scanner (ICMP + TCP) implemented in pure PHP with no external dependencies. `ipam_probe_icmp()` uses `proc_open()` with the system `ping` binary (1-second timeout, 1 packet). `ipam_probe_tcp()` uses `fsockopen()`. All IPs validated through `normalize_ip()` before system calls. OS-aware flag handling (macOS vs Linux ping differences).
+- **#322** — Auto-stale detection: `ipam_mark_stale_addresses()` sets `addresses.is_stale=1` for addresses that have missed N consecutive scan results. Addresses that come back online are automatically cleared. Stale badge displayed inline on the addresses page.
+- **#321** — Scan history timeline: new `scan_history.php` page shows per-subnet scan run history with up/down counts, per-address last-seen timestamps, and stale badges. Accessible to all logged-in users (no admin role required). Linked from each subnet row via a "Scan History" action pill.
+- **#324** — Scan REST API endpoints: `GET /api.php?resource=scan_results&subnet_id=N` (last scan run), `GET scan_history` (paginated history), `GET/POST/DELETE scan_schedules` (per-subnet schedule management), `POST scan_run` (synchronous trigger, capped at /28 to prevent timeout). All documented in `docs/api.md`.
+- **#323** — CLI scan runner `scan_run.php`: cron-compatible script (`php scan_run.php --all`). Guards against web execution (403 on non-CLI SAPI). Supports `--subnet-id=N`, `--all` (runs all active scheduled subnets past their interval), `--dry-run`, `--method=icmp|tcp|both`, `--stale-threshold=N`. JSON summary output.
+- **#320** — ARP / neighbour table import: new `import_arp.php` page (write role required). Paste ARP output in any format (space/tab/CSV, Linux `arp -a` style). Two-step flow: preview parsed entries with in-subnet indicator, then apply to update `addresses.mac`. Audit logged as `address.arp_import`. Linked from the Admin nav dropdown.
+- **#351** — Sticky table headers fully fixed: `syncTopbarHeight()` in `app.js` measures the topbar at runtime (DOMContentLoaded + resize) and writes the accurate pixel value to `--topbar-h` CSS custom property, eliminating the hard-coded 79px offset that caused headers to anchor at the wrong scroll position. `thead th` z-index raised to 51 (one above topbar's z-index: 50) so tbody rows can never render above pinned headers.
+- **Database** — Two new tables: `scan_schedules` (per-subnet scan configuration with method, interval, active flag) and `scan_results` (one row per IP per scan run with latency). Two new columns on `addresses`: `last_seen_at` (timestamp of last successful ping response) and `is_stale` (auto-stale flag). Migration `2.3.0-scanning` with full idempotency guards.
+- **Testing** — PHPUnit `tests/ScannerTest.php`: 13 test methods covering ARP table parsing (space/tab/CSV/comment/invalid/`arp -a` formats), ARP import MAC update/skip/no-match, and stale detection (threshold, clear on recovery, no-data). Three new Playwright specs: `scan-history.spec.ts`, `import-arp.spec.ts`, `scan-schedule.spec.ts`. Existing `addresses.spec.ts` and `subnets.spec.ts` extended for scan column and schedule UI. `test_api.sh` extended with scan resource tests. Large-DB sample updated to seed scan schedules and results.
+- **Docs** — `docs/scanning.md` (new): setup, cron example, ICMP vs TCP, ARP import format, stale detection. `docs/api.md` updated with all scan endpoints.
+- **Config** — Semgrep rule `ipam-proc-open-safe`: flags user-controlled input reaching `proc_open()`/`fsockopen()` without `normalize_ip()` validation. CodeRabbit path instructions added for `scan_run.php`, `scan_history.php`, `import_arp.php`, and scanner functions in `lib.php`.
+
 ## [2.2.1] - 2026-04-12
 
 ### Fixed

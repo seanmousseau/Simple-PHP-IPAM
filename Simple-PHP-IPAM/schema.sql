@@ -119,6 +119,8 @@ CREATE TABLE IF NOT EXISTS addresses (
   expires_at       TEXT,                                  -- optional expiration date (YYYY-MM-DD), NULL = no expiry
   status           TEXT NOT NULL DEFAULT 'used',
   owner_contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,  -- v2.1.0: FK to contacts
+  last_seen_at     TEXT,                                  -- v2.3.0: last successful scan response timestamp
+  is_stale         INTEGER NOT NULL DEFAULT 0,            -- v2.3.0: 1 = host missed N consecutive scans
   created_at       TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(subnet_id, ip),
@@ -131,6 +133,7 @@ CREATE INDEX IF NOT EXISTS idx_addresses_owner ON addresses(owner);
 CREATE INDEX IF NOT EXISTS idx_addresses_status ON addresses(status);
 CREATE INDEX IF NOT EXISTS idx_addresses_grp ON addresses(grp);
 CREATE INDEX IF NOT EXISTS idx_addresses_owner_contact_id ON addresses(owner_contact_id);
+CREATE INDEX IF NOT EXISTS idx_addresses_is_stale ON addresses(is_stale);
 
 CREATE TRIGGER IF NOT EXISTS addresses_updated_at
 AFTER UPDATE ON addresses
@@ -259,6 +262,36 @@ CREATE TABLE IF NOT EXISTS alert_state (
   last_alerted_at TEXT NOT NULL,
   PRIMARY KEY (subnet_id, level)
 );
+
+-- v2.3.0: Network scanning
+CREATE TABLE IF NOT EXISTS scan_schedules (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  subnet_id        INTEGER NOT NULL REFERENCES subnets(id) ON DELETE CASCADE,
+  method           TEXT NOT NULL DEFAULT 'icmp' CHECK(method IN ('icmp','tcp','both')),
+  tcp_port         INTEGER,
+  interval_minutes INTEGER NOT NULL DEFAULT 60 CHECK(interval_minutes >= 1),
+  is_active        INTEGER NOT NULL DEFAULT 1,
+  last_run_at      TEXT,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(subnet_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_scan_schedules_active ON scan_schedules(is_active, last_run_at);
+
+CREATE TABLE IF NOT EXISTS scan_results (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  subnet_id  INTEGER NOT NULL REFERENCES subnets(id) ON DELETE CASCADE,
+  address_id INTEGER REFERENCES addresses(id) ON DELETE SET NULL,
+  ip         TEXT NOT NULL,
+  method     TEXT NOT NULL,
+  is_up      INTEGER NOT NULL DEFAULT 0,
+  latency_ms INTEGER,
+  scanned_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_scan_results_subnet_time ON scan_results(subnet_id, scanned_at DESC);
+CREATE INDEX IF NOT EXISTS idx_scan_results_address ON scan_results(address_id, scanned_at DESC);
 
 CREATE TABLE IF NOT EXISTS schema_migrations (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,

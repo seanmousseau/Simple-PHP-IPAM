@@ -235,7 +235,42 @@ apikey.create       apikey.deactivate       apikey.activate      apikey.delete
 dhcp_pool.reserve   dhcp_pool.clear
 db.export           db.import               db.import_failed
 export.*            import.*
+scan.run            scan.schedule_create    scan.schedule_update   scan.schedule_delete
+address.arp_import
 ```
+
+---
+
+## Scanner (v2.3.0)
+
+### New tables
+- **`scan_schedules`** — per-subnet scan configuration: `subnet_id` (UNIQUE FK), `method` (icmp|tcp|both), `tcp_port`, `interval_minutes`, `is_active`, `last_run_at`
+- **`scan_results`** — one row per IP per scan run: `subnet_id`, `address_id` (nullable FK), `ip`, `method`, `is_up`, `latency_ms`, `scanned_at`
+
+### New columns on `addresses`
+- `last_seen_at TEXT` — datetime of last successful ping/TCP response
+- `is_stale INTEGER NOT NULL DEFAULT 0` — set by `ipam_mark_stale_addresses()`
+
+### New pages
+- `scan_history.php` — read-only scan timeline; requires `require_login()` (no admin gate)
+- `import_arp.php` — ARP import wizard; requires `require_write_access()` and CSRF
+- `scan_run.php` — CLI-only scan runner; must guard `PHP_SAPI !== 'cli'` at top
+
+### Scanner functions in lib.php
+- `ipam_probe_icmp(string $ip, int $timeoutMs): ?int` — IP **must** be pre-validated via `normalize_ip()` before this call; uses `proc_open()` with system `ping`; OS-aware flags (`-W ms` macOS, `-W s` Linux)
+- `ipam_probe_tcp(string $ip, int $port, int $timeoutMs): ?int` — IP and port **must** be validated; uses `fsockopen()`
+- `ipam_scan_subnet(PDO $db, int $subnetId, string $method, ?int $tcpPort): array` — enforces /28 cap for synchronous calls
+- `ipam_mark_stale_addresses(PDO $db, int $subnetId, int $missThreshold = 3): int` — runs in a transaction; audit logged if rows changed
+- `ipam_parse_arp_table(string $raw): array` — uses `filter_var(FILTER_VALIDATE_IP)` + MAC regex; never trusts raw input
+- `ipam_apply_arp_import(PDO $db, array $entries, int $subnetId): array` — returns `['matched', 'updated']` stats
+
+### Security patterns
+- **IP injection guard**: raw `$_GET`/`$_POST` IPs must go through `normalize_ip()` before `proc_open()`/`fsockopen()`. Semgrep rule `ipam-proc-open-safe` enforces this.
+- **CLI-only guard**: `scan_run.php` must `header('HTTP/1.1 403 Forbidden'); exit(1)` on non-CLI SAPI.
+- **Sync cap**: `api_scan_run()` checks prefix ≤ 28 and returns HTTP 400 for larger subnets.
+
+### Nav
+Admin dropdown includes **ARP Import** (`import_arp.php`). Subnet rows include a **Scan History** action pill.
 
 ---
 

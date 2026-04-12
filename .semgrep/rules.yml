@@ -137,6 +137,41 @@ rules:
       confidence: HIGH
 
   # ---------------------------------------------------------------------------
+  # Scanner IP injection: proc_open() / socket functions with user-controlled IP
+  #
+  # All IPs passed to proc_open() (ping) or fsockopen() must be validated
+  # through normalize_ip() first. This rule flags any such call where the
+  # argument derives directly from $_GET/$_POST/$_REQUEST without validation.
+  # ---------------------------------------------------------------------------
+  - id: ipam-proc-open-safe
+    mode: taint
+    pattern-sources:
+      - pattern: $_GET[...]
+      - pattern: $_POST[...]
+      - pattern: $_REQUEST[...]
+    pattern-sanitizers:
+      - pattern: normalize_ip(...)
+      - pattern: filter_var($X, FILTER_VALIDATE_IP)
+      - pattern: (int)$X
+      - pattern: intval(...)
+    pattern-sinks:
+      - pattern: proc_open($SINK, ...)
+      - pattern: shell_exec($SINK)
+      - pattern: system($SINK, ...)
+      - pattern: passthru($SINK, ...)
+      - pattern: fsockopen($SINK, ...)
+      - pattern: pfsockopen($SINK, ...)
+    message: >
+      User input ($SOURCE) passed to a process/socket function without IP validation.
+      Always call normalize_ip() to validate before passing to proc_open/fsockopen.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: CWE-78
+      confidence: HIGH
+
+  # ---------------------------------------------------------------------------
   # Open redirect: header('Location: ...') with unvalidated user input
   # ---------------------------------------------------------------------------
   - id: ipam-open-redirect
