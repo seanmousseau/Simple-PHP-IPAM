@@ -16,6 +16,7 @@ import {
 let ctx: BrowserContext;
 let page: Page;
 let testSubnetId = 0;
+let createdSubnet = false; // track whether this spec created the subnet
 
 test.beforeAll(async ({ browser }: { browser: Browser }) => {
   ctx = await newAuthContext(browser);
@@ -35,6 +36,7 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
     });
     await page.goto('subnets.php');
     existingId = await subnetIdFor(page, TEST_SCAN_CIDR);
+    createdSubnet = true;
   }
   testSubnetId = existingId ?? 0;
 
@@ -56,10 +58,13 @@ test.afterAll(async () => {
         action: 'delete_scan_schedule',
         id:     String(testSubnetId),
       });
-      await fetchPost(page, appUrl('subnets.php'), {
-        action: 'delete',
-        id:     String(testSubnetId),
-      });
+      // Only delete the subnet if this spec created it
+      if (createdSubnet) {
+        await fetchPost(page, appUrl('subnets.php'), {
+          action: 'delete',
+          id:     String(testSubnetId),
+        });
+      }
     }
   } catch { /* best-effort cleanup */ }
   await ctx?.close();
@@ -99,11 +104,12 @@ test('subnets.php shows Active badge for scheduled subnet', async () => {
   if (testSubnetId <= 0) test.skip();
 
   await page.goto('subnets.php');
-  // A scheduled subnet should display a visible scan-related status indicator
-  // The schedule was created with is_active=1 so the badge or schedule summary should appear
-  const body = await page.locator('body').innerText();
-  // The page should reference the scan interval or method somewhere for the subnet
-  expect(body.length).toBeGreaterThan(0);
+  // A scheduled subnet should show the Scan Schedule details element as attached
+  const scheduleDetails = page.locator('details').filter({ hasText: /Scan Schedule/i });
+  await expect(scheduleDetails.first()).toBeAttached();
+  // The schedule was saved with method=icmp so the form should reflect that
+  const methodSelect = scheduleDetails.first().locator('select[name="scan_method"]');
+  await expect(methodSelect).toHaveValue('icmp');
 });
 
 test('scan history pill links to scan_history.php for scheduled subnet', async () => {

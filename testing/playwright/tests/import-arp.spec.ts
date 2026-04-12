@@ -16,6 +16,7 @@ import {
 let ctx: BrowserContext;
 let page: Page;
 let testSubnetId = 0;
+let createdSubnet = false; // track whether this spec created the subnet
 let testIp = '10.44.0.1';
 
 test.beforeAll(async ({ browser }: { browser: Browser }) => {
@@ -36,6 +37,7 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
     });
     await page.goto('subnets.php');
     existingId = await subnetIdFor(page, TEST_SCAN_CIDR);
+    createdSubnet = true;
   }
   testSubnetId = existingId ?? 0;
 
@@ -52,12 +54,15 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
 });
 
 test.afterAll(async () => {
-  if (testSubnetId > 0) {
-    await fetchPost(page, appUrl('subnets.php'), {
-      action: 'delete',
-      id:     String(testSubnetId),
-    });
-  }
+  try {
+    // Only delete the subnet if this spec created it
+    if (createdSubnet && testSubnetId > 0) {
+      await fetchPost(page, appUrl('subnets.php'), {
+        action: 'delete',
+        id:     String(testSubnetId),
+      });
+    }
+  } catch { /* best-effort cleanup */ }
   await ctx?.close();
 });
 

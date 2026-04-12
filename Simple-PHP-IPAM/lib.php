@@ -3356,6 +3356,16 @@ function ipam_probe_tcp(string $ip, int $port, int $timeoutMs = 1000): ?int
  */
 function ipam_scan_subnet(PDO $db, int $subnetId, string $method, ?int $tcpPort, int $staleThreshold = 3): array
 {
+    // Normalise and validate inputs
+    if (!in_array($method, ['icmp', 'tcp', 'both'], true)) $method = 'icmp';
+    if (in_array($method, ['tcp', 'both'], true) && ($tcpPort === null || $tcpPort < 1 || $tcpPort > 65535)) {
+        // Invalid TCP port — fall back to ICMP-only to avoid false-stale marking
+        $method = 'icmp';
+        $tcpPort = null;
+    }
+    // After validation: if method needs TCP, $tcpPort is a valid port integer
+    $validTcpPort = ($method === 'tcp' || $method === 'both') ? (int) $tcpPort : 0;
+
     // Load all addresses in the subnet
     $st = $db->prepare("SELECT id, ip FROM addresses WHERE subnet_id = :sid ORDER BY ip_bin");
     $st->execute([':sid' => $subnetId]);
@@ -3386,8 +3396,8 @@ function ipam_scan_subnet(PDO $db, int $subnetId, string $method, ?int $tcpPort,
             $lat = ipam_probe_icmp($validIp);
             if ($lat !== null) { $latency = $lat; $isUp = true; }
         }
-        if (($method === 'tcp' || $method === 'both') && $tcpPort !== null && !$isUp) {
-            $lat = ipam_probe_tcp($validIp, $tcpPort);
+        if (($method === 'tcp' || $method === 'both') && $validTcpPort > 0 && !$isUp) {
+            $lat = ipam_probe_tcp($validIp, $validTcpPort);
             if ($lat !== null) { $latency = $lat; $isUp = true; }
         }
 
