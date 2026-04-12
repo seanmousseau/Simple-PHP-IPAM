@@ -516,7 +516,7 @@ function ipam_config_defaults(): array
                 'enabled'          => false,
                 'project_id'       => '',
                 'api_key'          => '',
-                'expected_action'  => 'LOGIN',
+                'expected_action'  => 'login',
                 'score_threshold'  => 0.5,
             ],
             'comment' => "reCAPTCHA Enterprise (v3). Set login_protection.method = 'recaptcha' and enable this block to use the Enterprise API for backend verification. project_id: GCP project ID. api_key: server-side API key. expected_action: action name from widget. score_threshold: 0.0–1.0 (default 0.5).",
@@ -1402,10 +1402,17 @@ function login_protection_widget_html(array $config): string
             return "<script src='https://js.hcaptcha.com/1/api.js' async defer></script>"
                  . "<div class='h-captcha' data-sitekey='{$siteKey}'></div>";
         case 'recaptcha':
-            $ver = $cfg['version'];
+            $ver        = $cfg['version'];
+            /** @var IpamConfig $gCfg */
+            $gCfg  = $GLOBALS['config'] ?? [];
+            $isEnt = !empty($gCfg['recaptcha_enterprise']['enabled']);
             if ($ver === 3) {
-                return "<script src='https://www.google.com/recaptcha/api.js?render={$siteKey}' async defer></script>"
-                     . "<input type='hidden' name='g-recaptcha-response' id='g-recaptcha-response' data-recaptcha-v3-key='{$siteKey}'>";
+                $scriptSrc = $isEnt
+                    ? "https://www.google.com/recaptcha/enterprise.js?render={$siteKey}"
+                    : "https://www.google.com/recaptcha/api.js?render={$siteKey}";
+                $entAttr = $isEnt ? " data-recaptcha-enterprise='1'" : '';
+                return "<script src='{$scriptSrc}' async defer></script>"
+                     . "<input type='hidden' name='g-recaptcha-response' id='g-recaptcha-response' data-recaptcha-v3-key='{$siteKey}'{$entAttr}>";
             }
             return "<script src='https://www.google.com/recaptcha/api.js' async defer></script>"
                  . "<div class='g-recaptcha' data-sitekey='{$siteKey}'></div>";
@@ -2336,11 +2343,11 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=1.19.0'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=1.19.1'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=1.19.0'></script>";
+    echo "<script defer src='assets/app.js?v=1.19.1'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
