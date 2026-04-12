@@ -8,6 +8,15 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 
 ---
 
+## What's new in v2.2.0
+
+- **Sticky table headers fixed** — two CSS stacking-context bugs corrected; headers now reliably pin below the navbar on all table pages (`overflow:hidden` → `clip-path`, `overflow-y:clip` on wrapper, corrected topbar offset)
+- **Contacts, VRFs, and DHCP Pool test suites** — three new Playwright specs bring full CRUD + integration coverage to the Contacts admin page, VRFs admin page (including delete-guard validation), and the DHCP Pool reservation tool
+- **Large-DB sample refreshed** — test sample database regenerated with current v2.1.x schema including VRFs, contacts, tags, VLANs, MAC addresses, and expiry dates (500 subnets, 43 000+ addresses)
+- **Visual audit selector fix** — subnet map check in `visual-audit.spec.ts` corrected to use actual DOM classes
+
+See [CHANGELOG.md](CHANGELOG.md) for full details.
+
 ## What's new in v2.1.5
 
 - **Rendering fixes** — VLAN badge no longer shows literal `\u{2014}`; search overlay placeholder no longer shows literal `\u2026`; sticky table header z-index corrected so headers always appear above scrolled rows

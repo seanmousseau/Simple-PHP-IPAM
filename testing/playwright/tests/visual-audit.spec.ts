@@ -180,11 +180,13 @@ test('visual audit — all pages', async ({ page }) => {
   await page.evaluate(() => localStorage.setItem('ipam_subnet_view', 'map'));
   await page.reload();
   await shot(page, '04_subnets_map');
-  // Only check for .subnet-map if subnets exist (it's rendered server-side when there's data)
-  const subnetCount = await page.locator('.subnet-node').count();
-  const mapEl = await page.locator('.subnet-map').count();
-  if (subnetCount > 0 && mapEl === 0) {
-    allIssues.push(`[subnets] Map view renders no .subnet-map element despite ${subnetCount} subnet nodes visible in list`);
+  // Check that the map view container and node elements are present (#344)
+  const mapContainer = await page.locator('#subnet-map-view').count();
+  const mapNodes    = await page.locator('.map-node').count();
+  if (mapContainer === 0) {
+    allIssues.push('[subnets] Map view container #subnet-map-view not found in DOM');
+  } else if (mapNodes === 0) {
+    console.log('[subnets] Map view container present but no .map-node elements — no subnet data in demo DB');
   }
   // Restore list view
   await page.evaluate(() => localStorage.setItem('ipam_subnet_view', 'list'));

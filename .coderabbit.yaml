@@ -88,6 +88,38 @@ reviews:
         - Screenshots on failure are configured in playwright.config.ts — do not add manual screenshot calls.
         - VLAN constants: TEST_VLAN_ID=99, TEST_VLAN_NAME='pw-test-vlan'. Use createVlan/deleteVlan helpers.
         - Tag constants: TEST_TAG_NAME='pw-test-tag', TEST_TAG_COLOUR='#ff0000'. Use createTag/deleteTag helpers.
+        - Contact constants: TEST_CONTACT_NAME, TEST_CONTACT_EMAIL, TEST_CONTACT_ORG — defined in fixtures/ipam.ts.
+        - VRF constants: TEST_VRF_NAME, TEST_VRF_DESC, TEST_VRF_RD, TEST_VRF_CIDR — defined in fixtures/ipam.ts.
+        - DHCP constant: TEST_DHCP_CIDR='10.55.0.0/24' — defined in fixtures/ipam.ts.
+
+    - path: "testing/playwright/tests/contacts.spec.ts"
+      instructions: |
+        Tests contacts.php CRUD, contact-address owner_contact_id typeahead integration,
+        readonly-user 403 guard, and API ?resource=contacts endpoint. Key invariants:
+        - beforeAll must clean up stale pw-test-contact records from previous failed runs.
+        - afterAll context.close() must always run.
+        - The contacts page requires admin role; test readonly access via fetchGet (not browser navigation).
+        - Contact name is required — verify required attribute; avoid empty-name submissions.
+
+    - path: "testing/playwright/tests/vrfs.spec.ts"
+      instructions: |
+        Tests vrfs.php CRUD, VRF picker on subnets.php (select[name=vrf_id]), VRF badge
+        (.badge containing "VRF: <name>"), delete-guard when subnets are assigned (button disabled),
+        and API ?resource=vrfs. Key invariants:
+        - beforeAll must clean up stale pw-test-vrf records and their associated subnets.
+        - "Cannot delete" test must check the disabled attribute on the delete button — the server
+          also blocks it, but the UI guard is first.
+        - VRF picker only renders if vrfList is non-empty — create the VRF before testing the picker.
+
+    - path: "testing/playwright/tests/dhcp_pool.spec.ts"
+      instructions: |
+        Tests dhcp_pool.php subnet picker, reserve_pool action, clear_pool action, and
+        readonly-user write-form hiding. Key invariants:
+        - beforeAll must create the TEST_DHCP_CIDR (10.55.0.0/24) subnet if absent; afterAll must delete it.
+        - Navigate via ?subnet_id= query param (not the select auto-submit) to ensure deterministic routing.
+        - Reserve range 10.55.0.10–10.55.0.20 (11 IPs); verify .success message and table entries.
+        - Clear range must remove the reserved records; verify .empty-state appears.
+        - Readonly user must not see reserve_pool / clear_pool forms.
 
     - path: "testing/playwright/tests/large-db.spec.ts"
       instructions: |

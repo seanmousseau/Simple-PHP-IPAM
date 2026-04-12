@@ -4,7 +4,7 @@
  */
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import {
-  login, fetchPost, fetchGet, fetchPostForm, deleteSubnet, subnetIdFor, appUrl,
+  login, fetchPost, fetchPostForm, deleteSubnet, appUrl,
   ADMIN_USER, ADMIN_PASS, TEST_CIDR1,
   newAuthContext,
 } from '../fixtures/ipam';
@@ -22,7 +22,7 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
   await page.goto('subnets.php');
   await deleteSubnet(page, TEST_CIDR1);
   await fetchPost(page, appUrl('subnets.php'), {
-    action: 'create', cidr: TEST_CIDR1, description: 'PW db-tools test',
+    action: 'create', cidr: TEST_CIDR1, description: 'PW db-tools test', confirm_overlap: '1',
   });
 });
 

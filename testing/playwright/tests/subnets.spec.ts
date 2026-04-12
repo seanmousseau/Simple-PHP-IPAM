@@ -57,7 +57,7 @@ test.afterAll(async () => {
 
 test('create subnet appears in list', async () => {
   await fetchPost(page, appUrl('subnets.php'), {
-    action: 'create', cidr: TEST_CIDR1, description: 'PW test subnet 1',
+    action: 'create', cidr: TEST_CIDR1, description: 'PW test subnet 1', confirm_overlap: '1',
   });
   await page.goto('subnets.php');
   await expect(page.getByText(TEST_CIDR1).first()).toBeVisible();
@@ -68,7 +68,7 @@ test('create subnet appears in list', async () => {
 test('duplicate subnet shows error', async () => {
   await page.goto('subnets.php');
   const r = await fetchPost(page, appUrl('subnets.php'), {
-    action: 'create', cidr: TEST_CIDR1, description: 'dup',
+    action: 'create', cidr: TEST_CIDR1, description: 'dup', confirm_overlap: '1',
   });
   expect(r.body).toMatch(/already exists|duplicate/i);
 });
@@ -78,7 +78,7 @@ test('update subnet description', async () => {
   await page.goto('subnets.php');
   await fetchPost(page, appUrl('subnets.php'), {
     action: 'update', id: String(subnetId!),
-    cidr: TEST_CIDR1, description: 'PW test subnet 1 — EDITED',
+    cidr: TEST_CIDR1, description: 'PW test subnet 1 — EDITED', confirm_overlap: '1',
   });
   await page.goto('subnets.php');
   await expect(page.getByText('EDITED').first()).toBeVisible();

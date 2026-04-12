@@ -26,7 +26,7 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
 
   // Create IPv4 test subnet and one address (to verify it's excluded from unassigned list)
   await fetchPost(page, appUrl('subnets.php'), {
-    action: 'create', cidr: TEST_CIDR2, description: 'PW unassigned test',
+    action: 'create', cidr: TEST_CIDR2, description: 'PW unassigned test', confirm_overlap: '1',
   });
   await page.goto('subnets.php');
   ipv4SubnetId = await subnetIdFor(page, TEST_CIDR2);
@@ -43,7 +43,7 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
   // Create IPv6 test subnet
   await page.goto('subnets.php');
   await fetchPost(page, appUrl('subnets.php'), {
-    action: 'create', cidr: TEST_CIDR_V6, description: 'PW IPv6 unassigned test',
+    action: 'create', cidr: TEST_CIDR_V6, description: 'PW IPv6 unassigned test', confirm_overlap: '1',
   });
   await page.goto('subnets.php');
   ipv6SubnetId = await subnetIdFor(page, TEST_CIDR_V6);

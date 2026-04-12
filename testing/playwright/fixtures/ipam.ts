@@ -44,6 +44,17 @@ export const TEST_VLAN_CIDR = '10.77.99.0/24';
 export const TEST_TAG_NAME   = 'pw-test-tag';
 export const TEST_TAG_COLOUR = '#ff0000';
 
+export const TEST_CONTACT_NAME  = 'pw-test-contact';
+export const TEST_CONTACT_EMAIL = 'pw-test@example.com';
+export const TEST_CONTACT_ORG   = 'PW Test Org';
+
+export const TEST_VRF_NAME = 'pw-test-vrf';
+export const TEST_VRF_DESC = 'Playwright test VRF';
+export const TEST_VRF_RD   = '65000:999';
+export const TEST_VRF_CIDR = '10.66.0.0/24';
+
+export const TEST_DHCP_CIDR = '10.55.0.0/24';
+
 export const TEST_CIDR1     = '10.99.0.0/24';
 export const TEST_CIDR2     = '10.88.0.0/24';
 export const TEST_CIDR_V6   = '2001:db8:1::/120';
@@ -171,6 +182,29 @@ export async function fetchGet(
     },
     { url, basicAuth },
   );
+}
+
+/**
+ * Ensure the pw-readonly test user exists. Creates it via users.php if not present.
+ * Must be called from an admin-authenticated page context.
+ * The db-tools import test wipes the DB, so this must be called before any readonly login.
+ */
+export async function ensureRoUser(page: Page): Promise<void> {
+  await page.goto('users.php');
+  const exists = await page.evaluate((u) => {
+    for (const td of document.querySelectorAll<HTMLElement>('table td')) {
+      if (td.textContent?.trim() === u) return true;
+    }
+    return false;
+  }, RO_USER);
+  if (!exists) {
+    await fetchPost(page, appUrl('users.php'), {
+      action: 'create',
+      username: RO_USER,
+      password: RO_PASS,
+      role: 'readonly',
+    });
+  }
 }
 
 // ── Subnet helpers ─────────────────────────────────────────────────────────────
