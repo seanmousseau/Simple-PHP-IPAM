@@ -22,18 +22,6 @@ $allowedStatus = ['', 'used', 'reserved', 'free'];
 if (!in_array($status, $allowedStatus, true)) $status = '';
 if (!in_array($ipVersion, [0, 4, 6], true)) $ipVersion = 0;
 
-/* Fetch sites for filter dropdown */
-$st = $db->prepare("SELECT id, name FROM sites ORDER BY name ASC");
-$st->execute();
-/** @var list<array<string, mixed>> $siteList */
-$siteList = $st->fetchAll();
-
-/* Fetch subnets for filter dropdown (include site_id for JS filtering) */
-$st = $db->prepare("SELECT id, cidr, ip_version, site_id FROM subnets ORDER BY ip_version ASC, cidr ASC");
-$st->execute();
-/** @var list<array<string, mixed>> $subnets */
-$subnets = $st->fetchAll();
-
 /* Build WHERE clause — all conditions reference `a` or `s` (subnets already joined) */
 $where  = [];
 $params = [];
@@ -61,7 +49,7 @@ if ($ipVersion > 0) {
 
 $whereSql = $where ? ("WHERE " . implode(" AND ", $where)) : "";
 
-/* --- format=json branch: used by the ⌘K overlay --- */
+/* --- format=json branch: used by the ⌘K overlay — exits before loading dropdown data --- */
 if ($format === 'json') {
     header('Content-Type: application/json; charset=utf-8');
     $st = $db->prepare("
@@ -90,6 +78,17 @@ if ($format === 'json') {
     echo json_encode($out, JSON_UNESCAPED_SLASHES);
     exit;
 }
+
+/* Fetch sites and subnets for filter dropdowns (HTML path only) */
+$st = $db->prepare("SELECT id, name FROM sites ORDER BY name ASC");
+$st->execute();
+/** @var list<array<string, mixed>> $siteList */
+$siteList = $st->fetchAll();
+
+$st = $db->prepare("SELECT id, cidr, ip_version, site_id FROM subnets ORDER BY ip_version ASC, cidr ASC");
+$st->execute();
+/** @var list<array<string, mixed>> $subnets */
+$subnets = $st->fetchAll();
 
 /* Count query — must JOIN subnets when site/version filters are active */
 $st = $db->prepare("

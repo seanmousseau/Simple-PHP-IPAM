@@ -372,27 +372,28 @@ function ipam_migrations(): array
                 return;
             }
 
-            // Temporarily disable FK enforcement for the table rebuild
-            $db->exec("PRAGMA foreign_keys = OFF");
-            try {
-                $db->exec("
-                    CREATE TABLE subnets_new (
-                        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                        cidr        TEXT NOT NULL,
-                        ip_version  INTEGER NOT NULL,
-                        network     TEXT NOT NULL,
-                        network_bin BLOB NOT NULL,
-                        prefix      INTEGER NOT NULL,
-                        description TEXT NOT NULL DEFAULT '',
-                        site_id     INTEGER,
-                        vlan_id     INTEGER,
-                        vlan_fk     INTEGER REFERENCES vlans(id) ON DELETE SET NULL,
-                        vrf_id      INTEGER REFERENCES vrfs(id) ON DELETE SET NULL,
-                        created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-                        updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
-                        UNIQUE(cidr, vrf_id)
-                    )
-                ");
+            // Note: PRAGMA foreign_keys is a no-op inside a transaction, but DROP TABLE
+            // in SQLite does not check FK constraints on DDL — only DML triggers FK checks.
+            // All child tables (addresses, subnet_tags, alert_state) use ON DELETE CASCADE,
+            // so the rename-based rebuild is safe without disabling FK enforcement.
+            $db->exec("
+                CREATE TABLE subnets_new (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    cidr        TEXT NOT NULL,
+                    ip_version  INTEGER NOT NULL,
+                    network     TEXT NOT NULL,
+                    network_bin BLOB NOT NULL,
+                    prefix      INTEGER NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    site_id     INTEGER,
+                    vlan_id     INTEGER,
+                    vlan_fk     INTEGER REFERENCES vlans(id) ON DELETE SET NULL,
+                    vrf_id      INTEGER REFERENCES vrfs(id) ON DELETE SET NULL,
+                    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE(cidr, vrf_id)
+                )
+            ");
                 $db->exec("
                     INSERT INTO subnets_new
                         (id, cidr, ip_version, network, network_bin, prefix, description,
@@ -426,9 +427,6 @@ function ipam_migrations(): array
                       UPDATE subnets SET vlan_id = NULL WHERE vlan_fk = OLD.id;
                     END
                 ");
-            } finally {
-                $db->exec("PRAGMA foreign_keys = ON");
-            }
         },
 
         // 2.1.0-contacts: contacts as first-class objects
@@ -466,6 +464,7 @@ function ipam_migrations(): array
             );
             if (!in_array('owner_contact_id', $addrCols, true)) {
                 $db->exec("ALTER TABLE addresses ADD COLUMN owner_contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL");
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_addresses_owner_contact_id ON addresses(owner_contact_id)");
             }
         },
     ];

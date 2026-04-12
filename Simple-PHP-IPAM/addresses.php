@@ -200,7 +200,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             audit($db, 'address.update', 'address', $id, "status=$newStatus via inline toggle");
         }
         header('Content-Type: application/json');
-        echo '{"ok":true,"status":"' . $newStatus . '"}';
+        echo json_encode(['ok' => true, 'status' => $newStatus]); // nosemgrep: php.lang.security.xss
         exit;
     } elseif ($action === 'update_cell') {
         // Inline cell edit — JSON response; CSRF already verified above
@@ -225,9 +225,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
         // Static SQL per field — no interpolation of user-controlled data
+        // Editing 'owner' free-text clears the structured contact link to keep them in sync.
         $updateSql = match ($field) {
             'hostname' => "UPDATE addresses SET hostname=:v, updated_at=datetime('now') WHERE id=:id",
-            'owner'    => "UPDATE addresses SET owner=:v, updated_at=datetime('now') WHERE id=:id",
+            'owner'    => "UPDATE addresses SET owner=:v, owner_contact_id=NULL, updated_at=datetime('now') WHERE id=:id",
             'note'     => "UPDATE addresses SET note=:v, updated_at=datetime('now') WHERE id=:id",
             'grp'      => "UPDATE addresses SET grp=:v, updated_at=datetime('now') WHERE id=:id",
         };

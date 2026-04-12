@@ -750,6 +750,15 @@
           overlay.classList.contains("visible") ? closeOverlay() : openOverlay();
         }
       });
+
+      // Delegated handler for the ⌘K nav button (replaces inline onclick removed for CSP compliance)
+      document.addEventListener("click", function(e) {
+        var btn = e.target.closest(".nav-search-key");
+        if (btn) {
+          e.preventDefault();
+          overlay.classList.contains("visible") ? closeOverlay() : openOverlay();
+        }
+      });
     }());
   });
 })();

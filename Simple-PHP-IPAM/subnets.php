@@ -164,31 +164,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'site_id' => $siteId ?? 0, 'vlan_fk' => $vlanFk ?? 0, 'vrf_id' => $vrfId ?? 0,
                 ];
             } else {
-                try {
-                    $st = $db->prepare("UPDATE subnets
-                                        SET cidr=:cidr, ip_version=:ver, network=:net, network_bin=:nb, prefix=:pre, description=:d, site_id=:site, vlan_id=:vlan, vlan_fk=:vfk, vrf_id=:vrf
-                                        WHERE id=:id");
-                    $st->execute([
-                        ':cidr' => $normalized,
-                        ':ver'  => $p['version'],
-                        ':net'  => $p['network'],
-                        ':nb'   => $p['net_bin'],
-                        ':pre'  => $p['prefix'],
-                        ':d'    => $desc,
-                        ':site' => $siteId,
-                        ':vlan' => $vlanId,
-                        ':vfk'  => $vlanFk,
-                        ':vrf'  => $vrfId,
-                        ':id'   => $id,
-                    ]);
-                    audit($db, 'subnet.update', 'subnet', $id, $normalized);
-                    $msg = 'Subnet updated.';
-                    if ($inheritedSiteId !== null) {
-                        $inheritedName = $siteMap[$inheritedSiteId] ?? "site #$inheritedSiteId";
-                        $warn = 'Site set to "' . $inheritedName . '" inherited from parent subnet.';
+                $dupChk = $db->prepare("SELECT id FROM subnets WHERE cidr = :cidr AND vrf_id IS :vrf AND id != :self");
+                $dupChk->execute([':cidr' => $normalized, ':vrf' => $vrfId, ':self' => $id]);
+                if ($dupChk->fetch()) {
+                    $err = 'A subnet with this CIDR already exists.';
+                } else {
+                    try {
+                        $st = $db->prepare("UPDATE subnets
+                                            SET cidr=:cidr, ip_version=:ver, network=:net, network_bin=:nb, prefix=:pre, description=:d, site_id=:site, vlan_id=:vlan, vlan_fk=:vfk, vrf_id=:vrf
+                                            WHERE id=:id");
+                        $st->execute([
+                            ':cidr' => $normalized,
+                            ':ver'  => $p['version'],
+                            ':net'  => $p['network'],
+                            ':nb'   => $p['net_bin'],
+                            ':pre'  => $p['prefix'],
+                            ':d'    => $desc,
+                            ':site' => $siteId,
+                            ':vlan' => $vlanId,
+                            ':vfk'  => $vlanFk,
+                            ':vrf'  => $vrfId,
+                            ':id'   => $id,
+                        ]);
+                        audit($db, 'subnet.update', 'subnet', $id, $normalized);
+                        $msg = 'Subnet updated.';
+                        if ($inheritedSiteId !== null) {
+                            $inheritedName = $siteMap[$inheritedSiteId] ?? "site #$inheritedSiteId";
+                            $warn = 'Site set to "' . $inheritedName . '" inherited from parent subnet.';
+                        }
+                    } catch (PDOException $e) {
+                        $err = 'Could not update subnet (duplicate?).';
                     }
-                } catch (PDOException $e) {
-                    $err = 'Could not update subnet (duplicate?).';
                 }
             }
         }
@@ -237,9 +243,13 @@ function build_subnet_tree_local(array $rows): array
     $byId = [];
     foreach ($rows as $r) $byId[to_int($r['id'])] = $r;
 
-    // Sort by ip_version ASC, prefix ASC (broadest first), network_bin ASC
+    // Sort by vrf_id ASC (NULL=0), then ip_version ASC, prefix ASC (broadest first), network_bin ASC.
+    // VRF grouping ensures subnets from different VRFs never become parents of each other.
     $sorted = $byId;
     uasort($sorted, function(array $a, array $b): int {
+        $vrfa = $a['vrf_id'] !== null ? to_int($a['vrf_id']) : 0;
+        $vrfb = $b['vrf_id'] !== null ? to_int($b['vrf_id']) : 0;
+        if ($vrfa !== $vrfb) return $vrfa <=> $vrfb;
         $va = to_int($a['ip_version']); $vb = to_int($b['ip_version']);
         if ($va !== $vb) return $va <=> $vb;
         $pa = to_int($a['prefix']); $pb = to_int($b['prefix']);
@@ -258,11 +268,14 @@ function build_subnet_tree_local(array $rows): array
         $ver    = to_int($row['ip_version']);
         $prefix = to_int($row['prefix']);
         $netBin = to_str($row['network_bin']);
+        $curVrf = $row['vrf_id'] !== null ? to_int($row['vrf_id']) : 0;
 
         // Pop entries that cannot be a parent of this subnet
         while (!empty($stack)) {
-            $top = end($stack);
-            if (to_int($top['ip_version']) !== $ver) {
+            $top    = end($stack);
+            $topVrf = $top['vrf_id'] !== null ? to_int($top['vrf_id']) : 0;
+            // Different VRF or IP version: start a fresh stack
+            if ($topVrf !== $curVrf || to_int($top['ip_version']) !== $ver) {
                 $stack = [];
                 break;
             }
@@ -280,7 +293,7 @@ function build_subnet_tree_local(array $rows): array
             $roots[] = $id;
         }
 
-        $stack[] = ['id' => $id, 'ip_version' => $ver, 'prefix' => $prefix, 'network_bin' => $netBin];
+        $stack[] = ['id' => $id, 'ip_version' => $ver, 'prefix' => $prefix, 'network_bin' => $netBin, 'vrf_id' => $row['vrf_id']];
     }
 
     $cmpFn = function(int $a, int $b) use ($byId): int {
@@ -809,10 +822,10 @@ page_header('Subnets');
 
     <!-- Map view (#255) -->
     <div id="subnet-map-view" style="display:none">
-    <?php foreach ($siteGroups as $group): ?>
+    <?php $mapCount = [0]; foreach ($siteGroups as $group): ?>
       <div class="map-group mb-24">
         <div class="map-group-label"><?= e(to_str($group['label'])) ?></div>
-        <?php $mapCount = [0]; render_subnet_map_nodes($tree, $agg, array_map('intval', $group['roots']), 0, $mapCount); ?>
+        <?php render_subnet_map_nodes($tree, $agg, array_map('intval', $group['roots']), 0, $mapCount); ?>
       </div>
     <?php endforeach; ?>
     </div>

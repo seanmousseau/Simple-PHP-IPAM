@@ -696,7 +696,7 @@ function api_vrfs(PDO $db): never
         /** @var array<string, mixed>|false $row */
         $row = $st->fetch();
         if (!$row) api_error(404, 'VRF not found.');
-        api_json(fmt_vrf($row));
+        api_json(['vrf' => fmt_vrf($row)]);
     }
 
     $st = $db->prepare("SELECT id, name, description, rd, created_at, updated_at FROM vrfs ORDER BY name");
@@ -759,10 +759,12 @@ function api_vrfs_update(PDO $db, array $apiKey, int $id, array $body): never
     $desc = trim(to_str($body['description'] ?? ''));
     $rd   = trim(to_str($body['rd'] ?? ''));
     if ($name === '') api_error(400, 'name is required.');
+    $checkSt = $db->prepare("SELECT id FROM vrfs WHERE id = :id");
+    $checkSt->execute([':id' => $id]);
+    if (!$checkSt->fetch()) api_error(404, 'VRF not found.');
     try {
         $st = $db->prepare("UPDATE vrfs SET name=:n, description=:d, rd=:rd, updated_at=datetime('now') WHERE id=:id");
         $st->execute([':n' => $name, ':d' => $desc, ':rd' => $rd, ':id' => $id]);
-        if ($st->rowCount() === 0) api_error(404, 'VRF not found.');
         audit($db, 'vrf.update', 'vrf', $id, "name=$name");
     } catch (PDOException $e) {
         api_error(409, 'A VRF with that name already exists.');
@@ -803,7 +805,7 @@ function api_contacts(PDO $db): never
         /** @var array<string, mixed>|false $row */
         $row = $st->fetch();
         if (!$row) api_error(404, 'Contact not found.');
-        api_json(fmt_contact($row));
+        api_json(['contact' => fmt_contact($row)]);
     }
 
     $where  = [];
@@ -904,9 +906,11 @@ function api_contacts_update(PDO $db, array $apiKey, int $id, array $body): neve
     $org   = trim(to_str($body['org']   ?? ''));
     $note  = trim(to_str($body['note']  ?? ''));
     if ($name === '') api_error(400, 'name is required.');
+    $checkSt = $db->prepare("SELECT id FROM contacts WHERE id = :id");
+    $checkSt->execute([':id' => $id]);
+    if (!$checkSt->fetch()) api_error(404, 'Contact not found.');
     $st = $db->prepare("UPDATE contacts SET name=:n, email=:e, phone=:p, org=:o, note=:nt, updated_at=datetime('now') WHERE id=:id");
     $st->execute([':n' => $name, ':e' => $email, ':p' => $phone, ':o' => $org, ':nt' => $note, ':id' => $id]);
-    if ($st->rowCount() === 0) api_error(404, 'Contact not found.');
     audit($db, 'contact.update', 'contact', $id, "name=$name");
     $st = $db->prepare("SELECT id, name, email, phone, org, note, created_at, updated_at FROM contacts WHERE id = :id");
     $st->execute([':id' => $id]);
@@ -1700,7 +1704,7 @@ function api_subnets_update(PDO $db, array $apiKey, int $id, array $body): never
 {
     if ($id <= 0) api_error(400, 'id is required as a query parameter.');
 
-    $st = $db->prepare("SELECT id, cidr, description, site_id, vlan_id, vlan_fk FROM subnets WHERE id = :id");
+    $st = $db->prepare("SELECT id, cidr, description, site_id, vlan_id, vlan_fk, vrf_id FROM subnets WHERE id = :id");
     $st->execute([':id' => $id]);
     /** @var array<string, mixed>|false $subnet */
     $subnet = $st->fetch();
@@ -1716,6 +1720,9 @@ function api_subnets_update(PDO $db, array $apiKey, int $id, array $body): never
     $vlanFk = array_key_exists('vlan_fk', $body)
         ? ($body['vlan_fk'] !== null ? to_int($body['vlan_fk']) : null)
         : ($subnet['vlan_fk'] !== null ? to_int($subnet['vlan_fk']) : null);
+    $vrfId = array_key_exists('vrf_id', $body)
+        ? ($body['vrf_id'] !== null ? to_int($body['vrf_id']) : null)
+        : ($subnet['vrf_id'] !== null ? to_int($subnet['vrf_id']) : null);
 
     if ($vlanId !== null && ($vlanId < 1 || $vlanId > 4094)) {
         api_error(400, 'vlan_id must be between 1 and 4094.');
@@ -1733,13 +1740,19 @@ function api_subnets_update(PDO $db, array $apiKey, int $id, array $body): never
         if (!$siteSt->fetch()) api_error(404, 'Site not found.');
     }
 
-    // Inherit site from tightest parent if one exists
-    $inheritedSiteId = find_parent_site_id($db, to_str($subnet['cidr']), $id);
+    if ($vrfId !== null) {
+        $vrfSt = $db->prepare("SELECT id FROM vrfs WHERE id = :id");
+        $vrfSt->execute([':id' => $vrfId]);
+        if (!$vrfSt->fetch()) api_error(400, 'vrf_id refers to a non-existent VRF.');
+    }
+
+    // Inherit site from tightest parent if one exists (VRF-scoped)
+    $inheritedSiteId = find_parent_site_id($db, to_str($subnet['cidr']), $id, $vrfId);
     if ($inheritedSiteId !== null) $siteId = $inheritedSiteId;
 
     $db->prepare(
-        "UPDATE subnets SET description = :desc, site_id = :sid, vlan_id = :vlan, vlan_fk = :vfk WHERE id = :id"
-    )->execute([':desc' => $description, ':sid' => $siteId, ':vlan' => $vlanId, ':vfk' => $vlanFk, ':id' => $id]);
+        "UPDATE subnets SET description = :desc, site_id = :sid, vlan_id = :vlan, vlan_fk = :vfk, vrf_id = :vrf WHERE id = :id"
+    )->execute([':desc' => $description, ':sid' => $siteId, ':vlan' => $vlanId, ':vfk' => $vlanFk, ':vrf' => $vrfId, ':id' => $id]);
 
     api_audit($db, $apiKey, 'subnet.update', 'subnet', $id, 'cidr=' . to_str($subnet['cidr']));
 

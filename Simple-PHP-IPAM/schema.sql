@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS subnets (
   site_id     INTEGER,
   vlan_id     INTEGER,                              -- 802.1Q VLAN ID (1–4094), legacy integer field
   vlan_fk     INTEGER REFERENCES vlans(id) ON DELETE SET NULL,  -- v2.0.0: FK to vlans table
-  vrf_id      INTEGER REFERENCES vrfs(id) ON DELETE SET NULL,   -- v2.1.0: FK to vrfs table
+  vrf_id      INTEGER REFERENCES vrfs(id) ON DELETE RESTRICT,   -- v2.1.0: FK to vrfs table; RESTRICT prevents orphaned subnets moving to global VRF
   created_at  TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(cidr, vrf_id)
@@ -130,6 +130,7 @@ CREATE INDEX IF NOT EXISTS idx_addresses_hostname ON addresses(hostname);
 CREATE INDEX IF NOT EXISTS idx_addresses_owner ON addresses(owner);
 CREATE INDEX IF NOT EXISTS idx_addresses_status ON addresses(status);
 CREATE INDEX IF NOT EXISTS idx_addresses_grp ON addresses(grp);
+CREATE INDEX IF NOT EXISTS idx_addresses_owner_contact_id ON addresses(owner_contact_id);
 
 CREATE TRIGGER IF NOT EXISTS addresses_updated_at
 AFTER UPDATE ON addresses
