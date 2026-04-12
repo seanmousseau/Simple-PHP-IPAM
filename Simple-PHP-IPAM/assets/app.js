@@ -592,11 +592,14 @@
         input.select();
 
         var csrf = document.querySelector("input[name=csrf]");
+        var isSaving = false;
 
         function save() {
+          if (isSaving) return;
           var newVal = input.value;
           if (newVal === origText) { cell.innerHTML = origHtml; return; }
           if (!csrf) { cell.innerHTML = origHtml; return; }
+          isSaving = true;
           var fd = new FormData();
           fd.append("csrf",   csrf.value);
           fd.append("action", "update_cell");
@@ -608,6 +611,7 @@
             .then(function(r) { return r.json(); })
             .then(function(data) {
               cell.classList.remove("cell-saving");
+              isSaving = false;
               if (data.ok) {
                 cell.innerHTML = data.value
                   ? data.value.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
@@ -619,6 +623,7 @@
             })
             .catch(function() {
               cell.classList.remove("cell-saving");
+              isSaving = false;
               cell.innerHTML = origHtml;
             });
         }
@@ -637,6 +642,7 @@
         });
         input.addEventListener("blur", function() {
           setTimeout(function() {
+            if (isSaving) return;
             if (cell.querySelector("input") === input) save();
           }, 100);
         });

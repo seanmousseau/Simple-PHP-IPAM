@@ -492,8 +492,6 @@ foreach ($tree['roots'] as $rid) {
 uasort($siteGroups, fn($a, $b) => strcasecmp($a['label'], $b['label']));
 
 /**
- * @param array{roots: list<int>, children: array<int, list<int>>, byId: array<int, array<string, mixed>>} $tree
-/**
  * @param array{byId: array<int, array<string, mixed>>, children: array<int, list<int>>} $tree
  * @param array<int, array{used: int, reserved: int, free: int, total: int}> $agg
  * @param array<int, array{assignable_total: int, assigned_assignable: int, unassigned_assignable: int}> $unassignedAgg
