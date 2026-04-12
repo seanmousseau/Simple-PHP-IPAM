@@ -372,10 +372,9 @@ function ipam_migrations(): array
                 return;
             }
 
-            // Note: PRAGMA foreign_keys is a no-op inside a transaction, but DROP TABLE
-            // in SQLite does not check FK constraints on DDL — only DML triggers FK checks.
-            // All child tables (addresses, subnet_tags, alert_state) use ON DELETE CASCADE,
-            // so the rename-based rebuild is safe without disabling FK enforcement.
+            // FK enforcement is disabled by apply_migrations() before this transaction
+            // so that DROP TABLE subnets below does not cascade-delete child rows
+            // (addresses, subnet_tags, alert_state all have ON DELETE CASCADE on subnet_id).
             $db->exec("
                 CREATE TABLE subnets_new (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
