@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS sites (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   name        TEXT NOT NULL UNIQUE,
   description TEXT NOT NULL DEFAULT '',
+  parent_id   INTEGER REFERENCES sites(id) ON DELETE SET NULL,  -- v2.0.0: region/parent hierarchy
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -43,7 +44,8 @@ CREATE TABLE IF NOT EXISTS subnets (
   prefix      INTEGER NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   site_id     INTEGER,
-  vlan_id     INTEGER,                              -- 802.1Q VLAN ID (1–4094), NULL means unassigned
+  vlan_id     INTEGER,                              -- 802.1Q VLAN ID (1–4094), legacy integer field
+  vlan_fk     INTEGER REFERENCES vlans(id) ON DELETE SET NULL,  -- v2.0.0: FK to vlans table
   created_at  TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -153,6 +155,53 @@ CREATE TABLE IF NOT EXISTS api_keys (
   created_by   TEXT NOT NULL DEFAULT '',
   is_readonly  INTEGER NOT NULL DEFAULT 0,
   description  TEXT    NOT NULL DEFAULT ''
+);
+
+-- v2.0.0: VLANs as first-class objects
+CREATE TABLE IF NOT EXISTS vlans (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  vlan_id     INTEGER NOT NULL CHECK(vlan_id BETWEEN 1 AND 4094),
+  name        TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  site_id     INTEGER REFERENCES sites(id) ON DELETE SET NULL,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(vlan_id, site_id)
+);
+
+CREATE TRIGGER IF NOT EXISTS vlans_updated_at
+AFTER UPDATE ON vlans
+FOR EACH ROW
+BEGIN
+  UPDATE vlans SET updated_at = datetime('now') WHERE id = OLD.id;
+END;
+
+-- v2.0.0: Tags on subnets and addresses
+CREATE TABLE IF NOT EXISTS tags (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL UNIQUE CHECK(length(name) <= 50),
+  colour     TEXT NOT NULL DEFAULT '#6c757d',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS subnet_tags (
+  subnet_id  INTEGER NOT NULL REFERENCES subnets(id) ON DELETE CASCADE,
+  tag_id     INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  PRIMARY KEY (subnet_id, tag_id)
+);
+
+CREATE TABLE IF NOT EXISTS address_tags (
+  address_id INTEGER NOT NULL REFERENCES addresses(id) ON DELETE CASCADE,
+  tag_id     INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  PRIMARY KEY (address_id, tag_id)
+);
+
+-- v2.0.0: Utilization alert state tracker
+CREATE TABLE IF NOT EXISTS alert_state (
+  subnet_id      INTEGER NOT NULL REFERENCES subnets(id) ON DELETE CASCADE,
+  level          TEXT NOT NULL CHECK(level IN ('warn','crit')),
+  last_alerted_at TEXT NOT NULL,
+  PRIMARY KEY (subnet_id, level)
 );
 
 CREATE TABLE IF NOT EXISTS schema_migrations (

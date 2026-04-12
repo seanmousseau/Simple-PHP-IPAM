@@ -1,5 +1,3 @@
-version: "2"
-
 reviews:
   profile: chill
   request_changes_workflow: false

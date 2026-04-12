@@ -153,7 +153,7 @@ test('subnets: VLAN picker lists test VLAN when it exists', async () => {
     test.skip(true, 'Test VLAN not present — skipping VLAN picker content check');
     return;
   }
-  expect(hasTestVlan).toBe(true);
+  expect(optTexts.some(t => t.includes(TEST_VLAN_NAME))).toBe(true);
 });
 
 test('subnets: form drawer opens on Add Subnet click', async () => {

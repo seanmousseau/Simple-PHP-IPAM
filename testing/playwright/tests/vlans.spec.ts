@@ -6,13 +6,9 @@ import { test, expect, type Browser, type BrowserContext, type Page } from '@pla
 import {
   login, fetchGet, fetchPost, appUrl,
   ADMIN_USER, ADMIN_PASS,
+  TEST_VLAN_ID, TEST_VLAN_NAME, TEST_VLAN_DESC, TEST_VLAN_CIDR,
   newAuthContext,
 } from '../fixtures/ipam';
-
-export const TEST_VLAN_ID   = 99;
-export const TEST_VLAN_NAME = 'pw-test-vlan';
-export const TEST_VLAN_DESC = 'Playwright test VLAN';
-export const TEST_VLAN_CIDR = '10.77.99.0/24';
 
 let ctx: BrowserContext;
 let page: Page;
