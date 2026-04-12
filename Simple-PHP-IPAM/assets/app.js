@@ -347,5 +347,409 @@
         document.body.appendChild(overlay);
       });
     }
+
+    // --- Contact typeahead (data-contact-typeahead) ---
+    document.querySelectorAll("[data-contact-typeahead]").forEach(function(input) {
+      var hiddenInput = input.parentElement.querySelector("input[name=owner_contact_id]");
+      if (!hiddenInput) return;
+      var list = document.createElement("ul");
+      list.className = "contact-suggestions";
+      list.style.display = "none";
+      input.parentElement.style.position = "relative";
+      input.parentElement.appendChild(list);
+      var timer;
+
+      function clearSuggestions() {
+        list.innerHTML = "";
+        list.style.display = "none";
+      }
+
+      input.addEventListener("input", function() {
+        hiddenInput.value = "0";
+        clearTimeout(timer);
+        var q = input.value.trim();
+        if (q.length < 2) { clearSuggestions(); return; }
+        timer = setTimeout(function() {
+          fetch("api.php?resource=contacts&q=" + encodeURIComponent(q) + "&limit=10", {credentials: "same-origin"})
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+              clearSuggestions();
+              if (!data.contacts || !data.contacts.length) return;
+              data.contacts.forEach(function(c) {
+                var li = document.createElement("li");
+                li.textContent = c.name + (c.email ? " <" + c.email + ">" : "");
+                li.dataset.contactId   = c.id;
+                li.dataset.contactName = c.name;
+                li.addEventListener("mousedown", function(e) {
+                  e.preventDefault();
+                  input.value = c.name;
+                  hiddenInput.value = c.id;
+                  clearSuggestions();
+                });
+                list.appendChild(li);
+              });
+              list.style.display = "block";
+            })
+            .catch(function() { clearSuggestions(); });
+        }, 250);
+      });
+
+      input.addEventListener("blur", function() {
+        setTimeout(clearSuggestions, 200);
+      });
+
+      input.addEventListener("keydown", function(e) {
+        if (e.key === "Escape") { clearSuggestions(); }
+      });
+    });
+
+    // --- Dashboard pinnable widgets + site filter (#257) ---
+    (function() {
+      var HIDDEN_KEY = "ipam_hidden_widgets";
+      var SITE_KEY   = "ipam_dash_site";
+
+      function hiddenList() {
+        try { return JSON.parse(localStorage.getItem(HIDDEN_KEY) || "[]"); } catch(e) { return []; }
+      }
+
+      function applyWidgetVisibility() {
+        var hidden = hiddenList();
+        document.querySelectorAll("[data-widget]").forEach(function(el) {
+          el.style.display = hidden.includes(el.dataset.widget) ? "none" : "";
+        });
+      }
+
+      applyWidgetVisibility();
+
+      document.querySelectorAll(".widget-hide-btn").forEach(function(btn) {
+        btn.addEventListener("click", function() {
+          var key    = btn.dataset.widgetKey;
+          var hidden = hiddenList();
+          if (!hidden.includes(key)) hidden.push(key);
+          localStorage.setItem(HIDDEN_KEY, JSON.stringify(hidden));
+          applyWidgetVisibility();
+        });
+      });
+
+      var resetBtn = document.getElementById("dash-reset");
+      if (resetBtn) {
+        resetBtn.addEventListener("click", function(e) {
+          e.preventDefault();
+          // Clear all ipam_ localStorage keys
+          Object.keys(localStorage).filter(function(k) { return k.startsWith("ipam_"); })
+                .forEach(function(k) { localStorage.removeItem(k); });
+          location.reload();
+        });
+      }
+
+      // Site filter on "by-site" table
+      var siteFilter = document.getElementById("dash-site-filter");
+      if (siteFilter) {
+        function applyFilter() {
+          var val = siteFilter.value;
+          localStorage.setItem(SITE_KEY, val);
+          document.querySelectorAll("[data-site-row]").forEach(function(tr) {
+            tr.style.display = (val === "" || tr.dataset.siteRow === val) ? "" : "none";
+          });
+        }
+        siteFilter.addEventListener("change", applyFilter);
+        var saved = localStorage.getItem(SITE_KEY) || "";
+        if (saved) { siteFilter.value = saved; }
+        applyFilter();
+      }
+    }());
+
+    // --- Per-user column visibility (#256) ---
+    document.querySelectorAll("[data-col-table]").forEach(function(table) {
+      var key    = "ipam_cols_" + table.dataset.colTable;
+      var hidden = JSON.parse(localStorage.getItem(key) || "[]");
+      var ths    = Array.from(table.querySelectorAll("thead th[data-col]"));
+      if (!ths.length) return;
+
+      function setColVisible(col, visible) {
+        var idx = ths.findIndex(function(th) { return th.dataset.col === col; });
+        if (idx < 0) return;
+        var allCells = [ths[idx]].concat(
+          Array.from(table.querySelectorAll("tbody tr")).map(function(tr) {
+            return tr.cells[idx];
+          }).filter(Boolean)
+        );
+        allCells.forEach(function(c) { c.classList.toggle("col-hidden", !visible); });
+      }
+
+      function saveAndApply(hiddenArr) {
+        hidden = hiddenArr;
+        localStorage.setItem(key, JSON.stringify(hidden));
+        ths.forEach(function(th) { setColVisible(th.dataset.col, !hidden.includes(th.dataset.col)); });
+        // keep at least one visible
+        var visCount = ths.filter(function(th) { return !hidden.includes(th.dataset.col); }).length;
+        if (visCount === 0 && ths[0]) {
+          hidden = hidden.filter(function(c) { return c !== ths[0].dataset.col; });
+          localStorage.setItem(key, JSON.stringify(hidden));
+          setColVisible(ths[0].dataset.col, true);
+        }
+        syncChecks();
+      }
+
+      // Build gear dropdown
+      var wrapper = document.createElement("div");
+      wrapper.className = "col-vis-wrap";
+      var gear = document.createElement("button");
+      gear.className = "col-vis-gear action-pill";
+      gear.textContent = "\u2699 Columns";
+      gear.setAttribute("aria-expanded", "false");
+      var drop = document.createElement("div");
+      drop.className = "col-vis-drop";
+      ths.forEach(function(th) {
+        var label = document.createElement("label");
+        var cb    = document.createElement("input");
+        cb.type   = "checkbox";
+        cb.dataset.col = th.dataset.col;
+        cb.checked = !hidden.includes(th.dataset.col);
+        cb.addEventListener("change", function() {
+          var newHidden = ths.map(function(t) { return t.dataset.col; })
+            .filter(function(c) {
+              var cbEl = drop.querySelector("input[data-col='" + c + "']");
+              return cbEl && !cbEl.checked;
+            });
+          saveAndApply(newHidden);
+        });
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode(" " + th.textContent.trim()));
+        drop.appendChild(label);
+      });
+      wrapper.appendChild(gear);
+      wrapper.appendChild(drop);
+
+      function syncChecks() {
+        drop.querySelectorAll("input[data-col]").forEach(function(cb) {
+          cb.checked = !hidden.includes(cb.dataset.col);
+        });
+      }
+
+      gear.addEventListener("click", function(e) {
+        e.stopPropagation();
+        var open = drop.classList.toggle("visible");
+        gear.setAttribute("aria-expanded", open ? "true" : "false");
+      });
+      document.addEventListener("click", function() { drop.classList.remove("visible"); gear.setAttribute("aria-expanded","false"); });
+
+      // Insert gear before table or into a toolbar if present
+      var toolbar = table.closest(".card") && table.closest(".card").querySelector(".toolbar");
+      if (toolbar) {
+        toolbar.appendChild(wrapper);
+      } else {
+        table.parentNode.insertBefore(wrapper, table);
+      }
+
+      // Apply persisted hidden columns
+      hidden.forEach(function(col) { setColVisible(col, false); });
+    });
+
+    // --- Subnet list/map view toggle (#255) ---
+    (function() {
+      var listView = document.getElementById("subnet-list-view");
+      var mapView  = document.getElementById("subnet-map-view");
+      var btns     = document.querySelectorAll(".subnet-view-btn");
+      if (!listView || !mapView) return;
+      var storageKey = "ipam_subnet_view";
+
+      function applyView(v) {
+        var isMap = v === "map";
+        listView.style.display = isMap ? "none" : "";
+        mapView.style.display  = isMap ? ""     : "none";
+        btns.forEach(function(b) {
+          b.classList.toggle("active", b.dataset.view === v);
+        });
+        localStorage.setItem(storageKey, v);
+      }
+
+      btns.forEach(function(b) {
+        b.addEventListener("click", function() { applyView(b.dataset.view); });
+      });
+
+      applyView(localStorage.getItem(storageKey) === "map" ? "map" : "list");
+    }());
+
+    // --- Inline cell editing on address rows (#254) ---
+    document.querySelectorAll("[data-editable][data-addr-id]").forEach(function(cell) {
+      cell.title = "Click to edit";
+      cell.style.cursor = "pointer";
+      cell.addEventListener("click", function(e) {
+        if (cell.querySelector("input")) return; // already editing
+        var field   = cell.dataset.editable;
+        var addrId  = cell.dataset.addrId;
+        var origHtml = cell.innerHTML;
+        var origText = cell.textContent.trim();
+
+        var input = document.createElement("input");
+        input.type = "text";
+        input.value = origText;
+        input.className = "inline-edit-input";
+        cell.innerHTML = "";
+        cell.appendChild(input);
+        input.focus();
+        input.select();
+
+        var csrf = document.querySelector("input[name=csrf]");
+
+        function save() {
+          var newVal = input.value;
+          if (newVal === origText) { cell.innerHTML = origHtml; return; }
+          if (!csrf) { cell.innerHTML = origHtml; return; }
+          var fd = new FormData();
+          fd.append("csrf",   csrf.value);
+          fd.append("action", "update_cell");
+          fd.append("id",     addrId);
+          fd.append("field",  field);
+          fd.append("value",  newVal);
+          cell.classList.add("cell-saving");
+          fetch("addresses.php", {method: "POST", body: fd})
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+              cell.classList.remove("cell-saving");
+              if (data.ok) {
+                cell.innerHTML = data.value
+                  ? data.value.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+                  : "";
+              } else {
+                cell.innerHTML = origHtml;
+                cell.title = data.error || "Save failed";
+              }
+            })
+            .catch(function() {
+              cell.classList.remove("cell-saving");
+              cell.innerHTML = origHtml;
+            });
+        }
+
+        input.addEventListener("keydown", function(e) {
+          if (e.key === "Enter")  { e.preventDefault(); save(); }
+          if (e.key === "Escape") { e.preventDefault(); cell.innerHTML = origHtml; }
+          if (e.key === "Tab") {
+            e.preventDefault();
+            save();
+            // Move to next editable cell in the same row
+            var cells = Array.from(cell.closest("tr").querySelectorAll("[data-editable]"));
+            var idx = cells.indexOf(cell);
+            if (idx >= 0 && cells[idx + 1]) cells[idx + 1].click();
+          }
+        });
+        input.addEventListener("blur", function() {
+          setTimeout(function() {
+            if (cell.querySelector("input") === input) save();
+          }, 100);
+        });
+      });
+    });
+
+    // --- Global ⌘K / Ctrl+K search overlay (#253) ---
+    (function() {
+      var overlay = document.getElementById("search-overlay");
+      if (!overlay) return;
+      var overlayInput  = document.getElementById("search-overlay-input");
+      var overlayList   = document.getElementById("search-overlay-list");
+      var overlayClose  = document.getElementById("search-overlay-close");
+      var searchTimer;
+      var activeIdx = -1;
+
+      function openOverlay() {
+        overlay.classList.add("visible");
+        overlayInput.value = "";
+        overlayList.innerHTML = "";
+        activeIdx = -1;
+        overlayInput.focus();
+      }
+
+      function closeOverlay() {
+        overlay.classList.remove("visible");
+        clearTimeout(searchTimer);
+      }
+
+      function setActive(idx) {
+        var items = overlayList.querySelectorAll(".so-item");
+        if (activeIdx >= 0 && items[activeIdx]) items[activeIdx].classList.remove("active");
+        activeIdx = Math.max(-1, Math.min(idx, items.length - 1));
+        if (activeIdx >= 0 && items[activeIdx]) {
+          items[activeIdx].classList.add("active");
+          items[activeIdx].scrollIntoView({block: "nearest"});
+        }
+      }
+
+      function runSearch(q) {
+        overlayList.innerHTML = '<li class="so-loading">Searching\u2026</li>';
+        activeIdx = -1;
+        fetch("search.php?format=json&q=" + encodeURIComponent(q), {credentials: "same-origin"})
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            overlayList.innerHTML = "";
+            if (!data.length) {
+              overlayList.innerHTML = '<li class="so-empty">No results.</li>';
+              return;
+            }
+            data.forEach(function(row) {
+              var li = document.createElement("li");
+              li.className = "so-item";
+              li.innerHTML =
+                '<span class="so-ip">' + escHtml(row.ip) + '</span>'
+                + (row.hostname ? ' <span class="so-host">' + escHtml(row.hostname) + '</span>' : '')
+                + ' <span class="so-status status-' + escHtml(row.status) + '">' + escHtml(row.status) + '</span>';
+              li.dataset.url = row.url;
+              li.addEventListener("mousedown", function(e) {
+                e.preventDefault();
+                window.location.href = row.url;
+              });
+              overlayList.appendChild(li);
+            });
+          })
+          .catch(function() {
+            overlayList.innerHTML = '<li class="so-empty">Search failed.</li>';
+          });
+      }
+
+      function escHtml(s) {
+        return String(s)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+
+      overlayInput.addEventListener("input", function() {
+        clearTimeout(searchTimer);
+        var q = overlayInput.value.trim();
+        overlayList.innerHTML = "";
+        activeIdx = -1;
+        if (q.length < 2) return;
+        searchTimer = setTimeout(function() { runSearch(q); }, 300);
+      });
+
+      overlayInput.addEventListener("keydown", function(e) {
+        var items = overlayList.querySelectorAll(".so-item");
+        if (e.key === "ArrowDown") { e.preventDefault(); setActive(activeIdx + 1); }
+        else if (e.key === "ArrowUp") { e.preventDefault(); setActive(activeIdx - 1); }
+        else if (e.key === "Enter") {
+          e.preventDefault();
+          if (activeIdx >= 0 && items[activeIdx]) {
+            window.location.href = items[activeIdx].dataset.url;
+          } else if (overlayInput.value.trim() !== "") {
+            window.location.href = "search.php?q=" + encodeURIComponent(overlayInput.value.trim());
+          }
+        } else if (e.key === "Escape") { closeOverlay(); }
+        else if (e.key === "Tab") { closeOverlay(); }
+      });
+
+      if (overlayClose) overlayClose.addEventListener("click", closeOverlay);
+      overlay.addEventListener("mousedown", function(e) {
+        if (e.target === overlay) closeOverlay();
+      });
+
+      document.addEventListener("keydown", function(e) {
+        if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+          e.preventDefault();
+          overlay.classList.contains("visible") ? closeOverlay() : openOverlay();
+        }
+      });
+    }());
   });
 })();

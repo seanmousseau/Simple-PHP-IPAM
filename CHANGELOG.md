@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [2.1.0] - 2026-04-12
+
+### Added
+- **#271** — VRF (Virtual Routing and Forwarding) support: new `vrfs` admin page (CRUD with name, description, route-distinguisher fields), `vrfs` DB table, `subnets.vrf_id` FK. Overlap detection is now VRF-scoped (same CIDR allowed in different VRFs). Subnet create/edit form includes a VRF picker; subnet list shows VRF badge. API: `?resource=vrfs` endpoint (GET/POST/PUT/DELETE); subnet response includes `vrf_id`/`vrf_name`; `?vrf_id=` filter on subnets.
+- **#272** — Contacts as first-class objects: new `contacts` admin page (CRUD with name, email, phone, org, note fields), `contacts` DB table, `addresses.owner_contact_id` FK. Address create/edit form includes a contact typeahead (debounced, session-auth). Address list shows linked contact name with mailto link. Free-text `owner` field retained for legacy rows. API: `?resource=contacts` endpoint (GET/POST/PUT/DELETE, `?q=` fuzzy search usable from browser session); address response includes `owner_contact_id`/`owner_contact_name`; `?contact_id=` filter on addresses.
+- **#253** — Global ⌘K / Ctrl+K search overlay: keydown listener opens a modal overlay; debounced 300ms fetch to `search.php?format=json`; ↑↓ keyboard navigation, Enter navigates, Escape/backdrop closes. New `format=json` branch on `search.php` returns up to 20 address results as JSON. ⌘K shortcut button added to nav bar.
+- **#254** — Inline cell editing on address rows: clicking hostname, owner, note, or group cells on the address list opens an in-place `<input>`; Enter saves, Escape reverts, Tab moves to next editable cell. New `action=update_cell` JSON handler on `addresses.php` (write role only; CSRF protected; whitelisted fields; history logged).
+- **#255** — Subnet visual hierarchy map view: "List / Map" toggle buttons on `subnets.php`. Map view renders a server-side indented tree with CIDR, description, and utilization bar per node. Toggle state persisted to `localStorage`. Graceful cap at 200 nodes.
+- **#256** — Per-user column visibility preferences: gear dropdown on the addresses table lets users show/hide columns; state persisted to `localStorage` per table. At least one column always remains visible.
+- **#257** — Dashboard pinnable widgets and site filter: ✕ button on each dashboard card hides the widget (persisted to `localStorage`). "Addresses by Site" panel has a live site-filter dropdown (saved to `localStorage`). "↺ Reset widgets" link in page-actions clears all `ipam_*` localStorage keys.
+
+---
+
 ## [2.0.0] - 2026-04-11
 
 ### Added
@@ -419,6 +432,7 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[2.1.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.19.1...v2.0.0
 [1.19.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.19.0...v1.19.1
 [1.19.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.18.0...v1.19.0

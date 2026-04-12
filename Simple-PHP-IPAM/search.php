@@ -10,6 +10,7 @@ $subnetId   = to_int($_GET['subnet_id'] ?? 0);
 $siteId     = to_int($_GET['site_id'] ?? 0);
 $ipVersion  = to_int($_GET['ip_version'] ?? 0);
 
+$format   = trim(to_str($_GET['format'] ?? ''));
 $page     = q_int('page', 1, 1, 1000000);
 $pageSize = q_int('page_size', 254, 1, 500);
 
@@ -59,6 +60,36 @@ if ($ipVersion > 0) {
 }
 
 $whereSql = $where ? ("WHERE " . implode(" AND ", $where)) : "";
+
+/* --- format=json branch: used by the ⌘K overlay --- */
+if ($format === 'json') {
+    header('Content-Type: application/json; charset=utf-8');
+    $st = $db->prepare("
+        SELECT a.id, a.subnet_id, a.ip, a.hostname, a.status
+        FROM addresses a
+        JOIN subnets s ON s.id = a.subnet_id
+        $whereSql
+        ORDER BY a.ip_bin ASC
+        LIMIT 20
+    ");
+    foreach ($params as $k => $v) $st->bindValue($k, $v);
+    $st->execute();
+    /** @var list<array<string, mixed>> $jRows */
+    $jRows = $st->fetchAll();
+    $out = [];
+    foreach ($jRows as $jr) {
+        $out[] = [
+            'ip'          => to_str($jr['ip']),
+            'hostname'    => to_str($jr['hostname']),
+            'status'      => to_str($jr['status']),
+            'url'         => 'addresses.php?subnet_id=' . to_int($jr['subnet_id'])
+                             . '&highlight=' . to_int($jr['id'])
+                             . '#addr-' . to_int($jr['id']),
+        ];
+    }
+    echo json_encode($out, JSON_UNESCAPED_SLASHES);
+    exit;
+}
 
 /* Count query — must JOIN subnets when site/version filters are active */
 $st = $db->prepare("

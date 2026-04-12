@@ -8,9 +8,11 @@ declare(strict_types=1);
  *   Authorization: Bearer <key>
  *
  * Resources (read):
- *   GET  ?resource=subnets             — list subnets (paginated, filterable by ip_version, vlan_id)
+ *   GET  ?resource=subnets             — list subnets (paginated, filterable by ip_version, vlan_id, vrf_id)
  *   GET  ?resource=addresses           — list addresses (paginated, filterable)
  *   GET  ?resource=sites               — list all sites
+ *   GET  ?resource=vlans               — list all VLANs
+ *   GET  ?resource=vrfs                — list all VRFs
  *   GET  ?resource=history&address_id= — address change history (paginated)
  *   GET  ?resource=search&q=           — search addresses by IP/hostname/owner/note
  *   GET  ?resource=audit               — audit log (paginated, filterable by action/date)
@@ -19,6 +21,8 @@ declare(strict_types=1);
  *   POST/PUT/DELETE ?resource=subnets  — create/update/delete subnets
  *   POST/PUT/DELETE ?resource=addresses — create/update/delete addresses
  *   POST/PUT/DELETE ?resource=sites    — create/update/delete sites
+ *   POST/PUT/DELETE ?resource=vrfs     — create/update/delete VRFs
+ *   POST/PUT/DELETE ?resource=contacts — create/update/delete contacts
  */
 
 // No session; stateless API request
@@ -66,30 +70,51 @@ if (preg_match('/^Bearer\s+(\S+)$/i', $authHeader, $m)) {
     header('X-Deprecation-Reason: API key via query parameter is deprecated. Use Authorization: Bearer header.');
 }
 
+// Session-based auth for contacts typeahead (no API key required from browser sessions)
+$sessionApiKey = null;
 if ($rawKey === '') {
+    $resourcePeek = strtolower(trim(to_str($_GET['resource'] ?? '')));
+    $methodPeek   = strtoupper(to_str($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+    if ($resourcePeek === 'contacts' && $methodPeek === 'GET' && isset($_GET['q'])) {
+        session_name(to_str($config['session_name']));
+        session_set_cookie_params(['lifetime' => 0, 'path' => '/', 'domain' => '', 'secure' => true, 'httponly' => true, 'samesite' => 'Strict']);
+        ini_set('session.use_strict_mode', '1');
+        ini_set('session.use_only_cookies', '1');
+        @session_start();
+        if (!empty($_SESSION['uid'])) {
+            $sessionApiKey = ['id' => 0, 'name' => 'session', 'is_readonly' => '1'];
+        }
+    }
+}
+
+if ($rawKey === '' && $sessionApiKey === null) {
     http_response_code(401);
     echo json_encode(['error' => 'API key required. Pass via Authorization: Bearer <key> header.']);
     exit;
 }
 
-$keyHash = hash('sha256', $rawKey);
-$st = $db->prepare("SELECT id, name, is_readonly FROM api_keys WHERE key_hash = :h AND is_active = 1");
-$st->execute([':h' => $keyHash]);
-/** @var array<string, mixed>|false $apiKey */
-$apiKey = $st->fetch();
+if ($sessionApiKey !== null) {
+    $apiKey = $sessionApiKey;
+} else {
+    $keyHash = hash('sha256', $rawKey);
+    $st = $db->prepare("SELECT id, name, is_readonly FROM api_keys WHERE key_hash = :h AND is_active = 1");
+    $st->execute([':h' => $keyHash]);
+    /** @var array<string, mixed>|false $apiKey */
+    $apiKey = $st->fetch();
 
-if (!$apiKey) {
-    record_login_failure($db, $clientIp);
-    http_response_code(401);
-    echo json_encode(['error' => 'Invalid or inactive API key.']);
-    exit;
+    if (!$apiKey) {
+        record_login_failure($db, $clientIp);
+        http_response_code(401);
+        echo json_encode(['error' => 'Invalid or inactive API key.']);
+        exit;
+    }
+
+    // Successful auth — clear any accumulated failures for this IP
+    clear_login_failures($db, $clientIp);
+
+    $db->prepare("UPDATE api_keys SET last_used_at = datetime('now') WHERE id = :id")
+       ->execute([':id' => to_int($apiKey['id'])]);
 }
-
-// Successful auth — clear any accumulated failures for this IP
-clear_login_failures($db, $clientIp);
-
-$db->prepare("UPDATE api_keys SET last_used_at = datetime('now') WHERE id = :id")
-   ->execute([':id' => to_int($apiKey['id'])]);
 
 // ---- Route ----
 
@@ -138,11 +163,31 @@ match ($resource) {
         default  => api_error(405, 'Method not allowed.'),
     },
     'history'    => $method === 'GET' ? api_history($db)      : api_error(405, 'Method not allowed.'),
-    'vlans'      => $method === 'GET' ? api_vlans($db)         : api_error(405, 'Method not allowed.'),
+    'vlans' => match ($method) {
+        'GET'    => api_vlans($db),
+        'POST'   => api_vlans_create($db, $apiKey, $body),
+        'PUT'    => api_vlans_update($db, $apiKey, to_int($_GET['id'] ?? 0), $body),
+        'DELETE' => api_vlans_delete($db, $apiKey, to_int($_GET['id'] ?? 0)),
+        default  => api_error(405, 'Method not allowed.'),
+    },
+    'vrfs'       => match ($method) {
+        'GET'    => api_vrfs($db),
+        'POST'   => api_vrfs_create($db, $apiKey, $body),
+        'PUT'    => api_vrfs_update($db, $apiKey, to_int($_GET['id'] ?? 0), $body),
+        'DELETE' => api_vrfs_delete($db, $apiKey, to_int($_GET['id'] ?? 0)),
+        default  => api_error(405, 'Method not allowed.'),
+    },
+    'contacts'   => match ($method) {
+        'GET'    => api_contacts($db),
+        'POST'   => api_contacts_create($db, $apiKey, $body),
+        'PUT'    => api_contacts_update($db, $apiKey, to_int($_GET['id'] ?? 0), $body),
+        'DELETE' => api_contacts_delete($db, $apiKey, to_int($_GET['id'] ?? 0)),
+        default  => api_error(405, 'Method not allowed.'),
+    },
     'search'     => $method === 'GET' ? api_search($db)       : api_error(405, 'Method not allowed.'),
     'audit'      => $method === 'GET' ? api_audit_log($db)    : api_error(405, 'Method not allowed.'),
     'unassigned' => $method === 'GET' ? api_unassigned($db)   : api_error(405, 'Method not allowed.'),
-    default      => api_error(404, 'Unknown resource. Valid: subnets, addresses, sites, vlans, history, search, audit, unassigned'),
+    default      => api_error(404, 'Unknown resource. Valid: subnets, addresses, sites, vlans, vrfs, contacts, history, search, audit, unassigned'),
 };
 
 // ---- Helpers ----
@@ -216,11 +261,13 @@ function api_subnets(PDO $db): never
         : '';
 
     $baseSql = "SELECT s.id, s.cidr, s.ip_version, s.network, s.prefix,
-                       s.description, s.vlan_id, s.vlan_fk, s.site_id, s.created_at,
-                       si.name AS site, v.vlan_id AS vlan_number, v.name AS vlan_name$countsSelect
+                       s.description, s.vlan_id, s.vlan_fk, s.site_id, s.vrf_id, s.created_at,
+                       si.name AS site, v.vlan_id AS vlan_number, v.name AS vlan_name,
+                       vr.name AS vrf_name$countsSelect
                 FROM subnets s
                 LEFT JOIN sites si ON si.id = s.site_id
                 LEFT JOIN vlans v ON v.id = s.vlan_fk
+                LEFT JOIN vrfs vr ON vr.id = s.vrf_id
                 $countsJoin";
 
     if (isset($_GET['id'])) {
@@ -231,7 +278,7 @@ function api_subnets(PDO $db): never
         $row = $st->fetch();
         if (!$row) api_error(404, 'Subnet not found.');
         $subnetTags = api_fetch_tags_for_ids($db, 'subnet', [$id]);
-        api_json(fmt_subnet($row, $withCounts, $subnetTags[$id] ?? []));
+        api_json(['subnet' => fmt_subnet($row, $withCounts, $subnetTags[$id] ?? [])]);
     }
 
     $page   = max(1, to_int($_GET['page']  ?? 1));
@@ -263,6 +310,12 @@ function api_subnets(PDO $db): never
         $params[':site_id'] = $v;
     }
 
+    if (isset($_GET['vrf_id'])) {
+        $v = to_int($_GET['vrf_id']);
+        $where[]         = 's.vrf_id = :vrf_id';
+        $params[':vrf_id'] = $v;
+    }
+
     $tagJoin = '';
     if (isset($_GET['tag'])) {
         $tagName = trim(to_str($_GET['tag']));
@@ -275,7 +328,7 @@ function api_subnets(PDO $db): never
 
     $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
 
-    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM subnets s $tagJoin $whereSql");
+    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM subnets s LEFT JOIN vlans v ON v.id = s.vlan_fk $tagJoin $whereSql");
     $cntSt->execute($params);
     /** @var array<string, mixed>|false $cntRow */
 
@@ -316,6 +369,7 @@ function api_subnets(PDO $db): never
 function fmt_subnet(array $r, bool $withCounts = false, array $tags = []): array
 {
     $vlanFk = $r['vlan_fk'] !== null ? to_int($r['vlan_fk']) : null;
+    $vrfId  = $r['vrf_id']  !== null ? to_int($r['vrf_id'])  : null;
     $out = [
         'id'          => to_int($r['id']),
         'cidr'        => $r['cidr'],
@@ -326,6 +380,8 @@ function fmt_subnet(array $r, bool $withCounts = false, array $tags = []): array
         'vlan_id'     => $r['vlan_id'] !== null ? to_int($r['vlan_id']) : null,
         'vlan_fk'     => $vlanFk,
         'vlan_name'   => $vlanFk !== null ? to_str($r['vlan_name'] ?? '') : null,
+        'vrf_id'      => $vrfId,
+        'vrf_name'    => $vrfId !== null ? to_str($r['vrf_name'] ?? '') : null,
         'site_id'     => $r['site_id'] !== null ? to_int($r['site_id']) : null,
         'site'        => $r['site'],
         'tags'        => $tags,
@@ -389,8 +445,14 @@ function api_addresses(PDO $db): never
         }
     }
 
+    if (isset($_GET['contact_id'])) {
+        $where[]             = 'a.owner_contact_id = :contact_id';
+        $params[':contact_id'] = to_int($_GET['contact_id']);
+    }
+
     $joins   = ($joinSite ? ' JOIN subnets s ON s.id = a.subnet_id' : '');
     $joins  .= ($joinTag  ? ' JOIN address_tags atf ON atf.address_id = a.id JOIN tags tf ON tf.id = atf.tag_id' : '');
+    $joins  .= ' LEFT JOIN contacts co ON co.id = a.owner_contact_id';
     $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
 
     $page   = max(1, to_int($_GET['page']  ?? 1));
@@ -406,7 +468,8 @@ function api_addresses(PDO $db): never
     $total = is_array($cntRow) ? to_int($cntRow['c']) : 0;
 
     $sql = "SELECT a.id, a.subnet_id, a.ip, a.hostname, a.owner,
-                   a.status, a.note, a.grp, a.mac, a.expires_at, a.created_at, a.updated_at
+                   a.status, a.note, a.grp, a.mac, a.expires_at, a.created_at, a.updated_at,
+                   a.owner_contact_id, co.name AS owner_contact_name
             FROM addresses a$joins $whereSql
             ORDER BY a.ip_bin
             LIMIT :lim OFFSET :off";
@@ -426,20 +489,23 @@ function api_addresses(PDO $db): never
 
     $rows = array_map(function(array $r) use ($tagsByAddr): array {
         $id = to_int($r['id']);
+        $contactId = $r['owner_contact_id'] !== null ? to_int($r['owner_contact_id']) : null;
         return [
-            'id'          => $id,
-            'subnet_id'   => to_int($r['subnet_id']),
-            'ip'          => $r['ip'],
-            'hostname'    => to_str($r['hostname']),
-            'owner'       => to_str($r['owner']),
-            'status'      => $r['status'],
-            'note'        => to_str($r['note']),
-            'group'       => to_str($r['grp']),
-            'mac'         => to_str($r['mac']),
-            'expires_at'  => isset($r['expires_at']) ? to_str($r['expires_at']) : null,
-            'tags'        => $tagsByAddr[$id] ?? [],
-            'created_at'  => $r['created_at'],
-            'updated_at'  => $r['updated_at'],
+            'id'                 => $id,
+            'subnet_id'          => to_int($r['subnet_id']),
+            'ip'                 => $r['ip'],
+            'hostname'           => to_str($r['hostname']),
+            'owner'              => to_str($r['owner']),
+            'owner_contact_id'   => $contactId,
+            'owner_contact_name' => $contactId !== null ? to_str($r['owner_contact_name'] ?? '') : null,
+            'status'             => $r['status'],
+            'note'               => to_str($r['note']),
+            'group'              => to_str($r['grp']),
+            'mac'                => to_str($r['mac']),
+            'expires_at'         => isset($r['expires_at']) ? to_str($r['expires_at']) : null,
+            'tags'               => $tagsByAddr[$id] ?? [],
+            'created_at'         => $r['created_at'],
+            'updated_at'         => $r['updated_at'],
         ];
     }, $rawRows);
 
@@ -460,7 +526,7 @@ function api_sites(PDO $db): never
         /** @var array<string, mixed>|false $row */
         $row = $st->fetch();
         if (!$row) api_error(404, 'Site not found.');
-        api_json(fmt_site($row));
+        api_json(['site' => fmt_site($row)]);
     }
 
     $where  = [];
@@ -506,7 +572,7 @@ function api_vlans(PDO $db): never
         /** @var array<string, mixed>|false $row */
         $row = $st->fetch();
         if (!$row) api_error(404, 'VLAN not found.');
-        api_json(fmt_vlan($row));
+        api_json(['vlan' => fmt_vlan($row)]);
     }
 
     $where  = [];
@@ -543,6 +609,326 @@ function fmt_vlan(array $r): array
         'created_at'  => $r['created_at'],
         'updated_at'  => $r['updated_at'],
     ];
+}
+
+/**
+ * @param array<string, mixed> $apiKey
+ * @param array<string, mixed> $body
+ */
+function api_vlans_create(PDO $db, array $apiKey, array $body): never
+{
+
+    $vlanId = to_int($body['vlan_id'] ?? 0);
+    $name   = trim(to_str($body['name']   ?? ''));
+    $desc   = trim(to_str($body['description'] ?? ''));
+    $siteId = isset($body['site_id']) ? to_int($body['site_id']) : null;
+
+    if ($vlanId < 1 || $vlanId > 4094) api_error(400, 'vlan_id must be between 1 and 4094.');
+    if ($name === '') api_error(400, 'name is required.');
+
+    $dup = $db->prepare("SELECT id FROM vlans WHERE vlan_id = :vid AND site_id IS :sid");
+    $dup->execute([':vid' => $vlanId, ':sid' => $siteId]);
+    if ($dup->fetch()) api_error(409, 'A VLAN with this vlan_id already exists in this site.');
+
+    $db->prepare("INSERT INTO vlans (vlan_id, name, description, site_id) VALUES (:vid, :n, :d, :sid)")
+       ->execute([':vid' => $vlanId, ':n' => $name, ':d' => $desc, ':sid' => $siteId]);
+    $newId = (int)$db->lastInsertId();
+    api_audit($db, $apiKey, 'vlan.create', 'vlan', $newId, "vlan_id=$vlanId name=$name");
+    http_response_code(201);
+    api_json(['id' => $newId]);
+}
+
+/**
+ * @param array<string, mixed> $apiKey
+ * @param array<string, mixed> $body
+ */
+function api_vlans_update(PDO $db, array $apiKey, int $id, array $body): never
+{
+
+    if ($id <= 0) api_error(400, 'id is required as a query parameter.');
+    $st = $db->prepare("SELECT id, vlan_id, name, description, site_id FROM vlans WHERE id = :id");
+    $st->execute([':id' => $id]);
+    /** @var array<string, mixed>|false $vlan */
+    $vlan = $st->fetch();
+    if (!$vlan) api_error(404, 'VLAN not found.');
+
+    $vlanId = array_key_exists('vlan_id', $body) ? to_int($body['vlan_id']) : to_int($vlan['vlan_id']);
+    $name   = array_key_exists('name', $body) ? trim(to_str($body['name'])) : to_str($vlan['name']);
+    $desc   = array_key_exists('description', $body) ? trim(to_str($body['description'])) : to_str($vlan['description']);
+    $siteId = array_key_exists('site_id', $body)
+        ? ($body['site_id'] !== null ? to_int($body['site_id']) : null)
+        : ($vlan['site_id'] !== null ? to_int($vlan['site_id']) : null);
+
+    if ($vlanId < 1 || $vlanId > 4094) api_error(400, 'vlan_id must be between 1 and 4094.');
+    if ($name === '') api_error(400, 'name cannot be empty.');
+
+    $dup = $db->prepare("SELECT id FROM vlans WHERE vlan_id = :vid AND site_id IS :sid AND id != :id");
+    $dup->execute([':vid' => $vlanId, ':sid' => $siteId, ':id' => $id]);
+    if ($dup->fetch()) api_error(409, 'A VLAN with this vlan_id already exists in this site.');
+
+    $db->prepare("UPDATE vlans SET vlan_id = :vid, name = :n, description = :d, site_id = :sid WHERE id = :id")
+       ->execute([':vid' => $vlanId, ':n' => $name, ':d' => $desc, ':sid' => $siteId, ':id' => $id]);
+    api_audit($db, $apiKey, 'vlan.update', 'vlan', $id, "vlan_id=$vlanId name=$name");
+    api_json(['id' => $id]);
+}
+
+/** @param array<string, mixed> $apiKey */
+function api_vlans_delete(PDO $db, array $apiKey, int $id): never
+{
+
+    if ($id <= 0) api_error(400, 'id is required as a query parameter.');
+    $st = $db->prepare("SELECT id FROM vlans WHERE id = :id");
+    $st->execute([':id' => $id]);
+    if (!$st->fetch()) api_error(404, 'VLAN not found.');
+
+    $db->prepare("DELETE FROM vlans WHERE id = :id")->execute([':id' => $id]);
+    api_audit($db, $apiKey, 'vlan.delete', 'vlan', $id, "id=$id");
+    http_response_code(204);
+    api_json([]);
+}
+
+function api_vrfs(PDO $db): never
+{
+    if (isset($_GET['id'])) {
+        $id = to_int($_GET['id']);
+        $st = $db->prepare("SELECT id, name, description, rd, created_at, updated_at FROM vrfs WHERE id = :id");
+        $st->execute([':id' => $id]);
+        /** @var array<string, mixed>|false $row */
+        $row = $st->fetch();
+        if (!$row) api_error(404, 'VRF not found.');
+        api_json(fmt_vrf($row));
+    }
+
+    $st = $db->prepare("SELECT id, name, description, rd, created_at, updated_at FROM vrfs ORDER BY name");
+    $st->execute();
+    api_json(['vrfs' => array_map('fmt_vrf', $st->fetchAll())]);
+}
+
+/**
+ * @param array<string, mixed> $r
+ * @return array<string, mixed>
+ */
+function fmt_vrf(array $r): array
+{
+    return [
+        'id'          => to_int($r['id']),
+        'name'        => to_str($r['name']),
+        'description' => to_str($r['description']),
+        'rd'          => to_str($r['rd']),
+        'created_at'  => $r['created_at'],
+        'updated_at'  => $r['updated_at'],
+    ];
+}
+
+/**
+ * @param array<string, mixed> $apiKey
+ * @param array<string, mixed> $body
+ */
+function api_vrfs_create(PDO $db, array $apiKey, array $body): never
+{
+    if (to_int($apiKey['is_readonly'] ?? 0) === 1) api_error(403, 'Read-only key.');
+    $name = trim(to_str($body['name'] ?? ''));
+    $desc = trim(to_str($body['description'] ?? ''));
+    $rd   = trim(to_str($body['rd'] ?? ''));
+    if ($name === '') api_error(400, 'name is required.');
+    try {
+        $st = $db->prepare("INSERT INTO vrfs (name, description, rd) VALUES (:n,:d,:rd)");
+        $st->execute([':n' => $name, ':d' => $desc, ':rd' => $rd]);
+        $newId = (int)$db->lastInsertId();
+        audit($db, 'vrf.create', 'vrf', $newId, "name=$name");
+    } catch (PDOException $e) {
+        api_error(409, 'A VRF with that name already exists.');
+    }
+    http_response_code(201);
+    $st = $db->prepare("SELECT id, name, description, rd, created_at, updated_at FROM vrfs WHERE id = :id");
+    $st->execute([':id' => $newId]);
+    /** @var array<string, mixed>|false $row */
+    $row = $st->fetch();
+    api_json(fmt_vrf($row ?: []));
+}
+
+/**
+ * @param array<string, mixed> $apiKey
+ * @param array<string, mixed> $body
+ */
+function api_vrfs_update(PDO $db, array $apiKey, int $id, array $body): never
+{
+    if (to_int($apiKey['is_readonly'] ?? 0) === 1) api_error(403, 'Read-only key.');
+    if ($id <= 0) api_error(400, 'id is required.');
+    $name = trim(to_str($body['name'] ?? ''));
+    $desc = trim(to_str($body['description'] ?? ''));
+    $rd   = trim(to_str($body['rd'] ?? ''));
+    if ($name === '') api_error(400, 'name is required.');
+    try {
+        $st = $db->prepare("UPDATE vrfs SET name=:n, description=:d, rd=:rd, updated_at=datetime('now') WHERE id=:id");
+        $st->execute([':n' => $name, ':d' => $desc, ':rd' => $rd, ':id' => $id]);
+        if ($st->rowCount() === 0) api_error(404, 'VRF not found.');
+        audit($db, 'vrf.update', 'vrf', $id, "name=$name");
+    } catch (PDOException $e) {
+        api_error(409, 'A VRF with that name already exists.');
+    }
+    $st = $db->prepare("SELECT id, name, description, rd, created_at, updated_at FROM vrfs WHERE id = :id");
+    $st->execute([':id' => $id]);
+    /** @var array<string, mixed>|false $row */
+    $row = $st->fetch();
+    api_json(fmt_vrf($row ?: []));
+}
+
+/** @param array<string, mixed> $apiKey */
+function api_vrfs_delete(PDO $db, array $apiKey, int $id): never
+{
+    if (to_int($apiKey['is_readonly'] ?? 0) === 1) api_error(403, 'Read-only key.');
+    if ($id <= 0) api_error(400, 'id is required.');
+    $countSt = $db->prepare("SELECT COUNT(*) FROM subnets WHERE vrf_id = :id");
+    $countSt->execute([':id' => $id]);
+    $count = (int)$countSt->fetchColumn();
+    if ($count > 0) api_error(409, "Cannot delete: $count subnet(s) are assigned to this VRF.");
+    $nameSt = $db->prepare("SELECT name FROM vrfs WHERE id = :id");
+    $nameSt->execute([':id' => $id]);
+    /** @var array<string, mixed>|false $row */
+    $row = $nameSt->fetch();
+    if (!$row) api_error(404, 'VRF not found.');
+    $db->prepare("DELETE FROM vrfs WHERE id = :id")->execute([':id' => $id]);
+    audit($db, 'vrf.delete', 'vrf', $id, 'name=' . to_str($row['name']));
+    http_response_code(204);
+    api_json(['deleted' => true]);
+}
+
+function api_contacts(PDO $db): never
+{
+    if (isset($_GET['id'])) {
+        $id = to_int($_GET['id']);
+        $st = $db->prepare("SELECT id, name, email, phone, org, note, created_at, updated_at FROM contacts WHERE id = :id");
+        $st->execute([':id' => $id]);
+        /** @var array<string, mixed>|false $row */
+        $row = $st->fetch();
+        if (!$row) api_error(404, 'Contact not found.');
+        api_json(fmt_contact($row));
+    }
+
+    $where  = [];
+    $params = [];
+
+    // ?q= fuzzy name/email search
+    if (isset($_GET['q'])) {
+        $q = trim(to_str($_GET['q']));
+        if ($q !== '') {
+            $like            = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $q) . '%';
+            $where[]         = '(name LIKE :q OR email LIKE :q2)';
+            $params[':q']    = $like;
+            $params[':q2']   = $like;
+        }
+    }
+
+    $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
+
+    $page   = max(1, to_int($_GET['page']  ?? 1));
+    $limit  = max(1, min(200, to_int($_GET['limit'] ?? 50)));
+    $offset = ($page - 1) * $limit;
+
+    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM contacts $whereSql");
+    $cntSt->execute($params);
+    /** @var array<string, mixed>|false $cntRow */
+    $cntRow = $cntSt->fetch();
+    $total = is_array($cntRow) ? to_int($cntRow['c']) : 0;
+
+    $st = $db->prepare("SELECT id, name, email, phone, org, note, created_at, updated_at FROM contacts $whereSql ORDER BY name LIMIT :lim OFFSET :off");
+    foreach ($params as $k => $v2) {
+        $st->bindValue($k, $v2, PDO::PARAM_STR);
+    }
+    $st->bindValue(':lim', $limit, PDO::PARAM_INT);
+    $st->bindValue(':off', $offset, PDO::PARAM_INT);
+    $st->execute();
+    api_json([
+        'total'    => $total,
+        'page'     => $page,
+        'limit'    => $limit,
+        'contacts' => array_map('fmt_contact', $st->fetchAll()),
+    ]);
+}
+
+/**
+ * @param array<string, mixed> $r
+ * @return array<string, mixed>
+ */
+function fmt_contact(array $r): array
+{
+    return [
+        'id'         => to_int($r['id']),
+        'name'       => to_str($r['name']),
+        'email'      => to_str($r['email']),
+        'phone'      => to_str($r['phone']),
+        'org'        => to_str($r['org']),
+        'note'       => to_str($r['note']),
+        'created_at' => $r['created_at'],
+        'updated_at' => $r['updated_at'],
+    ];
+}
+
+/**
+ * @param array<string, mixed> $apiKey
+ * @param array<string, mixed> $body
+ */
+function api_contacts_create(PDO $db, array $apiKey, array $body): never
+{
+    if (to_int($apiKey['is_readonly'] ?? 0) === 1) api_error(403, 'Read-only key.');
+    $name  = trim(to_str($body['name']  ?? ''));
+    $email = trim(to_str($body['email'] ?? ''));
+    $phone = trim(to_str($body['phone'] ?? ''));
+    $org   = trim(to_str($body['org']   ?? ''));
+    $note  = trim(to_str($body['note']  ?? ''));
+    if ($name === '') api_error(400, 'name is required.');
+    $st = $db->prepare("INSERT INTO contacts (name, email, phone, org, note) VALUES (:n,:e,:p,:o,:nt)");
+    $st->execute([':n' => $name, ':e' => $email, ':p' => $phone, ':o' => $org, ':nt' => $note]);
+    $newId = (int)$db->lastInsertId();
+    audit($db, 'contact.create', 'contact', $newId, "name=$name");
+    http_response_code(201);
+    $st = $db->prepare("SELECT id, name, email, phone, org, note, created_at, updated_at FROM contacts WHERE id = :id");
+    $st->execute([':id' => $newId]);
+    /** @var array<string, mixed>|false $row */
+    $row = $st->fetch();
+    api_json(fmt_contact($row ?: []));
+}
+
+/**
+ * @param array<string, mixed> $apiKey
+ * @param array<string, mixed> $body
+ */
+function api_contacts_update(PDO $db, array $apiKey, int $id, array $body): never
+{
+    if (to_int($apiKey['is_readonly'] ?? 0) === 1) api_error(403, 'Read-only key.');
+    if ($id <= 0) api_error(400, 'id is required.');
+    $name  = trim(to_str($body['name']  ?? ''));
+    $email = trim(to_str($body['email'] ?? ''));
+    $phone = trim(to_str($body['phone'] ?? ''));
+    $org   = trim(to_str($body['org']   ?? ''));
+    $note  = trim(to_str($body['note']  ?? ''));
+    if ($name === '') api_error(400, 'name is required.');
+    $st = $db->prepare("UPDATE contacts SET name=:n, email=:e, phone=:p, org=:o, note=:nt, updated_at=datetime('now') WHERE id=:id");
+    $st->execute([':n' => $name, ':e' => $email, ':p' => $phone, ':o' => $org, ':nt' => $note, ':id' => $id]);
+    if ($st->rowCount() === 0) api_error(404, 'Contact not found.');
+    audit($db, 'contact.update', 'contact', $id, "name=$name");
+    $st = $db->prepare("SELECT id, name, email, phone, org, note, created_at, updated_at FROM contacts WHERE id = :id");
+    $st->execute([':id' => $id]);
+    /** @var array<string, mixed>|false $row */
+    $row = $st->fetch();
+    api_json(fmt_contact($row ?: []));
+}
+
+/** @param array<string, mixed> $apiKey */
+function api_contacts_delete(PDO $db, array $apiKey, int $id): never
+{
+    if (to_int($apiKey['is_readonly'] ?? 0) === 1) api_error(403, 'Read-only key.');
+    if ($id <= 0) api_error(400, 'id is required.');
+    $nameSt = $db->prepare("SELECT name FROM contacts WHERE id = :id");
+    $nameSt->execute([':id' => $id]);
+    /** @var array<string, mixed>|false $row */
+    $row = $nameSt->fetch();
+    if (!$row) api_error(404, 'Contact not found.');
+    $db->prepare("DELETE FROM contacts WHERE id = :id")->execute([':id' => $id]);
+    audit($db, 'contact.delete', 'contact', $id, 'name=' . to_str($row['name']));
+    http_response_code(204);
+    api_json(['deleted' => true]);
 }
 
 function api_history(PDO $db): never
@@ -920,6 +1306,7 @@ function api_subnets_bulk_create(PDO $db, array $apiKey, array $body, int $bulkL
         $description = trim(to_str($item['description'] ?? ''));
         $siteId      = isset($item['site_id']) ? to_int($item['site_id']) : null;
         $vlanId      = isset($item['vlan_id']) ? to_int($item['vlan_id']) : null;
+        $vrfId       = isset($item['vrf_id'])  ? to_int($item['vrf_id'])  : null;
 
         if ($cidr === '') { $results[] = ['success' => false, 'error' => 'cidr is required.']; continue; }
 
@@ -938,17 +1325,17 @@ function api_subnets_bulk_create(PDO $db, array $apiKey, array $body, int $bulkL
         }
 
         $normalized = $p['network'] . '/' . $p['prefix'];
-        $dupSt = $db->prepare("SELECT id FROM subnets WHERE cidr = :cidr");
-        $dupSt->execute([':cidr' => $normalized]);
+        $dupSt = $db->prepare("SELECT id FROM subnets WHERE cidr = :cidr AND vrf_id IS :vrf");
+        $dupSt->execute([':cidr' => $normalized, ':vrf' => $vrfId]);
         if ($dupSt->fetch()) { $results[] = ['success' => false, 'error' => "Subnet $normalized already exists."]; continue; }
 
-        $inheritedSiteId = find_parent_site_id($db, $normalized);
+        $inheritedSiteId = find_parent_site_id($db, $normalized, null, $vrfId);
         if ($inheritedSiteId !== null) $siteId = $inheritedSiteId;
 
         try {
             $db->prepare(
-                "INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, site_id, vlan_id)
-                 VALUES (:cidr, :ver, :net, :nbin, :pfx, :desc, :sid, :vlan)"
+                "INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, site_id, vlan_id, vrf_id)
+                 VALUES (:cidr, :ver, :net, :nbin, :pfx, :desc, :sid, :vlan, :vrf)"
             )->execute([
                 ':cidr' => $normalized,
                 ':ver'  => $p['version'],
@@ -958,6 +1345,7 @@ function api_subnets_bulk_create(PDO $db, array $apiKey, array $body, int $bulkL
                 ':desc' => $description,
                 ':sid'  => $siteId,
                 ':vlan' => $vlanId,
+                ':vrf'  => $vrfId,
             ]);
             $newId = (int)$db->lastInsertId();
 
@@ -984,16 +1372,24 @@ function api_subnets_bulk_create(PDO $db, array $apiKey, array $body, int $bulkL
  */
 function api_sites_create(PDO $db, array $apiKey, array $body): never
 {
-    $name = trim(to_str($body['name'] ?? ''));
-    $desc = trim(to_str($body['description'] ?? ''));
+    $name     = trim(to_str($body['name'] ?? ''));
+    $desc     = trim(to_str($body['description'] ?? ''));
+    $parentId = array_key_exists('parent_id', $body) && $body['parent_id'] !== null
+        ? to_int($body['parent_id']) : null;
     if ($name === '') api_error(400, 'name is required.');
+
+    if ($parentId !== null) {
+        $pSt = $db->prepare("SELECT id FROM sites WHERE id = :id");
+        $pSt->execute([':id' => $parentId]);
+        if (!$pSt->fetch()) api_error(400, 'parent_id refers to a non-existent site.');
+    }
 
     $dup = $db->prepare("SELECT id FROM sites WHERE name = :n");
     $dup->execute([':n' => $name]);
     if ($dup->fetch()) api_error(409, 'A site with this name already exists.');
 
-    $db->prepare("INSERT INTO sites (name, description) VALUES (:n, :d)")
-       ->execute([':n' => $name, ':d' => $desc]);
+    $db->prepare("INSERT INTO sites (name, description, parent_id) VALUES (:n, :d, :p)")
+       ->execute([':n' => $name, ':d' => $desc, ':p' => $parentId]);
     $newId = (int)$db->lastInsertId();
     api_audit($db, $apiKey, 'site.create', 'site', $newId, "name=$name");
     http_response_code(201);
@@ -1007,23 +1403,33 @@ function api_sites_create(PDO $db, array $apiKey, array $body): never
 function api_sites_update(PDO $db, array $apiKey, int $id, array $body): never
 {
     if ($id <= 0) api_error(400, 'id is required as a query parameter.');
-    $st = $db->prepare("SELECT id, name, description FROM sites WHERE id = :id");
+    $st = $db->prepare("SELECT id, name, description, parent_id FROM sites WHERE id = :id");
     $st->execute([':id' => $id]);
     /** @var array<string, mixed>|false $site */
     $site = $st->fetch();
     if (!$site) api_error(404, 'Site not found.');
 
-    $name = array_key_exists('name', $body) ? trim(to_str($body['name'])) : to_str($site['name']);
-    $desc = array_key_exists('description', $body) ? trim(to_str($body['description'])) : to_str($site['description']);
+    $name     = array_key_exists('name', $body) ? trim(to_str($body['name'])) : to_str($site['name']);
+    $desc     = array_key_exists('description', $body) ? trim(to_str($body['description'])) : to_str($site['description']);
+    $parentId = array_key_exists('parent_id', $body)
+        ? ($body['parent_id'] !== null ? to_int($body['parent_id']) : null)
+        : ($site['parent_id'] !== null ? to_int($site['parent_id']) : null);
     if ($name === '') api_error(400, 'name cannot be empty.');
+
+    if ($parentId !== null) {
+        if ($parentId === $id) api_error(400, 'A site cannot be its own parent.');
+        $pSt = $db->prepare("SELECT id FROM sites WHERE id = :id");
+        $pSt->execute([':id' => $parentId]);
+        if (!$pSt->fetch()) api_error(400, 'parent_id refers to a non-existent site.');
+    }
 
     // Check for duplicate name (excluding self)
     $dupSt = $db->prepare("SELECT id FROM sites WHERE name = :n AND id != :id");
     $dupSt->execute([':n' => $name, ':id' => $id]);
     if ($dupSt->fetch()) api_error(409, 'A site with this name already exists.');
 
-    $db->prepare("UPDATE sites SET name = :n, description = :d WHERE id = :id")
-       ->execute([':n' => $name, ':d' => $desc, ':id' => $id]);
+    $db->prepare("UPDATE sites SET name = :n, description = :d, parent_id = :p WHERE id = :id")
+       ->execute([':n' => $name, ':d' => $desc, ':p' => $parentId, ':id' => $id]);
     api_audit($db, $apiKey, 'site.update', 'site', $id, "name=$name");
     api_json(['id' => $id]);
 }
@@ -1055,14 +1461,15 @@ function api_sites_delete(PDO $db, array $apiKey, int $id): never
  */
 function api_addresses_create(PDO $db, array $apiKey, array $body): never
 {
-    $subnetId = isset($body['subnet_id']) ? to_int($body['subnet_id']) : 0;
-    $ip       = trim(to_str($body['ip'] ?? ''));
-    $hostname  = trim(to_str($body['hostname']   ?? ''));
-    $owner     = trim(to_str($body['owner']     ?? ''));
-    $note      = trim(to_str($body['note']      ?? ''));
-    $grp       = trim(to_str($body['group']     ?? ''));
-    $mac       = substr(trim(to_str($body['mac'] ?? '')), 0, 64);
-    $expiresAt = trim(to_str($body['expires_at'] ?? ''));
+    $subnetId       = isset($body['subnet_id'])       ? to_int($body['subnet_id'])       : 0;
+    $ip             = trim(to_str($body['ip'] ?? ''));
+    $hostname       = trim(to_str($body['hostname']        ?? ''));
+    $owner          = trim(to_str($body['owner']           ?? ''));
+    $ownerContactId = isset($body['owner_contact_id']) ? to_int($body['owner_contact_id']) : null;
+    $note           = trim(to_str($body['note']            ?? ''));
+    $grp            = trim(to_str($body['group']           ?? ''));
+    $mac            = substr(trim(to_str($body['mac'] ?? '')), 0, 64);
+    $expiresAt      = trim(to_str($body['expires_at'] ?? ''));
     if ($expiresAt !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $expiresAt)) {
         $expiresAt = '';
     }
@@ -1072,6 +1479,12 @@ function api_addresses_create(PDO $db, array $apiKey, array $body): never
     if ($ip === '')      api_error(400, 'ip is required.');
     if (!in_array($status, ['used', 'reserved', 'free'], true)) {
         api_error(400, 'status must be used, reserved, or free.');
+    }
+
+    if ($ownerContactId !== null) {
+        $cSt = $db->prepare("SELECT id FROM contacts WHERE id = :id");
+        $cSt->execute([':id' => $ownerContactId]);
+        if (!$cSt->fetch()) api_error(404, 'Contact not found.');
     }
 
     $subnetSt = $db->prepare("SELECT id, cidr, ip_version FROM subnets WHERE id = :id");
@@ -1097,12 +1510,12 @@ function api_addresses_create(PDO $db, array $apiKey, array $body): never
     if ($dupSt->fetch()) api_error(409, 'An address record for this IP already exists in the subnet.');
 
     $db->prepare(
-        "INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, grp, mac, expires_at, status)
-         VALUES (:sid, :ip, :b, :hn, :ow, :nt, :grp, :mac, :exp, :st)"
+        "INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, owner_contact_id, note, grp, mac, expires_at, status)
+         VALUES (:sid, :ip, :b, :hn, :ow, :cid, :nt, :grp, :mac, :exp, :st)"
     )->execute([
         ':sid' => $subnetId, ':ip' => $n['ip'], ':b' => $n['bin'],
-        ':hn'  => $hostname,  ':ow' => $owner,   ':nt' => $note,
-        ':grp' => $grp,       ':mac' => $mac,
+        ':hn'  => $hostname,  ':ow' => $owner,  ':cid' => $ownerContactId,
+        ':nt'  => $note,      ':grp' => $grp,   ':mac' => $mac,
         ':exp' => $expiresAt !== '' ? $expiresAt : null,
         ':st'  => $status,
     ]);
@@ -1214,6 +1627,7 @@ function api_subnets_create(PDO $db, array $apiKey, array $body): never
     $description = trim(to_str($body['description'] ?? ''));
     $siteId      = isset($body['site_id']) ? to_int($body['site_id']) : null;
     $vlanId      = isset($body['vlan_id']) ? to_int($body['vlan_id']) : null;
+    $vrfId       = isset($body['vrf_id'])  ? to_int($body['vrf_id'])  : null;
 
     if ($cidr === '') api_error(400, 'cidr is required.');
 
@@ -1230,19 +1644,25 @@ function api_subnets_create(PDO $db, array $apiKey, array $body): never
         if (!$siteSt->fetch()) api_error(404, 'Site not found.');
     }
 
-    // Check duplicate CIDR
+    if ($vrfId !== null) {
+        $vrfSt = $db->prepare("SELECT id FROM vrfs WHERE id = :id");
+        $vrfSt->execute([':id' => $vrfId]);
+        if (!$vrfSt->fetch()) api_error(404, 'VRF not found.');
+    }
+
+    // Check duplicate CIDR within the same VRF (uses IS for NULL-safe comparison)
     $normalized = $p['network'] . '/' . $p['prefix'];
-    $dupSt = $db->prepare("SELECT id FROM subnets WHERE cidr = :cidr");
-    $dupSt->execute([':cidr' => $normalized]);
+    $dupSt = $db->prepare("SELECT id FROM subnets WHERE cidr = :cidr AND vrf_id IS :vrf");
+    $dupSt->execute([':cidr' => $normalized, ':vrf' => $vrfId]);
     if ($dupSt->fetch()) api_error(409, 'A subnet with this CIDR already exists.');
 
     // Inherit site from tightest parent if one exists
-    $inheritedSiteId = find_parent_site_id($db, $normalized);
+    $inheritedSiteId = find_parent_site_id($db, $normalized, null, $vrfId);
     if ($inheritedSiteId !== null) $siteId = $inheritedSiteId;
 
     $db->prepare(
-        "INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, site_id, vlan_id)
-         VALUES (:cidr, :ver, :net, :nbin, :pfx, :desc, :sid, :vlan)"
+        "INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, site_id, vlan_id, vrf_id)
+         VALUES (:cidr, :ver, :net, :nbin, :pfx, :desc, :sid, :vlan, :vrf)"
     )->execute([
         ':cidr' => $p['network'] . '/' . $p['prefix'],
         ':ver'  => $p['version'],
@@ -1252,6 +1672,7 @@ function api_subnets_create(PDO $db, array $apiKey, array $body): never
         ':desc' => $description,
         ':sid'  => $siteId,
         ':vlan' => $vlanId,
+        ':vrf'  => $vrfId,
     ]);
     $newId = (int)$db->lastInsertId();
 
@@ -1259,7 +1680,7 @@ function api_subnets_create(PDO $db, array $apiKey, array $body): never
         "cidr={$p['network']}/{$p['prefix']}");
 
     // Non-blocking overlap warnings
-    $overlaps = detect_subnet_overlaps($db, $normalized);
+    $overlaps = detect_subnet_overlaps($db, $normalized, null, $vrfId);
     $warnings = [];
     if (!empty($overlaps['parents']) || !empty($overlaps['children'])) {
         $warnings[] = subnet_overlap_warning_text($overlaps);
@@ -1279,7 +1700,7 @@ function api_subnets_update(PDO $db, array $apiKey, int $id, array $body): never
 {
     if ($id <= 0) api_error(400, 'id is required as a query parameter.');
 
-    $st = $db->prepare("SELECT id, cidr, description, site_id, vlan_id FROM subnets WHERE id = :id");
+    $st = $db->prepare("SELECT id, cidr, description, site_id, vlan_id, vlan_fk FROM subnets WHERE id = :id");
     $st->execute([':id' => $id]);
     /** @var array<string, mixed>|false $subnet */
     $subnet = $st->fetch();
@@ -1292,9 +1713,18 @@ function api_subnets_update(PDO $db, array $apiKey, int $id, array $body): never
     $vlanId = array_key_exists('vlan_id', $body)
         ? ($body['vlan_id'] !== null ? to_int($body['vlan_id']) : null)
         : ($subnet['vlan_id'] !== null ? to_int($subnet['vlan_id']) : null);
+    $vlanFk = array_key_exists('vlan_fk', $body)
+        ? ($body['vlan_fk'] !== null ? to_int($body['vlan_fk']) : null)
+        : ($subnet['vlan_fk'] !== null ? to_int($subnet['vlan_fk']) : null);
 
     if ($vlanId !== null && ($vlanId < 1 || $vlanId > 4094)) {
         api_error(400, 'vlan_id must be between 1 and 4094.');
+    }
+
+    if ($vlanFk !== null) {
+        $vfSt = $db->prepare("SELECT id FROM vlans WHERE id = :id");
+        $vfSt->execute([':id' => $vlanFk]);
+        if (!$vfSt->fetch()) api_error(400, 'vlan_fk refers to a non-existent VLAN.');
     }
 
     if ($siteId !== null) {
@@ -1308,8 +1738,8 @@ function api_subnets_update(PDO $db, array $apiKey, int $id, array $body): never
     if ($inheritedSiteId !== null) $siteId = $inheritedSiteId;
 
     $db->prepare(
-        "UPDATE subnets SET description = :desc, site_id = :sid, vlan_id = :vlan WHERE id = :id"
-    )->execute([':desc' => $description, ':sid' => $siteId, ':vlan' => $vlanId, ':id' => $id]);
+        "UPDATE subnets SET description = :desc, site_id = :sid, vlan_id = :vlan, vlan_fk = :vfk WHERE id = :id"
+    )->execute([':desc' => $description, ':sid' => $siteId, ':vlan' => $vlanId, ':vfk' => $vlanFk, ':id' => $id]);
 
     api_audit($db, $apiKey, 'subnet.update', 'subnet', $id, 'cidr=' . to_str($subnet['cidr']));
 

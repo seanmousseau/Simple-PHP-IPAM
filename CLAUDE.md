@@ -323,7 +323,9 @@ Before building a release bundle, **always** complete these steps in order:
    vendor/bin/phpunit
    semgrep --config=.semgrep/rules.yml Simple-PHP-IPAM/
    bash testing/scripts/test_api.sh https://dev-direct.seanmousseau.com:8343/claude/ipam
-   bash -c 'set -a; source ~/.claude/dev-secrets.env; set +a; python3 testing/scripts/cdp_test.py'
+   bash -c 'set -a; source ~/.claude/dev-secrets.env; set +a; \
+     IPAM_BASE_URL=https://dev-direct.seanmousseau.com:8343/claude/ipam \
+     npx --prefix testing/playwright playwright test --config=testing/playwright/playwright.config.ts'
    ```
 7. Run CodeRabbit review and address any Critical findings:
    ```bash

@@ -60,7 +60,7 @@ test('create subnet appears in list', async () => {
     action: 'create', cidr: TEST_CIDR1, description: 'PW test subnet 1',
   });
   await page.goto('subnets.php');
-  await expect(page.getByText(TEST_CIDR1)).toBeVisible();
+  await expect(page.getByText(TEST_CIDR1).first()).toBeVisible();
   subnetId = await subnetIdFor(page, TEST_CIDR1);
   expect(subnetId, 'subnet ID extractable').not.toBeNull();
 });
@@ -81,7 +81,7 @@ test('update subnet description', async () => {
     cidr: TEST_CIDR1, description: 'PW test subnet 1 — EDITED',
   });
   await page.goto('subnets.php');
-  await expect(page.getByText('EDITED')).toBeVisible();
+  await expect(page.getByText('EDITED').first()).toBeVisible();
 });
 
 test('deep-link from subnet row leads to addresses page (#246)', async () => {

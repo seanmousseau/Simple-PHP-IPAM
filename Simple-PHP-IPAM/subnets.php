@@ -30,6 +30,9 @@ foreach ($vlanList as $vl) {
     $vlanMap[to_int($vl['id'])] = $vl;
 }
 
+/** @var list<array<string, mixed>> $vrfList */
+$vrfList = ($db->query("SELECT id, name FROM vrfs ORDER BY name ASC") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = to_str($_POST['action'] ?? '');
 
@@ -47,6 +50,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $vlanId = to_int($vlanMap[$vlanFk]['vlan_id']);
         }
 
+        $vrfId = to_int($_POST['vrf_id'] ?? 0) ?: null;
+
         $doAutoReserve = !empty($_POST['auto_reserve']);
         $gateway       = trim(to_str($_POST['gateway'] ?? '')) ?: null;
 
@@ -56,9 +61,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if (!$err) {
             $normalized = $p['network'] . '/' . $p['prefix'];
-            $overlaps = detect_subnet_overlaps($db, $normalized);
+            $overlaps = detect_subnet_overlaps($db, $normalized, null, $vrfId);
             // Inherit site from tightest parent if one exists
-            $inheritedSiteId = find_parent_site_id($db, $normalized);
+            $inheritedSiteId = find_parent_site_id($db, $normalized, null, $vrfId);
             if ($inheritedSiteId !== null) $siteId = $inheritedSiteId;
 
             // Pre-save overlap confirmation
@@ -71,13 +76,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'description'  => $desc,
                     'site_id'      => $siteId ?? 0,
                     'vlan_fk'      => $vlanFk ?? 0,
+                    'vrf_id'       => $vrfId ?? 0,
                     'auto_reserve' => $doAutoReserve ? '1' : '0',
                     'gateway'      => $gateway ?? '',
                 ];
             } else {
                 try {
-                    $st = $db->prepare("INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, site_id, vlan_id, vlan_fk)
-                                        VALUES (:cidr,:ver,:net,:nb,:pre,:d,:site,:vlan,:vfk)");
+                    // UNIQUE(cidr, vrf_id) treats NULL as distinct from NULL in SQLite,
+                    // so check for duplicates explicitly before inserting.
+                    $dupChk = $db->prepare("SELECT id FROM subnets WHERE cidr = :cidr AND vrf_id IS :vrf");
+                    $dupChk->execute([':cidr' => $normalized, ':vrf' => $vrfId]);
+                    if ($dupChk->fetch()) {
+                        $err = 'A subnet with this CIDR already exists.';
+                    } else {
+                    $st = $db->prepare("INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, site_id, vlan_id, vlan_fk, vrf_id)
+                                        VALUES (:cidr,:ver,:net,:nb,:pre,:d,:site,:vlan,:vfk,:vrf)");
                     $st->execute([
                         ':cidr' => $normalized,
                         ':ver'  => $p['version'],
@@ -88,6 +101,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ':site' => $siteId,
                         ':vlan' => $vlanId,
                         ':vfk'  => $vlanFk,
+                        ':vrf'  => $vrfId,
                     ]);
                     $newSubnetId = (int)$db->lastInsertId();
                     audit($db, 'subnet.create', 'subnet', $newSubnetId, $normalized);
@@ -105,6 +119,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     else flash_set('Subnet created.');
                     header('Location: subnets.php');
                     exit;
+                    }
                 } catch (PDOException $e) {
                     $err = str_contains($e->getMessage(), 'UNIQUE')
                         ? 'A subnet with this CIDR already exists.'
@@ -126,15 +141,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $vlanId = to_int($vlanMap[$vlanFk]['vlan_id']);
         }
 
+        $vrfId = to_int($_POST['vrf_id'] ?? 0) ?: null;
+
         $p = parse_cidr($cidr);
         if (!$p) {
             $err = 'Invalid CIDR.';
         }
         if (!$err) {
             $normalized = $p['network'] . '/' . $p['prefix'];
-            $overlaps = detect_subnet_overlaps($db, $normalized, $id);
+            $overlaps = detect_subnet_overlaps($db, $normalized, $id, $vrfId);
             // Inherit site from tightest parent if one exists
-            $inheritedSiteId = find_parent_site_id($db, $normalized, $id);
+            $inheritedSiteId = find_parent_site_id($db, $normalized, $id, $vrfId);
             if ($inheritedSiteId !== null) $siteId = $inheritedSiteId;
 
             // Pre-save overlap confirmation
@@ -144,12 +161,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pendingAction = 'update';
                 $pendingData = [
                     'id' => $id, 'cidr' => $cidr, 'description' => $desc,
-                    'site_id' => $siteId ?? 0, 'vlan_fk' => $vlanFk ?? 0,
+                    'site_id' => $siteId ?? 0, 'vlan_fk' => $vlanFk ?? 0, 'vrf_id' => $vrfId ?? 0,
                 ];
             } else {
                 try {
                     $st = $db->prepare("UPDATE subnets
-                                        SET cidr=:cidr, ip_version=:ver, network=:net, network_bin=:nb, prefix=:pre, description=:d, site_id=:site, vlan_id=:vlan, vlan_fk=:vfk
+                                        SET cidr=:cidr, ip_version=:ver, network=:net, network_bin=:nb, prefix=:pre, description=:d, site_id=:site, vlan_id=:vlan, vlan_fk=:vfk, vrf_id=:vrf
                                         WHERE id=:id");
                     $st->execute([
                         ':cidr' => $normalized,
@@ -161,6 +178,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ':site' => $siteId,
                         ':vlan' => $vlanId,
                         ':vfk'  => $vlanFk,
+                        ':vrf'  => $vrfId,
                         ':id'   => $id,
                     ]);
                     audit($db, 'subnet.update', 'subnet', $id, $normalized);
@@ -193,10 +211,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $st = $db->prepare("
-    SELECT s.id, s.cidr, s.ip_version, s.network, s.network_bin, s.prefix, s.description, s.updated_at, s.site_id, s.vlan_id, s.vlan_fk,
-           v.name AS vlan_name
+    SELECT s.id, s.cidr, s.ip_version, s.network, s.network_bin, s.prefix, s.description, s.updated_at, s.site_id, s.vlan_id, s.vlan_fk, s.vrf_id,
+           v.name AS vlan_name, vr.name AS vrf_name
     FROM subnets s
     LEFT JOIN vlans v ON v.id = s.vlan_fk
+    LEFT JOIN vrfs vr ON vr.id = s.vrf_id
     ORDER BY s.ip_version ASC, s.prefix ASC, s.network_bin ASC
 ");
 $st->execute();
@@ -461,6 +480,46 @@ uasort($siteGroups, fn($a, $b) => strcasecmp($a['label'], $b['label']));
 
 /**
  * @param array{roots: list<int>, children: array<int, list<int>>, byId: array<int, array<string, mixed>>} $tree
+/**
+ * @param array{byId: array<int, array<string, mixed>>, children: array<int, list<int>>} $tree
+ * @param array<int, array{used: int, reserved: int, free: int, total: int}> $agg
+ * @param list<int> $roots
+ * @param array{0: int} &$count
+ */
+function render_subnet_map_nodes(array $tree, array $agg, array $roots, int $depth, array &$count): void
+{
+    foreach ($roots as $id) {
+        if ($count[0] >= 200) {
+            if ($count[0] === 200) {
+                echo "<div class='map-node map-cap'>More than 200 nodes — remaining nodes not shown.</div>";
+            }
+            $count[0]++;
+            continue;
+        }
+        $count[0]++;
+        /** @var array<string, mixed> $row */
+        $row = $tree['byId'][$id];
+        $a   = $agg[$id] ?? ['used' => 0, 'reserved' => 0, 'free' => 0, 'total' => 0];
+        $tot = max(1, to_int($a['total']));
+        $pct = (int)round((to_int($a['used']) + to_int($a['reserved'])) / $tot * 100);
+        $cls = $pct >= 90 ? 'util-bar-fill--crit' : ($pct >= 75 ? 'util-bar-fill--warn' : '');
+        $indent = $depth * 22;
+        echo "<div class='map-node' data-indent='{$indent}'>";
+        echo "<div class='map-node-inner' style='margin-left:{$indent}px'>";
+        echo "<a class='map-cidr' href='addresses.php?subnet_id=" . to_int($row['id']) . "'>" . e(to_str($row['cidr'])) . "</a>";
+        if (to_str($row['description']) !== '') echo " <span class='map-desc muted'>" . e(to_str($row['description'])) . "</span>";
+        echo "<span class='map-util'><span class='util-bar'><span class='util-bar-fill {$cls}' data-pct='{$pct}'></span></span><span class='map-pct muted'>{$pct}%</span></span>";
+        echo "</div>";
+        echo "</div>";
+        $children = $tree['children'][$id] ?? [];
+        if ($children !== []) {
+            render_subnet_map_nodes($tree, $agg, $children, $depth + 1, $count);
+        }
+    }
+}
+
+/**
+ * @param array{byId: array<int, array<string, mixed>>, children: array<int, list<int>>} $tree
  * @param array<int, array{used: int, reserved: int, free: int, total: int}> $direct
  * @param array<int, array{used: int, reserved: int, free: int, total: int}> $agg
  * @param array<int, array{assignable_total: int, assigned_assignable: int, unassigned_assignable: int}> $ipv4Unassigned
@@ -468,8 +527,9 @@ uasort($siteGroups, fn($a, $b) => strcasecmp($a['label'], $b['label']));
  * @param array<int, string> $siteMap
  * @param array<int, array<string, mixed>> $siteList
  * @param list<array<string, mixed>> $vlanList
+ * @param list<array<string, mixed>> $vrfList
  */
-function render_subnet_node_local(array $tree, array $direct, array $agg, array $ipv4Unassigned, array $ipv4UnassignedAgg, array $siteMap, array $siteList, array $vlanList, int $id, int $depth = 0): void
+function render_subnet_node_local(array $tree, array $direct, array $agg, array $ipv4Unassigned, array $ipv4UnassignedAgg, array $siteMap, array $siteList, array $vlanList, array $vrfList, int $id, int $depth = 0): void
 {
     $row = $tree['byId'][$id];
     $pad = $depth * 18;
@@ -494,6 +554,8 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
         $vlanLabel = 'VLAN ' . to_int($row['vlan_id']);
     }
     if ($vlanLabel !== '') echo " <span class='badge'>" . e($vlanLabel) . "</span>";
+    $vrfName = to_str($row['vrf_name'] ?? '');
+    if ($vrfName !== '') echo " <span class='badge'>VRF: " . e($vrfName) . "</span>";
     if (($row['description'] ?? '') !== '') echo " - " . e(to_str($row['description']));
     // Address count badges — direct counts on this subnet, aggregated in parens if children differ
     $countHtml = "<span class='status-used'>" . $d['used'] . " used</span>"
@@ -564,6 +626,17 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
         echo "</select></label>";
     }
 
+    if ($vrfList) {
+        $curVrfId = to_int($row['vrf_id'] ?? 0);
+        echo "<label>VRF<br><select name='vrf_id'><option value='0'>(global)</option>";
+        foreach ($vrfList as $vr) {
+            $vrId = to_int($vr['id']);
+            $sel  = $vrId === $curVrfId ? " selected" : "";
+            echo "<option value='" . $vrId . "'" . $sel . ">" . e(to_str($vr['name'])) . "</option>";
+        }
+        echo "</select></label>";
+    }
+
     if ($depth > 0) {
         // Child subnet: site is inherited from parent and cannot be changed here
         $lockedSiteName = ($siteId > 0 && isset($siteMap[$siteId])) ? $siteMap[$siteId] : '(none)';
@@ -595,7 +668,7 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
     }
 
     foreach (($tree['children'][$id] ?? []) as $cid) {
-        render_subnet_node_local($tree, $direct, $agg, $ipv4Unassigned, $ipv4UnassignedAgg, $siteMap, $siteList, $vlanList, (int)$cid, $depth + 1);
+        render_subnet_node_local($tree, $direct, $agg, $ipv4Unassigned, $ipv4UnassignedAgg, $siteMap, $siteList, $vlanList, $vrfList, (int)$cid, $depth + 1);
     }
 
     echo "</div></details></div>";
@@ -644,6 +717,7 @@ page_header('Subnets');
       <input type="hidden" name="description" value="<?= e(to_str($pendingData['description'])) ?>">
       <input type="hidden" name="site_id" value="<?= to_int($pendingData['site_id']) ?>">
       <input type="hidden" name="vlan_fk" value="<?= to_int($pendingData['vlan_fk'] ?? 0) ?>">
+      <input type="hidden" name="vrf_id" value="<?= to_int($pendingData['vrf_id'] ?? 0) ?>">
       <?php if (isset($pendingData['auto_reserve'])): ?>
         <input type="hidden" name="auto_reserve" value="<?= to_int($pendingData['auto_reserve']) ?>">
         <input type="hidden" name="gateway" value="<?= e(to_str($pendingData['gateway'] ?? '')) ?>">
@@ -673,6 +747,16 @@ page_header('Subnets');
         </select>
       </label>
       <?php endif; ?>
+      <?php if ($vrfList): ?>
+      <label>VRF<br>
+        <select name="vrf_id">
+          <option value="0">(global)</option>
+          <?php foreach ($vrfList as $vr): ?>
+            <option value="<?= to_int($vr['id']) ?>"><?= e(to_str($vr['name'])) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </label>
+      <?php endif; ?>
       <label>Site<br>
         <select name="site_id">
           <option value="0">(none)</option>
@@ -696,11 +780,19 @@ page_header('Subnets');
 </div>
 
 <div class="card mt-16">
-  <h2>Grouped Hierarchy</h2>
+  <div class="toolbar mb-8">
+    <h2 class="mb-0">Grouped Hierarchy</h2>
+    <div>
+      <button class="action-pill subnet-view-btn" data-view="list" id="btn-view-list">&#9776; List</button>
+      <button class="action-pill subnet-view-btn" data-view="map"  id="btn-view-map">&#9644; Map</button>
+    </div>
+  </div>
 
   <?php if (empty($siteGroups)): ?>
     <div class="empty-state">No subnets yet. <a class="action-pill" href="#add-subnet">+ Add Subnet</a></div>
   <?php else: ?>
+    <!-- List view -->
+    <div id="subnet-list-view">
     <?php foreach ($siteGroups as $key => $group): ?>
       <div class="site-group mb-24">
         <button type="button" class="site-group-toggle" aria-expanded="true" data-sg-key="<?= e((string)$key) ?>">
@@ -708,11 +800,22 @@ page_header('Subnets');
         </button>
         <div class="site-group-body">
           <?php foreach ($group['roots'] as $rid): ?>
-            <?php render_subnet_node_local($tree, $direct, $agg, $ipv4Unassigned, $ipv4UnassignedAgg, $siteMap, $siteList, $vlanList, (int)$rid, 0); ?>
+            <?php render_subnet_node_local($tree, $direct, $agg, $ipv4Unassigned, $ipv4UnassignedAgg, $siteMap, $siteList, $vlanList, $vrfList, (int)$rid, 0); ?>
           <?php endforeach; ?>
         </div>
       </div>
     <?php endforeach; ?>
+    </div>
+
+    <!-- Map view (#255) -->
+    <div id="subnet-map-view" style="display:none">
+    <?php foreach ($siteGroups as $group): ?>
+      <div class="map-group mb-24">
+        <div class="map-group-label"><?= e(to_str($group['label'])) ?></div>
+        <?php $mapCount = [0]; render_subnet_map_nodes($tree, $agg, array_map('intval', $group['roots']), 0, $mapCount); ?>
+      </div>
+    <?php endforeach; ?>
+    </div>
   <?php endif; ?>
 </div>
 

@@ -37,9 +37,28 @@ CREATE TABLE IF NOT EXISTS sites (
 
 CREATE INDEX IF NOT EXISTS idx_sites_parent_id ON sites(parent_id);
 
+-- v2.1.0: VRFs (defined before subnets for FK clarity)
+CREATE TABLE IF NOT EXISTS vrfs (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL UNIQUE,
+  description TEXT NOT NULL DEFAULT '',
+  rd          TEXT NOT NULL DEFAULT '',             -- Route Distinguisher, free-form (e.g. "65000:1")
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_vrfs_name ON vrfs(name);
+
+CREATE TRIGGER IF NOT EXISTS vrfs_updated_at
+AFTER UPDATE ON vrfs
+FOR EACH ROW
+BEGIN
+  UPDATE vrfs SET updated_at = datetime('now') WHERE id = OLD.id;
+END;
+
 CREATE TABLE IF NOT EXISTS subnets (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  cidr        TEXT NOT NULL UNIQUE,
+  cidr        TEXT NOT NULL,
   ip_version  INTEGER NOT NULL,
   network     TEXT NOT NULL,
   network_bin BLOB NOT NULL,
@@ -48,12 +67,15 @@ CREATE TABLE IF NOT EXISTS subnets (
   site_id     INTEGER,
   vlan_id     INTEGER,                              -- 802.1Q VLAN ID (1–4094), legacy integer field
   vlan_fk     INTEGER REFERENCES vlans(id) ON DELETE SET NULL,  -- v2.0.0: FK to vlans table
+  vrf_id      INTEGER REFERENCES vrfs(id) ON DELETE SET NULL,   -- v2.1.0: FK to vrfs table
   created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(cidr, vrf_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_subnets_ver_prefix_netbin ON subnets(ip_version, prefix, network_bin);
 CREATE INDEX IF NOT EXISTS idx_subnets_site_id ON subnets(site_id);
+CREATE INDEX IF NOT EXISTS idx_subnets_vrf_id ON subnets(vrf_id);
 
 CREATE TRIGGER IF NOT EXISTS subnets_updated_at
 AFTER UPDATE ON subnets
@@ -62,20 +84,43 @@ BEGIN
   UPDATE subnets SET updated_at = datetime('now') WHERE id = OLD.id;
 END;
 
-CREATE TABLE IF NOT EXISTS addresses (
+-- v2.1.0: Contacts as first-class objects (defined before addresses for FK clarity)
+CREATE TABLE IF NOT EXISTS contacts (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  subnet_id  INTEGER NOT NULL,
-  ip         TEXT NOT NULL,
-  ip_bin     BLOB NOT NULL,
-  hostname   TEXT NOT NULL DEFAULT '',
-  owner      TEXT NOT NULL DEFAULT '',
+  name       TEXT NOT NULL,
+  email      TEXT NOT NULL DEFAULT '',
+  phone      TEXT NOT NULL DEFAULT '',
+  org        TEXT NOT NULL DEFAULT '',
   note       TEXT NOT NULL DEFAULT '',
-  grp        TEXT NOT NULL DEFAULT '',              -- group label (group is a SQL reserved word)
-  mac        TEXT NOT NULL DEFAULT '',              -- MAC address (optional, free-form)
-  expires_at TEXT,                                  -- optional expiration date (YYYY-MM-DD), NULL = no expiry
-  status     TEXT NOT NULL DEFAULT 'used',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts(name);
+CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email);
+
+CREATE TRIGGER IF NOT EXISTS contacts_updated_at
+AFTER UPDATE ON contacts
+FOR EACH ROW
+BEGIN
+  UPDATE contacts SET updated_at = datetime('now') WHERE id = OLD.id;
+END;
+
+CREATE TABLE IF NOT EXISTS addresses (
+  id               INTEGER PRIMARY KEY AUTOINCREMENT,
+  subnet_id        INTEGER NOT NULL,
+  ip               TEXT NOT NULL,
+  ip_bin           BLOB NOT NULL,
+  hostname         TEXT NOT NULL DEFAULT '',
+  owner            TEXT NOT NULL DEFAULT '',
+  note             TEXT NOT NULL DEFAULT '',
+  grp              TEXT NOT NULL DEFAULT '',              -- group label (group is a SQL reserved word)
+  mac              TEXT NOT NULL DEFAULT '',              -- MAC address (optional, free-form)
+  expires_at       TEXT,                                  -- optional expiration date (YYYY-MM-DD), NULL = no expiry
+  status           TEXT NOT NULL DEFAULT 'used',
+  owner_contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,  -- v2.1.0: FK to contacts
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(subnet_id, ip),
   FOREIGN KEY(subnet_id) REFERENCES subnets(id) ON DELETE CASCADE
 );

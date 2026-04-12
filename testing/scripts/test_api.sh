@@ -758,6 +758,131 @@ else
 fi
 
 # ====================================================================
+log "=== VRFs ==="
+# ====================================================================
+
+call_api GET vrfs
+assert_http 200 "GET vrfs → 200"
+VRFS_ARRAY=$(python3 -c "import sys,json; print(type(json.load(sys.stdin).get('vrfs',[])).__name__)" <<< "$BODY" 2>/dev/null || echo "")
+[[ "$VRFS_ARRAY" == "list" ]] && pass "vrfs array is a list" || fail "vrfs response missing 'vrfs' array"
+
+# Create a VRF
+call_api POST vrfs '{"name":"API-Test-VRF","description":"API test","rd":"65000:1"}'
+assert_http 201 "Create VRF → 201"
+API_VRF_ID=$(python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" <<< "$BODY" 2>/dev/null || echo "")
+[[ -n "$API_VRF_ID" && "$API_VRF_ID" != "None" ]] && pass "Create VRF returns id=$API_VRF_ID" || fail "Create VRF — no id in response"
+
+# Get VRF
+call_api GET "vrfs&id=$API_VRF_ID"
+assert_http 200 "GET single VRF → 200"
+VRF_NAME=$(python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('vrf',d).get('name',''))" <<< "$BODY" 2>/dev/null || echo "")
+[[ "$VRF_NAME" == "API-Test-VRF" ]] && pass "VRF name matches" || fail "VRF name mismatch: $VRF_NAME"
+
+# Update VRF
+call_api PUT "vrfs&id=$API_VRF_ID" '{"name":"API-Test-VRF-UPDATED","description":"updated","rd":"65000:2"}'
+assert_http 200 "Update VRF → 200"
+
+# VRF overlap: same CIDR in different VRFs should succeed
+call_api POST subnets '{"cidr":"10.200.0.0/24","description":"VRF overlap test 1"}'
+assert_http 201 "Create subnet (global VRF) → 201"
+OVERLAP_SUBNET1=$(python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" <<< "$BODY" 2>/dev/null || echo "")
+
+call_api POST subnets "{\"cidr\":\"10.200.0.0/24\",\"description\":\"VRF overlap test 2\",\"vrf_id\":$API_VRF_ID}"
+assert_http 201 "Create same CIDR in different VRF → 201 (overlap allowed)"
+OVERLAP_SUBNET2=$(python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" <<< "$BODY" 2>/dev/null || echo "")
+
+# Subnet response includes vrf_id and vrf_name
+call_api GET "subnets&id=$OVERLAP_SUBNET2"
+VRF_NAME_IN_SUBNET=$(python3 -c "import sys,json; d=json.load(sys.stdin); s=d.get('subnet',{}); print(s.get('vrf_name','MISSING'))" <<< "$BODY" 2>/dev/null || echo "")
+[[ "$VRF_NAME_IN_SUBNET" == "API-Test-VRF-UPDATED" ]] && pass "Subnet response includes vrf_name" || fail "Subnet vrf_name mismatch: $VRF_NAME_IN_SUBNET"
+
+# vrf_id filter on subnets
+call_api GET "subnets&vrf_id=$API_VRF_ID"
+assert_http 200 "GET subnets with ?vrf_id= → 200"
+VRF_FILTER_COUNT=$(python3 -c "import sys,json; print(len(json.load(sys.stdin).get('subnets',[])))" <<< "$BODY" 2>/dev/null || echo "0")
+[[ "$VRF_FILTER_COUNT" -ge 1 ]] && pass "?vrf_id= filter: $VRF_FILTER_COUNT subnet(s)" || fail "?vrf_id= filter returned no subnets"
+
+# Cleanup overlap test subnets
+[[ -n "$OVERLAP_SUBNET2" && "$OVERLAP_SUBNET2" != "None" ]] && { call_api DELETE "subnets&id=$OVERLAP_SUBNET2"; assert_http 204 "Delete VRF-scoped subnet → 204"; }
+[[ -n "$OVERLAP_SUBNET1" && "$OVERLAP_SUBNET1" != "None" ]] && { call_api DELETE "subnets&id=$OVERLAP_SUBNET1"; assert_http 204 "Delete global-VRF subnet → 204"; }
+
+# Delete VRF
+[[ -n "$API_VRF_ID" && "$API_VRF_ID" != "None" ]] && {
+    call_api DELETE "vrfs&id=$API_VRF_ID"
+    assert_http 204 "Delete VRF → 204"
+}
+
+# ====================================================================
+log "=== Contacts ==="
+# ====================================================================
+
+call_api GET contacts
+assert_http 200 "GET contacts → 200"
+CONTACTS_ARRAY=$(python3 -c "import sys,json; print(type(json.load(sys.stdin).get('contacts',[])).__name__)" <<< "$BODY" 2>/dev/null || echo "")
+[[ "$CONTACTS_ARRAY" == "list" ]] && pass "contacts array is a list" || fail "contacts response missing 'contacts' array"
+
+# Create a contact
+call_api POST contacts '{"name":"API Test Contact","email":"api@example.com","phone":"555-1234","org":"Test Org","note":"API test"}'
+assert_http 201 "Create contact → 201"
+API_CONTACT_ID=$(python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" <<< "$BODY" 2>/dev/null || echo "")
+[[ -n "$API_CONTACT_ID" && "$API_CONTACT_ID" != "None" ]] && pass "Create contact returns id=$API_CONTACT_ID" || fail "Create contact — no id in response"
+
+# Search contacts with ?q=
+call_api GET "contacts&q=API+Test"
+assert_http 200 "GET contacts with ?q= → 200"
+CONTACT_SEARCH_COUNT=$(python3 -c "import sys,json; print(len(json.load(sys.stdin).get('contacts',[])))" <<< "$BODY" 2>/dev/null || echo "0")
+[[ "$CONTACT_SEARCH_COUNT" -ge 1 ]] && pass "?q= contact search: $CONTACT_SEARCH_COUNT result(s)" || fail "?q= contact search returned no results"
+
+# Update contact
+call_api PUT "contacts&id=$API_CONTACT_ID" '{"name":"API Test Contact UPDATED","email":"updated@example.com","phone":"555-5678","org":"Updated Org","note":"updated"}'
+assert_http 200 "Update contact → 200"
+
+# Verify owner_contact_id in address response after linking
+# Create a subnet + address to test contact_id filter
+call_api POST subnets '{"cidr":"10.201.0.0/24","description":"contact test subnet"}'
+assert_http 201 "Create contact-test subnet → 201"
+CONTACT_SUBNET_ID=$(python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" <<< "$BODY" 2>/dev/null || echo "")
+
+if [[ -n "$CONTACT_SUBNET_ID" && "$CONTACT_SUBNET_ID" != "None" ]]; then
+    call_api POST addresses "{\"subnet_id\":$CONTACT_SUBNET_ID,\"ip\":\"10.201.0.10\",\"hostname\":\"contact-test\",\"owner_contact_id\":$API_CONTACT_ID}"
+    assert_http 201 "Create address with owner_contact_id → 201"
+    CONTACT_ADDR_ID=$(python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" <<< "$BODY" 2>/dev/null || echo "")
+
+    # Verify owner_contact_name in address response
+    if [[ -n "$CONTACT_ADDR_ID" && "$CONTACT_ADDR_ID" != "None" ]]; then
+        call_api GET "addresses&subnet_id=$CONTACT_SUBNET_ID"
+        CONTACT_NAME_IN_ADDR=$(python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+for a in d.get('addresses', []):
+    if str(a.get('id','')) == '${CONTACT_ADDR_ID}':
+        print(a.get('owner_contact_name','MISSING'))
+        break
+else:
+    print('NOT_FOUND')
+" <<< "$BODY" 2>/dev/null || echo "MISSING")
+        [[ "$CONTACT_NAME_IN_ADDR" == "API Test Contact UPDATED" ]] && pass "Address response includes owner_contact_name" || fail "owner_contact_name mismatch: $CONTACT_NAME_IN_ADDR"
+
+        # contact_id filter on addresses
+        call_api GET "addresses&contact_id=$API_CONTACT_ID"
+        assert_http 200 "GET addresses with ?contact_id= → 200"
+        CONTACT_ADDR_COUNT=$(python3 -c "import sys,json; print(len(json.load(sys.stdin).get('addresses',[])))" <<< "$BODY" 2>/dev/null || echo "0")
+        [[ "$CONTACT_ADDR_COUNT" -ge 1 ]] && pass "?contact_id= filter: $CONTACT_ADDR_COUNT address(es)" || fail "?contact_id= filter returned no addresses"
+
+        call_api DELETE "addresses&id=$CONTACT_ADDR_ID"
+        assert_http 204 "Delete contact-test address → 204"
+    fi
+    call_api DELETE "subnets&id=$CONTACT_SUBNET_ID"
+    assert_http 204 "Delete contact-test subnet → 204"
+fi
+
+# Delete contact
+[[ -n "$API_CONTACT_ID" && "$API_CONTACT_ID" != "None" ]] && {
+    call_api DELETE "contacts&id=$API_CONTACT_ID"
+    assert_http 204 "Delete contact → 204"
+}
+
+# ====================================================================
 log "=== Health Check ==="
 # ====================================================================
 
