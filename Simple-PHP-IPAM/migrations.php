@@ -447,7 +447,7 @@ function ipam_migrations(): array
                     id               INTEGER PRIMARY KEY AUTOINCREMENT,
                     subnet_id        INTEGER NOT NULL REFERENCES subnets(id) ON DELETE CASCADE,
                     method           TEXT NOT NULL DEFAULT 'icmp' CHECK(method IN ('icmp','tcp','both')),
-                    tcp_port         INTEGER,
+                    tcp_port         INTEGER CHECK(tcp_port IS NULL OR (tcp_port BETWEEN 1 AND 65535)),
                     interval_minutes INTEGER NOT NULL DEFAULT 60 CHECK(interval_minutes >= 1),
                     is_active        INTEGER NOT NULL DEFAULT 1,
                     last_run_at      TEXT,
@@ -455,8 +455,9 @@ function ipam_migrations(): array
                     updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
                     UNIQUE(subnet_id)
                 )");
-                $db->exec("CREATE INDEX IF NOT EXISTS idx_scan_schedules_active ON scan_schedules(is_active, last_run_at)");
             }
+            // Indexes created unconditionally so they are repaired on re-run
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_scan_schedules_active ON scan_schedules(is_active, last_run_at)");
 
             // scan_results: one row per IP per scan run
             if (!in_array('scan_results', $tables, true)) {
@@ -470,9 +471,9 @@ function ipam_migrations(): array
                     latency_ms INTEGER,
                     scanned_at TEXT NOT NULL DEFAULT (datetime('now'))
                 )");
-                $db->exec("CREATE INDEX IF NOT EXISTS idx_scan_results_subnet_time ON scan_results(subnet_id, scanned_at DESC)");
-                $db->exec("CREATE INDEX IF NOT EXISTS idx_scan_results_address ON scan_results(address_id, scanned_at DESC)");
             }
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_scan_results_subnet_time ON scan_results(subnet_id, scanned_at DESC)");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_scan_results_address ON scan_results(address_id, scanned_at DESC)");
 
             // addresses.last_seen_at — timestamp of last successful scan response
             $addrCols = array_column(

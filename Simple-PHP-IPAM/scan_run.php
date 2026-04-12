@@ -65,7 +65,10 @@ if ($methodOverride !== null && !in_array($methodOverride, ['icmp', 'tcp', 'both
 // ---------------------------------------------------------------------------
 // Open the database
 // ---------------------------------------------------------------------------
-$dbPath = $scriptDir . '/data/ipam.sqlite';
+/** @var array<string, mixed> $config */
+$dbPath = isset($config['db_path']) && to_str($config['db_path']) !== ''
+    ? to_str($config['db_path'])
+    : $scriptDir . '/data/ipam.sqlite';
 if (!file_exists($dbPath)) {
     fwrite(STDERR, "Error: database not found at $dbPath\n");
     exit(1);
@@ -140,7 +143,7 @@ foreach ($toScan as $subnet) {
     }
 
     $start  = microtime(true);
-    $stats  = ipam_scan_subnet($db, $subnetId, $method, $tcpPort);
+    $stats  = ipam_scan_subnet($db, $subnetId, $method, $tcpPort, $staleThresh);
     $elapsed = round(microtime(true) - $start, 2);
 
     // Update last_run_at if there's a schedule row

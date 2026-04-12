@@ -268,7 +268,7 @@ CREATE TABLE IF NOT EXISTS scan_schedules (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
   subnet_id        INTEGER NOT NULL REFERENCES subnets(id) ON DELETE CASCADE,
   method           TEXT NOT NULL DEFAULT 'icmp' CHECK(method IN ('icmp','tcp','both')),
-  tcp_port         INTEGER,
+  tcp_port         INTEGER CHECK(tcp_port IS NULL OR (tcp_port BETWEEN 1 AND 65535)),
   interval_minutes INTEGER NOT NULL DEFAULT 60 CHECK(interval_minutes >= 1),
   is_active        INTEGER NOT NULL DEFAULT 1,
   last_run_at      TEXT,

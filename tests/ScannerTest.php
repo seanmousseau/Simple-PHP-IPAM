@@ -56,6 +56,13 @@ class ScannerTest extends TestCase
             is_up INTEGER NOT NULL DEFAULT 0, latency_ms INTEGER,
             scanned_at TEXT NOT NULL DEFAULT (datetime('now'))
         )");
+        $pdo->query("CREATE TABLE audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action TEXT NOT NULL, entity_type TEXT NOT NULL DEFAULT '',
+            entity_id INTEGER, user_id INTEGER, username TEXT NOT NULL DEFAULT '',
+            ip TEXT NOT NULL DEFAULT '', user_agent TEXT NOT NULL DEFAULT '',
+            details TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )");
 
         // One /24 subnet
         $pdo->prepare("INSERT INTO subnets (id, cidr, ip_version, network, network_bin, prefix)

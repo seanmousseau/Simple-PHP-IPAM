@@ -3351,9 +3351,10 @@ function ipam_probe_tcp(string $ip, int $port, int $timeoutMs = 1000): ?int
  *
  * @param  string   $method   'icmp' | 'tcp' | 'both'
  * @param  int|null $tcpPort  TCP port to probe when method is 'tcp' or 'both'
+ * @param  int      $staleThreshold  Consecutive misses before marking address stale (default: 3)
  * @return array{scanned:int, up:int, down:int, stale_marked:int}
  */
-function ipam_scan_subnet(PDO $db, int $subnetId, string $method, ?int $tcpPort): array
+function ipam_scan_subnet(PDO $db, int $subnetId, string $method, ?int $tcpPort, int $staleThreshold = 3): array
 {
     // Load all addresses in the subnet
     $st = $db->prepare("SELECT id, ip FROM addresses WHERE subnet_id = :sid ORDER BY ip_bin");
@@ -3408,7 +3409,7 @@ function ipam_scan_subnet(PDO $db, int $subnetId, string $method, ?int $tcpPort)
         $stats['scanned']++;
     }
 
-    $stats['stale_marked'] = ipam_mark_stale_addresses($db, $subnetId);
+    $stats['stale_marked'] = ipam_mark_stale_addresses($db, $subnetId, $staleThreshold);
     return $stats;
 }
 
@@ -3444,7 +3445,7 @@ function ipam_mark_stale_addresses(PDO $db, int $subnetId, int $missThreshold = 
     $rows = $st->fetchAll();
 
     $changed = 0;
-    $setStale = $db->prepare("UPDATE addresses SET is_stale = :stale WHERE id = :id");
+    $updates = [];
 
     foreach ($rows as $row) {
         $id = (int) $row['id'];
@@ -3455,10 +3456,35 @@ function ipam_mark_stale_addresses(PDO $db, int $subnetId, int $missThreshold = 
         $shouldBeStale = ($misses >= $missThreshold && $lastUp !== null && (int) $lastUp === 0) ? 1 : 0;
 
         if ($shouldBeStale !== $currentlyStale) {
-            $setStale->execute([':stale' => $shouldBeStale, ':id' => $id]);
-            $changed++;
+            $updates[] = ['id' => $id, 'stale' => $shouldBeStale];
         }
     }
+
+    if ($updates !== []) {
+        $db->beginTransaction();
+        try {
+            $setStale = $db->prepare("UPDATE addresses SET is_stale = :stale, updated_at = datetime('now') WHERE id = :id");
+            foreach ($updates as $u) {
+                $setStale->execute([':stale' => $u['stale'], ':id' => $u['id']]);
+            }
+            $changed = count($updates);
+            // Audit with system actor (works in CLI and web contexts)
+            $u = current_user();
+            $db->prepare("INSERT INTO audit_log (user_id, username, action, entity_type, entity_id, details)
+                          VALUES (:uid, :un, 'scan.stale_update', 'subnet', :eid, :dt)")
+               ->execute([
+                   ':uid' => $u['id'] ?: null,
+                   ':un'  => $u['username'] !== '' ? $u['username'] : 'system',
+                   ':eid' => $subnetId,
+                   ':dt'  => "marked=$changed threshold=$missThreshold",
+               ]);
+            $db->commit();
+        } catch (\Throwable $e) {
+            $db->rollBack();
+            throw $e;
+        }
+    }
+
     return $changed;
 }
 

@@ -222,6 +222,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $isActive       = isset($_POST['scan_active']) ? 1 : 0;
 
         if (!in_array($method, ['icmp', 'tcp', 'both'], true)) $method = 'icmp';
+        // Clear tcp_port for icmp-only; require a valid port for tcp/both
+        if ($method === 'icmp') {
+            $tcpPort = null;
+        } elseif ($tcpPort === null || $tcpPort < 1 || $tcpPort > 65535) {
+            flash_set('TCP port must be between 1 and 65535 when method is tcp or both.');
+            header('Location: subnets.php');
+            exit;
+        }
 
         // UPSERT: insert or update the schedule for this subnet
         $st = $db->prepare("

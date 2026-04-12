@@ -1929,6 +1929,13 @@ function api_scan_schedules_save(PDO $db, array $apiKey, array $body): never
     $method   = to_str($body['method'] ?? 'icmp');
     if (!in_array($method, ['icmp', 'tcp', 'both'], true)) api_error(400, "method must be icmp, tcp, or both.");
     $tcpPort  = isset($body['tcp_port']) ? to_int($body['tcp_port']) : null;
+    if (in_array($method, ['tcp', 'both'], true)) {
+        if ($tcpPort === null || $tcpPort < 1 || $tcpPort > 65535) {
+            api_error(400, 'tcp_port must be an integer between 1 and 65535 when method is tcp or both.');
+        }
+    } else {
+        $tcpPort = null; // clear irrelevant port for icmp-only schedules
+    }
     $interval = max(1, to_int($body['interval_minutes'] ?? 60));
     $active   = isset($body['is_active']) ? ((bool) $body['is_active'] ? 1 : 0) : 1;
 
