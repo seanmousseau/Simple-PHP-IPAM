@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [2.1.3] - 2026-04-12
+
+### Fixed
+- Migration locking (improved): `apply_migrations()` now retries up to 60 times (1s sleep between attempts) when a migration fails with `SQLITE_LOCKED` or `SQLITE_BUSY`. This handles the case where `busy_timeout` does not retry DDL inside an existing transaction (e.g. `DROP TABLE` needing WAL exclusive mode while PHP-FPM connections are open). SQLite DDL is fully transactional — `ROLLBACK` cleanly undoes partial work so each retry starts from a clean state. Confirmed to fix v2.0.0→v2.1.x upgrades on live servers.
+
 ## [2.1.2] - 2026-04-12
 
 ### Fixed
@@ -442,6 +447,7 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[2.1.3]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.1.2...v2.1.3
 [2.1.2]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.1.1...v2.1.2
 [2.1.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.0.0...v2.1.0

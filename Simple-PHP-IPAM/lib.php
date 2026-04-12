@@ -454,20 +454,48 @@ function apply_migrations(PDO $db): array
     foreach ($migs as $ver => $fn) {
         if (isset($done[$ver])) continue;
 
-        // Use BEGIN EXCLUSIVE so SQLite's busy_timeout retry fires at
-        // transaction start (not mid-transaction on the first DDL statement).
-        // This handles schema-rebuilding migrations that need an exclusive lock
-        // while the web server still has connections open.
-        $db->exec("BEGIN EXCLUSIVE");
-        try {
-            $fn($db);
-            $st = $db->prepare("INSERT INTO schema_migrations (version) VALUES (:v)");
-            $st->execute([':v' => $ver]);
-            $db->exec("COMMIT");
-            $appliedNow[] = $ver;
-        } catch (Throwable $e) {
-            try { $db->exec("ROLLBACK"); } catch (Throwable) {}
-            throw $e;
+        // SQLite DDL (DROP TABLE, ALTER TABLE) needs a full exclusive lock —
+        // even readers block it. busy_timeout only retries SQLITE_BUSY (5),
+        // not SQLITE_LOCKED (6), so we retry at the PHP level: ROLLBACK the
+        // transaction, sleep 1 s, and try again. SQLite DDL is fully
+        // transactional so ROLLBACK cleanly undoes any partial work.
+        $lastErr  = null;
+        $applied  = false;
+        for ($attempt = 0; $attempt < 60 && !$applied; $attempt++) {
+            if ($attempt > 0) {
+                sleep(1);
+            }
+
+            try {
+                $db->exec("BEGIN EXCLUSIVE");
+            } catch (Throwable $e) {
+                $lastErr = $e;
+                if (stripos($e->getMessage(), 'locked') !== false || stripos($e->getMessage(), 'busy') !== false) {
+                    continue;
+                }
+                throw $e;
+            }
+
+            try {
+                $fn($db);
+                $st = $db->prepare("INSERT INTO schema_migrations (version) VALUES (:v)");
+                $st->execute([':v' => $ver]);
+                $db->exec("COMMIT");
+                $applied = true;
+                $appliedNow[] = $ver;
+                $lastErr = null;
+            } catch (Throwable $e) {
+                try { $db->exec("ROLLBACK"); } catch (Throwable) {}
+                $lastErr = $e;
+                if (stripos($e->getMessage(), 'locked') !== false || stripos($e->getMessage(), 'busy') !== false) {
+                    continue;
+                }
+                throw $e;
+            }
+        }
+
+        if ($lastErr !== null) {
+            throw $lastErr;
         }
     }
 
@@ -2585,11 +2613,11 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=2.1.2'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=2.1.3'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=2.1.2'></script>";
+    echo "<script defer src='assets/app.js?v=2.1.3'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
