@@ -71,8 +71,8 @@ $appName = trim(to_str($config['app_name'] ?? '')) ?: 'Simple PHP IPAM';
   <link rel="icon" type="image/webp" sizes="32x32" href="assets/favicon-32.webp">
   <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
   <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
-  <link rel="stylesheet" href="assets/app.css?v=2.1.4">
-  <script defer src="assets/app.js?v=2.1.4"></script>
+  <link rel="stylesheet" href="assets/app.css?v=2.1.5">
+  <script defer src="assets/app.js?v=2.1.5"></script>
 </head>
 <body>
 <div class="gate-wrap">

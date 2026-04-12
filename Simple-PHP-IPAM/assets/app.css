@@ -708,7 +708,7 @@ details > summary::-webkit-details-marker{display:none}
 /* ---- Sticky table headers (#248) ---- */
 :root { --topbar-h: 73px; }
 .table-wrap{overflow-x:auto}
-thead th{position:sticky;top:var(--topbar-h);z-index:2;background:var(--card-2)}
+thead th{position:sticky;top:var(--topbar-h);z-index:10;background:var(--card-2)}
 
 /* ---- Mobile hamburger nav (#250) ---- */
 .nav-toggle{

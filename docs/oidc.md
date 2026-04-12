@@ -208,6 +208,26 @@ To make `login.php?local=1` completely non-functional:
 
 ---
 
+## Bot mitigation on the SSO login page
+
+OIDC and local login share the same login page. The `login_protection` config block applies to both flows — if a CAPTCHA widget is configured, it is rendered before the SSO button as well as the password form. This protects the OIDC redirect initiation endpoint from automated abuse.
+
+For Google reCAPTCHA Enterprise users, set `recaptcha_enterprise.enabled = true` in `config.php` and configure `expected_action` to match the action your reCAPTCHA assessment expects:
+
+```php
+'recaptcha_enterprise' => [
+    'enabled'         => true,
+    'project_id'      => 'your-gcp-project',
+    'api_key'         => 'your-api-key',
+    'expected_action' => 'login',  // must match recaptcha_action below
+],
+'recaptcha_action' => 'login',     // action name sent by app.js at runtime
+```
+
+See [`recaptcha_enterprise`](configuration.md#recaptcha_enterprise) for the full config reference.
+
+---
+
 ## Troubleshooting
 
 All OIDC errors are written to PHP's error log. The login page shows only a generic "SSO authentication failed" message to avoid leaking configuration details.

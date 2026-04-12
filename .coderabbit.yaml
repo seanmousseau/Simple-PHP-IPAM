@@ -89,6 +89,40 @@ reviews:
         - VLAN constants: TEST_VLAN_ID=99, TEST_VLAN_NAME='pw-test-vlan'. Use createVlan/deleteVlan helpers.
         - Tag constants: TEST_TAG_NAME='pw-test-tag', TEST_TAG_COLOUR='#ff0000'. Use createTag/deleteTag helpers.
 
+    - path: "testing/playwright/tests/large-db.spec.ts"
+      instructions: |
+        This spec tests db_tools.php with large SQL payloads (100+ subnets, 5 000+ addresses).
+        Key invariants:
+        - The afterAll MUST restore the original DB — if this breaks, all subsequent specs fail.
+        - Use test.setTimeout() inside the test body (not as a third argument) for large imports.
+        - INSERT … SELECT FROM subnets is allowed by db_tools.php (first word is INSERT, not SELECT).
+        - CIDR space for synthetic data: 172.17–172.27.x.0/24 — confirmed not to conflict with demo data.
+        - Test order matters: export must run after import, round-trip after export.
+
+    - path: "testing/playwright/tests/upgrade.spec.ts"
+      instructions: |
+        This spec tests the database upgrade path from pre-v2.0.0 schema to the current version.
+        Key invariants:
+        - The afterAll MUST restore the original DB — failure here breaks all subsequent specs.
+        - The pre-v2 SQL must NOT include v2.x tables (vlans, vrfs, contacts, tags, subnet_tags,
+          address_tags, alert_state) or v2.x columns (vlan_fk, vrf_id on subnets; mac,
+          expires_at, owner_contact_id on addresses; parent_id on sites; theme on users).
+        - Migration stamps in the pre-v2 SQL must stop at '1.13' so '1.19.0' (adds mac/expires_at),
+          all '2.0.0-*', and all '2.1.0-*' migrations run on the first page load after import.
+        - After import, the beforeAll navigates to logout.php before login.php to clear the
+          admin session; otherwise upgrade-test-admin at id=1 inherits the real admin session.
+        - The pre-v2 admin user hash must be a valid bcrypt hash for a known password so tests
+          can log in after migration.
+        - UPGRADE_ADMIN_HASH: bcrypt hash for 'admin' (cost 12, generated on PHP 8.2).
+
+    - path: "testing/samples/upgrade-snapshots/**"
+      instructions: |
+        SQL dumps representing the database at historical schema checkpoints.
+        These are imported via db_tools.php in upgrade tests — they must be valid SQL that
+        passes db_tools.php's import whitelist (INSERT, CREATE, DROP, DELETE only; no SELECT
+        standalone, no PRAGMA except foreign_keys, no ATTACH/DETACH).
+        When adding a new snapshot, document it in testing/samples/upgrade-snapshots/README.md.
+
     - path: "Simple-PHP-IPAM/vlans.php"
       instructions: |
         vlans.php is the VLAN admin CRUD page. Key invariants:
