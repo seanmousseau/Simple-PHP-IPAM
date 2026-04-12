@@ -290,7 +290,21 @@ semgrep --config=.semgrep/rules.yml Simple-PHP-IPAM/   # security rules (standal
 
 **PHPStan baseline (`phpstan-baseline.neon`):** Pre-existing errors are acknowledged in the baseline so CI only fails on *new* errors. The baseline is almost entirely `Variable $db/$config might not be defined` false-positives caused by PHPStan not being able to see variables injected by `require 'init.php'`. Fix baseline errors incrementally; do not add new entries to suppress real bugs.
 
-**PHPUnit tests (`tests/UtilTest.php`):** Tests covering the pure utility functions that have no DB or session dependencies: `e()`, `parse_cidr()`, `apply_prefix_mask()`, `ip_in_cidr()`, `normalize_ip()`, `ipv4_bin_to_int()`, `ipv4_int_to_bin()`, `ipam_normalise_version()`, `normalize_status()`, `ipv6_bin_increment()`. Bootstrap is `tests/bootstrap.php` which requires `lib.php` directly.
+**PHPUnit tests:**
+- `tests/UtilTest.php` — unit tests for pure utility functions that have no DB or session dependencies: `e()`, `parse_cidr()`, `apply_prefix_mask()`, `ip_in_cidr()`, `normalize_ip()`, `ipv4_bin_to_int()`, `ipv4_int_to_bin()`, `ipam_normalise_version()`, `normalize_status()`, `ipv6_bin_increment()`.
+- `tests/MigrationTest.php` — integration tests for `apply_migrations()`. Builds an in-memory SQLite database in the exact pre-`2.1.0-vrfs` schema state (subnets without `vrf_id`, 5 addresses, 18 prior migrations recorded), then runs `apply_migrations()` and asserts: addresses are preserved (the exact production data-loss scenario), subnet IDs are unchanged, the `vrf_id` column is added, addresses still JOIN to subnets, FK enforcement is re-enabled, second call is idempotent, and UNIQUE(cidr, vrf_id) is enforced for non-NULL vrf_id pairs.
+
+Bootstrap is `tests/bootstrap.php` which requires `lib.php` directly.
+
+**Migration testing pitfalls — read this before writing any migration that rebuilds a table:**
+
+1. **`DROP TABLE` with `PRAGMA foreign_keys = ON` cascades child rows.** SQLite executes an implicit row-by-row DELETE before physically dropping the table. Any child table with `ON DELETE CASCADE` (e.g. `addresses`, `subnet_tags`, `alert_state`) will have all its rows deleted. This is the root cause of the v2.2.1 data-loss bug where every upgrade from v1.x wiped all IP addresses. Fix: `apply_migrations()` disables FK enforcement (`PRAGMA foreign_keys = OFF`) before each migration's `BEGIN EXCLUSIVE` and restores it unconditionally in all exit paths.
+
+2. **`PRAGMA foreign_keys` cannot be changed inside a transaction.** The PRAGMA must be set *outside* `BEGIN`/`COMMIT`. Setting it after `BEGIN EXCLUSIVE` has no effect — the transaction runs with whatever FK state was active before `BEGIN`. Always set the PRAGMA, then begin the transaction.
+
+3. **`ALTER TABLE t RENAME TO t_old` in SQLite ≥3.26 rewrites child FK references.** After renaming `subnets` to `subnets_old`, the `addresses` table's FK is automatically rewritten to reference `subnets_old`. Dropping `subnets_old` still cascades. The `PRAGMA legacy_alter_table = ON` workaround was tested and does not reliably prevent this. The only safe approach is to disable FK enforcement before the transaction (point 1 above).
+
+4. **SQLite UNIQUE treats NULLs as distinct.** `UNIQUE(cidr, vrf_id)` does NOT prevent two rows with the same `cidr` and both `vrf_id = NULL` — SQLite considers each NULL distinct from every other value (SQL standard). The meaningful constraint is that two subnets cannot share the same CIDR within the same named (non-NULL) VRF. When testing UNIQUE constraints involving nullable FK columns, always use a non-NULL value.
 
 **PHPCS style exclusions** (see `.phpcs.xml` comments for rationale):
 - Inline control structures without braces — established codebase style
