@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [2.1.2] - 2026-04-12
+
+### Fixed
+- Migration locking: `apply_migrations()` now uses `BEGIN EXCLUSIVE` instead of `BEGIN DEFERRED` so SQLite's `busy_timeout` retry fires at transaction start rather than mid-transaction on the first DDL statement. This prevents `SQLITE_LOCKED` failures when the web server has connections open during an upgrade that rebuilds the subnets table (introduced in v2.1.0).
+
 ## [2.1.1] - 2026-04-12
 
 ### Fixed
@@ -437,6 +442,7 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[2.1.2]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.1.1...v2.1.2
 [2.1.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.19.1...v2.0.0
