@@ -138,9 +138,9 @@ test('vrfs: create subnet in VRF and verify badge', async () => {
   });
 
   await page.goto('subnets.php');
-  // VRF badge should appear in the subnet list
-  const body = await page.locator('body').innerText();
-  expect(body).toContain(TEST_VRF_NAME);
+  // VRF badge must appear in the subnet row, not just in the picker
+  const vrfBadge = page.locator('.badge', { hasText: `VRF: ${TEST_VRF_NAME}` });
+  await expect(vrfBadge).toBeVisible();
 });
 
 test('vrfs: edit VRF description', async () => {

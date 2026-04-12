@@ -174,6 +174,8 @@ test('dhcp_pool: readonly user can view page but not reserve', async () => {
     // Reserve and clear forms should NOT be present for readonly users
     const reserveForm = roPage.locator('form').filter({ has: roPage.locator('[value=reserve_pool]') });
     expect(await reserveForm.count()).toBe(0);
+    const clearForm = roPage.locator('form').filter({ has: roPage.locator('[value=clear_pool]') });
+    expect(await clearForm.count()).toBe(0);
   } finally {
     await roCtx.close();
   }

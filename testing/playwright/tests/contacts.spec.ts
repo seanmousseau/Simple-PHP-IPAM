@@ -4,7 +4,7 @@
  */
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import {
-  login, fetchGet, fetchPost, appUrl,
+  login, fetchGet, fetchPost, appUrl, deleteSubnet,
   ADMIN_USER, ADMIN_PASS,
   TEST_CONTACT_NAME, TEST_CONTACT_EMAIL, TEST_CONTACT_ORG,
   TEST_CIDR2,
@@ -148,39 +148,48 @@ test('api: GET contacts returns 200 with contacts array', async () => {
 // ── Contact-address integration ────────────────────────────────────────────────
 
 test('contacts: contact appears in address owner typeahead', async () => {
-  // Create a test subnet if needed
+  // Create a test subnet if needed; track creation so we can clean it up
   await page.goto('subnets.php');
   const hasSubnet = await page.locator('body').innerText().then(t => t.includes(TEST_CIDR2));
+  let createdSubnet = false;
   if (!hasSubnet) {
     await fetchPost(page, appUrl('subnets.php'), {
       action: 'create', cidr: TEST_CIDR2, description: 'contacts spec test subnet', confirm_overlap: '1',
     });
+    createdSubnet = true;
     await page.goto('subnets.php');
   }
+  try {
+    // Navigate to the addresses page for that subnet
+    const subnetLink = page.locator(`a[href*="addresses.php?subnet_id"]`).filter({ hasText: TEST_CIDR2 }).first();
+    const href = await subnetLink.getAttribute('href').catch(() => null);
+    if (!href) {
+      test.skip(true, `Could not find subnet link for ${TEST_CIDR2}`);
+      return;
+    }
 
-  // Navigate to the addresses page for that subnet
-  const subnetLink = page.locator(`a[href*="addresses.php?subnet_id"]`).filter({ hasText: TEST_CIDR2 }).first();
-  const href = await subnetLink.getAttribute('href').catch(() => null);
-  if (!href) {
-    test.skip(true, `Could not find subnet link for ${TEST_CIDR2}`);
-    return;
-  }
-
-  await page.goto(href);
-  // The contact typeahead autocomplete is driven by data-contact-ac on the owner input.
-  // We verify the input with the autocomplete attribute is present.
-  const ownerInput = page.locator('[data-contact-ac]').first();
-  const isVisible = await ownerInput.isVisible().catch(() => false);
-  // If there's no add-address form visible (subnet already has addresses), this is fine
-  // The integration is tested at a lighter level here: the attribute is wired up
-  if (isVisible) {
-    await ownerInput.fill(TEST_CONTACT_NAME.substring(0, 5));
-    // Small wait to allow XHR/autocomplete to trigger
-    await page.waitForTimeout(500);
-    // The datalist or suggestion element should contain the contact name
-    // The typeahead is client-side; just verify no JS errors and input accepted the text
-    const currentValue = await ownerInput.inputValue();
-    expect(currentValue.length).toBeGreaterThan(0);
+    await page.goto(href);
+    // The contact typeahead autocomplete is driven by data-contact-ac on the owner input.
+    // We verify the input with the autocomplete attribute is present.
+    const ownerInput = page.locator('[data-contact-ac]').first();
+    const isVisible = await ownerInput.isVisible().catch(() => false);
+    // If there's no add-address form visible (subnet already has addresses), this is fine
+    // The integration is tested at a lighter level here: the attribute is wired up
+    if (isVisible) {
+      await ownerInput.fill(TEST_CONTACT_NAME.substring(0, 5));
+      // Small wait to allow XHR/autocomplete to trigger
+      await page.waitForTimeout(500);
+      // The datalist or suggestion element should contain the contact name
+      // The typeahead is client-side; just verify no JS errors and input accepted the text
+      const currentValue = await ownerInput.inputValue();
+      expect(currentValue.length).toBeGreaterThan(0);
+    }
+  } finally {
+    // Clean up the subnet we created for this test
+    if (createdSubnet) {
+      await page.goto('subnets.php');
+      await deleteSubnet(page, TEST_CIDR2);
+    }
   }
 });
 

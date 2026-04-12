@@ -198,12 +198,13 @@ export async function ensureRoUser(page: Page): Promise<void> {
     return false;
   }, RO_USER);
   if (!exists) {
-    await fetchPost(page, appUrl('users.php'), {
+    const res = await fetchPost(page, appUrl('users.php'), {
       action: 'create',
       username: RO_USER,
       password: RO_PASS,
       role: 'readonly',
     });
+    if (!res.ok) throw new Error(`ensureRoUser: create failed (HTTP ${res.status}): ${res.body}`);
   }
 }
 
