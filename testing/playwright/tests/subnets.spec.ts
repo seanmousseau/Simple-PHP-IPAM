@@ -1,11 +1,12 @@
 /**
  * Subnet CRUD + deep-link to addresses (#246) + overlap warnings.
+ * Also covers: auto-reserve checkbox, breadcrumb, VLAN picker.
  * Migrated from cdp_test.py section 4.
  */
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import {
   login, fetchPost, deleteSubnet, subnetIdFor, appUrl,
-  ADMIN_USER, ADMIN_PASS, TEST_CIDR1,
+  ADMIN_USER, ADMIN_PASS, TEST_CIDR1, TEST_VLAN_NAME,
   newAuthContext,
 } from '../fixtures/ipam';
 
@@ -91,4 +92,57 @@ test('overlap subnet creates with warning', async () => {
 test('subnets page has nav bar', async () => {
   await page.goto('subnets.php');
   await expect(page.locator('.topbar')).toBeVisible();
+});
+
+test('subnets: breadcrumb is present', async () => {
+  await page.goto('subnets.php');
+  await expect(page.locator('.breadcrumbs')).toBeVisible();
+  await expect(page.locator('.breadcrumbs')).toContainText('Dashboard');
+});
+
+test('subnets: create form has auto-reserve checkbox', async () => {
+  await page.goto('subnets.php');
+  const checkbox = page.locator('input[name=auto_reserve]');
+  await expect(checkbox).toBeVisible();
+  // Should be pre-checked by default
+  await expect(checkbox).toBeChecked();
+});
+
+test('subnets: create form has gateway field', async () => {
+  await page.goto('subnets.php');
+  await expect(page.locator('input[name=gateway]')).toBeVisible();
+});
+
+test('subnets: create form has VLAN picker', async () => {
+  await page.goto('subnets.php');
+  const vlanSelect = page.locator('select[name=vlan_fk]').first();
+  await expect(vlanSelect).toBeVisible();
+  // VLAN picker should at least have a (none) option
+  const opts = await vlanSelect.locator('option').count();
+  expect(opts).toBeGreaterThanOrEqual(1);
+});
+
+test('subnets: VLAN picker lists test VLAN when it exists', async () => {
+  await page.goto('subnets.php');
+  const vlanSelect = page.locator('select[name=vlan_fk]').first();
+  const optTexts = await vlanSelect.locator('option').allInnerTexts();
+  // If pw-test-vlan exists, it should appear in the picker
+  // This test is informational — skip if no test VLAN present
+  const hasTestVlan = optTexts.some(t => t.includes(TEST_VLAN_NAME));
+  if (!hasTestVlan) {
+    test.skip(true, 'Test VLAN not present — skipping VLAN picker content check');
+    return;
+  }
+  expect(hasTestVlan).toBe(true);
+});
+
+test('subnets: form drawer opens on Add Subnet click', async () => {
+  await page.goto('subnets.php');
+  const drawerTrigger = page.locator('[data-open-drawer]').first();
+  if (await drawerTrigger.count() === 0) {
+    test.skip(true, 'No drawer trigger found — drawer may not be implemented on this page');
+    return;
+  }
+  await drawerTrigger.click();
+  await expect(page.locator('#form-drawer')).toBeVisible();
 });

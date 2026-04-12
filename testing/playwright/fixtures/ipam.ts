@@ -36,6 +36,14 @@ export async function newAuthContext(browser: Browser): Promise<BrowserContext> 
 }
 
 // ── Test data constants ────────────────────────────────────────────────────────
+export const TEST_VLAN_ID   = 99;
+export const TEST_VLAN_NAME = 'pw-test-vlan';
+export const TEST_VLAN_DESC = 'Playwright test VLAN';
+export const TEST_VLAN_CIDR = '10.77.99.0/24';
+
+export const TEST_TAG_NAME   = 'pw-test-tag';
+export const TEST_TAG_COLOUR = '#ff0000';
+
 export const TEST_CIDR1     = '10.99.0.0/24';
 export const TEST_CIDR2     = '10.88.0.0/24';
 export const TEST_CIDR_V6   = '2001:db8:1::/120';
@@ -203,6 +211,82 @@ export async function deleteSubnet(page: Page, cidr: string): Promise<void> {
   }, cidr);
   if (subId) {
     await fetchPost(page, appUrl('subnets.php'), { action: 'delete', id: subId });
+  }
+}
+
+// ── VLAN helpers ───────────────────────────────────────────────────────────────
+/**
+ * Create a VLAN via form POST to vlans.php.
+ * Requires an authenticated page already on (or able to navigate to) vlans.php.
+ */
+export async function createVlan(
+  page: Page,
+  vlanId: number,
+  name: string,
+  description = '',
+): Promise<void> {
+  await page.goto('vlans.php');
+  await page.locator('input[name=vlan_id]').fill(String(vlanId));
+  await page.locator('input[name=name]').fill(name);
+  if (description) await page.locator('input[name=description]').fill(description);
+  await page.locator('button[type=submit]').first().click();
+  await page.waitForURL(/vlans\.php/);
+}
+
+/**
+ * Delete a VLAN by name via the delete button on vlans.php.
+ * No-ops silently if the VLAN does not exist.
+ */
+export async function deleteVlan(page: Page, name: string): Promise<void> {
+  await page.goto('vlans.php');
+  const rows = await page.locator('table tbody tr').all();
+  for (const row of rows) {
+    const text = await row.innerText();
+    if (!text.includes(name)) continue;
+    const details = row.locator('details');
+    await details.click();
+    page.once('dialog', d => d.accept());
+    await details.locator('button.button-danger').click();
+    await page.waitForURL(/vlans\.php/);
+    break;
+  }
+}
+
+// ── Tag helpers ────────────────────────────────────────────────────────────────
+/**
+ * Create a tag via form POST to tags.php.
+ */
+export async function createTag(
+  page: Page,
+  name: string,
+  colour = '#6c757d',
+): Promise<void> {
+  await page.goto('tags.php');
+  await page.locator('input[name=name]').fill(name);
+  await page.locator('input[name=colour]').evaluate(
+    (el: HTMLInputElement, c: string) => { el.value = c; },
+    colour,
+  );
+  await page.locator('button[type=submit]').first().click();
+  await page.waitForURL(/tags\.php/);
+}
+
+/**
+ * Delete a tag by name via the delete button on tags.php.
+ * No-ops silently if the tag does not exist.
+ */
+export async function deleteTag(page: Page, name: string): Promise<void> {
+  await page.goto('tags.php');
+  const rows = await page.locator('table tbody tr').all();
+  for (const row of rows) {
+    const text = await row.innerText();
+    if (!text.includes(name)) continue;
+    const details = row.locator('details');
+    await details.click();
+    page.once('dialog', d => d.accept());
+    await details.locator('button.button-danger').click();
+    await page.waitForURL(/tags\.php/);
+    break;
   }
 }
 

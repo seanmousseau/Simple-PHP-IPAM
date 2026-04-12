@@ -1,6 +1,7 @@
 /**
  * Admin pages — API key CRUD (#10 in cdp), users, sites, session activity log (#235),
  * dashboard checks, v1.18/v1.19 UI feature verification.
+ * Also covers: VLANs admin page, tags admin page (v2.0.0 additions).
  * Migrated from cdp_test.py section 10 + 11b.
  */
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
@@ -185,4 +186,48 @@ test('no config validation warnings in normal operation', async () => {
   // Just verify the page loads (warnings are only shown for broken configs)
   expect((await page.title()).toLowerCase()).toContain('dashboard');
   void warnings; // soft check — not a failure condition in a valid install
+});
+
+// ── VLANs admin page (v2.0.0) ─────────────────────────────────────────────────
+
+test('vlans page: loads via admin nav', async () => {
+  await page.goto('vlans.php');
+  await expect(page).toHaveTitle(/VLANs/i);
+  await expect(page.locator('h1')).toContainText('VLANs');
+});
+
+test('vlans page: accessible from admin dropdown', async () => {
+  await page.goto('dashboard.php');
+  const adminDropdown = page.locator('.nav-dropdown-item');
+  const items = await adminDropdown.allInnerTexts();
+  const hasVlans = items.some(t => t.toLowerCase().includes('vlan'));
+  expect(hasVlans, 'Admin dropdown must contain a VLANs link').toBe(true);
+});
+
+test('vlans page: breadcrumb present', async () => {
+  await page.goto('vlans.php');
+  await expect(page.locator('.breadcrumbs')).toBeVisible();
+  await expect(page.locator('.breadcrumbs')).toContainText('Dashboard');
+});
+
+// ── Tags admin page (v2.0.0) ───────────────────────────────────────────────────
+
+test('tags page: loads via admin nav', async () => {
+  await page.goto('tags.php');
+  await expect(page).toHaveTitle(/Tags/i);
+  await expect(page.locator('h1')).toContainText('Tags');
+});
+
+test('tags page: accessible from admin dropdown', async () => {
+  await page.goto('dashboard.php');
+  const adminDropdown = page.locator('.nav-dropdown-item');
+  const items = await adminDropdown.allInnerTexts();
+  const hasTags = items.some(t => t.toLowerCase().includes('tag'));
+  expect(hasTags, 'Admin dropdown must contain a Tags link').toBe(true);
+});
+
+test('tags page: breadcrumb present', async () => {
+  await page.goto('tags.php');
+  await expect(page.locator('.breadcrumbs')).toBeVisible();
+  await expect(page.locator('.breadcrumbs')).toContainText('Dashboard');
 });

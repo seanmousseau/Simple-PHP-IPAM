@@ -45,6 +45,15 @@ reviews:
         - page_footer() does not call exit — never output after it.
         - $config is a global set by init.php; access via global $config inside functions.
         - All migrations must be idempotent — guard ALTER TABLE with PRAGMA table_info() checks.
+        - Tags are managed via tags, subnet_tags, address_tags tables. Both join tables have
+          ON DELETE CASCADE — ensure cascade is in place and never manually delete join rows
+          when deleting a tag or entity; the DB handles it.
+        - VLAN foreign key is subnets.vlan_fk (FK to vlans.id); subnets.vlan_id is a legacy
+          integer field (1–4094) — do not confuse them.
+        - Site hierarchy: sites.parent_id is a self-referential FK. Max depth is 2 (enforced
+          at the application layer). Always check for circular references when setting parent_id.
+        - mail() calls for utilization alerts must sanitize $to and $subject with
+          preg_replace('/[\r\n]/', '', ...) before use to prevent header injection.
 
     - path: "Simple-PHP-IPAM/api.php"
       instructions: |
@@ -79,6 +88,24 @@ reviews:
         - Test data created by a test must be cleaned up in the same test (afterEach or try/finally).
         - The base URL comes from the IPAM_BASE_URL env var; never hardcode URLs.
         - Screenshots on failure are configured in playwright.config.ts — do not add manual screenshot calls.
+        - VLAN constants: TEST_VLAN_ID=99, TEST_VLAN_NAME='pw-test-vlan'. Use createVlan/deleteVlan helpers.
+        - Tag constants: TEST_TAG_NAME='pw-test-tag', TEST_TAG_COLOUR='#ff0000'. Use createTag/deleteTag helpers.
+
+    - path: "Simple-PHP-IPAM/vlans.php"
+      instructions: |
+        vlans.php is the VLAN admin CRUD page. Key invariants:
+        - Requires admin role — call require_role('admin') at top.
+        - vlan_id must be between 1 and 4094 (enforced by DB CHECK constraint too).
+        - Audit every create/update/delete with vlan.create / vlan.update / vlan.delete.
+        - subnets.vlan_fk is the FK; subnets.vlan_id is the legacy integer — display both correctly.
+
+    - path: "Simple-PHP-IPAM/tags.php"
+      instructions: |
+        tags.php is the tag admin CRUD page. Key invariants:
+        - Requires admin role — call require_role('admin') at top.
+        - Tags are linked to subnets/addresses via subnet_tags/address_tags join tables.
+        - Audit every create/update/delete with tag.create / tag.update / tag.delete.
+        - ON DELETE CASCADE handles join table cleanup automatically; no need to manually delete rows.
 
   tools:
     github-checks:

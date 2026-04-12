@@ -45,4 +45,19 @@ test.describe('Authentication', () => {
     await page.goto('dashboard.php');
     await expect(page).toHaveURL(/login\.php/);
   });
+
+  test('reCAPTCHA v3: data-recaptcha-action attribute present on hidden input', async ({ page }) => {
+    await page.goto('login.php');
+    // The hidden reCAPTCHA v3 input renders data-recaptcha-action when reCAPTCHA is configured.
+    // When reCAPTCHA is NOT configured, the input is absent — skip gracefully.
+    const rv3Input = page.locator('[data-recaptcha-action]');
+    const count = await rv3Input.count();
+    if (count === 0) {
+      test.skip(true, 'reCAPTCHA v3 not configured on this instance — skipping action attribute check');
+      return;
+    }
+    const action = await rv3Input.getAttribute('data-recaptcha-action');
+    expect(typeof action).toBe('string');
+    expect(action!.length).toBeGreaterThan(0);
+  });
 });

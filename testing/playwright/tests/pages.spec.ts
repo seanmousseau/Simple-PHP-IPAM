@@ -1,5 +1,6 @@
 /**
  * Page inventory — every admin page loads without a .danger error element.
+ * Also covers: breadcrumbs on all pages, sticky headers, mobile nav toggle.
  * Migrated from cdp_test.py section 3.
  */
 import { adminTest, expect } from '../fixtures/ipam';
@@ -14,6 +15,8 @@ const PAGES: Array<[string, string]> = [
   ['audit.php',       'Audit'],
   ['users.php',       'User'],
   ['sites.php',       'Site'],
+  ['vlans.php',       'VLAN'],
+  ['tags.php',        'Tag'],
   ['api_keys.php',    'API Key'],
   ['dhcp_pool.php',   'DHCP'],
   ['import_csv.php',  'Import'],
@@ -21,6 +24,13 @@ const PAGES: Array<[string, string]> = [
   ['unassigned.php',  'Unassigned'],
   ['bulk_update.php', 'Bulk'],
   ['change_password.php', 'Password'],
+];
+
+// Pages that include breadcrumbs (all non-login pages with page_header())
+const BREADCRUMB_PAGES = [
+  'dashboard.php', 'subnets.php', 'search.php', 'audit.php',
+  'users.php', 'sites.php', 'vlans.php', 'tags.php',
+  'api_keys.php', 'change_password.php',
 ];
 
 adminTest.describe('Page inventory', () => {
@@ -36,4 +46,50 @@ adminTest.describe('Page inventory', () => {
       }
     });
   }
+});
+
+adminTest.describe('Breadcrumbs', () => {
+  for (const slug of BREADCRUMB_PAGES) {
+    adminTest(`${slug}: breadcrumb is present`, async ({ adminPage: page }) => {
+      await page.goto(slug);
+      await expect(page.locator('.breadcrumbs')).toBeVisible();
+      await expect(page.locator('.breadcrumbs')).toContainText('Dashboard');
+    });
+  }
+});
+
+adminTest.describe('Sticky headers', () => {
+  adminTest('audit.php: thead th has sticky position', async ({ adminPage: page }) => {
+    await page.goto('audit.php');
+    const th = page.locator('thead th').first();
+    await expect(th).toBeVisible();
+    const position = await th.evaluate(el => getComputedStyle(el).position);
+    expect(position).toBe('sticky');
+  });
+
+  adminTest('users.php: thead th has sticky position', async ({ adminPage: page }) => {
+    await page.goto('users.php');
+    const th = page.locator('thead th').first();
+    await expect(th).toBeVisible();
+    const position = await th.evaluate(el => getComputedStyle(el).position);
+    expect(position).toBe('sticky');
+  });
+});
+
+adminTest.describe('Mobile hamburger nav', () => {
+  adminTest('nav-toggle button exists in DOM', async ({ adminPage: page }) => {
+    await page.goto('dashboard.php');
+    const toggle = page.locator('#nav-toggle');
+    await expect(toggle).toBeAttached();
+  });
+
+  adminTest('nav-drawer opens on toggle click (mobile viewport)', async ({ adminPage: page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.goto('dashboard.php');
+    await page.locator('#nav-toggle').click();
+    await expect(page.locator('#nav-drawer')).toBeVisible();
+    // Close via overlay click
+    await page.locator('.nav-drawer-overlay').click();
+    await expect(page.locator('#nav-drawer')).not.toBeVisible();
+  });
 });

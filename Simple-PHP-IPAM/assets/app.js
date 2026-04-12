@@ -188,7 +188,7 @@
           e.preventDefault();
           var gr = rv3IsEnterprise ? grecaptcha.enterprise : grecaptcha;
           gr.ready(function() {
-            gr.execute(rv3.dataset.recaptchaV3Key, {action: "login"}).then(function(token) {
+            gr.execute(rv3.dataset.recaptchaV3Key, {action: rv3.dataset.recaptchaAction || "login"}).then(function(token) {
               rv3.value = token;
               rv3Form.submit();
             });
@@ -245,6 +245,97 @@
       el.addEventListener("blur", function() { validateInput(el); });
       el.addEventListener("input", function() { el.setCustomValidity(""); });
     });
+
+    // --- Mobile hamburger nav (#250) ---
+    var navToggle = document.getElementById("nav-toggle");
+    var navDrawer = document.getElementById("nav-drawer");
+    var navOverlay = document.querySelector(".nav-drawer-overlay");
+    if (navToggle && navDrawer) {
+      function openNav() {
+        document.body.classList.add("nav-open");
+        navToggle.setAttribute("aria-expanded", "true");
+        navDrawer.removeAttribute("aria-hidden");
+      }
+      function closeNav() {
+        document.body.classList.remove("nav-open");
+        navToggle.setAttribute("aria-expanded", "false");
+        navDrawer.setAttribute("aria-hidden", "true");
+      }
+      navToggle.addEventListener("click", function() {
+        document.body.classList.contains("nav-open") ? closeNav() : openNav();
+      });
+      if (navOverlay) navOverlay.addEventListener("click", closeNav);
+      var drawerClose = navDrawer.querySelector(".drawer-close");
+      if (drawerClose) drawerClose.addEventListener("click", closeNav);
+      navDrawer.querySelectorAll("a").forEach(function(a) { a.addEventListener("click", closeNav); });
+      document.addEventListener("keydown", function(e) { if (e.key === "Escape") closeNav(); });
+    }
+
+    // --- Inline status toggle (#252) ---
+    document.querySelectorAll(".status-badge[data-addr-id]").forEach(function(badge) {
+      badge.addEventListener("click", function() {
+        var addrId = badge.dataset.addrId;
+        var cycle = {used: "reserved", reserved: "free", free: "used"};
+        var curClass = ["status-used","status-reserved","status-free"].find(function(c){ return badge.classList.contains(c); });
+        var curStatus = curClass ? curClass.replace("status-","") : "used";
+        var nextStatus = cycle[curStatus] || "used";
+        var csrf = document.querySelector("input[name=csrf]");
+        if (!csrf) return;
+        var formData = new FormData();
+        formData.append("csrf", csrf.value);
+        formData.append("action", "update_status");
+        formData.append("id", addrId);
+        formData.append("status", nextStatus);
+        badge.classList.add("status-updating");
+        fetch("addresses.php", {method: "POST", body: formData})
+          .then(function(r){ return r.json(); })
+          .then(function(data) {
+            if (data.ok) {
+              badge.classList.remove("status-used","status-reserved","status-free");
+              badge.classList.add("status-" + data.status);
+              badge.textContent = data.status;
+            }
+            badge.classList.remove("status-updating");
+          })
+          .catch(function(){ badge.classList.remove("status-updating"); });
+      });
+    });
+
+    // --- Slide-in form drawer (#247) ---
+    var formDrawer = document.getElementById("form-drawer");
+    var formDrawerOverlay = document.querySelector(".form-drawer-overlay");
+    if (formDrawer) {
+      document.body.classList.add("drawer-ready");
+      function openFormDrawer(triggerId) {
+        var src = document.getElementById(triggerId);
+        if (!src) return;
+        var body = document.getElementById("form-drawer-body");
+        if (!body) return;
+        // Clear drawer body safely, then move source content in
+        while (body.firstChild) body.removeChild(body.firstChild);
+        body.appendChild(src);
+        src.style.display = "";
+        formDrawer.classList.add("drawer--open");
+        if (formDrawerOverlay) formDrawerOverlay.classList.add("visible");
+      }
+      function closeFormDrawer() {
+        formDrawer.classList.remove("drawer--open");
+        if (formDrawerOverlay) formDrawerOverlay.classList.remove("visible");
+      }
+      if (formDrawerOverlay) formDrawerOverlay.addEventListener("click", closeFormDrawer);
+      var drawerCloseBtn = formDrawer.querySelector(".drawer-close-btn");
+      if (drawerCloseBtn) drawerCloseBtn.addEventListener("click", closeFormDrawer);
+      document.addEventListener("keydown", function(e) { if (e.key === "Escape") closeFormDrawer(); });
+      // Wire up any [data-open-drawer] triggers
+      document.querySelectorAll("[data-open-drawer]").forEach(function(trigger) {
+        trigger.addEventListener("click", function(e) {
+          e.preventDefault();
+          var titleEl = formDrawer.querySelector(".drawer-title");
+          if (titleEl && trigger.dataset.drawerTitle) titleEl.textContent = trigger.dataset.drawerTitle;
+          openFormDrawer(trigger.dataset.openDrawer);
+        });
+      });
+    }
 
     // --- Import spinner overlay (data-import-form) ---
     var importForm = document.querySelector("[data-import-form]");

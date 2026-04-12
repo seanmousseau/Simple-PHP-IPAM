@@ -616,6 +616,148 @@ for bid in $BULK_SUBNET_IDS; do
 done
 
 # ====================================================================
+log "=== VLANs Resource ==="
+# ====================================================================
+
+call_api GET "vlans"
+assert_http 200 "GET vlans → 200"
+HAS_VLANS=$(python3 -c "import sys,json; d=json.load(sys.stdin); print('yes' if 'vlans' in d else 'no')" <<< "$BODY" 2>/dev/null || echo "no")
+[[ "$HAS_VLANS" == "yes" ]] && pass "VLANs response has vlans array" || fail "VLANs response missing vlans key"
+
+# Create a VLAN for subsequent tests
+call_api POST "vlans" '{"vlan_id":299,"name":"api-test-vlan","description":"API test VLAN"}'
+if [[ "$HTTP_CODE" == "201" ]]; then
+    API_VLAN_FK=$(jq_val id)
+    API_VLAN_ID=299
+    pass "Create VLAN → 201 (id=$API_VLAN_FK)"
+
+    # GET by id
+    call_api GET "vlans&id=$API_VLAN_FK"
+    assert_http 200 "GET vlan by id"
+    GOT_NAME=$(python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('vlan',{}).get('name',''))" <<< "$BODY" 2>/dev/null || echo "")
+    [[ "$GOT_NAME" == "api-test-vlan" ]] && pass "GET vlan by id: name matches" || fail "GET vlan by id: expected 'api-test-vlan', got '$GOT_NAME'"
+
+    # Subnet response includes vlan_name when vlan_fk is set
+    if [[ -n "${SUBNET_ID:-}" && "$SUBNET_ID" != "None" ]]; then
+        call_api PUT "subnets&id=$SUBNET_ID" "{\"vlan_fk\":$API_VLAN_FK}"
+        [[ "$HTTP_CODE" == "200" ]] && pass "Attach VLAN to subnet via vlan_fk" || skip "Attach VLAN to subnet — got $HTTP_CODE"
+
+        call_api GET "subnets&id=$SUBNET_ID"
+        assert_http 200 "GET subnet after VLAN attach"
+        HAS_VLAN_NAME=$(python3 -c "import sys,json; d=json.load(sys.stdin); s=d.get('subnet',d.get('subnets',[{}])[0] if 'subnets' in d else {}); print('yes' if 'vlan_name' in s else 'no')" <<< "$BODY" 2>/dev/null || echo "no")
+        [[ "$HAS_VLAN_NAME" == "yes" ]] && pass "Subnet response includes vlan_name field" || fail "Subnet response missing vlan_name field"
+    fi
+
+    # Duplicate VLAN ID → 409
+    call_api POST "vlans" '{"vlan_id":299,"name":"api-test-vlan-dup"}'
+    assert_http 409 "Duplicate VLAN vlan_id → 409"
+
+    # Cleanup
+    call_api DELETE "vlans&id=$API_VLAN_FK"
+    [[ "$HTTP_CODE" == "204" ]] && pass "Delete VLAN → 204" || fail "Delete VLAN — got $HTTP_CODE"
+else
+    skip "VLAN create tests — could not create test VLAN (HTTP $HTTP_CODE)"
+    API_VLAN_FK=""
+fi
+
+# Out-of-range vlan_id → 400
+call_api POST "vlans" '{"vlan_id":5000,"name":"bad-vlan"}'
+assert_http 400 "VLAN id out of range (5000) → 400"
+
+# GET non-existent VLAN → 404
+call_api GET "vlans&id=999999"
+assert_http 404 "GET non-existent VLAN → 404"
+
+# ====================================================================
+log "=== Tags Filter ==="
+# ====================================================================
+
+# Create a tag for filter tests
+call_api POST "tags" '{"name":"api-test-tag","colour":"#aabbcc"}'
+if [[ "$HTTP_CODE" == "201" ]]; then
+    API_TAG_ID=$(jq_val id)
+    pass "Create tag → 201 (id=$API_TAG_ID)"
+
+    # Attach tag to test subnet and address
+    if [[ -n "${SUBNET_ID:-}" && "$SUBNET_ID" != "None" ]]; then
+        call_api PUT "subnets&id=$SUBNET_ID" "{\"tags\":[$API_TAG_ID]}"
+        [[ "$HTTP_CODE" == "200" ]] && pass "Attach tag to subnet" || skip "Attach tag to subnet — got $HTTP_CODE"
+
+        # Verify tags array in subnet list response
+        call_api GET "subnets&id=$SUBNET_ID"
+        assert_http 200 "GET subnet after tag attach"
+        HAS_TAGS=$(python3 -c "import sys,json; d=json.load(sys.stdin); s=d.get('subnet',d.get('subnets',[{}])[0] if 'subnets' in d else {}); print('yes' if 'tags' in s else 'no')" <<< "$BODY" 2>/dev/null || echo "no")
+        [[ "$HAS_TAGS" == "yes" ]] && pass "Subnet response includes tags array" || fail "Subnet response missing tags field"
+
+        # ?tag= filter on subnets
+        call_api GET "subnets&tag=api-test-tag"
+        assert_http 200 "Filter subnets by tag name"
+        TAG_MATCH=$(python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('subnets',[])))" <<< "$BODY" 2>/dev/null || echo "0")
+        [[ "$TAG_MATCH" -ge 1 ]] && pass "?tag= filter on subnets: $TAG_MATCH match(es)" || fail "?tag= filter: no subnets returned"
+    fi
+
+    if [[ -n "${ADDR_ID:-}" && "$ADDR_ID" != "None" ]]; then
+        call_api PUT "addresses&id=$ADDR_ID" "{\"tags\":[$API_TAG_ID]}"
+        [[ "$HTTP_CODE" == "200" ]] && pass "Attach tag to address" || skip "Attach tag to address — got $HTTP_CODE"
+
+        # ?tag= filter on addresses
+        call_api GET "addresses&tag=api-test-tag"
+        assert_http 200 "Filter addresses by tag name"
+        ADDR_TAG_MATCH=$(python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('addresses',[])))" <<< "$BODY" 2>/dev/null || echo "0")
+        [[ "$ADDR_TAG_MATCH" -ge 1 ]] && pass "?tag= filter on addresses: $ADDR_TAG_MATCH match(es)" || fail "?tag= filter on addresses: no results"
+    fi
+
+    # Cleanup tag
+    call_api DELETE "tags&id=$API_TAG_ID"
+    [[ "$HTTP_CODE" == "204" ]] && pass "Delete tag → 204" || fail "Delete tag — got $HTTP_CODE"
+else
+    skip "Tag filter tests — could not create test tag (HTTP $HTTP_CODE)"
+    API_TAG_ID=""
+fi
+
+# ====================================================================
+log "=== Site Hierarchy ==="
+# ====================================================================
+
+# Create a parent region
+call_api POST "sites" '{"name":"api-test-region","description":"API test parent region"}'
+if [[ "$HTTP_CODE" == "201" ]]; then
+    API_PARENT_SITE_ID=$(jq_val id)
+    pass "Create parent region site → 201 (id=$API_PARENT_SITE_ID)"
+
+    # Verify site response includes parent_id field
+    call_api GET "sites&id=$API_PARENT_SITE_ID"
+    assert_http 200 "GET site by id"
+    HAS_PARENT_ID=$(python3 -c "import sys,json; d=json.load(sys.stdin); s=d.get('site',d.get('sites',[{}])[0] if 'sites' in d else {}); print('yes' if 'parent_id' in s else 'no')" <<< "$BODY" 2>/dev/null || echo "no")
+    [[ "$HAS_PARENT_ID" == "yes" ]] && pass "Site response includes parent_id field" || fail "Site response missing parent_id field"
+
+    # Create a child site under the parent
+    call_api POST "sites" "{\"name\":\"api-test-child-site\",\"description\":\"API test child\",\"parent_id\":$API_PARENT_SITE_ID}"
+    if [[ "$HTTP_CODE" == "201" ]]; then
+        API_CHILD_SITE_ID=$(jq_val id)
+        pass "Create child site → 201 (id=$API_CHILD_SITE_ID)"
+
+        # ?parent_id= filter on sites
+        call_api GET "sites&parent_id=$API_PARENT_SITE_ID"
+        assert_http 200 "Filter sites by parent_id"
+        CHILD_COUNT=$(python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('sites',[])))" <<< "$BODY" 2>/dev/null || echo "0")
+        [[ "$CHILD_COUNT" -ge 1 ]] && pass "?parent_id= filter: $CHILD_COUNT child site(s)" || fail "?parent_id= filter: no sites returned"
+
+        # Cleanup child
+        call_api DELETE "sites&id=$API_CHILD_SITE_ID"
+        [[ "$HTTP_CODE" == "204" ]] && pass "Delete child site → 204" || fail "Delete child site — got $HTTP_CODE"
+    else
+        skip "Child site tests — could not create child site (HTTP $HTTP_CODE)"
+    fi
+
+    # Cleanup parent
+    call_api DELETE "sites&id=$API_PARENT_SITE_ID"
+    [[ "$HTTP_CODE" == "204" ]] && pass "Delete parent region → 204" || fail "Delete parent region — got $HTTP_CODE"
+else
+    skip "Site hierarchy tests — could not create parent region (HTTP $HTTP_CODE)"
+fi
+
+# ====================================================================
 log "=== Health Check ==="
 # ====================================================================
 

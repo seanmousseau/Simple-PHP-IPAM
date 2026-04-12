@@ -104,6 +104,39 @@ rules:
       confidence: HIGH
 
   # ---------------------------------------------------------------------------
+  # Email header injection: mail() with unsanitized user input in $to / $subject
+  #
+  # The project's check_utilization_alerts() function sanitizes these with
+  # preg_replace('/[\r\n]/', '', ...) before passing to mail(). This rule flags
+  # any mail() call where $to or $subject derives from user-controlled input
+  # that has NOT been through that sanitizer.
+  # ---------------------------------------------------------------------------
+  - id: ipam-mail-header-injection
+    mode: taint
+    pattern-sources:
+      - pattern: $_GET[...]
+      - pattern: $_POST[...]
+      - pattern: $_REQUEST[...]
+      - pattern: $_COOKIE[...]
+    pattern-sanitizers:
+      - pattern: preg_replace('/[\r\n]/', '', ...)
+      - pattern: preg_replace("/[\r\n]/", '', ...)
+      - pattern: filter_var(...)
+      - pattern: (int)$X
+    pattern-sinks:
+      - pattern: mail($SINK, ...)
+      - pattern: mail($TO, $SINK, ...)
+    message: >
+      mail() called with user input ($SOURCE) in $to or $subject without sanitizing
+      \r and \n characters. Use preg_replace('/[\r\n]/', '', $value) before mail().
+    languages: [php]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: CWE-20
+      confidence: HIGH
+
+  # ---------------------------------------------------------------------------
   # Open redirect: header('Location: ...') with unvalidated user input
   # ---------------------------------------------------------------------------
   - id: ipam-open-redirect
