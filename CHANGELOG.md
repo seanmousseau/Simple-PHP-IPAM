@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [1.19.1] - 2026-04-12
+
+### Fixed
+- **reCAPTCHA Enterprise** — `enterprise.js` is now loaded instead of the standard `api.js` when `recaptcha_enterprise.enabled = true`, enabling proper Enterprise token generation.
+- **reCAPTCHA Enterprise** — `grecaptcha.enterprise.execute()` / `grecaptcha.enterprise.ready()` are now called instead of the standard `grecaptcha.*` equivalents when Enterprise mode is active.
+- **reCAPTCHA v3** — Removed premature `typeof grecaptcha !== "undefined"` guard in `DOMContentLoaded`; the guard prevented the submit-event listener from being attached when the async `api.js`/`enterprise.js` script had not yet executed, causing the form to submit with an empty token.
+- **reCAPTCHA Enterprise** — Default `expected_action` changed from `'LOGIN'` to `'login'`; the action name passed to `grecaptcha.enterprise.execute()` is lowercase and the comparison is case-sensitive, so the mismatch caused every verification to fail.
+
 ## [1.19.0] - 2026-04-11
 
 ### Added
@@ -390,6 +398,8 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[1.19.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.19.0...v1.19.1
+[1.19.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.18.0...v1.19.0
 [1.18.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.17.0...v1.18.0
 [1.17.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.16.0...v1.17.0
 [1.16.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.15.0...v1.16.0

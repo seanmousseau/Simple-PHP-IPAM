@@ -173,15 +173,22 @@
     });
 
     // --- reCAPTCHA v3: submit form after obtaining token ---
+    // Note: do NOT guard with typeof grecaptcha here — the api.js/enterprise.js script
+    // is async and may not have executed yet at DOMContentLoaded. ready() queues
+    // callbacks until the full library loads, so the listener must always be attached.
+    // For reCAPTCHA Enterprise, enterprise.js exposes grecaptcha.enterprise.execute()
+    // instead of grecaptcha.execute().
     var rv3 = document.getElementById("g-recaptcha-response");
-    if (rv3 && rv3.dataset.recaptchaV3Key && typeof grecaptcha !== "undefined") {
+    if (rv3 && rv3.dataset.recaptchaV3Key) {
       var rv3Form = rv3.closest("form");
+      var rv3IsEnterprise = rv3.dataset.recaptchaEnterprise === "1";
       if (rv3Form) {
         rv3Form.addEventListener("submit", function(e) {
           if (rv3.value) return; // already have token
           e.preventDefault();
-          grecaptcha.ready(function() {
-            grecaptcha.execute(rv3.dataset.recaptchaV3Key, {action: "login"}).then(function(token) {
+          var gr = rv3IsEnterprise ? grecaptcha.enterprise : grecaptcha;
+          gr.ready(function() {
+            gr.execute(rv3.dataset.recaptchaV3Key, {action: "login"}).then(function(token) {
               rv3.value = token;
               rv3Form.submit();
             });

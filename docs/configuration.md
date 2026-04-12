@@ -419,7 +419,7 @@ Optional upgrade to Google reCAPTCHA Enterprise for server-side token verificati
     'enabled'          => false,
     'project_id'       => '',    // GCP project ID
     'api_key'          => '',    // Server-side API key (Restricted API key from GCP Console)
-    'expected_action'  => 'LOGIN',
+    'expected_action'  => 'login',
     'score_threshold'  => 0.5,
 ],
 ```
@@ -429,7 +429,7 @@ Optional upgrade to Google reCAPTCHA Enterprise for server-side token verificati
 | `enabled` | `false` | Set to `true` to use the Enterprise API |
 | `project_id` | `''` | GCP project ID where reCAPTCHA Enterprise is enabled |
 | `api_key` | `''` | Server-side restricted API key (not the site key) |
-| `expected_action` | `'LOGIN'` | Action name registered in your reCAPTCHA Enterprise key |
+| `expected_action` | `'login'` | Action name passed to `grecaptcha.enterprise.execute()` — must match exactly (case-sensitive) |
 | `score_threshold` | `0.5` | Minimum score to pass (0.0–1.0; higher = stricter) |
 
 ### Setup
