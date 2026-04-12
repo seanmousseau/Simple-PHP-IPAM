@@ -24,7 +24,7 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
 
   // Create subnet + address for search tests
   await fetchPost(page, appUrl('subnets.php'), {
-    action: 'create', cidr: TEST_CIDR2, description: 'PW search test',
+    action: 'create', cidr: TEST_CIDR2, description: 'PW search test', confirm_overlap: '1',
   });
   await page.goto('subnets.php');
   subnetId = await subnetIdFor(page, TEST_CIDR2);

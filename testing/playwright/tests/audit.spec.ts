@@ -21,7 +21,7 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
   await page.goto('subnets.php');
   await deleteSubnet(page, TEST_CIDR1);
   await fetchPost(page, appUrl('subnets.php'), {
-    action: 'create', cidr: TEST_CIDR1, description: 'PW audit test',
+    action: 'create', cidr: TEST_CIDR1, description: 'PW audit test', confirm_overlap: '1',
   });
   await page.goto('subnets.php');
   await deleteSubnet(page, TEST_CIDR1);

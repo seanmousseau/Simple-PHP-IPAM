@@ -261,6 +261,7 @@ h3{font-size:1.05rem}
 
 .table-wrap{
   overflow-x:auto;
+  overflow-y:clip;
   -webkit-overflow-scrolling:touch;
 }
 .diff-table{font-size:.85rem;border-collapse:collapse;width:auto;min-width:200px}
@@ -351,7 +352,7 @@ table{
   width:100%;
   background:var(--card);
   border-radius:14px;
-  overflow:hidden;
+  clip-path:inset(0 round 14px);
 }
 th,td{
   border:1px solid var(--border);
@@ -705,9 +706,8 @@ details > summary::-webkit-details-marker{display:none}
 .row-inline{display:flex;align-items:center;gap:6px;font-size:.9rem;cursor:pointer;padding-bottom:6px;}
 .row-inline input[type=checkbox]{width:16px;height:16px;cursor:pointer;flex-shrink:0;}
 
-/* ---- Sticky table headers (#248) ---- */
-:root { --topbar-h: 73px; }
-.table-wrap{overflow-x:auto}
+/* ---- Sticky table headers (#248, #342) ---- */
+:root { --topbar-h: 79px; }
 thead th{position:sticky;top:var(--topbar-h);z-index:10;background:var(--card-2)}
 
 /* ---- Mobile hamburger nav (#250) ---- */

@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [2.2.0] - 2026-04-12
+
+### Fixed
+- **#342** — Sticky table headers now correctly pin below the topbar on all table pages. Two CSS stacking-context bugs resolved: `table { overflow: hidden }` replaced with `clip-path: inset(0 round 14px)` (removes the table as a scroll container while preserving rounded corners), and `overflow-y: clip` added to `.table-wrap` (prevents browsers from silently promoting `overflow-y` to `auto` which made `.table-wrap` the sticky ancestor instead of the viewport). Topbar offset variable corrected from `73 px` to `79 px`.
+- **#344** — `visual-audit.spec.ts` subnet map selector fixed: the spec used non-existent CSS classes `.subnet-node` and `.subnet-map`. Corrected to `#subnet-map-view` (the container rendered server-side) and `.map-node` (individual map entries).
+
+### Added
+- **Playwright test spec `contacts.spec.ts`** — full CRUD (create, edit, delete), contact typeahead integration on addresses page, readonly-user access control (403), and API `?resource=contacts` coverage.
+- **Playwright test spec `vrfs.spec.ts`** — full CRUD, VRF picker on subnet create, VRF badge on subnet list, delete-guard validation (blocked when subnets are assigned, button disabled), and API `?resource=vrfs` coverage.
+- **Playwright test spec `dhcp_pool.spec.ts`** — subnet picker navigation, pool reservation, reserved-address count verification, clear-reservation, empty-state check, readonly-user form-hiding, and out-of-subnet IP validation.
+- **#345** — Large-DB sample database regenerated with current v2.1.x schema (VRFs, contacts, tags, VLANs, `expires_at`, MAC addresses included). 500 subnets, 43 000+ addresses, 100 000 audit rows, 50 000 history rows.
+
 ## [2.1.5] - 2026-04-12
 
 ### Fixed
@@ -466,6 +478,7 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[2.2.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.1.5...v2.2.0
 [2.1.5]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.1.4...v2.1.5
 [2.1.4]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.1.3...v2.1.4
 [2.1.3]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.1.2...v2.1.3

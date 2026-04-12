@@ -22,7 +22,7 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
   await deleteSubnet(page, TEST_CIDR2);
 
   await fetchPost(page, appUrl('subnets.php'), {
-    action: 'create', cidr: TEST_CIDR2, description: 'PW bulk test',
+    action: 'create', cidr: TEST_CIDR2, description: 'PW bulk test', confirm_overlap: '1',
   });
   await page.goto('subnets.php');
   subnetId = await subnetIdFor(page, TEST_CIDR2);
@@ -76,7 +76,6 @@ test('bulk select all checkbox present', async () => {
   if (!subnetId) { test.skip(); return; }
   await page.goto(`bulk_update.php?subnet_id=${subnetId}`);
   // There should be a select-all checkbox
-  const selectAll = page.locator('[name=select_all], #select-all, [id*="select-all"]');
   // Soft check — the select-all control may use different names
   const hasCheckboxes = await page.locator('input[type=checkbox]').count();
   expect(hasCheckboxes, 'bulk update has checkboxes').toBeGreaterThan(0);

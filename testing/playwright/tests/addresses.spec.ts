@@ -27,7 +27,7 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
 
   // Create test subnet
   await fetchPost(page, appUrl('subnets.php'), {
-    action: 'create', cidr: TEST_CIDR2, description: 'PW address test',
+    action: 'create', cidr: TEST_CIDR2, description: 'PW address test', confirm_overlap: '1',
   });
   await page.goto('subnets.php');
   subnetId = await subnetIdFor(page, TEST_CIDR2);
@@ -198,22 +198,46 @@ test('addresses: inline status toggle cycles status on click', async () => {
 
   const badge = page.locator(`.status-badge[data-addr-id="${addrId}"]`);
   await expect(badge).toBeVisible();
+
+  // Scroll the badge into view to ensure it is not behind the sticky topbar
+  await badge.scrollIntoViewIfNeeded();
   const originalStatus = await badge.textContent();
 
-  // Click to cycle status
-  await badge.click();
-  // Wait for fetch to complete (badge text changes)
-  await page.waitForTimeout(500);
+  // Fire click via JS (bypasses coordinate-based click, reliably hits the element's handler)
+  // and capture the resulting network request atomically.
+  const [response] = await Promise.all([
+    page.waitForResponse(
+      r => r.url().includes('addresses.php') && r.request().method() === 'POST',
+      { timeout: 8000 },
+    ),
+    badge.evaluate((el) => (el as HTMLElement).click()),
+  ]);
+  const data = JSON.parse(await response.text()) as { ok: boolean; status: string };
+  expect(data.ok, 'update_status should return ok:true').toBe(true);
+  await expect(badge).not.toHaveText(originalStatus!, { timeout: 5000 });
   const newStatus = await badge.textContent();
   expect(newStatus).not.toBe(originalStatus);
 
-  // Click back to original (cycle twice more if needed)
-  await badge.click();
-  await page.waitForTimeout(500);
-  await badge.click();
-  await page.waitForTimeout(500);
-  const restoredStatus = await badge.textContent();
-  expect(restoredStatus).toBe(originalStatus);
+  // Click twice more to restore original status
+  const [r2] = await Promise.all([
+    page.waitForResponse(
+      r => r.url().includes('addresses.php') && r.request().method() === 'POST',
+      { timeout: 8000 },
+    ),
+    badge.evaluate((el) => (el as HTMLElement).click()),
+  ]);
+  expect((JSON.parse(await r2.text()) as { ok: boolean }).ok).toBe(true);
+  await expect(badge).not.toHaveText(newStatus!, { timeout: 5000 });
+
+  const [r3] = await Promise.all([
+    page.waitForResponse(
+      r => r.url().includes('addresses.php') && r.request().method() === 'POST',
+      { timeout: 8000 },
+    ),
+    badge.evaluate((el) => (el as HTMLElement).click()),
+  ]);
+  expect((JSON.parse(await r3.text()) as { ok: boolean }).ok).toBe(true);
+  await expect(badge).toHaveText(originalStatus!, { timeout: 5000 });
 });
 
 test('addresses: Add Address drawer trigger present', async () => {
