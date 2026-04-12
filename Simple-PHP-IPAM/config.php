@@ -50,6 +50,21 @@ return [
     'utilization_warn'     => 80,
     'utilization_critical' => 95,
 
+    // Auto-reserve IPs on subnet create.
+    // When true, the "Auto-reserve network/broadcast/gateway" checkbox in the
+    // Add Subnet form is pre-checked. Set to false to default it unchecked.
+    'auto_reserve_network_broadcast' => true,
+
+    // Email utilization alerts.
+    // alert_email: address to notify; leave empty to disable alerts.
+    // alert_util_warn_pct: threshold (%) to send a warning alert.
+    // alert_util_crit_pct: threshold (%) to send a critical alert.
+    // alert_interval_seconds: minimum seconds between housekeeping alert checks.
+    'alert_email'             => '',
+    'alert_util_warn_pct'     => 80,
+    'alert_util_crit_pct'     => 95,
+    'alert_interval_seconds'  => 3600,
+
     // Update check: fetches releases from GitHub and shows a banner when a newer
     // version is available. notify_prerelease: also alert for alpha/beta/RC builds.
     'update_check' => [

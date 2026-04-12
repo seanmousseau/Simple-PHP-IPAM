@@ -1,5 +1,6 @@
 /**
  * Address CRUD + mac/expires_at fields (#264, #262) + address history.
+ * Also covers: inline status toggle, breadcrumb, form drawer.
  * Migrated from cdp_test.py section 5.
  */
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
@@ -174,4 +175,62 @@ test('address_history.php without address_id shows styled error', async () => {
                    body.toLowerCase().includes('address_id') ||
                    body.toLowerCase().includes('addresses.php');
   expect(hasError).toBeTruthy();
+});
+
+test('addresses: breadcrumb is present', async () => {
+  if (!subnetId) { test.skip(); return; }
+  await page.goto(`addresses.php?subnet_id=${subnetId}`);
+  await expect(page.locator('.breadcrumbs')).toBeVisible();
+  await expect(page.locator('.breadcrumbs')).toContainText('Dashboard');
+});
+
+test('addresses: status badge has data-addr-id for write users', async () => {
+  if (!subnetId || !addrId) { test.skip(); return; }
+  await page.goto(`addresses.php?subnet_id=${subnetId}`);
+  // The status badge for the test address should carry data-addr-id (inline toggle enabled)
+  const badge = page.locator(`.status-badge[data-addr-id="${addrId}"]`);
+  await expect(badge).toBeVisible();
+});
+
+test('addresses: inline status toggle cycles status on click', async () => {
+  if (!subnetId || !addrId) { test.skip(); return; }
+  await page.goto(`addresses.php?subnet_id=${subnetId}`);
+
+  const badge = page.locator(`.status-badge[data-addr-id="${addrId}"]`);
+  await expect(badge).toBeVisible();
+  const originalStatus = await badge.textContent();
+
+  // Click to cycle status
+  await badge.click();
+  // Wait for fetch to complete (badge text changes)
+  await page.waitForTimeout(500);
+  const newStatus = await badge.textContent();
+  expect(newStatus).not.toBe(originalStatus);
+
+  // Click back to original (cycle twice more if needed)
+  await badge.click();
+  await page.waitForTimeout(500);
+  await badge.click();
+  await page.waitForTimeout(500);
+  const restoredStatus = await badge.textContent();
+  expect(restoredStatus).toBe(originalStatus);
+});
+
+test('addresses: Add Address drawer trigger present', async () => {
+  if (!subnetId) { test.skip(); return; }
+  await page.goto(`addresses.php?subnet_id=${subnetId}`);
+  const trigger = page.locator('[data-open-drawer="add-address"]');
+  await expect(trigger).toBeVisible();
+});
+
+test('addresses: form drawer opens on Add Address click', async () => {
+  if (!subnetId) { test.skip(); return; }
+  await page.goto(`addresses.php?subnet_id=${subnetId}`);
+  const trigger = page.locator('[data-open-drawer="add-address"]');
+  if (await trigger.count() === 0) {
+    test.skip(true, 'No Add Address drawer trigger found');
+    return;
+  }
+  await trigger.click();
+  await expect(page.locator('#form-drawer')).toBeVisible();
 });

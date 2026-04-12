@@ -700,3 +700,96 @@ details > summary::-webkit-details-marker{display:none}
   animation:spin .8s linear infinite;
 }
 @keyframes spin{to{transform:rotate(360deg)}}
+
+/* ---- Inline checkbox label (used in forms alongside other inputs) ---- */
+.row-inline{display:flex;align-items:center;gap:6px;font-size:.9rem;cursor:pointer;padding-bottom:6px;}
+.row-inline input[type=checkbox]{width:16px;height:16px;cursor:pointer;flex-shrink:0;}
+
+/* ---- Sticky table headers (#248) ---- */
+:root { --topbar-h: 73px; }
+.table-wrap{overflow-x:auto}
+thead th{position:sticky;top:var(--topbar-h);z-index:2;background:var(--card-2)}
+
+/* ---- Mobile hamburger nav (#250) ---- */
+.nav-toggle{
+  display:none;
+  background:none;border:none;cursor:pointer;
+  font-size:1.4rem;color:var(--fg);padding:4px 8px;
+  line-height:1;flex-shrink:0;
+}
+#nav-drawer{
+  position:fixed;top:0;right:0;bottom:0;width:280px;max-width:90vw;
+  background:var(--card);border-left:1px solid var(--border);
+  z-index:200;overflow-y:auto;
+  transform:translateX(100%);transition:transform .22s ease;
+  display:flex;flex-direction:column;gap:0;padding:16px 0;
+}
+body.nav-open #nav-drawer{transform:translateX(0)}
+.nav-drawer-overlay{
+  display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:199;
+}
+body.nav-open .nav-drawer-overlay{display:block}
+#nav-drawer .drawer-close{
+  align-self:flex-end;background:none;border:none;cursor:pointer;
+  font-size:1.2rem;color:var(--muted);padding:4px 16px 12px;
+}
+#nav-drawer a,#nav-drawer button.nav-drawer-btn{
+  display:block;width:100%;text-align:left;background:none;border:none;cursor:pointer;
+  color:var(--fg);padding:10px 20px;font-size:1rem;text-decoration:none;
+  border-radius:0;
+}
+#nav-drawer a:hover,#nav-drawer button.nav-drawer-btn:hover{background:var(--card-2)}
+#nav-drawer .nav-drawer-section{padding:4px 20px;font-size:.78rem;font-weight:700;
+  color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:8px}
+#nav-drawer hr{border:none;border-top:1px solid var(--border);margin:6px 0}
+@media(max-width:600px){
+  .nav-links{display:none}
+  .nav-toggle{display:block}
+}
+
+/* ---- Inline status badge (#252) ---- */
+.status-badge{display:inline-block;cursor:default}
+.status-badge[data-addr-id]{cursor:pointer;user-select:none}
+.status-badge[data-addr-id]:hover{opacity:.8;text-decoration:underline}
+.status-badge.status-used{color:var(--success)}
+.status-badge.status-reserved{color:var(--warn)}
+.status-badge.status-free{color:var(--muted)}
+
+/* ---- Slide-in form drawer (#247) ---- */
+#form-drawer{
+  position:fixed;top:0;right:0;bottom:0;width:440px;max-width:95vw;
+  background:var(--card);border-left:1px solid var(--border);
+  z-index:180;overflow-y:auto;padding:24px;
+  transform:translateX(100%);transition:transform .22s ease;
+  display:flex;flex-direction:column;gap:16px;
+}
+#form-drawer.drawer--open{transform:translateX(0)}
+.form-drawer-overlay{
+  display:none;position:fixed;inset:0;background:rgba(0,0,0,.25);z-index:179;
+}
+.form-drawer-overlay.visible{display:block}
+#form-drawer .drawer-header{
+  display:flex;align-items:center;justify-content:space-between;
+  border-bottom:1px solid var(--border);padding-bottom:12px;
+}
+#form-drawer .drawer-title{margin:0;font-size:1.15rem;font-weight:700}
+#form-drawer .drawer-close-btn{
+  background:none;border:none;cursor:pointer;font-size:1.3rem;
+  color:var(--muted);padding:2px 6px;
+}
+.drawer-form-card{display:none}
+body.drawer-ready .drawer-form-card{display:none}
+@media(max-width:600px){
+  #form-drawer{width:100vw;top:auto;height:85vh;transform:translateY(100%)}
+  #form-drawer.drawer--open{transform:translateY(0)}
+}
+
+/* ---- Tag badges ---- */
+.tag-badge{
+  display:inline-block;padding:2px 8px;border-radius:10px;
+  font-size:.78rem;font-weight:600;color:#fff;white-space:nowrap;
+}
+/* Darken text when badge is light-coloured (handled via inline style; default white) */
+.tag-picker{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0;}
+.tag-picker label{display:flex;align-items:center;gap:4px;cursor:pointer;font-size:.85rem;}
+.tag-picker input[type=checkbox]{width:14px;height:14px;cursor:pointer;}

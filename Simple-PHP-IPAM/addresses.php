@@ -177,6 +177,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $msg = 'Address updated.';
             }
         }
+    } elseif ($action === 'update_status') {
+        // Inline status toggle — JSON response for JS fetch; graceful-degrades on non-JS
+        require_write_access();
+        $id       = to_int($_POST['id'] ?? 0);
+        $newStatus = to_str($_POST['status'] ?? '');
+        if (!in_array($newStatus, ['used', 'reserved', 'free'], true) || $id <= 0) {
+            header('Content-Type: application/json');
+            echo '{"ok":false,"error":"Invalid request"}';
+            exit;
+        }
+        $st = $db->prepare("UPDATE addresses SET status=:s, updated_at=datetime('now') WHERE id=:id");
+        $st->execute([':s' => $newStatus, ':id' => $id]);
+        if ($st->rowCount()) {
+            audit($db, 'address.update', 'address', $id, "status=$newStatus via inline toggle");
+        }
+        header('Content-Type: application/json');
+        echo '{"ok":true,"status":"' . $newStatus . '"}';
+        exit;
     } elseif ($action === 'delete') {
         require_write_access();
 
@@ -273,6 +291,7 @@ page_header('Addresses');
 <div class="page-actions">
   <?php if ($selectedSubnetId > 0): ?>
     <?php if (current_user()['role'] !== 'readonly'): ?>
+      <a class="action-pill" href="#add-address" data-open-drawer="add-address" data-drawer-title="Add Address">➕ Add Address</a>
       <a class="action-pill" href="bulk_update.php?subnet_id=<?= (int)$selectedSubnetId ?>">✏ Bulk Update</a>
     <?php endif; ?>
     <?php if ($selectedSubnet && to_int($selectedSubnet['ip_version']) === 4): ?>
@@ -322,7 +341,7 @@ page_header('Addresses');
   </div>
 <?php endif; ?>
 
-<div class="card mt-16">
+<div class="card mt-16 drawer-form-card" id="add-address">
   <h2>Add address</h2>
   <?php if ($nextAvailableIp): ?>
     <p class="muted">Next available: <b><?= e($nextAvailableIp) ?></b>
@@ -395,7 +414,11 @@ page_header('Addresses');
           <td><?= e(to_str($a['ip'])) ?></td>
           <td><?= e(to_str($a['hostname'])) ?></td>
           <td><?= e(to_str($a['owner'])) ?></td>
-          <td><span class="status-<?= e(to_str($a['status'])) ?>"><?= e(to_str($a['status'])) ?></span></td>
+          <td><?php
+            $addrStatus = e(to_str($a['status']));
+            $canToggle  = (current_user()['role'] !== 'readonly') ? ' data-addr-id="' . to_int($a['id']) . '"' : '';
+            echo "<span class='status-badge status-{$addrStatus}'{$canToggle} title='Click to cycle status'>{$addrStatus}</span>";
+          ?></td>
           <td><?php if ($a['grp'] !== ''): ?><span class="badge"><?= e(to_str($a['grp'])) ?></span><?php endif; ?></td>
           <td class="muted"><?= e(to_str($a['mac'])) ?></td>
           <td class="muted"><?= e(to_str($a['expires_at'] ?? '')) ?></td>

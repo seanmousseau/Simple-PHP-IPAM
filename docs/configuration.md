@@ -309,6 +309,50 @@ Maximum number of records accepted per bulk API write request (`POST ?resource=a
 
 ---
 
+### `auto_reserve_network_broadcast`
+
+*(Added in v2.0.0)*
+
+**Default:** `true`
+
+When `true`, the **Auto-reserve network, broadcast & gateway IPs** checkbox on the subnet create form is pre-checked. When a subnet is created with this option enabled, the network address, broadcast address, and (if provided) the gateway are automatically inserted as `status=reserved` addresses. Users can uncheck the box per-subnet at creation time regardless of this default.
+
+---
+
+### `alert_email`
+
+*(Added in v2.0.0)*
+
+**Default:** `''` (disabled)
+
+Email address to send utilization threshold alerts to. Leave empty to disable all email alerts. The feature depends on a working server MTA (`mail()` function).
+
+```php
+'alert_email' => 'netops@example.com',
+```
+
+---
+
+### `alert_util_warn_pct` / `alert_util_crit_pct`
+
+*(Added in v2.0.0)*
+
+**Defaults:** `80` / `95`
+
+Percentage thresholds for email utilization alerts (distinct from the `utilization_warn` / `utilization_critical` keys which control UI colour only). An email is sent once per 24-hour window per subnet per level. The application tracks sent alerts in the `alert_state` table and auto-clears them when utilization drops back below the threshold.
+
+---
+
+### `alert_interval_seconds`
+
+*(Added in v2.0.0)*
+
+**Default:** `3600`
+
+Minimum number of seconds between utilization alert checks. Each page load may trigger a check if this interval has elapsed since the last run. The check itself is fast (a single SQL query); set lower if you need sub-hourly polling.
+
+---
+
 ## `login_protection`
 
 *(Added in v1.9)*
@@ -441,6 +485,26 @@ Optional upgrade to Google reCAPTCHA Enterprise for server-side token verificati
 5. Set `recaptcha_enterprise.enabled = true`, `project_id`, `api_key`, and `expected_action`.
 
 When `enabled` is `false` (default), the standard `https://www.google.com/recaptcha/api/siteverify` endpoint is used instead.
+
+---
+
+### `recaptcha_action`
+
+*(Added in v2.0.0)*
+
+**Default:** `'login'`
+
+Top-level config key (not inside `recaptcha_enterprise`) that controls the reCAPTCHA v3 `action` parameter used by the login form. The value is emitted as a `data-recaptcha-action` HTML attribute on the hidden reCAPTCHA input and read by `app.js` at runtime, replacing the previous hardcoded `'login'` string.
+
+Change this if your reCAPTCHA policy requires a different action name:
+
+```php
+'recaptcha_action' => 'ipam_login',
+```
+
+This key applies to both the standard reCAPTCHA v3 integration and the reCAPTCHA Enterprise flow (which reads `recaptcha_enterprise.expected_action` separately for server-side verification).
+
+---
 
 ### Nightly reset cron (optional)
 

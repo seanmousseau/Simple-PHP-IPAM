@@ -99,6 +99,12 @@ $keys = ($db->query("SELECT id, name, description, is_readonly, created_at, last
 
 page_header('API Keys');
 ?>
+<div class="breadcrumbs">
+  <a href="dashboard.php">Dashboard</a><span class="sep">›</span>
+  <a href="#">Admin</a><span class="sep">›</span>
+  <span>API Keys</span>
+</div>
+
 <h1>API Keys</h1>
 <p class="muted">API keys grant access to the <a href="api.php">REST API</a>.
   Read-only keys can only perform GET requests. Each key is shown <strong>once</strong> at creation — copy it before navigating away.</p>

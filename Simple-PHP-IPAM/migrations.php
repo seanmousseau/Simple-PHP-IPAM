@@ -222,5 +222,113 @@ function ipam_migrations(): array
                 $db->exec("ALTER TABLE addresses ADD COLUMN expires_at TEXT");
             }
         },
+
+        // 2.0.0-vlans: VLANs as first-class managed objects
+        '2.0.0-vlans' => function(PDO $db): void {
+            $tables = array_column(
+                ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                'name'
+            );
+            if (!in_array('vlans', $tables, true)) {
+                $db->exec("
+                    CREATE TABLE vlans (
+                        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                        vlan_id     INTEGER NOT NULL CHECK(vlan_id BETWEEN 1 AND 4094),
+                        name        TEXT NOT NULL,
+                        description TEXT NOT NULL DEFAULT '',
+                        site_id     INTEGER REFERENCES sites(id) ON DELETE SET NULL,
+                        created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                        updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                        UNIQUE(vlan_id, site_id)
+                    )
+                ");
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_vlans_vlan_id ON vlans(vlan_id)");
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_vlans_site_id ON vlans(site_id)");
+            }
+            $subnetCols = array_column(
+                ($db->query("PRAGMA table_info(subnets)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                'name'
+            );
+            if (!in_array('vlan_fk', $subnetCols, true)) {
+                $db->exec("ALTER TABLE subnets ADD COLUMN vlan_fk INTEGER REFERENCES vlans(id) ON DELETE SET NULL");
+            }
+            // Clear legacy vlan_id when the backing VLAN row is deleted
+            $db->exec("
+                CREATE TRIGGER IF NOT EXISTS vlans_before_delete_cleanup_subnets
+                BEFORE DELETE ON vlans
+                FOR EACH ROW
+                BEGIN
+                  UPDATE subnets SET vlan_id = NULL WHERE vlan_fk = OLD.id;
+                END
+            ");
+        },
+
+        // 2.0.0-site-hierarchy: parent site / region support
+        '2.0.0-site-hierarchy' => function(PDO $db): void {
+            $cols = array_column(
+                ($db->query("PRAGMA table_info(sites)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                'name'
+            );
+            if (!in_array('parent_id', $cols, true)) {
+                $db->exec("ALTER TABLE sites ADD COLUMN parent_id INTEGER REFERENCES sites(id) ON DELETE SET NULL");
+            }
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_sites_parent_id ON sites(parent_id)");
+        },
+
+        // 2.0.0-tags: tags on subnets and addresses
+        '2.0.0-tags' => function(PDO $db): void {
+            $tables = array_column(
+                ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                'name'
+            );
+            if (!in_array('tags', $tables, true)) {
+                $db->exec("
+                    CREATE TABLE tags (
+                        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name       TEXT NOT NULL UNIQUE CHECK(length(name) <= 50),
+                        colour     TEXT NOT NULL DEFAULT '#6c757d',
+                        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                    )
+                ");
+            }
+            if (!in_array('subnet_tags', $tables, true)) {
+                $db->exec("
+                    CREATE TABLE subnet_tags (
+                        subnet_id INTEGER NOT NULL REFERENCES subnets(id) ON DELETE CASCADE,
+                        tag_id    INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                        PRIMARY KEY (subnet_id, tag_id)
+                    )
+                ");
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_subnet_tags_tag_id ON subnet_tags(tag_id)");
+            }
+            if (!in_array('address_tags', $tables, true)) {
+                $db->exec("
+                    CREATE TABLE address_tags (
+                        address_id INTEGER NOT NULL REFERENCES addresses(id) ON DELETE CASCADE,
+                        tag_id     INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+                        PRIMARY KEY (address_id, tag_id)
+                    )
+                ");
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_address_tags_tag_id ON address_tags(tag_id)");
+            }
+        },
+
+        // 2.0.0-alert-state: email utilization alert dedup state
+        '2.0.0-alert-state' => function(PDO $db): void {
+            $tables = array_column(
+                ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                'name'
+            );
+            if (!in_array('alert_state', $tables, true)) {
+                $db->exec("
+                    CREATE TABLE alert_state (
+                        subnet_id       INTEGER NOT NULL REFERENCES subnets(id) ON DELETE CASCADE,
+                        level           TEXT NOT NULL CHECK(level IN ('warn','crit')),
+                        last_alerted_at TEXT NOT NULL,
+                        PRIMARY KEY (subnet_id, level)
+                    )
+                ");
+            }
+        },
     ];
 }

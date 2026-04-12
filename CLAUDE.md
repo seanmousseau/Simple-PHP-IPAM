@@ -35,7 +35,9 @@ Dev tooling at the repo root (not deployed): `composer.json`, `composer.lock`, `
 | `bulk_update.php` | yes | write | Bulk address update/delete |
 | `dhcp_pool.php` | yes | write | DHCP pool reservation tool |
 | `import_csv.php` | yes | admin | CSV import wizard |
-| `sites.php` | yes | admin | Site management |
+| `sites.php` | yes | admin | Site management (supports parent site / region hierarchy) |
+| `vlans.php` | yes | admin | VLAN management (first-class VLAN objects, linked to subnets via `vlan_fk`) |
+| `tags.php` | yes | admin | Tag management (colour-coded tags attached to subnets and addresses) |
 | `users.php` | yes | admin | User management |
 | `api_keys.php` | yes | admin | REST API key management |
 | `change_password.php` | yes | any | Self-service password change |
@@ -88,10 +90,15 @@ Every web page starts with `require __DIR__ . '/init.php'`, which:
 | Table | Key columns |
 |-------|------------|
 | `users` | `id`, `username`, `password_hash`, `role` (admin\|readonly), `is_active`, `oidc_sub`, `name`, `email`, `last_login_at`, `password_changed_at`, `theme` (auto\|light\|dark), `created_at`, `updated_at` |
-| `subnets` | `id`, `cidr`, `ip_version`, `network`, `network_bin` (BLOB), `prefix`, `description`, `site_id`, `vlan_id` (1–4094, nullable), `created_at`, `updated_at` |
+| `subnets` | `id`, `cidr`, `ip_version`, `network`, `network_bin` (BLOB), `prefix`, `description`, `site_id`, `vlan_id` (legacy int 1–4094, nullable), `vlan_fk` (FK → `vlans.id`, nullable), `created_at`, `updated_at` |
 | `addresses` | `id`, `subnet_id`, `ip`, `ip_bin` (BLOB), `hostname`, `owner`, `note`, `grp`, `status` (used\|reserved\|free), `mac` (free-form, default ''), `expires_at` (YYYY-MM-DD, nullable), `created_at`, `updated_at` |
 | `audit_log` | `id`, `action`, `entity_type`, `entity_id`, `user_id`, `username`, `ip`, `user_agent`, `details`, `created_at` |
-| `sites` | `id`, `name`, `description`, `created_at` |
+| `sites` | `id`, `name`, `description`, `parent_id` (FK → `sites.id`, nullable, added v2.0.0), `created_at` |
+| `vlans` | `id`, `vlan_id` (1–4094), `name`, `description`, `site_id` (FK → `sites.id`, nullable), `created_at`, `updated_at` — UNIQUE(vlan_id, site_id) |
+| `tags` | `id`, `name` (UNIQUE, max 50 chars), `colour` (hex, default `#6c757d`), `created_at` |
+| `subnet_tags` | `subnet_id` (FK → `subnets.id` CASCADE), `tag_id` (FK → `tags.id` CASCADE) — join table |
+| `address_tags` | `address_id` (FK → `addresses.id` CASCADE), `tag_id` (FK → `tags.id` CASCADE) — join table |
+| `alert_state` | `subnet_id` (FK → `subnets.id` CASCADE), `level` (warn\|crit), `last_alerted_at` — tracks sent utilization alerts |
 | `api_keys` | `id`, `name`, `key_hash` (SHA-256), `is_active`, `is_readonly`, `description`, `created_by`, `created_at`, `last_used_at` |
 | `login_attempts` | `id`, `ip`, `attempted_at` |
 | `address_history` | `id`, `address_id`, `subnet_id`, `ip`, `action`, `user_id`, `username`, `client_ip`, `user_agent`, `before_json`, `after_json`, `created_at` |
@@ -199,7 +206,7 @@ Asset cache-buster: update `?v=X.Y.Z` in the `<link>` and `<script>` tags in `pa
 ### Nav structure
 - Left: nav-links (Dashboard, Subnets, Addresses, Search, Audit, ⚙ Admin dropdown)
 - Right: user dropdown (username + role badge → Theme, Password, Logout)
-- Admin dropdown items: Sites, Users, DHCP Pools, API Keys, Import CSV, Database Tools
+- Admin dropdown items: Sites, VLANs, Tags, Users, DHCP Pools, API Keys, Import CSV, Database Tools
 
 ---
 
@@ -216,6 +223,8 @@ user.create         user.delete             user.toggle_active
 user.set_role       user.reset_password     user.update_profile
 user.oidc_link      user.oidc_unlink
 site.create         site.update             site.delete
+vlan.create         vlan.update             vlan.delete
+tag.create          tag.update              tag.delete
 apikey.create       apikey.deactivate       apikey.activate      apikey.delete
 dhcp_pool.reserve   dhcp_pool.clear
 db.export           db.import               db.import_failed
@@ -362,3 +371,8 @@ Include `https://claude.ai/code/session_...` in commit body.
 - **Child subnets inherit site** — `find_parent_site_id()` is called on every subnet create/update; the server overrides the submitted `site_id` if a parent with a site is found. The UI shows a locked badge for `$depth > 0`.
 - **Self-delete guard** — cannot delete the last *active* admin. Count uses `AND id != :id` (exclude target) and only applies when deleting an *active* admin.
 - **`page_footer()` is not `exit`** — it outputs the closing HTML but does not call `exit`. The calling page must not output anything after it.
+- **`subnets.vlan_fk` vs `subnets.vlan_id`** — `vlan_fk` (added v2.0.0) is the FK to `vlans.id`. The legacy integer column `vlan_id` (1–4094) is retained for backwards compatibility. New code should use `vlan_fk`; do not confuse the two.
+- **Tags via join tables** — tags are attached to subnets/addresses through `subnet_tags` and `address_tags`. Both have `ON DELETE CASCADE` so tags are automatically removed when the parent entity is deleted. Use `get_tags_for_entity()` / `save_tags_for_entity()` in `lib.php`.
+- **Site hierarchy depth limit** — enforced at the application layer (max depth 2: region → site). Prevent circular references in the parent picker by filtering out the site itself and its descendants.
+- **`alert_email` must be set** — `check_utilization_alerts()` no-ops silently when `alert_email` is empty. The email alert feature relies on the server's MTA (`mail()` function).
+- **`recaptcha_action` config key** — controls the reCAPTCHA v3 `action` parameter passed during login. Defaults to `'login'`. The value is emitted as `data-recaptcha-action` on the hidden input and read by `app.js` at runtime.

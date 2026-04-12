@@ -22,23 +22,36 @@ foreach ($siteList as $s) {
     $siteMap[to_int($s['id'])] = to_str($s['name']);
 }
 
+/** @var list<array<string, mixed>> $vlanList */
+$vlanList = ($db->query("SELECT id, vlan_id, name FROM vlans ORDER BY vlan_id ASC") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+/** @var array<int, array<string, mixed>> $vlanMap key = vlans.id */
+$vlanMap = [];
+foreach ($vlanList as $vl) {
+    $vlanMap[to_int($vl['id'])] = $vl;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = to_str($_POST['action'] ?? '');
 
     if ($action === 'create') {
         require_write_access();
-        $cidr = trim(to_str($_POST['cidr'] ?? ''));
-        $desc = trim(to_str($_POST['description'] ?? ''));
+        $cidr   = trim(to_str($_POST['cidr'] ?? ''));
+        $desc   = trim(to_str($_POST['description'] ?? ''));
         $siteId = to_int($_POST['site_id'] ?? 0);
         if ($siteId <= 0) $siteId = null;
-        $vlanIdRaw = trim(to_str($_POST['vlan_id'] ?? ''));
-        $vlanId = $vlanIdRaw !== '' ? (int)$vlanIdRaw : null;
-        if ($vlanId !== null && ($vlanId < 1 || $vlanId > 4094)) {
-            $err = 'VLAN ID must be between 1 and 4094.';
+
+        // vlan_fk: FK to vlans.id; also derive legacy vlan_id integer for the badge
+        $vlanFk = to_int($_POST['vlan_fk'] ?? 0) ?: null;
+        $vlanId = null;
+        if ($vlanFk !== null && isset($vlanMap[$vlanFk])) {
+            $vlanId = to_int($vlanMap[$vlanFk]['vlan_id']);
         }
 
-        $p = $err ? null : parse_cidr($cidr);
-        if (!$err && !$p) {
+        $doAutoReserve = !empty($_POST['auto_reserve']);
+        $gateway       = trim(to_str($_POST['gateway'] ?? '')) ?: null;
+
+        $p = parse_cidr($cidr);
+        if (!$p) {
             $err = 'Invalid CIDR. Examples: 192.168.1.0/24 or 2001:db8::/64';
         }
         if (!$err) {
@@ -54,24 +67,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $overlapWarning = subnet_overlap_warning_text($overlaps);
                 $pendingAction = 'create';
                 $pendingData = [
-                    'cidr' => $cidr, 'description' => $desc,
-                    'site_id' => $siteId ?? 0, 'vlan_id' => $vlanIdRaw,
+                    'cidr'         => $cidr,
+                    'description'  => $desc,
+                    'site_id'      => $siteId ?? 0,
+                    'vlan_fk'      => $vlanFk ?? 0,
+                    'auto_reserve' => $doAutoReserve ? '1' : '0',
+                    'gateway'      => $gateway ?? '',
                 ];
             } else {
                 try {
-                    $st = $db->prepare("INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, site_id, vlan_id)
-                                        VALUES (:cidr,:ver,:net,:nb,:pre,:d,:site,:vlan)");
+                    $st = $db->prepare("INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, site_id, vlan_id, vlan_fk)
+                                        VALUES (:cidr,:ver,:net,:nb,:pre,:d,:site,:vlan,:vfk)");
                     $st->execute([
                         ':cidr' => $normalized,
-                        ':ver' => $p['version'],
-                        ':net' => $p['network'],
-                        ':nb'  => $p['net_bin'],
-                        ':pre' => $p['prefix'],
-                        ':d' => $desc,
+                        ':ver'  => $p['version'],
+                        ':net'  => $p['network'],
+                        ':nb'   => $p['net_bin'],
+                        ':pre'  => $p['prefix'],
+                        ':d'    => $desc,
                         ':site' => $siteId,
                         ':vlan' => $vlanId,
+                        ':vfk'  => $vlanFk,
                     ]);
-                    audit($db, 'subnet.create', 'subnet', (int)$db->lastInsertId(), $normalized);
+                    $newSubnetId = (int)$db->lastInsertId();
+                    audit($db, 'subnet.create', 'subnet', $newSubnetId, $normalized);
+
+                    if ($doAutoReserve) {
+                        auto_reserve_subnet_ips($db, $newSubnetId, $normalized, $gateway);
+                    }
+
                     $flashMsg = '';
                     if ($inheritedSiteId !== null) {
                         $inheritedName = $siteMap[$inheritedSiteId] ?? "site #$inheritedSiteId";
@@ -90,19 +114,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     } elseif ($action === 'update') {
         require_write_access();
-        $id = to_int($_POST['id'] ?? 0);
-        $cidr = trim(to_str($_POST['cidr'] ?? ''));
-        $desc = trim(to_str($_POST['description'] ?? ''));
+        $id     = to_int($_POST['id'] ?? 0);
+        $cidr   = trim(to_str($_POST['cidr'] ?? ''));
+        $desc   = trim(to_str($_POST['description'] ?? ''));
         $siteId = to_int($_POST['site_id'] ?? 0);
         if ($siteId <= 0) $siteId = null;
-        $vlanIdRaw = trim(to_str($_POST['vlan_id'] ?? ''));
-        $vlanId = $vlanIdRaw !== '' ? (int)$vlanIdRaw : null;
-        if ($vlanId !== null && ($vlanId < 1 || $vlanId > 4094)) {
-            $err = 'VLAN ID must be between 1 and 4094.';
+
+        $vlanFk = to_int($_POST['vlan_fk'] ?? 0) ?: null;
+        $vlanId = null;
+        if ($vlanFk !== null && isset($vlanMap[$vlanFk])) {
+            $vlanId = to_int($vlanMap[$vlanFk]['vlan_id']);
         }
 
-        $p = $err ? null : parse_cidr($cidr);
-        if (!$err && !$p) {
+        $p = parse_cidr($cidr);
+        if (!$p) {
             $err = 'Invalid CIDR.';
         }
         if (!$err) {
@@ -119,23 +144,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pendingAction = 'update';
                 $pendingData = [
                     'id' => $id, 'cidr' => $cidr, 'description' => $desc,
-                    'site_id' => $siteId ?? 0, 'vlan_id' => $vlanIdRaw,
+                    'site_id' => $siteId ?? 0, 'vlan_fk' => $vlanFk ?? 0,
                 ];
             } else {
                 try {
                     $st = $db->prepare("UPDATE subnets
-                                        SET cidr=:cidr, ip_version=:ver, network=:net, network_bin=:nb, prefix=:pre, description=:d, site_id=:site, vlan_id=:vlan
+                                        SET cidr=:cidr, ip_version=:ver, network=:net, network_bin=:nb, prefix=:pre, description=:d, site_id=:site, vlan_id=:vlan, vlan_fk=:vfk
                                         WHERE id=:id");
                     $st->execute([
                         ':cidr' => $normalized,
-                        ':ver' => $p['version'],
-                        ':net' => $p['network'],
-                        ':nb'  => $p['net_bin'],
-                        ':pre' => $p['prefix'],
-                        ':d' => $desc,
+                        ':ver'  => $p['version'],
+                        ':net'  => $p['network'],
+                        ':nb'   => $p['net_bin'],
+                        ':pre'  => $p['prefix'],
+                        ':d'    => $desc,
                         ':site' => $siteId,
                         ':vlan' => $vlanId,
-                        ':id' => $id
+                        ':vfk'  => $vlanFk,
+                        ':id'   => $id,
                     ]);
                     audit($db, 'subnet.update', 'subnet', $id, $normalized);
                     $msg = 'Subnet updated.';
@@ -167,9 +193,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $st = $db->prepare("
-    SELECT id, cidr, ip_version, network, network_bin, prefix, description, updated_at, site_id, vlan_id
-    FROM subnets
-    ORDER BY ip_version ASC, prefix ASC, network_bin ASC
+    SELECT s.id, s.cidr, s.ip_version, s.network, s.network_bin, s.prefix, s.description, s.updated_at, s.site_id, s.vlan_id, s.vlan_fk,
+           v.name AS vlan_name
+    FROM subnets s
+    LEFT JOIN vlans v ON v.id = s.vlan_fk
+    ORDER BY s.ip_version ASC, s.prefix ASC, s.network_bin ASC
 ");
 $st->execute();
 /** @var list<array<string, mixed>> $list */
@@ -439,8 +467,9 @@ uasort($siteGroups, fn($a, $b) => strcasecmp($a['label'], $b['label']));
  * @param array<int, array{assignable_total: int, assigned_assignable: int, unassigned_assignable: int}> $ipv4UnassignedAgg
  * @param array<int, string> $siteMap
  * @param array<int, array<string, mixed>> $siteList
+ * @param list<array<string, mixed>> $vlanList
  */
-function render_subnet_node_local(array $tree, array $direct, array $agg, array $ipv4Unassigned, array $ipv4UnassignedAgg, array $siteMap, array $siteList, int $id, int $depth = 0): void
+function render_subnet_node_local(array $tree, array $direct, array $agg, array $ipv4Unassigned, array $ipv4UnassignedAgg, array $siteMap, array $siteList, array $vlanList, int $id, int $depth = 0): void
 {
     $row = $tree['byId'][$id];
     $pad = $depth * 18;
@@ -457,7 +486,14 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
     echo "<b><a href='addresses.php?subnet_id=" . to_int($row['id']) . "'>" . e(to_str($row['cidr'])) . "</a></b> ";
     echo "<span class='muted'>(v" . to_int($row['ip_version']) . ")</span> ";
     if ($siteName !== '') echo " <span class='badge'>" . e($siteName) . "</span>";
-    if (!empty($row['vlan_id'])) echo " <span class='badge'>VLAN " . to_int($row['vlan_id']) . "</span>";
+    $vlanFkVal = to_int($row['vlan_fk'] ?? 0);
+    $vlanLabel = '';
+    if ($vlanFkVal > 0 && !empty($row['vlan_name'])) {
+        $vlanLabel = to_int($row['vlan_id']) . ' \u{2014} ' . to_str($row['vlan_name']);
+    } elseif (!empty($row['vlan_id'])) {
+        $vlanLabel = 'VLAN ' . to_int($row['vlan_id']);
+    }
+    if ($vlanLabel !== '') echo " <span class='badge'>" . e($vlanLabel) . "</span>";
     if (($row['description'] ?? '') !== '') echo " - " . e(to_str($row['description']));
     // Address count badges — direct counts on this subnet, aggregated in parens if children differ
     $countHtml = "<span class='status-used'>" . $d['used'] . " used</span>"
@@ -517,8 +553,16 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
     echo "<input type='hidden' name='id' value='" . to_int($row['id']) . "'>";
     echo "<label>CIDR<br><input name='cidr' value='" . e(to_str($row['cidr'])) . "' required></label>";
     echo "<label>Description<br><input name='description' value='" . e(to_str($row['description'])) . "'></label>";
-    $vlanVal = ($row['vlan_id'] !== null && $row['vlan_id'] !== '') ? to_int($row['vlan_id']) : '';
-    echo "<label>VLAN ID<br><input name='vlan_id' type='number' min='1' max='4094' value='" . e((string)$vlanVal) . "' placeholder='1–4094' class='mw-80'></label>";
+    if ($vlanList) {
+        $curVlanFk = to_int($row['vlan_fk'] ?? 0);
+        echo "<label>VLAN<br><select name='vlan_fk'><option value='0'>(none)</option>";
+        foreach ($vlanList as $vl) {
+            $vlId = to_int($vl['id']);
+            $sel  = $vlId === $curVlanFk ? " selected" : "";
+            echo "<option value='" . $vlId . "'" . $sel . ">" . to_int($vl['vlan_id']) . " \u{2014} " . e(to_str($vl['name'])) . "</option>";
+        }
+        echo "</select></label>";
+    }
 
     if ($depth > 0) {
         // Child subnet: site is inherited from parent and cannot be changed here
@@ -551,7 +595,7 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
     }
 
     foreach (($tree['children'][$id] ?? []) as $cid) {
-        render_subnet_node_local($tree, $direct, $agg, $ipv4Unassigned, $ipv4UnassignedAgg, $siteMap, $siteList, (int)$cid, $depth + 1);
+        render_subnet_node_local($tree, $direct, $agg, $ipv4Unassigned, $ipv4UnassignedAgg, $siteMap, $siteList, $vlanList, (int)$cid, $depth + 1);
     }
 
     echo "</div></details></div>";
@@ -599,7 +643,11 @@ page_header('Subnets');
       <input type="hidden" name="cidr" value="<?= e(to_str($pendingData['cidr'])) ?>">
       <input type="hidden" name="description" value="<?= e(to_str($pendingData['description'])) ?>">
       <input type="hidden" name="site_id" value="<?= to_int($pendingData['site_id']) ?>">
-      <input type="hidden" name="vlan_id" value="<?= e(to_str($pendingData['vlan_id'] ?? '')) ?>">
+      <input type="hidden" name="vlan_fk" value="<?= to_int($pendingData['vlan_fk'] ?? 0) ?>">
+      <?php if (isset($pendingData['auto_reserve'])): ?>
+        <input type="hidden" name="auto_reserve" value="<?= to_int($pendingData['auto_reserve']) ?>">
+        <input type="hidden" name="gateway" value="<?= e(to_str($pendingData['gateway'] ?? '')) ?>">
+      <?php endif; ?>
       <input type="hidden" name="confirm_overlap" value="1">
       <button type="submit">Save anyway</button>
       <a class="action-pill" href="subnets.php">Cancel</a>
@@ -615,7 +663,16 @@ page_header('Subnets');
     <div class="row">
       <label>CIDR<br><input name="cidr" placeholder="10.0.0.0/24 or 2001:db8::/64" required data-validate="cidr"></label>
       <label>Description<br><input name="description" placeholder="Office LAN"></label>
-      <label>VLAN ID<br><input name="vlan_id" type="number" min="1" max="4094" placeholder="1–4094" class="mw-80"></label>
+      <?php if ($vlanList): ?>
+      <label>VLAN<br>
+        <select name="vlan_fk">
+          <option value="0">(none)</option>
+          <?php foreach ($vlanList as $vl): ?>
+            <option value="<?= to_int($vl['id']) ?>"><?= to_int($vl['vlan_id']) ?> &mdash; <?= e(to_str($vl['name'])) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </label>
+      <?php endif; ?>
       <label>Site<br>
         <select name="site_id">
           <option value="0">(none)</option>
@@ -625,6 +682,14 @@ page_header('Subnets');
         </select>
       </label>
       <button type="submit" <?= (current_user()['role']==='readonly')?'disabled':'' ?>>Add</button>
+    </div>
+    <?php $autoReserveDefault = (bool)($config['auto_reserve_network_broadcast'] ?? true); ?>
+    <div class="row mt-8">
+      <label class="row-inline">
+        <input type="checkbox" name="auto_reserve" value="1" <?= $autoReserveDefault ? 'checked' : '' ?>>
+        Auto-reserve network, broadcast &amp; gateway IPs
+      </label>
+      <label>Gateway (optional)<br><input name="gateway" placeholder="e.g. 10.0.0.1"></label>
     </div>
     <?php if (current_user()['role']==='readonly'): ?><p class="muted">Read-only account.</p><?php endif; ?>
   </form>
@@ -643,7 +708,7 @@ page_header('Subnets');
         </button>
         <div class="site-group-body">
           <?php foreach ($group['roots'] as $rid): ?>
-            <?php render_subnet_node_local($tree, $direct, $agg, $ipv4Unassigned, $ipv4UnassignedAgg, $siteMap, $siteList, (int)$rid, 0); ?>
+            <?php render_subnet_node_local($tree, $direct, $agg, $ipv4Unassigned, $ipv4UnassignedAgg, $siteMap, $siteList, $vlanList, (int)$rid, 0); ?>
           <?php endforeach; ?>
         </div>
       </div>

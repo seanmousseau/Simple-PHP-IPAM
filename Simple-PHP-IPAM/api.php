@@ -138,13 +138,47 @@ match ($resource) {
         default  => api_error(405, 'Method not allowed.'),
     },
     'history'    => $method === 'GET' ? api_history($db)      : api_error(405, 'Method not allowed.'),
+    'vlans'      => $method === 'GET' ? api_vlans($db)         : api_error(405, 'Method not allowed.'),
     'search'     => $method === 'GET' ? api_search($db)       : api_error(405, 'Method not allowed.'),
     'audit'      => $method === 'GET' ? api_audit_log($db)    : api_error(405, 'Method not allowed.'),
     'unassigned' => $method === 'GET' ? api_unassigned($db)   : api_error(405, 'Method not allowed.'),
-    default      => api_error(404, 'Unknown resource. Valid: subnets, addresses, sites, history, search, audit, unassigned'),
+    default      => api_error(404, 'Unknown resource. Valid: subnets, addresses, sites, vlans, history, search, audit, unassigned'),
 };
 
 // ---- Helpers ----
+
+/**
+ * Batch-fetch tags for a list of entity IDs (address or subnet).
+ * Returns a map of entity_id → list of tag arrays [{id, name, colour}].
+ *
+ * @param array<int> $ids
+ * @return array<int, list<array{id: int, name: string, colour: string}>>
+ */
+function api_fetch_tags_for_ids(PDO $db, string $type, array $ids): array
+{
+    if (!$ids) return [];
+
+    if ($type === 'address') {
+        $join  = 'JOIN address_tags j ON j.tag_id = t.id';
+        $col   = 'j.address_id AS entity_id';
+        $where = 'j.address_id';
+    } else {
+        $join  = 'JOIN subnet_tags j ON j.tag_id = t.id';
+        $col   = 'j.subnet_id AS entity_id';
+        $where = 'j.subnet_id';
+    }
+
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $st = $db->prepare("SELECT $col, t.id, t.name, t.colour FROM tags t $join WHERE $where IN ($placeholders) ORDER BY t.name");
+    $st->execute($ids);
+
+    $out = [];
+    foreach ($st->fetchAll() as $r) {
+        $eid = to_int($r['entity_id']);
+        $out[$eid][] = ['id' => to_int($r['id']), 'name' => to_str($r['name']), 'colour' => to_str($r['colour'])];
+    }
+    return $out;
+}
 
 function api_json(mixed $data): never
 {
@@ -182,10 +216,11 @@ function api_subnets(PDO $db): never
         : '';
 
     $baseSql = "SELECT s.id, s.cidr, s.ip_version, s.network, s.prefix,
-                       s.description, s.vlan_id, s.site_id, s.created_at,
-                       si.name AS site$countsSelect
+                       s.description, s.vlan_id, s.vlan_fk, s.site_id, s.created_at,
+                       si.name AS site, v.vlan_id AS vlan_number, v.name AS vlan_name$countsSelect
                 FROM subnets s
                 LEFT JOIN sites si ON si.id = s.site_id
+                LEFT JOIN vlans v ON v.id = s.vlan_fk
                 $countsJoin";
 
     if (isset($_GET['id'])) {
@@ -195,7 +230,8 @@ function api_subnets(PDO $db): never
         /** @var array<string, mixed>|false $row */
         $row = $st->fetch();
         if (!$row) api_error(404, 'Subnet not found.');
-        api_json(fmt_subnet($row, $withCounts));
+        $subnetTags = api_fetch_tags_for_ids($db, 'subnet', [$id]);
+        api_json(fmt_subnet($row, $withCounts, $subnetTags[$id] ?? []));
     }
 
     $page   = max(1, to_int($_GET['page']  ?? 1));
@@ -215,8 +251,10 @@ function api_subnets(PDO $db): never
     if (isset($_GET['vlan_id'])) {
         $v = to_int($_GET['vlan_id']);
         if ($v < 1 || $v > 4094) api_error(400, 'vlan_id must be between 1 and 4094.');
-        $where[]         = 's.vlan_id = :vlan';
-        $params[':vlan'] = $v;
+        // Filter by VLAN numeric ID via the FK join, falling back to legacy integer field
+        $where[]         = '(v.vlan_id = :vlan OR (s.vlan_fk IS NULL AND s.vlan_id = :vlan2))';
+        $params[':vlan']  = $v;
+        $params[':vlan2'] = $v;
     }
 
     if (isset($_GET['site_id'])) {
@@ -225,9 +263,19 @@ function api_subnets(PDO $db): never
         $params[':site_id'] = $v;
     }
 
+    $tagJoin = '';
+    if (isset($_GET['tag'])) {
+        $tagName = trim(to_str($_GET['tag']));
+        if ($tagName !== '') {
+            $tagJoin = 'JOIN subnet_tags stf ON stf.subnet_id = s.id JOIN tags tf ON tf.id = stf.tag_id';
+            $where[]           = 'tf.name = :tag_name';
+            $params[':tag_name'] = $tagName;
+        }
+    }
+
     $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
 
-    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM subnets s $whereSql");
+    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM subnets s $tagJoin $whereSql");
     $cntSt->execute($params);
     /** @var array<string, mixed>|false $cntRow */
 
@@ -235,27 +283,39 @@ function api_subnets(PDO $db): never
 
     $total = is_array($cntRow) ? to_int($cntRow['c']) : 0;
 
-    $st = $db->prepare($baseSql . " $whereSql ORDER BY s.ip_version, s.network_bin LIMIT :lim OFFSET :off");
+    $st = $db->prepare($baseSql . " $tagJoin $whereSql ORDER BY s.ip_version, s.network_bin LIMIT :lim OFFSET :off");
     foreach ($params as $k => $v) {
         $st->bindValue($k, $v, PDO::PARAM_INT);
+    }
+    // tag_name is a string param — rebind as string
+    if (isset($params[':tag_name'])) {
+        $st->bindValue(':tag_name', $params[':tag_name'], PDO::PARAM_STR);
     }
     $st->bindValue(':lim', $limit,  PDO::PARAM_INT);
     $st->bindValue(':off', $offset, PDO::PARAM_INT);
     $st->execute();
+    $rawSubnets = $st->fetchAll();
+
+    // Batch-load tags for all returned subnets
+    $subnetIds    = array_map(fn($r) => to_int($r['id']), $rawSubnets);
+    $tagsBySubnet = api_fetch_tags_for_ids($db, 'subnet', $subnetIds);
+
     api_json([
         'total'   => $total,
         'page'    => $page,
         'limit'   => $limit,
-        'subnets' => array_map(fn($r) => fmt_subnet($r, $withCounts), $st->fetchAll()),
+        'subnets' => array_map(fn($r) => fmt_subnet($r, $withCounts, $tagsBySubnet[to_int($r['id'])] ?? []), $rawSubnets),
     ]);
 }
 
 /**
  * @param array<string, mixed> $r
+ * @param list<array{id: int, name: string, colour: string}> $tags
  * @return array<string, mixed>
  */
-function fmt_subnet(array $r, bool $withCounts = false): array
+function fmt_subnet(array $r, bool $withCounts = false, array $tags = []): array
 {
+    $vlanFk = $r['vlan_fk'] !== null ? to_int($r['vlan_fk']) : null;
     $out = [
         'id'          => to_int($r['id']),
         'cidr'        => $r['cidr'],
@@ -264,8 +324,11 @@ function fmt_subnet(array $r, bool $withCounts = false): array
         'prefix'      => to_int($r['prefix']),
         'description' => to_str($r['description']),
         'vlan_id'     => $r['vlan_id'] !== null ? to_int($r['vlan_id']) : null,
+        'vlan_fk'     => $vlanFk,
+        'vlan_name'   => $vlanFk !== null ? to_str($r['vlan_name'] ?? '') : null,
         'site_id'     => $r['site_id'] !== null ? to_int($r['site_id']) : null,
         'site'        => $r['site'],
+        'tags'        => $tags,
         'created_at'  => $r['created_at'],
     ];
     if ($withCounts) {
@@ -299,6 +362,7 @@ function api_addresses(PDO $db): never
     $where  = [];
     $params = [];
     $joinSite = false;
+    $joinTag  = false;
 
     if (isset($_GET['subnet_id'])) {
         $where[] = 'a.subnet_id = :sid';
@@ -316,15 +380,24 @@ function api_addresses(PDO $db): never
         $where[]            = 's.site_id = :site_id';
         $params[':site_id'] = to_int($_GET['site_id']);
     }
+    if (isset($_GET['tag'])) {
+        $tagName = trim(to_str($_GET['tag']));
+        if ($tagName !== '') {
+            $joinTag = true;
+            $where[]          = 'tf.name = :tag_name';
+            $params[':tag_name'] = $tagName;
+        }
+    }
 
-    $joinSql  = $joinSite ? ' JOIN subnets s ON s.id = a.subnet_id' : '';
+    $joins   = ($joinSite ? ' JOIN subnets s ON s.id = a.subnet_id' : '');
+    $joins  .= ($joinTag  ? ' JOIN address_tags atf ON atf.address_id = a.id JOIN tags tf ON tf.id = atf.tag_id' : '');
     $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
 
     $page   = max(1, to_int($_GET['page']  ?? 1));
     $limit  = max(1, min(500, to_int($_GET['limit'] ?? 100)));
     $offset = ($page - 1) * $limit;
 
-    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM addresses a$joinSql $whereSql");
+    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM addresses a$joins $whereSql");
     $cntSt->execute($params);
     /** @var array<string, mixed>|false $cntRow */
 
@@ -334,7 +407,7 @@ function api_addresses(PDO $db): never
 
     $sql = "SELECT a.id, a.subnet_id, a.ip, a.hostname, a.owner,
                    a.status, a.note, a.grp, a.mac, a.expires_at, a.created_at, a.updated_at
-            FROM addresses a$joinSql $whereSql
+            FROM addresses a$joins $whereSql
             ORDER BY a.ip_bin
             LIMIT :lim OFFSET :off";
 
@@ -345,10 +418,16 @@ function api_addresses(PDO $db): never
         $st->bindValue($k, $v);
     }
     $st->execute();
+    $rawRows = $st->fetchAll();
 
-    $rows = array_map(function(array $r): array {
+    // Batch-load tags for all returned addresses
+    $addrIds = array_map(fn($r) => to_int($r['id']), $rawRows);
+    $tagsByAddr = api_fetch_tags_for_ids($db, 'address', $addrIds);
+
+    $rows = array_map(function(array $r) use ($tagsByAddr): array {
+        $id = to_int($r['id']);
         return [
-            'id'          => to_int($r['id']),
+            'id'          => $id,
             'subnet_id'   => to_int($r['subnet_id']),
             'ip'          => $r['ip'],
             'hostname'    => to_str($r['hostname']),
@@ -358,10 +437,11 @@ function api_addresses(PDO $db): never
             'group'       => to_str($r['grp']),
             'mac'         => to_str($r['mac']),
             'expires_at'  => isset($r['expires_at']) ? to_str($r['expires_at']) : null,
+            'tags'        => $tagsByAddr[$id] ?? [],
             'created_at'  => $r['created_at'],
             'updated_at'  => $r['updated_at'],
         ];
-    }, $st->fetchAll());
+    }, $rawRows);
 
     api_json([
         'total'     => $total,
@@ -373,17 +453,96 @@ function api_addresses(PDO $db): never
 
 function api_sites(PDO $db): never
 {
-    $st = $db->query("SELECT id, name, description, created_at FROM sites ORDER BY name")
-        ?: throw new \RuntimeException('Query failed');
-    $rows = array_map(function(array $r): array {
-        return [
-            'id'          => to_int($r['id']),
-            'name'        => $r['name'],
-            'description' => to_str($r['description']),
-            'created_at'  => $r['created_at'],
-        ];
-    }, $st->fetchAll());
-    api_json(['sites' => $rows]);
+    if (isset($_GET['id'])) {
+        $id = to_int($_GET['id']);
+        $st = $db->prepare("SELECT s.id, s.name, s.description, s.parent_id, s.created_at, p.name AS parent_name FROM sites s LEFT JOIN sites p ON p.id = s.parent_id WHERE s.id = :id");
+        $st->execute([':id' => $id]);
+        /** @var array<string, mixed>|false $row */
+        $row = $st->fetch();
+        if (!$row) api_error(404, 'Site not found.');
+        api_json(fmt_site($row));
+    }
+
+    $where  = [];
+    $params = [];
+
+    if (isset($_GET['parent_id'])) {
+        $pid = to_int($_GET['parent_id']);
+        $where[]            = 's.parent_id = :parent_id';
+        $params[':parent_id'] = $pid;
+    }
+
+    $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
+    $st = $db->prepare("SELECT s.id, s.name, s.description, s.parent_id, s.created_at, p.name AS parent_name FROM sites s LEFT JOIN sites p ON p.id = s.parent_id $whereSql ORDER BY s.name");
+    foreach ($params as $k => $v) {
+        $st->bindValue($k, $v, PDO::PARAM_INT);
+    }
+    $st->execute();
+    api_json(['sites' => array_map('fmt_site', $st->fetchAll())]);
+}
+
+/**
+ * @param array<string, mixed> $r
+ * @return array<string, mixed>
+ */
+function fmt_site(array $r): array
+{
+    return [
+        'id'          => to_int($r['id']),
+        'name'        => to_str($r['name']),
+        'description' => to_str($r['description']),
+        'parent_id'   => $r['parent_id'] !== null ? to_int($r['parent_id']) : null,
+        'parent_name' => $r['parent_name'] !== null ? to_str($r['parent_name']) : null,
+        'created_at'  => $r['created_at'],
+    ];
+}
+
+function api_vlans(PDO $db): never
+{
+    if (isset($_GET['id'])) {
+        $id = to_int($_GET['id']);
+        $st = $db->prepare("SELECT v.id, v.vlan_id, v.name, v.description, v.site_id, v.created_at, v.updated_at, s.name AS site_name FROM vlans v LEFT JOIN sites s ON s.id = v.site_id WHERE v.id = :id");
+        $st->execute([':id' => $id]);
+        /** @var array<string, mixed>|false $row */
+        $row = $st->fetch();
+        if (!$row) api_error(404, 'VLAN not found.');
+        api_json(fmt_vlan($row));
+    }
+
+    $where  = [];
+    $params = [];
+
+    if (isset($_GET['site_id'])) {
+        $where[]           = 'v.site_id = :site_id';
+        $params[':site_id'] = to_int($_GET['site_id']);
+    }
+
+    $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
+
+    $st = $db->prepare("SELECT v.id, v.vlan_id, v.name, v.description, v.site_id, v.created_at, v.updated_at, s.name AS site_name FROM vlans v LEFT JOIN sites s ON s.id = v.site_id $whereSql ORDER BY v.vlan_id");
+    foreach ($params as $k => $v2) {
+        $st->bindValue($k, $v2, PDO::PARAM_INT);
+    }
+    $st->execute();
+    api_json(['vlans' => array_map('fmt_vlan', $st->fetchAll())]);
+}
+
+/**
+ * @param array<string, mixed> $r
+ * @return array<string, mixed>
+ */
+function fmt_vlan(array $r): array
+{
+    return [
+        'id'          => to_int($r['id']),
+        'vlan_id'     => to_int($r['vlan_id']),
+        'name'        => to_str($r['name']),
+        'description' => to_str($r['description']),
+        'site_id'     => $r['site_id'] !== null ? to_int($r['site_id']) : null,
+        'site_name'   => $r['site_name'] !== null ? to_str($r['site_name']) : null,
+        'created_at'  => $r['created_at'],
+        'updated_at'  => $r['updated_at'],
+    ];
 }
 
 function api_history(PDO $db): never

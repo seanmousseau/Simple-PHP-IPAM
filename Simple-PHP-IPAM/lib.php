@@ -841,6 +841,123 @@ function prune_address_history(PDO $db, int $retentionDays): int
     return $st->rowCount();
 }
 
+/**
+ * Send email utilization alerts for subnets that have crossed warn/crit thresholds.
+ * Deduplicates sends using the alert_state table (max one alert per subnet+level per 24 h).
+ * Auto-clears alert_state rows when utilization drops back below the threshold.
+ *
+ * @param IpamConfig $config
+ */
+function check_utilization_alerts(PDO $db, array $config): void
+{
+    $alertEmail = trim(to_str($config['alert_email'] ?? ''));
+    if ($alertEmail === '') return;
+
+    $warnPct = to_int($config['alert_util_warn_pct'] ?? 80);
+    $critPct = to_int($config['alert_util_crit_pct'] ?? 95);
+    $appName = to_str($config['app_name']);
+
+    // Compute direct address counts per subnet (used+reserved)
+    $rows = ($db->query("
+        SELECT s.id, s.cidr, s.prefix,
+               SUM(CASE WHEN a.status IN ('used','reserved') THEN 1 ELSE 0 END) AS assigned
+        FROM subnets s
+        LEFT JOIN addresses a ON a.subnet_id = s.id
+        WHERE s.ip_version = 4
+        GROUP BY s.id
+    ") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+
+    // Load existing alert state
+    $stateRows = ($db->query("SELECT subnet_id, level, last_alerted_at FROM alert_state")
+        ?: throw new \RuntimeException('Query failed'))->fetchAll();
+    $alertState = [];
+    foreach ($stateRows as $sr) {
+        $alertState[to_int($sr['subnet_id'])][to_str($sr['level'])] = to_str($sr['last_alerted_at']);
+    }
+
+    $cooldownSeconds = 86400; // 24 hours
+
+    foreach ($rows as $row) {
+        $sid    = to_int($row['id']);
+        $cidr   = to_str($row['cidr']);
+        $prefix = to_int($row['prefix']);
+        $assigned = to_int($row['assigned']);
+
+        $assignable = ipv4_assignable_count($prefix);
+        if ($assignable <= 0) continue;
+
+        $pct = (int)round($assigned / $assignable * 100);
+
+        // Determine active levels
+        $levels = [];
+        if ($pct >= $critPct) $levels[] = 'crit';
+        elseif ($pct >= $warnPct) $levels[] = 'warn';
+
+        // Auto-clear stale alert_state rows when below thresholds
+        foreach (['warn', 'crit'] as $lvl) {
+            if (isset($alertState[$sid][$lvl]) && !in_array($lvl, $levels, true)) {
+                $db->prepare("DELETE FROM alert_state WHERE subnet_id = :sid AND level = :lvl")
+                   ->execute([':sid' => $sid, ':lvl' => $lvl]);
+                unset($alertState[$sid][$lvl]);
+            }
+        }
+
+        foreach ($levels as $lvl) {
+            $lastAlerted = $alertState[$sid][$lvl] ?? null;
+            if ($lastAlerted !== null) {
+                $lastTs = strtotime($lastAlerted);
+                if ($lastTs !== false && (time() - $lastTs) < $cooldownSeconds) continue;
+            }
+
+            $levelLabel = $lvl === 'crit' ? 'CRITICAL' : 'WARNING';
+            $subject    = "[{$appName}] {$levelLabel}: subnet {$cidr} at {$pct}% utilization";
+            $body       = "{$levelLabel}: Subnet {$cidr} has reached {$pct}% utilization.\n"
+                        . "Assigned: {$assigned} / Assignable: {$assignable}\n\n"
+                        . "-- {$appName}";
+
+            // Sanitize recipient and subject to prevent header injection
+            $safeEmail   = preg_replace('/[\r\n]/', '', $alertEmail) ?? '';
+            $safeSubject = preg_replace('/[\r\n]/', '', $subject) ?? '';
+
+            @mail($safeEmail, $safeSubject, $body);
+
+            $now = date('Y-m-d H:i:s');
+            $db->prepare(
+                "INSERT INTO alert_state (subnet_id, level, last_alerted_at)
+                 VALUES (:sid, :lvl, :now)
+                 ON CONFLICT(subnet_id, level) DO UPDATE SET last_alerted_at = excluded.last_alerted_at"
+            )->execute([':sid' => $sid, ':lvl' => $lvl, ':now' => $now]);
+            $alertState[$sid][$lvl] = $now;
+        }
+    }
+}
+
+/**
+ * Run utilization alert check if the alert interval has elapsed.
+ * Uses a dedicated state file so it can fire more frequently than main housekeeping.
+ *
+ * @param IpamConfig $config
+ */
+function alerts_check_if_due(array $config, PDO $db): void
+{
+    $alertEmail = trim(to_str($config['alert_email'] ?? ''));
+    if ($alertEmail === '') return;
+
+    $interval = to_int($config['alert_interval_seconds'] ?? 3600);
+    if ($interval < 60) $interval = 60;
+
+    $statePath = __DIR__ . '/data/alerts_last_run.txt';
+    if (is_file($statePath)) {
+        $last = (int)@file_get_contents($statePath);
+        if ((time() - $last) < $interval) return;
+    }
+
+    check_utilization_alerts($db, $config);
+
+    @file_put_contents($statePath, (string)time());
+    @chmod($statePath, 0600);
+}
+
 /** @param IpamConfig $config */
 function run_housekeeping_if_due(array $config, ?PDO $db = null): void
 {
@@ -1407,12 +1524,14 @@ function login_protection_widget_html(array $config): string
             $gCfg  = $GLOBALS['config'] ?? [];
             $isEnt = !empty($gCfg['recaptcha_enterprise']['enabled']);
             if ($ver === 3) {
-                $scriptSrc = $isEnt
+                $scriptSrc    = $isEnt
                     ? "https://www.google.com/recaptcha/enterprise.js?render={$siteKey}"
                     : "https://www.google.com/recaptcha/api.js?render={$siteKey}";
-                $entAttr = $isEnt ? " data-recaptcha-enterprise='1'" : '';
+                $entAttr      = $isEnt ? " data-recaptcha-enterprise='1'" : '';
+                $action       = e(to_str($gCfg['recaptcha_enterprise']['expected_action']));
+                $actionAttr   = " data-recaptcha-action='{$action}'";
                 return "<script src='{$scriptSrc}' async defer></script>"
-                     . "<input type='hidden' name='g-recaptcha-response' id='g-recaptcha-response' data-recaptcha-v3-key='{$siteKey}'{$entAttr}>";
+                     . "<input type='hidden' name='g-recaptcha-response' id='g-recaptcha-response' data-recaptcha-v3-key='{$siteKey}'{$entAttr}{$actionAttr}>";
             }
             return "<script src='https://www.google.com/recaptcha/api.js' async defer></script>"
                  . "<div class='g-recaptcha' data-sitekey='{$siteKey}'></div>";
@@ -1456,6 +1575,121 @@ function login_protection_extra_csp(array $config): array
         ],
         default            => ['script_src' => '', 'frame_src' => ''],
     };
+}
+
+/* ---------------- Auto-reserve IPs ---------------- */
+
+/**
+ * Auto-reserve the network address, broadcast address (IPv4), and optionally
+ * a gateway IP immediately after a subnet is created.
+ *
+ * IPv4: reserves network (x.x.x.0) and broadcast (x.x.x.255) as status=reserved.
+ * IPv6: reserves network address only (broadcast concept does not apply).
+ * Gateway (if provided): reserved as status=reserved with hostname 'gateway'.
+ *
+ * Skips any IP that is already assigned (INSERT OR IGNORE).
+ */
+function auto_reserve_subnet_ips(PDO $db, int $subnetId, string $cidr, ?string $gateway): void
+{
+    $p = parse_cidr($cidr);
+    if (!$p) return;
+
+    $ins = $db->prepare(
+        "INSERT OR IGNORE INTO addresses (subnet_id, ip, ip_bin, hostname, status, owner, note, grp, mac)
+         VALUES (:sid, :ip, :ipbin, :host, 'reserved', '', 'Auto-reserved', '', '')"
+    );
+
+    // Network address
+    $netIp  = $p['network'];
+    $netBin = $p['net_bin'];
+    $ins->execute([':sid' => $subnetId, ':ip' => $netIp, ':ipbin' => $netBin, ':host' => 'network']);
+    if ($db->lastInsertId()) {
+        audit($db, 'address.create', 'address', (int)$db->lastInsertId(), "auto-reserve network $netIp in subnet $subnetId");
+    }
+
+    if ($p['version'] === 4) {
+        // Broadcast address for IPv4
+        $hostBits = 32 - $p['prefix'];
+        if ($hostBits > 0) {
+            $unpacked  = unpack('N', $netBin) ?: [1 => 0];
+            $n         = (int)$unpacked[1];
+            $hostMask  = $hostBits === 32 ? 0xFFFFFFFF : ((1 << $hostBits) - 1);
+            $bcastInt  = ($n | $hostMask) & 0xFFFFFFFF;
+            $bcastBin  = pack('N', $bcastInt);
+            $bcastIp   = inet_ntop($bcastBin) ?: '';
+            if ($bcastIp !== '' && $bcastIp !== $netIp) {
+                $ins->execute([':sid' => $subnetId, ':ip' => $bcastIp, ':ipbin' => $bcastBin, ':host' => 'broadcast']);
+                if ($db->lastInsertId()) {
+                    audit($db, 'address.create', 'address', (int)$db->lastInsertId(), "auto-reserve broadcast $bcastIp in subnet $subnetId");
+                }
+            }
+        }
+    }
+
+    // Gateway (optional, any version)
+    if ($gateway !== null && $gateway !== '') {
+        $gwNorm = normalize_ip($gateway);
+        if ($gwNorm && ip_in_cidr($gwNorm['ip'], $p['network'], $p['prefix'])) {
+            $ins->execute([':sid' => $subnetId, ':ip' => $gwNorm['ip'], ':ipbin' => $gwNorm['bin'], ':host' => 'gateway']);
+            if ($db->lastInsertId()) {
+                audit($db, 'address.create', 'address', (int)$db->lastInsertId(), "auto-reserve gateway {$gwNorm['ip']} in subnet $subnetId");
+            }
+        }
+    }
+}
+
+/* ---------------- Tags ---------------- */
+
+/**
+ * Return tags for a given entity (subnet or address).
+ * @return array<array{id: int, name: string, colour: string}>
+ */
+function get_tags_for_entity(PDO $db, string $type, int $id): array
+{
+    if ($type === 'subnet') {
+        $sql = "SELECT t.id, t.name, t.colour FROM tags t JOIN subnet_tags st ON st.tag_id = t.id WHERE st.subnet_id = :id ORDER BY t.name";
+    } elseif ($type === 'address') {
+        $sql = "SELECT t.id, t.name, t.colour FROM tags t JOIN address_tags at ON at.tag_id = t.id WHERE at.address_id = :id ORDER BY t.name";
+    } else {
+        return [];
+    }
+    $st = $db->prepare($sql);
+    $st->execute([':id' => $id]);
+    return array_map(fn($r) => ['id' => to_int($r['id']), 'name' => to_str($r['name']), 'colour' => to_str($r['colour'])], $st->fetchAll());
+}
+
+/**
+ * Replace all tags for a given entity with the supplied tag IDs.
+ * @param list<int> $tagIds
+ */
+function save_tags_for_entity(PDO $db, string $type, int $id, array $tagIds): void
+{
+    if ($type === 'subnet') {
+        $db->prepare("DELETE FROM subnet_tags WHERE subnet_id = :id")->execute([':id' => $id]);
+        $ins = $db->prepare("INSERT OR IGNORE INTO subnet_tags (subnet_id, tag_id) VALUES (:eid, :tid)");
+    } elseif ($type === 'address') {
+        $db->prepare("DELETE FROM address_tags WHERE address_id = :id")->execute([':id' => $id]);
+        $ins = $db->prepare("INSERT OR IGNORE INTO address_tags (address_id, tag_id) VALUES (:eid, :tid)");
+    } else {
+        return;
+    }
+    foreach ($tagIds as $tid) {
+        $ins->execute([':eid' => $id, ':tid' => $tid]);
+    }
+}
+
+/** Render coloured tag badges for a list of tags (HTML-safe). */
+function render_tag_badges(PDO $db, string $type, int $id): string
+{
+    $tags = get_tags_for_entity($db, $type, $id);
+    if (!$tags) return '';
+    $out = '';
+    foreach ($tags as $tag) {
+        $bg   = e($tag['colour']);
+        $name = e($tag['name']);
+        $out .= "<span class='tag-badge' style='background:$bg'>$name</span>";
+    }
+    return $out;
 }
 
 /* ---------------- Demo mode ---------------- */
@@ -2343,17 +2577,18 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=1.19.1'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=2.0.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=1.19.1'></script>";
+    echo "<script defer src='assets/app.js?v=2.0.0'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
     echo "<a href='dashboard.php' class='nav-brand'>"
        . "<picture><source srcset='assets/logo.webp' type='image/webp'><img src='assets/logo.png' alt='' class='nav-logo' aria-hidden='true' width='161' height='48'></picture>"
        . "</a>";
+    echo "<button class='nav-toggle' id='nav-toggle' aria-label='Open menu' aria-expanded='false' aria-controls='nav-drawer'>&#9776;</button>";
     echo "<div class='nav-links'>";
     if ($u) {
         echo "<a class='nav-pill' href='dashboard.php'>🏠 Dashboard</a>";
@@ -2368,6 +2603,8 @@ function page_header(string $title, array $opts = []): void
             echo "<a class='nav-dropdown-item' href='dhcp_pool.php'>🔒 DHCP Pools</a>";
             echo "<hr class='nav-dropdown-divider'>";
             echo "<a class='nav-dropdown-item' href='sites.php'>📍 Sites</a>";
+            echo "<a class='nav-dropdown-item' href='vlans.php'>🏷 VLANs</a>";
+            echo "<a class='nav-dropdown-item' href='tags.php'>🔖 Tags</a>";
             echo "<a class='nav-dropdown-item' href='users.php'>👤 Users</a>";
             echo "<a class='nav-dropdown-item' href='api_keys.php'>🔑 API Keys</a>";
             echo "<a class='nav-dropdown-item' href='import_csv.php'>⬆ Import CSV</a>";
@@ -2395,6 +2632,39 @@ function page_header(string $title, array $opts = []): void
     }
 
     echo "</div></div>";
+
+    // Mobile nav drawer (hidden on desktop, slides in on mobile)
+    echo "<div id='nav-drawer' aria-hidden='true'>";
+    echo "<button class='drawer-close' aria-label='Close menu'>&#10005;</button>";
+    if ($u) {
+        echo "<span class='nav-drawer-section'>Navigation</span>";
+        echo "<a href='dashboard.php'>&#127968; Dashboard</a>";
+        echo "<a href='subnets.php'>&#127760; Subnets</a>";
+        echo "<a href='addresses.php'>&#129438; Addresses</a>";
+        echo "<a href='search.php'>&#128270; Search</a>";
+        echo "<a href='audit.php'>&#128220; Audit</a>";
+        if ($role === 'admin') {
+            echo "<hr>";
+            echo "<span class='nav-drawer-section'>Admin</span>";
+            echo "<a href='dhcp_pool.php'>&#128274; DHCP Pools</a>";
+            echo "<a href='sites.php'>&#128205; Sites</a>";
+            echo "<a href='vlans.php'>&#127991; VLANs</a>";
+            echo "<a href='tags.php'>&#128278; Tags</a>";
+            echo "<a href='users.php'>&#128100; Users</a>";
+            echo "<a href='api_keys.php'>&#128273; API Keys</a>";
+            echo "<a href='import_csv.php'>&#8679; Import CSV</a>";
+            echo "<a href='db_tools.php'>&#128444; Database Tools</a>";
+        }
+        echo "<hr>";
+        echo "<span class='nav-drawer-section'>Account</span>";
+        echo "<a href='change_password.php'>&#128272; Password</a>";
+        echo "<a href='logout.php'>&#8617; Logout</a>";
+    } else {
+        echo "<a href='login.php'>&#128272; Login</a>";
+    }
+    echo "</div>";
+    echo "<div class='nav-drawer-overlay'></div>";
+
     echo "<div class='page'>";
 
     // Demo mode banner (non-dismissible)
@@ -2487,6 +2757,16 @@ function page_footer(): void
         echo " <a href='{$url}' target='_blank' rel='noopener' class='badge badge-update'>"
            . "Update available v{$uv}</a>";
     }
+
+    // Slide-in form drawer container (populated by JS openFormDrawer())
+    echo "<div id='form-drawer' role='dialog' aria-modal='true' aria-labelledby='drawer-title-text'>";
+    echo "<div class='drawer-header'>";
+    echo "<span class='drawer-title' id='drawer-title-text'></span>";
+    echo "<button class='drawer-close-btn' aria-label='Close'>&times;</button>";
+    echo "</div>";
+    echo "<div id='form-drawer-body'></div>";
+    echo "</div>";
+    echo "<div class='form-drawer-overlay'></div>";
 
     echo "</div></div></body></html>";
 }

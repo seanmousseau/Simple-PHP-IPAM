@@ -86,6 +86,9 @@ unset($_configWarnings);
 // Run best-effort housekeeping at most once/day (configurable)
 run_housekeeping_if_due($config, $db);
 
+// Utilization alerts — independent interval (default 1 h); no-op if alert_email is empty
+alerts_check_if_due($config, $db);
+
 // Demo nightly reset — independent of housekeeping schedule; never crashes the page
 if (!empty($config['demo_mode']['enabled'])) {
     run_demo_reset_if_due($db);

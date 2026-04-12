@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [2.0.0] - 2026-04-11
+
+### Added
+- **#268** — VLANs as first-class managed objects: new `vlans` admin page (CRUD), `vlans` DB table, `subnets.vlan_fk` FK column. Subnet create/edit form includes a VLAN picker; subnet list shows VLAN name badge. API: `?resource=vlans` endpoint (GET list, GET by id, POST, PUT, DELETE); subnet response includes `vlan_name` field; `?tag=` filter on subnets/addresses.
+- **#269** — Site hierarchy / region support: `sites.parent_id` self-referential FK (max depth 2). Sites admin page shows parent picker and indented tree. Subnet site picker shows hierarchy. API: sites response includes `parent_id` / `parent_name`; `?parent_id=` filter on sites endpoint.
+- **#266** — Tags on subnets and addresses: new `tags` admin page (CRUD with colour picker), `tags`, `subnet_tags`, `address_tags` tables. Coloured tag badges on subnet and address lists. `?tag=` filter in API and search. CSV export includes `tags` column.
+- **#267** — Auto-reserve network/broadcast/gateway IPs on subnet create: checkbox (pre-checked per `auto_reserve_network_broadcast` config key) and optional gateway field on subnet create form. Inserts network, broadcast, and gateway as `status=reserved` addresses automatically.
+- **#270** — Email utilization threshold alerts: `check_utilization_alerts()` in `lib.php` sends email via `mail()` when subnet utilization crosses `alert_util_warn_pct` (default 80%) or `alert_util_crit_pct` (default 95%). 24-hour cooldown per subnet per level tracked in new `alert_state` table. Configurable via `alert_email`, `alert_util_warn_pct`, `alert_util_crit_pct`, `alert_interval_seconds` config keys.
+- **#251** — Sortable columns on key tables: `addresses.php`, `search.php`, `users.php`, `audit.php` support `?sort=` and `?dir=` query parameters with ▲/▼/⇅ sort indicators; sort state preserved in pagination links.
+- **#249** — Consistent breadcrumb trail on all pages via new `page_breadcrumb()` helper in `lib.php`; `.breadcrumbs` nav element renders on every page with correct hierarchy.
+- **#250** — Mobile hamburger navigation: `#nav-toggle` button (☰) and `#nav-drawer` slide-in overlay with all nav links; toggled by `body.nav-open` class; closes on overlay click, nav link click, or ESC key. Desktop nav unchanged.
+- **#248** — Sticky table headers: `thead th` elements use `position: sticky; top: var(--topbar-h)` so column headers stay visible while scrolling long tables.
+- **#252** — Inline status toggle on address rows: clicking a `.status-badge` cycles `free→used→reserved→free` via a JSON POST to `addresses.php?action=update_status`; optimistic UI update with revert on error. Readonly users see a static badge.
+- **#247** — Slide-in form drawer: add/edit forms on `subnets.php`, `addresses.php`, `users.php`, `sites.php`, `api_keys.php` open in a fixed right-panel drawer (`#form-drawer`) instead of inline page sections. Falls back gracefully when JS is unavailable.
+- **#289** — reCAPTCHA v3 configurable action name: new `recaptcha_action` top-level config key (default `'login'`) controls the action string passed to `grecaptcha[.enterprise].execute()`; previously hardcoded.
+
+### Security
+- **#288** — GitHub Actions workflows now pin `actions/checkout` and all third-party actions to full commit SHAs instead of mutable version tags, preventing supply-chain attacks via tag mutation.
+
+---
+
 ## [1.19.1] - 2026-04-12
 
 ### Fixed
@@ -398,6 +419,7 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[2.0.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.19.1...v2.0.0
 [1.19.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.19.0...v1.19.1
 [1.19.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.18.0...v1.19.0
 [1.18.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v1.17.0...v1.18.0

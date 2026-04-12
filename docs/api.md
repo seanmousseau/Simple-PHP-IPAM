@@ -12,6 +12,7 @@ Simple-PHP-IPAM exposes a JSON REST API (`api.php`). Read endpoints are availabl
   - [Subnets](#subnets)
   - [Addresses](#addresses)
   - [Sites](#sites)
+  - [VLANs](#vlans)
   - [History](#history)
   - [Search](#search)
   - [Audit Log](#audit-log)
@@ -111,8 +112,9 @@ GET /api.php?resource=subnets
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `ip_version` | integer | — | Filter by IP version: `4` or `6` |
-| `vlan_id` | integer | — | Filter by VLAN ID (1–4094) |
+| `vlan_id` | integer | — | Filter by legacy VLAN ID (1–4094) on `subnets.vlan_id` |
 | `site_id` | integer | — | Filter to subnets assigned to this site |
+| `tag` | string | — | Filter to subnets with the given tag name attached |
 | `counts` | flag | — | Include address count fields in each subnet object (any non-empty value enables, e.g. `?counts=1`) |
 | `page` | integer | `1` | Page number (1-based) |
 | `limit` | integer | `200` | Records per page (max `1000`) |
@@ -196,9 +198,12 @@ Returns `404` if the ID does not exist.
 | `network` | string | Network address, e.g. `10.0.0.0` |
 | `prefix` | integer | Prefix length, e.g. `8` |
 | `description` | string | Free-text description (may be empty) |
-| `vlan_id` | integer\|null | VLAN ID (1–4094), or `null` if not set |
+| `vlan_id` | integer\|null | Legacy VLAN ID integer (1–4094), or `null` |
+| `vlan_fk` | integer\|null | FK to `vlans.id` (v2.0.0+), or `null` |
+| `vlan_name` | string\|null | VLAN name from the linked VLAN object, or `null` |
 | `site_id` | integer\|null | Site database ID, or `null` if not assigned |
 | `site` | string\|null | Site name if assigned, otherwise `null` |
+| `tags` | array | Array of tag objects (`{"id":1,"name":"prod","colour":"#ff0000"}`); empty array if no tags |
 | `created_at` | string | UTC timestamp (`YYYY-MM-DD HH:MM:SS`) |
 | `address_counts` | object\|— | Present only when `?counts=1` — see above |
 
@@ -219,6 +224,7 @@ Returns a paginated list of address records.
 | `subnet_id` | integer | — | Filter to a single subnet |
 | `site_id` | integer | — | Filter to addresses in subnets belonging to this site |
 | `status` | string | — | Filter by status: `used`, `reserved`, or `free` |
+| `tag` | string | — | Filter to addresses with the given tag name attached |
 | `expired` | flag | — | Pass `?expired=1` to return only addresses where `expires_at` is in the past |
 | `page` | integer | `1` | Page number (1-based) |
 | `limit` | integer | `100` | Records per page (max `500`) |
@@ -276,6 +282,13 @@ Results are ordered by IP address (binary sort — correct numerical order withi
 GET /api.php?resource=sites
 ```
 
+**Query parameters**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `id` | integer | — | Get a single site by ID |
+| `parent_id` | integer | — | Filter to child sites of the given parent site (v2.0.0+) |
+
 **Response**
 
 ```json
@@ -283,8 +296,18 @@ GET /api.php?resource=sites
   "sites": [
     {
       "id": 1,
+      "name": "Europe",
+      "description": "European region",
+      "parent_id": null,
+      "parent_name": null,
+      "created_at": "2025-01-10 09:00:00"
+    },
+    {
+      "id": 2,
       "name": "HQ",
       "description": "Headquarters — London",
+      "parent_id": 1,
+      "parent_name": "Europe",
       "created_at": "2025-01-10 09:00:00"
     }
   ]
@@ -300,7 +323,68 @@ Results are ordered alphabetically by name.
 | `id` | integer | Internal database ID |
 | `name` | string | Site name (unique) |
 | `description` | string | Free-text description (may be empty) |
+| `parent_id` | integer\|null | Parent site database ID (v2.0.0+), or `null` for root sites |
+| `parent_name` | string\|null | Parent site name (v2.0.0+), or `null` for root sites |
 | `created_at` | string | UTC timestamp (`YYYY-MM-DD HH:MM:SS`) |
+
+---
+
+### VLANs
+
+```
+GET /api.php?resource=vlans
+```
+
+Returns all managed VLAN objects. Added in v2.0.0.
+
+**Query parameters**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `id` | integer | — | Get a single VLAN by database ID |
+| `site_id` | integer | — | Filter to VLANs belonging to a specific site |
+
+**Response**
+
+```json
+{
+  "vlans": [
+    {
+      "id": 1,
+      "vlan_id": 100,
+      "name": "Management",
+      "description": "Management VLAN",
+      "site_id": null,
+      "created_at": "2025-06-01 12:00:00",
+      "updated_at": "2025-06-01 12:00:00"
+    }
+  ]
+}
+```
+
+When fetching a single VLAN (`?id=N`), the response is `{"vlan": {...}}`.
+
+**VLAN object fields**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | integer | Internal database ID |
+| `vlan_id` | integer | VLAN number (1–4094) |
+| `name` | string | VLAN name |
+| `description` | string | Free-text description (may be empty) |
+| `site_id` | integer\|null | Optional site scope FK |
+| `created_at` | string | UTC timestamp |
+| `updated_at` | string | UTC timestamp |
+
+**Write operations** (requires write-access API key):
+
+```
+POST   /api.php?resource=vlans          — create a VLAN (body: {"vlan_id":100,"name":"..."})
+PUT    /api.php?resource=vlans&id=<id>  — update a VLAN
+DELETE /api.php?resource=vlans&id=<id>  — delete a VLAN (→ 204)
+```
+
+`vlan_id` must be between 1 and 4094. A duplicate `(vlan_id, site_id)` pair returns `409 Conflict`.
 
 ---
 

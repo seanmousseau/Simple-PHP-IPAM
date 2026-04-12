@@ -8,6 +8,24 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 
 ---
 
+## What's new in v2.0.0
+
+- **VLANs** — first-class VLAN objects with admin CRUD, subnet assignment picker, and list badge
+- **Site hierarchy** — parent site / region support; two-level tree (region → site) with indented display
+- **Tags** — colour-coded labels on subnets and addresses; filter by tag in search and API
+- **Auto-reserve IPs** — network, broadcast, and gateway automatically reserved on subnet create
+- **Email utilization alerts** — configurable threshold alerts with 24-hour per-subnet cooldown
+- **Slide-in form drawer** — add/edit forms open in a side panel instead of inline sections
+- **Mobile hamburger nav** — full-screen drawer overlay at ≤600 px
+- **Breadcrumbs** — consistent trail on every page
+- **Sticky table headers** — column headers stay visible while scrolling
+- **Sortable columns** — click column headers on addresses, search, users, and audit tables
+- **Inline status toggle** — click a status badge to cycle `free → used → reserved → free`
+
+See [CHANGELOG.md](CHANGELOG.md) for full details.
+
+---
+
 ## Features
 
 ### Core IPAM
@@ -17,16 +35,19 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 - **Subnet overlap detection** — warns when a new subnet nests inside or contains existing ones
 - **Unassigned IP tracking** — lists assignable IPs (IPv4 and IPv6, capped at 256) with no address record and a quick-add form
 - Correct IP sorting using packed binary storage (`ip_bin`, `network_bin`)
+- **Auto-reserve** network/broadcast/gateway IPs on subnet create (configurable)
 
 ### Search & Productivity
 - **Dashboard** — utilization bars for top subnets, per-site address breakdown, recent audit activity
-- **Global search** across IP / hostname / owner / note with filters for status, site, and IP version
+- **Global search** across IP / hostname / owner / note with filters for status, site, IP version, and tag
 - **Bulk update** — update hostname / owner / status / note / MAC / expiry across multiple addresses at once, with bulk delete
 - **CSV import wizard** (admin-only) — upload, map columns, dry-run preview, then apply; supports auto-create missing subnets
 - **CSV exports** — addresses per subnet, all addresses cross-subnet, subnet utilization summary, address change history, search results, unassigned IPs, audit log
 
 ### Organisation
-- **Sites** — group subnets by location or network segment
+- **Sites** — group subnets by location or network segment; supports **site hierarchy** (region → site)
+- **VLANs** — first-class VLAN objects linked to subnets; admin CRUD at `/vlans.php`
+- **Tags** — colour-coded labels attachable to subnets and addresses; filter by tag in search and API
 - Child subnets automatically **inherit the site** of their enclosing parent
 
 ### Security & Access Control
@@ -34,7 +55,7 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 - **Login rate limiting** — IP-based lockout after repeated failed attempts
 - **Session idle timeout** — automatic logout after configurable inactivity period
 - CSRF protection on all POST requests; PDO prepared statements throughout
-- **RBAC roles:** `admin` (full access), `netops` (write access, no user/key management), `readonly`
+- **RBAC roles:** `admin` (full access), `readonly`
 - Append-only audit log enforced with SQLite triggers
 - **OIDC SSO** — Authorization Code + PKCE in pure PHP; auto-provision and auto-link; optional `disable_local_login`
 - **User management** — name/email fields, per-user enable/disable, delete, manual SSO linking
@@ -43,7 +64,8 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 - **Database Tools** — one-click SQL export, SQL import with pre-import backup, manual backup trigger, backup status panel
 - **Automatic backups** — configurable daily/weekly SQLite snapshots with retention pruning
 - **Config auto-population** — missing config keys appended with defaults on boot; admin notice on first load
-- **Mobile-optimized GUI** — responsive layout works on phones and tablets at 375 px and 768 px
+- **Responsive GUI** — sticky headers, slide-in form drawer, mobile hamburger nav, sortable columns, breadcrumbs
+- **Email utilization alerts** — configurable warn/critical thresholds with 24-hour per-subnet cooldown
 - **Health check endpoint** — unauthenticated `GET /status.php` returns JSON status and version for uptime monitors and container health checks
 - **Audit log retention** — configurable pruning of old audit entries during scheduled housekeeping
 
@@ -51,8 +73,9 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 - JSON REST API (`api.php`) authenticated with API keys
 - **Read-only API keys** — admin-toggleable flag restricts a key to GET-only access; write attempts return 403
 - **API key descriptions** — optional free-text field to document what each key is for
-- Read: subnets, addresses (filterable; `?expired=1` for expiry-due), sites, address history, search, audit log, unassigned IPs (IPv4 and IPv6)
-- Write: create / update / delete subnets, addresses, and sites (POST / PUT / DELETE)
+- Read: subnets (with `vlan_name`, `tags[]`), addresses (with `tags[]`), sites (with `parent_id`), VLANs, address history, search, audit log, unassigned IPs
+- Filters: `?tag=`, `?vlan_id=`, `?parent_id=`, `?expired=1`, `?site_id=`, `?ip_version=`
+- Write: create / update / delete subnets, addresses, sites, and VLANs (POST / PUT / DELETE)
 - **Bulk write** — `POST ?resource=addresses&bulk=1` / `POST ?resource=subnets&bulk=1` with JSON array; partial success returns HTTP 207
 
 ---
