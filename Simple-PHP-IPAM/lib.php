@@ -2598,8 +2598,7 @@ function page_header(string $title, array $opts = []): void
         echo "<a class='nav-pill' href='dashboard.php'>🏠 Dashboard</a>";
         echo "<a class='nav-pill' href='subnets.php'>🌐 Subnets</a>";
         echo "<a class='nav-pill' href='addresses.php'>🧾 Addresses</a>";
-        echo "<a class='nav-pill' href='search.php'>🔎 Search</a>";
-        echo "<button class='nav-pill nav-search-key' title='Quick search (Ctrl+K / \u2318K)'>\u2318K</button>";
+        echo "<a class='nav-pill nav-search-link' href='search.php'>🔎 Search <kbd class='nav-kbd'>⌘K</kbd></a>";
         echo "<a class='nav-pill' href='audit.php'>📜 Audit</a>";
         if ($role === 'admin') {
             echo "<div class='nav-dropdown'>";

@@ -766,9 +766,9 @@
         }
       });
 
-      // Delegated handler for the ⌘K nav button (replaces inline onclick removed for CSP compliance)
+      // Delegated handler for the Search nav link (opens overlay, falls back to search.php without JS)
       document.addEventListener("click", function(e) {
-        var btn = e.target.closest(".nav-search-key");
+        var btn = e.target.closest(".nav-search-link");
         if (btn) {
           e.preventDefault();
           overlay.classList.contains("visible") ? closeOverlay() : openOverlay();
