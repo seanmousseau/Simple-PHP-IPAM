@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [2.1.5] - 2026-04-12
+
+### Fixed
+- **#300** — VLAN badge em dash rendered as literal `\u{2014}` on the subnet list. PHP does not interpret `\u{...}` Unicode escapes in single-quoted strings; the em dash separator is now embedded as a literal UTF-8 `—` character in `subnets.php`.
+- **#301** — Search overlay placeholder showed literal `\u2026` instead of an ellipsis (`…`). The escape sequence in `assets/app.js` has been replaced with the actual UTF-8 ellipsis character.
+- **#302** — Sticky table header appeared below the first data row during scroll due to insufficient z-index. `thead th` z-index raised from `2` to `10` in `assets/app.css`; `--topbar-h` corrected to match the actual rendered topbar height.
+
+### Added (testing)
+- **#303** — Sample data generators (`gen_large_db.php` and CSV generators) updated to include VRFs, contacts, tags, VLANs, `expires_at`, and MAC addresses so generated datasets exercise all v2.x features.
+- **#304** — Demo database (`demo_seed.php`) now seeds VRFs, contacts, tags, VLANs (with `vlan_fk` linkage), addresses with `expires_at` and MAC populated, and a parent+child site pair so the live demo showcases all available features.
+- **#305** — Upgrade-path test suite: `testing/playwright/tests/upgrade.spec.ts` imports a pre-v2.0.0 SQL snapshot, triggers `apply_migrations()` via a page load, and asserts all v2.x pages (VLANs, VRFs, contacts, tags, addresses, audit) load correctly with migrated data intact. Supporting shell script at `testing/scripts/test_upgrade.sh`.
+- **#306** — Large-DB import/export test suite: `testing/playwright/tests/large-db.spec.ts` imports 100 subnets and 5 000 addresses via `db_tools.php`, verifies counts and export integrity, then performs a full round-trip (export → re-import). Original database is always restored in `afterAll`.
+- **#307** — Full visual audit spec: `testing/playwright/tests/visual-audit.spec.ts` covers every page in the page inventory, checks for literal Unicode escapes in rendered text (both `\uXXXX` and `\u{XXXX}` forms), verifies sticky header z-index (≥ 10), and captures screenshots for every page in desktop, mobile, and dark-mode viewports.
+
 ## [2.1.4] - 2026-04-12
 
 ### Fixed
@@ -452,6 +466,7 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[2.1.5]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.1.4...v2.1.5
 [2.1.4]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.1.3...v2.1.4
 [2.1.3]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.1.2...v2.1.3
 [2.1.2]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.1.1...v2.1.2

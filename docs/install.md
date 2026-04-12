@@ -24,6 +24,17 @@
 | **HTTPS** | Required — the app redirects all HTTP traffic to HTTPS |
 | **Writable `data/` dir** | The web server user needs read/write access to `data/` (and `data/tmp/` for CSV import) |
 
+There are **no additional dependencies** for v2.x features. VLANs, VRFs, contacts, tags, site hierarchy, address expiry, and MAC address fields are all managed within the same SQLite database and require no extra extensions or services.
+
+**Optional integrations** (all opt-in via `config.php`):
+
+| Feature | Prerequisite |
+|---------|-------------|
+| OIDC single sign-on | `openssl` extension (standard) + reachable OIDC provider |
+| Login bot mitigation | Third-party CAPTCHA account (Turnstile, hCaptcha, reCAPTCHA, Friendly Captcha) |
+| reCAPTCHA Enterprise | Google Cloud project + reCAPTCHA Enterprise API key |
+| Utilization email alerts | Server-side MTA (`mail()` function; most PHP hosts provide this) |
+
 ### `upgrade.sh` dependencies (optional)
 
 `bash`, `rsync`, `tar`, `stat`, `find`, `chmod`, `sort`, `sed`, `head`, `rm`

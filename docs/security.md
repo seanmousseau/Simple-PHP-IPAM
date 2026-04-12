@@ -97,7 +97,11 @@ Failed login attempts are tracked per IP address in the `login_attempts` table.
 
 Optional bot mitigation on the login form is available via the `login_protection` config block. This is separate from and complementary to IP-based rate limiting.
 
-See [`login_protection`](configuration.md#login_protection) in the configuration reference for available methods and setup instructions.
+Supported methods: `honeypot`, `turnstile` (Cloudflare), `hcaptcha`, `recaptcha` (Google v2/v3), and `friendly_captcha`. See [`login_protection`](configuration.md#login_protection) in the configuration reference for available methods and setup instructions.
+
+**Google reCAPTCHA Enterprise** is supported in addition to the standard reCAPTCHA v2/v3 service. When `recaptcha_enterprise.enabled` is `true`, the assessment is sent to the Enterprise API for scoring. See [`recaptcha_enterprise`](configuration.md#recaptcha_enterprise) for configuration details.
+
+**Demo mode gate:** when the `demo_mode.gate` option is configured, the pre-login gate page (`demo_gate.php`) applies the same bot-mitigation widget before allowing access to the login form. This is distinct from login page protection and is configured under `demo_mode.gate` in `config.php`.
 
 ---
 
@@ -123,12 +127,24 @@ All POST endpoints call `csrf_require()`, which validates a per-session token st
 
 ---
 
+## Binary IP storage
+
+IP addresses and network prefixes are stored as raw 4-byte (IPv4) or 16-byte (IPv6) binary blobs in `network_bin` (subnets) and `ip_bin` (addresses) columns. This provides:
+
+- **Correct sort order** — binary comparison of raw network addresses sorts numerically, not lexicographically.
+- **Fast range queries** — containment checks use direct binary comparison, not string manipulation.
+
+The text `ip` and `network` columns are stored alongside the blobs for display. `inet_pton()` encodes and `inet_ntop()` decodes at the application layer. Blobs are never compared with `==` — the code uses `hash_equals()` for safe timing-safe comparison where needed.
+
+---
+
 ## Audit log integrity
 
 The `audit_log` table is **append-only**. SQLite triggers prevent any `UPDATE` or `DELETE` on audit rows — even the database owner cannot silently alter past entries. The audit log records:
 
 - Login, logout, and failed login events (including rate-limited blocks)
-- All create / update / delete operations on subnets, addresses, sites, and users
+- All create / update / delete operations on subnets, addresses, sites, users, VLANs, VRFs, contacts, and tags *(v2.0+)*
+- Database export and import events *(v2.0+)*
 - CSV import events (dry-run and apply)
 - Export actions
 - API key lifecycle events (create, deactivate, activate, delete)

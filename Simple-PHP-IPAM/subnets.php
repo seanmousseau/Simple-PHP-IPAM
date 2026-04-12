@@ -565,7 +565,7 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
     $vlanFkVal = to_int($row['vlan_fk'] ?? 0);
     $vlanLabel = '';
     if ($vlanFkVal > 0 && !empty($row['vlan_name'])) {
-        $vlanLabel = to_int($row['vlan_id']) . ' \u{2014} ' . to_str($row['vlan_name']);
+        $vlanLabel = to_int($row['vlan_id']) . ' — ' . to_str($row['vlan_name']);
     } elseif (!empty($row['vlan_id'])) {
         $vlanLabel = 'VLAN ' . to_int($row['vlan_id']);
     }

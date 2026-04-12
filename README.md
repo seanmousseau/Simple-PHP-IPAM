@@ -8,6 +8,16 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 
 ---
 
+## What's new in v2.1.5
+
+- **Rendering fixes** — VLAN badge no longer shows literal `\u{2014}`; search overlay placeholder no longer shows literal `\u2026`; sticky table header z-index corrected so headers always appear above scrolled rows
+- **Upgrade-path tests** — automated Playwright spec imports a pre-v2.0.0 schema snapshot, runs all migrations, and asserts every v2.x page loads cleanly
+- **Large-DB tests** — automated import/export round-trip test with 100 subnets and 5 000 addresses via Database Tools
+- **Visual audit** — full-coverage screenshot spec across every page in desktop, mobile, and dark-mode viewports
+- **Richer demo & sample data** — demo database and large-DB generators now include VRFs, contacts, tags, VLANs, MAC addresses, and expiry dates
+
+See [CHANGELOG.md](CHANGELOG.md) for full details.
+
 ## What's new in v2.1.0
 
 - **VRF support** — virtual routing tables with VRF-scoped overlap detection; same CIDR allowed in different VRFs; admin CRUD page + API
