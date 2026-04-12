@@ -94,10 +94,7 @@ test('vlans: create subnet with VLAN and verify badge', async () => {
       break;
     }
   }
-  if (!vlanFkValue) {
-    test.skip(true, 'Test VLAN not found in picker — skipping subnet test');
-    return;
-  }
+  expect(vlanFkValue, 'Test VLAN must appear in the subnet VLAN picker').toBeTruthy();
 
   await page.locator('input[name=cidr]').first().fill(TEST_VLAN_CIDR);
   await page.locator('input[name=description]').first().fill('vlan badge test');
@@ -166,26 +163,28 @@ test('vlans: delete test VLAN subnet then VLAN', async () => {
 // ── API — VLANs resource ───────────────────────────────────────────────────────
 
 test('api: GET vlans returns 200 with vlans array', async () => {
-  const res = await fetchGet(page, appUrl('api.php?resource=vlans'));
-  // 401 is acceptable when no API key is configured in the test environment
-  expect([200, 401]).toContain(res.status);
-  if (res.status === 200) {
-    const data = JSON.parse(res.body);
-    expect(data).toHaveProperty('vlans');
-    expect(Array.isArray(data.vlans)).toBe(true);
+  if (!process.env.IPAM_API_KEY) {
+    test.skip(true, 'IPAM_API_KEY not set — skipping API endpoint test');
+    return;
   }
+  const res = await fetchGet(page, appUrl('api.php?resource=vlans'));
+  expect(res.status).toBe(200);
+  const data = JSON.parse(res.body);
+  expect(data).toHaveProperty('vlans');
+  expect(Array.isArray(data.vlans)).toBe(true);
 });
 
 test('api: subnet response includes vlan_name field', async () => {
+  if (!process.env.IPAM_API_KEY) {
+    test.skip(true, 'IPAM_API_KEY not set — skipping API endpoint test');
+    return;
+  }
   const res = await fetchGet(page, appUrl('api.php?resource=subnets'));
-  // 401 is acceptable when no API key is configured in the test environment
-  expect([200, 401]).toContain(res.status);
-  if (res.status === 200) {
-    const data = JSON.parse(res.body);
-    expect(data).toHaveProperty('subnets');
-    // Each subnet should have vlan_name (may be null if no VLAN assigned)
-    if (data.subnets.length > 0) {
-      expect(Object.prototype.hasOwnProperty.call(data.subnets[0], 'vlan_name')).toBe(true);
-    }
+  expect(res.status).toBe(200);
+  const data = JSON.parse(res.body);
+  expect(data).toHaveProperty('subnets');
+  // Each subnet should have vlan_name (may be null if no VLAN assigned)
+  if (data.subnets.length > 0) {
+    expect(Object.prototype.hasOwnProperty.call(data.subnets[0], 'vlan_name')).toBe(true);
   }
 });

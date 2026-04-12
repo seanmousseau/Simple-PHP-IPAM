@@ -252,6 +252,15 @@ function ipam_migrations(): array
             if (!in_array('vlan_fk', $subnetCols, true)) {
                 $db->exec("ALTER TABLE subnets ADD COLUMN vlan_fk INTEGER REFERENCES vlans(id) ON DELETE SET NULL");
             }
+            // Clear legacy vlan_id when the backing VLAN row is deleted
+            $db->exec("
+                CREATE TRIGGER IF NOT EXISTS vlans_before_delete_cleanup_subnets
+                BEFORE DELETE ON vlans
+                FOR EACH ROW
+                BEGIN
+                  UPDATE subnets SET vlan_id = NULL WHERE vlan_fk = OLD.id;
+                END
+            ");
         },
 
         // 2.0.0-site-hierarchy: parent site / region support

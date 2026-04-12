@@ -85,6 +85,7 @@ test('tags: overview metric shows at least 1 tag', async () => {
 test('tags: edit tag name', async () => {
   await page.goto('tags.php');
   const rows = await page.locator('table tbody tr').all();
+  let found = false;
   for (const row of rows) {
     const text = await row.innerText();
     if (!text.includes(TEST_TAG_NAME)) continue;
@@ -97,8 +98,10 @@ test('tags: edit tag name', async () => {
     await details.locator('button[type=submit]').first().click();
     await page.waitForURL(/tags\.php/);
     await expect(page.locator('table')).toContainText(TEST_TAG_NAME + '-v2');
+    found = true;
     break;
   }
+  expect(found).toBe(true);
 });
 
 test('tags: subnet create form loads without error', async () => {
@@ -111,6 +114,7 @@ test('tags: subnet create form loads without error', async () => {
 test('tags: delete test tag', async () => {
   await page.goto('tags.php');
   const rows = await page.locator('table tbody tr').all();
+  let found = false;
   for (const row of rows) {
     const text = await row.innerText();
     if (!text.includes(TEST_TAG_NAME)) continue;
@@ -121,8 +125,10 @@ test('tags: delete test tag', async () => {
     page.once('dialog', d => d.accept());
     await details.locator('button.button-danger').click();
     await page.waitForURL(/tags\.php/);
+    found = true;
     break;
   }
+  expect(found).toBe(true);
 
   await expect(page.locator('body')).not.toContainText(TEST_TAG_NAME);
 });

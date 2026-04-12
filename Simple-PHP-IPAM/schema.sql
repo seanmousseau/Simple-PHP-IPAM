@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS sites (
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE INDEX IF NOT EXISTS idx_sites_parent_id ON sites(parent_id);
+
 CREATE TABLE IF NOT EXISTS subnets (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   cidr        TEXT NOT NULL UNIQUE,
@@ -174,6 +176,14 @@ AFTER UPDATE ON vlans
 FOR EACH ROW
 BEGIN
   UPDATE vlans SET updated_at = datetime('now') WHERE id = OLD.id;
+END;
+
+-- Clear legacy vlan_id when the backing VLAN row is deleted
+CREATE TRIGGER IF NOT EXISTS vlans_before_delete_cleanup_subnets
+BEFORE DELETE ON vlans
+FOR EACH ROW
+BEGIN
+  UPDATE subnets SET vlan_id = NULL WHERE vlan_fk = OLD.id;
 END;
 
 -- v2.0.0: Tags on subnets and addresses
