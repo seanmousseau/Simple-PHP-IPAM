@@ -6,7 +6,7 @@
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import {
   login, fetchPost, deleteSubnet, subnetIdFor, appUrl,
-  ADMIN_USER, ADMIN_PASS, TEST_CIDR1, TEST_VLAN_NAME,
+  ADMIN_USER, ADMIN_PASS, TEST_CIDR1, TEST_VLAN_ID, TEST_VLAN_NAME,
   newAuthContext,
 } from '../fixtures/ipam';
 
@@ -21,6 +21,10 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
   await page.goto('subnets.php');
   await deleteSubnet(page, TEST_CIDR1);             // stale cleanup
   await deleteSubnet(page, '10.99.0.128/28');
+  // Create a test VLAN so the VLAN picker renders on subnets.php
+  await fetchPost(page, appUrl('vlans.php'), {
+    action: 'create', vlan_id: String(TEST_VLAN_ID), name: TEST_VLAN_NAME, description: 'subnets test',
+  });
 });
 
 test.afterAll(async () => {
@@ -29,6 +33,22 @@ test.afterAll(async () => {
       await page.goto('subnets.php');
       await deleteSubnet(page, '10.99.0.128/28');
       await deleteSubnet(page, TEST_CIDR1);
+      // Clean up the test VLAN created in beforeAll
+      await page.goto('vlans.php');
+      const vlanId = await page.evaluate((vlanName: string) => {
+        for (const f of document.querySelectorAll<HTMLFormElement>('form')) {
+          const act = f.querySelector<HTMLInputElement>('[name=action]');
+          const id  = f.querySelector<HTMLInputElement>('[name=id]');
+          if (act?.value === 'delete' && id) {
+            const row = f.closest('tr');
+            if (row?.innerText.includes(vlanName)) return id.value;
+          }
+        }
+        return null;
+      }, TEST_VLAN_NAME);
+      if (vlanId) {
+        await fetchPost(page, appUrl('vlans.php'), { action: 'delete', id: vlanId });
+      }
     }
   } finally {
     await ctx?.close();

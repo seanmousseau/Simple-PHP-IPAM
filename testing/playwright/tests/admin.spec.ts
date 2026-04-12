@@ -119,7 +119,8 @@ test('site CRUD: create → appears in list → delete', async () => {
     action: 'create', name: 'pw-test-site', description: 'playwright test',
   });
   await page.goto('sites.php');
-  await expect(page.getByText('pw-test-site')).toBeVisible();
+  // Scope to the table to avoid strict-mode violations (site name also appears as a <option>)
+  await expect(page.locator('table').getByText('pw-test-site').first()).toBeVisible();
 
   // Delete it
   const siteId = await page.evaluate(() => {

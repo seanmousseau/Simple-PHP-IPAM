@@ -85,6 +85,11 @@ $activityRows = $actSt->fetchAll();
 
 page_header('Change Password');
 ?>
+<div class="breadcrumbs">
+  <a href="dashboard.php">Dashboard</a><span class="sep">›</span>
+  <span>Change Password</span>
+</div>
+
 <h1>Change Password</h1>
 <?php if ($isSsoOnly): ?>
   <p class="muted">Your account authenticates via SSO. Password changes are managed through your identity provider.</p>

@@ -86,10 +86,14 @@ adminTest.describe('Mobile hamburger nav', () => {
   adminTest('nav-drawer opens on toggle click (mobile viewport)', async ({ adminPage: page }) => {
     await page.setViewportSize({ width: 375, height: 812 });
     await page.goto('dashboard.php');
+    // Open: toggle click adds body.nav-open and removes aria-hidden from drawer
     await page.locator('#nav-toggle').click();
-    await expect(page.locator('#nav-drawer')).toBeVisible();
+    await expect(page.locator('body')).toHaveClass(/nav-open/);
+    // drawer uses CSS transform (not display:none), so check aria-hidden instead of toBeVisible
+    await expect(page.locator('#nav-drawer')).not.toHaveAttribute('aria-hidden', 'true');
     // Close via overlay click
     await page.locator('.nav-drawer-overlay').click();
-    await expect(page.locator('#nav-drawer')).not.toBeVisible();
+    await expect(page.locator('body')).not.toHaveClass(/nav-open/);
+    await expect(page.locator('#nav-drawer')).toHaveAttribute('aria-hidden', 'true');
   });
 });

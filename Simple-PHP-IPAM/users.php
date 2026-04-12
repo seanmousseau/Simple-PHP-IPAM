@@ -231,6 +231,12 @@ $users = $st->fetchAll();
 
 page_header('Users');
 ?>
+<div class="breadcrumbs">
+  <a href="dashboard.php">Dashboard</a><span class="sep">›</span>
+  <a href="#">Admin</a><span class="sep">›</span>
+  <span>Users</span>
+</div>
+
 <h1>Users</h1>
 <?php if ($errors): ?>
   <ul class="danger list-indent">
