@@ -330,5 +330,142 @@ function ipam_migrations(): array
                 ");
             }
         },
+
+        // 2.1.0-vrfs: VRF support — overlapping address spaces
+        // SQLite cannot DROP CONSTRAINT, so we rebuild the subnets table to change
+        // UNIQUE(cidr) → UNIQUE(cidr, vrf_id).  All existing subnets get vrf_id = NULL
+        // (= global/default VRF).  Idempotent: guarded by vrf_id column presence.
+        '2.1.0-vrfs' => function(PDO $db): void {
+            $tables = array_column(
+                ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                'name'
+            );
+
+            // Create vrfs table if absent
+            if (!in_array('vrfs', $tables, true)) {
+                $db->exec("
+                    CREATE TABLE vrfs (
+                        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name        TEXT NOT NULL UNIQUE,
+                        description TEXT NOT NULL DEFAULT '',
+                        rd          TEXT NOT NULL DEFAULT '',
+                        created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                        updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+                    )
+                ");
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_vrfs_name ON vrfs(name)");
+                $db->exec("
+                    CREATE TRIGGER IF NOT EXISTS vrfs_updated_at
+                    AFTER UPDATE ON vrfs FOR EACH ROW
+                    BEGIN
+                      UPDATE vrfs SET updated_at = datetime('now') WHERE id = OLD.id;
+                    END
+                ");
+            }
+
+            // Rebuild subnets only if vrf_id column is absent
+            $subnetCols = array_column(
+                ($db->query("PRAGMA table_info(subnets)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                'name'
+            );
+            if (in_array('vrf_id', $subnetCols, true)) {
+                return;
+            }
+
+            // Note: PRAGMA foreign_keys is a no-op inside a transaction, but DROP TABLE
+            // in SQLite does not check FK constraints on DDL — only DML triggers FK checks.
+            // All child tables (addresses, subnet_tags, alert_state) use ON DELETE CASCADE,
+            // so the rename-based rebuild is safe without disabling FK enforcement.
+            $db->exec("
+                CREATE TABLE subnets_new (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    cidr        TEXT NOT NULL,
+                    ip_version  INTEGER NOT NULL,
+                    network     TEXT NOT NULL,
+                    network_bin BLOB NOT NULL,
+                    prefix      INTEGER NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    site_id     INTEGER,
+                    vlan_id     INTEGER,
+                    vlan_fk     INTEGER REFERENCES vlans(id) ON DELETE SET NULL,
+                    vrf_id      INTEGER REFERENCES vrfs(id) ON DELETE RESTRICT,
+                    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE(cidr, vrf_id)
+                )
+            ");
+                $db->exec("
+                    INSERT INTO subnets_new
+                        (id, cidr, ip_version, network, network_bin, prefix, description,
+                         site_id, vlan_id, vlan_fk, vrf_id, created_at, updated_at)
+                    SELECT id, cidr, ip_version, network, network_bin, prefix, description,
+                           site_id, vlan_id, vlan_fk, NULL, created_at, updated_at
+                    FROM subnets
+                ");
+                $db->exec("DROP TABLE subnets");
+                $db->exec("ALTER TABLE subnets_new RENAME TO subnets");
+
+                // Recreate indexes
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_subnets_ver_prefix_netbin ON subnets(ip_version, prefix, network_bin)");
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_subnets_site_id ON subnets(site_id)");
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_subnets_vrf_id ON subnets(vrf_id)");
+
+                // Recreate subnets_updated_at trigger (dropped with the old table)
+                $db->exec("
+                    CREATE TRIGGER IF NOT EXISTS subnets_updated_at
+                    AFTER UPDATE ON subnets FOR EACH ROW
+                    BEGIN
+                      UPDATE subnets SET updated_at = datetime('now') WHERE id = OLD.id;
+                    END
+                ");
+
+                // Recreate vlans cleanup trigger (also dropped with old subnets table)
+                $db->exec("
+                    CREATE TRIGGER IF NOT EXISTS vlans_before_delete_cleanup_subnets
+                    BEFORE DELETE ON vlans FOR EACH ROW
+                    BEGIN
+                      UPDATE subnets SET vlan_id = NULL WHERE vlan_fk = OLD.id;
+                    END
+                ");
+        },
+
+        // 2.1.0-contacts: contacts as first-class objects
+        '2.1.0-contacts' => function(PDO $db): void {
+            $tables = array_column(
+                ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                'name'
+            );
+            if (!in_array('contacts', $tables, true)) {
+                $db->exec("
+                    CREATE TABLE contacts (
+                        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name       TEXT NOT NULL,
+                        email      TEXT NOT NULL DEFAULT '',
+                        phone      TEXT NOT NULL DEFAULT '',
+                        org        TEXT NOT NULL DEFAULT '',
+                        note       TEXT NOT NULL DEFAULT '',
+                        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                    )
+                ");
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_contacts_name ON contacts(name)");
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_contacts_email ON contacts(email)");
+                $db->exec("
+                    CREATE TRIGGER IF NOT EXISTS contacts_updated_at
+                    AFTER UPDATE ON contacts FOR EACH ROW
+                    BEGIN
+                      UPDATE contacts SET updated_at = datetime('now') WHERE id = OLD.id;
+                    END
+                ");
+            }
+            $addrCols = array_column(
+                ($db->query("PRAGMA table_info(addresses)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                'name'
+            );
+            if (!in_array('owner_contact_id', $addrCols, true)) {
+                $db->exec("ALTER TABLE addresses ADD COLUMN owner_contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL");
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_addresses_owner_contact_id ON addresses(owner_contact_id)");
+            }
+        },
     ];
 }

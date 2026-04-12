@@ -37,6 +37,8 @@ Dev tooling at the repo root (not deployed): `composer.json`, `composer.lock`, `
 | `import_csv.php` | yes | admin | CSV import wizard |
 | `sites.php` | yes | admin | Site management (supports parent site / region hierarchy) |
 | `vlans.php` | yes | admin | VLAN management (first-class VLAN objects, linked to subnets via `vlan_fk`) |
+| `vrfs.php` | yes | admin | VRF management (Virtual Routing and Forwarding; admin CRUD) |
+| `contacts.php` | yes | admin | Contact management (first-class contact records linked to addresses via `owner_contact_id`) |
 | `tags.php` | yes | admin | Tag management (colour-coded tags attached to subnets and addresses) |
 | `users.php` | yes | admin | User management |
 | `api_keys.php` | yes | admin | REST API key management |
@@ -90,8 +92,10 @@ Every web page starts with `require __DIR__ . '/init.php'`, which:
 | Table | Key columns |
 |-------|------------|
 | `users` | `id`, `username`, `password_hash`, `role` (admin\|readonly), `is_active`, `oidc_sub`, `name`, `email`, `last_login_at`, `password_changed_at`, `theme` (auto\|light\|dark), `created_at`, `updated_at` |
-| `subnets` | `id`, `cidr`, `ip_version`, `network`, `network_bin` (BLOB), `prefix`, `description`, `site_id`, `vlan_id` (legacy int 1–4094, nullable), `vlan_fk` (FK → `vlans.id`, nullable), `created_at`, `updated_at` |
-| `addresses` | `id`, `subnet_id`, `ip`, `ip_bin` (BLOB), `hostname`, `owner`, `note`, `grp`, `status` (used\|reserved\|free), `mac` (free-form, default ''), `expires_at` (YYYY-MM-DD, nullable), `created_at`, `updated_at` |
+| `vrfs` | `id`, `name` (UNIQUE), `description`, `rd` (Route Distinguisher, free-form), `created_at`, `updated_at` |
+| `subnets` | `id`, `cidr`, `ip_version`, `network`, `network_bin` (BLOB), `prefix`, `description`, `site_id`, `vlan_id` (legacy int 1–4094, nullable), `vlan_fk` (FK → `vlans.id`, nullable), `vrf_id` (FK → `vrfs.id`, nullable), `created_at`, `updated_at` — UNIQUE(cidr, vrf_id) |
+| `contacts` | `id`, `name`, `email`, `phone`, `org`, `note`, `created_at`, `updated_at` |
+| `addresses` | `id`, `subnet_id`, `ip`, `ip_bin` (BLOB), `hostname`, `owner`, `owner_contact_id` (FK → `contacts.id`, nullable), `note`, `grp`, `status` (used\|reserved\|free), `mac` (free-form, default ''), `expires_at` (YYYY-MM-DD, nullable), `created_at`, `updated_at` |
 | `audit_log` | `id`, `action`, `entity_type`, `entity_id`, `user_id`, `username`, `ip`, `user_agent`, `details`, `created_at` |
 | `sites` | `id`, `name`, `description`, `parent_id` (FK → `sites.id`, nullable, added v2.0.0), `created_at` |
 | `vlans` | `id`, `vlan_id` (1–4094), `name`, `description`, `site_id` (FK → `sites.id`, nullable), `created_at`, `updated_at` — UNIQUE(vlan_id, site_id) |
@@ -206,7 +210,7 @@ Asset cache-buster: update `?v=X.Y.Z` in the `<link>` and `<script>` tags in `pa
 ### Nav structure
 - Left: nav-links (Dashboard, Subnets, Addresses, Search, Audit, ⚙ Admin dropdown)
 - Right: user dropdown (username + role badge → Theme, Password, Logout)
-- Admin dropdown items: Sites, VLANs, Tags, Users, DHCP Pools, API Keys, Import CSV, Database Tools
+- Admin dropdown items: Sites, VLANs, VRFs, Tags, Contacts, Users, DHCP Pools, API Keys, Import CSV, Database Tools
 
 ---
 
@@ -224,6 +228,8 @@ user.set_role       user.reset_password     user.update_profile
 user.oidc_link      user.oidc_unlink
 site.create         site.update             site.delete
 vlan.create         vlan.update             vlan.delete
+vrf.create          vrf.update              vrf.delete
+contact.create      contact.update          contact.delete
 tag.create          tag.update              tag.delete
 apikey.create       apikey.deactivate       apikey.activate      apikey.delete
 dhcp_pool.reserve   dhcp_pool.clear
@@ -323,7 +329,9 @@ Before building a release bundle, **always** complete these steps in order:
    vendor/bin/phpunit
    semgrep --config=.semgrep/rules.yml Simple-PHP-IPAM/
    bash testing/scripts/test_api.sh https://dev-direct.seanmousseau.com:8343/claude/ipam
-   bash -c 'set -a; source ~/.claude/dev-secrets.env; set +a; python3 testing/scripts/cdp_test.py'
+   bash -c 'set -a; source ~/.claude/dev-secrets.env; set +a; \
+     IPAM_BASE_URL=https://dev-direct.seanmousseau.com:8343/claude/ipam \
+     npx --prefix testing/playwright playwright test --config=testing/playwright/playwright.config.ts'
    ```
 7. Run CodeRabbit review and address any Critical findings:
    ```bash

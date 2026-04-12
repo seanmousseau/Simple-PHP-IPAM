@@ -15,6 +15,7 @@ function ipam_db(string $path): PDO
     ]);
 
     $pdo->exec("PRAGMA journal_mode = WAL;");
+    $pdo->exec("PRAGMA busy_timeout = 30000;");
     $pdo->exec("PRAGMA foreign_keys = ON;");
     return $pdo;
 }
@@ -1312,15 +1313,16 @@ function parse_sort(array $allowed, string $defaultCol, string $defaultDir = 'as
  * Render a sortable <th> element linking to the current page with sort params applied.
  * $baseQs should be the query string prefix for the page (e.g. '?subnet_id=3&page_size=50').
  */
-function sort_th(string $col, string $label, string $currentCol, string $currentDir, string $baseQs): string
+function sort_th(string $col, string $label, string $currentCol, string $currentDir, string $baseQs, string $dataCol = ''): string
 {
-    $isActive = $col === $currentCol;
-    $nextDir  = ($isActive && $currentDir === 'asc') ? 'desc' : 'asc';
-    $arrow    = $isActive ? ($currentDir === 'asc' ? ' ▲' : ' ▼') : '';
-    $sep      = str_contains($baseQs, '?') ? '&' : '?';
-    $qs       = $baseQs . $sep . 'sort=' . urlencode($col) . '&dir=' . $nextDir;
-    $cls      = $isActive ? ' class="sort-active"' : '';
-    return "<th{$cls}><a href='" . e($qs) . "'>" . e($label) . $arrow . '</a></th>';
+    $isActive  = $col === $currentCol;
+    $nextDir   = ($isActive && $currentDir === 'asc') ? 'desc' : 'asc';
+    $arrow     = $isActive ? ($currentDir === 'asc' ? ' ▲' : ' ▼') : '';
+    $sep       = str_contains($baseQs, '?') ? '&' : '?';
+    $qs        = $baseQs . $sep . 'sort=' . urlencode($col) . '&dir=' . $nextDir;
+    $cls       = $isActive ? ' class="sort-active"' : '';
+    $dataAttr  = $dataCol !== '' ? ' data-col="' . e($dataCol) . '"' : '';
+    return "<th{$cls}{$dataAttr}><a href='" . e($qs) . "'>" . e($label) . $arrow . '</a></th>';
 }
 
 /* ---------------- Login protection (#124) ---------------- */
@@ -2495,7 +2497,7 @@ function cidr_from_ip_and_prefix(array $normIp, int $prefix): string
  *
  * @return array{parents: list<string>, children: list<string>}
  */
-function detect_subnet_overlaps(PDO $db, string $cidr, ?int $excludeId = null): array
+function detect_subnet_overlaps(PDO $db, string $cidr, ?int $excludeId = null, ?int $vrfId = null): array
 {
     $p = parse_cidr($cidr);
     if (!$p) return ['parents' => [], 'children' => []];
@@ -2504,8 +2506,10 @@ function detect_subnet_overlaps(PDO $db, string $cidr, ?int $excludeId = null): 
     $prefix = to_int($p['prefix']);
     $netBin = to_str($p['net_bin']);
 
-    $sql    = "SELECT id, cidr, prefix, network_bin FROM subnets WHERE ip_version = :v";
-    $params = [':v' => $ver];
+    // Scope overlap detection to the same VRF (NULL = global routing table).
+    // SQLite's IS operator handles NULL equality correctly.
+    $sql    = "SELECT id, cidr, prefix, network_bin FROM subnets WHERE ip_version = :v AND vrf_id IS :vrf";
+    $params = [':v' => $ver, ':vrf' => $vrfId];
     if ($excludeId !== null) {
         $sql .= " AND id != :excl";
         $params[':excl'] = $excludeId;
@@ -2577,11 +2581,11 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=2.0.0'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=2.1.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=2.0.0'></script>";
+    echo "<script defer src='assets/app.js?v=2.1.0'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
@@ -2595,6 +2599,7 @@ function page_header(string $title, array $opts = []): void
         echo "<a class='nav-pill' href='subnets.php'>🌐 Subnets</a>";
         echo "<a class='nav-pill' href='addresses.php'>🧾 Addresses</a>";
         echo "<a class='nav-pill' href='search.php'>🔎 Search</a>";
+        echo "<button class='nav-pill nav-search-key' title='Quick search (Ctrl+K / \u2318K)'>\u2318K</button>";
         echo "<a class='nav-pill' href='audit.php'>📜 Audit</a>";
         if ($role === 'admin') {
             echo "<div class='nav-dropdown'>";
@@ -2603,8 +2608,10 @@ function page_header(string $title, array $opts = []): void
             echo "<a class='nav-dropdown-item' href='dhcp_pool.php'>🔒 DHCP Pools</a>";
             echo "<hr class='nav-dropdown-divider'>";
             echo "<a class='nav-dropdown-item' href='sites.php'>📍 Sites</a>";
+            echo "<a class='nav-dropdown-item' href='vrfs.php'>🌐 VRFs</a>";
             echo "<a class='nav-dropdown-item' href='vlans.php'>🏷 VLANs</a>";
             echo "<a class='nav-dropdown-item' href='tags.php'>🔖 Tags</a>";
+            echo "<a class='nav-dropdown-item' href='contacts.php'>📇 Contacts</a>";
             echo "<a class='nav-dropdown-item' href='users.php'>👤 Users</a>";
             echo "<a class='nav-dropdown-item' href='api_keys.php'>🔑 API Keys</a>";
             echo "<a class='nav-dropdown-item' href='import_csv.php'>⬆ Import CSV</a>";
@@ -2648,8 +2655,10 @@ function page_header(string $title, array $opts = []): void
             echo "<span class='nav-drawer-section'>Admin</span>";
             echo "<a href='dhcp_pool.php'>&#128274; DHCP Pools</a>";
             echo "<a href='sites.php'>&#128205; Sites</a>";
+            echo "<a href='vrfs.php'>&#127760; VRFs</a>";
             echo "<a href='vlans.php'>&#127991; VLANs</a>";
             echo "<a href='tags.php'>&#128278; Tags</a>";
+            echo "<a href='contacts.php'>&#128215; Contacts</a>";
             echo "<a href='users.php'>&#128100; Users</a>";
             echo "<a href='api_keys.php'>&#128273; API Keys</a>";
             echo "<a href='import_csv.php'>&#8679; Import CSV</a>";
@@ -2664,6 +2673,16 @@ function page_header(string $title, array $opts = []): void
     }
     echo "</div>";
     echo "<div class='nav-drawer-overlay'></div>";
+
+    // ⌘K / Ctrl+K search overlay (#253)
+    echo "<div id='search-overlay' role='dialog' aria-modal='true' aria-label='Quick search'>";
+    echo "<div class='so-box'>";
+    echo "<input id='search-overlay-input' type='search' placeholder='Search IPs, hostnames, owners\u2026' autocomplete='off' spellcheck='false'>";
+    echo "<button id='search-overlay-close' class='so-close' aria-label='Close search'>&times;</button>";
+    echo "<ul id='search-overlay-list'></ul>";
+    echo "<div class='so-hint'>&#x23CE; to navigate &nbsp;&middot;&nbsp; &#x2191;&#x2193; to move &nbsp;&middot;&nbsp; <kbd>Esc</kbd> to close</div>";
+    echo "</div>";
+    echo "</div>";
 
     echo "<div class='page'>";
 
@@ -2879,18 +2898,18 @@ function ipam_update_check(array $config): ?array
  * Find the site_id a subnet should inherit from its tightest parent.
  * Returns null if no parent exists or no parent has a site assigned.
  */
-function find_parent_site_id(PDO $db, string $cidr, ?int $excludeId = null): ?int
+function find_parent_site_id(PDO $db, string $cidr, ?int $excludeId = null, ?int $vrfId = null): ?int
 {
-    $overlaps = detect_subnet_overlaps($db, $cidr, $excludeId);
+    $overlaps = detect_subnet_overlaps($db, $cidr, $excludeId, $vrfId);
     if (empty($overlaps['parents'])) return null;
 
     $placeholders = implode(',', array_fill(0, count($overlaps['parents']), '?'));
     $st = $db->prepare(
         "SELECT site_id FROM subnets
-         WHERE cidr IN ($placeholders) AND site_id IS NOT NULL
+         WHERE cidr IN ($placeholders) AND site_id IS NOT NULL AND vrf_id IS ?
          ORDER BY prefix DESC LIMIT 1"
     );
-    $st->execute($overlaps['parents']);
+    $st->execute(array_merge($overlaps['parents'], [$vrfId]));
     /** @var array<string, mixed>|false $row */
     $row = $st->fetch();
     return $row ? to_int($row['site_id']) : null;

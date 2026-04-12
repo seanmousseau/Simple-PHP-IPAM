@@ -97,7 +97,7 @@ test('db import round-trip succeeds and data survives', async () => {
 
   // Verify data survived the round-trip
   await page.goto('subnets.php');
-  await expect(page.getByText(TEST_CIDR1)).toBeVisible();
+  await expect(page.getByText(TEST_CIDR1).first()).toBeVisible();
 });
 
 test('db_tools security warning banner is present', async () => {

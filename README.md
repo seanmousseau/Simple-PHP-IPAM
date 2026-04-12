@@ -8,6 +8,18 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 
 ---
 
+## What's new in v2.1.0
+
+- **VRF support** — virtual routing tables with VRF-scoped overlap detection; same CIDR allowed in different VRFs; admin CRUD page + API
+- **Contacts** — first-class contact records (name, email, phone, org, note) linked to address owner fields via typeahead; API CRUD + fuzzy search
+- **⌘K / Ctrl+K search overlay** — instant global search from any page with keyboard navigation
+- **Inline cell editing** — click hostname, owner, note, or group on the address list to edit in-place; Enter saves, Escape reverts
+- **Subnet map view** — visual indented hierarchy map on subnets page with List / Map toggle (persisted to localStorage)
+- **Column visibility** — gear dropdown to show/hide address table columns; preference persisted per browser
+- **Dashboard widgets** — hide/show stat cards; site filter on "Addresses by Site" panel; one-click reset
+
+See [CHANGELOG.md](CHANGELOG.md) for full details.
+
 ## What's new in v2.0.0
 
 - **VLANs** — first-class VLAN objects with admin CRUD, subnet assignment picker, and list badge

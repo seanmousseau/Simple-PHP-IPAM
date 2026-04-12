@@ -145,19 +145,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                         );
                     }
                     // CREATE TRIGGER bodies can contain arbitrary SQL. Only allow
-                    // triggers that match one of two known-safe patterns:
+                    // triggers that match one of three known-safe patterns:
                     //   1. RAISE(ABORT, ...) — append-only guards on audit_log
                     //   2. UPDATE <table> SET updated_at = datetime('now') WHERE id = OLD.id
                     //      — the timestamp maintenance triggers on users/subnets/addresses
-                    // Pattern 2 is matched strictly: the entire trigger body must be that
-                    // single UPDATE statement with no other statements before or after it.
+                    //   3. UPDATE <table> SET <col> = NULL WHERE <col> = OLD.id
+                    //      — FK cleanup triggers (e.g. vlans_before_delete_cleanup_subnets)
+                    // Patterns 2 and 3 are matched strictly: the entire trigger body must be
+                    // that single UPDATE statement with no other statements before or after it.
                     if (preg_match('/^CREATE\s+TRIGGER/i', $exec)) {
                         $isRaise     = preg_match('/RAISE\s*\(\s*ABORT/i', $exec);
                         $isTimestamp = preg_match(
                             '/\bBEGIN\s+UPDATE\s+\w+\s+SET\s+updated_at\s*=\s*datetime\s*\(\s*\'now\'\s*\)\s+WHERE\s+id\s*=\s*OLD\.id\s*;\s*END\b/is',
                             $exec
                         );
-                        if (!$isRaise && !$isTimestamp) {
+                        $isFkCleanup = preg_match(
+                            '/\bBEGIN\s+UPDATE\s+\w+\s+SET\s+\w+\s*=\s*NULL\s+WHERE\s+\w+\s*=\s*OLD\.id\s*;\s*END\b/is',
+                            $exec
+                        );
+                        if (!$isRaise && !$isTimestamp && !$isFkCleanup) {
                             throw new RuntimeException(
                                 'Blocked CREATE TRIGGER with non-RAISE body: ' . substr($exec, 0, 80)
                             );

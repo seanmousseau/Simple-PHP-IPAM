@@ -115,9 +115,10 @@ page_header('Dashboard');
   <?php if (current_user()['role'] === 'admin'): ?>
     <a class="action-pill" href="import_csv.php">📥 Import CSV</a>
   <?php endif; ?>
+  <a class="action-pill muted" href="#" id="dash-reset" title="Reset widget layout and filters">↺ Reset widgets</a>
 </div>
 
-<div class="grid cols-3 mt-16">
+<div class="grid cols-3 mt-16" data-widget="metrics">
   <div class="metric"><div class="label">Subnets</div><div class="value"><?= e((string)$totalSubnets) ?></div></div>
   <div class="metric"><div class="label">Addresses (rows)</div><div class="value"><?= e((string)$totalAddrs) ?></div></div>
   <div class="metric"><div class="label">Used</div><div class="value status-used"><?= e(to_str($statusMap['used'])) ?></div></div>
@@ -130,8 +131,11 @@ page_header('Dashboard');
 
 <div class="grid cols-2 mt-16">
 
-  <div class="card">
-    <h2>Top IPv4 Subnets by Usage</h2>
+  <div class="card" data-widget="top-subnets">
+    <div class="widget-header">
+      <h2>Top IPv4 Subnets by Usage</h2>
+      <button class="widget-hide-btn" data-widget-key="top-subnets" title="Hide widget">&#10005;</button>
+    </div>
     <?php if (!$topSubnets): ?>
       <div class="empty-state">No IPv4 subnets in /8–/32 range.</div>
     <?php else: ?>
@@ -169,18 +173,29 @@ page_header('Dashboard');
     <div class="mt-10"><a class="action-pill" href="subnets.php">🌐 All Subnets</a></div>
   </div>
 
-  <div class="card">
-    <h2>Addresses by Site</h2>
+  <div class="card" data-widget="by-site">
+    <div class="widget-header">
+      <h2>Addresses by Site</h2>
+      <button class="widget-hide-btn" data-widget-key="by-site" title="Hide widget">&#10005;</button>
+    </div>
     <?php if (!$bySite): ?>
       <div class="empty-state">No data yet.</div>
     <?php else: ?>
+      <div class="mb-8">
+        <select id="dash-site-filter" class="action-pill">
+          <option value="">(all sites)</option>
+          <?php foreach ($bySite as $r): ?>
+            <option value="<?= e(to_str($r['site_name'])) ?>"><?= e(to_str($r['site_name'])) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
       <table>
         <thead>
           <tr><th>Site</th><th>Used</th><th>Reserved</th><th>Free</th><th>Total</th></tr>
         </thead>
         <tbody>
         <?php foreach ($bySite as $r): ?>
-          <tr>
+          <tr data-site-row="<?= e(to_str($r['site_name'])) ?>">
             <td><?= e(to_str($r['site_name'])) ?></td>
             <td class="status-used"><?= e(to_str($r['used'])) ?></td>
             <td class="status-reserved"><?= e(to_str($r['reserved'])) ?></td>
@@ -198,8 +213,11 @@ page_header('Dashboard');
 
 </div>
 
-<div class="card mt-16">
-  <h2>Recent Activity</h2>
+<div class="card mt-16" data-widget="recent-activity">
+  <div class="widget-header">
+    <h2>Recent Activity</h2>
+    <button class="widget-hide-btn" data-widget-key="recent-activity" title="Hide widget">&#10005;</button>
+  </div>
   <?php if (!$recentAudit): ?>
     <div class="empty-state">No audit events yet.</div>
   <?php else: ?>

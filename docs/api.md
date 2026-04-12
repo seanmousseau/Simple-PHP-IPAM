@@ -225,6 +225,7 @@ Returns a paginated list of address records.
 | `site_id` | integer | — | Filter to addresses in subnets belonging to this site |
 | `status` | string | — | Filter by status: `used`, `reserved`, or `free` |
 | `tag` | string | — | Filter to addresses with the given tag name attached |
+| `contact_id` | integer | — | Filter to addresses linked to this contact (v2.1.0+) |
 | `expired` | flag | — | Pass `?expired=1` to return only addresses where `expires_at` is in the past |
 | `page` | integer | `1` | Page number (1-based) |
 | `limit` | integer | `100` | Records per page (max `500`) |
@@ -265,12 +266,15 @@ Results are ordered by IP address (binary sort — correct numerical order withi
 | `subnet_id` | integer | ID of the containing subnet |
 | `ip` | string | IP address |
 | `hostname` | string | Hostname (may be empty) |
-| `owner` | string | Owner/team (may be empty) |
+| `owner` | string | Owner/team free-text (may be empty) |
+| `owner_contact_id` | integer\|null | FK to `contacts.id` if linked, else `null` (v2.1.0+) |
+| `owner_contact_name` | string\|null | Contact name when `owner_contact_id` is set, else `null` (v2.1.0+) |
 | `status` | string | `used`, `reserved`, or `free` |
 | `note` | string | Free-text note (may be empty) |
 | `group` | string | Group/tag label (may be empty) |
 | `mac` | string | MAC address (free-form, max 64 chars, may be empty) |
 | `expires_at` | string\|null | Lease expiry date (`YYYY-MM-DD`), or `null` if not set |
+| `tags` | array | Tag objects attached to this address (`[{"id":1,"name":"prod","colour":"#28a745"}]`) |
 | `created_at` | string | UTC timestamp (`YYYY-MM-DD HH:MM:SS`) |
 | `updated_at` | string | UTC timestamp of last modification |
 
@@ -388,6 +392,110 @@ DELETE /api.php?resource=vlans&id=<id>  — delete a VLAN (→ 204)
 
 ---
 
+---
+
+### VRFs
+
+```
+GET /api.php?resource=vrfs
+```
+
+Returns all VRF (Virtual Routing and Forwarding) objects. Added in v2.1.0.
+
+**Query parameters**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `id` | integer | — | Get a single VRF by database ID |
+
+**Response**
+
+```json
+{
+  "vrfs": [
+    {
+      "id": 1,
+      "name": "Corporate",
+      "description": "Main corporate VRF",
+      "rd": "65000:1",
+      "created_at": "2026-01-01 12:00:00",
+      "updated_at": "2026-01-01 12:00:00"
+    }
+  ]
+}
+```
+
+When fetching a single VRF (`?id=N`), the response is `{"vrf": {...}}`.
+
+**VRF object fields**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | integer | Internal database ID |
+| `name` | string | Unique VRF name |
+| `description` | string | Free-text description (may be empty) |
+| `rd` | string | Route Distinguisher, free-form (e.g. `65000:1`); may be empty |
+| `created_at` | string | UTC timestamp |
+| `updated_at` | string | UTC timestamp |
+
+**Write operations** (requires write-access API key):
+
+```
+POST   /api.php?resource=vrfs          — create a VRF (body: {"name":"...","rd":"65000:1"})
+PUT    /api.php?resource=vrfs&id=<id>  — update a VRF
+DELETE /api.php?resource=vrfs&id=<id>  — delete a VRF (→ 204; blocked if subnets assigned)
+```
+
+A duplicate `name` returns `409 Conflict`. Deleting a VRF that has subnets assigned returns `409 Conflict`.
+
+---
+
+### Contacts
+
+```
+GET /api.php?resource=contacts
+```
+
+Returns all contact records. Added in v2.1.0.
+
+**Query parameters**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `id` | integer | — | Get a single contact by database ID |
+| `q` | string | — | Fuzzy search — matches against name and email (case-insensitive LIKE) |
+
+**Response**
+
+```json
+{
+  "contacts": [
+    {
+      "id": 1,
+      "name": "Alice Smith",
+      "email": "alice@example.com",
+      "phone": "555-1234",
+      "org": "Example Corp",
+      "note": "Primary network admin",
+      "created_at": "2026-01-01 12:00:00",
+      "updated_at": "2026-01-01 12:00:00"
+    }
+  ]
+}
+```
+
+**Write operations** (requires write-access API key):
+
+```
+POST   /api.php?resource=contacts          — create a contact (body: {"name":"...",...})
+PUT    /api.php?resource=contacts&id=<id>  — update a contact
+DELETE /api.php?resource=contacts&id=<id>  — delete a contact (→ 204)
+```
+
+`name` is required. All other fields are optional (default empty string).
+
+---
+
 ### History
 
 ```
@@ -459,8 +567,32 @@ Search addresses by IP, hostname, owner, note, or group.
 | `status` | string | — | Filter by status: `used`, `reserved`, or `free` |
 | `site_id` | integer | — | Filter to addresses in subnets belonging to this site |
 | `ip_version` | integer | — | Filter by IP version: `4` or `6` |
+| `tag` | string | — | Filter to results with the given tag name |
+| `vrf_id` | integer | — | Filter to results in subnets belonging to this VRF (v2.1.0+) |
 | `page` | integer | `1` | Page number |
 | `limit` | integer | `100` | Records per page (max `500`) |
+
+**JSON format for ⌘K overlay** (v2.1.0+)
+
+The web app's `⌘K`/`Ctrl+K` search overlay calls `search.php?q=<term>&format=json` directly. You can also call this URL (with session cookies) to get a compact array of up to 20 results for autocomplete use cases:
+
+```
+GET /search.php?q=<term>&format=json
+```
+
+Response (session-authenticated, not API key):
+
+```json
+[
+  {
+    "ip": "10.1.0.10",
+    "hostname": "server01.example.com",
+    "subnet_cidr": "10.1.0.0/24",
+    "status": "used",
+    "url": "/addresses.php?subnet_id=3#addr-99"
+  }
+]
+```
 
 **Response**
 
@@ -589,16 +721,18 @@ POST /api.php?resource=subnets
   "cidr": "10.1.0.0/24",
   "description": "Office LAN",
   "site_id": 2,
-  "vlan_id": 100
+  "vlan_id": 100,
+  "vrf_id": 1
 }
 ```
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `cidr` | yes | CIDR notation; must be unique |
+| `cidr` | yes | CIDR notation; must be unique within the same VRF |
 | `description` | no | Free-text description |
 | `site_id` | no | Integer ID of an existing site, or `null` |
 | `vlan_id` | no | Integer 1–4094, or `null` |
+| `vrf_id` | no | Integer ID of an existing VRF, or `null` (global/default) |
 
 **Response** — HTTP `201`
 

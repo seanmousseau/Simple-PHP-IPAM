@@ -43,11 +43,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $subnetId = to_int($_POST['subnet_id'] ?? 0);
         $ipInput = trim(to_str($_POST['ip'] ?? ''));
 
-        $hostname  = substr(trim(to_str($_POST['hostname']   ?? '')), 0, 253);
-        $owner     = substr(trim(to_str($_POST['owner']     ?? '')), 0, 255);
-        $note      = substr(trim(to_str($_POST['note']      ?? '')), 0, 1000);
-        $grp       = substr(trim(to_str($_POST['grp']       ?? '')), 0, 100);
-        $mac       = substr(trim(to_str($_POST['mac']       ?? '')), 0, 64);
+        $hostname        = substr(trim(to_str($_POST['hostname']        ?? '')), 0, 253);
+        $owner           = substr(trim(to_str($_POST['owner']          ?? '')), 0, 255);
+        $note            = substr(trim(to_str($_POST['note']           ?? '')), 0, 1000);
+        $grp             = substr(trim(to_str($_POST['grp']            ?? '')), 0, 100);
+        $mac             = substr(trim(to_str($_POST['mac']            ?? '')), 0, 64);
+        $ownerContactId  = to_int($_POST['owner_contact_id'] ?? 0) ?: null;
+        if ($ownerContactId !== null) {
+            $cck = $db->prepare("SELECT id FROM contacts WHERE id = :id");
+            $cck->execute([':id' => $ownerContactId]);
+            if (!$cck->fetch()) $ownerContactId = null;
+        }
         $expiresAt = trim(to_str($_POST['expires_at'] ?? ''));
         if ($expiresAt !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $expiresAt)) {
             $expiresAt = '';
@@ -73,8 +79,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $err = 'Invalid status.';
             } else {
                 try {
-                    $ins = $db->prepare("INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, grp, mac, expires_at, status)
-                                         VALUES (:sid,:ip,:bin,:hn,:ow,:nt,:grp,:mac,:exp,:st)");
+                    $ins = $db->prepare("INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, grp, mac, expires_at, status, owner_contact_id)
+                                         VALUES (:sid,:ip,:bin,:hn,:ow,:nt,:grp,:mac,:exp,:st,:cid)");
                     $ins->execute([
                         ':sid' => $subnetId,
                         ':ip'  => $norm['ip'],
@@ -86,17 +92,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ':mac' => $mac,
                         ':exp' => $expiresAt !== '' ? $expiresAt : null,
                         ':st'  => $status,
+                        ':cid' => $ownerContactId,
                     ]);
                     $aid = (int)$db->lastInsertId();
 
                     history_log_address($db, 'create', $subnetId, $norm['ip'], $aid, null, [
-                        'hostname'   => $hostname,
-                        'owner'      => $owner,
-                        'note'       => $note,
-                        'grp'        => $grp,
-                        'mac'        => $mac,
-                        'expires_at' => $expiresAt !== '' ? $expiresAt : null,
-                        'status'     => $status,
+                        'hostname'        => $hostname,
+                        'owner'           => $owner,
+                        'note'            => $note,
+                        'grp'             => $grp,
+                        'mac'             => $mac,
+                        'expires_at'      => $expiresAt !== '' ? $expiresAt : null,
+                        'status'          => $status,
+                        'owner_contact_id' => $ownerContactId,
                     ]);
                     audit($db, 'address.create', 'address', $aid, "ip={$norm['ip']} subnet_id=$subnetId");
 
@@ -115,11 +123,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $id = to_int($_POST['id'] ?? 0);
         $subnetId = to_int($_POST['subnet_id'] ?? 0);
-        $hostname  = substr(trim(to_str($_POST['hostname']   ?? '')), 0, 253);
-        $owner     = substr(trim(to_str($_POST['owner']     ?? '')), 0, 255);
-        $note      = substr(trim(to_str($_POST['note']      ?? '')), 0, 1000);
-        $grp       = substr(trim(to_str($_POST['grp']       ?? '')), 0, 100);
-        $mac       = substr(trim(to_str($_POST['mac']       ?? '')), 0, 64);
+        $hostname       = substr(trim(to_str($_POST['hostname']       ?? '')), 0, 253);
+        $owner          = substr(trim(to_str($_POST['owner']         ?? '')), 0, 255);
+        $note           = substr(trim(to_str($_POST['note']          ?? '')), 0, 1000);
+        $grp            = substr(trim(to_str($_POST['grp']           ?? '')), 0, 100);
+        $mac            = substr(trim(to_str($_POST['mac']           ?? '')), 0, 64);
+        $ownerContactId = to_int($_POST['owner_contact_id'] ?? 0) ?: null;
+        if ($ownerContactId !== null) {
+            $cck = $db->prepare("SELECT id FROM contacts WHERE id = :id");
+            $cck->execute([':id' => $ownerContactId]);
+            if (!$cck->fetch()) $ownerContactId = null;
+        }
         $expiresAt = trim(to_str($_POST['expires_at'] ?? ''));
         if ($expiresAt !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $expiresAt)) {
             $expiresAt = '';
@@ -129,7 +143,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!in_array($status, ['used','reserved','free'], true)) {
             $err = 'Invalid status.';
         } else {
-            $sel = $db->prepare("SELECT id, ip, hostname, owner, note, grp, mac, expires_at, status FROM addresses WHERE id=:id AND subnet_id=:sid");
+            $sel = $db->prepare("SELECT id, ip, hostname, owner, note, grp, mac, expires_at, status, owner_contact_id FROM addresses WHERE id=:id AND subnet_id=:sid");
             $sel->execute([':id' => $id, ':sid' => $subnetId]);
             /** @var array<string, mixed>|false $before */
             $before = $sel->fetch();
@@ -138,7 +152,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $err = 'Address not found.';
             } else {
                 $up = $db->prepare("UPDATE addresses
-                                    SET hostname=:hn, owner=:ow, note=:nt, grp=:grp, mac=:mac, expires_at=:exp, status=:st
+                                    SET hostname=:hn, owner=:ow, note=:nt, grp=:grp, mac=:mac, expires_at=:exp, status=:st, owner_contact_id=:cid
                                     WHERE id=:id AND subnet_id=:sid");
                 $up->execute([
                     ':hn'  => $hostname,
@@ -148,28 +162,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ':mac' => $mac,
                     ':exp' => $expiresAt !== '' ? $expiresAt : null,
                     ':st'  => $status,
+                    ':cid' => $ownerContactId,
                     ':id'  => $id,
                     ':sid' => $subnetId,
                 ]);
 
                 history_log_address($db, 'update', $subnetId, to_str($before['ip']), $id,
                     [
-                        'hostname'   => to_str($before['hostname']),
-                        'owner'      => to_str($before['owner']),
-                        'note'       => to_str($before['note']),
-                        'grp'        => to_str($before['grp']),
-                        'mac'        => to_str($before['mac']),
-                        'expires_at' => isset($before['expires_at']) ? to_str($before['expires_at']) : null,
-                        'status'     => to_str($before['status']),
+                        'hostname'        => to_str($before['hostname']),
+                        'owner'           => to_str($before['owner']),
+                        'note'            => to_str($before['note']),
+                        'grp'             => to_str($before['grp']),
+                        'mac'             => to_str($before['mac']),
+                        'expires_at'      => isset($before['expires_at']) ? to_str($before['expires_at']) : null,
+                        'status'          => to_str($before['status']),
+                        'owner_contact_id' => $before['owner_contact_id'] !== null ? to_int($before['owner_contact_id']) : null,
                     ],
                     [
-                        'hostname'   => $hostname,
-                        'owner'      => $owner,
-                        'note'       => $note,
-                        'grp'        => $grp,
-                        'mac'        => $mac,
-                        'expires_at' => $expiresAt !== '' ? $expiresAt : null,
-                        'status'     => $status,
+                        'hostname'        => $hostname,
+                        'owner'           => $owner,
+                        'note'            => $note,
+                        'grp'             => $grp,
+                        'mac'             => $mac,
+                        'expires_at'      => $expiresAt !== '' ? $expiresAt : null,
+                        'status'          => $status,
+                        'owner_contact_id' => $ownerContactId,
                     ]
                 );
 
@@ -193,7 +210,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             audit($db, 'address.update', 'address', $id, "status=$newStatus via inline toggle");
         }
         header('Content-Type: application/json');
-        echo '{"ok":true,"status":"' . $newStatus . '"}';
+        echo json_encode(['ok' => true, 'status' => $newStatus]); // nosemgrep: php.lang.security.xss
+        exit;
+    } elseif ($action === 'update_cell') {
+        // Inline cell edit — JSON response; CSRF already verified above
+        require_write_access();
+        header('Content-Type: application/json');
+        $id     = to_int($_POST['id']    ?? 0);
+        $field  = to_str($_POST['field'] ?? '');
+        $value  = to_str($_POST['value'] ?? '');
+        $allowed = ['hostname', 'owner', 'note', 'grp'];
+        if ($id <= 0 || !in_array($field, $allowed, true)) {
+            echo json_encode(['ok' => false, 'error' => 'Invalid request.']);
+            exit;
+        }
+        $maxLen = ['hostname' => 253, 'owner' => 255, 'note' => 1000, 'grp' => 100];
+        $value = substr(trim($value), 0, $maxLen[$field]);
+        $sel = $db->prepare("SELECT id, ip, hostname, owner, note, grp FROM addresses WHERE id=:id");
+        $sel->execute([':id' => $id]);
+        /** @var array<string, mixed>|false $before */
+        $before = $sel->fetch();
+        if (!$before) {
+            echo json_encode(['ok' => false, 'error' => 'Address not found.']);
+            exit;
+        }
+        // Static SQL per field — no interpolation of user-controlled data
+        // Editing 'owner' free-text clears the structured contact link to keep them in sync.
+        $updateSql = match ($field) {
+            'hostname' => "UPDATE addresses SET hostname=:v, updated_at=datetime('now') WHERE id=:id",
+            'owner'    => "UPDATE addresses SET owner=:v, owner_contact_id=NULL, updated_at=datetime('now') WHERE id=:id",
+            'note'     => "UPDATE addresses SET note=:v, updated_at=datetime('now') WHERE id=:id",
+            'grp'      => "UPDATE addresses SET grp=:v, updated_at=datetime('now') WHERE id=:id",
+        };
+        $db->prepare($updateSql)->execute([':v' => $value, ':id' => $id]);
+        $after = array_merge(
+            ['hostname' => to_str($before['hostname']), 'owner' => to_str($before['owner']),
+             'note'     => to_str($before['note']),     'grp'   => to_str($before['grp'])],
+            [$field => $value]
+        );
+        $subnetIdForHistory = to_int((function() use ($db, $id) {
+            $r = $db->prepare("SELECT subnet_id FROM addresses WHERE id=:id");
+            $r->execute([':id' => $id]);
+            /** @var array<string, mixed>|false $row */
+            $row = $r->fetch();
+            return $row ? to_int($row['subnet_id']) : 0;
+        })());
+        history_log_address($db, 'update', $subnetIdForHistory, to_str($before['ip']), $id,
+            ['hostname' => to_str($before['hostname']), 'owner' => to_str($before['owner']),
+             'note'     => to_str($before['note']),     'grp'   => to_str($before['grp'])],
+            $after
+        );
+        audit($db, 'address.update', 'address', $id, "inline_cell=$field");
+        echo json_encode(['ok' => true, 'value' => $value]);
         exit;
     } elseif ($action === 'delete') {
         require_write_access();
@@ -246,9 +314,11 @@ if ($selectedSubnetId > 0) {
 
     $p = paginate($total, $page, $pageSize);
 
-    $st = $db->prepare("SELECT id, ip, hostname, owner, note, grp, mac, expires_at, status, updated_at
-                        FROM addresses
-                        WHERE subnet_id = :sid
+    $st = $db->prepare("SELECT a.id, a.ip, a.hostname, a.owner, a.note, a.grp, a.mac, a.expires_at, a.status, a.updated_at,
+                               a.owner_contact_id, c.name AS owner_contact_name, c.email AS owner_contact_email
+                        FROM addresses a
+                        LEFT JOIN contacts c ON c.id = a.owner_contact_id
+                        WHERE a.subnet_id = :sid
                         ORDER BY {$addrSort['sql']}
                         LIMIT :lim OFFSET :off");
     $st->bindValue(':sid', $selectedSubnetId, PDO::PARAM_INT);
@@ -356,7 +426,10 @@ page_header('Addresses');
     <div class="row">
       <label>IP<br><input name="ip" value="<?= e($prefillIp) ?>" placeholder="<?= ($selectedSubnet && to_int($selectedSubnet['ip_version'])===6) ? '2001:db8::10' : '10.0.0.10' ?>" required data-validate="ip"></label>
       <label>Hostname<br><input name="hostname" maxlength="253"></label>
-      <label>Owner<br><input name="owner" maxlength="255"></label>
+      <label>Owner<br>
+        <input name="owner" maxlength="255" autocomplete="off" data-contact-typeahead>
+        <input type="hidden" name="owner_contact_id" value="0">
+      </label>
       <label>Group<br><input name="grp" maxlength="100" placeholder="e.g. web-tier" class="mw-160"></label>
       <label>MAC<br><input name="mac" maxlength="64" placeholder="e.g. aa:bb:cc:dd:ee:ff" class="mw-160"></label>
       <label>Expires<br><input name="expires_at" type="date" class="mw-160"></label>
@@ -391,38 +464,55 @@ page_header('Addresses');
     <div class="empty-state">No addresses in this subnet yet. <a class="action-pill" href="#add-address">+ Add Address</a></div>
   <?php else: ?>
     <div class="table-wrap">
-    <table>
+    <table data-col-table="addresses">
       <thead>
         <tr>
           <?php $addrQs = '?subnet_id=' . $selectedSubnetId . '&page_size=' . $pageSize;
-                echo sort_th('ip',       'IP',       $addrSort['col'], $addrSort['dir'], $addrQs);
-                echo sort_th('hostname', 'Hostname', $addrSort['col'], $addrSort['dir'], $addrQs);
-                echo sort_th('owner',    'Owner',    $addrSort['col'], $addrSort['dir'], $addrQs);
-                echo sort_th('status',   'Status',   $addrSort['col'], $addrSort['dir'], $addrQs);
+                echo sort_th('ip',       'IP',       $addrSort['col'], $addrSort['dir'], $addrQs, 'ip');
+                echo sort_th('hostname', 'Hostname', $addrSort['col'], $addrSort['dir'], $addrQs, 'hostname');
+                echo sort_th('owner',    'Owner',    $addrSort['col'], $addrSort['dir'], $addrQs, 'owner');
+                echo sort_th('status',   'Status',   $addrSort['col'], $addrSort['dir'], $addrQs, 'status');
           ?>
-          <th>Group</th>
-          <th>MAC</th>
-          <th>Expires</th>
-          <th>Note</th>
-          <?php echo sort_th('updated', 'Updated', $addrSort['col'], $addrSort['dir'], $addrQs); ?>
+          <th data-col="group">Group</th>
+          <th data-col="mac">MAC</th>
+          <th data-col="expires">Expires</th>
+          <th data-col="note">Note</th>
+          <?php echo sort_th('updated', 'Updated', $addrSort['col'], $addrSort['dir'], $addrQs, 'updated'); ?>
           <th>Actions</th>
         </tr>
       </thead>
       <tbody>
-      <?php foreach ($addresses as $a): $isHighlighted = $highlightId > 0 && to_int($a['id']) === $highlightId; ?>
-        <tr id="addr-<?= to_int($a['id']) ?>"<?= $isHighlighted ? ' class="highlight-row"' : '' ?>>
+      <?php
+        $isWrite = (current_user()['role'] !== 'readonly');
+        foreach ($addresses as $a):
+          $isHighlighted = $highlightId > 0 && to_int($a['id']) === $highlightId;
+          $isExpired = isset($a['expires_at']) && to_str($a['expires_at']) < date('Y-m-d');
+          $aid = to_int($a['id']);
+          $rowClasses = array_filter([$isHighlighted ? 'highlight-row' : '', $isExpired ? 'expired-row' : '']);
+      ?>
+        <tr id="addr-<?= $aid ?>"<?= $rowClasses ? ' class="' . e(implode(' ', $rowClasses)) . '"' : '' ?>>
           <td><?= e(to_str($a['ip'])) ?></td>
-          <td><?= e(to_str($a['hostname'])) ?></td>
-          <td><?= e(to_str($a['owner'])) ?></td>
+          <td<?= $isWrite ? ' data-editable="hostname" data-addr-id="' . $aid . '"' : '' ?>><?= e(to_str($a['hostname'])) ?></td>
+          <td<?= $isWrite ? ' data-editable="owner" data-addr-id="' . $aid . '"' : '' ?>><?php
+            $ownContactId    = to_int($a['owner_contact_id'] ?? 0);
+            $ownContactName  = to_str($a['owner_contact_name'] ?? '');
+            $ownContactEmail = to_str($a['owner_contact_email'] ?? '');
+            if ($ownContactId > 0 && $ownContactName !== '') {
+                echo '<a href="contacts.php">' . e($ownContactName) . '</a>';
+                if ($ownContactEmail !== '') echo ' <a href="mailto:' . e($ownContactEmail) . '" class="muted" title="' . e($ownContactEmail) . '">✉</a>';
+            } else {
+                echo e(to_str($a['owner']));
+            }
+          ?></td>
           <td><?php
             $addrStatus = e(to_str($a['status']));
-            $canToggle  = (current_user()['role'] !== 'readonly') ? ' data-addr-id="' . to_int($a['id']) . '"' : '';
+            $canToggle  = $isWrite ? ' data-addr-id="' . $aid . '"' : '';
             echo "<span class='status-badge status-{$addrStatus}'{$canToggle} title='Click to cycle status'>{$addrStatus}</span>";
           ?></td>
-          <td><?php if ($a['grp'] !== ''): ?><span class="badge"><?= e(to_str($a['grp'])) ?></span><?php endif; ?></td>
+          <td<?= $isWrite ? ' data-editable="grp" data-addr-id="' . $aid . '"' : '' ?>><?php if ($a['grp'] !== ''): ?><span class="badge"><?= e(to_str($a['grp'])) ?></span><?php endif; ?></td>
           <td class="muted"><?= e(to_str($a['mac'])) ?></td>
           <td class="muted"><?= e(to_str($a['expires_at'] ?? '')) ?></td>
-          <td><?= e(to_str($a['note'])) ?></td>
+          <td<?= $isWrite ? ' data-editable="note" data-addr-id="' . $aid . '"' : '' ?>><?= e(to_str($a['note'])) ?></td>
           <td class="muted"><?= e(to_str($a['updated_at'])) ?></td>
           <td>
             <div class="actions-inline">
@@ -440,7 +530,10 @@ page_header('Addresses');
 
                 <div class="row">
                   <label>Hostname<br><input name="hostname" maxlength="253" value="<?= e(to_str($a['hostname'])) ?>"></label>
-                  <label>Owner<br><input name="owner" maxlength="255" value="<?= e(to_str($a['owner'])) ?>"></label>
+                  <label>Owner<br>
+                    <input name="owner" maxlength="255" value="<?= e(to_str($a['owner'])) ?>" autocomplete="off" data-contact-typeahead>
+                    <input type="hidden" name="owner_contact_id" value="<?= to_int($a['owner_contact_id'] ?? 0) ?>">
+                  </label>
                   <label>Group<br><input name="grp" value="<?= e(to_str($a['grp'] ?? '')) ?>" maxlength="100" placeholder="e.g. web-tier" class="mw-160"></label>
                   <label>MAC<br><input name="mac" maxlength="64" value="<?= e(to_str($a['mac'])) ?>" placeholder="e.g. aa:bb:cc:dd:ee:ff" class="mw-160"></label>
                   <label>Expires<br><input name="expires_at" type="date" value="<?= e(to_str($a['expires_at'] ?? '')) ?>" class="mw-160"></label>
@@ -470,7 +563,7 @@ page_header('Addresses');
             </details>
           </td>
         </tr>
-      <?php endforeach; ?>
+        <?php endforeach; ?>
       </tbody>
     </table>
     </div>
