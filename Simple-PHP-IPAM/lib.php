@@ -468,9 +468,18 @@ function apply_migrations(PDO $db): array
                 sleep(1);
             }
 
+            // PRAGMA foreign_keys cannot be changed inside a transaction — it must
+            // be set here, outside BEGIN. When it is ON, SQLite executes an implicit
+            // DELETE on every row before DROP TABLE, which triggers ON DELETE CASCADE
+            // on all child tables (addresses, subnet_tags, etc.), wiping all data.
+            // Disabling it for the duration of each migration prevents that cascade.
+            // FK enforcement is restored unconditionally after the transaction ends.
+            $db->exec("PRAGMA foreign_keys = OFF");
+
             try {
                 $db->exec("BEGIN EXCLUSIVE");
             } catch (Throwable $e) {
+                $db->exec("PRAGMA foreign_keys = ON");
                 $lastErr = $e;
                 if (stripos($e->getMessage(), 'locked') !== false || stripos($e->getMessage(), 'busy') !== false) {
                     continue;
@@ -488,12 +497,14 @@ function apply_migrations(PDO $db): array
                 $lastErr = null;
             } catch (Throwable $e) {
                 try { $db->exec("ROLLBACK"); } catch (Throwable) {}
+                $db->exec("PRAGMA foreign_keys = ON");
                 $lastErr = $e;
                 if (stripos($e->getMessage(), 'locked') !== false || stripos($e->getMessage(), 'busy') !== false) {
                     continue;
                 }
                 throw $e;
             }
+            $db->exec("PRAGMA foreign_keys = ON");
         }
 
         if ($lastErr !== null) {
@@ -2666,11 +2677,11 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=2.2.0'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=2.2.1'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=2.2.0'></script>";
+    echo "<script defer src='assets/app.js?v=2.2.1'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";

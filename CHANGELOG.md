@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [2.2.1] - 2026-04-12
+
+### Fixed
+- **Critical data-loss bug** — Upgrading from any v1.x release directly to v2.1.0 or later wiped all IP addresses. Root cause: the `2.1.0-vrfs` migration rebuilds the `subnets` table (SQLite cannot drop a UNIQUE constraint in-place) by creating a new table, copying rows, dropping the old table, then renaming. With `PRAGMA foreign_keys = ON` active, SQLite executes an implicit row-by-row DELETE before dropping the parent table, which triggers `ON DELETE CASCADE` on the `addresses` table — deleting every address. Fix: `apply_migrations()` now disables FK enforcement (`PRAGMA foreign_keys = OFF`) before each migration's `BEGIN EXCLUSIVE` transaction and unconditionally re-enables it afterwards. Users already on v2.1.x are unaffected (the migration's idempotency guard exits early if the `vrf_id` column already exists); users upgrading directly from v1.x to v2.2.1 will now preserve all address data.
+
 ## [2.2.0] - 2026-04-12
 
 ### Fixed
@@ -478,6 +483,7 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[2.2.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.1.5...v2.2.0
 [2.1.5]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.1.4...v2.1.5
 [2.1.4]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.1.3...v2.1.4
