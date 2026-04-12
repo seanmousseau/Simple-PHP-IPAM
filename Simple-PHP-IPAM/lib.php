@@ -2581,11 +2581,11 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=2.1.0'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=2.1.1'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=2.1.0'></script>";
+    echo "<script defer src='assets/app.js?v=2.1.1'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
@@ -2598,8 +2598,7 @@ function page_header(string $title, array $opts = []): void
         echo "<a class='nav-pill' href='dashboard.php'>🏠 Dashboard</a>";
         echo "<a class='nav-pill' href='subnets.php'>🌐 Subnets</a>";
         echo "<a class='nav-pill' href='addresses.php'>🧾 Addresses</a>";
-        echo "<a class='nav-pill' href='search.php'>🔎 Search</a>";
-        echo "<button class='nav-pill nav-search-key' title='Quick search (Ctrl+K / \u2318K)'>\u2318K</button>";
+        echo "<a class='nav-pill nav-search-link' href='search.php'>🔎 Search <kbd class='nav-kbd'>⌘K</kbd></a>";
         echo "<a class='nav-pill' href='audit.php'>📜 Audit</a>";
         if ($role === 'admin') {
             echo "<div class='nav-dropdown'>";

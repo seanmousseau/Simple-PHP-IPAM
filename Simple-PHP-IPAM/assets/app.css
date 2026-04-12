@@ -907,8 +907,10 @@ td[data-editable].cell-saving{opacity:.5;}
   outline:none;
 }
 
-.nav-search-key{
-  font-size:.75rem;padding:2px 7px;background:none;border:1px solid var(--border);
-  border-radius:4px;cursor:pointer;color:var(--muted);line-height:1.6;
+.nav-kbd{
+  font-size:.65rem;padding:1px 5px;
+  border:1px solid currentColor;border-radius:3px;
+  opacity:.55;vertical-align:middle;margin-left:4px;
+  font-family:inherit;pointer-events:none;
 }
-.nav-search-key:hover{background:var(--btn);color:var(--btnfg);border-color:var(--btn);}
+.nav-search-link:hover .nav-kbd{opacity:.85;}
