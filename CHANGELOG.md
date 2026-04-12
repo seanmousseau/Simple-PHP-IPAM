@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [2.1.4] - 2026-04-12
+
+### Fixed
+- Migration locking (root cause): `ipam_db_init()` now calls `closeCursor()` on the `sqlite_master` check statement before running migrations. An unfinalised PDOStatement holds a WAL read mark at the **database level** — not just on the table it queried — which prevents `DROP TABLE` from entering WAL exclusive mode and causes `SQLITE_LOCKED` even in a single-process CLI context. This is the real reason v2.1.2/v2.1.3 retries all failed: the lock was intra-process, so sleeping never helped. Confirmed fix on OpenLiteSpeed (PHP 8.4).
+
 ## [2.1.3] - 2026-04-12
 
 ### Fixed
@@ -447,6 +452,7 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[2.1.4]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.1.3...v2.1.4
 [2.1.3]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.1.2...v2.1.3
 [2.1.2]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.1.1...v2.1.2
 [2.1.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.1.0...v2.1.1
