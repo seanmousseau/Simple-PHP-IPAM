@@ -736,10 +736,19 @@
             window.location.href = "search.php?q=" + encodeURIComponent(overlayInput.value.trim());
           }
         } else if (e.key === "Escape") { closeOverlay(); }
-        else if (e.key === "Tab") { closeOverlay(); }
+        else if (e.key === "Tab") {
+          e.preventDefault();
+          if (overlayClose) overlayClose.focus();
+        }
       });
 
-      if (overlayClose) overlayClose.addEventListener("click", closeOverlay);
+      if (overlayClose) {
+        overlayClose.addEventListener("click", closeOverlay);
+        overlayClose.addEventListener("keydown", function(e) {
+          if (e.key === "Tab") { e.preventDefault(); overlayInput.focus(); }
+          if (e.key === "Escape") { closeOverlay(); }
+        });
+      }
       overlay.addEventListener("mousedown", function(e) {
         if (e.target === overlay) closeOverlay();
       });

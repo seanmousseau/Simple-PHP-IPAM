@@ -49,6 +49,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $grp             = substr(trim(to_str($_POST['grp']            ?? '')), 0, 100);
         $mac             = substr(trim(to_str($_POST['mac']            ?? '')), 0, 64);
         $ownerContactId  = to_int($_POST['owner_contact_id'] ?? 0) ?: null;
+        if ($ownerContactId !== null) {
+            $cck = $db->prepare("SELECT id FROM contacts WHERE id = :id");
+            $cck->execute([':id' => $ownerContactId]);
+            if (!$cck->fetch()) $ownerContactId = null;
+        }
         $expiresAt = trim(to_str($_POST['expires_at'] ?? ''));
         if ($expiresAt !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $expiresAt)) {
             $expiresAt = '';
@@ -124,6 +129,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $grp            = substr(trim(to_str($_POST['grp']           ?? '')), 0, 100);
         $mac            = substr(trim(to_str($_POST['mac']           ?? '')), 0, 64);
         $ownerContactId = to_int($_POST['owner_contact_id'] ?? 0) ?: null;
+        if ($ownerContactId !== null) {
+            $cck = $db->prepare("SELECT id FROM contacts WHERE id = :id");
+            $cck->execute([':id' => $ownerContactId]);
+            if (!$cck->fetch()) $ownerContactId = null;
+        }
         $expiresAt = trim(to_str($_POST['expires_at'] ?? ''));
         if ($expiresAt !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $expiresAt)) {
             $expiresAt = '';
@@ -476,9 +486,11 @@ page_header('Addresses');
         $isWrite = (current_user()['role'] !== 'readonly');
         foreach ($addresses as $a):
           $isHighlighted = $highlightId > 0 && to_int($a['id']) === $highlightId;
+          $isExpired = isset($a['expires_at']) && to_str($a['expires_at']) < date('Y-m-d');
           $aid = to_int($a['id']);
+          $rowClasses = array_filter([$isHighlighted ? 'highlight-row' : '', $isExpired ? 'expired-row' : '']);
       ?>
-        <tr id="addr-<?= $aid ?>"<?= $isHighlighted ? ' class="highlight-row"' : '' ?>>
+        <tr id="addr-<?= $aid ?>"<?= $rowClasses ? ' class="' . e(implode(' ', $rowClasses)) . '"' : '' ?>>
           <td><?= e(to_str($a['ip'])) ?></td>
           <td<?= $isWrite ? ' data-editable="hostname" data-addr-id="' . $aid . '"' : '' ?>><?= e(to_str($a['hostname'])) ?></td>
           <td<?= $isWrite ? ' data-editable="owner" data-addr-id="' . $aid . '"' : '' ?>><?php

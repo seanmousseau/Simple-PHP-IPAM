@@ -496,10 +496,11 @@ uasort($siteGroups, fn($a, $b) => strcasecmp($a['label'], $b['label']));
 /**
  * @param array{byId: array<int, array<string, mixed>>, children: array<int, list<int>>} $tree
  * @param array<int, array{used: int, reserved: int, free: int, total: int}> $agg
+ * @param array<int, array{assignable_total: int, assigned_assignable: int, unassigned_assignable: int}> $unassignedAgg
  * @param list<int> $roots
  * @param array{0: int} &$count
  */
-function render_subnet_map_nodes(array $tree, array $agg, array $roots, int $depth, array &$count): void
+function render_subnet_map_nodes(array $tree, array $agg, array $unassignedAgg, array $roots, int $depth, array &$count): void
 {
     foreach ($roots as $id) {
         if ($count[0] >= 200) {
@@ -512,9 +513,13 @@ function render_subnet_map_nodes(array $tree, array $agg, array $roots, int $dep
         $count[0]++;
         /** @var array<string, mixed> $row */
         $row = $tree['byId'][$id];
-        $a   = $agg[$id] ?? ['used' => 0, 'reserved' => 0, 'free' => 0, 'total' => 0];
-        $tot = max(1, to_int($a['total']));
-        $pct = (int)round((to_int($a['used']) + to_int($a['reserved'])) / $tot * 100);
+        $u = $unassignedAgg[$id] ?? null;
+        if ($u !== null && to_int($u['assignable_total']) > 0) {
+            $pct = (int)round(to_int($u['assigned_assignable']) / to_int($u['assignable_total']) * 100);
+        } else {
+            $a   = $agg[$id] ?? ['used' => 0, 'reserved' => 0, 'free' => 0, 'total' => 0];
+            $pct = (int)round((to_int($a['used']) + to_int($a['reserved'])) / max(1, to_int($a['total'])) * 100);
+        }
         $cls = $pct >= 90 ? 'util-bar-fill--crit' : ($pct >= 75 ? 'util-bar-fill--warn' : '');
         $indent = $depth * 22;
         echo "<div class='map-node' data-indent='{$indent}'>";
@@ -526,7 +531,7 @@ function render_subnet_map_nodes(array $tree, array $agg, array $roots, int $dep
         echo "</div>";
         $children = $tree['children'][$id] ?? [];
         if ($children !== []) {
-            render_subnet_map_nodes($tree, $agg, $children, $depth + 1, $count);
+            render_subnet_map_nodes($tree, $agg, $unassignedAgg, $children, $depth + 1, $count);
         }
     }
 }
@@ -825,7 +830,7 @@ page_header('Subnets');
     <?php $mapCount = [0]; foreach ($siteGroups as $group): ?>
       <div class="map-group mb-24">
         <div class="map-group-label"><?= e(to_str($group['label'])) ?></div>
-        <?php render_subnet_map_nodes($tree, $agg, array_map('intval', $group['roots']), 0, $mapCount); ?>
+        <?php render_subnet_map_nodes($tree, $agg, $ipv4UnassignedAgg, array_map('intval', $group['roots']), 0, $mapCount); ?>
       </div>
     <?php endforeach; ?>
     </div>

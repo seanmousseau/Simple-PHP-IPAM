@@ -388,7 +388,7 @@ function ipam_migrations(): array
                     site_id     INTEGER,
                     vlan_id     INTEGER,
                     vlan_fk     INTEGER REFERENCES vlans(id) ON DELETE SET NULL,
-                    vrf_id      INTEGER REFERENCES vrfs(id) ON DELETE SET NULL,
+                    vrf_id      INTEGER REFERENCES vrfs(id) ON DELETE RESTRICT,
                     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
                     updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
                     UNIQUE(cidr, vrf_id)
