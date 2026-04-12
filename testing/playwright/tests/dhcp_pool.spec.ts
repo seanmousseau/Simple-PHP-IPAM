@@ -28,28 +28,24 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
   // Ensure the readonly test user exists (db-tools import can wipe it)
   await ensureRoUser(page);
 
-  // Ensure the test subnet exists (clean up and recreate if necessary)
+  // Ensure the test subnet exists in a clean state (delete and recreate if stale)
   await page.goto('subnets.php');
   const existingId = await subnetIdFor(page, TEST_DHCP_CIDR);
   if (existingId) {
-    // Clean up any stale reserved addresses from a previous run
-    await fetchPost(page, appUrl('dhcp_pool.php'), {
-      action:    'clear_pool',
-      subnet_id: String(existingId),
-      start_ip:  POOL_START,
-      end_ip:    POOL_END,
-    });
-    testSubnetId = existingId;
-  } else {
+    // Delete and recreate to guarantee no stale reserved addresses from any prior run
     await fetchPost(page, appUrl('subnets.php'), {
-      action:          'create',
-      cidr:            TEST_DHCP_CIDR,
-      description:     'dhcp pool spec test subnet',
-      confirm_overlap: '1',
+      action: 'delete',
+      id:     String(existingId),
     });
-    await page.goto('subnets.php');
-    testSubnetId = await subnetIdFor(page, TEST_DHCP_CIDR) ?? 0;
   }
+  await fetchPost(page, appUrl('subnets.php'), {
+    action:          'create',
+    cidr:            TEST_DHCP_CIDR,
+    description:     'dhcp pool spec test subnet',
+    confirm_overlap: '1',
+  });
+  await page.goto('subnets.php');
+  testSubnetId = await subnetIdFor(page, TEST_DHCP_CIDR) ?? 0;
 });
 
 test.afterAll(async () => {
@@ -132,7 +128,7 @@ test('dhcp_pool: reserved count matches expected range size', async () => {
   const match = headerText.match(/\((\d+)\)/);
   expect(match).not.toBeNull();
   const count = parseInt(match![1], 10);
-  expect(count).toBeGreaterThanOrEqual(11);
+  expect(count).toBe(11);
 });
 
 // ── Clear reservation ──────────────────────────────────────────────────────────
