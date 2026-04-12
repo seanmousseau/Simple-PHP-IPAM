@@ -402,6 +402,12 @@ function ipam_migrations(): array
                            site_id, vlan_id, vlan_fk, NULL, created_at, updated_at
                     FROM subnets
                 ");
+                // vlans_before_delete_cleanup_subnets fires ON vlans (not subnets), so
+                // it is NOT auto-dropped when subnets is dropped. SQLite validates trigger
+                // bodies during ALTER TABLE RENAME and will error if subnets doesn't exist
+                // at that point. Drop it explicitly here; it is recreated below.
+                $db->exec("DROP TRIGGER IF EXISTS vlans_before_delete_cleanup_subnets");
+
                 $db->exec("DROP TABLE subnets");
                 $db->exec("ALTER TABLE subnets_new RENAME TO subnets");
 
@@ -419,7 +425,7 @@ function ipam_migrations(): array
                     END
                 ");
 
-                // Recreate vlans cleanup trigger (also dropped with old subnets table)
+                // Recreate vlans cleanup trigger
                 $db->exec("
                     CREATE TRIGGER IF NOT EXISTS vlans_before_delete_cleanup_subnets
                     BEFORE DELETE ON vlans FOR EACH ROW
