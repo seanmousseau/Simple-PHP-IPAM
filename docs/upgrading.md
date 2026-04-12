@@ -87,6 +87,57 @@ The backup is left in place after a successful upgrade. You can remove it manual
 
 ---
 
+## Version-specific upgrade notes
+
+### v2.1.0
+
+**New database tables:** `vrfs`, `contacts`
+
+**Modified tables:**
+- `subnets`: the `UNIQUE(cidr)` constraint is replaced with `UNIQUE(cidr, vrf_id)` to support the same CIDR in different VRFs. Existing subnets get `vrf_id = NULL` (global VRF) — no data is lost.
+- `addresses`: new nullable column `owner_contact_id` (FK → `contacts.id`).
+
+These changes are applied automatically by `upgrade.sh` via `php migrate.php`.
+
+**New admin pages:** `vrfs.php` (VRF management), `contacts.php` (Contacts management) — both accessible from the Admin dropdown.
+
+**New config keys** added automatically by `config_auto_populate` on first boot after upgrade:
+- `api_max_attempts` (default 20)
+- `api_lockout_seconds` (default 300)
+- `api_bulk_limit` (default 500)
+- `recaptcha_enterprise` block (disabled by default)
+
+**API additions:** `resource=vrfs` (full CRUD), `resource=contacts` (CRUD + `?q=` search), `?vrf_id=` filter on subnets, `?contact_id=` filter on addresses, `owner_contact_id`/`owner_contact_name` fields in address responses, `vrf_id`/`vrf_name` fields in subnet responses, `search.php?format=json` for the ⌘K overlay.
+
+---
+
+### v2.0.0
+
+**New database tables:** `vlans`, `tags`, `subnet_tags`, `address_tags`, `alert_state`
+
+**Modified tables:**
+- `subnets`: new columns `vlan_fk` (FK → `vlans.id`), `tags` (via join table `subnet_tags`).
+- `addresses`: new columns `mac`, `expires_at`, `tags` (via join table `address_tags`).
+- `sites`: new column `parent_id` (nullable FK → `sites.id`, self-referential for region/site hierarchy).
+- `users`: new columns `name`, `email`, `last_login_at`, `password_changed_at`, `theme`.
+
+These changes are applied automatically by `upgrade.sh` via `php migrate.php`.
+
+**New admin pages:** `vlans.php` (VLAN management), `tags.php` (Tag management) — both accessible from the Admin dropdown.
+
+**New config keys** added automatically on first boot after upgrade:
+- `utilization_warn`, `utilization_critical` (subnet utilization thresholds)
+- `auto_reserve_network_broadcast` (default `true`)
+- `alert_email`, `alert_util_warn_pct`, `alert_util_crit_pct` (email alerts, disabled by default)
+- `password_policy` block
+- `login_protection` block (bot protection, disabled by default)
+- `demo_mode` block (disabled by default)
+- `oidc` block (disabled by default)
+
+**API additions:** `vlan_name` and `tags[]` on subnet responses, `tags[]` on address responses, `resource=vlans` (full CRUD), `?tag=` / `?vlan_id=` / `?parent_id=` / `?site_id=` / `?ip_version=` / `?expired=1` filters, bulk write (`POST ?resource=addresses&bulk=1` / `POST ?resource=subnets&bulk=1`).
+
+---
+
 ## CLI utilities
 
 These scripts are run from the application directory using the PHP CLI.

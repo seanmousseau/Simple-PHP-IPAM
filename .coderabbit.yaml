@@ -97,6 +97,28 @@ reviews:
         - Audit every create/update/delete with vlan.create / vlan.update / vlan.delete.
         - subnets.vlan_fk is the FK; subnets.vlan_id is the legacy integer — display both correctly.
 
+    - path: "Simple-PHP-IPAM/vrfs.php"
+      instructions: |
+        vrfs.php is the VRF (Virtual Routing and Forwarding) admin CRUD page. Key invariants:
+        - Requires admin role — call require_role('admin') at top.
+        - VRF name must be unique (UNIQUE constraint on vrfs.name).
+        - Cannot delete a VRF that has subnets assigned (check subnets.vrf_id reference).
+        - Audit every create/update/delete with vrf.create / vrf.update / vrf.delete.
+        - rd (Route Distinguisher) is free-form text, no format validation required.
+        - subnets.vrf_id = NULL means the global/default VRF (not "no VRF").
+        - UNIQUE(cidr, vrf_id) in subnets uses IS NULL comparison for NULL-safe check.
+
+    - path: "Simple-PHP-IPAM/contacts.php"
+      instructions: |
+        contacts.php is the Contacts admin CRUD page. Key invariants:
+        - Requires admin role — call require_role('admin') at top.
+        - Contact name is required; email, phone, org, note are optional free-text.
+        - Contacts are linked to addresses via addresses.owner_contact_id (nullable FK).
+        - Deleting a contact sets addresses.owner_contact_id = NULL (ON DELETE SET NULL).
+        - Audit every create/update/delete with contact.create / contact.update / contact.delete.
+        - The owner field in addresses remains free-text for backwards compatibility;
+          owner_contact_id is an optional overlay, not a replacement.
+
     - path: "Simple-PHP-IPAM/tags.php"
       instructions: |
         tags.php is the tag admin CRUD page. Key invariants:
