@@ -76,11 +76,11 @@ test('--topbar-h CSS custom property set by ResizeObserver', async () => {
   expect(topbarH).not.toBe('0px');
 });
 
-test('sticky thead has position:sticky (not per-th)', async () => {
+test('sticky thead th has position:sticky', async () => {
   await page.goto(appUrl('vrfs.php'));
-  const theads = await page.locator('thead').all();
-  if (theads.length === 0) return; // no table on this page load (empty state)
-  const pos = await theads[0].evaluate((el: Element) =>
+  const ths = await page.locator('thead th').all();
+  if (ths.length === 0) return; // no table on this page load (empty state)
+  const pos = await ths[0].evaluate((el: Element) =>
     window.getComputedStyle(el).position
   );
   expect(pos).toBe('sticky');
