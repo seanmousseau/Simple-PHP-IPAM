@@ -8,6 +8,18 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 
 ---
 
+## What's new in v2.3.0
+
+- **Network scanning** — ping sweep scanner (ICMP + TCP) implemented in pure PHP with no external dependencies; all IPs validated before use in `proc_open()` / `fsockopen()`
+- **Scan schedules** — per-subnet scan configuration (method, interval, active flag) managed via subnets page or REST API; `scan_run.php` CLI script for cron integration
+- **Auto-stale detection** — addresses that miss N consecutive scan results are automatically flagged as stale with a visible badge; clear automatically when host responds
+- **Scan history** — new `scan_history.php` page shows per-subnet scan run timeline with up/down counts, per-address last-seen timestamps, and stale badges
+- **ARP table import** — new `import_arp.php` wizard: paste ARP output in any format (space/tab/CSV, Linux `arp -a` style), preview parsed entries, apply to update MAC addresses
+- **Scan REST API** — six new endpoints: `scan_results`, `scan_history`, `scan_schedules` (GET/POST/DELETE), and `scan_run` (synchronous trigger, /28 cap)
+- **Sticky header final fix** — `syncTopbarHeight()` measures the topbar at runtime, eliminating the hard-coded 79px offset; `thead th` z-index raised to 51
+
+See [CHANGELOG.md](CHANGELOG.md) for full details.
+
 ## What's new in v2.2.0
 
 - **Sticky table headers fixed** — two CSS stacking-context bugs corrected; headers now reliably pin below the navbar on all table pages (`overflow:hidden` → `clip-path`, `overflow-y:clip` on wrapper, corrected topbar offset)

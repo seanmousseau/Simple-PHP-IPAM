@@ -184,10 +184,19 @@ match ($resource) {
         'DELETE' => api_contacts_delete($db, $apiKey, to_int($_GET['id'] ?? 0)),
         default  => api_error(405, 'Method not allowed.'),
     },
-    'search'     => $method === 'GET' ? api_search($db)       : api_error(405, 'Method not allowed.'),
-    'audit'      => $method === 'GET' ? api_audit_log($db)    : api_error(405, 'Method not allowed.'),
-    'unassigned' => $method === 'GET' ? api_unassigned($db)   : api_error(405, 'Method not allowed.'),
-    default      => api_error(404, 'Unknown resource. Valid: subnets, addresses, sites, vlans, vrfs, contacts, history, search, audit, unassigned'),
+    'search'          => $method === 'GET' ? api_search($db)            : api_error(405, 'Method not allowed.'),
+    'audit'           => $method === 'GET' ? api_audit_log($db)         : api_error(405, 'Method not allowed.'),
+    'unassigned'      => $method === 'GET' ? api_unassigned($db)        : api_error(405, 'Method not allowed.'),
+    'scan_results'    => $method === 'GET' ? api_scan_results($db)      : api_error(405, 'Method not allowed.'),
+    'scan_history'    => $method === 'GET' ? api_scan_history($db)      : api_error(405, 'Method not allowed.'),
+    'scan_schedules'  => match ($method) {
+        'GET'    => api_scan_schedules_list($db),
+        'POST'   => api_scan_schedules_save($db, $apiKey, $body),
+        'DELETE' => api_scan_schedules_delete($db, $apiKey),
+        default  => api_error(405, 'Method not allowed.'),
+    },
+    'scan_run'        => $method === 'POST' ? api_scan_run($db, $apiKey) : api_error(405, 'Method not allowed.'),
+    default      => api_error(404, 'Unknown resource. Valid: subnets, addresses, sites, vlans, vrfs, contacts, history, search, audit, unassigned, scan_results, scan_history, scan_schedules, scan_run'),
 };
 
 // ---- Helpers ----
@@ -1834,4 +1843,181 @@ function api_audit(PDO $db, array $apiKey, string $action, string $entityType, i
         ':ua'  => to_str($_SERVER['HTTP_USER_AGENT'] ?? ''),
         ':det' => $details,
     ]);
+}
+
+// ---------------------------------------------------------------------------
+// Scan API endpoints — v2.3.0
+// ---------------------------------------------------------------------------
+
+/** GET ?resource=scan_results&subnet_id=N — latest scan run for a subnet */
+function api_scan_results(PDO $db): never
+{
+    $subnetId = to_int($_GET['subnet_id'] ?? 0);
+    if ($subnetId <= 0) api_error(400, 'subnet_id is required.');
+
+    // Return results from the most recent scan run (grouped by latest scanned_at minute)
+    $st = $db->prepare("
+        SELECT r.id, r.address_id, r.ip, r.method, r.is_up, r.latency_ms, r.scanned_at
+        FROM scan_results r
+        WHERE r.subnet_id = :sid
+          AND r.scanned_at >= (
+              SELECT datetime(MAX(scanned_at), '-60 seconds') FROM scan_results WHERE subnet_id = :sid2
+          )
+        ORDER BY r.ip
+    ");
+    $st->execute([':sid' => $subnetId, ':sid2' => $subnetId]);
+    api_json($st->fetchAll());
+}
+
+/** GET ?resource=scan_history&subnet_id=N[&limit=N] — paginated scan history */
+function api_scan_history(PDO $db): never
+{
+    $subnetId = to_int($_GET['subnet_id'] ?? 0);
+    if ($subnetId <= 0) api_error(400, 'subnet_id is required.');
+    $limit = max(1, min(200, to_int($_GET['limit'] ?? 50)));
+
+    $st = $db->prepare("
+        SELECT
+            strftime('%Y-%m-%dT%H:%M:00', scanned_at) AS run_minute,
+            COUNT(*) AS total,
+            SUM(is_up) AS up_count,
+            COUNT(*) - SUM(is_up) AS down_count,
+            MIN(scanned_at) AS started_at
+        FROM scan_results
+        WHERE subnet_id = :sid
+        GROUP BY run_minute
+        ORDER BY run_minute DESC
+        LIMIT :lim
+    ");
+    $st->bindValue(':sid', $subnetId, PDO::PARAM_INT);
+    $st->bindValue(':lim', $limit,    PDO::PARAM_INT);
+    $st->execute();
+    api_json($st->fetchAll());
+}
+
+/** GET ?resource=scan_schedules[&subnet_id=N] — list scan schedules */
+function api_scan_schedules_list(PDO $db): never
+{
+    $subnetId = to_int($_GET['subnet_id'] ?? 0);
+    if ($subnetId > 0) {
+        $st = $db->prepare("SELECT * FROM scan_schedules WHERE subnet_id = :sid");
+        $st->execute([':sid' => $subnetId]);
+        $row = $st->fetch();
+        api_json($row ?: null);
+    }
+    $rows = ($db->query("SELECT * FROM scan_schedules ORDER BY subnet_id") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+    api_json($rows);
+}
+
+/**
+ * POST ?resource=scan_schedules — create or update a scan schedule
+ * @param array<string, mixed> $apiKey
+ * @param array<string, mixed> $body
+ */
+function api_scan_schedules_save(PDO $db, array $apiKey, array $body): never
+{
+    if (isset($apiKey['is_readonly']) && $apiKey['is_readonly']) {
+        api_error(403, 'Read-only API key cannot modify scan schedules.');
+    }
+    $subnetId = to_int($body['subnet_id'] ?? 0);
+    if ($subnetId <= 0) api_error(400, 'subnet_id is required.');
+
+    $subnetChk = $db->prepare("SELECT id FROM subnets WHERE id = :id");
+    $subnetChk->execute([':id' => $subnetId]);
+    if (!$subnetChk->fetch()) api_error(404, 'Subnet not found.');
+
+    $method   = to_str($body['method'] ?? 'icmp');
+    if (!in_array($method, ['icmp', 'tcp', 'both'], true)) api_error(400, "method must be icmp, tcp, or both.");
+    $tcpPort  = isset($body['tcp_port']) ? to_int($body['tcp_port']) : null;
+    if (in_array($method, ['tcp', 'both'], true)) {
+        if ($tcpPort === null || $tcpPort < 1 || $tcpPort > 65535) {
+            api_error(400, 'tcp_port must be an integer between 1 and 65535 when method is tcp or both.');
+        }
+    } else {
+        $tcpPort = null; // clear irrelevant port for icmp-only schedules
+    }
+    $interval = max(1, to_int($body['interval_minutes'] ?? 60));
+    $active   = isset($body['is_active']) ? ((bool) $body['is_active'] ? 1 : 0) : 1;
+
+    $st = $db->prepare("
+        INSERT INTO scan_schedules (subnet_id, method, tcp_port, interval_minutes, is_active, updated_at)
+        VALUES (:sid, :method, :port, :interval, :active, datetime('now'))
+        ON CONFLICT(subnet_id) DO UPDATE SET
+            method           = excluded.method,
+            tcp_port         = excluded.tcp_port,
+            interval_minutes = excluded.interval_minutes,
+            is_active        = excluded.is_active,
+            updated_at       = datetime('now')
+    ");
+    $st->execute([':sid' => $subnetId, ':method' => $method, ':port' => $tcpPort, ':interval' => $interval, ':active' => $active]);
+
+    api_audit($db, $apiKey, 'scan.schedule_update', 'subnet', $subnetId, "method=$method interval={$interval}m active=$active");
+
+    $fetch = $db->prepare("SELECT * FROM scan_schedules WHERE subnet_id = :sid");
+    $fetch->execute([':sid' => $subnetId]);
+    http_response_code(201);
+    api_json($fetch->fetch());
+}
+
+/** DELETE ?resource=scan_schedules&subnet_id=N — remove a scan schedule */
+/** @param array<string, mixed> $apiKey */
+function api_scan_schedules_delete(PDO $db, array $apiKey): never
+{
+    if (isset($apiKey['is_readonly']) && $apiKey['is_readonly']) {
+        api_error(403, 'Read-only API key cannot delete scan schedules.');
+    }
+    $subnetId = to_int($_GET['subnet_id'] ?? 0);
+    if ($subnetId <= 0) api_error(400, 'subnet_id is required.');
+
+    $st = $db->prepare("DELETE FROM scan_schedules WHERE subnet_id = :sid");
+    $st->execute([':sid' => $subnetId]);
+    if ($st->rowCount() === 0) api_error(404, 'No scan schedule found for this subnet.');
+
+    api_audit($db, $apiKey, 'scan.schedule_delete', 'subnet', $subnetId, '');
+
+    http_response_code(204);
+    exit;
+}
+
+/**
+ * POST ?resource=scan_run&subnet_id=N — trigger an immediate synchronous scan.
+ * Capped at /28 (16 IPs) to avoid HTTP timeout on large subnets.
+ * @param array<string, mixed> $apiKey
+ */
+function api_scan_run(PDO $db, array $apiKey): never
+{
+    if (isset($apiKey['is_readonly']) && $apiKey['is_readonly']) {
+        api_error(403, 'Read-only API key cannot trigger scans.');
+    }
+    $subnetId = to_int($_GET['subnet_id'] ?? 0);
+    if ($subnetId <= 0) api_error(400, 'subnet_id is required.');
+
+    // Load subnet and enforce /28 (16 addresses) cap
+    $st = $db->prepare("SELECT id, cidr, prefix FROM subnets WHERE id = :id");
+    $st->execute([':id' => $subnetId]);
+    /** @var array<string, mixed>|false $subnet */
+    $subnet = $st->fetch();
+    if (!$subnet) api_error(404, 'Subnet not found.');
+
+    if (to_int($subnet['prefix']) < 28) {
+        api_error(400, 'Synchronous scan is limited to /28 or smaller (16 IPs). Use the CLI scanner for larger subnets: php scan_run.php --subnet-id=' . $subnetId);
+    }
+
+    // Load schedule for method/port defaults
+    $schedSt = $db->prepare("SELECT method, tcp_port FROM scan_schedules WHERE subnet_id = :sid");
+    $schedSt->execute([':sid' => $subnetId]);
+    /** @var array<string, mixed>|false $sched */
+    $sched   = $schedSt->fetch();
+    $method  = $sched ? to_str($sched['method'] ?? 'icmp') : 'icmp';
+    $tcpPort = ($sched && isset($sched['tcp_port'])) ? to_int($sched['tcp_port']) : null;
+
+    $stats = ipam_scan_subnet($db, $subnetId, $method, $tcpPort);
+
+    $db->prepare("UPDATE scan_schedules SET last_run_at = datetime('now') WHERE subnet_id = :sid")
+       ->execute([':sid' => $subnetId]);
+
+    api_audit($db, $apiKey, 'scan.run', 'subnet', $subnetId,
+        "method=$method scanned={$stats['scanned']} up={$stats['up']} down={$stats['down']}");
+
+    api_json(array_merge(['subnet_id' => $subnetId, 'cidr' => to_str($subnet['cidr'] ?? '')], $stats));
 }

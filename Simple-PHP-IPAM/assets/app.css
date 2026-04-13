@@ -706,9 +706,12 @@ details > summary::-webkit-details-marker{display:none}
 .row-inline{display:flex;align-items:center;gap:6px;font-size:.9rem;cursor:pointer;padding-bottom:6px;}
 .row-inline input[type=checkbox]{width:16px;height:16px;cursor:pointer;flex-shrink:0;}
 
-/* ---- Sticky table headers (#248, #342) ---- */
-:root { --topbar-h: 79px; }
-thead th{position:sticky;top:var(--topbar-h);z-index:10;background:var(--card-2)}
+/* ---- Sticky table headers (#248, #342, #351) ---- */
+/* --topbar-h is updated dynamically by app.js on load/resize to match the actual
+   rendered topbar height, so sticky headers always pin at the correct offset.
+   z-index 51 sits above the topbar (50) so scrolled tbody rows never cover the header. */
+:root { --topbar-h: 56px; }
+thead th{position:sticky;top:var(--topbar-h);z-index:51;background:var(--card-2)}
 
 /* ---- Mobile hamburger nav (#250) ---- */
 .nav-toggle{

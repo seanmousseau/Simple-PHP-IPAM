@@ -4,7 +4,8 @@
  * Generate a large IPAM database for testing streaming export.
  * Usage: php gen_large_db.php
  *
- * Creates ~50,000 addresses, ~500 subnets, ~100,000 audit rows, ~50,000 history rows.
+ * Creates ~50,000 addresses, ~500 subnets, ~100,000 audit rows, ~50,000 history rows,
+ * ~100 scan schedules, and scan results for scheduled subnets (v2.3.0).
  * DB file: Simple-PHP-IPAM/data/ipam.sqlite
  */
 declare(strict_types=1);
@@ -417,11 +418,74 @@ for ($addrId = 1; $addrId <= $totalAddresses; $addrId++) {
 $db->commit();
 echo "Address tags applied.\n";
 
+// --- Scan schedules (v2.3.0) — ~20% of subnets have active scan schedules ---
+$scanMethods = ['icmp', 'tcp', 'both'];
+$stSched = $db->prepare("INSERT OR IGNORE INTO scan_schedules
+    (subnet_id, method, tcp_port, interval_minutes, is_active, last_run_at, created_at, updated_at)
+    VALUES (:sid, :m, :p, :iv, :a, :lr, datetime('now'), datetime('now'))");
+$schedCount = 0;
+$db->beginTransaction();
+foreach ($subnetIds as $idx => $subId) {
+    if ($idx % 5 !== 0) continue;
+    $method     = $scanMethods[$idx % count($scanMethods)];
+    $tcpPort    = ($method === 'tcp' || $method === 'both') ? 443 : null;
+    $interval   = [15, 30, 60, 120, 240][$idx % 5];
+    $isActive   = ($idx % 10 === 0) ? 0 : 1;
+    $lastRunAt  = $isActive ? date('Y-m-d H:i:s', time() - random_int(60, 86400)) : null;
+    $stSched->execute([
+        ':sid' => $subId, ':m' => $method, ':p' => $tcpPort,
+        ':iv'  => $interval, ':a' => $isActive, ':lr' => $lastRunAt,
+    ]);
+    $schedCount++;
+}
+$db->commit();
+echo "$schedCount scan schedules created.\n";
+
+// --- Scan results (v2.3.0) — recent results for scheduled subnets ---
+$stScanRes = $db->prepare("INSERT INTO scan_results
+    (subnet_id, address_id, ip, method, is_up, latency_ms, scanned_at)
+    VALUES (:sid, :aid, :ip, :m, :up, :lat, :at)");
+$scanResCount = 0;
+$db->beginTransaction();
+$schedSubnets = $db->query("SELECT subnet_id, method FROM scan_schedules LIMIT 50")->fetchAll();
+$addrFetch    = $db->prepare("SELECT id, ip FROM addresses WHERE subnet_id=? LIMIT 16");
+foreach ($schedSubnets as $sched) {
+    $addrFetch->execute([$sched['subnet_id']]);
+    $addrs = $addrFetch->fetchAll();
+    if (!$addrs) continue;
+    // 3 scan runs per subnet, 30 minutes apart
+    for ($run = 0; $run < 3; $run++) {
+        $runAt = date('Y-m-d H:i:s', time() - (($run + 1) * 1800));
+        foreach ($addrs as $addr) {
+            $isUp    = (random_int(0, 9) < 8) ? 1 : 0;
+            $latency = $isUp ? random_int(1, 120) : null;
+            $stScanRes->execute([
+                ':sid' => $sched['subnet_id'], ':aid' => $addr['id'],
+                ':ip'  => $addr['ip'],         ':m'   => $sched['method'],
+                ':up'  => $isUp,               ':lat' => $latency,
+                ':at'  => $runAt,
+            ]);
+            $scanResCount++;
+        }
+    }
+}
+$db->commit();
+echo "$scanResCount scan results created.\n";
+
+// Mark addresses that had consecutive down results as stale
+$db->query("UPDATE addresses SET is_stale=1
+    WHERE id IN (
+        SELECT address_id FROM scan_results
+        WHERE is_up=0 AND address_id IS NOT NULL
+        GROUP BY address_id HAVING COUNT(*) >= 3
+    )");
+echo "Stale addresses flagged.\n";
+
 // --- Stamp schema migrations ---
 $versions = ['0.3', '0.7', '0.9', '0.11', '0.12', '0.13', '0.14',
              '1.4', '1.9', '1.11', '1.12', '1.13', '1.19.0',
              '2.0.0-alert-state', '2.0.0-site-hierarchy', '2.0.0-tags', '2.0.0-vlans',
-             '2.1.0-contacts', '2.1.0-vrfs'];
+             '2.1.0-contacts', '2.1.0-vrfs', '2.3.0-scanning'];
 $stMig = $db->prepare("INSERT OR IGNORE INTO schema_migrations (version) VALUES (:v)");
 foreach ($versions as $v) {
     $stMig->execute([':v' => $v]);
@@ -430,7 +494,7 @@ echo count($versions) . " migration versions stamped.\n";
 
 // Final stats
 $stats = [];
-foreach (['users', 'sites', 'vrfs', 'vlans', 'contacts', 'tags', 'subnets', 'addresses', 'audit_log', 'address_history'] as $t) {
+foreach (['users', 'sites', 'vrfs', 'vlans', 'contacts', 'tags', 'subnets', 'addresses', 'audit_log', 'address_history', 'scan_schedules', 'scan_results'] as $t) {
     $stats[$t] = (int)$db->query("SELECT COUNT(*) FROM $t")->fetchColumn();
 }
 $dbSize = filesize($dbPath);

@@ -2677,11 +2677,11 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=2.2.1'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=2.3.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=2.2.1'></script>";
+    echo "<script defer src='assets/app.js?v=2.3.0'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
@@ -2710,6 +2710,7 @@ function page_header(string $title, array $opts = []): void
             echo "<a class='nav-dropdown-item' href='users.php'>👤 Users</a>";
             echo "<a class='nav-dropdown-item' href='api_keys.php'>🔑 API Keys</a>";
             echo "<a class='nav-dropdown-item' href='import_csv.php'>⬆ Import CSV</a>";
+            echo "<a class='nav-dropdown-item' href='import_arp.php'>📡 ARP Import</a>";
             echo "<a class='nav-dropdown-item' href='db_tools.php'>🗄 Database Tools</a>";
             echo "</div></div>";
         }
@@ -3280,4 +3281,300 @@ function der_len(int $len): string
     if ($len < 0x80) return chr($len);
     if ($len < 0x100) return "\x81" . chr($len);
     return "\x82" . chr($len >> 8) . chr($len & 0xFF);
+}
+
+// ---------------------------------------------------------------------------
+// Network scanning — v2.3.0 (#319, #320, #321, #322, #323, #324)
+// ---------------------------------------------------------------------------
+
+/**
+ * Probe a single IP via ICMP ping.
+ *
+ * Uses the system `ping` binary (available on Linux, macOS, BSD).
+ * The IP MUST be validated by normalize_ip() before this call is made.
+ *
+ * @return int|null  Round-trip latency in milliseconds, or null if the host
+ *                   did not respond or ICMP is unavailable (e.g. no cap_net_raw).
+ */
+function ipam_probe_icmp(string $ip, int $timeoutMs = 1000): ?int
+{
+    // Detect OS for the correct timeout flag
+    $isWindows = stripos(PHP_OS, 'WIN') === 0;
+    if ($isWindows) return null; // not supported
+
+    $isMac = stripos(PHP_OS, 'Darwin') === 0;
+    $timeoutSec = max(1, (int) round($timeoutMs / 1000));
+
+    if ($isMac) {
+        // macOS: -W <milliseconds>
+        $cmd = ['ping', '-c1', '-W' . $timeoutMs, $ip];
+    } else {
+        // Linux/BSD: -W <seconds>
+        $cmd = ['ping', '-c1', '-W' . $timeoutSec, $ip];
+    }
+
+    $desc = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+    $proc = @proc_open($cmd, $desc, $pipes);
+    if (!is_resource($proc)) return null;
+
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+
+    $start = microtime(true);
+    $exitCode = proc_close($proc);
+    $elapsed = (int) round((microtime(true) - $start) * 1000);
+
+    // Exit code 1 or 2: host down or permission denied
+    return $exitCode === 0 ? $elapsed : null;
+}
+
+/**
+ * Probe a single IP via TCP connection.
+ *
+ * The IP MUST be validated by normalize_ip() before this call is made.
+ *
+ * @return int|null  Connection latency in milliseconds, or null on failure.
+ */
+function ipam_probe_tcp(string $ip, int $port, int $timeoutMs = 1000): ?int
+{
+    $timeout = $timeoutMs / 1000.0;
+    $start = microtime(true);
+    $sock = @fsockopen($ip, $port, $errno, $errstr, $timeout);
+    if (!is_resource($sock)) return null;
+    $latency = (int) round((microtime(true) - $start) * 1000);
+    fclose($sock);
+    return $latency;
+}
+
+/**
+ * Scan all registered addresses in a subnet and persist the results.
+ *
+ * @param  string   $method   'icmp' | 'tcp' | 'both'
+ * @param  int|null $tcpPort  TCP port to probe when method is 'tcp' or 'both'
+ * @param  int      $staleThreshold  Consecutive misses before marking address stale (default: 3)
+ * @return array{scanned:int, up:int, down:int, stale_marked:int}
+ */
+function ipam_scan_subnet(PDO $db, int $subnetId, string $method, ?int $tcpPort, int $staleThreshold = 3): array
+{
+    // Normalise and validate inputs
+    if (!in_array($method, ['icmp', 'tcp', 'both'], true)) $method = 'icmp';
+    if (in_array($method, ['tcp', 'both'], true) && ($tcpPort === null || $tcpPort < 1 || $tcpPort > 65535)) {
+        // Invalid TCP port — fall back to ICMP-only to avoid false-stale marking
+        $method = 'icmp';
+        $tcpPort = null;
+    }
+    // After validation: if method needs TCP, $tcpPort is a valid port integer
+    $validTcpPort = ($method === 'tcp' || $method === 'both') ? (int) $tcpPort : 0;
+
+    // Load all addresses in the subnet
+    $st = $db->prepare("SELECT id, ip FROM addresses WHERE subnet_id = :sid ORDER BY ip_bin");
+    $st->execute([':sid' => $subnetId]);
+    $addresses = $st->fetchAll();
+
+    $stats = ['scanned' => 0, 'up' => 0, 'down' => 0, 'stale_marked' => 0];
+    $insert = $db->prepare("
+        INSERT INTO scan_results (subnet_id, address_id, ip, method, is_up, latency_ms, scanned_at)
+        VALUES (:sid, :aid, :ip, :method, :is_up, :lat, datetime('now'))
+    ");
+    $updateSeen = $db->prepare("
+        UPDATE addresses SET last_seen_at = datetime('now'), is_stale = 0 WHERE id = :id
+    ");
+
+    foreach ($addresses as $row) {
+        $ip = is_string($row['ip']) ? $row['ip'] : '';
+        $addrId = is_int($row['id']) ? $row['id'] : (int) $row['id'];
+
+        // Validate IP before any system call
+        $norm = normalize_ip($ip);
+        if ($norm === null) continue;
+        $validIp = $norm['ip'];
+
+        $latency = null;
+        $isUp = false;
+
+        if ($method === 'icmp' || $method === 'both') {
+            $lat = ipam_probe_icmp($validIp);
+            if ($lat !== null) { $latency = $lat; $isUp = true; }
+        }
+        if (($method === 'tcp' || $method === 'both') && $validTcpPort > 0 && !$isUp) {
+            $lat = ipam_probe_tcp($validIp, $validTcpPort);
+            if ($lat !== null) { $latency = $lat; $isUp = true; }
+        }
+
+        $insert->execute([
+            ':sid'    => $subnetId,
+            ':aid'    => $addrId,
+            ':ip'     => $validIp,
+            ':method' => $method,
+            ':is_up'  => $isUp ? 1 : 0,
+            ':lat'    => $latency,
+        ]);
+
+        if ($isUp) {
+            $updateSeen->execute([':id' => $addrId]);
+            $stats['up']++;
+        } else {
+            $stats['down']++;
+        }
+        $stats['scanned']++;
+    }
+
+    $stats['stale_marked'] = ipam_mark_stale_addresses($db, $subnetId, $staleThreshold);
+    return $stats;
+}
+
+/**
+ * Mark addresses stale when they missed N consecutive scans.
+ * Clears is_stale when the most recent scan result is up.
+ *
+ * @return int  Number of addresses whose is_stale flag changed.
+ */
+function ipam_mark_stale_addresses(PDO $db, int $subnetId, int $missThreshold = 3): int
+{
+    // Fetch per-address: count of recent consecutive down results
+    $st = $db->prepare("
+        SELECT a.id,
+               a.is_stale,
+               (
+                 SELECT COALESCE(SUM(CASE WHEN r.is_up = 0 THEN 1 ELSE 0 END), 0)
+                 FROM (
+                   SELECT is_up
+                   FROM scan_results
+                   WHERE address_id = a.id
+                   ORDER BY scanned_at DESC
+                   LIMIT :thresh
+                 ) r
+               ) AS recent_misses,
+               (SELECT is_up FROM scan_results WHERE address_id = a.id ORDER BY scanned_at DESC LIMIT 1) AS last_up
+        FROM addresses a
+        WHERE a.subnet_id = :sid
+    ");
+    $st->bindValue(':sid', $subnetId, PDO::PARAM_INT);
+    $st->bindValue(':thresh', $missThreshold, PDO::PARAM_INT);
+    $st->execute();
+    $rows = $st->fetchAll();
+
+    $changed = 0;
+    $updates = [];
+
+    foreach ($rows as $row) {
+        $id = (int) $row['id'];
+        $currentlyStale = (int) $row['is_stale'];
+        $misses = (int) $row['recent_misses'];
+        $lastUp = $row['last_up'];
+
+        $shouldBeStale = ($misses >= $missThreshold && $lastUp !== null && (int) $lastUp === 0) ? 1 : 0;
+
+        if ($shouldBeStale !== $currentlyStale) {
+            $updates[] = ['id' => $id, 'stale' => $shouldBeStale];
+        }
+    }
+
+    if ($updates !== []) {
+        $db->beginTransaction();
+        try {
+            $setStale = $db->prepare("UPDATE addresses SET is_stale = :stale, updated_at = datetime('now') WHERE id = :id");
+            foreach ($updates as $u) {
+                $setStale->execute([':stale' => $u['stale'], ':id' => $u['id']]);
+            }
+            $changed = count($updates);
+            // Audit with system actor (works in CLI and web contexts)
+            $u = current_user();
+            $db->prepare("INSERT INTO audit_log (user_id, username, action, entity_type, entity_id, details)
+                          VALUES (:uid, :un, 'scan.stale_update', 'subnet', :eid, :dt)")
+               ->execute([
+                   ':uid' => $u['id'] ?: null,
+                   ':un'  => $u['username'] !== '' ? $u['username'] : 'system',
+                   ':eid' => $subnetId,
+                   ':dt'  => "marked=$changed threshold=$missThreshold",
+               ]);
+            $db->commit();
+        } catch (\Throwable $e) {
+            $db->rollBack();
+            throw $e;
+        }
+    }
+
+    return $changed;
+}
+
+/**
+ * Parse a pasted ARP / neighbour table into IP+MAC pairs.
+ *
+ * Accepts common dump formats:
+ *   - `ip mac`         (space-separated, one per line)
+ *   - `ip\tmac`        (tab-separated)
+ *   - `ip,mac`         (CSV)
+ *   - `ip mac iface`   (extra columns ignored)
+ *
+ * @return list<array{ip:string, mac:string}>
+ */
+function ipam_parse_arp_table(string $raw): array
+{
+    $results = [];
+    $lines = preg_split('/\r?\n/', trim($raw));
+    if ($lines === false) return [];
+
+    foreach ($lines as $line) {
+        $line = trim($line);
+        if ($line === '' || str_starts_with($line, '#')) continue;
+
+        // Split on whitespace or commas
+        $parts = preg_split('/[\s,]+/', $line);
+        if ($parts === false || count($parts) < 2) continue;
+
+        // Find the first valid IP and first valid MAC in the parts.
+        // Strip parentheses to handle Linux `arp -a` format: hostname (ip) at mac ...
+        $foundIp = null;
+        $foundMac = null;
+        foreach ($parts as $part) {
+            $bare = trim($part, '()');
+            if ($foundIp === null && filter_var($bare, FILTER_VALIDATE_IP) !== false) {
+                $foundIp = $bare;
+            } elseif ($foundMac === null && preg_match('/^([0-9a-fA-F]{2}[:\-.]){5}[0-9a-fA-F]{2}$/', $part)) {
+                $foundMac = $part;
+            }
+            if ($foundIp !== null && $foundMac !== null) break;
+        }
+
+        if ($foundIp === null || $foundMac === null) continue;
+
+        // Validate IP through normalize_ip for canonicalization
+        $norm = normalize_ip($foundIp);
+        if ($norm === null) continue;
+
+        $results[] = ['ip' => $norm['ip'], 'mac' => $foundMac];
+    }
+    return $results;
+}
+
+/**
+ * Apply parsed ARP entries: update addresses.mac for matching IPs in a subnet.
+ *
+ * @param  list<array{ip:string, mac:string}> $entries
+ * @return array{matched:int, updated:int, skipped:int}
+ */
+function ipam_apply_arp_import(PDO $db, array $entries, int $subnetId): array
+{
+    $stats = ['matched' => 0, 'updated' => 0, 'skipped' => 0];
+    $find = $db->prepare("SELECT id, mac FROM addresses WHERE subnet_id = :sid AND ip = :ip LIMIT 1");
+    $update = $db->prepare("UPDATE addresses SET mac = :mac, updated_at = datetime('now') WHERE id = :id");
+
+    foreach ($entries as $entry) {
+        $ip  = $entry['ip'];
+        $mac = $entry['mac'];
+        if ($ip === '' || $mac === '') { $stats['skipped']++; continue; }
+
+        $find->execute([':sid' => $subnetId, ':ip' => $ip]);
+        /** @var array<string, mixed>|false $addr */
+        $addr = $find->fetch();
+        if (!$addr) { $stats['skipped']++; continue; }
+
+        $stats['matched']++;
+        if (to_str($addr['mac']) === $mac) { $stats['skipped']++; continue; }
+
+        $update->execute([':mac' => $mac, ':id' => to_int($addr['id'])]);
+        $stats['updated']++;
+    }
+    return $stats;
 }

@@ -52,7 +52,17 @@
     if (banner) banner.style.display = "none";
   }
 
+  // --- Sticky header offset: keep --topbar-h in sync with actual topbar height (#351) ---
+  function syncTopbarHeight() {
+    var topbar = document.querySelector(".topbar");
+    if (topbar) {
+      document.documentElement.style.setProperty("--topbar-h", topbar.offsetHeight + "px");
+    }
+  }
+  window.addEventListener("resize", syncTopbarHeight);
+
   document.addEventListener("DOMContentLoaded", function() {
+    syncTopbarHeight();
     updateThemeButton();
 
     // --- Theme toggle button ---
@@ -462,8 +472,13 @@
     // --- Per-user column visibility (#256) ---
     document.querySelectorAll("[data-col-table]").forEach(function(table) {
       var key    = "ipam_cols_" + table.dataset.colTable;
-      var hidden = JSON.parse(localStorage.getItem(key) || "[]");
+      var stored = localStorage.getItem(key);
       var ths    = Array.from(table.querySelectorAll("thead th[data-col]"));
+      // When no saved preference exists, use data-col-default-hidden as the initial state
+      var defaultHidden = ths
+        .filter(function(th) { return th.dataset.colDefaultHidden === "1"; })
+        .map(function(th) { return th.dataset.col; });
+      var hidden = stored !== null ? JSON.parse(stored) : defaultHidden;
       if (!ths.length) return;
 
       function setColVisible(col, visible) {

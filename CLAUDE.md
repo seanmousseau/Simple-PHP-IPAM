@@ -235,7 +235,42 @@ apikey.create       apikey.deactivate       apikey.activate      apikey.delete
 dhcp_pool.reserve   dhcp_pool.clear
 db.export           db.import               db.import_failed
 export.*            import.*
+scan.run            scan.schedule_create    scan.schedule_update   scan.schedule_delete
+address.arp_import
 ```
+
+---
+
+## Scanner (v2.3.0)
+
+### New tables
+- **`scan_schedules`** — per-subnet scan configuration: `subnet_id` (UNIQUE FK), `method` (icmp|tcp|both), `tcp_port`, `interval_minutes`, `is_active`, `last_run_at`
+- **`scan_results`** — one row per IP per scan run: `subnet_id`, `address_id` (nullable FK), `ip`, `method`, `is_up`, `latency_ms`, `scanned_at`
+
+### New columns on `addresses`
+- `last_seen_at TEXT` — datetime of last successful ping/TCP response
+- `is_stale INTEGER NOT NULL DEFAULT 0` — set by `ipam_mark_stale_addresses()`
+
+### New pages
+- `scan_history.php` — read-only scan timeline; requires `require_login()` (no admin gate)
+- `import_arp.php` — ARP import wizard; requires `require_write_access()` and CSRF
+- `scan_run.php` — CLI-only scan runner; must guard `PHP_SAPI !== 'cli'` at top
+
+### Scanner functions in lib.php
+- `ipam_probe_icmp(string $ip, int $timeoutMs): ?int` — IP **must** be pre-validated via `normalize_ip()` before this call; uses `proc_open()` with system `ping`; OS-aware flags (`-W ms` macOS, `-W s` Linux)
+- `ipam_probe_tcp(string $ip, int $port, int $timeoutMs): ?int` — IP and port **must** be validated; uses `fsockopen()`
+- `ipam_scan_subnet(PDO $db, int $subnetId, string $method, ?int $tcpPort): array` — enforces /28 cap for synchronous calls
+- `ipam_mark_stale_addresses(PDO $db, int $subnetId, int $missThreshold = 3): int` — runs in a transaction; audit logged if rows changed
+- `ipam_parse_arp_table(string $raw): array` — uses `filter_var(FILTER_VALIDATE_IP)` + MAC regex; never trusts raw input
+- `ipam_apply_arp_import(PDO $db, array $entries, int $subnetId): array` — returns `['matched', 'updated']` stats
+
+### Security patterns
+- **IP injection guard**: raw `$_GET`/`$_POST` IPs must go through `normalize_ip()` before `proc_open()`/`fsockopen()`. Semgrep rule `ipam-proc-open-safe` enforces this.
+- **CLI-only guard**: `scan_run.php` must `header('HTTP/1.1 403 Forbidden'); exit(1)` on non-CLI SAPI.
+- **Sync cap**: `api_scan_run()` checks prefix ≤ 28 and returns HTTP 400 for larger subnets.
+
+### Nav
+Admin dropdown includes **ARP Import** (`import_arp.php`). Subnet rows include a **Scan History** action pill.
 
 ---
 
@@ -290,7 +325,21 @@ semgrep --config=.semgrep/rules.yml Simple-PHP-IPAM/   # security rules (standal
 
 **PHPStan baseline (`phpstan-baseline.neon`):** Pre-existing errors are acknowledged in the baseline so CI only fails on *new* errors. The baseline is almost entirely `Variable $db/$config might not be defined` false-positives caused by PHPStan not being able to see variables injected by `require 'init.php'`. Fix baseline errors incrementally; do not add new entries to suppress real bugs.
 
-**PHPUnit tests (`tests/UtilTest.php`):** Tests covering the pure utility functions that have no DB or session dependencies: `e()`, `parse_cidr()`, `apply_prefix_mask()`, `ip_in_cidr()`, `normalize_ip()`, `ipv4_bin_to_int()`, `ipv4_int_to_bin()`, `ipam_normalise_version()`, `normalize_status()`, `ipv6_bin_increment()`. Bootstrap is `tests/bootstrap.php` which requires `lib.php` directly.
+**PHPUnit tests:**
+- `tests/UtilTest.php` — unit tests for pure utility functions that have no DB or session dependencies: `e()`, `parse_cidr()`, `apply_prefix_mask()`, `ip_in_cidr()`, `normalize_ip()`, `ipv4_bin_to_int()`, `ipv4_int_to_bin()`, `ipam_normalise_version()`, `normalize_status()`, `ipv6_bin_increment()`.
+- `tests/MigrationTest.php` — integration tests for `apply_migrations()`. Builds an in-memory SQLite database in the exact pre-`2.1.0-vrfs` schema state (subnets without `vrf_id`, 5 addresses, 18 prior migrations recorded), then runs `apply_migrations()` and asserts: addresses are preserved (the exact production data-loss scenario), subnet IDs are unchanged, the `vrf_id` column is added, addresses still JOIN to subnets, FK enforcement is re-enabled, second call is idempotent, and UNIQUE(cidr, vrf_id) is enforced for non-NULL vrf_id pairs.
+
+Bootstrap is `tests/bootstrap.php` which requires `lib.php` directly.
+
+**Migration testing pitfalls — read this before writing any migration that rebuilds a table:**
+
+1. **`DROP TABLE` with `PRAGMA foreign_keys = ON` cascades child rows.** SQLite executes an implicit row-by-row DELETE before physically dropping the table. Any child table with `ON DELETE CASCADE` (e.g. `addresses`, `subnet_tags`, `alert_state`) will have all its rows deleted. This is the root cause of the v2.2.1 data-loss bug where every upgrade from v1.x wiped all IP addresses. Fix: `apply_migrations()` disables FK enforcement (`PRAGMA foreign_keys = OFF`) before each migration's `BEGIN EXCLUSIVE` and restores it unconditionally in all exit paths.
+
+2. **`PRAGMA foreign_keys` cannot be changed inside a transaction.** The PRAGMA must be set *outside* `BEGIN`/`COMMIT`. Setting it after `BEGIN EXCLUSIVE` has no effect — the transaction runs with whatever FK state was active before `BEGIN`. Always set the PRAGMA, then begin the transaction.
+
+3. **`ALTER TABLE t RENAME TO t_old` in SQLite ≥3.26 rewrites child FK references.** After renaming `subnets` to `subnets_old`, the `addresses` table's FK is automatically rewritten to reference `subnets_old`. Dropping `subnets_old` still cascades. The `PRAGMA legacy_alter_table = ON` workaround was tested and does not reliably prevent this. The only safe approach is to disable FK enforcement before the transaction (point 1 above).
+
+4. **SQLite UNIQUE treats NULLs as distinct.** `UNIQUE(cidr, vrf_id)` does NOT prevent two rows with the same `cidr` and both `vrf_id = NULL` — SQLite considers each NULL distinct from every other value (SQL standard). The meaningful constraint is that two subnets cannot share the same CIDR within the same named (non-NULL) VRF. When testing UNIQUE constraints involving nullable FK columns, always use a non-NULL value.
 
 **PHPCS style exclusions** (see `.phpcs.xml` comments for rationale):
 - Inline control structures without braces — established codebase style

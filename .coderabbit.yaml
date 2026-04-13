@@ -74,8 +74,10 @@ reviews:
 
     - path: "tests/**"
       instructions: |
-        PHPUnit tests cover pure utility functions in lib.php only (no DB, no session).
-        Do not add tests that require database connections or HTTP calls.
+        PHPUnit tests cover pure utility functions and DB-backed helpers in lib.php.
+        In-memory SQLite (PDO 'sqlite::memory:') is permitted and used in both MigrationTest.php
+        and ScannerTest.php — do not flag these as guideline violations.
+        Do not add tests that require live network calls or an external HTTP server.
 
     - path: "testing/playwright/**"
       instructions: |
@@ -192,6 +194,49 @@ reviews:
         - Tags are linked to subnets/addresses via subnet_tags/address_tags join tables.
         - Audit every create/update/delete with tag.create / tag.update / tag.delete.
         - ON DELETE CASCADE handles join table cleanup automatically; no need to manually delete rows.
+
+    - path: "Simple-PHP-IPAM/scan_run.php"
+      instructions: |
+        scan_run.php is a CLI-only script. Key invariants:
+        - Must check PHP_SAPI === 'cli' at the very top and return HTTP 403 + exit for web requests.
+        - Loads config.php and lib.php directly — does NOT use init.php (no session, no web context).
+        - IP arguments passed to ipam_scan_subnet() / ipam_probe_icmp() / ipam_probe_tcp() must come
+          from the database (addresses.ip), never from raw CLI arguments without validation.
+        - Must NOT output HTML — only plain text and JSON to stdout.
+        - stdout JSON summary must be valid JSON for cron job parsing.
+
+    - path: "Simple-PHP-IPAM/scan_history.php"
+      instructions: |
+        scan_history.php is a read-only view page. Key invariants:
+        - Requires login but NOT admin role — call require_login() only.
+        - All user-controlled output (e.g. ?subnet_id= rendered in HTML) must go through e().
+        - Never expose raw binary ip_bin data — always convert with inet_ntop().
+        - Query scan_results table with subnet_id filter and ORDER BY scanned_at DESC; limit results.
+
+    - path: "Simple-PHP-IPAM/import_arp.php"
+      instructions: |
+        import_arp.php is a write-access page for ARP table import. Key invariants:
+        - Requires write role — call require_write_access() at top.
+        - CSRF protection is mandatory — call csrf_require() on every POST.
+        - All output from parsed ARP data (IPs, MACs) must go through e() before echoing.
+        - Two-step flow: action=preview returns parsed table; action=apply calls ipam_apply_arp_import().
+        - Audit the apply action with address.arp_import action string.
+
+    - path: "Simple-PHP-IPAM/lib.php"
+      instructions: |
+        lib.php contains all shared functions including the v2.3.0 scanner utilities. Additional
+        invariants for scanner functions:
+        - ipam_probe_icmp(): IP argument must already be validated by normalize_ip() before this
+          function is called. The function itself calls proc_open() with the ping binary. Ping flags
+          differ by OS — use PHP_OS to detect macOS vs Linux and choose the correct -W/-c flags.
+        - ipam_probe_tcp(): IP and port must be validated before calling fsockopen(). Port must be
+          an integer in 1–65535 range.
+        - ipam_scan_subnet(): enforces /28 prefix cap for synchronous HTTP-triggered scans; CLI
+          scanner (scan_run.php) bypasses this cap.
+        - ipam_mark_stale_addresses(): must run inside a transaction; must audit the stale update
+          if any rows are changed.
+        - ipam_parse_arp_table(): must use filter_var(FILTER_VALIDATE_IP) for IP validation; must
+          use a MAC regex for MAC validation — never trust raw input.
 
   tools:
     github-checks:

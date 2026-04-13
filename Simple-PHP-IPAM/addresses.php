@@ -315,7 +315,8 @@ if ($selectedSubnetId > 0) {
     $p = paginate($total, $page, $pageSize);
 
     $st = $db->prepare("SELECT a.id, a.ip, a.hostname, a.owner, a.note, a.grp, a.mac, a.expires_at, a.status, a.updated_at,
-                               a.owner_contact_id, c.name AS owner_contact_name, c.email AS owner_contact_email
+                               a.owner_contact_id, c.name AS owner_contact_name, c.email AS owner_contact_email,
+                               a.last_seen_at, a.is_stale
                         FROM addresses a
                         LEFT JOIN contacts c ON c.id = a.owner_contact_id
                         WHERE a.subnet_id = :sid
@@ -478,6 +479,7 @@ page_header('Addresses');
           <th data-col="expires">Expires</th>
           <th data-col="note">Note</th>
           <?php echo sort_th('updated', 'Updated', $addrSort['col'], $addrSort['dir'], $addrQs, 'updated'); ?>
+          <th data-col="last-seen" data-col-default-hidden="1">Last Seen</th>
           <th>Actions</th>
         </tr>
       </thead>
@@ -491,7 +493,9 @@ page_header('Addresses');
           $rowClasses = array_filter([$isHighlighted ? 'highlight-row' : '', $isExpired ? 'expired-row' : '']);
       ?>
         <tr id="addr-<?= $aid ?>"<?= $rowClasses ? ' class="' . e(implode(' ', $rowClasses)) . '"' : '' ?>>
-          <td><?= e(to_str($a['ip'])) ?></td>
+          <td><?= e(to_str($a['ip'])) ?>
+            <?php if (!empty($a['is_stale'])): ?><span class="badge" style="background:var(--danger);color:#fff;font-size:.7rem" title="Host missed recent scans">Stale</span><?php endif ?>
+          </td>
           <td<?= $isWrite ? ' data-editable="hostname" data-addr-id="' . $aid . '"' : '' ?>><?= e(to_str($a['hostname'])) ?></td>
           <td<?= $isWrite ? ' data-editable="owner" data-addr-id="' . $aid . '"' : '' ?>><?php
             $ownContactId    = to_int($a['owner_contact_id'] ?? 0);
@@ -514,6 +518,7 @@ page_header('Addresses');
           <td class="muted"><?= e(to_str($a['expires_at'] ?? '')) ?></td>
           <td<?= $isWrite ? ' data-editable="note" data-addr-id="' . $aid . '"' : '' ?>><?= e(to_str($a['note'])) ?></td>
           <td class="muted"><?= e(to_str($a['updated_at'])) ?></td>
+          <td data-col="last-seen" class="muted"><?= isset($a['last_seen_at']) && to_str($a['last_seen_at']) !== '' ? e(to_str($a['last_seen_at'])) : '—' ?></td>
           <td>
             <div class="actions-inline">
               <a href="address_history.php?address_id=<?= to_int($a['id']) ?>">History</a>
