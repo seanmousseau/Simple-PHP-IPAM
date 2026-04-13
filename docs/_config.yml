@@ -1,0 +1,32 @@
+title: Simple PHP IPAM
+description: Lightweight IPv4/IPv6 address management — PHP 8.2+, SQLite, zero runtime dependencies.
+theme: minima
+remote_theme: ""
+
+# GitHub Pages source
+baseurl: "/Simple-PHP-IPAM"
+url: "https://seanmousseau.github.io"
+
+# Navigation
+header_pages:
+  - index.md
+  - install.md
+  - configuration.md
+  - scanning.md
+  - advanced-networking.md
+  - api.md
+  - oidc.md
+  - security.md
+  - upgrading.md
+
+# Markdown settings
+markdown: kramdown
+kramdown:
+  input: GFM
+  syntax_highlighter: rouge
+
+# Exclude build artifacts
+exclude:
+  - "*.sh"
+  - Gemfile
+  - Gemfile.lock

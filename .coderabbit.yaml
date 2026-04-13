@@ -164,6 +164,59 @@ reviews:
         - vlan_id must be between 1 and 4094 (enforced by DB CHECK constraint too).
         - Audit every create/update/delete with vlan.create / vlan.update / vlan.delete.
         - subnets.vlan_fk is the FK; subnets.vlan_id is the legacy integer — display both correctly.
+        - v2.4.0 adds VLAN ranges (vlan_ranges table). The ranges query is wrapped in a try/catch
+          to handle pre-migration databases gracefully. Range actions are create_range, update_range,
+          delete_range. Audit with vlan.range_create / vlan.range_update / vlan.range_delete.
+
+    - path: "Simple-PHP-IPAM/aggregates.php"
+      instructions: |
+        aggregates.php is the aggregate/supernet CRUD page. Key invariants:
+        - Requires admin role — call require_role('admin') at top.
+        - CIDR is validated and normalised via parse_cidr(); host bits are zeroed on save.
+        - network_bin is a raw binary blob (inet_pton output) — must not treat as UTF-8 string.
+        - Audit every create/update/delete with aggregate.create / aggregate.update / aggregate.delete.
+        - Subnet coverage count is a heuristic (prefix >= aggregate prefix, same ip_version),
+          not a containment check — document this limitation.
+
+    - path: "Simple-PHP-IPAM/pd_pools.php"
+      instructions: |
+        pd_pools.php is the IPv6 Prefix Delegation pool management page. Key invariants:
+        - Requires admin role — call require_role('admin') at top.
+        - Parent subnet must be IPv6 (check ip_version = 6 before creating a pool).
+        - delegation_prefix must be between 1 and 128 (enforced by DB CHECK constraint too).
+        - One pool per subnet (UNIQUE(parent_subnet_id) on pd_pools).
+        - Delegated CIDR must be an IPv6 CIDR (validate via parse_cidr() and check version === 6).
+        - expires_at is nullable YYYY-MM-DD — never set to empty string in DB (use null).
+        - Audit: pd_pool.create / pd_pool.delete / pd_pool.delegate / pd_pool.revoke.
+
+    - path: "Simple-PHP-IPAM/export_dns.php"
+      instructions: |
+        export_dns.php produces BIND-format zone file downloads. Key invariants:
+        - Requires login (any role) — call require_login() at top.
+        - subnet_id comes from GET and must be validated; resolve subnet from DB (never trust the URL).
+        - No HTML output — sets Content-Type: text/plain for the download.
+        - IPv4 PTR origin derived from network octets and prefix length (octet-aligned).
+        - IPv6 PTR uses nibble format (one hex digit per label) with ip6.arpa. suffix.
+        - All hostname values echoed into zone output must be sanitised (strip CR/LF characters
+          to prevent zone file injection).
+
+    - path: "Simple-PHP-IPAM/ping_host.php"
+      instructions: |
+        ping_host.php is a POST-only AJAX endpoint for live address pinging. Key invariants:
+        - Requires login (any role, including readonly — non-destructive operation).
+        - Manual CSRF check returning JSON (not csrf_require() which outputs HTML on failure).
+        - IP is always resolved from the DB by address_id — NEVER accept raw IP from the request.
+        - IP must go through normalize_ip() before being passed to ipam_probe_icmp().
+        - Response is always JSON: {"up":true,"latency_ms":N}, {"up":false}, or {"error":"..."}.
+
+    - path: "Simple-PHP-IPAM/cron.php"
+      instructions: |
+        cron.php is a CLI-only housekeeping runner. Key invariants:
+        - Must check PHP_SAPI === 'cli' at the very top; return HTTP 403 + exit for web requests.
+        - Loads config.php and lib.php directly — does NOT use init.php (no session, no web context).
+        - Outputs one JSON object per task to stdout (JSONL format); errors go to stderr.
+        - Each task is wrapped in try/catch(Throwable); failure sets exit code 1 but continues.
+        - Exit code: 0 on full success, 1 if any task raised an exception.
 
     - path: "Simple-PHP-IPAM/vrfs.php"
       instructions: |

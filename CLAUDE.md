@@ -14,7 +14,7 @@ Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application bu
 
 The web root is `Simple-PHP-IPAM/` (subdirectory, not the repo root). Key files in it: `init.php` (bootstrap), `lib.php` (all shared functions), `migrations.php` (schema migrations), `schema.sql` (fresh-install schema), `version.php` (`IPAM_VERSION` constant), `config.php` (user-editable config), `assets/app.css` + `assets/app.js` (all CSS/JS), `upgrade.sh` (upgrade script). Runtime data lives in `data/` (gitignored): `data/ipam.sqlite` and `data/tmp/` (caches, temp uploads).
 
-Other top-level directories: `testing/` (API test suite and sample datasets), `releases/` (release bundle builder), `docs/` (api.md, configuration.md, install.md, oidc.md, security.md, upgrading.md), `tests/` (PHPUnit unit tests).
+Other top-level directories: `testing/` (API test suite and sample datasets), `releases/` (release bundle builder), `docs/` (api.md, advanced-networking.md, configuration.md, install.md, oidc.md, scanning.md, security.md, upgrading.md; plus `_config.yml` and `index.md` for GitHub Pages), `tests/` (PHPUnit unit tests).
 
 Dev tooling at the repo root (not deployed): `composer.json`, `composer.lock`, `phpstan.neon`, `phpstan-baseline.neon`, `.phpcs.xml`, `phpunit.xml`. Run `composer install` once to install tools into `vendor/` (gitignored).
 
@@ -36,8 +36,10 @@ Dev tooling at the repo root (not deployed): `composer.json`, `composer.lock`, `
 | `dhcp_pool.php` | yes | write | DHCP pool reservation tool |
 | `import_csv.php` | yes | admin | CSV import wizard |
 | `sites.php` | yes | admin | Site management (supports parent site / region hierarchy) |
-| `vlans.php` | yes | admin | VLAN management (first-class VLAN objects, linked to subnets via `vlan_fk`) |
-| `vrfs.php` | yes | admin | VRF management (Virtual Routing and Forwarding; admin CRUD) |
+| `vlans.php` | yes | admin | VLAN management (first-class VLAN objects, linked to subnets via `vlan_fk`); includes VLAN ranges section (v2.4.0) |
+| `vrfs.php` | yes | admin | VRF management (Virtual Routing and Forwarding; admin CRUD); includes BGP attributes (ASN, RT import/export, enforce_unique) (v2.4.0) |
+| `aggregates.php` | yes | admin | Aggregate/supernet CRUD — RIR-assigned blocks, IPv4 and IPv6 (v2.4.0) |
+| `pd_pools.php` | yes | admin | IPv6 Prefix Delegation pool management (RFC 3633); per-pool delegation list with subscriber linking and expiry (v2.4.0) |
 | `contacts.php` | yes | admin | Contact management (first-class contact records linked to addresses via `owner_contact_id`) |
 | `tags.php` | yes | admin | Tag management (colour-coded tags attached to subnets and addresses) |
 | `users.php` | yes | admin | User management |
@@ -52,6 +54,9 @@ Dev tooling at the repo root (not deployed): `composer.json`, `composer.lock`, `
 | `demo_reset.php` | CLI | — | Resets demo database to seed data (nightly cron) |
 | `demo_seed.php` | CLI | — | Seeds demo data into database |
 | `export_addresses.php` | yes | any/write | CSV export: single subnet (any role) or all subnets cross-subnet (write role) |
+| `export_dns.php` | yes | any | BIND-format DNS zone file export (A/AAAA + PTR) for a single subnet (v2.4.0) |
+| `ping_host.php` | yes | any | AJAX POST: ICMP probe a single address by ID; returns latency or down status (v2.4.0) |
+| `cron.php` | CLI | — | Unified housekeeping cron runner: temp cleanup, audit pruning, history pruning, utilisation alerts, DB backup (v2.4.0) |
 | `export_address_history.php` | yes | any | CSV export: per-address change history |
 | `export_subnet_utilization.php` | yes | any | CSV export: subnet utilization summary across all subnets |
 | export_audit.php, export_search.php, export_subnets.php, export_unassigned.php, export_import_report.php | yes | any | Other CSV export endpoints |

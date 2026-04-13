@@ -252,7 +252,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         audit($db, 'scan.schedule_update', 'subnet', $id,
             "method=$method interval={$intervalMins}m active=$isActive");
         flash_set('Scan schedule saved.');
-        header('Location: subnets.php');
+        header('Location: scan_history.php?subnet_id=' . $id);
         exit;
     } elseif ($action === 'delete_scan_schedule') {
         require_write_access();
@@ -260,7 +260,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $db->prepare("DELETE FROM scan_schedules WHERE subnet_id = :sid")->execute([':sid' => $id]);
         audit($db, 'scan.schedule_delete', 'subnet', $id, '');
         flash_set('Scan schedule removed.');
-        header('Location: subnets.php');
+        header('Location: scan_history.php?subnet_id=' . $id);
         exit;
     }
 }
@@ -733,47 +733,13 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
     echo "<button type='submit' class='button-danger' $disabled>Delete</button>";
     echo "</form>";
 
-    // Scan schedule form (write role only)
-    if (current_user()['role'] !== 'readonly') {
-        $hasSched   = $row['scan_method'] !== null;
-        $scanActive = (bool)($row['scan_active'] ?? false);
-        $scanMethod = to_str($row['scan_method'] ?? 'icmp');
-        $scanPort   = to_int($row['scan_tcp_port'] ?? 0);
-        $scanInt    = to_int($row['scan_interval'] ?? 60);
-        $lastRun    = to_str($row['scan_last_run_at'] ?? '');
-
-        echo "<details class='mt-8'><summary style='cursor:pointer;font-weight:600'>📡 Scan Schedule"
-           . ($hasSched && $scanActive ? " <span class='badge' style='background:var(--success);color:#fff'>Active</span>" : "")
-           . ($hasSched && !$scanActive ? " <span class='badge'>Inactive</span>" : "")
-           . ($lastRun !== '' ? " <span class='muted' style='font-weight:normal;font-size:.8rem'>Last run: " . e($lastRun) . "</span>" : "")
-           . "</summary>";
-        echo "<form method='post' action='subnets.php' class='row mt-8' style='flex-wrap:wrap;gap:10px;align-items:flex-end'>";
-        echo "<input type='hidden' name='csrf' value='" . e(csrf_token()) . "'>";
-        echo "<input type='hidden' name='action' value='save_scan_schedule'>";
-        echo "<input type='hidden' name='id' value='" . to_int($row['id']) . "'>";
-        echo "<label>Method<br><select name='scan_method'>";
-        foreach (['icmp' => 'ICMP ping', 'tcp' => 'TCP connect', 'both' => 'ICMP + TCP'] as $v => $lbl) {
-            $sel = $scanMethod === $v ? ' selected' : '';
-            echo "<option value='" . e($v) . "'$sel>" . e($lbl) . "</option>";
-        }
-        echo "</select></label>";
-        echo "<label>TCP Port<br><input type='number' name='scan_tcp_port' min='1' max='65535' value='" . ($scanPort > 0 ? $scanPort : '') . "' placeholder='e.g. 22' style='width:90px'></label>";
-        echo "<label>Interval (min)<br><input type='number' name='scan_interval' min='1' max='1440' value='" . ($scanInt > 0 ? $scanInt : 60) . "' style='width:80px'></label>";
-        echo "<label style='display:flex;align-items:center;gap:6px;padding-top:20px'>"
-           . "<input type='checkbox' name='scan_active' value='1'" . ($hasSched && $scanActive ? ' checked' : '') . "> Active</label>";
-        echo "<div style='padding-top:16px'><button type='submit'>Save Schedule</button>";
-        if ($hasSched) {
-            echo "</div></form>";
-            echo "<form method='post' action='subnets.php' class='mt-4' data-confirm='Remove scan schedule for this subnet?'>";
-            echo "<input type='hidden' name='csrf' value='" . e(csrf_token()) . "'>";
-            echo "<input type='hidden' name='action' value='delete_scan_schedule'>";
-            echo "<input type='hidden' name='id' value='" . to_int($row['id']) . "'>";
-            echo "<button type='submit' class='button-secondary'>Remove Schedule</button>";
-        } else {
-            echo "</div></form>";
-        }
-        echo "</details>";
-    }
+    // Scan schedule is now managed on scan_history.php (#356)
+    $hasSched   = $row['scan_method'] !== null;
+    $scanActive = (bool)($row['scan_active'] ?? false);
+    $schedLabel = $hasSched
+        ? ($scanActive ? " <span class='badge' style='background:var(--success);color:#fff'>Active</span>" : " <span class='badge'>Inactive</span>")
+        : '';
+    echo "<a href='scan_history.php?subnet_id=" . to_int($row['id']) . "' class='action-pill mt-8'>📡 Scan History &amp; Schedule" . $schedLabel . "</a>";
 
     if (current_user()['role'] === 'readonly') {
         echo "<p class='muted'>Read-only account.</p>";

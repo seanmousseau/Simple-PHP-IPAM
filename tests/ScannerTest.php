@@ -177,6 +177,64 @@ class ScannerTest extends TestCase
     }
 
     // -----------------------------------------------------------------------
+    // ipam_probe_icmp() RTT parsing tests (no live network calls)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Verify that the RTT regex matches Linux ping output format.
+     */
+    public function testProbeIcmpRttRegexMatchesLinuxFormat(): void
+    {
+        // Replicate the regex used in ipam_probe_icmp()
+        $stdout = "PING 10.0.0.1 (10.0.0.1) 56(84) bytes of data.\n"
+            . "64 bytes from 10.0.0.1: icmp_seq=1 ttl=64 time=1.23 ms\n\n"
+            . "--- 10.0.0.1 ping statistics ---\n"
+            . "1 packets transmitted, 1 received, 0% packet loss, time 0ms\n"
+            . "rtt min/avg/max/mdev = 1.230/1.230/1.230/0.000 ms\n";
+
+        $this->assertSame(1, preg_match('/time[=<]([\d.]+)\s*ms/i', $stdout, $m));
+        $this->assertSame(1, (int) round((float) $m[1])); // 1.23 rounds to 1
+    }
+
+    /**
+     * Verify that the RTT regex matches macOS ping output format.
+     */
+    public function testProbeIcmpRttRegexMatchesMacFormat(): void
+    {
+        $stdout = "PING 10.0.0.1 (10.0.0.1): 56 data bytes\n"
+            . "64 bytes from 10.0.0.1: icmp_seq=0 ttl=64 time=0.456 ms\n\n"
+            . "--- 10.0.0.1 ping statistics ---\n"
+            . "1 packets transmitted, 1 packets received, 0.0% packet loss\n"
+            . "round-trip min/avg/max/stddev = 0.456/0.456/0.456/0.000 ms\n";
+
+        $this->assertSame(1, preg_match('/time[=<]([\d.]+)\s*ms/i', $stdout, $m));
+        $this->assertSame(0, (int) round((float) $m[1])); // 0.456 rounds to 0
+    }
+
+    /**
+     * Verify the RTT regex matches "time<1 ms" format (sub-millisecond responses).
+     */
+    public function testProbeIcmpRttRegexMatchesSubMillisecondFormat(): void
+    {
+        $stdout = "64 bytes from 127.0.0.1: icmp_seq=1 ttl=64 time<1 ms\n";
+
+        $this->assertSame(1, preg_match('/time[=<]([\d.]+)\s*ms/i', $stdout, $m));
+        $this->assertSame(1, (int) round((float) $m[1]));
+    }
+
+    /**
+     * Verify no RTT match on empty or error output (host down case).
+     */
+    public function testProbeIcmpRttRegexNoMatchOnEmptyOutput(): void
+    {
+        $stdout = '';
+        $this->assertSame(0, preg_match('/time[=<]([\d.]+)\s*ms/i', $stdout, $m));
+
+        $stdout = "From 10.0.0.1 icmp_seq=1 Destination Host Unreachable\n";
+        $this->assertSame(0, preg_match('/time[=<]([\d.]+)\s*ms/i', $stdout, $m));
+    }
+
+    // -----------------------------------------------------------------------
     // ipam_mark_stale_addresses() tests
     // -----------------------------------------------------------------------
 

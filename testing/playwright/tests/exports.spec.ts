@@ -111,3 +111,36 @@ test('export search: contains mac/expires_at columns', async () => {
   expect(r.body.toLowerCase()).toContain('mac');
   expect(r.body.toLowerCase()).toContain('expires_at');
 });
+
+test('export DNS forward zone: returns text with A records', async () => {
+  if (!subnetId) { test.skip(); return; }
+  await page.goto(`addresses.php?subnet_id=${subnetId}`);
+  const r = await fetchGet(page, appUrl(`export_dns.php?subnet_id=${subnetId}&type=forward`));
+  expect(r.status).toBe(200);
+  expect(r.contentType.toLowerCase()).toContain('text');
+  // Should contain BIND directives
+  expect(r.body).toContain('$TTL');
+  // Should have at least a comment line with the CIDR
+  expect(r.body).toContain(TEST_CIDR2.split('/')[0]);
+});
+
+test('export DNS reverse zone: returns text with PTR $ORIGIN', async () => {
+  if (!subnetId) { test.skip(); return; }
+  const r = await fetchGet(page, appUrl(`export_dns.php?subnet_id=${subnetId}&type=reverse`));
+  expect(r.status).toBe(200);
+  expect(r.contentType.toLowerCase()).toContain('text');
+  expect(r.body).toContain('in-addr.arpa');
+});
+
+test('export DNS both: contains forward and reverse sections', async () => {
+  if (!subnetId) { test.skip(); return; }
+  const r = await fetchGet(page, appUrl(`export_dns.php?subnet_id=${subnetId}&type=both`));
+  expect(r.status).toBe(200);
+  expect(r.body).toContain('$TTL');
+  expect(r.body).toContain('in-addr.arpa');
+});
+
+test('export DNS missing subnet_id returns 400', async () => {
+  const r = await fetchGet(page, appUrl('export_dns.php'));
+  expect(r.status).toBe(400);
+});

@@ -151,6 +151,35 @@ if (!function_exists('to_str')) {
     }
 }
 
+/* ---------------- Timestamp display ---------------- */
+
+/**
+ * Convert a UTC SQLite timestamp string to the configured timezone for display.
+ *
+ * All timestamps are stored as UTC ('YYYY-MM-DD HH:MM:SS'). This helper converts
+ * them to the timezone configured in config.php['timezone'] (default 'UTC').
+ * Apply to every timestamp echo in the UI rather than using the raw DB value.
+ *
+ * @param  string $utcStr  UTC datetime string from the database, or empty string.
+ * @param  string $format  PHP date() format string. Defaults to 'Y-m-d H:i:s'.
+ * @return string          Formatted datetime in the configured timezone, or '' if input is empty.
+ */
+function display_datetime(string $utcStr, string $format = 'Y-m-d H:i:s'): string
+{
+    if ($utcStr === '') return '';
+    try {
+        $dt = new DateTime($utcStr, new DateTimeZone('UTC'));
+        /** @var IpamConfig $gConf */
+        $gConf = $GLOBALS['config'];
+        $tz = to_str($gConf['timezone'] ?? 'UTC');
+        if ($tz === '') $tz = 'UTC';
+        $dt->setTimezone(new DateTimeZone($tz));
+        return $dt->format($format);
+    } catch (\Exception) {
+        return $utcStr; // return raw value on parse failure
+    }
+}
+
 /* ---------------- CSRF ---------------- */
 
 function csrf_token(): string
@@ -540,6 +569,12 @@ function ipam_config_defaults(): array
         'app_name' => [
             'default' => 'Simple PHP IPAM',
             'comment' => "Application display name shown in the browser tab, nav bar, and login page. Default: 'Simple PHP IPAM'.",
+        ],
+        'timezone' => [
+            'default' => 'UTC',
+            'comment' => "Timezone for displaying timestamps in the UI. Use a PHP timezone identifier, "
+                       . "e.g. 'America/Toronto', 'Europe/London', 'UTC'. "
+                       . "All timestamps are stored in UTC; this setting converts them for display only.",
         ],
         'bootstrap_admin' => ['default' => null, 'comment' => ''],
         'session_idle_seconds' => ['default' => null, 'comment' => ''],
@@ -2677,11 +2712,11 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=2.3.0'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=2.4.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=2.3.0'></script>";
+    echo "<script defer src='assets/app.js?v=2.4.0'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
@@ -2705,6 +2740,8 @@ function page_header(string $title, array $opts = []): void
             echo "<a class='nav-dropdown-item' href='sites.php'>📍 Sites</a>";
             echo "<a class='nav-dropdown-item' href='vrfs.php'>🌐 VRFs</a>";
             echo "<a class='nav-dropdown-item' href='vlans.php'>🏷 VLANs</a>";
+            echo "<a class='nav-dropdown-item' href='aggregates.php'>🗂 Aggregates</a>";
+            echo "<a class='nav-dropdown-item' href='pd_pools.php'>🔷 PD Pools</a>";
             echo "<a class='nav-dropdown-item' href='tags.php'>🔖 Tags</a>";
             echo "<a class='nav-dropdown-item' href='contacts.php'>📇 Contacts</a>";
             echo "<a class='nav-dropdown-item' href='users.php'>👤 Users</a>";
@@ -3293,8 +3330,10 @@ function der_len(int $len): string
  * Uses the system `ping` binary (available on Linux, macOS, BSD).
  * The IP MUST be validated by normalize_ip() before this call is made.
  *
- * @return int|null  Round-trip latency in milliseconds, or null if the host
- *                   did not respond or ICMP is unavailable (e.g. no cap_net_raw).
+ * @return int|null  Round-trip latency in milliseconds parsed from ping output,
+ *                   or null if the host did not respond or ICMP is unavailable.
+ *                   Returns null and emits an error_log entry when CAP_NET_RAW
+ *                   is missing (ping exit code 2 — permission denied).
  */
 function ipam_probe_icmp(string $ip, int $timeoutMs = 1000): ?int
 {
@@ -3317,15 +3356,36 @@ function ipam_probe_icmp(string $ip, int $timeoutMs = 1000): ?int
     $proc = @proc_open($cmd, $desc, $pipes);
     if (!is_resource($proc)) return null;
 
+    // Read stdout/stderr to EOF *before* closing pipes. Closing the read end
+    // while ping is still writing causes SIGPIPE, which makes ping exit non-zero
+    // even when the host responded — producing false "host down" results.
+    $stdout = (string) stream_get_contents($pipes[1]);
+    stream_get_contents($pipes[2]); // drain stderr
     fclose($pipes[1]);
     fclose($pipes[2]);
 
-    $start = microtime(true);
     $exitCode = proc_close($proc);
-    $elapsed = (int) round((microtime(true) - $start) * 1000);
 
-    // Exit code 1 or 2: host down or permission denied
-    return $exitCode === 0 ? $elapsed : null;
+    if ($exitCode === 2) {
+        // Permission denied — CAP_NET_RAW capability not available (common in
+        // Docker containers). Log once so operators know; return null so the
+        // scan records the address as non-responsive rather than silently
+        // masking the capability failure.
+        error_log('ipam_probe_icmp: ping exited with code 2 (permission denied) — '
+            . 'ensure CAP_NET_RAW is available (e.g. cap_add: [NET_RAW] in Docker Compose)');
+        return null;
+    }
+
+    if ($exitCode !== 0) return null; // host did not respond or timed out
+
+    // Parse actual RTT from ping stdout: matches "time=1.23 ms" or "time<1.23 ms"
+    // This is the true round-trip time, not wall-clock process duration.
+    if (preg_match('/time[=<]([\d.]+)\s*ms/i', $stdout, $m)) {
+        return max(0, (int) round((float) $m[1]));
+    }
+
+    // Ping reported success but stdout had no RTT line (unusual) — return 0.
+    return 0;
 }
 
 /**
