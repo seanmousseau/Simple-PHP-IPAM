@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [2.4.1] - 2026-04-13
+
+### Fixed
+- **aggregates.php** — Fatal SQL error (`no such column: a.cidr`) caused by missing table alias in `FROM aggregates` clause; corrected to `FROM aggregates a`.
+- **CSP compliance** — Eliminated all inline-style Content Security Policy violations: JS `element.style` assignments replaced with `classList`/`hidden`/`data-*` attribute patterns; dynamic percentage widths and indentation depths moved to CSS attribute selectors; PHP inline styles in `subnets.php` replaced with utility classes. `style-src-attr 'unsafe-inline'` added to allow tooltip dynamic `top`/`left` positioning while keeping `style-src 'self'` for stylesheet links.
+- **Footer logo** — Removed `style="vertical-align:middle;opacity:.7;"` inline style; replaced with `.footer-logo` CSS class.
+- **test_api.sh** — Fixed empty-array expansion (`${arr[@]}`) under `bash set -euo pipefail` using the safe `"${_ba_args[@]+"${_ba_args[@]}"}"` pattern; fixed `${BASIC_AUTH}` reference under `set -u` with `${BASIC_AUTH:-}`.
+
 ## [2.4.0] - 2026-04-13
 
 ### Added
@@ -520,6 +528,7 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[2.4.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.4.0...v2.4.1
 [2.4.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.2.1...v2.3.0
 [2.2.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.2.0...v2.2.1

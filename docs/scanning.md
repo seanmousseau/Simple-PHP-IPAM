@@ -56,7 +56,39 @@ DELETE /api.php?resource=scan_schedules&subnet_id=N   # remove schedule
 
 ## CLI runner (cron)
 
-`scan_run.php` is a CLI-only script. Running it from a web request returns HTTP 403.
+### Unified cron runner — `cron.php` (recommended)
+
+`cron.php` is the unified housekeeping and scanning runner. A **single cron entry** covers all periodic tasks:
+
+- Temp file cleanup
+- Audit log pruning
+- Address history pruning
+- Subnet utilisation alerts
+- Database backup
+- Network scanning — all active scheduled subnets that are due
+
+```cron
+# Run every 15 minutes — housekeeping tasks throttle themselves internally;
+# scanning honours the per-subnet interval set in the Scan Schedule UI.
+*/15 * * * * php /path/to/Simple-PHP-IPAM/cron.php >> /var/log/ipam-cron.log 2>&1
+```
+
+The script outputs one JSON object per task (JSONL format). Each subnet scan emits an individual result object, followed by a `scan_summary` totals object. Exit code 0 on success, 1 if any task raised an exception.
+
+Example output:
+```json
+{"task":"tmp_cleanup","files_removed":0,"plans_removed":0,"ts":"2024-01-15T10:00:00+00:00"}
+{"task":"prune_audit_log","skipped":true,"reason":"retention_days=0","ts":"..."}
+{"task":"prune_address_history","skipped":true,"reason":"retention_days=0","ts":"..."}
+{"task":"utilisation_alerts","skipped":true,"reason":"alert_email not configured","ts":"..."}
+{"task":"db_backup","skipped":true,"reason":"backup.enabled=false","ts":"..."}
+{"task":"scan","subnet_id":1,"cidr":"10.0.0.0\/24","method":"icmp","tcp_port":null,"scanned":254,"up":12,"down":242,"stale_marked":3,"elapsed_sec":8.4,"ts":"..."}
+{"task":"scan_summary","scanned_subnets":1,"total_hosts":254,"total_up":12,"total_down":242,"total_stale_marked":3,"ts":"..."}
+```
+
+### Per-subnet / manual scanning — `scan_run.php`
+
+`scan_run.php` is still available for one-off or per-subnet scans from the CLI. Running it from a web request returns HTTP 403.
 
 ```bash
 # Scan all active scheduled subnets past their interval
@@ -70,11 +102,6 @@ php scan_run.php --all --dry-run
 
 # Override method and stale threshold
 php scan_run.php --all --method=tcp --port=22 --stale-threshold=5
-```
-
-**Cron example** (scan every 15 minutes):
-```cron
-*/15 * * * * php /var/www/html/Simple-PHP-IPAM/scan_run.php --all >> /var/log/ipam-scan.log 2>&1
 ```
 
 The script outputs a JSON summary per subnet and an overall totals object. Exit code 0 on success, 1 on error.

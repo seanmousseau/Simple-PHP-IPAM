@@ -76,14 +76,19 @@ test('--topbar-h CSS custom property set by ResizeObserver', async () => {
   expect(topbarH).not.toBe('0px');
 });
 
-test('sticky thead has position:sticky (not per-th)', async () => {
+test('sticky thead th has position:sticky with topbar offset', async () => {
   await page.goto(appUrl('vrfs.php'));
-  const theads = await page.locator('thead').all();
-  if (theads.length === 0) return; // no table on this page load (empty state)
-  const pos = await theads[0].evaluate((el: Element) =>
-    window.getComputedStyle(el).position
-  );
+  await page.waitForLoadState('networkidle');
+  const ths = await page.locator('thead th').all();
+  if (ths.length === 0) return; // no table on this page load (empty state)
+  const [pos, top, topbarH] = await ths[0].evaluate((el: Element) => {
+    const style = window.getComputedStyle(el);
+    const topbarH = getComputedStyle(document.documentElement)
+      .getPropertyValue('--topbar-h').trim();
+    return [style.position, style.top, topbarH];
+  });
   expect(pos).toBe('sticky');
+  expect(top).toBe(topbarH); // must pin below nav, not at 0
 });
 
 test('DNS Export link present on addresses page', async () => {

@@ -518,8 +518,8 @@ page_header('Addresses');
           <td class="muted"><?= e(to_str($a['mac'])) ?></td>
           <td class="muted"><?= e(to_str($a['expires_at'] ?? '')) ?></td>
           <td<?= $isWrite ? ' data-editable="note" data-addr-id="' . $aid . '"' : '' ?>><?= e(to_str($a['note'])) ?></td>
-          <td class="muted"><?= e(to_str($a['updated_at'])) ?></td>
-          <td data-col="last-seen" class="muted"><?= isset($a['last_seen_at']) && to_str($a['last_seen_at']) !== '' ? e(to_str($a['last_seen_at'])) : '—' ?></td>
+          <td class="muted"><?= e(display_datetime(to_str($a['updated_at']))) ?></td>
+          <td data-col="last-seen" class="muted"><?= isset($a['last_seen_at']) && to_str($a['last_seen_at']) !== '' ? e(display_datetime(to_str($a['last_seen_at']))) : '—' ?></td>
           <td>
             <div class="actions-inline">
               <a href="address_history.php?address_id=<?= to_int($a['id']) ?>">History</a>

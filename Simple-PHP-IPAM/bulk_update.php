@@ -470,7 +470,7 @@ page_header('Bulk Update');
           <td><?= e(to_str($a['owner'])) ?></td>
           <td><?= e(to_str($a['status'])) ?></td>
           <td><?= e(to_str($a['note'])) ?></td>
-          <td class="muted"><?= e(to_str($a['updated_at'])) ?></td>
+          <td class="muted"><?= e(display_datetime(to_str($a['updated_at']))) ?></td>
         </tr>
       <?php endforeach; ?>
       <?php foreach ($unconfigured as $uip): ?>

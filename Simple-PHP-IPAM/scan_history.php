@@ -287,7 +287,7 @@ page_header('Scan History');
             <?php endif ?>
           </td>
           <td class="<?= to_str($a['last_seen_at']) === '' || $a['last_seen_at'] === null ? 'muted' : '' ?>">
-            <?= $a['last_seen_at'] !== null ? e(to_str($a['last_seen_at'])) : '—' ?>
+            <?= $a['last_seen_at'] !== null ? e(display_datetime(to_str($a['last_seen_at']))) : '—' ?>
           </td>
           <td class="<?= $misses > 0 ? 'danger' : 'muted' ?>"><?= $misses ?></td>
           <td class="muted"><?= to_int($a['total_scans']) ?></td>

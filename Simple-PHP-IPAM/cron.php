@@ -1,23 +1,23 @@
 <?php
 declare(strict_types=1);
 /**
- * cron.php — unified housekeeping runner
+ * cron.php — unified housekeeping + scanning runner
  *
- * Consolidates all periodic maintenance tasks into a single cron entry:
+ * Consolidates all periodic maintenance and network scanning into a single cron entry:
  *   - Temp file cleanup
  *   - Audit log pruning
  *   - Address history pruning
  *   - Subnet utilisation alerts
  *   - Database backup
+ *   - Network scanning (all active scheduled subnets that are due)
  *
- * Network scanning (scan_run.php) remains a separate script due to its
- * per-subnet options and dry-run mode. Schedule both:
+ * A single cron entry covers everything:
  *
- *   # Housekeeping — once per hour is fine; tasks throttle themselves internally
- *   0 * * * * php /path/to/Simple-PHP-IPAM/cron.php >> /var/log/ipam-cron.log 2>&1
+ *   # Run every 15 minutes — housekeeping tasks throttle themselves internally;
+ *   # scanning honours the per-subnet interval set in the Scan Schedule UI.
+ *   *\/15 * * * * php /path/to/Simple-PHP-IPAM/cron.php >> /var/log/ipam-cron.log 2>&1
  *
- *   # Network scanning — every 15 minutes; scan_run.php respects per-subnet schedules
- *   *\/15 * * * * php /path/to/Simple-PHP-IPAM/scan_run.php --all >> /var/log/ipam-scan.log 2>&1
+ * scan_run.php is still available for one-off or per-subnet scans from the CLI.
  *
  * Outputs one JSON object per task to stdout (JSONL format). Errors go to stderr.
  * Exit code: 0 on success, 1 if any task raised an exception.
@@ -135,6 +135,78 @@ try {
     }
 } catch (Throwable $e) {
     $fail('db_backup', $e->getMessage());
+}
+
+// ---------------------------------------------------------------------------
+// Task 6: Network scanning — all active schedules that are due
+// ---------------------------------------------------------------------------
+try {
+    $dueStmt = $db->query("
+        SELECT s.id, s.cidr, ss.method, ss.tcp_port
+        FROM subnets s
+        JOIN scan_schedules ss ON ss.subnet_id = s.id
+        WHERE ss.is_active = 1
+          AND (ss.last_run_at IS NULL
+               OR datetime(ss.last_run_at, '+' || ss.interval_minutes || ' minutes') <= datetime('now'))
+        ORDER BY ss.last_run_at ASC
+    ");
+    if ($dueStmt === false) throw new \RuntimeException('Scan schedule query failed');
+
+    /** @var list<array<string, mixed>> $dueSubnets */
+    $dueSubnets = $dueStmt->fetchAll();
+
+    if (count($dueSubnets) === 0) {
+        $emit(['task' => 'scan', 'skipped' => true, 'reason' => 'no schedules due', 'ts' => $now]);
+    } else {
+        $updateLastRun = $db->prepare(
+            "UPDATE scan_schedules SET last_run_at = datetime('now'), updated_at = datetime('now') WHERE subnet_id = :sid"
+        );
+        $scanSummary = [
+            'scanned_subnets' => 0,
+            'total_hosts'     => 0,
+            'total_up'        => 0,
+            'total_down'      => 0,
+            'total_stale_marked' => 0,
+        ];
+
+        foreach ($dueSubnets as $sub) {
+            $subnetId = to_int($sub['id']);
+            $cidr     = to_str($sub['cidr'] ?? '');
+            $method   = to_str($sub['method'] ?? 'icmp');
+            $tcpPort  = isset($sub['tcp_port']) ? to_int($sub['tcp_port']) : null;
+            if (!in_array($method, ['icmp', 'tcp', 'both'], true)) $method = 'icmp';
+
+            $start   = microtime(true);
+            $stats   = ipam_scan_subnet($db, $subnetId, $method, $tcpPort);
+            $elapsed = round(microtime(true) - $start, 2);
+
+            $updateLastRun->execute([':sid' => $subnetId]);
+
+            $emit([
+                'task'         => 'scan',
+                'subnet_id'    => $subnetId,
+                'cidr'         => $cidr,
+                'method'       => $method,
+                'tcp_port'     => $tcpPort,
+                'scanned'      => $stats['scanned'],
+                'up'           => $stats['up'],
+                'down'         => $stats['down'],
+                'stale_marked' => $stats['stale_marked'],
+                'elapsed_sec'  => $elapsed,
+                'ts'           => $now,
+            ]);
+
+            $scanSummary['scanned_subnets']++;
+            $scanSummary['total_hosts']        += $stats['scanned'];
+            $scanSummary['total_up']           += $stats['up'];
+            $scanSummary['total_down']         += $stats['down'];
+            $scanSummary['total_stale_marked'] += $stats['stale_marked'];
+        }
+
+        $emit(array_merge(['task' => 'scan_summary', 'ts' => $now], $scanSummary));
+    }
+} catch (Throwable $e) {
+    $fail('scan', $e->getMessage());
 }
 
 exit($exitCode);

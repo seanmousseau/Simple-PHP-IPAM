@@ -192,7 +192,7 @@ page_header('VRFs');
           <td><?= to_str($v['rt_export']) !== '' ? e(to_str($v['rt_export'])) : '<span class="muted">—</span>' ?></td>
           <td><?= to_str($v['description']) !== '' ? e(to_str($v['description'])) : '<span class="muted">—</span>' ?></td>
           <td><?= to_int($v['subnet_count']) ?></td>
-          <td class="muted"><?= e(to_str($v['created_at'])) ?></td>
+          <td class="muted"><?= e(display_datetime(to_str($v['created_at']))) ?></td>
           <td>
             <details>
               <summary>Edit/Delete</summary>

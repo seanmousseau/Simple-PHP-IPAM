@@ -239,11 +239,11 @@ for s in d.get('sites', []):
 log "=== Authentication ==="
 # ====================================================================
 
-_ba_args=(); [[ -n "$BASIC_AUTH" ]] && _ba_args=(-u "$BASIC_AUTH")
-HTTP_CODE=$(curl -s --noproxy '*' "${_ba_args[@]}" -o /dev/null -w '%{http_code}' "${API}?resource=subnets")
+_ba_args=(); [[ -n "${BASIC_AUTH:-}" ]] && _ba_args=(-u "$BASIC_AUTH")
+HTTP_CODE=$(curl -s --noproxy '*' "${_ba_args[@]+"${_ba_args[@]}"}" -o /dev/null -w '%{http_code}' "${API}?resource=subnets")
 [[ "$HTTP_CODE" == "401" ]] && pass "No auth → 401" || fail "No auth → expected 401, got $HTTP_CODE"
 
-HTTP_CODE=$(curl -s --noproxy '*' "${_ba_args[@]}" -o /dev/null -w '%{http_code}' -H "Authorization: Bearer bad-key" "${API}?resource=subnets")
+HTTP_CODE=$(curl -s --noproxy '*' "${_ba_args[@]+"${_ba_args[@]}"}" -o /dev/null -w '%{http_code}' -H "Authorization: Bearer bad-key" "${API}?resource=subnets")
 [[ "$HTTP_CODE" == "401" ]] && pass "Bad key → 401" || fail "Bad key → expected 401, got $HTTP_CODE"
 
 call_api GET subnets
@@ -503,7 +503,7 @@ assert_http 405 "PATCH → 405"
 log "=== Deprecation Warning ==="
 # ====================================================================
 
-DEP_HEADER=$(curl -s --noproxy '*' "${_ba_args[@]}" -D - -o /dev/null "${API}?resource=subnets&api_key=$API_KEY" 2>/dev/null | grep -i 'deprecation' || echo "")
+DEP_HEADER=$(curl -s --noproxy '*' "${_ba_args[@]+"${_ba_args[@]}"}" -D - -o /dev/null "${API}?resource=subnets&api_key=$API_KEY" 2>/dev/null | grep -i 'deprecation' || echo "")
 [[ -n "$DEP_HEADER" ]] && pass "Query param API key sends Deprecation header" || skip "Deprecation header not found (may need header-only auth)"
 
 # ====================================================================
@@ -954,7 +954,7 @@ fi
 log "=== Health Check ==="
 # ====================================================================
 
-STATUS_HTTP=$(curl -s --noproxy '*' "${_ba_args[@]}" -o /tmp/_ipam_status.json -w '%{http_code}' "$BASE_URL/status.php")
+STATUS_HTTP=$(curl -s --noproxy '*' "${_ba_args[@]+"${_ba_args[@]}"}" -o /tmp/_ipam_status.json -w '%{http_code}' "$BASE_URL/status.php")
 if [[ "$STATUS_HTTP" == "200" ]]; then
     STATUS_VAL=$(python3 -c "import json; d=json.load(open('/tmp/_ipam_status.json')); print(d.get('status',''))" 2>/dev/null || echo "")
     [[ "$STATUS_VAL" == "ok" ]] && pass "status.php: {\"status\":\"ok\"}" || fail "status.php: unexpected body (status=$STATUS_VAL)"

@@ -84,7 +84,7 @@ $sort = parse_sort($sortCols, 'cidr');
 /** @var list<array<string,mixed>> $aggregates */
 $aggregates = ($db->query("
     SELECT id, cidr, ip_version, network, prefix, description, rir, notes, date_added, created_at
-    FROM aggregates
+    FROM aggregates a
     ORDER BY {$sort['sql']}
 ") ?: throw new \RuntimeException('Query failed'))->fetchAll();
 
@@ -191,7 +191,7 @@ page_header('Aggregates');
           <td><span class="badge"><?= to_int($a['ip_version']) === 6 ? 'IPv6' : 'IPv4' ?></span></td>
           <td><?= to_str($a['description']) !== '' ? e(to_str($a['description'])) : '<span class="muted">—</span>' ?></td>
           <td><?= $coverageMap[to_int($a['id'])] ?? 0 ?></td>
-          <td class="muted"><?= e(to_str($a['created_at'])) ?></td>
+          <td class="muted"><?= e(display_datetime(to_str($a['created_at']))) ?></td>
           <td>
             <details>
               <summary>Edit/Delete</summary>

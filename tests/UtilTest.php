@@ -406,4 +406,70 @@ class UtilTest extends TestCase
         $input = (string)inet_pton('2001:db8::1');
         $this->assertSame(16, strlen(ipv6_bin_increment($input)));
     }
+
+    // -----------------------------------------------------------------------
+    // display_datetime()
+    // -----------------------------------------------------------------------
+
+    protected function setUp(): void
+    {
+        // Ensure $GLOBALS['config'] is available (display_datetime reads it).
+        if (!isset($GLOBALS['config'])) {
+            $GLOBALS['config'] = [];
+        }
+    }
+
+    public function testDisplayDatetimeEmptyStringReturnsEmpty(): void
+    {
+        $GLOBALS['config']['timezone'] = 'UTC';
+        $this->assertSame('', display_datetime(''));
+    }
+
+    public function testDisplayDatetimeUtcPassthrough(): void
+    {
+        $GLOBALS['config']['timezone'] = 'UTC';
+        $this->assertSame('2024-06-15 10:30:00', display_datetime('2024-06-15 10:30:00'));
+    }
+
+    public function testDisplayDatetimeConvertsToTokyoTime(): void
+    {
+        // Asia/Tokyo = UTC+9, no DST — unambiguous conversion.
+        // 03:00 UTC → 12:00 JST
+        $GLOBALS['config']['timezone'] = 'Asia/Tokyo';
+        $this->assertSame('2024-01-15 12:00:00', display_datetime('2024-01-15 03:00:00'));
+    }
+
+    public function testDisplayDatetimeConvertsToNegativeOffset(): void
+    {
+        // America/New_York in January = EST (UTC-5).
+        // 17:00 UTC → 12:00 EST
+        $GLOBALS['config']['timezone'] = 'America/New_York';
+        $this->assertSame('2024-01-15 12:00:00', display_datetime('2024-01-15 17:00:00'));
+    }
+
+    public function testDisplayDatetimeCustomFormat(): void
+    {
+        $GLOBALS['config']['timezone'] = 'UTC';
+        $this->assertSame('15/06/2024', display_datetime('2024-06-15 10:30:00', 'd/m/Y'));
+    }
+
+    public function testDisplayDatetimeFallsBackOnInvalidInput(): void
+    {
+        $GLOBALS['config']['timezone'] = 'UTC';
+        // Invalid datetime — should return the raw input rather than throwing.
+        $this->assertSame('not-a-date', display_datetime('not-a-date'));
+    }
+
+    public function testDisplayDatetimeEmptyTimezoneDefaultsToUtc(): void
+    {
+        $GLOBALS['config']['timezone'] = '';
+        $this->assertSame('2024-06-15 10:30:00', display_datetime('2024-06-15 10:30:00'));
+    }
+
+    public function testDisplayDatetimeMidnightBoundary(): void
+    {
+        // UTC+9: 2024-01-16 00:00:00 JST = 2024-01-15 15:00:00 UTC
+        $GLOBALS['config']['timezone'] = 'Asia/Tokyo';
+        $this->assertSame('2024-01-16 00:00:00', display_datetime('2024-01-15 15:00:00'));
+    }
 }
