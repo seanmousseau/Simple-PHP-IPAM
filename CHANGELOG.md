@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [2.5.0] - 2026-04-13
+
+### Added
+- **#364** — `cron.php` now runs the demo database reset as Task 7. No-op when `demo_mode.enabled=false`; throttled to once every 24 hours when enabled (tracked via `data/demo_last_reset.txt`). Operators can continue to call `demo_reset.php` directly for an unthrottled manual reset.
+- **docs/install.md** — new **Step 6: Register the cron runner** section with the recommended `*/15 * * * *` crontab entry.
+- **docs/configuration.md** — cron task table now lists the demo reset task and its throttling behaviour.
+- **Testing** — new Playwright specs: `csp.spec.ts` (CSP header + no inline-style/script violations across every admin page), `console-clean.spec.ts` (no `console.error` or unhandled rejections across every admin page), `css-regression.spec.ts` (theme switching, sticky headers, status badge tokens, `.util-bar-fill` width). Extended `tooltips.spec.ts` with fleet-wide `[data-tooltip]`/`[title]` non-empty assertions and single-tooltip-element guarantee. Extended `js-behaviour.spec.ts` with CSRF-token-on-every-POST-form sweep, theme persistence across reload, and search overlay Escape regression. 329 Playwright tests total.
+- **PHPUnit** — 7 new unit tests for `ipam_compute_broadcast_bin()` covering `/24`, `/29`, `/30`, `/31` (RFC 3021), `/32`, and IPv6 (no broadcast). 96 PHPUnit tests total.
+
+### Changed
+- **#363** — Scanner now excludes IPv4 network and broadcast addresses from scan targets. These IPs are never probed even if they exist in the `addresses` table: some hosts respond to broadcast ICMP, producing misleading up/down results. Broadcast exclusion applies to `/30` and larger; `/31` (RFC 3021 point-to-point) and `/32` (single host) have no reserved addresses. IPv6 has no broadcast concept, so only the network address is skipped. Reserved IPs are also excluded from the stale-marking pass. Scan summary gains a `skipped` counter. See `docs/scanning.md` → *What gets scanned*.
+
+### Security
+- Full QA gate re-run: PHP lint, PHPStan level 9, PHPCS, PHPUnit, Semgrep taint rules, and Playwright (329 tests) all green. No new baseline entries.
+
 ## [2.4.1] - 2026-04-13
 
 ### Fixed
@@ -528,6 +543,7 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[2.5.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.4.1...v2.5.0
 [2.4.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.4.0...v2.4.1
 [2.4.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.2.1...v2.3.0

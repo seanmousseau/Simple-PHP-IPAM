@@ -93,3 +93,44 @@ test('no JS errors during tooltip interactions', async () => {
   await page.locator('h1').hover(); // move away to trigger mouseleave
   expect(errors.filter(e => !e.includes('ResizeObserver'))).toHaveLength(0);
 });
+
+// -- v2.5.0 expanded tooltip coverage ---------------------------------------
+
+const TOOLTIP_PAGES = [
+  'dashboard.php', 'subnets.php', 'aggregates.php', 'pd_pools.php',
+  'vrfs.php',      'vlans.php',   'sites.php',      'tags.php',
+];
+
+test('every [data-tooltip] attribute is non-empty across admin pages', async () => {
+  for (const slug of TOOLTIP_PAGES) {
+    await page.goto(appUrl(slug), { waitUntil: 'networkidle' });
+    const attrs = await page.locator('[data-tooltip]').evaluateAll(
+      (els) => els.map((e) => e.getAttribute('data-tooltip') ?? '')
+    );
+    for (const v of attrs) {
+      expect(v.trim(), `${slug} has empty data-tooltip`).not.toBe('');
+    }
+  }
+});
+
+test('every [title] attribute is non-empty across admin pages', async () => {
+  for (const slug of TOOLTIP_PAGES) {
+    await page.goto(appUrl(slug), { waitUntil: 'networkidle' });
+    const titles = await page.locator('[title]').evaluateAll(
+      (els) => els.map((e) => e.getAttribute('title') ?? '')
+    );
+    for (const v of titles) {
+      expect(v.trim(), `${slug} has empty [title]`).not.toBe('');
+    }
+  }
+});
+
+test('only one #ipam-tooltip element exists at a time', async () => {
+  await page.goto(appUrl('vrfs.php'));
+  const anchor = page.locator('[data-tooltip]').first();
+  if (await anchor.count() === 0) return;
+  await anchor.hover();
+  await expect(page.locator('#ipam-tooltip')).toBeVisible({ timeout: 1000 });
+  const count = await page.locator('#ipam-tooltip').count();
+  expect(count).toBe(1);
+});

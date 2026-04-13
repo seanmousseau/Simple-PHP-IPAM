@@ -10,6 +10,7 @@ declare(strict_types=1);
  *   - Subnet utilisation alerts
  *   - Database backup
  *   - Network scanning (all active scheduled subnets that are due)
+ *   - Demo mode database reset (no-op when demo_mode.enabled is false)
  *
  * A single cron entry covers everything:
  *
@@ -207,6 +208,63 @@ try {
     }
 } catch (Throwable $e) {
     $fail('scan', $e->getMessage());
+}
+
+// ---------------------------------------------------------------------------
+// Task 7: Demo mode database reset
+// ---------------------------------------------------------------------------
+try {
+    $demoEnabled = !empty($config['demo_mode']['enabled']);
+    if (!$demoEnabled) {
+        $emit(['task' => 'demo_reset', 'skipped' => true, 'reason' => 'demo_mode.enabled=false', 'ts' => $now]);
+    } else {
+        // Throttle to once per 24h so the /15min cron cadence doesn't wipe the DB
+        // every tick. demo_reset.php (run from its own cron entry) bypasses this.
+        // The flock + ftruncate + fwrite sequence is atomic across overlapping
+        // cron invocations: only one process holds the exclusive lock, and the
+        // stamp write is verified — a failed write throws and the task fails
+        // loudly instead of silently re-running on the next tick.
+        $stampFile = $scriptDir . '/data/demo_last_reset.txt';
+        $stamp = fopen($stampFile, 'c+');
+        if ($stamp === false) {
+            throw new RuntimeException("Unable to open demo reset stamp: $stampFile");
+        }
+        if (!flock($stamp, LOCK_EX)) {
+            fclose($stamp);
+            throw new RuntimeException('Unable to lock demo reset stamp');
+        }
+        try {
+            rewind($stamp);
+            $raw = stream_get_contents($stamp);
+            $lastRun = (is_string($raw) && ctype_digit(trim($raw))) ? (int) trim($raw) : 0;
+
+            $throttleSeconds = 24 * 3600;
+            if ((time() - $lastRun) < $throttleSeconds) {
+                $emit([
+                    'task'        => 'demo_reset',
+                    'skipped'     => true,
+                    'reason'      => 'throttled',
+                    'last_run_at' => $lastRun > 0 ? date('c', $lastRun) : null,
+                    'next_due_at' => $lastRun > 0 ? date('c', $lastRun + $throttleSeconds) : null,
+                    'ts'          => $now,
+                ]);
+            } else {
+                demo_reset_db($db);
+                if (ftruncate($stamp, 0) === false
+                    || rewind($stamp) === false
+                    || fwrite($stamp, (string) time()) === false
+                    || fflush($stamp) === false) {
+                    throw new RuntimeException('Unable to persist demo reset timestamp');
+                }
+                $emit(['task' => 'demo_reset', 'ran' => true, 'ts' => $now]);
+            }
+        } finally {
+            flock($stamp, LOCK_UN);
+            fclose($stamp);
+        }
+    }
+} catch (Throwable $e) {
+    $fail('demo_reset', $e->getMessage());
 }
 
 exit($exitCode);

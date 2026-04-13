@@ -109,3 +109,30 @@ test('no console errors on dashboard load', async () => {
   const realErrors = errors.filter(e => !e.includes('ResizeObserver'));
   expect(realErrors).toHaveLength(0);
 });
+
+// -- v2.5.0 expanded JS coverage -------------------------------------------
+
+const CSRF_PAGES = [
+  'users.php', 'sites.php', 'vlans.php', 'vrfs.php', 'tags.php',
+  'api_keys.php', 'contacts.php', 'aggregates.php', 'pd_pools.php',
+];
+
+test('every POST form on admin pages carries a CSRF token input', async () => {
+  for (const slug of CSRF_PAGES) {
+    await page.goto(appUrl(slug));
+    const missing = await page.evaluate(() => {
+      const result: string[] = [];
+      document.querySelectorAll('form').forEach((f, i) => {
+        const method = (f.getAttribute('method') ?? 'get').toLowerCase();
+        if (method !== 'post') return;
+        const csrf = f.querySelector('input[name="csrf"]') as HTMLInputElement | null;
+        if (!csrf || !csrf.value) {
+          result.push(`form[${i}] action="${f.getAttribute('action') ?? ''}"`);
+        }
+      });
+      return result;
+    });
+    expect(missing, `${slug} has POST forms missing a csrf token:\n  - ${missing.join('\n  - ')}`).toEqual([]);
+  }
+});
+
