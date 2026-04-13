@@ -4,6 +4,12 @@ declare(strict_types=1);
 /** @var IpamConfig $config */
 $config = require __DIR__ . '/config.php';
 
+// Apply configured timezone before any date/time operations. All DB timestamps are
+// stored as UTC; display_datetime() in lib.php converts them for UI output.
+date_default_timezone_set(is_string($config['timezone'] ?? null) && $config['timezone'] !== ''
+    ? $config['timezone']
+    : 'UTC');
+
 /**
  * Convert a mixed value to string. Defined early in init.php so it is available
  * before lib.php is loaded; lib.php guards against redefinition with function_exists().

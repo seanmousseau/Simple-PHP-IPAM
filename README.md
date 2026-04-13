@@ -8,6 +8,23 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 
 ---
 
+## What's new in v2.4.0
+
+- **Bug fixes** — ICMP scan false negatives fixed (stdout read before pipe close; RTT parsing for Linux and macOS; exit code 2 handled); sticky table headers unified stacking context via thead-level sticky
+- **Timezone support** — `timezone` config key; `display_datetime()` helper converts UTC timestamps; `init.php` calls `date_default_timezone_set()`
+- **Unified cron.php** — single cron entry for housekeeping (temp cleanup, audit pruning, history pruning, utilisation alerts, DB backup); JSONL output per task
+- **Live ping button** — per-address "Ping" button on addresses page; fires `ping_host.php` via `fetch()`; available to all authenticated users including read-only
+- **Scan schedule UI** — moved from subnets.php inline form to dedicated section on scan_history.php
+- **VRF BGP attributes** — ASN, RT Import, RT Export, enforce-unique-prefix fields on VRF add/edit forms
+- **VLAN ranges** — named 802.1Q VLAN ID allocation blocks (e.g. Management: 1–99) with optional site scoping
+- **Tooltip system** — `[data-tooltip]` CSS pseudo-element tooltips across all admin forms; edge-clamping via JS
+- **Aggregates** (`aggregates.php`) — supernet/RIR block CRUD for admin users; subnet coverage count; IPv4 and IPv6
+- **IPv6 PD pools** (`pd_pools.php`) — RFC 3633 prefix delegation pool management; subscriber linking; expiry tracking
+- **DNS zone export** (`export_dns.php`) — BIND-format A/AAAA and PTR zone file download from any subnet
+- **Docs** — `docs/advanced-networking.md` (VRF BGP, VLAN ranges, aggregates, PD pools, DNS export); GitHub Pages site (`docs/_config.yml`, `docs/index.md`)
+
+See [CHANGELOG.md](CHANGELOG.md) for full details.
+
 ## What's new in v2.3.0
 
 - **Network scanning** — ping sweep scanner (ICMP + TCP) implemented in pure PHP with no external dependencies; all IPs validated before use in `proc_open()` / `fsockopen()`

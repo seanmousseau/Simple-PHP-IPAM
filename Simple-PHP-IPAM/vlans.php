@@ -10,7 +10,7 @@ $err = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = to_str($_POST['action'] ?? '');
 
-    if (demo_mode_enabled() && in_array($action, ['create', 'update', 'delete'], true)) {
+    if (demo_mode_enabled() && in_array($action, ['create', 'update', 'delete', 'create_range', 'update_range', 'delete_range'], true)) {
         $err = 'This action is disabled in demo mode.';
         $action = '';
     }
@@ -74,6 +74,71 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             header('Location: vlans.php');
             exit;
         }
+    } elseif ($action === 'create_range') {
+        $rName   = trim(to_str($_POST['range_name'] ?? ''));
+        $rMin    = to_int($_POST['vlan_min'] ?? 0);
+        $rMax    = to_int($_POST['vlan_max'] ?? 0);
+        $rDesc   = trim(to_str($_POST['range_desc'] ?? ''));
+        $rSiteId = to_int($_POST['range_site_id'] ?? 0) ?: null;
+
+        if ($rName === '') {
+            $err = 'Range name is required.';
+        } elseif ($rMin < 1 || $rMin > 4094 || $rMax < 1 || $rMax > 4094) {
+            $err = 'VLAN min/max must be between 1 and 4094.';
+        } elseif ($rMin > $rMax) {
+            $err = 'VLAN min must not exceed VLAN max.';
+        } else {
+            try {
+                $st = $db->prepare("INSERT INTO vlan_ranges (name, vlan_min, vlan_max, description, site_id) VALUES (:n,:min,:max,:d,:sid)");
+                $st->execute([':n' => $rName, ':min' => $rMin, ':max' => $rMax, ':d' => $rDesc, ':sid' => $rSiteId]);
+                $newId = (int)$db->lastInsertId();
+                audit($db, 'vlan.range_create', 'vlan_range', $newId, "name=$rName min=$rMin max=$rMax");
+                flash_set("VLAN range \"$rName\" created.");
+            } catch (PDOException $e) {
+                $err = 'Could not create VLAN range.';
+            }
+        }
+        header('Location: vlans.php');
+        exit;
+    } elseif ($action === 'update_range') {
+        $rId     = to_int($_POST['range_id'] ?? 0);
+        $rName   = trim(to_str($_POST['range_name'] ?? ''));
+        $rMin    = to_int($_POST['vlan_min'] ?? 0);
+        $rMax    = to_int($_POST['vlan_max'] ?? 0);
+        $rDesc   = trim(to_str($_POST['range_desc'] ?? ''));
+        $rSiteId = to_int($_POST['range_site_id'] ?? 0) ?: null;
+
+        if ($rId <= 0 || $rName === '') {
+            $err = 'Range name is required.';
+        } elseif ($rMin < 1 || $rMin > 4094 || $rMax < 1 || $rMax > 4094) {
+            $err = 'VLAN min/max must be between 1 and 4094.';
+        } elseif ($rMin > $rMax) {
+            $err = 'VLAN min must not exceed VLAN max.';
+        } else {
+            try {
+                $st = $db->prepare("UPDATE vlan_ranges SET name=:n, vlan_min=:min, vlan_max=:max, description=:d, site_id=:sid, updated_at=datetime('now') WHERE id=:id");
+                $st->execute([':n' => $rName, ':min' => $rMin, ':max' => $rMax, ':d' => $rDesc, ':sid' => $rSiteId, ':id' => $rId]);
+                audit($db, 'vlan.range_update', 'vlan_range', $rId, "name=$rName min=$rMin max=$rMax");
+                flash_set("VLAN range \"$rName\" updated.");
+            } catch (PDOException $e) {
+                $err = 'Could not update VLAN range.';
+            }
+        }
+        header('Location: vlans.php');
+        exit;
+    } elseif ($action === 'delete_range') {
+        $rId = to_int($_POST['range_id'] ?? 0);
+        if ($rId > 0) {
+            $st = $db->prepare("SELECT name FROM vlan_ranges WHERE id = :id");
+            $st->execute([':id' => $rId]);
+            /** @var array<string,mixed>|false $rRow */
+            $rRow = $st->fetch();
+            $db->prepare("DELETE FROM vlan_ranges WHERE id = :id")->execute([':id' => $rId]);
+            audit($db, 'vlan.range_delete', 'vlan_range', $rId, $rRow ? 'name=' . to_str($rRow['name']) : '');
+            flash_set('VLAN range deleted.');
+        }
+        header('Location: vlans.php');
+        exit;
     }
 }
 
@@ -91,6 +156,21 @@ $vlans = ($db->query("
     LEFT JOIN sites s ON s.id = v.site_id
     ORDER BY {$sort['sql']}
 ") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+
+// VLAN ranges (table added in v2.4.0 — guard against pre-migration DBs)
+/** @var list<array<string,mixed>> $vlanRanges */
+$vlanRanges = [];
+try {
+    $vlanRanges = ($db->query("
+        SELECT r.id, r.name, r.vlan_min, r.vlan_max, r.description, r.site_id, r.created_at,
+               s.name AS site_name
+        FROM vlan_ranges r
+        LEFT JOIN sites s ON s.id = r.site_id
+        ORDER BY r.vlan_min
+    ") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+} catch (PDOException) {
+    // table not yet created — migration pending
+}
 
 page_header('VLANs');
 ?>
@@ -220,6 +300,98 @@ page_header('VLANs');
       </tbody>
     </table>
     </div>
+  <?php endif; ?>
+</div>
+
+<div class="card mt-16" id="vlan-ranges">
+  <h2>VLAN Ranges</h2>
+  <p class="muted" style="margin-bottom:12px">Define named 802.1Q VLAN ID ranges to organise allocation blocks (e.g. Management: 1–99, User Access: 100–199).</p>
+
+  <form method="post" action="vlans.php" class="row" style="flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:16px">
+    <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+    <input type="hidden" name="action" value="create_range">
+    <label>Name<br><input name="range_name" required placeholder="e.g. Management" style="width:160px"></label>
+    <label>Min<br><input type="number" name="vlan_min" min="1" max="4094" required placeholder="1" style="width:70px"></label>
+    <label>Max<br><input type="number" name="vlan_max" min="1" max="4094" required placeholder="99" style="width:70px"></label>
+    <label class="flex-1">Description<br><input name="range_desc" class="w-full"></label>
+    <?php if ($sites): ?>
+    <label>Site<br>
+      <select name="range_site_id">
+        <option value="">— Global —</option>
+        <?php foreach ($sites as $site): ?>
+          <option value="<?= to_int($site['id']) ?>"><?= e(to_str($site['name'])) ?></option>
+        <?php endforeach; ?>
+      </select>
+    </label>
+    <?php endif; ?>
+    <div><button type="submit">Add Range</button></div>
+  </form>
+
+  <?php if (!$vlanRanges): ?>
+    <div class="empty-state">No VLAN ranges defined.</div>
+  <?php else: ?>
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Min</th>
+        <th>Max</th>
+        <th>Site</th>
+        <th>Description</th>
+        <th>Created</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+    <?php foreach ($vlanRanges as $r): ?>
+      <tr>
+        <td><b><?= e(to_str($r['name'])) ?></b></td>
+        <td><?= to_int($r['vlan_min']) ?></td>
+        <td><?= to_int($r['vlan_max']) ?></td>
+        <td><?= $r['site_name'] ? e(to_str($r['site_name'])) : '<span class="muted">Global</span>' ?></td>
+        <td><?= to_str($r['description']) !== '' ? e(to_str($r['description'])) : '<span class="muted">—</span>' ?></td>
+        <td class="muted"><?= e(to_str($r['created_at'])) ?></td>
+        <td>
+          <details>
+            <summary>Edit/Delete</summary>
+            <form method="post" action="vlans.php" class="row mt-8">
+              <input type="hidden" name="csrf"     value="<?= e(csrf_token()) ?>">
+              <input type="hidden" name="action"   value="update_range">
+              <input type="hidden" name="range_id" value="<?= to_int($r['id']) ?>">
+              <label>Name<br><input name="range_name" value="<?= e(to_str($r['name'])) ?>" required style="width:140px"></label>
+              <label>Min<br><input type="number" name="vlan_min" min="1" max="4094" value="<?= to_int($r['vlan_min']) ?>" required style="width:70px"></label>
+              <label>Max<br><input type="number" name="vlan_max" min="1" max="4094" value="<?= to_int($r['vlan_max']) ?>" required style="width:70px"></label>
+              <label class="flex-1">Description<br><input name="range_desc" value="<?= e(to_str($r['description'])) ?>" class="w-full"></label>
+              <?php if ($sites): ?>
+              <label>Site<br>
+                <select name="range_site_id">
+                  <option value="">— Global —</option>
+                  <?php foreach ($sites as $site): ?>
+                    <option value="<?= to_int($site['id']) ?>"
+                      <?= to_int($r['site_id']) === to_int($site['id']) ? 'selected' : '' ?>>
+                      <?= e(to_str($site['name'])) ?>
+                    </option>
+                  <?php endforeach; ?>
+                </select>
+              </label>
+              <?php endif; ?>
+              <button type="submit">Save</button>
+            </form>
+            <form method="post" action="vlans.php" class="mt-8"
+                  data-confirm="Delete this VLAN range?">
+              <input type="hidden" name="csrf"     value="<?= e(csrf_token()) ?>">
+              <input type="hidden" name="action"   value="delete_range">
+              <input type="hidden" name="range_id" value="<?= to_int($r['id']) ?>">
+              <button type="submit" class="button-danger">Delete</button>
+            </form>
+          </details>
+        </td>
+      </tr>
+    <?php endforeach; ?>
+    </tbody>
+  </table>
+  </div>
   <?php endif; ?>
 </div>
 

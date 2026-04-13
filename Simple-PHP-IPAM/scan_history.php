@@ -4,14 +4,72 @@ require __DIR__ . '/init.php';
 /** @var \PDO $db */
 require_login();
 
+// ---- POST: scan schedule management (write role required) ----
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    require_write_access();
+    csrf_require();
+    $action = to_str($_POST['action'] ?? '');
+    $sid    = to_int($_POST['subnet_id'] ?? 0);
+
+    if ($action === 'save_scan_schedule' && $sid > 0) {
+        $method       = to_str($_POST['scan_method'] ?? 'icmp');
+        $tcpPort      = to_int($_POST['scan_tcp_port'] ?? 0) ?: null;
+        $intervalMins = max(1, to_int($_POST['scan_interval'] ?? 60));
+        $isActive     = isset($_POST['scan_active']) ? 1 : 0;
+
+        if (!in_array($method, ['icmp', 'tcp', 'both'], true)) $method = 'icmp';
+        if ($method === 'icmp') {
+            $tcpPort = null;
+        } elseif ($tcpPort === null || $tcpPort < 1 || $tcpPort > 65535) {
+            flash_set('TCP port must be between 1 and 65535 when method is tcp or both.');
+            header('Location: scan_history.php?subnet_id=' . $sid);
+            exit;
+        }
+
+        $db->prepare("
+            INSERT INTO scan_schedules (subnet_id, method, tcp_port, interval_minutes, is_active, updated_at)
+            VALUES (:sid, :method, :port, :interval, :active, datetime('now'))
+            ON CONFLICT(subnet_id) DO UPDATE SET
+                method           = excluded.method,
+                tcp_port         = excluded.tcp_port,
+                interval_minutes = excluded.interval_minutes,
+                is_active        = excluded.is_active,
+                updated_at       = datetime('now')
+        ")->execute([
+            ':sid'      => $sid,
+            ':method'   => $method,
+            ':port'     => $tcpPort,
+            ':interval' => $intervalMins,
+            ':active'   => $isActive,
+        ]);
+        audit($db, 'scan.schedule_update', 'subnet', $sid,
+            "method=$method interval={$intervalMins}m active=$isActive");
+        flash_set('Scan schedule saved.');
+
+    } elseif ($action === 'delete_scan_schedule' && $sid > 0) {
+        $db->prepare("DELETE FROM scan_schedules WHERE subnet_id = :sid")->execute([':sid' => $sid]);
+        audit($db, 'scan.schedule_delete', 'subnet', $sid, '');
+        flash_set('Scan schedule removed.');
+    }
+
+    header('Location: scan_history.php?subnet_id=' . $sid);
+    exit;
+}
+
 $subnetId = to_int($_GET['subnet_id'] ?? 0);
 
-// Load subnet details
-$subnet = null;
+// Load subnet details + current scan schedule
+$subnet   = null;
+$schedule = null;
 if ($subnetId > 0) {
     $st = $db->prepare("SELECT id, cidr, description FROM subnets WHERE id = :id");
     $st->execute([':id' => $subnetId]);
     $subnet = $st->fetch() ?: null;
+
+    $st = $db->prepare("SELECT method, tcp_port, interval_minutes, is_active, last_run_at FROM scan_schedules WHERE subnet_id = :id");
+    $st->execute([':id' => $subnetId]);
+    /** @var array{method:string,tcp_port:int|null,interval_minutes:int,is_active:int,last_run_at:string|null}|null $schedule */
+    $schedule = $st->fetch() ?: null;
 }
 
 // Paginate scan runs: group by scanned_at minute window, show last 50
@@ -91,6 +149,67 @@ page_header('Scan History');
 <?php if ($subnet !== null): ?>
   <?php /** @var array<string, mixed> $subnet */ ?>
   <h2><?= e(to_str($subnet['cidr'])) ?><?php if (to_str($subnet['description']) !== ''): ?> <span class="muted">— <?= e(to_str($subnet['description'])) ?></span><?php endif ?></h2>
+
+  <?php
+    $isWrite   = current_user()['role'] !== 'readonly';
+    $hasSched  = $schedule !== null;
+    $schedMeth = $schedule !== null ? to_str($schedule['method']) : 'icmp';
+    $schedPort = $schedule !== null ? to_int($schedule['tcp_port']) : 0;
+    $schedInt  = $schedule !== null ? to_int($schedule['interval_minutes']) : 60;
+    $schedAct  = $schedule !== null && (bool)$schedule['is_active'];
+    $schedLast = $schedule !== null ? to_str($schedule['last_run_at'] ?? '') : '';
+  ?>
+  <div class="card" style="margin-bottom:20px">
+    <div class="row" style="align-items:center;margin-bottom:<?= $isWrite ? '14px' : '0' ?>">
+      <h3 style="margin:0">📡 Scan Schedule</h3>
+      <?php if ($hasSched): ?>
+        <?php if ($schedAct): ?>
+          <span class="badge" style="background:var(--success);color:#fff">Active</span>
+        <?php else: ?>
+          <span class="badge">Inactive</span>
+        <?php endif ?>
+        <?php if ($schedLast !== ''): ?>
+          <span class="muted" style="font-size:.85rem">Last run: <?= e(display_datetime($schedLast)) ?></span>
+        <?php endif ?>
+      <?php else: ?>
+        <span class="muted">No schedule configured.</span>
+      <?php endif ?>
+    </div>
+    <?php if ($isWrite): ?>
+    <form method="post" class="row" style="flex-wrap:wrap;gap:10px;align-items:flex-end">
+      <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+      <input type="hidden" name="action" value="save_scan_schedule">
+      <input type="hidden" name="subnet_id" value="<?= (int)$subnetId ?>">
+      <label>Method<br>
+        <select name="scan_method">
+          <?php foreach (['icmp' => 'ICMP ping', 'tcp' => 'TCP connect', 'both' => 'ICMP + TCP'] as $v => $lbl): ?>
+            <option value="<?= e($v) ?>"<?= $schedMeth === $v ? ' selected' : '' ?>><?= e($lbl) ?></option>
+          <?php endforeach ?>
+        </select>
+      </label>
+      <label>TCP Port<br>
+        <input type="number" name="scan_tcp_port" min="1" max="65535"
+               value="<?= $schedPort > 0 ? $schedPort : '' ?>" placeholder="e.g. 22" style="width:90px">
+      </label>
+      <label>Interval (min)<br>
+        <input type="number" name="scan_interval" min="1" max="1440"
+               value="<?= $schedInt > 0 ? $schedInt : 60 ?>" style="width:80px">
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;padding-top:20px">
+        <input type="checkbox" name="scan_active" value="1"<?= $schedAct ? ' checked' : '' ?>> Active
+      </label>
+      <div style="padding-top:20px"><button type="submit">Save Schedule</button></div>
+    </form>
+    <?php if ($hasSched): ?>
+    <form method="post" class="mt-8" data-confirm="Remove scan schedule for this subnet?">
+      <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+      <input type="hidden" name="action" value="delete_scan_schedule">
+      <input type="hidden" name="subnet_id" value="<?= (int)$subnetId ?>">
+      <button type="submit" class="button-secondary">Remove Schedule</button>
+    </form>
+    <?php endif ?>
+    <?php endif ?>
+  </div>
 
   <?php if (count($runs) === 0): ?>
     <div class="card"><p class="muted">No scan results yet. Schedule a scan or run <code>php scan_run.php --subnet-id=<?= (int)$subnetId ?></code> from the CLI.</p></div>

@@ -16,6 +16,9 @@ const PAGES: Array<[string, string]> = [
   ['users.php',       'User'],
   ['sites.php',       'Site'],
   ['vlans.php',       'VLAN'],
+  ['vrfs.php',        'VRF'],
+  ['aggregates.php',  'Aggregate'],
+  ['pd_pools.php',    'PD Pool'],
   ['tags.php',        'Tag'],
   ['api_keys.php',    'API Key'],
   ['dhcp_pool.php',   'DHCP'],
@@ -24,6 +27,7 @@ const PAGES: Array<[string, string]> = [
   ['unassigned.php',  'Unassigned'],
   ['bulk_update.php', 'Bulk'],
   ['change_password.php', 'Password'],
+  ['scan_history.php', 'Scan'],
 ];
 
 // Pages that include breadcrumbs (all non-login pages with page_header())

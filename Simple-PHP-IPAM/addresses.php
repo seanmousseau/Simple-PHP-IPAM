@@ -370,6 +370,7 @@ page_header('Addresses');
     <?php endif; ?>
     <a class="action-pill" href="search.php?subnet_id=<?= (int)$selectedSubnetId ?>">🔎 Search in Subnet</a>
     <a class="action-pill" href="export_addresses.php?subnet_id=<?= (int)$selectedSubnetId ?>">⬇ Export CSV</a>
+    <a class="action-pill" href="export_dns.php?subnet_id=<?= (int)$selectedSubnetId ?>">🌐 DNS Export</a>
   <?php endif; ?>
 </div>
 
@@ -522,6 +523,9 @@ page_header('Addresses');
           <td>
             <div class="actions-inline">
               <a href="address_history.php?address_id=<?= to_int($a['id']) ?>">History</a>
+              <button type="button" class="ping-btn" data-address-id="<?= to_int($a['id']) ?>"
+                      data-csrf="<?= e(csrf_token()) ?>" style="font-size:.8rem;padding:2px 8px">Ping</button>
+              <span class="ping-result-<?= to_int($a['id']) ?> muted" style="font-size:.8rem"></span>
             </div>
 
             <details class="mt-6"<?= $isHighlighted ? ' open' : '' ?>>

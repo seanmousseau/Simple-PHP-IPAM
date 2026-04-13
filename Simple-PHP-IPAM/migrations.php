@@ -528,5 +528,110 @@ function ipam_migrations(): array
                 $db->exec("CREATE INDEX IF NOT EXISTS idx_addresses_owner_contact_id ON addresses(owner_contact_id)");
             }
         },
+
+        // 2.4.0-vrf-bgp: BGP context fields on VRFs
+        '2.4.0-vrf-bgp' => function(PDO $db): void {
+            $cols = array_column(
+                ($db->query("PRAGMA table_info(vrfs)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                'name'
+            );
+            if (!in_array('asn', $cols, true)) {
+                $db->exec("ALTER TABLE vrfs ADD COLUMN asn TEXT NOT NULL DEFAULT ''");
+            }
+            if (!in_array('rt_import', $cols, true)) {
+                $db->exec("ALTER TABLE vrfs ADD COLUMN rt_import TEXT NOT NULL DEFAULT ''");
+            }
+            if (!in_array('rt_export', $cols, true)) {
+                $db->exec("ALTER TABLE vrfs ADD COLUMN rt_export TEXT NOT NULL DEFAULT ''");
+            }
+            if (!in_array('enforce_unique', $cols, true)) {
+                $db->exec("ALTER TABLE vrfs ADD COLUMN enforce_unique INTEGER NOT NULL DEFAULT 1");
+            }
+        },
+
+        // 2.4.0-vlan-ranges: 802.1Q VLAN ID range model
+        '2.4.0-vlan-ranges' => function(PDO $db): void {
+            $tables = array_column(
+                ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                'name'
+            );
+            if (!in_array('vlan_ranges', $tables, true)) {
+                $db->exec("
+                    CREATE TABLE vlan_ranges (
+                        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name        TEXT NOT NULL,
+                        vlan_min    INTEGER NOT NULL CHECK(vlan_min >= 1 AND vlan_min <= 4094),
+                        vlan_max    INTEGER NOT NULL CHECK(vlan_max >= 1 AND vlan_max <= 4094),
+                        description TEXT NOT NULL DEFAULT '',
+                        site_id     INTEGER REFERENCES sites(id) ON DELETE SET NULL,
+                        created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                        updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                        CHECK(vlan_min <= vlan_max)
+                    )
+                ");
+            }
+        },
+
+        // 2.4.0-aggregates: supernet/aggregate tracking
+        '2.4.0-aggregates' => function(PDO $db): void {
+            $tables = array_column(
+                ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                'name'
+            );
+            if (!in_array('aggregates', $tables, true)) {
+                $db->exec("
+                    CREATE TABLE aggregates (
+                        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                        cidr        TEXT NOT NULL UNIQUE,
+                        ip_version  INTEGER NOT NULL,
+                        network     TEXT NOT NULL,
+                        network_bin BLOB NOT NULL,
+                        prefix      INTEGER NOT NULL,
+                        description TEXT NOT NULL DEFAULT '',
+                        rir         TEXT NOT NULL DEFAULT '',
+                        date_added  TEXT NOT NULL DEFAULT (date('now')),
+                        notes       TEXT NOT NULL DEFAULT '',
+                        created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                        updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+                    )
+                ");
+            }
+        },
+
+        // 2.4.0-pd-pools: IPv6 prefix delegation (RFC 3633)
+        '2.4.0-pd-pools' => function(PDO $db): void {
+            $tables = array_column(
+                ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                'name'
+            );
+            if (!in_array('pd_pools', $tables, true)) {
+                $db->exec("
+                    CREATE TABLE pd_pools (
+                        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                        parent_subnet_id  INTEGER NOT NULL REFERENCES subnets(id) ON DELETE CASCADE,
+                        delegation_prefix INTEGER NOT NULL CHECK(delegation_prefix BETWEEN 1 AND 128),
+                        description       TEXT NOT NULL DEFAULT '',
+                        site_id           INTEGER REFERENCES sites(id) ON DELETE SET NULL,
+                        created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+                        updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+                        UNIQUE(parent_subnet_id)
+                    )
+                ");
+            }
+            if (!in_array('pd_delegations', $tables, true)) {
+                $db->exec("
+                    CREATE TABLE pd_delegations (
+                        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                        pool_id       INTEGER NOT NULL REFERENCES pd_pools(id) ON DELETE CASCADE,
+                        cidr          TEXT NOT NULL,
+                        subscriber_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
+                        delegated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                        expires_at    TEXT,
+                        notes         TEXT NOT NULL DEFAULT '',
+                        created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+                    )
+                ");
+            }
+        },
     ];
 }

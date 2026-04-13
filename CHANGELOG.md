@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [2.4.0] - 2026-04-13
+
+### Added
+- **#357** — ICMP scan false negatives fixed: `ipam_probe_icmp()` now reads `stdout` before closing pipes (eliminating SIGPIPE-induced silent failures), correctly parses RTT from both Linux (`time=6.12 ms`) and macOS (`time=6.125 ms`) ping output formats, and handles exit code 2 (permission denied / missing `CAP_NET_RAW`) with a logged error instead of a silent null.
+- **#352** — Sticky table headers fixed: changed `position:sticky` from per-cell (`thead th`) to the `thead` element itself, creating a single unified stacking context. Added `z-index:52` on `thead` and `background:var(--card-2)` on `thead th`. Topbar height is now measured dynamically via `ResizeObserver` (replaces the unreliable `DOMContentLoaded`+resize approach).
+- **#358** — Timezone support: new `timezone` config key (`config.php`) and `date_default_timezone_set()` call in `init.php`. New `display_datetime()` helper in `lib.php` converts UTC SQLite timestamps to the configured timezone for display. `scan_history.php` and other pages use `display_datetime()` for all timestamp output.
+- **#360** — Unified `cron.php` housekeeping runner: consolidates temp cleanup, audit log pruning, address history pruning, utilisation alerts, and database backup into a single cron entry. JSONL output per task. Network scanning (`scan_run.php`) remains separate.
+- **#356** — Scan schedule UI moved from `subnets.php` inline details to a dedicated section on `scan_history.php`. Subnet rows now show a "Scan History" link instead of an inline schedule form.
+- **#359** — Live ping button: each address row on `addresses.php` gains a "Ping" button that fires a POST to `ping_host.php` via `fetch()`. The response shows latency (green) or "down" (red). Available to all authenticated users including read-only. CSRF-protected. IP resolved from the database — raw IP never trusted from the request body.
+- **#326** — BGP attributes on VRFs: `asn`, `rt_import`, `rt_export`, and `enforce_unique` fields added to the VRF add/edit forms and detail table. Database migration `2.4.0-vrf-bgp` with idempotency guards.
+- **#329** — VLAN ranges: new `vlan_ranges` table and management UI under Admin → VLANs. Named 802.1Q VLAN ID allocation blocks with optional site scoping. Migration `2.4.0-vlan-ranges`.
+- **#354** — Tooltip system: `[data-tooltip]` attribute on any element renders a CSS pseudo-element tooltip (no JS required for display). JavaScript edge-clamping adds `.tooltip-left`/`.tooltip-right` to prevent overflow at viewport edges. Used throughout VRF BGP and aggregate forms.
+- **#328** — Aggregates page (`aggregates.php`): supernet/aggregate CRUD for admin users. RIR selection (ARIN, RIPE, APNIC, LACNIC, AFRINIC, Internal), subnet coverage count, IPv4 and IPv6 support. Migration `2.4.0-aggregates`. Linked from Admin dropdown.
+- **#325** — IPv6 Prefix Delegation pools (`pd_pools.php`): RFC 3633 PD pool management. Create pools from IPv6 parent subnets, delegate sub-prefixes to subscribers (linked to contacts), track expiry. Expired delegations highlighted in red. Migration `2.4.0-pd-pools`. Linked from Admin dropdown.
+- **#327** — DNS zone export (`export_dns.php`): BIND-format zone file download from any subnet. Supports forward (A/AAAA), reverse (PTR), or both. IPv4 PTR uses octet-reversed in-addr.arpa origin; IPv6 PTR uses nibble format ip6.arpa. Linked as "DNS Export" action pill on addresses page.
+- **#330** — `docs/advanced-networking.md`: comprehensive guide covering VRF BGP attributes, VLAN ranges, aggregates, IPv6 PD pools, and DNS zone export.
+- **#353** — GitHub Pages site: `docs/_config.yml` and `docs/index.md` added. Deploy from `docs/` branch to publish documentation at the project's GitHub Pages URL.
+- **Testing** — PHPUnit `tests/ScannerTest.php` extended with 4 new RTT-parsing tests (Linux format, macOS format, sub-millisecond, empty output). Total: 81 tests.
+
+### Changed
+- Admin nav dropdown now includes **Aggregates** and **PD Pools** links between VLANs and Tags.
+
 ## [2.3.0] - 2026-04-12
 
 ### Added
@@ -498,6 +520,8 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[2.4.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.3.0...v2.4.0
+[2.3.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.2.1...v2.3.0
 [2.2.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.2.0...v2.2.1
 [2.2.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.1.5...v2.2.0
 [2.1.5]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.1.4...v2.1.5

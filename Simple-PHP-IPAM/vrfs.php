@@ -16,16 +16,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($action === 'create') {
-        $name = trim(to_str($_POST['name'] ?? ''));
-        $desc = trim(to_str($_POST['description'] ?? ''));
-        $rd   = trim(to_str($_POST['rd'] ?? ''));
+        $name          = trim(to_str($_POST['name'] ?? ''));
+        $desc          = trim(to_str($_POST['description'] ?? ''));
+        $rd            = trim(to_str($_POST['rd'] ?? ''));
+        $asn           = trim(to_str($_POST['asn'] ?? ''));
+        $rtImport      = trim(to_str($_POST['rt_import'] ?? ''));
+        $rtExport      = trim(to_str($_POST['rt_export'] ?? ''));
+        $enforceUnique = isset($_POST['enforce_unique']) ? 1 : 0;
 
         if ($name === '') {
             $err = 'VRF name is required.';
         } else {
             try {
-                $st = $db->prepare("INSERT INTO vrfs (name, description, rd) VALUES (:n,:d,:rd)");
-                $st->execute([':n' => $name, ':d' => $desc, ':rd' => $rd]);
+                $st = $db->prepare("INSERT INTO vrfs (name, description, rd, asn, rt_import, rt_export, enforce_unique) VALUES (:n,:d,:rd,:asn,:rti,:rte,:eu)");
+                $st->execute([':n' => $name, ':d' => $desc, ':rd' => $rd, ':asn' => $asn, ':rti' => $rtImport, ':rte' => $rtExport, ':eu' => $enforceUnique]);
                 $newId = (int)$db->lastInsertId();
                 audit($db, 'vrf.create', 'vrf', $newId, "name=$name");
                 flash_set("VRF \"$name\" created.");
@@ -36,17 +40,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     } elseif ($action === 'update') {
-        $id   = to_int($_POST['id'] ?? 0);
-        $name = trim(to_str($_POST['name'] ?? ''));
-        $desc = trim(to_str($_POST['description'] ?? ''));
-        $rd   = trim(to_str($_POST['rd'] ?? ''));
+        $id            = to_int($_POST['id'] ?? 0);
+        $name          = trim(to_str($_POST['name'] ?? ''));
+        $desc          = trim(to_str($_POST['description'] ?? ''));
+        $rd            = trim(to_str($_POST['rd'] ?? ''));
+        $asn           = trim(to_str($_POST['asn'] ?? ''));
+        $rtImport      = trim(to_str($_POST['rt_import'] ?? ''));
+        $rtExport      = trim(to_str($_POST['rt_export'] ?? ''));
+        $enforceUnique = isset($_POST['enforce_unique']) ? 1 : 0;
 
         if ($id <= 0 || $name === '') {
             $err = 'VRF name is required.';
         } else {
             try {
-                $st = $db->prepare("UPDATE vrfs SET name=:n, description=:d, rd=:rd, updated_at=datetime('now') WHERE id=:id");
-                $st->execute([':n' => $name, ':d' => $desc, ':rd' => $rd, ':id' => $id]);
+                $st = $db->prepare("UPDATE vrfs SET name=:n, description=:d, rd=:rd, asn=:asn, rt_import=:rti, rt_export=:rte, enforce_unique=:eu, updated_at=datetime('now') WHERE id=:id");
+                $st->execute([':n' => $name, ':d' => $desc, ':rd' => $rd, ':asn' => $asn, ':rti' => $rtImport, ':rte' => $rtExport, ':eu' => $enforceUnique, ':id' => $id]);
                 audit($db, 'vrf.update', 'vrf', $id, "name=$name");
                 flash_set("VRF \"$name\" updated.");
                 header('Location: vrfs.php');
@@ -84,7 +92,7 @@ $sort = parse_sort($sortCols, 'name');
 
 /** @var list<array<string, mixed>> $vrfs */
 $vrfs = ($db->query("
-    SELECT v.id, v.name, v.description, v.rd, v.created_at,
+    SELECT v.id, v.name, v.description, v.rd, v.asn, v.rt_import, v.rt_export, v.enforce_unique, v.created_at,
            (SELECT COUNT(*) FROM subnets sn WHERE sn.vrf_id = v.id) AS subnet_count
     FROM vrfs v
     ORDER BY {$sort['sql']}
@@ -120,6 +128,17 @@ page_header('VRFs');
       <div class="row">
         <label class="flex-1">Description<br><input name="description" class="w-full"></label>
       </div>
+      <div class="row mt-8">
+        <label class="mw-160">ASN <span class="muted" data-tooltip="Autonomous System Number, e.g. 65000 or AS65000">ⓘ</span><br><input name="asn" placeholder="e.g. 65000" class="w-full"></label>
+        <label class="flex-1">RT Import <span class="muted" data-tooltip="Route Target import list (comma-separated), e.g. 65000:100">ⓘ</span><br><input name="rt_import" placeholder="e.g. 65000:100" class="w-full"></label>
+        <label class="flex-1">RT Export <span class="muted" data-tooltip="Route Target export list (comma-separated), e.g. 65000:100">ⓘ</span><br><input name="rt_export" placeholder="e.g. 65000:100" class="w-full"></label>
+      </div>
+      <div class="row mt-8">
+        <label style="display:flex;align-items:center;gap:6px">
+          <input type="checkbox" name="enforce_unique" value="1" checked>
+          Enforce unique prefixes <span class="muted" data-tooltip="Prevent duplicate CIDRs within this VRF">ⓘ</span>
+        </label>
+      </div>
       <p><button type="submit">Create VRF</button></p>
     </form>
   </div>
@@ -154,6 +173,9 @@ page_header('VRFs');
                 echo sort_th('name',    'Name',    $sort['col'], $sort['dir'], $qs);
                 echo sort_th('rd',      'Route Distinguisher', $sort['col'], $sort['dir'], $qs);
           ?>
+          <th>ASN</th>
+          <th>RT Import</th>
+          <th>RT Export</th>
           <th>Description</th>
           <th>Subnets</th>
           <?php echo sort_th('created', 'Created', $sort['col'], $sort['dir'], $qs); ?>
@@ -164,21 +186,37 @@ page_header('VRFs');
       <?php foreach ($vrfs as $v): ?>
         <tr>
           <td><b><?= e(to_str($v['name'])) ?></b></td>
-          <td><?= $v['rd'] !== '' ? e(to_str($v['rd'])) : '<span class="muted">—</span>' ?></td>
-          <td><?= $v['description'] !== '' ? e(to_str($v['description'])) : '<span class="muted">—</span>' ?></td>
+          <td><?= to_str($v['rd']) !== '' ? e(to_str($v['rd'])) : '<span class="muted">—</span>' ?></td>
+          <td><?= to_str($v['asn']) !== '' ? e(to_str($v['asn'])) : '<span class="muted">—</span>' ?></td>
+          <td><?= to_str($v['rt_import']) !== '' ? e(to_str($v['rt_import'])) : '<span class="muted">—</span>' ?></td>
+          <td><?= to_str($v['rt_export']) !== '' ? e(to_str($v['rt_export'])) : '<span class="muted">—</span>' ?></td>
+          <td><?= to_str($v['description']) !== '' ? e(to_str($v['description'])) : '<span class="muted">—</span>' ?></td>
           <td><?= to_int($v['subnet_count']) ?></td>
           <td class="muted"><?= e(to_str($v['created_at'])) ?></td>
           <td>
             <details>
               <summary>Edit/Delete</summary>
-              <form method="post" action="vrfs.php" class="row mt-8">
+              <form method="post" action="vrfs.php" class="mt-8">
                 <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action" value="update">
                 <input type="hidden" name="id"     value="<?= to_int($v['id']) ?>">
-                <label>Name<br><input name="name" value="<?= e(to_str($v['name'])) ?>" required></label>
-                <label>Route Distinguisher<br><input name="rd" value="<?= e(to_str($v['rd'])) ?>"></label>
-                <label class="flex-1">Description<br><input name="description" value="<?= e(to_str($v['description'])) ?>"></label>
-                <button type="submit">Save</button>
+                <div class="row">
+                  <label>Name<br><input name="name" value="<?= e(to_str($v['name'])) ?>" required></label>
+                  <label>Route Distinguisher<br><input name="rd" value="<?= e(to_str($v['rd'])) ?>"></label>
+                  <label class="flex-1">Description<br><input name="description" value="<?= e(to_str($v['description'])) ?>"></label>
+                </div>
+                <div class="row mt-8">
+                  <label>ASN<br><input name="asn" value="<?= e(to_str($v['asn'])) ?>" placeholder="e.g. 65000"></label>
+                  <label class="flex-1">RT Import<br><input name="rt_import" value="<?= e(to_str($v['rt_import'])) ?>" placeholder="e.g. 65000:100"></label>
+                  <label class="flex-1">RT Export<br><input name="rt_export" value="<?= e(to_str($v['rt_export'])) ?>" placeholder="e.g. 65000:100"></label>
+                </div>
+                <div class="row mt-8">
+                  <label style="display:flex;align-items:center;gap:6px">
+                    <input type="checkbox" name="enforce_unique" value="1"<?= to_int($v['enforce_unique']) ? ' checked' : '' ?>>
+                    Enforce unique prefixes
+                  </label>
+                  <button type="submit">Save</button>
+                </div>
               </form>
               <form method="post" action="vrfs.php" class="mt-8"
                     data-confirm="Delete this VRF? All subnets must be reassigned first.">

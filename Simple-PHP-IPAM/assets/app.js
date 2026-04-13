@@ -52,17 +52,26 @@
     if (banner) banner.style.display = "none";
   }
 
-  // --- Sticky header offset: keep --topbar-h in sync with actual topbar height (#351) ---
-  function syncTopbarHeight() {
+  document.addEventListener("DOMContentLoaded", function() {
+    // --- Sticky header offset: keep --topbar-h in sync with actual topbar height (#351, #352) ---
+    // ResizeObserver fires immediately on observe (correct initial measurement even when fonts
+    // are still loading or flex layout hasn't settled) and on every subsequent resize, replacing
+    // the unreliable one-shot DOMContentLoaded + window resize listener approach.
     var topbar = document.querySelector(".topbar");
     if (topbar) {
-      document.documentElement.style.setProperty("--topbar-h", topbar.offsetHeight + "px");
+      if (window.ResizeObserver) {
+        new ResizeObserver(function() {
+          document.documentElement.style.setProperty("--topbar-h", topbar.offsetHeight + "px");
+        }).observe(topbar);
+      } else {
+        // Fallback for browsers without ResizeObserver
+        document.documentElement.style.setProperty("--topbar-h", topbar.offsetHeight + "px");
+        window.addEventListener("resize", function() {
+          document.documentElement.style.setProperty("--topbar-h", topbar.offsetHeight + "px");
+        });
+      }
     }
-  }
-  window.addEventListener("resize", syncTopbarHeight);
 
-  document.addEventListener("DOMContentLoaded", function() {
-    syncTopbarHeight();
     updateThemeButton();
 
     // --- Theme toggle button ---
@@ -117,6 +126,45 @@
       }
       document.querySelectorAll(".nav-dropdown.open")
               .forEach(function(d) { d.classList.remove("open"); });
+    });
+
+    // --- Live Ping buttons (addresses.php) ---
+    document.addEventListener("click", function(e) {
+      var btn = e.target.closest(".ping-btn");
+      if (!btn || btn.disabled) return;
+
+      var addrId = btn.dataset.addressId;
+      var csrf   = btn.dataset.csrf;
+      var result = document.querySelector(".ping-result-" + addrId);
+
+      btn.disabled = true;
+      btn.textContent = "…";
+      if (result) { result.textContent = ""; }
+
+      var body = new URLSearchParams({ csrf: csrf, address_id: addrId });
+      fetch("ping_host.php", { method: "POST", body: body })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (result) {
+            if (data.up) {
+              result.textContent = "up — " + data.latency_ms + "ms";
+              result.className   = result.className.replace(/\bmuted\b/, "success");
+            } else if (data.error) {
+              result.textContent = "error: " + data.error;
+              result.className   = result.className.replace(/\bsuccess\b/, "muted");
+            } else {
+              result.textContent = "no response";
+              result.className   = result.className.replace(/\bsuccess\b/, "muted");
+            }
+          }
+        })
+        .catch(function() {
+          if (result) result.textContent = "request failed";
+        })
+        .finally(function() {
+          btn.disabled = false;
+          btn.textContent = "Ping";
+        });
     });
 
     // --- Auto-submit selects (data-auto-submit) ---
@@ -790,5 +838,30 @@
         }
       });
     }());
+
+    // ── Tooltip edge clamping (#354) ────────────────────────────────────────
+    // Adds .tooltip-left / .tooltip-right when the tooltip bubble would
+    // overflow the viewport so CSS can re-align it flush to the near edge.
+    (function() {
+      var MARGIN = 8;
+      function clampTooltip(el) {
+        el.classList.remove("tooltip-left", "tooltip-right");
+        var rect = el.getBoundingClientRect();
+        var vw   = window.innerWidth;
+        var tip  = el.dataset.tooltip || "";
+        var tipW = Math.min(240, tip.length * 7 + 18);
+        var cx   = rect.left + rect.width / 2;
+        if (cx - tipW / 2 < MARGIN) {
+          el.classList.add("tooltip-left");
+        } else if (cx + tipW / 2 > vw - MARGIN) {
+          el.classList.add("tooltip-right");
+        }
+      }
+      document.querySelectorAll("[data-tooltip]").forEach(function(el) {
+        el.addEventListener("mouseenter", function() { clampTooltip(el); });
+        el.addEventListener("focusin",    function() { clampTooltip(el); });
+      });
+    }());
+
   });
 })();

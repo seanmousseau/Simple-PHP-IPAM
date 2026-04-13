@@ -9,6 +9,12 @@ return [
     // Application display name shown in the browser tab, nav bar, and login page.
     'app_name' => 'Simple PHP IPAM',
 
+    // Timezone for displaying timestamps in the UI.
+    // Use any PHP timezone identifier, e.g. 'America/Toronto', 'Europe/London', 'UTC'.
+    // All timestamps are stored in UTC; this setting converts them for display only.
+    // See: https://www.php.net/manual/en/timezones.php
+    'timezone' => 'UTC',
+
     'bootstrap_admin' => [
         'username' => 'admin',
         'password' => 'ChangeMeNow!12345',
