@@ -574,7 +574,7 @@ function render_subnet_map_nodes(array $tree, array $agg, array $unassignedAgg, 
         $cls = $pct >= 90 ? 'util-bar-fill--crit' : ($pct >= 75 ? 'util-bar-fill--warn' : '');
         $indent = $depth * 22;
         echo "<div class='map-node' data-indent='{$indent}'>";
-        echo "<div class='map-node-inner' style='margin-left:{$indent}px'>";
+        echo "<div class='map-node-inner' data-indent='{$indent}'>";
         echo "<a class='map-cidr' href='addresses.php?subnet_id=" . to_int($row['id']) . "'>" . e(to_str($row['cidr'])) . "</a>";
         if (to_str($row['description']) !== '') echo " <span class='map-desc muted'>" . e(to_str($row['description'])) . "</span>";
         echo "<span class='map-util'><span class='util-bar'><span class='util-bar-fill {$cls}' data-pct='{$pct}'></span></span><span class='map-pct muted'>{$pct}%</span></span>";
@@ -737,7 +737,7 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
     $hasSched   = $row['scan_method'] !== null;
     $scanActive = (bool)($row['scan_active'] ?? false);
     $schedLabel = $hasSched
-        ? ($scanActive ? " <span class='badge' style='background:var(--success);color:#fff'>Active</span>" : " <span class='badge'>Inactive</span>")
+        ? ($scanActive ? " <span class='badge badge--success'>Active</span>" : " <span class='badge'>Inactive</span>")
         : '';
     echo "<a href='scan_history.php?subnet_id=" . to_int($row['id']) . "' class='action-pill mt-8'>📡 Scan History &amp; Schedule" . $schedLabel . "</a>";
 
@@ -782,10 +782,10 @@ page_header('Subnets');
 <?php if ($warn): ?><p class="warning"><?= e($warn) ?></p><?php endif; ?>
 
 <?php if (!empty($overlapWarning) && !empty($pendingAction) && !empty($pendingData)): ?>
-  <div class="card mt-16 warning" style="border-left:4px solid var(--warn)">
+  <div class="card mt-16 warning card--warn">
     <h2>⚠ Overlap Warning</h2>
     <p><?= e($overlapWarning) ?></p>
-    <form method="post" action="subnets.php" style="display:inline">
+    <form method="post" action="subnets.php" class="d-inline">
       <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
       <input type="hidden" name="action" value="<?= e($pendingAction) ?>">
       <?php if (($pendingData['id'] ?? 0) > 0): ?>
@@ -886,7 +886,7 @@ page_header('Subnets');
     </div>
 
     <!-- Map view (#255) -->
-    <div id="subnet-map-view" style="display:none">
+    <div id="subnet-map-view" hidden>
     <?php $mapCount = [0]; foreach ($siteGroups as $group): ?>
       <div class="map-group mb-24">
         <div class="map-group-label"><?= e(to_str($group['label'])) ?></div>

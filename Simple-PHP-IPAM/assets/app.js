@@ -49,7 +49,7 @@
   function dismissUpdate(version) {
     localStorage.setItem("ipam_dismissed_update", version);
     var banner = document.getElementById("ipam-update-banner");
-    if (banner) banner.style.display = "none";
+    if (banner) banner.classList.add("hidden");
   }
 
   document.addEventListener("DOMContentLoaded", function() {
@@ -73,7 +73,7 @@
       var dismissed = localStorage.getItem("ipam_dismissed_update");
       var bannerVersion = banner.dataset.version;
       if (dismissed && bannerVersion && dismissed === bannerVersion) {
-        banner.style.display = "none";
+        banner.classList.add("hidden");
       }
     }
     document.querySelectorAll("[data-dismiss-update]").forEach(function(btn) {
@@ -204,15 +204,8 @@
       }
     }
 
-    // --- Utilization bar fill widths from data-pct (replaces inline style width) ---
-    document.querySelectorAll(".util-bar-fill[data-pct]").forEach(function(el) {
-      el.style.width = el.dataset.pct + "%";
-    });
-
-    // --- Subnet hierarchy node indentation from data-indent (replaces inline margin-left) ---
-    document.querySelectorAll(".subnet-node[data-indent]").forEach(function(el) {
-      el.style.marginLeft = el.dataset.indent + "px";
-    });
+    // util-bar-fill widths and subnet-node indentation are now handled by CSS attribute
+    // selectors in app.css ([data-pct="N"], [data-indent="N"]) — no JS needed.
 
     // --- reCAPTCHA v3: submit form after obtaining token ---
     // Note: do NOT guard with typeof grecaptcha here — the api.js/enterprise.js script
@@ -251,7 +244,7 @@
         opts.forEach(function(opt) {
           if (opt.value === "0") return;
           var match = selectedSite === "0" || opt.dataset.site === selectedSite;
-          opt.style.display = match ? "" : "none";
+          opt.hidden = !match;
           if (match && opt.value === currentVal) currentStillVisible = true;
         });
         if (!currentStillVisible) filterSubnet.value = "0";
@@ -356,7 +349,6 @@
         // Clear drawer body safely, then move source content in
         while (body.firstChild) body.removeChild(body.firstChild);
         body.appendChild(src);
-        src.style.display = "";
         formDrawer.classList.add("drawer--open");
         if (formDrawerOverlay) formDrawerOverlay.classList.add("visible");
       }
@@ -395,15 +387,14 @@
       var hiddenInput = input.parentElement.querySelector("input[name=owner_contact_id]");
       if (!hiddenInput) return;
       var list = document.createElement("ul");
-      list.className = "contact-suggestions";
-      list.style.display = "none";
-      input.parentElement.style.position = "relative";
+      list.className = "contact-suggestions hidden";
+      input.parentElement.classList.add("contact-typeahead-wrap");
       input.parentElement.appendChild(list);
       var timer;
 
       function clearSuggestions() {
-        list.innerHTML = "";
-        list.style.display = "none";
+        while (list.firstChild) list.removeChild(list.firstChild);
+        list.classList.add("hidden");
       }
 
       input.addEventListener("input", function() {
@@ -430,7 +421,7 @@
                 });
                 list.appendChild(li);
               });
-              list.style.display = "block";
+              list.classList.remove("hidden");
             })
             .catch(function() { clearSuggestions(); });
         }, 250);
@@ -457,7 +448,7 @@
       function applyWidgetVisibility() {
         var hidden = hiddenList();
         document.querySelectorAll("[data-widget]").forEach(function(el) {
-          el.style.display = hidden.includes(el.dataset.widget) ? "none" : "";
+          el.classList.toggle("hidden", hidden.includes(el.dataset.widget));
         });
       }
 
@@ -491,7 +482,7 @@
           var val = siteFilter.value;
           localStorage.setItem(SITE_KEY, val);
           document.querySelectorAll("[data-site-row]").forEach(function(tr) {
-            tr.style.display = (val === "" || tr.dataset.siteRow === val) ? "" : "none";
+            tr.hidden = !(val === "" || tr.dataset.siteRow === val);
           });
         }
         siteFilter.addEventListener("change", applyFilter);
@@ -603,8 +594,8 @@
 
       function applyView(v) {
         var isMap = v === "map";
-        listView.style.display = isMap ? "none" : "";
-        mapView.style.display  = isMap ? ""     : "none";
+        listView.hidden = isMap;
+        mapView.hidden  = !isMap;
         btns.forEach(function(b) {
           b.classList.toggle("active", b.dataset.view === v);
         });
@@ -621,7 +612,7 @@
     // --- Inline cell editing on address rows (#254) ---
     document.querySelectorAll("[data-editable][data-addr-id]").forEach(function(cell) {
       cell.title = "Click to edit";
-      cell.style.cursor = "pointer";
+      cell.classList.add("th-sortable");
       cell.addEventListener("click", function(e) {
         if (cell.querySelector("input")) return; // already editing
         var field   = cell.dataset.editable;

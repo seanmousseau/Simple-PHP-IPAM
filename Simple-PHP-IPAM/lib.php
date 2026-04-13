@@ -2701,7 +2701,7 @@ function page_header(string $title, array $opts = []): void
 
     $extraScriptSrc = isset($opts['extra_script_src']) && $opts['extra_script_src'] !== '' ? ' ' . $opts['extra_script_src'] : '';
     $frameSrc       = isset($opts['extra_frame_src'])  && $opts['extra_frame_src']  !== '' ? " frame-src 'self' " . $opts['extra_frame_src'] . ';' : '';
-    header("Content-Security-Policy: default-src 'self'; script-src 'self'{$extraScriptSrc}; style-src 'self'; img-src 'self' data:;{$frameSrc} frame-ancestors 'none'");
+    header("Content-Security-Policy: default-src 'self'; script-src 'self'{$extraScriptSrc}; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:;{$frameSrc} frame-ancestors 'none'");
     header('X-Frame-Options: DENY');
     header('X-Content-Type-Options: nosniff');
     header('Referrer-Policy: strict-origin-when-cross-origin');
@@ -2899,7 +2899,7 @@ function page_footer(): void
 
     echo "<hr><div class='muted footer-meta'>";
     echo "<a href='https://github.com/seanmousseau/Simple-PHP-IPAM' target='_blank' rel='noopener' class='link-plain'>"
-       . "<picture><source srcset='assets/logo.webp' type='image/webp'><img src='assets/logo.png' alt='Simple PHP IPAM' width='81' height='24' style='vertical-align:middle;opacity:.7;'></picture>"
+       . "<picture><source srcset='assets/logo.webp' type='image/webp'><img src='assets/logo.png' alt='Simple PHP IPAM' width='81' height='24' class='footer-logo'></picture>"
        . "</a> v" . e(IPAM_VERSION)
        . " &middot; <a href='https://seanmousseau.github.io/Simple-PHP-IPAM/' target='_blank' rel='noopener'>Docs</a>";
 

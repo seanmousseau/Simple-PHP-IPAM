@@ -84,7 +84,7 @@ $sort = parse_sort($sortCols, 'cidr');
 /** @var list<array<string,mixed>> $aggregates */
 $aggregates = ($db->query("
     SELECT id, cidr, ip_version, network, prefix, description, rir, notes, date_added, created_at
-    FROM aggregates
+    FROM aggregates a
     ORDER BY {$sort['sql']}
 ") ?: throw new \RuntimeException('Query failed'))->fetchAll();
 
