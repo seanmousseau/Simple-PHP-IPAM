@@ -164,7 +164,7 @@ page_header('Contacts');
           <td><?= $c['org']   !== '' ? e(to_str($c['org']))   : '<span class="muted">—</span>' ?></td>
           <td><?= $c['note']  !== '' ? e(to_str($c['note']))  : '<span class="muted">—</span>' ?></td>
           <td><?= to_int($c['address_count']) ?></td>
-          <td class="muted"><?= e(to_str($c['created_at'])) ?></td>
+          <td class="muted"><?= e(display_datetime(to_str($c['created_at']))) ?></td>
           <td>
             <details>
               <summary>Edit/Delete</summary>

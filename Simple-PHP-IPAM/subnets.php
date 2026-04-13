@@ -677,7 +677,7 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
     }
     echo "</div>";
 
-    echo "<div class='muted'>Updated " . e(to_str($row['updated_at'])) . "</div>";
+    echo "<div class='muted'>Updated " . e(display_datetime(to_str($row['updated_at']))) . "</div>";
 
     echo "<form method='post' action='subnets.php' class='row mt-8'>";
     echo "<input type='hidden' name='csrf' value='" . e(csrf_token()) . "'>";

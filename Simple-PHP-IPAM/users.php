@@ -309,8 +309,8 @@ page_header('Users');
           <span class="muted">—</span>
         <?php endif; ?>
       </td>
-      <td class="muted"><?= $u['last_login_at'] ? e(to_str($u['last_login_at'])) : '<span class="muted">never</span>' ?></td>
-      <td class="muted"><?= e(to_str($u['created_at'])) ?></td>
+      <td class="muted"><?= $u['last_login_at'] ? e(display_datetime(to_str($u['last_login_at']))) : '<span class="muted">never</span>' ?></td>
+      <td class="muted"><?= e(display_datetime(to_str($u['created_at']))) ?></td>
       <td>
         <details>
           <summary class="muted cursor-pointer font-sm">Actions ▾</summary>

@@ -176,7 +176,7 @@ page_header('Address History');
       <tbody>
       <?php foreach ($rows as $r): ?>
         <tr>
-          <td class="muted"><?= e(to_str($r['created_at'])) ?></td>
+          <td class="muted"><?= e(display_datetime(to_str($r['created_at']))) ?></td>
           <td><?= e(to_str($r['action'])) ?></td>
           <td><?= e(to_str($r['username'] ?? '')) ?></td>
           <td class="muted"><?= e(to_str($r['client_ip'] ?? '')) ?></td>

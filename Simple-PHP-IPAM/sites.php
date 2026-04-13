@@ -192,7 +192,7 @@ page_header('Sites');
             <?php if ($depth > 0): ?><span class="muted">↳ </span><?php endif; ?>
             <b><?= e(to_str($site['name'])) ?></b>
           </td>
-          <td class="muted"><?= e(to_str($site['created_at'])) ?></td>
+          <td class="muted"><?= e(display_datetime(to_str($site['created_at']))) ?></td>
           <td><?= $site['parent_name'] ? e(to_str($site['parent_name'])) : '<span class="muted">—</span>' ?></td>
           <td><?= e(to_str($site['description'])) ?></td>
           <td><?= e(to_str($site['subnet_count'])) ?></td>

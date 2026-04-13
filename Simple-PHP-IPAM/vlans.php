@@ -260,7 +260,7 @@ page_header('VLANs');
           <td><?= $v['site_name'] ? e(to_str($v['site_name'])) : '<span class="muted">Global</span>' ?></td>
           <td><?= $v['description'] !== '' ? e(to_str($v['description'])) : '<span class="muted">—</span>' ?></td>
           <td><?= to_int($v['subnet_count']) ?></td>
-          <td class="muted"><?= e(to_str($v['created_at'])) ?></td>
+          <td class="muted"><?= e(display_datetime(to_str($v['created_at']))) ?></td>
           <td>
             <details>
               <summary>Edit/Delete</summary>
@@ -351,7 +351,7 @@ page_header('VLANs');
         <td><?= to_int($r['vlan_max']) ?></td>
         <td><?= $r['site_name'] ? e(to_str($r['site_name'])) : '<span class="muted">Global</span>' ?></td>
         <td><?= to_str($r['description']) !== '' ? e(to_str($r['description'])) : '<span class="muted">—</span>' ?></td>
-        <td class="muted"><?= e(to_str($r['created_at'])) ?></td>
+        <td class="muted"><?= e(display_datetime(to_str($r['created_at']))) ?></td>
         <td>
           <details>
             <summary>Edit/Delete</summary>

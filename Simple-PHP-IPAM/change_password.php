@@ -140,7 +140,7 @@ page_header('Change Password');
       <tbody>
       <?php foreach ($activityRows as $act): ?>
         <tr>
-          <td class="muted"><?= e(to_str($act['created_at'])) ?></td>
+          <td class="muted"><?= e(display_datetime(to_str($act['created_at']))) ?></td>
           <td><?= e(to_str($act['action'])) ?></td>
           <td class="muted"><?= $act['ip'] !== null ? e(to_str($act['ip'])) : '—' ?></td>
           <td class="muted"><span class="audit-details" title="<?= e(to_str($act['user_agent'] ?? '')) ?>"><?= e(to_str($act['user_agent'] ?? '')) ?></span></td>

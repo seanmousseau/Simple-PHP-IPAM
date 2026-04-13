@@ -165,9 +165,9 @@ page_header('API Keys');
     <?php foreach ($keys as $k): ?>
       <tr>
         <td><?= e(to_str($k['name'])) ?></td>
-        <td><?= e(to_str($k['created_at'])) ?></td>
+        <td><?= e(display_datetime(to_str($k['created_at']))) ?></td>
         <td><?= e(to_str($k['created_by'])) ?></td>
-        <td><?= $k['last_used_at'] ? e(to_str($k['last_used_at'])) : '<span class="muted">Never</span>' ?></td>
+        <td><?= $k['last_used_at'] ? e(display_datetime(to_str($k['last_used_at']))) : '<span class="muted">Never</span>' ?></td>
         <td><?= $k['description'] !== '' ? e(to_str($k['description'])) : '<span class="muted">—</span>' ?></td>
         <td>
           <?php if (to_int($k['is_readonly'])): ?>
