@@ -53,24 +53,8 @@
   }
 
   document.addEventListener("DOMContentLoaded", function() {
-    // --- Sticky header offset: keep --topbar-h in sync with actual topbar height (#351, #352) ---
-    // ResizeObserver fires immediately on observe (correct initial measurement even when fonts
-    // are still loading or flex layout hasn't settled) and on every subsequent resize, replacing
-    // the unreliable one-shot DOMContentLoaded + window resize listener approach.
-    var topbar = document.querySelector(".topbar");
-    if (topbar) {
-      if (window.ResizeObserver) {
-        new ResizeObserver(function() {
-          document.documentElement.style.setProperty("--topbar-h", topbar.offsetHeight + "px");
-        }).observe(topbar);
-      } else {
-        // Fallback for browsers without ResizeObserver
-        document.documentElement.style.setProperty("--topbar-h", topbar.offsetHeight + "px");
-        window.addEventListener("resize", function() {
-          document.documentElement.style.setProperty("--topbar-h", topbar.offsetHeight + "px");
-        });
-      }
-    }
+    // Sticky headers are handled by CSS (thead th { position:sticky; top:0 } within
+    // .table-wrap { overflow:auto; max-height:65vh }). No JS offset needed.
 
     updateThemeButton();
 
