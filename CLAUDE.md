@@ -306,7 +306,7 @@ When implementing a new version:
    - Header: `## [X.Y.Z] - YYYY-MM-DD`
    - Categories: **Added**, **Changed**, **Deprecated**, **Removed**, **Fixed**, **Security** (only include categories with entries)
    - Add a version comparison link at the bottom of the file
-4. Update `README.md` "What's new" section
+4. Update `README.md` "What's new" section. **README only carries the single most recent release** — replace the existing `## What's new in vX.Y.Z` section in-place rather than appending. Older versions live in `CHANGELOG.md`. Do not let the README accumulate historical sections.
 5. Update relevant `docs/` files
 6. Bump asset cache-buster `?v=X.Y.Z` in `page_header()` **and** `demo_gate.php:74–75` if CSS/JS changed
 
