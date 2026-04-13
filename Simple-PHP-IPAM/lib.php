@@ -1690,15 +1690,12 @@ function auto_reserve_subnet_ips(PDO $db, int $subnetId, string $cidr, ?string $
     }
 
     if ($p['version'] === 4) {
-        // Broadcast address for IPv4
-        $hostBits = 32 - $p['prefix'];
-        if ($hostBits > 0) {
-            $unpacked  = unpack('N', $netBin) ?: [1 => 0];
-            $n         = (int)$unpacked[1];
-            $hostMask  = $hostBits === 32 ? 0xFFFFFFFF : ((1 << $hostBits) - 1);
-            $bcastInt  = ($n | $hostMask) & 0xFFFFFFFF;
-            $bcastBin  = pack('N', $bcastInt);
-            $bcastIp   = inet_ntop($bcastBin) ?: '';
+        // Broadcast address for IPv4 — uses the same helper as the scanner so
+        // /31 (RFC 3021 point-to-point) and /32 correctly reserve no broadcast
+        // and the UI agrees with the scanner's reserved set.
+        $bcastBin = ipam_compute_broadcast_bin($netBin, $p['prefix']);
+        if ($bcastBin !== null) {
+            $bcastIp = inet_ntop($bcastBin) ?: '';
             if ($bcastIp !== '' && $bcastIp !== $netIp) {
                 $ins->execute([':sid' => $subnetId, ':ip' => $bcastIp, ':ipbin' => $bcastBin, ':host' => 'broadcast']);
                 if ($db->lastInsertId()) {

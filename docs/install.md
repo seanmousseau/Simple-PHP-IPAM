@@ -230,7 +230,14 @@ Simple PHP IPAM ships with a unified CLI cron runner that handles all periodic t
 Add this to the web server user's crontab (for example `www-data`):
 
 ```cron
-*/15 * * * * php /path/to/Simple-PHP-IPAM/cron.php >> /var/log/ipam-cron.log 2>&1
+*/15 * * * * php /path/to/Simple-PHP-IPAM/cron.php >> /path/to/Simple-PHP-IPAM/data/cron.log 2>&1
+```
+
+The example points the log file at the application's own `data/` directory, which is already writable by the web server user. If you prefer a system log path such as `/var/log/ipam-cron.log`, **pre-create and chown the file before enabling the cron** — most web server users cannot create files under `/var/log` themselves and the job will silently fail to run:
+
+```bash
+sudo touch /var/log/ipam-cron.log
+sudo chown www-data:www-data /var/log/ipam-cron.log
 ```
 
 Each task throttles itself internally and is skipped cleanly when not yet due, so a 15-minute cadence is safe. See the **Cron runner** section in [configuration.md](configuration.md) for the full task table, per-task config keys, and troubleshooting.

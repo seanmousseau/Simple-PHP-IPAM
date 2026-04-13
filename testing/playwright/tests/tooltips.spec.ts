@@ -113,7 +113,7 @@ test('every [data-tooltip] attribute is non-empty across admin pages', async () 
   }
 });
 
-test('every [title] attribute is non-empty and unique per element across admin pages', async () => {
+test('every [title] attribute is non-empty across admin pages', async () => {
   for (const slug of TOOLTIP_PAGES) {
     await page.goto(appUrl(slug), { waitUntil: 'networkidle' });
     const titles = await page.locator('[title]').evaluateAll(
