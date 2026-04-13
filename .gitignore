@@ -19,3 +19,12 @@ vendor/
 # OS
 .DS_Store
 Thumbs.db
+
+# Playwright test artifacts
+test-results/
+.playwright-mcp/
+
+# Session/scratch files
+.remember/
+stubs/
+*.png
