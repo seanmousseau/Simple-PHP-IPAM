@@ -63,6 +63,9 @@ adminTest.describe('Breadcrumbs', () => {
 });
 
 adminTest.describe('Sticky headers', () => {
+  // Check position:sticky on <th>, NOT <thead>. The CSS must apply sticky to the cell
+  // level because .table-wrap{overflow-x:auto} creates a scroll container that would
+  // confine thead-level sticky to scroll within the wrapper instead of the viewport.
   adminTest('audit.php: thead th has sticky position', async ({ adminPage: page }) => {
     await page.goto('audit.php');
     const th = page.locator('thead th').first();
@@ -77,6 +80,46 @@ adminTest.describe('Sticky headers', () => {
     await expect(th).toBeVisible();
     const position = await th.evaluate(el => getComputedStyle(el).position);
     expect(position).toBe('sticky');
+  });
+
+  // The top offset must equal --topbar-h (not 0px or auto), so the header
+  // pins below the nav bar rather than behind it.
+  adminTest('thead th top offset equals --topbar-h CSS custom property', async ({ adminPage: page }) => {
+    await page.goto('audit.php');
+    await page.waitForLoadState('networkidle');
+    const th = page.locator('thead th').first();
+    await expect(th).toBeVisible();
+    const [topbarH, thTop] = await page.evaluate(() => {
+      const topbarH = getComputedStyle(document.documentElement)
+        .getPropertyValue('--topbar-h').trim();
+      const th = document.querySelector('thead th') as HTMLElement;
+      const thTop = th ? getComputedStyle(th).top : '';
+      return [topbarH, thTop];
+    });
+    expect(topbarH).not.toBe('');
+    expect(topbarH).not.toBe('0px');
+    expect(thTop).toBe(topbarH); // must pin exactly at topbar bottom
+  });
+
+  // thead itself must NOT have position:sticky — that breaks inside overflow-x:auto.
+  adminTest('thead does NOT have position:sticky (per-th approach)', async ({ adminPage: page }) => {
+    await page.goto('audit.php');
+    const theads = await page.locator('thead').all();
+    if (theads.length === 0) return;
+    const pos = await theads[0].evaluate(el => getComputedStyle(el).position);
+    // 'static' or 'relative' are both fine; 'sticky' is the regression
+    expect(pos).not.toBe('sticky');
+  });
+
+  // thead th must have a non-transparent background so content doesn't bleed through.
+  adminTest('thead th has opaque background', async ({ adminPage: page }) => {
+    await page.goto('audit.php');
+    const th = page.locator('thead th').first();
+    await expect(th).toBeVisible();
+    const bg = await th.evaluate(el => getComputedStyle(el).backgroundColor);
+    // rgba(0,0,0,0) / transparent means content will show through the pinned header
+    expect(bg).not.toBe('rgba(0, 0, 0, 0)');
+    expect(bg).not.toBe('transparent');
   });
 });
 
