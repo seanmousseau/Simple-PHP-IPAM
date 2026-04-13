@@ -223,6 +223,22 @@ Open `https://ipam.example.com/` in a browser. You should be redirected to the l
 
 ---
 
+## Step 6 — Register the cron runner
+
+Simple PHP IPAM ships with a unified CLI cron runner that handles all periodic tasks in a single entry: temp file cleanup, audit log pruning, address history pruning, subnet utilisation alerts, database backups, scheduled network scans, and (when demo mode is enabled) the demo database reset.
+
+Add this to the web server user's crontab (for example `www-data`):
+
+```cron
+*/15 * * * * php /path/to/Simple-PHP-IPAM/cron.php >> /var/log/ipam-cron.log 2>&1
+```
+
+Each task throttles itself internally and is skipped cleanly when not yet due, so a 15-minute cadence is safe. See the **Cron runner** section in [configuration.md](configuration.md) for the full task table, per-task config keys, and troubleshooting.
+
+`cron.php` refuses to run under a web SAPI (returns HTTP 403); it is CLI-only by design.
+
+---
+
 ## First login
 
 1. Navigate to your install URL — you will be redirected to the login page.

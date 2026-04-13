@@ -10,6 +10,7 @@ declare(strict_types=1);
  *   - Subnet utilisation alerts
  *   - Database backup
  *   - Network scanning (all active scheduled subnets that are due)
+ *   - Demo mode database reset (no-op when demo_mode.enabled is false)
  *
  * A single cron entry covers everything:
  *
@@ -207,6 +208,44 @@ try {
     }
 } catch (Throwable $e) {
     $fail('scan', $e->getMessage());
+}
+
+// ---------------------------------------------------------------------------
+// Task 7: Demo mode database reset
+// ---------------------------------------------------------------------------
+try {
+    $demoEnabled = !empty($config['demo_mode']['enabled']);
+    if (!$demoEnabled) {
+        $emit(['task' => 'demo_reset', 'skipped' => true, 'reason' => 'demo_mode.enabled=false', 'ts' => $now]);
+    } else {
+        // Throttle to once per 24h so the /15min cron cadence doesn't wipe the DB
+        // every tick. demo_reset.php (run from its own cron entry) bypasses this.
+        $stampFile = $scriptDir . '/data/demo_last_reset.txt';
+        $lastRun   = 0;
+        if (is_file($stampFile)) {
+            $raw = @file_get_contents($stampFile);
+            if (is_string($raw) && ctype_digit(trim($raw))) {
+                $lastRun = (int) trim($raw);
+            }
+        }
+        $throttleSeconds = 24 * 3600;
+        if ((time() - $lastRun) < $throttleSeconds) {
+            $emit([
+                'task'             => 'demo_reset',
+                'skipped'          => true,
+                'reason'           => 'throttled',
+                'last_run_at'      => $lastRun > 0 ? date('c', $lastRun) : null,
+                'next_due_at'      => $lastRun > 0 ? date('c', $lastRun + $throttleSeconds) : null,
+                'ts'               => $now,
+            ]);
+        } else {
+            demo_reset_db($db);
+            @file_put_contents($stampFile, (string) time());
+            $emit(['task' => 'demo_reset', 'ran' => true, 'ts' => $now]);
+        }
+    }
+} catch (Throwable $e) {
+    $fail('demo_reset', $e->getMessage());
 }
 
 exit($exitCode);

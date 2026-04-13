@@ -2240,6 +2240,39 @@ function apply_prefix_mask(string $ipBin, int $prefix): string
     return $out;
 }
 
+/**
+ * Compute the IPv4 broadcast address (binary) for a given network+prefix.
+ *
+ * Returns null when the concept does not apply:
+ *   - IPv6 networks (no broadcast)
+ *   - /32 (single host)
+ *   - /31 (RFC 3021 point-to-point; both addresses are usable)
+ *
+ * @param string $netBin 4-byte IPv4 network address (output of apply_prefix_mask)
+ */
+function ipam_compute_broadcast_bin(string $netBin, int $prefix): ?string
+{
+    if (strlen($netBin) !== 4) return null;       // IPv6 has no broadcast
+    if ($prefix < 0 || $prefix >= 31) return null; // /31, /32 have no broadcast
+    $hostBits = 32 - $prefix;
+    $out = '';
+    for ($i = 0; $i < 4; $i++) {
+        $byteIdx = 3 - $i; // little-endian walk from LSB
+        $n = ord($netBin[$byteIdx]);
+        if ($hostBits >= 8) {
+            $out = chr(0xFF) . $out;
+            $hostBits -= 8;
+        } elseif ($hostBits > 0) {
+            $lowMask = (1 << $hostBits) - 1;
+            $out = chr($n | $lowMask) . $out;
+            $hostBits = 0;
+        } else {
+            $out = chr($n) . $out;
+        }
+    }
+    return $out;
+}
+
 function ip_in_cidr(string $ip, string $network, int $prefix): bool
 {
     $ipBin = @inet_pton(trim($ip));
@@ -2712,11 +2745,11 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=2.4.1'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=2.5.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=2.4.1'></script>";
+    echo "<script defer src='assets/app.js?v=2.5.0'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
@@ -3415,6 +3448,36 @@ function ipam_probe_tcp(string $ip, int $port, int $timeoutMs = 1000): ?int
  * @param  int      $staleThreshold  Consecutive misses before marking address stale (default: 3)
  * @return array{scanned:int, up:int, down:int, stale_marked:int}
  */
+/**
+ * Return the reserved binary IPs for a subnet (network + IPv4 broadcast).
+ *
+ * @return array{network:?string, broadcast:?string}
+ */
+function ipam_subnet_reserved_bins(PDO $db, int $subnetId): array
+{
+    $st = $db->prepare("SELECT cidr FROM subnets WHERE id = :id");
+    $st->execute([':id' => $subnetId]);
+    $row = $st->fetch();
+    if (!is_array($row)) {
+        return ['network' => null, 'broadcast' => null];
+    }
+    $cidr = to_str($row['cidr'] ?? '');
+    if ($cidr === '') {
+        return ['network' => null, 'broadcast' => null];
+    }
+    $parsed = parse_cidr($cidr);
+    if ($parsed === null) {
+        return ['network' => null, 'broadcast' => null];
+    }
+    return [
+        'network'   => $parsed['net_bin'],
+        'broadcast' => ipam_compute_broadcast_bin($parsed['net_bin'], $parsed['prefix']),
+    ];
+}
+
+/**
+ * @return array{scanned:int, up:int, down:int, skipped:int, stale_marked:int}
+ */
 function ipam_scan_subnet(PDO $db, int $subnetId, string $method, ?int $tcpPort, int $staleThreshold = 3): array
 {
     // Normalise and validate inputs
@@ -3427,12 +3490,17 @@ function ipam_scan_subnet(PDO $db, int $subnetId, string $method, ?int $tcpPort,
     // After validation: if method needs TCP, $tcpPort is a valid port integer
     $validTcpPort = ($method === 'tcp' || $method === 'both') ? (int) $tcpPort : 0;
 
+    // Reserved IPs for this subnet (network + IPv4 broadcast). Excluded from scan
+    // targets: probing network/broadcast produces misleading results and some hosts
+    // respond to broadcast pings. IPv6 and IPv4 /31, /32 have no reserved set.
+    $reserved = ipam_subnet_reserved_bins($db, $subnetId);
+
     // Load all addresses in the subnet
-    $st = $db->prepare("SELECT id, ip FROM addresses WHERE subnet_id = :sid ORDER BY ip_bin");
+    $st = $db->prepare("SELECT id, ip, ip_bin FROM addresses WHERE subnet_id = :sid ORDER BY ip_bin");
     $st->execute([':sid' => $subnetId]);
     $addresses = $st->fetchAll();
 
-    $stats = ['scanned' => 0, 'up' => 0, 'down' => 0, 'stale_marked' => 0];
+    $stats = ['scanned' => 0, 'up' => 0, 'down' => 0, 'skipped' => 0, 'stale_marked' => 0];
     $insert = $db->prepare("
         INSERT INTO scan_results (subnet_id, address_id, ip, method, is_up, latency_ms, scanned_at)
         VALUES (:sid, :aid, :ip, :method, :is_up, :lat, datetime('now'))
@@ -3444,6 +3512,15 @@ function ipam_scan_subnet(PDO $db, int $subnetId, string $method, ?int $tcpPort,
     foreach ($addresses as $row) {
         $ip = is_string($row['ip']) ? $row['ip'] : '';
         $addrId = is_int($row['id']) ? $row['id'] : (int) $row['id'];
+        $ipBin = isset($row['ip_bin']) && is_string($row['ip_bin']) ? $row['ip_bin'] : '';
+
+        // Skip the subnet's reserved IPs (network + IPv4 broadcast). These must
+        // never be probed — some hosts respond to broadcast ICMP, producing
+        // misleading up/down results.
+        if ($ipBin !== '') {
+            if ($reserved['network']   !== null && hash_equals($reserved['network'],   $ipBin)) { $stats['skipped']++; continue; }
+            if ($reserved['broadcast'] !== null && hash_equals($reserved['broadcast'], $ipBin)) { $stats['skipped']++; continue; }
+        }
 
         // Validate IP before any system call
         $norm = normalize_ip($ip);
@@ -3492,9 +3569,14 @@ function ipam_scan_subnet(PDO $db, int $subnetId, string $method, ?int $tcpPort,
  */
 function ipam_mark_stale_addresses(PDO $db, int $subnetId, int $missThreshold = 3): int
 {
+    // Reserved IPs (network, IPv4 broadcast) are excluded from stale marking so
+    // they don't accrue a stale flag from historical scan_results rows.
+    $reserved = ipam_subnet_reserved_bins($db, $subnetId);
+
     // Fetch per-address: count of recent consecutive down results
     $st = $db->prepare("
         SELECT a.id,
+               a.ip_bin,
                a.is_stale,
                (
                  SELECT COALESCE(SUM(CASE WHEN r.is_up = 0 THEN 1 ELSE 0 END), 0)
@@ -3523,6 +3605,14 @@ function ipam_mark_stale_addresses(PDO $db, int $subnetId, int $missThreshold = 
         $currentlyStale = (int) $row['is_stale'];
         $misses = (int) $row['recent_misses'];
         $lastUp = $row['last_up'];
+        $ipBin = isset($row['ip_bin']) && is_string($row['ip_bin']) ? $row['ip_bin'] : '';
+
+        // Skip reserved IPs — they are never probed, so any historical scan data
+        // should not drive their stale flag.
+        if ($ipBin !== '') {
+            if ($reserved['network']   !== null && hash_equals($reserved['network'],   $ipBin)) continue;
+            if ($reserved['broadcast'] !== null && hash_equals($reserved['broadcast'], $ipBin)) continue;
+        }
 
         $shouldBeStale = ($misses >= $missThreshold && $lastUp !== null && (int) $lastUp === 0) ? 1 : 0;
 

@@ -539,6 +539,7 @@ For a guaranteed reset at midnight (independent of web traffic), add a cron entr
 | Subnet utilisation alerts | `alert_email` | No — skipped when `alert_email` is empty |
 | Database backup | `backup.enabled`, `backup.frequency` | Yes — honours frequency setting |
 | Network scanning | Per-subnet `scan_schedules.interval_minutes` | Yes — each subnet's own interval |
+| Demo mode reset | `demo_mode.enabled` | Yes — at most once every 24 hours |
 
 Each task emits one JSON object to stdout (JSONL format). Errors go to stderr. Exit code is `0` on success or `1` if any task throws an exception (remaining tasks still run).
 
@@ -546,6 +547,7 @@ Each task emits one JSON object to stdout (JSONL format). Errors go to stderr. E
 - `cron.php` rejects web requests with HTTP 403 — it is CLI-only.
 - For one-off or per-subnet scans from the CLI, use `scan_run.php` instead.
 - Scanning requires `scan_schedules` rows (configured via the Scan Schedule UI or REST API). Subnets with no schedule are never scanned by `cron.php`.
+- The demo reset task is a no-op unless `demo_mode.enabled=true` in `config.php`. When enabled, it resets the database to seed data at most once every 24 hours (tracked via `data/demo_last_reset.txt`). For an immediate unthrottled reset, run `php demo_reset.php` directly.
 
 ### Security note
 

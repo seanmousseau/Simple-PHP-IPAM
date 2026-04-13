@@ -8,6 +8,16 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 
 ---
 
+## What's new in v2.5.0
+
+- **Scanner broadcast exclusion** (#363) — network and IPv4 broadcast addresses are now skipped during scan runs. Some hosts respond to broadcast ICMP, which previously produced misleading up/down results. `/31` (RFC 3021) and `/32` have no reserved addresses; IPv6 only skips the network address.
+- **cron.php demo reset** (#364) — demo mode database reset is now an integrated task in the unified cron runner (throttled to once every 24 hours). `demo_reset.php` remains available as an unthrottled manual runner.
+- **docs/install.md** — new *Step 6: Register the cron runner* post-install section with the recommended crontab entry.
+- **Testing hardening** — new Playwright specs for CSP compliance, console cleanliness, and CSS regression (theme switching, sticky headers, status badge tokens, utilisation bar width). Extended tooltip and JS behaviour specs (fleet-wide `[data-tooltip]`/`[title]` non-empty sweep, CSRF-token-on-every-POST-form check, theme persistence). 329 Playwright tests, 96 PHPUnit tests.
+- Full QA gate (lint, PHPStan level 9, PHPCS, PHPUnit, Semgrep, Playwright) green.
+
+See [CHANGELOG.md](CHANGELOG.md) for full details.
+
 ## What's new in v2.4.0
 
 - **Bug fixes** — ICMP scan false negatives fixed (stdout read before pipe close; RTT parsing for Linux and macOS; exit code 2 handled); sticky table headers unified stacking context via thead-level sticky

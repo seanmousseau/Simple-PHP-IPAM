@@ -32,6 +32,15 @@ Two new columns are added to `addresses`:
 
 If ICMP probing fails with a permission error (exit code 2 on Linux), the scanner automatically falls back to TCP-only for that subnet.
 
+### What gets scanned
+
+The scanner iterates over every address recorded in the `addresses` table for a subnet. Two classes of IP are **never probed**, even if they exist in the table:
+
+- **Network address** (first IP in the subnet). Reports of "up" on the network address are almost always false positives.
+- **IPv4 broadcast address** (last IP in the subnet, /30 and larger). Many hosts on the same link respond to broadcast ICMP, producing misleading up/down results.
+
+Both are counted in the `skipped` stat on the scan summary. `/31` (RFC 3021 point-to-point) and `/32` (single host) have no reserved addresses — all IPs are probed. IPv6 has no broadcast concept, so only the network address is reserved.
+
 ---
 
 ## Scan schedules

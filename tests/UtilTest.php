@@ -472,4 +472,68 @@ class UtilTest extends TestCase
         $GLOBALS['config']['timezone'] = 'Asia/Tokyo';
         $this->assertSame('2024-01-16 00:00:00', display_datetime('2024-01-15 15:00:00'));
     }
+
+    // -----------------------------------------------------------------------
+    // ipam_compute_broadcast_bin() — scanner broadcast exclusion (#363)
+    // -----------------------------------------------------------------------
+
+    public function testBroadcastBinSlash29(): void
+    {
+        $net = parse_cidr('10.0.0.0/29');
+        $this->assertNotNull($net);
+        $bcast = ipam_compute_broadcast_bin($net['net_bin'], $net['prefix']);
+        $this->assertNotNull($bcast);
+        $this->assertSame('10.0.0.7', inet_ntop($bcast));
+    }
+
+    public function testBroadcastBinSlash24(): void
+    {
+        $net = parse_cidr('192.168.1.0/24');
+        $this->assertNotNull($net);
+        $bcast = ipam_compute_broadcast_bin($net['net_bin'], $net['prefix']);
+        $this->assertNotNull($bcast);
+        $this->assertSame('192.168.1.255', inet_ntop($bcast));
+    }
+
+    public function testBroadcastBinSlash16(): void
+    {
+        $net = parse_cidr('172.16.0.0/16');
+        $this->assertNotNull($net);
+        $bcast = ipam_compute_broadcast_bin($net['net_bin'], $net['prefix']);
+        $this->assertNotNull($bcast);
+        $this->assertSame('172.16.255.255', inet_ntop($bcast));
+    }
+
+    public function testBroadcastBinSlash30(): void
+    {
+        $net = parse_cidr('10.1.2.4/30');
+        $this->assertNotNull($net);
+        $bcast = ipam_compute_broadcast_bin($net['net_bin'], $net['prefix']);
+        $this->assertNotNull($bcast);
+        $this->assertSame('10.1.2.7', inet_ntop($bcast));
+    }
+
+    public function testBroadcastBinSlash31ReturnsNull(): void
+    {
+        // RFC 3021: /31 point-to-point, both addresses usable, no broadcast.
+        $net = parse_cidr('10.0.0.0/31');
+        $this->assertNotNull($net);
+        $this->assertNull(ipam_compute_broadcast_bin($net['net_bin'], $net['prefix']));
+    }
+
+    public function testBroadcastBinSlash32ReturnsNull(): void
+    {
+        // Single host, no broadcast.
+        $net = parse_cidr('10.0.0.5/32');
+        $this->assertNotNull($net);
+        $this->assertNull(ipam_compute_broadcast_bin($net['net_bin'], $net['prefix']));
+    }
+
+    public function testBroadcastBinIpv6ReturnsNull(): void
+    {
+        // IPv6 has no broadcast concept.
+        $net = parse_cidr('2001:db8::/64');
+        $this->assertNotNull($net);
+        $this->assertNull(ipam_compute_broadcast_bin($net['net_bin'], $net['prefix']));
+    }
 }

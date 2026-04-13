@@ -264,8 +264,10 @@ address.arp_import
 ### Scanner functions in lib.php
 - `ipam_probe_icmp(string $ip, int $timeoutMs): ?int` — IP **must** be pre-validated via `normalize_ip()` before this call; uses `proc_open()` with system `ping`; OS-aware flags (`-W ms` macOS, `-W s` Linux)
 - `ipam_probe_tcp(string $ip, int $port, int $timeoutMs): ?int` — IP and port **must** be validated; uses `fsockopen()`
-- `ipam_scan_subnet(PDO $db, int $subnetId, string $method, ?int $tcpPort): array` — enforces /28 cap for synchronous calls
-- `ipam_mark_stale_addresses(PDO $db, int $subnetId, int $missThreshold = 3): int` — runs in a transaction; audit logged if rows changed
+- `ipam_scan_subnet(PDO $db, int $subnetId, string $method, ?int $tcpPort): array{scanned:int,up:int,down:int,skipped:int,stale_marked:int}` — enforces /28 cap for synchronous calls. Skips reserved IPs (network + IPv4 broadcast) via `ipam_subnet_reserved_bins()`; counted in `skipped`. (v2.5.0 / #363)
+- `ipam_mark_stale_addresses(PDO $db, int $subnetId, int $missThreshold = 3): int` — runs in a transaction; audit logged if rows changed. Also skips reserved IPs so they never accrue a stale flag.
+- `ipam_subnet_reserved_bins(PDO $db, int $subnetId): array{network:?string, broadcast:?string}` — binary IPs excluded from scan/stale passes. Nulls for IPv6, /31, /32.
+- `ipam_compute_broadcast_bin(string $netBin, int $prefix): ?string` — pure IPv4 broadcast calculation; unit-tested in `tests/UtilTest.php`. Returns null for IPv6, /31, /32.
 - `ipam_parse_arp_table(string $raw): array` — uses `filter_var(FILTER_VALIDATE_IP)` + MAC regex; never trusts raw input
 - `ipam_apply_arp_import(PDO $db, array $entries, int $subnetId): array` — returns `['matched', 'updated']` stats
 
@@ -369,6 +371,129 @@ php -l Simple-PHP-IPAM/users.php
 # etc.
 ```
 
+### Running the test suites against dev-direct
+
+The dev environment is shared, stateful, and has multiple footguns that have caused repeated false failures. Read this whole section before invoking the suites. All commands assume cwd is the repo root.
+
+See the dedicated subsections below: **Local PHP tools**, **Deploy**, **Pre-flight cleanup**, **Verify admin login**, **test_api.sh**, **Playwright**.
+
+#### Local PHP tools
+
+These have no dev-server dependency. Must be green before deploying.
+
+```bash
+php -l Simple-PHP-IPAM/<changed-file>.php   # one per changed file
+vendor/bin/phpstan analyse --memory-limit=1G   # default 128M crashes parallel workers
+vendor/bin/phpcs
+vendor/bin/phpunit
+semgrep --config=.semgrep/rules.yml --error Simple-PHP-IPAM/
+```
+
+#### Deploy
+
+The API and Playwright suites run against the live `/claude/ipam/` deploy, not your local copy.
+
+```bash
+rsync -az --delete \
+  --exclude='data/' --exclude='config.php' --exclude='.htaccess' \
+  Simple-PHP-IPAM/ root@192.168.80.15:/opt/container_data/dev.seanmousseau.com/html/claude/ipam/
+ssh root@192.168.80.15 \
+  "chown -R www-data:www-data /opt/container_data/dev.seanmousseau.com/html/claude/ipam/ && \
+   docker exec dev_seanmousseau_com-apache-php-1 php /var/www/html/claude/ipam/migrate.php"
+```
+
+Always `chown -R www-data` after rsync — Apache cannot write the SQLite WAL otherwise.
+
+#### Pre-flight cleanup
+
+The suites are sensitive to leftover state from prior runs. Run this before every test invocation:
+
+```bash
+ssh root@192.168.80.15 \
+  'docker exec dev_seanmousseau_com-apache-php-1 bash -c "pkill -f cron.php; pkill -f ping; true"'
+ssh root@192.168.80.15 \
+  "docker exec dev_seanmousseau_com-apache-php-1 sqlite3 /var/www/html/claude/ipam/data/ipam.sqlite \
+   'DELETE FROM login_attempts;'"
+```
+
+- **Stale cron processes** can hold the SQLite write lock for hours (50+ active scan_schedules × 254 IPs each). Symptom: `database is locked` errors mid-suite, or `cron.php` hanging silently after Task 5.
+- **login_attempts** is the rate limiter. Any prior failed login (wrong creds, hung CSP test) leaves rows that cause subsequent good logins to return *"Too many failed login attempts. Please try again later"*.
+
+#### Verify admin login before running the suites
+
+`~/.claude/dev-secrets.env` can drift from what's stored in the dev DB. Verify before assuming creds are wrong:
+
+```bash
+bash -c 'set -a; source ~/.claude/dev-secrets.env; set +a; \
+  rm -f /tmp/c.txt; \
+  curl -k -sS -u "$IPAM_BASIC_USER:$IPAM_BASIC_PASS" -c /tmp/c.txt -b /tmp/c.txt \
+    https://dev-direct.seanmousseau.com:8343/claude/ipam/login.php > /tmp/login.html; \
+  CSRF=$(grep -oE "name=\"csrf\" value=\"[^\"]*\"" /tmp/login.html | head -1 | sed "s/.*value=\"//;s/\"//"); \
+  curl -k -sS -u "$IPAM_BASIC_USER:$IPAM_BASIC_PASS" -c /tmp/c.txt -b /tmp/c.txt -L \
+    --data-urlencode "username=$IPAM_ADMIN_USER" \
+    --data-urlencode "password=$IPAM_ADMIN_PASS" \
+    --data-urlencode "csrf=$CSRF" \
+    -w "%{url_effective}\n" -o /dev/null \
+    https://dev-direct.seanmousseau.com:8343/claude/ipam/login.php'
+```
+
+Success: URL ends with `/dashboard.php`. Failure: still `/login.php`.
+
+**Always use `--data-urlencode` for the password**, not `-d`. The default bootstrap password contains `!` which curl's `-d` does not encode, breaking the form post.
+
+If creds are wrong, reset the DB password to match secrets via a small PHP tempfile (avoids shell-escaping the bcrypt `$` chars):
+
+```bash
+cat > /tmp/setpw.php <<'PHP'
+<?php
+$p = getenv('NEW_PASS');
+$h = password_hash($p, PASSWORD_DEFAULT);
+$db = new PDO('sqlite:/var/www/html/claude/ipam/data/ipam.sqlite');
+$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+$db->prepare("UPDATE users SET password_hash=:h, is_active=1 WHERE username='admin'")
+   ->execute([':h' => $h]);
+$db->exec("DELETE FROM login_attempts");
+echo password_verify($p, $h) ? "ok\n" : "FAIL\n";
+PHP
+scp /tmp/setpw.php root@192.168.80.15:/tmp/setpw.php
+bash -c 'set -a; source ~/.claude/dev-secrets.env; set +a; \
+  ssh root@192.168.80.15 "docker cp /tmp/setpw.php dev_seanmousseau_com-apache-php-1:/tmp/setpw.php && \
+    docker exec -e NEW_PASS='\''$IPAM_ADMIN_PASS'\'' dev_seanmousseau_com-apache-php-1 php /tmp/setpw.php"'
+```
+
+#### test_api.sh
+
+```bash
+bash -c 'set -a; source ~/.claude/dev-secrets.env; set +a; \
+  BASIC_AUTH="$IPAM_BASIC_USER:$IPAM_BASIC_PASS" \
+  SSH_HOST=root@192.168.80.15 \
+  SSH_DB_PATH=/opt/container_data/dev.seanmousseau.com/html/claude/ipam/data/ipam.sqlite \
+  bash testing/scripts/test_api.sh https://dev-direct.seanmousseau.com:8343/claude/ipam'
+```
+
+- **`BASIC_AUTH=user:pass`** is required. Exporting `IPAM_BASIC_USER`/`PASS` alone is not enough — the script reads the combined `BASIC_AUTH` env var. Forgetting this returns 401 on every POST/PUT.
+- **`SSH_HOST` + `SSH_DB_PATH`** let the script auto-create an API key on the dev server. Without them you must pass `API_KEY=...`.
+- Expect ~150 PASS, 0 FAIL, possibly 1 SKIP. A `database is locked` error means a stray cron is holding the lock — re-run pre-flight cleanup.
+
+#### Playwright
+
+```bash
+bash -c 'set -a; source ~/.claude/dev-secrets.env; set +a; \
+  IPAM_BASE_URL=https://dev-direct.seanmousseau.com:8343/claude/ipam \
+  npx --prefix testing/playwright playwright test \
+    --config=testing/playwright/playwright.config.ts > /tmp/pw.log 2>&1; \
+  echo "exit=$?"; tail -40 /tmp/pw.log'
+```
+
+- The suite has 329 tests and takes 25–30 minutes. Always run in the background with `run_in_background: true` and a Monitor watching for `exit=` in the output file.
+- **Do not pipe through `tail`** during the run — Playwright's reporter buffers and you lose all output until the end. Redirect to a file instead.
+- Failures cluster: if the auth fixture fails, every dependent test fails. Always look at the **first failure**, not the count. The most common first-failure causes:
+  1. Bad admin password (see *Verify admin login* above).
+  2. `database is locked` from a stale cron — see pre-flight cleanup.
+  3. Rate-limited from prior failed runs (`login_attempts` not cleared).
+  4. The dev container is down or unreachable.
+- Single-test debug: append `pages.spec.ts:42 --reporter=line` (or any `file.spec.ts:line`).
+
 ### Pre-release checklist
 Before building a release bundle, **always** complete these steps in order:
 1. Update `docs/` (api.md, configuration.md, etc.) for any changed features or config keys
@@ -376,17 +501,7 @@ Before building a release bundle, **always** complete these steps in order:
 3. Update `testing/scripts/test_api.sh` if API endpoints were added or changed
 4. Update `testing/scripts/cdp_test.py` if UI features were added or changed
 5. Run `php -l` on every changed PHP file
-6. Run the full QA suite and confirm **all checks pass**:
-   ```bash
-   vendor/bin/phpstan analyse
-   vendor/bin/phpcs
-   vendor/bin/phpunit
-   semgrep --config=.semgrep/rules.yml Simple-PHP-IPAM/
-   bash testing/scripts/test_api.sh https://dev-direct.seanmousseau.com:8343/claude/ipam
-   bash -c 'set -a; source ~/.claude/dev-secrets.env; set +a; \
-     IPAM_BASE_URL=https://dev-direct.seanmousseau.com:8343/claude/ipam \
-     npx --prefix testing/playwright playwright test --config=testing/playwright/playwright.config.ts'
-   ```
+6. Run the full QA suite using the commands in *Running the test suites against dev-direct* above (Local PHP tools → Deploy → Pre-flight cleanup → Verify admin login → test_api.sh → Playwright). All must pass.
 7. Run CodeRabbit review and address any Critical findings:
    ```bash
    coderabbit review --plain -t all
