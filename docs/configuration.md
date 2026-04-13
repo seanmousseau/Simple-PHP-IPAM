@@ -514,6 +514,39 @@ For a guaranteed reset at midnight (independent of web traffic), add a cron entr
 0 0 * * * php /path/to/Simple-PHP-IPAM/demo_reset.php
 ```
 
+---
+
+## Cron runner (`cron.php`)
+
+*(Added in v2.3.0)*
+
+`cron.php` is the unified CLI housekeeping and network scanning runner. A single cron entry replaces the need for multiple scheduled scripts:
+
+```cron
+# Run every 15 minutes.
+# Housekeeping tasks throttle themselves internally (temp cleanup, log pruning, backups).
+# Scanning honours the per-subnet interval configured in the Scan Schedule UI.
+*/15 * * * * php /path/to/Simple-PHP-IPAM/cron.php >> /var/log/ipam-cron.log 2>&1
+```
+
+**What it runs (in order):**
+
+| Task | Config key(s) | Throttled? |
+|------|--------------|-----------|
+| Temp file cleanup | `tmp_cleanup_ttl_seconds` | No — always runs |
+| Audit log pruning | `audit_log_retention_days` | No — skipped when `retention_days=0` |
+| Address history pruning | `address_history_retention_days` | No — skipped when `retention_days=0` |
+| Subnet utilisation alerts | `alert_email` | No — skipped when `alert_email` is empty |
+| Database backup | `backup.enabled`, `backup.frequency` | Yes — honours frequency setting |
+| Network scanning | Per-subnet `scan_schedules.interval_minutes` | Yes — each subnet's own interval |
+
+Each task emits one JSON object to stdout (JSONL format). Errors go to stderr. Exit code is `0` on success or `1` if any task throws an exception (remaining tasks still run).
+
+**Notes:**
+- `cron.php` rejects web requests with HTTP 403 — it is CLI-only.
+- For one-off or per-subnet scans from the CLI, use `scan_run.php` instead.
+- Scanning requires `scan_schedules` rows (configured via the Scan Schedule UI or REST API). Subnets with no schedule are never scanned by `cron.php`.
+
 ### Security note
 
 Demo mode does not restrict read access. Any visitor can browse all IPAM data. For public-facing demo instances, strongly consider adding an IP allowlist or HTTP Basic Auth at the web-server level to limit exposure. The demo gate provides bot protection but not access control.

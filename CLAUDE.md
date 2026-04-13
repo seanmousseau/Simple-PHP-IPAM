@@ -56,7 +56,7 @@ Dev tooling at the repo root (not deployed): `composer.json`, `composer.lock`, `
 | `export_addresses.php` | yes | any/write | CSV export: single subnet (any role) or all subnets cross-subnet (write role) |
 | `export_dns.php` | yes | any | BIND-format DNS zone file export (A/AAAA + PTR) for a single subnet (v2.4.0) |
 | `ping_host.php` | yes | any | AJAX POST: ICMP probe a single address by ID; returns latency or down status (v2.4.0) |
-| `cron.php` | CLI | — | Unified housekeeping cron runner: temp cleanup, audit pruning, history pruning, utilisation alerts, DB backup (v2.4.0) |
+| `cron.php` | CLI | — | Unified housekeeping + scanning cron runner: temp cleanup, audit pruning, history pruning, utilisation alerts, DB backup, network scanning of all due scan_schedules (v2.3.0) |
 | `export_address_history.php` | yes | any | CSV export: per-address change history |
 | `export_subnet_utilization.php` | yes | any | CSV export: subnet utilization summary across all subnets |
 | export_audit.php, export_search.php, export_subnets.php, export_unassigned.php, export_import_report.php | yes | any | Other CSV export endpoints |
