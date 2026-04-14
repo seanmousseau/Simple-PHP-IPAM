@@ -772,6 +772,33 @@ function ipam_setting_definitions(): array
             'sensitive'   => false,
             'config_key'  => ['oidc', 'default_role'],
         ],
+        'oidc.disable_local_login' => [
+            'label'       => 'Disable local password login',
+            'description' => 'When OIDC is active, hide the local username/password form entirely. Emergency bypass still works unless also disabled below.',
+            'type'        => 'bool',
+            'group'       => 'oidc',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => ['oidc', 'disable_local_login'],
+        ],
+        'oidc.disable_emergency_bypass' => [
+            'label'       => 'Disable emergency local bypass',
+            'description' => 'Disable the ?local=1 emergency access path that lets a local admin sign in even when local login is hidden. Leave off until you are confident SSO will keep working.',
+            'type'        => 'bool',
+            'group'       => 'oidc',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => ['oidc', 'disable_emergency_bypass'],
+        ],
+        'oidc.hide_emergency_link' => [
+            'label'       => 'Hide emergency bypass link',
+            'description' => 'Hide the "(emergency local access)" link even if the ?local=1 bypass itself is still reachable.',
+            'type'        => 'bool',
+            'group'       => 'oidc',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => ['oidc', 'hide_emergency_link'],
+        ],
     ];
 }
 
@@ -1617,16 +1644,18 @@ function prune_address_history(PDO $db, int $retentionDays): int
  * Deduplicates sends using the alert_state table (max one alert per subnet+level per 24 h).
  * Auto-clears alert_state rows when utilization drops back below the threshold.
  *
- * @param IpamConfig $config
+ * @param IpamConfig $config Unused since v2.7.0 — thresholds and the
+ *                           recipient now flow through ipam_setting().
  */
 function check_utilization_alerts(PDO $db, array $config): void
 {
-    $alertEmail = trim(to_str($config['alert_email'] ?? ''));
+    unset($config);
+    $alertEmail = trim(to_str(ipam_setting('alert.email')));
     if ($alertEmail === '') return;
 
-    $warnPct = to_int($config['alert_util_warn_pct'] ?? 80);
-    $critPct = to_int($config['alert_util_crit_pct'] ?? 95);
-    $appName = to_str($config['app_name']);
+    $warnPct = to_int(ipam_setting('alert.util_warn_pct'));
+    $critPct = to_int(ipam_setting('alert.util_crit_pct'));
+    $appName = to_str(ipam_setting('branding.site_name'));
 
     // Compute direct address counts per subnet (used+reserved)
     $rows = ($db->query("
@@ -1707,14 +1736,14 @@ function check_utilization_alerts(PDO $db, array $config): void
  * Run utilization alert check if the alert interval has elapsed.
  * Uses a dedicated state file so it can fire more frequently than main housekeeping.
  *
- * @param IpamConfig $config
+ * @param IpamConfig $config Unused since v2.7.0 — kept for signature stability.
  */
 function alerts_check_if_due(array $config, PDO $db): void
 {
-    $alertEmail = trim(to_str($config['alert_email'] ?? ''));
+    $alertEmail = trim(to_str(ipam_setting('alert.email')));
     if ($alertEmail === '') return;
 
-    $interval = to_int($config['alert_interval_seconds'] ?? 3600);
+    $interval = to_int(ipam_setting('alert.interval_seconds'));
     if ($interval < 60) $interval = 60;
 
     $statePath = __DIR__ . '/data/alerts_last_run.txt';
@@ -2163,13 +2192,14 @@ function recaptcha_enterprise_verify(string $token, string $siteKey, array $cfg)
  * or a non-empty error string that should be shown to the user.
  * Fails open on network errors so a broken CAPTCHA provider never blocks login.
  *
- * @param LoginProtectionConfig $config
+ * @param LoginProtectionConfig $config Unused since v2.7.0 — config flows
+ *                                      through ipam_setting().
  * @param array<string, mixed> $post
  */
 function login_protection_verify(array $config, array $post): ?string
 {
-    $cfg    = $config['login_protection'];
-    $method = to_str($cfg['method'] ?? '');
+    unset($config);
+    $method = to_str(ipam_setting('login_protection.method'));
     if ($method === '' || $method === 'null') return null;
 
     if ($method === 'honeypot') {
@@ -2177,7 +2207,7 @@ function login_protection_verify(array $config, array $post): ?string
     }
 
     if ($method === 'time_check') {
-        $min = max(1, $cfg['min_seconds']);
+        $min = max(1, to_int(ipam_setting('login_protection.min_seconds')));
         $ts  = to_int($_SESSION['login_form_at'] ?? 0);
         unset($_SESSION['login_form_at']);
         if ($ts === 0 || (time() - $ts) < $min) {
@@ -2186,7 +2216,7 @@ function login_protection_verify(array $config, array $post): ?string
         return null;
     }
 
-    $secretKey = $cfg['secret_key'];
+    $secretKey = to_str(ipam_setting('login_protection.secret_key'));
 
     if ($method === 'turnstile') {
         $token = to_str($post['cf-turnstile-response'] ?? '');
@@ -2225,11 +2255,16 @@ function login_protection_verify(array $config, array $post): ?string
         if ($token === '') return 'Please complete the security check.';
 
         // Use Enterprise API if configured; fall back to standard reCAPTCHA API
-        /** @var IpamConfig $gConfig */
-        $gConfig    = $GLOBALS['config'] ?? [];
-        $enterprise = $gConfig['recaptcha_enterprise'];
-        if (!empty($enterprise['enabled'])) {
-            return recaptcha_enterprise_verify($token, $cfg['site_key'], $enterprise);
+        if ((bool)ipam_setting('recaptcha_enterprise.enabled')) {
+            $rawThreshold = ipam_setting('recaptcha_enterprise.score_threshold');
+            $enterprise = [
+                'enabled'         => true,
+                'project_id'      => to_str(ipam_setting('recaptcha_enterprise.project_id')),
+                'api_key'         => to_str(ipam_setting('recaptcha_enterprise.api_key')),
+                'expected_action' => to_str(ipam_setting('recaptcha_enterprise.expected_action')),
+                'score_threshold' => is_numeric($rawThreshold) ? (float)$rawThreshold : 0.5,
+            ];
+            return recaptcha_enterprise_verify($token, to_str(ipam_setting('login_protection.site_key')), $enterprise);
         }
 
         try {
@@ -2253,7 +2288,7 @@ function login_protection_verify(array $config, array $post): ?string
             $resp = oidc_http_post('https://api.friendlycaptcha.com/api/v1/siteverify', [
                 'secret'  => $secretKey,
                 'solution'=> $token,
-                'sitekey' => $cfg['site_key'],
+                'sitekey' => to_str(ipam_setting('login_protection.site_key')),
             ]);
         } catch (Throwable $e) {
             error_log('FriendlyCaptcha verify error: ' . $e->getMessage());
@@ -2268,13 +2303,14 @@ function login_protection_verify(array $config, array $post): ?string
 /**
  * Return the HTML widget snippet to embed in the login/gate form.
  * For time_check, also sets the session timestamp on GET requests.
+ *
+ * @param LoginProtectionConfig $config Unused since v2.7.0 — kept for signature stability.
  */
-/** @param LoginProtectionConfig $config */
 function login_protection_widget_html(array $config): string
 {
-    $cfg     = $config['login_protection'];
-    $method  = to_str($cfg['method'] ?? '');
-    $siteKey = e($cfg['site_key']);
+    unset($config);
+    $method  = to_str(ipam_setting('login_protection.method'));
+    $siteKey = e(to_str(ipam_setting('login_protection.site_key')));
 
     switch ($method) {
         case 'honeypot':
@@ -2291,16 +2327,14 @@ function login_protection_widget_html(array $config): string
             return "<script src='https://js.hcaptcha.com/1/api.js' async defer></script>"
                  . "<div class='h-captcha' data-sitekey='{$siteKey}'></div>";
         case 'recaptcha':
-            $ver        = $cfg['version'];
-            /** @var IpamConfig $gCfg */
-            $gCfg  = $GLOBALS['config'] ?? [];
-            $isEnt = !empty($gCfg['recaptcha_enterprise']['enabled']);
+            $ver   = to_int(ipam_setting('login_protection.version'));
+            $isEnt = (bool)ipam_setting('recaptcha_enterprise.enabled');
             if ($ver === 3) {
                 $scriptSrc    = $isEnt
                     ? "https://www.google.com/recaptcha/enterprise.js?render={$siteKey}"
                     : "https://www.google.com/recaptcha/api.js?render={$siteKey}";
                 $entAttr      = $isEnt ? " data-recaptcha-enterprise='1'" : '';
-                $action       = e(to_str($gCfg['recaptcha_enterprise']['expected_action']));
+                $action       = e(to_str(ipam_setting('recaptcha_enterprise.expected_action')));
                 $actionAttr   = " data-recaptcha-action='{$action}'";
                 return "<script src='{$scriptSrc}' async defer></script>"
                      . "<input type='hidden' name='g-recaptcha-response' id='g-recaptcha-response' data-recaptcha-v3-key='{$siteKey}'{$entAttr}{$actionAttr}>";
@@ -2322,12 +2356,13 @@ function login_protection_widget_html(array $config): string
  * be explicitly allowed; Friendly Captcha uses Web Components (no iframe needed).
  */
 /**
- * @param LoginProtectionConfig $config
+ * @param LoginProtectionConfig $config Unused since v2.7.0 — kept for signature stability.
  * @return array{script_src: string, frame_src: string}
  */
 function login_protection_extra_csp(array $config): array
 {
-    $method = to_str($config['login_protection']['method'] ?? '');
+    unset($config);
+    $method = to_str(ipam_setting('login_protection.method'));
     return match ($method) {
         'turnstile'        => [
             'script_src' => 'https://challenges.cloudflare.com',
@@ -3414,10 +3449,14 @@ function subnet_overlap_warning_text(array $overlaps): string
 /** @param array<string, string> $opts */
 function page_header(string $title, array $opts = []): void
 {
+    // Still needed for the bootstrap_admin default-password warning below —
+    // that is a pre-registry config-only check that stays on config.php
+    // forever (see below). Everything else in this function reads through
+    // ipam_setting() as of v2.7.0.
     global $config;
     $u = to_str($_SESSION['username'] ?? '');
     $role = to_str($_SESSION['role'] ?? '');
-    $appName = trim($config['app_name']) ?: 'Simple PHP IPAM';
+    $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
 
     $extraScriptSrc = isset($opts['extra_script_src']) && $opts['extra_script_src'] !== '' ? ' ' . $opts['extra_script_src'] : '';
     $frameSrc       = isset($opts['extra_frame_src'])  && $opts['extra_frame_src']  !== '' ? " frame-src 'self' " . $opts['extra_frame_src'] . ';' : '';
@@ -3601,7 +3640,7 @@ function page_header(string $title, array $opts = []): void
 
     // Update-available dismissible banner (admin only, client-side dismiss via localStorage)
     if ($role === 'admin') {
-        $update = ipam_update_check($config ?? []);
+        $update = ipam_update_check($config);
         if ($update) {
             $uv  = e(to_str($update['version']));
             $url = e(to_str($update['url']));
@@ -3669,20 +3708,20 @@ function ipam_normalise_version(string $v): string
  * Returns ['version' => '1.2.1', 'url' => 'https://...'] if newer, otherwise null.
  */
 /**
- * @param IpamConfig $config
+ * @param IpamConfig $config Unused since v2.7.0 — kept for signature stability.
  * @return array{version: string, url: string}|null
  */
 function ipam_update_check(array $config): ?array
 {
+    unset($config);
     // Memoize within a single request — page_header() and page_footer() both call this
     static $memo = false;
     if ($memo !== false) return $memo;
 
-    $uc = $config['update_check'];
-    if (!(bool)$uc['enabled']) { $memo = null; return null; }
+    if (!(bool)ipam_setting('update_check.enabled')) { $memo = null; return null; }
 
-    $ttl             = max(3600, to_int($uc['ttl_seconds']));
-    $notifyPrerelease = !empty($uc['notify_prerelease']);
+    $ttl              = max(3600, to_int(ipam_setting('update_check.ttl_seconds')));
+    $notifyPrerelease = (bool)ipam_setting('update_check.notify_prerelease');
 
     ensure_tmp_dir();
     $cache = tmp_dir() . '/update-check.json';
@@ -3776,15 +3815,20 @@ function find_parent_site_id(PDO $db, string $cidr, ?int $excludeId = null, ?int
  * OIDC — Authorization Code + PKCE (pure PHP, no dependencies)
  * ============================================================ */
 
-/** @param IpamConfig $config */
+/**
+ * @param IpamConfig $config Unused since v2.7.0 — kept for back-compat with
+ *                           existing callers. Reads go through ipam_setting()
+ *                           which falls back to $GLOBALS['config'] on a miss,
+ *                           so legacy config.php-only installs still work.
+ */
 function oidc_enabled(array $config): bool
 {
-    $o = $config['oidc'];
-    return !empty($o['enabled'])
-        && !empty($o['client_id'])
-        && !empty($o['client_secret'])
-        && !empty($o['discovery_url'])
-        && !empty($o['redirect_uri']);
+    unset($config); // keep the signature stable; body now reads through ipam_setting()
+    return (bool)ipam_setting('oidc.enabled')
+        && to_str(ipam_setting('oidc.client_id'))     !== ''
+        && to_str(ipam_setting('oidc.client_secret')) !== ''
+        && to_str(ipam_setting('oidc.discovery_url')) !== ''
+        && to_str(ipam_setting('oidc.redirect_uri'))  !== '';
 }
 
 /**
@@ -3793,12 +3837,13 @@ function oidc_enabled(array $config): bool
  * contain that path.
  */
 /**
- * @param IpamConfig $config
+ * @param IpamConfig $config Unused since v2.7.0 — kept for signature stability.
  * @return array<string, mixed>
  */
 function oidc_discovery(array $config): array
 {
-    $base = rtrim($config['oidc']['discovery_url'], '/');
+    unset($config);
+    $base = rtrim(to_str(ipam_setting('oidc.discovery_url')), '/');
     if ($base === '') throw new RuntimeException('OIDC discovery_url not set');
 
     $url = (str_contains($base, '.well-known')) ? $base : $base . '/.well-known/openid-configuration';

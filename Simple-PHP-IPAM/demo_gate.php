@@ -60,7 +60,7 @@ header('X-Content-Type-Options: nosniff');
 header('Referrer-Policy: strict-origin-when-cross-origin');
 
 require_once __DIR__ . '/version.php';
-$appName = trim(to_str($config['app_name'] ?? '')) ?: 'Simple PHP IPAM';
+$appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
 ?>
 <!doctype html>
 <html>

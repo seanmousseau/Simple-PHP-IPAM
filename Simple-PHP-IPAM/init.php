@@ -4,11 +4,10 @@ declare(strict_types=1);
 /** @var IpamConfig $config */
 $config = require __DIR__ . '/config.php';
 
-// Apply configured timezone before any date/time operations. All DB timestamps are
-// stored as UTC; display_datetime() in lib.php converts them for UI output.
-date_default_timezone_set(is_string($config['timezone'] ?? null) && $config['timezone'] !== ''
-    ? $config['timezone']
-    : 'UTC');
+// Seed a UTC default so any pre-DB date/time operations (HTTPS redirect, session
+// setup) are deterministic. The real timezone is applied from the DB settings
+// (branding.timezone) once $db is open and lib.php is loaded — see below.
+date_default_timezone_set('UTC');
 
 /**
  * Convert a mixed value to string. Defined early in init.php so it is available
@@ -73,6 +72,15 @@ require __DIR__ . '/lib.php';
 
 $db = ipam_db(to_str($config['db_path']));
 ipam_db_init($db);
+
+// Now that settings are available, apply the admin-configured timezone. All DB
+// timestamps are stored as UTC; display_datetime() in lib.php converts them
+// for UI output using the effective timezone set here.
+$tz = to_str(ipam_setting('branding.timezone'));
+if ($tz === '' || !@date_default_timezone_set($tz)) {
+    date_default_timezone_set('UTC');
+}
+unset($tz);
 
 // Auto-populate any missing config keys with their defaults
 $_addedConfigKeys = ipam_config_sync(__DIR__ . '/config.php', $config);
