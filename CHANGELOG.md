@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [2.8.0] - 2026-04-14
+
+Quality-of-life and API release on top of v2.7.0's settings rewire. Adds long-form notes on subnets, multi-recipient utilization alerts tied to user records, write API for tags, paginated API metadata, a keyboard shortcut for power users, and a redesigned password-show toggle that finally works in real browsers with password managers installed.
+
+### Added
+- **#316** — `subnets.notes` long-form operational notes column. New `2.8.0-subnet-notes` migration adds `notes TEXT NOT NULL DEFAULT ''`. Edited via a textarea in the subnet create/edit drawers, rendered as a collapsible card above the address table on `addresses.php`, exposed as `notes` on the subnet API GET/POST/PUT, included as a column in the subnets CSV export, and indexed by the global search LIKE query alongside `description`.
+- **#443** — Alert recipients are now picked from active users with email instead of a single free-text address. New `alert.recipient_user_ids` registry key (`type: json`, `default: []`); the multi-select on the Settings → Alerting card lists every active user with a non-empty email and shows a live "Emails will be sent to:" preview. `check_utilization_alerts()` resolves selected user IDs to current emails on every send, so deactivating a user or clearing their email drops them automatically — no need to re-save the settings page. Loop-per-recipient delivery with one audit row per send for per-recipient debuggability. New `2.8.0-alert-recipients` migration auto-maps the legacy `alert.email` value to a single matching active user (case-insensitive); unmigratable values produce a `settings.alert_email_unmigrated` audit row instead of being silently dropped.
+- **#314** — API pagination metadata. Every paginated `GET` endpoint (subnets, addresses, contacts, history, search, audit, unassigned) now sets an `X-Total-Count` response header and accepts an optional `?envelope=1` query parameter that wraps the response as `{data, meta:{total, page, per_page, pages}}`. Default flat shape unchanged for backwards compatibility.
+- **#310** — Write API for tags. New endpoints `GET/POST/PUT/DELETE ?resource=tags`, plus association endpoints `POST/DELETE ?resource=subnet_tags` and `POST/DELETE ?resource=address_tags`. Subnet and address `POST`/`PUT` bodies now accept an optional `tag_ids[]` array that replaces the full tag set via `save_tags_for_entity()`. All write operations honour the `is_readonly` API key flag and emit `tag.create` / `tag.update` / `tag.delete` / `tag.attach` / `tag.detach` audit entries.
+- **#317** — `Cmd+N` / `Ctrl+N` keyboard shortcut on `addresses.php` opens the Add Address drawer and focuses the IP field. Gated by `<body data-page="addresses">` so it only fires on the intended page; suppressed when focus is in any text input or textarea so users can still type the letter `n`. A `⌘N` hint badge renders next to the Add Address button.
+
+### Changed
+- **page_header()** now accepts an `opts['page']` key that emits `<body data-page='…'>` for per-page JS gating.
+- **#449** — Sensitive-field show toggles on `settings.php` are no longer checkboxes. Replaced with eye-icon `<button type="button">` siblings of the password input, sitting at `right:36px` to leave room for password manager icons. The button toggles the input's `type` attribute and its own `aria-pressed` state. Per-browser opt-out via `localStorage['ipam-pw-toggle-hidden'] = '1'`.
+- **Asset cache-buster** — `page_header()` and `demo_gate.php` bump to `?v=2.8.0`.
+
+### Deprecated
+- **`alert.email`** registry key, replaced by `alert.recipient_user_ids`. Hidden from the Settings UI but kept in the registry so the v2.8.0 migration can read its value once. Slated for removal in v3.0.0.
+
+### Fixed
+- **#449** — The sensitive-field show toggle on `settings.php` now flips the input type in real browsers. The v2.6.0 inline-onclick and v2.7.0 nested-`<label>` checkbox approaches both regressed in deployed Chrome / Firefox / Safari with password managers installed despite passing headless Playwright. Eye-icon button design avoids both failure modes and stays on `type=password` by default so 1Password / Bitwarden autofill keeps working.
+
 ## [2.7.0] - 2026-04-14
 
 Subsystems now read configuration from the database. Every non-bootstrap key covered by the v2.6.0 registry (OIDC, alerting, branding, login protection, update checker, reCAPTCHA Enterprise) routes through `ipam_setting()` instead of touching `$config` directly, so edits in the admin Settings UI take effect on the next request without a `config.php` change or a restart. `config.php` continues to work as a fallback for back-compat — removal is v3.0.0.
@@ -600,6 +622,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[2.8.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.7.0...v2.8.0
 [2.7.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.5.2...v2.6.0
 [2.5.2]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.5.1...v2.5.2

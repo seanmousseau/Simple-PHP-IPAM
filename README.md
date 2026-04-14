@@ -8,15 +8,16 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 
 ---
 
-## What's new in v2.7.0
+## What's new in v2.8.0
 
-- **Subsystems now read from the database.** OIDC, alerting, branding, login protection, update checker, and reCAPTCHA Enterprise all route through `ipam_setting()` instead of touching `config.php` directly. Edits in **⚙ Admin → Settings** take effect on the next request with no `config.php` change and no restart.
-- **Deprecation banner + one-click import.** After upgrading, the admin Settings page shows a **config.php settings to migrate** banner listing every customised key that is still being served from `config.php`. Each row has an **Import to database** button that copies the value into the `settings` table in one atomic audited write. The dashboard shows a matching warning card so you do not miss it, and `init.php` logs a rate-limited consolidated warning to the server log.
-- **Settings UX polish.** The sensitive-field "show" toggle now actually reveals the input (fixed a nested-label bug from v2.6.0). Bool settings render with their checkbox inline next to the label instead of stacked below. Timezone and login-protection method are now dropdowns with server-side value-set validation, so typos never silently break a subsystem.
-- **New OIDC hardening flags.** `oidc.disable_local_login`, `oidc.disable_emergency_bypass`, and `oidc.hide_emergency_link` are registered database settings you can toggle from the admin UI — no more `config.php` edits for common lockout scenarios.
-- **`config.php` is still a fallback.** Nothing in your existing `config.php` stops working on upgrade. Removal is v3.0.0; v2.7.x is the migration window. Bootstrap keys (`db_path`, `session_name`, etc.) stay in `config.php` forever.
+- **Long-form subnet notes.** New `subnets.notes` field for runbooks, ownership context, and operational gotchas that don't fit in the one-line description. Edited via a textarea in the subnet drawer, rendered as a collapsible card above the address table on `addresses.php`, exposed on the API and CSV export, and indexed by global search.
+- **Multi-recipient utilization alerts.** Pick alert recipients from a multi-select tied to active users with email instead of a free-text address. Inactive users and cleared emails drop out automatically — no need to re-save settings when staffing changes. The legacy `alert.email` value migrates automatically on upgrade if it matches an existing user; unmappable values produce an audit row instead of being silently dropped.
+- **API write endpoints for tags.** Full CRUD for tags plus association endpoints for subnet/address attachments, and an optional `tag_ids[]` body parameter on subnet/address create/update so external tools (Ansible, Terraform, scripts) can manage tags without using the web UI.
+- **API pagination metadata.** Every paginated `GET` endpoint now sets an `X-Total-Count` response header and accepts an optional `?envelope=1` query parameter that wraps the response as `{data, meta}` for easier UI pagination. Default response shape unchanged for backwards compatibility.
+- **Cmd / Ctrl + N keyboard shortcut** opens the Add Address drawer on `addresses.php` and focuses the IP field. Suppressed when typing in any input.
+- **Password show toggle, third time's the charm.** Replaces the v2.6.0 inline-onclick and v2.7.0 nested-checkbox approaches with an eye-icon button positioned to coexist with password manager icons (1Password, Bitwarden). Real-browser tested with PMs installed.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release history, [docs/upgrading.md](docs/upgrading.md) for the v2.7.0 upgrade notes, and [docs/configuration.md](docs/configuration.md) for the full settings transition plan.
+See [CHANGELOG.md](CHANGELOG.md) for full release history, [docs/upgrading.md](docs/upgrading.md) for upgrade notes, and [docs/configuration.md](docs/configuration.md) for the settings transition plan.
 
 ---
 
