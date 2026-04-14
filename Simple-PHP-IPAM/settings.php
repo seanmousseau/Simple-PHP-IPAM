@@ -106,6 +106,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         } else {
             $newValue = to_str($_POST[$fieldName] ?? '');
+
+            // Enum validation: if the registry declares an `options` set for
+            // this string setting, reject any value outside it. Keeps typos
+            // from silently breaking the login protection or timezone
+            // subsystems. The registry is the single source of truth for the
+            // valid set — settings.php never hard-codes these lists.
+            $options = ipam_setting_options($def);
+            if ($options !== null && !array_key_exists($newValue, $options)) {
+                $fieldErrors[$key] = 'Must be one of the listed values.';
+                continue;
+            }
         }
 
         // Skip unchanged values to avoid audit log noise.
@@ -207,25 +218,42 @@ page_header('Settings');
               default   => ['text' => '⚪ Default',   'cls' => 'muted'],
           };
       ?>
-        <div class="row" style="align-items:flex-start;margin-top:0.75rem;">
+        <?php
+        $inputId = 'f-' . $fieldName;
+        $options = ($type === 'string') ? ipam_setting_options($def) : null;
+        $badgeHtml =
+            '<span class="badge badge-' . e($badge['cls']) . '" style="margin-left:0.5rem;">' . e($badge['text']) . '</span>'
+          . '<code class="muted" style="margin-left:0.5rem;">' . e($key) . '</code>';
+        ?>
+        <div class="setting-row row" style="align-items:flex-start;margin-top:0.75rem;">
           <div class="flex-1">
-            <label>
-              <strong><?= e($label) ?></strong>
-              <span class="badge badge-<?= e($badge['cls']) ?>" style="margin-left:0.5rem;"><?= e($badge['text']) ?></span>
-              <code class="muted" style="margin-left:0.5rem;"><?= e($key) ?></code>
-              <br>
-              <?php if ($type === 'bool'): ?>
-                <?php $boolChecked = $shown !== null ? $shown === '1' : (bool)$current; ?>
-                <input type="checkbox" name="<?= e($fieldName) ?>" value="1"<?= $boolChecked ? ' checked' : '' ?>>
-              <?php elseif ($type === 'int'):
+            <?php if ($type === 'bool'):
+                // #441: render the checkbox inline with the label, badge, and
+                // key code so the control sits next to the setting it toggles
+                // instead of on a line by itself underneath. The whole row is
+                // one <label for="..."> so clicking anywhere on the title
+                // toggles the checkbox.
+                $boolChecked = $shown !== null ? $shown === '1' : (bool)$current;
+            ?>
+              <label for="<?= e($inputId) ?>" class="setting-head setting-head--bool">
+                <input type="checkbox" id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>" value="1"<?= $boolChecked ? ' checked' : '' ?>>
+                <strong><?= e($label) ?></strong>
+                <?= $badgeHtml ?>
+              </label>
+            <?php else: ?>
+              <div class="setting-head">
+                <label for="<?= e($inputId) ?>"><strong><?= e($label) ?></strong></label>
+                <?= $badgeHtml ?>
+              </div>
+              <?php if ($type === 'int'):
                   $minAttr = array_key_exists('min', $def) ? ' min="' . e((string)to_int($def['min'])) . '"' : '';
                   $maxAttr = array_key_exists('max', $def) ? ' max="' . e((string)to_int($def['max'])) . '"' : '';
               ?>
-                <input type="number" name="<?= e($fieldName) ?>"
+                <input type="number" id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>"
                        value="<?= e($shown !== null ? $shown : (string)to_int($current)) ?>"<?= $minAttr . $maxAttr ?>
                        class="mw-240">
               <?php elseif ($type === 'json'): ?>
-                <textarea name="<?= e($fieldName) ?>" rows="4" class="w-full"><?php
+                <textarea id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>" rows="4" class="w-full"><?php
                     if ($shown !== null) { echo e($shown); }
                     else { $j = json_encode($current, JSON_PRETTY_PRINT); echo e(is_string($j) ? $j : ''); }
                 ?></textarea>
@@ -238,20 +266,38 @@ page_header('Settings');
                   $isSet = is_string($current) && $current !== '';
                   $statusText = $isSet ? 'Set — leave blank to keep current' : 'Not set';
                   $statusCls  = $isSet ? 'success' : 'muted';
+                  $toggleId   = 'pwshow-' . $fieldName;
               ?>
-                <input type="password" name="<?= e($fieldName) ?>" id="pw-<?= e($fieldName) ?>"
+                <input type="password" id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>"
                        value="" placeholder="<?= $isSet ? '••••••••' : '' ?>"
                        class="w-full" autocomplete="new-password">
                 <span class="badge badge-<?= e($statusCls) ?>" style="margin-left:0.25rem;"><?= e($statusText) ?></span>
-                <label class="muted" style="font-weight:normal;">
-                  <input type="checkbox" data-password-toggle="pw-<?= e($fieldName) ?>"> show
+                <!--
+                  #440: the show-toggle lives outside the primary field's label
+                  (not nested inside it) so the checkbox's own <label for=...>
+                  association is unambiguous and clicking the text flips the
+                  password input type instead of stealing focus to it.
+                -->
+                <label for="<?= e($toggleId) ?>" class="muted" style="font-weight:normal;margin-left:0.25rem;">
+                  <input type="checkbox" id="<?= e($toggleId) ?>" data-password-toggle="<?= e($inputId) ?>"> show
                 </label>
+              <?php elseif ($options !== null):
+                  // #442: string settings with a fixed option set render as a
+                  // validated <select>. The registry owns the option list; the
+                  // POST handler rejects any value not in it.
+                  $selected = $shown !== null ? $shown : (is_scalar($current) ? (string)$current : '');
+              ?>
+                <select id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>" class="w-full">
+                  <?php foreach ($options as $optValue => $optLabel): ?>
+                    <option value="<?= e((string)$optValue) ?>"<?= (string)$optValue === $selected ? ' selected' : '' ?>><?= e((string)$optLabel) ?></option>
+                  <?php endforeach; ?>
+                </select>
               <?php else: ?>
-                <input type="text" name="<?= e($fieldName) ?>"
+                <input type="text" id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>"
                        value="<?= e($shown !== null ? $shown : (is_scalar($current) ? (string)$current : '')) ?>"
                        class="w-full">
               <?php endif; ?>
-            </label>
+            <?php endif; // bool vs other ?>
             <?php if ($help): ?><div class="muted"><?= e($help) ?></div><?php endif; ?>
             <?php if ($err): ?><div class="danger"><?= e($err) ?></div><?php endif; ?>
           </div>
