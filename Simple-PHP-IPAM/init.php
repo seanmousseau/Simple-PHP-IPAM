@@ -97,6 +97,34 @@ if ($_configWarnings) {
 }
 unset($_configWarnings);
 
+// #376: surface a rate-limited server-log warning listing any registered
+// settings still being served from config.php. Touch a marker file so we
+// emit at most one line per hour regardless of traffic. Missing/unwritable
+// data/tmp/ silently falls through to the "no marker" path so the warning
+// still fires once per request — preferable to failing silently.
+$_deprecated = ipam_setting_deprecated_keys();
+if ($_deprecated) {
+    $_markerPath = __DIR__ . '/data/tmp/deprecation_warning.txt';
+    $_shouldLog  = true;
+    if (is_file($_markerPath) && (time() - (int)@filemtime($_markerPath)) < 3600) {
+        $_shouldLog = false;
+    }
+    if ($_shouldLog) {
+        $_keyList = implode(', ', array_map(fn($d) => $d['key'], $_deprecated));
+        error_log(
+            'Simple-PHP-IPAM: ' . count($_deprecated)
+            . ' registered setting(s) still served from config.php — will break at v3.0.0. Keys: '
+            . $_keyList
+            . '. Migrate via Admin → Settings.'
+        );
+        @ensure_tmp_dir();
+        @touch($_markerPath);
+        @chmod($_markerPath, 0600);
+    }
+    unset($_markerPath, $_shouldLog, $_keyList);
+}
+unset($_deprecated);
+
 // Run best-effort housekeeping at most once/day (configurable)
 run_housekeeping_if_due($config, $db);
 
