@@ -1070,6 +1070,85 @@ function ipam_setting_source(PDO $db, string $key): string
 }
 
 /**
+ * Return the list of registered settings that are still being served from
+ * $config (config.php) instead of the database. Drives the v2.7.0 deprecation
+ * banner in settings.php, the init.php boot-time log warning, and the
+ * dashboard admin card that nudges admins to migrate before v3.0.0 removes
+ * the fallback.
+ *
+ * A key is considered deprecated iff **all** of these hold:
+ *   - its registry definition exists (bootstrap-only keys like db_driver
+ *     are not in the registry so they are never flagged);
+ *   - no row exists in the `settings` table for that key;
+ *   - the key's `config_key` path resolves to a non-null value in
+ *     $GLOBALS['config'];
+ *   - that value differs from the registry `default`.
+ *
+ * The last condition keeps a pristine install with a seeded default
+ * config.php from lighting up the banner for every single key — we only
+ * surface what the admin has actually customised.
+ *
+ * On any DB error the helper returns [] (fail-quiet) so the boot path and
+ * the dashboard render never break because of this advisory feature.
+ *
+ * @return list<array{key: string, config_path: string, current: mixed}>
+ */
+function ipam_setting_deprecated_keys(): array
+{
+    $db = $GLOBALS['db'] ?? null;
+    if (!($db instanceof PDO)) return [];
+
+    try {
+        $st   = $db->query("SELECT key FROM settings");
+        $rows = $st !== false ? $st->fetchAll(PDO::FETCH_COLUMN) : [];
+    } catch (\Throwable) {
+        return [];
+    }
+    $inDb = [];
+    foreach ($rows as $k) {
+        if (is_string($k)) $inDb[$k] = true;
+    }
+
+    $config = $GLOBALS['config'] ?? null;
+    if (!is_array($config)) return [];
+
+    $out  = [];
+    $defs = ipam_setting_definitions();
+    foreach ($defs as $key => $def) {
+        if (isset($inDb[$key])) continue;
+        $configKey = $def['config_key'] ?? null;
+        if ($configKey === null || (!is_string($configKey) && !is_array($configKey))) continue;
+
+        $current = ipam_setting_config_fallback($config, $configKey);
+        if ($current === null) continue;
+
+        // Skip values that match the registry default — a config that still
+        // holds the shipped default is not "customised". Loose compares keep
+        // '0' vs 0 vs false from producing spurious banner entries.
+        $default = $def['default'] ?? null;
+        $type = is_string($def['type'] ?? null) ? $def['type'] : 'string';
+        if ($type === 'bool' && (bool)$current === (bool)$default) continue;
+        if ($type === 'int'  && is_numeric($current) && is_numeric($default) && (int)$current === (int)$default) continue;
+        if (($type === 'string' || $type === 'json') && $current === $default) continue;
+
+        if (is_array($configKey)) {
+            $segments   = [];
+            foreach ($configKey as $seg) $segments[] = to_str($seg);
+            $configPath = implode('.', $segments);
+        } else {
+            $configPath = $configKey;
+        }
+
+        $out[] = [
+            'key'         => $key,
+            'config_path' => $configPath,
+            'current'     => $current,
+        ];
+    }
+    return $out;
+}
+
+/**
  * Resolve a setting definition's `options` entry to a `[value => label]` map,
  * or null when the setting is free-form. Supports three registry shapes:
  *

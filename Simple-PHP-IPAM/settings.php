@@ -20,6 +20,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
+    // v2.7.0 #376: "Import to database" action from the deprecation banner.
+    // Takes a single registered setting key whose value currently lives in
+    // config.php, reads that fallback value through the same helper that
+    // produced the banner, and persists it via ipam_setting_set(). On
+    // success the key stops appearing as deprecated on the next render.
+    if (to_str($_POST['action'] ?? '') === 'import_deprecated') {
+        $user   = current_user();
+        $userId = to_int($user['id'] ?? 0) ?: null;
+        $importKey = to_str($_POST['import_key'] ?? '');
+        $deprecated = ipam_setting_deprecated_keys();
+        $known = [];
+        foreach ($deprecated as $d) $known[$d['key']] = $d['current'];
+        if ($importKey === '' || !array_key_exists($importKey, $known)) {
+            flash_set('That setting is not in the deprecated list.', 'danger');
+            header('Location: settings.php');
+            exit;
+        }
+        try {
+            ipam_setting_set($db, $importKey, $known[$importKey], $userId);
+            flash_set("Imported \"{$importKey}\" into the database.");
+        } catch (\Throwable $e) {
+            error_log('settings.php import failed: ' . $e->getMessage());
+            flash_set('Import failed. Please try again.', 'danger');
+        }
+        header('Location: settings.php');
+        exit;
+    }
+
     $postedGroup = to_str($_POST['group'] ?? '');
     if ($postedGroup === '' || !isset($groups[$postedGroup])) {
         flash_set('Unknown settings group.', 'danger');
@@ -185,6 +213,58 @@ page_header('Settings');
 <?php endif; ?>
 <?php if (!empty($fieldErrors['_group'])): ?>
   <p class="danger"><?= e($fieldErrors['_group']) ?></p>
+<?php endif; ?>
+
+<?php $deprecated = ipam_setting_deprecated_keys(); if ($deprecated): ?>
+  <!--
+    #376 deprecation banner: lists every registered setting whose value is
+    still being served from config.php. Each row gets an "Import to database"
+    button that POSTs action=import_deprecated to this page; the handler
+    reads the current fallback value and persists it via ipam_setting_set().
+    The banner disappears once every customised key has been imported, or
+    once the admin edits the key through its own group form.
+  -->
+  <div class="card admin-notice admin-notice--warning" id="deprecated-banner">
+    <h2 style="margin-top:0;">⚠ config.php settings to migrate</h2>
+    <div class="muted" style="margin-bottom:.5rem;">
+      These <?= count($deprecated) ?> setting(s) are still being read from <code>config.php</code>.
+      In v3.0.0 the fallback is removed — migrate them into the database now
+      so they survive the upgrade. Import copies the current <code>config.php</code>
+      value into the <code>settings</code> table; you can then remove it from
+      <code>config.php</code> at your convenience.
+    </div>
+    <table class="table">
+      <thead>
+        <tr><th>Setting</th><th>config.php path</th><th>Current value</th><th>&nbsp;</th></tr>
+      </thead>
+      <tbody>
+      <?php foreach ($deprecated as $row): ?>
+        <?php
+        $key  = to_str($row['key']);
+        $path = to_str($row['config_path']);
+        $def  = $definitions[$key] ?? null;
+        $isSensitive = is_array($def) && !empty($def['sensitive']);
+        $display = $isSensitive
+            ? '***'
+            : (is_scalar($row['current']) ? (string)$row['current'] : json_encode($row['current']));
+        ?>
+        <tr>
+          <td><code><?= e($key) ?></code></td>
+          <td><code class="muted"><?= e($path) ?></code></td>
+          <td><?= e(is_string($display) ? $display : '') ?></td>
+          <td>
+            <form method="post" action="settings.php" style="margin:0;">
+              <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+              <input type="hidden" name="action" value="import_deprecated">
+              <input type="hidden" name="import_key" value="<?= e($key) ?>">
+              <button type="submit" class="button-secondary btn-sm">Import to database</button>
+            </form>
+          </td>
+        </tr>
+      <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
 <?php endif; ?>
 
 <?php foreach ($groups as $groupKey => $groupMeta): ?>
