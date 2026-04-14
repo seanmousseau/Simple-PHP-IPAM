@@ -15,8 +15,16 @@ import {
   newAuthContext, ensureRoUser,
 } from '../fixtures/ipam';
 
-const TEST_CIDR = '10.200.0.0/8';
-const TEST_CIDR_V6 = '2001:db8:agg::/48';
+// Must be already-network-aligned: the app rewrites non-aligned /8 inputs
+// like 10.200.0.0/8 to 10.0.0.0/8, which would then fail to match the test's
+// own input string in later assertions.
+const TEST_CIDR = '10.0.0.0/8';
+// The prior fixture ('2001:db8:agg::/48') was invalid hex — 'g' is out of
+// range — so creation failed outright. Use a valid hex group instead.
+const TEST_CIDR_V6 = '2001:db8:a::/48';
+// Substring used for row/body matching — the app lowercases and compresses
+// IPv6 on render so this short prefix is the most stable identifier.
+const TEST_CIDR_V6_MATCH = '2001:db8:a:';
 
 let ctx: BrowserContext;
 let page: Page;
@@ -45,7 +53,7 @@ test('create IPv4 aggregate', async () => {
   await page.fill('input[name="description"]', 'Test aggregate');
   await page.click('button[type="submit"]');
   await page.waitForURL(/aggregates\.php/);
-  await expect(page.locator('table')).toContainText('10.200.0.0/8');
+  await expect(page.locator('table')).toContainText(TEST_CIDR);
 });
 
 test('create IPv6 aggregate', async () => {
@@ -55,25 +63,25 @@ test('create IPv6 aggregate', async () => {
   await page.fill('input[name="description"]', 'Test IPv6 aggregate');
   await page.click('button[type="submit"]');
   await page.waitForURL(/aggregates\.php/);
-  await expect(page.locator('table')).toContainText('2001:db8:agg');
+  await expect(page.locator('table')).toContainText(TEST_CIDR_V6_MATCH);
 });
 
 test('IPv4 badge shown for IPv4 aggregate', async () => {
   await page.goto(appUrl('aggregates.php'));
-  const row = page.locator('tr', { hasText: '10.200.0.0/8' });
+  const row = page.locator('tr', { hasText: TEST_CIDR });
   await expect(row.locator('.badge')).toContainText('IPv4');
 });
 
 test('IPv6 badge shown for IPv6 aggregate', async () => {
   await page.goto(appUrl('aggregates.php'));
-  const row = page.locator('tr', { hasText: '2001:db8:agg' });
+  const row = page.locator('tr', { hasText: TEST_CIDR_V6_MATCH });
   await expect(row.locator('.badge')).toContainText('IPv6');
 });
 
 test('update aggregate description', async () => {
   await page.goto(appUrl('aggregates.php'));
   // Open edit details for the IPv4 aggregate
-  const row = page.locator('tr', { hasText: '10.200.0.0/8' });
+  const row = page.locator('tr', { hasText: TEST_CIDR });
   await row.locator('details summary').click();
   const descInput = row.locator('input[name="description"]');
   await descInput.fill('Updated description');
@@ -84,23 +92,23 @@ test('update aggregate description', async () => {
 
 test('delete IPv4 aggregate', async () => {
   await page.goto(appUrl('aggregates.php'));
-  const row = page.locator('tr', { hasText: '10.200.0.0/8' });
+  const row = page.locator('tr', { hasText: TEST_CIDR });
   await row.locator('details summary').click();
   page.once('dialog', d => d.accept());
   await row.locator('button.button-danger').click();
   await page.waitForURL(/aggregates\.php/);
   // Should no longer be in the table
-  await expect(page.locator('body')).not.toContainText('10.200.0.0/8');
+  await expect(page.locator('body')).not.toContainText(TEST_CIDR);
 });
 
 test('delete IPv6 aggregate', async () => {
   await page.goto(appUrl('aggregates.php'));
-  const row = page.locator('tr', { hasText: '2001:db8:agg' });
+  const row = page.locator('tr', { hasText: TEST_CIDR_V6_MATCH });
   await row.locator('details summary').click();
   page.once('dialog', d => d.accept());
   await row.locator('button.button-danger').click();
   await page.waitForURL(/aggregates\.php/);
-  await expect(page.locator('body')).not.toContainText('2001:db8:agg');
+  await expect(page.locator('body')).not.toContainText(TEST_CIDR_V6_MATCH);
 });
 
 test('invalid CIDR is rejected', async () => {

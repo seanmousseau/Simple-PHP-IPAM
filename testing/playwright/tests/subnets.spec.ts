@@ -168,25 +168,20 @@ test('subnets: form drawer opens on Add Subnet click', async () => {
 });
 
 // ── v2.3.0 scan schedule section ─────────────────────────────────────────────
+//
+// As of v2.3.0 (#356) the scan schedule form was moved out of subnets.php and
+// onto scan_history.php. subnets.php now only renders a "Scan History &
+// Schedule" action pill per subnet. The previous tests in this block asserted
+// the old inline-form shape and flaked on a fresh database because they ended
+// up matching the outer subnet <details> by the word "Schedule" in the pill
+// text, not a real schedule <details>. Rewritten to assert the current UI
+// shape — see scan-schedule.spec.ts for the full schedule save/load flow.
 
-test('subnets: scan schedule details element is present for admin', async () => {
+test('subnets: scan history & schedule action pill is present for admin', async () => {
   if (!subnetId) { test.skip(); return; }
   await page.goto('subnets.php');
-  // The scan schedule <details> should exist in the subnet row for admin users
-  const scheduleDetails = page.locator('details').filter({ hasText: /Scan Schedule/i });
-  await expect(scheduleDetails.first()).toBeAttached();
-});
-
-test('subnets: scan schedule form has method, interval, active fields', async () => {
-  if (!subnetId) { test.skip(); return; }
-  await page.goto('subnets.php');
-  // Open the scan schedule details to reveal the form
-  const scheduleDetails = page.locator('details').filter({ hasText: /Scan Schedule/i }).first();
-  if (await scheduleDetails.count() === 0) {
-    test.skip(true, 'Scan schedule details not found — may not be implemented yet');
-    return;
-  }
-  await scheduleDetails.evaluate((el: HTMLDetailsElement) => { el.open = true; });
-  await expect(page.locator('select[name="scan_method"]').first()).toBeAttached();
-  await expect(page.locator('input[name="scan_interval"]').first()).toBeAttached();
+  const pill = page
+    .locator(`a.action-pill[href*="scan_history.php?subnet_id=${subnetId}"]`)
+    .filter({ hasText: /Schedule/i });
+  await expect(pill).toBeVisible();
 });

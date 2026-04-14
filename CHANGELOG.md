@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [2.5.2] - 2026-04-14
+
+**Internal tooling release. No user-facing changes.** Application code, schema, and config are unchanged from v2.5.1 — end users can skip this release and go straight from v2.5.1 to v2.6.0. There is no release tarball and no GitHub release; v2.5.2 exists only as a git tag marking the milestone boundary for contributors.
+
+### Internal
+- **#428** — Playwright suite audit. The CDP → `@playwright/test` rewrite was already complete in earlier releases; this pass verified no dev-direct-only assumptions remain in `playwright.config.ts`, `fixtures/ipam.ts`, or the 32 spec files. Findings documented in `testing/playwright/MIGRATION_NOTES.md`.
+- **#429** — New containerized Playwright harness. `testing/playwright/bootstrap-app.sh` boots a Dockerized Apache+PHP instance with a self-signed cert on `https://127.0.0.1:8443`, seeds from `demo_seed.php`, and is ready for `npx playwright test`. New `.github/workflows/playwright-nightly.yml` nightly job runs the full suite against the SQLite matrix slot. v2.10.0 adds `mysql` and v2.11.0 adds `pgsql` to the same matrix.
+- **#430** — New Apache `.htaccess` coverage subset. `testing/playwright/tests/htaccess.spec.ts` (~13 tests) runs against the same Dockerized image as a separate CI job, verifying that the root and `data/` `.htaccess` deny rules block direct access to `config.php`, `lib.php`, `init.php`, schema files, `data/*`, CLI-only scripts, and `SHA256SUMS`. Future-gated skips for `vendor/` and `dialects/` that land in v2.9.0.
+- **#431** — Flake policy and contributor docs. `playwright.config.ts` now sets `retries: 2` in CI (0 locally), 60s test timeout, 10s expect timeout, 15s action timeout, and `trace: 'retain-on-failure'` for CI failure diagnosis. New `testing/playwright/scripts/flake-rate.mjs` aggregates the JSON reporter output into a green/yellow/red exit code. New `testing/playwright/README.md` documents running the suite, writing tests, debugging CI failures, and the flake budget. `CLAUDE.md` "Running the test suites" section rewritten to lead with the containerized path and keep dev-direct as a fallback for real-IdP OIDC and timezone tests.
+- **#432** — `demo_seed.php` audit. Added a header comment listing every fixture the seed produces (3 users, 6 sites, 2 VRFs, 4 VLANs, 3 contacts, 4 tags, 13 subnets, 50+ addresses, pre-populated audit log) so contributors can see what test data already exists before extending it. New `testing/playwright/SEED_AUDIT.md` serves as the running log of seed/test mismatches to be populated once nightly CI produces its first 7-run baseline.
+
 ## [2.5.1] - 2026-04-14
 
 ### Fixed
@@ -548,6 +559,7 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[2.5.2]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.5.1...v2.5.2
 [2.5.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.4.1...v2.5.0
 [2.4.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.4.0...v2.4.1

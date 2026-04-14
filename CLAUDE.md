@@ -6,7 +6,7 @@ Developer guide for AI assistants working on this repository.
 
 ## Project overview
 
-Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application built with **PHP 8.2+ and SQLite**. It has no Composer dependencies and no npm build step — everything is vanilla PHP, CSS, and JavaScript. The web root is `Simple-PHP-IPAM/` (the subdirectory, not the repo root).
+Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application built with **PHP 8.2+ and SQLite**. It has **no npm build step** — all CSS and JavaScript are vanilla. Starting in v2.9.0, the application ships a small, carefully curated set of Composer-managed runtime dependencies bundled into the release tarball, so end users still deploy by extracting the tarball with no build step. The web root is `Simple-PHP-IPAM/` (the subdirectory, not the repo root).
 
 ---
 
@@ -121,6 +121,22 @@ The `audit_log` table is **append-only** — SQLite triggers raise an abort on a
 
 IPs are stored as raw binary blobs (`inet_pton()` output) for correct sort order and fast range queries. Never store text IPs in `ip_bin`/`network_bin`. Use `inet_pton()` to encode and `inet_ntop()` to decode.
 
+**Storage format: native length, never padded.** IPv4 is stored as 4 bytes and IPv6 as 16 bytes, matching the output of `inet_pton()` directly. Do not left-pad IPv4 to 16 bytes. All three supported engines (SQLite, MySQL `VARBINARY(16)`, Postgres `BYTEA`) do byte-wise memcmp comparison on native-length values, so sort order is equivalent across engines without padding. This was evaluated during v2.8.0 planning and locked in as the storage convention — if you are tempted to change it, read the discussion on #410 and #379 first.
+
+**All binding goes through `ipam_bind_binary()`** (introduced in v2.9.0, #379), which uses `PDO::PARAM_LOB` on every driver. This is non-negotiable:
+
+- On **SQLite**, `PARAM_LOB` is required so the column stores with BLOB affinity rather than TEXT affinity. SQLite's comparison rules state that any BLOB sorts greater than any TEXT regardless of byte content, so mixing affinities in the same column breaks `ORDER BY ip_bin` and every range query. Pre-v2.9.0 data was inadvertently stored with TEXT affinity because the default `PARAM_STR` binding was used. The migration in #410 normalizes existing rows to BLOB on upgrade.
+- On **MySQL**, `PARAM_LOB` is required for `VARBINARY(16)` columns. `PARAM_STR` would string-escape high bytes and truncate at null bytes, corrupting every stored IP.
+- On **Postgres**, `PARAM_LOB` is required for `BYTEA` columns. The pgsql driver may also need an explicit bytea type hint on prepare — verify during the v2.11.0 implementation.
+
+**Round-trip test vectors** that any new driver binding must handle correctly:
+
+- `inet_pton('10.0.0.0')` — `\x0A\x00\x00\x00`, null bytes after the first byte
+- `inet_pton('2001:db8::')` — `\x20\x01\x0D\xB8\x00...\x00`, mostly null bytes
+- `inet_pton('255.255.255.255')` — `\xFF\xFF\xFF\xFF`, all high bytes
+
+These three values catch the most common string-escape bugs immediately. If a binding round-trips any of them incorrectly, the driver is broken and must not ship.
+
 Key helpers in `lib.php`:
 - `parse_cidr(string $cidr): ?array` — validates and normalises a CIDR, returns `['version', 'network', 'prefix', 'net_bin']`
 - `normalize_ip(string $ip): ?array` — returns `['ip', 'bin', 'version']`
@@ -137,6 +153,88 @@ Key helpers in `lib.php`:
 Migrations live in `migrations.php` as an associative array of version string → closure returned by `ipam_migrations()`. `apply_migrations()` in `lib.php` calls `ksort($migs, SORT_NATURAL)` before iterating, so **array order does not matter** — migrations always execute in natural version order. Each migration runs in a transaction and is recorded in `schema_migrations`. Always guard `ALTER TABLE` with `PRAGMA table_info()` checks to make new migrations idempotent.
 
 **When adding a new version:** add the migration closure, bump `version.php`, update `CHANGELOG.md` (keepachangelog format).
+
+### Creating new data tables in post-v4.0.0 releases
+
+Once v4.0.0 has shipped and the tenancy migration has run, every data table in the IPAM schema has a `tenant_id` column pointing at the `tenants` table. **Any migration in a release numbered greater than v4.0.0 that creates a new data table must include `tenant_id` in the `CREATE TABLE` statement from day one**, with `NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT` and an index on `tenant_id`.
+
+This rule exists because the v4.0.0 tenancy migration only backfills tables that existed at the time it ran. A table created in v4.1.0, v5.0.0, or any later release is outside that migration's reach and must carry its own tenant scoping from creation.
+
+Pre-v4.0.0 migrations do not need to worry about this — they predate tenancy and are handled automatically by v4.0.0's runtime table enumeration (see #406 for implementation). The rule applies strictly to migrations whose version key sorts greater than v4.0.0 under natural-sort ordering.
+
+**Exception:** tables that are explicitly global and not tenant-scoped (e.g. `users`, `tenants` itself, future `system_health` or similar) do not take `tenant_id`. When adding such a table, document in the migration closure why it is global, and update `docs/tenancy.md` to list it as an exception.
+
+### Modifying the schema (multi-engine, from v2.9.0 onward)
+
+Once v2.9.0 lands, the project ships three schema files that must stay in sync:
+
+- `schema.sql` — SQLite (authoritative for fresh SQLite installs)
+- `schema.mysql.sql` — MySQL 8.0+ (lands in v2.10.0)
+- `schema.pgsql.sql` — PostgreSQL 14+ (lands in v2.11.0)
+
+**When adding or modifying a table, column, index, or constraint:** update all three files in the same PR. No exceptions. The `SchemaParityTest` in CI will fail the build if the three files diverge on any structural element (table set, column set, type class, nullability, default kind, FK target, FK on-delete action). Type classes are normalised — `BLOB` / `VARBINARY(16)` / `BYTEA` all map to `"binary"`, so you do not need to match exact type names, only semantic equivalents.
+
+Migrations remain the source of truth for schema evolution. The three schema files are a fast path for fresh installs; the migration chain is what existing installs run through. `MigrationTest` asserts that applying every migration from v1.0 on an empty database converges to the same structural state as the matching `schema.X.sql` file, so drift between "what migrations produce" and "what the schema file says" is also caught.
+
+**Dialect helpers** (the `Dialect` abstraction from v2.9.0) are used inside migration closures for portable SQL — `$dialect->now()`, `$dialect->upsert()`, `$dialect->autoincrement()`, `$dialect->binary_type()`, etc. The schema files themselves are hand-written per engine and do not go through the dialect layer, because they are engine-specific by definition.
+
+**Do not introduce a schema templating system.** This was evaluated during v2.9.0 planning and rejected: three plain SQL files are easier to review, easier to debug against a live database, and aligned with the project's vanilla-PHP ethos. The parity test plus migration-replay test is sufficient drift protection.
+
+### Runtime dependencies
+
+Adopted in v2.9.0. The project uses Composer-managed runtime dependencies under a narrow, curated policy. The goals are (1) to avoid hand-rolling security-sensitive network protocols and cryptography and (2) to preserve the "rsync and run" deployment story for end users.
+
+**Deployment model:**
+
+- `vendor/` is gitignored and never committed
+- `releases/make_releases.sh` runs `composer install --no-dev --optimize-autoloader` against the working tree before building the tarball
+- The tarball includes `vendor/` with all production deps pre-built
+- End users extract the tarball and run — no `composer install` on the server, no network access to packagist required at install time
+- `.htaccess` inside `vendor/` denies all web access to bundled library source
+- Security advisories are tracked via `composer audit` in CI (scheduled nightly and on every PR)
+
+**When a runtime dependency is acceptable:**
+
+A new dep must meet **all** of the following criteria:
+
+1. **Narrow purpose.** It solves a security-sensitive protocol or standards compliance problem where hand-rolling is error-prone. Canonical examples: SMTP, SAML, OAuth/OIDC/JWT verification, LDAP, TOTP.
+2. **Mature.** >5 years of active maintenance, with visible security advisories and a track record of prompt response.
+3. **Widely used.** Big enough user base that bugs get found by someone else first. "Thousands of GitHub stars" is not a metric but "used by WordPress, Drupal, Joomla" is.
+4. **Minimal dependency tree.** Prefer libraries with zero or few transitive deps. A 300KB lib with 20 transitive deps is worse than a 500KB lib with none.
+5. **Liberal license.** MIT, BSD, Apache 2.0. No GPL-family licenses (viral), no LGPL (complicated for bundled distribution).
+6. **Maintainer justification.** Adding a new dep requires a PR that updates this section with the dep name, version constraint, purpose, and a one-paragraph justification explaining why vanilla PHP is a poor fit.
+
+**When a runtime dependency is NOT acceptable:**
+
+- **IPAM business logic.** Subnet math, CIDR parsing, address allocation, audit logging, permission checks, etc. All of this is bespoke to the project and has no library equivalent worth pulling in.
+- **UI and rendering.** All HTML is hand-authored PHP. No templating engines, no frontend frameworks, no CSS preprocessors.
+- **Simple utilities.** If it can be done in 20 lines of vanilla PHP, it should be done in 20 lines of vanilla PHP. Do not pull in a library for one function.
+- **"Nice to have" conveniences.** Libraries that make code 5% cleaner are not worth the dep. The bar is "hand-rolling is meaningfully dangerous or expensive," not "this API is nicer."
+
+**Current runtime dependency whitelist:**
+
+| Package | Version | Purpose | Justified in |
+|---|---|---|---|
+| (none yet — policy introduced in v2.9.0 as infrastructure; first dep lands in v3.1.0) | — | — | — |
+
+First dep expected to land in v3.1.0 (#415, PHPMailer for SMTP). Future candidates to be evaluated on a case-by-case basis as feature work surfaces them.
+
+**Explicitly not adopted (deliberate choices):**
+
+- No HTTP client library yet. `ext-curl` + careful wrapping is the current path for webhook dispatch (#399, v3.3.0). May revisit if curl wrapping proves painful at implementation time — Guzzle or symfony/http-client would be the likely candidates.
+- No JWT / JWK library yet. The hand-rolled OIDC in `lib.php` works and is not being retrofitted on speculation. May revisit if a security-sensitive bug surfaces or if the RFC tracking burden becomes obviously not worth it.
+- No JSON Schema validator. Custom fields (#313, v3.5.0) use a bespoke lightweight type system, not JSON Schema.
+- No templating engine, no DI container, no service locator, no ORM. These are architectural departures that do not fit this project's philosophy.
+
+### When to use classes vs functions
+
+The project's application code is predominantly procedural — `lib.php` is a bag of top-level functions, and most pages are procedural PHP. The one deliberate exception is the `Dialect` family of classes under `dialects/` (introduced in v2.9.0), which encapsulates per-engine SQL differences.
+
+**Classes are appropriate for polymorphic contracts with a small, closed set of implementations.** The `Dialect` interface with `SqliteDialect` / `MysqlDialect` / `PgsqlDialect` is the canonical example: the contract says "every DB engine must implement these methods with these signatures," and PHPStan level 9 enforces that at compile time. Without an interface, we would have to reinvent the same guarantee with array shape annotations or runtime dispatch, both of which are worse.
+
+**Classes are not appropriate for utility functions, request handlers, or anything that would otherwise be a plain function.** Do not OO-ify `lib.php`. Do not wrap handlers in controller classes. Do not introduce a service locator or DI container. When in doubt, write a function.
+
+**Namespaces are not used.** The project has zero namespaces today and a hand-rolled autoloader is not worth the complexity for the small number of classes we expect to introduce. Keep class names unambiguous (`Dialect`, `SqliteDialect`, etc.) and `require_once` explicitly in `init.php` or `lib.php`.
 
 ---
 
@@ -371,11 +469,24 @@ php -l Simple-PHP-IPAM/users.php
 # etc.
 ```
 
-### Running the test suites against dev-direct
+### Running the test suites
 
-The dev environment is shared, stateful, and has multiple footguns that have caused repeated false failures. Read this whole section before invoking the suites. All commands assume cwd is the repo root.
+Two paths exist as of v2.5.2:
 
-See the dedicated subsections below: **Local PHP tools**, **Deploy**, **Pre-flight cleanup**, **Verify admin login**, **test_api.sh**, **Playwright**.
+1. **Containerized** — a fully self-contained Dockerized Apache+PHP instance on `https://127.0.0.1:8443` seeded from `demo_seed.php`. No SSH, no dev-direct dependencies, no shared state. Use this for Playwright unless you need something that only a real deployment can test (real-IdP OIDC, the `timezone.spec.ts` remote-config flow). See `testing/playwright/README.md` for full instructions. In short:
+   ```bash
+   (cd testing/playwright && npm ci && npx playwright install chromium)
+   bash testing/playwright/bootstrap-app.sh sqlite
+   (cd testing/playwright && \
+     IPAM_BASE_URL=https://127.0.0.1:8443 IPAM_ADMIN_USER=demo IPAM_ADMIN_PASS=demo \
+     npx playwright test)
+   bash testing/playwright/teardown-app.sh
+   ```
+   The nightly `.github/workflows/playwright-nightly.yml` CI job runs the same commands against the same image; a failing CI run can almost always be reproduced locally verbatim.
+
+2. **Manual against dev-direct** — the shared test server at `https://dev-direct.seanmousseau.com:8343/claude/ipam`. Needed for `test_api.sh`, real-IdP OIDC scenarios, and any quick verification against a "real" install. The dev environment is shared, stateful, and has multiple footguns that have caused repeated false failures — read this whole section before invoking the suites. All commands assume cwd is the repo root.
+
+See the dedicated subsections below: **Local PHP tools**, **Deploy**, **Pre-flight cleanup**, **Verify admin login**, **test_api.sh**, **Playwright (dev-direct)**.
 
 #### Local PHP tools
 
@@ -475,7 +586,9 @@ bash -c 'set -a; source ~/.claude/dev-secrets.env; set +a; \
 - **`SSH_HOST` + `SSH_DB_PATH`** let the script auto-create an API key on the dev server. Without them you must pass `API_KEY=...`.
 - Expect ~150 PASS, 0 FAIL, possibly 1 SKIP. A `database is locked` error means a stray cron is holding the lock — re-run pre-flight cleanup.
 
-#### Playwright
+#### Playwright (dev-direct)
+
+Prefer the containerized local path described at the top of this section. Use dev-direct only when you need something that only a real deployment can test (real-IdP OIDC, `timezone.spec.ts` which SSHes to patch remote config, etc.). Most timezone and OIDC specs self-skip against non-dev-direct targets via an `isDevServer()` guard.
 
 ```bash
 bash -c 'set -a; source ~/.claude/dev-secrets.env; set +a; \
@@ -501,7 +614,7 @@ Before building a release bundle, **always** complete these steps in order:
 3. Update `testing/scripts/test_api.sh` if API endpoints were added or changed
 4. Update `testing/scripts/cdp_test.py` if UI features were added or changed
 5. Run `php -l` on every changed PHP file
-6. Run the full QA suite using the commands in *Running the test suites against dev-direct* above (Local PHP tools → Deploy → Pre-flight cleanup → Verify admin login → test_api.sh → Playwright). All must pass.
+6. Run the full QA suite using the commands in *Running the test suites* above: Local PHP tools → containerized Playwright (fast, hermetic) → dev-direct pipeline if needed for test_api.sh or real-IdP/timezone coverage (Deploy → Pre-flight cleanup → Verify admin login → test_api.sh → Playwright dev-direct). All must pass.
 7. Run CodeRabbit review and address any Critical findings:
    ```bash
    coderabbit review --plain -t all
@@ -532,7 +645,8 @@ Include `https://claude.ai/code/session_...` in commit body.
 
 ## Key constraints and gotchas
 
-- **No Composer, no npm in production** — the application itself has zero runtime dependencies. Everything must be implemented in vanilla PHP using only standard extensions (`pdo`, `pdo_sqlite`, `openssl`). Composer is used for *dev tooling only* (`vendor/` is gitignored and never deployed).
+- **Runtime dependencies are allowed but curated** — see the "Runtime dependencies" section below for the policy and current whitelist. Historical note: this project shipped with zero runtime deps through v2.7.0 and adopted a curated dep policy in v2.8.0 to avoid hand-rolling security-sensitive protocols. The `vendor/` directory is gitignored in the repo but **is shipped in the release tarball** — end users still deploy by extracting the tarball with no build step. `composer install --no-dev` runs at release bundle time, not at install time on the target.
+- **No npm in production** — all frontend CSS and JavaScript is vanilla. No bundlers, no build step, no node_modules. This rule is separate from the Composer rule and is not being relaxed.
 - **`addresses` has no `ip_version`** — that column exists only on `subnets`. Do not add it to address INSERTs.
 - **`addresses.grp` is a SQL reserved word** — stored as `grp` in the DB, exposed as `group` in the UI, API responses, and CSV headers.
 - **`addresses.mac`** — free-form MAC address string, `NOT NULL DEFAULT ''`. Never validate the format server-side; users may enter any notation.
