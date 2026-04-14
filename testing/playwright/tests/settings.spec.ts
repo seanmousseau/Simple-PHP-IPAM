@@ -54,14 +54,106 @@ test.describe('Settings page', () => {
       await brandingSubmit(page);
 
       await expect(page.locator(SITE_NAME_FIELD)).toHaveValue(newValue);
-      const row = page.locator('label', { hasText: 'Application name' }).first();
-      await expect(row).toContainText('Database');
+      // v2.7.0: label+badge+key live in a .setting-head wrapper (no longer
+      // one big <label>). Assert the source badge inside that wrapper.
+      const head = page.locator('.setting-head', { hasText: 'Application name' }).first();
+      await expect(head).toContainText('Database');
     } finally {
       // Always put the field back so later specs see the seeded value.
       await page.goto(appUrl('settings.php'));
       await page.locator(SITE_NAME_FIELD).fill(original);
       await brandingSubmit(page);
     }
+  });
+
+  test('#440 password show toggle flips sensitive input type', async () => {
+    // Regression for the nested-<label> bug in v2.6.0: clicking "show" on a
+    // sensitive field used to tick the checkbox but leave the input masked.
+    await page.goto(appUrl('settings.php'));
+    const secret = page.locator('input[name="k_oidc__client_secret"]');
+    const toggle = page.locator('input[data-password-toggle="f-k_oidc__client_secret"]');
+    await expect(secret).toHaveAttribute('type', 'password');
+    await secret.fill('round-trip-check');
+    await toggle.check();
+    await expect(secret).toHaveAttribute('type', 'text');
+    await expect(secret).toHaveValue('round-trip-check');
+    await toggle.uncheck();
+    await expect(secret).toHaveAttribute('type', 'password');
+    // Do not submit — leave sensitive field blank so we don't rewrite the
+    // stored secret on dev. The sensitive POST path ignores blank values.
+    await secret.fill('');
+  });
+
+  test('#441 bool rows render checkbox inline with label (same row)', async () => {
+    await page.goto(appUrl('settings.php'));
+    const cb = page.locator('input[type=checkbox][name="k_oidc__enabled"]');
+    const label = page.locator('label[for="f-k_oidc__enabled"] strong', { hasText: 'OIDC enabled' });
+    await expect(cb).toBeVisible();
+    await expect(label).toBeVisible();
+
+    const cbBox    = await cb.boundingBox();
+    const labelBox = await label.boundingBox();
+    expect(cbBox).not.toBeNull();
+    expect(labelBox).not.toBeNull();
+    if (cbBox && labelBox) {
+      const cbCenter    = cbBox.y + cbBox.height / 2;
+      const labelCenter = labelBox.y + labelBox.height / 2;
+      // Centres must be within 10px vertically — same row, not stacked.
+      expect(Math.abs(cbCenter - labelCenter)).toBeLessThan(10);
+    }
+  });
+
+  test('#442 login_protection.method renders as a validated <select>', async () => {
+    await page.goto(appUrl('settings.php'));
+    const select = page.locator('select[name="k_login_protection__method"]');
+    await expect(select).toBeVisible();
+    // At minimum the seven registry entries must be selectable.
+    for (const value of ['', 'honeypot', 'time_check', 'turnstile', 'hcaptcha', 'recaptcha', 'friendly_captcha']) {
+      await expect(select.locator(`option[value="${value}"]`)).toHaveCount(1);
+    }
+  });
+
+  test('#442 branding.timezone renders as a dropdown seeded with PHP zoneinfo', async () => {
+    await page.goto(appUrl('settings.php'));
+    const select = page.locator('select[name="k_branding__timezone"]');
+    await expect(select).toBeVisible();
+    for (const value of ['UTC', 'America/Toronto', 'Europe/London']) {
+      await expect(select.locator(`option[value="${value}"]`)).toHaveCount(1);
+    }
+  });
+
+  test('#442 out-of-set login_protection.method is rejected server-side', async () => {
+    // Go through the form to grab a fresh CSRF token, then POST a forged value.
+    await page.goto(appUrl('settings.php'));
+    const csrf = await page
+      .locator('form:has(select[name="k_login_protection__method"]) input[name="csrf"]')
+      .first()
+      .getAttribute('value');
+    expect(csrf).toBeTruthy();
+
+    const response = await page.request.post(appUrl('settings.php'), {
+      form: {
+        csrf: csrf ?? '',
+        group: 'login_protection',
+        k_login_protection__method: 'not-a-real-method',
+        k_login_protection__site_key: '',
+        k_login_protection__min_seconds: '3',
+        k_login_protection__version: '2',
+      },
+      maxRedirects: 0,
+    });
+    // Validation error path re-renders the page (HTTP 200), not a redirect.
+    expect(response.status()).toBe(200);
+    const body = await response.text();
+    expect(body).toContain('Must be one of the listed values.');
+
+    // Guarantee nothing persisted: reload the page and the select value must
+    // still be one of the known-good entries, never the forged string.
+    await page.goto(appUrl('settings.php'));
+    const selected = await page
+      .locator('select[name="k_login_protection__method"]')
+      .inputValue();
+    expect(selected).not.toBe('not-a-real-method');
   });
 
   test('saving a setting produces a setting.update audit entry', async () => {
