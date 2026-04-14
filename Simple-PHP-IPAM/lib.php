@@ -562,6 +562,100 @@ function ipam_setting_definitions(): array
             'config_key'  => ['update_check', 'notify_prerelease'],
         ],
 
+        // --- Login protection (bot/abuse mitigation on the login form) ---
+        'login_protection.method' => [
+            'label'       => 'Login protection method',
+            'description' => "Bot/abuse mitigation on the login form. One of: '' (off), 'honeypot', 'time_check', 'turnstile', 'hcaptcha', 'recaptcha', 'friendly_captcha'.",
+            'type'        => 'string',
+            'group'       => 'login_protection',
+            'default'     => '',
+            'sensitive'   => false,
+            'config_key'  => ['login_protection', 'method'],
+        ],
+        'login_protection.site_key' => [
+            'label'       => 'Login protection site key',
+            'description' => 'Widget site key (Turnstile / hCaptcha / reCAPTCHA / Friendly Captcha).',
+            'type'        => 'string',
+            'group'       => 'login_protection',
+            'default'     => '',
+            'sensitive'   => false,
+            'config_key'  => ['login_protection', 'site_key'],
+        ],
+        'login_protection.secret_key' => [
+            'label'       => 'Login protection secret key',
+            'description' => 'Widget secret key used for backend verification.',
+            'type'        => 'string',
+            'group'       => 'login_protection',
+            'default'     => '',
+            'sensitive'   => true,
+            'config_key'  => ['login_protection', 'secret_key'],
+        ],
+        'login_protection.min_seconds' => [
+            'label'       => 'Login time-check minimum (seconds)',
+            'description' => "Minimum seconds between page load and submit when method is 'time_check'.",
+            'type'        => 'int',
+            'group'       => 'login_protection',
+            'default'     => 3,
+            'sensitive'   => false,
+            'config_key'  => ['login_protection', 'min_seconds'],
+        ],
+        'login_protection.version' => [
+            'label'       => 'reCAPTCHA version',
+            'description' => "reCAPTCHA widget version: 2 (checkbox) or 3 (invisible). Only applies when method is 'recaptcha'.",
+            'type'        => 'int',
+            'group'       => 'login_protection',
+            'default'     => 2,
+            'sensitive'   => false,
+            'config_key'  => ['login_protection', 'version'],
+        ],
+
+        // --- reCAPTCHA Enterprise backend verification ---
+        'recaptcha_enterprise.enabled' => [
+            'label'       => 'reCAPTCHA Enterprise enabled',
+            'description' => "Use the reCAPTCHA Enterprise API for backend verification. Requires login_protection.method = 'recaptcha'.",
+            'type'        => 'bool',
+            'group'       => 'recaptcha_enterprise',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => ['recaptcha_enterprise', 'enabled'],
+        ],
+        'recaptcha_enterprise.project_id' => [
+            'label'       => 'GCP project ID',
+            'description' => 'Google Cloud project that owns the reCAPTCHA Enterprise key.',
+            'type'        => 'string',
+            'group'       => 'recaptcha_enterprise',
+            'default'     => '',
+            'sensitive'   => false,
+            'config_key'  => ['recaptcha_enterprise', 'project_id'],
+        ],
+        'recaptcha_enterprise.api_key' => [
+            'label'       => 'GCP API key',
+            'description' => 'Server-side API key used to call the reCAPTCHA Enterprise API.',
+            'type'        => 'string',
+            'group'       => 'recaptcha_enterprise',
+            'default'     => '',
+            'sensitive'   => true,
+            'config_key'  => ['recaptcha_enterprise', 'api_key'],
+        ],
+        'recaptcha_enterprise.expected_action' => [
+            'label'       => 'Expected action',
+            'description' => "Action name emitted by the widget, matched server-side during verification.",
+            'type'        => 'string',
+            'group'       => 'recaptcha_enterprise',
+            'default'     => 'login',
+            'sensitive'   => false,
+            'config_key'  => ['recaptcha_enterprise', 'expected_action'],
+        ],
+        'recaptcha_enterprise.score_threshold' => [
+            'label'       => 'Score threshold',
+            'description' => "Minimum risk score to accept (0.0–1.0). Stored as a string so the 0.5 default round-trips cleanly.",
+            'type'        => 'string',
+            'group'       => 'recaptcha_enterprise',
+            'default'     => '0.5',
+            'sensitive'   => false,
+            'config_key'  => ['recaptcha_enterprise', 'score_threshold'],
+        ],
+
         // --- OIDC ---
         'oidc.enabled' => [
             'label'       => 'OIDC enabled',
@@ -664,11 +758,13 @@ function ipam_setting_definitions(): array
 function ipam_setting_groups(): array
 {
     return [
-        'branding'     => ['label' => 'Branding',       'description' => 'Display name and timezone shown across the UI.'],
-        'security'     => ['label' => 'Security',       'description' => 'Session lifetime and login lockout policy.'],
-        'alert'        => ['label' => 'Alerting',       'description' => 'Subnet utilization email alerts.'],
-        'update_check' => ['label' => 'Update checker', 'description' => 'GitHub release checker for the in-app upgrade banner.'],
-        'oidc'         => ['label' => 'OIDC / SSO',     'description' => 'OpenID Connect single sign-on.'],
+        'branding'             => ['label' => 'Branding',             'description' => 'Display name and timezone shown across the UI.'],
+        'security'             => ['label' => 'Security',             'description' => 'Session lifetime and login lockout policy.'],
+        'alert'                => ['label' => 'Alerting',             'description' => 'Subnet utilization email alerts.'],
+        'update_check'         => ['label' => 'Update checker',       'description' => 'GitHub release checker for the in-app upgrade banner.'],
+        'login_protection'     => ['label' => 'Login protection',     'description' => 'Bot and abuse mitigation on the login form.'],
+        'recaptcha_enterprise' => ['label' => 'reCAPTCHA Enterprise', 'description' => "Backend verification via Google's reCAPTCHA Enterprise API."],
+        'oidc'                 => ['label' => 'OIDC / SSO',           'description' => 'OpenID Connect single sign-on.'],
     ];
 }
 
@@ -763,10 +859,12 @@ function ipam_setting(string $key, mixed $default = null): mixed
     $definitions = ipam_setting_definitions();
     $def         = $definitions[$key] ?? null;
     $type        = is_array($def) && is_string($def['type'] ?? null) ? $def['type'] : 'string';
-    $fallback    = $default;
-    if ($def !== null && array_key_exists('default', $def)) {
-        $fallback = $default === null ? $def['default'] : $default;
-    }
+    // Precedence: DB → config → registry default → caller $default. A caller
+    // default only matters for unregistered keys; registered keys always fall
+    // through to the registry's authoritative default.
+    $fallback = ($def !== null && array_key_exists('default', $def))
+        ? $def['default']
+        : $default;
 
     try {
         $db = $GLOBALS['db'] ?? null;
@@ -3268,11 +3366,11 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=2.5.1'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=2.6.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=2.5.1'></script>";
+    echo "<script defer src='assets/app.js?v=2.6.0'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";

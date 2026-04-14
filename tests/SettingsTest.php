@@ -22,7 +22,8 @@ class SettingsTest extends TestCase
             CREATE TABLE settings (
                 key        TEXT PRIMARY KEY,
                 value      TEXT,
-                type       TEXT NOT NULL DEFAULT 'string',
+                type       TEXT NOT NULL DEFAULT 'string'
+                           CHECK(type IN ('string','int','bool','json')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_by INTEGER
             )
@@ -219,5 +220,26 @@ class SettingsTest extends TestCase
         $this->assertNull(ipam_setting_config_fallback($config, 'missing'));
         $this->assertNull(ipam_setting_config_fallback($config, ['parent', 'missing']));
         $this->assertNull(ipam_setting_config_fallback($config, null));
+    }
+
+    public function testCheckConstraintRejectsUnsupportedTypeValue(): void
+    {
+        $this->expectException(PDOException::class);
+        $ins = $this->db->prepare("INSERT INTO settings (key, value, type) VALUES (:k, :v, :t)");
+        $ins->execute([':k' => 'bogus.key', ':v' => 'x', ':t' => 'date']);
+    }
+
+    public function testCallerDefaultIgnoredForRegisteredKey(): void
+    {
+        // Registry default must win; caller-supplied $default only matters for
+        // unregistered keys. Regression guard for the inverted precedence bug.
+        $this->assertSame(
+            'Simple PHP IPAM',
+            ipam_setting('branding.site_name', 'caller-override')
+        );
+        ipam_setting_cache_bust('branding.site_name');
+
+        // Unregistered key still honours the caller default.
+        $this->assertSame('caller-default', ipam_setting('bogus.unregistered', 'caller-default'));
     }
 }

@@ -27,9 +27,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
-    $user    = current_user();
-    $userId  = to_int($user['id'] ?? 0) ?: null;
-    $changed = 0;
+    $user   = current_user();
+    $userId = to_int($user['id'] ?? 0) ?: null;
+
+    // Phase 1 — validate every field in the posted group into a pending map.
+    // Nothing is written until the whole group validates cleanly; that way a
+    // late validation error cannot leave earlier fields persisted and audited
+    // while the page re-renders with an error banner.
+    /** @var array<string, mixed> $pending */
+    $pending = [];
 
     foreach ($definitions as $key => $def) {
         if (($def['group'] ?? '') !== $postedGroup) continue;
@@ -41,13 +47,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($type === 'bool') {
             $newValue = isset($_POST[$fieldName]);
         } elseif ($type === 'int') {
-            $raw      = trim(to_str($_POST[$fieldName] ?? ''));
-            $newValue = $raw === '' ? 0 : (int)$raw;
+            $raw = trim(to_str($_POST[$fieldName] ?? ''));
             if ($raw !== '' && !preg_match('/^-?\d+$/', $raw)) {
-                $fieldErrors[$key] = 'Must be an integer.';
+                $fieldErrors[$key]   = 'Must be an integer.';
                 $formOverrides[$key] = $raw;
                 continue;
             }
+            $newValue = $raw === '' ? 0 : (int)$raw;
         } elseif ($type === 'json') {
             $raw = to_str($_POST[$fieldName] ?? '');
             if (trim($raw) === '') {
@@ -71,11 +77,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($type === 'int' && to_int($current) === to_int($newValue)) continue;
         if ($type === 'bool' && (bool)$current === (bool)$newValue) continue;
 
+        $pending[$key] = $newValue;
+    }
+
+    // Phase 2 — only persist when the whole group validated. A failure inside
+    // the transaction rolls the whole batch back so we never audit or leave
+    // a half-applied group.
+    $changed = 0;
+    if (!$fieldErrors && $pending) {
+        $db->beginTransaction();
         try {
-            ipam_setting_set($db, $key, $newValue, $userId);
-            $changed++;
+            foreach ($pending as $key => $newValue) {
+                ipam_setting_set($db, $key, $newValue, $userId);
+                $changed++;
+            }
+            $db->commit();
         } catch (\Throwable $e) {
-            $fieldErrors[$key] = 'Save failed: ' . $e->getMessage();
+            if ($db->inTransaction()) $db->rollBack();
+            $fieldErrors['_group'] = 'Save failed: ' . $e->getMessage();
+            $changed = 0;
         }
     }
 
@@ -110,6 +130,9 @@ page_header('Settings');
 
 <?php $flash = flash_get(); if ($flash): ?>
   <p class="<?= e($flash['type']) ?>"><?= e($flash['msg']) ?></p>
+<?php endif; ?>
+<?php if (!empty($fieldErrors['_group'])): ?>
+  <p class="danger"><?= e($fieldErrors['_group']) ?></p>
 <?php endif; ?>
 
 <?php foreach ($groups as $groupKey => $groupMeta): ?>
@@ -162,11 +185,11 @@ page_header('Settings');
                     else { $j = json_encode($current, JSON_PRETTY_PRINT); echo e(is_string($j) ? $j : ''); }
                 ?></textarea>
               <?php elseif ($sensitive): ?>
-                <input type="password" name="<?= e($fieldName) ?>"
+                <input type="password" name="<?= e($fieldName) ?>" id="pw-<?= e($fieldName) ?>"
                        value="<?= e($shown !== null ? $shown : (is_scalar($current) ? (string)$current : '')) ?>"
                        class="w-full" autocomplete="new-password">
                 <label class="muted" style="font-weight:normal;">
-                  <input type="checkbox" onclick="const p=this.closest('label').previousElementSibling; p.type = p.type==='password' ? 'text' : 'password';"> show
+                  <input type="checkbox" data-password-toggle="pw-<?= e($fieldName) ?>"> show
                 </label>
               <?php else: ?>
                 <input type="text" name="<?= e($fieldName) ?>"

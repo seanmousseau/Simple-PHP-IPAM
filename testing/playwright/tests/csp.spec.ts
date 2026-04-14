@@ -30,6 +30,7 @@ const PAGES = [
   'bulk_update.php',
   'change_password.php',
   'scan_history.php',
+  'settings.php',
 ];
 
 // Substrings identifying a CSP violation in a console message. Blink/Chromium
