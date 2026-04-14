@@ -31,9 +31,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $userId = to_int($user['id'] ?? 0) ?: null;
 
     // Phase 1 — validate every field in the posted group into a pending map.
-    // Nothing is written until the whole group validates cleanly; that way a
-    // late validation error cannot leave earlier fields persisted and audited
-    // while the page re-renders with an error banner.
+    // Every submitted value is recorded in $formOverrides so the re-render
+    // path (used on validation error) shows the admin what they typed, not
+    // the stale DB/config value. Nothing is written until the whole group
+    // validates cleanly; that way a late validation error cannot leave
+    // earlier fields persisted and audited while the page re-renders.
     /** @var array<string, mixed> $pending */
     $pending = [];
 
@@ -44,16 +46,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $type      = is_string($def['type'] ?? null) ? $def['type'] : 'string';
         $current   = ipam_setting($key);
 
+        // Record the raw submitted value up front so a later validation
+        // failure in this group does not cause earlier inputs to snap back
+        // to their stored state on re-render.
+        if ($type === 'bool') {
+            $formOverrides[$key] = isset($_POST[$fieldName]) ? '1' : '0';
+        } else {
+            $formOverrides[$key] = to_str($_POST[$fieldName] ?? '');
+        }
+
         if ($type === 'bool') {
             $newValue = isset($_POST[$fieldName]);
         } elseif ($type === 'int') {
             $raw = trim(to_str($_POST[$fieldName] ?? ''));
             if ($raw !== '' && !preg_match('/^-?\d+$/', $raw)) {
-                $fieldErrors[$key]   = 'Must be an integer.';
-                $formOverrides[$key] = $raw;
+                $fieldErrors[$key] = 'Must be an integer.';
                 continue;
             }
             $newValue = $raw === '' ? 0 : (int)$raw;
+
+            // Enforce per-definition min/max so admins cannot persist nonsense
+            // like a negative session_idle_seconds or login_max_attempts.
+            $min = array_key_exists('min', $def) ? to_int($def['min']) : null;
+            $max = array_key_exists('max', $def) ? to_int($def['max']) : null;
+            if ($min !== null && $newValue < $min) {
+                $fieldErrors[$key] = "Must be at least {$min}.";
+                continue;
+            }
+            if ($max !== null && $newValue > $max) {
+                $fieldErrors[$key] = "Must be at most {$max}.";
+                continue;
+            }
         } elseif ($type === 'json') {
             $raw = to_str($_POST[$fieldName] ?? '');
             if (trim($raw) === '') {
@@ -61,8 +84,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } else {
                 $decoded = json_decode($raw, true);
                 if ($decoded === null && strtolower(trim($raw)) !== 'null') {
-                    $fieldErrors[$key]   = 'Invalid JSON.';
-                    $formOverrides[$key] = $raw;
+                    $fieldErrors[$key] = 'Invalid JSON.';
                     continue;
                 }
                 $newValue = $decoded;
@@ -174,10 +196,14 @@ page_header('Settings');
               <code class="muted" style="margin-left:0.5rem;"><?= e($key) ?></code>
               <br>
               <?php if ($type === 'bool'): ?>
-                <input type="checkbox" name="<?= e($fieldName) ?>" value="1"<?= $current ? ' checked' : '' ?>>
-              <?php elseif ($type === 'int'): ?>
+                <?php $boolChecked = $shown !== null ? $shown === '1' : (bool)$current; ?>
+                <input type="checkbox" name="<?= e($fieldName) ?>" value="1"<?= $boolChecked ? ' checked' : '' ?>>
+              <?php elseif ($type === 'int'):
+                  $minAttr = array_key_exists('min', $def) ? ' min="' . e((string)to_int($def['min'])) . '"' : '';
+                  $maxAttr = array_key_exists('max', $def) ? ' max="' . e((string)to_int($def['max'])) . '"' : '';
+              ?>
                 <input type="number" name="<?= e($fieldName) ?>"
-                       value="<?= e($shown !== null ? $shown : (string)to_int($current)) ?>"
+                       value="<?= e($shown !== null ? $shown : (string)to_int($current)) ?>"<?= $minAttr . $maxAttr ?>
                        class="mw-240">
               <?php elseif ($type === 'json'): ?>
                 <textarea name="<?= e($fieldName) ?>" rows="4" class="w-full"><?php

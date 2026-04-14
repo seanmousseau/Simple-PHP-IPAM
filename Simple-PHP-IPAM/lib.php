@@ -469,30 +469,33 @@ function ipam_setting_definitions(): array
         // --- Security ---
         'security.session_idle_seconds' => [
             'label'       => 'Session idle timeout (seconds)',
-            'description' => 'Users are logged out after this many seconds of inactivity.',
+            'description' => 'Users are logged out after this many seconds of inactivity. Minimum 60.',
             'type'        => 'int',
             'group'       => 'security',
             'default'     => 1800,
             'sensitive'   => false,
             'config_key'  => 'session_idle_seconds',
+            'min'         => 60,
         ],
         'security.login_max_attempts' => [
             'label'       => 'Max failed login attempts',
-            'description' => 'Lock out an IP after this many failed attempts within the window.',
+            'description' => 'Lock out an IP after this many failed attempts within the window. Minimum 1.',
             'type'        => 'int',
             'group'       => 'security',
             'default'     => 5,
             'sensitive'   => false,
             'config_key'  => 'login_max_attempts',
+            'min'         => 1,
         ],
         'security.login_lockout_seconds' => [
             'label'       => 'Login lockout window (seconds)',
-            'description' => 'Time window during which failed attempts are counted toward lockout.',
+            'description' => 'Time window during which failed attempts are counted toward lockout. Minimum 60.',
             'type'        => 'int',
             'group'       => 'security',
             'default'     => 900,
             'sensitive'   => false,
             'config_key'  => 'login_lockout_seconds',
+            'min'         => 60,
         ],
 
         // --- Alerting ---
@@ -513,6 +516,8 @@ function ipam_setting_definitions(): array
             'default'     => 80,
             'sensitive'   => false,
             'config_key'  => 'alert_util_warn_pct',
+            'min'         => 0,
+            'max'         => 100,
         ],
         'alert.util_crit_pct' => [
             'label'       => 'Utilization critical threshold (%)',
@@ -522,15 +527,18 @@ function ipam_setting_definitions(): array
             'default'     => 95,
             'sensitive'   => false,
             'config_key'  => 'alert_util_crit_pct',
+            'min'         => 0,
+            'max'         => 100,
         ],
         'alert.interval_seconds' => [
             'label'       => 'Alert check interval (seconds)',
-            'description' => 'Minimum seconds between utilization alert evaluations.',
+            'description' => 'Minimum seconds between utilization alert evaluations. Minimum 60.',
             'type'        => 'int',
             'group'       => 'alert',
             'default'     => 3600,
             'sensitive'   => false,
             'config_key'  => 'alert_interval_seconds',
+            'min'         => 60,
         ],
 
         // --- Update check ---
@@ -545,12 +553,13 @@ function ipam_setting_definitions(): array
         ],
         'update_check.ttl_seconds' => [
             'label'       => 'Update check cache TTL (seconds)',
-            'description' => 'How long to cache the update check result before re-fetching.',
+            'description' => 'How long to cache the update check result before re-fetching. Minimum 60.',
             'type'        => 'int',
             'group'       => 'update_check',
             'default'     => 86400,
             'sensitive'   => false,
             'config_key'  => ['update_check', 'ttl_seconds'],
+            'min'         => 60,
         ],
         'update_check.notify_prerelease' => [
             'label'       => 'Notify on prereleases',
@@ -598,6 +607,7 @@ function ipam_setting_definitions(): array
             'default'     => 3,
             'sensitive'   => false,
             'config_key'  => ['login_protection', 'min_seconds'],
+            'min'         => 0,
         ],
         'login_protection.version' => [
             'label'       => 'reCAPTCHA version',
@@ -607,6 +617,8 @@ function ipam_setting_definitions(): array
             'default'     => 2,
             'sensitive'   => false,
             'config_key'  => ['login_protection', 'version'],
+            'min'         => 2,
+            'max'         => 3,
         ],
 
         // --- reCAPTCHA Enterprise backend verification ---

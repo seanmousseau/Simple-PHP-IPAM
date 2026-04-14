@@ -229,6 +229,29 @@ class SettingsTest extends TestCase
         $ins->execute([':k' => 'bogus.key', ':v' => 'x', ':t' => 'date']);
     }
 
+    public function testRegistryAdvertisesMinMaxOnKnownIntKeys(): void
+    {
+        // These keys must stay bounded in the registry so settings.php rejects
+        // negative / out-of-range values that would break runtime behaviour.
+        // See CodeRabbit review on PR #437.
+        $defs = ipam_setting_definitions();
+        foreach ([
+            'security.session_idle_seconds',
+            'security.login_max_attempts',
+            'security.login_lockout_seconds',
+            'alert.util_warn_pct',
+            'alert.util_crit_pct',
+            'alert.interval_seconds',
+            'update_check.ttl_seconds',
+        ] as $k) {
+            $this->assertArrayHasKey($k, $defs, "registry missing {$k}");
+            $this->assertArrayHasKey('min', $defs[$k], "{$k} should advertise a min");
+        }
+        // Percent thresholds must also advertise a max.
+        $this->assertArrayHasKey('max', $defs['alert.util_warn_pct']);
+        $this->assertArrayHasKey('max', $defs['alert.util_crit_pct']);
+    }
+
     public function testCallerDefaultIgnoredForRegisteredKey(): void
     {
         // Registry default must win; caller-supplied $default only matters for
