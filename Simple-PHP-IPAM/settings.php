@@ -131,7 +131,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $db->commit();
         } catch (\Throwable $e) {
             if ($db->inTransaction()) $db->rollBack();
-            $fieldErrors['_group'] = 'Save failed: ' . $e->getMessage();
+            // Log the underlying error server-side; keep the UI message
+            // generic so PDO error text (e.g. UNIQUE constraint failed on
+            // settings.key) is never rendered back to the browser.
+            error_log('settings.php save failed: ' . $e->getMessage());
+            $fieldErrors['_group'] = 'Save failed. Please try again.';
             $changed = 0;
         }
     }
