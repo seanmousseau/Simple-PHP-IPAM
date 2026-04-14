@@ -217,13 +217,13 @@ A new dep must meet **all** of the following criteria:
 |---|---|---|---|
 | (none yet — policy introduced in v2.8.0 as infrastructure; first dep lands in v3.1.0) | — | — | — |
 
-First dep expected to land in v3.1.0 (#415, PHPMailer for SMTP). Future candidates to be evaluated on a case-by-case basis as feature work surfaces them.
+First dep expected to land in v3.2.0 (#415, PHPMailer for SMTP). Future candidates to be evaluated on a case-by-case basis as feature work surfaces them.
 
 **Explicitly not adopted (deliberate choices):**
 
-- No HTTP client library yet. `ext-curl` + careful wrapping is the current path for webhook dispatch (#399, v3.3.0). May revisit if curl wrapping proves painful at implementation time — Guzzle or symfony/http-client would be the likely candidates.
+- No HTTP client library yet. `ext-curl` + careful wrapping is the current path for webhook dispatch (#399, v3.4.0). May revisit if curl wrapping proves painful at implementation time — Guzzle or symfony/http-client would be the likely candidates.
 - No JWT / JWK library yet. The hand-rolled OIDC in `lib.php` works and is not being retrofitted on speculation. May revisit if a security-sensitive bug surfaces or if the RFC tracking burden becomes obviously not worth it.
-- No JSON Schema validator. Custom fields (#313, v3.5.0) use a bespoke lightweight type system, not JSON Schema.
+- No JSON Schema validator. Custom fields (#313, v3.6.0) use a bespoke lightweight type system, not JSON Schema.
 - No templating engine, no DI container, no service locator, no ORM. These are architectural departures that do not fit this project's philosophy.
 
 ### When to use classes vs functions
