@@ -4,7 +4,7 @@ Simple-PHP-IPAM supports single sign-on via OpenID Connect (OIDC) Authorization 
 
 OIDC is implemented in pure PHP using only the built-in `openssl` extension — no Composer packages required.
 
-> **v2.6.0 note** — OIDC settings are now editable from the admin UI under **⚙ Admin → Settings → OIDC / SSO**. The `config.php` `oidc` block is still honoured as a fallback during the v2.6 → v3.0 transition; in v3.0.0 it will be removed and the database values become the only source of truth. See [configuration.md → Transition from config.php](configuration.md#transition-from-configphp-v26--v27--v30).
+> **v2.7.0 note** — OIDC is now fully wired to the database. `oidc_enabled()`, the login button, the authorize redirect, the callback token exchange, and every claim-mapping flag all read through `ipam_setting('oidc.*')`. Configure everything from **⚙ Admin → Settings → OIDC / SSO** — edits take effect on the next login with no `config.php` change and no restart. `config.php` still works as a fallback for back-compat; in v3.0.0 the fallback is removed and the database values become the only source of truth. New in v2.7.0: `oidc.disable_local_login`, `oidc.disable_emergency_bypass`, and `oidc.hide_emergency_link` are now registered database settings you can toggle from the admin UI.
 
 ## Contents
 
