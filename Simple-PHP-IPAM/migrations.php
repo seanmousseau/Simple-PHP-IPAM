@@ -633,5 +633,84 @@ function ipam_migrations(): array
                 ");
             }
         },
+
+        '2.6.0-settings' => \Closure::fromCallable('ipam_migrate_2_6_0_settings'),
     ];
+}
+
+/**
+ * 2.6.0-settings migration: create the settings table and seed every registry
+ * key from the live $config.php. Lives as a named function (rather than a
+ * closure literal inside ipam_migrations()) so the migration body is easier
+ * to read and unit-test.
+ */
+function ipam_migrate_2_6_0_settings(PDO $db): void
+{
+    $tables = array_column(
+        ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+        'name'
+    );
+
+    if (!in_array('settings', $tables, true)) {
+        $db->exec("
+            CREATE TABLE settings (
+                key        TEXT PRIMARY KEY,
+                value      TEXT,
+                type       TEXT NOT NULL DEFAULT 'string',
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+            )
+        ");
+    }
+
+    // Seed rows from the live $config for every registry entry that does not
+    // already exist. Relies on ipam_setting_definitions() being available from
+    // lib.php, which init.php loads before migrations run.
+    if (!function_exists('ipam_setting_definitions')) {
+        return;
+    }
+
+    /** @var array<string, mixed>|null $config */
+    $config = $GLOBALS['config'] ?? null;
+    $definitions = ipam_setting_definitions();
+
+    $check = $db->prepare("SELECT 1 FROM settings WHERE key = :k");
+    $ins = $db->prepare(
+        "INSERT INTO settings (key, value, type, updated_at, updated_by)
+         VALUES (:k, :v, :t, datetime('now'), NULL)"
+    );
+
+    $seeded = 0;
+    foreach ($definitions as $key => $def) {
+        $check->execute([':k' => $key]);
+        if ($check->fetchColumn() !== false) continue;
+
+        $type = is_string($def['type'] ?? null) ? $def['type'] : 'string';
+        $value = $def['default'] ?? null;
+        if (is_array($config)) {
+            $cfgKey = $def['config_key'] ?? null;
+            if ($cfgKey !== null && (is_string($cfgKey) || is_array($cfgKey))) {
+                $cfgVal = ipam_setting_config_fallback($config, $cfgKey);
+                if ($cfgVal !== null) $value = $cfgVal;
+            }
+        }
+
+        $ins->execute([
+            ':k' => $key,
+            ':v' => ipam_setting_encode($value, $type),
+            ':t' => $type,
+        ]);
+        $seeded++;
+    }
+
+    if ($seeded > 0 && function_exists('audit')) {
+        // Audit is best-effort: tests use a stricter audit_log schema than production,
+        // and we never want a seeding log entry to abort a migration.
+        try {
+            $details = json_encode(['count' => $seeded, 'source' => 'config.php']);
+            audit($db, 'settings.seeded_from_config', 'setting', null, is_string($details) ? $details : "count={$seeded}");
+        } catch (\Throwable) {
+            // swallow
+        }
+    }
 }

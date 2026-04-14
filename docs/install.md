@@ -255,6 +255,8 @@ Each task throttles itself internally and is skipped cleanly when not yet due, s
 
 > The bootstrap admin account is only created if no users exist in the database. Once any user account exists, changes to `bootstrap_admin` in `config.php` have no effect.
 
+Starting in **v2.6.0**, most operational settings — branding, timezone, alerting, update checker, OIDC — live in the database and are editable from the admin UI under **⚙ Admin → Settings**. `config.php` is still used for bootstrap values (`db_path`, `session_name`, proxy/HTTPS), and still works as a fallback for the database-backed settings during the v2.6 → v3.0 transition. See [docs/configuration.md](configuration.md) for the full model.
+
 ---
 
 ## File permissions reference

@@ -350,4 +350,42 @@ class MigrationTest extends TestCase
         $this->expectException(PDOException::class);
         $ins->execute(['10.99.0.0/24', '10.99.0.0', inet_pton('10.99.0.0'), $vrfId]);
     }
+
+    /**
+     * The 2.6.0-settings migration must create the settings table, seed every
+     * registry key, and not clobber rows written between runs. Second apply is
+     * idempotent — no duplicate rows, no errors.
+     */
+    public function testSettingsMigrationSeedsAndIsIdempotent(): void
+    {
+        $db = $this->makePreVrfDb();
+        apply_migrations($db);
+
+        $tables = array_column(
+            $db->query("SELECT name FROM sqlite_master WHERE type='table'")->fetchAll(),
+            'name'
+        );
+        $this->assertContains('settings', $tables, '2.6.0-settings must create the settings table');
+
+        $cols = array_column(
+            $db->query("PRAGMA table_info(settings)")->fetchAll(),
+            'name'
+        );
+        foreach (['key', 'value', 'type', 'updated_at', 'updated_by'] as $expected) {
+            $this->assertContains($expected, $cols, "settings column {$expected} missing");
+        }
+
+        $registryKeys = array_keys(ipam_setting_definitions());
+        $seededCount  = (int)$db->query("SELECT count(*) FROM settings")->fetchColumn();
+        $this->assertSame(count($registryKeys), $seededCount, 'Every registry key must be seeded on first run');
+
+        // User writes a value between migration runs via a prepared update.
+        $db->prepare("UPDATE settings SET value = :v WHERE key = :k")
+           ->execute([':v' => 'Custom Name', ':k' => 'branding.site_name']);
+
+        // Second apply_migrations() must be a no-op and must NOT clobber the user write.
+        apply_migrations($db);
+        $preserved = $db->query("SELECT value FROM settings WHERE key = 'branding.site_name'")->fetchColumn();
+        $this->assertSame('Custom Name', $preserved, 'Second migration run must not overwrite existing rows');
+    }
 }
