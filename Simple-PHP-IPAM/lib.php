@@ -2722,7 +2722,21 @@ function csv_output_handle()
 function csv_out(array $row): void
 {
     $fh = csv_output_handle();
-    fputcsv($fh, $row, ',', '"', '');
+    // CodeRabbit C1 (PR #450): defuse spreadsheet formula injection. Excel /
+    // LibreOffice / Numbers treat any cell starting with =, +, -, @, TAB, CR
+    // or LF as a formula. Prefix offending cells with a single quote so they
+    // render as literal text. Applies to every CSV export site-wide because
+    // every export goes through this helper.
+    $sanitized = array_map(static function (string $cell): string {
+        if ($cell === '') return $cell;
+        $first = $cell[0];
+        if ($first === '=' || $first === '+' || $first === '-' || $first === '@'
+            || $first === "\t" || $first === "\r" || $first === "\n") {
+            return "'" . $cell;
+        }
+        return $cell;
+    }, $row);
+    fputcsv($fh, $sanitized, ',', '"', '');
 }
 
 /* ---------------- Security warning banner ---------------- */

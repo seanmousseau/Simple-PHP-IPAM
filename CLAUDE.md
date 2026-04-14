@@ -22,7 +22,7 @@ Cross-project / global entities that also apply to this project but are named wi
 
 ### Session-start query for this project
 
-```
+```text
 open_nodes(["user:sean"])
 search_nodes("project:simple-php-ipam")
 ```

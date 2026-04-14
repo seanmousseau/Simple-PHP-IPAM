@@ -69,6 +69,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     foreach ($definitions as $key => $def) {
         if (($def['group'] ?? '') !== $postedGroup) continue;
+        // CodeRabbit M2 (PR #450): mirror the renderer's deprecated guard.
+        // The save loop must not process deprecated keys, otherwise saving any
+        // group containing them would silently overwrite the stored value with
+        // an empty string (since the field is absent from the form). Affected
+        // alert.email after #443 — it would be wiped on every Alerting save.
+        if (!empty($def['deprecated'])) continue;
 
         $fieldName = 'k_' . str_replace('.', '__', $key);
         $type      = is_string($def['type'] ?? null) ? $def['type'] : 'string';

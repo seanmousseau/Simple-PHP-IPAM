@@ -259,6 +259,33 @@ function api_json(mixed $data): never
 }
 
 /**
+ * CodeRabbit m1 (PR #450): validate tag_ids[] before any DB write so a bad
+ * ID returns 400 instead of 500 + an orphan entity. Returns the unique
+ * positive int list. api_error()'s on unknown IDs.
+ *
+ * @param array<mixed> $rawTagIds
+ * @return list<int>
+ */
+function api_validate_tag_ids(PDO $db, array $rawTagIds): array
+{
+    $tagIds = array_values(array_unique(array_filter(
+        array_map(fn($v) => (int)to_str($v), $rawTagIds),
+        fn($i) => $i > 0
+    )));
+    if ($tagIds === []) return [];
+    $placeholders = implode(',', array_fill(0, count($tagIds), '?'));
+    $st = $db->prepare("SELECT id FROM tags WHERE id IN ($placeholders)");
+    $st->execute($tagIds);
+    /** @var list<int> $found */
+    $found = array_map(fn($v) => (int)to_str($v), $st->fetchAll(PDO::FETCH_COLUMN));
+    $missing = array_values(array_diff($tagIds, $found));
+    if ($missing !== []) {
+        api_error(400, 'tag_ids contains unknown tag IDs: ' . implode(', ', $missing));
+    }
+    return $tagIds;
+}
+
+/**
  * #314: build a paginated response shape and emit the X-Total-Count header.
  *
  * Default flat shape (BC) wraps the items under $listKey alongside total/page/
@@ -1700,6 +1727,10 @@ function api_addresses_create(PDO $db, array $apiKey, array $body): never
 {
     $subnetId       = isset($body['subnet_id'])       ? to_int($body['subnet_id'])       : 0;
     $ip             = trim(to_str($body['ip'] ?? ''));
+    // Validate tag_ids up-front (CodeRabbit m1 / PR #450).
+    $validatedTagIds = isset($body['tag_ids']) && is_array($body['tag_ids'])
+        ? api_validate_tag_ids($db, $body['tag_ids'])
+        : null;
     $hostname       = trim(to_str($body['hostname']        ?? ''));
     $owner          = trim(to_str($body['owner']           ?? ''));
     $ownerContactId = isset($body['owner_contact_id']) ? to_int($body['owner_contact_id']) : null;
@@ -1758,10 +1789,9 @@ function api_addresses_create(PDO $db, array $apiKey, array $body): never
     ]);
     $newId = (int)$db->lastInsertId();
 
-    // #310: optional tag_ids[] on the create body
-    if (isset($body['tag_ids']) && is_array($body['tag_ids'])) {
-        $tagIds = array_values(array_filter(array_map(fn($v) => (int)to_str($v), $body['tag_ids']), fn($i) => $i > 0));
-        save_tags_for_entity($db, 'address', $newId, $tagIds);
+    // #310 + CodeRabbit m1: tag_ids[] validated up-front.
+    if ($validatedTagIds !== null) {
+        save_tags_for_entity($db, 'address', $newId, $validatedTagIds);
     }
 
     api_audit($db, $apiKey, 'address.create', 'address', $newId,
@@ -1792,6 +1822,10 @@ function api_addresses_update(PDO $db, array $apiKey, int $id, array $body): nev
     $addr = $st->fetch();
     if (!$addr) api_error(404, 'Address not found.');
 
+    // Validate tag_ids up-front (CodeRabbit m1 / PR #450).
+    $validatedTagIds = array_key_exists('tag_ids', $body) && is_array($body['tag_ids'])
+        ? api_validate_tag_ids($db, $body['tag_ids'])
+        : null;
     $hostname  = array_key_exists('hostname',   $body) ? trim(to_str($body['hostname']))   : to_str($addr['hostname']);
     $owner     = array_key_exists('owner',      $body) ? trim(to_str($body['owner']))      : to_str($addr['owner']);
     $note      = array_key_exists('note',       $body) ? trim(to_str($body['note']))       : to_str($addr['note']);
@@ -1814,10 +1848,9 @@ function api_addresses_update(PDO $db, array $apiKey, int $id, array $body): nev
     )->execute([':hn' => $hostname, ':ow' => $owner, ':nt' => $note, ':grp' => $grp,
                 ':mac' => $mac, ':exp' => $expiresAt, ':st' => $status, ':id' => $id]);
 
-    // #310: optional tag_ids[] on the update body — replaces the full set
-    if (array_key_exists('tag_ids', $body) && is_array($body['tag_ids'])) {
-        $tagIds = array_values(array_filter(array_map(fn($v) => (int)to_str($v), $body['tag_ids']), fn($i) => $i > 0));
-        save_tags_for_entity($db, 'address', $id, $tagIds);
+    // #310 + CodeRabbit m1: tag_ids[] validated up-front.
+    if ($validatedTagIds !== null) {
+        save_tags_for_entity($db, 'address', $id, $validatedTagIds);
     }
 
     api_audit($db, $apiKey, 'address.update', 'address', $id,
@@ -1876,6 +1909,11 @@ function api_subnets_create(PDO $db, array $apiKey, array $body): never
     $description = trim(to_str($body['description'] ?? ''));
     $notes       = trim(to_str($body['notes']       ?? ''));
     $siteId      = isset($body['site_id']) ? to_int($body['site_id']) : null;
+    // Validate tag_ids up-front so we never INSERT a subnet and then 500 on
+    // the join (CodeRabbit m1 / PR #450). null = key absent (no-op).
+    $validatedTagIds = isset($body['tag_ids']) && is_array($body['tag_ids'])
+        ? api_validate_tag_ids($db, $body['tag_ids'])
+        : null;
     $vlanId      = isset($body['vlan_id']) ? to_int($body['vlan_id']) : null;
     $vrfId       = isset($body['vrf_id'])  ? to_int($body['vrf_id'])  : null;
 
@@ -1927,10 +1965,10 @@ function api_subnets_create(PDO $db, array $apiKey, array $body): never
     ]);
     $newId = (int)$db->lastInsertId();
 
-    // #310: optional tag_ids[] on the create body
-    if (isset($body['tag_ids']) && is_array($body['tag_ids'])) {
-        $tagIds = array_values(array_filter(array_map(fn($v) => (int)to_str($v), $body['tag_ids']), fn($i) => $i > 0));
-        save_tags_for_entity($db, 'subnet', $newId, $tagIds);
+    // #310 + CodeRabbit m1: tag_ids[] is validated up-front (see below) so
+    // we already know every ID exists; the only DB work left is the join.
+    if ($validatedTagIds !== null) {
+        save_tags_for_entity($db, 'subnet', $newId, $validatedTagIds);
     }
 
     api_audit($db, $apiKey, 'subnet.create', 'subnet', $newId,
@@ -1965,6 +2003,11 @@ function api_subnets_update(PDO $db, array $apiKey, int $id, array $body): never
 
     $description = array_key_exists('description', $body) ? trim(to_str($body['description'])) : to_str($subnet['description']);
     $notes       = array_key_exists('notes', $body)       ? trim(to_str($body['notes']))       : to_str($subnet['notes'] ?? '');
+    // Validate tag_ids up-front (CodeRabbit m1 / PR #450) so an invalid ID
+    // returns 400 instead of half-applying the update.
+    $validatedTagIds = array_key_exists('tag_ids', $body) && is_array($body['tag_ids'])
+        ? api_validate_tag_ids($db, $body['tag_ids'])
+        : null;
     $siteId = array_key_exists('site_id', $body)
         ? ($body['site_id'] !== null ? to_int($body['site_id']) : null)
         : ($subnet['site_id'] !== null ? to_int($subnet['site_id']) : null);
@@ -2008,10 +2051,9 @@ function api_subnets_update(PDO $db, array $apiKey, int $id, array $body): never
         "UPDATE subnets SET description = :desc, notes = :notes, site_id = :sid, vlan_id = :vlan, vlan_fk = :vfk, vrf_id = :vrf WHERE id = :id"
     )->execute([':desc' => $description, ':notes' => $notes, ':sid' => $siteId, ':vlan' => $vlanId, ':vfk' => $vlanFk, ':vrf' => $vrfId, ':id' => $id]);
 
-    // #310: optional tag_ids[] on the update body — replaces the full set
-    if (array_key_exists('tag_ids', $body) && is_array($body['tag_ids'])) {
-        $tagIds = array_values(array_filter(array_map(fn($v) => (int)to_str($v), $body['tag_ids']), fn($i) => $i > 0));
-        save_tags_for_entity($db, 'subnet', $id, $tagIds);
+    // #310 + CodeRabbit m1: tag_ids[] validated up-front; null = no-op.
+    if ($validatedTagIds !== null) {
+        save_tags_for_entity($db, 'subnet', $id, $validatedTagIds);
     }
 
     api_audit($db, $apiKey, 'subnet.update', 'subnet', $id, 'cidr=' . to_str($subnet['cidr']));

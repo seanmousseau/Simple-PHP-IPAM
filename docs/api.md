@@ -86,7 +86,7 @@ Error responses return an appropriate HTTP status code and a JSON body:
 
 Every list endpoint that supports `?page=` / `?limit=` now sets an `X-Total-Count` response header containing the total row count for the unpaged result set. Use it to drive a pagination UI without fetching every page just to count rows.
 
-```
+```http
 HTTP/1.1 200 OK
 Content-Type: application/json; charset=utf-8
 X-Total-Count: 1247
@@ -493,7 +493,7 @@ A duplicate `name` returns `409 Conflict`. Deleting a VRF that has subnets assig
 
 Full CRUD for tags plus association endpoints. Tags are colour-coded labels attached to subnets and addresses through the `subnet_tags` and `address_tags` join tables (`ON DELETE CASCADE`). Subnet and address create/update bodies also accept an optional `tag_ids[]` array that replaces the full tag set in one call.
 
-```
+```text
 GET    /api.php?resource=tags                  # list all tags
 GET    /api.php?resource=tags&id=N             # single tag
 POST   /api.php?resource=tags                  # create  body: {name, colour}

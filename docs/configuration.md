@@ -387,11 +387,13 @@ When `true`, the **Auto-reserve network, broadcast & gateway IPs** checkbox on t
 
 ### `alert_email`
 
-*(Added in v2.0.0)*
+*(Added in v2.0.0; **deprecated in v2.8.0**, removal in v3.0.0)*
 
 **Default:** `''` (disabled)
 
-Email address to send utilization threshold alerts to. Leave empty to disable all email alerts. The feature depends on a working server MTA (`mail()` function).
+Replaced in v2.8.0 by **`alert.recipient_user_ids`**, a multi-select picker on **⚙ Admin → Settings → Alerting** that ties recipients to active user records with a non-empty email. The v2.8.0 migration auto-maps a single matching active user from any existing `alert_email` value; unmappable values produce a `settings.alert_email_unmigrated` audit row so the admin can re-pick recipients on the settings page. The legacy key is hidden from the settings UI as of v2.8.0 and will be removed in v3.0.0.
+
+If you are still on v2.7.x or earlier, this key is the single string address that receives every utilization alert. The feature depends on a working server MTA (`mail()` function).
 
 ```php
 'alert_email' => 'netops@example.com',
@@ -602,7 +604,7 @@ For a guaranteed reset at midnight (independent of web traffic), add a cron entr
 | Temp file cleanup | `tmp_cleanup_ttl_seconds` | No — always runs |
 | Audit log pruning | `audit_log_retention_days` | No — skipped when `retention_days=0` |
 | Address history pruning | `address_history_retention_days` | No — skipped when `retention_days=0` |
-| Subnet utilisation alerts | `alert_email` | No — skipped when `alert_email` is empty |
+| Subnet utilisation alerts | `alert.recipient_user_ids` (v2.8.0+; legacy `alert_email`) | No — skipped when no eligible recipients resolve |
 | Database backup | `backup.enabled`, `backup.frequency` | Yes — honours frequency setting |
 | Network scanning | Per-subnet `scan_schedules.interval_minutes` | Yes — each subnet's own interval |
 | Demo mode reset | `demo_mode.enabled` | Yes — at most once every 24 hours |

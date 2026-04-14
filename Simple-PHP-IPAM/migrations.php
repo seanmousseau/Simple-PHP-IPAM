@@ -667,6 +667,16 @@ function ipam_migrations(): array
                  ON CONFLICT(key) DO NOTHING"
             )->execute([':k' => 'alert.recipient_user_ids']);
 
+            // CodeRabbit M1 (PR #450): re-run safety. If alert.recipient_user_ids
+            // is already non-default, the migration (or an admin) has already
+            // populated it. Don't overwrite admin changes and don't audit a
+            // duplicate auto-migrate row on partial fixture replays.
+            $cur = $db->prepare("SELECT value FROM settings WHERE key = 'alert.recipient_user_ids'");
+            $cur->execute();
+            $curRow = $cur->fetch();
+            $curVal = is_array($curRow) ? trim(to_str($curRow['value'] ?? '')) : '';
+            if ($curVal !== '' && $curVal !== '[]') return;
+
             // Read the legacy alert.email value (may be missing or blank).
             $legacy = '';
             $st = $db->prepare("SELECT value FROM settings WHERE key = 'alert.email'");

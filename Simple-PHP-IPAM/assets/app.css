@@ -1125,7 +1125,11 @@ td[data-editable].cell-saving{opacity:.5;}
 .pw-toggle[aria-pressed="true"] .pw-eye--open{display:none}
 .pw-toggle[aria-pressed="true"] .pw-eye--closed{display:inline-block}
 body.pw-toggle-hidden .pw-toggle{display:none}
-body.pw-toggle-hidden .pw-wrap .pw-input{padding-right:8px}
+/* CodeRabbit m3 (PR #450): keep right padding when the IPAM eye is hidden so
+   the password manager icon at right:0-8px is not crowded against the typed
+   value. The eye reservation drops from 76px (eye + PM icon) to 36px (PM
+   icon only), not all the way to 8px. */
+body.pw-toggle-hidden .pw-wrap .pw-input{padding-right:36px}
 
 /* --- #317: keyboard shortcut hint badge --- */
 .kbd-hint{display:inline-block;margin-left:0.4em;padding:0 0.35em;border:1px solid var(--border);border-radius:3px;font:0.78em/1.4 ui-monospace,Menlo,monospace;color:var(--muted);background:transparent;vertical-align:middle}
