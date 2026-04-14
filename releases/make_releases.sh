@@ -106,6 +106,7 @@ rsync -a \
   --exclude 'data/demo_last_reset.txt' \
   --exclude 'data/cron.lock' --exclude 'data/backups/' \
   --exclude 'data/.db_initialized' \
+  --exclude 'data/tmp/*' \
   --exclude '.git/' --exclude '.github/' --exclude '.DS_Store' \
   "$RELEASE_DIR/" "$PAYLOAD/"
 
