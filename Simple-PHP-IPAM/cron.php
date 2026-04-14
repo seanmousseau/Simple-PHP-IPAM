@@ -43,6 +43,45 @@ date_default_timezone_set(is_string($config['timezone'] ?? null) && $config['tim
 
 require $scriptDir . '/lib.php';
 
+// ---------------------------------------------------------------------------
+// Self-lock — refuse to run if another cron.php is still in progress.
+//
+// This prevents the runaway-stacking scenario where a misconfigured `* * * * *`
+// crontab (or a scan that takes longer than the cron interval) starts a new
+// invocation before the previous one has finished. Concurrent runs all hammer
+// the same scan_results table and inevitably exhaust the SQLite busy_timeout,
+// failing user-facing writes elsewhere with "database is locked".
+//
+// Uses LOCK_EX | LOCK_NB so the second invocation exits cleanly instead of
+// blocking. A separate lock file (data/cron.lock) keeps this independent of
+// the demo_reset stamp lock used in Task 7.
+// ---------------------------------------------------------------------------
+$cronLockFile = $scriptDir . '/data/cron.lock';
+$cronLockHandle = fopen($cronLockFile, 'c');
+if ($cronLockHandle === false) {
+    fwrite(STDERR, "[cron] ERROR: unable to open cron lock file: $cronLockFile\n");
+    exit(1);
+}
+if (!flock($cronLockHandle, LOCK_EX | LOCK_NB)) {
+    // Another cron.php instance already holds the lock — exit cleanly. This
+    // is normal/expected, not an error, so exit code 0.
+    echo json_encode([
+        'task'    => 'cron',
+        'skipped' => true,
+        'reason'  => 'another cron.php instance is still running',
+        'ts'      => date('c'),
+    ], JSON_UNESCAPED_SLASHES) . "\n";
+    fclose($cronLockHandle);
+    exit(0);
+}
+// Release on shutdown — covers normal exit, fatal errors, and uncaught throws.
+register_shutdown_function(static function () use ($cronLockHandle): void {
+    if (is_resource($cronLockHandle)) {
+        @flock($cronLockHandle, LOCK_UN);
+        @fclose($cronLockHandle);
+    }
+});
+
 $db       = ipam_db(to_str($config['db_path']));
 $now      = date('c');
 $exitCode = 0;

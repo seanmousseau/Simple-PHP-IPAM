@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [2.5.1] - 2026-04-14
+
+### Fixed
+- **`cron.php` self-lock** — concurrent cron invocations now exit cleanly instead of stacking. A new `data/cron.lock` file is held with `flock(LOCK_EX | LOCK_NB)` for the lifetime of each run; a second invocation that finds the lock held emits `{"task":"cron","skipped":true,"reason":"another cron.php instance is still running"}` and exits 0. This prevents the runaway scenario observed on a misconfigured `* * * * *` testing host where 30+ overlapping cron processes hammered the same `scan_results` table, eventually exhausted SQLite's `busy_timeout=30000`, and caused user-facing writes (e.g. `clear_login_failures()` on login) to fail with `database is locked`. Also covers the case where a single scan run takes longer than the configured cron interval and the next tick fires before the previous one exits. Released by `register_shutdown_function()` so it covers normal exit, fatal errors, and uncaught throws alike.
+
 ## [2.5.0] - 2026-04-13
 
 ### Added
@@ -543,6 +548,7 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[2.5.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.4.1...v2.5.0
 [2.4.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.4.0...v2.4.1
 [2.4.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.3.0...v2.4.0
