@@ -44,15 +44,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $fieldName = 'k_' . str_replace('.', '__', $key);
         $type      = is_string($def['type'] ?? null) ? $def['type'] : 'string';
+        $sensitive = !empty($def['sensitive']);
         $current   = ipam_setting($key);
 
         // Record the raw submitted value up front so a later validation
         // failure in this group does not cause earlier inputs to snap back
-        // to their stored state on re-render.
+        // to their stored state on re-render. Sensitive fields deliberately
+        // render empty on every request, so never echo an old value back.
         if ($type === 'bool') {
             $formOverrides[$key] = isset($_POST[$fieldName]) ? '1' : '0';
+        } elseif ($sensitive) {
+            $formOverrides[$key] = '';
         } else {
             $formOverrides[$key] = to_str($_POST[$fieldName] ?? '');
+        }
+
+        // Sensitive fields follow the "leave blank to keep current" pattern:
+        // an empty submission means the admin didn't touch the field, so we
+        // must not re-write (or re-audit) the stored value with itself. A
+        // non-empty submission is treated as an explicit new value.
+        if ($sensitive) {
+            $raw = to_str($_POST[$fieldName] ?? '');
+            if ($raw === '') continue;
+            $pending[$key] = $raw;
+            continue;
         }
 
         if ($type === 'bool') {
@@ -210,10 +225,20 @@ page_header('Settings');
                     if ($shown !== null) { echo e($shown); }
                     else { $j = json_encode($current, JSON_PRETTY_PRINT); echo e(is_string($j) ? $j : ''); }
                 ?></textarea>
-              <?php elseif ($sensitive): ?>
+              <?php elseif ($sensitive):
+                  // Sensitive fields intentionally render blank on every request
+                  // so the stored secret is never echoed back into the HTML
+                  // source or browser autofill. The admin must re-type the
+                  // secret to update it; leaving the field blank leaves the
+                  // stored value unchanged (handled in the POST loop above).
+                  $isSet = is_string($current) && $current !== '';
+                  $statusText = $isSet ? 'Set — leave blank to keep current' : 'Not set';
+                  $statusCls  = $isSet ? 'success' : 'muted';
+              ?>
                 <input type="password" name="<?= e($fieldName) ?>" id="pw-<?= e($fieldName) ?>"
-                       value="<?= e($shown !== null ? $shown : (is_scalar($current) ? (string)$current : '')) ?>"
+                       value="" placeholder="<?= $isSet ? '••••••••' : '' ?>"
                        class="w-full" autocomplete="new-password">
+                <span class="badge badge-<?= e($statusCls) ?>" style="margin-left:0.25rem;"><?= e($statusText) ?></span>
                 <label class="muted" style="font-weight:normal;">
                   <input type="checkbox" data-password-toggle="pw-<?= e($fieldName) ?>"> show
                 </label>
