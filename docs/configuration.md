@@ -26,7 +26,8 @@ The keys below are seeded into the `settings` table by the v2.6.0 migration and 
 | `security.session_idle_seconds` | int | `1800` | Session idle timeout before auto-logout. |
 | `security.login_max_attempts` | int | `5` | Failed logins per window before IP lockout. |
 | `security.login_lockout_seconds` | int | `900` | Lockout window length. |
-| `alert.email` | string | *(empty)* | Destination for utilization alert emails. Empty disables alerts. |
+| `alert.recipient_user_ids` | json | `[]` | (v2.8.0+) Active user IDs that receive utilization alerts. Picked from a multi-select on **Settings → Alerting**; only users with a non-empty email are eligible. Inactive users / cleared emails drop out automatically at send time. |
+| `alert.email` | string | *(empty)* | **Deprecated in v2.8.0** — replaced by `alert.recipient_user_ids`. The 2.8.0 migration auto-maps a matching active user; unmappable values produce a `settings.alert_email_unmigrated` audit row. Hidden from the UI. Removal in v3.0.0. |
 | `alert.util_warn_pct` | int | `80` | Subnet utilization warn threshold. |
 | `alert.util_crit_pct` | int | `95` | Subnet utilization critical threshold. |
 | `alert.interval_seconds` | int | `3600` | Minimum seconds between utilization alert checks. |
