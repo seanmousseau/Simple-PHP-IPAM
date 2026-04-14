@@ -4,60 +4,30 @@ Developer guide for AI assistants working on this repository.
 
 ---
 
-## Agent session state — Memory MCP (non-negotiable)
+## Agent session state — Memory MCP
 
-This project uses the **Memory MCP server** (Docker MCP Toolkit, `claude-memory` Docker named volume, persistent across container restarts) as the sole store for agent session state: user profile, project facts, in-flight work, bugs, decisions, roadmap epics, file hotspots. There is no Kanban board and no cloud ticket system — the knowledge graph IS the board. This replaced the TrucoPilot MCP on 2026-04-14 (see the `migration:trucopilot-to-memory-mcp` entity in the graph for the rationale and the archived board snapshot at `~/.claude/projects/<project>/memory/archive_trucopilot_snapshot_20260414.json`).
+This project uses the **Memory MCP server** (Docker MCP Toolkit, `claude-memory` Docker volume, persistent) as the sole agent session-state store. Session rules, entity naming convention, backup procedure, and the full Memory MCP workflow live in the user-scope global `~/.claude/CLAUDE.md` — read that first, then come back for the project-specific notes below. Memory MCP replaced TrucoPilot on 2026-04-14 (see `migration:trucopilot-to-memory-mcp` in the graph and the archived snapshot at `~/.claude/projects/<project>/memory/archive_trucopilot_snapshot_20260414.json`).
 
-**Server:** Docker MCP Toolkit, installed as part of `MCP_DOCKER`. Tools are exposed as `mcp__MCP_DOCKER__<name>`. The core set:
+### Project slug for entity naming
 
-- `read_graph` — return the entire knowledge graph (cheap on a small graph, costly on a large one).
-- `search_nodes` — query by entity name, type, or observation content substring. Preferred over `read_graph` once the graph is non-trivial.
-- `open_nodes` — fetch specific entities by exact name.
-- `create_entities`, `add_observations`, `create_relations` — write side.
-- `delete_entities`, `delete_observations`, `delete_relations` — cleanup.
+This project's slug is **`simple-php-ipam`**. Per the global convention, all project-scoped entities must use it as a prefix:
 
-**Persistence:** Docker named volume `claude-memory` mounted at `/var/lib/docker/volumes/claude-memory/_data/`. Storage file is `memory.json` in JSONL format (one entity or relation per line). Survives container recreation and Docker Desktop restart. Does NOT survive `docker volume prune` or a Docker Desktop reinstall that nukes the VM disk — back up before major Docker Desktop version bumps with:
+- `project:simple-php-ipam` — the project entity
+- `project:simple-php-ipam:release:v2.7.0` — current release
+- `project:simple-php-ipam:roadmap:v2.8.0` through `...:roadmap:v4.0.0` — planned work
+- `project:simple-php-ipam:bug:v2.8.0-showpw-visibility` — active bug
+- `project:simple-php-ipam:hotspot:settings.php` — repeat-offender file
 
-```bash
-docker run --rm -v claude-memory:/src -v ~/Backups:/dst alpine \
-  cp /src/memory.json /dst/memory-$(date +%Y%m%d).json
+Cross-project / global entities that also apply to this project but are named without a prefix: `user:sean`, `mcp:memory`, `migration:trucopilot-to-memory-mcp`.
+
+### Session-start query for this project
+
+```
+open_nodes(["user:sean"])
+search_nodes("project:simple-php-ipam")
 ```
 
-### Session rules (apply every session)
-
-1. **On session start or after context compaction, call `search_nodes` or `read_graph` before doing anything else.** The graph is authoritative for "what am I supposed to know about this project." Typical first query: `search_nodes("active-release")` or `search_nodes("<topic the user just mentioned>")`. Only fall back to `read_graph` if the search comes up empty and you need the full context.
-2. **Before thinking, planning, or writing any code for a task, find or create the relevant entity in the graph.** If a matching `bug:`, `epic:`, or `release:` entity already exists, add an observation with a start marker ("Started <UTC timestamp>"). If it doesn't, `create_entities` it *before* you edit files. This is the Memory-MCP equivalent of "no work without a ticket."
-3. **Do not refetch the graph on every micro-step.** Unlike the old TrucoPilot rule, `search_nodes` is cheap (~10–30ms) so you can call it freely — but there's no point re-reading the same entities between two edits in the same task. Read at task boundaries; write as you go.
-4. **Write observations to the relevant entity after any meaningful change.** What to include in every observation:
-   - Short factual statement (1–2 sentences). Observations accrete on an entity; they should each stand alone.
-   - Files and functions touched.
-   - **Git short commit hash** (`git rev-parse --short HEAD`) — this is the link back to code. For multi-commit changes, one observation per commit is fine.
-   - Test results at the sensible level (local gate pass, Playwright result, release SHA256) when the observation closes out a work chunk.
-5. **Create relations when they teach something new.** `bug:X --affects--> hotspot:Y`, `release:vX --is-regression-of--> release:vY`, `roadmap:vX --depends-on--> roadmap:vY`. Relations are how the graph answers "what else do I need to know about this?" Two-hop queries via `open_nodes` are fast and give you much more context than a flat file would.
-6. **Clean up when work closes out.** When a release ships, add a final observation to `release:vX.Y.Z` with the tag, merge commit, bundle SHA256, and GitHub release URL. When a bug is fixed, add a "Fixed in <commit>" observation and, if the bug was a regression, update the `is-regression-of` relation chain.
-7. **If Memory MCP is unavailable** (Docker Desktop stopped, volume missing, MCP server not listed in `claude mcp list`), surface that to the user immediately rather than silently working without a session store. The user decides whether to proceed on flat memory files alone.
-
-### Entity naming convention for this project
-
-| Prefix | Purpose | Example |
-|---|---|---|
-| `user:` | People | `user:sean` |
-| `project:` | The repo itself | `project:simple-php-ipam` |
-| `mcp:` | Installed MCP servers | `mcp:memory` |
-| `release:` | Shipped releases | `release:v2.7.0` |
-| `roadmap:` | Planned but unreleased work | `roadmap:v2.8.0` |
-| `bug:` | Known bugs | `bug:v2.8.0-showpw-visibility` |
-| `epic:` | Multi-phase work units | `epic:settings-rewire` |
-| `hotspot:` | Files that keep coming up | `hotspot:settings.php` |
-| `decision:` | Architectural decisions with rationale | `migration:trucopilot-to-memory-mcp` |
-
-New entity types are fine when they earn their keep — the graph is intentionally schemaless. Stay consistent within a type once it exists.
-
-### When in doubt
-
-- If the user is asking a pure question (no code changes), you still don't need a new entity — the graph is for work state and facts worth remembering, not every conversation.
-- If no matching entity exists for the user's ask, `create_entities` one before you start. Include an observation that captures the user's intent verbatim so the next session can reconstruct the why.
-- Flat memory files at `~/.claude/projects/<project>/memory/*.md` remain the ultimate source of truth for anything load-bearing (user profile, workflow rules, critical reference info). Memory MCP is a fast working cache layered on top of them — if Docker dies, the flat files still work.
+Two cheap calls. The first loads your profile + preferences. The second returns every entity prefixed with `project:simple-php-ipam:` plus the bare `project:simple-php-ipam` node itself — the full project view — without dragging in other projects' state.
 
 ---
 
