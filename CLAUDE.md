@@ -33,7 +33,9 @@ Two cheap calls. The first loads your profile + preferences. The second returns 
 
 ## Project overview
 
-Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application built with **PHP 8.2+ and SQLite**. It has **no npm build step** — all CSS and JavaScript are vanilla. Starting in v2.9.0, the application ships a small, carefully curated set of Composer-managed runtime dependencies bundled into the release tarball, so end users still deploy by extracting the tarball with no build step. The web root is `Simple-PHP-IPAM/` (the subdirectory, not the repo root).
+> **Current shipped version: v2.7.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v2.8.0 → v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v2.8.0 describes future work — **do not apply it to current v2.7.x code**. Current-state rules are the ones that do not cite a future version.
+
+Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application built with **PHP 8.2+ and SQLite**. It has **no npm build step** — all CSS and JavaScript are vanilla. Starting in v2.9.0, the application will ship a small, carefully curated set of Composer-managed runtime dependencies bundled into the release tarball, so end users still deploy by extracting the tarball with no build step. The web root is `Simple-PHP-IPAM/` (the subdirectory, not the repo root).
 
 ---
 
@@ -181,7 +183,9 @@ Migrations live in `migrations.php` as an associative array of version string �
 
 **When adding a new version:** add the migration closure, bump `version.php`, update `CHANGELOG.md` (keepachangelog format).
 
-### Creating new data tables in post-v4.0.0 releases
+> **Current shipped version: v2.7.0.** The three subsections below (`Creating new data tables in post-v4.0.0 releases`, `Modifying the schema (multi-engine, from v2.9.0 onward)`, `Runtime dependencies`) describe **forward-looking policy** for unreleased versions. Do not apply them to work targeting v2.7.x or earlier. The rules become active on the version indicated in each heading; until then, treat them as design intent to preserve when new work approaches that version.
+
+### Creating new data tables in post-v4.0.0 releases *(applies from v4.1.0+)*
 
 Once v4.0.0 has shipped and the tenancy migration has run, every data table in the IPAM schema has a `tenant_id` column pointing at the `tenants` table. **Any migration in a release numbered greater than v4.0.0 that creates a new data table must include `tenant_id` in the `CREATE TABLE` statement from day one**, with `NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT` and an index on `tenant_id`.
 
@@ -191,7 +195,7 @@ Pre-v4.0.0 migrations do not need to worry about this — they predate tenancy a
 
 **Exception:** tables that are explicitly global and not tenant-scoped (e.g. `users`, `tenants` itself, future `system_health` or similar) do not take `tenant_id`. When adding such a table, document in the migration closure why it is global, and update `docs/tenancy.md` to list it as an exception.
 
-### Modifying the schema (multi-engine, from v2.9.0 onward)
+### Modifying the schema (multi-engine, from v2.9.0 onward) *(applies from v2.9.0+)*
 
 Once v2.9.0 lands, the project ships three schema files that must stay in sync:
 
@@ -207,7 +211,7 @@ Migrations remain the source of truth for schema evolution. The three schema fil
 
 **Do not introduce a schema templating system.** This was evaluated during v2.9.0 planning and rejected: three plain SQL files are easier to review, easier to debug against a live database, and aligned with the project's vanilla-PHP ethos. The parity test plus migration-replay test is sufficient drift protection.
 
-### Runtime dependencies
+### Runtime dependencies *(applies from v2.9.0+)*
 
 Adopted in v2.9.0. The project uses Composer-managed runtime dependencies under a narrow, curated policy. The goals are (1) to avoid hand-rolling security-sensitive network protocols and cryptography and (2) to preserve the "rsync and run" deployment story for end users.
 
