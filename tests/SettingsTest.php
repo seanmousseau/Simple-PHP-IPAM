@@ -252,6 +252,63 @@ class SettingsTest extends TestCase
         $this->assertArrayHasKey('max', $defs['alert.util_crit_pct']);
     }
 
+    public function testOidcEnabledReadsThroughSettingsHelperFromDb(): void
+    {
+        // v2.7.0 #373: oidc_enabled() must stop reading $config['oidc'][...]
+        // directly and instead go through ipam_setting() so DB-backed values
+        // take precedence over config.php and the admin UI actually controls
+        // the subsystem.
+        $GLOBALS['config'] = [];
+        $this->assertFalse(oidc_enabled([]), 'defaults to disabled');
+
+        // Seed every required key in the DB and confirm it flips true.
+        ipam_setting_set($this->db, 'oidc.enabled',       true);
+        ipam_setting_set($this->db, 'oidc.client_id',     'cid');
+        ipam_setting_set($this->db, 'oidc.client_secret', 'secret');
+        ipam_setting_set($this->db, 'oidc.discovery_url', 'https://idp.example/');
+        ipam_setting_set($this->db, 'oidc.redirect_uri',  'https://app.example/oidc_callback.php');
+        ipam_setting_cache_bust();
+
+        $this->assertTrue(oidc_enabled([]), 'enabled once every required DB key is set');
+
+        // Flipping enabled to false in the DB must take effect even if
+        // $config still has every OIDC key filled in. DB wins over config.
+        $GLOBALS['config'] = [
+            'oidc' => [
+                'enabled'       => true,
+                'client_id'     => 'cid',
+                'client_secret' => 'secret',
+                'discovery_url' => 'https://idp.example/',
+                'redirect_uri'  => 'https://app.example/oidc_callback.php',
+            ],
+        ];
+        ipam_setting_set($this->db, 'oidc.enabled', false);
+        ipam_setting_cache_bust();
+        $this->assertFalse(oidc_enabled([]), 'DB enabled=false overrides config enabled=true');
+    }
+
+    public function testOidcEnabledFallsBackToConfigPhpWhenDbEmpty(): void
+    {
+        // Back-compat guarantee for v2.7.0: admins who have not touched the
+        // settings UI yet must still see OIDC work with pure config.php.
+        $GLOBALS['config'] = [
+            'oidc' => [
+                'enabled'       => true,
+                'client_id'     => 'cid',
+                'client_secret' => 'secret',
+                'discovery_url' => 'https://idp.example/',
+                'redirect_uri'  => 'https://app.example/oidc_callback.php',
+            ],
+        ];
+        ipam_setting_cache_bust();
+        $this->assertTrue(oidc_enabled([]));
+
+        // Remove one required key — back to disabled.
+        $GLOBALS['config']['oidc']['client_secret'] = '';
+        ipam_setting_cache_bust();
+        $this->assertFalse(oidc_enabled([]));
+    }
+
     public function testCallerDefaultIgnoredForRegisteredKey(): void
     {
         // Registry default must win; caller-supplied $default only matters for

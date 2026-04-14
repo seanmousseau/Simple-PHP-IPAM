@@ -25,9 +25,9 @@ $_SESSION['oidc_verifier'] = $pkce['verifier'];
 
 $params = [
     'response_type'         => 'code',
-    'client_id'             => to_str($config['oidc']['client_id']),
-    'redirect_uri'          => to_str($config['oidc']['redirect_uri']),
-    'scope'                 => to_str($config['oidc']['scopes']),
+    'client_id'             => to_str(ipam_setting('oidc.client_id')),
+    'redirect_uri'          => to_str(ipam_setting('oidc.redirect_uri')),
+    'scope'                 => to_str(ipam_setting('oidc.scopes')),
     'state'                 => $state,
     'nonce'                 => $nonce,
     'code_challenge'        => $pkce['challenge'],

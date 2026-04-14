@@ -32,9 +32,9 @@ try {
     $firstRun = true; // treat as first-run if audit_log is temporarily unavailable
 }
 $oidcActive            = oidc_enabled($config) && !demo_mode_enabled();
-$disableLocal          = $oidcActive && !empty($config['oidc']['disable_local_login']);
-$disableEmergencyBypass= $oidcActive && !empty($config['oidc']['disable_emergency_bypass']);
-$hideEmergencyLink     = $oidcActive && !empty($config['oidc']['hide_emergency_link']);
+$disableLocal          = $oidcActive && (bool)ipam_setting('oidc.disable_local_login');
+$disableEmergencyBypass= $oidcActive && (bool)ipam_setting('oidc.disable_emergency_bypass');
+$hideEmergencyLink     = $oidcActive && (bool)ipam_setting('oidc.hide_emergency_link');
 $localForceShown       = isset($_GET['local']) && !$disableEmergencyBypass;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -135,7 +135,7 @@ $appName = trim(to_str($config['app_name'])) ?: 'Simple PHP IPAM';
   <?php if ($error): ?><p class="danger"><?= e($error) ?></p><?php endif; ?>
 
   <?php if ($oidcActive): ?>
-  <p><a href="oidc_login.php" class="btn-sso">Sign in with <?= e(to_str($config['oidc']['display_name'])) ?></a></p>
+  <p><a href="oidc_login.php" class="btn-sso">Sign in with <?= e(to_str(ipam_setting('oidc.display_name'))) ?></a></p>
   <?php endif; ?>
 
   <?php if (!$disableLocal || $localForceShown): ?>

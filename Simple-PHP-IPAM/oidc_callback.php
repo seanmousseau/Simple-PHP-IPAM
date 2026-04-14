@@ -58,9 +58,9 @@ try {
     $tokens = oidc_http_post(to_str($discovery['token_endpoint']), [
         'grant_type'    => 'authorization_code',
         'code'          => $code,
-        'redirect_uri'  => to_str($config['oidc']['redirect_uri']),
-        'client_id'     => to_str($config['oidc']['client_id']),
-        'client_secret' => to_str($config['oidc']['client_secret']),
+        'redirect_uri'  => to_str(ipam_setting('oidc.redirect_uri')),
+        'client_id'     => to_str(ipam_setting('oidc.client_id')),
+        'client_secret' => to_str(ipam_setting('oidc.client_secret')),
         'code_verifier' => $verifier,
     ]);
 } catch (Throwable $e) {
@@ -74,7 +74,7 @@ if (empty($tokens['id_token'])) {
 // ---- Verify ID token (with one JWKS cache-bust retry for key rotation) ----
 $expect = [
     'iss'   => to_str($discovery['issuer'] ?? ''),
-    'aud'   => to_str($config['oidc']['client_id']),
+    'aud'   => to_str(ipam_setting('oidc.client_id')),
     'nonce' => $nonce,
 ];
 
@@ -110,8 +110,8 @@ $user = $st->fetch();
 // auto_link: link incoming OIDC login to an existing unlinked local account by username/email.
 // auto_provision: create a new account when no match is found (implies auto_link).
 // For backwards compatibility, if auto_link is absent, fall back to auto_provision for both.
-$autoProvision = !empty($config['oidc']['auto_provision']);
-$autoLink      = !empty($config['oidc']['auto_link']);
+$autoProvision = (bool)ipam_setting('oidc.auto_provision');
+$autoLink      = (bool)ipam_setting('oidc.auto_link');
 
 if (!$user && $autoLink) {
     // Try to link an existing local user by preferred_username then by email
@@ -138,7 +138,7 @@ if (!$user && $autoLink) {
         $user = $existing;
     } elseif ($autoProvision) {
         // Auto-provision a new local user
-        $role = to_str($config['oidc']['default_role']);
+        $role = to_str(ipam_setting('oidc.default_role'));
         if (!in_array($role, ['admin', 'netops', 'readonly'], true)) $role = 'readonly';
 
         // Derive a username: prefer preferred_username, fall back to email local-part, then sub

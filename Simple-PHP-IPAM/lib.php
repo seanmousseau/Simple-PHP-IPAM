@@ -759,6 +759,33 @@ function ipam_setting_definitions(): array
             'sensitive'   => false,
             'config_key'  => ['oidc', 'default_role'],
         ],
+        'oidc.disable_local_login' => [
+            'label'       => 'Disable local password login',
+            'description' => 'When OIDC is active, hide the local username/password form entirely. Emergency bypass still works unless also disabled below.',
+            'type'        => 'bool',
+            'group'       => 'oidc',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => ['oidc', 'disable_local_login'],
+        ],
+        'oidc.disable_emergency_bypass' => [
+            'label'       => 'Disable emergency local bypass',
+            'description' => 'Disable the ?local=1 emergency access path that lets a local admin sign in even when local login is hidden. Leave off until you are confident SSO will keep working.',
+            'type'        => 'bool',
+            'group'       => 'oidc',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => ['oidc', 'disable_emergency_bypass'],
+        ],
+        'oidc.hide_emergency_link' => [
+            'label'       => 'Hide emergency bypass link',
+            'description' => 'Hide the "(emergency local access)" link even if the ?local=1 bypass itself is still reachable.',
+            'type'        => 'bool',
+            'group'       => 'oidc',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => ['oidc', 'hide_emergency_link'],
+        ],
     ];
 }
 
@@ -3722,15 +3749,20 @@ function find_parent_site_id(PDO $db, string $cidr, ?int $excludeId = null, ?int
  * OIDC — Authorization Code + PKCE (pure PHP, no dependencies)
  * ============================================================ */
 
-/** @param IpamConfig $config */
+/**
+ * @param IpamConfig $config Unused since v2.7.0 — kept for back-compat with
+ *                           existing callers. Reads go through ipam_setting()
+ *                           which falls back to $GLOBALS['config'] on a miss,
+ *                           so legacy config.php-only installs still work.
+ */
 function oidc_enabled(array $config): bool
 {
-    $o = $config['oidc'];
-    return !empty($o['enabled'])
-        && !empty($o['client_id'])
-        && !empty($o['client_secret'])
-        && !empty($o['discovery_url'])
-        && !empty($o['redirect_uri']);
+    unset($config); // keep the signature stable; body now reads through ipam_setting()
+    return (bool)ipam_setting('oidc.enabled')
+        && to_str(ipam_setting('oidc.client_id'))     !== ''
+        && to_str(ipam_setting('oidc.client_secret')) !== ''
+        && to_str(ipam_setting('oidc.discovery_url')) !== ''
+        && to_str(ipam_setting('oidc.redirect_uri'))  !== '';
 }
 
 /**
@@ -3739,12 +3771,13 @@ function oidc_enabled(array $config): bool
  * contain that path.
  */
 /**
- * @param IpamConfig $config
+ * @param IpamConfig $config Unused since v2.7.0 — kept for signature stability.
  * @return array<string, mixed>
  */
 function oidc_discovery(array $config): array
 {
-    $base = rtrim($config['oidc']['discovery_url'], '/');
+    unset($config);
+    $base = rtrim(to_str(ipam_setting('oidc.discovery_url')), '/');
     if ($base === '') throw new RuntimeException('OIDC discovery_url not set');
 
     $url = (str_contains($base, '.well-known')) ? $base : $base . '/.well-known/openid-configuration';
