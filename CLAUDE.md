@@ -607,14 +607,50 @@ bash -c 'set -a; source ~/.claude/dev-secrets.env; set +a; \
   4. The dev container is down or unreachable.
 - Single-test debug: append `pages.spec.ts:42 --reporter=line` (or any `file.spec.ts:line`).
 
+### Local gate — required before opening a PR
+
+Starting in v2.5.2, the containerized Playwright harness runs automatically on every PR targeting `dev` or `main` via `.github/workflows/playwright-nightly.yml` (full suite + `.htaccess` subset, both against a fresh Dockerized Apache+PHP instance). That changes what has to be run locally.
+
+**Required every PR — must be green before pushing:**
+```bash
+# For every changed PHP file
+php -l Simple-PHP-IPAM/<file>.php
+
+# Full local PHP gate
+vendor/bin/phpstan analyse --memory-limit=1G
+vendor/bin/phpcs
+vendor/bin/phpunit
+semgrep --config=.semgrep/rules.yml --error Simple-PHP-IPAM/
+```
+
+These are fast (~5s total after the first PHPStan cold run), deterministic, and have no Docker or dev-server dependency. Do not push a PR without this gate green — CI repeats all five checks so you're just saving a round trip.
+
+**Recommended (optional) for PRs that touch UI, JS, CSS, migrations, or session/auth flow:**
+```bash
+bash testing/playwright/bootstrap-app.sh sqlite
+(cd testing/playwright && \
+  IPAM_BASE_URL=https://127.0.0.1:8443 IPAM_ADMIN_USER=demo IPAM_ADMIN_PASS=demo \
+  npx playwright test)
+bash testing/playwright/teardown-app.sh
+```
+Runs the same image CI runs, ~1.5 min wall clock on a warm Docker cache. If this is green locally, the PR check will be green. If you skip it, you'll find out when CI reports in ~4 minutes.
+
+**Manual dev-direct testing is only needed when:**
+- You need `testing/scripts/test_api.sh` (REST API regression coverage — not in CI yet; see the v2.10.0 roadmap)
+- You're verifying `timezone.spec.ts` (SSH-based remote config patching — skipped against containerized targets)
+- You're testing real-IdP OIDC against a live provider
+- You suspect a bug that only reproduces behind the reverse-proxy / shared Chrome stack
+
+For those scenarios, follow the full dev-direct pipeline in the *Running the test suites* section above (Deploy → Pre-flight cleanup → Verify admin login → test_api.sh / Playwright dev-direct). For everything else, trust the CI run.
+
 ### Pre-release checklist
 Before building a release bundle, **always** complete these steps in order:
 1. Update `docs/` (api.md, configuration.md, etc.) for any changed features or config keys
 2. Update `testing/samples/large-db-sample/gen_large_db.php` and sample datasets if schema or data model changed
 3. Update `testing/scripts/test_api.sh` if API endpoints were added or changed
-4. Update `testing/scripts/cdp_test.py` if UI features were added or changed
-5. Run `php -l` on every changed PHP file
-6. Run the full QA suite using the commands in *Running the test suites* above: Local PHP tools → containerized Playwright (fast, hermetic) → dev-direct pipeline if needed for test_api.sh or real-IdP/timezone coverage (Deploy → Pre-flight cleanup → Verify admin login → test_api.sh → Playwright dev-direct). All must pass.
+4. Confirm the local gate is green (PHP lint + PHPStan + PHPCS + PHPUnit + Semgrep — see *Local gate* above)
+5. Confirm the PR's `Playwright (sqlite)` and `.htaccess coverage` checks are green on the latest commit
+6. Run the dev-direct pipeline only if the release touches something the containerized harness can't cover (real-IdP OIDC, `test_api.sh` regressions, `timezone.spec.ts`)
 7. Run CodeRabbit review and address any Critical findings:
    ```bash
    coderabbit review --plain -t all
