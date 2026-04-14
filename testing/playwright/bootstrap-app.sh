@@ -76,11 +76,19 @@ docker build --quiet -t "$image" -f "$script_dir/Dockerfile.apache" "$script_dir
 # 3. Run migrate + demo seed inside a throwaway container so there is no host
 #    PHP version dependency. Uses the same image the long-running container uses.
 echo "bootstrap-app: running migrate.php and demo_seed.php"
+# Seed inside a throwaway container of the same image so there is no host
+# PHP dependency. The seed container's root user creates the SQLite file
+# with UID 0 ownership in the bind mount; the long-running container runs
+# Apache as www-data (UID 33) and must also write the file (SQLite WAL).
+# Relax permissions on the data dir so www-data can open it. We do this
+# inside the throwaway container (guaranteed to have chmod) rather than
+# on the host (which on macOS Docker Desktop is a no-op due to UID
+# translation and on CI is only reachable if run as root).
 docker run --rm \
     -v "$app_dir:/var/www/html" \
     -w /var/www/html \
     "$image" \
-    bash -c 'php migrate.php && php demo_seed.php' \
+    bash -c 'php migrate.php && php demo_seed.php && chmod -R a+rwX data' \
     >/tmp/ipam-pw-seed.log 2>&1 || {
         echo "bootstrap-app: seeding failed, log follows:" >&2
         cat /tmp/ipam-pw-seed.log >&2
