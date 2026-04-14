@@ -1590,16 +1590,18 @@ function prune_address_history(PDO $db, int $retentionDays): int
  * Deduplicates sends using the alert_state table (max one alert per subnet+level per 24 h).
  * Auto-clears alert_state rows when utilization drops back below the threshold.
  *
- * @param IpamConfig $config
+ * @param IpamConfig $config Unused since v2.7.0 — thresholds and the
+ *                           recipient now flow through ipam_setting().
  */
 function check_utilization_alerts(PDO $db, array $config): void
 {
-    $alertEmail = trim(to_str($config['alert_email'] ?? ''));
+    unset($config);
+    $alertEmail = trim(to_str(ipam_setting('alert.email')));
     if ($alertEmail === '') return;
 
-    $warnPct = to_int($config['alert_util_warn_pct'] ?? 80);
-    $critPct = to_int($config['alert_util_crit_pct'] ?? 95);
-    $appName = to_str($config['app_name']);
+    $warnPct = to_int(ipam_setting('alert.util_warn_pct'));
+    $critPct = to_int(ipam_setting('alert.util_crit_pct'));
+    $appName = to_str(ipam_setting('branding.site_name'));
 
     // Compute direct address counts per subnet (used+reserved)
     $rows = ($db->query("
@@ -1680,14 +1682,14 @@ function check_utilization_alerts(PDO $db, array $config): void
  * Run utilization alert check if the alert interval has elapsed.
  * Uses a dedicated state file so it can fire more frequently than main housekeeping.
  *
- * @param IpamConfig $config
+ * @param IpamConfig $config Unused since v2.7.0 — kept for signature stability.
  */
 function alerts_check_if_due(array $config, PDO $db): void
 {
-    $alertEmail = trim(to_str($config['alert_email'] ?? ''));
+    $alertEmail = trim(to_str(ipam_setting('alert.email')));
     if ($alertEmail === '') return;
 
-    $interval = to_int($config['alert_interval_seconds'] ?? 3600);
+    $interval = to_int(ipam_setting('alert.interval_seconds'));
     if ($interval < 60) $interval = 60;
 
     $statePath = __DIR__ . '/data/alerts_last_run.txt';

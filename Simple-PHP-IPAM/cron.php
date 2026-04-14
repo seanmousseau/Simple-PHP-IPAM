@@ -151,12 +151,12 @@ try {
 // Task 4: Subnet utilisation alerts
 // ---------------------------------------------------------------------------
 try {
-    $alertEmail = to_str($config['alert_email'] ?? '');
+    $alertEmail = to_str(ipam_setting('alert.email'));
     if ($alertEmail !== '') {
         check_utilization_alerts($db, $config);
         $emit(['task' => 'utilisation_alerts', 'ran' => true, 'ts' => $now]);
     } else {
-        $emit(['task' => 'utilisation_alerts', 'skipped' => true, 'reason' => 'alert_email not configured', 'ts' => $now]);
+        $emit(['task' => 'utilisation_alerts', 'skipped' => true, 'reason' => 'alert.email not configured', 'ts' => $now]);
     }
 } catch (Throwable $e) {
     $fail('utilisation_alerts', $e->getMessage());

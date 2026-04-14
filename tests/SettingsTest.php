@@ -287,6 +287,33 @@ class SettingsTest extends TestCase
         $this->assertFalse(oidc_enabled([]), 'DB enabled=false overrides config enabled=true');
     }
 
+    public function testAlertThresholdsFallbackChain(): void
+    {
+        // v2.7.0 #374: alerting thresholds must follow the DB → config.php →
+        // registry default chain so an admin can override either way.
+        $GLOBALS['config'] = [];
+        $this->assertSame(80, ipam_setting('alert.util_warn_pct'), 'registry default');
+        $this->assertSame(95, ipam_setting('alert.util_crit_pct'), 'registry default');
+        $this->assertSame(3600, ipam_setting('alert.interval_seconds'), 'registry default');
+
+        $GLOBALS['config'] = [
+            'alert_util_warn_pct'    => 70,
+            'alert_util_crit_pct'    => 88,
+            'alert_interval_seconds' => 900,
+            'alert_email'            => 'ops@example.com',
+        ];
+        ipam_setting_cache_bust();
+        $this->assertSame(70, ipam_setting('alert.util_warn_pct'), 'config fallback honoured');
+        $this->assertSame(88, ipam_setting('alert.util_crit_pct'));
+        $this->assertSame(900, ipam_setting('alert.interval_seconds'));
+        $this->assertSame('ops@example.com', ipam_setting('alert.email'));
+
+        // DB value wins over config.
+        ipam_setting_set($this->db, 'alert.util_warn_pct', 60);
+        ipam_setting_cache_bust();
+        $this->assertSame(60, ipam_setting('alert.util_warn_pct'));
+    }
+
     public function testOidcEnabledFallsBackToConfigPhpWhenDbEmpty(): void
     {
         // Back-compat guarantee for v2.7.0: admins who have not touched the
