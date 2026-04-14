@@ -121,6 +121,22 @@ The `audit_log` table is **append-only** — SQLite triggers raise an abort on a
 
 IPs are stored as raw binary blobs (`inet_pton()` output) for correct sort order and fast range queries. Never store text IPs in `ip_bin`/`network_bin`. Use `inet_pton()` to encode and `inet_ntop()` to decode.
 
+**Storage format: native length, never padded.** IPv4 is stored as 4 bytes and IPv6 as 16 bytes, matching the output of `inet_pton()` directly. Do not left-pad IPv4 to 16 bytes. All three supported engines (SQLite, MySQL `VARBINARY(16)`, Postgres `BYTEA`) do byte-wise memcmp comparison on native-length values, so sort order is equivalent across engines without padding. This was evaluated during v2.8.0 planning and locked in as the storage convention — if you are tempted to change it, read the discussion on #410 and #379 first.
+
+**All binding goes through `ipam_bind_binary()`** (introduced in v2.8.0, #379), which uses `PDO::PARAM_LOB` on every driver. This is non-negotiable:
+
+- On **SQLite**, `PARAM_LOB` is required so the column stores with BLOB affinity rather than TEXT affinity. SQLite's comparison rules state that any BLOB sorts greater than any TEXT regardless of byte content, so mixing affinities in the same column breaks `ORDER BY ip_bin` and every range query. Pre-v2.8.0 data was inadvertently stored with TEXT affinity because the default `PARAM_STR` binding was used. The migration in #410 normalizes existing rows to BLOB on upgrade.
+- On **MySQL**, `PARAM_LOB` is required for `VARBINARY(16)` columns. `PARAM_STR` would string-escape high bytes and truncate at null bytes, corrupting every stored IP.
+- On **Postgres**, `PARAM_LOB` is required for `BYTEA` columns. The pgsql driver may also need an explicit bytea type hint on prepare — verify during the v2.10.0 implementation.
+
+**Round-trip test vectors** that any new driver binding must handle correctly:
+
+- `inet_pton('10.0.0.0')` — `\x0A\x00\x00\x00`, null bytes after the first byte
+- `inet_pton('2001:db8::')` — `\x20\x01\x0D\xB8\x00...\x00`, mostly null bytes
+- `inet_pton('255.255.255.255')` — `\xFF\xFF\xFF\xFF`, all high bytes
+
+These three values catch the most common string-escape bugs immediately. If a binding round-trips any of them incorrectly, the driver is broken and must not ship.
+
 Key helpers in `lib.php`:
 - `parse_cidr(string $cidr): ?array` — validates and normalises a CIDR, returns `['version', 'network', 'prefix', 'net_bin']`
 - `normalize_ip(string $ip): ?array` — returns `['ip', 'bin', 'version']`
@@ -137,6 +153,42 @@ Key helpers in `lib.php`:
 Migrations live in `migrations.php` as an associative array of version string → closure returned by `ipam_migrations()`. `apply_migrations()` in `lib.php` calls `ksort($migs, SORT_NATURAL)` before iterating, so **array order does not matter** — migrations always execute in natural version order. Each migration runs in a transaction and is recorded in `schema_migrations`. Always guard `ALTER TABLE` with `PRAGMA table_info()` checks to make new migrations idempotent.
 
 **When adding a new version:** add the migration closure, bump `version.php`, update `CHANGELOG.md` (keepachangelog format).
+
+### Creating new data tables in post-v4.0.0 releases
+
+Once v4.0.0 has shipped and the tenancy migration has run, every data table in the IPAM schema has a `tenant_id` column pointing at the `tenants` table. **Any migration in a release numbered greater than v4.0.0 that creates a new data table must include `tenant_id` in the `CREATE TABLE` statement from day one**, with `NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT` and an index on `tenant_id`.
+
+This rule exists because the v4.0.0 tenancy migration only backfills tables that existed at the time it ran. A table created in v4.1.0, v5.0.0, or any later release is outside that migration's reach and must carry its own tenant scoping from creation.
+
+Pre-v4.0.0 migrations do not need to worry about this — they predate tenancy and are handled automatically by v4.0.0's runtime table enumeration (see #406 for implementation). The rule applies strictly to migrations whose version key sorts greater than v4.0.0 under natural-sort ordering.
+
+**Exception:** tables that are explicitly global and not tenant-scoped (e.g. `users`, `tenants` itself, future `system_health` or similar) do not take `tenant_id`. When adding such a table, document in the migration closure why it is global, and update `docs/tenancy.md` to list it as an exception.
+
+### Modifying the schema (multi-engine, from v2.8.0 onward)
+
+Once v2.8.0 lands, the project ships three schema files that must stay in sync:
+
+- `schema.sql` — SQLite (authoritative for fresh SQLite installs)
+- `schema.mysql.sql` — MySQL 8.0+ (lands in v2.9.0)
+- `schema.pgsql.sql` — PostgreSQL 14+ (lands in v2.10.0)
+
+**When adding or modifying a table, column, index, or constraint:** update all three files in the same PR. No exceptions. The `SchemaParityTest` in CI will fail the build if the three files diverge on any structural element (table set, column set, type class, nullability, default kind, FK target, FK on-delete action). Type classes are normalised — `BLOB` / `VARBINARY(16)` / `BYTEA` all map to `"binary"`, so you do not need to match exact type names, only semantic equivalents.
+
+Migrations remain the source of truth for schema evolution. The three schema files are a fast path for fresh installs; the migration chain is what existing installs run through. `MigrationTest` asserts that applying every migration from v1.0 on an empty database converges to the same structural state as the matching `schema.X.sql` file, so drift between "what migrations produce" and "what the schema file says" is also caught.
+
+**Dialect helpers** (the `Ipam\Db\Dialect` abstraction from v2.8.0) are used inside migration closures for portable SQL — `$dialect->now()`, `$dialect->upsert()`, `$dialect->autoincrement()`, `$dialect->binary_type()`, etc. The schema files themselves are hand-written per engine and do not go through the dialect layer, because they are engine-specific by definition.
+
+**Do not introduce a schema templating system.** This was evaluated during v2.8.0 planning and rejected: three plain SQL files are easier to review, easier to debug against a live database, and aligned with the project's vanilla-PHP ethos. The parity test plus migration-replay test is sufficient drift protection.
+
+### When to use classes vs functions
+
+The project's application code is predominantly procedural — `lib.php` is a bag of top-level functions, and most pages are procedural PHP. The one deliberate exception is the `Dialect` family of classes under `dialects/` (introduced in v2.8.0), which encapsulates per-engine SQL differences.
+
+**Classes are appropriate for polymorphic contracts with a small, closed set of implementations.** The `Dialect` interface with `SqliteDialect` / `MysqlDialect` / `PgsqlDialect` is the canonical example: the contract says "every DB engine must implement these methods with these signatures," and PHPStan level 9 enforces that at compile time. Without an interface, we would have to reinvent the same guarantee with array shape annotations or runtime dispatch, both of which are worse.
+
+**Classes are not appropriate for utility functions, request handlers, or anything that would otherwise be a plain function.** Do not OO-ify `lib.php`. Do not wrap handlers in controller classes. Do not introduce a service locator or DI container. When in doubt, write a function.
+
+**Namespaces are not used.** The project has zero namespaces today and a hand-rolled autoloader is not worth the complexity for the small number of classes we expect to introduce. Keep class names unambiguous (`Dialect`, `SqliteDialect`, etc.) and `require_once` explicitly in `init.php` or `lib.php`.
 
 ---
 
