@@ -4,33 +4,60 @@ Developer guide for AI assistants working on this repository.
 
 ---
 
-## TrucoPilot ticket management (non-negotiable)
+## Agent session state — Memory MCP (non-negotiable)
 
-This project uses the **TrucoPilot MCP server** for ticket management. Every task of meaningful size goes through a ticket. No work without a ticket.
+This project uses the **Memory MCP server** (Docker MCP Toolkit, `claude-memory` Docker named volume, persistent across container restarts) as the sole store for agent session state: user profile, project facts, in-flight work, bugs, decisions, roadmap epics, file hotspots. There is no Kanban board and no cloud ticket system — the knowledge graph IS the board. This replaced the TrucoPilot MCP on 2026-04-14 (see the `migration:trucopilot-to-memory-mcp` entity in the graph for the rationale and the archived board snapshot at `~/.claude/projects/<project>/memory/archive_trucopilot_snapshot_20260414.json`).
 
-**Server:** `https://trucopilot.com/api/mcp/v1/mcp` (HTTP MCP, Bearer token). The token is already wired into the local project scope of `~/.claude.json` as the `trucopilot-tickets` server — nothing to re-install per session.
+**Server:** Docker MCP Toolkit, installed as part of `MCP_DOCKER`. Tools are exposed as `mcp__MCP_DOCKER__<name>`. The core set:
 
-**Tool names** (all exposed as `mcp__trucopilot-tickets__<name>`): `get_project_status`, `list_columns`, `create_ticket`, `create_sub_ticket`, `move_ticket`, `add_comment`. `get_project_status` returns the full board state plus every ticket with AI summaries, descriptions, comments, and attached documents — it is the canonical "what's going on here" call.
+- `read_graph` — return the entire knowledge graph (cheap on a small graph, costly on a large one).
+- `search_nodes` — query by entity name, type, or observation content substring. Preferred over `read_graph` once the graph is non-trivial.
+- `open_nodes` — fetch specific entities by exact name.
+- `create_entities`, `add_observations`, `create_relations` — write side.
+- `delete_entities`, `delete_observations`, `delete_relations` — cleanup.
+
+**Persistence:** Docker named volume `claude-memory` mounted at `/var/lib/docker/volumes/claude-memory/_data/`. Storage file is `memory.json` in JSONL format (one entity or relation per line). Survives container recreation and Docker Desktop restart. Does NOT survive `docker volume prune` or a Docker Desktop reinstall that nukes the VM disk — back up before major Docker Desktop version bumps with:
+
+```bash
+docker run --rm -v claude-memory:/src -v ~/Backups:/dst alpine \
+  cp /src/memory.json /dst/memory-$(date +%Y%m%d).json
+```
 
 ### Session rules (apply every session)
 
-1. **On session start or after context compaction, call `get_project_status` before doing anything else.** That one call loads the current board, every ticket's AI summary and description, comments, and documents. Do this even if the user's first message looks trivial — the ticket state is the source of truth for what's in progress.
-2. **Before each new task within a session, call `get_project_status` again** to pick up any board changes another agent or the user made since the last call. Do not assume the previous snapshot is still current.
-3. **Before thinking, planning, or writing any code for a task, find or create the ticket and move it to "In Process".** This is the hard rule: no analysis, no plan file, no edits until there is a ticket in the correct column. Search existing tickets with `get_project_status` first — never create a duplicate.
-4. **Break feature work into tickets and sub-tickets.** A multi-phase change (e.g. a release) gets a parent ticket with one sub-ticket per phase. Sub-tickets auto-promote the parent to an Epic.
-5. **Move tickets through columns as work progresses** — pending/backlog → In Process → Review → Done (or whatever the board's `list_columns` returns). Use `move_ticket`. Moving the ticket is part of the work, not a separate admin step.
-6. **Log every meaningful change with `add_comment`.** What to include in every comment:
-   - Short summary of what changed (1–3 sentences).
-   - Files changed and key functions/classes modified.
-   - **The git short commit hash** (`git rev-parse --short HEAD`) so the ticket is linkable back to code. If the change spans multiple commits, list each short hash on its own line.
-   - Test results at the sensible level (local gate pass, Playwright result, etc.) when the comment is about a completed chunk.
-7. **Never skip the ticket step to "save time".** Skipping leaves the board out of sync with reality, which breaks every future `get_project_status` call and every follow-up agent session.
+1. **On session start or after context compaction, call `search_nodes` or `read_graph` before doing anything else.** The graph is authoritative for "what am I supposed to know about this project." Typical first query: `search_nodes("active-release")` or `search_nodes("<topic the user just mentioned>")`. Only fall back to `read_graph` if the search comes up empty and you need the full context.
+2. **Before thinking, planning, or writing any code for a task, find or create the relevant entity in the graph.** If a matching `bug:`, `epic:`, or `release:` entity already exists, add an observation with a start marker ("Started <UTC timestamp>"). If it doesn't, `create_entities` it *before* you edit files. This is the Memory-MCP equivalent of "no work without a ticket."
+3. **Do not refetch the graph on every micro-step.** Unlike the old TrucoPilot rule, `search_nodes` is cheap (~10–30ms) so you can call it freely — but there's no point re-reading the same entities between two edits in the same task. Read at task boundaries; write as you go.
+4. **Write observations to the relevant entity after any meaningful change.** What to include in every observation:
+   - Short factual statement (1–2 sentences). Observations accrete on an entity; they should each stand alone.
+   - Files and functions touched.
+   - **Git short commit hash** (`git rev-parse --short HEAD`) — this is the link back to code. For multi-commit changes, one observation per commit is fine.
+   - Test results at the sensible level (local gate pass, Playwright result, release SHA256) when the observation closes out a work chunk.
+5. **Create relations when they teach something new.** `bug:X --affects--> hotspot:Y`, `release:vX --is-regression-of--> release:vY`, `roadmap:vX --depends-on--> roadmap:vY`. Relations are how the graph answers "what else do I need to know about this?" Two-hop queries via `open_nodes` are fast and give you much more context than a flat file would.
+6. **Clean up when work closes out.** When a release ships, add a final observation to `release:vX.Y.Z` with the tag, merge commit, bundle SHA256, and GitHub release URL. When a bug is fixed, add a "Fixed in <commit>" observation and, if the bug was a regression, update the `is-regression-of` relation chain.
+7. **If Memory MCP is unavailable** (Docker Desktop stopped, volume missing, MCP server not listed in `claude mcp list`), surface that to the user immediately rather than silently working without a session store. The user decides whether to proceed on flat memory files alone.
+
+### Entity naming convention for this project
+
+| Prefix | Purpose | Example |
+|---|---|---|
+| `user:` | People | `user:sean` |
+| `project:` | The repo itself | `project:simple-php-ipam` |
+| `mcp:` | Installed MCP servers | `mcp:memory` |
+| `release:` | Shipped releases | `release:v2.7.0` |
+| `roadmap:` | Planned but unreleased work | `roadmap:v2.8.0` |
+| `bug:` | Known bugs | `bug:v2.8.0-showpw-visibility` |
+| `epic:` | Multi-phase work units | `epic:settings-rewire` |
+| `hotspot:` | Files that keep coming up | `hotspot:settings.php` |
+| `decision:` | Architectural decisions with rationale | `migration:trucopilot-to-memory-mcp` |
+
+New entity types are fine when they earn their keep — the graph is intentionally schemaless. Stay consistent within a type once it exists.
 
 ### When in doubt
 
-- If no matching ticket exists for the user's ask, create one with `create_ticket` in the appropriate column before doing anything else. Include a clear title and a description that captures the user's intent verbatim.
-- If the user is asking a pure question (no code changes), you still don't need a ticket — tickets are for work that touches the repo.
-- If the TrucoPilot MCP server is unavailable (network failure, expired token), surface that to the user immediately rather than silently skipping the ticket step. The user decides whether to proceed without a ticket.
+- If the user is asking a pure question (no code changes), you still don't need a new entity — the graph is for work state and facts worth remembering, not every conversation.
+- If no matching entity exists for the user's ask, `create_entities` one before you start. Include an observation that captures the user's intent verbatim so the next session can reconstruct the why.
+- Flat memory files at `~/.claude/projects/<project>/memory/*.md` remain the ultimate source of truth for anything load-bearing (user profile, workflow rules, critical reference info). Memory MCP is a fast working cache layered on top of them — if Docker dies, the flat files still work.
 
 ---
 
