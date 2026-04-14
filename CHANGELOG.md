@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [2.7.0] - 2026-04-14
+
+Subsystems now read configuration from the database. Every non-bootstrap key covered by the v2.6.0 registry (OIDC, alerting, branding, login protection, update checker, reCAPTCHA Enterprise) routes through `ipam_setting()` instead of touching `$config` directly, so edits in the admin Settings UI take effect on the next request without a `config.php` change or a restart. `config.php` continues to work as a fallback for back-compat — removal is v3.0.0.
+
+### Added
+- **#442** — `options` contract on the settings registry. `ipam_setting_definitions()` now accepts an `options` key (static assoc array or `'@timezone'` sentinel for PHP zoneinfo). `settings.php` renders a `<select>` for any string setting with options and rejects out-of-set values in the two-phase POST handler. First consumers: `login_protection.method` (7-item enum) and `branding.timezone`.
+- **#373** — Three new registered OIDC hardening flags — `oidc.disable_local_login`, `oidc.disable_emergency_bypass`, `oidc.hide_emergency_link` — editable in the admin Settings UI.
+- **#376** — Deprecation tooling. New `ipam_setting_deprecated_keys()` helper walks the registry and returns any registered key whose `config.php` value is customised but has not been imported into the `settings` table. Drives a new deprecation banner above the settings group forms with per-key **Import to database** buttons (sensitive values masked as `***`), a rate-limited boot-time `error_log()` line listing the deprecated keys once per hour, and an admin warning card on the dashboard linking to the banner.
+- **Testing** — 15+ new PHPUnit tests covering the `options` contract, `oidc_enabled()` DB→config fallback chain, alert threshold fallback chain, and the deprecated-keys helper (empty-on-clean, skip defaults, flag customised, hide already-imported). 8+ new Playwright tests for the settings.php UX fixes and the deprecation banner round-trip (force a deprecated state via `docker exec`, assert the Import flow persists the value and drops the banner row).
+
+### Changed
+- **#373** — OIDC subsystem routes every config read through `ipam_setting('oidc.*')`. `oidc_enabled()`, `oidc_discovery()`, `oidc_login.php`, `oidc_callback.php`, and the OIDC button in `login.php` all go through the helper. Function signatures are preserved for back-compat; the `array $config` parameter is now advisory.
+- **#374** — Alerting subsystem routes through `ipam_setting('alert.*')`. `check_utilization_alerts()`, `alerts_check_if_due()`, and `cron.php` task 4 read `alert.email`, `alert.util_warn_pct`, `alert.util_crit_pct`, and `alert.interval_seconds` via the helper. Silent-no-op-when-empty behaviour preserved; the `alert_state` dedup table is untouched.
+- **#375** — Branding, login protection, and update checker subsystems route through `ipam_setting()`. `page_header()` reads `branding.site_name`; `init.php` and `cron.php` seed a UTC default pre-DB and re-apply `branding.timezone` once `$db` is open (bad value falls back to UTC, never a broken state); `login_protection_verify()`, `login_protection_widget_html()`, and `login_protection_extra_csp()` route through `ipam_setting('login_protection.*')` and `ipam_setting('recaptcha_enterprise.*')`; `ipam_update_check()` reads `update_check.enabled`, `ttl_seconds`, and `notify_prerelease` via the helper.
+- **Asset cache-buster** — `page_header()` and `demo_gate.php` bump to `?v=2.7.0`.
+
+### Fixed
+- **#440** — The sensitive-field **show** toggle on `settings.php` now actually reveals the input. Root cause was a nested `<label>` inside `<label>` where the outer label's implicit labeling swallowed click intent to the password field. Restructured the markup so the password field and its show-toggle are siblings with explicit `<label for="…">` associations — no more nested labels anywhere in the settings form. Hardened the JS handler with `closest()` as a belt-and-braces.
+- **#441** — Bool settings now render with their checkbox inline next to the label, source badge, and key code on a single row instead of stacked underneath. New `.setting-head--bool` CSS class overrides the global `label { display:flex; flex-direction:column }` rule that was forcing every setting row to stack.
+
+### Deprecated
+- Every non-bootstrap key in `config.php` is explicitly deprecated as of v2.7.0 and will be removed in v3.0.0. Admins can use the new Settings banner to import customised values into the database with one click; the rest auto-fall-through to the registry defaults. Bootstrap-only keys (`db_path`, `session_name`, `proxy_trust`, `force_https`, `bootstrap_admin`) stay in `config.php` forever.
+
 ## [2.6.0] - 2026-04-14
 
 Settings-in-database groundwork release. Introduces a new `settings` table, a typed read/write helper, and an admin UI under ⚙ Admin → Settings. `config.php` continues to work as a fallback for every non-bootstrap key — v2.7.0 rewires each subsystem to read from the database, and v3.0.0 removes the `config.php` fallback entirely.
@@ -577,6 +600,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[2.7.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.5.2...v2.6.0
 [2.5.2]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.5.1...v2.5.2
 [2.5.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.5.0...v2.5.1
