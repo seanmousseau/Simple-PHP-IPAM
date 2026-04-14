@@ -36,10 +36,9 @@ $scriptDir = __DIR__;
 /** @var IpamConfig $config */
 $config = require $scriptDir . '/config.php';
 
-// Apply configured timezone before any date/time operations
-date_default_timezone_set(is_string($config['timezone'] ?? null) && $config['timezone'] !== ''
-    ? $config['timezone']
-    : 'UTC');
+// Seed a UTC default so any pre-DB date operations in lib.php bootstrap are
+// deterministic. Real timezone is applied from the DB settings below.
+date_default_timezone_set('UTC');
 
 require $scriptDir . '/lib.php';
 
@@ -83,6 +82,15 @@ register_shutdown_function(static function () use ($cronLockHandle): void {
 });
 
 $db       = ipam_db(to_str($config['db_path']));
+
+// Apply admin-configured timezone from DB settings now that $db is open. All
+// downstream date() calls in this cron run pick up the new zone.
+$tz = to_str(ipam_setting('branding.timezone'));
+if ($tz === '' || !@date_default_timezone_set($tz)) {
+    date_default_timezone_set('UTC');
+}
+unset($tz);
+
 $now      = date('c');
 $exitCode = 0;
 

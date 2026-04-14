@@ -7,14 +7,14 @@ require __DIR__ . '/init.php';
 if (is_logged_in()) { header('Location: dashboard.php'); exit; }
 if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 
-$maxAttempts   = to_int($config['login_max_attempts']);
-$lockoutSeconds = to_int($config['login_lockout_seconds']);
+$maxAttempts   = to_int(ipam_setting('security.login_max_attempts'));
+$lockoutSeconds = to_int(ipam_setting('security.login_lockout_seconds'));
 
 $error    = '';
 $timedOut = !empty($_GET['timeout']);
 
 // Login protection setup (#124) — widget HTML also sets time_check session ts on GET
-$lpMethod     = to_str($config['login_protection']['method'] ?? '');
+$lpMethod     = to_str(ipam_setting('login_protection.method'));
 $lpWidgetHtml = login_protection_widget_html($config);
 $lpCsp        = login_protection_extra_csp($config);
 
@@ -118,7 +118,7 @@ page_header('Login', array_filter([
     'extra_script_src' => $lpCsp['script_src'],
     'extra_frame_src'  => $lpCsp['frame_src'],
 ]));
-$appName = trim(to_str($config['app_name'])) ?: 'Simple PHP IPAM';
+$appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
 ?>
 <div class="login-wrap">
 <div class="login-card">

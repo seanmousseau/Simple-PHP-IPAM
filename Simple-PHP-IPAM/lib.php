@@ -2138,13 +2138,14 @@ function recaptcha_enterprise_verify(string $token, string $siteKey, array $cfg)
  * or a non-empty error string that should be shown to the user.
  * Fails open on network errors so a broken CAPTCHA provider never blocks login.
  *
- * @param LoginProtectionConfig $config
+ * @param LoginProtectionConfig $config Unused since v2.7.0 — config flows
+ *                                      through ipam_setting().
  * @param array<string, mixed> $post
  */
 function login_protection_verify(array $config, array $post): ?string
 {
-    $cfg    = $config['login_protection'];
-    $method = to_str($cfg['method'] ?? '');
+    unset($config);
+    $method = to_str(ipam_setting('login_protection.method'));
     if ($method === '' || $method === 'null') return null;
 
     if ($method === 'honeypot') {
@@ -2152,7 +2153,7 @@ function login_protection_verify(array $config, array $post): ?string
     }
 
     if ($method === 'time_check') {
-        $min = max(1, $cfg['min_seconds']);
+        $min = max(1, to_int(ipam_setting('login_protection.min_seconds')));
         $ts  = to_int($_SESSION['login_form_at'] ?? 0);
         unset($_SESSION['login_form_at']);
         if ($ts === 0 || (time() - $ts) < $min) {
@@ -2161,7 +2162,7 @@ function login_protection_verify(array $config, array $post): ?string
         return null;
     }
 
-    $secretKey = $cfg['secret_key'];
+    $secretKey = to_str(ipam_setting('login_protection.secret_key'));
 
     if ($method === 'turnstile') {
         $token = to_str($post['cf-turnstile-response'] ?? '');
@@ -2200,11 +2201,16 @@ function login_protection_verify(array $config, array $post): ?string
         if ($token === '') return 'Please complete the security check.';
 
         // Use Enterprise API if configured; fall back to standard reCAPTCHA API
-        /** @var IpamConfig $gConfig */
-        $gConfig    = $GLOBALS['config'] ?? [];
-        $enterprise = $gConfig['recaptcha_enterprise'];
-        if (!empty($enterprise['enabled'])) {
-            return recaptcha_enterprise_verify($token, $cfg['site_key'], $enterprise);
+        if ((bool)ipam_setting('recaptcha_enterprise.enabled')) {
+            $rawThreshold = ipam_setting('recaptcha_enterprise.score_threshold');
+            $enterprise = [
+                'enabled'         => true,
+                'project_id'      => to_str(ipam_setting('recaptcha_enterprise.project_id')),
+                'api_key'         => to_str(ipam_setting('recaptcha_enterprise.api_key')),
+                'expected_action' => to_str(ipam_setting('recaptcha_enterprise.expected_action')),
+                'score_threshold' => is_numeric($rawThreshold) ? (float)$rawThreshold : 0.5,
+            ];
+            return recaptcha_enterprise_verify($token, to_str(ipam_setting('login_protection.site_key')), $enterprise);
         }
 
         try {
@@ -2228,7 +2234,7 @@ function login_protection_verify(array $config, array $post): ?string
             $resp = oidc_http_post('https://api.friendlycaptcha.com/api/v1/siteverify', [
                 'secret'  => $secretKey,
                 'solution'=> $token,
-                'sitekey' => $cfg['site_key'],
+                'sitekey' => to_str(ipam_setting('login_protection.site_key')),
             ]);
         } catch (Throwable $e) {
             error_log('FriendlyCaptcha verify error: ' . $e->getMessage());
@@ -2243,13 +2249,14 @@ function login_protection_verify(array $config, array $post): ?string
 /**
  * Return the HTML widget snippet to embed in the login/gate form.
  * For time_check, also sets the session timestamp on GET requests.
+ *
+ * @param LoginProtectionConfig $config Unused since v2.7.0 — kept for signature stability.
  */
-/** @param LoginProtectionConfig $config */
 function login_protection_widget_html(array $config): string
 {
-    $cfg     = $config['login_protection'];
-    $method  = to_str($cfg['method'] ?? '');
-    $siteKey = e($cfg['site_key']);
+    unset($config);
+    $method  = to_str(ipam_setting('login_protection.method'));
+    $siteKey = e(to_str(ipam_setting('login_protection.site_key')));
 
     switch ($method) {
         case 'honeypot':
@@ -2266,16 +2273,14 @@ function login_protection_widget_html(array $config): string
             return "<script src='https://js.hcaptcha.com/1/api.js' async defer></script>"
                  . "<div class='h-captcha' data-sitekey='{$siteKey}'></div>";
         case 'recaptcha':
-            $ver        = $cfg['version'];
-            /** @var IpamConfig $gCfg */
-            $gCfg  = $GLOBALS['config'] ?? [];
-            $isEnt = !empty($gCfg['recaptcha_enterprise']['enabled']);
+            $ver   = to_int(ipam_setting('login_protection.version'));
+            $isEnt = (bool)ipam_setting('recaptcha_enterprise.enabled');
             if ($ver === 3) {
                 $scriptSrc    = $isEnt
                     ? "https://www.google.com/recaptcha/enterprise.js?render={$siteKey}"
                     : "https://www.google.com/recaptcha/api.js?render={$siteKey}";
                 $entAttr      = $isEnt ? " data-recaptcha-enterprise='1'" : '';
-                $action       = e(to_str($gCfg['recaptcha_enterprise']['expected_action']));
+                $action       = e(to_str(ipam_setting('recaptcha_enterprise.expected_action')));
                 $actionAttr   = " data-recaptcha-action='{$action}'";
                 return "<script src='{$scriptSrc}' async defer></script>"
                      . "<input type='hidden' name='g-recaptcha-response' id='g-recaptcha-response' data-recaptcha-v3-key='{$siteKey}'{$entAttr}{$actionAttr}>";
@@ -2297,12 +2302,13 @@ function login_protection_widget_html(array $config): string
  * be explicitly allowed; Friendly Captcha uses Web Components (no iframe needed).
  */
 /**
- * @param LoginProtectionConfig $config
+ * @param LoginProtectionConfig $config Unused since v2.7.0 — kept for signature stability.
  * @return array{script_src: string, frame_src: string}
  */
 function login_protection_extra_csp(array $config): array
 {
-    $method = to_str($config['login_protection']['method'] ?? '');
+    unset($config);
+    $method = to_str(ipam_setting('login_protection.method'));
     return match ($method) {
         'turnstile'        => [
             'script_src' => 'https://challenges.cloudflare.com',
@@ -3389,10 +3395,14 @@ function subnet_overlap_warning_text(array $overlaps): string
 /** @param array<string, string> $opts */
 function page_header(string $title, array $opts = []): void
 {
+    // Still needed for the bootstrap_admin default-password warning below —
+    // that is a pre-registry config-only check that stays on config.php
+    // forever (see below). Everything else in this function reads through
+    // ipam_setting() as of v2.7.0.
     global $config;
     $u = to_str($_SESSION['username'] ?? '');
     $role = to_str($_SESSION['role'] ?? '');
-    $appName = trim($config['app_name']) ?: 'Simple PHP IPAM';
+    $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
 
     $extraScriptSrc = isset($opts['extra_script_src']) && $opts['extra_script_src'] !== '' ? ' ' . $opts['extra_script_src'] : '';
     $frameSrc       = isset($opts['extra_frame_src'])  && $opts['extra_frame_src']  !== '' ? " frame-src 'self' " . $opts['extra_frame_src'] . ';' : '';
@@ -3407,11 +3417,11 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=2.6.0'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=2.7.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=2.6.0'></script>";
+    echo "<script defer src='assets/app.js?v=2.7.0'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
@@ -3576,7 +3586,7 @@ function page_header(string $title, array $opts = []): void
 
     // Update-available dismissible banner (admin only, client-side dismiss via localStorage)
     if ($role === 'admin') {
-        $update = ipam_update_check($config ?? []);
+        $update = ipam_update_check($config);
         if ($update) {
             $uv  = e(to_str($update['version']));
             $url = e(to_str($update['url']));
@@ -3644,20 +3654,20 @@ function ipam_normalise_version(string $v): string
  * Returns ['version' => '1.2.1', 'url' => 'https://...'] if newer, otherwise null.
  */
 /**
- * @param IpamConfig $config
+ * @param IpamConfig $config Unused since v2.7.0 — kept for signature stability.
  * @return array{version: string, url: string}|null
  */
 function ipam_update_check(array $config): ?array
 {
+    unset($config);
     // Memoize within a single request — page_header() and page_footer() both call this
     static $memo = false;
     if ($memo !== false) return $memo;
 
-    $uc = $config['update_check'];
-    if (!(bool)$uc['enabled']) { $memo = null; return null; }
+    if (!(bool)ipam_setting('update_check.enabled')) { $memo = null; return null; }
 
-    $ttl             = max(3600, to_int($uc['ttl_seconds']));
-    $notifyPrerelease = !empty($uc['notify_prerelease']);
+    $ttl              = max(3600, to_int(ipam_setting('update_check.ttl_seconds')));
+    $notifyPrerelease = (bool)ipam_setting('update_check.notify_prerelease');
 
     ensure_tmp_dir();
     $cache = tmp_dir() . '/update-check.json';
