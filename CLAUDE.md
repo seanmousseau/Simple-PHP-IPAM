@@ -469,11 +469,24 @@ php -l Simple-PHP-IPAM/users.php
 # etc.
 ```
 
-### Running the test suites against dev-direct
+### Running the test suites
 
-The dev environment is shared, stateful, and has multiple footguns that have caused repeated false failures. Read this whole section before invoking the suites. All commands assume cwd is the repo root.
+Two paths exist as of v2.5.2:
 
-See the dedicated subsections below: **Local PHP tools**, **Deploy**, **Pre-flight cleanup**, **Verify admin login**, **test_api.sh**, **Playwright**.
+1. **Containerized** — a fully self-contained Dockerized Apache+PHP instance on `https://127.0.0.1:8443` seeded from `demo_seed.php`. No SSH, no dev-direct dependencies, no shared state. Use this for Playwright unless you need something that only a real deployment can test (real-IdP OIDC, the `timezone.spec.ts` remote-config flow). See `testing/playwright/README.md` for full instructions. In short:
+   ```bash
+   (cd testing/playwright && npm ci && npx playwright install chromium)
+   bash testing/playwright/bootstrap-app.sh sqlite
+   (cd testing/playwright && \
+     IPAM_BASE_URL=https://127.0.0.1:8443 IPAM_ADMIN_USER=demo IPAM_ADMIN_PASS=demo \
+     npx playwright test)
+   bash testing/playwright/teardown-app.sh
+   ```
+   The nightly `.github/workflows/playwright-nightly.yml` CI job runs the same commands against the same image; a failing CI run can almost always be reproduced locally verbatim.
+
+2. **Manual against dev-direct** — the shared test server at `https://dev-direct.seanmousseau.com:8343/claude/ipam`. Needed for `test_api.sh`, real-IdP OIDC scenarios, and any quick verification against a "real" install. The dev environment is shared, stateful, and has multiple footguns that have caused repeated false failures — read this whole section before invoking the suites. All commands assume cwd is the repo root.
+
+See the dedicated subsections below: **Local PHP tools**, **Deploy**, **Pre-flight cleanup**, **Verify admin login**, **test_api.sh**, **Playwright (dev-direct)**.
 
 #### Local PHP tools
 
@@ -573,7 +586,9 @@ bash -c 'set -a; source ~/.claude/dev-secrets.env; set +a; \
 - **`SSH_HOST` + `SSH_DB_PATH`** let the script auto-create an API key on the dev server. Without them you must pass `API_KEY=...`.
 - Expect ~150 PASS, 0 FAIL, possibly 1 SKIP. A `database is locked` error means a stray cron is holding the lock — re-run pre-flight cleanup.
 
-#### Playwright
+#### Playwright (dev-direct)
+
+Prefer the containerized local path described at the top of this section. Use dev-direct only when you need something that only a real deployment can test (real-IdP OIDC, `timezone.spec.ts` which SSHes to patch remote config, etc.). Most timezone and OIDC specs self-skip against non-dev-direct targets via an `isDevServer()` guard.
 
 ```bash
 bash -c 'set -a; source ~/.claude/dev-secrets.env; set +a; \
@@ -599,7 +614,7 @@ Before building a release bundle, **always** complete these steps in order:
 3. Update `testing/scripts/test_api.sh` if API endpoints were added or changed
 4. Update `testing/scripts/cdp_test.py` if UI features were added or changed
 5. Run `php -l` on every changed PHP file
-6. Run the full QA suite using the commands in *Running the test suites against dev-direct* above (Local PHP tools → Deploy → Pre-flight cleanup → Verify admin login → test_api.sh → Playwright). All must pass.
+6. Run the full QA suite using the commands in *Running the test suites* above: Local PHP tools → containerized Playwright (fast, hermetic) → dev-direct pipeline if needed for test_api.sh or real-IdP/timezone coverage (Deploy → Pre-flight cleanup → Verify admin login → test_api.sh → Playwright dev-direct). All must pass.
 7. Run CodeRabbit review and address any Critical findings:
    ```bash
    coderabbit review --plain -t all

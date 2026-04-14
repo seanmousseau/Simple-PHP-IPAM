@@ -1,0 +1,25 @@
+# Containerized Apache+PHP image used by the Playwright harness (see bootstrap-app.sh).
+# Mirrors the production deployment closely enough that .htaccess deny rules,
+# session cookies, and HTTPS-only enforcement all work as they would in a real install.
+FROM php:8.2-apache
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libsqlite3-dev openssl ca-certificates \
+    && docker-php-ext-install pdo_sqlite \
+    && a2enmod rewrite ssl headers \
+    && a2ensite default-ssl \
+    && openssl req -x509 -nodes -days 3650 \
+         -newkey rsa:2048 \
+         -keyout /etc/ssl/private/ssl-cert-snakeoil.key \
+         -out /etc/ssl/certs/ssl-cert-snakeoil.pem \
+         -subj "/CN=ipam-pw-test" \
+    && printf '%s\n' \
+       '<Directory /var/www/html>' \
+       '    AllowOverride All' \
+       '    Require all granted' \
+       '</Directory>' \
+       > /etc/apache2/conf-available/ipam-override.conf \
+    && a2enconf ipam-override \
+    && rm -rf /var/lib/apt/lists/*
+
+EXPOSE 443

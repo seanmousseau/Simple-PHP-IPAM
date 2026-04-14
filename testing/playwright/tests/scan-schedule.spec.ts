@@ -103,13 +103,19 @@ test('subnets.php shows schedule details after save', async () => {
 test('subnets.php shows Active badge for scheduled subnet', async () => {
   if (testSubnetId <= 0) test.skip();
 
+  // As of v2.3.0 (#356) the scan schedule form no longer lives inline on
+  // subnets.php — it was moved to scan_history.php. subnets.php now
+  // renders two pills pointing at scan_history.php for the same subnet:
+  // a plain "📡 Scan History" in the top action row, and a second pill
+  // labelled "📡 Scan History & Schedule" with an "Active"/"Inactive"
+  // badge appended when a schedule exists. This test asserts the second
+  // pill carries the Active badge.
   await page.goto('subnets.php');
-  // A scheduled subnet should show the Scan Schedule details element as attached
-  const scheduleDetails = page.locator('details').filter({ hasText: /Scan Schedule/i });
-  await expect(scheduleDetails.first()).toBeAttached();
-  // The schedule was saved with method=icmp so the form should reflect that
-  const methodSelect = scheduleDetails.first().locator('select[name="scan_method"]');
-  await expect(methodSelect).toHaveValue('icmp');
+  const pill = page
+    .locator(`a.action-pill[href*="scan_history.php?subnet_id=${testSubnetId}"]`)
+    .filter({ hasText: /Schedule/i });
+  await expect(pill).toBeVisible();
+  await expect(pill).toContainText('Active');
 });
 
 test('scan history pill links to scan_history.php for scheduled subnet', async () => {
