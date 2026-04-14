@@ -2269,6 +2269,24 @@ function recaptcha_enterprise_verify(string $token, string $siteKey, array $cfg)
 }
 
 /**
+ * Resolve the reCAPTCHA v3 expected action name, honouring the legacy
+ * top-level $config['recaptcha_action'] key (documented since #289) before
+ * falling back to the v2.6.0 registry key recaptcha_enterprise.expected_action.
+ * Both the widget render and the Enterprise verify path must go through this
+ * helper so the action emitted in the hidden input matches the action checked
+ * during verification — otherwise valid Enterprise tokens fail action matching.
+ */
+function recaptcha_expected_action_resolved(): string
+{
+    $legacyCfg    = $GLOBALS['config'] ?? null;
+    $legacyAction = is_array($legacyCfg) ? ($legacyCfg['recaptcha_action'] ?? null) : null;
+    $resolved = (is_string($legacyAction) && $legacyAction !== '')
+        ? $legacyAction
+        : to_str(ipam_setting('recaptcha_enterprise.expected_action'));
+    return $resolved !== '' ? $resolved : 'login';
+}
+
+/**
  * Verify the login form protection token/field for the current POST request.
  *
  * Returns null on pass, '' for a silent honeypot rejection (no error shown),
@@ -2344,7 +2362,9 @@ function login_protection_verify(array $config, array $post): ?string
                 'enabled'         => true,
                 'project_id'      => to_str(ipam_setting('recaptcha_enterprise.project_id')),
                 'api_key'         => to_str(ipam_setting('recaptcha_enterprise.api_key')),
-                'expected_action' => to_str(ipam_setting('recaptcha_enterprise.expected_action')),
+                // Must match the action the widget emits (see
+                // recaptcha_expected_action_resolved for the precedence rules).
+                'expected_action' => recaptcha_expected_action_resolved(),
                 'score_threshold' => is_numeric($rawThreshold) ? (float)$rawThreshold : 0.5,
             ];
             return recaptcha_enterprise_verify($token, to_str(ipam_setting('login_protection.site_key')), $enterprise);
@@ -2417,21 +2437,7 @@ function login_protection_widget_html(array $config): string
                     ? "https://www.google.com/recaptcha/enterprise.js?render={$siteKey}"
                     : "https://www.google.com/recaptcha/api.js?render={$siteKey}";
                 $entAttr      = $isEnt ? " data-recaptcha-enterprise='1'" : '';
-                // Action name precedence for the v3 widget:
-                // 1. $config['recaptcha_action'] (legacy top-level key from
-                //    #289, still documented in docs/configuration.md and
-                //    docs/oidc.md; some deployments depend on it).
-                // 2. recaptcha_enterprise.expected_action from the settings
-                //    helper (v2.7.0 rewire path, covers both the DB and the
-                //    nested config.php fallback).
-                // 3. Literal 'login' fallback.
-                $legacyCfg    = $GLOBALS['config'] ?? null;
-                $legacyAction = is_array($legacyCfg) ? ($legacyCfg['recaptcha_action'] ?? null) : null;
-                $resolvedAction = (is_string($legacyAction) && $legacyAction !== '')
-                    ? $legacyAction
-                    : to_str(ipam_setting('recaptcha_enterprise.expected_action'));
-                if ($resolvedAction === '') $resolvedAction = 'login';
-                $action       = e($resolvedAction);
+                $action       = e(recaptcha_expected_action_resolved());
                 $actionAttr   = " data-recaptcha-action='{$action}'";
                 return "<script src='{$scriptSrc}' async defer></script>"
                      . "<input type='hidden' name='g-recaptcha-response' id='g-recaptcha-response' data-recaptcha-v3-key='{$siteKey}'{$entAttr}{$actionAttr}>";
