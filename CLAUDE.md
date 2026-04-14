@@ -6,7 +6,7 @@ Developer guide for AI assistants working on this repository.
 
 ## Project overview
 
-Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application built with **PHP 8.2+ and SQLite**. It has **no npm build step** — all CSS and JavaScript are vanilla. Starting in v2.8.0, the application ships a small, carefully curated set of Composer-managed runtime dependencies bundled into the release tarball, so end users still deploy by extracting the tarball with no build step. The web root is `Simple-PHP-IPAM/` (the subdirectory, not the repo root).
+Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application built with **PHP 8.2+ and SQLite**. It has **no npm build step** — all CSS and JavaScript are vanilla. Starting in v2.9.0, the application ships a small, carefully curated set of Composer-managed runtime dependencies bundled into the release tarball, so end users still deploy by extracting the tarball with no build step. The web root is `Simple-PHP-IPAM/` (the subdirectory, not the repo root).
 
 ---
 
@@ -123,11 +123,11 @@ IPs are stored as raw binary blobs (`inet_pton()` output) for correct sort order
 
 **Storage format: native length, never padded.** IPv4 is stored as 4 bytes and IPv6 as 16 bytes, matching the output of `inet_pton()` directly. Do not left-pad IPv4 to 16 bytes. All three supported engines (SQLite, MySQL `VARBINARY(16)`, Postgres `BYTEA`) do byte-wise memcmp comparison on native-length values, so sort order is equivalent across engines without padding. This was evaluated during v2.8.0 planning and locked in as the storage convention — if you are tempted to change it, read the discussion on #410 and #379 first.
 
-**All binding goes through `ipam_bind_binary()`** (introduced in v2.8.0, #379), which uses `PDO::PARAM_LOB` on every driver. This is non-negotiable:
+**All binding goes through `ipam_bind_binary()`** (introduced in v2.9.0, #379), which uses `PDO::PARAM_LOB` on every driver. This is non-negotiable:
 
-- On **SQLite**, `PARAM_LOB` is required so the column stores with BLOB affinity rather than TEXT affinity. SQLite's comparison rules state that any BLOB sorts greater than any TEXT regardless of byte content, so mixing affinities in the same column breaks `ORDER BY ip_bin` and every range query. Pre-v2.8.0 data was inadvertently stored with TEXT affinity because the default `PARAM_STR` binding was used. The migration in #410 normalizes existing rows to BLOB on upgrade.
+- On **SQLite**, `PARAM_LOB` is required so the column stores with BLOB affinity rather than TEXT affinity. SQLite's comparison rules state that any BLOB sorts greater than any TEXT regardless of byte content, so mixing affinities in the same column breaks `ORDER BY ip_bin` and every range query. Pre-v2.9.0 data was inadvertently stored with TEXT affinity because the default `PARAM_STR` binding was used. The migration in #410 normalizes existing rows to BLOB on upgrade.
 - On **MySQL**, `PARAM_LOB` is required for `VARBINARY(16)` columns. `PARAM_STR` would string-escape high bytes and truncate at null bytes, corrupting every stored IP.
-- On **Postgres**, `PARAM_LOB` is required for `BYTEA` columns. The pgsql driver may also need an explicit bytea type hint on prepare — verify during the v2.10.0 implementation.
+- On **Postgres**, `PARAM_LOB` is required for `BYTEA` columns. The pgsql driver may also need an explicit bytea type hint on prepare — verify during the v2.11.0 implementation.
 
 **Round-trip test vectors** that any new driver binding must handle correctly:
 
@@ -164,25 +164,25 @@ Pre-v4.0.0 migrations do not need to worry about this — they predate tenancy a
 
 **Exception:** tables that are explicitly global and not tenant-scoped (e.g. `users`, `tenants` itself, future `system_health` or similar) do not take `tenant_id`. When adding such a table, document in the migration closure why it is global, and update `docs/tenancy.md` to list it as an exception.
 
-### Modifying the schema (multi-engine, from v2.8.0 onward)
+### Modifying the schema (multi-engine, from v2.9.0 onward)
 
-Once v2.8.0 lands, the project ships three schema files that must stay in sync:
+Once v2.9.0 lands, the project ships three schema files that must stay in sync:
 
 - `schema.sql` — SQLite (authoritative for fresh SQLite installs)
-- `schema.mysql.sql` — MySQL 8.0+ (lands in v2.9.0)
-- `schema.pgsql.sql` — PostgreSQL 14+ (lands in v2.10.0)
+- `schema.mysql.sql` — MySQL 8.0+ (lands in v2.10.0)
+- `schema.pgsql.sql` — PostgreSQL 14+ (lands in v2.11.0)
 
 **When adding or modifying a table, column, index, or constraint:** update all three files in the same PR. No exceptions. The `SchemaParityTest` in CI will fail the build if the three files diverge on any structural element (table set, column set, type class, nullability, default kind, FK target, FK on-delete action). Type classes are normalised — `BLOB` / `VARBINARY(16)` / `BYTEA` all map to `"binary"`, so you do not need to match exact type names, only semantic equivalents.
 
 Migrations remain the source of truth for schema evolution. The three schema files are a fast path for fresh installs; the migration chain is what existing installs run through. `MigrationTest` asserts that applying every migration from v1.0 on an empty database converges to the same structural state as the matching `schema.X.sql` file, so drift between "what migrations produce" and "what the schema file says" is also caught.
 
-**Dialect helpers** (the `Ipam\Db\Dialect` abstraction from v2.8.0) are used inside migration closures for portable SQL — `$dialect->now()`, `$dialect->upsert()`, `$dialect->autoincrement()`, `$dialect->binary_type()`, etc. The schema files themselves are hand-written per engine and do not go through the dialect layer, because they are engine-specific by definition.
+**Dialect helpers** (the `Dialect` abstraction from v2.9.0) are used inside migration closures for portable SQL — `$dialect->now()`, `$dialect->upsert()`, `$dialect->autoincrement()`, `$dialect->binary_type()`, etc. The schema files themselves are hand-written per engine and do not go through the dialect layer, because they are engine-specific by definition.
 
-**Do not introduce a schema templating system.** This was evaluated during v2.8.0 planning and rejected: three plain SQL files are easier to review, easier to debug against a live database, and aligned with the project's vanilla-PHP ethos. The parity test plus migration-replay test is sufficient drift protection.
+**Do not introduce a schema templating system.** This was evaluated during v2.9.0 planning and rejected: three plain SQL files are easier to review, easier to debug against a live database, and aligned with the project's vanilla-PHP ethos. The parity test plus migration-replay test is sufficient drift protection.
 
 ### Runtime dependencies
 
-Adopted in v2.8.0. The project uses Composer-managed runtime dependencies under a narrow, curated policy. The goals are (1) to avoid hand-rolling security-sensitive network protocols and cryptography and (2) to preserve the "rsync and run" deployment story for end users.
+Adopted in v2.9.0. The project uses Composer-managed runtime dependencies under a narrow, curated policy. The goals are (1) to avoid hand-rolling security-sensitive network protocols and cryptography and (2) to preserve the "rsync and run" deployment story for end users.
 
 **Deployment model:**
 
@@ -215,20 +215,20 @@ A new dep must meet **all** of the following criteria:
 
 | Package | Version | Purpose | Justified in |
 |---|---|---|---|
-| (none yet — policy introduced in v2.8.0 as infrastructure; first dep lands in v3.1.0) | — | — | — |
+| (none yet — policy introduced in v2.9.0 as infrastructure; first dep lands in v3.1.0) | — | — | — |
 
-First dep expected to land in v3.2.0 (#415, PHPMailer for SMTP). Future candidates to be evaluated on a case-by-case basis as feature work surfaces them.
+First dep expected to land in v3.1.0 (#415, PHPMailer for SMTP). Future candidates to be evaluated on a case-by-case basis as feature work surfaces them.
 
 **Explicitly not adopted (deliberate choices):**
 
-- No HTTP client library yet. `ext-curl` + careful wrapping is the current path for webhook dispatch (#399, v3.4.0). May revisit if curl wrapping proves painful at implementation time — Guzzle or symfony/http-client would be the likely candidates.
+- No HTTP client library yet. `ext-curl` + careful wrapping is the current path for webhook dispatch (#399, v3.3.0). May revisit if curl wrapping proves painful at implementation time — Guzzle or symfony/http-client would be the likely candidates.
 - No JWT / JWK library yet. The hand-rolled OIDC in `lib.php` works and is not being retrofitted on speculation. May revisit if a security-sensitive bug surfaces or if the RFC tracking burden becomes obviously not worth it.
-- No JSON Schema validator. Custom fields (#313, v3.6.0) use a bespoke lightweight type system, not JSON Schema.
+- No JSON Schema validator. Custom fields (#313, v3.5.0) use a bespoke lightweight type system, not JSON Schema.
 - No templating engine, no DI container, no service locator, no ORM. These are architectural departures that do not fit this project's philosophy.
 
 ### When to use classes vs functions
 
-The project's application code is predominantly procedural — `lib.php` is a bag of top-level functions, and most pages are procedural PHP. The one deliberate exception is the `Dialect` family of classes under `dialects/` (introduced in v2.8.0), which encapsulates per-engine SQL differences.
+The project's application code is predominantly procedural — `lib.php` is a bag of top-level functions, and most pages are procedural PHP. The one deliberate exception is the `Dialect` family of classes under `dialects/` (introduced in v2.9.0), which encapsulates per-engine SQL differences.
 
 **Classes are appropriate for polymorphic contracts with a small, closed set of implementations.** The `Dialect` interface with `SqliteDialect` / `MysqlDialect` / `PgsqlDialect` is the canonical example: the contract says "every DB engine must implement these methods with these signatures," and PHPStan level 9 enforces that at compile time. Without an interface, we would have to reinvent the same guarantee with array shape annotations or runtime dispatch, both of which are worse.
 
