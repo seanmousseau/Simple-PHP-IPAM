@@ -336,6 +336,58 @@ class SettingsTest extends TestCase
         $this->assertFalse(oidc_enabled([]));
     }
 
+    public function testLoginProtectionMethodAdvertisesStaticOptions(): void
+    {
+        // v2.7.0 #442: login_protection.method must declare a fixed option set
+        // so settings.php can render a dropdown and reject out-of-set values.
+        $defs = ipam_setting_definitions();
+        $this->assertArrayHasKey('login_protection.method', $defs);
+        $resolved = ipam_setting_options($defs['login_protection.method']);
+        $this->assertIsArray($resolved);
+        $this->assertArrayHasKey('', $resolved, "'' (off) must be one of the options");
+        $this->assertArrayHasKey('recaptcha', $resolved);
+        $this->assertArrayHasKey('turnstile', $resolved);
+        $this->assertArrayHasKey('friendly_captcha', $resolved);
+    }
+
+    public function testBrandingTimezoneResolvesToPhpIdentifiers(): void
+    {
+        // v2.7.0 #442: branding.timezone uses the @timezone sentinel which
+        // must resolve to PHP's zoneinfo list, including a few stable IDs.
+        $defs = ipam_setting_definitions();
+        $this->assertArrayHasKey('branding.timezone', $defs);
+        $resolved = ipam_setting_options($defs['branding.timezone']);
+        $this->assertIsArray($resolved);
+        $this->assertArrayHasKey('UTC', $resolved);
+        $this->assertArrayHasKey('America/Toronto', $resolved);
+        $this->assertArrayHasKey('Europe/London', $resolved);
+        // Values should be string labels (we default to value = label for the
+        // timezone sentinel since zoneinfo has no human-friendly labels).
+        $this->assertSame('UTC', $resolved['UTC']);
+    }
+
+    public function testSettingOptionsReturnsNullForFreeFormKeys(): void
+    {
+        // Settings without an explicit `options` entry must render as free
+        // text — the resolver is the source of truth for "is this a dropdown".
+        $defs = ipam_setting_definitions();
+        $this->assertNull(ipam_setting_options($defs['branding.site_name']));
+        $this->assertNull(ipam_setting_options($defs['oidc.client_id']));
+    }
+
+    public function testSettingOptionsAcceptsStaticArrayAndCallable(): void
+    {
+        $static = ipam_setting_options([
+            'options' => ['a' => 'Alpha', 'b' => 'Beta'],
+        ]);
+        $this->assertSame(['a' => 'Alpha', 'b' => 'Beta'], $static);
+
+        $callable = ipam_setting_options([
+            'options' => fn(): array => ['x' => 'Xray', 'y' => 'Yankee'],
+        ]);
+        $this->assertSame(['x' => 'Xray', 'y' => 'Yankee'], $callable);
+    }
+
     public function testCallerDefaultIgnoredForRegisteredKey(): void
     {
         // Registry default must win; caller-supplied $default only matters for

@@ -706,6 +706,18 @@ details > summary::-webkit-details-marker{display:none}
 .row-inline{display:flex;align-items:center;gap:6px;font-size:.9rem;cursor:pointer;padding-bottom:6px;}
 .row-inline input[type=checkbox]{width:16px;height:16px;cursor:pointer;flex-shrink:0;}
 
+/* ---- settings.php row header (v2.7.0) ----
+   .setting-head is the title line above an input: label text + source badge
+   + key <code>. .setting-head--bool wraps the checkbox on the same line
+   as the label so bool settings render inline with the control they toggle
+   (see GitHub issue #441). Explicit flex-direction:row overrides the global
+   `label { display:flex; flex-direction:column }` rule above, which would
+   otherwise stack the checkbox and label on separate rows. */
+.setting-head{display:flex;flex-direction:row;align-items:baseline;flex-wrap:wrap;gap:.25rem;margin-bottom:.25rem;}
+label.setting-head{font-size:inherit;}
+.setting-head--bool{cursor:pointer;align-items:center;}
+.setting-head--bool input[type=checkbox]{margin:0 .25rem 0 0;flex-shrink:0;}
+
 /* ---- Sticky table headers (#248, #342, #351, #352) ---- */
 /* .table-wrap is the scroll container (overflow:auto; max-height:65vh).
    position:sticky on thead th with top:0 sticks the header to the top of the
