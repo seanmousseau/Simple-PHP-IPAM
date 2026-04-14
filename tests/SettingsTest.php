@@ -388,6 +388,72 @@ class SettingsTest extends TestCase
         $this->assertSame(['x' => 'Xray', 'y' => 'Yankee'], $callable);
     }
 
+    public function testDeprecatedKeysEmptyWhenNothingCustomised(): void
+    {
+        // v2.7.0 #376: a fresh install with empty $config and empty settings
+        // table must not light up the banner for every registered key.
+        $GLOBALS['config'] = [];
+        ipam_setting_cache_bust();
+        $this->assertSame([], ipam_setting_deprecated_keys());
+    }
+
+    public function testDeprecatedKeysSkipsDefaultValues(): void
+    {
+        // $config may carry every registered default literally (as v2.6.0
+        // ipam_config_sync() does). None of those should be flagged — only
+        // admin-customised values should.
+        $GLOBALS['config'] = [
+            'app_name'                => 'Simple PHP IPAM', // registry default
+            'alert_util_warn_pct'     => 80,                // registry default
+            'oidc'                    => ['enabled' => false],
+        ];
+        ipam_setting_cache_bust();
+        $this->assertSame([], ipam_setting_deprecated_keys());
+    }
+
+    public function testDeprecatedKeysFlagsCustomisedConfigValues(): void
+    {
+        $GLOBALS['config'] = [
+            'app_name'            => 'Acme IPAM',            // customised
+            'alert_util_warn_pct' => 70,                     // customised
+            'oidc'                => ['enabled' => true],    // customised
+        ];
+        ipam_setting_cache_bust();
+
+        $deprecated = ipam_setting_deprecated_keys();
+        $keys = array_column($deprecated, 'key');
+        $this->assertContains('branding.site_name', $keys);
+        $this->assertContains('alert.util_warn_pct', $keys);
+        $this->assertContains('oidc.enabled', $keys);
+
+        // Each row must carry the config_path and the current value so the
+        // banner can render them.
+        $row = null;
+        foreach ($deprecated as $d) {
+            if ($d['key'] === 'branding.site_name') { $row = $d; break; }
+        }
+        $this->assertNotNull($row);
+        $this->assertSame('app_name', $row['config_path']);
+        $this->assertSame('Acme IPAM', $row['current']);
+
+        // Nested config_key flattens with '.' so the banner column stays
+        // readable.
+        foreach ($deprecated as $d) {
+            if ($d['key'] === 'oidc.enabled') {
+                $this->assertSame('oidc.enabled', $d['config_path']);
+                break;
+            }
+        }
+    }
+
+    public function testDeprecatedKeysHidesRowsAlreadyInDb(): void
+    {
+        $GLOBALS['config'] = ['app_name' => 'Acme IPAM'];
+        ipam_setting_set($this->db, 'branding.site_name', 'Acme IPAM');
+        ipam_setting_cache_bust();
+        $this->assertSame([], ipam_setting_deprecated_keys());
+    }
+
     public function testCallerDefaultIgnoredForRegisteredKey(): void
     {
         // Registry default must win; caller-supplied $default only matters for

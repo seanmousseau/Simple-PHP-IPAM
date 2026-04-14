@@ -108,6 +108,22 @@ page_header('Dashboard');
   </div>
 </div>
 
+<?php if (current_user()['role'] === 'admin'):
+    // v2.7.0 #376: nudge admins to migrate any customised config.php values
+    // into the database before v3.0.0 removes the fallback. The settings
+    // page has the real banner with per-key import buttons — this card just
+    // gets the admin to click over and see it.
+    $_deprecatedDash = ipam_setting_deprecated_keys();
+    if ($_deprecatedDash):
+?>
+  <div class="admin-notice admin-notice--warning" role="alert">
+    &#9888; <strong>Settings migration needed:</strong>
+    <?= count($_deprecatedDash) ?> registered setting(s) are still being read from
+    <code>config.php</code>. These will stop working at v3.0.0.
+    <a href="settings.php#deprecated-banner">Review and migrate in Settings &rsaquo;</a>
+  </div>
+    <?php endif; unset($_deprecatedDash); endif; ?>
+
 <div class="page-actions">
   <a class="action-pill" href="subnets.php#add-subnet">➕ Add Subnet</a>
   <a class="action-pill" href="search.php">🔎 Search</a>
