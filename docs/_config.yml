@@ -1,7 +1,6 @@
 title: Simple PHP IPAM
 description: Lightweight IPv4/IPv6 address management — PHP 8.2+, SQLite, zero runtime dependencies.
 theme: minima
-remote_theme: ""
 
 # GitHub Pages source
 baseurl: "/Simple-PHP-IPAM"
