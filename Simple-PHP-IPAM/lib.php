@@ -464,6 +464,10 @@ function ipam_setting_definitions(): array
             'default'     => 'UTC',
             'sensitive'   => false,
             'config_key'  => 'timezone',
+            // Dynamic option list from PHP's zoneinfo database (~420 entries).
+            // Callable form keeps the registry lazy — the list is only built
+            // when settings.php actually renders or validates this field.
+            'options'     => '@timezone',
         ],
 
         // --- Security ---
@@ -574,12 +578,21 @@ function ipam_setting_definitions(): array
         // --- Login protection (bot/abuse mitigation on the login form) ---
         'login_protection.method' => [
             'label'       => 'Login protection method',
-            'description' => "Bot/abuse mitigation on the login form. One of: '' (off), 'honeypot', 'time_check', 'turnstile', 'hcaptcha', 'recaptcha', 'friendly_captcha'.",
+            'description' => 'Bot/abuse mitigation on the login form. Pick the provider that matches the site/secret keys below.',
             'type'        => 'string',
             'group'       => 'login_protection',
             'default'     => '',
             'sensitive'   => false,
             'config_key'  => ['login_protection', 'method'],
+            'options'     => [
+                ''                 => 'Off',
+                'honeypot'         => 'Honeypot',
+                'time_check'       => 'Time check',
+                'turnstile'        => 'Cloudflare Turnstile',
+                'hcaptcha'         => 'hCaptcha',
+                'recaptcha'        => 'Google reCAPTCHA',
+                'friendly_captcha' => 'Friendly Captcha',
+            ],
         ],
         'login_protection.site_key' => [
             'label'       => 'Login protection site key',
@@ -1054,6 +1067,47 @@ function ipam_setting_source(PDO $db, string $key): string
         }
     }
     return 'default';
+}
+
+/**
+ * Resolve a setting definition's `options` entry to a `[value => label]` map,
+ * or null when the setting is free-form. Supports three registry shapes:
+ *
+ *   - associative array: returned as-is
+ *   - callable: invoked, result must be an associative array
+ *   - sentinel string '@timezone': PHP timezone identifiers
+ *
+ * Unknown sentinels return null so the caller falls back to free-text
+ * rendering rather than silently accepting any value.
+ *
+ * @param array<string, mixed> $def
+ * @return array<string, string>|null
+ */
+function ipam_setting_options(array $def): ?array
+{
+    if (!array_key_exists('options', $def)) return null;
+    $raw = $def['options'];
+
+    if (is_callable($raw)) {
+        $resolved = $raw();
+    } elseif ($raw === '@timezone') {
+        $ids = DateTimeZone::listIdentifiers();
+        $resolved = array_combine($ids, $ids);
+    } elseif (is_array($raw)) {
+        $resolved = $raw;
+    } else {
+        return null;
+    }
+
+    if (!is_array($resolved)) return null;
+
+    // Normalise to string => string for consistent rendering and strict
+    // validation with array_key_exists() on the persisted value.
+    $out = [];
+    foreach ($resolved as $value => $label) {
+        $out[(string)$value] = is_scalar($label) ? (string)$label : (string)$value;
+    }
+    return $out;
 }
 
 /* ---------------- History ---------------- */
@@ -3378,11 +3432,11 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=2.6.0'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=2.7.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=2.6.0'></script>";
+    echo "<script defer src='assets/app.js?v=2.7.0'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
