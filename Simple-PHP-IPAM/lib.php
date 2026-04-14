@@ -503,14 +503,28 @@ function ipam_setting_definitions(): array
         ],
 
         // --- Alerting ---
+        // Deprecated in v2.8.0 by alert.recipient_user_ids. Kept in the
+        // registry so the v2.8.0 migration can read its current value and
+        // try to map it to a user. Hidden from the settings UI via the
+        // 'deprecated' flag below; settings.php must skip rendering it.
         'alert.email' => [
-            'label'       => 'Alert email recipient',
-            'description' => 'Address to notify for utilization alerts. Leave empty to disable.',
+            'label'       => 'Alert email recipient (deprecated)',
+            'description' => 'Replaced in v2.8.0 by a multi-select picker tied to user records. This row is migrated automatically and hidden from the UI.',
             'type'        => 'string',
             'group'       => 'alert',
             'default'     => '',
             'sensitive'   => false,
+            'deprecated'  => true,
             'config_key'  => 'alert_email',
+        ],
+        'alert.recipient_user_ids' => [
+            'label'       => 'Alert recipients',
+            'description' => 'Users who receive utilization alerts. Only users with a non-empty email address and an active account are eligible. Leave empty to disable email alerts.',
+            'type'        => 'json',
+            'group'       => 'alert',
+            'default'     => [],
+            'sensitive'   => false,
+            'config_key'  => 'alert_recipient_user_ids',
         ],
         'alert.util_warn_pct' => [
             'label'       => 'Utilization warn threshold (%)',
@@ -1730,11 +1744,47 @@ function prune_address_history(PDO $db, int $retentionDays): int
  * @param IpamConfig $config Unused since v2.7.0 — thresholds and the
  *                           recipient now flow through ipam_setting().
  */
+/**
+ * #443: resolve the configured `alert.recipient_user_ids` list to a list of
+ * current email addresses. Inactive users and users whose email has been
+ * cleared since the recipient was selected drop out automatically — no need
+ * to re-save the settings page when staffing changes.
+ *
+ * @return list<string>
+ */
+function ipam_resolve_alert_recipients(PDO $db): array
+{
+    $ids = ipam_setting('alert.recipient_user_ids', []);
+    if (!is_array($ids) || $ids === []) return [];
+    $intIds = array_values(array_unique(array_map(fn($v) => (int)to_str($v), $ids)));
+    $intIds = array_values(array_filter($intIds, fn($i) => $i > 0));
+    if ($intIds === []) return [];
+
+    $placeholders = implode(',', array_fill(0, count($intIds), '?'));
+    $st = $db->prepare(
+        "SELECT email FROM users
+         WHERE id IN ($placeholders)
+           AND is_active = 1
+           AND email IS NOT NULL
+           AND email != ''
+         ORDER BY id"
+    );
+    $st->execute($intIds);
+    /** @var list<string> $out */
+    $out = [];
+    foreach ($st->fetchAll(PDO::FETCH_COLUMN) as $email) {
+        $email = trim(to_str($email));
+        if ($email !== '') $out[] = $email;
+    }
+    return $out;
+}
+
+/** @param IpamConfig $config */
 function check_utilization_alerts(PDO $db, array $config): void
 {
     unset($config);
-    $alertEmail = trim(to_str(ipam_setting('alert.email')));
-    if ($alertEmail === '') return;
+    $recipients = ipam_resolve_alert_recipients($db);
+    if ($recipients === []) return;
 
     $warnPct = to_int(ipam_setting('alert.util_warn_pct'));
     $critPct = to_int(ipam_setting('alert.util_crit_pct'));
@@ -1797,12 +1847,16 @@ function check_utilization_alerts(PDO $db, array $config): void
             $body       = "{$levelLabel}: Subnet {$cidr} has reached {$pct}% utilization.\n"
                         . "Assigned: {$assigned} / Assignable: {$assignable}\n\n"
                         . "-- {$appName}";
-
-            // Sanitize recipient and subject to prevent header injection
-            $safeEmail   = preg_replace('/[\r\n]/', '', $alertEmail) ?? '';
             $safeSubject = preg_replace('/[\r\n]/', '', $subject) ?? '';
 
-            @mail($safeEmail, $safeSubject, $body);
+            // #443: loop-per-recipient delivery. Best-effort: a bad address
+            // for one recipient does not block delivery to the others, and
+            // each send produces its own audit row so failures are debuggable.
+            foreach ($recipients as $recipient) {
+                $safeEmail = preg_replace('/[\r\n]/', '', $recipient) ?? '';
+                @mail($safeEmail, $safeSubject, $body);
+                audit($db, 'alert.send', 'subnet', $sid, "level={$lvl} pct={$pct} email={$safeEmail}");
+            }
 
             $now = date('Y-m-d H:i:s');
             $db->prepare(
@@ -1823,8 +1877,7 @@ function check_utilization_alerts(PDO $db, array $config): void
  */
 function alerts_check_if_due(array $config, PDO $db): void
 {
-    $alertEmail = trim(to_str(ipam_setting('alert.email')));
-    if ($alertEmail === '') return;
+    if (ipam_resolve_alert_recipients($db) === []) return;
 
     $interval = to_int(ipam_setting('alert.interval_seconds'));
     if ($interval < 60) $interval = 60;
@@ -3574,12 +3627,15 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=2.7.0'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=2.8.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=2.7.0'></script>";
-    echo "</head><body>";
+    echo "<script defer src='assets/app.js?v=2.8.0'></script>";
+    $pageAttr = isset($opts['page']) && $opts['page'] !== ''
+        ? " data-page='" . e(to_str($opts['page'])) . "'"
+        : '';
+    echo "</head><body{$pageAttr}>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
     echo "<a href='dashboard.php' class='nav-brand'>"

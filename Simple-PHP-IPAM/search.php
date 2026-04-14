@@ -128,7 +128,7 @@ $subnetResults = [];
 if ($q !== '') {
     $subWhere  = [];
     $subParams = [];
-    $subWhere[]       = "(s.cidr LIKE :sq ESCAPE '\\' OR s.description LIKE :sq ESCAPE '\\')";
+    $subWhere[]       = "(s.cidr LIKE :sq ESCAPE '\\' OR s.description LIKE :sq ESCAPE '\\' OR s.notes LIKE :sq ESCAPE '\\')";
     $subParams[':sq'] = '%' . like_escape($q) . '%';
     if ($siteId > 0) {
         $subWhere[]          = "s.site_id = :site_id";

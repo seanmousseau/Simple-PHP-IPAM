@@ -184,6 +184,24 @@ match ($resource) {
         'DELETE' => api_contacts_delete($db, $apiKey, to_int($_GET['id'] ?? 0)),
         default  => api_error(405, 'Method not allowed.'),
     },
+    // #310: write API for tags + association endpoints
+    'tags' => match ($method) {
+        'GET'    => api_tags_list($db),
+        'POST'   => api_tags_create($db, $apiKey, $body),
+        'PUT'    => api_tags_update($db, $apiKey, to_int($_GET['id'] ?? 0), $body),
+        'DELETE' => api_tags_delete($db, $apiKey, to_int($_GET['id'] ?? 0)),
+        default  => api_error(405, 'Method not allowed.'),
+    },
+    'subnet_tags' => match ($method) {
+        'POST'   => api_subnet_tags_attach($db, $apiKey, $body),
+        'DELETE' => api_subnet_tags_detach($db, $apiKey, to_int($_GET['subnet_id'] ?? 0), to_int($_GET['tag_id'] ?? 0)),
+        default  => api_error(405, 'Method not allowed.'),
+    },
+    'address_tags' => match ($method) {
+        'POST'   => api_address_tags_attach($db, $apiKey, $body),
+        'DELETE' => api_address_tags_detach($db, $apiKey, to_int($_GET['address_id'] ?? 0), to_int($_GET['tag_id'] ?? 0)),
+        default  => api_error(405, 'Method not allowed.'),
+    },
     'search'          => $method === 'GET' ? api_search($db)            : api_error(405, 'Method not allowed.'),
     'audit'           => $method === 'GET' ? api_audit_log($db)         : api_error(405, 'Method not allowed.'),
     'unassigned'      => $method === 'GET' ? api_unassigned($db)        : api_error(405, 'Method not allowed.'),
@@ -196,7 +214,7 @@ match ($resource) {
         default  => api_error(405, 'Method not allowed.'),
     },
     'scan_run'        => $method === 'POST' ? api_scan_run($db, $apiKey) : api_error(405, 'Method not allowed.'),
-    default      => api_error(404, 'Unknown resource. Valid: subnets, addresses, sites, vlans, vrfs, contacts, history, search, audit, unassigned, scan_results, scan_history, scan_schedules, scan_run'),
+    default      => api_error(404, 'Unknown resource. Valid: subnets, addresses, sites, vlans, vrfs, contacts, tags, subnet_tags, address_tags, history, search, audit, unassigned, scan_results, scan_history, scan_schedules, scan_run'),
 };
 
 // ---- Helpers ----
@@ -240,6 +258,45 @@ function api_json(mixed $data): never
     exit;
 }
 
+/**
+ * #314: build a paginated response shape and emit the X-Total-Count header.
+ *
+ * Default flat shape (BC) wraps the items under $listKey alongside total/page/
+ * limit. When the caller passes ?envelope=1, the shape switches to a generic
+ * `{data, meta}` wrapper so paginating UIs can parse one shape across every
+ * resource.
+ *
+ * @param array<int|string, mixed> $items
+ * @param array<string, mixed>     $extra extra top-level keys to merge into the
+ *                                        flat-shape response (e.g. address_id
+ *                                        on the history endpoint). Ignored in
+ *                                        envelope mode.
+ * @return array<string, mixed>
+ */
+function api_paginated_response(string $listKey, array $items, int $total, int $page, int $limit, array $extra = []): array
+{
+    header('X-Total-Count: ' . $total);
+    $envelope = isset($_GET['envelope']) && $_GET['envelope'] !== '0' && $_GET['envelope'] !== '';
+    if ($envelope) {
+        $pages = $limit > 0 ? (int)ceil($total / $limit) : 1;
+        return [
+            'data' => $items,
+            'meta' => [
+                'total'    => $total,
+                'page'     => $page,
+                'per_page' => $limit,
+                'pages'    => max(1, $pages),
+            ],
+        ];
+    }
+    return array_merge($extra, [
+        'total'  => $total,
+        'page'   => $page,
+        'limit'  => $limit,
+        $listKey => $items,
+    ]);
+}
+
 function api_error(int $code, string $message): never
 {
     http_response_code($code);
@@ -270,7 +327,7 @@ function api_subnets(PDO $db): never
         : '';
 
     $baseSql = "SELECT s.id, s.cidr, s.ip_version, s.network, s.prefix,
-                       s.description, s.vlan_id, s.vlan_fk, s.site_id, s.vrf_id, s.created_at,
+                       s.description, s.notes, s.vlan_id, s.vlan_fk, s.site_id, s.vrf_id, s.created_at,
                        si.name AS site, v.vlan_id AS vlan_number, v.name AS vlan_name,
                        vr.name AS vrf_name$countsSelect
                 FROM subnets s
@@ -362,12 +419,8 @@ function api_subnets(PDO $db): never
     $subnetIds    = array_map(fn($r) => to_int($r['id']), $rawSubnets);
     $tagsBySubnet = api_fetch_tags_for_ids($db, 'subnet', $subnetIds);
 
-    api_json([
-        'total'   => $total,
-        'page'    => $page,
-        'limit'   => $limit,
-        'subnets' => array_map(fn($r) => fmt_subnet($r, $withCounts, $tagsBySubnet[to_int($r['id'])] ?? []), $rawSubnets),
-    ]);
+    $items = array_map(fn($r) => fmt_subnet($r, $withCounts, $tagsBySubnet[to_int($r['id'])] ?? []), $rawSubnets);
+    api_json(api_paginated_response('subnets', $items, $total, $page, $limit));
 }
 
 /**
@@ -386,6 +439,7 @@ function fmt_subnet(array $r, bool $withCounts = false, array $tags = []): array
         'network'     => $r['network'],
         'prefix'      => to_int($r['prefix']),
         'description' => to_str($r['description']),
+        'notes'       => to_str($r['notes'] ?? ''),
         'vlan_id'     => $r['vlan_id'] !== null ? to_int($r['vlan_id']) : null,
         'vlan_fk'     => $vlanFk,
         'vlan_name'   => $vlanFk !== null ? to_str($r['vlan_name'] ?? '') : null,
@@ -518,12 +572,7 @@ function api_addresses(PDO $db): never
         ];
     }, $rawRows);
 
-    api_json([
-        'total'     => $total,
-        'page'      => $page,
-        'limit'     => $limit,
-        'addresses' => $rows,
-    ]);
+    api_json(api_paginated_response('addresses', $rows, $total, $page, $limit));
 }
 
 function api_sites(PDO $db): never
@@ -850,12 +899,7 @@ function api_contacts(PDO $db): never
     $st->bindValue(':lim', $limit, PDO::PARAM_INT);
     $st->bindValue(':off', $offset, PDO::PARAM_INT);
     $st->execute();
-    api_json([
-        'total'    => $total,
-        'page'     => $page,
-        'limit'    => $limit,
-        'contacts' => array_map('fmt_contact', $st->fetchAll()),
-    ]);
+    api_json(api_paginated_response('contacts', array_map('fmt_contact', $st->fetchAll()), $total, $page, $limit));
 }
 
 /**
@@ -944,6 +988,191 @@ function api_contacts_delete(PDO $db, array $apiKey, int $id): never
     api_json(['deleted' => true]);
 }
 
+// ---- #310: write API for tags + association endpoints ----
+
+/**
+ * @param array<string, mixed> $r
+ * @return array<string, mixed>
+ */
+function fmt_tag(array $r): array
+{
+    return [
+        'id'         => to_int($r['id']),
+        'name'       => to_str($r['name']),
+        'colour'     => to_str($r['colour']),
+        'created_at' => to_str($r['created_at']),
+    ];
+}
+
+function api_tags_list(PDO $db): never
+{
+    if (isset($_GET['id'])) {
+        $st = $db->prepare("SELECT id, name, colour, created_at FROM tags WHERE id = :id");
+        $st->execute([':id' => to_int($_GET['id'])]);
+        /** @var array<string, mixed>|false $row */
+        $row = $st->fetch();
+        if (!$row) api_error(404, 'Tag not found.');
+        api_json(['tag' => fmt_tag($row)]);
+    }
+    $st = $db->query("SELECT id, name, colour, created_at FROM tags ORDER BY name");
+    $rows = $st !== false ? $st->fetchAll() : [];
+    api_json(['tags' => array_map('fmt_tag', $rows)]);
+}
+
+/**
+ * @param array<string, mixed> $apiKey
+ * @param array<string, mixed> $body
+ */
+function api_tags_create(PDO $db, array $apiKey, array $body): never
+{
+    if (to_int($apiKey['is_readonly'] ?? 0) === 1) api_error(403, 'Read-only key.');
+    $name   = trim(to_str($body['name'] ?? ''));
+    $colour = trim(to_str($body['colour'] ?? '#6c757d'));
+    if ($name === '') api_error(400, 'name is required.');
+    if (mb_strlen($name) > 50) api_error(400, 'name must be 50 characters or fewer.');
+    if (!preg_match('/^#[0-9a-fA-F]{6}$/', $colour)) api_error(400, 'colour must be a 6-digit hex string like #6c757d.');
+
+    $dup = $db->prepare("SELECT id FROM tags WHERE name = :n");
+    $dup->execute([':n' => $name]);
+    if ($dup->fetch()) api_error(409, 'A tag with this name already exists.');
+
+    $db->prepare("INSERT INTO tags (name, colour) VALUES (:n, :c)")
+       ->execute([':n' => $name, ':c' => $colour]);
+    $newId = (int)$db->lastInsertId();
+    api_audit($db, $apiKey, 'tag.create', 'tag', $newId, "name={$name}");
+    http_response_code(201);
+    api_json(['id' => $newId, 'name' => $name, 'colour' => $colour]);
+}
+
+/**
+ * @param array<string, mixed> $apiKey
+ * @param array<string, mixed> $body
+ */
+function api_tags_update(PDO $db, array $apiKey, int $id, array $body): never
+{
+    if (to_int($apiKey['is_readonly'] ?? 0) === 1) api_error(403, 'Read-only key.');
+    if ($id <= 0) api_error(400, 'id is required.');
+
+    $st = $db->prepare("SELECT id, name, colour FROM tags WHERE id = :id");
+    $st->execute([':id' => $id]);
+    /** @var array<string, mixed>|false $tag */
+    $tag = $st->fetch();
+    if (!$tag) api_error(404, 'Tag not found.');
+
+    $name   = array_key_exists('name', $body) ? trim(to_str($body['name'])) : to_str($tag['name']);
+    $colour = array_key_exists('colour', $body) ? trim(to_str($body['colour'])) : to_str($tag['colour']);
+
+    if ($name === '') api_error(400, 'name is required.');
+    if (mb_strlen($name) > 50) api_error(400, 'name must be 50 characters or fewer.');
+    if (!preg_match('/^#[0-9a-fA-F]{6}$/', $colour)) api_error(400, 'colour must be a 6-digit hex string like #6c757d.');
+
+    if ($name !== to_str($tag['name'])) {
+        $dup = $db->prepare("SELECT id FROM tags WHERE name = :n AND id != :id");
+        $dup->execute([':n' => $name, ':id' => $id]);
+        if ($dup->fetch()) api_error(409, 'Another tag with this name already exists.');
+    }
+
+    $db->prepare("UPDATE tags SET name = :n, colour = :c WHERE id = :id")
+       ->execute([':n' => $name, ':c' => $colour, ':id' => $id]);
+    api_audit($db, $apiKey, 'tag.update', 'tag', $id, "name={$name}");
+    api_json(['id' => $id, 'name' => $name, 'colour' => $colour]);
+}
+
+/** @param array<string, mixed> $apiKey */
+function api_tags_delete(PDO $db, array $apiKey, int $id): never
+{
+    if (to_int($apiKey['is_readonly'] ?? 0) === 1) api_error(403, 'Read-only key.');
+    if ($id <= 0) api_error(400, 'id is required.');
+
+    $st = $db->prepare("SELECT name FROM tags WHERE id = :id");
+    $st->execute([':id' => $id]);
+    /** @var array<string, mixed>|false $row */
+    $row = $st->fetch();
+    if (!$row) api_error(404, 'Tag not found.');
+
+    // ON DELETE CASCADE on the join tables removes attachments automatically.
+    $db->prepare("DELETE FROM tags WHERE id = :id")->execute([':id' => $id]);
+    api_audit($db, $apiKey, 'tag.delete', 'tag', $id, 'name=' . to_str($row['name']));
+    http_response_code(204);
+    exit;
+}
+
+/**
+ * @param array<string, mixed> $apiKey
+ * @param array<string, mixed> $body
+ */
+function api_subnet_tags_attach(PDO $db, array $apiKey, array $body): never
+{
+    if (to_int($apiKey['is_readonly'] ?? 0) === 1) api_error(403, 'Read-only key.');
+    $subnetId = to_int($body['subnet_id'] ?? 0);
+    $tagId    = to_int($body['tag_id'] ?? 0);
+    if ($subnetId <= 0 || $tagId <= 0) api_error(400, 'subnet_id and tag_id are required.');
+
+    $sChk = $db->prepare("SELECT id FROM subnets WHERE id = :id");
+    $sChk->execute([':id' => $subnetId]);
+    if (!$sChk->fetch()) api_error(404, 'Subnet not found.');
+
+    $tChk = $db->prepare("SELECT id FROM tags WHERE id = :id");
+    $tChk->execute([':id' => $tagId]);
+    if (!$tChk->fetch()) api_error(404, 'Tag not found.');
+
+    $db->prepare("INSERT OR IGNORE INTO subnet_tags (subnet_id, tag_id) VALUES (:s, :t)")
+       ->execute([':s' => $subnetId, ':t' => $tagId]);
+    api_audit($db, $apiKey, 'tag.attach', 'subnet', $subnetId, "tag_id={$tagId}");
+    http_response_code(201);
+    api_json(['subnet_id' => $subnetId, 'tag_id' => $tagId]);
+}
+
+/** @param array<string, mixed> $apiKey */
+function api_subnet_tags_detach(PDO $db, array $apiKey, int $subnetId, int $tagId): never
+{
+    if (to_int($apiKey['is_readonly'] ?? 0) === 1) api_error(403, 'Read-only key.');
+    if ($subnetId <= 0 || $tagId <= 0) api_error(400, 'subnet_id and tag_id are required.');
+    $db->prepare("DELETE FROM subnet_tags WHERE subnet_id = :s AND tag_id = :t")
+       ->execute([':s' => $subnetId, ':t' => $tagId]);
+    api_audit($db, $apiKey, 'tag.detach', 'subnet', $subnetId, "tag_id={$tagId}");
+    http_response_code(204);
+    exit;
+}
+
+/**
+ * @param array<string, mixed> $apiKey
+ * @param array<string, mixed> $body
+ */
+function api_address_tags_attach(PDO $db, array $apiKey, array $body): never
+{
+    if (to_int($apiKey['is_readonly'] ?? 0) === 1) api_error(403, 'Read-only key.');
+    $addressId = to_int($body['address_id'] ?? 0);
+    $tagId     = to_int($body['tag_id'] ?? 0);
+    if ($addressId <= 0 || $tagId <= 0) api_error(400, 'address_id and tag_id are required.');
+
+    $aChk = $db->prepare("SELECT id FROM addresses WHERE id = :id");
+    $aChk->execute([':id' => $addressId]);
+    if (!$aChk->fetch()) api_error(404, 'Address not found.');
+
+    $tChk = $db->prepare("SELECT id FROM tags WHERE id = :id");
+    $tChk->execute([':id' => $tagId]);
+    if (!$tChk->fetch()) api_error(404, 'Tag not found.');
+
+    $db->prepare("INSERT OR IGNORE INTO address_tags (address_id, tag_id) VALUES (:a, :t)")
+       ->execute([':a' => $addressId, ':t' => $tagId]);
+    api_audit($db, $apiKey, 'tag.attach', 'address', $addressId, "tag_id={$tagId}");
+    http_response_code(201);
+    api_json(['address_id' => $addressId, 'tag_id' => $tagId]);
+}
+
+/** @param array<string, mixed> $apiKey */
+function api_address_tags_detach(PDO $db, array $apiKey, int $addressId, int $tagId): never
+{
+    if (to_int($apiKey['is_readonly'] ?? 0) === 1) api_error(403, 'Read-only key.');
+    if ($addressId <= 0 || $tagId <= 0) api_error(400, 'address_id and tag_id are required.');
+    $db->prepare("DELETE FROM address_tags WHERE address_id = :a AND tag_id = :t")
+       ->execute([':a' => $addressId, ':t' => $tagId]);
+    api_audit($db, $apiKey, 'tag.detach', 'address', $addressId, "tag_id={$tagId}");
+    http_response_code(204);
+    exit;
+}
+
 function api_history(PDO $db): never
 {
     if (!isset($_GET['address_id'])) {
@@ -994,14 +1223,10 @@ function api_history(PDO $db): never
         ];
     }, $st->fetchAll());
 
-    api_json([
+    api_json(api_paginated_response('history', $rows, $total, $page, $limit, [
         'address_id' => $addressId,
         'ip'         => $addr ? to_str($addr['ip']) : null,
-        'total'      => $total,
-        'page'       => $page,
-        'limit'      => $limit,
-        'history'    => $rows,
-    ]);
+    ]));
 }
 
 // ---- Search endpoint ----
@@ -1068,7 +1293,7 @@ function api_search(PDO $db): never
         'created_at' => $r['created_at'], 'updated_at' => $r['updated_at'],
     ], $st->fetchAll());
 
-    api_json(['total' => $total, 'page' => $page, 'limit' => $limit, 'results' => $rows]);
+    api_json(api_paginated_response('results', $rows, $total, $page, $limit));
 }
 
 // ---- Audit log endpoint ----
@@ -1120,7 +1345,7 @@ function api_audit_log(PDO $db): never
         'ip' => to_str($r['ip'] ?? ''), 'details' => to_str($r['details'] ?? ''),
     ], $st->fetchAll());
 
-    api_json(['total' => $total, 'page' => $page, 'limit' => $limit, 'entries' => $rows]);
+    api_json(api_paginated_response('entries', $rows, $total, $page, $limit));
 }
 
 // ---- Unassigned IPs endpoint ----
@@ -1180,15 +1405,12 @@ function api_unassigned(PDO $db): never
     if ($page > $pages) $page = $pages;
     $offset = ($page - 1) * $limit;
 
-    api_json([
+    api_json(api_paginated_response('unassigned', array_slice($all, $offset, $limit), $total, $page, $limit, [
         'subnet_id'        => $subnetId,
         'cidr'             => $subnet['cidr'],
         'total_unassigned' => $total,
-        'page'             => $page,
         'pages'            => $pages,
-        'limit'            => $limit,
-        'unassigned'       => array_slice($all, $offset, $limit),
-    ]);
+    ]));
 }
 
 // ---- Bulk write ----
@@ -1317,6 +1539,7 @@ function api_subnets_bulk_create(PDO $db, array $apiKey, array $body, int $bulkL
 
         $cidr        = trim(to_str($item['cidr'] ?? ''));
         $description = trim(to_str($item['description'] ?? ''));
+        $notes       = trim(to_str($item['notes'] ?? ''));
         $siteId      = isset($item['site_id']) ? to_int($item['site_id']) : null;
         $vlanId      = isset($item['vlan_id']) ? to_int($item['vlan_id']) : null;
         $vrfId       = isset($item['vrf_id'])  ? to_int($item['vrf_id'])  : null;
@@ -1347,18 +1570,19 @@ function api_subnets_bulk_create(PDO $db, array $apiKey, array $body, int $bulkL
 
         try {
             $db->prepare(
-                "INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, site_id, vlan_id, vrf_id)
-                 VALUES (:cidr, :ver, :net, :nbin, :pfx, :desc, :sid, :vlan, :vrf)"
+                "INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, notes, site_id, vlan_id, vrf_id)
+                 VALUES (:cidr, :ver, :net, :nbin, :pfx, :desc, :notes, :sid, :vlan, :vrf)"
             )->execute([
-                ':cidr' => $normalized,
-                ':ver'  => $p['version'],
-                ':net'  => $p['network'],
-                ':nbin' => $p['net_bin'],
-                ':pfx'  => $p['prefix'],
-                ':desc' => $description,
-                ':sid'  => $siteId,
-                ':vlan' => $vlanId,
-                ':vrf'  => $vrfId,
+                ':cidr'  => $normalized,
+                ':ver'   => $p['version'],
+                ':net'   => $p['network'],
+                ':nbin'  => $p['net_bin'],
+                ':pfx'   => $p['prefix'],
+                ':desc'  => $description,
+                ':notes' => $notes,
+                ':sid'   => $siteId,
+                ':vlan'  => $vlanId,
+                ':vrf'   => $vrfId,
             ]);
             $newId = (int)$db->lastInsertId();
 
@@ -1534,6 +1758,12 @@ function api_addresses_create(PDO $db, array $apiKey, array $body): never
     ]);
     $newId = (int)$db->lastInsertId();
 
+    // #310: optional tag_ids[] on the create body
+    if (isset($body['tag_ids']) && is_array($body['tag_ids'])) {
+        $tagIds = array_values(array_filter(array_map(fn($v) => (int)to_str($v), $body['tag_ids']), fn($i) => $i > 0));
+        save_tags_for_entity($db, 'address', $newId, $tagIds);
+    }
+
     api_audit($db, $apiKey, 'address.create', 'address', $newId,
         "ip={$n['ip']} subnet_id={$subnetId} status={$status}");
 
@@ -1583,6 +1813,12 @@ function api_addresses_update(PDO $db, array $apiKey, int $id, array $body): nev
         "UPDATE addresses SET hostname = :hn, owner = :ow, note = :nt, grp = :grp, mac = :mac, expires_at = :exp, status = :st WHERE id = :id"
     )->execute([':hn' => $hostname, ':ow' => $owner, ':nt' => $note, ':grp' => $grp,
                 ':mac' => $mac, ':exp' => $expiresAt, ':st' => $status, ':id' => $id]);
+
+    // #310: optional tag_ids[] on the update body — replaces the full set
+    if (array_key_exists('tag_ids', $body) && is_array($body['tag_ids'])) {
+        $tagIds = array_values(array_filter(array_map(fn($v) => (int)to_str($v), $body['tag_ids']), fn($i) => $i > 0));
+        save_tags_for_entity($db, 'address', $id, $tagIds);
+    }
 
     api_audit($db, $apiKey, 'address.update', 'address', $id,
         'ip=' . to_str($addr['ip']) . ' status=' . $status);
@@ -1638,6 +1874,7 @@ function api_subnets_create(PDO $db, array $apiKey, array $body): never
 {
     $cidr        = trim(to_str($body['cidr']        ?? ''));
     $description = trim(to_str($body['description'] ?? ''));
+    $notes       = trim(to_str($body['notes']       ?? ''));
     $siteId      = isset($body['site_id']) ? to_int($body['site_id']) : null;
     $vlanId      = isset($body['vlan_id']) ? to_int($body['vlan_id']) : null;
     $vrfId       = isset($body['vrf_id'])  ? to_int($body['vrf_id'])  : null;
@@ -1674,20 +1911,27 @@ function api_subnets_create(PDO $db, array $apiKey, array $body): never
     if ($inheritedSiteId !== null) $siteId = $inheritedSiteId;
 
     $db->prepare(
-        "INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, site_id, vlan_id, vrf_id)
-         VALUES (:cidr, :ver, :net, :nbin, :pfx, :desc, :sid, :vlan, :vrf)"
+        "INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, notes, site_id, vlan_id, vrf_id)
+         VALUES (:cidr, :ver, :net, :nbin, :pfx, :desc, :notes, :sid, :vlan, :vrf)"
     )->execute([
-        ':cidr' => $p['network'] . '/' . $p['prefix'],
-        ':ver'  => $p['version'],
-        ':net'  => $p['network'],
-        ':nbin' => $p['net_bin'],
-        ':pfx'  => $p['prefix'],
-        ':desc' => $description,
-        ':sid'  => $siteId,
-        ':vlan' => $vlanId,
-        ':vrf'  => $vrfId,
+        ':cidr'  => $p['network'] . '/' . $p['prefix'],
+        ':ver'   => $p['version'],
+        ':net'   => $p['network'],
+        ':nbin'  => $p['net_bin'],
+        ':pfx'   => $p['prefix'],
+        ':desc'  => $description,
+        ':notes' => $notes,
+        ':sid'   => $siteId,
+        ':vlan'  => $vlanId,
+        ':vrf'   => $vrfId,
     ]);
     $newId = (int)$db->lastInsertId();
+
+    // #310: optional tag_ids[] on the create body
+    if (isset($body['tag_ids']) && is_array($body['tag_ids'])) {
+        $tagIds = array_values(array_filter(array_map(fn($v) => (int)to_str($v), $body['tag_ids']), fn($i) => $i > 0));
+        save_tags_for_entity($db, 'subnet', $newId, $tagIds);
+    }
 
     api_audit($db, $apiKey, 'subnet.create', 'subnet', $newId,
         "cidr={$p['network']}/{$p['prefix']}");
@@ -1713,13 +1957,14 @@ function api_subnets_update(PDO $db, array $apiKey, int $id, array $body): never
 {
     if ($id <= 0) api_error(400, 'id is required as a query parameter.');
 
-    $st = $db->prepare("SELECT id, cidr, description, site_id, vlan_id, vlan_fk, vrf_id FROM subnets WHERE id = :id");
+    $st = $db->prepare("SELECT id, cidr, description, notes, site_id, vlan_id, vlan_fk, vrf_id FROM subnets WHERE id = :id");
     $st->execute([':id' => $id]);
     /** @var array<string, mixed>|false $subnet */
     $subnet = $st->fetch();
     if (!$subnet) api_error(404, 'Subnet not found.');
 
     $description = array_key_exists('description', $body) ? trim(to_str($body['description'])) : to_str($subnet['description']);
+    $notes       = array_key_exists('notes', $body)       ? trim(to_str($body['notes']))       : to_str($subnet['notes'] ?? '');
     $siteId = array_key_exists('site_id', $body)
         ? ($body['site_id'] !== null ? to_int($body['site_id']) : null)
         : ($subnet['site_id'] !== null ? to_int($subnet['site_id']) : null);
@@ -1760,8 +2005,14 @@ function api_subnets_update(PDO $db, array $apiKey, int $id, array $body): never
     if ($inheritedSiteId !== null) $siteId = $inheritedSiteId;
 
     $db->prepare(
-        "UPDATE subnets SET description = :desc, site_id = :sid, vlan_id = :vlan, vlan_fk = :vfk, vrf_id = :vrf WHERE id = :id"
-    )->execute([':desc' => $description, ':sid' => $siteId, ':vlan' => $vlanId, ':vfk' => $vlanFk, ':vrf' => $vrfId, ':id' => $id]);
+        "UPDATE subnets SET description = :desc, notes = :notes, site_id = :sid, vlan_id = :vlan, vlan_fk = :vfk, vrf_id = :vrf WHERE id = :id"
+    )->execute([':desc' => $description, ':notes' => $notes, ':sid' => $siteId, ':vlan' => $vlanId, ':vfk' => $vlanFk, ':vrf' => $vrfId, ':id' => $id]);
+
+    // #310: optional tag_ids[] on the update body — replaces the full set
+    if (array_key_exists('tag_ids', $body) && is_array($body['tag_ids'])) {
+        $tagIds = array_values(array_filter(array_map(fn($v) => (int)to_str($v), $body['tag_ids']), fn($i) => $i > 0));
+        save_tags_for_entity($db, 'subnet', $id, $tagIds);
+    }
 
     api_audit($db, $apiKey, 'subnet.update', 'subnet', $id, 'cidr=' . to_str($subnet['cidr']));
 

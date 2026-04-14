@@ -1108,3 +1108,24 @@ td[data-editable].cell-saving{opacity:.5;}
 .map-node-inner[data-indent="264"]{margin-left:264px}
 .map-node-inner[data-indent="286"]{margin-left:286px}
 .map-node-inner[data-indent="308"]{margin-left:308px}
+
+/* --- #449: password show/hide eye-icon button --- */
+/* Wraps a sensitive <input> + sibling .pw-toggle button. The button sits
+   inside the right edge of the input; the input reserves padding-right so
+   the typed value doesn't slide under the icon. The 36px right offset
+   leaves room for password manager icons (1Password, Bitwarden) which
+   paint at right:0–8px. */
+.pw-wrap{position:relative;display:block}
+.pw-wrap .pw-input{padding-right:76px}
+.pw-toggle{position:absolute;right:36px;top:50%;transform:translateY(-50%);background:transparent;border:0;padding:4px;margin:0;cursor:pointer;color:var(--muted);display:inline-flex;align-items:center;justify-content:center;border-radius:4px}
+.pw-toggle:hover,.pw-toggle:focus{color:var(--fg);outline:none}
+.pw-toggle:focus-visible{box-shadow:0 0 0 2px var(--link)}
+.pw-eye{display:inline-block;vertical-align:middle}
+.pw-eye--closed{display:none}
+.pw-toggle[aria-pressed="true"] .pw-eye--open{display:none}
+.pw-toggle[aria-pressed="true"] .pw-eye--closed{display:inline-block}
+body.pw-toggle-hidden .pw-toggle{display:none}
+body.pw-toggle-hidden .pw-wrap .pw-input{padding-right:8px}
+
+/* --- #317: keyboard shortcut hint badge --- */
+.kbd-hint{display:inline-block;margin-left:0.4em;padding:0 0.35em;border:1px solid var(--border);border-radius:3px;font:0.78em/1.4 ui-monospace,Menlo,monospace;color:var(--muted);background:transparent;vertical-align:middle}

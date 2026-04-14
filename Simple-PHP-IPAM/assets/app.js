@@ -151,29 +151,57 @@
         });
     });
 
+    // --- #317: Cmd/Ctrl+N opens the Add Address drawer on addresses.php ---
+    // Gated by <body data-page="addresses"> so the shortcut only fires on the
+    // intended page. Skipped when focus is in a text input/textarea so users
+    // typing an address can still type the letter "n".
+    document.addEventListener("keydown", function(e) {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key !== "n" && e.key !== "N") return;
+      if (document.body.dataset.page !== "addresses") return;
+      var ae = document.activeElement;
+      if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)) return;
+      var trigger = document.querySelector('[data-open-drawer="add-address"]');
+      if (!trigger) return;
+      e.preventDefault();
+      trigger.click();
+      // Auto-focus the IP field once the drawer is open. The drawer-open
+      // logic is synchronous so the field is in the DOM by the time we
+      // ask for it.
+      var ipField = document.querySelector('#add-address input[name="ip"]');
+      if (ipField) ipField.focus();
+    });
+
     // --- Auto-submit selects (data-auto-submit) ---
     document.querySelectorAll("[data-auto-submit]").forEach(function(el) {
       el.addEventListener("change", function() { el.form.submit(); });
     });
 
-    // --- Password show/hide toggle (data-password-toggle="<input id>") ---
-    // Used by settings.php sensitive fields; CSP blocks inline onclick handlers
-    // so the wiring lives here instead. Uses closest() so clicks on the
-    // wrapping <label> text also hit the handler, and falls back on `click`
-    // in addition to `change` so the toggle is resilient to any future
-    // markup reshuffle in settings.php.
-    function applyPasswordToggle(cb) {
-      if (!cb || cb.type !== "checkbox") return;
-      var targetId = cb.getAttribute("data-password-toggle");
-      if (!targetId) return;
-      var input = document.getElementById(targetId);
+    // --- Password show/hide toggle (eye-icon button, #449) ---
+    // <button class="pw-toggle" data-pw-toggle-for="<input-id>"> flips the
+    // referenced password input between type=password and type=text.
+    // Replaced the v2.6.0 inline-onclick + v2.7.0 nested-checkbox approaches
+    // after both regressed in real browsers (containerized Playwright passed
+    // but the deployed UI did not flip). Stays on type=password by default
+    // so password manager autofill keeps working.
+    document.addEventListener("click", function(e) {
+      var btn = e.target && e.target.closest ? e.target.closest("button.pw-toggle[data-pw-toggle-for]") : null;
+      if (!btn) return;
+      var input = document.getElementById(btn.getAttribute("data-pw-toggle-for"));
       if (!input) return;
-      input.type = cb.checked ? "text" : "password";
-    }
-    document.addEventListener("change", function(e) {
-      var cb = e.target && e.target.closest ? e.target.closest("input[type=checkbox][data-password-toggle]") : null;
-      applyPasswordToggle(cb);
+      var willShow = input.type === "password";
+      input.type = willShow ? "text" : "password";
+      btn.setAttribute("aria-pressed", willShow ? "true" : "false");
+      btn.setAttribute("aria-label", willShow ? "Hide password" : "Show password");
     });
+    // Per-browser opt-out: users whose password manager already provides a
+    // visibility toggle can hide the IPAM eye buttons by setting
+    // localStorage['ipam-pw-toggle-hidden'] = '1' from devtools.
+    try {
+      if (window.localStorage && localStorage.getItem("ipam-pw-toggle-hidden") === "1") {
+        document.body.classList.add("pw-toggle-hidden");
+      }
+    } catch (_) { /* localStorage may be blocked; non-fatal */ }
 
     // --- Confirm dialogs on forms (data-confirm on <form>) ---
     document.addEventListener("submit", function(e) {

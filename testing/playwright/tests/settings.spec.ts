@@ -97,19 +97,23 @@ test.describe('Settings page', () => {
     }
   });
 
-  test('#440 password show toggle flips sensitive input type', async () => {
-    // Regression for the nested-<label> bug in v2.6.0: clicking "show" on a
-    // sensitive field used to tick the checkbox but leave the input masked.
+  test('#449 password show eye-button flips sensitive input type', async () => {
+    // Regression for the v2.6.0 inline-onclick and v2.7.0 nested-<label>
+    // checkbox patterns. v2.8.0 replaces both with a sibling <button> that
+    // flips the input type and toggles aria-pressed.
     await page.goto(appUrl('settings.php'));
     const secret = page.locator('input[name="k_oidc__client_secret"]');
-    const toggle = page.locator('input[data-password-toggle="f-k_oidc__client_secret"]');
+    const toggle = page.locator('button.pw-toggle[data-pw-toggle-for="f-k_oidc__client_secret"]');
     await expect(secret).toHaveAttribute('type', 'password');
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
     await secret.fill('round-trip-check');
-    await toggle.check();
+    await toggle.click();
     await expect(secret).toHaveAttribute('type', 'text');
     await expect(secret).toHaveValue('round-trip-check');
-    await toggle.uncheck();
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    await toggle.click();
     await expect(secret).toHaveAttribute('type', 'password');
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
     // Do not submit — leave sensitive field blank so we don't rewrite the
     // stored secret on dev. The sensitive POST path ignores blank values.
     await secret.fill('');
