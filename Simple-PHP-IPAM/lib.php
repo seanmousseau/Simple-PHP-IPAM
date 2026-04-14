@@ -420,6 +420,642 @@ function audit_export(PDO $db, string $what, string $details = ''): void
     audit($db, "export.$what", 'system', null, $details);
 }
 
+/* ---------------- Settings (v2.6.0) ---------------- */
+
+/**
+ * Authoritative registry of database-backed settings. Single source of truth for
+ * what settings exist, how to render them, and what they default to. Consumed by
+ * the v2.6.0-settings migration (seeds the table), ipam_setting() (defaults), and
+ * settings.php (form rendering).
+ *
+ * Fields per definition:
+ *   - label       : human label for the admin UI
+ *   - description : help text shown under the input
+ *   - type        : string|int|bool|json
+ *   - group       : oidc|alert|branding|update_check|security
+ *   - default     : value returned when the table and $config have no entry
+ *   - sensitive   : mask in UI and audit details
+ *   - config_key  : string (flat $config key) or array of keys (nested path) for
+ *                   v2.6.0 $config back-compat fallback; null if no fallback.
+ *
+ * Typed loosely (mixed values) so callers can still be defensive about the
+ * shape; the precise structure is documented above.
+ *
+ * @return array<string, array<string, mixed>>
+ */
+function ipam_setting_definitions(): array
+{
+    return [
+        // --- Branding ---
+        'branding.site_name' => [
+            'label'       => 'Application name',
+            'description' => 'Shown in the browser tab, nav bar, and login page.',
+            'type'        => 'string',
+            'group'       => 'branding',
+            'default'     => 'Simple PHP IPAM',
+            'sensitive'   => false,
+            'config_key'  => 'app_name',
+        ],
+        'branding.timezone' => [
+            'label'       => 'Display timezone',
+            'description' => 'PHP timezone identifier (e.g. America/Toronto). Timestamps are stored as UTC; this converts them for display only.',
+            'type'        => 'string',
+            'group'       => 'branding',
+            'default'     => 'UTC',
+            'sensitive'   => false,
+            'config_key'  => 'timezone',
+        ],
+
+        // --- Security ---
+        'security.session_idle_seconds' => [
+            'label'       => 'Session idle timeout (seconds)',
+            'description' => 'Users are logged out after this many seconds of inactivity. Minimum 60.',
+            'type'        => 'int',
+            'group'       => 'security',
+            'default'     => 1800,
+            'sensitive'   => false,
+            'config_key'  => 'session_idle_seconds',
+            'min'         => 60,
+        ],
+        'security.login_max_attempts' => [
+            'label'       => 'Max failed login attempts',
+            'description' => 'Lock out an IP after this many failed attempts within the window. Minimum 1.',
+            'type'        => 'int',
+            'group'       => 'security',
+            'default'     => 5,
+            'sensitive'   => false,
+            'config_key'  => 'login_max_attempts',
+            'min'         => 1,
+        ],
+        'security.login_lockout_seconds' => [
+            'label'       => 'Login lockout window (seconds)',
+            'description' => 'Time window during which failed attempts are counted toward lockout. Minimum 60.',
+            'type'        => 'int',
+            'group'       => 'security',
+            'default'     => 900,
+            'sensitive'   => false,
+            'config_key'  => 'login_lockout_seconds',
+            'min'         => 60,
+        ],
+
+        // --- Alerting ---
+        'alert.email' => [
+            'label'       => 'Alert email recipient',
+            'description' => 'Address to notify for utilization alerts. Leave empty to disable.',
+            'type'        => 'string',
+            'group'       => 'alert',
+            'default'     => '',
+            'sensitive'   => false,
+            'config_key'  => 'alert_email',
+        ],
+        'alert.util_warn_pct' => [
+            'label'       => 'Utilization warn threshold (%)',
+            'description' => 'Trigger a warning alert when subnet utilization reaches this percent.',
+            'type'        => 'int',
+            'group'       => 'alert',
+            'default'     => 80,
+            'sensitive'   => false,
+            'config_key'  => 'alert_util_warn_pct',
+            'min'         => 0,
+            'max'         => 100,
+        ],
+        'alert.util_crit_pct' => [
+            'label'       => 'Utilization critical threshold (%)',
+            'description' => 'Trigger a critical alert when subnet utilization reaches this percent.',
+            'type'        => 'int',
+            'group'       => 'alert',
+            'default'     => 95,
+            'sensitive'   => false,
+            'config_key'  => 'alert_util_crit_pct',
+            'min'         => 0,
+            'max'         => 100,
+        ],
+        'alert.interval_seconds' => [
+            'label'       => 'Alert check interval (seconds)',
+            'description' => 'Minimum seconds between utilization alert evaluations. Minimum 60.',
+            'type'        => 'int',
+            'group'       => 'alert',
+            'default'     => 3600,
+            'sensitive'   => false,
+            'config_key'  => 'alert_interval_seconds',
+            'min'         => 60,
+        ],
+
+        // --- Update check ---
+        'update_check.enabled' => [
+            'label'       => 'Check for updates',
+            'description' => 'Fetch release info from GitHub and show a banner when a newer version is available.',
+            'type'        => 'bool',
+            'group'       => 'update_check',
+            'default'     => true,
+            'sensitive'   => false,
+            'config_key'  => ['update_check', 'enabled'],
+        ],
+        'update_check.ttl_seconds' => [
+            'label'       => 'Update check cache TTL (seconds)',
+            'description' => 'How long to cache the update check result before re-fetching. Minimum 60.',
+            'type'        => 'int',
+            'group'       => 'update_check',
+            'default'     => 86400,
+            'sensitive'   => false,
+            'config_key'  => ['update_check', 'ttl_seconds'],
+            'min'         => 60,
+        ],
+        'update_check.notify_prerelease' => [
+            'label'       => 'Notify on prereleases',
+            'description' => 'Also alert for alpha, beta, and RC builds.',
+            'type'        => 'bool',
+            'group'       => 'update_check',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => ['update_check', 'notify_prerelease'],
+        ],
+
+        // --- Login protection (bot/abuse mitigation on the login form) ---
+        'login_protection.method' => [
+            'label'       => 'Login protection method',
+            'description' => "Bot/abuse mitigation on the login form. One of: '' (off), 'honeypot', 'time_check', 'turnstile', 'hcaptcha', 'recaptcha', 'friendly_captcha'.",
+            'type'        => 'string',
+            'group'       => 'login_protection',
+            'default'     => '',
+            'sensitive'   => false,
+            'config_key'  => ['login_protection', 'method'],
+        ],
+        'login_protection.site_key' => [
+            'label'       => 'Login protection site key',
+            'description' => 'Widget site key (Turnstile / hCaptcha / reCAPTCHA / Friendly Captcha).',
+            'type'        => 'string',
+            'group'       => 'login_protection',
+            'default'     => '',
+            'sensitive'   => false,
+            'config_key'  => ['login_protection', 'site_key'],
+        ],
+        'login_protection.secret_key' => [
+            'label'       => 'Login protection secret key',
+            'description' => 'Widget secret key used for backend verification.',
+            'type'        => 'string',
+            'group'       => 'login_protection',
+            'default'     => '',
+            'sensitive'   => true,
+            'config_key'  => ['login_protection', 'secret_key'],
+        ],
+        'login_protection.min_seconds' => [
+            'label'       => 'Login time-check minimum (seconds)',
+            'description' => "Minimum seconds between page load and submit when method is 'time_check'.",
+            'type'        => 'int',
+            'group'       => 'login_protection',
+            'default'     => 3,
+            'sensitive'   => false,
+            'config_key'  => ['login_protection', 'min_seconds'],
+            'min'         => 0,
+        ],
+        'login_protection.version' => [
+            'label'       => 'reCAPTCHA version',
+            'description' => "reCAPTCHA widget version: 2 (checkbox) or 3 (invisible). Only applies when method is 'recaptcha'.",
+            'type'        => 'int',
+            'group'       => 'login_protection',
+            'default'     => 2,
+            'sensitive'   => false,
+            'config_key'  => ['login_protection', 'version'],
+            'min'         => 2,
+            'max'         => 3,
+        ],
+
+        // --- reCAPTCHA Enterprise backend verification ---
+        'recaptcha_enterprise.enabled' => [
+            'label'       => 'reCAPTCHA Enterprise enabled',
+            'description' => "Use the reCAPTCHA Enterprise API for backend verification. Requires login_protection.method = 'recaptcha'.",
+            'type'        => 'bool',
+            'group'       => 'recaptcha_enterprise',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => ['recaptcha_enterprise', 'enabled'],
+        ],
+        'recaptcha_enterprise.project_id' => [
+            'label'       => 'GCP project ID',
+            'description' => 'Google Cloud project that owns the reCAPTCHA Enterprise key.',
+            'type'        => 'string',
+            'group'       => 'recaptcha_enterprise',
+            'default'     => '',
+            'sensitive'   => false,
+            'config_key'  => ['recaptcha_enterprise', 'project_id'],
+        ],
+        'recaptcha_enterprise.api_key' => [
+            'label'       => 'GCP API key',
+            'description' => 'Server-side API key used to call the reCAPTCHA Enterprise API.',
+            'type'        => 'string',
+            'group'       => 'recaptcha_enterprise',
+            'default'     => '',
+            'sensitive'   => true,
+            'config_key'  => ['recaptcha_enterprise', 'api_key'],
+        ],
+        'recaptcha_enterprise.expected_action' => [
+            'label'       => 'Expected action',
+            'description' => "Action name emitted by the widget, matched server-side during verification.",
+            'type'        => 'string',
+            'group'       => 'recaptcha_enterprise',
+            'default'     => 'login',
+            'sensitive'   => false,
+            'config_key'  => ['recaptcha_enterprise', 'expected_action'],
+        ],
+        'recaptcha_enterprise.score_threshold' => [
+            'label'       => 'Score threshold',
+            'description' => "Minimum risk score to accept (0.0–1.0). Stored as a string so the 0.5 default round-trips cleanly.",
+            'type'        => 'string',
+            'group'       => 'recaptcha_enterprise',
+            'default'     => '0.5',
+            'sensitive'   => false,
+            'config_key'  => ['recaptcha_enterprise', 'score_threshold'],
+        ],
+
+        // --- OIDC ---
+        'oidc.enabled' => [
+            'label'       => 'OIDC enabled',
+            'description' => 'Turn Authorization Code + PKCE SSO on or off.',
+            'type'        => 'bool',
+            'group'       => 'oidc',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => ['oidc', 'enabled'],
+        ],
+        'oidc.display_name' => [
+            'label'       => 'OIDC button label',
+            'description' => 'Label shown on the login page SSO button (e.g. Okta, Azure AD).',
+            'type'        => 'string',
+            'group'       => 'oidc',
+            'default'     => 'SSO',
+            'sensitive'   => false,
+            'config_key'  => ['oidc', 'display_name'],
+        ],
+        'oidc.client_id' => [
+            'label'       => 'OIDC client ID',
+            'description' => 'Client identifier issued by the identity provider.',
+            'type'        => 'string',
+            'group'       => 'oidc',
+            'default'     => '',
+            'sensitive'   => false,
+            'config_key'  => ['oidc', 'client_id'],
+        ],
+        'oidc.client_secret' => [
+            'label'       => 'OIDC client secret',
+            'description' => 'Client secret issued by the identity provider. Stored in the database.',
+            'type'        => 'string',
+            'group'       => 'oidc',
+            'default'     => '',
+            'sensitive'   => true,
+            'config_key'  => ['oidc', 'client_secret'],
+        ],
+        'oidc.discovery_url' => [
+            'label'       => 'OIDC discovery URL',
+            'description' => 'Base URL of the IdP (/.well-known/openid-configuration is appended automatically).',
+            'type'        => 'string',
+            'group'       => 'oidc',
+            'default'     => '',
+            'sensitive'   => false,
+            'config_key'  => ['oidc', 'discovery_url'],
+        ],
+        'oidc.redirect_uri' => [
+            'label'       => 'OIDC redirect URI',
+            'description' => 'Must match exactly what is registered in the IdP application settings.',
+            'type'        => 'string',
+            'group'       => 'oidc',
+            'default'     => '',
+            'sensitive'   => false,
+            'config_key'  => ['oidc', 'redirect_uri'],
+        ],
+        'oidc.scopes' => [
+            'label'       => 'OIDC scopes',
+            'description' => "Space-separated scopes. 'openid' is required; 'email' is needed for auto-provisioning.",
+            'type'        => 'string',
+            'group'       => 'oidc',
+            'default'     => 'openid email profile',
+            'sensitive'   => false,
+            'config_key'  => ['oidc', 'scopes'],
+        ],
+        'oidc.auto_link' => [
+            'label'       => 'OIDC auto-link existing accounts',
+            'description' => 'On first OIDC login, link the incoming identity to a matching local account by username or email.',
+            'type'        => 'bool',
+            'group'       => 'oidc',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => ['oidc', 'auto_link'],
+        ],
+        'oidc.auto_provision' => [
+            'label'       => 'OIDC auto-provision users',
+            'description' => 'Create a new local account on first OIDC login when no existing user can be matched. Implies auto-link.',
+            'type'        => 'bool',
+            'group'       => 'oidc',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => ['oidc', 'auto_provision'],
+        ],
+        'oidc.default_role' => [
+            'label'       => 'OIDC default role',
+            'description' => "Role assigned to auto-provisioned users. 'readonly' is recommended.",
+            'type'        => 'string',
+            'group'       => 'oidc',
+            'default'     => 'readonly',
+            'sensitive'   => false,
+            'config_key'  => ['oidc', 'default_role'],
+        ],
+    ];
+}
+
+/**
+ * Ordered list of setting groups for the admin UI.
+ *
+ * @return array<string, array<string, mixed>>
+ */
+function ipam_setting_groups(): array
+{
+    return [
+        'branding'             => ['label' => 'Branding',             'description' => 'Display name and timezone shown across the UI.'],
+        'security'             => ['label' => 'Security',             'description' => 'Session lifetime and login lockout policy.'],
+        'alert'                => ['label' => 'Alerting',             'description' => 'Subnet utilization email alerts.'],
+        'update_check'         => ['label' => 'Update checker',       'description' => 'GitHub release checker for the in-app upgrade banner.'],
+        'login_protection'     => ['label' => 'Login protection',     'description' => 'Bot and abuse mitigation on the login form.'],
+        'recaptcha_enterprise' => ['label' => 'reCAPTCHA Enterprise', 'description' => "Backend verification via Google's reCAPTCHA Enterprise API."],
+        'oidc'                 => ['label' => 'OIDC / SSO',           'description' => 'OpenID Connect single sign-on.'],
+    ];
+}
+
+/**
+ * Look up a value in $GLOBALS['config'] given either a flat key or a nested path.
+ * Used by the v2.6.0 back-compat fallback in ipam_setting() and by the settings
+ * table seeder. Returns null when the key is not present.
+ *
+ * @param array<array-key, mixed> $config
+ * @param string|array<array-key, mixed>|null $configKey
+ */
+function ipam_setting_config_fallback(array $config, string|array|null $configKey): mixed
+{
+    if ($configKey === null) return null;
+    if (is_string($configKey)) {
+        return array_key_exists($configKey, $config) ? $config[$configKey] : null;
+    }
+    $cursor = $config;
+    foreach ($configKey as $segment) {
+        if (!is_string($segment) && !is_int($segment)) return null;
+        if (!is_array($cursor) || !array_key_exists($segment, $cursor)) return null;
+        $cursor = $cursor[$segment];
+    }
+    return $cursor;
+}
+
+/**
+ * Encode a PHP value for storage in the settings.value TEXT column, given a type.
+ */
+function ipam_setting_encode(mixed $value, string $type): string
+{
+    switch ($type) {
+        case 'bool':
+            return ($value === true || $value === 1 || $value === '1' || (is_string($value) && strtolower($value) === 'true')) ? '1' : '0';
+        case 'int':
+            return (string)(int)(is_numeric($value) ? $value : 0);
+        case 'json':
+            $encoded = json_encode($value);
+            return is_string($encoded) ? $encoded : 'null';
+        default:
+            return is_scalar($value) ? (string)$value : '';
+    }
+}
+
+/**
+ * Decode a value read from the settings.value column back to its PHP type. On
+ * JSON decode failure returns $default and logs a warning.
+ */
+function ipam_setting_decode(?string $stored, string $type, mixed $default): mixed
+{
+    if ($stored === null) return $default;
+    switch ($type) {
+        case 'bool':
+            return ($stored === '1' || strtolower($stored) === 'true');
+        case 'int':
+            return (int)$stored;
+        case 'json':
+            $decoded = json_decode($stored, true);
+            if ($decoded === null && strtolower(trim($stored)) !== 'null') {
+                error_log("ipam_setting_decode: invalid JSON in settings row, returning default");
+                return $default;
+            }
+            return $decoded;
+        default:
+            return $stored;
+    }
+}
+
+/**
+ * Infer a type string from a PHP value. Used when callers write without an
+ * explicit type hint.
+ */
+function ipam_setting_infer_type(mixed $value): string
+{
+    if (is_bool($value)) return 'bool';
+    if (is_int($value))  return 'int';
+    if (is_array($value)) return 'json';
+    return 'string';
+}
+
+/**
+ * Read a setting. Fallback chain: settings table -> $config (v2.6 back-compat)
+ * -> registry default -> $default argument. Never throws. Results are memoised
+ * via ipam_setting_cache_storage() so repeated reads in a single request don't
+ * re-query the DB; ipam_setting_set() invalidates the relevant entry.
+ */
+function ipam_setting(string $key, mixed $default = null): mixed
+{
+    $cached = ipam_setting_cache_storage($key);
+    if ($cached !== '__IPAM_SETTING_MISS__') return $cached;
+
+    $definitions = ipam_setting_definitions();
+    $def         = $definitions[$key] ?? null;
+    $type        = is_array($def) && is_string($def['type'] ?? null) ? $def['type'] : 'string';
+    // Precedence: DB → config → registry default → caller $default. A caller
+    // default only matters for unregistered keys; registered keys always fall
+    // through to the registry's authoritative default.
+    $fallback = ($def !== null && array_key_exists('default', $def))
+        ? $def['default']
+        : $default;
+
+    try {
+        $db = $GLOBALS['db'] ?? null;
+        if ($db instanceof PDO) {
+            $st = $db->prepare("SELECT value, type FROM settings WHERE key = :k");
+            $st->execute([':k' => $key]);
+            $row = $st->fetch();
+            if (is_array($row)) {
+                $storedType = is_string($row['type'] ?? null) && $row['type'] !== '' ? $row['type'] : $type;
+                $value      = is_string($row['value'] ?? null) ? $row['value'] : null;
+                $decoded    = ipam_setting_decode($value, $storedType, $fallback);
+                ipam_setting_cache_storage($key, false, $decoded, true);
+                return $decoded;
+            }
+        }
+    } catch (\Throwable $e) {
+        error_log("ipam_setting: read failed for key {$key}: " . $e->getMessage());
+    }
+
+    $config = $GLOBALS['config'] ?? null;
+    if (is_array($config) && $def !== null) {
+        $configKey = $def['config_key'] ?? null;
+        if ($configKey !== null && (is_string($configKey) || is_array($configKey))) {
+            $cfgVal = ipam_setting_config_fallback($config, $configKey);
+            if ($cfgVal !== null) {
+                ipam_setting_cache_storage($key, false, $cfgVal, true);
+                return $cfgVal;
+            }
+        }
+    }
+
+    ipam_setting_cache_storage($key, false, $fallback, true);
+    return $fallback;
+}
+
+/**
+ * Write a setting. Infers type from $value unless the registry defines one.
+ * Produces a `setting.update` audit entry with old/new values (masked for
+ * sensitive keys). Invalidates the per-request cache for the key.
+ */
+function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = null): void
+{
+    $definitions = ipam_setting_definitions();
+    $def         = $definitions[$key] ?? null;
+    $type        = (is_array($def) && is_string($def['type'] ?? null) && $def['type'] !== '')
+        ? $def['type']
+        : ipam_setting_infer_type($value);
+    $sensitive   = is_array($def) && !empty($def['sensitive']);
+
+    $encoded = ipam_setting_encode($value, $type);
+
+    $oldRaw = null;
+    $oldType = $type;
+    $st = $db->prepare("SELECT value, type FROM settings WHERE key = :k");
+    $st->execute([':k' => $key]);
+    $prev = $st->fetch();
+    if (is_array($prev)) {
+        $oldRaw  = is_string($prev['value'] ?? null) ? $prev['value'] : null;
+        $oldType = is_string($prev['type'] ?? null) && $prev['type'] !== '' ? $prev['type'] : $type;
+    }
+
+    $up = $db->prepare(
+        "INSERT INTO settings (key, value, type, updated_at, updated_by)
+         VALUES (:k, :v, :t, datetime('now'), :u)
+         ON CONFLICT(key) DO UPDATE SET
+             value = excluded.value,
+             type = excluded.type,
+             updated_at = datetime('now'),
+             updated_by = excluded.updated_by"
+    );
+    $up->execute([
+        ':k' => $key,
+        ':v' => $encoded,
+        ':t' => $type,
+        ':u' => $userId,
+    ]);
+
+    $details = [
+        'key' => $key,
+        'old' => $sensitive ? '***' : ipam_setting_decode($oldRaw, $oldType, null),
+        'new' => $sensitive ? '***' : ipam_setting_decode($encoded, $type, null),
+    ];
+    $encodedDetails = json_encode($details);
+    audit($db, 'setting.update', 'setting', null, is_string($encodedDetails) ? $encodedDetails : $key);
+
+    // Bust the per-request cache by forcing a re-read on next call.
+    // (ipam_setting() uses a function-level static, so we can't reach into it
+    // directly; instead the next read will use the new DB row because the
+    // cache starts empty on each request and callers typically read after
+    // writing in different requests.)
+    ipam_setting_cache_bust($key);
+}
+
+/**
+ * Bust the per-request cache for ipam_setting(). Pass a key to clear a single
+ * entry, or omit to clear all entries. Also exposed so tests can reset state
+ * between assertions.
+ */
+function ipam_setting_cache_bust(?string $key = null): void
+{
+    ipam_setting_cache_storage($key, true);
+}
+
+/**
+ * Internal cache backing store for ipam_setting(). Keeps the static array
+ * outside ipam_setting()'s own scope so ipam_setting_set() and
+ * ipam_setting_cache_bust() can invalidate entries. Not intended for direct
+ * use by application code.
+ *
+ * @internal
+ */
+function ipam_setting_cache_storage(
+    ?string $key = null,
+    bool $reset = false,
+    mixed $setValue = null,
+    bool $doSet = false
+): mixed {
+    static $cache = [];
+    if ($reset) {
+        if ($key === null) {
+            $cache = [];
+        } else {
+            unset($cache[$key]);
+        }
+        return null;
+    }
+    if ($doSet && $key !== null) {
+        $cache[$key] = $setValue;
+        return $setValue;
+    }
+    if ($key !== null && array_key_exists($key, $cache)) {
+        return $cache[$key];
+    }
+    return '__IPAM_SETTING_MISS__';
+}
+
+/**
+ * @return array<string, mixed> All known setting keys mapped to their effective
+ *                              values via ipam_setting(). Used by the admin UI.
+ */
+function ipam_setting_all(): array
+{
+    $out = [];
+    foreach (array_keys(ipam_setting_definitions()) as $key) {
+        $out[$key] = ipam_setting($key);
+    }
+    return $out;
+}
+
+/**
+ * Resolve where a setting's current value is coming from: 'db', 'config', or
+ * 'default'. Used to render the source badge on settings.php. Queries the
+ * database directly rather than through the cached helper so the badge
+ * reflects ground truth.
+ *
+ * @return 'db'|'config'|'default'
+ */
+function ipam_setting_source(PDO $db, string $key): string
+{
+    try {
+        $st = $db->prepare("SELECT 1 FROM settings WHERE key = :k");
+        $st->execute([':k' => $key]);
+        if ($st->fetchColumn() !== false) return 'db';
+    } catch (\Throwable) {
+        // Fall through to config/default classification.
+    }
+
+    $definitions = ipam_setting_definitions();
+    $def = $definitions[$key] ?? null;
+    $config = $GLOBALS['config'] ?? null;
+    if (is_array($config) && $def !== null) {
+        $cfgKey = $def['config_key'] ?? null;
+        if ($cfgKey !== null && (is_string($cfgKey) || is_array($cfgKey))) {
+            if (ipam_setting_config_fallback($config, $cfgKey) !== null) return 'config';
+        }
+    }
+    return 'default';
+}
+
 /* ---------------- History ---------------- */
 
 /**
@@ -2742,11 +3378,11 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=2.5.1'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=2.6.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=2.5.1'></script>";
+    echo "<script defer src='assets/app.js?v=2.6.0'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
@@ -2779,6 +3415,8 @@ function page_header(string $title, array $opts = []): void
             echo "<a class='nav-dropdown-item' href='import_csv.php'>⬆ Import CSV</a>";
             echo "<a class='nav-dropdown-item' href='import_arp.php'>📡 ARP Import</a>";
             echo "<a class='nav-dropdown-item' href='db_tools.php'>🗄 Database Tools</a>";
+            echo "<hr class='nav-dropdown-divider'>";
+            echo "<a class='nav-dropdown-item' href='settings.php'>⚙ Settings</a>";
             echo "</div></div>";
         }
     } else {
@@ -2826,6 +3464,7 @@ function page_header(string $title, array $opts = []): void
             echo "<a href='api_keys.php'>&#128273; API Keys</a>";
             echo "<a href='import_csv.php'>&#8679; Import CSV</a>";
             echo "<a href='db_tools.php'>&#128444; Database Tools</a>";
+            echo "<a href='settings.php'>&#9881; Settings</a>";
         }
         echo "<hr>";
         echo "<span class='nav-drawer-section'>Account</span>";

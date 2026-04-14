@@ -156,6 +156,19 @@
       el.addEventListener("change", function() { el.form.submit(); });
     });
 
+    // --- Password show/hide toggle (data-password-toggle="<input id>") ---
+    // Used by settings.php sensitive fields; CSP blocks inline onclick handlers
+    // so the wiring lives here instead.
+    document.addEventListener("change", function(e) {
+      var cb = e.target;
+      if (!(cb instanceof HTMLInputElement) || cb.type !== "checkbox") return;
+      var targetId = cb.dataset.passwordToggle;
+      if (!targetId) return;
+      var input = document.getElementById(targetId);
+      if (!input) return;
+      input.type = cb.checked ? "text" : "password";
+    });
+
     // --- Confirm dialogs on forms (data-confirm on <form>) ---
     document.addEventListener("submit", function(e) {
       var form = e.target;

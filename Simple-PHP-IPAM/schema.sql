@@ -298,3 +298,12 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   version    TEXT NOT NULL UNIQUE,
   applied_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT,
+  type       TEXT NOT NULL DEFAULT 'string'
+             CHECK(type IN ('string','int','bool','json')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+);

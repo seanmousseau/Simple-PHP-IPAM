@@ -24,6 +24,7 @@ const PAGES = [
   'bulk_update.php',
   'change_password.php',
   'scan_history.php',
+  'settings.php',
 ];
 
 // Benign warnings we deliberately tolerate — empty for now. Add with caution.

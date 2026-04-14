@@ -1,6 +1,56 @@
 # Configuration Reference
 
-All application settings live in `config.php` in the application root. This file is preserved automatically during upgrades — you will never need to re-apply your settings after an upgrade.
+## Where configuration lives
+
+Starting in **v2.6.0**, configuration lives in two places:
+
+1. **`config.php`** — bootstrap keys only. These are values the app needs before it can open the database, and they will always live on disk: `db_path`, `session_name`, `proxy_trust`, and the HTTPS / base URL settings. Edit by hand on the server.
+2. **Database (`settings` table)** — everything else. Edited through the admin UI under **⚙ Admin → Settings**. Reads are cached per-request.
+
+When the app reads a setting it checks each source in order and returns the first match: `settings` table row → `config.php` value at the same key (or nested path) → default from `ipam_setting_definitions()`. The admin page shows a source badge next to every setting — 🟢 Database, 🟡 config.php, or ⚪ Default — so you can see where the effective value comes from.
+
+### Transition from `config.php` (v2.6 → v2.7 → v3.0)
+
+- **v2.6.0** — the migration seeds every registered setting into the `settings` table using the current `config.php` value (or the registry default). You can edit in either place; the database wins.
+- **v2.7.0** — each subsystem (OIDC, alerting, branding, update checker, security) stops reading from `config.php` directly and uses `ipam_setting()` instead. `config.php` continues to be accepted as a fallback.
+- **v3.0.0** — the `config.php` fallback is removed. Only bootstrap keys are still read from the file. An upgrade-time migration copies any stragglers into the database.
+
+### Settings reference (database-backed)
+
+The keys below are seeded into the `settings` table by the v2.6.0 migration and can be edited at **⚙ Admin → Settings**. Generated from `ipam_setting_definitions()` in `lib.php`; if it drifts from the registry, the registry is authoritative.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `branding.site_name` | string | `Simple PHP IPAM` | App display name in browser tab, nav bar, and login page. |
+| `branding.timezone` | string | `UTC` | PHP timezone identifier used to render timestamps. |
+| `security.session_idle_seconds` | int | `1800` | Session idle timeout before auto-logout. |
+| `security.login_max_attempts` | int | `5` | Failed logins per window before IP lockout. |
+| `security.login_lockout_seconds` | int | `900` | Lockout window length. |
+| `alert.email` | string | *(empty)* | Destination for utilization alert emails. Empty disables alerts. |
+| `alert.util_warn_pct` | int | `80` | Subnet utilization warn threshold. |
+| `alert.util_crit_pct` | int | `95` | Subnet utilization critical threshold. |
+| `alert.interval_seconds` | int | `3600` | Minimum seconds between utilization alert checks. |
+| `update_check.enabled` | bool | `true` | Fetch GitHub release info and show the update banner. |
+| `update_check.ttl_seconds` | int | `86400` | Update check cache TTL. |
+| `update_check.notify_prerelease` | bool | `false` | Also alert for alpha / beta / RC builds. |
+| `oidc.enabled` | bool | `false` | Master switch for Authorization Code + PKCE SSO. |
+| `oidc.display_name` | string | `SSO` | Label on the login page SSO button. |
+| `oidc.client_id` | string | *(empty)* | OIDC client identifier. |
+| `oidc.client_secret` | **sensitive** string | *(empty)* | OIDC client secret. Masked in the UI and in audit details. |
+| `oidc.discovery_url` | string | *(empty)* | Base URL of the IdP. |
+| `oidc.redirect_uri` | string | *(empty)* | Must match the URI registered with the IdP exactly. |
+| `oidc.scopes` | string | `openid email profile` | Space-separated scopes. |
+| `oidc.auto_link` | bool | `false` | Link incoming OIDC identities to matching local accounts on first login. |
+| `oidc.auto_provision` | bool | `false` | Create a new local account on first OIDC login. Implies auto-link. |
+| `oidc.default_role` | string | `readonly` | Role assigned to auto-provisioned users. |
+
+---
+
+## Legacy reference (`config.php`)
+
+The rest of this document describes the full `config.php` file. In v2.6.0 every non-bootstrap key here is also editable from the admin UI, and the UI value takes precedence. This section will shrink to just the bootstrap keys in v3.0.0.
+
+All non-bootstrap settings currently still read from `config.php` when no database row exists. This file is preserved automatically during upgrades — you will never need to re-apply your settings after an upgrade.
 
 New configuration keys are added automatically when you upgrade: on the first page load after an upgrade, any missing keys are appended to `config.php` with their default values. An admin notice is shown once to confirm what was added.
 

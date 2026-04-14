@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [2.6.0] - 2026-04-14
+
+Settings-in-database groundwork release. Introduces a new `settings` table, a typed read/write helper, and an admin UI under ⚙ Admin → Settings. `config.php` continues to work as a fallback for every non-bootstrap key — v2.7.0 rewires each subsystem to read from the database, and v3.0.0 removes the `config.php` fallback entirely.
+
+### Added
+- **#369** — `settings` table (`key`, `value`, `type`, `updated_at`, `updated_by`) added via new `2.6.0-settings` migration. Fresh installs also get the table from `schema.sql`. The migration is idempotent and seeds every registry key from the live `config.php` on first run, preserving any values operators later edit directly in the database.
+- **#370** — `ipam_setting()` / `ipam_setting_set()` / `ipam_setting_all()` helpers in `lib.php`, plus the authoritative `ipam_setting_definitions()` registry that enumerates every tunable and its type, group, default, sensitivity, and `config.php` fallback path. Reads fall through: database → `config.php` → registry default → caller default. Writes produce `setting.update` audit entries with masked old/new values for sensitive keys. Includes a per-request cache cleared by `ipam_setting_cache_bust()`.
+- **#371** — New admin page `settings.php` (⚙ Admin → Settings) that renders every registered setting grouped by namespace (Branding, Security, Alerting, Update checker, OIDC / SSO) as card forms with per-type inputs (text / number / checkbox / password with show-toggle / JSON textarea). Each row shows a source badge — 🟢 Database, 🟡 config.php, ⚪ Default — so the transition state is explicit. readonly users and demo mode are blocked at the top of the handler.
+- **docs/configuration.md** — new "Where configuration lives" section documenting the two sources, read precedence, and the v2.6 → v2.7 → v3.0 transition plan.
+- **PHPUnit** — new `tests/SettingsTest.php` with 15 tests covering registry shape, all four type round-trips, `$config` fallback, default path, invalid-JSON safety, audit-entry uniqueness, sensitive-key masking, cache busting, source classification, and flat/nested config lookup. `tests/MigrationTest.php` gains `testSettingsMigrationSeedsAndIsIdempotent` asserting the table is created, every registry key is seeded, and a user-written value survives a second migration run.
+
+### Changed
+- **Admin dropdown** — "Settings" added as a new entry under ⚙ Admin in both the desktop dropdown and the mobile drawer.
+- **Configuration** — administrators can now edit most operational settings from the web UI. `config.php` remains the authoritative source for bootstrap keys (`db_path`, `session_name`, `proxy_trust`, HTTPS enforcement) forever.
+
+### Deprecated
+- Reading non-bootstrap configuration from `config.php` is deprecated. The fallback still works in v2.6.0 and v2.7.0, and will be removed in v3.0.0. See `docs/configuration.md` → "Transition from config.php" for the migration plan.
+
 ## [2.5.2] - 2026-04-14
 
 **Internal tooling release. No user-facing changes.** Application code, schema, and config are unchanged from v2.5.1 — end users can skip this release and go straight from v2.5.1 to v2.6.0. There is no release tarball and no GitHub release; v2.5.2 exists only as a git tag marking the milestone boundary for contributors.
@@ -559,6 +577,7 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[2.6.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.5.2...v2.6.0
 [2.5.2]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.5.1...v2.5.2
 [2.5.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.5.0...v2.5.1
 [2.5.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.4.1...v2.5.0

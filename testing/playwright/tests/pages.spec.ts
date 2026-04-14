@@ -28,6 +28,7 @@ const PAGES: Array<[string, string]> = [
   ['bulk_update.php', 'Bulk'],
   ['change_password.php', 'Password'],
   ['scan_history.php', 'Scan'],
+  ['settings.php',     'Settings'],
 ];
 
 // Pages that include breadcrumbs (all non-login pages with page_header())

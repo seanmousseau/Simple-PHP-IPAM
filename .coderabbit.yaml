@@ -75,9 +75,12 @@ reviews:
     - path: "tests/**"
       instructions: |
         PHPUnit tests cover pure utility functions and DB-backed helpers in lib.php.
-        In-memory SQLite (PDO 'sqlite::memory:') is permitted and used in both MigrationTest.php
-        and ScannerTest.php — do not flag these as guideline violations.
+        In-memory SQLite (PDO 'sqlite::memory:') is permitted and used across MigrationTest.php,
+        ScannerTest.php, and SettingsTest.php — do not flag these as guideline violations.
         Do not add tests that require live network calls or an external HTTP server.
+        SettingsTest.php exercises the v2.6.0 settings subsystem and asserts the
+        settings.type CHECK constraint (CHECK(type IN ('string','int','bool','json'))) —
+        keep that constraint in the in-memory schema used by setUp() when adding new tests.
 
     - path: "testing/playwright/**"
       instructions: |
@@ -275,10 +278,62 @@ reviews:
         - Two-step flow: action=preview returns parsed table; action=apply calls ipam_apply_arp_import().
         - Audit the apply action with address.arp_import action string.
 
+    - path: "Simple-PHP-IPAM/settings.php"
+      instructions: |
+        Admin page for the database-backed settings table, introduced in v2.6.0.
+        Scope is explicitly plumbing only: the table, registry, helpers, and UI.
+
+        Do NOT flag "$config is still read directly in <subsystem>" or "DB settings
+        aren't wired into runtime behavior" as issues on v2.6.x PRs. Rewiring each
+        subsystem (OIDC, alerting, branding, page_header, login_protection,
+        recaptcha_enterprise, session_idle_seconds, etc.) through ipam_setting()
+        is the explicit scope of v2.7.0 and is documented in:
+          - CHANGELOG.md under the v2.6.0 "Deprecated" section
+          - docs/configuration.md → "Transition from config.php (v2.6 → v2.7 → v3.0)"
+        The v3.0.0 release removes the config.php fallback entirely.
+
+        Invariants specific to settings.php:
+        - require_role('admin') + csrf_require() gate every POST.
+        - Demo mode blocks all writes with a flash + redirect.
+        - Validation runs in two phases: build a pending map first, then persist
+          the entire group inside a single beginTransaction / commit so a late
+          validation error never leaves earlier fields half-applied or audited.
+        - Every submitted value (including bool/checkbox) is recorded in
+          $formOverrides up front so a validation error does not clobber the
+          other posted values on re-render.
+        - Integer settings enforce per-definition 'min' / 'max' from the registry
+          so nonsense values (negative session_idle_seconds, >100 percent
+          thresholds) are rejected server-side before ipam_setting_set().
+        - Sensitive fields render as password inputs with a show toggle wired via
+          a data-password-toggle attribute + handler in assets/app.js — inline
+          onclick is CSP-blocked (script-src 'self').
+
     - path: "Simple-PHP-IPAM/lib.php"
       instructions: |
-        lib.php contains all shared functions including the v2.3.0 scanner utilities. Additional
-        invariants for scanner functions:
+        lib.php contains all shared functions including the v2.3.0 scanner utilities
+        and the v2.6.0 settings subsystem. Additional invariants for settings helpers:
+
+        - ipam_setting() precedence is: settings table → $GLOBALS['config']
+          (v2.6 back-compat) → registry default → caller $default. The caller
+          $default only matters for UNREGISTERED keys; for registered keys the
+          registry default always wins. Do not suggest inverting this.
+        - ipam_setting_definitions() is the authoritative registry. New settings
+          must be added here with label/description/type/group/default/sensitive
+          and a config_key (string or nested path) for v2.6 back-compat. Integer
+          keys that have a sane range should advertise 'min' and optionally 'max'
+          so settings.php can enforce them.
+        - The v2.6.0 release is plumbing: DO NOT flag "login.php / alerts /
+          page_header / etc. still read $config directly" as a finding. That
+          rewire is the explicit scope of v2.7.0 — see settings.php path
+          instructions and docs/configuration.md for the transition plan.
+        - ipam_setting_set() writes go through a `setting.update` audit entry
+          with masked old/new values for sensitive keys. Never bypass audit on
+          writes.
+        - ipam_setting_cache_storage() is the internal per-request cache.
+          Application code should call ipam_setting() / ipam_setting_set() /
+          ipam_setting_cache_bust() — never poke the storage helper directly.
+
+        Scanner invariants (v2.3.0):
         - ipam_probe_icmp(): IP argument must already be validated by normalize_ip() before this
           function is called. The function itself calls proc_open() with the ping binary. Ping flags
           differ by OS — use PHP_OS to detect macOS vs Linux and choose the correct -W/-c flags.

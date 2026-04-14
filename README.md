@@ -8,11 +8,14 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 
 ---
 
-## What's new in v2.5.1
+## What's new in v2.6.0
 
-- **`cron.php` self-lock** — concurrent cron invocations now exit cleanly instead of stacking. Prevents the runaway scenario where a misconfigured `* * * * *` crontab (or a scan that takes longer than the cron interval) starts a new `cron.php` before the previous one finishes, eventually exhausting SQLite's busy_timeout and causing user-facing writes (e.g. login) to fail with `database is locked`.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release history.
+- **Settings in the database** — administrators can now edit most operational settings from the web UI at **⚙ Admin → Settings** instead of hand-editing `config.php`. Branding, security, alerting, update checker, and OIDC settings all live in a new `settings` table.
+- **Transparent transition** — `config.php` still works as a fallback for every non-bootstrap key in v2.6.0, and every value you set in the UI takes precedence automatically. Each settings row shows a source badge (🟢 Database / 🟡 config.php / ⚪ Default) so you always know where a value is coming from. v2.7.0 rewires each subsystem to read from the database; v3.0.0 removes the `config.php` fallback entirely.
+- **Audit logged** — every change goes through `ipam_setting_set()`, which writes a `setting.update` audit entry with masked old/new values for sensitive keys like OIDC client secrets.
+
+See [CHANGELOG.md](CHANGELOG.md) for full release history and [docs/configuration.md](docs/configuration.md) for the full settings transition plan.
 
 ---
 
