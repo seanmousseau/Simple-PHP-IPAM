@@ -680,7 +680,7 @@ if [[ "$HTTP_CODE" == "201" ]]; then
 
     # Attach tag to test subnet and address
     if [[ -n "${SUBNET_ID:-}" && "$SUBNET_ID" != "None" ]]; then
-        call_api PUT "subnets&id=$SUBNET_ID" "{\"tags\":[$API_TAG_ID]}"
+        call_api PUT "subnets&id=$SUBNET_ID" "{\"tag_ids\":[$API_TAG_ID]}"
         [[ "$HTTP_CODE" == "200" ]] && pass "Attach tag to subnet" || skip "Attach tag to subnet — got $HTTP_CODE"
 
         # Verify tags array in subnet list response
@@ -697,7 +697,7 @@ if [[ "$HTTP_CODE" == "201" ]]; then
     fi
 
     if [[ -n "${ADDR_ID:-}" && "$ADDR_ID" != "None" ]]; then
-        call_api PUT "addresses&id=$ADDR_ID" "{\"tags\":[$API_TAG_ID]}"
+        call_api PUT "addresses&id=$ADDR_ID" "{\"tag_ids\":[$API_TAG_ID]}"
         [[ "$HTTP_CODE" == "200" ]] && pass "Attach tag to address" || skip "Attach tag to address — got $HTTP_CODE"
 
         # ?tag= filter on addresses
