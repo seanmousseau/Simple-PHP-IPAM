@@ -6,7 +6,7 @@ Developer guide for AI assistants working on this repository.
 
 ## Project overview
 
-Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application built with **PHP 8.2+ and SQLite**. It has no Composer dependencies and no npm build step — everything is vanilla PHP, CSS, and JavaScript. The web root is `Simple-PHP-IPAM/` (the subdirectory, not the repo root).
+Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application built with **PHP 8.2+ and SQLite**. It has **no npm build step** — all CSS and JavaScript are vanilla. Starting in v2.8.0, the application ships a small, carefully curated set of Composer-managed runtime dependencies bundled into the release tarball, so end users still deploy by extracting the tarball with no build step. The web root is `Simple-PHP-IPAM/` (the subdirectory, not the repo root).
 
 ---
 
@@ -179,6 +179,52 @@ Migrations remain the source of truth for schema evolution. The three schema fil
 **Dialect helpers** (the `Ipam\Db\Dialect` abstraction from v2.8.0) are used inside migration closures for portable SQL — `$dialect->now()`, `$dialect->upsert()`, `$dialect->autoincrement()`, `$dialect->binary_type()`, etc. The schema files themselves are hand-written per engine and do not go through the dialect layer, because they are engine-specific by definition.
 
 **Do not introduce a schema templating system.** This was evaluated during v2.8.0 planning and rejected: three plain SQL files are easier to review, easier to debug against a live database, and aligned with the project's vanilla-PHP ethos. The parity test plus migration-replay test is sufficient drift protection.
+
+### Runtime dependencies
+
+Adopted in v2.8.0. The project uses Composer-managed runtime dependencies under a narrow, curated policy. The goals are (1) to avoid hand-rolling security-sensitive network protocols and cryptography and (2) to preserve the "rsync and run" deployment story for end users.
+
+**Deployment model:**
+
+- `vendor/` is gitignored and never committed
+- `releases/make_releases.sh` runs `composer install --no-dev --optimize-autoloader` against the working tree before building the tarball
+- The tarball includes `vendor/` with all production deps pre-built
+- End users extract the tarball and run — no `composer install` on the server, no network access to packagist required at install time
+- `.htaccess` inside `vendor/` denies all web access to bundled library source
+- Security advisories are tracked via `composer audit` in CI (scheduled nightly and on every PR)
+
+**When a runtime dependency is acceptable:**
+
+A new dep must meet **all** of the following criteria:
+
+1. **Narrow purpose.** It solves a security-sensitive protocol or standards compliance problem where hand-rolling is error-prone. Canonical examples: SMTP, SAML, OAuth/OIDC/JWT verification, LDAP, TOTP.
+2. **Mature.** >5 years of active maintenance, with visible security advisories and a track record of prompt response.
+3. **Widely used.** Big enough user base that bugs get found by someone else first. "Thousands of GitHub stars" is not a metric but "used by WordPress, Drupal, Joomla" is.
+4. **Minimal dependency tree.** Prefer libraries with zero or few transitive deps. A 300KB lib with 20 transitive deps is worse than a 500KB lib with none.
+5. **Liberal license.** MIT, BSD, Apache 2.0. No GPL-family licenses (viral), no LGPL (complicated for bundled distribution).
+6. **Maintainer justification.** Adding a new dep requires a PR that updates this section with the dep name, version constraint, purpose, and a one-paragraph justification explaining why vanilla PHP is a poor fit.
+
+**When a runtime dependency is NOT acceptable:**
+
+- **IPAM business logic.** Subnet math, CIDR parsing, address allocation, audit logging, permission checks, etc. All of this is bespoke to the project and has no library equivalent worth pulling in.
+- **UI and rendering.** All HTML is hand-authored PHP. No templating engines, no frontend frameworks, no CSS preprocessors.
+- **Simple utilities.** If it can be done in 20 lines of vanilla PHP, it should be done in 20 lines of vanilla PHP. Do not pull in a library for one function.
+- **"Nice to have" conveniences.** Libraries that make code 5% cleaner are not worth the dep. The bar is "hand-rolling is meaningfully dangerous or expensive," not "this API is nicer."
+
+**Current runtime dependency whitelist:**
+
+| Package | Version | Purpose | Justified in |
+|---|---|---|---|
+| (none yet — policy introduced in v2.8.0 as infrastructure; first dep lands in v3.1.0) | — | — | — |
+
+First dep expected to land in v3.1.0 (#415, PHPMailer for SMTP). Future candidates to be evaluated on a case-by-case basis as feature work surfaces them.
+
+**Explicitly not adopted (deliberate choices):**
+
+- No HTTP client library yet. `ext-curl` + careful wrapping is the current path for webhook dispatch (#399, v3.3.0). May revisit if curl wrapping proves painful at implementation time — Guzzle or symfony/http-client would be the likely candidates.
+- No JWT / JWK library yet. The hand-rolled OIDC in `lib.php` works and is not being retrofitted on speculation. May revisit if a security-sensitive bug surfaces or if the RFC tracking burden becomes obviously not worth it.
+- No JSON Schema validator. Custom fields (#313, v3.5.0) use a bespoke lightweight type system, not JSON Schema.
+- No templating engine, no DI container, no service locator, no ORM. These are architectural departures that do not fit this project's philosophy.
 
 ### When to use classes vs functions
 
@@ -584,7 +630,8 @@ Include `https://claude.ai/code/session_...` in commit body.
 
 ## Key constraints and gotchas
 
-- **No Composer, no npm in production** — the application itself has zero runtime dependencies. Everything must be implemented in vanilla PHP using only standard extensions (`pdo`, `pdo_sqlite`, `openssl`). Composer is used for *dev tooling only* (`vendor/` is gitignored and never deployed).
+- **Runtime dependencies are allowed but curated** — see the "Runtime dependencies" section below for the policy and current whitelist. Historical note: this project shipped with zero runtime deps through v2.7.0 and adopted a curated dep policy in v2.8.0 to avoid hand-rolling security-sensitive protocols. The `vendor/` directory is gitignored in the repo but **is shipped in the release tarball** — end users still deploy by extracting the tarball with no build step. `composer install --no-dev` runs at release bundle time, not at install time on the target.
+- **No npm in production** — all frontend CSS and JavaScript is vanilla. No bundlers, no build step, no node_modules. This rule is separate from the Composer rule and is not being relaxed.
 - **`addresses` has no `ip_version`** — that column exists only on `subnets`. Do not add it to address INSERTs.
 - **`addresses.grp` is a SQL reserved word** — stored as `grp` in the DB, exposed as `group` in the UI, API responses, and CSV headers.
 - **`addresses.mac`** — free-form MAC address string, `NOT NULL DEFAULT ''`. Never validate the format server-side; users may enter any notation.
