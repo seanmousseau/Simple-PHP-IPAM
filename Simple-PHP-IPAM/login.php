@@ -7,14 +7,14 @@ require __DIR__ . '/init.php';
 if (is_logged_in()) { header('Location: dashboard.php'); exit; }
 if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 
-$maxAttempts   = to_int($config['login_max_attempts']);
-$lockoutSeconds = to_int($config['login_lockout_seconds']);
+$maxAttempts   = to_int(ipam_setting('security.login_max_attempts'));
+$lockoutSeconds = to_int(ipam_setting('security.login_lockout_seconds'));
 
 $error    = '';
 $timedOut = !empty($_GET['timeout']);
 
 // Login protection setup (#124) — widget HTML also sets time_check session ts on GET
-$lpMethod     = to_str($config['login_protection']['method'] ?? '');
+$lpMethod     = to_str(ipam_setting('login_protection.method'));
 $lpWidgetHtml = login_protection_widget_html($config);
 $lpCsp        = login_protection_extra_csp($config);
 
@@ -32,9 +32,9 @@ try {
     $firstRun = true; // treat as first-run if audit_log is temporarily unavailable
 }
 $oidcActive            = oidc_enabled($config) && !demo_mode_enabled();
-$disableLocal          = $oidcActive && !empty($config['oidc']['disable_local_login']);
-$disableEmergencyBypass= $oidcActive && !empty($config['oidc']['disable_emergency_bypass']);
-$hideEmergencyLink     = $oidcActive && !empty($config['oidc']['hide_emergency_link']);
+$disableLocal          = $oidcActive && (bool)ipam_setting('oidc.disable_local_login');
+$disableEmergencyBypass= $oidcActive && (bool)ipam_setting('oidc.disable_emergency_bypass');
+$hideEmergencyLink     = $oidcActive && (bool)ipam_setting('oidc.hide_emergency_link');
 $localForceShown       = isset($_GET['local']) && !$disableEmergencyBypass;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -118,7 +118,7 @@ page_header('Login', array_filter([
     'extra_script_src' => $lpCsp['script_src'],
     'extra_frame_src'  => $lpCsp['frame_src'],
 ]));
-$appName = trim(to_str($config['app_name'])) ?: 'Simple PHP IPAM';
+$appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
 ?>
 <div class="login-wrap">
 <div class="login-card">
@@ -135,7 +135,7 @@ $appName = trim(to_str($config['app_name'])) ?: 'Simple PHP IPAM';
   <?php if ($error): ?><p class="danger"><?= e($error) ?></p><?php endif; ?>
 
   <?php if ($oidcActive): ?>
-  <p><a href="oidc_login.php" class="btn-sso">Sign in with <?= e(to_str($config['oidc']['display_name'])) ?></a></p>
+  <p><a href="oidc_login.php" class="btn-sso">Sign in with <?= e(to_str(ipam_setting('oidc.display_name'))) ?></a></p>
   <?php endif; ?>
 
   <?php if (!$disableLocal || $localForceShown): ?>
