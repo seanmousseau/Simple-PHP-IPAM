@@ -89,6 +89,31 @@ The backup is left in place after a successful upgrade. You can remove it manual
 
 ## Version-specific upgrade notes
 
+### v2.7.0
+
+**No schema changes.** v2.7.0 is entirely a runtime rewire — every registered setting was already seeded into the `settings` table by v2.6.0's migration. `upgrade.sh` just syncs files, runs `php migrate.php` (no-op), and you are done.
+
+**What changes at runtime:**
+
+- Every subsystem now reads through `ipam_setting()` instead of `$config[...]`. Edits in **⚙ Admin → Settings** take effect on the next request without a `config.php` change or a restart.
+- `config.php` still works as a fallback for back-compat. Nothing in your existing `config.php` stops working on upgrade.
+- Three new registered OIDC keys (`oidc.disable_local_login`, `oidc.disable_emergency_bypass`, `oidc.hide_emergency_link`) are now visible in the admin UI. If you already have these in `config.php` they keep working via the fallback chain.
+
+**Dealing with the deprecation banner.** After upgrading, if you have **customised** any non-bootstrap value in `config.php` (i.e. the value differs from the registry default), the admin Settings page will show a **config.php settings to migrate** banner listing each such key. You have two options:
+
+1. **Click Import to database** on each row in the banner. This copies the current `config.php` value into the `settings` table in one atomic write (audited), and the row disappears. You can then delete the key from `config.php` at your convenience.
+2. **Leave it.** The fallback keeps working through v2.7.x. You can batch the migration later — the banner stays visible until every customised key is imported or matches the registry default.
+
+The dashboard shows a matching admin warning card linking to the banner so you do not forget.
+
+**Server log warning.** Once per hour (rate-limited via `data/tmp/deprecation_warning.txt`), `init.php` writes a single consolidated line to the PHP error log listing every registered key still being served from `config.php`. This is informational — nothing is broken. It is there so your log aggregator surfaces the migration work before v3.0.0 removes the fallback.
+
+**Sensitive values in the banner.** Sensitive keys (`oidc.client_secret`, `login_protection.secret_key`, `recaptcha_enterprise.api_key`) are masked as `***` in the banner — the secret itself is never rendered into the HTML source. **Import to database** still imports the real value from `config.php`; the mask only affects the display.
+
+**What stays in `config.php` forever:** the bootstrap keys — `db_path`, `session_name`, `proxy_trust`, `force_https` / `base_url`, and `bootstrap_admin`. These are loaded before the database is open and will never be in the `settings` table.
+
+---
+
 ### v2.1.0
 
 **New database tables:** `vrfs`, `contacts`

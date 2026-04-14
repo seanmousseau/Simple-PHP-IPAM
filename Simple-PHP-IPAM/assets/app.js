@@ -158,15 +158,21 @@
 
     // --- Password show/hide toggle (data-password-toggle="<input id>") ---
     // Used by settings.php sensitive fields; CSP blocks inline onclick handlers
-    // so the wiring lives here instead.
-    document.addEventListener("change", function(e) {
-      var cb = e.target;
-      if (!(cb instanceof HTMLInputElement) || cb.type !== "checkbox") return;
-      var targetId = cb.dataset.passwordToggle;
+    // so the wiring lives here instead. Uses closest() so clicks on the
+    // wrapping <label> text also hit the handler, and falls back on `click`
+    // in addition to `change` so the toggle is resilient to any future
+    // markup reshuffle in settings.php.
+    function applyPasswordToggle(cb) {
+      if (!cb || cb.type !== "checkbox") return;
+      var targetId = cb.getAttribute("data-password-toggle");
       if (!targetId) return;
       var input = document.getElementById(targetId);
       if (!input) return;
       input.type = cb.checked ? "text" : "password";
+    }
+    document.addEventListener("change", function(e) {
+      var cb = e.target && e.target.closest ? e.target.closest("input[type=checkbox][data-password-toggle]") : null;
+      applyPasswordToggle(cb);
     });
 
     // --- Confirm dialogs on forms (data-confirm on <form>) ---

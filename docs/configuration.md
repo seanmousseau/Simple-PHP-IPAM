@@ -11,8 +11,8 @@ When the app reads a setting it checks each source in order and returns the firs
 
 ### Transition from `config.php` (v2.6 → v2.7 → v3.0)
 
-- **v2.6.0** — the migration seeds every registered setting into the `settings` table using the current `config.php` value (or the registry default). You can edit in either place; the database wins.
-- **v2.7.0** — each subsystem (OIDC, alerting, branding, update checker, security) stops reading from `config.php` directly and uses `ipam_setting()` instead. `config.php` continues to be accepted as a fallback.
+- **v2.6.0** — groundwork release. Introduces the `settings` table, the `ipam_setting()` helper, the registry, and the `settings.php` admin UI. The migration seeds every registered key into the table on first boot using the current `config.php` value (or the registry default). Wherever `ipam_setting()` is called, the database row takes precedence over `config.php`. The runtime subsystems (OIDC, alerting, branding, login protection, update checker) are not yet rewired to call `ipam_setting()`, though, so they keep reading straight from `$config` at request time — saving a value in the admin UI lands it in the `settings` table correctly, but most subsystems still behave as if you had edited `config.php`.
+- **v2.7.0** — **(current)** every subsystem (OIDC, alerting, branding, login protection, update checker, reCAPTCHA Enterprise, security) routes through `ipam_setting()`, so edits in the admin UI take effect on the next request without a `config.php` change or a restart. `config.php` continues to work as a fallback. Admin UI now shows a deprecation banner listing any registered key still being served from `config.php` with a one-click **Import to database** action; the dashboard shows a matching warning card for admins.
 - **v3.0.0** — the `config.php` fallback is removed. Only bootstrap keys are still read from the file. An upgrade-time migration copies any stragglers into the database.
 
 ### Settings reference (database-backed)
@@ -43,12 +43,27 @@ The keys below are seeded into the `settings` table by the v2.6.0 migration and 
 | `oidc.auto_link` | bool | `false` | Link incoming OIDC identities to matching local accounts on first login. |
 | `oidc.auto_provision` | bool | `false` | Create a new local account on first OIDC login. Implies auto-link. |
 | `oidc.default_role` | string | `readonly` | Role assigned to auto-provisioned users. |
+| `oidc.disable_local_login` | bool | `false` | Hide the local username/password form entirely when OIDC is active. **Added v2.7.0.** |
+| `oidc.disable_emergency_bypass` | bool | `false` | Disable the `?local=1` emergency access path. **Added v2.7.0.** |
+| `oidc.hide_emergency_link` | bool | `false` | Hide the "(emergency local access)" link. **Added v2.7.0.** |
+| `login_protection.method` | string | *(empty)* | Bot/abuse mitigation on the login form. One of: off, `honeypot`, `time_check`, `turnstile`, `hcaptcha`, `recaptcha`, `friendly_captcha`. Dropdown-validated. |
+| `login_protection.site_key` | string | *(empty)* | Widget site key for the selected provider. |
+| `login_protection.secret_key` | **sensitive** string | *(empty)* | Widget secret key used for backend verification. |
+| `login_protection.min_seconds` | int | `3` | Minimum seconds between page load and submit for the `time_check` method. |
+| `login_protection.version` | int | `2` | reCAPTCHA widget version: 2 (checkbox) or 3 (invisible). |
+| `recaptcha_enterprise.enabled` | bool | `false` | Use the Google reCAPTCHA Enterprise API for backend verification. |
+| `recaptcha_enterprise.project_id` | string | *(empty)* | GCP project ID for Enterprise assessments. |
+| `recaptcha_enterprise.api_key` | **sensitive** string | *(empty)* | GCP API key for the reCAPTCHA Enterprise API. |
+| `recaptcha_enterprise.expected_action` | string | `login` | Action name passed in reCAPTCHA v3 assessments. |
+| `recaptcha_enterprise.score_threshold` | string | `0.5` | Minimum risk score for a request to be accepted. |
 
 ---
 
 ## Legacy reference (`config.php`)
 
-The rest of this document describes the full `config.php` file. In v2.6.0 every non-bootstrap key here is also editable from the admin UI, and the UI value takes precedence. This section will shrink to just the bootstrap keys in v3.0.0.
+**Every non-bootstrap key in this section is deprecated as of v2.7.0 and will be removed in v3.0.0.** Edit them from **⚙ Admin → Settings** instead. If the admin UI shows a "config.php settings to migrate" banner, click **Import to database** on each listed key to copy its current value into the `settings` table; after that you can remove the key from `config.php` at your convenience.
+
+The rest of this document describes the full `config.php` file. In v2.7.0 every non-bootstrap key here is also editable from the admin UI, and the UI value takes precedence at runtime. This section will shrink to just the bootstrap keys in v3.0.0.
 
 All non-bootstrap settings currently still read from `config.php` when no database row exists. This file is preserved automatically during upgrades — you will never need to re-apply your settings after an upgrade.
 

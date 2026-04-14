@@ -5,10 +5,41 @@
  * assertion must be self-sufficient rather than depend on a prior test.
  */
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
+import { execFileSync } from 'child_process';
 import {
   login, appUrl, ADMIN_USER, ADMIN_PASS,
   newAuthContext,
 } from '../fixtures/ipam';
+
+/**
+ * Delete a settings row from the containerized test database so a known key
+ * falls back to config.php and appears in the #376 deprecation banner.
+ * Uses docker exec + php -r via execFileSync (no shell) because the
+ * container is the source of truth for test state and there is no HTTP
+ * endpoint that can surgically drop a row. A no-op (swallowed) when the
+ * container is not running so the rest of the spec still skips cleanly
+ * under dev-direct.
+ */
+function deleteSettingRowInContainer(key: string): void {
+  // Key is hardcoded in the call site below; guard anyway in case the
+  // function is reused so a stray quote can never break out of the PHP
+  // string literal.
+  if (!/^[a-z_][a-z0-9_.]*$/.test(key)) return;
+  try {
+    execFileSync(
+      'docker',
+      [
+        'exec', 'ipam-pw-test',
+        'php', '-r',
+        'require "/var/www/html/init.php"; ' +
+        '$db->prepare("DELETE FROM settings WHERE key = :k")->execute([":k" => "' + key + '"]);',
+      ],
+      { stdio: 'pipe' },
+    );
+  } catch {
+    // Swallow — the test will detect the absent banner and skip itself.
+  }
+}
 
 let ctx: BrowserContext;
 let page: Page;
@@ -54,14 +85,153 @@ test.describe('Settings page', () => {
       await brandingSubmit(page);
 
       await expect(page.locator(SITE_NAME_FIELD)).toHaveValue(newValue);
-      const row = page.locator('label', { hasText: 'Application name' }).first();
-      await expect(row).toContainText('Database');
+      // v2.7.0: label+badge+key live in a .setting-head wrapper (no longer
+      // one big <label>). Assert the source badge inside that wrapper.
+      const head = page.locator('.setting-head', { hasText: 'Application name' }).first();
+      await expect(head).toContainText('Database');
     } finally {
       // Always put the field back so later specs see the seeded value.
       await page.goto(appUrl('settings.php'));
       await page.locator(SITE_NAME_FIELD).fill(original);
       await brandingSubmit(page);
     }
+  });
+
+  test('#440 password show toggle flips sensitive input type', async () => {
+    // Regression for the nested-<label> bug in v2.6.0: clicking "show" on a
+    // sensitive field used to tick the checkbox but leave the input masked.
+    await page.goto(appUrl('settings.php'));
+    const secret = page.locator('input[name="k_oidc__client_secret"]');
+    const toggle = page.locator('input[data-password-toggle="f-k_oidc__client_secret"]');
+    await expect(secret).toHaveAttribute('type', 'password');
+    await secret.fill('round-trip-check');
+    await toggle.check();
+    await expect(secret).toHaveAttribute('type', 'text');
+    await expect(secret).toHaveValue('round-trip-check');
+    await toggle.uncheck();
+    await expect(secret).toHaveAttribute('type', 'password');
+    // Do not submit — leave sensitive field blank so we don't rewrite the
+    // stored secret on dev. The sensitive POST path ignores blank values.
+    await secret.fill('');
+  });
+
+  test('#441 bool rows render checkbox inline with label (same row)', async () => {
+    await page.goto(appUrl('settings.php'));
+    const cb = page.locator('input[type=checkbox][name="k_oidc__enabled"]');
+    const label = page.locator('label[for="f-k_oidc__enabled"] strong', { hasText: 'OIDC enabled' });
+    await expect(cb).toBeVisible();
+    await expect(label).toBeVisible();
+
+    const cbBox    = await cb.boundingBox();
+    const labelBox = await label.boundingBox();
+    expect(cbBox).not.toBeNull();
+    expect(labelBox).not.toBeNull();
+    if (cbBox && labelBox) {
+      const cbCenter    = cbBox.y + cbBox.height / 2;
+      const labelCenter = labelBox.y + labelBox.height / 2;
+      // Centres must be within 10px vertically — same row, not stacked.
+      expect(Math.abs(cbCenter - labelCenter)).toBeLessThan(10);
+    }
+  });
+
+  test('#442 login_protection.method renders as a validated <select>', async () => {
+    await page.goto(appUrl('settings.php'));
+    const select = page.locator('select[name="k_login_protection__method"]');
+    await expect(select).toBeVisible();
+    // At minimum the seven registry entries must be selectable.
+    for (const value of ['', 'honeypot', 'time_check', 'turnstile', 'hcaptcha', 'recaptcha', 'friendly_captcha']) {
+      await expect(select.locator(`option[value="${value}"]`)).toHaveCount(1);
+    }
+  });
+
+  test('#442 branding.timezone renders as a dropdown seeded with PHP zoneinfo', async () => {
+    await page.goto(appUrl('settings.php'));
+    const select = page.locator('select[name="k_branding__timezone"]');
+    await expect(select).toBeVisible();
+    for (const value of ['UTC', 'America/Toronto', 'Europe/London']) {
+      await expect(select.locator(`option[value="${value}"]`)).toHaveCount(1);
+    }
+  });
+
+  test('#376 deprecation banner lists a customised config.php key', async () => {
+    // The v2.6.0 migration seeds every registered key into the settings
+    // table on install, so on a pristine container nothing is deprecated.
+    // Force a deprecated state by dropping a specific row so its value
+    // falls back to config.php (which is "0" / false in the test fixture
+    // but "true" in the registry default — different, so flagged).
+    deleteSettingRowInContainer('update_check.enabled');
+    await page.goto(appUrl('settings.php'));
+    const banner = page.locator('#deprecated-banner');
+    await expect(banner).toBeVisible();
+    await expect(banner.locator('h2')).toContainText('config.php settings to migrate');
+    const row = banner.locator('tr', { hasText: 'update_check.enabled' });
+    await expect(row).toBeVisible();
+  });
+
+  test('#376 Import to database persists the value and drops the row', async () => {
+    deleteSettingRowInContainer('update_check.enabled');
+    await page.goto(appUrl('settings.php'));
+    const banner = page.locator('#deprecated-banner');
+    if (await banner.count() === 0) {
+      test.skip(true, 'could not force a deprecated state — container not running?');
+      return;
+    }
+    const row = banner.locator('tr', { hasText: 'update_check.enabled' });
+    await expect(row).toBeVisible();
+
+    await row.locator('button[type="submit"]').click();
+    await page.waitForURL(/settings\.php/);
+    await expect(page.locator('body')).toContainText('Imported');
+    const bannerAfter = page.locator('#deprecated-banner');
+    if (await bannerAfter.count() > 0) {
+      await expect(bannerAfter.locator('tr', { hasText: 'update_check.enabled' })).toHaveCount(0);
+    }
+  });
+
+  test('#376 dashboard shows a deprecation warning card for admin', async () => {
+    deleteSettingRowInContainer('update_check.enabled');
+    await page.goto(appUrl('dashboard.php'));
+    const warning = page.locator('.admin-notice--warning', { hasText: 'Settings migration needed' });
+    if (await warning.count() === 0) {
+      test.skip(true, 'could not force a deprecated state — container not running?');
+      return;
+    }
+    await expect(warning).toBeVisible();
+    await expect(warning.locator('a[href*="settings.php"]')).toHaveCount(1);
+  });
+
+  test('#442 out-of-set login_protection.method is rejected server-side', async () => {
+    // Go through the form to grab a fresh CSRF token, then POST a forged value.
+    await page.goto(appUrl('settings.php'));
+    const csrf = await page
+      .locator('form:has(select[name="k_login_protection__method"]) input[name="csrf"]')
+      .first()
+      .getAttribute('value');
+    expect(csrf).toBeTruthy();
+
+    const response = await page.request.post(appUrl('settings.php'), {
+      form: {
+        csrf: csrf ?? '',
+        group: 'login_protection',
+        k_login_protection__method: 'not-a-real-method',
+        k_login_protection__site_key: '',
+        k_login_protection__min_seconds: '3',
+        k_login_protection__version: '2',
+      },
+      maxRedirects: 0,
+    });
+    // Validation error path re-renders the page (HTTP 200), not a redirect.
+    expect(response.status()).toBe(200);
+    const body = await response.text();
+    expect(body).toContain('Must be one of the listed values.');
+
+    // Guarantee nothing persisted: reload the page and the select value must
+    // still be one of the known-good entries, never the forged string.
+    await page.goto(appUrl('settings.php'));
+    const selected = await page
+      .locator('select[name="k_login_protection__method"]')
+      .inputValue();
+    expect(selected).not.toBe('not-a-real-method');
   });
 
   test('saving a setting produces a setting.update audit entry', async () => {

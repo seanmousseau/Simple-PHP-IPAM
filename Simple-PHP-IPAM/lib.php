@@ -464,6 +464,10 @@ function ipam_setting_definitions(): array
             'default'     => 'UTC',
             'sensitive'   => false,
             'config_key'  => 'timezone',
+            // Dynamic option list from PHP's zoneinfo database (~420 entries).
+            // Callable form keeps the registry lazy — the list is only built
+            // when settings.php actually renders or validates this field.
+            'options'     => '@timezone',
         ],
 
         // --- Security ---
@@ -553,13 +557,13 @@ function ipam_setting_definitions(): array
         ],
         'update_check.ttl_seconds' => [
             'label'       => 'Update check cache TTL (seconds)',
-            'description' => 'How long to cache the update check result before re-fetching. Minimum 60.',
+            'description' => 'How long to cache the update check result before re-fetching from GitHub. Runtime enforces a floor of 3600 (one hour) to avoid hammering the GitHub API, so values below 3600 are silently clamped.',
             'type'        => 'int',
             'group'       => 'update_check',
             'default'     => 86400,
             'sensitive'   => false,
             'config_key'  => ['update_check', 'ttl_seconds'],
-            'min'         => 60,
+            'min'         => 3600,
         ],
         'update_check.notify_prerelease' => [
             'label'       => 'Notify on prereleases',
@@ -574,12 +578,21 @@ function ipam_setting_definitions(): array
         // --- Login protection (bot/abuse mitigation on the login form) ---
         'login_protection.method' => [
             'label'       => 'Login protection method',
-            'description' => "Bot/abuse mitigation on the login form. One of: '' (off), 'honeypot', 'time_check', 'turnstile', 'hcaptcha', 'recaptcha', 'friendly_captcha'.",
+            'description' => 'Bot/abuse mitigation on the login form. Pick the provider that matches the site/secret keys below.',
             'type'        => 'string',
             'group'       => 'login_protection',
             'default'     => '',
             'sensitive'   => false,
             'config_key'  => ['login_protection', 'method'],
+            'options'     => [
+                ''                 => 'Off',
+                'honeypot'         => 'Honeypot',
+                'time_check'       => 'Time check',
+                'turnstile'        => 'Cloudflare Turnstile',
+                'hcaptcha'         => 'hCaptcha',
+                'recaptcha'        => 'Google reCAPTCHA',
+                'friendly_captcha' => 'Friendly Captcha',
+            ],
         ],
         'login_protection.site_key' => [
             'label'       => 'Login protection site key',
@@ -758,6 +771,33 @@ function ipam_setting_definitions(): array
             'default'     => 'readonly',
             'sensitive'   => false,
             'config_key'  => ['oidc', 'default_role'],
+        ],
+        'oidc.disable_local_login' => [
+            'label'       => 'Disable local password login',
+            'description' => 'When OIDC is active, hide the local username/password form entirely. Emergency bypass still works unless also disabled below.',
+            'type'        => 'bool',
+            'group'       => 'oidc',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => ['oidc', 'disable_local_login'],
+        ],
+        'oidc.disable_emergency_bypass' => [
+            'label'       => 'Disable emergency local bypass',
+            'description' => 'Disable the ?local=1 emergency access path that lets a local admin sign in even when local login is hidden. Leave off until you are confident SSO will keep working.',
+            'type'        => 'bool',
+            'group'       => 'oidc',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => ['oidc', 'disable_emergency_bypass'],
+        ],
+        'oidc.hide_emergency_link' => [
+            'label'       => 'Hide emergency bypass link',
+            'description' => 'Hide the "(emergency local access)" link even if the ?local=1 bypass itself is still reachable.',
+            'type'        => 'bool',
+            'group'       => 'oidc',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => ['oidc', 'hide_emergency_link'],
         ],
     ];
 }
@@ -1054,6 +1094,130 @@ function ipam_setting_source(PDO $db, string $key): string
         }
     }
     return 'default';
+}
+
+/**
+ * Return the list of registered settings that are still being served from
+ * $config (config.php) instead of the database. Drives the v2.7.0 deprecation
+ * banner in settings.php, the init.php boot-time log warning, and the
+ * dashboard admin card that nudges admins to migrate before v3.0.0 removes
+ * the fallback.
+ *
+ * A key is considered deprecated iff **all** of these hold:
+ *   - its registry definition exists (bootstrap-only keys like db_driver
+ *     are not in the registry so they are never flagged);
+ *   - no row exists in the `settings` table for that key;
+ *   - the key's `config_key` path resolves to a non-null value in
+ *     $GLOBALS['config'];
+ *   - that value differs from the registry `default`.
+ *
+ * The last condition keeps a pristine install with a seeded default
+ * config.php from lighting up the banner for every single key — we only
+ * surface what the admin has actually customised.
+ *
+ * On any DB error the helper returns [] (fail-quiet) so the boot path and
+ * the dashboard render never break because of this advisory feature.
+ *
+ * @return list<array{key: string, config_path: string, current: mixed}>
+ */
+function ipam_setting_deprecated_keys(): array
+{
+    $db = $GLOBALS['db'] ?? null;
+    if (!($db instanceof PDO)) return [];
+
+    try {
+        $st   = $db->query("SELECT key FROM settings");
+        $rows = $st !== false ? $st->fetchAll(PDO::FETCH_COLUMN) : [];
+    } catch (\Throwable) {
+        return [];
+    }
+    $inDb = [];
+    foreach ($rows as $k) {
+        if (is_string($k)) $inDb[$k] = true;
+    }
+
+    $config = $GLOBALS['config'] ?? null;
+    if (!is_array($config)) return [];
+
+    $out  = [];
+    $defs = ipam_setting_definitions();
+    foreach ($defs as $key => $def) {
+        if (isset($inDb[$key])) continue;
+        $configKey = $def['config_key'] ?? null;
+        if ($configKey === null || (!is_string($configKey) && !is_array($configKey))) continue;
+
+        $current = ipam_setting_config_fallback($config, $configKey);
+        if ($current === null) continue;
+
+        // Skip values that match the registry default — a config that still
+        // holds the shipped default is not "customised". Loose compares keep
+        // '0' vs 0 vs false and '0.5' vs 0.5 from producing spurious banner
+        // entries. recaptcha_enterprise.score_threshold is the concrete
+        // reason the string branch normalises through (string) casts: the
+        // registry default is '0.5' while config_defaults keeps 0.5 (float).
+        $default = $def['default'] ?? null;
+        $type = is_string($def['type'] ?? null) ? $def['type'] : 'string';
+        if ($type === 'bool' && (bool)$current === (bool)$default) continue;
+        if ($type === 'int'  && is_numeric($current) && is_numeric($default) && (int)$current === (int)$default) continue;
+        if ($type === 'string' && is_scalar($current) && is_scalar($default) && (string)$current === (string)$default) continue;
+        if ($type === 'json'   && $current === $default) continue;
+
+        if (is_array($configKey)) {
+            $segments   = [];
+            foreach ($configKey as $seg) $segments[] = to_str($seg);
+            $configPath = implode('.', $segments);
+        } else {
+            $configPath = $configKey;
+        }
+
+        $out[] = [
+            'key'         => $key,
+            'config_path' => $configPath,
+            'current'     => $current,
+        ];
+    }
+    return $out;
+}
+
+/**
+ * Resolve a setting definition's `options` entry to a `[value => label]` map,
+ * or null when the setting is free-form. Supports three registry shapes:
+ *
+ *   - associative array: returned as-is
+ *   - callable: invoked, result must be an associative array
+ *   - sentinel string '@timezone': PHP timezone identifiers
+ *
+ * Unknown sentinels return null so the caller falls back to free-text
+ * rendering rather than silently accepting any value.
+ *
+ * @param array<string, mixed> $def
+ * @return array<string, string>|null
+ */
+function ipam_setting_options(array $def): ?array
+{
+    if (!array_key_exists('options', $def)) return null;
+    $raw = $def['options'];
+
+    if (is_callable($raw)) {
+        $resolved = $raw();
+    } elseif ($raw === '@timezone') {
+        $ids = DateTimeZone::listIdentifiers();
+        $resolved = array_combine($ids, $ids);
+    } elseif (is_array($raw)) {
+        $resolved = $raw;
+    } else {
+        return null;
+    }
+
+    if (!is_array($resolved)) return null;
+
+    // Normalise to string => string for consistent rendering and strict
+    // validation with array_key_exists() on the persisted value.
+    $out = [];
+    foreach ($resolved as $value => $label) {
+        $out[(string)$value] = is_scalar($label) ? (string)$label : (string)$value;
+    }
+    return $out;
 }
 
 /* ---------------- History ---------------- */
@@ -1563,16 +1727,18 @@ function prune_address_history(PDO $db, int $retentionDays): int
  * Deduplicates sends using the alert_state table (max one alert per subnet+level per 24 h).
  * Auto-clears alert_state rows when utilization drops back below the threshold.
  *
- * @param IpamConfig $config
+ * @param IpamConfig $config Unused since v2.7.0 — thresholds and the
+ *                           recipient now flow through ipam_setting().
  */
 function check_utilization_alerts(PDO $db, array $config): void
 {
-    $alertEmail = trim(to_str($config['alert_email'] ?? ''));
+    unset($config);
+    $alertEmail = trim(to_str(ipam_setting('alert.email')));
     if ($alertEmail === '') return;
 
-    $warnPct = to_int($config['alert_util_warn_pct'] ?? 80);
-    $critPct = to_int($config['alert_util_crit_pct'] ?? 95);
-    $appName = to_str($config['app_name']);
+    $warnPct = to_int(ipam_setting('alert.util_warn_pct'));
+    $critPct = to_int(ipam_setting('alert.util_crit_pct'));
+    $appName = to_str(ipam_setting('branding.site_name'));
 
     // Compute direct address counts per subnet (used+reserved)
     $rows = ($db->query("
@@ -1653,14 +1819,14 @@ function check_utilization_alerts(PDO $db, array $config): void
  * Run utilization alert check if the alert interval has elapsed.
  * Uses a dedicated state file so it can fire more frequently than main housekeeping.
  *
- * @param IpamConfig $config
+ * @param IpamConfig $config Unused since v2.7.0 — kept for signature stability.
  */
 function alerts_check_if_due(array $config, PDO $db): void
 {
-    $alertEmail = trim(to_str($config['alert_email'] ?? ''));
+    $alertEmail = trim(to_str(ipam_setting('alert.email')));
     if ($alertEmail === '') return;
 
-    $interval = to_int($config['alert_interval_seconds'] ?? 3600);
+    $interval = to_int(ipam_setting('alert.interval_seconds'));
     if ($interval < 60) $interval = 60;
 
     $statePath = __DIR__ . '/data/alerts_last_run.txt';
@@ -2103,19 +2269,38 @@ function recaptcha_enterprise_verify(string $token, string $siteKey, array $cfg)
 }
 
 /**
+ * Resolve the reCAPTCHA v3 expected action name, honouring the legacy
+ * top-level $config['recaptcha_action'] key (documented since #289) before
+ * falling back to the v2.6.0 registry key recaptcha_enterprise.expected_action.
+ * Both the widget render and the Enterprise verify path must go through this
+ * helper so the action emitted in the hidden input matches the action checked
+ * during verification — otherwise valid Enterprise tokens fail action matching.
+ */
+function recaptcha_expected_action_resolved(): string
+{
+    $legacyCfg    = $GLOBALS['config'] ?? null;
+    $legacyAction = is_array($legacyCfg) ? ($legacyCfg['recaptcha_action'] ?? null) : null;
+    $resolved = (is_string($legacyAction) && $legacyAction !== '')
+        ? $legacyAction
+        : to_str(ipam_setting('recaptcha_enterprise.expected_action'));
+    return $resolved !== '' ? $resolved : 'login';
+}
+
+/**
  * Verify the login form protection token/field for the current POST request.
  *
  * Returns null on pass, '' for a silent honeypot rejection (no error shown),
  * or a non-empty error string that should be shown to the user.
  * Fails open on network errors so a broken CAPTCHA provider never blocks login.
  *
- * @param LoginProtectionConfig $config
+ * @param LoginProtectionConfig $config Unused since v2.7.0 — config flows
+ *                                      through ipam_setting().
  * @param array<string, mixed> $post
  */
 function login_protection_verify(array $config, array $post): ?string
 {
-    $cfg    = $config['login_protection'];
-    $method = to_str($cfg['method'] ?? '');
+    unset($config);
+    $method = to_str(ipam_setting('login_protection.method'));
     if ($method === '' || $method === 'null') return null;
 
     if ($method === 'honeypot') {
@@ -2123,7 +2308,7 @@ function login_protection_verify(array $config, array $post): ?string
     }
 
     if ($method === 'time_check') {
-        $min = max(1, $cfg['min_seconds']);
+        $min = max(1, to_int(ipam_setting('login_protection.min_seconds')));
         $ts  = to_int($_SESSION['login_form_at'] ?? 0);
         unset($_SESSION['login_form_at']);
         if ($ts === 0 || (time() - $ts) < $min) {
@@ -2132,7 +2317,7 @@ function login_protection_verify(array $config, array $post): ?string
         return null;
     }
 
-    $secretKey = $cfg['secret_key'];
+    $secretKey = to_str(ipam_setting('login_protection.secret_key'));
 
     if ($method === 'turnstile') {
         $token = to_str($post['cf-turnstile-response'] ?? '');
@@ -2171,11 +2356,18 @@ function login_protection_verify(array $config, array $post): ?string
         if ($token === '') return 'Please complete the security check.';
 
         // Use Enterprise API if configured; fall back to standard reCAPTCHA API
-        /** @var IpamConfig $gConfig */
-        $gConfig    = $GLOBALS['config'] ?? [];
-        $enterprise = $gConfig['recaptcha_enterprise'];
-        if (!empty($enterprise['enabled'])) {
-            return recaptcha_enterprise_verify($token, $cfg['site_key'], $enterprise);
+        if ((bool)ipam_setting('recaptcha_enterprise.enabled')) {
+            $rawThreshold = ipam_setting('recaptcha_enterprise.score_threshold');
+            $enterprise = [
+                'enabled'         => true,
+                'project_id'      => to_str(ipam_setting('recaptcha_enterprise.project_id')),
+                'api_key'         => to_str(ipam_setting('recaptcha_enterprise.api_key')),
+                // Must match the action the widget emits (see
+                // recaptcha_expected_action_resolved for the precedence rules).
+                'expected_action' => recaptcha_expected_action_resolved(),
+                'score_threshold' => is_numeric($rawThreshold) ? (float)$rawThreshold : 0.5,
+            ];
+            return recaptcha_enterprise_verify($token, to_str(ipam_setting('login_protection.site_key')), $enterprise);
         }
 
         try {
@@ -2199,7 +2391,7 @@ function login_protection_verify(array $config, array $post): ?string
             $resp = oidc_http_post('https://api.friendlycaptcha.com/api/v1/siteverify', [
                 'secret'  => $secretKey,
                 'solution'=> $token,
-                'sitekey' => $cfg['site_key'],
+                'sitekey' => to_str(ipam_setting('login_protection.site_key')),
             ]);
         } catch (Throwable $e) {
             error_log('FriendlyCaptcha verify error: ' . $e->getMessage());
@@ -2214,13 +2406,14 @@ function login_protection_verify(array $config, array $post): ?string
 /**
  * Return the HTML widget snippet to embed in the login/gate form.
  * For time_check, also sets the session timestamp on GET requests.
+ *
+ * @param LoginProtectionConfig $config Unused since v2.7.0 — kept for signature stability.
  */
-/** @param LoginProtectionConfig $config */
 function login_protection_widget_html(array $config): string
 {
-    $cfg     = $config['login_protection'];
-    $method  = to_str($cfg['method'] ?? '');
-    $siteKey = e($cfg['site_key']);
+    unset($config);
+    $method  = to_str(ipam_setting('login_protection.method'));
+    $siteKey = e(to_str(ipam_setting('login_protection.site_key')));
 
     switch ($method) {
         case 'honeypot':
@@ -2237,16 +2430,14 @@ function login_protection_widget_html(array $config): string
             return "<script src='https://js.hcaptcha.com/1/api.js' async defer></script>"
                  . "<div class='h-captcha' data-sitekey='{$siteKey}'></div>";
         case 'recaptcha':
-            $ver        = $cfg['version'];
-            /** @var IpamConfig $gCfg */
-            $gCfg  = $GLOBALS['config'] ?? [];
-            $isEnt = !empty($gCfg['recaptcha_enterprise']['enabled']);
+            $ver   = to_int(ipam_setting('login_protection.version'));
+            $isEnt = (bool)ipam_setting('recaptcha_enterprise.enabled');
             if ($ver === 3) {
                 $scriptSrc    = $isEnt
                     ? "https://www.google.com/recaptcha/enterprise.js?render={$siteKey}"
                     : "https://www.google.com/recaptcha/api.js?render={$siteKey}";
                 $entAttr      = $isEnt ? " data-recaptcha-enterprise='1'" : '';
-                $action       = e(to_str($gCfg['recaptcha_enterprise']['expected_action']));
+                $action       = e(recaptcha_expected_action_resolved());
                 $actionAttr   = " data-recaptcha-action='{$action}'";
                 return "<script src='{$scriptSrc}' async defer></script>"
                      . "<input type='hidden' name='g-recaptcha-response' id='g-recaptcha-response' data-recaptcha-v3-key='{$siteKey}'{$entAttr}{$actionAttr}>";
@@ -2268,12 +2459,13 @@ function login_protection_widget_html(array $config): string
  * be explicitly allowed; Friendly Captcha uses Web Components (no iframe needed).
  */
 /**
- * @param LoginProtectionConfig $config
+ * @param LoginProtectionConfig $config Unused since v2.7.0 — kept for signature stability.
  * @return array{script_src: string, frame_src: string}
  */
 function login_protection_extra_csp(array $config): array
 {
-    $method = to_str($config['login_protection']['method'] ?? '');
+    unset($config);
+    $method = to_str(ipam_setting('login_protection.method'));
     return match ($method) {
         'turnstile'        => [
             'script_src' => 'https://challenges.cloudflare.com',
@@ -3360,10 +3552,14 @@ function subnet_overlap_warning_text(array $overlaps): string
 /** @param array<string, string> $opts */
 function page_header(string $title, array $opts = []): void
 {
+    // Still needed for the bootstrap_admin default-password warning below —
+    // that is a pre-registry config-only check that stays on config.php
+    // forever (see below). Everything else in this function reads through
+    // ipam_setting() as of v2.7.0.
     global $config;
     $u = to_str($_SESSION['username'] ?? '');
     $role = to_str($_SESSION['role'] ?? '');
-    $appName = trim($config['app_name']) ?: 'Simple PHP IPAM';
+    $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
 
     $extraScriptSrc = isset($opts['extra_script_src']) && $opts['extra_script_src'] !== '' ? ' ' . $opts['extra_script_src'] : '';
     $frameSrc       = isset($opts['extra_frame_src'])  && $opts['extra_frame_src']  !== '' ? " frame-src 'self' " . $opts['extra_frame_src'] . ';' : '';
@@ -3378,11 +3574,11 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=2.6.0'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=2.7.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=2.6.0'></script>";
+    echo "<script defer src='assets/app.js?v=2.7.0'></script>";
     echo "</head><body>";
 
     echo "<div class='topbar'><div class='nav-wrap'>";
@@ -3547,7 +3743,7 @@ function page_header(string $title, array $opts = []): void
 
     // Update-available dismissible banner (admin only, client-side dismiss via localStorage)
     if ($role === 'admin') {
-        $update = ipam_update_check($config ?? []);
+        $update = ipam_update_check($config);
         if ($update) {
             $uv  = e(to_str($update['version']));
             $url = e(to_str($update['url']));
@@ -3615,20 +3811,20 @@ function ipam_normalise_version(string $v): string
  * Returns ['version' => '1.2.1', 'url' => 'https://...'] if newer, otherwise null.
  */
 /**
- * @param IpamConfig $config
+ * @param IpamConfig $config Unused since v2.7.0 — kept for signature stability.
  * @return array{version: string, url: string}|null
  */
 function ipam_update_check(array $config): ?array
 {
+    unset($config);
     // Memoize within a single request — page_header() and page_footer() both call this
     static $memo = false;
     if ($memo !== false) return $memo;
 
-    $uc = $config['update_check'];
-    if (!(bool)$uc['enabled']) { $memo = null; return null; }
+    if (!(bool)ipam_setting('update_check.enabled')) { $memo = null; return null; }
 
-    $ttl             = max(3600, to_int($uc['ttl_seconds']));
-    $notifyPrerelease = !empty($uc['notify_prerelease']);
+    $ttl              = max(3600, to_int(ipam_setting('update_check.ttl_seconds')));
+    $notifyPrerelease = (bool)ipam_setting('update_check.notify_prerelease');
 
     ensure_tmp_dir();
     $cache = tmp_dir() . '/update-check.json';
@@ -3722,15 +3918,20 @@ function find_parent_site_id(PDO $db, string $cidr, ?int $excludeId = null, ?int
  * OIDC — Authorization Code + PKCE (pure PHP, no dependencies)
  * ============================================================ */
 
-/** @param IpamConfig $config */
+/**
+ * @param IpamConfig $config Unused since v2.7.0 — kept for back-compat with
+ *                           existing callers. Reads go through ipam_setting()
+ *                           which falls back to $GLOBALS['config'] on a miss,
+ *                           so legacy config.php-only installs still work.
+ */
 function oidc_enabled(array $config): bool
 {
-    $o = $config['oidc'];
-    return !empty($o['enabled'])
-        && !empty($o['client_id'])
-        && !empty($o['client_secret'])
-        && !empty($o['discovery_url'])
-        && !empty($o['redirect_uri']);
+    unset($config); // keep the signature stable; body now reads through ipam_setting()
+    return (bool)ipam_setting('oidc.enabled')
+        && to_str(ipam_setting('oidc.client_id'))     !== ''
+        && to_str(ipam_setting('oidc.client_secret')) !== ''
+        && to_str(ipam_setting('oidc.discovery_url')) !== ''
+        && to_str(ipam_setting('oidc.redirect_uri'))  !== '';
 }
 
 /**
@@ -3739,12 +3940,13 @@ function oidc_enabled(array $config): bool
  * contain that path.
  */
 /**
- * @param IpamConfig $config
+ * @param IpamConfig $config Unused since v2.7.0 — kept for signature stability.
  * @return array<string, mixed>
  */
 function oidc_discovery(array $config): array
 {
-    $base = rtrim($config['oidc']['discovery_url'], '/');
+    unset($config);
+    $base = rtrim(to_str(ipam_setting('oidc.discovery_url')), '/');
     if ($base === '') throw new RuntimeException('OIDC discovery_url not set');
 
     $url = (str_contains($base, '.well-known')) ? $base : $base . '/.well-known/openid-configuration';

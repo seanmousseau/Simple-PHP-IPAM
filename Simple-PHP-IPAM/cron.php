@@ -36,10 +36,9 @@ $scriptDir = __DIR__;
 /** @var IpamConfig $config */
 $config = require $scriptDir . '/config.php';
 
-// Apply configured timezone before any date/time operations
-date_default_timezone_set(is_string($config['timezone'] ?? null) && $config['timezone'] !== ''
-    ? $config['timezone']
-    : 'UTC');
+// Seed a UTC default so any pre-DB date operations in lib.php bootstrap are
+// deterministic. Real timezone is applied from the DB settings below.
+date_default_timezone_set('UTC');
 
 require $scriptDir . '/lib.php';
 
@@ -83,6 +82,15 @@ register_shutdown_function(static function () use ($cronLockHandle): void {
 });
 
 $db       = ipam_db(to_str($config['db_path']));
+
+// Apply admin-configured timezone from DB settings now that $db is open. All
+// downstream date() calls in this cron run pick up the new zone.
+$tz = to_str(ipam_setting('branding.timezone'));
+if ($tz === '' || !@date_default_timezone_set($tz)) {
+    date_default_timezone_set('UTC');
+}
+unset($tz);
+
 $now      = date('c');
 $exitCode = 0;
 
@@ -151,12 +159,12 @@ try {
 // Task 4: Subnet utilisation alerts
 // ---------------------------------------------------------------------------
 try {
-    $alertEmail = to_str($config['alert_email'] ?? '');
+    $alertEmail = to_str(ipam_setting('alert.email'));
     if ($alertEmail !== '') {
         check_utilization_alerts($db, $config);
         $emit(['task' => 'utilisation_alerts', 'ran' => true, 'ts' => $now]);
     } else {
-        $emit(['task' => 'utilisation_alerts', 'skipped' => true, 'reason' => 'alert_email not configured', 'ts' => $now]);
+        $emit(['task' => 'utilisation_alerts', 'skipped' => true, 'reason' => 'alert.email not configured', 'ts' => $now]);
     }
 } catch (Throwable $e) {
     $fail('utilisation_alerts', $e->getMessage());

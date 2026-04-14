@@ -252,6 +252,208 @@ class SettingsTest extends TestCase
         $this->assertArrayHasKey('max', $defs['alert.util_crit_pct']);
     }
 
+    public function testOidcEnabledReadsThroughSettingsHelperFromDb(): void
+    {
+        // v2.7.0 #373: oidc_enabled() must stop reading $config['oidc'][...]
+        // directly and instead go through ipam_setting() so DB-backed values
+        // take precedence over config.php and the admin UI actually controls
+        // the subsystem.
+        $GLOBALS['config'] = [];
+        $this->assertFalse(oidc_enabled([]), 'defaults to disabled');
+
+        // Seed every required key in the DB and confirm it flips true.
+        ipam_setting_set($this->db, 'oidc.enabled',       true);
+        ipam_setting_set($this->db, 'oidc.client_id',     'cid');
+        ipam_setting_set($this->db, 'oidc.client_secret', 'secret');
+        ipam_setting_set($this->db, 'oidc.discovery_url', 'https://idp.example/');
+        ipam_setting_set($this->db, 'oidc.redirect_uri',  'https://app.example/oidc_callback.php');
+        ipam_setting_cache_bust();
+
+        $this->assertTrue(oidc_enabled([]), 'enabled once every required DB key is set');
+
+        // Flipping enabled to false in the DB must take effect even if
+        // $config still has every OIDC key filled in. DB wins over config.
+        $GLOBALS['config'] = [
+            'oidc' => [
+                'enabled'       => true,
+                'client_id'     => 'cid',
+                'client_secret' => 'secret',
+                'discovery_url' => 'https://idp.example/',
+                'redirect_uri'  => 'https://app.example/oidc_callback.php',
+            ],
+        ];
+        ipam_setting_set($this->db, 'oidc.enabled', false);
+        ipam_setting_cache_bust();
+        $this->assertFalse(oidc_enabled([]), 'DB enabled=false overrides config enabled=true');
+    }
+
+    public function testAlertThresholdsFallbackChain(): void
+    {
+        // v2.7.0 #374: alerting thresholds must follow the DB → config.php →
+        // registry default chain so an admin can override either way.
+        $GLOBALS['config'] = [];
+        $this->assertSame(80, ipam_setting('alert.util_warn_pct'), 'registry default');
+        $this->assertSame(95, ipam_setting('alert.util_crit_pct'), 'registry default');
+        $this->assertSame(3600, ipam_setting('alert.interval_seconds'), 'registry default');
+
+        $GLOBALS['config'] = [
+            'alert_util_warn_pct'    => 70,
+            'alert_util_crit_pct'    => 88,
+            'alert_interval_seconds' => 900,
+            'alert_email'            => 'ops@example.com',
+        ];
+        ipam_setting_cache_bust();
+        $this->assertSame(70, ipam_setting('alert.util_warn_pct'), 'config fallback honoured');
+        $this->assertSame(88, ipam_setting('alert.util_crit_pct'));
+        $this->assertSame(900, ipam_setting('alert.interval_seconds'));
+        $this->assertSame('ops@example.com', ipam_setting('alert.email'));
+
+        // DB value wins over config.
+        ipam_setting_set($this->db, 'alert.util_warn_pct', 60);
+        ipam_setting_cache_bust();
+        $this->assertSame(60, ipam_setting('alert.util_warn_pct'));
+    }
+
+    public function testOidcEnabledFallsBackToConfigPhpWhenDbEmpty(): void
+    {
+        // Back-compat guarantee for v2.7.0: admins who have not touched the
+        // settings UI yet must still see OIDC work with pure config.php.
+        $GLOBALS['config'] = [
+            'oidc' => [
+                'enabled'       => true,
+                'client_id'     => 'cid',
+                'client_secret' => 'secret',
+                'discovery_url' => 'https://idp.example/',
+                'redirect_uri'  => 'https://app.example/oidc_callback.php',
+            ],
+        ];
+        ipam_setting_cache_bust();
+        $this->assertTrue(oidc_enabled([]));
+
+        // Remove one required key — back to disabled.
+        $GLOBALS['config']['oidc']['client_secret'] = '';
+        ipam_setting_cache_bust();
+        $this->assertFalse(oidc_enabled([]));
+    }
+
+    public function testLoginProtectionMethodAdvertisesStaticOptions(): void
+    {
+        // v2.7.0 #442: login_protection.method must declare a fixed option set
+        // so settings.php can render a dropdown and reject out-of-set values.
+        $defs = ipam_setting_definitions();
+        $this->assertArrayHasKey('login_protection.method', $defs);
+        $resolved = ipam_setting_options($defs['login_protection.method']);
+        $this->assertIsArray($resolved);
+        $this->assertArrayHasKey('', $resolved, "'' (off) must be one of the options");
+        $this->assertArrayHasKey('recaptcha', $resolved);
+        $this->assertArrayHasKey('turnstile', $resolved);
+        $this->assertArrayHasKey('friendly_captcha', $resolved);
+    }
+
+    public function testBrandingTimezoneResolvesToPhpIdentifiers(): void
+    {
+        // v2.7.0 #442: branding.timezone uses the @timezone sentinel which
+        // must resolve to PHP's zoneinfo list, including a few stable IDs.
+        $defs = ipam_setting_definitions();
+        $this->assertArrayHasKey('branding.timezone', $defs);
+        $resolved = ipam_setting_options($defs['branding.timezone']);
+        $this->assertIsArray($resolved);
+        $this->assertArrayHasKey('UTC', $resolved);
+        $this->assertArrayHasKey('America/Toronto', $resolved);
+        $this->assertArrayHasKey('Europe/London', $resolved);
+        // Values should be string labels (we default to value = label for the
+        // timezone sentinel since zoneinfo has no human-friendly labels).
+        $this->assertSame('UTC', $resolved['UTC']);
+    }
+
+    public function testSettingOptionsReturnsNullForFreeFormKeys(): void
+    {
+        // Settings without an explicit `options` entry must render as free
+        // text — the resolver is the source of truth for "is this a dropdown".
+        $defs = ipam_setting_definitions();
+        $this->assertNull(ipam_setting_options($defs['branding.site_name']));
+        $this->assertNull(ipam_setting_options($defs['oidc.client_id']));
+    }
+
+    public function testSettingOptionsAcceptsStaticArrayAndCallable(): void
+    {
+        $static = ipam_setting_options([
+            'options' => ['a' => 'Alpha', 'b' => 'Beta'],
+        ]);
+        $this->assertSame(['a' => 'Alpha', 'b' => 'Beta'], $static);
+
+        $callable = ipam_setting_options([
+            'options' => fn(): array => ['x' => 'Xray', 'y' => 'Yankee'],
+        ]);
+        $this->assertSame(['x' => 'Xray', 'y' => 'Yankee'], $callable);
+    }
+
+    public function testDeprecatedKeysEmptyWhenNothingCustomised(): void
+    {
+        // v2.7.0 #376: a fresh install with empty $config and empty settings
+        // table must not light up the banner for every registered key.
+        $GLOBALS['config'] = [];
+        ipam_setting_cache_bust();
+        $this->assertSame([], ipam_setting_deprecated_keys());
+    }
+
+    public function testDeprecatedKeysSkipsDefaultValues(): void
+    {
+        // $config may carry every registered default literally (as v2.6.0
+        // ipam_config_sync() does). None of those should be flagged — only
+        // admin-customised values should.
+        $GLOBALS['config'] = [
+            'app_name'                => 'Simple PHP IPAM', // registry default
+            'alert_util_warn_pct'     => 80,                // registry default
+            'oidc'                    => ['enabled' => false],
+        ];
+        ipam_setting_cache_bust();
+        $this->assertSame([], ipam_setting_deprecated_keys());
+    }
+
+    public function testDeprecatedKeysFlagsCustomisedConfigValues(): void
+    {
+        $GLOBALS['config'] = [
+            'app_name'            => 'Acme IPAM',            // customised
+            'alert_util_warn_pct' => 70,                     // customised
+            'oidc'                => ['enabled' => true],    // customised
+        ];
+        ipam_setting_cache_bust();
+
+        $deprecated = ipam_setting_deprecated_keys();
+        $keys = array_column($deprecated, 'key');
+        $this->assertContains('branding.site_name', $keys);
+        $this->assertContains('alert.util_warn_pct', $keys);
+        $this->assertContains('oidc.enabled', $keys);
+
+        // Each row must carry the config_path and the current value so the
+        // banner can render them.
+        $row = null;
+        foreach ($deprecated as $d) {
+            if ($d['key'] === 'branding.site_name') { $row = $d; break; }
+        }
+        $this->assertNotNull($row);
+        $this->assertSame('app_name', $row['config_path']);
+        $this->assertSame('Acme IPAM', $row['current']);
+
+        // Nested config_key flattens with '.' so the banner column stays
+        // readable.
+        foreach ($deprecated as $d) {
+            if ($d['key'] === 'oidc.enabled') {
+                $this->assertSame('oidc.enabled', $d['config_path']);
+                break;
+            }
+        }
+    }
+
+    public function testDeprecatedKeysHidesRowsAlreadyInDb(): void
+    {
+        $GLOBALS['config'] = ['app_name' => 'Acme IPAM'];
+        ipam_setting_set($this->db, 'branding.site_name', 'Acme IPAM');
+        ipam_setting_cache_bust();
+        $this->assertSame([], ipam_setting_deprecated_keys());
+    }
+
     public function testCallerDefaultIgnoredForRegisteredKey(): void
     {
         // Registry default must win; caller-supplied $default only matters for

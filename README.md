@@ -8,14 +8,15 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 
 ---
 
-## What's new in v2.6.0
+## What's new in v2.7.0
 
+- **Subsystems now read from the database.** OIDC, alerting, branding, login protection, update checker, and reCAPTCHA Enterprise all route through `ipam_setting()` instead of touching `config.php` directly. Edits in **⚙ Admin → Settings** take effect on the next request with no `config.php` change and no restart.
+- **Deprecation banner + one-click import.** After upgrading, the admin Settings page shows a **config.php settings to migrate** banner listing every customised key that is still being served from `config.php`. Each row has an **Import to database** button that copies the value into the `settings` table in one atomic audited write. The dashboard shows a matching warning card so you do not miss it, and `init.php` logs a rate-limited consolidated warning to the server log.
+- **Settings UX polish.** The sensitive-field "show" toggle now actually reveals the input (fixed a nested-label bug from v2.6.0). Bool settings render with their checkbox inline next to the label instead of stacked below. Timezone and login-protection method are now dropdowns with server-side value-set validation, so typos never silently break a subsystem.
+- **New OIDC hardening flags.** `oidc.disable_local_login`, `oidc.disable_emergency_bypass`, and `oidc.hide_emergency_link` are registered database settings you can toggle from the admin UI — no more `config.php` edits for common lockout scenarios.
+- **`config.php` is still a fallback.** Nothing in your existing `config.php` stops working on upgrade. Removal is v3.0.0; v2.7.x is the migration window. Bootstrap keys (`db_path`, `session_name`, etc.) stay in `config.php` forever.
 
-- **Settings in the database** — administrators can now edit most operational settings from the web UI at **⚙ Admin → Settings** instead of hand-editing `config.php`. Branding, security, alerting, update checker, and OIDC settings all live in a new `settings` table.
-- **Transparent transition** — `config.php` still works as a fallback for every non-bootstrap key in v2.6.0, and every value you set in the UI takes precedence automatically. Each settings row shows a source badge (🟢 Database / 🟡 config.php / ⚪ Default) so you always know where a value is coming from. v2.7.0 rewires each subsystem to read from the database; v3.0.0 removes the `config.php` fallback entirely.
-- **Audit logged** — every change goes through `ipam_setting_set()`, which writes a `setting.update` audit entry with masked old/new values for sensitive keys like OIDC client secrets.
-
-See [CHANGELOG.md](CHANGELOG.md) for full release history and [docs/configuration.md](docs/configuration.md) for the full settings transition plan.
+See [CHANGELOG.md](CHANGELOG.md) for full release history, [docs/upgrading.md](docs/upgrading.md) for the v2.7.0 upgrade notes, and [docs/configuration.md](docs/configuration.md) for the full settings transition plan.
 
 ---
 
