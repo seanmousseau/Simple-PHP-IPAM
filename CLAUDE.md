@@ -643,31 +643,104 @@ Runs the same image CI runs, ~1.5 min wall clock on a warm Docker cache. If this
 
 For those scenarios, follow the full dev-direct pipeline in the *Running the test suites* section above (Deploy → Pre-flight cleanup → Verify admin login → test_api.sh / Playwright dev-direct). For everything else, trust the CI run.
 
-### Pre-release checklist
-Before building a release bundle, **always** complete these steps in order:
-1. Update `docs/` (api.md, configuration.md, etc.) for any changed features or config keys
-2. Update `testing/samples/large-db-sample/gen_large_db.php` and sample datasets if schema or data model changed
-3. Update `testing/scripts/test_api.sh` if API endpoints were added or changed
-4. Confirm the local gate is green (PHP lint + PHPStan + PHPCS + PHPUnit + Semgrep — see *Local gate* above)
-5. Confirm the PR's `Playwright (sqlite)` and `.htaccess coverage` checks are green on the latest commit
-6. Run the dev-direct pipeline only if the release touches something the containerized harness can't cover (real-IdP OIDC, `test_api.sh` regressions, `timezone.spec.ts`)
-7. Run CodeRabbit review and address any Critical findings:
+### Release workflow
+
+The release bundle **ships with the release PR**, not in a follow-up PR. Feature code and the prebuilt tarball land in a single merge to `main`, and CodeRabbit reviews both in one cycle. The previous workflow (merge → build bundle → second archive PR → second CR review) was abandoned because the second CR pass on a binary tarball added nothing but latency.
+
+#### Phase 1 — land the release content on `dev`
+
+Normal feature PRs into `dev` through the session. Every feature/fix/docs commit goes through its own review cycle; nothing in this phase is release-specific.
+
+#### Phase 2 — prepare the release on `dev`
+
+Once everything that belongs in `vX.Y.Z` is on `dev`, do the following **in order** on `dev`:
+
+1. Update `docs/` (`api.md`, `configuration.md`, `oidc.md`, etc.) for any changed features or config keys.
+2. Update `testing/samples/large-db-sample/gen_large_db.php` and sample datasets if schema or data model changed.
+3. Update `testing/scripts/test_api.sh` if API endpoints were added or changed.
+4. Bump `Simple-PHP-IPAM/version.php` to `X.Y.Z`.
+5. Bump the asset cache-buster `?v=X.Y.Z` in `page_header()` (`lib.php`) **and** `demo_gate.php:74-75` if any CSS/JS changed.
+6. Update `CHANGELOG.md` with the full `## [X.Y.Z] - YYYY-MM-DD` entry and add the comparison link at the bottom.
+7. Update `README.md` — replace the existing `## What's new in vA.B.C` block **in place** with a vX.Y.Z summary (README only ever carries the single latest release).
+8. Run the full local gate until clean:
    ```bash
-   coderabbit review --plain -t all
+   for f in Simple-PHP-IPAM/<changed>.php; do php -l "$f"; done
+   vendor/bin/phpstan analyse --memory-limit=1G
+   vendor/bin/phpcs
+   vendor/bin/phpunit
+   semgrep --config=.semgrep/rules.yml --error Simple-PHP-IPAM/
    ```
-8. Only then build the release bundle
+9. Run the containerized Playwright harness end-to-end — not just the new spec. The full suite is the gate on release-readiness, not feature-completeness:
+   ```bash
+   bash testing/playwright/bootstrap-app.sh sqlite
+   (cd testing/playwright && \
+     IPAM_BASE_URL=https://127.0.0.1:8443 IPAM_ADMIN_USER=demo IPAM_ADMIN_PASS=demo \
+     npx playwright test)
+   bash testing/playwright/teardown-app.sh
+   ```
+   Only proceed if the full suite is green (pre-existing flaky tests excepted — log them in the PR description).
+10. Run the dev-direct pipeline only if the release touches something the containerized harness can't cover (real-IdP OIDC, `test_api.sh` regressions, `timezone.spec.ts`).
+11. **Clean `Simple-PHP-IPAM/data/` of any local test debris** before building — the release script excludes `*.sqlite` but **not** `*.sqlite.*.bak`, `demo_last_reset.txt`, or any other runtime artifacts. Stray files get baked into the tarball otherwise:
+    ```bash
+    rm -f Simple-PHP-IPAM/data/*.bak Simple-PHP-IPAM/data/demo_last_reset.txt
+    ls Simple-PHP-IPAM/data/   # expect only ipam.sqlite, tmp/, possibly .htaccess
+    ```
+12. **Build the bundle:**
+    ```bash
+    ./releases/make_releases.sh Simple-PHP-IPAM X.Y.Z
+    ```
+    If `rsync` is not available, replicate the same logic with `cp -a` (copy dotfiles with `cp -a src/. dest/`), permission sanitisation, and `tar --numeric-owner --owner=0 --group=0`. Verify the tarball contains:
+    - `upgrade.sh` with execute permission (`-rwxr-xr-x` in `tar tvf ...`)
+    - Both `.htaccess` files (root and `data/`)
+    - `settings.php`, `lib.php`, and any other newly-added PHP files
+    - **No** `data/ipam.sqlite`, no `data/.db_initialized`, no `data/*.bak`
+13. Move the bundle into its permanent home and commit:
+    ```bash
+    mkdir -p releases/ipam-X.Y.Z
+    mv ipam-X.Y.Z/ipam-X.Y.Z.tar.gz ipam-X.Y.Z/SHA256SUMS releases/ipam-X.Y.Z/
+    rmdir ipam-X.Y.Z 2>/dev/null || true
+    git add releases/ipam-X.Y.Z/
+    git commit -m "chore(release): add vX.Y.Z release bundle and SHA256SUMS"
+    ```
+14. Push `dev` and open the release PR `dev → main`. CodeRabbit + CI review the full changeset — code, docs, tests, and bundle — in one cycle.
 
-### Building a release bundle
-Use `releases/make_releases.sh` when `rsync` is available:
-```bash
-./releases/make_releases.sh Simple-PHP-IPAM X.Y.Z
-```
-If `rsync` is not available, replicate the same logic with `cp -a` (copy dotfiles with `cp -a src/. dest/`), permission sanitisation, and `tar --numeric-owner --owner=0 --group=0`.
+#### Phase 3 — responding to review comments
 
-Verify the bundle contains:
-- `upgrade.sh` with execute permission (`-rwxr-xr-x` in `tar tvf`)
-- Both `.htaccess` files (root and `data/`)
-- No `data/ipam.sqlite` or `data/.db_initialized`
+If CodeRabbit or a human reviewer asks for a change on the open PR:
+
+1. Make the code/doc/test fix on `dev` and re-run the relevant local gate checks.
+2. **Rebuild the bundle so it reflects the fix.** This is non-negotiable: the merged `releases/ipam-X.Y.Z/ipam-X.Y.Z.tar.gz` must match the final code state. Delete the old artifact, rerun the cleanup + build, commit as a new `chore(release): rebuild vX.Y.Z bundle after review fixes` commit (or amend, if the review round happens on a single unreviewed change):
+   ```bash
+   rm -rf releases/ipam-X.Y.Z ipam-X.Y.Z
+   rm -f Simple-PHP-IPAM/data/*.bak Simple-PHP-IPAM/data/demo_last_reset.txt
+   ./releases/make_releases.sh Simple-PHP-IPAM X.Y.Z
+   mkdir -p releases/ipam-X.Y.Z
+   mv ipam-X.Y.Z/ipam-X.Y.Z.tar.gz ipam-X.Y.Z/SHA256SUMS releases/ipam-X.Y.Z/
+   rmdir ipam-X.Y.Z 2>/dev/null || true
+   git add releases/ipam-X.Y.Z/
+   git commit -m "chore(release): rebuild vX.Y.Z bundle after review fixes"
+   ```
+3. Push the same branch. CI re-runs; CodeRabbit re-reviews. Repeat until the code is clean.
+4. **Never merge a PR where `releases/ipam-X.Y.Z/ipam-X.Y.Z.tar.gz` predates the final code commit.** If you forget step 2 on the last round, catch it before merge: the `git log --name-only` should show the rebuild commit after every code-fix round.
+
+#### Phase 4 — merge and release
+
+1. Merge the PR once all checks are green.
+2. Pull `main` locally.
+3. Tag and push:
+   ```bash
+   git tag -a vX.Y.Z -m "vX.Y.Z - <one-line summary>"
+   git push origin vX.Y.Z
+   ```
+4. Create the GitHub release, attaching the bundle from the in-tree path (or the local copy — both SHA match because the tree is now authoritative):
+   ```bash
+   gh release create vX.Y.Z \
+     releases/ipam-X.Y.Z/ipam-X.Y.Z.tar.gz \
+     releases/ipam-X.Y.Z/SHA256SUMS \
+     --title "vX.Y.Z - <summary>" \
+     --notes "<markdown body>"
+   ```
+5. Verify the release is live: `gh release view vX.Y.Z --json url,assets`.
 
 ### Commit style
 ```
