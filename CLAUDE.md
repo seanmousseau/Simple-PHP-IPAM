@@ -4,6 +4,36 @@ Developer guide for AI assistants working on this repository.
 
 ---
 
+## TrucoPilot ticket management (non-negotiable)
+
+This project uses the **TrucoPilot MCP server** for ticket management. Every task of meaningful size goes through a ticket. No work without a ticket.
+
+**Server:** `https://trucopilot.com/api/mcp/v1/mcp` (HTTP MCP, Bearer token). The token is already wired into the local project scope of `~/.claude.json` as the `trucopilot-tickets` server — nothing to re-install per session.
+
+**Tool names** (all exposed as `mcp__trucopilot-tickets__<name>`): `get_project_status`, `list_columns`, `create_ticket`, `create_sub_ticket`, `move_ticket`, `add_comment`. `get_project_status` returns the full board state plus every ticket with AI summaries, descriptions, comments, and attached documents — it is the canonical "what's going on here" call.
+
+### Session rules (apply every session)
+
+1. **On session start or after context compaction, call `get_project_status` before doing anything else.** That one call loads the current board, every ticket's AI summary and description, comments, and documents. Do this even if the user's first message looks trivial — the ticket state is the source of truth for what's in progress.
+2. **Before each new task within a session, call `get_project_status` again** to pick up any board changes another agent or the user made since the last call. Do not assume the previous snapshot is still current.
+3. **Before thinking, planning, or writing any code for a task, find or create the ticket and move it to "In Process".** This is the hard rule: no analysis, no plan file, no edits until there is a ticket in the correct column. Search existing tickets with `get_project_status` first — never create a duplicate.
+4. **Break feature work into tickets and sub-tickets.** A multi-phase change (e.g. a release) gets a parent ticket with one sub-ticket per phase. Sub-tickets auto-promote the parent to an Epic.
+5. **Move tickets through columns as work progresses** — pending/backlog → In Process → Review → Done (or whatever the board's `list_columns` returns). Use `move_ticket`. Moving the ticket is part of the work, not a separate admin step.
+6. **Log every meaningful change with `add_comment`.** What to include in every comment:
+   - Short summary of what changed (1–3 sentences).
+   - Files changed and key functions/classes modified.
+   - **The git short commit hash** (`git rev-parse --short HEAD`) so the ticket is linkable back to code. If the change spans multiple commits, list each short hash on its own line.
+   - Test results at the sensible level (local gate pass, Playwright result, etc.) when the comment is about a completed chunk.
+7. **Never skip the ticket step to "save time".** Skipping leaves the board out of sync with reality, which breaks every future `get_project_status` call and every follow-up agent session.
+
+### When in doubt
+
+- If no matching ticket exists for the user's ask, create one with `create_ticket` in the appropriate column before doing anything else. Include a clear title and a description that captures the user's intent verbatim.
+- If the user is asking a pure question (no code changes), you still don't need a ticket — tickets are for work that touches the repo.
+- If the TrucoPilot MCP server is unavailable (network failure, expired token), surface that to the user immediately rather than silently skipping the ticket step. The user decides whether to proceed without a ticket.
+
+---
+
 ## Project overview
 
 Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application built with **PHP 8.2+ and SQLite**. It has **no npm build step** — all CSS and JavaScript are vanilla. Starting in v2.9.0, the application ships a small, carefully curated set of Composer-managed runtime dependencies bundled into the release tarball, so end users still deploy by extracting the tarball with no build step. The web root is `Simple-PHP-IPAM/` (the subdirectory, not the repo root).
