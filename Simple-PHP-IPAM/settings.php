@@ -140,10 +140,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // from silently breaking the login protection or timezone
             // subsystems. The registry is the single source of truth for the
             // valid set — settings.php never hard-codes these lists.
+            //
+            // We also guard against the "invalid stored value coerced by
+            // unrelated save" trap (see CodeRabbit review on #448): if the
+            // currently stored value is already outside the option set,
+            // the <select> renders its first option as selected and the
+            // browser submits that on save. A plain array_key_exists check
+            // on the submitted value would accept the first option and
+            // silently overwrite the invalid-but-untouched stored value.
+            // Block those saves unless the submitted value is an explicit,
+            // valid fix that differs from the invalid stored value.
             $options = ipam_setting_options($def);
-            if ($options !== null && !array_key_exists($newValue, $options)) {
-                $fieldErrors[$key] = 'Must be one of the listed values.';
-                continue;
+            if ($options !== null) {
+                $currentStr = is_scalar($current) ? (string)$current : '';
+                $storedValid    = array_key_exists($currentStr, $options);
+                $submittedValid = array_key_exists($newValue, $options);
+
+                if (!$submittedValid) {
+                    $fieldErrors[$key] = 'Must be one of the listed values.';
+                    continue;
+                }
+                if (!$storedValid && $newValue === $currentStr) {
+                    $fieldErrors[$key] = 'Stored value is not a valid option. Select a valid option to fix it.';
+                    continue;
+                }
             }
         }
 
@@ -365,11 +385,23 @@ page_header('Settings');
                   // #442: string settings with a fixed option set render as a
                   // validated <select>. The registry owns the option list; the
                   // POST handler rejects any value not in it.
-                  $selected = $shown !== null ? $shown : (is_scalar($current) ? (string)$current : '');
+                  //
+                  // If the currently stored value is outside the option set
+                  // (e.g. from a direct SQL write or a dropped registry entry),
+                  // render it as an extra "⚠ invalid" option at the top of the
+                  // list and mark it selected so the admin can see the bad
+                  // state instead of the browser silently picking the first
+                  // valid option. The POST handler rejects a re-save of the
+                  // same invalid value, forcing the admin to pick a valid fix.
+                  $selected       = $shown !== null ? $shown : (is_scalar($current) ? (string)$current : '');
+                  $selectedValid  = array_key_exists($selected, $options);
               ?>
                 <select id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>" class="w-full">
+                  <?php if (!$selectedValid): ?>
+                    <option value="<?= e($selected) ?>" selected>⚠ invalid: <?= e($selected) ?></option>
+                  <?php endif; ?>
                   <?php foreach ($options as $optValue => $optLabel): ?>
-                    <option value="<?= e((string)$optValue) ?>"<?= (string)$optValue === $selected ? ' selected' : '' ?>><?= e((string)$optLabel) ?></option>
+                    <option value="<?= e((string)$optValue) ?>"<?= ($selectedValid && (string)$optValue === $selected) ? ' selected' : '' ?>><?= e((string)$optLabel) ?></option>
                   <?php endforeach; ?>
                 </select>
               <?php else: ?>

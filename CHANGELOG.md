@@ -27,7 +27,7 @@ Subsystems now read configuration from the database. Every non-bootstrap key cov
 - **#441** — Bool settings now render with their checkbox inline next to the label, source badge, and key code on a single row instead of stacked underneath. New `.setting-head--bool` CSS class overrides the global `label { display:flex; flex-direction:column }` rule that was forcing every setting row to stack.
 
 ### Deprecated
-- Every non-bootstrap key in `config.php` is explicitly deprecated as of v2.7.0 and will be removed in v3.0.0. Admins can use the new Settings banner to import customised values into the database with one click; the rest auto-fall-through to the registry defaults. Bootstrap-only keys (`db_path`, `session_name`, `proxy_trust`, `force_https`, `bootstrap_admin`) stay in `config.php` forever.
+- Every non-bootstrap key in `config.php` is explicitly deprecated as of v2.7.0 and will be removed in v3.0.0. Admins can use the new Settings banner to import customised values into the database with one click; the rest auto-fall-through to the registry defaults. Bootstrap-only keys (`db_path`, `session_name`, `proxy_trust`, `force_https`, `base_url`, `bootstrap_admin`) stay in `config.php` forever.
 
 ## [2.6.0] - 2026-04-14
 

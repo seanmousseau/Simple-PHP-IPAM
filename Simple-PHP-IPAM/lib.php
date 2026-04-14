@@ -557,13 +557,13 @@ function ipam_setting_definitions(): array
         ],
         'update_check.ttl_seconds' => [
             'label'       => 'Update check cache TTL (seconds)',
-            'description' => 'How long to cache the update check result before re-fetching. Minimum 60.',
+            'description' => 'How long to cache the update check result before re-fetching from GitHub. Runtime enforces a floor of 3600 (one hour) to avoid hammering the GitHub API, so values below 3600 are silently clamped.',
             'type'        => 'int',
             'group'       => 'update_check',
             'default'     => 86400,
             'sensitive'   => false,
             'config_key'  => ['update_check', 'ttl_seconds'],
-            'min'         => 60,
+            'min'         => 3600,
         ],
         'update_check.notify_prerelease' => [
             'label'       => 'Notify on prereleases',
@@ -1151,12 +1151,16 @@ function ipam_setting_deprecated_keys(): array
 
         // Skip values that match the registry default — a config that still
         // holds the shipped default is not "customised". Loose compares keep
-        // '0' vs 0 vs false from producing spurious banner entries.
+        // '0' vs 0 vs false and '0.5' vs 0.5 from producing spurious banner
+        // entries. recaptcha_enterprise.score_threshold is the concrete
+        // reason the string branch normalises through (string) casts: the
+        // registry default is '0.5' while config_defaults keeps 0.5 (float).
         $default = $def['default'] ?? null;
         $type = is_string($def['type'] ?? null) ? $def['type'] : 'string';
         if ($type === 'bool' && (bool)$current === (bool)$default) continue;
         if ($type === 'int'  && is_numeric($current) && is_numeric($default) && (int)$current === (int)$default) continue;
-        if (($type === 'string' || $type === 'json') && $current === $default) continue;
+        if ($type === 'string' && is_scalar($current) && is_scalar($default) && (string)$current === (string)$default) continue;
+        if ($type === 'json'   && $current === $default) continue;
 
         if (is_array($configKey)) {
             $segments   = [];
@@ -2413,7 +2417,21 @@ function login_protection_widget_html(array $config): string
                     ? "https://www.google.com/recaptcha/enterprise.js?render={$siteKey}"
                     : "https://www.google.com/recaptcha/api.js?render={$siteKey}";
                 $entAttr      = $isEnt ? " data-recaptcha-enterprise='1'" : '';
-                $action       = e(to_str(ipam_setting('recaptcha_enterprise.expected_action')));
+                // Action name precedence for the v3 widget:
+                // 1. $config['recaptcha_action'] (legacy top-level key from
+                //    #289, still documented in docs/configuration.md and
+                //    docs/oidc.md; some deployments depend on it).
+                // 2. recaptcha_enterprise.expected_action from the settings
+                //    helper (v2.7.0 rewire path, covers both the DB and the
+                //    nested config.php fallback).
+                // 3. Literal 'login' fallback.
+                $legacyCfg    = $GLOBALS['config'] ?? null;
+                $legacyAction = is_array($legacyCfg) ? ($legacyCfg['recaptcha_action'] ?? null) : null;
+                $resolvedAction = (is_string($legacyAction) && $legacyAction !== '')
+                    ? $legacyAction
+                    : to_str(ipam_setting('recaptcha_enterprise.expected_action'));
+                if ($resolvedAction === '') $resolvedAction = 'login';
+                $action       = e($resolvedAction);
                 $actionAttr   = " data-recaptcha-action='{$action}'";
                 return "<script src='{$scriptSrc}' async defer></script>"
                      . "<input type='hidden' name='g-recaptcha-response' id='g-recaptcha-response' data-recaptcha-v3-key='{$siteKey}'{$entAttr}{$actionAttr}>";

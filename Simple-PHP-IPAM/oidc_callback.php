@@ -108,10 +108,12 @@ $st->execute([':sub' => $sub]);
 $user = $st->fetch();
 
 // auto_link: link incoming OIDC login to an existing unlinked local account by username/email.
-// auto_provision: create a new account when no match is found (implies auto_link).
-// For backwards compatibility, if auto_link is absent, fall back to auto_provision for both.
+// auto_provision: create a new account when no match is found. Implies
+// auto_link — provisioning runs inside the auto_link block below, so enabling
+// auto_provision alone must also flip auto_link on or provisioning never
+// fires. This mirrors the documented v2.0.0 behaviour before the rewire.
 $autoProvision = (bool)ipam_setting('oidc.auto_provision');
-$autoLink      = (bool)ipam_setting('oidc.auto_link');
+$autoLink      = (bool)ipam_setting('oidc.auto_link') || $autoProvision;
 
 if (!$user && $autoLink) {
     // Try to link an existing local user by preferred_username then by email
