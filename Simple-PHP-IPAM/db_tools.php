@@ -283,7 +283,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
 /* ------------------------------------------------------------------ *
  * GET: manual backup trigger                                           *
  * ------------------------------------------------------------------ */
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'backup_now') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'backup_now' && !$sqlDumpSupported) {
+    csrf_require();
+    // Manual backup is SQLite-only for the same reason SQL dump is:
+    // wal_checkpoint + file-copy of a .sqlite file is engine-specific.
+    // Return 400 + the same notice as export/import so scripted clients
+    // cannot mistake the warning page for a successful backup trigger.
+    http_response_code(400);
+    header('X-IPAM-Sql-Dump-Unsupported: 1');
+    $err = $sqlDumpUnsupportedMsg;
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'backup_now') {
     csrf_require();
     // Force a backup regardless of schedule
     $dbPath = to_str($config['db_path']);
@@ -407,7 +416,7 @@ render_security_banner('db_tools', 'Database import will overwrite all existing 
   <form method='post' class='mt-14'>
     <input type='hidden' name='csrf' value='<?= e(csrf_token()) ?>'>
     <input type='hidden' name='action' value='backup_now'>
-    <button type='submit' class='button-secondary'>💾 Run Backup Now</button>
+    <button type='submit' class='button-secondary'<?= $sqlDumpSupported ? '' : ' disabled' ?>>💾 Run Backup Now</button>
   </form>
 </div>
 
