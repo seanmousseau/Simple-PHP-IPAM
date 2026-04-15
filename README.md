@@ -1,18 +1,18 @@
-<img width="200" draggable="false" oncontextmenu="return false;" src="https://media.pupness.ca/file/seanmousseau/assets/logos/ipam/logo-readme.webp" alt="logo_readme" />
+<img width="200" draggable="false" oncontextmenu="return false;" src="https://media.seanmousseau.com/file/seanmousseau/assets/logos/ipam/logo-readme.webp" alt="logo_readme" />
 
 # Simple-PHP-IPAM
 
-A lightweight **IP Address Management (IPAM)** web application built with PHP 8.2+ and SQLite. Designed for small to mid-sized environments that need straightforward subnet and address tracking without the complexity of a full enterprise IPAM platform.
+A lightweight **IP Address Management (IPAM)** web application built with PHP 8.2+ and SQLite — or **experimental MySQL 8.0.29+** as of v2.10.0. Designed for small to mid-sized environments that need straightforward subnet and address tracking without the complexity of a full enterprise IPAM platform.
 
-No Composer, no npm, no external dependencies — just PHP and a web server.
+No npm, no build step — just PHP and a web server. Runtime Composer dependencies are pre-bundled into the release tarball, so end users still deploy by extracting and running.
 
 ---
 
 ## What's new in v2.10.0
 
-**Experimental MySQL 8.0.22+ driver.** Opt-in via `db_driver = 'mysql'` in `config.php`; SQLite remains the default and is unchanged. The MySQL path is **beta** — a dismissible yellow banner shows on every admin page while it is active, the install docs carry a "MySQL (experimental)" section with a known-issues list, and the v2.10.0 release exists so real users can validate the driver against their data before v3.0.0 commits to the contract. SQLite users can upgrade with zero impact.
+**Experimental MySQL 8.0.29+ driver.** Opt-in via `db_driver = 'mysql'` in `config.php`; SQLite remains the default and is unchanged. The MySQL path is **beta** — a dismissible yellow banner shows on every page while it is active, the install docs carry a "MySQL (experimental)" section with a known-issues list, and the v2.10.0 release exists so real users can validate the driver against their data before v3.0.0 commits to the contract. SQLite users can upgrade with zero impact.
 
-- **`MysqlDialect` on top of the v2.9.0 `Dialect` interface.** Every interface method implemented for MySQL — `NOW()`, `ON DUPLICATE KEY UPDATE`, `BIGINT AUTO_INCREMENT`, `VARBINARY(16)` for binary IPs (native length, never padded, same byte-wise sort order as SQLite), `utf8mb4_bin` for case-sensitive columns, `SIGNAL SQLSTATE '45000'` append-only triggers. Rejects MySQL < 8.0.22 at connect time with a clear error.
+- **`MysqlDialect` on top of the v2.9.0 `Dialect` interface.** Every interface method implemented for MySQL — `UTC_TIMESTAMP()` (always UTC regardless of session timezone), `ON DUPLICATE KEY UPDATE`, `BIGINT AUTO_INCREMENT`, `VARBINARY(16)` for binary IPs (native length, never padded, same byte-wise sort order as SQLite), `utf8mb4_bin` for case-sensitive columns, `SIGNAL SQLSTATE '45000'` append-only triggers. Rejects MySQL < 8.0.29 at connect time with a clear error.
 - **`schema.mysql.sql`** — authoritative 19-table MySQL schema mirroring the fully-migrated SQLite state. Ends with a pre-seed of all 28 historical migration rows so `apply_migrations()` is a no-op on fresh MySQL installs and the SQLite-only historical closures never execute. Installer picks the schema file by `db_driver`.
 - **Cross-engine SQL sweep.** The last SQLite-specific idioms in `lib.php`, `dashboard.php`, and the search endpoints were routed through the `Dialect` abstraction or rewritten in portable SQL: `datetime('now')`, `BEGIN EXCLUSIVE`, `sqlite_sequence`, `PRAGMA foreign_keys`, `PRAGMA table_info`, `IS :param`, `INSERT OR IGNORE`, `strftime()`, `LIKE ... ESCAPE '\\'`, and reused `:q` placeholders across LIKE-OR chains (MySQL native prepares reject reused named placeholders). A new suite of 10 proactive Semgrep rules catches any regression.
 - **CI coverage.** PHP QA and nightly Playwright both gain a MySQL 8.0 matrix slot (`fail-fast: false`) running the full suite — PHPStan, PHPCS, PHPUnit, Semgrep, `test_api.sh`, and the 329-test Playwright suite — against a containerized `mysql:8.0` service. A failing MySQL slot never masks a SQLite slot or vice-versa.
@@ -91,11 +91,11 @@ See [CHANGELOG.md](CHANGELOG.md) for full release history, [docs/install.md](doc
 | Requirement | Details |
 |---|---|
 | **PHP** | 8.2 or later (8.3 recommended) |
-| **PHP extensions** | `pdo`, `pdo_sqlite`, `openssl` |
+| **PHP extensions** | `pdo`, `openssl`, plus one of `pdo_sqlite` (default) or `pdo_mysql` (experimental, v2.10.0+) |
 | **Web server** | Apache, LiteSpeed, nginx, or Caddy (see [install.md](docs/install.md)) |
-| **SQLite** | 3.x via PDO SQLite |
+| **Database** | SQLite 3.x (default) **or** MySQL 8.0.29+ (experimental, opt-in via `db_driver = 'mysql'`; see [install.md#mysql-experimental](docs/install.md#mysql-experimental)) |
 | **HTTPS** | Required — HTTP is redirected to HTTPS |
-| **Writable `data/` dir** | Web server user needs read/write access to `data/` |
+| **Writable `data/` dir** | Web server user requires read/write access to `data/` (SQLite only — MySQL stores its own data files) |
 
 ---
 

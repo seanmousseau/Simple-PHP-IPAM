@@ -186,13 +186,51 @@ final class MysqlSmokeTest extends TestCase
     {
         $bin = inet_pton($ip);
         $this->assertNotFalse($bin);
-        $expectedLen = strpos($ip, ':') === false ? 4 : 16;
+        $isIpv6      = strpos($ip, ':') !== false;
+        $expectedLen = $isIpv6 ? 16 : 4;
         $this->assertSame($expectedLen, strlen($bin));
 
-        // Seed a subnet row so the addresses FK is satisfied.
-        $this->db->exec("INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, notes)
-                         VALUES ('10.0.0.0/24', 4, '10.0.0.0', UNHEX('0A000000'), 24, '', '')");
+        // Seed a parent subnet row whose network_bin is native-length for the
+        // IP family being tested. Before v2.10.0 this fixture always used a
+        // 4-byte /24 IPv4 subnet even for the IPv6 vectors, so the 16-byte
+        // network_bin round-trip was never exercised. Creating a real IPv6
+        // subnet row for IPv6 vectors proves VARBINARY(16) stores both the
+        // 4-byte and 16-byte forms correctly without padding.
+        if ($isIpv6) {
+            $netCidr = '2001:db8::/32';
+            $netText = '2001:db8::';
+            $netBin  = inet_pton($netText);
+            $prefix  = 32;
+            $version = 6;
+        } else {
+            $netCidr = '10.0.0.0/24';
+            $netText = '10.0.0.0';
+            $netBin  = inet_pton($netText);
+            $prefix  = 24;
+            $version = 4;
+        }
+        $this->assertNotFalse($netBin);
+        $this->assertSame($expectedLen, strlen($netBin), 'parent subnet network_bin is native length');
+
+        $sIns = $this->db->prepare(
+            "INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, notes)
+             VALUES (:cidr, :ver, :net, :nbin, :pfx, '', '')"
+        );
+        $sIns->bindValue(':cidr', $netCidr);
+        $sIns->bindValue(':ver',  $version, PDO::PARAM_INT);
+        $sIns->bindValue(':net',  $netText);
+        ipam_bind_binary($sIns, ':nbin', $netBin);
+        $sIns->bindValue(':pfx',  $prefix,  PDO::PARAM_INT);
+        $sIns->execute();
         $subnetId = (int)$this->db->lastInsertId();
+
+        // Round-trip the parent subnet's network_bin first so the 16-byte
+        // shape is asserted independently of the child address row.
+        $sOut = $this->db->prepare("SELECT network_bin FROM subnets WHERE id = :id");
+        $sOut->execute([':id' => $subnetId]);
+        $fetchedNet = (string)$sOut->fetch(PDO::FETCH_ASSOC)['network_bin'];
+        $this->assertSame(strlen($netBin), strlen($fetchedNet), 'subnet network_bin native length preserved');
+        $this->assertSame($netBin, $fetchedNet, 'subnet network_bin bytes preserved');
 
         $ins = $this->db->prepare(
             "INSERT INTO addresses (subnet_id, ip, ip_bin, note) VALUES (:sid, :ip, :bin, '')"

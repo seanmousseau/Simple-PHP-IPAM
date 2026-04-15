@@ -162,11 +162,17 @@ final class MysqlDialectTest extends TestCase
             $this->assertStringContainsString("SIGNAL SQLSTATE '45000'", $stmt);
             $this->assertStringContainsString("audit_log is append-only", $stmt);
             $this->assertStringContainsString("FOR EACH ROW", $stmt);
-            // Single-statement body, no BEGIN/END wrapping — important so
-            // PDO::exec() can dispatch each CREATE TRIGGER as one statement
-            // without any multi-statement parsing concerns.
-            $this->assertStringNotContainsString('BEGIN', $stmt);
-            $this->assertStringNotContainsString('END', $stmt);
+            // v2.10.0 #502: the trigger body is a compound BEGIN ... END
+            // block wrapping the SIGNAL in an IF guard on the session
+            // variable @ipam_bypass_append_only. Housekeeping routines
+            // set the variable to 1, DELETE, then unset it — other
+            // connections continue to be blocked because session
+            // variables are per-connection. PDO::exec() handles compound
+            // CREATE TRIGGER bodies fine without DELIMITER directives.
+            $this->assertStringContainsString('BEGIN', $stmt);
+            $this->assertStringContainsString('END', $stmt);
+            $this->assertStringContainsString('@ipam_bypass_append_only', $stmt);
+            $this->assertStringContainsString('IF', $stmt);
         }
     }
 
@@ -180,7 +186,7 @@ final class MysqlDialectTest extends TestCase
 
     public function testAppendOnlyTriggerStatementsAreIdempotent(): void
     {
-        // CREATE TRIGGER IF NOT EXISTS is supported on MySQL 8.0.22+, which
+        // CREATE TRIGGER IF NOT EXISTS is supported on MySQL 8.0.29+, which
         // v2.10.0 effectively targets (the bootstrap path calls the
         // self-heal on every request).
         $stmts = $this->mysql->append_only_trigger('audit_log');

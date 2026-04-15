@@ -156,17 +156,31 @@ final class MysqlDialect implements Dialect
      *
      * Trigger names embed the table name for namespace safety.
      *
-     * Note: CREATE TRIGGER IF NOT EXISTS requires MySQL 8.0.22+. Earlier
+     * Note: CREATE TRIGGER IF NOT EXISTS requires MySQL 8.0.29+. Earlier
      * 8.0 minor versions will fail on re-run because ensure_audit_log_table()
      * is called idempotently on every bootstrap. v2.10.0 effectively targets
-     * 8.0.22+.
+     * 8.0.29+.
      *
      * @return list<string>
      */
     public function append_only_trigger(string $table): array
     {
         $msg = "$table is append-only";
-        $body = "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '$msg', MYSQL_ERRNO = 1644";
+        // Conditional SIGNAL: the trigger body wraps SIGNAL in an IF block
+        // gated on the session variable @ipam_bypass_append_only. Housekeeping
+        // routines that need to prune (e.g. prune_audit_log) set the variable
+        // to 1 for the duration of their work, DELETE, then unset it. Other
+        // connections keep @ipam_bypass_append_only as NULL (or 0) and
+        // continue to be blocked by SIGNAL. This eliminates the race window
+        // from the drop-triggers-then-delete pattern, where another
+        // connection could mutate the table while the triggers were absent.
+        // Session variables are per-connection so the bypass never leaks.
+        // v2.10.0 #502 post-review fix.
+        $body = "BEGIN"
+            . " IF @ipam_bypass_append_only IS NULL OR @ipam_bypass_append_only <> 1 THEN"
+            . " SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '$msg', MYSQL_ERRNO = 1644;"
+            . " END IF;"
+            . " END";
         return [
             "CREATE TRIGGER IF NOT EXISTS {$table}_no_update "
             . "BEFORE UPDATE ON {$table} FOR EACH ROW $body",
