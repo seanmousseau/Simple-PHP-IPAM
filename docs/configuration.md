@@ -26,7 +26,8 @@ The keys below are seeded into the `settings` table by the v2.6.0 migration and 
 | `security.session_idle_seconds` | int | `1800` | Session idle timeout before auto-logout. |
 | `security.login_max_attempts` | int | `5` | Failed logins per window before IP lockout. |
 | `security.login_lockout_seconds` | int | `900` | Lockout window length. |
-| `alert.email` | string | *(empty)* | Destination for utilization alert emails. Empty disables alerts. |
+| `alert.recipient_user_ids` | json | `[]` | (v2.8.0+) Active user IDs that receive utilization alerts. Picked from a multi-select on **Settings → Alerting**; only users with a non-empty email are eligible. Inactive users / cleared emails drop out automatically at send time. |
+| `alert.email` | string | *(empty)* | **Deprecated in v2.8.0** — replaced by `alert.recipient_user_ids`. The 2.8.0 migration auto-maps a matching active user; unmappable values produce a `settings.alert_email_unmigrated` audit row. Hidden from the UI. Removal in v3.0.0. |
 | `alert.util_warn_pct` | int | `80` | Subnet utilization warn threshold. |
 | `alert.util_crit_pct` | int | `95` | Subnet utilization critical threshold. |
 | `alert.interval_seconds` | int | `3600` | Minimum seconds between utilization alert checks. |
@@ -386,11 +387,13 @@ When `true`, the **Auto-reserve network, broadcast & gateway IPs** checkbox on t
 
 ### `alert_email`
 
-*(Added in v2.0.0)*
+*(Added in v2.0.0; **deprecated in v2.8.0**, removal in v3.0.0)*
 
 **Default:** `''` (disabled)
 
-Email address to send utilization threshold alerts to. Leave empty to disable all email alerts. The feature depends on a working server MTA (`mail()` function).
+Replaced in v2.8.0 by **`alert.recipient_user_ids`**, a multi-select picker on **⚙ Admin → Settings → Alerting** that ties recipients to active user records with a non-empty email. The v2.8.0 migration auto-maps a single matching active user from any existing `alert_email` value; unmappable values produce a `settings.alert_email_unmigrated` audit row so the admin can re-pick recipients on the settings page. The legacy key is hidden from the settings UI as of v2.8.0 and will be removed in v3.0.0.
+
+If you are still on v2.7.x or earlier, this key is the single string address that receives every utilization alert. The feature depends on a working server MTA (`mail()` function).
 
 ```php
 'alert_email' => 'netops@example.com',
@@ -601,7 +604,7 @@ For a guaranteed reset at midnight (independent of web traffic), add a cron entr
 | Temp file cleanup | `tmp_cleanup_ttl_seconds` | No — always runs |
 | Audit log pruning | `audit_log_retention_days` | No — skipped when `retention_days=0` |
 | Address history pruning | `address_history_retention_days` | No — skipped when `retention_days=0` |
-| Subnet utilisation alerts | `alert_email` | No — skipped when `alert_email` is empty |
+| Subnet utilisation alerts | `alert.recipient_user_ids` (v2.8.0+; legacy `alert_email`) | No — skipped when no eligible recipients resolve |
 | Database backup | `backup.enabled`, `backup.frequency` | Yes — honours frequency setting |
 | Network scanning | Per-subnet `scan_schedules.interval_minutes` | Yes — each subnet's own interval |
 | Demo mode reset | `demo_mode.enabled` | Yes — at most once every 24 hours |

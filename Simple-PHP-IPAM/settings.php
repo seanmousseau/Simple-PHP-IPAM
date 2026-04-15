@@ -69,11 +69,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     foreach ($definitions as $key => $def) {
         if (($def['group'] ?? '') !== $postedGroup) continue;
+        // CodeRabbit M2 (PR #450): mirror the renderer's deprecated guard.
+        // The save loop must not process deprecated keys, otherwise saving any
+        // group containing them would silently overwrite the stored value with
+        // an empty string (since the field is absent from the form). Affected
+        // alert.email after #443 — it would be wiped on every Alerting save.
+        if (!empty($def['deprecated'])) continue;
 
         $fieldName = 'k_' . str_replace('.', '__', $key);
         $type      = is_string($def['type'] ?? null) ? $def['type'] : 'string';
         $sensitive = !empty($def['sensitive']);
         $current   = ipam_setting($key);
+
+        // #443: the alert.recipient_user_ids field uses a multi-select tied
+        // to the users table instead of the generic JSON textarea. The select
+        // posts ${fieldName}__select[] (an int[]) which we re-encode as JSON
+        // here so the rest of the pipeline (validator, formOverrides, json
+        // type branch) handles it unchanged.
+        if ($key === 'alert.recipient_user_ids') {
+            $rawSel = $_POST[$fieldName . '__select'] ?? null;
+            if (is_array($rawSel)) {
+                $intIds = array_values(array_unique(array_map(fn($v) => (int)to_str($v), $rawSel)));
+                $intIds = array_values(array_filter($intIds, fn($i) => $i > 0));
+                $encoded = json_encode($intIds, JSON_UNESCAPED_SLASHES);
+                $_POST[$fieldName] = is_string($encoded) ? $encoded : '[]';
+            }
+        }
 
         // Record the raw submitted value up front so a later validation
         // failure in this group does not cause earlier inputs to snap back
@@ -302,6 +323,9 @@ page_header('Settings');
       <input type="hidden" name="group" value="<?= e($groupKey) ?>">
 
       <?php foreach ($groupDefs as $key => $def):
+          // #443: hide deprecated registry entries from the UI. The values
+          // are still in the table so migrations can read them.
+          if (!empty($def['deprecated'])) continue;
           $type      = to_str($def['type'] ?? 'string');
           $label     = to_str($def['label'] ?? $key);
           $help      = to_str($def['description'] ?? '');
@@ -352,6 +376,62 @@ page_header('Settings');
                 <input type="number" id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>"
                        value="<?= e($shown !== null ? $shown : (string)to_int($current)) ?>"<?= $minAttr . $maxAttr ?>
                        class="mw-240">
+              <?php elseif ($key === 'alert.recipient_user_ids'):
+                  // #443: render a multi-select picker tied to the users table
+                  // instead of a raw JSON textarea. Only active users with a
+                  // non-empty email are eligible. Submitted form value is a
+                  // JSON-encoded list[int] so it round-trips through the
+                  // existing 'json' POST validator unchanged.
+                  $allUsers = $db->query(
+                      "SELECT id, username, name, email FROM users
+                       WHERE email IS NOT NULL AND email != '' AND is_active = 1
+                       ORDER BY username"
+                  );
+                  $eligibleUsers = is_object($allUsers) ? $allUsers->fetchAll() : [];
+                  $selectedIds = [];
+                  if ($shown !== null) {
+                      $decoded = json_decode($shown, true);
+                      if (is_array($decoded)) {
+                          $selectedIds = array_map(fn($v) => (int)to_str($v), $decoded);
+                      }
+                  } elseif (is_array($current)) {
+                      $selectedIds = array_map(fn($v) => (int)to_str($v), $current);
+                  }
+                  $selectedEmails = [];
+              ?>
+                <?php if ($eligibleUsers === []): ?>
+                  <div class="warning">
+                    No active users have an email address set. Add an email to a user on
+                    <a href="users.php">Users</a> to enable alert recipients.
+                  </div>
+                  <input type="hidden" name="<?= e($fieldName) ?>__select[]" value="">
+                <?php else: ?>
+                  <!-- Sentinel posts an empty value so the POST handler always
+                       sees the __select key, even when the user deselects all
+                       options (browsers omit empty <select multiple> fields). -->
+                  <input type="hidden" name="<?= e($fieldName) ?>__select[]" value="">
+                  <select multiple size="6" id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>__select[]" class="w-full">
+                    <?php foreach ($eligibleUsers as $u):
+                        $uid   = to_int($u['id']);
+                        $uname = to_str($u['username']);
+                        $name  = to_str($u['name'] ?? '');
+                        $em    = to_str($u['email'] ?? '');
+                        $sel   = in_array($uid, $selectedIds, true);
+                        if ($sel) $selectedEmails[] = $em;
+                        $disp  = $name !== '' ? "{$uname} ({$name}) <{$em}>" : "{$uname} <{$em}>";
+                    ?>
+                      <option value="<?= e((string)$uid) ?>"<?= $sel ? ' selected' : '' ?>><?= e($disp) ?></option>
+                    <?php endforeach; ?>
+                  </select>
+                  <div class="settings-multi-actions">
+                    <button type="button" class="button-secondary settings-multi-clear" data-clear-select="<?= e($inputId) ?>">Clear all</button>
+                    <span class="muted" style="margin-left:0.5rem;font-size:0.85em;">Cmd/Ctrl-click to toggle individual selections.</span>
+                  </div>
+                  <div class="muted" style="margin-top:0.25rem;">
+                    Emails will be sent to:
+                    <?= $selectedEmails === [] ? '<em>(none)</em>' : e(implode(', ', $selectedEmails)) ?>
+                  </div>
+                <?php endif; ?>
               <?php elseif ($type === 'json'): ?>
                 <textarea id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>" rows="4" class="w-full"><?php
                     if ($shown !== null) { echo e($shown); }
@@ -366,21 +446,34 @@ page_header('Settings');
                   $isSet = is_string($current) && $current !== '';
                   $statusText = $isSet ? 'Set — leave blank to keep current' : 'Not set';
                   $statusCls  = $isSet ? 'success' : 'muted';
-                  $toggleId   = 'pwshow-' . $fieldName;
               ?>
-                <input type="password" id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>"
-                       value="" placeholder="<?= $isSet ? '••••••••' : '' ?>"
-                       class="w-full" autocomplete="new-password">
+                <span class="pw-wrap">
+                  <input type="password" id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>"
+                         value="" placeholder="<?= $isSet ? '••••••••' : '' ?>"
+                         class="w-full pw-input" autocomplete="new-password">
+                  <!--
+                    #449: eye-icon button replaces the v2.6.0/v2.7.0 checkbox toggles,
+                    which both regressed in real browsers despite passing headless
+                    Playwright. type="button" is mandatory or Enter submits the form.
+                    Positioned at right:36px so password-manager icons (1Password,
+                    Bitwarden) can paint at right:0–8px without overlap.
+
+                    #449 follow-up: when the field has a stored value (isSet),
+                    render data-pw-reveal-key + data-pw-reveal-csrf so the JS
+                    handler can fetch the actual stored secret from
+                    settings_reveal.php on first reveal click. Without this,
+                    the toggle could only reveal what the user had just typed,
+                    which is not what users expect on a "Set" field.
+                  -->
+                  <button type="button" class="pw-toggle"
+                          data-pw-toggle-for="<?= e($inputId) ?>"
+                          <?php if ($isSet): ?>data-pw-reveal-key="<?= e($key) ?>" data-pw-reveal-csrf="<?= e(csrf_token()) ?>"<?php endif; ?>
+                          aria-label="Show password" aria-pressed="false">
+                    <svg class="pw-eye pw-eye--open" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    <svg class="pw-eye pw-eye--closed" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a19.77 19.77 0 0 1 5.06-5.94"/><path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a19.77 19.77 0 0 1-3.17 4.19"/><path d="M14.12 14.12A3 3 0 1 1 9.88 9.88"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                  </button>
+                </span>
                 <span class="badge badge-<?= e($statusCls) ?>" style="margin-left:0.25rem;"><?= e($statusText) ?></span>
-                <!--
-                  #440: the show-toggle lives outside the primary field's label
-                  (not nested inside it) so the checkbox's own <label for=...>
-                  association is unambiguous and clicking the text flips the
-                  password input type instead of stealing focus to it.
-                -->
-                <label for="<?= e($toggleId) ?>" class="muted" style="font-weight:normal;margin-left:0.25rem;">
-                  <input type="checkbox" id="<?= e($toggleId) ?>" data-password-toggle="<?= e($inputId) ?>"> show
-                </label>
               <?php elseif ($options !== null):
                   // #442: string settings with a fixed option set render as a
                   // validated <select>. The registry owns the option list; the

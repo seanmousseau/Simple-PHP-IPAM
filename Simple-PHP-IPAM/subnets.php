@@ -40,6 +40,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         require_write_access();
         $cidr   = trim(to_str($_POST['cidr'] ?? ''));
         $desc   = trim(to_str($_POST['description'] ?? ''));
+        $notes  = trim(to_str($_POST['notes'] ?? ''));
         $siteId = to_int($_POST['site_id'] ?? 0);
         if ($siteId <= 0) $siteId = null;
 
@@ -74,6 +75,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pendingData = [
                     'cidr'         => $cidr,
                     'description'  => $desc,
+                    'notes'        => $notes,
                     'site_id'      => $siteId ?? 0,
                     'vlan_fk'      => $vlanFk ?? 0,
                     'vrf_id'       => $vrfId ?? 0,
@@ -89,19 +91,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if ($dupChk->fetch()) {
                         $err = 'A subnet with this CIDR already exists.';
                     } else {
-                    $st = $db->prepare("INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, site_id, vlan_id, vlan_fk, vrf_id)
-                                        VALUES (:cidr,:ver,:net,:nb,:pre,:d,:site,:vlan,:vfk,:vrf)");
+                    $st = $db->prepare("INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, notes, site_id, vlan_id, vlan_fk, vrf_id)
+                                        VALUES (:cidr,:ver,:net,:nb,:pre,:d,:notes,:site,:vlan,:vfk,:vrf)");
                     $st->execute([
-                        ':cidr' => $normalized,
-                        ':ver'  => $p['version'],
-                        ':net'  => $p['network'],
-                        ':nb'   => $p['net_bin'],
-                        ':pre'  => $p['prefix'],
-                        ':d'    => $desc,
-                        ':site' => $siteId,
-                        ':vlan' => $vlanId,
-                        ':vfk'  => $vlanFk,
-                        ':vrf'  => $vrfId,
+                        ':cidr'  => $normalized,
+                        ':ver'   => $p['version'],
+                        ':net'   => $p['network'],
+                        ':nb'    => $p['net_bin'],
+                        ':pre'   => $p['prefix'],
+                        ':d'     => $desc,
+                        ':notes' => $notes,
+                        ':site'  => $siteId,
+                        ':vlan'  => $vlanId,
+                        ':vfk'   => $vlanFk,
+                        ':vrf'   => $vrfId,
                     ]);
                     $newSubnetId = (int)$db->lastInsertId();
                     audit($db, 'subnet.create', 'subnet', $newSubnetId, $normalized);
@@ -132,6 +135,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $id     = to_int($_POST['id'] ?? 0);
         $cidr   = trim(to_str($_POST['cidr'] ?? ''));
         $desc   = trim(to_str($_POST['description'] ?? ''));
+        $notes  = trim(to_str($_POST['notes'] ?? ''));
         $siteId = to_int($_POST['site_id'] ?? 0);
         if ($siteId <= 0) $siteId = null;
 
@@ -160,7 +164,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $overlapWarning = subnet_overlap_warning_text($overlaps);
                 $pendingAction = 'update';
                 $pendingData = [
-                    'id' => $id, 'cidr' => $cidr, 'description' => $desc,
+                    'id' => $id, 'cidr' => $cidr, 'description' => $desc, 'notes' => $notes,
                     'site_id' => $siteId ?? 0, 'vlan_fk' => $vlanFk ?? 0, 'vrf_id' => $vrfId ?? 0,
                 ];
             } else {
@@ -171,20 +175,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } else {
                     try {
                         $st = $db->prepare("UPDATE subnets
-                                            SET cidr=:cidr, ip_version=:ver, network=:net, network_bin=:nb, prefix=:pre, description=:d, site_id=:site, vlan_id=:vlan, vlan_fk=:vfk, vrf_id=:vrf
+                                            SET cidr=:cidr, ip_version=:ver, network=:net, network_bin=:nb, prefix=:pre, description=:d, notes=:notes, site_id=:site, vlan_id=:vlan, vlan_fk=:vfk, vrf_id=:vrf
                                             WHERE id=:id");
                         $st->execute([
-                            ':cidr' => $normalized,
-                            ':ver'  => $p['version'],
-                            ':net'  => $p['network'],
-                            ':nb'   => $p['net_bin'],
-                            ':pre'  => $p['prefix'],
-                            ':d'    => $desc,
-                            ':site' => $siteId,
-                            ':vlan' => $vlanId,
-                            ':vfk'  => $vlanFk,
-                            ':vrf'  => $vrfId,
-                            ':id'   => $id,
+                            ':cidr'  => $normalized,
+                            ':ver'   => $p['version'],
+                            ':net'   => $p['network'],
+                            ':nb'    => $p['net_bin'],
+                            ':pre'   => $p['prefix'],
+                            ':d'     => $desc,
+                            ':notes' => $notes,
+                            ':site'  => $siteId,
+                            ':vlan'  => $vlanId,
+                            ':vfk'   => $vlanFk,
+                            ':vrf'   => $vrfId,
+                            ':id'    => $id,
                         ]);
                         audit($db, 'subnet.update', 'subnet', $id, $normalized);
                         $msg = 'Subnet updated.';
@@ -266,7 +271,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $st = $db->prepare("
-    SELECT s.id, s.cidr, s.ip_version, s.network, s.network_bin, s.prefix, s.description, s.updated_at, s.site_id, s.vlan_id, s.vlan_fk, s.vrf_id,
+    SELECT s.id, s.cidr, s.ip_version, s.network, s.network_bin, s.prefix, s.description, s.notes, s.updated_at, s.site_id, s.vlan_id, s.vlan_fk, s.vrf_id,
            v.name AS vlan_name, vr.name AS vrf_name,
            ss.method AS scan_method, ss.tcp_port AS scan_tcp_port,
            ss.interval_minutes AS scan_interval, ss.is_active AS scan_active,
@@ -685,6 +690,7 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
     echo "<input type='hidden' name='id' value='" . to_int($row['id']) . "'>";
     echo "<label>CIDR<br><input name='cidr' value='" . e(to_str($row['cidr'])) . "' required></label>";
     echo "<label>Description<br><input name='description' value='" . e(to_str($row['description'])) . "'></label>";
+    echo "<label class='subnet-notes-edit'>Notes<br><textarea name='notes' rows='4' placeholder='Long-form operational notes, runbook links, ownership context…'>" . e(to_str($row['notes'] ?? '')) . "</textarea></label>";
     if ($vlanList) {
         $curVlanFk = to_int($row['vlan_fk'] ?? 0);
         echo "<label>VLAN<br><select name='vlan_fk'><option value='0'>(none)</option>";
@@ -793,6 +799,7 @@ page_header('Subnets');
       <?php endif; ?>
       <input type="hidden" name="cidr" value="<?= e(to_str($pendingData['cidr'])) ?>">
       <input type="hidden" name="description" value="<?= e(to_str($pendingData['description'])) ?>">
+      <input type="hidden" name="notes" value="<?= e(to_str($pendingData['notes'] ?? '')) ?>">
       <input type="hidden" name="site_id" value="<?= to_int($pendingData['site_id']) ?>">
       <input type="hidden" name="vlan_fk" value="<?= to_int($pendingData['vlan_fk'] ?? 0) ?>">
       <input type="hidden" name="vrf_id" value="<?= to_int($pendingData['vrf_id'] ?? 0) ?>">
@@ -815,6 +822,7 @@ page_header('Subnets');
     <div class="row">
       <label>CIDR<br><input name="cidr" placeholder="10.0.0.0/24 or 2001:db8::/64" required data-validate="cidr"></label>
       <label>Description<br><input name="description" placeholder="Office LAN"></label>
+      <label class="subnet-notes-edit">Notes<br><textarea name="notes" rows="3" placeholder="Long-form operational notes, runbook links, ownership context…"></textarea></label>
       <?php if ($vlanList): ?>
       <label>VLAN<br>
         <select name="vlan_fk">

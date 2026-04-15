@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS subnets (
   network_bin BLOB NOT NULL,
   prefix      INTEGER NOT NULL,
   description TEXT NOT NULL DEFAULT '',
+  notes       TEXT NOT NULL DEFAULT '',             -- v2.8.0 #316: long-form operational notes (textarea)
   site_id     INTEGER,
   vlan_id     INTEGER,                              -- 802.1Q VLAN ID (1–4094), legacy integer field
   vlan_fk     INTEGER REFERENCES vlans(id) ON DELETE SET NULL,  -- v2.0.0: FK to vlans table

@@ -635,6 +635,85 @@ function ipam_migrations(): array
         },
 
         '2.6.0-settings' => \Closure::fromCallable('ipam_migrate_2_6_0_settings'),
+
+        // v2.8.0 #316: long-form operational notes on subnets, separate from
+        // the short-form description column used in table listings.
+        '2.8.0-subnet-notes' => function(PDO $db): void {
+            $cols = ($db->query("PRAGMA table_info(subnets)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+            $names = array_map(fn($c) => to_str($c['name']), $cols);
+            if (!in_array('notes', $names, true)) {
+                $db->exec("ALTER TABLE subnets ADD COLUMN notes TEXT NOT NULL DEFAULT ''");
+            }
+        },
+
+        // v2.8.0 #443: alert.email -> alert.recipient_user_ids. Seed the new
+        // registry row, try to map the legacy free-text address to a single
+        // active user via case-insensitive email match, and audit either the
+        // automatic migration or the unmigratable value so the admin can
+        // re-pick recipients on the settings page.
+        '2.8.0-alert-recipients' => function(PDO $db): void {
+            // settings table only exists on installs that ran 2.6.0-settings.
+            // Fresh installs older than v2.6.0 are not supported; this guard
+            // is for resilience during test fixtures.
+            $tables = array_column(
+                ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                'name'
+            );
+            if (!in_array('settings', $tables, true)) return;
+
+            // Insert the new row with default '[]' if not already present.
+            $db->prepare(
+                "INSERT INTO settings (key, value, type) VALUES (:k, '[]', 'json')
+                 ON CONFLICT(key) DO NOTHING"
+            )->execute([':k' => 'alert.recipient_user_ids']);
+
+            // CodeRabbit M1 (PR #450): re-run safety. If alert.recipient_user_ids
+            // is already non-default, the migration (or an admin) has already
+            // populated it. Don't overwrite admin changes and don't audit a
+            // duplicate auto-migrate row on partial fixture replays.
+            $cur = $db->prepare("SELECT value FROM settings WHERE key = 'alert.recipient_user_ids'");
+            $cur->execute();
+            $curRow = $cur->fetch();
+            $curVal = is_array($curRow) ? trim(to_str($curRow['value'] ?? '')) : '';
+            if ($curVal !== '' && $curVal !== '[]') return;
+
+            // Read the legacy alert.email value (may be missing or blank).
+            $legacy = '';
+            $st = $db->prepare("SELECT value FROM settings WHERE key = 'alert.email'");
+            $st->execute();
+            $row = $st->fetch();
+            if (is_array($row)) $legacy = trim(to_str($row['value'] ?? ''));
+            if ($legacy === '') return;
+
+            // Look up exactly one active user with this email (case-insensitive).
+            $users = ($db->query("SELECT name FROM sqlite_master WHERE type='table' AND name='users'") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+            if (!$users) return;
+
+            $u = $db->prepare("SELECT id FROM users WHERE LOWER(email) = LOWER(:e) AND is_active = 1");
+            $u->execute([':e' => $legacy]);
+            $matches = $u->fetchAll();
+
+            if (count($matches) === 1) {
+                $uid = to_int($matches[0]['id']);
+                $payload = json_encode([$uid], JSON_UNESCAPED_SLASHES);
+                $db->prepare("UPDATE settings SET value = :v WHERE key = 'alert.recipient_user_ids'")
+                   ->execute([':v' => is_string($payload) ? $payload : '[]']);
+                // Audit the auto-migration so it appears in audit.php and the
+                // admin sees what happened.
+                $db->prepare(
+                    "INSERT INTO audit_log (action, entity_type, entity_id, user_id, username, ip, user_agent, details, created_at)
+                     VALUES ('settings.auto_migrate_alert_email', 'setting', NULL, NULL, 'system', '', '', :d, datetime('now'))"
+                )->execute([':d' => "from={$legacy} matched_user_id={$uid}"]);
+            } else {
+                // Either zero matches or ambiguous (>1 active user with the
+                // same email). Don't drop the value silently — emit an audit
+                // row so the admin can re-pick recipients on settings.php.
+                $db->prepare(
+                    "INSERT INTO audit_log (action, entity_type, entity_id, user_id, username, ip, user_agent, details, created_at)
+                     VALUES ('settings.alert_email_unmigrated', 'setting', NULL, NULL, 'system', '', '', :d, datetime('now'))"
+                )->execute([':d' => "from={$legacy} matched_count=" . count($matches)]);
+            }
+        },
     ];
 }
 

@@ -399,6 +399,25 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),select{
   min-width:0;
   box-sizing:border-box;
 }
+/* #443: <select multiple> needs the size attribute to control row count
+   instead of the default 40px height that single-selects use, otherwise
+   the alert recipients picker collapses to a single row with a scrollbar. */
+select[multiple]{
+  height:auto;
+  padding:6px 8px;
+  line-height:1.4;
+}
+select[multiple] option{
+  padding:4px 6px;
+  border-radius:4px;
+}
+.settings-multi-actions{
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:0.25rem;
+  margin-top:0.5rem;
+}
 textarea{
   padding:10px 12px;
   border:1px solid var(--border-strong);
@@ -1108,3 +1127,28 @@ td[data-editable].cell-saving{opacity:.5;}
 .map-node-inner[data-indent="264"]{margin-left:264px}
 .map-node-inner[data-indent="286"]{margin-left:286px}
 .map-node-inner[data-indent="308"]{margin-left:308px}
+
+/* --- #449: password show/hide eye-icon button --- */
+/* Wraps a sensitive <input> + sibling .pw-toggle button. The button sits
+   inside the right edge of the input; the input reserves padding-right so
+   the typed value doesn't slide under the icon. The 36px right offset
+   leaves room for password manager icons (1Password, Bitwarden) which
+   paint at right:0–8px. */
+.pw-wrap{position:relative;display:block}
+.pw-wrap .pw-input{padding-right:76px}
+.pw-toggle{position:absolute;right:36px;top:50%;transform:translateY(-50%);background:transparent;border:0;padding:4px;margin:0;cursor:pointer;color:var(--muted);display:inline-flex;align-items:center;justify-content:center;border-radius:4px}
+.pw-toggle:hover,.pw-toggle:focus{color:var(--fg);outline:none}
+.pw-toggle:focus-visible{box-shadow:0 0 0 2px var(--link)}
+.pw-eye{display:inline-block;vertical-align:middle}
+.pw-eye--closed{display:none}
+.pw-toggle[aria-pressed="true"] .pw-eye--open{display:none}
+.pw-toggle[aria-pressed="true"] .pw-eye--closed{display:inline-block}
+body.pw-toggle-hidden .pw-toggle{display:none}
+/* CodeRabbit m3 (PR #450): keep right padding when the IPAM eye is hidden so
+   the password manager icon at right:0-8px is not crowded against the typed
+   value. The eye reservation drops from 76px (eye + PM icon) to 36px (PM
+   icon only), not all the way to 8px. */
+body.pw-toggle-hidden .pw-wrap .pw-input{padding-right:36px}
+
+/* --- #317: keyboard shortcut hint badge --- */
+.kbd-hint{display:inline-block;margin-left:0.4em;padding:0 0.35em;border:1px solid var(--border);border-radius:3px;font:0.78em/1.4 ui-monospace,Menlo,monospace;color:var(--muted);background:transparent;vertical-align:middle}

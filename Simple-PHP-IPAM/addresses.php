@@ -27,7 +27,7 @@ $addrSort = parse_sort($addrSortCols, 'ip');
 
 $selectedSubnet = null;
 if ($selectedSubnetId > 0) {
-    $st = $db->prepare("SELECT id, cidr, network, prefix, ip_version FROM subnets WHERE id = :id");
+    $st = $db->prepare("SELECT id, cidr, network, prefix, ip_version, description, notes FROM subnets WHERE id = :id");
     $st->execute([':id' => $selectedSubnetId]);
     /** @var array<string, mixed>|false $selRow */
     $selRow = $st->fetch();
@@ -337,7 +337,7 @@ if ($selectedSubnet && to_int($selectedSubnet['ip_version']) === 4) {
         to_str($selectedSubnet['network']), to_int($selectedSubnet['prefix']));
 }
 
-page_header('Addresses');
+page_header('Addresses', ['page' => 'addresses']);
 ?>
 
 <div class="breadcrumbs">
@@ -362,7 +362,7 @@ page_header('Addresses');
 <div class="page-actions">
   <?php if ($selectedSubnetId > 0): ?>
     <?php if (current_user()['role'] !== 'readonly'): ?>
-      <a class="action-pill" href="#add-address" data-open-drawer="add-address" data-drawer-title="Add Address">➕ Add Address</a>
+      <a class="action-pill" href="#add-address" data-open-drawer="add-address" data-drawer-title="Add Address">➕ Add Address <kbd class="kbd-hint">⌘N</kbd></a>
       <a class="action-pill" href="bulk_update.php?subnet_id=<?= (int)$selectedSubnetId ?>">✏ Bulk Update</a>
     <?php endif; ?>
     <?php if ($selectedSubnet && to_int($selectedSubnet['ip_version']) === 4): ?>
@@ -411,6 +411,18 @@ page_header('Addresses');
       </div>
     </div>
   </div>
+  <?php
+    // #316: render long-form subnet notes (if any) above the address table.
+    // <details> keeps it collapsible so a long runbook doesn't dominate the
+    // page; default-open if non-empty so the operator notices it.
+    $subnetNotes = to_str($selectedSubnet['notes'] ?? '');
+    if ($subnetNotes !== '') {
+        echo '<details class="card mt-16 subnet-notes" open>'
+           . '<summary><b>📝 Subnet notes</b></summary>'
+           . '<div class="subnet-notes-body">' . nl2br(e($subnetNotes)) . '</div>'
+           . '</details>';
+    }
+  ?>
 <?php endif; ?>
 
 <div class="card mt-16 drawer-form-card" id="add-address">

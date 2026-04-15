@@ -151,29 +151,140 @@
         });
     });
 
+    // --- #317: Cmd/Ctrl+N opens the Add Address drawer on addresses.php ---
+    // Gated by <body data-page="addresses"> so the shortcut only fires on the
+    // intended page. Skipped when focus is in a text input/textarea so users
+    // typing an address can still type the letter "n".
+    document.addEventListener("keydown", function(e) {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key !== "n" && e.key !== "N") return;
+      if (document.body.dataset.page !== "addresses") return;
+      var ae = document.activeElement;
+      if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)) return;
+      var trigger = document.querySelector('[data-open-drawer="add-address"]');
+      if (!trigger) return;
+      e.preventDefault();
+      trigger.click();
+      // Auto-focus the IP field once the drawer is open. The drawer-open
+      // logic is synchronous so the field is in the DOM by the time we
+      // ask for it.
+      var ipField = document.querySelector('#add-address input[name="ip"]');
+      if (ipField) ipField.focus();
+    });
+
+    // --- #443: clear-all button for the alert recipients multi-select ---
+    // <button data-clear-select="<select-id>"> deselects every option in the
+    // referenced <select multiple>. Without this, HTML offers no built-in
+    // way to deselect ALL options once at least one is selected (clicking an
+    // unmodified option re-selects only that one), so the user has no way to
+    // disable email alerts entirely from the UI.
+    document.addEventListener("click", function(e) {
+      var btn = e.target && e.target.closest ? e.target.closest("button[data-clear-select]") : null;
+      if (!btn) return;
+      e.preventDefault();
+      var sel = document.getElementById(btn.getAttribute("data-clear-select"));
+      if (!sel) return;
+      Array.from(sel.options).forEach(function(o) { o.selected = false; });
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
     // --- Auto-submit selects (data-auto-submit) ---
     document.querySelectorAll("[data-auto-submit]").forEach(function(el) {
       el.addEventListener("change", function() { el.form.submit(); });
     });
 
-    // --- Password show/hide toggle (data-password-toggle="<input id>") ---
-    // Used by settings.php sensitive fields; CSP blocks inline onclick handlers
-    // so the wiring lives here instead. Uses closest() so clicks on the
-    // wrapping <label> text also hit the handler, and falls back on `click`
-    // in addition to `change` so the toggle is resilient to any future
-    // markup reshuffle in settings.php.
-    function applyPasswordToggle(cb) {
-      if (!cb || cb.type !== "checkbox") return;
-      var targetId = cb.getAttribute("data-password-toggle");
-      if (!targetId) return;
-      var input = document.getElementById(targetId);
-      if (!input) return;
-      input.type = cb.checked ? "text" : "password";
+    // --- Password show/hide toggle (eye-icon button, #449) ---
+    // <button class="pw-toggle" data-pw-toggle-for="<input-id>"> flips the
+    // referenced password input between type=password and type=text.
+    // Replaced the v2.6.0 inline-onclick + v2.7.0 nested-checkbox approaches
+    // after both regressed in real browsers (containerized Playwright passed
+    // but the deployed UI did not flip). Stays on type=password by default
+    // so password manager autofill keeps working.
+    //
+    // #449 follow-up: settings.php sensitive fields render with value=""
+    // (the stored secret never appears in HTML source), so an unaided
+    // toggle could only reveal what the user had just typed. When the
+    // button carries data-pw-reveal-key + data-pw-reveal-csrf, fetch the
+    // stored value from settings_reveal.php on the first reveal click and
+    // populate the input. On hide, clear the input so the secret does not
+    // linger in the DOM and the existing "leave blank to keep current"
+    // submit semantics still work.
+    function pwToggleApply(btn, input, willShow) {
+      input.type = willShow ? "text" : "password";
+      btn.setAttribute("aria-pressed", willShow ? "true" : "false");
+      btn.setAttribute("aria-label", willShow ? "Hide password" : "Show password");
     }
-    document.addEventListener("change", function(e) {
-      var cb = e.target && e.target.closest ? e.target.closest("input[type=checkbox][data-password-toggle]") : null;
-      applyPasswordToggle(cb);
+    document.addEventListener("click", function(e) {
+      var btn = e.target && e.target.closest ? e.target.closest("button.pw-toggle[data-pw-toggle-for]") : null;
+      if (!btn) return;
+      var input = document.getElementById(btn.getAttribute("data-pw-toggle-for"));
+      if (!input) return;
+      var willShow = input.type === "password";
+
+      // Hide path: if we filled this from the stored value, clear the
+      // input so the secret leaves the DOM.
+      if (!willShow) {
+        if (input.dataset.pwRevealedFromStored === "1") {
+          input.value = "";
+          delete input.dataset.pwRevealedFromStored;
+        }
+        pwToggleApply(btn, input, false);
+        return;
+      }
+
+      // Show path: if the input is empty and the button declares a reveal
+      // key, fetch the stored secret first. Otherwise just flip the type
+      // (user has typed a value they want to verify).
+      var revealKey = btn.getAttribute("data-pw-reveal-key");
+      var revealCsrf = btn.getAttribute("data-pw-reveal-csrf");
+      if (revealKey && revealCsrf && input.value === "") {
+        var body = new URLSearchParams({ csrf: revealCsrf, key: revealKey });
+        // Build an absolute URL with any embedded credentials stripped so
+        // the fetch() constructor does not throw "Request cannot be
+        // constructed from a URL that includes credentials" when the page
+        // was loaded with HTTP basic auth credentials in the URL (dev /
+        // test scenarios).
+        var revealUrl;
+        try {
+          revealUrl = new URL("settings_reveal.php", window.location.href);
+          revealUrl.username = "";
+          revealUrl.password = "";
+          revealUrl = revealUrl.toString();
+        } catch (_) {
+          revealUrl = "settings_reveal.php";
+        }
+        btn.disabled = true;
+        fetch(revealUrl, { method: "POST", body: body, credentials: "include" })
+          .then(function(r) {
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            return r.json();
+          })
+          .then(function(data) {
+            if (typeof data.value === "string") {
+              input.value = data.value;
+              input.dataset.pwRevealedFromStored = "1";
+            }
+            pwToggleApply(btn, input, true);
+          })
+          .catch(function() {
+            btn.setAttribute("aria-label", "Could not reveal stored value");
+          })
+          .finally(function() {
+            btn.disabled = false;
+          });
+        return;
+      }
+
+      pwToggleApply(btn, input, true);
     });
+    // Per-browser opt-out: users whose password manager already provides a
+    // visibility toggle can hide the IPAM eye buttons by setting
+    // localStorage['ipam-pw-toggle-hidden'] = '1' from devtools.
+    try {
+      if (window.localStorage && localStorage.getItem("ipam-pw-toggle-hidden") === "1") {
+        document.body.classList.add("pw-toggle-hidden");
+      }
+    } catch (_) { /* localStorage may be blocked; non-fatal */ }
 
     // --- Confirm dialogs on forms (data-confirm on <form>) ---
     document.addEventListener("submit", function(e) {

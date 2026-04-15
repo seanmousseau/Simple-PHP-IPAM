@@ -82,6 +82,45 @@ Error responses return an appropriate HTTP status code and a JSON body:
 
 ---
 
+## Pagination (v2.8.0+)
+
+Every list endpoint that supports `?page=` / `?limit=` now sets an `X-Total-Count` response header containing the total row count for the unpaged result set. Use it to drive a pagination UI without fetching every page just to count rows.
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+X-Total-Count: 1247
+```
+
+The default response shape stays flat for backwards compatibility:
+
+```json
+{
+  "total": 1247,
+  "page": 1,
+  "limit": 200,
+  "subnets": [ ... ]
+}
+```
+
+Pass `?envelope=1` to switch to a generic `{data, meta}` envelope. The list key is replaced with `data` so a single client can iterate every paginated resource with one shape:
+
+```json
+{
+  "data": [ ... ],
+  "meta": {
+    "total":    1247,
+    "page":     1,
+    "per_page": 200,
+    "pages":    7
+  }
+}
+```
+
+Both shapes always include the `X-Total-Count` header, so a polling client can use HEAD-style introspection without parsing the body.
+
+---
+
 ## Error codes
 
 | Status | Meaning |
@@ -447,6 +486,30 @@ DELETE /api.php?resource=vrfs&id=<id>  — delete a VRF (→ 204; blocked if sub
 ```
 
 A duplicate `name` returns `409 Conflict`. Deleting a VRF that has subnets assigned returns `409 Conflict`.
+
+---
+
+### Tags (v2.8.0+)
+
+Full CRUD for tags plus association endpoints. Tags are colour-coded labels attached to subnets and addresses through the `subnet_tags` and `address_tags` join tables (`ON DELETE CASCADE`). Subnet and address create/update bodies also accept an optional `tag_ids[]` array that replaces the full tag set in one call.
+
+```text
+GET    /api.php?resource=tags                  # list all tags
+GET    /api.php?resource=tags&id=N             # single tag
+POST   /api.php?resource=tags                  # create  body: {name, colour}
+PUT    /api.php?resource=tags&id=N             # update  body: {name?, colour?}
+DELETE /api.php?resource=tags&id=N             # delete (cascades attachments)
+
+POST   /api.php?resource=subnet_tags           # attach  body: {subnet_id, tag_id}
+DELETE /api.php?resource=subnet_tags&subnet_id=N&tag_id=M
+
+POST   /api.php?resource=address_tags          # attach  body: {address_id, tag_id}
+DELETE /api.php?resource=address_tags&address_id=N&tag_id=M
+```
+
+`name` is required and capped at 50 characters. `colour` must be a 6-digit hex string like `#6c757d` (default if not supplied on create). All write operations require a non-readonly API key and emit `tag.create` / `tag.update` / `tag.delete` / `tag.attach` / `tag.detach` audit entries.
+
+To attach tags atomically when creating a subnet or address, pass `tag_ids: [1, 2, 3]` in the create body. Same on update — the array replaces the existing set.
 
 ---
 
