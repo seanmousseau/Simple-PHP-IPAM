@@ -78,6 +78,24 @@ interface Dialect
     public function autoincrement(): string;
 
     /**
+     * Column type for a TEXT-like column that will be used in an INDEX,
+     * UNIQUE constraint, or primary key.
+     *
+     *  - SQLite  : `TEXT` (no key-length limit on loosely-typed BLOB/TEXT)
+     *  - MySQL   : `VARCHAR($maxLen)` — MySQL 8.0 rejects "BLOB/TEXT column
+     *              used in key specification without a key length", so
+     *              indexed text columns must be VARCHAR with an explicit
+     *              length. 191 is the utf8mb4 default that fits the
+     *              historical 767-byte index-key limit.
+     *  - Postgres: `TEXT` (native B-tree indexes on TEXT are unrestricted)
+     *
+     * Use for any TEXT column that appears in a CREATE INDEX, UNIQUE, or
+     * PRIMARY KEY declaration. Free-form text columns (descriptions, notes,
+     * etc.) that are never indexed should stay as the literal `TEXT`.
+     */
+    public function indexed_text_type(int $maxLen = 191): string;
+
+    /**
      * Column type for a fixed-length binary blob.
      *
      *  - SQLite: `BLOB`
