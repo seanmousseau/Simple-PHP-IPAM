@@ -97,7 +97,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
     } else {
         $tmpPath  = to_str($upload['tmp_name']);
         $fileSize = filesize($tmpPath);
-        $maxMb    = to_int($config['import_sql_max_mb']);
+        // Null-coalesce to match ipam_config_defaults() default. Upgrades from
+        // older installs may not yet have this key in config.php if the file
+        // is not writable by the web server user (so ipam_config_sync() could
+        // not auto-populate it on boot). Fallback prevents a "headers already
+        // sent" cascade even if the global error handler is not yet installed.
+        $maxMb    = to_int($config['import_sql_max_mb'] ?? 200);
         $maxBytes = $maxMb * 1024 * 1024;
 
         if ($fileSize === false || $fileSize > $maxBytes) {
