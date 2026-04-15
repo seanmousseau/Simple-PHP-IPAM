@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [2.9.1] - 2026-04-15
+
+Hotfix release for one post-v2.9.0 user report. No new features. No schema changes. Upgrade is safe from any v2.9.x install.
+
+### Fixed
+- **Database Tools SQL import cascade on oversized uploads.** Uploading a SQL dump larger than `post_max_size` produced a wall of "headers already sent" warnings and left the session broken. Root cause: PHP emitted its "Request Startup" size-limit warning to stdout *before any script ran*, which committed the HTTP response body. Every subsequent `session_name()` / `session_set_cookie_params()` / `session_start()` call in `init.php` then cascaded with "headers already sent".
+
+### Changed
+- **`Simple-PHP-IPAM/.htaccess`** — default upload limits raised from `upload_max_filesize 200M` / `post_max_size 210M` to `512M` / `520M`. Added `php_flag display_startup_errors Off` so PHP's startup warnings never land in the HTTP response body (they still go to the PHP error log for operators).
+- **`Simple-PHP-IPAM/db_tools.php`** — early `CONTENT_LENGTH` check *before* `require init.php`. When a POST's content length exceeds `ini_get('post_max_size')` AND `$_POST` and `$_FILES` are both empty (the exact signature of PHP silently discarding an oversized upload), the endpoint emits a clean 413 page with actionable per-SAPI guidance (Apache + mod_php → `.htaccess`, PHP-FPM → pool config, CGI → `php.ini`). Normal-sized POSTs flow through unchanged.
+- **`docs/install.md`** — new "Upload limits for DB import" subsection under Requirements documenting the bundled defaults, the table of places to raise them per server type, and the app-level `import_sql_max_mb` soft cap in `config.php` (default 200 MB).
+
 ## [2.9.0] - 2026-04-15
 
 Driver-abstraction foundation release. Introduces the `Dialect` interface, a data-integrity migration that normalizes SQLite's `ip_bin` / `network_bin` columns to BLOB affinity, Composer runtime-dependency infrastructure for future curated libraries, a CI tier restructure with an engine-matrix seam for v2.10.0 MySQL and v2.11.0 Postgres, and a handful of smaller fixes carried over from the v2.8.0 CodeRabbit sweep.
@@ -652,6 +664,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[2.9.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.9.0...v2.9.1
 [2.9.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.8.0...v2.9.0
 [2.8.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.7.0...v2.8.0
 [2.7.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.6.0...v2.7.0
