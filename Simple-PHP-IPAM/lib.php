@@ -3436,8 +3436,8 @@ function demo_seed_data(PDO $db): void
     // --- Address history ---
     // Address IDs looked up by IP so we don't hardcode AUTO_INCREMENT
     // positions (same rationale as the address_tags block above).
-    // Backdated created_at timestamps computed in PHP because SQLite's
-    // `datetime('now', '-N days')` modifier is not portable.
+    // Backdated created_at timestamps computed in PHP because the SQLite
+    // relative-time modifier syntax is not portable to MySQL.
     $histIds = [];
     $histIdSt = $db->prepare("SELECT id, ip FROM addresses WHERE ip IN ('10.10.1.1','10.10.2.10','10.10.2.12','10.10.2.20','10.10.3.1','10.10.3.20')");
     $histIdSt->execute();

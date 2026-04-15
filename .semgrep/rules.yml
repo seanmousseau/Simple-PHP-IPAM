@@ -198,3 +198,201 @@ rules:
       category: security
       cwe: CWE-601
       confidence: MEDIUM
+
+  # ---------------------------------------------------------------------------
+  # Cross-engine SQL portability (v2.10.0+)
+  #
+  # v2.10.0 introduced the MysqlDialect alongside SqliteDialect. Every SQLite-
+  # specific idiom that slips into page handlers, lib.php, or new migration
+  # closures targeting post-v2.9.0 schema will break on MySQL. These rules
+  # catch the most common offenders that the v2.9.0 #379/#380 audit missed
+  # and that v2.10.0 #384 / #433 had to sweep (28 call sites across 15 files).
+  #
+  # Exclusions — files where SQLite-specific SQL is correct by design:
+  #   - "**/Simple-PHP-IPAM/schema.sql              (SQLite-only schema file)"
+  #   - "**/Simple-PHP-IPAM/migrations.php          (historical closures stay"
+  #                                              SQLite-specific per the
+  #                                              #484 scope decision)
+  #   - "**/Simple-PHP-IPAM/dialects/SqliteDialect.php (the dialect itself)"
+  #   - Simple-PHP-IPAM/lib.php:ipam_db_dump_stream() (SQLite-format backup
+  #                                                    dump, engine-specific
+  #                                                    by design)
+  #
+  # All other files must use the dialect helpers: $dialect->now(),
+  # $dialect->autoincrement(), $dialect->upsert_or_ignore(),
+  # $dialect->null_safe_eq(), $dialect->pragma_foreign_keys(), etc.
+  # ---------------------------------------------------------------------------
+  - id: ipam-sqlite-datetime-now
+    patterns:
+      - pattern: "\"...datetime('now'...\""
+      - pattern-not-inside: $DB->exec("...PRAGMA foreign_keys...")
+    paths:
+      exclude:
+        - "**/Simple-PHP-IPAM/schema.sql"
+        - "**/Simple-PHP-IPAM/migrations.php"
+        - "**/Simple-PHP-IPAM/dialects/SqliteDialect.php"
+    message: >
+      SQLite-specific `datetime('now')` literal in SQL string.
+      Use `" . ipam_dialect()->now() . "` for cross-engine compatibility.
+      See v2.10.0 #384 for the full audit history.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      category: portability
+      confidence: HIGH
+
+  - id: ipam-sqlite-begin-exclusive
+    pattern: $DB->exec("BEGIN EXCLUSIVE...")
+    paths:
+      exclude:
+        - "**/Simple-PHP-IPAM/dialects/SqliteDialect.php"
+    message: >
+      SQLite-specific `BEGIN EXCLUSIVE` transaction mode. MySQL and Postgres
+      reject the EXCLUSIVE modifier. Branch on `ipam_dialect()->driver_name()`
+      or use plain `START TRANSACTION` / `BEGIN` on non-SQLite engines.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      category: portability
+      confidence: HIGH
+
+  - id: ipam-sqlite-sequence
+    pattern: "\"...sqlite_sequence...\""
+    paths:
+      exclude:
+        - "**/Simple-PHP-IPAM/dialects/SqliteDialect.php"
+        - "**/Simple-PHP-IPAM/migrations.php"
+    message: >
+      `sqlite_sequence` is a SQLite-internal table for AUTOINCREMENT counters.
+      MySQL and Postgres have their own mechanisms (ALTER TABLE ...
+      AUTO_INCREMENT = 1, ALTER SEQUENCE ... RESTART). Guard the call with
+      `if (ipam_dialect()->driver_name() === 'sqlite')`.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      category: portability
+      confidence: HIGH
+
+  - id: ipam-sqlite-pragma-table-info
+    pattern: "\"...PRAGMA table_info...\""
+    paths:
+      exclude:
+        - "**/Simple-PHP-IPAM/dialects/SqliteDialect.php"
+        - "**/Simple-PHP-IPAM/migrations.php"
+    message: >
+      `PRAGMA table_info` is a SQLite introspection query. MySQL uses
+      `information_schema.columns` and Postgres uses `information_schema`
+      too. Add a dialect helper if this information is needed cross-engine;
+      historical migrations in migrations.php are exempt per the #484 scope
+      decision (they never execute on MySQL because schema.mysql.sql
+      pre-seeds schema_migrations).
+    languages: [php]
+    severity: ERROR
+    metadata:
+      category: portability
+      confidence: HIGH
+
+  - id: ipam-sqlite-insert-or-ignore
+    pattern: "\"...INSERT OR IGNORE INTO $TABLE...\""
+    paths:
+      exclude:
+        - "**/Simple-PHP-IPAM/dialects/SqliteDialect.php"
+        - "**/Simple-PHP-IPAM/migrations.php"
+    message: >
+      `INSERT OR IGNORE` is SQLite-specific. Use
+      `Dialect::upsert_or_ignore($table, $conflictCols)` which emits the
+      right form per engine (SQLite: `ON CONFLICT(...) DO NOTHING`,
+      MySQL: `ON DUPLICATE KEY UPDATE col = col`, Postgres: `ON CONFLICT
+      (...) DO NOTHING`).
+    languages: [php]
+    severity: ERROR
+    metadata:
+      category: portability
+      confidence: HIGH
+
+  - id: ipam-sqlite-strftime
+    pattern: "\"...strftime('%...'...\""
+    paths:
+      exclude:
+        - "**/Simple-PHP-IPAM/dialects/SqliteDialect.php"
+        - "**/Simple-PHP-IPAM/migrations.php"
+    message: >
+      `strftime()` is a SQLite function. Use `SUBSTR(col, 1, N)` for simple
+      date-to-minute/hour/day truncation — it works on both SQLite (TEXT)
+      and MySQL (DATETIME auto-converted to string in string-function
+      context) and returns the same prefix.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      category: portability
+      confidence: HIGH
+
+  - id: ipam-sqlite-datetime-offset
+    pattern-regex: "datetime\\('now',\\s*'[-+]"
+    paths:
+      exclude:
+        - "**/Simple-PHP-IPAM/dialects/SqliteDialect.php"
+        - "**/Simple-PHP-IPAM/migrations.php"
+    message: >
+      `datetime('now', '-N days')` modifier arithmetic is SQLite-specific.
+      Compute the absolute timestamp in PHP via strtotime + gmdate, then
+      bind as a plain string parameter. See dashboard.php and
+      api_scan_results() in api.php for examples.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      category: portability
+      confidence: HIGH
+
+  - id: ipam-sqlite-is-param
+    pattern-regex: "\\bIS\\s+:[a-zA-Z_][a-zA-Z0-9_]*"
+    paths:
+      exclude:
+        - "**/Simple-PHP-IPAM/dialects/SqliteDialect.php"
+        - "**/Simple-PHP-IPAM/dialects/Dialect.php"
+        - "**/Simple-PHP-IPAM/migrations.php"
+    message: >
+      `IS :param` is SQLite's null-safe equality syntax. MySQL parses
+      `IS` as `IS NULL`/`IS NOT NULL` only and rejects a parameter after
+      it. Use `Dialect::null_safe_eq($column, $placeholder)` which emits
+      the engine-appropriate form (SQLite: `col IS :ph`, MySQL:
+      `col <=> :ph`, Postgres: `col IS NOT DISTINCT FROM :ph`).
+    languages: [php]
+    severity: ERROR
+    metadata:
+      category: portability
+      confidence: HIGH
+
+  - id: ipam-sqlite-unquoted-settings-key
+    pattern-regex: "(?:FROM|INTO|UPDATE)\\s+settings\\b[^`\\n]*?\\bkey\\b"
+    paths:
+      exclude:
+        - "**/Simple-PHP-IPAM/dialects/SqliteDialect.php"
+    message: >
+      `settings.key` must be backtick-quoted in every query — `key` is
+      a reserved word in MySQL. SQLite accepts backticks as an identifier
+      delimiter so the same SQL runs on both engines. Unquoted usage
+      inside a try/catch can silently swallow the error on MySQL and
+      hide the deprecation-banner UI (see v2.10.0 #433 post-mortem).
+    languages: [php]
+    severity: ERROR
+    metadata:
+      category: portability
+      confidence: HIGH
+
+  - id: ipam-sqlite-like-escape-backslash
+    pattern-regex: "LIKE [^\"\\n]*ESCAPE '\\\\\\\\'"
+    paths:
+      exclude:
+        - "**/Simple-PHP-IPAM/dialects/SqliteDialect.php"
+        - "**/Simple-PHP-IPAM/migrations.php"
+    message: >
+      `LIKE ... ESCAPE '\\'` renders as `ESCAPE '\'` in SQL text which
+      MySQL parses as an unterminated string literal. Use `ESCAPE '!'`
+      (neither engine treats `!` specially) and update like_escape() to
+      match. See the 5 call sites fixed in v2.10.0 #384.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      category: portability
+      confidence: HIGH
