@@ -160,6 +160,11 @@ final class MysqlDialectTest extends TestCase
             $this->assertStringContainsString("SIGNAL SQLSTATE '45000'", $stmt);
             $this->assertStringContainsString("audit_log is append-only", $stmt);
             $this->assertStringContainsString("FOR EACH ROW", $stmt);
+            // Single-statement body, no BEGIN/END wrapping — important so
+            // PDO::exec() can dispatch each CREATE TRIGGER as one statement
+            // without any multi-statement parsing concerns.
+            $this->assertStringNotContainsString('BEGIN', $stmt);
+            $this->assertStringNotContainsString('END', $stmt);
         }
     }
 

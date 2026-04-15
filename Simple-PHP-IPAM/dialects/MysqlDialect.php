@@ -142,30 +142,29 @@ final class MysqlDialect implements Dialect
     }
 
     /**
-     * Two BEFORE triggers using SIGNAL SQLSTATE '45000' which is MySQL's
-     * idiom for raising a generic user-defined exception. MYSQL_ERRNO
-     * 1644 is the standard code for "Unhandled user-defined exception
-     * condition" — the closest MySQL equivalent to SQLite's
-     * RAISE(ABORT).
+     * Two BEFORE triggers using SIGNAL SQLSTATE '45000' — MySQL's idiom for
+     * raising a generic user-defined exception. MYSQL_ERRNO 1644 is the
+     * standard code for "Unhandled user-defined exception condition", the
+     * closest MySQL equivalent to SQLite's RAISE(ABORT).
+     *
+     * Single-statement trigger bodies (no BEGIN/END wrapping) so each CREATE
+     * TRIGGER is one complete statement — PDO::exec() can dispatch them
+     * without any multi-statement parsing concerns, and the schema file
+     * stays parseable without DELIMITER directives.
      *
      * Trigger names embed the table name for namespace safety.
      *
-     * Note: CREATE TRIGGER IF NOT EXISTS is supported on MySQL 8.0.22+.
-     * Earlier 8.0 minor versions will fail on re-run. The ipam_db_init
-     * bootstrap path calls ensure_audit_log_table idempotently on every
-     * request, so pre-8.0.22 users would see noise on every hit. If
-     * support for 8.0.0–8.0.21 becomes a concern, wrap the CREATE with
-     * a DROP TRIGGER IF EXISTS first. v2.10.0 targets 8.0.22+ as the
-     * effective minimum.
+     * Note: CREATE TRIGGER IF NOT EXISTS requires MySQL 8.0.22+. Earlier
+     * 8.0 minor versions will fail on re-run because ensure_audit_log_table()
+     * is called idempotently on every bootstrap. v2.10.0 effectively targets
+     * 8.0.22+.
      *
      * @return list<string>
      */
     public function append_only_trigger(string $table): array
     {
         $msg = "$table is append-only";
-        $body = "BEGIN "
-              . "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '$msg', MYSQL_ERRNO = 1644; "
-              . "END";
+        $body = "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '$msg', MYSQL_ERRNO = 1644";
         return [
             "CREATE TRIGGER IF NOT EXISTS {$table}_no_update "
             . "BEFORE UPDATE ON {$table} FOR EACH ROW $body",

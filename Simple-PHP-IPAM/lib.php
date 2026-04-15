@@ -200,29 +200,48 @@ function ensure_audit_log_table(PDO $db): void
 
 function ipam_db_init(PDO $db): void
 {
-    // Skip bootstrap checks if sentinel exists and DB file hasn't changed since
-    $sentinelPath = __DIR__ . '/data/.db_initialized';
-    $dbFilePath   = __DIR__ . '/data/ipam.sqlite';
-    if (is_file($sentinelPath) && is_file($dbFilePath)) {
-        $sentinelTime = (int)filemtime($sentinelPath);
-        $dbTime       = (int)filemtime($dbFilePath);
-        if ($sentinelTime >= $dbTime) {
-            ensure_migrations_table($db);
-            apply_migrations($db);
-            ensure_audit_log_table($db); // self-heal if table was dropped
-            return;
+    $driver = ipam_dialect()->driver_name();
+
+    // SQLite-only fast path: skip bootstrap checks if the sentinel file is
+    // at least as new as the SQLite DB file. MySQL has no local file to
+    // stat, so this optimisation does not apply there — the MySQL path
+    // runs the full check on every bootstrap (overhead is one SELECT).
+    if ($driver === 'sqlite') {
+        $sentinelPath = __DIR__ . '/data/.db_initialized';
+        $dbFilePath   = __DIR__ . '/data/ipam.sqlite';
+        if (is_file($sentinelPath) && is_file($dbFilePath)) {
+            $sentinelTime = (int)filemtime($sentinelPath);
+            $dbTime       = (int)filemtime($dbFilePath);
+            if ($sentinelTime >= $dbTime) {
+                ensure_migrations_table($db);
+                apply_migrations($db);
+                ensure_audit_log_table($db); // self-heal if table was dropped
+                return;
+            }
         }
     }
 
-    $st = $db->prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'");
-    $st->execute();
-    $hasUsers = (bool)$st->fetch();
-    $st->closeCursor(); // Release WAL read mark — open cursors block DROP TABLE even on other tables
-    unset($st);
+    // Probe for the users table. Try a lightweight SELECT and catch the
+    // "table not found" error — works on every engine without needing
+    // sqlite_master / information_schema branching.
+    $hasUsers = false;
+    try {
+        $probe = $db->query("SELECT 1 FROM users LIMIT 1");
+        if ($probe !== false) {
+            $probe->closeCursor();
+            $hasUsers = true;
+        }
+    } catch (PDOException) {
+        $hasUsers = false;
+    }
 
     if (!$hasUsers) {
-        $schema = file_get_contents(__DIR__ . '/schema.sql');
-        if ($schema === false) throw new RuntimeException("Cannot read schema.sql");
+        $schemaFile = __DIR__ . '/schema.sql';
+        if ($driver === 'mysql') {
+            $schemaFile = __DIR__ . '/schema.mysql.sql';
+        }
+        $schema = file_get_contents($schemaFile);
+        if ($schema === false) throw new RuntimeException("Cannot read " . basename($schemaFile));
         $db->exec($schema);
 
         $config = require __DIR__ . '/config.php';
@@ -233,10 +252,14 @@ function ipam_db_init(PDO $db): void
         $ins = $db->prepare("INSERT INTO users (username, password_hash, role, is_active) VALUES (:u,:h,'admin',1)");
         $ins->execute([':u' => $u, ':h' => $hash]);
 
-        // Stamp all known migrations as already satisfied by the fresh schema
+        // Stamp all known migrations as already satisfied by the fresh schema.
+        // schema.mysql.sql already pre-seeds these rows so the INSERT below
+        // is a no-op on MySQL — upsert_or_ignore() makes that explicit and
+        // lets the same path work on every driver.
         ensure_migrations_table($db);
         require_once __DIR__ . '/migrations.php';
-        $stamp = $db->prepare("INSERT OR IGNORE INTO schema_migrations (version) VALUES (:v)");
+        $ignore = ipam_dialect()->upsert_or_ignore('schema_migrations', ['version']);
+        $stamp = $db->prepare("INSERT INTO schema_migrations (version) VALUES (:v) $ignore");
         foreach (array_keys(ipam_migrations()) as $ver) {
             $stamp->execute([':v' => $ver]);
         }
@@ -264,8 +287,12 @@ function ipam_db_init(PDO $db): void
         $ins->execute([':u' => $u, ':h' => $hash]);
     }
 
-    // Write sentinel so subsequent requests skip bootstrap queries
-    @touch($sentinelPath);
+    // Write sentinel so subsequent requests skip bootstrap queries (SQLite
+    // only — the sentinel is a filesystem optimisation for the local DB
+    // file and has no meaning on MySQL).
+    if ($driver === 'sqlite') {
+        @touch(__DIR__ . '/data/.db_initialized');
+    }
 }
 
 function e(string $s): string
