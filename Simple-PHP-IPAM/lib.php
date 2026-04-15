@@ -779,12 +779,16 @@ function ipam_setting_definitions(): array
         ],
         'oidc.default_role' => [
             'label'       => 'OIDC default role',
-            'description' => "Role assigned to auto-provisioned users. 'readonly' is recommended.",
+            'description' => "Role assigned to auto-provisioned users. 'Read-only' is recommended.",
             'type'        => 'string',
             'group'       => 'oidc',
             'default'     => 'readonly',
             'sensitive'   => false,
             'config_key'  => ['oidc', 'default_role'],
+            'options'     => [
+                'readonly' => 'Read-only',
+                'admin'    => 'Administrator',
+            ],
         ],
         'oidc.disable_local_login' => [
             'label'       => 'Disable local password login',
