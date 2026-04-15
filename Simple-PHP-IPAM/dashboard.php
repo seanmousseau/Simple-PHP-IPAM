@@ -78,10 +78,10 @@ $st->execute();
 $bySite = $st->fetchAll();
 
 /* --- Growth trend: addresses added in last 7 and 30 days ---
- * Cutoffs computed in PHP so the query stays engine-agnostic. SQLite's
- * `datetime('now', '-N days')` modifier form is not portable to MySQL /
- * Postgres — an earlier attempt to use it caused a SQL 1064 on every
- * dashboard load against MySQL in v2.10.0 #433 Playwright validation.
+ * Cutoffs computed in PHP so the query stays engine-agnostic. The SQLite
+ * relative-time modifier form is not portable to MySQL / Postgres — an
+ * earlier attempt caused a SQL 1064 on every dashboard load against MySQL
+ * in v2.10.0 #433 Playwright validation.
  */
 $cutoffWeek  = gmdate('Y-m-d H:i:s', time() - 7  * 86400);
 $cutoffMonth = gmdate('Y-m-d H:i:s', time() - 30 * 86400);
