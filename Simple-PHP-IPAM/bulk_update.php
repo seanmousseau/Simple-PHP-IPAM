@@ -50,8 +50,18 @@ if ($subnetId > 0) {
     $params = [':sid' => $subnetId];
 
     if ($q !== '') {
-        $whereClause .= " AND (ip LIKE :q ESCAPE '!' OR hostname LIKE :q ESCAPE '!' OR owner LIKE :q ESCAPE '!' OR note LIKE :q ESCAPE '!' OR grp LIKE :q ESCAPE '!')";
-        $params[':q'] = '%' . like_escape($q) . '%';
+        // Distinct :q1..:q5 placeholders for PDO native-prepared safety —
+        // MySQL rejects reusing a single named placeholder across multiple
+        // positions. See api.php::api_search() for the same pattern.
+        $whereClause .= " AND (ip LIKE :q1 ESCAPE '!' OR hostname LIKE :q2 ESCAPE '!'"
+                     . " OR owner LIKE :q3 ESCAPE '!' OR note LIKE :q4 ESCAPE '!'"
+                     . " OR grp LIKE :q5 ESCAPE '!')";
+        $qLike = '%' . like_escape($q) . '%';
+        $params[':q1'] = $qLike;
+        $params[':q2'] = $qLike;
+        $params[':q3'] = $qLike;
+        $params[':q4'] = $qLike;
+        $params[':q5'] = $qLike;
     }
 
     // Pagination

@@ -1287,8 +1287,25 @@ function api_search(PDO $db): never
     $q = substr(trim(to_str($_GET['q'] ?? '')), 0, 500);
     if ($q === '') api_error(400, 'q parameter is required.');
 
-    $where  = ["(a.ip LIKE :q ESCAPE '!' OR a.hostname LIKE :q ESCAPE '!' OR a.owner LIKE :q ESCAPE '!' OR a.note LIKE :q ESCAPE '!' OR a.grp LIKE :q ESCAPE '!')"];
-    $params = [':q' => '%' . like_escape($q) . '%'];
+    // Each LIKE clause gets its own distinct placeholder (:q1..:q5) so the
+    // query works under PDO's native prepared statements on every engine.
+    // MySQL's PDO in non-emulated mode rejects reusing a single named
+    // placeholder across multiple positions; SQLite allows it but we keep
+    // the same shape for consistency. All five bindings hold the same
+    // pre-escaped value.
+    $where  = [
+        "(a.ip LIKE :q1 ESCAPE '!' OR a.hostname LIKE :q2 ESCAPE '!' "
+        . "OR a.owner LIKE :q3 ESCAPE '!' OR a.note LIKE :q4 ESCAPE '!' "
+        . "OR a.grp LIKE :q5 ESCAPE '!')"
+    ];
+    $qLike  = '%' . like_escape($q) . '%';
+    $params = [
+        ':q1' => $qLike,
+        ':q2' => $qLike,
+        ':q3' => $qLike,
+        ':q4' => $qLike,
+        ':q5' => $qLike,
+    ];
 
     if (isset($_GET['status'])) {
         $s = strtolower(trim(to_str($_GET['status'])));

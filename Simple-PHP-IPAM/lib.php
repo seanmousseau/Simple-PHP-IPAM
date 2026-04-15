@@ -137,15 +137,7 @@ function ipam_db(array $config): PDO
             $pdo = new PDO($dsn, $user, $pass, [
                 PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-                // PDO_MYSQL's native prepared statements reject reusing a
-                // named placeholder multiple times in the same query. SQLite
-                // allows it, and several queries in the codebase (notably
-                // the full-text search in api.php) rely on that behavior.
-                // Enabling emulation aligns MySQL with SQLite's semantics.
-                // Safe on modern PHP 8.x with the utf8mb4 charset pinned
-                // in the DSN — the historical injection concerns around
-                // prepare emulation required mis-configured character sets.
-                PDO::ATTR_EMULATE_PREPARES => true,
+                PDO::ATTR_EMULATE_PREPARES => false,
             ]);
             // MySQL 8.0 minimum. Versions before that lack utf8mb4 defaults,
             // modern JSON support, and the looser InnoDB key prefix limit

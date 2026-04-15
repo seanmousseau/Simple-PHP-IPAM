@@ -18,8 +18,18 @@ $where = [];
 $params = [];
 
 if ($q !== '') {
-    $where[] = "(a.ip LIKE :q ESCAPE '!' OR a.hostname LIKE :q ESCAPE '!' OR a.owner LIKE :q ESCAPE '!' OR a.note LIKE :q ESCAPE '!' OR a.grp LIKE :q ESCAPE '!' OR a.mac LIKE :q ESCAPE '!')";
-    $params[':q'] = '%' . like_escape($q) . '%';
+    // Distinct :q1..:q6 placeholders for PDO native-prepared safety.
+    // See api.php::api_search() for the full rationale.
+    $where[] = "(a.ip LIKE :q1 ESCAPE '!' OR a.hostname LIKE :q2 ESCAPE '!'"
+             . " OR a.owner LIKE :q3 ESCAPE '!' OR a.note LIKE :q4 ESCAPE '!'"
+             . " OR a.grp LIKE :q5 ESCAPE '!' OR a.mac LIKE :q6 ESCAPE '!')";
+    $qLike = '%' . like_escape($q) . '%';
+    $params[':q1'] = $qLike;
+    $params[':q2'] = $qLike;
+    $params[':q3'] = $qLike;
+    $params[':q4'] = $qLike;
+    $params[':q5'] = $qLike;
+    $params[':q6'] = $qLike;
 }
 if ($status !== '') {
     $where[] = "a.status = :st";

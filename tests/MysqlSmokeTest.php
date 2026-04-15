@@ -41,6 +41,7 @@ final class MysqlSmokeTest extends TestCase
     private PDO $db;
     /** @var array<string, mixed> */
     private array $config;
+    private bool $hadConfigFile = false;
 
     public static function setUpBeforeClass(): void
     {
@@ -86,15 +87,18 @@ final class MysqlSmokeTest extends TestCase
 
         // Write a minimal config.php stub so ipam_db_init() can require it
         // when bootstrapping the admin user on a fresh install. Restored in
-        // tearDown().
+        // tearDown(). Track whether the file existed originally so teardown
+        // can either restore the backup OR unlink the stub it created.
         $cfgPath = dirname(__DIR__) . '/Simple-PHP-IPAM/config.php';
-        if (file_exists($cfgPath)) {
+        $this->hadConfigFile = file_exists($cfgPath);
+        if ($this->hadConfigFile) {
             copy($cfgPath, $cfgPath . '.smoke-bak');
         }
-        file_put_contents(
+        $written = file_put_contents(
             $cfgPath,
             "<?php return " . var_export($this->config, true) . ";\n"
         );
+        $this->assertNotFalse($written, "Failed to write test config stub to $cfgPath");
 
         // Fresh dialect for each test — the globals cache needs to pick up
         // MysqlDialect based on the config we just pinned.
@@ -108,9 +112,18 @@ final class MysqlSmokeTest extends TestCase
     {
         $cfgPath = dirname(__DIR__) . '/Simple-PHP-IPAM/config.php';
         $bak = $cfgPath . '.smoke-bak';
-        if (file_exists($bak)) {
-            copy($bak, $cfgPath);
-            @unlink($bak);
+        if ($this->hadConfigFile) {
+            // Restore the original file from the backup.
+            if (file_exists($bak)) {
+                copy($bak, $cfgPath);
+                @unlink($bak);
+            }
+        } else {
+            // Nothing to restore — remove the stub we wrote so the worktree
+            // is clean for later local runs.
+            if (file_exists($cfgPath)) {
+                @unlink($cfgPath);
+            }
         }
         unset($GLOBALS['ipam_dialect']);
         unset($GLOBALS['config']);
