@@ -91,9 +91,11 @@ Build:
 Stage:
 
 ```bash
-mkdir -p releases/ipam-X.Y.Z
-mv ipam-X.Y.Z/ipam-X.Y.Z.tar.gz ipam-X.Y.Z/SHA256SUMS releases/ipam-X.Y.Z/
-rmdir ipam-X.Y.Z 2>/dev/null || true
+# make_releases.sh emits artifacts directly under releases/ipam-X.Y.Z/.
+# Verify they exist and add to the git index so the release commit picks them up.
+test -f releases/ipam-X.Y.Z/ipam-X.Y.Z.tar.gz
+test -f releases/ipam-X.Y.Z/SHA256SUMS
+git add releases/ipam-X.Y.Z/ipam-X.Y.Z.tar.gz releases/ipam-X.Y.Z/SHA256SUMS
 ```
 
 Verify the tarball contents:

@@ -10,8 +10,21 @@ file="$(printf '%s' "$payload" | jq -r '.tool_input.file_path // empty')"
 
 [[ -z "$file" ]] && exit 0
 
-# Normalise to repo-relative
-rel="${file#"$PWD/"}"
+# Canonicalize both the input path and $PWD so ./ and ../ segments cannot
+# bypass the block list, and so symlinked working directories (e.g. macOS
+# OneDrive Library/CloudStorage <-> ~/OneDrive) strip cleanly. We use
+# python3 because BSD realpath on macOS lacks -m and cannot canonicalize
+# paths whose leaf does not yet exist (Edit/Write may target new files).
+rel="$(FILE="$file" python3 - <<'PY'
+import os, sys
+f = os.environ["FILE"]
+# os.path.realpath resolves symlinks; works for non-existent leaves.
+abs_file = os.path.realpath(os.path.abspath(f))
+abs_pwd  = os.path.realpath(os.path.abspath(os.getcwd()))
+prefix = abs_pwd + os.sep
+sys.stdout.write(abs_file[len(prefix):] if abs_file.startswith(prefix) else abs_file)
+PY
+)"
 
 case "$rel" in
   releases/ipam-*/ipam-*.tar.gz|releases/ipam-*/SHA256SUMS)
