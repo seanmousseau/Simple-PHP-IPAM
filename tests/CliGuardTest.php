@@ -51,14 +51,36 @@ final class CliGuardTest extends TestCase
         $head = (string) file_get_contents($absPath, false, null, 0, 8192);
         $this->assertNotEmpty($head, "Could not read first 8KB of $relPath");
 
-        // Accept either constant form or function form. Both are project-idiomatic.
-        $hasConstantForm = (bool) preg_match('/PHP_SAPI\s*!==?\s*[\'"]cli[\'"]/', $head);
-        $hasFunctionForm = (bool) preg_match('/php_sapi_name\(\)\s*!==?\s*[\'"]cli[\'"]/', $head);
+        // Strip block comments, line comments, and single-line string literals
+        // before matching so a commented-out guard or a docblock example cannot
+        // satisfy the check. A bare token mention is NOT enough — the match
+        // must be the full `if (PHP_SAPI !== 'cli')` statement.
+        $codeOnly = (string) preg_replace('!/\*[\s\S]*?\*/!', '', $head);
+        $codeOnly = (string) preg_replace('/^\s*(?:\/\/|#[^!]).*$/m', '', $codeOnly);
+        $codeOnly = (string) preg_replace("/'[^'\\n]*'|\"[^\"\\n]*\"/", "''", $codeOnly);
 
-        $this->assertTrue(
-            $hasConstantForm || $hasFunctionForm,
-            "$relPath must reject web invocation. Add at the top:\n"
-            . "    if (PHP_SAPI !== 'cli') { header('HTTP/1.1 403 Forbidden'); exit(1); }"
-        );
+        $pattern = '/\bif\s*\(\s*(?:PHP_SAPI|php_sapi_name\s*\(\s*\))\s*!==?\s*\'\'/';
+        if (!preg_match($pattern, $codeOnly, $m, PREG_OFFSET_CAPTURE)) {
+            $this->fail(
+                "$relPath must reject web invocation. Add at the top:\n"
+                . "    if (PHP_SAPI !== 'cli') { http_response_code(403); exit(1); }"
+            );
+        }
+        $guardOffset = (int) $m[0][1];
+
+        // The guard must come before any of a short list of real side effects:
+        // require statements for app code, database opens, direct output.
+        // `declare(strict_types=1);` and bare `use`/`function` declarations
+        // are fine — those don't execute user-visible work.
+        foreach (['require ', 'require_once', 'include ', 'include_once', '\\$db\s*=', '\\$config\s*=', 'echo ', 'print '] as $marker) {
+            if (preg_match('/' . $marker . '/', $codeOnly, $mm, PREG_OFFSET_CAPTURE)) {
+                $markerOffset = (int) $mm[0][1];
+                $this->assertLessThan(
+                    $markerOffset,
+                    $guardOffset,
+                    "$relPath: SAPI guard must run BEFORE `" . trim($marker, '\\') . "`. Move the `if (PHP_SAPI !== 'cli')` block above it."
+                );
+            }
+        }
     }
 }

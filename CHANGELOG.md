@@ -652,6 +652,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[2.9.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.8.0...v2.9.0
 [2.8.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.7.0...v2.8.0
 [2.7.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.5.2...v2.6.0

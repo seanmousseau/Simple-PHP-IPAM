@@ -4,55 +4,10 @@ require __DIR__ . '/init.php';
 /** @var \PDO $db */
 require_login();
 
-// ---- POST: scan schedule management (write role required) ----
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    require_write_access();
-    csrf_require();
-    $action = to_str($_POST['action'] ?? '');
-    $sid    = to_int($_POST['subnet_id'] ?? 0);
-
-    if ($action === 'save_scan_schedule' && $sid > 0) {
-        $method       = to_str($_POST['scan_method'] ?? 'icmp');
-        $tcpPort      = to_int($_POST['scan_tcp_port'] ?? 0) ?: null;
-        $intervalMins = max(1, to_int($_POST['scan_interval'] ?? 60));
-        $isActive     = isset($_POST['scan_active']) ? 1 : 0;
-
-        if (!in_array($method, ['icmp', 'tcp', 'both'], true)) $method = 'icmp';
-        if ($method === 'icmp') {
-            $tcpPort = null;
-        } elseif ($tcpPort === null || $tcpPort < 1 || $tcpPort > 65535) {
-            flash_set('TCP port must be between 1 and 65535 when method is tcp or both.');
-            header('Location: scan_history.php?subnet_id=' . $sid);
-            exit;
-        }
-
-        // #380: dialect-routed upsert so future engines pick up the right idiom.
-        $d = ipam_dialect();
-        $upsertClause = $d->upsert('scan_schedules', ['subnet_id'], ['method', 'tcp_port', 'interval_minutes', 'is_active', 'updated_at']);
-        $db->prepare("
-            INSERT INTO scan_schedules (subnet_id, method, tcp_port, interval_minutes, is_active, updated_at)
-            VALUES (:sid, :method, :port, :interval, :active, {$d->now()})
-            $upsertClause
-        ")->execute([
-            ':sid'      => $sid,
-            ':method'   => $method,
-            ':port'     => $tcpPort,
-            ':interval' => $intervalMins,
-            ':active'   => $isActive,
-        ]);
-        audit($db, 'scan.schedule_update', 'subnet', $sid,
-            "method=$method interval={$intervalMins}m active=$isActive");
-        flash_set('Scan schedule saved.');
-
-    } elseif ($action === 'delete_scan_schedule' && $sid > 0) {
-        $db->prepare("DELETE FROM scan_schedules WHERE subnet_id = :sid")->execute([':sid' => $sid]);
-        audit($db, 'scan.schedule_delete', 'subnet', $sid, '');
-        flash_set('Scan schedule removed.');
-    }
-
-    header('Location: scan_history.php?subnet_id=' . $sid);
-    exit;
-}
+// scan_history.php is a read-only view by project convention. Scan-schedule
+// save / delete is handled by scan_schedule_save.php, which both forms below
+// POST to. Keeping the view page GET-only keeps the "read-only view /
+// read-write controller" split clean.
 
 $subnetId = to_int($_GET['subnet_id'] ?? 0);
 
@@ -174,7 +129,7 @@ page_header('Scan History');
       <?php endif ?>
     </div>
     <?php if ($isWrite): ?>
-    <form method="post" class="row" style="flex-wrap:wrap;gap:10px;align-items:flex-end">
+    <form method="post" action="scan_schedule_save.php" class="row" style="flex-wrap:wrap;gap:10px;align-items:flex-end">
       <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
       <input type="hidden" name="action" value="save_scan_schedule">
       <input type="hidden" name="subnet_id" value="<?= (int)$subnetId ?>">
@@ -199,7 +154,7 @@ page_header('Scan History');
       <div style="padding-top:20px"><button type="submit">Save Schedule</button></div>
     </form>
     <?php if ($hasSched): ?>
-    <form method="post" class="mt-8" data-confirm="Remove scan schedule for this subnet?">
+    <form method="post" action="scan_schedule_save.php" class="mt-8" data-confirm="Remove scan schedule for this subnet?">
       <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
       <input type="hidden" name="action" value="delete_scan_schedule">
       <input type="hidden" name="subnet_id" value="<?= (int)$subnetId ?>">

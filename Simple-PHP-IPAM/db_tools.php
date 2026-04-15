@@ -177,9 +177,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                     $stmtCount++;
                 }
 
+                $db->commit();
+                // SQLite ignores PRAGMA foreign_keys while a transaction is
+                // open, so the re-enable must run *after* commit(), not before.
                 $fkOn = $d->pragma_foreign_keys(true);
                 if ($fkOn !== null) $db->exec($fkOn);
-                $db->commit();
 
                 $elapsed = round(microtime(true) - $importStart, 1);
                 audit($db, 'db.import', 'system', null,
