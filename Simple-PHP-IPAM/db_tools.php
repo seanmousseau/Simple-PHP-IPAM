@@ -93,10 +93,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
     && !$sqlDumpSupported
 ) {
     csrf_require();
+    // Non-2xx status + machine-readable header so a scripted backup
+    // client cannot mistake the warning HTML for a successful dump.
+    // The HTML still renders inline below so interactive users see the
+    // notice the same way every other db_tools error is surfaced.
+    http_response_code(400);
+    header('X-IPAM-Sql-Dump-Unsupported: 1');
     $err = $sqlDumpUnsupportedMsg;
-    // Fall through to the HTML render below so the user sees the notice
-    // inline on the page, matching the feedback pattern for every other
-    // db_tools error path.
 } elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'import') {
     csrf_require();
 

@@ -1974,25 +1974,74 @@ function prune_audit_log(PDO $db, int $retentionDays): int
     if ($retentionDays <= 0) return 0;
     $cutoff = date('Y-m-d H:i:s', (int)strtotime("-{$retentionDays} days"));
 
-    // Drop triggers, DELETE directly, recreate via the active dialect so the
-    // retention job works on every engine (SQLite RAISE(ABORT), MySQL
-    // SIGNAL SQLSTATE '45000'). Hardcoding SQLite trigger SQL here would
-    // leave audit_log mutable on MySQL after the first prune.
+    // Retention routine must DELETE rows without ever leaving the
+    // append-only guarantee observable-violated. v2.10.0 #502 post-review
+    // fix: previously this dropped triggers, DELETEd, then recreated the
+    // triggers — which exposed a race window where other connections
+    // could UPDATE/DELETE audit_log. Two per-engine strategies now close
+    // the window without needing a drop/recreate cycle:
+    //
+    //   SQLite  — wrap the DELETE in BEGIN IMMEDIATE / COMMIT. SQLite DDL
+    //             is transactional AND BEGIN IMMEDIATE holds a reserved
+    //             write lock the entire time, so no other writer can
+    //             touch audit_log. The SQLite RAISE(ABORT) triggers DO
+    //             fire on DELETE, so we still have to drop+recreate on
+    //             SQLite — but now inside the reserved-lock transaction,
+    //             which is atomic from every other connection's point of
+    //             view.
+    //
+    //   MySQL   — set @ipam_bypass_append_only = 1 at session scope. The
+    //             MysqlDialect trigger bodies wrap SIGNAL in an IF block
+    //             gated on this variable (v2.10.0 #502 change to
+    //             MysqlDialect::append_only_trigger). Session variables
+    //             are per-connection so the bypass never leaks to other
+    //             connections — their SIGNAL continues to fire
+    //             unconditionally. DELETE proceeds on this connection,
+    //             every other write is still blocked. No drop/recreate
+    //             needed; the triggers stay in place the entire time.
+    //
+    //   Postgres (v2.11.0) — TBD; pg_advisory_xact_lock() or similar.
+    //
+    // Error paths always attempt to restore a safe state: clear the
+    // MySQL session variable, recreate SQLite triggers via
+    // ensure_audit_log_table() as a fallback.
+    $driver = ipam_dialect()->driver_name();
     try {
-        $db->exec("DROP TRIGGER IF EXISTS audit_log_no_update");
-        $db->exec("DROP TRIGGER IF EXISTS audit_log_no_delete");
+        if ($driver === 'sqlite') {
+            $db->exec("BEGIN IMMEDIATE");
+            $db->exec("DROP TRIGGER IF EXISTS audit_log_no_update");
+            $db->exec("DROP TRIGGER IF EXISTS audit_log_no_delete");
 
-        $st = $db->prepare("DELETE FROM audit_log WHERE created_at < :cutoff");
-        $st->execute([':cutoff' => $cutoff]);
-        $pruned = $st->rowCount();
+            $st = $db->prepare("DELETE FROM audit_log WHERE created_at < :cutoff");
+            $st->execute([':cutoff' => $cutoff]);
+            $pruned = $st->rowCount();
 
-        ensure_audit_log_table($db);
+            ensure_audit_log_table($db);
+            $db->exec("COMMIT");
+        } elseif ($driver === 'mysql') {
+            $db->exec("SET @ipam_bypass_append_only = 1");
+
+            $st = $db->prepare("DELETE FROM audit_log WHERE created_at < :cutoff");
+            $st->execute([':cutoff' => $cutoff]);
+            $pruned = $st->rowCount();
+
+            $db->exec("SET @ipam_bypass_append_only = NULL");
+        } else {
+            // Unknown driver — refuse rather than expose a partial write
+            // path. Future engines add their own branch here.
+            throw new \RuntimeException("prune_audit_log: unsupported driver '$driver'");
+        }
 
         return $pruned;
     } catch (Throwable $e) {
-        // Attempt to restore triggers even on failure so a partial prune
-        // does not leave audit_log writable.
-        try { ensure_audit_log_table($db); } catch (Throwable) {}
+        // Best-effort restore to a safe state. Each branch is independently
+        // guarded because ROLLBACK / UNSET may also throw.
+        if ($driver === 'sqlite') {
+            try { $db->exec("ROLLBACK"); } catch (Throwable) {}
+            try { ensure_audit_log_table($db); } catch (Throwable) {}
+        } elseif ($driver === 'mysql') {
+            try { $db->exec("SET @ipam_bypass_append_only = NULL"); } catch (Throwable) {}
+        }
         error_log('audit_log prune failed: ' . $e->getMessage());
         return 0;
     }

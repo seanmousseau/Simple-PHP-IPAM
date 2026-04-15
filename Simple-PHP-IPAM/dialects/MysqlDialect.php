@@ -166,7 +166,21 @@ final class MysqlDialect implements Dialect
     public function append_only_trigger(string $table): array
     {
         $msg = "$table is append-only";
-        $body = "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '$msg', MYSQL_ERRNO = 1644";
+        // Conditional SIGNAL: the trigger body wraps SIGNAL in an IF block
+        // gated on the session variable @ipam_bypass_append_only. Housekeeping
+        // routines that need to prune (e.g. prune_audit_log) set the variable
+        // to 1 for the duration of their work, DELETE, then unset it. Other
+        // connections keep @ipam_bypass_append_only as NULL (or 0) and
+        // continue to be blocked by SIGNAL. This eliminates the race window
+        // from the drop-triggers-then-delete pattern, where another
+        // connection could mutate the table while the triggers were absent.
+        // Session variables are per-connection so the bypass never leaks.
+        // v2.10.0 #502 post-review fix.
+        $body = "BEGIN"
+            . " IF @ipam_bypass_append_only IS NULL OR @ipam_bypass_append_only <> 1 THEN"
+            . " SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '$msg', MYSQL_ERRNO = 1644;"
+            . " END IF;"
+            . " END";
         return [
             "CREATE TRIGGER IF NOT EXISTS {$table}_no_update "
             . "BEFORE UPDATE ON {$table} FOR EACH ROW $body",

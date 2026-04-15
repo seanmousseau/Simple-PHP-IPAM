@@ -261,13 +261,27 @@ CREATE TABLE IF NOT EXISTS audit_log (
   KEY idx_audit_log_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+-- v2.10.0 #502 post-review: the trigger body wraps SIGNAL in an IF block
+-- gated on the session variable @ipam_bypass_append_only. Housekeeping
+-- routines (e.g. prune_audit_log in lib.php) set the variable to 1 for the
+-- duration of their work, DELETE, then unset it. Other connections keep the
+-- variable as NULL/0 and continue to be blocked — session variables are
+-- per-connection so the bypass never leaks. See MysqlDialect::append_only_trigger().
 CREATE TRIGGER IF NOT EXISTS audit_log_no_update
   BEFORE UPDATE ON audit_log FOR EACH ROW
-  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'audit_log is append-only', MYSQL_ERRNO = 1644;
+  BEGIN
+    IF @ipam_bypass_append_only IS NULL OR @ipam_bypass_append_only <> 1 THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'audit_log is append-only', MYSQL_ERRNO = 1644;
+    END IF;
+  END;
 
 CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
   BEFORE DELETE ON audit_log FOR EACH ROW
-  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'audit_log is append-only', MYSQL_ERRNO = 1644;
+  BEGIN
+    IF @ipam_bypass_append_only IS NULL OR @ipam_bypass_append_only <> 1 THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'audit_log is append-only', MYSQL_ERRNO = 1644;
+    END IF;
+  END;
 
 -- ---------------------------------------------------------------------------
 -- login_attempts (rate limiter)
