@@ -46,6 +46,29 @@ interface Dialect
     public function upsert(string $table, array $conflictCols, array $updateCols): string;
 
     /**
+     * Returns an INSERT ... ON CONFLICT DO NOTHING fragment.
+     *
+     * Semantically distinct from upsert(): this variant leaves any existing
+     * row untouched on conflict, rather than updating it. Used by migrations
+     * and bootstrap code that want "insert if absent, otherwise noop" without
+     * racing against concurrent writers.
+     *
+     *  - SQLite  : `ON CONFLICT(col, ...) DO NOTHING`
+     *  - MySQL   : `ON DUPLICATE KEY UPDATE col = col` (no-op self-assign)
+     *  - Postgres: `ON CONFLICT (col, ...) DO NOTHING`
+     *
+     * MySQL note: `ON DUPLICATE KEY UPDATE` fires on *any* unique-key
+     * conflict, not just the columns named in $conflictCols. For the call
+     * sites this method was introduced for (single PK or single UNIQUE
+     * constraint), that difference is invisible. If a future caller has
+     * multiple unique keys on the same table and needs conflict-target
+     * scoping, use upsert() with a self-assign updateCols list instead.
+     *
+     * @param string[] $conflictCols
+     */
+    public function upsert_or_ignore(string $table, array $conflictCols): string;
+
+    /**
      * Column definition for an auto-incrementing integer primary key.
      *
      *  - SQLite: `INTEGER PRIMARY KEY AUTOINCREMENT`
