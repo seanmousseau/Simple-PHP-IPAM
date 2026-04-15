@@ -29,6 +29,35 @@ final class DialectTest extends TestCase
         $this->assertSame('sqlite', $this->sqlite->driver_name());
     }
 
+    public function testDialectFromConfigDefaultsToSqlite(): void
+    {
+        require_once dirname(__DIR__) . '/Simple-PHP-IPAM/lib.php';
+        $this->assertInstanceOf(SqliteDialect::class, ipam_dialect_from_config([]));
+        $this->assertInstanceOf(SqliteDialect::class, ipam_dialect_from_config(['db_driver' => 'sqlite']));
+        $this->assertInstanceOf(SqliteDialect::class, ipam_dialect_from_config(['db_driver' => '']));
+    }
+
+    public function testDialectFromConfigSelectsMysql(): void
+    {
+        require_once dirname(__DIR__) . '/Simple-PHP-IPAM/lib.php';
+        require_once dirname(__DIR__) . '/Simple-PHP-IPAM/dialects/MysqlDialect.php';
+        $this->assertInstanceOf(MysqlDialect::class, ipam_dialect_from_config(['db_driver' => 'mysql']));
+    }
+
+    public function testDialectFromConfigRejectsUnknownDriver(): void
+    {
+        require_once dirname(__DIR__) . '/Simple-PHP-IPAM/lib.php';
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Unsupported db_driver: oracle');
+        ipam_dialect_from_config(['db_driver' => 'oracle']);
+    }
+
+    protected function tearDown(): void
+    {
+        // Reset the cached dialect so later tests get a fresh SqliteDialect.
+        unset($GLOBALS['ipam_dialect']);
+    }
+
     public function testNowReturnsSqliteDatetimeExpression(): void
     {
         $this->assertSame("datetime('now')", $this->sqlite->now());
@@ -44,6 +73,17 @@ final class DialectTest extends TestCase
         $this->assertSame('BLOB', $this->sqlite->binary_type(16));
         $this->assertSame('BLOB', $this->sqlite->binary_type(4));
         $this->assertSame('BLOB', $this->sqlite->binary_type(255));
+    }
+
+    public function testIndexedTextTypeIsPlainTextOnSqlite(): void
+    {
+        // SQLite has no key-length limit on TEXT columns, so the maxLen
+        // argument is a no-op here. MysqlDialect will emit VARCHAR($maxLen)
+        // on the same call to satisfy MySQL 8.0's "BLOB/TEXT column used
+        // in key specification without a key length" error.
+        $this->assertSame('TEXT', $this->sqlite->indexed_text_type());
+        $this->assertSame('TEXT', $this->sqlite->indexed_text_type(191));
+        $this->assertSame('TEXT', $this->sqlite->indexed_text_type(255));
     }
 
     public function testCaseSensitiveCollationIsNullOnSqlite(): void
@@ -89,6 +129,43 @@ final class DialectTest extends TestCase
     {
         $this->expectException(InvalidArgumentException::class);
         $this->sqlite->upsert('users', ['username'], []);
+    }
+
+    public function testUpsertOrIgnoreSingleConflictColumn(): void
+    {
+        $sql = $this->sqlite->upsert_or_ignore('settings', ['key']);
+        $this->assertSame('ON CONFLICT(key) DO NOTHING', $sql);
+    }
+
+    public function testUpsertOrIgnoreCompositeConflictColumns(): void
+    {
+        $sql = $this->sqlite->upsert_or_ignore('subnet_tags', ['subnet_id', 'tag_id']);
+        $this->assertSame('ON CONFLICT(subnet_id, tag_id) DO NOTHING', $sql);
+    }
+
+    public function testUpsertOrIgnoreRequiresAtLeastOneConflictColumn(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->sqlite->upsert_or_ignore('settings', []);
+    }
+
+    public function testUpsertOrIgnoreComposesIntoValidSqliteInsert(): void
+    {
+        // End-to-end: the fragment the dialect returns must compose into a
+        // real INSERT that a real SQLite DB will accept and that leaves an
+        // existing row untouched on conflict.
+        $pdo = new PDO('sqlite::memory:');
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $pdo->query("CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT NOT NULL)");
+        $pdo->prepare("INSERT INTO kv (k, v) VALUES (:k, :v)")
+            ->execute([':k' => 'greeting', ':v' => 'hello']);
+
+        $ignore = $this->sqlite->upsert_or_ignore('kv', ['k']);
+        $st = $pdo->prepare("INSERT INTO kv (k, v) VALUES (:k, :v) $ignore");
+        $st->execute([':k' => 'greeting', ':v' => 'overwritten']);
+
+        $row = $pdo->query("SELECT v FROM kv WHERE k = 'greeting'")->fetch(PDO::FETCH_ASSOC);
+        $this->assertSame('hello', $row['v']);
     }
 
     public function testAppendOnlyTriggerReturnsExactlyTwoStatements(): void

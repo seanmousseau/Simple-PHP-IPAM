@@ -81,7 +81,7 @@ register_shutdown_function(static function () use ($cronLockHandle): void {
     }
 });
 
-$db       = ipam_db(to_str($config['db_path']));
+$db       = ipam_db($config);
 
 // Apply admin-configured timezone from DB settings now that $db is open. All
 // downstream date() calls in this cron run pick up the new zone.
@@ -189,25 +189,43 @@ try {
 // Task 6: Network scanning — all active schedules that are due
 // ---------------------------------------------------------------------------
 try {
+    // Fetch every active schedule and filter "is due" in PHP so the query
+    // stays engine-agnostic — SQLite's `datetime(col, '+N minutes')` and
+    // `||` string concatenation are not portable to MySQL / Postgres. The
+    // filter is cheap: scan_schedules is bounded by subnet count and each
+    // row is a simple strtotime + integer comparison.
     $dueStmt = $db->query("
-        SELECT s.id, s.cidr, ss.method, ss.tcp_port
+        SELECT s.id, s.cidr, ss.method, ss.tcp_port, ss.interval_minutes, ss.last_run_at
         FROM subnets s
         JOIN scan_schedules ss ON ss.subnet_id = s.id
         WHERE ss.is_active = 1
-          AND (ss.last_run_at IS NULL
-               OR datetime(ss.last_run_at, '+' || ss.interval_minutes || ' minutes') <= datetime('now'))
         ORDER BY ss.last_run_at ASC
     ");
     if ($dueStmt === false) throw new \RuntimeException('Scan schedule query failed');
 
-    /** @var list<array<string, mixed>> $dueSubnets */
-    $dueSubnets = $dueStmt->fetchAll();
+    /** @var list<array<string, mixed>> $candidates */
+    $candidates = $dueStmt->fetchAll();
+    $nowTs = time();
+    $dueSubnets = [];
+    foreach ($candidates as $row) {
+        $lastRun = $row['last_run_at'] ?? null;
+        if ($lastRun === null || $lastRun === '') {
+            $dueSubnets[] = $row;
+            continue;
+        }
+        $lastTs = strtotime(to_str($lastRun) . ' UTC');
+        if ($lastTs === false) continue;
+        $intervalMinutes = to_int($row["interval_minutes"] ?? 0);
+        if (($nowTs - $lastTs) >= ($intervalMinutes * 60)) {
+            $dueSubnets[] = $row;
+        }
+    }
 
     if (count($dueSubnets) === 0) {
         $emit(['task' => 'scan', 'skipped' => true, 'reason' => 'no schedules due', 'ts' => $now]);
     } else {
         $updateLastRun = $db->prepare(
-            "UPDATE scan_schedules SET last_run_at = datetime('now'), updated_at = datetime('now') WHERE subnet_id = :sid"
+            "UPDATE scan_schedules SET last_run_at = " . ipam_dialect()->now() . ", updated_at = " . ipam_dialect()->now() . " WHERE subnet_id = :sid"
         );
         $scanSummary = [
             'scanned_subnets' => 0,

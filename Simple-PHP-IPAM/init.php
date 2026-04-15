@@ -25,6 +25,66 @@ set_error_handler(static function (int $severity, string $message, string $file,
     return true;
 }, E_WARNING | E_NOTICE | E_USER_WARNING | E_USER_NOTICE | E_DEPRECATED | E_USER_DEPRECATED);
 
+// Global exception handler (v2.10.0 #536). Any Throwable that escapes a
+// page script — most commonly a RuntimeException out of ipam_db() because
+// the MySQL version is wrong, the DSN points at MariaDB, the credentials
+// are invalid, or the server is unreachable — used to bubble up to PHP's
+// default fatal handler. The default handler:
+//
+//   1. Does NOT set an HTTP status code → Apache returns 200 OK with the
+//      fatal error in the response body. Uptime monitors see "success"
+//      and never alert.
+//   2. Emits the full Throwable::__toString() including absolute server
+//      paths, line numbers, and stack traces. Information disclosure on
+//      every misconfigured install.
+//
+// This handler routes every uncaught Throwable to:
+//   - error_log() with the FULL trace (operator keeps the debug info)
+//   - An HTTP 500 response body that contains ONLY the exception message
+//     (which is already operator-written and actionable — "MariaDB is not
+//     supported in v2.10.0", "MySQL 8.0.29+ is required", etc.) plus a
+//     small user-facing shell. No paths, no trace, no PHP fatal markup.
+//
+// Note: parse errors and some fatal errors (memory exhaustion, max
+// execution time) still bypass user handlers — the handler catches what
+// PHP lets us catch, which is every Throwable thrown from PHP code.
+set_exception_handler(static function (\Throwable $e): void {
+    // Log the full exception for operators — absolute paths, line numbers,
+    // full stack trace, previous exceptions. This is the ONLY place those
+    // end up; the HTTP response body never contains them.
+    error_log(sprintf(
+        "Simple-PHP-IPAM uncaught %s: %s in %s:%d\n%s",
+        get_class($e),
+        $e->getMessage(),
+        $e->getFile(),
+        $e->getLine(),
+        $e->getTraceAsString()
+    ));
+
+    // HTTP 500 + user-safe body. Use htmlspecialchars() directly rather
+    // than e() because lib.php may not have loaded yet when this handler
+    // fires (e.g. an exception thrown from ipam_db() before lib.php's
+    // helpers are in scope).
+    if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg' && !headers_sent()) {
+        http_response_code(500);
+        header('Content-Type: text/html; charset=utf-8');
+        header('Cache-Control: no-store');
+    }
+
+    $msg = htmlspecialchars($e->getMessage(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    echo '<!doctype html><html lang="en"><head><meta charset="utf-8">';
+    echo '<meta name="viewport" content="width=device-width,initial-scale=1">';
+    echo '<title>Simple PHP IPAM — Configuration error</title>';
+    echo '<style>body{font:16px system-ui,-apple-system,sans-serif;max-width:720px;margin:80px auto;padding:0 24px;color:#1e293b;background:#f8fafc}h1{font-size:24px;margin:0 0 16px;color:#991b1b}.msg{background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;padding:16px 20px;border-radius:6px;margin:20px 0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px;word-break:break-word}.hint{color:#64748b;font-size:14px;margin-top:24px}</style>';
+    echo '</head><body>';
+    echo '<h1>Configuration error</h1>';
+    echo '<p>Simple PHP IPAM could not start. The server reports:</p>';
+    echo '<div class="msg">' . $msg . '</div>';
+    echo '<p class="hint">An administrator should check the PHP error log for full diagnostic details.</p>';
+    echo '</body></html>';
+    exit(1);
+});
+
 /** @var IpamConfig $config */
 $config = require __DIR__ . '/config.php';
 
@@ -46,10 +106,12 @@ if (is_file(__DIR__ . '/vendor/autoload.php')) {
 // ...) because STDIN/STDOUT/STDERR are only defined under CLI and phpdbg SAPIs
 // — referencing them under Apache or PHP-FPM would throw a fatal error.
 require_once __DIR__ . '/dialects/Dialect.php';
+// v2.10.0 (#382) — supported drivers: 'sqlite' (default) and 'mysql'
+// (experimental beta). Postgres lands in v2.11.0 (#386). Unknown values are
+// rejected here before the request touches any DB code.
 $_ipam_db_driver = (string)($config['db_driver'] ?? 'sqlite');
 $_ipam_driver_error = match ($_ipam_db_driver) {
-    'sqlite' => null,
-    'mysql'  => 'db_driver=mysql is experimental and lands in v2.10.0 (#384)',
+    'sqlite', 'mysql' => null,
     'pgsql'  => 'db_driver=pgsql is experimental and lands in v2.11.0 (#388)',
     default  => "Unknown db_driver: {$_ipam_db_driver}",
 };
@@ -63,8 +125,17 @@ if ($_ipam_driver_error !== null) {
     }
     exit(2);
 }
+// Load the concrete dialect class and stash an instance under
+// $GLOBALS['ipam_dialect'] so any code that calls ipam_dialect() before
+// ipam_db($config) runs (HTTPS redirect, session setup, early helpers) sees
+// the right driver rather than the SqliteDialect fallback.
 require_once __DIR__ . '/dialects/SqliteDialect.php';
-$GLOBALS['ipam_dialect'] = new SqliteDialect();
+if ($_ipam_db_driver === 'mysql') {
+    require_once __DIR__ . '/dialects/MysqlDialect.php';
+    $GLOBALS['ipam_dialect'] = new MysqlDialect();
+} else {
+    $GLOBALS['ipam_dialect'] = new SqliteDialect();
+}
 unset($_ipam_db_driver, $_ipam_driver_error);
 
 // Seed a UTC default so any pre-DB date/time operations (HTTPS redirect, session
@@ -116,15 +187,81 @@ if (!$isHttps) {
     exit;
 }
 
-session_name(to_str($config['session_name']));
+// -------------------------------------------------------------------------
+// Session isolation (v2.10.0 #532 security fix)
+// -------------------------------------------------------------------------
+// Two IPAM installs under the same hostname used to share a session cookie
+// because the default session name ('IPAMSESSID') and path ('/') were
+// identical on every deploy. A user logged into /ipam-a/ would be
+// authenticated on /ipam-b/ without ever entering credentials, because the
+// browser sent the same cookie, PHP loaded the same $_SESSION record, and
+// /ipam-b/'s require_login() trusted the $_SESSION['user_id'] (which
+// resolved against its own users table to its own admin).
+//
+// Three layers of isolation close this:
+//
+// 1. Cookie NAME derived from the install directory hash, so two installs
+//    at different filesystem paths never collide. Users who set
+//    config.session_name explicitly keep full control and get their
+//    exact value (operators who front-proxy multiple hostnames may need
+//    this for SSO-style shared sessions).
+//
+// 2. Cookie PATH scoped to the install's URL directory, so even if two
+//    installs somehow wound up with the same cookie name, the browser
+//    would not send /ipam-a/'s cookie to /ipam-b/ requests. Operators
+//    behind a reverse proxy that rewrites paths can override via
+//    config.session_cookie_path.
+//
+// 3. Session STORAGE path under each install's data/sessions/ with 0700
+//    perms, so PHP's session files are physically separated per install.
+//    Defense in depth: prevents cross-read even if both cookies ever
+//    collided via session fixation.
+//
+// The default for every layer is "derive from __DIR__", which makes
+// isolation automatic on every install without requiring any config edit.
+$configuredSessionName = to_str($config['session_name']);
+if ($configuredSessionName === '' || $configuredSessionName === 'IPAMSESSID') {
+    // Default path: suffix with 8 hex chars of the install-dir hash so
+    // two installs at different filesystem paths never collide.
+    $configuredSessionName = 'IPAMSESSID_' . substr(hash('sha256', __DIR__), 0, 8);
+}
+session_name($configuredSessionName);
+
+// Derive the cookie path from the running script so an install at
+// /claude/ipam-mysql/login.php gets path=/claude/ipam-mysql/. CLI mode
+// has no SCRIPT_NAME and doesn't issue cookies, so the fallback is '/'.
+$configuredCookiePath = to_str($config['session_cookie_path'] ?? '');
+if ($configuredCookiePath === '') {
+    $scriptName = to_str($_SERVER['SCRIPT_NAME'] ?? '');
+    if ($scriptName !== '') {
+        $dir = str_replace('\\', '/', dirname($scriptName));
+        $configuredCookiePath = ($dir === '' || $dir === '.' || $dir === '/') ? '/' : $dir . '/';
+    } else {
+        $configuredCookiePath = '/';
+    }
+}
+
 session_set_cookie_params([
     'lifetime' => 0,
-    'path' => '/',
-    'domain' => '',
-    'secure' => true,
+    'path'     => $configuredCookiePath,
+    'domain'   => '',
+    'secure'   => true,
     'httponly' => true,
     'samesite' => 'Strict',
 ]);
+
+// Session storage isolation: each install keeps its own session files
+// under data/sessions/ so two installs that somehow ended up with the
+// same session ID would still look up different records. Created with
+// 0700 perms so other local users on a shared host cannot list or read
+// the session files.
+$sessionSaveDir = __DIR__ . '/data/sessions';
+if (!is_dir($sessionSaveDir)) {
+    @mkdir($sessionSaveDir, 0700, true);
+}
+if (is_dir($sessionSaveDir) && is_writable($sessionSaveDir)) {
+    ini_set('session.save_path', $sessionSaveDir);
+}
 
 ini_set('session.use_strict_mode', '1');
 ini_set('session.use_only_cookies', '1');
@@ -133,7 +270,7 @@ session_start();
 
 require __DIR__ . '/lib.php';
 
-$db = ipam_db(to_str($config['db_path']));
+$db = ipam_db($config);
 ipam_db_init($db);
 
 // Now that settings are available, apply the admin-configured timezone. All DB

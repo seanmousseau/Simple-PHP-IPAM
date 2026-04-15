@@ -45,7 +45,7 @@ if (!$isSsoOnly && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = 'Current password is incorrect.';
         } else {
             $hash = password_hash($new1, PASSWORD_DEFAULT);
-            $db->prepare("UPDATE users SET password_hash = :h, password_changed_at = datetime('now') WHERE id = :id")
+            $db->prepare("UPDATE users SET password_hash = :h, password_changed_at = " . ipam_dialect()->now() . " WHERE id = :id")
                ->execute([':h' => $hash, ':id' => $cur['id']]);
             audit($db, 'user.change_password', 'user', to_int($cur['id']), 'self');
             $msg = 'Password updated.';

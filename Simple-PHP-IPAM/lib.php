@@ -2,12 +2,13 @@
 declare(strict_types=1);
 
 /**
- * Returns the active SQL dialect (#378). init.php instantiates this once per
- * request and stows it under $GLOBALS['ipam_dialect']. v2.9.0 always returns
- * a SqliteDialect; v2.10.0+ may return Mysql/Pgsql variants based on
- * $config['db_driver']. Tests and CLI scripts that bootstrap lib.php
- * directly (without init.php) get a SqliteDialect lazily — this is the
- * v2.9.0 default and matches the only driver shipped this release.
+ * Returns the active SQL dialect (#378). ipam_db() bootstraps this once per
+ * request based on $config['db_driver'] and stows it under
+ * $GLOBALS['ipam_dialect']. v2.9.0 shipped SqliteDialect only; v2.10.0 adds
+ * MysqlDialect (#382); v2.11.0 adds PgsqlDialect (#386). Tests and CLI
+ * scripts that bootstrap lib.php directly (without going through ipam_db())
+ * get a SqliteDialect lazily — that is the historical default and matches
+ * what every test fixture expects.
  */
 function ipam_dialect(): Dialect
 {
@@ -17,6 +18,35 @@ function ipam_dialect(): Dialect
         $GLOBALS['ipam_dialect'] = new SqliteDialect();
     }
     return $GLOBALS['ipam_dialect'];
+}
+
+/**
+ * Select and cache the active dialect from a config array. Called by
+ * ipam_db() during connection bootstrap; safe to call standalone from
+ * tests that need to pin a specific dialect without opening a connection.
+ *
+ * @param array<string, mixed> $config
+ */
+function ipam_dialect_from_config(array $config): Dialect
+{
+    require_once __DIR__ . '/dialects/Dialect.php';
+    $driverRaw = $config['db_driver'] ?? 'sqlite';
+    $driver = is_string($driverRaw) ? $driverRaw : 'sqlite';
+    switch ($driver) {
+        case 'mysql':
+            require_once __DIR__ . '/dialects/MysqlDialect.php';
+            $dialect = new MysqlDialect();
+            break;
+        case 'sqlite':
+        case '':
+            require_once __DIR__ . '/dialects/SqliteDialect.php';
+            $dialect = new SqliteDialect();
+            break;
+        default:
+            throw new RuntimeException("Unsupported db_driver: $driver");
+    }
+    $GLOBALS['ipam_dialect'] = $dialect;
+    return $dialect;
 }
 
 /**
@@ -56,75 +86,229 @@ function ipam_bind_binary(PDOStatement $stmt, int|string $param, string $bin): v
     $stmt->bindValue($param, $bin, PDO::PARAM_LOB);
 }
 
-function ipam_db(string $path): PDO
+/**
+ * Open a PDO connection based on $config['db_driver'].
+ *
+ * Dispatcher for the multi-engine support introduced in v2.10.0. Picks the
+ * dialect first (so ipam_dialect() returns the right instance for the rest
+ * of the request), then connects to the selected engine.
+ *
+ * Supported drivers:
+ *   - 'sqlite' (default) — uses $config['db_path'] as the file path.
+ *   - 'mysql' (experimental, v2.10.0 #382) — uses $config['db_dsn'],
+ *     $config['db_user'], $config['db_pass']. Requires MySQL 8.0+.
+ *
+ * @param array<string, mixed> $config
+ */
+function ipam_db(array $config): PDO
 {
-    $dir = dirname($path);
-    if (!is_dir($dir)) {
-        mkdir($dir, 0700, true);
+    $dialect = ipam_dialect_from_config($config);
+
+    switch ($dialect->driver_name()) {
+        case 'sqlite':
+            $pathRaw = $config['db_path'] ?? '';
+            $path = is_string($pathRaw) ? $pathRaw : '';
+            if ($path === '') {
+                throw new RuntimeException('ipam_db: sqlite driver requires $config[\'db_path\']');
+            }
+            $dir = dirname($path);
+            if (!is_dir($dir)) {
+                mkdir($dir, 0700, true);
+            }
+            $pdo = new PDO('sqlite:' . $path, null, null, [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_EMULATE_PREPARES => false,
+            ]);
+            $pdo->exec("PRAGMA journal_mode = WAL;");
+            $pdo->exec("PRAGMA busy_timeout = 30000;");
+            break;
+
+        case 'mysql':
+            $dsnRaw  = $config['db_dsn']  ?? '';
+            $userRaw = $config['db_user'] ?? '';
+            $passRaw = $config['db_pass'] ?? '';
+            $dsn  = is_string($dsnRaw)  ? $dsnRaw  : '';
+            $user = is_string($userRaw) ? $userRaw : '';
+            $pass = is_string($passRaw) ? $passRaw : '';
+            if ($dsn === '') {
+                throw new RuntimeException('ipam_db: mysql driver requires $config[\'db_dsn\']');
+            }
+            $pdo = new PDO($dsn, $user, $pass, [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_EMULATE_PREPARES => false,
+            ]);
+            // 8.0.29 is the effective minimum. ensure_audit_log_table()
+            // and MysqlDialect::append_only_trigger() both emit
+            // `CREATE TRIGGER IF NOT EXISTS`, a syntax feature added in
+            // MySQL 8.0.29. Earlier 8.0.x servers pass a naive `8.0.0`
+            // check and then crash on the first self-heal bootstrap.
+            // Reject at connect time so failures are clear and immediate.
+            $serverVersionRaw = $pdo->getAttribute(PDO::ATTR_SERVER_VERSION);
+            $serverVersion = is_string($serverVersionRaw) ? $serverVersionRaw : '';
+
+            // v2.10.0 #499 CR-sweep fix: reject MariaDB explicitly before
+            // the version_compare. PDO::ATTR_SERVER_VERSION returns e.g.
+            // "10.11.6-MariaDB" or "5.5.5-10.11.6-MariaDB" (the 5.5.5
+            // prefix is a historical protocol-compat lie). version_compare
+            // treats those as "10.11.6.MariaDB" or "5.5.5.10.11.6.MariaDB"
+            // and compares only the numeric prefix: 10 > 8 passes the
+            // floor check even though we have not tested MariaDB at all.
+            // First-class MariaDB support is tracked at #534 (v2.12.0).
+            // Until then, detect and reject explicitly so users get a
+            // clear actionable error instead of a later runtime crash.
+            if ($serverVersion !== '' && stripos($serverVersion, 'mariadb') !== false) {
+                throw new RuntimeException(
+                    "MariaDB is not supported in v2.10.0 (server reports '$serverVersion'). "
+                    . 'First-class MariaDB support is tracked at #534 and will land in v2.12.0. '
+                    . 'For v2.10.0, use MySQL 8.0.29+ or stay on the SQLite driver.'
+                );
+            }
+
+            if ($serverVersion === '' || version_compare($serverVersion, '8.0.29', '<')) {
+                throw new RuntimeException(
+                    "MySQL 8.0.29+ is required (server reports '$serverVersion')"
+                );
+            }
+            break;
+
+        default:
+            throw new RuntimeException('ipam_db: unreachable — unsupported driver ' . $dialect->driver_name());
     }
 
-    $pdo = new PDO('sqlite:' . $path, null, null, [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        PDO::ATTR_EMULATE_PREPARES => false,
-    ]);
-
-    $pdo->exec("PRAGMA journal_mode = WAL;");
-    $pdo->exec("PRAGMA busy_timeout = 30000;");
-    $pdo->exec("PRAGMA foreign_keys = ON;");
+    $fk = $dialect->pragma_foreign_keys(true);
+    if ($fk !== null) {
+        $pdo->exec($fk);
+    }
     return $pdo;
 }
 
 /**
  * Create the audit_log table and its append-only triggers (idempotent).
  * Centralises DDL that was previously duplicated in 4 places.
+ *
+ * Routes type declarations and triggers through the active dialect so
+ * fresh MySQL / Postgres installs emit engine-valid DDL. On SQLite the
+ * resulting text matches the pre-v2.10.0 literals byte-for-byte. Per
+ * the v2.10.0 schema-files decision: historical migration closures are
+ * NOT refactored — schema.mysql.sql / schema.pgsql.sql pre-populate
+ * schema_migrations so replay is a no-op on fresh non-SQLite installs.
  */
 function ensure_audit_log_table(PDO $db): void
 {
+    $d = ipam_dialect();
+    // action and created_at are indexed below, so they must use the
+    // indexed text type (VARCHAR on MySQL, TEXT elsewhere). Free-form
+    // unindexed columns (username, entity_type, ip, user_agent, details)
+    // stay as plain TEXT.
+    $idxText = $d->indexed_text_type();
     $db->exec("
         CREATE TABLE IF NOT EXISTS audit_log (
-          id          INTEGER PRIMARY KEY AUTOINCREMENT,
-          created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-          user_id     INTEGER, username TEXT, action TEXT NOT NULL,
+          id          " . $d->autoincrement() . ",
+          created_at  $idxText NOT NULL DEFAULT (" . $d->now() . "),
+          user_id     INTEGER, username TEXT, action $idxText NOT NULL,
           entity_type TEXT NOT NULL, entity_id INTEGER,
           ip TEXT, user_agent TEXT, details TEXT
         )
     ");
-    $db->exec("CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action)");
-    $db->exec("CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at)");
-    $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_update
-        BEFORE UPDATE ON audit_log
-        BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
-    $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
-        BEFORE DELETE ON audit_log
-        BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
+    // CREATE INDEX IF NOT EXISTS is a SQLite idiom. MySQL 8.0.0–8.0.28 do
+    // not accept it (IF NOT EXISTS on CREATE INDEX landed in 8.0.29, which
+    // is above our effective 8.0.29 floor), so we use a helper that swallows
+    // the MySQL "Duplicate key name" error (errno 1061). On SQLite the
+    // IF NOT EXISTS is native and the catch never fires.
+    $createIndex = static function (PDO $db, string $name, string $table, string $col): void {
+        try {
+            $db->exec("CREATE INDEX IF NOT EXISTS $name ON $table($col)");
+        } catch (PDOException $e) {
+            $msg = $e->getMessage();
+            // MySQL raises 1061 with "Duplicate key name" when the index
+            // already exists. On MySQL 8.0.0–8.0.28, CREATE INDEX IF NOT
+            // EXISTS itself is rejected (syntax error 1064) — retry with
+            // plain CREATE INDEX, then swallow 1061 if the index is
+            // already there.
+            $sqlstate = (string)($e->errorInfo[0] ?? '');
+            if ($sqlstate === '42000' && stripos($msg, 'syntax') !== false) {
+                try {
+                    $db->exec("CREATE INDEX $name ON $table($col)");
+                } catch (PDOException $e2) {
+                    if (stripos($e2->getMessage(), 'duplicate key name') === false) {
+                        throw $e2;
+                    }
+                }
+                return;
+            }
+            throw $e;
+        }
+    };
+    $createIndex($db, 'idx_audit_log_action',     'audit_log', 'action');
+    $createIndex($db, 'idx_audit_log_created_at', 'audit_log', 'created_at');
+    foreach ($d->append_only_trigger('audit_log') as $stmt) {
+        try {
+            $db->exec($stmt);
+        } catch (PDOException $e) {
+            // MySQL 8.0.0–8.0.28 do not support CREATE TRIGGER IF NOT EXISTS
+            // (added in 8.0.29). Swallow "Trigger already exists" (errno 1359)
+            // so the self-heal path is idempotent on every supported 8.0.x.
+            if (stripos($e->getMessage(), 'already exists') === false) {
+                throw $e;
+            }
+        }
+    }
 }
 
 function ipam_db_init(PDO $db): void
 {
-    // Skip bootstrap checks if sentinel exists and DB file hasn't changed since
-    $sentinelPath = __DIR__ . '/data/.db_initialized';
-    $dbFilePath   = __DIR__ . '/data/ipam.sqlite';
-    if (is_file($sentinelPath) && is_file($dbFilePath)) {
-        $sentinelTime = (int)filemtime($sentinelPath);
-        $dbTime       = (int)filemtime($dbFilePath);
-        if ($sentinelTime >= $dbTime) {
-            ensure_migrations_table($db);
-            apply_migrations($db);
-            ensure_audit_log_table($db); // self-heal if table was dropped
-            return;
+    global $config;
+    $driver = ipam_dialect()->driver_name();
+
+    // SQLite-only fast path: skip bootstrap checks if the sentinel file is
+    // at least as new as the SQLite DB file. MySQL has no local file to
+    // stat, so this optimisation does not apply there — the MySQL path
+    // runs the full check on every bootstrap (overhead is one SELECT).
+    if ($driver === 'sqlite') {
+        // Honour a deployment's configured db_path so the sentinel check
+        // stats the real database file, not the default one. The sentinel
+        // itself lives next to the DB file so custom paths stay
+        // self-contained.
+        $dbPathRaw  = is_array($config ?? null) ? ($config['db_path'] ?? null) : null;
+        $dbFilePath = is_string($dbPathRaw) && $dbPathRaw !== ''
+            ? $dbPathRaw
+            : __DIR__ . '/data/ipam.sqlite';
+        $sentinelPath = dirname($dbFilePath) . '/.db_initialized';
+        if (is_file($sentinelPath) && is_file($dbFilePath)) {
+            $sentinelTime = (int)filemtime($sentinelPath);
+            $dbTime       = (int)filemtime($dbFilePath);
+            if ($sentinelTime >= $dbTime) {
+                ensure_migrations_table($db);
+                apply_migrations($db);
+                ensure_audit_log_table($db); // self-heal if table was dropped
+                return;
+            }
         }
     }
 
-    $st = $db->prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='users'");
-    $st->execute();
-    $hasUsers = (bool)$st->fetch();
-    $st->closeCursor(); // Release WAL read mark — open cursors block DROP TABLE even on other tables
-    unset($st);
+    // Probe for the users table. Try a lightweight SELECT and catch the
+    // "table not found" error — works on every engine without needing
+    // sqlite_master / information_schema branching.
+    $hasUsers = false;
+    try {
+        $probe = $db->query("SELECT 1 FROM users LIMIT 1");
+        if ($probe !== false) {
+            $probe->closeCursor();
+            $hasUsers = true;
+        }
+    } catch (PDOException) {
+        $hasUsers = false;
+    }
 
     if (!$hasUsers) {
-        $schema = file_get_contents(__DIR__ . '/schema.sql');
-        if ($schema === false) throw new RuntimeException("Cannot read schema.sql");
+        $schemaFile = __DIR__ . '/schema.sql';
+        if ($driver === 'mysql') {
+            $schemaFile = __DIR__ . '/schema.mysql.sql';
+        }
+        $schema = file_get_contents($schemaFile);
+        if ($schema === false) throw new RuntimeException("Cannot read " . basename($schemaFile));
         $db->exec($schema);
 
         $config = require __DIR__ . '/config.php';
@@ -135,10 +319,14 @@ function ipam_db_init(PDO $db): void
         $ins = $db->prepare("INSERT INTO users (username, password_hash, role, is_active) VALUES (:u,:h,'admin',1)");
         $ins->execute([':u' => $u, ':h' => $hash]);
 
-        // Stamp all known migrations as already satisfied by the fresh schema
+        // Stamp all known migrations as already satisfied by the fresh schema.
+        // schema.mysql.sql already pre-seeds these rows so the INSERT below
+        // is a no-op on MySQL — upsert_or_ignore() makes that explicit and
+        // lets the same path work on every driver.
         ensure_migrations_table($db);
         require_once __DIR__ . '/migrations.php';
-        $stamp = $db->prepare("INSERT OR IGNORE INTO schema_migrations (version) VALUES (:v)");
+        $ignore = ipam_dialect()->upsert_or_ignore('schema_migrations', ['version']);
+        $stamp = $db->prepare("INSERT INTO schema_migrations (version) VALUES (:v) $ignore");
         foreach (array_keys(ipam_migrations()) as $ver) {
             $stamp->execute([':v' => $ver]);
         }
@@ -166,8 +354,17 @@ function ipam_db_init(PDO $db): void
         $ins->execute([':u' => $u, ':h' => $hash]);
     }
 
-    // Write sentinel so subsequent requests skip bootstrap queries
-    @touch($sentinelPath);
+    // Write sentinel so subsequent requests skip bootstrap queries (SQLite
+    // only — the sentinel is a filesystem optimisation for the local DB
+    // file and has no meaning on MySQL). Location must match the path
+    // derived in the fast-path above: next to the resolved db_path file.
+    if ($driver === 'sqlite') {
+        $dbPathRaw  = is_array($config ?? null) ? ($config['db_path'] ?? null) : null;
+        $dbFilePath = is_string($dbPathRaw) && $dbPathRaw !== ''
+            ? $dbPathRaw
+            : __DIR__ . '/data/ipam.sqlite';
+        @touch(dirname($dbFilePath) . '/.db_initialized');
+    }
 }
 
 function e(string $s): string
@@ -994,7 +1191,7 @@ function ipam_setting(string $key, mixed $default = null): mixed
     try {
         $db = $GLOBALS['db'] ?? null;
         if ($db instanceof PDO) {
-            $st = $db->prepare("SELECT value, type FROM settings WHERE key = :k");
+            $st = $db->prepare("SELECT value, type FROM settings WHERE `key` = :k");
             $st->execute([':k' => $key]);
             $row = $st->fetch();
             if (is_array($row)) {
@@ -1043,7 +1240,7 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
 
     $oldRaw = null;
     $oldType = $type;
-    $st = $db->prepare("SELECT value, type FROM settings WHERE key = :k");
+    $st = $db->prepare("SELECT value, type FROM settings WHERE `key` = :k");
     $st->execute([':k' => $key]);
     $prev = $st->fetch();
     if (is_array($prev)) {
@@ -1057,7 +1254,7 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
     $d = ipam_dialect();
     $upsertClause = $d->upsert('settings', ['key'], ['value', 'type', 'updated_at', 'updated_by']);
     $up = $db->prepare(
-        "INSERT INTO settings (key, value, type, updated_at, updated_by)
+        "INSERT INTO settings (`key`, value, type, updated_at, updated_by)
          VALUES (:k, :v, :t, {$d->now()}, :u)
          $upsertClause"
     );
@@ -1151,7 +1348,7 @@ function ipam_setting_all(): array
 function ipam_setting_source(PDO $db, string $key): string
 {
     try {
-        $st = $db->prepare("SELECT 1 FROM settings WHERE key = :k");
+        $st = $db->prepare("SELECT 1 FROM settings WHERE `key` = :k");
         $st->execute([':k' => $key]);
         if ($st->fetchColumn() !== false) return 'db';
     } catch (\Throwable) {
@@ -1200,7 +1397,12 @@ function ipam_setting_deprecated_keys(): array
     if (!($db instanceof PDO)) return [];
 
     try {
-        $st   = $db->query("SELECT key FROM settings");
+        // `key` must be backtick-quoted — it's a MySQL reserved word. SQLite
+        // also accepts backticks as identifier delimiters so the same SQL
+        // runs on both engines. Without the quotes, MySQL would throw a
+        // syntax error that the catch below would silently swallow,
+        // returning [] and hiding every deprecation from the UI banner.
+        $st   = $db->query("SELECT `key` FROM settings");
         $rows = $st !== false ? $st->fetchAll(PDO::FETCH_COLUMN) : [];
     } catch (\Throwable) {
         return [];
@@ -1333,10 +1535,13 @@ function history_log_address(PDO $db, string $action, int $subnetId, string $ip,
 
 function ensure_migrations_table(PDO $db): void
 {
+    $d = ipam_dialect();
+    // version has a UNIQUE constraint so it must use the indexed text type
+    // (VARCHAR on MySQL, TEXT elsewhere).
     $db->exec("CREATE TABLE IF NOT EXISTS schema_migrations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        version TEXT NOT NULL UNIQUE,
-        applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        id " . $d->autoincrement() . ",
+        version " . $d->indexed_text_type() . " NOT NULL UNIQUE,
+        applied_at TEXT NOT NULL DEFAULT (" . $d->now() . ")
     )");
 }
 
@@ -1372,23 +1577,46 @@ function apply_migrations(PDO $db): array
         // transactional so ROLLBACK cleanly undoes any partial work.
         $lastErr  = null;
         $applied  = false;
+        // Route FK toggling through the dialect so non-SQLite engines (MySQL
+        // via SET FOREIGN_KEY_CHECKS, Postgres via null / deferred constraints)
+        // get the engine-appropriate statement. Null means the engine has no
+        // per-connection FK toggle and we rely on other mechanisms instead.
+        $dialect = ipam_dialect();
+        $fkOff   = $dialect->pragma_foreign_keys(false);
+        $fkOn    = $dialect->pragma_foreign_keys(true);
+        $toggleFk = static function (PDO $db, ?string $stmt): void {
+            if ($stmt !== null) {
+                $db->exec($stmt);
+            }
+        };
         for ($attempt = 0; $attempt < 60 && !$applied; $attempt++) {
             if ($attempt > 0) {
                 sleep(1);
             }
 
-            // PRAGMA foreign_keys cannot be changed inside a transaction — it must
-            // be set here, outside BEGIN. When it is ON, SQLite executes an implicit
-            // DELETE on every row before DROP TABLE, which triggers ON DELETE CASCADE
-            // on all child tables (addresses, subnet_tags, etc.), wiping all data.
-            // Disabling it for the duration of each migration prevents that cascade.
-            // FK enforcement is restored unconditionally after the transaction ends.
-            $db->exec("PRAGMA foreign_keys = OFF");
+            // FK enforcement must be toggled outside the transaction. On
+            // SQLite, PRAGMA foreign_keys cannot be changed inside BEGIN; and
+            // with FK ON, DROP TABLE triggers an implicit row-by-row DELETE
+            // that cascades ON DELETE CASCADE children (addresses,
+            // subnet_tags, etc.), wiping all data. Disabling around each
+            // migration prevents the cascade. FK enforcement is restored
+            // unconditionally in every exit path.
+            $toggleFk($db, $fkOff);
 
             try {
-                $db->exec("BEGIN EXCLUSIVE");
+                // SQLite's `BEGIN EXCLUSIVE` acquires a table-level write
+                // lock up front, which is required around DDL to avoid
+                // SQLITE_LOCKED mid-migration. MySQL / Postgres don't need
+                // (and don't accept) the EXCLUSIVE modifier — their DDL
+                // acquires its own metadata locks. Fall back to a plain
+                // transaction on non-SQLite engines.
+                if ($dialect->driver_name() === 'sqlite') {
+                    $db->exec("BEGIN EXCLUSIVE");
+                } else {
+                    $db->exec("START TRANSACTION");
+                }
             } catch (Throwable $e) {
-                $db->exec("PRAGMA foreign_keys = ON");
+                $toggleFk($db, $fkOn);
                 $lastErr = $e;
                 if (stripos($e->getMessage(), 'locked') !== false || stripos($e->getMessage(), 'busy') !== false) {
                     continue;
@@ -1406,14 +1634,14 @@ function apply_migrations(PDO $db): array
                 $lastErr = null;
             } catch (Throwable $e) {
                 try { $db->exec("ROLLBACK"); } catch (Throwable) {}
-                $db->exec("PRAGMA foreign_keys = ON");
+                $toggleFk($db, $fkOn);
                 $lastErr = $e;
                 if (stripos($e->getMessage(), 'locked') !== false || stripos($e->getMessage(), 'busy') !== false) {
                     continue;
                 }
                 throw $e;
             }
-            $db->exec("PRAGMA foreign_keys = ON");
+            $toggleFk($db, $fkOn);
         }
 
         if ($lastErr !== null) {
@@ -1765,39 +1993,74 @@ function prune_audit_log(PDO $db, int $retentionDays): int
     if ($retentionDays <= 0) return 0;
     $cutoff = date('Y-m-d H:i:s', (int)strtotime("-{$retentionDays} days"));
 
-    // The audit_log triggers block DELETE. Drop triggers, DELETE directly, recreate.
-    // This avoids ALTER TABLE RENAME (which can implicitly commit in SQLite)
-    // and SELECT * column-ordering risks.
+    // Retention routine must DELETE rows without ever leaving the
+    // append-only guarantee observable-violated. v2.10.0 #502 post-review
+    // fix: previously this dropped triggers, DELETEd, then recreated the
+    // triggers — which exposed a race window where other connections
+    // could UPDATE/DELETE audit_log. Two per-engine strategies now close
+    // the window without needing a drop/recreate cycle:
+    //
+    //   SQLite  — wrap the DELETE in BEGIN IMMEDIATE / COMMIT. SQLite DDL
+    //             is transactional AND BEGIN IMMEDIATE holds a reserved
+    //             write lock the entire time, so no other writer can
+    //             touch audit_log. The SQLite RAISE(ABORT) triggers DO
+    //             fire on DELETE, so we still have to drop+recreate on
+    //             SQLite — but now inside the reserved-lock transaction,
+    //             which is atomic from every other connection's point of
+    //             view.
+    //
+    //   MySQL   — set @ipam_bypass_append_only = 1 at session scope. The
+    //             MysqlDialect trigger bodies wrap SIGNAL in an IF block
+    //             gated on this variable (v2.10.0 #502 change to
+    //             MysqlDialect::append_only_trigger). Session variables
+    //             are per-connection so the bypass never leaks to other
+    //             connections — their SIGNAL continues to fire
+    //             unconditionally. DELETE proceeds on this connection,
+    //             every other write is still blocked. No drop/recreate
+    //             needed; the triggers stay in place the entire time.
+    //
+    //   Postgres (v2.11.0) — TBD; pg_advisory_xact_lock() or similar.
+    //
+    // Error paths always attempt to restore a safe state: clear the
+    // MySQL session variable, recreate SQLite triggers via
+    // ensure_audit_log_table() as a fallback.
+    $driver = ipam_dialect()->driver_name();
     try {
-        $oldCount = to_int(($db->query("SELECT COUNT(*) FROM audit_log")
-            ?: throw new \RuntimeException('Query failed'))->fetchColumn());
+        if ($driver === 'sqlite') {
+            $db->exec("BEGIN IMMEDIATE");
+            $db->exec("DROP TRIGGER IF EXISTS audit_log_no_update");
+            $db->exec("DROP TRIGGER IF EXISTS audit_log_no_delete");
 
-        $db->exec("DROP TRIGGER IF EXISTS audit_log_no_update");
-        $db->exec("DROP TRIGGER IF EXISTS audit_log_no_delete");
+            $st = $db->prepare("DELETE FROM audit_log WHERE created_at < :cutoff");
+            $st->execute([':cutoff' => $cutoff]);
+            $pruned = $st->rowCount();
 
-        $st = $db->prepare("DELETE FROM audit_log WHERE created_at < :cutoff");
-        $st->execute([':cutoff' => $cutoff]);
-        $pruned = $st->rowCount();
+            ensure_audit_log_table($db);
+            $db->exec("COMMIT");
+        } elseif ($driver === 'mysql') {
+            $db->exec("SET @ipam_bypass_append_only = 1");
 
-        // Recreate append-only triggers
-        $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_update
-            BEFORE UPDATE ON audit_log
-            BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
-        $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
-            BEFORE DELETE ON audit_log
-            BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
+            $st = $db->prepare("DELETE FROM audit_log WHERE created_at < :cutoff");
+            $st->execute([':cutoff' => $cutoff]);
+            $pruned = $st->rowCount();
+
+            $db->exec("SET @ipam_bypass_append_only = NULL");
+        } else {
+            // Unknown driver — refuse rather than expose a partial write
+            // path. Future engines add their own branch here.
+            throw new \RuntimeException("prune_audit_log: unsupported driver '$driver'");
+        }
 
         return $pruned;
     } catch (Throwable $e) {
-        // Attempt to restore triggers even on failure
-        try {
-            $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_update
-                BEFORE UPDATE ON audit_log
-                BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
-            $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
-                BEFORE DELETE ON audit_log
-                BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
-        } catch (Throwable) {}
+        // Best-effort restore to a safe state. Each branch is independently
+        // guarded because ROLLBACK / UNSET may also throw.
+        if ($driver === 'sqlite') {
+            try { $db->exec("ROLLBACK"); } catch (Throwable) {}
+            try { ensure_audit_log_table($db); } catch (Throwable) {}
+        } elseif ($driver === 'mysql') {
+            try { $db->exec("SET @ipam_bypass_append_only = NULL"); } catch (Throwable) {}
+        }
         error_log('audit_log prune failed: ' . $e->getMessage());
         return 0;
     }
@@ -2094,10 +2357,26 @@ function backup_is_due(array $config): bool
  * Run a database backup if one is due. Uses WAL checkpoint + file copy for
  * a consistent snapshot without requiring SQLite3 extension.
  * Returns true if a backup was written, false otherwise.
+ *
+ * SQLite-only for the moment. The whole flow (`wal_checkpoint`,
+ * file-copy of a single `.sqlite` file, `.sqlite` retention pruning)
+ * is SQLite-specific. MySQL / Postgres users should run engine-native
+ * backups (`mysqldump`, `pg_dump`) from cron or their hosting
+ * platform. v3.0.0 `migrate_db.php` (#392) will expose a generic
+ * cross-engine backup API; until then, short-circuit here on any
+ * non-SQLite driver so the housekeeping cycle does not fatal out on
+ * the missing `db_path` key.
  */
 /** @param IpamConfig $config */
 function run_db_backup_if_due(PDO $db, array $config): bool
 {
+    // Driver-gate before anything else. MySQL / Postgres do not have a
+    // `db_path` key in $config, so even reading $gConf['db_path'] below
+    // would emit an undefined-array-key warning and — on PHP 8.x — a
+    // TypeError on `is_file(null)` when the warning handler routes the
+    // notice but doesn't cast the value. v2.10.0 regression fix (#502).
+    if (ipam_dialect()->driver_name() !== 'sqlite') return false;
+
     if (!backup_is_due($config)) return false;
 
     $lockPath = __DIR__ . '/data/backup.lock';
@@ -2113,6 +2392,9 @@ function run_db_backup_if_due(PDO $db, array $config): bool
     try {
         if (!backup_is_due($config)) return false;
 
+        // Driver gate at the top of the function already proved
+        // driver_name() === 'sqlite', so IpamConfig's required db_path
+        // is genuinely present here.
         /** @var IpamConfig $gConf */
         $gConf = $GLOBALS['config'];
         $dbPath = $gConf['db_path'] !== '' ? $gConf['db_path'] : (__DIR__ . '/data/ipam.sqlite');
@@ -2193,6 +2475,18 @@ function backup_info(array $config): array
  */
 function ipam_db_dump_stream(PDO $db, callable $write): void
 {
+    // SQLite-format dump only. Every query in this function depends on
+    // sqlite_master and SQLite-specific PRAGMA output. Cross-engine
+    // dump/restore lands in v3.0.0 via migrate_db.php (#392). db_tools.php
+    // gates the entry point on driver; this is defence-in-depth for any
+    // direct caller that slips past it.
+    if (ipam_dialect()->driver_name() !== 'sqlite') {
+        throw new \RuntimeException(
+            'ipam_db_dump_stream() is SQLite-only. Use engine-native tooling '
+            . '(mysqldump / pg_dump) on other drivers until v3.0.0 migrate_db.php.'
+        );
+    }
+
     $write("-- Simple PHP IPAM database dump\n");
     $write("-- Generated: " . date('Y-m-d H:i:s') . "\n\n");
     $write("PRAGMA foreign_keys=OFF;\n");
@@ -2300,11 +2594,17 @@ function q_int(string $key, int $default, int $min, int $max): int
 /**
  * Escape SQL LIKE wildcard characters in a user-supplied search string.
  * Returns the escaped string ready to be wrapped in % delimiters.
- * Use with LIKE :q ESCAPE '\\' in your SQL.
+ * Use with `LIKE :q ESCAPE '!'` in your SQL.
+ *
+ * Uses `!` as the escape character because it is a normal character in
+ * both SQLite and MySQL string literals — whereas `\\` is parsed as an
+ * escape sequence inside single-quoted strings by MySQL (so `ESCAPE '\\'`
+ * in PHP source, which renders as `ESCAPE '\'` in SQL text, is a syntax
+ * error on MySQL). `!` avoids the cross-engine quoting landmine.
  */
 function like_escape(string $q): string
 {
-    return str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $q);
+    return str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $q);
 }
 
 /**
@@ -2641,24 +2941,31 @@ function auto_reserve_subnet_ips(PDO $db, int $subnetId, string $cidr, ?string $
     // affinity is BLOB on SQLite and bytes round-trip safely on MySQL/Postgres.
     // The scalar params still come through bindValue so we can mix the two
     // binding styles on a single statement.
+    $ignoreClause = ipam_dialect()->upsert_or_ignore('addresses', ['subnet_id', 'ip']);
     $ins = $db->prepare(
-        "INSERT OR IGNORE INTO addresses (subnet_id, ip, ip_bin, hostname, status, owner, note, grp, mac)
-         VALUES (:sid, :ip, :ipbin, :host, 'reserved', '', 'Auto-reserved', '', '')"
+        "INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, status, owner, note, grp, mac)
+         VALUES (:sid, :ip, :ipbin, :host, 'reserved', '', 'Auto-reserved', '', '') $ignoreClause"
     );
-    $reserveBind = function (int $sid, string $ip, string $bin, string $host) use ($ins): void {
+    // Returns the new row's id on a fresh insert, or 0 when the row was
+    // ignored by the upsert-or-ignore clause. Using rowCount() instead of
+    // lastInsertId() is critical: on MySQL, lastInsertId() after a
+    // duplicate-key no-op returns the previous successful insert id, which
+    // would otherwise produce a bogus address.create audit entry.
+    $reserveBind = function (int $sid, string $ip, string $bin, string $host) use ($ins, $db): int {
         $ins->bindValue(':sid',  $sid,  PDO::PARAM_INT);
         $ins->bindValue(':ip',   $ip,   PDO::PARAM_STR);
         ipam_bind_binary($ins, ':ipbin', $bin);
         $ins->bindValue(':host', $host, PDO::PARAM_STR);
         $ins->execute();
+        return $ins->rowCount() > 0 ? (int)$db->lastInsertId() : 0;
     };
 
     // Network address
     $netIp  = $p['network'];
     $netBin = $p['net_bin'];
-    $reserveBind($subnetId, $netIp, $netBin, 'network');
-    if ($db->lastInsertId()) {
-        audit($db, 'address.create', 'address', (int)$db->lastInsertId(), "auto-reserve network $netIp in subnet $subnetId");
+    $newId = $reserveBind($subnetId, $netIp, $netBin, 'network');
+    if ($newId > 0) {
+        audit($db, 'address.create', 'address', $newId, "auto-reserve network $netIp in subnet $subnetId");
     }
 
     if ($p['version'] === 4) {
@@ -2669,9 +2976,9 @@ function auto_reserve_subnet_ips(PDO $db, int $subnetId, string $cidr, ?string $
         if ($bcastBin !== null) {
             $bcastIp = inet_ntop($bcastBin) ?: '';
             if ($bcastIp !== '' && $bcastIp !== $netIp) {
-                $reserveBind($subnetId, $bcastIp, $bcastBin, 'broadcast');
-                if ($db->lastInsertId()) {
-                    audit($db, 'address.create', 'address', (int)$db->lastInsertId(), "auto-reserve broadcast $bcastIp in subnet $subnetId");
+                $newId = $reserveBind($subnetId, $bcastIp, $bcastBin, 'broadcast');
+                if ($newId > 0) {
+                    audit($db, 'address.create', 'address', $newId, "auto-reserve broadcast $bcastIp in subnet $subnetId");
                 }
             }
         }
@@ -2681,9 +2988,9 @@ function auto_reserve_subnet_ips(PDO $db, int $subnetId, string $cidr, ?string $
     if ($gateway !== null && $gateway !== '') {
         $gwNorm = normalize_ip($gateway);
         if ($gwNorm && ip_in_cidr($gwNorm['ip'], $p['network'], $p['prefix'])) {
-            $reserveBind($subnetId, $gwNorm['ip'], $gwNorm['bin'], 'gateway');
-            if ($db->lastInsertId()) {
-                audit($db, 'address.create', 'address', (int)$db->lastInsertId(), "auto-reserve gateway {$gwNorm['ip']} in subnet $subnetId");
+            $newId = $reserveBind($subnetId, $gwNorm['ip'], $gwNorm['bin'], 'gateway');
+            if ($newId > 0) {
+                audit($db, 'address.create', 'address', $newId, "auto-reserve gateway {$gwNorm['ip']} in subnet $subnetId");
             }
         }
     }
@@ -2717,10 +3024,10 @@ function save_tags_for_entity(PDO $db, string $type, int $id, array $tagIds): vo
 {
     if ($type === 'subnet') {
         $db->prepare("DELETE FROM subnet_tags WHERE subnet_id = :id")->execute([':id' => $id]);
-        $ins = $db->prepare("INSERT OR IGNORE INTO subnet_tags (subnet_id, tag_id) VALUES (:eid, :tid)");
+        $ins = $db->prepare("INSERT INTO subnet_tags (subnet_id, tag_id) VALUES (:eid, :tid) " . ipam_dialect()->upsert_or_ignore("subnet_tags", ["subnet_id", "tag_id"]) . "");
     } elseif ($type === 'address') {
         $db->prepare("DELETE FROM address_tags WHERE address_id = :id")->execute([':id' => $id]);
-        $ins = $db->prepare("INSERT OR IGNORE INTO address_tags (address_id, tag_id) VALUES (:eid, :tid)");
+        $ins = $db->prepare("INSERT INTO address_tags (address_id, tag_id) VALUES (:eid, :tid) " . ipam_dialect()->upsert_or_ignore("address_tags", ["address_id", "tag_id"]) . "");
     } else {
         return;
     }
@@ -2870,6 +3177,8 @@ function render_security_banner(string $context, string $message): void
 
 function demo_reset_db(PDO $db): void
 {
+    $driver = ipam_dialect()->driver_name();
+
     // audit_log has append-only triggers that block DELETE, so bypass via rename+drop,
     // then immediately recreate the table and triggers.
     $db->exec("ALTER TABLE audit_log RENAME TO audit_log_old");
@@ -2877,14 +3186,39 @@ function demo_reset_db(PDO $db): void
     ensure_audit_log_table($db);
 
     // Clear in FK-safe order; CASCADE removes subnet_tags, address_tags, alert_state.
+    // schema_migrations is only wiped on SQLite, where the historical migration
+    // closures are expected to re-run after the reset. On MySQL / Postgres,
+    // schema.{engine}.sql pre-seeds schema_migrations with every historical
+    // version row at fresh-install time (v2.10.0 #484 decision), and the
+    // historical closures use SQLite-specific PRAGMA / sqlite_master queries
+    // that would fail on other engines. Keep the pre-seed intact so
+    // apply_migrations() remains a no-op.
     $tables = ['address_history', 'login_attempts', 'api_keys',
                'addresses', 'subnets', 'vlans', 'vrfs', 'contacts', 'tags',
-               'sites', 'users', 'schema_migrations'];
+               'sites', 'users'];
+    if ($driver === 'sqlite') {
+        $tables[] = 'schema_migrations';
+    }
     foreach ($tables as $t) {
         $db->exec("DELETE FROM $t");
-        $db->exec("DELETE FROM sqlite_sequence WHERE name='$t'");
+        // Rewind the table's auto-increment counter so subsequent inserts
+        // start at 1 and the fixture IDs that demo_seed_data passes
+        // explicitly land deterministically on every reset. Critical on
+        // MySQL: DELETE alone does NOT rewind AUTO_INCREMENT, so on a
+        // second reset any row inserted WITHOUT an explicit id (e.g. the
+        // audit rows written by audit()) would carry a drifted id and
+        // break fixtures that reference it by id.
+        if ($driver === 'sqlite') {
+            $db->exec("DELETE FROM sqlite_sequence WHERE name='$t'");
+        } elseif ($driver === 'mysql') {
+            $db->exec("ALTER TABLE $t AUTO_INCREMENT = 1");
+        }
     }
-    $db->exec("DELETE FROM sqlite_sequence WHERE name='audit_log'");
+    if ($driver === 'sqlite') {
+        $db->exec("DELETE FROM sqlite_sequence WHERE name='audit_log'");
+    } elseif ($driver === 'mysql') {
+        $db->exec("ALTER TABLE audit_log AUTO_INCREMENT = 1");
+    }
     apply_migrations($db);
     demo_seed_data($db);
 }
@@ -3104,8 +3438,34 @@ function demo_seed_data(PDO $db): void
 
     // --- Address tags ---
     // db-lon-01 id=17: Critical(3), Monitored(4) | db-lon-02 id=18: Monitored(4) | fw-lon-dmz id=28: Critical(3)
+    //
+    // We look up the target IDs by IP rather than hard-coding them because
+    // MySQL and SQLite can disagree on the starting value and increment of
+    // AUTO_INCREMENT under some configurations (especially when a schema
+    // file has pre-populated another table with explicit IDs — which is
+    // exactly what v2.10.0 schema.mysql.sql does for schema_migrations).
+    // Locking the address_tags fixtures to the actual inserted row IDs
+    // keeps the demo fixture engine-agnostic.
+    $idByIp = [];
+    $idSt = $db->prepare("SELECT id, ip FROM addresses WHERE ip IN ('10.10.2.30','10.10.2.31','10.10.3.1')");
+    $idSt->execute();
+    /** @var list<array<string, mixed>> $idRows */
+    $idRows = $idSt->fetchAll();
+    foreach ($idRows as $r) {
+        $idByIp[to_str($r['ip'])] = to_int($r['id']);
+    }
     $at = $db->prepare("INSERT INTO address_tags (address_id, tag_id) VALUES (?,?)");
-    foreach ([[17, 3], [17, 4], [18, 4], [28, 3]] as $t) $at->execute($t);
+    foreach ([
+        // db-lon-01 → Critical + Monitored
+        [$idByIp['10.10.2.30'] ?? 0, 3],
+        [$idByIp['10.10.2.30'] ?? 0, 4],
+        // db-lon-02 → Monitored
+        [$idByIp['10.10.2.31'] ?? 0, 4],
+        // fw-lon-dmz → Critical
+        [$idByIp['10.10.3.1']  ?? 0, 3],
+        ] as $t) {
+        if ($t[0] > 0) $at->execute($t);
+    }
 
     // --- API Keys ---
     $ak = $db->prepare(
@@ -3115,9 +3475,15 @@ function demo_seed_data(PDO $db): void
     $ak->execute(['Old script (inactive)', hash('sha256', 'demo-api-key-old-script-0987654321fedcba'), 0, 'demo']);
 
     // --- Audit log (backdated) ---
+    // Compute the backdated created_at timestamp in PHP so the SQL stays
+    // engine-agnostic. The last tuple element remains a human-readable
+    // offset string ('-30 days', '-5 days', '-0 seconds', etc.) that
+    // strtotime() parses directly, and we format the result as ISO
+    // 'YYYY-MM-DD HH:MM:SS' UTC which both SQLite TEXT storage and
+    // MySQL DATETIME accept.
     $al = $db->prepare(
         "INSERT INTO audit_log (action, entity_type, entity_id, username, ip, details, created_at)
-         VALUES (?,?,?,?,?,?,datetime('now',?))"
+         VALUES (?,?,?,?,?,?,?)"
     );
     foreach ([
         ['auth.login',        'user',    1,    'demo',          '192.168.1.100', 'login ok',                               '-30 days'],
@@ -3155,47 +3521,74 @@ function demo_seed_data(PDO $db): void
         ['address.bulk_update','address',null, 'demo',          '192.168.1.100', 'subnet_id=4 selected=3 affected=3',      '-2 days'],
         ['auth.login',        'user',    1,    'demo',          '192.168.1.100', 'login ok',                               '-1 day'],
         ['auth.login',        'user',    1,    'demo',          '192.168.1.100', 'login ok',                               '-0 seconds'],
-        ] as $e) $al->execute($e);
+        ] as $e) {
+        // Replace the human-readable offset (last element) with an
+        // absolute 'YYYY-MM-DD HH:MM:SS' UTC timestamp computed in PHP.
+        $offset = array_pop($e);
+        $ts = strtotime((string)$offset);
+        $e[] = ($ts !== false) ? gmdate('Y-m-d H:i:s', $ts) : gmdate('Y-m-d H:i:s');
+        $al->execute($e);
+    }
 
     // --- Address history ---
+    // Address IDs looked up by IP so we don't hardcode AUTO_INCREMENT
+    // positions (same rationale as the address_tags block above).
+    // Backdated created_at timestamps computed in PHP because the SQLite
+    // relative-time modifier syntax is not portable to MySQL.
+    $histIds = [];
+    $histIdSt = $db->prepare("SELECT id, ip FROM addresses WHERE ip IN ('10.10.1.1','10.10.2.10','10.10.2.12','10.10.2.20','10.10.3.1','10.10.3.20')");
+    $histIdSt->execute();
+    /** @var list<array<string, mixed>> $histIdRows */
+    $histIdRows = $histIdSt->fetchAll();
+    foreach ($histIdRows as $r) {
+        $histIds[to_str($r['ip'])] = to_int($r['id']);
+    }
+
     $hist = $db->prepare(
         "INSERT INTO address_history (address_id, subnet_id, ip, action, username, client_ip, before_json, after_json, created_at)
-         VALUES (?,?,?,?,?,?,?,?,datetime('now',?))"
+         VALUES (?,?,?,?,?,?,?,?,?)"
     );
     foreach ([
-        // id=1 → 10.10.1.1 gw-lon-mgmt
-        [1,  3, '10.10.1.1',  'create', 'demo', '192.168.1.100', null,
+        // gw-lon-mgmt
+        [$histIds['10.10.1.1']  ?? 0, 3, '10.10.1.1',  'create', 'demo', '192.168.1.100', null,
          '{"hostname":"gw-lon-mgmt","owner":"NetOps","status":"used","note":"Default gateway","mac":"aa:bb:cc:00:01:01"}',
          '-28 days'],
-        // id=11 → 10.10.2.10 web-lon-01
-        [11, 4, '10.10.2.10', 'create', 'demo', '192.168.1.100', null,
+        // web-lon-01
+        [$histIds['10.10.2.10'] ?? 0, 4, '10.10.2.10', 'create', 'demo', '192.168.1.100', null,
          '{"hostname":"","owner":"WebTeam","status":"used","note":"","mac":""}',
          '-28 days'],
-        [11, 4, '10.10.2.10', 'update', 'demo', '192.168.1.100',
+        [$histIds['10.10.2.10'] ?? 0, 4, '10.10.2.10', 'update', 'demo', '192.168.1.100',
          '{"hostname":"","owner":"WebTeam","status":"used","note":"","mac":""}',
          '{"hostname":"web-lon-01","owner":"WebTeam","status":"used","note":"Web frontend 1","mac":"de:ad:be:ef:00:01","expires_at":"2027-06-30"}',
          '-25 days'],
-        // id=13 → 10.10.2.12 web-lon-03
-        [13, 4, '10.10.2.12', 'create', 'demo', '192.168.1.100', null,
+        // web-lon-03
+        [$histIds['10.10.2.12'] ?? 0, 4, '10.10.2.12', 'create', 'demo', '192.168.1.100', null,
          '{"hostname":"web-lon-03","owner":"WebTeam","status":"used","note":"Web frontend 3","mac":"de:ad:be:ef:00:03"}',
          '-28 days'],
-        // id=14 → 10.10.2.20 app-lon-01
-        [14, 4, '10.10.2.20', 'create', 'demo', '192.168.1.100', null,
+        // app-lon-01
+        [$histIds['10.10.2.20'] ?? 0, 4, '10.10.2.20', 'create', 'demo', '192.168.1.100', null,
          '{"hostname":"app-lon-01","owner":"AppTeam","status":"used","note":"Application server 1","mac":""}',
          '-28 days'],
-        // id=28 → 10.10.3.1 fw-lon-dmz
-        [28, 5, '10.10.3.1',  'create', 'demo', '192.168.1.100', null,
+        // fw-lon-dmz
+        [$histIds['10.10.3.1']  ?? 0, 5, '10.10.3.1',  'create', 'demo', '192.168.1.100', null,
          '{"hostname":"fw-lon-dmz","owner":"Security","status":"used","note":"DMZ firewall inside","mac":"00:50:56:a1:b2:c3"}',
          '-23 days'],
-        // id=35 → 10.10.3.20 (future load balancer)
-        [35, 5, '10.10.3.20', 'create', 'demo', '192.168.1.100', null,
+        // 10.10.3.20 (future load balancer)
+        [$histIds['10.10.3.20'] ?? 0, 5, '10.10.3.20', 'create', 'demo', '192.168.1.100', null,
          '{"hostname":"","owner":"","status":"free","note":"","mac":""}',
          '-23 days'],
-        [35, 5, '10.10.3.20', 'update', 'demo', '192.168.1.100',
+        [$histIds['10.10.3.20'] ?? 0, 5, '10.10.3.20', 'update', 'demo', '192.168.1.100',
          '{"hostname":"","owner":"","status":"free","note":"","mac":""}',
          '{"hostname":"","owner":"","status":"reserved","note":"Future load balancer","mac":""}',
          '-10 days'],
-        ] as $h) $hist->execute($h);
+        ] as $h) {
+        if ($h[0] === 0) continue;
+        // Replace the human-readable offset with an absolute UTC timestamp.
+        $offset = array_pop($h);
+        $ts = strtotime((string)$offset);
+        $h[] = ($ts !== false) ? gmdate('Y-m-d H:i:s', $ts) : gmdate('Y-m-d H:i:s');
+        $hist->execute($h);
+    }
 }
 
 /* ---------------- IP helpers ---------------- */
@@ -3687,7 +4080,7 @@ function detect_subnet_overlaps(PDO $db, string $cidr, ?int $excludeId = null, ?
 
     // Scope overlap detection to the same VRF (NULL = global routing table).
     // SQLite's IS operator handles NULL equality correctly.
-    $sql    = "SELECT id, cidr, prefix, network_bin FROM subnets WHERE ip_version = :v AND vrf_id IS :vrf";
+    $sql    = "SELECT id, cidr, prefix, network_bin FROM subnets WHERE ip_version = :v AND " . ipam_dialect()->null_safe_eq("vrf_id", ":vrf") . "";
     $params = [':v' => $ver, ':vrf' => $vrfId];
     if ($excludeId !== null) {
         $sql .= " AND id != :excl";
@@ -3764,11 +4157,11 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=2.8.0d'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=2.10.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=2.8.0d'></script>";
+    echo "<script defer src='assets/app.js?v=2.10.0'></script>";
     $pageAttr = isset($opts['page']) && $opts['page'] !== ''
         ? " data-page='" . e(to_str($opts['page'])) . "'"
         : '';
@@ -3881,6 +4274,25 @@ function page_header(string $title, array $opts = []): void
     if (demo_mode_enabled()) {
         echo "<div class='admin-notice admin-notice--info text-center' role='alert'>"
            . "🧪 <strong>Demo mode</strong> — Explore freely. Destructive actions are disabled. Data resets nightly at midnight."
+           . "</div>";
+    }
+
+    // MySQL experimental driver banner — admin only, dismissible (v2.10.0 #385).
+    // Appears whenever db_driver=mysql is active so operators always know the
+    // driver is in beta. The banner key is suffixed with IPAM_VERSION so the
+    // localStorage dismiss state is per app version: upgrading the app
+    // changes the key and the banner re-surfaces until dismissed on the
+    // new version. Dismiss state lives only in the browser; the server
+    // doesn't track it (client-side, stateless, survives the request cycle
+    // without a session write).
+    if ($role === 'admin' && ipam_dialect()->driver_name() === 'mysql') {
+        require_once __DIR__ . '/version.php';
+        $bannerKey = 'mysql-beta-' . IPAM_VERSION;
+        echo "<div class='admin-notice admin-notice--warning' role='alert' data-banner='" . e($bannerKey) . "'>"
+           . "⚠ <strong>MySQL driver (experimental)</strong> — MySQL support is beta in v" . e(IPAM_VERSION) . ". "
+           . "Report issues at <a href='https://github.com/seanmousseau/Simple-PHP-IPAM/issues' target='_blank' rel='noopener'>the GitHub tracker</a>. "
+           . "See <a href='https://github.com/seanmousseau/Simple-PHP-IPAM/blob/main/docs/install.md#mysql-experimental' target='_blank' rel='noopener'>docs/install.md</a> for current limitations. "
+           . "<button type='button' class='admin-notice-dismiss' data-dismiss-banner='" . e($bannerKey) . "' aria-label='Dismiss'>✕</button>"
            . "</div>";
     }
 
@@ -4096,9 +4508,10 @@ function find_parent_site_id(PDO $db, string $cidr, ?int $excludeId = null, ?int
     if (empty($overlaps['parents'])) return null;
 
     $placeholders = implode(',', array_fill(0, count($overlaps['parents']), '?'));
+    $vrfEq = ipam_dialect()->null_safe_eq('vrf_id', '?');
     $st = $db->prepare(
         "SELECT site_id FROM subnets
-         WHERE cidr IN ($placeholders) AND site_id IS NOT NULL AND vrf_id IS ?
+         WHERE cidr IN ($placeholders) AND site_id IS NOT NULL AND $vrfEq
          ORDER BY prefix DESC LIMIT 1"
     );
     $st->execute(array_merge($overlaps['parents'], [$vrfId]));
@@ -4534,10 +4947,10 @@ function ipam_scan_subnet(PDO $db, int $subnetId, string $method, ?int $tcpPort,
     $stats = ['scanned' => 0, 'up' => 0, 'down' => 0, 'skipped' => 0, 'stale_marked' => 0];
     $insert = $db->prepare("
         INSERT INTO scan_results (subnet_id, address_id, ip, method, is_up, latency_ms, scanned_at)
-        VALUES (:sid, :aid, :ip, :method, :is_up, :lat, datetime('now'))
+        VALUES (:sid, :aid, :ip, :method, :is_up, :lat, " . ipam_dialect()->now() . ")
     ");
     $updateSeen = $db->prepare("
-        UPDATE addresses SET last_seen_at = datetime('now'), is_stale = 0 WHERE id = :id
+        UPDATE addresses SET last_seen_at = " . ipam_dialect()->now() . ", is_stale = 0 WHERE id = :id
     ");
 
     foreach ($addresses as $row) {
@@ -4655,7 +5068,7 @@ function ipam_mark_stale_addresses(PDO $db, int $subnetId, int $missThreshold = 
     if ($updates !== []) {
         $db->beginTransaction();
         try {
-            $setStale = $db->prepare("UPDATE addresses SET is_stale = :stale, updated_at = datetime('now') WHERE id = :id");
+            $setStale = $db->prepare("UPDATE addresses SET is_stale = :stale, updated_at = " . ipam_dialect()->now() . " WHERE id = :id");
             foreach ($updates as $u) {
                 $setStale->execute([':stale' => $u['stale'], ':id' => $u['id']]);
             }
@@ -4740,7 +5153,7 @@ function ipam_apply_arp_import(PDO $db, array $entries, int $subnetId): array
 {
     $stats = ['matched' => 0, 'updated' => 0, 'skipped' => 0];
     $find = $db->prepare("SELECT id, mac FROM addresses WHERE subnet_id = :sid AND ip = :ip LIMIT 1");
-    $update = $db->prepare("UPDATE addresses SET mac = :mac, updated_at = datetime('now') WHERE id = :id");
+    $update = $db->prepare("UPDATE addresses SET mac = :mac, updated_at = " . ipam_dialect()->now() . " WHERE id = :id");
 
     foreach ($entries as $entry) {
         $ip  = $entry['ip'];

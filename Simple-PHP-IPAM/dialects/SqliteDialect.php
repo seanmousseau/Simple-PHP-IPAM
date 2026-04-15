@@ -43,9 +43,32 @@ final class SqliteDialect implements Dialect
         return "ON CONFLICT$target DO UPDATE SET " . implode(', ', $assignments);
     }
 
+    /**
+     * SQLite's `ON CONFLICT(col, ...) DO NOTHING` is the direct native idiom.
+     *
+     * @param string[] $conflictCols
+     */
+    public function upsert_or_ignore(string $table, array $conflictCols): string
+    {
+        if ($conflictCols === []) {
+            throw new InvalidArgumentException('upsert_or_ignore() requires at least one conflict column');
+        }
+        return 'ON CONFLICT(' . implode(', ', $conflictCols) . ') DO NOTHING';
+    }
+
     public function autoincrement(): string
     {
         return 'INTEGER PRIMARY KEY AUTOINCREMENT';
+    }
+
+    /**
+     * SQLite has no key-length limit on TEXT columns in indexes or unique
+     * constraints. The $maxLen argument is ignored on this engine but kept
+     * in the signature so MySQL can use it for strict typing.
+     */
+    public function indexed_text_type(int $maxLen = 191): string
+    {
+        return 'TEXT';
     }
 
     /**
@@ -98,6 +121,11 @@ final class SqliteDialect implements Dialect
     public function pragma_foreign_keys(bool $on): string
     {
         return 'PRAGMA foreign_keys = ' . ($on ? 'ON' : 'OFF');
+    }
+
+    public function null_safe_eq(string $column, string $placeholder): string
+    {
+        return "$column IS $placeholder";
     }
 
     public function driver_name(): string

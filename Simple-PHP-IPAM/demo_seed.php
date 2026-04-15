@@ -55,7 +55,7 @@ if (!($config['demo_mode']['enabled'] ?? false)) {
     exit(1);
 }
 
-$db = ipam_db($config['db_path']);
+$db = ipam_db($config);
 ipam_db_init($db);
 
 echo "Resetting database to demo data...\n";

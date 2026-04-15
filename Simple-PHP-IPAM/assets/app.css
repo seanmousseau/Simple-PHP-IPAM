@@ -597,7 +597,24 @@ details > summary::-webkit-details-marker{display:none}
   border-color:color-mix(in srgb,var(--danger) 30%,var(--border));
   color:var(--fg);
 }
+.admin-notice--warning{
+  background:color-mix(in srgb,var(--warn) 8%,var(--card));
+  border-color:color-mix(in srgb,var(--warn) 40%,var(--border));
+  color:var(--fg);
+}
 .admin-notice a{font-weight:600}
+.admin-notice-dismiss{
+  margin-left:auto;
+  background:transparent;
+  border:0;
+  color:inherit;
+  font-size:1.1em;
+  cursor:pointer;
+  padding:2px 6px;
+  border-radius:6px;
+  opacity:.7;
+}
+.admin-notice-dismiss:hover{opacity:1;background:color-mix(in srgb,var(--fg) 10%,transparent)}
 
 /* Scrollable table wrapper — wrap tables in this on narrow pages */
 .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}

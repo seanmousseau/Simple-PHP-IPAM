@@ -46,6 +46,29 @@ interface Dialect
     public function upsert(string $table, array $conflictCols, array $updateCols): string;
 
     /**
+     * Returns an INSERT ... ON CONFLICT DO NOTHING fragment.
+     *
+     * Semantically distinct from upsert(): this variant leaves any existing
+     * row untouched on conflict, rather than updating it. Used by migrations
+     * and bootstrap code that want "insert if absent, otherwise noop" without
+     * racing against concurrent writers.
+     *
+     *  - SQLite  : `ON CONFLICT(col, ...) DO NOTHING`
+     *  - MySQL   : `ON DUPLICATE KEY UPDATE col = col` (no-op self-assign)
+     *  - Postgres: `ON CONFLICT (col, ...) DO NOTHING`
+     *
+     * MySQL note: `ON DUPLICATE KEY UPDATE` fires on *any* unique-key
+     * conflict, not just the columns named in $conflictCols. For the call
+     * sites this method was introduced for (single PK or single UNIQUE
+     * constraint), that difference is invisible. If a future caller has
+     * multiple unique keys on the same table and needs conflict-target
+     * scoping, use upsert() with a self-assign updateCols list instead.
+     *
+     * @param string[] $conflictCols
+     */
+    public function upsert_or_ignore(string $table, array $conflictCols): string;
+
+    /**
      * Column definition for an auto-incrementing integer primary key.
      *
      *  - SQLite: `INTEGER PRIMARY KEY AUTOINCREMENT`
@@ -53,6 +76,24 @@ interface Dialect
      *  - Postgres: `BIGSERIAL PRIMARY KEY` (or `GENERATED ALWAYS AS IDENTITY`)
      */
     public function autoincrement(): string;
+
+    /**
+     * Column type for a TEXT-like column that will be used in an INDEX,
+     * UNIQUE constraint, or primary key.
+     *
+     *  - SQLite  : `TEXT` (no key-length limit on loosely-typed BLOB/TEXT)
+     *  - MySQL   : `VARCHAR($maxLen)` — MySQL 8.0 rejects "BLOB/TEXT column
+     *              used in key specification without a key length", so
+     *              indexed text columns must be VARCHAR with an explicit
+     *              length. 191 is the utf8mb4 default that fits the
+     *              historical 767-byte index-key limit.
+     *  - Postgres: `TEXT` (native B-tree indexes on TEXT are unrestricted)
+     *
+     * Use for any TEXT column that appears in a CREATE INDEX, UNIQUE, or
+     * PRIMARY KEY declaration. Free-form text columns (descriptions, notes,
+     * etc.) that are never indexed should stay as the literal `TEXT`.
+     */
+    public function indexed_text_type(int $maxLen = 191): string;
 
     /**
      * Column type for a fixed-length binary blob.
@@ -109,6 +150,21 @@ interface Dialect
      * the toggle exists.
      */
     public function pragma_foreign_keys(bool $on): ?string;
+
+    /**
+     * SQL fragment for a null-safe equality comparison between a column
+     * and a placeholder — both NULLs should compare equal.
+     *
+     *  - SQLite  : `col IS :ph`   (SQLite's `IS` is null-safe)
+     *  - MySQL   : `col <=> :ph`  (MySQL's spaceship operator)
+     *  - Postgres: `col IS NOT DISTINCT FROM :ph`
+     *
+     * Introduced in v2.10.0 (#384) for the duplicate-CIDR / duplicate-VLAN
+     * checks that need to treat `vrf_id IS NULL` as equal to `:vrf = NULL`.
+     * SQLite's `IS :ph` syntax is SQLite-specific and must not leak into
+     * any query that might run on MySQL or Postgres.
+     */
+    public function null_safe_eq(string $column, string $placeholder): string;
 
     /**
      * Driver identifier, for logging and one-off branching.

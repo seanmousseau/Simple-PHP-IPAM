@@ -66,14 +66,22 @@ if ($methodOverride !== null && !in_array($methodOverride, ['icmp', 'tcp', 'both
 // Open the database
 // ---------------------------------------------------------------------------
 /** @var array<string, mixed> $config */
-$dbPath = isset($config['db_path']) && to_str($config['db_path']) !== ''
-    ? to_str($config['db_path'])
-    : $scriptDir . '/data/ipam.sqlite';
-if (!file_exists($dbPath)) {
-    fwrite(STDERR, "Error: database not found at $dbPath\n");
-    exit(1);
+// Default db_path for legacy configs that omit it, then sanity-check the
+// file on SQLite only (MySQL has no local path to check).
+$driverRaw = $config['db_driver'] ?? 'sqlite';
+$driver = is_string($driverRaw) ? $driverRaw : 'sqlite';
+if ($driver === 'sqlite' || $driver === '') {
+    $dbPathRaw = $config['db_path'] ?? '';
+    $dbPath = is_string($dbPathRaw) && $dbPathRaw !== ''
+        ? $dbPathRaw
+        : $scriptDir . '/data/ipam.sqlite';
+    $config['db_path'] = $dbPath;
+    if (!file_exists($dbPath)) {
+        fwrite(STDERR, "Error: database not found at $dbPath\n");
+        exit(1);
+    }
 }
-$db = ipam_db($dbPath);
+$db = ipam_db($config);
 
 // ---------------------------------------------------------------------------
 // Gather subnets to scan
@@ -98,19 +106,32 @@ if ($specificId > 0) {
     }
     $toScan[] = $row;
 } else {
-    // All subnets with an active schedule that is due
+    // All subnets with an active schedule that is due. Interval check is
+    // done in PHP so the query stays engine-agnostic (SQLite's
+    // `datetime(col, '+N minutes')` + `||` concatenation is not portable).
     $st = $db->prepare("
         SELECT s.id, s.cidr, s.description, s.ip_version,
-               ss.method, ss.tcp_port, ss.interval_minutes, ss.is_active
+               ss.method, ss.tcp_port, ss.interval_minutes, ss.is_active,
+               ss.last_run_at
         FROM subnets s
         JOIN scan_schedules ss ON ss.subnet_id = s.id
         WHERE ss.is_active = 1
-          AND (ss.last_run_at IS NULL
-               OR datetime(ss.last_run_at, '+' || ss.interval_minutes || ' minutes') <= datetime('now'))
         ORDER BY ss.last_run_at ASC
     ");
     $st->execute();
-    $toScan = $st->fetchAll();
+    $nowTs = time();
+    $toScan = array_values(array_filter(
+        $st->fetchAll(),
+        static function ($row) use ($nowTs): bool {
+            if (!is_array($row)) return false;
+            $lastRun = $row['last_run_at'] ?? null;
+            if ($lastRun === null || $lastRun === '') return true;
+            $lastTs = strtotime(to_str($lastRun) . ' UTC');
+            if ($lastTs === false) return false;
+            $intervalMinutes = to_int($row['interval_minutes'] ?? 0);
+            return ($nowTs - $lastTs) >= ($intervalMinutes * 60);
+        }
+    ));
 }
 
 if (count($toScan) === 0) {
@@ -122,7 +143,7 @@ if (count($toScan) === 0) {
 // Run scans
 // ---------------------------------------------------------------------------
 $summary = ['scanned_subnets' => 0, 'total_hosts' => 0, 'total_up' => 0, 'total_down' => 0, 'total_stale_marked' => 0];
-$updateLastRun = $db->prepare("UPDATE scan_schedules SET last_run_at = datetime('now'), updated_at = datetime('now') WHERE subnet_id = :sid");
+$updateLastRun = $db->prepare("UPDATE scan_schedules SET last_run_at = " . ipam_dialect()->now() . ", updated_at = " . ipam_dialect()->now() . " WHERE subnet_id = :sid");
 
 foreach ($toScan as $subnet) {
     $subnetId   = (int) $subnet['id'];

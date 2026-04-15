@@ -16,8 +16,15 @@ import { test, expect, type Browser, type BrowserContext, type Page } from '@pla
 import {
   login, fetchPost, fetchPostForm, appUrl,
   ADMIN_USER, ADMIN_PASS,
-  newAuthContext,
+  newAuthContext, IS_MYSQL,
 } from '../fixtures/ipam';
+
+// v2.10.0 #433: db_tools.php SQL import/export uses ipam_db_dump_stream()
+// which emits SQLite-format dumps by design. On MySQL, db_tools.php now
+// gates both actions with a user-facing notice; the large-db round-trip
+// scenarios only make sense on SQLite. The gating itself is verified in
+// db-tools.spec.ts:"db_tools shows SQL-only notice on non-sqlite driver".
+test.skip(IS_MYSQL, 'large-db round-trip is SQLite-only; MySQL gating is covered in db-tools.spec.ts');
 
 let ctx: BrowserContext;
 let page: Page;

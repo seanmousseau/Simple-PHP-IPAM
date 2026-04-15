@@ -44,7 +44,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($id <= 0 || $name === '') {
             $err = 'Contact name is required.';
         } else {
-            $st = $db->prepare("UPDATE contacts SET name=:n, email=:e, phone=:p, org=:o, note=:nt, updated_at=datetime('now') WHERE id=:id");
+            $st = $db->prepare("UPDATE contacts SET name=:n, email=:e, phone=:p, org=:o, note=:nt, updated_at=" . ipam_dialect()->now() . " WHERE id=:id");
             $st->execute([':n' => $name, ':e' => $email, ':p' => $phone, ':o' => $org, ':nt' => $note, ':id' => $id]);
             audit($db, 'contact.update', 'contact', $id, "name=$name");
             flash_set("Contact \"$name\" updated.");

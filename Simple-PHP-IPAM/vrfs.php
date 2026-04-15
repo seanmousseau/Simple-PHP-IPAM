@@ -53,7 +53,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $err = 'VRF name is required.';
         } else {
             try {
-                $st = $db->prepare("UPDATE vrfs SET name=:n, description=:d, rd=:rd, asn=:asn, rt_import=:rti, rt_export=:rte, enforce_unique=:eu, updated_at=datetime('now') WHERE id=:id");
+                $st = $db->prepare("UPDATE vrfs SET name=:n, description=:d, rd=:rd, asn=:asn, rt_import=:rti, rt_export=:rte, enforce_unique=:eu, updated_at=" . ipam_dialect()->now() . " WHERE id=:id");
                 $st->execute([':n' => $name, ':d' => $desc, ':rd' => $rd, ':asn' => $asn, ':rti' => $rtImport, ':rte' => $rtExport, ':eu' => $enforceUnique, ':id' => $id]);
                 audit($db, 'vrf.update', 'vrf', $id, "name=$name");
                 flash_set("VRF \"$name\" updated.");
