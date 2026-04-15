@@ -43,6 +43,19 @@ final class SqliteDialect implements Dialect
         return "ON CONFLICT$target DO UPDATE SET " . implode(', ', $assignments);
     }
 
+    /**
+     * SQLite's `ON CONFLICT(col, ...) DO NOTHING` is the direct native idiom.
+     *
+     * @param string[] $conflictCols
+     */
+    public function upsert_or_ignore(string $table, array $conflictCols): string
+    {
+        if ($conflictCols === []) {
+            throw new InvalidArgumentException('upsert_or_ignore() requires at least one conflict column');
+        }
+        return 'ON CONFLICT(' . implode(', ', $conflictCols) . ') DO NOTHING';
+    }
+
     public function autoincrement(): string
     {
         return 'INTEGER PRIMARY KEY AUTOINCREMENT';
