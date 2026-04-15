@@ -147,6 +147,25 @@ function ipam_db(array $config): PDO
             // Reject at connect time so failures are clear and immediate.
             $serverVersionRaw = $pdo->getAttribute(PDO::ATTR_SERVER_VERSION);
             $serverVersion = is_string($serverVersionRaw) ? $serverVersionRaw : '';
+
+            // v2.10.0 #499 CR-sweep fix: reject MariaDB explicitly before
+            // the version_compare. PDO::ATTR_SERVER_VERSION returns e.g.
+            // "10.11.6-MariaDB" or "5.5.5-10.11.6-MariaDB" (the 5.5.5
+            // prefix is a historical protocol-compat lie). version_compare
+            // treats those as "10.11.6.MariaDB" or "5.5.5.10.11.6.MariaDB"
+            // and compares only the numeric prefix: 10 > 8 passes the
+            // floor check even though we have not tested MariaDB at all.
+            // First-class MariaDB support is tracked at #534 (v2.12.0).
+            // Until then, detect and reject explicitly so users get a
+            // clear actionable error instead of a later runtime crash.
+            if ($serverVersion !== '' && stripos($serverVersion, 'mariadb') !== false) {
+                throw new RuntimeException(
+                    "MariaDB is not supported in v2.10.0 (server reports '$serverVersion'). "
+                    . 'First-class MariaDB support is tracked at #534 and will land in v2.12.0. '
+                    . 'For v2.10.0, use MySQL 8.0.29+ or stay on the SQLite driver.'
+                );
+            }
+
             if ($serverVersion === '' || version_compare($serverVersion, '8.0.29', '<')) {
                 throw new RuntimeException(
                     "MySQL 8.0.29+ is required (server reports '$serverVersion')"
