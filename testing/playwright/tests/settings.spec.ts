@@ -31,8 +31,11 @@ function deleteSettingRowInContainer(key: string): void {
       [
         'exec', 'ipam-pw-test',
         'php', '-r',
+        // Backtick-quote `key` so the DELETE works on both SQLite and MySQL
+        // (MySQL reserves `key` as a keyword). Matches the convention used
+        // across Simple-PHP-IPAM/lib.php for settings queries.
         'require "/var/www/html/init.php"; ' +
-        '$db->prepare("DELETE FROM settings WHERE key = :k")->execute([":k" => "' + key + '"]);',
+        '$db->prepare("DELETE FROM settings WHERE `key` = :k")->execute([":k" => "' + key + '"]);',
       ],
       { stdio: 'pipe' },
     );

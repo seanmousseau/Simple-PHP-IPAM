@@ -1378,7 +1378,12 @@ function ipam_setting_deprecated_keys(): array
     if (!($db instanceof PDO)) return [];
 
     try {
-        $st   = $db->query("SELECT key FROM settings");
+        // `key` must be backtick-quoted — it's a MySQL reserved word. SQLite
+        // also accepts backticks as identifier delimiters so the same SQL
+        // runs on both engines. Without the quotes, MySQL would throw a
+        // syntax error that the catch below would silently swallow,
+        // returning [] and hiding every deprecation from the UI banner.
+        $st   = $db->query("SELECT `key` FROM settings");
         $rows = $st !== false ? $st->fetchAll(PDO::FETCH_COLUMN) : [];
     } catch (\Throwable) {
         return [];

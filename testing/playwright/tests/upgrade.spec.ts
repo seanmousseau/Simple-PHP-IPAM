@@ -21,8 +21,16 @@ import { test, expect, type Browser, type BrowserContext, type Page } from '@pla
 import {
   login as loginAs, fetchPost, fetchPostForm, appUrl,
   ADMIN_USER, ADMIN_PASS,
-  newAuthContext,
+  newAuthContext, IS_MYSQL,
 } from '../fixtures/ipam';
+
+// v2.10.0 #433: the pre-v2.0.0 upgrade path is fundamentally SQLite-only.
+// On MySQL fresh installs, schema.mysql.sql pre-seeds schema_migrations with
+// every historical version row so apply_migrations() is a no-op, and the
+// historical closures use SQLite-specific PRAGMA / sqlite_master queries
+// that cannot run on MySQL. Pre-v2.0.0 state also requires importing a
+// SQLite-format dump via db_tools.php which is itself SQLite-only.
+test.skip(IS_MYSQL, 'pre-v2.0.0 upgrade path is SQLite-only (schema.mysql.sql pre-seeds migrations)');
 
 let ctx: BrowserContext;
 let page: Page;
