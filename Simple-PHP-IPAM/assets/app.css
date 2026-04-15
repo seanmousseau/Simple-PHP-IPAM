@@ -399,6 +399,25 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),select{
   min-width:0;
   box-sizing:border-box;
 }
+/* #443: <select multiple> needs the size attribute to control row count
+   instead of the default 40px height that single-selects use, otherwise
+   the alert recipients picker collapses to a single row with a scrollbar. */
+select[multiple]{
+  height:auto;
+  padding:6px 8px;
+  line-height:1.4;
+}
+select[multiple] option{
+  padding:4px 6px;
+  border-radius:4px;
+}
+.settings-multi-actions{
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  gap:0.25rem;
+  margin-top:0.5rem;
+}
 textarea{
   padding:10px 12px;
   border:1px solid var(--border-strong);

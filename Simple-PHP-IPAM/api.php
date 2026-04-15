@@ -1155,9 +1155,14 @@ function api_subnet_tags_detach(PDO $db, array $apiKey, int $subnetId, int $tagI
 {
     if (to_int($apiKey['is_readonly'] ?? 0) === 1) api_error(403, 'Read-only key.');
     if ($subnetId <= 0 || $tagId <= 0) api_error(400, 'subnet_id and tag_id are required.');
-    $db->prepare("DELETE FROM subnet_tags WHERE subnet_id = :s AND tag_id = :t")
-       ->execute([':s' => $subnetId, ':t' => $tagId]);
-    api_audit($db, $apiKey, 'tag.detach', 'subnet', $subnetId, "tag_id={$tagId}");
+    // CodeRabbit second sweep on PR #450: only audit when DELETE actually
+    // removed a row, otherwise calling DELETE with bogus IDs creates
+    // misleading tag.detach entries in the audit log.
+    $st = $db->prepare("DELETE FROM subnet_tags WHERE subnet_id = :s AND tag_id = :t");
+    $st->execute([':s' => $subnetId, ':t' => $tagId]);
+    if ($st->rowCount() > 0) {
+        api_audit($db, $apiKey, 'tag.detach', 'subnet', $subnetId, "tag_id={$tagId}");
+    }
     http_response_code(204);
     exit;
 }
@@ -1193,9 +1198,12 @@ function api_address_tags_detach(PDO $db, array $apiKey, int $addressId, int $ta
 {
     if (to_int($apiKey['is_readonly'] ?? 0) === 1) api_error(403, 'Read-only key.');
     if ($addressId <= 0 || $tagId <= 0) api_error(400, 'address_id and tag_id are required.');
-    $db->prepare("DELETE FROM address_tags WHERE address_id = :a AND tag_id = :t")
-       ->execute([':a' => $addressId, ':t' => $tagId]);
-    api_audit($db, $apiKey, 'tag.detach', 'address', $addressId, "tag_id={$tagId}");
+    // CodeRabbit second sweep on PR #450: only audit on a real deletion.
+    $st = $db->prepare("DELETE FROM address_tags WHERE address_id = :a AND tag_id = :t");
+    $st->execute([':a' => $addressId, ':t' => $tagId]);
+    if ($st->rowCount() > 0) {
+        api_audit($db, $apiKey, 'tag.detach', 'address', $addressId, "tag_id={$tagId}");
+    }
     http_response_code(204);
     exit;
 }

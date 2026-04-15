@@ -423,6 +423,10 @@ page_header('Settings');
                       <option value="<?= e((string)$uid) ?>"<?= $sel ? ' selected' : '' ?>><?= e($disp) ?></option>
                     <?php endforeach; ?>
                   </select>
+                  <div class="settings-multi-actions">
+                    <button type="button" class="button-secondary settings-multi-clear" data-clear-select="<?= e($inputId) ?>">Clear all</button>
+                    <span class="muted" style="margin-left:0.5rem;font-size:0.85em;">Cmd/Ctrl-click to toggle individual selections.</span>
+                  </div>
                   <div class="muted" style="margin-top:0.25rem;">
                     Emails will be sent to:
                     <?= $selectedEmails === [] ? '<em>(none)</em>' : e(implode(', ', $selectedEmails)) ?>
@@ -453,9 +457,17 @@ page_header('Settings');
                     Playwright. type="button" is mandatory or Enter submits the form.
                     Positioned at right:36px so password-manager icons (1Password,
                     Bitwarden) can paint at right:0–8px without overlap.
+
+                    #449 follow-up: when the field has a stored value (isSet),
+                    render data-pw-reveal-key + data-pw-reveal-csrf so the JS
+                    handler can fetch the actual stored secret from
+                    settings_reveal.php on first reveal click. Without this,
+                    the toggle could only reveal what the user had just typed,
+                    which is not what users expect on a "Set" field.
                   -->
                   <button type="button" class="pw-toggle"
                           data-pw-toggle-for="<?= e($inputId) ?>"
+                          <?php if ($isSet): ?>data-pw-reveal-key="<?= e($key) ?>" data-pw-reveal-csrf="<?= e(csrf_token()) ?>"<?php endif; ?>
                           aria-label="Show password" aria-pressed="false">
                     <svg class="pw-eye pw-eye--open" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                     <svg class="pw-eye pw-eye--closed" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a19.77 19.77 0 0 1 5.06-5.94"/><path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a19.77 19.77 0 0 1-3.17 4.19"/><path d="M14.12 14.12A3 3 0 1 1 9.88 9.88"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
