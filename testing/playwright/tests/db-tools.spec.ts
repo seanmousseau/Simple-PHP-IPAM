@@ -6,8 +6,12 @@ import { test, expect, type Browser, type BrowserContext, type Page } from '@pla
 import {
   login, fetchPost, fetchPostForm, deleteSubnet, appUrl,
   ADMIN_USER, ADMIN_PASS, TEST_CIDR1,
-  newAuthContext,
+  newAuthContext, IS_MYSQL,
 } from '../fixtures/ipam';
+
+// v2.10.0 #433: SQL export/import via ipam_db_dump_stream() is SQLite-format
+// only. Cross-engine dump lands in v3.0.0 migrate_db.php (#392).
+test.skip(IS_MYSQL, 'db_tools SQL dump is SQLite-format only (v3.0.0 migrate_db.php scope)');
 
 let ctx: BrowserContext;
 let page: Page;

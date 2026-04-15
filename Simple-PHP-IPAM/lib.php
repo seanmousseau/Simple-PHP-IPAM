@@ -1378,7 +1378,12 @@ function ipam_setting_deprecated_keys(): array
     if (!($db instanceof PDO)) return [];
 
     try {
-        $st   = $db->query("SELECT key FROM settings");
+        // `key` must be backtick-quoted — it's a MySQL reserved word. SQLite
+        // also accepts backticks as identifier delimiters so the same SQL
+        // runs on both engines. Without the quotes, MySQL would throw a
+        // syntax error that the catch below would silently swallow,
+        // returning [] and hiding every deprecation from the UI banner.
+        $st   = $db->query("SELECT `key` FROM settings");
         $rows = $st !== false ? $st->fetchAll(PDO::FETCH_COLUMN) : [];
     } catch (\Throwable) {
         return [];
@@ -1580,7 +1585,17 @@ function apply_migrations(PDO $db): array
             $toggleFk($db, $fkOff);
 
             try {
-                $db->exec("BEGIN EXCLUSIVE");
+                // SQLite's `BEGIN EXCLUSIVE` acquires a table-level write
+                // lock up front, which is required around DDL to avoid
+                // SQLITE_LOCKED mid-migration. MySQL / Postgres don't need
+                // (and don't accept) the EXCLUSIVE modifier — their DDL
+                // acquires its own metadata locks. Fall back to a plain
+                // transaction on non-SQLite engines.
+                if ($dialect->driver_name() === 'sqlite') {
+                    $db->exec("BEGIN EXCLUSIVE");
+                } else {
+                    $db->exec("START TRANSACTION");
+                }
             } catch (Throwable $e) {
                 $toggleFk($db, $fkOn);
                 $lastErr = $e;
@@ -3071,6 +3086,8 @@ function render_security_banner(string $context, string $message): void
 
 function demo_reset_db(PDO $db): void
 {
+    $driver = ipam_dialect()->driver_name();
+
     // audit_log has append-only triggers that block DELETE, so bypass via rename+drop,
     // then immediately recreate the table and triggers.
     $db->exec("ALTER TABLE audit_log RENAME TO audit_log_old");
@@ -3078,14 +3095,33 @@ function demo_reset_db(PDO $db): void
     ensure_audit_log_table($db);
 
     // Clear in FK-safe order; CASCADE removes subnet_tags, address_tags, alert_state.
+    // schema_migrations is only wiped on SQLite, where the historical migration
+    // closures are expected to re-run after the reset. On MySQL / Postgres,
+    // schema.{engine}.sql pre-seeds schema_migrations with every historical
+    // version row at fresh-install time (v2.10.0 #484 decision), and the
+    // historical closures use SQLite-specific PRAGMA / sqlite_master queries
+    // that would fail on other engines. Keep the pre-seed intact so
+    // apply_migrations() remains a no-op.
     $tables = ['address_history', 'login_attempts', 'api_keys',
                'addresses', 'subnets', 'vlans', 'vrfs', 'contacts', 'tags',
-               'sites', 'users', 'schema_migrations'];
+               'sites', 'users'];
+    if ($driver === 'sqlite') {
+        $tables[] = 'schema_migrations';
+    }
     foreach ($tables as $t) {
         $db->exec("DELETE FROM $t");
-        $db->exec("DELETE FROM sqlite_sequence WHERE name='$t'");
+        // SQLite tracks AUTOINCREMENT counters in sqlite_sequence; clear them
+        // so subsequent inserts start at 1. MySQL / Postgres have their own
+        // mechanisms (ALTER TABLE ... AUTO_INCREMENT = 1, ALTER SEQUENCE
+        // ... RESTART) and reset automatically when explicit IDs are
+        // inserted — which demo_seed_data does — so no reset is needed.
+        if ($driver === 'sqlite') {
+            $db->exec("DELETE FROM sqlite_sequence WHERE name='$t'");
+        }
     }
-    $db->exec("DELETE FROM sqlite_sequence WHERE name='audit_log'");
+    if ($driver === 'sqlite') {
+        $db->exec("DELETE FROM sqlite_sequence WHERE name='audit_log'");
+    }
     apply_migrations($db);
     demo_seed_data($db);
 }
@@ -3305,8 +3341,34 @@ function demo_seed_data(PDO $db): void
 
     // --- Address tags ---
     // db-lon-01 id=17: Critical(3), Monitored(4) | db-lon-02 id=18: Monitored(4) | fw-lon-dmz id=28: Critical(3)
+    //
+    // We look up the target IDs by IP rather than hard-coding them because
+    // MySQL and SQLite can disagree on the starting value and increment of
+    // AUTO_INCREMENT under some configurations (especially when a schema
+    // file has pre-populated another table with explicit IDs — which is
+    // exactly what v2.10.0 schema.mysql.sql does for schema_migrations).
+    // Locking the address_tags fixtures to the actual inserted row IDs
+    // keeps the demo fixture engine-agnostic.
+    $idByIp = [];
+    $idSt = $db->prepare("SELECT id, ip FROM addresses WHERE ip IN ('10.10.2.30','10.10.2.31','10.10.3.1')");
+    $idSt->execute();
+    /** @var list<array<string, mixed>> $idRows */
+    $idRows = $idSt->fetchAll();
+    foreach ($idRows as $r) {
+        $idByIp[to_str($r['ip'])] = to_int($r['id']);
+    }
     $at = $db->prepare("INSERT INTO address_tags (address_id, tag_id) VALUES (?,?)");
-    foreach ([[17, 3], [17, 4], [18, 4], [28, 3]] as $t) $at->execute($t);
+    foreach ([
+        // db-lon-01 → Critical + Monitored
+        [$idByIp['10.10.2.30'] ?? 0, 3],
+        [$idByIp['10.10.2.30'] ?? 0, 4],
+        // db-lon-02 → Monitored
+        [$idByIp['10.10.2.31'] ?? 0, 4],
+        // fw-lon-dmz → Critical
+        [$idByIp['10.10.3.1']  ?? 0, 3],
+        ] as $t) {
+        if ($t[0] > 0) $at->execute($t);
+    }
 
     // --- API Keys ---
     $ak = $db->prepare(
@@ -3316,9 +3378,15 @@ function demo_seed_data(PDO $db): void
     $ak->execute(['Old script (inactive)', hash('sha256', 'demo-api-key-old-script-0987654321fedcba'), 0, 'demo']);
 
     // --- Audit log (backdated) ---
+    // Compute the backdated created_at timestamp in PHP so the SQL stays
+    // engine-agnostic. The last tuple element remains a human-readable
+    // offset string ('-30 days', '-5 days', '-0 seconds', etc.) that
+    // strtotime() parses directly, and we format the result as ISO
+    // 'YYYY-MM-DD HH:MM:SS' UTC which both SQLite TEXT storage and
+    // MySQL DATETIME accept.
     $al = $db->prepare(
         "INSERT INTO audit_log (action, entity_type, entity_id, username, ip, details, created_at)
-         VALUES (?,?,?,?,?,?,datetime('now',?))"
+         VALUES (?,?,?,?,?,?,?)"
     );
     foreach ([
         ['auth.login',        'user',    1,    'demo',          '192.168.1.100', 'login ok',                               '-30 days'],
@@ -3356,47 +3424,74 @@ function demo_seed_data(PDO $db): void
         ['address.bulk_update','address',null, 'demo',          '192.168.1.100', 'subnet_id=4 selected=3 affected=3',      '-2 days'],
         ['auth.login',        'user',    1,    'demo',          '192.168.1.100', 'login ok',                               '-1 day'],
         ['auth.login',        'user',    1,    'demo',          '192.168.1.100', 'login ok',                               '-0 seconds'],
-        ] as $e) $al->execute($e);
+        ] as $e) {
+        // Replace the human-readable offset (last element) with an
+        // absolute 'YYYY-MM-DD HH:MM:SS' UTC timestamp computed in PHP.
+        $offset = array_pop($e);
+        $ts = strtotime((string)$offset);
+        $e[] = ($ts !== false) ? gmdate('Y-m-d H:i:s', $ts) : gmdate('Y-m-d H:i:s');
+        $al->execute($e);
+    }
 
     // --- Address history ---
+    // Address IDs looked up by IP so we don't hardcode AUTO_INCREMENT
+    // positions (same rationale as the address_tags block above).
+    // Backdated created_at timestamps computed in PHP because SQLite's
+    // `datetime('now', '-N days')` modifier is not portable.
+    $histIds = [];
+    $histIdSt = $db->prepare("SELECT id, ip FROM addresses WHERE ip IN ('10.10.1.1','10.10.2.10','10.10.2.12','10.10.2.20','10.10.3.1','10.10.3.20')");
+    $histIdSt->execute();
+    /** @var list<array<string, mixed>> $histIdRows */
+    $histIdRows = $histIdSt->fetchAll();
+    foreach ($histIdRows as $r) {
+        $histIds[to_str($r['ip'])] = to_int($r['id']);
+    }
+
     $hist = $db->prepare(
         "INSERT INTO address_history (address_id, subnet_id, ip, action, username, client_ip, before_json, after_json, created_at)
-         VALUES (?,?,?,?,?,?,?,?,datetime('now',?))"
+         VALUES (?,?,?,?,?,?,?,?,?)"
     );
     foreach ([
-        // id=1 → 10.10.1.1 gw-lon-mgmt
-        [1,  3, '10.10.1.1',  'create', 'demo', '192.168.1.100', null,
+        // gw-lon-mgmt
+        [$histIds['10.10.1.1']  ?? 0, 3, '10.10.1.1',  'create', 'demo', '192.168.1.100', null,
          '{"hostname":"gw-lon-mgmt","owner":"NetOps","status":"used","note":"Default gateway","mac":"aa:bb:cc:00:01:01"}',
          '-28 days'],
-        // id=11 → 10.10.2.10 web-lon-01
-        [11, 4, '10.10.2.10', 'create', 'demo', '192.168.1.100', null,
+        // web-lon-01
+        [$histIds['10.10.2.10'] ?? 0, 4, '10.10.2.10', 'create', 'demo', '192.168.1.100', null,
          '{"hostname":"","owner":"WebTeam","status":"used","note":"","mac":""}',
          '-28 days'],
-        [11, 4, '10.10.2.10', 'update', 'demo', '192.168.1.100',
+        [$histIds['10.10.2.10'] ?? 0, 4, '10.10.2.10', 'update', 'demo', '192.168.1.100',
          '{"hostname":"","owner":"WebTeam","status":"used","note":"","mac":""}',
          '{"hostname":"web-lon-01","owner":"WebTeam","status":"used","note":"Web frontend 1","mac":"de:ad:be:ef:00:01","expires_at":"2027-06-30"}',
          '-25 days'],
-        // id=13 → 10.10.2.12 web-lon-03
-        [13, 4, '10.10.2.12', 'create', 'demo', '192.168.1.100', null,
+        // web-lon-03
+        [$histIds['10.10.2.12'] ?? 0, 4, '10.10.2.12', 'create', 'demo', '192.168.1.100', null,
          '{"hostname":"web-lon-03","owner":"WebTeam","status":"used","note":"Web frontend 3","mac":"de:ad:be:ef:00:03"}',
          '-28 days'],
-        // id=14 → 10.10.2.20 app-lon-01
-        [14, 4, '10.10.2.20', 'create', 'demo', '192.168.1.100', null,
+        // app-lon-01
+        [$histIds['10.10.2.20'] ?? 0, 4, '10.10.2.20', 'create', 'demo', '192.168.1.100', null,
          '{"hostname":"app-lon-01","owner":"AppTeam","status":"used","note":"Application server 1","mac":""}',
          '-28 days'],
-        // id=28 → 10.10.3.1 fw-lon-dmz
-        [28, 5, '10.10.3.1',  'create', 'demo', '192.168.1.100', null,
+        // fw-lon-dmz
+        [$histIds['10.10.3.1']  ?? 0, 5, '10.10.3.1',  'create', 'demo', '192.168.1.100', null,
          '{"hostname":"fw-lon-dmz","owner":"Security","status":"used","note":"DMZ firewall inside","mac":"00:50:56:a1:b2:c3"}',
          '-23 days'],
-        // id=35 → 10.10.3.20 (future load balancer)
-        [35, 5, '10.10.3.20', 'create', 'demo', '192.168.1.100', null,
+        // 10.10.3.20 (future load balancer)
+        [$histIds['10.10.3.20'] ?? 0, 5, '10.10.3.20', 'create', 'demo', '192.168.1.100', null,
          '{"hostname":"","owner":"","status":"free","note":"","mac":""}',
          '-23 days'],
-        [35, 5, '10.10.3.20', 'update', 'demo', '192.168.1.100',
+        [$histIds['10.10.3.20'] ?? 0, 5, '10.10.3.20', 'update', 'demo', '192.168.1.100',
          '{"hostname":"","owner":"","status":"free","note":"","mac":""}',
          '{"hostname":"","owner":"","status":"reserved","note":"Future load balancer","mac":""}',
          '-10 days'],
-        ] as $h) $hist->execute($h);
+        ] as $h) {
+        if ($h[0] === 0) continue;
+        // Replace the human-readable offset with an absolute UTC timestamp.
+        $offset = array_pop($h);
+        $ts = strtotime((string)$offset);
+        $h[] = ($ts !== false) ? gmdate('Y-m-d H:i:s', $ts) : gmdate('Y-m-d H:i:s');
+        $hist->execute($h);
+    }
 }
 
 /* ---------------- IP helpers ---------------- */
@@ -4094,6 +4189,7 @@ function page_header(string $title, array $opts = []): void
     // doesn't track it (client-side, stateless, survives the request cycle
     // without a session write).
     if ($role === 'admin' && ipam_dialect()->driver_name() === 'mysql') {
+        require_once __DIR__ . '/version.php';
         $bannerKey = 'mysql-beta-' . IPAM_VERSION;
         echo "<div class='admin-notice admin-notice--warning' role='alert' data-banner='" . e($bannerKey) . "'>"
            . "⚠ <strong>MySQL driver (experimental)</strong> — MySQL support is beta in v" . e(IPAM_VERSION) . ". "

@@ -16,8 +16,14 @@ import { test, expect, type Browser, type BrowserContext, type Page } from '@pla
 import {
   login, fetchPost, fetchPostForm, appUrl,
   ADMIN_USER, ADMIN_PASS,
-  newAuthContext,
+  newAuthContext, IS_MYSQL,
 } from '../fixtures/ipam';
+
+// v2.10.0 #433: db_tools.php SQL import/export uses ipam_db_dump_stream()
+// which emits SQLite-format dumps by design. Cross-engine dump/restore
+// lands in v3.0.0 migrate_db.php (#392). Skip the whole suite on MySQL
+// until then.
+test.skip(IS_MYSQL, 'db_tools SQL dump is SQLite-format only (v3.0.0 migrate_db.php scope)');
 
 let ctx: BrowserContext;
 let page: Page;

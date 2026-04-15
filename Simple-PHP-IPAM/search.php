@@ -138,8 +138,14 @@ $subnetResults = [];
 if ($q !== '') {
     $subWhere  = [];
     $subParams = [];
-    $subWhere[]       = "(s.cidr LIKE :sq ESCAPE '!' OR s.description LIKE :sq ESCAPE '!' OR s.notes LIKE :sq ESCAPE '!')";
-    $subParams[':sq'] = '%' . like_escape($q) . '%';
+    // Distinct :sq1..:sq3 placeholders — same PDO native-prepared rule
+    // as the addresses search above. See api.php::api_search() for the
+    // full rationale.
+    $subWhere[] = "(s.cidr LIKE :sq1 ESCAPE '!' OR s.description LIKE :sq2 ESCAPE '!' OR s.notes LIKE :sq3 ESCAPE '!')";
+    $sqLike = '%' . like_escape($q) . '%';
+    $subParams[':sq1'] = $sqLike;
+    $subParams[':sq2'] = $sqLike;
+    $subParams[':sq3'] = $sqLike;
     if ($siteId > 0) {
         $subWhere[]          = "s.site_id = :site_id";
         $subParams[':site_id'] = $siteId;
