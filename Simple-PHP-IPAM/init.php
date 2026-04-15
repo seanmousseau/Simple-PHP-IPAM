@@ -17,24 +17,31 @@ if (is_file(__DIR__ . '/vendor/autoload.php')) {
 // can call ipam_dialect() without needing a separate bootstrap step. v2.9.0
 // ships SqliteDialect only; v2.10.0 adds Mysql, v2.11.0 adds Pgsql. The driver
 // is selected from $config['db_driver'] (default 'sqlite' for back-compat).
+//
+// Error reporting routes through error_log() / echo rather than fwrite(STDERR,
+// ...) because STDIN/STDOUT/STDERR are only defined under CLI and phpdbg SAPIs
+// — referencing them under Apache or PHP-FPM would throw a fatal error.
 require_once __DIR__ . '/dialects/Dialect.php';
 $_ipam_db_driver = (string)($config['db_driver'] ?? 'sqlite');
-switch ($_ipam_db_driver) {
-    case 'sqlite':
-        require_once __DIR__ . '/dialects/SqliteDialect.php';
-        $GLOBALS['ipam_dialect'] = new SqliteDialect();
-        break;
-    case 'mysql':
-        fwrite(STDERR, "db_driver=mysql is experimental and lands in v2.10.0 (#384)\n");
-        exit(2);
-    case 'pgsql':
-        fwrite(STDERR, "db_driver=pgsql is experimental and lands in v2.11.0 (#388)\n");
-        exit(2);
-    default:
-        fwrite(STDERR, "Unknown db_driver: {$_ipam_db_driver}\n");
-        exit(2);
+$_ipam_driver_error = match ($_ipam_db_driver) {
+    'sqlite' => null,
+    'mysql'  => 'db_driver=mysql is experimental and lands in v2.10.0 (#384)',
+    'pgsql'  => 'db_driver=pgsql is experimental and lands in v2.11.0 (#388)',
+    default  => "Unknown db_driver: {$_ipam_db_driver}",
+};
+if ($_ipam_driver_error !== null) {
+    error_log('Simple-PHP-IPAM: ' . $_ipam_driver_error);
+    if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
+        http_response_code(500);
+        echo 'Internal configuration error. See server log for details.';
+    } else {
+        echo $_ipam_driver_error . "\n";
+    }
+    exit(2);
 }
-unset($_ipam_db_driver);
+require_once __DIR__ . '/dialects/SqliteDialect.php';
+$GLOBALS['ipam_dialect'] = new SqliteDialect();
+unset($_ipam_db_driver, $_ipam_driver_error);
 
 // Seed a UTC default so any pre-DB date/time operations (HTTPS redirect, session
 // setup) are deterministic. The real timezone is applied from the DB settings

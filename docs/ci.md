@@ -1,6 +1,6 @@
 # CI tiers
 
-Simple PHP IPAM organizes its CI into three tiers. The structure exists so v2.10.0 (MySQL) and v2.11.0 (Postgres) have a predictable home, and so heavier round-trip migration tests do not bloat per-commit checks.
+Simple PHP IPAM organizes its CI into four tiers. The structure exists so v2.10.0 (MySQL) and v2.11.0 (Postgres) have a predictable home, and so heavier round-trip migration tests do not bloat per-commit checks.
 
 ## Tier 1 — fast per-commit (blocking)
 

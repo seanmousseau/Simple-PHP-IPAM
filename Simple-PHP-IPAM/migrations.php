@@ -739,6 +739,16 @@ function ipam_migrations(): array
         // on a v2.9.0+ install that already has BLOB-affinity data) is a
         // no-op.
         '2.9.0-blob-affinity' => function(PDO $db): void {
+            // SQLite-only: TEXT-vs-BLOB affinity is a quirk of SQLite's loose
+            // typing. MySQL VARBINARY(16) and Postgres BYTEA do not have the
+            // same problem — PARAM_LOB binding on those engines is correct
+            // from v2.10.0 / v2.11.0 onward without a data rewrite. No-op
+            // cleanly on non-SQLite drivers so the migration framework can
+            // replay the full chain on any engine.
+            if (ipam_dialect()->driver_name() !== 'sqlite') {
+                return;
+            }
+
             // Tables with binary IP columns. address_history.ip and
             // scan_results.ip are TEXT — only these two columns store
             // raw bytes from inet_pton().
@@ -772,10 +782,10 @@ function ipam_migrations(): array
                 }
 
                 // Stream every row that needs rewriting and rebind via
-                // PARAM_LOB. We select id + value rather than UPDATE-in-place
-                // because the affinity flip happens at bind time — there is
-                // no SQLite syntax for "force this column to BLOB affinity"
-                // other than re-binding the value.
+                // ipam_bind_binary() (PARAM_LOB). We select id + value rather
+                // than UPDATE-in-place because the affinity flip happens at
+                // bind time — there is no SQLite syntax for "force this
+                // column to BLOB affinity" other than re-binding the value.
                 $select = $db->query("SELECT id, {$col} AS bin FROM {$table} WHERE typeof({$col}) != 'blob'");
                 if (!$select) continue;
 
@@ -785,7 +795,7 @@ function ipam_migrations(): array
                     if (!is_array($row)) continue;
                     $bin = is_string($row['bin'] ?? null) ? $row['bin'] : '';
                     $id  = is_int($row['id'] ?? null) ? $row['id'] : (int)to_str($row['id'] ?? 0);
-                    $update->bindValue(':bin', $bin, PDO::PARAM_LOB);
+                    ipam_bind_binary($update, ':bin', $bin);
                     $update->bindValue(':id',  $id,  PDO::PARAM_INT);
                     $update->execute();
                     $rewritten++;
@@ -794,19 +804,28 @@ function ipam_migrations(): array
             }
 
             // Audit a single row summarising the migration so admins can see
-            // it ran in audit.php. Skip if no table needed rewriting at all
-            // (fresh installs and re-runs both produce 0 audit noise).
+            // it ran in audit.php. Skip if no table needed rewriting (fresh
+            // installs and re-runs both produce 0 audit noise). Guarded on
+            // audit_log existence because ipam_db_init() recreates that
+            // table after apply_migrations() — on a partial fixture where
+            // the table has been dropped, a raw INSERT would abort the
+            // transaction and the BLOB normalization would never commit.
             $totalRewritten = array_sum($totals);
             if ($totalRewritten > 0) {
-                $detailParts = [];
-                foreach ($totals as $tbl => $n) {
-                    if ($n > 0) $detailParts[] = "{$tbl}={$n}";
+                $auditExists = $db->query(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='audit_log'"
+                );
+                if ($auditExists && $auditExists->fetch()) {
+                    $detailParts = [];
+                    foreach ($totals as $tbl => $n) {
+                        if ($n > 0) $detailParts[] = "{$tbl}={$n}";
+                    }
+                    $details = 'normalized ' . implode(', ', $detailParts);
+                    $db->prepare(
+                        "INSERT INTO audit_log (action, entity_type, entity_id, user_id, username, ip, user_agent, details, created_at)
+                         VALUES ('migration.blob_affinity_normalized', 'migration', NULL, NULL, 'system', '', '', :d, " . ipam_dialect()->now() . ")"
+                    )->execute([':d' => $details]);
                 }
-                $details = 'normalized ' . implode(', ', $detailParts);
-                $db->prepare(
-                    "INSERT INTO audit_log (action, entity_type, entity_id, user_id, username, ip, user_agent, details, created_at)
-                     VALUES ('migration.blob_affinity_normalized', 'migration', NULL, NULL, 'system', '', '', :d, datetime('now'))"
-                )->execute([':d' => $details]);
             }
         },
     ];

@@ -1,13 +1,17 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/init.php';
-/** @var \PDO $db */
-
-if (php_sapi_name() !== 'cli') {
+// CLI-only guard MUST run before init.php. Otherwise an HTTP hit on
+// /migrate.php would pass through init.php's full boot (HTTPS redirect,
+// session, ipam_db_init → apply_migrations) before the 403 fires, which
+// defeats the purpose of the guard.
+if (PHP_SAPI !== 'cli') {
     http_response_code(403);
     exit("Forbidden\n");
 }
+
+require __DIR__ . '/init.php';
+/** @var \PDO $db */
 
 try {
     $applied = apply_migrations($db);

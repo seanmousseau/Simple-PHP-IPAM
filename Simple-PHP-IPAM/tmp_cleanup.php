@@ -1,12 +1,15 @@
 <?php
 declare(strict_types=1);
 
-require __DIR__ . '/init.php';
-
-if (php_sapi_name() !== 'cli') {
+// CLI-only guard MUST run before init.php. Otherwise an HTTP hit on
+// /tmp_cleanup.php would pass through init.php's full boot before the 403
+// fires. See CliGuardTest.
+if (PHP_SAPI !== 'cli') {
     http_response_code(403);
     exit("Forbidden\n");
 }
+
+require __DIR__ . '/init.php';
 
 $config = require __DIR__ . '/config.php';
 $ttl = to_int($config['tmp_cleanup_ttl_seconds'] ?? 86400);
