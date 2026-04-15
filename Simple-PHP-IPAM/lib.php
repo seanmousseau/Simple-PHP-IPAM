@@ -3918,11 +3918,11 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=2.8.0d'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=2.10.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=2.8.0d'></script>";
+    echo "<script defer src='assets/app.js?v=2.10.0'></script>";
     $pageAttr = isset($opts['page']) && $opts['page'] !== ''
         ? " data-page='" . e(to_str($opts['page'])) . "'"
         : '';
@@ -4036,6 +4036,22 @@ function page_header(string $title, array $opts = []): void
         echo "<div class='admin-notice admin-notice--info text-center' role='alert'>"
            . "🧪 <strong>Demo mode</strong> — Explore freely. Destructive actions are disabled. Data resets nightly at midnight."
            . "</div>";
+    }
+
+    // MySQL experimental driver banner — admin only, dismissible (v2.10.0 #385).
+    // Appears whenever db_driver=mysql is active so operators always know the
+    // driver is in beta. Dismiss state is per-session + per-server-version so
+    // upgrading the driver re-shows the banner. Uses existing .warning styling.
+    if ($role === 'admin' && ipam_dialect()->driver_name() === 'mysql') {
+        $dismissKey = 'mysql_beta_banner_dismissed_' . IPAM_VERSION;
+        if (empty($_SESSION[$dismissKey])) {
+            echo "<div class='admin-notice admin-notice--warning' role='alert' data-banner='mysql-beta'>"
+               . "⚠ <strong>MySQL driver (experimental)</strong> — MySQL support is beta in v" . e(IPAM_VERSION) . ". "
+               . "Report issues at <a href='https://github.com/seanmousseau/Simple-PHP-IPAM/issues' target='_blank' rel='noopener'>the GitHub tracker</a>. "
+               . "See <a href='https://github.com/seanmousseau/Simple-PHP-IPAM/blob/main/docs/install.md#mysql-experimental' target='_blank' rel='noopener'>docs/install.md</a> for current limitations. "
+               . "<button type='button' class='admin-notice-dismiss' data-dismiss-banner='mysql-beta' aria-label='Dismiss'>✕</button>"
+               . "</div>";
+        }
     }
 
     // Default bootstrap admin password warning (admin only)
