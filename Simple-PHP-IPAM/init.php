@@ -4,6 +4,45 @@ declare(strict_types=1);
 /** @var IpamConfig $config */
 $config = require __DIR__ . '/config.php';
 
+// Composer autoloader (#416). Conditional because v2.9.0 ships with an empty
+// require {} — vendor/autoload.php only exists in release tarballs (built by
+// releases/make_releases.sh) and in dev environments where the tester has run
+// `composer install`. A fresh git clone without composer install must still
+// boot, so we skip silently if the file is absent.
+if (is_file(__DIR__ . '/vendor/autoload.php')) {
+    require_once __DIR__ . '/vendor/autoload.php';
+}
+
+// Dialect abstraction (#378). Loaded before lib.php so any function in lib.php
+// can call ipam_dialect() without needing a separate bootstrap step. v2.9.0
+// ships SqliteDialect only; v2.10.0 adds Mysql, v2.11.0 adds Pgsql. The driver
+// is selected from $config['db_driver'] (default 'sqlite' for back-compat).
+//
+// Error reporting routes through error_log() / echo rather than fwrite(STDERR,
+// ...) because STDIN/STDOUT/STDERR are only defined under CLI and phpdbg SAPIs
+// — referencing them under Apache or PHP-FPM would throw a fatal error.
+require_once __DIR__ . '/dialects/Dialect.php';
+$_ipam_db_driver = (string)($config['db_driver'] ?? 'sqlite');
+$_ipam_driver_error = match ($_ipam_db_driver) {
+    'sqlite' => null,
+    'mysql'  => 'db_driver=mysql is experimental and lands in v2.10.0 (#384)',
+    'pgsql'  => 'db_driver=pgsql is experimental and lands in v2.11.0 (#388)',
+    default  => "Unknown db_driver: {$_ipam_db_driver}",
+};
+if ($_ipam_driver_error !== null) {
+    error_log('Simple-PHP-IPAM: ' . $_ipam_driver_error);
+    if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
+        http_response_code(500);
+        echo 'Internal configuration error. See server log for details.';
+    } else {
+        echo $_ipam_driver_error . "\n";
+    }
+    exit(2);
+}
+require_once __DIR__ . '/dialects/SqliteDialect.php';
+$GLOBALS['ipam_dialect'] = new SqliteDialect();
+unset($_ipam_db_driver, $_ipam_driver_error);
+
 // Seed a UTC default so any pre-DB date/time operations (HTTPS redirect, session
 // setup) are deterministic. The real timezone is applied from the DB settings
 // (branding.timezone) once $db is open and lib.php is loaded — see below.

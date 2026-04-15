@@ -1,6 +1,61 @@
 <?php
 declare(strict_types=1);
 
+/**
+ * Returns the active SQL dialect (#378). init.php instantiates this once per
+ * request and stows it under $GLOBALS['ipam_dialect']. v2.9.0 always returns
+ * a SqliteDialect; v2.10.0+ may return Mysql/Pgsql variants based on
+ * $config['db_driver']. Tests and CLI scripts that bootstrap lib.php
+ * directly (without init.php) get a SqliteDialect lazily — this is the
+ * v2.9.0 default and matches the only driver shipped this release.
+ */
+function ipam_dialect(): Dialect
+{
+    if (!isset($GLOBALS['ipam_dialect']) || !($GLOBALS['ipam_dialect'] instanceof Dialect)) {
+        require_once __DIR__ . '/dialects/Dialect.php';
+        require_once __DIR__ . '/dialects/SqliteDialect.php';
+        $GLOBALS['ipam_dialect'] = new SqliteDialect();
+    }
+    return $GLOBALS['ipam_dialect'];
+}
+
+/**
+ * Bind a raw binary value (typically inet_pton output) to a PDOStatement
+ * parameter using PDO::PARAM_LOB on every driver (#410).
+ *
+ * **Why this helper exists.** Pre-v2.9.0 the codebase passed binary IP
+ * values through positional execute(), which ultimately hits PDO::PARAM_STR.
+ * On SQLite this stores the value with TEXT affinity even though the column
+ * is declared BLOB — SQLite's loose typing honors the binding's affinity at
+ * insert time, not the column's declared type. The bytes round-trip
+ * correctly, but `ORDER BY ip_bin` and range queries break the moment new
+ * rows arrive bound as BLOB, because SQLite's comparison rules say any BLOB
+ * sorts greater than any TEXT regardless of byte content.
+ *
+ * On MySQL / Postgres the situation is worse: PARAM_STR string-escapes high
+ * bytes and truncates at null bytes, corrupting every stored IP.
+ *
+ * This helper uses PARAM_LOB unconditionally so the same binding works on
+ * SQLite (BLOB affinity), MySQL (VARBINARY), and Postgres (BYTEA). The
+ * existing-data normalization happens in the 2.9.0-blob-affinity migration.
+ *
+ * **Storage format**: native length, never padded. IPv4 = 4 bytes,
+ * IPv6 = 16 bytes. All three engines do byte-wise memcmp comparison on
+ * native-length values, so sort order is equivalent across engines.
+ *
+ * Round-trip test vectors (covered by tests/BinaryBindTest.php):
+ *   inet_pton('10.0.0.0')         = \x0A\x00\x00\x00  (null bytes after first)
+ *   inet_pton('2001:db8::')       = \x20\x01\x0D\xB8...  (mostly null bytes)
+ *   inet_pton('255.255.255.255')  = \xFF\xFF\xFF\xFF  (all high bytes)
+ */
+/**
+ * @param int|string $param 1-based positional index, or ':name' for a named placeholder.
+ */
+function ipam_bind_binary(PDOStatement $stmt, int|string $param, string $bin): void
+{
+    $stmt->bindValue($param, $bin, PDO::PARAM_LOB);
+}
+
 function ipam_db(string $path): PDO
 {
     $dir = dirname($path);
@@ -779,12 +834,16 @@ function ipam_setting_definitions(): array
         ],
         'oidc.default_role' => [
             'label'       => 'OIDC default role',
-            'description' => "Role assigned to auto-provisioned users. 'readonly' is recommended.",
+            'description' => "Role assigned to auto-provisioned users. 'Read-only' is recommended.",
             'type'        => 'string',
             'group'       => 'oidc',
             'default'     => 'readonly',
             'sensitive'   => false,
             'config_key'  => ['oidc', 'default_role'],
+            'options'     => [
+                'readonly' => 'Read-only',
+                'admin'    => 'Administrator',
+            ],
         ],
         'oidc.disable_local_login' => [
             'label'       => 'Disable local password login',
@@ -992,14 +1051,15 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
         $oldType = is_string($prev['type'] ?? null) && $prev['type'] !== '' ? $prev['type'] : $type;
     }
 
+    // #379: route through the dialect so v2.10.0 / v2.11.0 swap upsert and
+    // timestamp idioms without touching this call site. The dialect's
+    // upsert() returns the ON CONFLICT...DO UPDATE fragment for the engine.
+    $d = ipam_dialect();
+    $upsertClause = $d->upsert('settings', ['key'], ['value', 'type', 'updated_at', 'updated_by']);
     $up = $db->prepare(
         "INSERT INTO settings (key, value, type, updated_at, updated_by)
-         VALUES (:k, :v, :t, datetime('now'), :u)
-         ON CONFLICT(key) DO UPDATE SET
-             value = excluded.value,
-             type = excluded.type,
-             updated_at = datetime('now'),
-             updated_by = excluded.updated_by"
+         VALUES (:k, :v, :t, {$d->now()}, :u)
+         $upsertClause"
     );
     $up->execute([
         ':k' => $key,
@@ -1865,10 +1925,14 @@ function check_utilization_alerts(PDO $db, array $config): void
             }
 
             $now = date('Y-m-d H:i:s');
+            // #379: route through the dialect's upsert() so v2.10.0+ can
+            // swap to ON DUPLICATE KEY UPDATE / ON CONFLICT DO UPDATE
+            // without touching this call site.
+            $alertUpsert = ipam_dialect()->upsert('alert_state', ['subnet_id', 'level'], ['last_alerted_at']);
             $db->prepare(
                 "INSERT INTO alert_state (subnet_id, level, last_alerted_at)
                  VALUES (:sid, :lvl, :now)
-                 ON CONFLICT(subnet_id, level) DO UPDATE SET last_alerted_at = excluded.last_alerted_at"
+                 $alertUpsert"
             )->execute([':sid' => $sid, ':lvl' => $lvl, ':now' => $now]);
             $alertState[$sid][$lvl] = $now;
         }
@@ -2563,15 +2627,26 @@ function auto_reserve_subnet_ips(PDO $db, int $subnetId, string $cidr, ?string $
     $p = parse_cidr($cidr);
     if (!$p) return;
 
+    // #379/#410: bind ip_bin via ipam_bind_binary() (PARAM_LOB) so the stored
+    // affinity is BLOB on SQLite and bytes round-trip safely on MySQL/Postgres.
+    // The scalar params still come through bindValue so we can mix the two
+    // binding styles on a single statement.
     $ins = $db->prepare(
         "INSERT OR IGNORE INTO addresses (subnet_id, ip, ip_bin, hostname, status, owner, note, grp, mac)
          VALUES (:sid, :ip, :ipbin, :host, 'reserved', '', 'Auto-reserved', '', '')"
     );
+    $reserveBind = function (int $sid, string $ip, string $bin, string $host) use ($ins): void {
+        $ins->bindValue(':sid',  $sid,  PDO::PARAM_INT);
+        $ins->bindValue(':ip',   $ip,   PDO::PARAM_STR);
+        ipam_bind_binary($ins, ':ipbin', $bin);
+        $ins->bindValue(':host', $host, PDO::PARAM_STR);
+        $ins->execute();
+    };
 
     // Network address
     $netIp  = $p['network'];
     $netBin = $p['net_bin'];
-    $ins->execute([':sid' => $subnetId, ':ip' => $netIp, ':ipbin' => $netBin, ':host' => 'network']);
+    $reserveBind($subnetId, $netIp, $netBin, 'network');
     if ($db->lastInsertId()) {
         audit($db, 'address.create', 'address', (int)$db->lastInsertId(), "auto-reserve network $netIp in subnet $subnetId");
     }
@@ -2584,7 +2659,7 @@ function auto_reserve_subnet_ips(PDO $db, int $subnetId, string $cidr, ?string $
         if ($bcastBin !== null) {
             $bcastIp = inet_ntop($bcastBin) ?: '';
             if ($bcastIp !== '' && $bcastIp !== $netIp) {
-                $ins->execute([':sid' => $subnetId, ':ip' => $bcastIp, ':ipbin' => $bcastBin, ':host' => 'broadcast']);
+                $reserveBind($subnetId, $bcastIp, $bcastBin, 'broadcast');
                 if ($db->lastInsertId()) {
                     audit($db, 'address.create', 'address', (int)$db->lastInsertId(), "auto-reserve broadcast $bcastIp in subnet $subnetId");
                 }
@@ -2596,7 +2671,7 @@ function auto_reserve_subnet_ips(PDO $db, int $subnetId, string $cidr, ?string $
     if ($gateway !== null && $gateway !== '') {
         $gwNorm = normalize_ip($gateway);
         if ($gwNorm && ip_in_cidr($gwNorm['ip'], $p['network'], $p['prefix'])) {
-            $ins->execute([':sid' => $subnetId, ':ip' => $gwNorm['ip'], ':ipbin' => $gwNorm['bin'], ':host' => 'gateway']);
+            $reserveBind($subnetId, $gwNorm['ip'], $gwNorm['bin'], 'gateway');
             if ($db->lastInsertId()) {
                 audit($db, 'address.create', 'address', (int)$db->lastInsertId(), "auto-reserve gateway {$gwNorm['ip']} in subnet $subnetId");
             }
@@ -2850,6 +2925,23 @@ function demo_seed_data(PDO $db): void
         [4, 'Monitored',   '#6c757d'],
         ] as $t) $tg->execute($t);
 
+    // #379/#410: helper that binds the ten subnet columns onto a prepared
+    // INSERT, routing network_bin through ipam_bind_binary() (PARAM_LOB) so
+    // every demo-seeded row is BLOB-affinity from the start. Positional ? in
+    // the prepare maps to 1-based bindValue indexes.
+    $bindSubnetRow = function (PDOStatement $stmt, int $id, string $cidr, string $netNorm, string $netBin, int $pfx, string $desc, ?int $siteId, ?int $vlanFk, ?int $vrfId): void {
+        $stmt->bindValue(1,  $id,      PDO::PARAM_INT);
+        $stmt->bindValue(2,  $cidr,    PDO::PARAM_STR);
+        $stmt->bindValue(3,  $netNorm, PDO::PARAM_STR);
+        ipam_bind_binary($stmt, 4, $netBin);
+        $stmt->bindValue(5,  $pfx,     PDO::PARAM_INT);
+        $stmt->bindValue(6,  $desc,    PDO::PARAM_STR);
+        $stmt->bindValue(7,  $siteId,  $siteId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+        $stmt->bindValue(8,  $vlanFk,  $vlanFk === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+        $stmt->bindValue(9,  $vrfId,   $vrfId  === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+        $stmt->execute();
+    };
+
     // --- Subnets (IPv4) ---
     // [id, cidr, site_id, vlan_fk, vrf_id, description]
     $sn = $db->prepare(
@@ -2872,7 +2964,7 @@ function demo_seed_data(PDO $db): void
         $rawBin  = inet_pton($net) ?: throw new \RuntimeException("Invalid IP: $net");
         $netNorm = inet_ntop(apply_prefix_mask($rawBin, (int)$pfx)) ?: throw new \RuntimeException("inet_ntop failed");
         $netBin  = inet_pton($netNorm) ?: throw new \RuntimeException("inet_pton failed on $netNorm");
-        $sn->execute([$id, $cidr, $netNorm, $netBin, (int)$pfx, $desc, $siteId, $vlanFk, $vrfId]);
+        $bindSubnetRow($sn, $id, $cidr, $netNorm, $netBin, (int)$pfx, $desc, $siteId, $vlanFk, $vrfId);
     }
 
     // --- Subnets (IPv6) ---
@@ -2889,7 +2981,7 @@ function demo_seed_data(PDO $db): void
         $rawBin6  = inet_pton($net) ?: throw new \RuntimeException("Invalid IP: $net");
         $netNorm6 = inet_ntop(apply_prefix_mask($rawBin6, (int)$pfx)) ?: throw new \RuntimeException("inet_ntop failed");
         $netBin6  = inet_pton($netNorm6) ?: throw new \RuntimeException("inet_pton failed on $netNorm6");
-        $sn6->execute([$id, $cidr, $netNorm6, $netBin6, (int)$pfx, $desc, $siteId, $vlanFk, $vrfId]);
+        $bindSubnetRow($sn6, $id, $cidr, $netNorm6, $netBin6, (int)$pfx, $desc, $siteId, $vlanFk, $vrfId);
     }
 
     // --- Subnet tags ---
@@ -2982,7 +3074,22 @@ function demo_seed_data(PDO $db): void
         [10, '172.16.1.100','',             '',          'free',     '',                        '',                  null,         null],
         ] as [$sid, $ip, $hn, $ow, $st, $nt, $mac, $exp, $cid]) {
         $bin = inet_pton($ip);
-        $ai->execute([$sid, $ip, $bin, $hn, $ow, $st, $nt, $mac, $exp, $cid]);
+        if ($bin === false) throw new \RuntimeException("inet_pton failed on $ip");
+        // #379/#410: bind ip_bin via ipam_bind_binary() (PARAM_LOB) so demo
+        // seed rows are BLOB affinity from the start. Other params use
+        // bindValue with explicit PARAM_* so the prepare's positional ?
+        // placeholders bind cleanly (no execute(array) shorthand).
+        $ai->bindValue(1,  $sid, PDO::PARAM_INT);
+        $ai->bindValue(2,  $ip,  PDO::PARAM_STR);
+        ipam_bind_binary($ai, 3, $bin);
+        $ai->bindValue(4,  $hn,  PDO::PARAM_STR);
+        $ai->bindValue(5,  $ow,  PDO::PARAM_STR);
+        $ai->bindValue(6,  $st,  PDO::PARAM_STR);
+        $ai->bindValue(7,  $nt,  PDO::PARAM_STR);
+        $ai->bindValue(8,  $mac, PDO::PARAM_STR);
+        $ai->bindValue(9,  $exp, $exp === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
+        $ai->bindValue(10, $cid, $cid === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+        $ai->execute();
     }
 
     // --- Address tags ---
@@ -3517,16 +3624,16 @@ function ensure_subnet_exists(PDO $db, string $cidr, string $description = ''): 
     $row = $st->fetch();
     if ($row) return to_int($row['id']);
 
+    // #379/#410: bind network_bin via ipam_bind_binary() (PARAM_LOB).
     $ins = $db->prepare("INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description)
                          VALUES (:cidr,:ver,:net,:nb,:pre,:d)");
-    $ins->execute([
-        ':cidr' => $normalized,
-        ':ver' => $p['version'],
-        ':net' => $p['network'],
-        ':nb' => $p['net_bin'],
-        ':pre' => $p['prefix'],
-        ':d' => $description,
-    ]);
+    $ins->bindValue(':cidr', $normalized,    PDO::PARAM_STR);
+    $ins->bindValue(':ver',  $p['version'],  PDO::PARAM_INT);
+    $ins->bindValue(':net',  $p['network'],  PDO::PARAM_STR);
+    ipam_bind_binary($ins, ':nb', $p['net_bin']);
+    $ins->bindValue(':pre',  $p['prefix'],   PDO::PARAM_INT);
+    $ins->bindValue(':d',    $description,   PDO::PARAM_STR);
+    $ins->execute();
 
     return (int)$db->lastInsertId();
 }

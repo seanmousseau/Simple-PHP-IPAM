@@ -18,11 +18,17 @@ function ipam_migrations(): array
             $st->execute();
             $rows = $st->fetchAll();
 
+            // #380/#410: bind network_bin via ipam_bind_binary() (PARAM_LOB) so
+            // the backfilled rows are BLOB affinity from the start. The
+            // 2.9.0-blob-affinity migration would otherwise need to re-rewrite
+            // every row that this migration inserted.
             $up = $db->prepare("UPDATE subnets SET network_bin = :b WHERE id = :id");
             foreach ($rows as $r) {
                 $bin = @inet_pton(to_str($r['network']));
                 if ($bin === false) continue;
-                $up->execute([':b' => $bin, ':id' => to_int($r['id'])]);
+                ipam_bind_binary($up, ':b', $bin);
+                $up->bindValue(':id', to_int($r['id']), PDO::PARAM_INT);
+                $up->execute();
             }
 
             $db->exec("CREATE INDEX IF NOT EXISTS idx_subnets_ver_prefix_netbin ON subnets(ip_version, prefix, network_bin)");
@@ -712,6 +718,114 @@ function ipam_migrations(): array
                     "INSERT INTO audit_log (action, entity_type, entity_id, user_id, username, ip, user_agent, details, created_at)
                      VALUES ('settings.alert_email_unmigrated', 'setting', NULL, NULL, 'system', '', '', :d, datetime('now'))"
                 )->execute([':d' => "from={$legacy} matched_count=" . count($matches)]);
+            }
+        },
+
+        // v2.9.0 #410 (CRITICAL): normalize ip_bin / network_bin storage on
+        // SQLite from TEXT affinity to BLOB affinity. Pre-v2.9.0 the project
+        // used PDO::PARAM_STR (the default) for binary IP binding. SQLite's
+        // loose typing honors the binding's affinity at insert time, not the
+        // column's declared type, so 100% of existing data on every install
+        // is stored with TEXT affinity. v2.9.0 switches to PDO::PARAM_LOB via
+        // ipam_bind_binary(); without normalizing existing rows first, every
+        // ORDER BY ip_bin and every range query breaks immediately, because
+        // SQLite's comparison rules say any BLOB sorts greater than any TEXT
+        // regardless of byte content.
+        //
+        // The migration rewrites every binary IP column row using explicit
+        // PARAM_LOB binding. Bytes are preserved exactly. Idempotent: if all
+        // rows in a target table already have BLOB affinity, the rewrite
+        // loop is skipped. Re-running the migration on a fresh install (or
+        // on a v2.9.0+ install that already has BLOB-affinity data) is a
+        // no-op.
+        '2.9.0-blob-affinity' => function(PDO $db): void {
+            // SQLite-only: TEXT-vs-BLOB affinity is a quirk of SQLite's loose
+            // typing. MySQL VARBINARY(16) and Postgres BYTEA do not have the
+            // same problem — PARAM_LOB binding on those engines is correct
+            // from v2.10.0 / v2.11.0 onward without a data rewrite. No-op
+            // cleanly on non-SQLite drivers so the migration framework can
+            // replay the full chain on any engine.
+            if (ipam_dialect()->driver_name() !== 'sqlite') {
+                return;
+            }
+
+            // Tables with binary IP columns. address_history.ip and
+            // scan_results.ip are TEXT — only these two columns store
+            // raw bytes from inet_pton().
+            $targets = [
+                ['table' => 'subnets',   'col' => 'network_bin'],
+                ['table' => 'addresses', 'col' => 'ip_bin'],
+            ];
+
+            $totals = [];
+
+            foreach ($targets as $t) {
+                $table = $t['table'];
+                $col   = $t['col'];
+
+                // Skip tables that don't exist (defensive — fresh-install
+                // schemas always have them, but partial test fixtures may not).
+                $exists = $db->query(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name=" . $db->quote($table)
+                );
+                if (!$exists || !$exists->fetch()) continue;
+
+                // Idempotency check: how many rows are NOT already BLOB
+                // affinity? typeof() returns 'blob' / 'text' / 'null' /
+                // 'integer' / 'real'. We rewrite anything that isn't 'blob'.
+                $countStmt = $db->query("SELECT COUNT(*) FROM {$table} WHERE typeof({$col}) != 'blob'");
+                if (!$countStmt) continue;
+                $needsRewrite = (int)$countStmt->fetchColumn();
+                if ($needsRewrite === 0) {
+                    $totals[$table] = 0;
+                    continue;
+                }
+
+                // Stream every row that needs rewriting and rebind via
+                // ipam_bind_binary() (PARAM_LOB). We select id + value rather
+                // than UPDATE-in-place because the affinity flip happens at
+                // bind time — there is no SQLite syntax for "force this
+                // column to BLOB affinity" other than re-binding the value.
+                $select = $db->query("SELECT id, {$col} AS bin FROM {$table} WHERE typeof({$col}) != 'blob'");
+                if (!$select) continue;
+
+                $update = $db->prepare("UPDATE {$table} SET {$col} = :bin WHERE id = :id");
+                $rewritten = 0;
+                while ($row = $select->fetch()) {
+                    if (!is_array($row)) continue;
+                    $bin = is_string($row['bin'] ?? null) ? $row['bin'] : '';
+                    $id  = is_int($row['id'] ?? null) ? $row['id'] : (int)to_str($row['id'] ?? 0);
+                    ipam_bind_binary($update, ':bin', $bin);
+                    $update->bindValue(':id',  $id,  PDO::PARAM_INT);
+                    $update->execute();
+                    $rewritten++;
+                }
+                $totals[$table] = $rewritten;
+            }
+
+            // Audit a single row summarising the migration so admins can see
+            // it ran in audit.php. Skip if no table needed rewriting (fresh
+            // installs and re-runs both produce 0 audit noise). Guarded on
+            // audit_log existence because ipam_db_init() recreates that
+            // table after apply_migrations() — on a partial fixture where
+            // the table has been dropped, a raw INSERT would abort the
+            // transaction and the BLOB normalization would never commit.
+            $totalRewritten = array_sum($totals);
+            if ($totalRewritten > 0) {
+                $auditExists = $db->query(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='audit_log'"
+                );
+                if ($auditExists && $auditExists->fetch()) {
+                    $detailParts = [];
+                    foreach ($totals as $tbl => $n) {
+                        if ($n > 0) $detailParts[] = "{$tbl}={$n}";
+                    }
+                    $details = 'normalized ' . implode(', ', $detailParts);
+                    $db->prepare(
+                        "INSERT INTO audit_log (action, entity_type, entity_id, user_id, username, ip, user_agent, details, created_at)
+                         VALUES ('migration.blob_affinity_normalized', 'migration', NULL, NULL, 'system', '', '', :d, " . ipam_dialect()->now() . ")"
+                    )->execute([':d' => $details]);
+                }
             }
         },
     ];

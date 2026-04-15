@@ -23,8 +23,18 @@ set -euo pipefail
 #   BASIC_AUTH="$IPAM_BASIC_USER:$IPAM_BASIC_PASS" AUTH_MODE=query \
 #   ./test_api.sh https://dev-direct.seanmousseau.com:8343/claude/ipam
 #
-# SSH_HOST and SSH_DB_PATH are required when testing a remote server without a pre-existing
-# API_KEY — the script will create and clean up temp keys in the remote SQLite via SSH.
+# For the containerized Playwright harness (#451), bootstrap the image first and
+# point at it via DOCKER_CONTAINER:
+#   bash testing/playwright/bootstrap-app.sh sqlite
+#   DOCKER_CONTAINER=ipam-pw-test ./test_api.sh https://127.0.0.1:8443
+#   bash testing/playwright/teardown-app.sh
+#
+# Auto-API-key creation accepts THREE backends, in priority order:
+#   1. DOCKER_CONTAINER  — runs sqlite3/php inside the named container via `docker exec`
+#   2. SSH_HOST + SSH_DB_PATH — runs php on a remote host via ssh (dev-direct)
+#   3. local PHP CLI — when BASE_URL is omitted (auto-started built-in server)
+#
+# Pass an explicit API_KEY=... to bypass auto-creation entirely.
 #
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -60,10 +70,21 @@ IS_REMOTE=0
 SSH_HOST="${SSH_HOST:-}"       # e.g. root@192.168.80.15
 SSH_DB_PATH="${SSH_DB_PATH:-}" # e.g. /opt/container_data/.../data/ipam.sqlite
 
-# Helper: run PHP to manipulate the correct DB (local or remote via SSH)
+# Containerized harness access (#451). When DOCKER_CONTAINER is set, the script
+# runs sqlite manipulation via `docker exec` instead of ssh. The container name
+# matches testing/playwright/bootstrap-app.sh (default: ipam-pw-test, overridable
+# via IPAM_TEST_NAME). DOCKER_DB_PATH defaults to the inside-container path that
+# bootstrap-app.sh's volume mount produces.
+DOCKER_CONTAINER="${DOCKER_CONTAINER:-}"
+DOCKER_DB_PATH="${DOCKER_DB_PATH:-/var/www/html/data/ipam.sqlite}"
+
+# Helper: run PHP to manipulate the correct DB. Backend priority:
+#   docker exec  > ssh remote  > local php
 db_php() {
     local code="$1"
-    if [[ "$IS_REMOTE" -eq 1 && -n "$SSH_HOST" && -n "$SSH_DB_PATH" ]]; then
+    if [[ -n "$DOCKER_CONTAINER" ]]; then
+        docker exec -i "$DOCKER_CONTAINER" php -r "$code"
+    elif [[ "$IS_REMOTE" -eq 1 && -n "$SSH_HOST" && -n "$SSH_DB_PATH" ]]; then
         ssh -o BatchMode=yes "$SSH_HOST" "php -r $(printf '%q' "$code")"
     elif [[ "$IS_REMOTE" -eq 0 ]]; then
         php -r "$code"
@@ -71,9 +92,20 @@ db_php() {
 }
 
 PHP_PID=""
+
+# Resolve the right SQLite path for the chosen backend. DOCKER_DB_PATH is the
+# inside-container path; SSH_DB_PATH is the remote-server path; DB_PATH is local.
+if [[ -n "$DOCKER_CONTAINER" ]]; then
+    EFFECTIVE_DB_PATH="$DOCKER_DB_PATH"
+elif [[ -n "$SSH_DB_PATH" ]]; then
+    EFFECTIVE_DB_PATH="$SSH_DB_PATH"
+else
+    EFFECTIVE_DB_PATH="$DB_PATH"
+fi
+
 cleanup() {
     [[ -n "$PHP_PID" ]] && kill "$PHP_PID" 2>/dev/null || true
-    db_php "\$db = new PDO('sqlite:${SSH_DB_PATH:-$DB_PATH}'); \$db->exec(\"DELETE FROM api_keys WHERE name IN ('test-runner','test-readonly')\");" 2>/dev/null || true
+    db_php "\$db = new PDO('sqlite:$EFFECTIVE_DB_PATH'); \$db->exec(\"DELETE FROM api_keys WHERE name IN ('test-runner','test-readonly')\");" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -94,15 +126,19 @@ API="$BASE_URL/api.php"
 
 # ---- API Key ----
 if [[ -z "${API_KEY:-}" ]]; then
-    if [[ "$IS_REMOTE" -eq 1 && ( -z "$SSH_HOST" || -z "$SSH_DB_PATH" ) ]]; then
-        echo "ERROR: Set API_KEY, or set SSH_HOST + SSH_DB_PATH to auto-create keys on the remote server." >&2
+    if [[ "$IS_REMOTE" -eq 1 && -z "$DOCKER_CONTAINER" && ( -z "$SSH_HOST" || -z "$SSH_DB_PATH" ) ]]; then
+        echo "ERROR: Set API_KEY, or set DOCKER_CONTAINER, or set SSH_HOST + SSH_DB_PATH to auto-create keys." >&2
         echo "  API_KEY=your-key ./test_api.sh $BASE_URL" >&2
+        echo "  DOCKER_CONTAINER=ipam-pw-test ./test_api.sh $BASE_URL" >&2
         echo "  SSH_HOST=root@host SSH_DB_PATH=/path/to/ipam.sqlite ./test_api.sh $BASE_URL" >&2
         exit 1
     fi
 
-    local_db="${SSH_DB_PATH:-$DB_PATH}"
-    [[ "$IS_REMOTE" -eq 0 ]] && { [[ -f "$DB_PATH" ]] || { echo "ERROR: No database at $DB_PATH" >&2; exit 1; }; }
+    local_db="$EFFECTIVE_DB_PATH"
+    # Local-PHP backend needs the file present on disk. Docker/SSH backends
+    # access the file inside the remote/container so the host-side check is
+    # not meaningful.
+    [[ "$IS_REMOTE" -eq 0 && -z "$DOCKER_CONTAINER" ]] && { [[ -f "$DB_PATH" ]] || { echo "ERROR: No database at $DB_PATH" >&2; exit 1; }; }
 
     # Clean up any stale test keys from previous runs
     db_php "\$db = new PDO('sqlite:$local_db'); \$db->exec(\"DELETE FROM api_keys WHERE name IN ('test-runner','test-readonly')\");" 2>/dev/null || true
@@ -137,12 +173,19 @@ AUTH_MODE="${AUTH_MODE:-header}"
 # Optional HTTP Basic Auth for servers behind a gateway (e.g. BASIC_AUTH=user:pass)
 BASIC_AUTH="${BASIC_AUTH:-}"
 
+# Skip TLS cert verification. Required for the containerized harness (#451)
+# which serves a self-signed cert. Defaults to "on" when DOCKER_CONTAINER is
+# set, opt-in elsewhere via CURL_INSECURE=1.
+CURL_INSECURE="${CURL_INSECURE:-}"
+[[ -z "$CURL_INSECURE" && -n "$DOCKER_CONTAINER" ]] && CURL_INSECURE=1
+
 # call METHOD URL [JSON_BODY]
 call() {
     local method="$1" url="$2" body="${3:-}"
     local tmp; tmp=$(mktemp)
     local args=(-s --noproxy '*' -o "$tmp" -w '%{http_code}' -X "$method"
                 -H "Content-Type: application/json")
+    [[ -n "$CURL_INSECURE" ]] && args+=(-k)
     [[ -n "$BASIC_AUTH" ]] && args+=(-u "$BASIC_AUTH")
     if [[ "$AUTH_MODE" == "query" ]]; then
         # Append api_key as query parameter (for proxies that strip Authorization header)
@@ -239,7 +282,9 @@ for s in d.get('sites', []):
 log "=== Authentication ==="
 # ====================================================================
 
-_ba_args=(); [[ -n "${BASIC_AUTH:-}" ]] && _ba_args=(-u "$BASIC_AUTH")
+_ba_args=()
+[[ -n "$CURL_INSECURE" ]] && _ba_args+=(-k)
+[[ -n "${BASIC_AUTH:-}" ]] && _ba_args+=(-u "$BASIC_AUTH")
 HTTP_CODE=$(curl -s --noproxy '*' "${_ba_args[@]+"${_ba_args[@]}"}" -o /dev/null -w '%{http_code}' "${API}?resource=subnets")
 [[ "$HTTP_CODE" == "401" ]] && pass "No auth → 401" || fail "No auth → expected 401, got $HTTP_CODE"
 

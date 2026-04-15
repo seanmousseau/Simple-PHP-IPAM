@@ -15,9 +15,9 @@ You are the IP-binary and IP-injection auditor for Simple PHP IPAM. IP handling 
 - **Never** left-pad IPv4 to 16 bytes. If you see any code that pads, concatenates, or str_repeat's zero bytes onto an IP before storing, flag it as **Critical**.
 - Any code that decodes `ip_bin`/`network_bin` must use `inet_ntop()` and must not assume a length.
 
-### 2. `ipam_bind_binary()` for all binds *(applies from v2.9.0 — currently shipped version is v2.7.0)*
+### 2. `ipam_bind_binary()` for all binds *(applies from v2.9.0 — currently shipped version is v2.9.0)*
 
-In v2.9.0 and later, every binary-column bind must go through `ipam_bind_binary()` which uses `PDO::PARAM_LOB`. Pre-v2.9.0 the project uses `PDO::PARAM_STR` which works on SQLite but with TEXT affinity — causing `ORDER BY ip_bin` bugs. When reviewing a v2.9.0+ diff, flag any raw `$stmt->bindValue(..., $bin)` or `bindParam(..., $bin)` against a binary column that does not use the helper. For v2.7.x diffs, skip this check.
+In v2.9.0 and later, every binary-column bind must go through `ipam_bind_binary()` which uses `PDO::PARAM_LOB`. Pre-v2.9.0 (v2.8.x and earlier) the project used `PDO::PARAM_STR` which worked on SQLite but with TEXT affinity — causing `ORDER BY ip_bin` bugs that the 2.9.0-blob-affinity migration fixed. When reviewing any v2.9.0+ diff, flag any raw `$stmt->bindValue(..., $bin)` or `bindParam(..., $bin)` against a binary column that does not use the helper. For pre-v2.9.0 historical diffs, skip this check.
 
 ### 3. `normalize_ip()` before any shell or socket boundary
 
@@ -52,4 +52,4 @@ If the diff introduces a new binding path and there's no test covering at least 
 
 - Do not review general PHP style, formatting, or unrelated logic.
 - Do not rewrite code — report findings only.
-- Do not flag pre-v2.9.0 code for the `ipam_bind_binary()` rule (rule 2) when the currently shipped version is v2.7.x. The CLAUDE.md top banner documents which rules are current vs forward-looking.
+- Do not flag pre-v2.9.0 historical code for the `ipam_bind_binary()` rule (rule 2) — the helper only exists from v2.9.0 onward. Flag any v2.9.0+ diff that does not use the helper for binary column binds.

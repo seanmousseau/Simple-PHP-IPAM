@@ -2269,15 +2269,14 @@ function api_scan_schedules_save(PDO $db, array $apiKey, array $body): never
     $interval = max(1, to_int($body['interval_minutes'] ?? 60));
     $active   = isset($body['is_active']) ? ((bool) $body['is_active'] ? 1 : 0) : 1;
 
+    // #380: route through the dialect so v2.10.0+ swaps upsert + timestamp
+    // idioms without touching this call site.
+    $d = ipam_dialect();
+    $upsertClause = $d->upsert('scan_schedules', ['subnet_id'], ['method', 'tcp_port', 'interval_minutes', 'is_active', 'updated_at']);
     $st = $db->prepare("
         INSERT INTO scan_schedules (subnet_id, method, tcp_port, interval_minutes, is_active, updated_at)
-        VALUES (:sid, :method, :port, :interval, :active, datetime('now'))
-        ON CONFLICT(subnet_id) DO UPDATE SET
-            method           = excluded.method,
-            tcp_port         = excluded.tcp_port,
-            interval_minutes = excluded.interval_minutes,
-            is_active        = excluded.is_active,
-            updated_at       = datetime('now')
+        VALUES (:sid, :method, :port, :interval, :active, {$d->now()})
+        $upsertClause
     ");
     $st->execute([':sid' => $subnetId, ':method' => $method, ':port' => $tcpPort, ':interval' => $interval, ':active' => $active]);
 

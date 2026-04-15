@@ -80,5 +80,24 @@
             Line length is not enforced; SQL and HTML strings are legitimately long.
         -->
         <exclude name="Generic.Files.LineLength"/>
+
+        <!--
+            The Dialect interface and its implementations use snake_case method
+            names to match the project's pervasive function-style snake_case
+            convention (ipam_db, parse_cidr, ipam_setting, ...). The whole
+            codebase is procedural; adding camelCase methods just because
+            they live on a class would be inconsistent with everything around
+            them. See CLAUDE.md → "When to use classes vs functions".
+        -->
+        <exclude name="PSR1.Methods.CamelCapsMethodName.NotCamelCaps"/>
+
+        <!--
+            The project does not use PHP namespaces. Adding one would force a
+            hand-rolled autoloader for the small handful of classes (Dialect
+            and its implementations) we expect to ever introduce. Globally
+            unique class names are sufficient. See CLAUDE.md → "When to use
+            classes vs functions".
+        -->
+        <exclude name="PSR1.Classes.ClassDeclaration.MissingNamespace"/>
     </rule>
 </ruleset>

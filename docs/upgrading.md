@@ -89,6 +89,25 @@ The backup is left in place after a successful upgrade. You can remove it manual
 
 ## Version-specific upgrade notes
 
+### v2.9.0
+
+**New `vendor/` directory in the release tarball.** Starting in v2.9.0, the release bundle includes `Simple-PHP-IPAM/vendor/` with a pre-built Composer autoloader. You do **not** need Composer on the target server — `upgrade.sh` handles `vendor/` like every other file in the tree (rsync overwrites it on each upgrade).
+
+If you have customised anything inside `vendor/` on the server, those changes will be lost on upgrade. Don't do that — keep all customisation outside `vendor/`.
+
+The bundled `vendor/.htaccess` denies direct HTTP access to library source. Verify after upgrade with:
+
+```bash
+curl -sI https://your-host/path/to/ipam/vendor/autoload.php | head -1
+# Expected: HTTP/1.1 403 Forbidden (or 404 if your server hides denied paths)
+```
+
+**No schema changes that require manual action, provided `php` is in `PATH`.** v2.9.0 includes a one-shot internal migration that normalises `ip_bin` / `network_bin` storage to BLOB affinity on SQLite. `upgrade.sh` runs `migrate.php` automatically when the `php` CLI is available, so no operator action is required. The migration is idempotent — re-running it is a no-op.
+
+> ⚠️ **If `php` is not in `PATH`, `upgrade.sh` skips the migration step** (see `upgrade.sh` lines 75-77 and 239-244). On minimalist containers or systems where `php` is only reachable via a full path, either add `php` to `PATH` before running `upgrade.sh` **or** run `php /var/www/ipam/migrate.php` manually after the upgrade completes. Without this step, your install retains TEXT-affinity `ip_bin` / `network_bin` storage, and `ORDER BY ip_bin` will produce incorrect results once new rows start arriving via v2.9.0's `PDO::PARAM_LOB` binding.
+
+---
+
 ### v2.7.0
 
 **No schema changes.** v2.7.0 is entirely a runtime rewire — every registered setting was already seeded into the `settings` table by v2.6.0's migration. `upgrade.sh` just syncs files, runs `php migrate.php` (no-op), and you are done.

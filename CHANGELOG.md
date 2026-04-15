@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [2.9.0] - 2026-04-15
+
+Driver-abstraction foundation release. Introduces the `Dialect` interface, a data-integrity migration that normalizes SQLite's `ip_bin` / `network_bin` columns to BLOB affinity, Composer runtime-dependency infrastructure for future curated libraries, a CI tier restructure with an engine-matrix seam for v2.10.0 MySQL and v2.11.0 Postgres, and a handful of smaller fixes carried over from the v2.8.0 CodeRabbit sweep.
+
+End-user behaviour is unchanged — same SQLite, same vanilla deployment, same `upgrade.sh` flow. The codebase is now ready to grow in three directions: multi-engine SQL, curated Composer deps, and tiered CI.
+
+### Added
+- **#378** — `Dialect` interface + `SqliteDialect` implementation. New `Simple-PHP-IPAM/dialects/` subdirectory with a stateless 8-method interface (`now`, `upsert`, `autoincrement`, `binary_type`, `case_sensitive_collation`, `append_only_trigger`, `pragma_foreign_keys`, `driver_name`). `init.php` instantiates the dialect based on `$config['db_driver']` (default `sqlite`); `mysql` / `pgsql` values exit with a clear "lands in v2.10.0 / v2.11.0" message. New `ipam_dialect()` helper in `lib.php` lazy-instantiates `SqliteDialect` for CLI scripts that bootstrap `lib.php` without `init.php`. 16 new PHPUnit tests in `tests/DialectTest.php` including an end-to-end in-memory SQLite check that the generated append-only trigger DDL actually blocks `UPDATE`.
+- **#410** — `ipam_bind_binary()` helper in `lib.php` using `PDO::PARAM_LOB` unconditionally on every driver, plus a one-shot `2.9.0-blob-affinity` migration that rewrites every `subnets.network_bin` and `addresses.ip_bin` row from TEXT to BLOB affinity on existing SQLite installs. Pre-v2.9.0 the project used `PARAM_STR` (the default), and SQLite's loose typing stored these values with TEXT affinity even though the columns were declared `BLOB`. Bytes round-tripped correctly but `ORDER BY ip_bin` and range queries would break the moment new rows arrived bound as `BLOB` — SQLite's comparison rules say any BLOB sorts greater than any TEXT regardless of byte content. The migration is idempotent (skips when 0 TEXT rows), audits a single `migration.blob_affinity_normalized` row with per-table counts, and runs automatically via `migrate.php` during upgrade. 11 new tests in `tests/MigrationTest.php` and `tests/BinaryBindTest.php` including a 5-vector data provider covering the documented byte shapes.
+- **#416** — Composer runtime-dependency infrastructure. `composer.json` gains a `require` block (empty in v2.9.0 — first actual dep lands in a future release), `prefer-stable: true`, `minimum-stability: stable`, `platform-check: true`. `releases/make_releases.sh` now runs `composer install --no-dev --optimize-autoloader --no-scripts` into a scratch tmp dir and rsyncs the resulting `vendor/` into the staging payload, so the release tarball bundles a pre-built autoloader. `vendor/.htaccess` denies direct HTTP access to library source (Apache 2.4 + 2.2 syntax). `init.php` conditionally requires `vendor/autoload.php` so fresh git clones without Composer still boot. CI gains `composer validate --strict` and `composer audit --no-dev --locked` steps. End-user deployment story is unchanged — still tarball + extract, no Composer needed on the target server.
+- **#411** — CI tier restructure. `.github/workflows/php-qa.yml` is now the Tier 1 fast-per-commit workflow with a `fail-fast: false` engine matrix (sqlite slot, placeholder comments for the v2.10.0 mysql and v2.11.0 pgsql slots). Composer cache via `actions/cache@v4` keyed on `composer.lock`. `concurrency: cancel-in-progress` so busy PRs do not stack runs. **CI gap fixed**: PHP QA now runs on PRs targeting `dev`, not just `main` (feature branches into `dev` previously had zero PHP QA coverage). New `docs/ci.md` documents all four tiers and how to debug a failing matrix slot.
+- **#451** — `testing/scripts/test_api.sh` now accepts a `DOCKER_CONTAINER` env var that routes auto-API-key creation through `docker exec` instead of ssh. New `CURL_INSECURE` env var (auto-on when `DOCKER_CONTAINER` is set). New `api-tests` CI job in `playwright-nightly.yml` runs the 160-assertion REST regression suite against a freshly bootstrapped container alongside the existing `containerized-playwright` and `htaccess-subset` jobs. API regression coverage previously required a shared dev-direct deployment; now it runs in CI on every PR.
+- **#455** — `oidc.default_role` is now an enumerated `<select>` dropdown on **⚙ Admin → Settings**. Options: `Read-only` (default, recommended) and `Administrator`. A typo previously broke OIDC auto-provisioning silently; the enum rejects out-of-set values in the two-phase POST handler.
+- **#381** — `tests/CliGuardTest.php` asserts every CLI-only entry point (`cron.php`, `scan_run.php`, `migrate.php`, `demo_seed.php`, `demo_reset.php`, `tmp_cleanup.php`) contains a `PHP_SAPI !== 'cli'` guard in its first 8KB. All 6 already had guards as of v2.8.0 — pure regression protection.
+
+### Changed
+- **#379 / #380** — Every binary IP write site in `lib.php` and the page handlers now routes through `ipam_bind_binary()`: `auto_reserve_subnet_ips()` (network / broadcast / gateway auto-reserve), `ipam_ensure_subnet()` (CSV import + API auto-create), `demo_seed_data()` (IPv4 / IPv6 subnets + addresses), and `migrations.php` migration 0.3 network_bin backfill. After this change every new `subnets.network_bin` / `addresses.ip_bin` row is BLOB affinity on SQLite from the start.
+- **#379 / #380** — Routed four upsert call sites through `$dialect->upsert()`: `ipam_set_setting()` (settings registry), `check_utilization_alerts()` (alert_state), and the scan_schedules upserts in `api.php`, `subnets.php`, and `scan_history.php`. Routed three `PRAGMA foreign_keys` call sites in `db_tools.php` through `$dialect->pragma_foreign_keys()`.
+- **`.phpcs.xml`** — adds exclusions for `PSR1.Methods.CamelCapsMethodName.NotCamelCaps` and `PSR1.Classes.ClassDeclaration.MissingNamespace` with documented rationale. Snake_case method names match the codebase's procedural convention; no namespaces per CLAUDE.md → "When to use classes vs functions".
+
+### Fixed
+- **#452** — `.claude/hooks/block-sensitive-paths.sh` canonicalization bypass. The `${file#"$PWD/"}` strip only matched exact absolute prefixes, so `./Simple-PHP-IPAM/config.php` and `Simple-PHP-IPAM/data/../config.php` slipped past every block pattern. Replaced with a `python3 os.path.realpath` canonicalizer that resolves both input and `$PWD` (macOS BSD `realpath` lacks `-m`). Verified against 11 path-form regression cases including symlinked OneDrive working directories.
+- **#453** — `.claude/skills/release-gate/SKILL.md` stage step pointed at a non-existent `ipam-X.Y.Z/` directory at the repo root. `make_releases.sh` emits directly to `releases/ipam-X.Y.Z/`. Replaced with a `test -f && git add` block.
+- **#454** — `.claude/agents/ip-binary-auditor.md` shipped-version baseline bumped from v2.7.0 → v2.8.0.
+- **`dialects/.htaccess`** — new file denying direct HTTP access to bundled dialect class source. A preemptive Playwright test (`htaccess.spec.ts:94 "blocks /dialects/ when present"`) was added in v2.5.2 with a `test.skip(!hasDialects)` guard so it lit up automatically when v2.9.0 shipped the directory.
+
+### Security
+- **#410** — Binary IP column storage is now explicitly BLOB on SQLite. Pre-v2.9.0 data is normalized automatically on upgrade. Fixed root cause: `ORDER BY ip_bin` returning nonsense when mixed TEXT/BLOB affinity rows coexisted.
+- **#416** — `composer audit --no-dev --locked` now runs in CI on every PR and fails the build on any known CVE in a runtime dep.
+
 ## [2.8.0] - 2026-04-14
 
 Quality-of-life and API release on top of v2.7.0's settings rewire. Adds long-form notes on subnets, multi-recipient utilization alerts tied to user records, write API for tags, paginated API metadata, a keyboard shortcut for power users, and a redesigned password-show toggle that finally works in real browsers with password managers installed.
@@ -622,6 +652,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[2.9.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.8.0...v2.9.0
 [2.8.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.7.0...v2.8.0
 [2.7.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.6.0...v2.7.0
 [2.6.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.5.2...v2.6.0
