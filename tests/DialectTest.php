@@ -46,6 +46,17 @@ final class DialectTest extends TestCase
         $this->assertSame('BLOB', $this->sqlite->binary_type(255));
     }
 
+    public function testIndexedTextTypeIsPlainTextOnSqlite(): void
+    {
+        // SQLite has no key-length limit on TEXT columns, so the maxLen
+        // argument is a no-op here. MysqlDialect will emit VARCHAR($maxLen)
+        // on the same call to satisfy MySQL 8.0's "BLOB/TEXT column used
+        // in key specification without a key length" error.
+        $this->assertSame('TEXT', $this->sqlite->indexed_text_type());
+        $this->assertSame('TEXT', $this->sqlite->indexed_text_type(191));
+        $this->assertSame('TEXT', $this->sqlite->indexed_text_type(255));
+    }
+
     public function testCaseSensitiveCollationIsNullOnSqlite(): void
     {
         $this->assertNull($this->sqlite->case_sensitive_collation());

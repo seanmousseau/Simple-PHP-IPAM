@@ -92,11 +92,16 @@ function ipam_db(string $path): PDO
 function ensure_audit_log_table(PDO $db): void
 {
     $d = ipam_dialect();
+    // action and created_at are indexed below, so they must use the
+    // indexed text type (VARCHAR on MySQL, TEXT elsewhere). Free-form
+    // unindexed columns (username, entity_type, ip, user_agent, details)
+    // stay as plain TEXT.
+    $idxText = $d->indexed_text_type();
     $db->exec("
         CREATE TABLE IF NOT EXISTS audit_log (
           id          " . $d->autoincrement() . ",
-          created_at  TEXT NOT NULL DEFAULT (" . $d->now() . "),
-          user_id     INTEGER, username TEXT, action TEXT NOT NULL,
+          created_at  $idxText NOT NULL DEFAULT (" . $d->now() . "),
+          user_id     INTEGER, username TEXT, action $idxText NOT NULL,
           entity_type TEXT NOT NULL, entity_id INTEGER,
           ip TEXT, user_agent TEXT, details TEXT
         )
@@ -1342,9 +1347,11 @@ function history_log_address(PDO $db, string $action, int $subnetId, string $ip,
 function ensure_migrations_table(PDO $db): void
 {
     $d = ipam_dialect();
+    // version has a UNIQUE constraint so it must use the indexed text type
+    // (VARCHAR on MySQL, TEXT elsewhere).
     $db->exec("CREATE TABLE IF NOT EXISTS schema_migrations (
         id " . $d->autoincrement() . ",
-        version TEXT NOT NULL UNIQUE,
+        version " . $d->indexed_text_type() . " NOT NULL UNIQUE,
         applied_at TEXT NOT NULL DEFAULT (" . $d->now() . ")
     )");
 }

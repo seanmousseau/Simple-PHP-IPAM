@@ -62,6 +62,16 @@ final class SqliteDialect implements Dialect
     }
 
     /**
+     * SQLite has no key-length limit on TEXT columns in indexes or unique
+     * constraints. The $maxLen argument is ignored on this engine but kept
+     * in the signature so MySQL can use it for strict typing.
+     */
+    public function indexed_text_type(int $maxLen = 191): string
+    {
+        return 'TEXT';
+    }
+
+    /**
      * SQLite's typing is loose — BLOB is the affinity, not a fixed-length
      * type. The $length argument is ignored on this engine but kept in the
      * signature so MySQL/Postgres can use it for strict typing.
