@@ -19,6 +19,40 @@ function ipam_dialect(): Dialect
     return $GLOBALS['ipam_dialect'];
 }
 
+/**
+ * Bind a raw binary value (typically inet_pton output) to a PDOStatement
+ * parameter using PDO::PARAM_LOB on every driver (#410).
+ *
+ * **Why this helper exists.** Pre-v2.9.0 the codebase passed binary IP
+ * values through positional execute(), which ultimately hits PDO::PARAM_STR.
+ * On SQLite this stores the value with TEXT affinity even though the column
+ * is declared BLOB — SQLite's loose typing honors the binding's affinity at
+ * insert time, not the column's declared type. The bytes round-trip
+ * correctly, but `ORDER BY ip_bin` and range queries break the moment new
+ * rows arrive bound as BLOB, because SQLite's comparison rules say any BLOB
+ * sorts greater than any TEXT regardless of byte content.
+ *
+ * On MySQL / Postgres the situation is worse: PARAM_STR string-escapes high
+ * bytes and truncates at null bytes, corrupting every stored IP.
+ *
+ * This helper uses PARAM_LOB unconditionally so the same binding works on
+ * SQLite (BLOB affinity), MySQL (VARBINARY), and Postgres (BYTEA). The
+ * existing-data normalization happens in the 2.9.0-blob-affinity migration.
+ *
+ * **Storage format**: native length, never padded. IPv4 = 4 bytes,
+ * IPv6 = 16 bytes. All three engines do byte-wise memcmp comparison on
+ * native-length values, so sort order is equivalent across engines.
+ *
+ * Round-trip test vectors (covered by tests/BinaryBindTest.php):
+ *   inet_pton('10.0.0.0')         = \x0A\x00\x00\x00  (null bytes after first)
+ *   inet_pton('2001:db8::')       = \x20\x01\x0D\xB8...  (mostly null bytes)
+ *   inet_pton('255.255.255.255')  = \xFF\xFF\xFF\xFF  (all high bytes)
+ */
+function ipam_bind_binary(PDOStatement $stmt, string $param, string $bin): void
+{
+    $stmt->bindValue($param, $bin, PDO::PARAM_LOB);
+}
+
 function ipam_db(string $path): PDO
 {
     $dir = dirname($path);
