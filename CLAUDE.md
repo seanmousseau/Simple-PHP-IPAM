@@ -235,10 +235,12 @@ A new dep must meet **all** of the following criteria:
 5. **Liberal license.** MIT, BSD, Apache 2.0. No GPL-family licenses (viral), no LGPL (complicated for bundled distribution).
 6. **Maintainer justification.** Adding a new dep requires a PR that updates this section with the dep name, version constraint, purpose, and a one-paragraph justification explaining why vanilla PHP is a poor fit.
 
+**Data-visualization primitives — the one carve-out.** Sparklines, time-series charts, gauges, heatmaps, and similar chart primitives MAY use a curated, vendored library if hand-rolling would require reinventing axis scaling, tick generation, DPI-aware canvas rendering, or responsive sizing. The bar is the same as the SMTP/SAML rule above: narrow purpose, mature, wide adoption, minimal deps, liberal license. Additional constraints specific to viz libraries: (a) **vanilla JS only** — no framework deps, no build step, (b) **self-hosted** under `Simple-PHP-IPAM/assets/vendor/` rather than Composer, (c) **single file** or small handful of files that can be copied in with no transitive deps, (d) **under ~50KB minified** — "lean" is a hard criterion here. Adding a viz library still requires a CLAUDE.md PR with the same justification as a Composer dep. The v3.8.0 UI rework is expected to vendor uPlot (~40KB, zero deps, MIT) for the dashboard time-series work; see #TBD.
+
 **When a runtime dependency is NOT acceptable:**
 
 - **IPAM business logic.** Subnet math, CIDR parsing, address allocation, audit logging, permission checks, etc. All of this is bespoke to the project and has no library equivalent worth pulling in.
-- **UI and rendering.** All HTML is hand-authored PHP. No templating engines, no frontend frameworks, no CSS preprocessors.
+- **UI and rendering.** All HTML is hand-authored PHP. No templating engines (no Twig/Blade/Latte/Smarty — no new syntax, no compile cache, no reserved directives), no frontend frameworks (no React/Vue/Svelte), no CSS preprocessors (no Sass/Less). **Exception:** shared `ipam_render($view, $props)` helpers that `require` a PHP file under `Simple-PHP-IPAM/views/*.php` with `extract($props)` ARE allowed and encouraged — they are ordinary PHP functions, not a DSL. The anti-pattern is a compiled syntax layer, not code reuse. Data-viz primitives covered by the carve-out above.
 - **Simple utilities.** If it can be done in 20 lines of vanilla PHP, it should be done in 20 lines of vanilla PHP. Do not pull in a library for one function.
 - **"Nice to have" conveniences.** Libraries that make code 5% cleaner are not worth the dep. The bar is "hand-rolling is meaningfully dangerous or expensive," not "this API is nicer."
 
