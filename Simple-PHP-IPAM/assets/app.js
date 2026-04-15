@@ -82,6 +82,24 @@
       });
     });
 
+    // --- Dismiss generic admin banners (e.g. MySQL beta banner) ---
+    // Keys are per-app-version so upgrading a banner resurfaces it. State is
+    // local to the browser (localStorage) so each operator dismisses once.
+    document.querySelectorAll("[data-banner]").forEach(function(notice) {
+      var key = "ipam_dismissed_banner_" + notice.dataset.banner;
+      if (localStorage.getItem(key)) {
+        notice.classList.add("hidden");
+      }
+    });
+    document.querySelectorAll("[data-dismiss-banner]").forEach(function(btn) {
+      btn.addEventListener("click", function() {
+        var name = btn.dataset.dismissBanner;
+        var notice = btn.closest("[data-banner]");
+        if (notice) { notice.classList.add("hidden"); }
+        localStorage.setItem("ipam_dismissed_banner_" + name, "1");
+      });
+    });
+
     // --- Site group collapse/expand ---
     document.querySelectorAll(".site-group-toggle").forEach(function(btn) {
       var sgKey = btn.dataset.sgKey;

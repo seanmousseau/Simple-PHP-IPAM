@@ -139,15 +139,17 @@ function ipam_db(array $config): PDO
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
                 PDO::ATTR_EMULATE_PREPARES => false,
             ]);
-            // MySQL 8.0 minimum. Versions before that lack utf8mb4 defaults,
-            // modern JSON support, and the looser InnoDB key prefix limit
-            // this project relies on. Rejecting at connect keeps bootstrap
-            // failures clear and immediate.
+            // 8.0.22 is the effective minimum. ensure_audit_log_table()
+            // and MysqlDialect::append_only_trigger() both emit
+            // `CREATE TRIGGER IF NOT EXISTS`, a syntax feature added in
+            // MySQL 8.0.22. Earlier 8.0.x servers pass a naive `8.0.0`
+            // check and then crash on the first self-heal bootstrap.
+            // Reject at connect time so failures are clear and immediate.
             $serverVersionRaw = $pdo->getAttribute(PDO::ATTR_SERVER_VERSION);
             $serverVersion = is_string($serverVersionRaw) ? $serverVersionRaw : '';
-            if ($serverVersion === '' || version_compare($serverVersion, '8.0.0', '<')) {
+            if ($serverVersion === '' || version_compare($serverVersion, '8.0.22', '<')) {
                 throw new RuntimeException(
-                    "MySQL 8.0+ is required (server reports '$serverVersion')"
+                    "MySQL 8.0.22+ is required (server reports '$serverVersion')"
                 );
             }
             break;
@@ -3918,11 +3920,11 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=2.8.0d'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=2.10.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=2.8.0d'></script>";
+    echo "<script defer src='assets/app.js?v=2.10.0'></script>";
     $pageAttr = isset($opts['page']) && $opts['page'] !== ''
         ? " data-page='" . e(to_str($opts['page'])) . "'"
         : '';
@@ -4035,6 +4037,24 @@ function page_header(string $title, array $opts = []): void
     if (demo_mode_enabled()) {
         echo "<div class='admin-notice admin-notice--info text-center' role='alert'>"
            . "🧪 <strong>Demo mode</strong> — Explore freely. Destructive actions are disabled. Data resets nightly at midnight."
+           . "</div>";
+    }
+
+    // MySQL experimental driver banner — admin only, dismissible (v2.10.0 #385).
+    // Appears whenever db_driver=mysql is active so operators always know the
+    // driver is in beta. The banner key is suffixed with IPAM_VERSION so the
+    // localStorage dismiss state is per app version: upgrading the app
+    // changes the key and the banner re-surfaces until dismissed on the
+    // new version. Dismiss state lives only in the browser; the server
+    // doesn't track it (client-side, stateless, survives the request cycle
+    // without a session write).
+    if ($role === 'admin' && ipam_dialect()->driver_name() === 'mysql') {
+        $bannerKey = 'mysql-beta-' . IPAM_VERSION;
+        echo "<div class='admin-notice admin-notice--warning' role='alert' data-banner='" . e($bannerKey) . "'>"
+           . "⚠ <strong>MySQL driver (experimental)</strong> — MySQL support is beta in v" . e(IPAM_VERSION) . ". "
+           . "Report issues at <a href='https://github.com/seanmousseau/Simple-PHP-IPAM/issues' target='_blank' rel='noopener'>the GitHub tracker</a>. "
+           . "See <a href='https://github.com/seanmousseau/Simple-PHP-IPAM/blob/main/docs/install.md#mysql-experimental' target='_blank' rel='noopener'>docs/install.md</a> for current limitations. "
+           . "<button type='button' class='admin-notice-dismiss' data-dismiss-banner='" . e($bannerKey) . "' aria-label='Dismiss'>✕</button>"
            . "</div>";
     }
 

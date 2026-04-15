@@ -121,6 +121,58 @@ Copy or edit `config.php`. See the [Configuration guide](configuration.md) for a
 
 At minimum, **change the default admin password** before the site receives any traffic.
 
+### MySQL (experimental)
+
+> ⚠️ **MySQL support is experimental in v2.10.0 and will be promoted to stable in v3.0.0.** The default driver is SQLite; you must opt in explicitly. Report bugs at the [GitHub tracker](https://github.com/seanmousseau/Simple-PHP-IPAM/issues). See the [Known issues](#mysql-known-issues) list below for current limitations.
+
+**Requirements:**
+
+- MySQL **8.0.22** or newer (the installer rejects earlier versions). 8.0.22 is the effective floor because the bootstrap path uses `CREATE TRIGGER IF NOT EXISTS`, which landed in that release.
+- The default connection charset must be `utf8mb4`. `utf8mb4_general_ci` for the database default collation is fine — the application explicitly pins `utf8mb4_bin` on case-sensitive columns (usernames, CIDRs, hostnames, IP text, API key hashes) so cross-engine string comparison stays consistent with SQLite.
+- An InnoDB-backed database. Every table in `schema.mysql.sql` declares `ENGINE=InnoDB` explicitly.
+- A dedicated MySQL account with these privileges on the IPAM database: `CREATE`, `ALTER`, `INDEX`, `INSERT`, `UPDATE`, `DELETE`, `SELECT`, `REFERENCES`, `TRIGGER`. `DROP` is only needed if you intend to run `db_tools.php` import/export or uninstall the application — omit it otherwise to narrow the blast radius.
+
+**Prepare the database:**
+
+```sql
+CREATE DATABASE ipam CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+CREATE USER 'ipam'@'localhost' IDENTIFIED BY 'a-strong-random-password';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES, TRIGGER
+  ON ipam.* TO 'ipam'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+**`config.php` stub for MySQL:**
+
+```php
+<?php
+return [
+    'db_driver' => 'mysql',
+    'db_dsn'    => 'mysql:host=127.0.0.1;port=3306;dbname=ipam;charset=utf8mb4',
+    'db_user'   => 'ipam',
+    'db_pass'   => 'a-strong-random-password',
+
+    // Bootstrap admin used on the very first page load only.
+    'bootstrap_admin' => [
+        'username' => 'admin',
+        'password' => 'ChangeMeNow!12345',
+    ],
+
+    // Rest of the file is identical to the SQLite example.
+    // session_idle_seconds, force_https, oidc, etc.
+];
+```
+
+On the first request, the installer loads `schema.mysql.sql`, creates the bootstrap admin account, and pre-seeds `schema_migrations` with every historical version so subsequent migration runs are no-ops. An **admin UI beta banner** appears on every page while `db_driver=mysql` is active — you can dismiss it per browser, and it resurfaces whenever you upgrade the application.
+
+<a id="mysql-known-issues"></a>
+**Known issues and current limitations:**
+
+- **Binary binding requires PDO `PARAM_LOB`.** The application already does this everywhere internally via `ipam_bind_binary()`. If you write a custom script that talks to `ipam.sqlite`-style columns (`ip_bin`, `network_bin`), bind with `PDO::PARAM_LOB` or your values will be string-escaped and corrupted.
+- **Backups are SQLite-format only.** `db_tools.php` export produces a SQLite dump that can only be imported back into a SQLite install. Cross-engine migration (MySQL ↔ SQLite ↔ Postgres) lands in v3.0.0 via a dedicated `migrate_db.php` tool. For now, use native MySQL tools (`mysqldump`) for MySQL-to-MySQL backups.
+- **CHECK constraints require MySQL 8.0.16+.** The schema declares CHECK constraints on enum columns (`role`, `theme`, `status`, `level`, `method`) and range columns (`vlan_id`, `tcp_port`, prefix delegation). Versions below 8.0.16 silently ignore them, leaving invariant enforcement to the application layer only.
+- **No Playwright CI coverage yet against MySQL.** v2.10.0 ships with MySQL unit + integration tests in the per-commit matrix, but the nightly end-to-end Playwright suite is SQLite-only. MySQL gets a dedicated matrix slot during the v2.10.0 soak period — track progress at [#433](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/433).
+
 ---
 
 ## Step 4 — Configure your web server
