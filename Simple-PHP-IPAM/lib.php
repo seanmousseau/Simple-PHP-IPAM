@@ -2338,10 +2338,26 @@ function backup_is_due(array $config): bool
  * Run a database backup if one is due. Uses WAL checkpoint + file copy for
  * a consistent snapshot without requiring SQLite3 extension.
  * Returns true if a backup was written, false otherwise.
+ *
+ * SQLite-only for the moment. The whole flow (`wal_checkpoint`,
+ * file-copy of a single `.sqlite` file, `.sqlite` retention pruning)
+ * is SQLite-specific. MySQL / Postgres users should run engine-native
+ * backups (`mysqldump`, `pg_dump`) from cron or their hosting
+ * platform. v3.0.0 `migrate_db.php` (#392) will expose a generic
+ * cross-engine backup API; until then, short-circuit here on any
+ * non-SQLite driver so the housekeeping cycle does not fatal out on
+ * the missing `db_path` key.
  */
 /** @param IpamConfig $config */
 function run_db_backup_if_due(PDO $db, array $config): bool
 {
+    // Driver-gate before anything else. MySQL / Postgres do not have a
+    // `db_path` key in $config, so even reading $gConf['db_path'] below
+    // would emit an undefined-array-key warning and — on PHP 8.x — a
+    // TypeError on `is_file(null)` when the warning handler routes the
+    // notice but doesn't cast the value. v2.10.0 regression fix (#502).
+    if (ipam_dialect()->driver_name() !== 'sqlite') return false;
+
     if (!backup_is_due($config)) return false;
 
     $lockPath = __DIR__ . '/data/backup.lock';
@@ -2357,6 +2373,9 @@ function run_db_backup_if_due(PDO $db, array $config): bool
     try {
         if (!backup_is_due($config)) return false;
 
+        // Driver gate at the top of the function already proved
+        // driver_name() === 'sqlite', so IpamConfig's required db_path
+        // is genuinely present here.
         /** @var IpamConfig $gConf */
         $gConf = $GLOBALS['config'];
         $dbPath = $gConf['db_path'] !== '' ? $gConf['db_path'] : (__DIR__ . '/data/ipam.sqlite');
