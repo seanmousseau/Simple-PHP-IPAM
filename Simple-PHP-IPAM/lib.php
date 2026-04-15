@@ -193,10 +193,48 @@ function ensure_audit_log_table(PDO $db): void
           ip TEXT, user_agent TEXT, details TEXT
         )
     ");
-    $db->exec("CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action)");
-    $db->exec("CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at)");
+    // CREATE INDEX IF NOT EXISTS is a SQLite idiom. MySQL 8.0.0–8.0.28 do
+    // not accept it (IF NOT EXISTS on CREATE INDEX landed in 8.0.29, which
+    // is above our effective 8.0.22 floor), so we use a helper that swallows
+    // the MySQL "Duplicate key name" error (errno 1061). On SQLite the
+    // IF NOT EXISTS is native and the catch never fires.
+    $createIndex = static function (PDO $db, string $name, string $table, string $col): void {
+        try {
+            $db->exec("CREATE INDEX IF NOT EXISTS $name ON $table($col)");
+        } catch (PDOException $e) {
+            $msg = $e->getMessage();
+            // MySQL raises 1061 with "Duplicate key name" when the index
+            // already exists. On MySQL 8.0.0–8.0.28, CREATE INDEX IF NOT
+            // EXISTS itself is rejected (syntax error 1064) — retry with
+            // plain CREATE INDEX, then swallow 1061 if the index is
+            // already there.
+            $sqlstate = (string)($e->errorInfo[0] ?? '');
+            if ($sqlstate === '42000' && stripos($msg, 'syntax') !== false) {
+                try {
+                    $db->exec("CREATE INDEX $name ON $table($col)");
+                } catch (PDOException $e2) {
+                    if (stripos($e2->getMessage(), 'duplicate key name') === false) {
+                        throw $e2;
+                    }
+                }
+                return;
+            }
+            throw $e;
+        }
+    };
+    $createIndex($db, 'idx_audit_log_action',     'audit_log', 'action');
+    $createIndex($db, 'idx_audit_log_created_at', 'audit_log', 'created_at');
     foreach ($d->append_only_trigger('audit_log') as $stmt) {
-        $db->exec($stmt);
+        try {
+            $db->exec($stmt);
+        } catch (PDOException $e) {
+            // MySQL 8.0.0–8.0.21 do not support CREATE TRIGGER IF NOT EXISTS
+            // (added in 8.0.22). Swallow "Trigger already exists" (errno 1359)
+            // so the self-heal path is idempotent on every supported 8.0.x.
+            if (stripos($e->getMessage(), 'already exists') === false) {
+                throw $e;
+            }
+        }
     }
 }
 
@@ -1134,7 +1172,7 @@ function ipam_setting(string $key, mixed $default = null): mixed
     try {
         $db = $GLOBALS['db'] ?? null;
         if ($db instanceof PDO) {
-            $st = $db->prepare("SELECT value, type FROM settings WHERE key = :k");
+            $st = $db->prepare("SELECT value, type FROM settings WHERE `key` = :k");
             $st->execute([':k' => $key]);
             $row = $st->fetch();
             if (is_array($row)) {
@@ -1183,7 +1221,7 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
 
     $oldRaw = null;
     $oldType = $type;
-    $st = $db->prepare("SELECT value, type FROM settings WHERE key = :k");
+    $st = $db->prepare("SELECT value, type FROM settings WHERE `key` = :k");
     $st->execute([':k' => $key]);
     $prev = $st->fetch();
     if (is_array($prev)) {
@@ -1197,7 +1235,7 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
     $d = ipam_dialect();
     $upsertClause = $d->upsert('settings', ['key'], ['value', 'type', 'updated_at', 'updated_by']);
     $up = $db->prepare(
-        "INSERT INTO settings (key, value, type, updated_at, updated_by)
+        "INSERT INTO settings (`key`, value, type, updated_at, updated_by)
          VALUES (:k, :v, :t, {$d->now()}, :u)
          $upsertClause"
     );
@@ -1291,7 +1329,7 @@ function ipam_setting_all(): array
 function ipam_setting_source(PDO $db, string $key): string
 {
     try {
-        $st = $db->prepare("SELECT 1 FROM settings WHERE key = :k");
+        $st = $db->prepare("SELECT 1 FROM settings WHERE `key` = :k");
         $st->execute([':k' => $key]);
         if ($st->fetchColumn() !== false) return 'db';
     } catch (\Throwable) {
@@ -2456,11 +2494,17 @@ function q_int(string $key, int $default, int $min, int $max): int
 /**
  * Escape SQL LIKE wildcard characters in a user-supplied search string.
  * Returns the escaped string ready to be wrapped in % delimiters.
- * Use with LIKE :q ESCAPE '\\' in your SQL.
+ * Use with `LIKE :q ESCAPE '!'` in your SQL.
+ *
+ * Uses `!` as the escape character because it is a normal character in
+ * both SQLite and MySQL string literals — whereas `\\` is parsed as an
+ * escape sequence inside single-quoted strings by MySQL (so `ESCAPE '\\'`
+ * in PHP source, which renders as `ESCAPE '\'` in SQL text, is a syntax
+ * error on MySQL). `!` avoids the cross-engine quoting landmine.
  */
 function like_escape(string $q): string
 {
-    return str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $q);
+    return str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $q);
 }
 
 /**
@@ -2797,9 +2841,10 @@ function auto_reserve_subnet_ips(PDO $db, int $subnetId, string $cidr, ?string $
     // affinity is BLOB on SQLite and bytes round-trip safely on MySQL/Postgres.
     // The scalar params still come through bindValue so we can mix the two
     // binding styles on a single statement.
+    $ignoreClause = ipam_dialect()->upsert_or_ignore('addresses', ['subnet_id', 'ip']);
     $ins = $db->prepare(
-        "INSERT OR IGNORE INTO addresses (subnet_id, ip, ip_bin, hostname, status, owner, note, grp, mac)
-         VALUES (:sid, :ip, :ipbin, :host, 'reserved', '', 'Auto-reserved', '', '')"
+        "INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, status, owner, note, grp, mac)
+         VALUES (:sid, :ip, :ipbin, :host, 'reserved', '', 'Auto-reserved', '', '') $ignoreClause"
     );
     $reserveBind = function (int $sid, string $ip, string $bin, string $host) use ($ins): void {
         $ins->bindValue(':sid',  $sid,  PDO::PARAM_INT);
@@ -2873,10 +2918,10 @@ function save_tags_for_entity(PDO $db, string $type, int $id, array $tagIds): vo
 {
     if ($type === 'subnet') {
         $db->prepare("DELETE FROM subnet_tags WHERE subnet_id = :id")->execute([':id' => $id]);
-        $ins = $db->prepare("INSERT OR IGNORE INTO subnet_tags (subnet_id, tag_id) VALUES (:eid, :tid)");
+        $ins = $db->prepare("INSERT INTO subnet_tags (subnet_id, tag_id) VALUES (:eid, :tid) " . ipam_dialect()->upsert_or_ignore("subnet_tags", ["subnet_id", "tag_id"]) . "");
     } elseif ($type === 'address') {
         $db->prepare("DELETE FROM address_tags WHERE address_id = :id")->execute([':id' => $id]);
-        $ins = $db->prepare("INSERT OR IGNORE INTO address_tags (address_id, tag_id) VALUES (:eid, :tid)");
+        $ins = $db->prepare("INSERT INTO address_tags (address_id, tag_id) VALUES (:eid, :tid) " . ipam_dialect()->upsert_or_ignore("address_tags", ["address_id", "tag_id"]) . "");
     } else {
         return;
     }
@@ -3843,7 +3888,7 @@ function detect_subnet_overlaps(PDO $db, string $cidr, ?int $excludeId = null, ?
 
     // Scope overlap detection to the same VRF (NULL = global routing table).
     // SQLite's IS operator handles NULL equality correctly.
-    $sql    = "SELECT id, cidr, prefix, network_bin FROM subnets WHERE ip_version = :v AND vrf_id IS :vrf";
+    $sql    = "SELECT id, cidr, prefix, network_bin FROM subnets WHERE ip_version = :v AND " . ipam_dialect()->null_safe_eq("vrf_id", ":vrf") . "";
     $params = [':v' => $ver, ':vrf' => $vrfId];
     if ($excludeId !== null) {
         $sql .= " AND id != :excl";
@@ -4270,9 +4315,10 @@ function find_parent_site_id(PDO $db, string $cidr, ?int $excludeId = null, ?int
     if (empty($overlaps['parents'])) return null;
 
     $placeholders = implode(',', array_fill(0, count($overlaps['parents']), '?'));
+    $vrfEq = ipam_dialect()->null_safe_eq('vrf_id', '?');
     $st = $db->prepare(
         "SELECT site_id FROM subnets
-         WHERE cidr IN ($placeholders) AND site_id IS NOT NULL AND vrf_id IS ?
+         WHERE cidr IN ($placeholders) AND site_id IS NOT NULL AND $vrfEq
          ORDER BY prefix DESC LIMIT 1"
     );
     $st->execute(array_merge($overlaps['parents'], [$vrfId]));
@@ -4708,10 +4754,10 @@ function ipam_scan_subnet(PDO $db, int $subnetId, string $method, ?int $tcpPort,
     $stats = ['scanned' => 0, 'up' => 0, 'down' => 0, 'skipped' => 0, 'stale_marked' => 0];
     $insert = $db->prepare("
         INSERT INTO scan_results (subnet_id, address_id, ip, method, is_up, latency_ms, scanned_at)
-        VALUES (:sid, :aid, :ip, :method, :is_up, :lat, datetime('now'))
+        VALUES (:sid, :aid, :ip, :method, :is_up, :lat, " . ipam_dialect()->now() . ")
     ");
     $updateSeen = $db->prepare("
-        UPDATE addresses SET last_seen_at = datetime('now'), is_stale = 0 WHERE id = :id
+        UPDATE addresses SET last_seen_at = " . ipam_dialect()->now() . ", is_stale = 0 WHERE id = :id
     ");
 
     foreach ($addresses as $row) {
@@ -4829,7 +4875,7 @@ function ipam_mark_stale_addresses(PDO $db, int $subnetId, int $missThreshold = 
     if ($updates !== []) {
         $db->beginTransaction();
         try {
-            $setStale = $db->prepare("UPDATE addresses SET is_stale = :stale, updated_at = datetime('now') WHERE id = :id");
+            $setStale = $db->prepare("UPDATE addresses SET is_stale = :stale, updated_at = " . ipam_dialect()->now() . " WHERE id = :id");
             foreach ($updates as $u) {
                 $setStale->execute([':stale' => $u['stale'], ':id' => $u['id']]);
             }
@@ -4914,7 +4960,7 @@ function ipam_apply_arp_import(PDO $db, array $entries, int $subnetId): array
 {
     $stats = ['matched' => 0, 'updated' => 0, 'skipped' => 0];
     $find = $db->prepare("SELECT id, mac FROM addresses WHERE subnet_id = :sid AND ip = :ip LIMIT 1");
-    $update = $db->prepare("UPDATE addresses SET mac = :mac, updated_at = datetime('now') WHERE id = :id");
+    $update = $db->prepare("UPDATE addresses SET mac = :mac, updated_at = " . ipam_dialect()->now() . " WHERE id = :id");
 
     foreach ($entries as $entry) {
         $ip  = $entry['ip'];

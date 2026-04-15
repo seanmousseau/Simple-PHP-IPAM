@@ -123,6 +123,11 @@ final class SqliteDialect implements Dialect
         return 'PRAGMA foreign_keys = ' . ($on ? 'ON' : 'OFF');
     }
 
+    public function null_safe_eq(string $column, string $placeholder): string
+    {
+        return "$column IS $placeholder";
+    }
+
     public function driver_name(): string
     {
         return 'sqlite';

@@ -63,7 +63,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $demoUser = $st->fetch();
             if ($demoUser) {
                 login_user(to_int($demoUser['id']), to_str($demoUser['username']), to_str($demoUser['role']));
-                $db->prepare("UPDATE users SET last_login_at=datetime('now') WHERE id=:id")
+                $db->prepare("UPDATE users SET last_login_at=" . ipam_dialect()->now() . " WHERE id=:id")
                    ->execute([':id' => to_int($demoUser['id'])]);
                 audit($db, 'auth.login', 'user', to_int($demoUser['id']), 'demo login');
                 header('Location: dashboard.php');
@@ -94,7 +94,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 clear_login_failures($db, $ip);
                 login_user(to_int($user['id']), to_str($user['username']), to_str($user['role']));
-                $db->prepare("UPDATE users SET last_login_at=datetime('now') WHERE id=:id")
+                $db->prepare("UPDATE users SET last_login_at=" . ipam_dialect()->now() . " WHERE id=:id")
                    ->execute([':id' => to_int($user['id'])]);
                 audit($db, 'auth.login', 'user', to_int($user['id']), 'login ok');
                 header('Location: dashboard.php');

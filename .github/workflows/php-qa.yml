@@ -36,12 +36,34 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        engine: [sqlite]
-        # v2.10.0 (#384) appends 'mysql'
+        engine: [sqlite, mysql]
         # v2.11.0 (#388) appends 'pgsql'
+
+    # MySQL 8.0 service container. GitHub Actions does not support matrix-
+    # gated services, so the container is always started and simply unused
+    # on the sqlite slot. Cold-start overhead is ~15 seconds, amortized by
+    # the runner cache on warm hits.
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: rootpw
+          MYSQL_DATABASE: ipam_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -prootpw --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
 
     env:
       IPAM_DB_DRIVER: ${{ matrix.engine }}
+      # tests/MysqlSmokeTest.php skips when IPAM_MYSQL_DSN is empty, so the
+      # sqlite slot ignores these fields naturally.
+      IPAM_MYSQL_DSN: ${{ matrix.engine == 'mysql' && 'mysql:host=127.0.0.1;port=3306;dbname=ipam_ci;charset=utf8mb4' || '' }}
+      IPAM_MYSQL_USER: ${{ matrix.engine == 'mysql' && 'root' || '' }}
+      IPAM_MYSQL_PASS: ${{ matrix.engine == 'mysql' && 'rootpw' || '' }}
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -50,7 +72,7 @@ jobs:
         uses: shivammathur/setup-php@accd6127cb78bee3e8082180cb391013d204ef9f # v2
         with:
           php-version: '8.2'
-          extensions: pdo_sqlite, mbstring, openssl
+          extensions: pdo_sqlite, pdo_mysql, mbstring, openssl
           coverage: none
 
       # ----- Composer cache (#411) -----
@@ -91,6 +113,79 @@ jobs:
 
       - name: PHPUnit
         run: vendor/bin/phpunit
+
+      # ----- MySQL slot only: test_api.sh against php -S backed by MySQL -----
+      #
+      # Runs the full ~150-assertion API regression suite against a fresh
+      # php -S webserver pointed at the MySQL service container. This
+      # catches MySQL-specific breakage in the page handlers (bound
+      # parameters, pagination SQL, REST API endpoints) that unit tests
+      # alone do not exercise. The sqlite slot already has Playwright
+      # coverage via playwright-nightly.yml and does not need this step.
+      - name: Bootstrap php -S + config for test_api.sh (mysql)
+        if: matrix.engine == 'mysql'
+        run: |
+          cat > Simple-PHP-IPAM/config.php <<'PHP'
+          <?php
+          return [
+              'db_driver' => 'mysql',
+              'db_dsn'    => 'mysql:host=127.0.0.1;port=3306;dbname=ipam_ci;charset=utf8mb4',
+              'db_user'   => 'root',
+              'db_pass'   => 'rootpw',
+              'bootstrap_admin' => [
+                  'username' => 'admin',
+                  'password' => 'ChangeMeNow!12345',
+              ],
+              'force_https' => false,
+              'session_idle_seconds' => 1800,
+          ];
+          PHP
+
+      - name: Start php -S (mysql)
+        if: matrix.engine == 'mysql'
+        run: |
+          php -S 127.0.0.1:8080 -t Simple-PHP-IPAM > /tmp/php-s.log 2>&1 &
+          echo $! > /tmp/php-s.pid
+          # Wait for readiness (up to 30 s)
+          for i in $(seq 1 30); do
+            if curl -sSf http://127.0.0.1:8080/status.php > /tmp/status.json 2>/dev/null; then
+              echo "php -S ready"
+              cat /tmp/status.json
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "php -S failed to start" >&2
+          cat /tmp/php-s.log >&2
+          exit 1
+
+      - name: Create temp API key in MySQL for test_api.sh
+        if: matrix.engine == 'mysql'
+        id: mysql-api-key
+        run: |
+          export IPAM_API_KEY="ci-mysql-$(date +%s)-$RANDOM"
+          export IPAM_API_KEY_HASH="$(php -r 'echo hash("sha256", getenv("IPAM_API_KEY"));')"
+          php -r '
+            $db = new PDO(getenv("IPAM_MYSQL_DSN"), getenv("IPAM_MYSQL_USER"), getenv("IPAM_MYSQL_PASS"), [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+            $db->exec("DELETE FROM api_keys WHERE name = \"test-runner\"");
+            $st = $db->prepare("INSERT INTO api_keys (name, key_hash, is_active, created_by) VALUES (\"test-runner\", :h, 1, \"ci\")");
+            $st->execute([":h" => getenv("IPAM_API_KEY_HASH")]);
+            echo "inserted\n";
+          '
+          echo "key=$IPAM_API_KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Run test_api.sh against MySQL-backed php -S
+        if: matrix.engine == 'mysql'
+        env:
+          API_KEY: ${{ steps.mysql-api-key.outputs.key }}
+        run: bash testing/scripts/test_api.sh http://127.0.0.1:8080
+
+      - name: Stop php -S (mysql)
+        if: always() && matrix.engine == 'mysql'
+        run: |
+          if [ -f /tmp/php-s.pid ]; then
+            kill "$(cat /tmp/php-s.pid)" 2>/dev/null || true
+          fi
 
       # SchemaParityTest lands in v2.10.0 (#409) once the MySQL schema file
       # exists. It will run inside this matrix slot and assert that every

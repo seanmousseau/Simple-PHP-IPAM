@@ -55,7 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($id <= 0) {
             $err = 'Invalid aggregate.';
         } else {
-            $st = $db->prepare("UPDATE aggregates SET description=:desc, rir=:rir, notes=:notes, updated_at=datetime('now') WHERE id=:id");
+            $st = $db->prepare("UPDATE aggregates SET description=:desc, rir=:rir, notes=:notes, updated_at=" . ipam_dialect()->now() . " WHERE id=:id");
             $st->execute([':desc' => $desc, ':rir' => $rir, ':notes' => $notes, ':id' => $id]);
             audit($db, 'aggregate.update', 'aggregate', $id, '');
             flash_set('Aggregate updated.');

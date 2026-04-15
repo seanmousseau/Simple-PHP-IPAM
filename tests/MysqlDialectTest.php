@@ -122,12 +122,14 @@ final class MysqlDialectTest extends TestCase
         $this->mysql->upsert('users', ['username'], []);
     }
 
-    public function testUpsertOrIgnoreUsesFirstConflictColumnAsNoopAssign(): void
+    public function testUpsertOrIgnoreBacktickQuotesFirstConflictColumn(): void
     {
         // ON DUPLICATE KEY UPDATE col = col is MySQL's idiom for "leave
         // existing row alone on conflict" — the self-assign is a no-op.
+        // Column name is backtick-quoted so reserved words (e.g.
+        // settings.key) do not trigger ER_PARSE_ERROR at execution time.
         $sql = $this->mysql->upsert_or_ignore('settings', ['key']);
-        $this->assertSame('ON DUPLICATE KEY UPDATE key = key', $sql);
+        $this->assertSame('ON DUPLICATE KEY UPDATE `key` = `key`', $sql);
     }
 
     public function testUpsertOrIgnoreCompositeStillUsesFirstColumn(): void
@@ -136,7 +138,7 @@ final class MysqlDialectTest extends TestCase
         // conflict target anyway, so we only need any one column to form
         // the self-assign. First conflict column is the stable choice.
         $sql = $this->mysql->upsert_or_ignore('subnet_tags', ['subnet_id', 'tag_id']);
-        $this->assertSame('ON DUPLICATE KEY UPDATE subnet_id = subnet_id', $sql);
+        $this->assertSame('ON DUPLICATE KEY UPDATE `subnet_id` = `subnet_id`', $sql);
     }
 
     public function testUpsertOrIgnoreRequiresAtLeastOneConflictColumn(): void

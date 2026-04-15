@@ -179,6 +179,12 @@ BASIC_AUTH="${BASIC_AUTH:-}"
 CURL_INSECURE="${CURL_INSECURE:-}"
 [[ -z "$CURL_INSECURE" && -n "$DOCKER_CONTAINER" ]] && CURL_INSECURE=1
 
+# Optional extra header for every request. Added in v2.10.0 (#384) so the
+# MySQL CI job can inject X-Forwarded-Proto: https against an HTTP-only
+# `php -S` backend whose config has proxy_trust=true. Value is a single
+# "Name: value" pair; leave unset in normal usage.
+CURL_EXTRA_HEADER="${CURL_EXTRA_HEADER:-}"
+
 # call METHOD URL [JSON_BODY]
 call() {
     local method="$1" url="$2" body="${3:-}"
@@ -186,6 +192,7 @@ call() {
     local args=(-s --noproxy '*' -o "$tmp" -w '%{http_code}' -X "$method"
                 -H "Content-Type: application/json")
     [[ -n "$CURL_INSECURE" ]] && args+=(-k)
+    [[ -n "$CURL_EXTRA_HEADER" ]] && args+=(-H "$CURL_EXTRA_HEADER")
     [[ -n "$BASIC_AUTH" ]] && args+=(-u "$BASIC_AUTH")
     if [[ "$AUTH_MODE" == "query" ]]; then
         # Append api_key as query parameter (for proxies that strip Authorization header)
@@ -284,6 +291,7 @@ log "=== Authentication ==="
 
 _ba_args=()
 [[ -n "$CURL_INSECURE" ]] && _ba_args+=(-k)
+[[ -n "$CURL_EXTRA_HEADER" ]] && _ba_args+=(-H "$CURL_EXTRA_HEADER")
 [[ -n "${BASIC_AUTH:-}" ]] && _ba_args+=(-u "$BASIC_AUTH")
 HTTP_CODE=$(curl -s --noproxy '*' "${_ba_args[@]+"${_ba_args[@]}"}" -o /dev/null -w '%{http_code}' "${API}?resource=subnets")
 [[ "$HTTP_CODE" == "401" ]] && pass "No auth → 401" || fail "No auth → expected 401, got $HTTP_CODE"

@@ -670,14 +670,14 @@ function ipam_migrations(): array
             // Insert the new row with default '[]' if not already present.
             $ignore = ipam_dialect()->upsert_or_ignore('settings', ['key']);
             $db->prepare(
-                "INSERT INTO settings (key, value, type) VALUES (:k, '[]', 'json') $ignore"
+                "INSERT INTO settings (`key`, value, type) VALUES (:k, '[]', 'json') $ignore"
             )->execute([':k' => 'alert.recipient_user_ids']);
 
             // CodeRabbit M1 (PR #450): re-run safety. If alert.recipient_user_ids
             // is already non-default, the migration (or an admin) has already
             // populated it. Don't overwrite admin changes and don't audit a
             // duplicate auto-migrate row on partial fixture replays.
-            $cur = $db->prepare("SELECT value FROM settings WHERE key = 'alert.recipient_user_ids'");
+            $cur = $db->prepare("SELECT value FROM settings WHERE `key` = 'alert.recipient_user_ids'");
             $cur->execute();
             $curRow = $cur->fetch();
             $curVal = is_array($curRow) ? trim(to_str($curRow['value'] ?? '')) : '';
@@ -685,7 +685,7 @@ function ipam_migrations(): array
 
             // Read the legacy alert.email value (may be missing or blank).
             $legacy = '';
-            $st = $db->prepare("SELECT value FROM settings WHERE key = 'alert.email'");
+            $st = $db->prepare("SELECT value FROM settings WHERE `key` = 'alert.email'");
             $st->execute();
             $row = $st->fetch();
             if (is_array($row)) $legacy = trim(to_str($row['value'] ?? ''));
@@ -702,7 +702,7 @@ function ipam_migrations(): array
             if (count($matches) === 1) {
                 $uid = to_int($matches[0]['id']);
                 $payload = json_encode([$uid], JSON_UNESCAPED_SLASHES);
-                $db->prepare("UPDATE settings SET value = :v WHERE key = 'alert.recipient_user_ids'")
+                $db->prepare("UPDATE settings SET value = :v WHERE `key` = 'alert.recipient_user_ids'")
                    ->execute([':v' => is_string($payload) ? $payload : '[]']);
                 // Audit the auto-migration so it appears in audit.php and the
                 // admin sees what happened.
@@ -868,9 +868,9 @@ function ipam_migrate_2_6_0_settings(PDO $db): void
     $config = $GLOBALS['config'] ?? null;
     $definitions = ipam_setting_definitions();
 
-    $check = $db->prepare("SELECT 1 FROM settings WHERE key = :k");
+    $check = $db->prepare("SELECT 1 FROM settings WHERE `key` = :k");
     $ins = $db->prepare(
-        "INSERT INTO settings (key, value, type, updated_at, updated_by)
+        "INSERT INTO settings (`key`, value, type, updated_at, updated_by)
          VALUES (:k, :v, :t, datetime('now'), NULL)"
     );
 
