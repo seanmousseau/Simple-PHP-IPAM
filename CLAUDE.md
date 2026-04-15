@@ -605,6 +605,18 @@ bash -c 'set -a; source ~/.claude/dev-secrets.env; set +a; \
 
 #### test_api.sh
 
+**Containerized (preferred since v2.9.0 / #451):**
+
+```bash
+bash testing/playwright/bootstrap-app.sh sqlite
+DOCKER_CONTAINER=ipam-pw-test bash testing/scripts/test_api.sh https://127.0.0.1:8443
+bash testing/playwright/teardown-app.sh
+```
+
+No SSH, no shared state, no `BASIC_AUTH`. The same flow runs in CI's `api-tests` job under `playwright-nightly.yml`.
+
+**Against dev-direct (use only when you need the shared deployment):**
+
 ```bash
 bash -c 'set -a; source ~/.claude/dev-secrets.env; set +a; \
   BASIC_AUTH="$IPAM_BASIC_USER:$IPAM_BASIC_PASS" \
@@ -613,7 +625,7 @@ bash -c 'set -a; source ~/.claude/dev-secrets.env; set +a; \
   bash testing/scripts/test_api.sh https://dev-direct.seanmousseau.com:8343/claude/ipam'
 ```
 
-- **`BASIC_AUTH=user:pass`** is required. Exporting `IPAM_BASIC_USER`/`PASS` alone is not enough — the script reads the combined `BASIC_AUTH` env var. Forgetting this returns 401 on every POST/PUT.
+- **`BASIC_AUTH=user:pass`** is required for dev-direct. Exporting `IPAM_BASIC_USER`/`PASS` alone is not enough — the script reads the combined `BASIC_AUTH` env var. Forgetting this returns 401 on every POST/PUT.
 - **`SSH_HOST` + `SSH_DB_PATH`** let the script auto-create an API key on the dev server. Without them you must pass `API_KEY=...`.
 - Expect ~150 PASS, 0 FAIL, possibly 1 SKIP. A `database is locked` error means a stray cron is holding the lock — re-run pre-flight cleanup.
 
@@ -667,7 +679,7 @@ bash testing/playwright/teardown-app.sh
 Runs the same image CI runs, ~1.5 min wall clock on a warm Docker cache. If this is green locally, the PR check will be green. If you skip it, you'll find out when CI reports in ~4 minutes.
 
 **Manual dev-direct testing is only needed when:**
-- You need `testing/scripts/test_api.sh` (REST API regression coverage — not in CI yet; see the v2.10.0 roadmap)
+- You need `testing/scripts/test_api.sh` against a real deployment specifically (the containerized `DOCKER_CONTAINER=ipam-pw-test` path in CI covers regression on every PR via #451 — see the **test_api.sh** subsection above)
 - You're verifying `timezone.spec.ts` (SSH-based remote config patching — skipped against containerized targets)
 - You're testing real-IdP OIDC against a live provider
 - You suspect a bug that only reproduces behind the reverse-proxy / shared Chrome stack

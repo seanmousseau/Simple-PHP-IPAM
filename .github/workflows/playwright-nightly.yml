@@ -7,9 +7,12 @@ name: Playwright (nightly)
 #   v2.10.0 adds mysql and v2.11.0 adds pgsql to the matrix.
 # - `htaccess-subset` runs a small HTTP-level test that verifies .htaccess deny
 #   rules work correctly against the same image.
+# - `api-tests` runs testing/scripts/test_api.sh against the same image (#451,
+#   v2.9.0). API regression coverage that previously only ran against the
+#   shared dev-direct host now runs in CI on every PR.
 #
-# Both jobs use testing/playwright/Dockerfile.apache so the realism gap between
-# `php -S` and production Apache does not exist.
+# All three jobs use testing/playwright/Dockerfile.apache so the realism gap
+# between `php -S` and production Apache does not exist.
 
 on:
   schedule:
@@ -130,3 +133,36 @@ jobs:
           name: playwright-report-htaccess
           path: testing/playwright/playwright-report/
           retention-days: 7
+
+  api-tests:
+    name: API regression (test_api.sh)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@accd6127cb78bee3e8082180cb391013d204ef9f # v2
+        with:
+          php-version: '8.2'
+          extensions: pdo_sqlite, mbstring, openssl
+          coverage: none
+
+      - name: Bootstrap containerized IPAM
+        run: bash testing/playwright/bootstrap-app.sh sqlite
+
+      - name: Run API regression suite
+        # #451: test_api.sh now accepts DOCKER_CONTAINER and routes auto-API-key
+        # creation through `docker exec` instead of ssh. The container name
+        # matches bootstrap-app.sh's default.
+        env:
+          DOCKER_CONTAINER: ipam-pw-test
+        run: bash testing/scripts/test_api.sh https://127.0.0.1:8443
+
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs ipam-pw-test || true
+
+      - name: Tear down containerized IPAM
+        if: always()
+        run: bash testing/playwright/teardown-app.sh
