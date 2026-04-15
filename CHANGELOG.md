@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [2.9.2] - 2026-04-15
+
+Second hotfix on top of v2.9.1 for a related cascade. Same failure mode ("headers already sent" wall after an error got written to stdout), different trigger. No new features, no schema changes. Upgrade is safe from any v2.9.x install.
+
+### Fixed
+- **Database Tools import cascade on missing `import_sql_max_mb` config key.** On an install upgraded from an older release whose `config.php` never had `import_sql_max_mb`, `db_tools.php:100` read the undefined key, PHP 8.x emitted an `E_WARNING` ("Undefined array key") to stdout, and every subsequent `header()` / `session_start()` call cascaded with "headers already sent". The v2.9.1 hotfix only handled PHP **startup** warnings (e.g. `post_max_size` exceeded); this was a **runtime** warning and slipped through.
+
+### Changed
+- **`Simple-PHP-IPAM/lib.php`** — `ipam_config_defaults()` registry now includes `import_sql_max_mb` with `default => 200`. Root cause of the missing key: `ipam_config_sync()` reads this registry to auto-populate missing keys on boot during `upgrade.sh` → `migrate.php` → `init.php`, but the registry entry was absent, so the sync silently skipped it. On the next request after this release lands, missing keys are written back into `config.php` automatically.
+- **`Simple-PHP-IPAM/init.php`** — installed a global `set_error_handler()` at the very top that routes `E_WARNING` / `E_NOTICE` / `E_DEPRECATED` / `E_USER_*` to `error_log()` only, never to stdout. **This is the root-cause fix for the entire class of cascade bug.** Any future unguarded array access, deprecated function call, or runtime notice will be logged to the PHP error log instead of cascading into the HTTP response body. Fatal errors (`E_ERROR`, parse errors) bypass user handlers and still exit as normal. The handler respects `error_reporting()` so `@`-suppressed calls behave unchanged.
+- **`Simple-PHP-IPAM/db_tools.php`** — belt-and-suspenders `?? 200` null-coalesce on the `import_sql_max_mb` read site.
+- **`phpstan.neon`** — marked `import_sql_max_mb?: int` in the `IpamConfig` type alias (it is optional in practice on upgrades from older installs).
+
 ## [2.9.1] - 2026-04-15
 
 Hotfix release for one post-v2.9.0 user report. No new features. No schema changes. Upgrade is safe from any v2.9.x install.
@@ -664,6 +677,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[2.9.2]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.9.1...v2.9.2
 [2.9.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.9.0...v2.9.1
 [2.9.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.8.0...v2.9.0
 [2.8.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.7.0...v2.8.0

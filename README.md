@@ -8,14 +8,16 @@ No Composer, no npm, no external dependencies — just PHP and a web server.
 
 ---
 
-## What's new in v2.9.1
+## What's new in v2.9.2
 
-Hotfix release for one post-v2.9.0 user report. No new features, no schema changes, no behavioural differences — upgrade is safe from any v2.9.x install.
+Second hotfix on top of v2.9.1 for a related cascade. Same failure mode, different trigger. No new features, no schema changes — upgrade is safe from any v2.9.x install.
 
-- **Graceful 413 on oversized SQL imports.** Uploading a SQL dump larger than `post_max_size` previously produced a wall of "headers already sent" warnings and left the session broken, with no indication of what actually went wrong. Root cause: PHP emitted its size-limit warning to stdout *before any script ran*, committing the HTTP response body and cascading into every `session_start()` call in `init.php`. Fixed by (a) raising the bundled `.htaccess` defaults to `upload_max_filesize 512M` / `post_max_size 520M`, (b) suppressing PHP startup warnings from HTTP output via `php_flag display_startup_errors Off` (they still land in the error log), and (c) a narrow early `CONTENT_LENGTH` check in `db_tools.php` that emits a clean 413 page with per-SAPI guidance *before* `init.php` runs.
-- **New docs section: "Upload limits for DB import"** in `docs/install.md` — the table of places to raise limits per server type (Apache + mod_php, PHP-FPM, CGI, nginx / Caddy) and the app-level `import_sql_max_mb` soft cap in `config.php` (default 200 MB).
+- **Database Tools import cascade on missing config keys (root-cause fix).** On installs upgraded from older releases whose `config.php` never had `import_sql_max_mb`, reading the undefined key emitted an `E_WARNING` that committed the HTTP response body and cascaded into every `session_start()` call. v2.9.1's fix covered PHP *startup* warnings (e.g. `post_max_size` exceeded) but not *runtime* ones.
+- **Global warning handler in `init.php`.** This is the real fix for the entire class of bug: runtime `E_WARNING` / `E_NOTICE` / `E_DEPRECATED` errors are now routed to the PHP error log only, never to stdout. Operators still see every warning in the error log; users in the browser just get a working page. Fatal errors (`E_ERROR`, parse errors) bypass the handler and still exit as normal.
+- **Missing config key in the sync registry.** `ipam_config_defaults()` didn't list `import_sql_max_mb`, so `ipam_config_sync()` on boot silently skipped it during `upgrade.sh`. That's fixed — any install missing the key will have it written back to `config.php` on the next request after upgrade.
+- Plus a belt-and-suspenders `?? 200` fallback on the `db_tools.php` read site and a matching `IpamConfig` type alias update.
 
-**All v2.9.0 features from the driver-abstraction foundation release are still present** — Dialect abstraction, BLOB affinity normalization, Composer runtime-dep infrastructure, CI tier restructure, containerized `test_api.sh`, `oidc.default_role` dropdown. See the [v2.9.0 CHANGELOG entry](CHANGELOG.md#290---2026-04-15) for the full list.
+**All v2.9.0 / v2.9.1 features are still present** — Dialect abstraction, BLOB affinity normalization, Composer runtime-dep infrastructure, CI tier restructure, containerized `test_api.sh`, `oidc.default_role` dropdown, graceful 413 on oversized uploads. See the [v2.9.0](CHANGELOG.md#290---2026-04-15) and [v2.9.1](CHANGELOG.md#291---2026-04-15) CHANGELOG entries for the full list.
 
 See [CHANGELOG.md](CHANGELOG.md) for full release history, [docs/upgrading.md](docs/upgrading.md) for upgrade notes, and [docs/configuration.md](docs/configuration.md) for the settings transition plan.
 

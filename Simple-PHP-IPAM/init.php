@@ -1,6 +1,30 @@
 <?php
 declare(strict_types=1);
 
+// Defensive error handler: route runtime warnings and notices to error_log()
+// only, never to stdout. PHP's default behaviour (display_errors=on) writes
+// E_WARNING / E_NOTICE / E_DEPRECATED messages into the HTTP response body,
+// which commits the response headers and causes every subsequent header() /
+// session_start() call to cascade with "headers already sent".
+//
+// This has bitten v2.9.x twice already: once on oversized uploads exceeding
+// post_max_size (fixed in v2.9.1), and once on a config.php missing a newer
+// registry key like `import_sql_max_mb` on an install where `config.php`
+// is not writable by the web server user (so `ipam_config_sync()` cannot
+// auto-populate the missing key). Rather than hunt every unguarded
+// $config[...] read, install a global handler that swallows these non-fatal
+// errors and logs them. Fatal errors (E_ERROR / parse errors) still exit
+// because they bypass the user handler.
+//
+// Operators should monitor the PHP error log — any missing config key still
+// surfaces there, just not in the user's browser.
+set_error_handler(static function (int $severity, string $message, string $file, int $line): bool {
+    // Respect the error_reporting() setting (e.g. @-suppressed calls).
+    if ((error_reporting() & $severity) === 0) return true;
+    error_log(sprintf('Simple-PHP-IPAM [%d]: %s in %s:%d', $severity, $message, $file, $line));
+    return true;
+}, E_WARNING | E_NOTICE | E_USER_WARNING | E_USER_NOTICE | E_DEPRECATED | E_USER_DEPRECATED);
+
 /** @var IpamConfig $config */
 $config = require __DIR__ . '/config.php';
 
