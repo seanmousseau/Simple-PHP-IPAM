@@ -57,6 +57,8 @@ git clone https://github.com/seanmousseau/Simple-PHP-IPAM.git /var/www/ipam
 
 The application files live inside the `Simple-PHP-IPAM/` subdirectory of the repo. Point your web server document root at that directory.
 
+> **About `vendor/` (v2.9.0+).** Starting in v2.9.0, release tarballs bundle a small set of pre-built PHP libraries under `Simple-PHP-IPAM/vendor/`. You do **not** need Composer on the target server — the libraries are pre-packaged. Do not edit anything inside `vendor/`; it will be overwritten on the next upgrade. The bundled `vendor/.htaccess` denies direct HTTP access to library source.
+
 ---
 
 ## Step 2 — Set file permissions
