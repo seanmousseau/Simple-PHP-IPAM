@@ -78,13 +78,21 @@ function ipam_db(string $path): PDO
 /**
  * Create the audit_log table and its append-only triggers (idempotent).
  * Centralises DDL that was previously duplicated in 4 places.
+ *
+ * Routes type declarations and triggers through the active dialect so
+ * fresh MySQL / Postgres installs emit engine-valid DDL. On SQLite the
+ * resulting text matches the pre-v2.10.0 literals byte-for-byte. Per
+ * the v2.10.0 schema-files decision: historical migration closures are
+ * NOT refactored — schema.mysql.sql / schema.pgsql.sql pre-populate
+ * schema_migrations so replay is a no-op on fresh non-SQLite installs.
  */
 function ensure_audit_log_table(PDO $db): void
 {
+    $d = ipam_dialect();
     $db->exec("
         CREATE TABLE IF NOT EXISTS audit_log (
-          id          INTEGER PRIMARY KEY AUTOINCREMENT,
-          created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+          id          " . $d->autoincrement() . ",
+          created_at  TEXT NOT NULL DEFAULT (" . $d->now() . "),
           user_id     INTEGER, username TEXT, action TEXT NOT NULL,
           entity_type TEXT NOT NULL, entity_id INTEGER,
           ip TEXT, user_agent TEXT, details TEXT
@@ -92,12 +100,9 @@ function ensure_audit_log_table(PDO $db): void
     ");
     $db->exec("CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action)");
     $db->exec("CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at)");
-    $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_update
-        BEFORE UPDATE ON audit_log
-        BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
-    $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
-        BEFORE DELETE ON audit_log
-        BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
+    foreach ($d->append_only_trigger('audit_log') as $stmt) {
+        $db->exec($stmt);
+    }
 }
 
 function ipam_db_init(PDO $db): void
@@ -1333,10 +1338,11 @@ function history_log_address(PDO $db, string $action, int $subnetId, string $ip,
 
 function ensure_migrations_table(PDO $db): void
 {
+    $d = ipam_dialect();
     $db->exec("CREATE TABLE IF NOT EXISTS schema_migrations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id " . $d->autoincrement() . ",
         version TEXT NOT NULL UNIQUE,
-        applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        applied_at TEXT NOT NULL DEFAULT (" . $d->now() . ")
     )");
 }
 
