@@ -200,6 +200,7 @@ function ensure_audit_log_table(PDO $db): void
 
 function ipam_db_init(PDO $db): void
 {
+    global $config;
     $driver = ipam_dialect()->driver_name();
 
     // SQLite-only fast path: skip bootstrap checks if the sentinel file is
@@ -207,8 +208,15 @@ function ipam_db_init(PDO $db): void
     // stat, so this optimisation does not apply there — the MySQL path
     // runs the full check on every bootstrap (overhead is one SELECT).
     if ($driver === 'sqlite') {
-        $sentinelPath = __DIR__ . '/data/.db_initialized';
-        $dbFilePath   = __DIR__ . '/data/ipam.sqlite';
+        // Honour a deployment's configured db_path so the sentinel check
+        // stats the real database file, not the default one. The sentinel
+        // itself lives next to the DB file so custom paths stay
+        // self-contained.
+        $dbPathRaw  = is_array($config ?? null) ? ($config['db_path'] ?? null) : null;
+        $dbFilePath = is_string($dbPathRaw) && $dbPathRaw !== ''
+            ? $dbPathRaw
+            : __DIR__ . '/data/ipam.sqlite';
+        $sentinelPath = dirname($dbFilePath) . '/.db_initialized';
         if (is_file($sentinelPath) && is_file($dbFilePath)) {
             $sentinelTime = (int)filemtime($sentinelPath);
             $dbTime       = (int)filemtime($dbFilePath);
@@ -289,9 +297,14 @@ function ipam_db_init(PDO $db): void
 
     // Write sentinel so subsequent requests skip bootstrap queries (SQLite
     // only — the sentinel is a filesystem optimisation for the local DB
-    // file and has no meaning on MySQL).
+    // file and has no meaning on MySQL). Location must match the path
+    // derived in the fast-path above: next to the resolved db_path file.
     if ($driver === 'sqlite') {
-        @touch(__DIR__ . '/data/.db_initialized');
+        $dbPathRaw  = is_array($config ?? null) ? ($config['db_path'] ?? null) : null;
+        $dbFilePath = is_string($dbPathRaw) && $dbPathRaw !== ''
+            ? $dbPathRaw
+            : __DIR__ . '/data/ipam.sqlite';
+        @touch(dirname($dbFilePath) . '/.db_initialized');
     }
 }
 
