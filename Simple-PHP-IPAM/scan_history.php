@@ -26,15 +26,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
 
+        // #380: dialect-routed upsert so future engines pick up the right idiom.
+        $d = ipam_dialect();
+        $upsertClause = $d->upsert('scan_schedules', ['subnet_id'], ['method', 'tcp_port', 'interval_minutes', 'is_active', 'updated_at']);
         $db->prepare("
             INSERT INTO scan_schedules (subnet_id, method, tcp_port, interval_minutes, is_active, updated_at)
-            VALUES (:sid, :method, :port, :interval, :active, datetime('now'))
-            ON CONFLICT(subnet_id) DO UPDATE SET
-                method           = excluded.method,
-                tcp_port         = excluded.tcp_port,
-                interval_minutes = excluded.interval_minutes,
-                is_active        = excluded.is_active,
-                updated_at       = datetime('now')
+            VALUES (:sid, :method, :port, :interval, :active, {$d->now()})
+            $upsertClause
         ")->execute([
             ':sid'      => $sid,
             ':method'   => $method,

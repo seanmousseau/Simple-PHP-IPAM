@@ -76,8 +76,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
         if (!$err) {
             // Execute import inside a transaction; rollback on any error
             try {
-                // Close current connection cleanly, re-open after replacing DB content
-                $db->exec("PRAGMA foreign_keys=OFF");
+                // Close current connection cleanly, re-open after replacing DB content.
+                // #380: route FK toggle through the dialect so future engines
+                // swap in their own connection-level override.
+                $d = ipam_dialect();
+                $fkOff = $d->pragma_foreign_keys(false);
+                if ($fkOff !== null) $db->exec($fkOff);
                 $db->beginTransaction();
 
                 // Drop all user tables (except sqlite_sequence which is auto-managed)
@@ -173,7 +177,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                     $stmtCount++;
                 }
 
-                $db->exec("PRAGMA foreign_keys=ON");
+                $fkOn = $d->pragma_foreign_keys(true);
+                if ($fkOn !== null) $db->exec($fkOn);
                 $db->commit();
 
                 $elapsed = round(microtime(true) - $importStart, 1);
@@ -184,7 +189,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'impor
                 @unlink(__DIR__ . '/data/.db_initialized');
             } catch (Throwable $ex) {
                 if ($db->inTransaction()) $db->rollBack();
-                $db->exec("PRAGMA foreign_keys=ON");
+                $fkOnRecover = ipam_dialect()->pragma_foreign_keys(true);
+                if ($fkOnRecover !== null) $db->exec($fkOnRecover);
                 $err = 'Import failed: ' . $ex->getMessage()
                      . ' The database has been restored from the pre-import state.';
                 audit($db, 'db.import_failed', 'system', null,
