@@ -1,6 +1,24 @@
 <?php
 declare(strict_types=1);
 
+/**
+ * Returns the active SQL dialect (#378). init.php instantiates this once per
+ * request and stows it under $GLOBALS['ipam_dialect']. v2.9.0 always returns
+ * a SqliteDialect; v2.10.0+ may return Mysql/Pgsql variants based on
+ * $config['db_driver']. Tests that need to bypass init.php can set the
+ * global directly.
+ *
+ * Throws a RuntimeException only if init.php was skipped — every page entry
+ * point loads init.php which guarantees the global is populated.
+ */
+function ipam_dialect(): Dialect
+{
+    if (!isset($GLOBALS['ipam_dialect']) || !($GLOBALS['ipam_dialect'] instanceof Dialect)) {
+        throw new RuntimeException('ipam_dialect() called before init.php loaded the dialect — did you bypass init.php?');
+    }
+    return $GLOBALS['ipam_dialect'];
+}
+
 function ipam_db(string $path): PDO
 {
     $dir = dirname($path);
