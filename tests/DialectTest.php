@@ -91,6 +91,43 @@ final class DialectTest extends TestCase
         $this->sqlite->upsert('users', ['username'], []);
     }
 
+    public function testUpsertOrIgnoreSingleConflictColumn(): void
+    {
+        $sql = $this->sqlite->upsert_or_ignore('settings', ['key']);
+        $this->assertSame('ON CONFLICT(key) DO NOTHING', $sql);
+    }
+
+    public function testUpsertOrIgnoreCompositeConflictColumns(): void
+    {
+        $sql = $this->sqlite->upsert_or_ignore('subnet_tags', ['subnet_id', 'tag_id']);
+        $this->assertSame('ON CONFLICT(subnet_id, tag_id) DO NOTHING', $sql);
+    }
+
+    public function testUpsertOrIgnoreRequiresAtLeastOneConflictColumn(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->sqlite->upsert_or_ignore('settings', []);
+    }
+
+    public function testUpsertOrIgnoreComposesIntoValidSqliteInsert(): void
+    {
+        // End-to-end: the fragment the dialect returns must compose into a
+        // real INSERT that a real SQLite DB will accept and that leaves an
+        // existing row untouched on conflict.
+        $pdo = new PDO('sqlite::memory:');
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $pdo->query("CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT NOT NULL)");
+        $pdo->prepare("INSERT INTO kv (k, v) VALUES (:k, :v)")
+            ->execute([':k' => 'greeting', ':v' => 'hello']);
+
+        $ignore = $this->sqlite->upsert_or_ignore('kv', ['k']);
+        $st = $pdo->prepare("INSERT INTO kv (k, v) VALUES (:k, :v) $ignore");
+        $st->execute([':k' => 'greeting', ':v' => 'overwritten']);
+
+        $row = $pdo->query("SELECT v FROM kv WHERE k = 'greeting'")->fetch(PDO::FETCH_ASSOC);
+        $this->assertSame('hello', $row['v']);
+    }
+
     public function testAppendOnlyTriggerReturnsExactlyTwoStatements(): void
     {
         // SQLite needs two BEFORE triggers; MySQL needs two SIGNAL triggers;

@@ -668,9 +668,9 @@ function ipam_migrations(): array
             if (!in_array('settings', $tables, true)) return;
 
             // Insert the new row with default '[]' if not already present.
+            $ignore = ipam_dialect()->upsert_or_ignore('settings', ['key']);
             $db->prepare(
-                "INSERT INTO settings (key, value, type) VALUES (:k, '[]', 'json')
-                 ON CONFLICT(key) DO NOTHING"
+                "INSERT INTO settings (key, value, type) VALUES (:k, '[]', 'json') $ignore"
             )->execute([':k' => 'alert.recipient_user_ids']);
 
             // CodeRabbit M1 (PR #450): re-run safety. If alert.recipient_user_ids
