@@ -66,14 +66,22 @@ if ($methodOverride !== null && !in_array($methodOverride, ['icmp', 'tcp', 'both
 // Open the database
 // ---------------------------------------------------------------------------
 /** @var array<string, mixed> $config */
-$dbPath = isset($config['db_path']) && to_str($config['db_path']) !== ''
-    ? to_str($config['db_path'])
-    : $scriptDir . '/data/ipam.sqlite';
-if (!file_exists($dbPath)) {
-    fwrite(STDERR, "Error: database not found at $dbPath\n");
-    exit(1);
+// Default db_path for legacy configs that omit it, then sanity-check the
+// file on SQLite only (MySQL has no local path to check).
+$driverRaw = $config['db_driver'] ?? 'sqlite';
+$driver = is_string($driverRaw) ? $driverRaw : 'sqlite';
+if ($driver === 'sqlite' || $driver === '') {
+    $dbPathRaw = $config['db_path'] ?? '';
+    $dbPath = is_string($dbPathRaw) && $dbPathRaw !== ''
+        ? $dbPathRaw
+        : $scriptDir . '/data/ipam.sqlite';
+    $config['db_path'] = $dbPath;
+    if (!file_exists($dbPath)) {
+        fwrite(STDERR, "Error: database not found at $dbPath\n");
+        exit(1);
+    }
 }
-$db = ipam_db($dbPath);
+$db = ipam_db($config);
 
 // ---------------------------------------------------------------------------
 // Gather subnets to scan

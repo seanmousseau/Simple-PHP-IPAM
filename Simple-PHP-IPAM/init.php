@@ -133,7 +133,7 @@ session_start();
 
 require __DIR__ . '/lib.php';
 
-$db = ipam_db(to_str($config['db_path']));
+$db = ipam_db($config);
 ipam_db_init($db);
 
 // Now that settings are available, apply the admin-configured timezone. All DB

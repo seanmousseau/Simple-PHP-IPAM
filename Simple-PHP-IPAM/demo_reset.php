@@ -23,7 +23,7 @@ if (!($config['demo_mode']['enabled'] ?? false)) {
     exit(0);
 }
 
-$db = ipam_db($config['db_path']);
+$db = ipam_db($config);
 ipam_db_init($db);
 
 demo_reset_db($db);

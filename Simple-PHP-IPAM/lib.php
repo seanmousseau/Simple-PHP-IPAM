@@ -2,12 +2,13 @@
 declare(strict_types=1);
 
 /**
- * Returns the active SQL dialect (#378). init.php instantiates this once per
- * request and stows it under $GLOBALS['ipam_dialect']. v2.9.0 always returns
- * a SqliteDialect; v2.10.0+ may return Mysql/Pgsql variants based on
- * $config['db_driver']. Tests and CLI scripts that bootstrap lib.php
- * directly (without init.php) get a SqliteDialect lazily — this is the
- * v2.9.0 default and matches the only driver shipped this release.
+ * Returns the active SQL dialect (#378). ipam_db() bootstraps this once per
+ * request based on $config['db_driver'] and stows it under
+ * $GLOBALS['ipam_dialect']. v2.9.0 shipped SqliteDialect only; v2.10.0 adds
+ * MysqlDialect (#382); v2.11.0 adds PgsqlDialect (#386). Tests and CLI
+ * scripts that bootstrap lib.php directly (without going through ipam_db())
+ * get a SqliteDialect lazily — that is the historical default and matches
+ * what every test fixture expects.
  */
 function ipam_dialect(): Dialect
 {
@@ -17,6 +18,35 @@ function ipam_dialect(): Dialect
         $GLOBALS['ipam_dialect'] = new SqliteDialect();
     }
     return $GLOBALS['ipam_dialect'];
+}
+
+/**
+ * Select and cache the active dialect from a config array. Called by
+ * ipam_db() during connection bootstrap; safe to call standalone from
+ * tests that need to pin a specific dialect without opening a connection.
+ *
+ * @param array<string, mixed> $config
+ */
+function ipam_dialect_from_config(array $config): Dialect
+{
+    require_once __DIR__ . '/dialects/Dialect.php';
+    $driverRaw = $config['db_driver'] ?? 'sqlite';
+    $driver = is_string($driverRaw) ? $driverRaw : 'sqlite';
+    switch ($driver) {
+        case 'mysql':
+            require_once __DIR__ . '/dialects/MysqlDialect.php';
+            $dialect = new MysqlDialect();
+            break;
+        case 'sqlite':
+        case '':
+            require_once __DIR__ . '/dialects/SqliteDialect.php';
+            $dialect = new SqliteDialect();
+            break;
+        default:
+            throw new RuntimeException("Unsupported db_driver: $driver");
+    }
+    $GLOBALS['ipam_dialect'] = $dialect;
+    return $dialect;
 }
 
 /**
@@ -56,22 +86,77 @@ function ipam_bind_binary(PDOStatement $stmt, int|string $param, string $bin): v
     $stmt->bindValue($param, $bin, PDO::PARAM_LOB);
 }
 
-function ipam_db(string $path): PDO
+/**
+ * Open a PDO connection based on $config['db_driver'].
+ *
+ * Dispatcher for the multi-engine support introduced in v2.10.0. Picks the
+ * dialect first (so ipam_dialect() returns the right instance for the rest
+ * of the request), then connects to the selected engine.
+ *
+ * Supported drivers:
+ *   - 'sqlite' (default) — uses $config['db_path'] as the file path.
+ *   - 'mysql' (experimental, v2.10.0 #382) — uses $config['db_dsn'],
+ *     $config['db_user'], $config['db_pass']. Requires MySQL 8.0+.
+ *
+ * @param array<string, mixed> $config
+ */
+function ipam_db(array $config): PDO
 {
-    $dir = dirname($path);
-    if (!is_dir($dir)) {
-        mkdir($dir, 0700, true);
+    $dialect = ipam_dialect_from_config($config);
+
+    switch ($dialect->driver_name()) {
+        case 'sqlite':
+            $pathRaw = $config['db_path'] ?? '';
+            $path = is_string($pathRaw) ? $pathRaw : '';
+            if ($path === '') {
+                throw new RuntimeException('ipam_db: sqlite driver requires $config[\'db_path\']');
+            }
+            $dir = dirname($path);
+            if (!is_dir($dir)) {
+                mkdir($dir, 0700, true);
+            }
+            $pdo = new PDO('sqlite:' . $path, null, null, [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_EMULATE_PREPARES => false,
+            ]);
+            $pdo->exec("PRAGMA journal_mode = WAL;");
+            $pdo->exec("PRAGMA busy_timeout = 30000;");
+            break;
+
+        case 'mysql':
+            $dsnRaw  = $config['db_dsn']  ?? '';
+            $userRaw = $config['db_user'] ?? '';
+            $passRaw = $config['db_pass'] ?? '';
+            $dsn  = is_string($dsnRaw)  ? $dsnRaw  : '';
+            $user = is_string($userRaw) ? $userRaw : '';
+            $pass = is_string($passRaw) ? $passRaw : '';
+            if ($dsn === '') {
+                throw new RuntimeException('ipam_db: mysql driver requires $config[\'db_dsn\']');
+            }
+            $pdo = new PDO($dsn, $user, $pass, [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_EMULATE_PREPARES => false,
+            ]);
+            // MySQL 8.0 minimum. Versions before that lack utf8mb4 defaults,
+            // modern JSON support, and the looser InnoDB key prefix limit
+            // this project relies on. Rejecting at connect keeps bootstrap
+            // failures clear and immediate.
+            $serverVersionRaw = $pdo->getAttribute(PDO::ATTR_SERVER_VERSION);
+            $serverVersion = is_string($serverVersionRaw) ? $serverVersionRaw : '';
+            if ($serverVersion === '' || version_compare($serverVersion, '8.0.0', '<')) {
+                throw new RuntimeException(
+                    "MySQL 8.0+ is required (server reports '$serverVersion')"
+                );
+            }
+            break;
+
+        default:
+            throw new RuntimeException('ipam_db: unreachable — unsupported driver ' . $dialect->driver_name());
     }
 
-    $pdo = new PDO('sqlite:' . $path, null, null, [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        PDO::ATTR_EMULATE_PREPARES => false,
-    ]);
-
-    $pdo->exec("PRAGMA journal_mode = WAL;");
-    $pdo->exec("PRAGMA busy_timeout = 30000;");
-    $fk = ipam_dialect()->pragma_foreign_keys(true);
+    $fk = $dialect->pragma_foreign_keys(true);
     if ($fk !== null) {
         $pdo->exec($fk);
     }

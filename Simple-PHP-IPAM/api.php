@@ -34,7 +34,7 @@ header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
 header('Referrer-Policy: strict-origin-when-cross-origin');
 
-$db = ipam_db(to_str($config['db_path']));
+$db = ipam_db($config);
 ipam_db_init($db);
 
 // ---- API key authentication ----
