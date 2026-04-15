@@ -38,7 +38,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        driver: [sqlite]   # v2.10.0 adds 'mysql'; v2.11.0 adds 'pgsql'
+        driver: [sqlite, mysql]   # v2.11.0 appends 'pgsql' (#388)
     env:
       DRIVER: ${{ matrix.driver }}
     steps:

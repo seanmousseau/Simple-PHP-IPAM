@@ -1580,7 +1580,17 @@ function apply_migrations(PDO $db): array
             $toggleFk($db, $fkOff);
 
             try {
-                $db->exec("BEGIN EXCLUSIVE");
+                // SQLite's `BEGIN EXCLUSIVE` acquires a table-level write
+                // lock up front, which is required around DDL to avoid
+                // SQLITE_LOCKED mid-migration. MySQL / Postgres don't need
+                // (and don't accept) the EXCLUSIVE modifier — their DDL
+                // acquires its own metadata locks. Fall back to a plain
+                // transaction on non-SQLite engines.
+                if ($dialect->driver_name() === 'sqlite') {
+                    $db->exec("BEGIN EXCLUSIVE");
+                } else {
+                    $db->exec("START TRANSACTION");
+                }
             } catch (Throwable $e) {
                 $toggleFk($db, $fkOn);
                 $lastErr = $e;
@@ -3071,6 +3081,8 @@ function render_security_banner(string $context, string $message): void
 
 function demo_reset_db(PDO $db): void
 {
+    $driver = ipam_dialect()->driver_name();
+
     // audit_log has append-only triggers that block DELETE, so bypass via rename+drop,
     // then immediately recreate the table and triggers.
     $db->exec("ALTER TABLE audit_log RENAME TO audit_log_old");
@@ -3078,14 +3090,33 @@ function demo_reset_db(PDO $db): void
     ensure_audit_log_table($db);
 
     // Clear in FK-safe order; CASCADE removes subnet_tags, address_tags, alert_state.
+    // schema_migrations is only wiped on SQLite, where the historical migration
+    // closures are expected to re-run after the reset. On MySQL / Postgres,
+    // schema.{engine}.sql pre-seeds schema_migrations with every historical
+    // version row at fresh-install time (v2.10.0 #484 decision), and the
+    // historical closures use SQLite-specific PRAGMA / sqlite_master queries
+    // that would fail on other engines. Keep the pre-seed intact so
+    // apply_migrations() remains a no-op.
     $tables = ['address_history', 'login_attempts', 'api_keys',
                'addresses', 'subnets', 'vlans', 'vrfs', 'contacts', 'tags',
-               'sites', 'users', 'schema_migrations'];
+               'sites', 'users'];
+    if ($driver === 'sqlite') {
+        $tables[] = 'schema_migrations';
+    }
     foreach ($tables as $t) {
         $db->exec("DELETE FROM $t");
-        $db->exec("DELETE FROM sqlite_sequence WHERE name='$t'");
+        // SQLite tracks AUTOINCREMENT counters in sqlite_sequence; clear them
+        // so subsequent inserts start at 1. MySQL / Postgres have their own
+        // mechanisms (ALTER TABLE ... AUTO_INCREMENT = 1, ALTER SEQUENCE
+        // ... RESTART) and reset automatically when explicit IDs are
+        // inserted — which demo_seed_data does — so no reset is needed.
+        if ($driver === 'sqlite') {
+            $db->exec("DELETE FROM sqlite_sequence WHERE name='$t'");
+        }
     }
-    $db->exec("DELETE FROM sqlite_sequence WHERE name='audit_log'");
+    if ($driver === 'sqlite') {
+        $db->exec("DELETE FROM sqlite_sequence WHERE name='audit_log'");
+    }
     apply_migrations($db);
     demo_seed_data($db);
 }
@@ -3316,9 +3347,15 @@ function demo_seed_data(PDO $db): void
     $ak->execute(['Old script (inactive)', hash('sha256', 'demo-api-key-old-script-0987654321fedcba'), 0, 'demo']);
 
     // --- Audit log (backdated) ---
+    // Compute the backdated created_at timestamp in PHP so the SQL stays
+    // engine-agnostic. The last tuple element remains a human-readable
+    // offset string ('-30 days', '-5 days', '-0 seconds', etc.) that
+    // strtotime() parses directly, and we format the result as ISO
+    // 'YYYY-MM-DD HH:MM:SS' UTC which both SQLite TEXT storage and
+    // MySQL DATETIME accept.
     $al = $db->prepare(
         "INSERT INTO audit_log (action, entity_type, entity_id, username, ip, details, created_at)
-         VALUES (?,?,?,?,?,?,datetime('now',?))"
+         VALUES (?,?,?,?,?,?,?)"
     );
     foreach ([
         ['auth.login',        'user',    1,    'demo',          '192.168.1.100', 'login ok',                               '-30 days'],
@@ -3356,12 +3393,22 @@ function demo_seed_data(PDO $db): void
         ['address.bulk_update','address',null, 'demo',          '192.168.1.100', 'subnet_id=4 selected=3 affected=3',      '-2 days'],
         ['auth.login',        'user',    1,    'demo',          '192.168.1.100', 'login ok',                               '-1 day'],
         ['auth.login',        'user',    1,    'demo',          '192.168.1.100', 'login ok',                               '-0 seconds'],
-        ] as $e) $al->execute($e);
+        ] as $e) {
+        // Replace the human-readable offset (last element) with an
+        // absolute 'YYYY-MM-DD HH:MM:SS' UTC timestamp computed in PHP.
+        $offset = array_pop($e);
+        $ts = strtotime((string)$offset);
+        $e[] = ($ts !== false) ? gmdate('Y-m-d H:i:s', $ts) : gmdate('Y-m-d H:i:s');
+        $al->execute($e);
+    }
 
     // --- Address history ---
+    // Same backdated-timestamp-in-PHP pattern as the audit_log loop above,
+    // for the same reason: SQLite's `datetime('now', '-N days')` is not
+    // portable to MySQL / Postgres.
     $hist = $db->prepare(
         "INSERT INTO address_history (address_id, subnet_id, ip, action, username, client_ip, before_json, after_json, created_at)
-         VALUES (?,?,?,?,?,?,?,?,datetime('now',?))"
+         VALUES (?,?,?,?,?,?,?,?,?)"
     );
     foreach ([
         // id=1 → 10.10.1.1 gw-lon-mgmt
@@ -3396,7 +3443,15 @@ function demo_seed_data(PDO $db): void
          '{"hostname":"","owner":"","status":"free","note":"","mac":""}',
          '{"hostname":"","owner":"","status":"reserved","note":"Future load balancer","mac":""}',
          '-10 days'],
-        ] as $h) $hist->execute($h);
+        ] as $h) {
+        // Same replace-offset-with-absolute-timestamp pattern as the
+        // audit_log loop: last tuple element is a human-readable offset
+        // like '-28 days', rewritten here to 'YYYY-MM-DD HH:MM:SS' UTC.
+        $offset = array_pop($h);
+        $ts = strtotime((string)$offset);
+        $h[] = ($ts !== false) ? gmdate('Y-m-d H:i:s', $ts) : gmdate('Y-m-d H:i:s');
+        $hist->execute($h);
+    }
 }
 
 /* ---------------- IP helpers ---------------- */
@@ -4094,6 +4149,7 @@ function page_header(string $title, array $opts = []): void
     // doesn't track it (client-side, stateless, survives the request cycle
     // without a session write).
     if ($role === 'admin' && ipam_dialect()->driver_name() === 'mysql') {
+        require_once __DIR__ . '/version.php';
         $bannerKey = 'mysql-beta-' . IPAM_VERSION;
         echo "<div class='admin-notice admin-notice--warning' role='alert' data-banner='" . e($bannerKey) . "'>"
            . "⚠ <strong>MySQL driver (experimental)</strong> — MySQL support is beta in v" . e(IPAM_VERSION) . ". "

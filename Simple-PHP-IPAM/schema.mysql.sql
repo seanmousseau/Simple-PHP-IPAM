@@ -47,9 +47,11 @@ CREATE TABLE IF NOT EXISTS users (
   theme               VARCHAR(10)  NOT NULL DEFAULT 'auto',
   created_at          DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   updated_at          DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
-  UNIQUE KEY idx_users_oidc_sub (oidc_sub),
-  CONSTRAINT users_role_check  CHECK (role IN ('admin','readonly')),
-  CONSTRAINT users_theme_check CHECK (theme IN ('auto','light','dark'))
+  UNIQUE KEY idx_users_oidc_sub (oidc_sub)
+  -- No CHECK on role or theme: schema.sql (SQLite) has none, and
+  -- demo_seed_data() inserts a display-only 'netops' user. Enum
+  -- enforcement lives at the application layer (settings.php,
+  -- users.php) where it belongs.
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 CREATE TRIGGER IF NOT EXISTS users_updated_at

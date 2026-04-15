@@ -77,11 +77,20 @@ $st->execute();
 /** @var list<array<string, mixed>> $bySite */
 $bySite = $st->fetchAll();
 
-/* --- Growth trend: addresses added in last 7 and 30 days --- */
-$gWkSt = $db->query("SELECT COUNT(*) FROM addresses WHERE created_at >= datetime('now', '-7 days')");
-$growthWeek = $gWkSt !== false ? to_int($gWkSt->fetchColumn()) : 0;
-$gMoSt = $db->query("SELECT COUNT(*) FROM addresses WHERE created_at >= datetime('now', '-30 days')");
-$growthMonth = $gMoSt !== false ? to_int($gMoSt->fetchColumn()) : 0;
+/* --- Growth trend: addresses added in last 7 and 30 days ---
+ * Cutoffs computed in PHP so the query stays engine-agnostic. SQLite's
+ * `datetime('now', '-N days')` modifier form is not portable to MySQL /
+ * Postgres — an earlier attempt to use it caused a SQL 1064 on every
+ * dashboard load against MySQL in v2.10.0 #433 Playwright validation.
+ */
+$cutoffWeek  = gmdate('Y-m-d H:i:s', time() - 7  * 86400);
+$cutoffMonth = gmdate('Y-m-d H:i:s', time() - 30 * 86400);
+$gWkSt = $db->prepare("SELECT COUNT(*) FROM addresses WHERE created_at >= :c");
+$gWkSt->execute([':c' => $cutoffWeek]);
+$growthWeek = to_int($gWkSt->fetchColumn());
+$gMoSt = $db->prepare("SELECT COUNT(*) FROM addresses WHERE created_at >= :c");
+$gMoSt->execute([':c' => $cutoffMonth]);
+$growthMonth = to_int($gMoSt->fetchColumn());
 
 /* --- Recent audit events --- */
 $st = $db->prepare("
