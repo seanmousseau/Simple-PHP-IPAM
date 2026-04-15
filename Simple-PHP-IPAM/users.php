@@ -65,7 +65,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $hash = password_hash($password, PASSWORD_DEFAULT);
                     $st = $db->prepare(
                         "INSERT INTO users (username, password_hash, role, is_active, name, email, password_changed_at)
-                         VALUES (:u,:h,:r,1,:n,:e,datetime('now'))"
+                         VALUES (:u,:h,:r,1,:n,:e," . ipam_dialect()->now() . ")"
                     );
                     $st->execute([':u' => $username, ':h' => $hash, ':r' => $role, ':n' => $name, ':e' => $email]);
                     $details = "username=$username role=$role";
@@ -157,7 +157,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors = $pwErrs;
         } else {
             $hash = password_hash($pw, PASSWORD_DEFAULT);
-            $db->prepare("UPDATE users SET password_hash = :h, password_changed_at = datetime('now') WHERE id = :id")
+            $db->prepare("UPDATE users SET password_hash = :h, password_changed_at = " . ipam_dialect()->now() . " WHERE id = :id")
                ->execute([':h' => $hash, ':id' => $id]);
             audit($db, 'user.reset_password', 'user', $id, 'admin reset');
             $msg = 'Password reset.';

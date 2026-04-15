@@ -50,7 +50,7 @@ if ($subnetId > 0) {
     $params = [':sid' => $subnetId];
 
     if ($q !== '') {
-        $whereClause .= " AND (ip LIKE :q ESCAPE '\\' OR hostname LIKE :q ESCAPE '\\' OR owner LIKE :q ESCAPE '\\' OR note LIKE :q ESCAPE '\\' OR grp LIKE :q ESCAPE '\\')";
+        $whereClause .= " AND (ip LIKE :q ESCAPE '!' OR hostname LIKE :q ESCAPE '!' OR owner LIKE :q ESCAPE '!' OR note LIKE :q ESCAPE '!' OR grp LIKE :q ESCAPE '!')";
         $params[':q'] = '%' . like_escape($q) . '%';
     }
 

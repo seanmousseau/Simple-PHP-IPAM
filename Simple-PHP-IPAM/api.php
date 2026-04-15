@@ -112,7 +112,7 @@ if ($sessionApiKey !== null) {
     // Successful auth — clear any accumulated failures for this IP
     clear_login_failures($db, $clientIp);
 
-    $db->prepare("UPDATE api_keys SET last_used_at = datetime('now') WHERE id = :id")
+    $db->prepare("UPDATE api_keys SET last_used_at = " . ipam_dialect()->now() . " WHERE id = :id")
        ->execute([':id' => to_int($apiKey['id'])]);
 }
 
@@ -714,7 +714,7 @@ function api_vlans_create(PDO $db, array $apiKey, array $body): never
     if ($vlanId < 1 || $vlanId > 4094) api_error(400, 'vlan_id must be between 1 and 4094.');
     if ($name === '') api_error(400, 'name is required.');
 
-    $dup = $db->prepare("SELECT id FROM vlans WHERE vlan_id = :vid AND site_id IS :sid");
+    $dup = $db->prepare("SELECT id FROM vlans WHERE vlan_id = :vid AND " . ipam_dialect()->null_safe_eq("site_id", ":sid") . "");
     $dup->execute([':vid' => $vlanId, ':sid' => $siteId]);
     if ($dup->fetch()) api_error(409, 'A VLAN with this vlan_id already exists in this site.');
 
@@ -750,7 +750,7 @@ function api_vlans_update(PDO $db, array $apiKey, int $id, array $body): never
     if ($vlanId < 1 || $vlanId > 4094) api_error(400, 'vlan_id must be between 1 and 4094.');
     if ($name === '') api_error(400, 'name cannot be empty.');
 
-    $dup = $db->prepare("SELECT id FROM vlans WHERE vlan_id = :vid AND site_id IS :sid AND id != :id");
+    $dup = $db->prepare("SELECT id FROM vlans WHERE vlan_id = :vid AND " . ipam_dialect()->null_safe_eq("site_id", ":sid") . " AND id != :id");
     $dup->execute([':vid' => $vlanId, ':sid' => $siteId, ':id' => $id]);
     if ($dup->fetch()) api_error(409, 'A VLAN with this vlan_id already exists in this site.');
 
@@ -851,7 +851,7 @@ function api_vrfs_update(PDO $db, array $apiKey, int $id, array $body): never
     $checkSt->execute([':id' => $id]);
     if (!$checkSt->fetch()) api_error(404, 'VRF not found.');
     try {
-        $st = $db->prepare("UPDATE vrfs SET name=:n, description=:d, rd=:rd, updated_at=datetime('now') WHERE id=:id");
+        $st = $db->prepare("UPDATE vrfs SET name=:n, description=:d, rd=:rd, updated_at=" . ipam_dialect()->now() . " WHERE id=:id");
         $st->execute([':n' => $name, ':d' => $desc, ':rd' => $rd, ':id' => $id]);
         audit($db, 'vrf.update', 'vrf', $id, "name=$name");
     } catch (PDOException $e) {
@@ -992,7 +992,7 @@ function api_contacts_update(PDO $db, array $apiKey, int $id, array $body): neve
     $checkSt = $db->prepare("SELECT id FROM contacts WHERE id = :id");
     $checkSt->execute([':id' => $id]);
     if (!$checkSt->fetch()) api_error(404, 'Contact not found.');
-    $st = $db->prepare("UPDATE contacts SET name=:n, email=:e, phone=:p, org=:o, note=:nt, updated_at=datetime('now') WHERE id=:id");
+    $st = $db->prepare("UPDATE contacts SET name=:n, email=:e, phone=:p, org=:o, note=:nt, updated_at=" . ipam_dialect()->now() . " WHERE id=:id");
     $st->execute([':n' => $name, ':e' => $email, ':p' => $phone, ':o' => $org, ':nt' => $note, ':id' => $id]);
     audit($db, 'contact.update', 'contact', $id, "name=$name");
     $st = $db->prepare("SELECT id, name, email, phone, org, note, created_at, updated_at FROM contacts WHERE id = :id");
@@ -1150,7 +1150,7 @@ function api_subnet_tags_attach(PDO $db, array $apiKey, array $body): never
     // insertion. INSERT OR IGNORE silently no-ops on duplicates; without
     // the rowCount() check the audit log fills with phantom tag.attach
     // entries and the client gets a misleading 201 for a no-op.
-    $st = $db->prepare("INSERT OR IGNORE INTO subnet_tags (subnet_id, tag_id) VALUES (:s, :t)");
+    $st = $db->prepare("INSERT INTO subnet_tags (subnet_id, tag_id) VALUES (:s, :t) " . ipam_dialect()->upsert_or_ignore("subnet_tags", ["subnet_id", "tag_id"]) . "");
     $st->execute([':s' => $subnetId, ':t' => $tagId]);
     if ($st->rowCount() > 0) {
         api_audit($db, $apiKey, 'tag.attach', 'subnet', $subnetId, "tag_id={$tagId}");
@@ -1198,7 +1198,7 @@ function api_address_tags_attach(PDO $db, array $apiKey, array $body): never
     if (!$tChk->fetch()) api_error(404, 'Tag not found.');
 
     // CodeRabbit third sweep on PR #450: gate audit + 201 on a real insert.
-    $st = $db->prepare("INSERT OR IGNORE INTO address_tags (address_id, tag_id) VALUES (:a, :t)");
+    $st = $db->prepare("INSERT INTO address_tags (address_id, tag_id) VALUES (:a, :t) " . ipam_dialect()->upsert_or_ignore("address_tags", ["address_id", "tag_id"]) . "");
     $st->execute([':a' => $addressId, ':t' => $tagId]);
     if ($st->rowCount() > 0) {
         api_audit($db, $apiKey, 'tag.attach', 'address', $addressId, "tag_id={$tagId}");
@@ -1287,7 +1287,7 @@ function api_search(PDO $db): never
     $q = substr(trim(to_str($_GET['q'] ?? '')), 0, 500);
     if ($q === '') api_error(400, 'q parameter is required.');
 
-    $where  = ["(a.ip LIKE :q ESCAPE '\\' OR a.hostname LIKE :q ESCAPE '\\' OR a.owner LIKE :q ESCAPE '\\' OR a.note LIKE :q ESCAPE '\\' OR a.grp LIKE :q ESCAPE '\\')"];
+    $where  = ["(a.ip LIKE :q ESCAPE '!' OR a.hostname LIKE :q ESCAPE '!' OR a.owner LIKE :q ESCAPE '!' OR a.note LIKE :q ESCAPE '!' OR a.grp LIKE :q ESCAPE '!')"];
     $params = [':q' => '%' . like_escape($q) . '%'];
 
     if (isset($_GET['status'])) {
@@ -1612,7 +1612,7 @@ function api_subnets_bulk_create(PDO $db, array $apiKey, array $body, int $bulkL
         }
 
         $normalized = $p['network'] . '/' . $p['prefix'];
-        $dupSt = $db->prepare("SELECT id FROM subnets WHERE cidr = :cidr AND vrf_id IS :vrf");
+        $dupSt = $db->prepare("SELECT id FROM subnets WHERE cidr = :cidr AND " . ipam_dialect()->null_safe_eq("vrf_id", ":vrf") . "");
         $dupSt->execute([':cidr' => $normalized, ':vrf' => $vrfId]);
         if ($dupSt->fetch()) { $results[] = ['success' => false, 'error' => "Subnet $normalized already exists."]; continue; }
 
@@ -1975,7 +1975,7 @@ function api_subnets_create(PDO $db, array $apiKey, array $body): never
 
     // Check duplicate CIDR within the same VRF (uses IS for NULL-safe comparison)
     $normalized = $p['network'] . '/' . $p['prefix'];
-    $dupSt = $db->prepare("SELECT id FROM subnets WHERE cidr = :cidr AND vrf_id IS :vrf");
+    $dupSt = $db->prepare("SELECT id FROM subnets WHERE cidr = :cidr AND " . ipam_dialect()->null_safe_eq("vrf_id", ":vrf") . "");
     $dupSt->execute([':cidr' => $normalized, ':vrf' => $vrfId]);
     if ($dupSt->fetch()) api_error(409, 'A subnet with this CIDR already exists.');
 
@@ -2185,17 +2185,32 @@ function api_scan_results(PDO $db): never
     $subnetId = to_int($_GET['subnet_id'] ?? 0);
     if ($subnetId <= 0) api_error(400, 'subnet_id is required.');
 
-    // Return results from the most recent scan run (grouped by latest scanned_at minute)
+    // Return results from the most recent scan run, defined as anything
+    // within 60 seconds of the latest scanned_at timestamp for this subnet.
+    // Compute the cutoff in PHP so the query stays engine-agnostic — the
+    // SQLite-specific `datetime(col, '-N seconds')` idiom is not portable.
+    $maxSt = $db->prepare("SELECT MAX(scanned_at) AS m FROM scan_results WHERE subnet_id = :sid");
+    $maxSt->execute([':sid' => $subnetId]);
+    /** @var array<string, mixed>|false $maxRow */
+    $maxRow = $maxSt->fetch();
+    $maxAt  = is_array($maxRow) ? to_str($maxRow['m'] ?? '') : '';
+    if ($maxAt === '') {
+        api_json([]);
+    }
+    $cutoffTs = strtotime($maxAt . ' UTC');
+    if ($cutoffTs === false) {
+        api_json([]);
+    }
+    $cutoff = gmdate('Y-m-d H:i:s', $cutoffTs - 60);
+
     $st = $db->prepare("
         SELECT r.id, r.address_id, r.ip, r.method, r.is_up, r.latency_ms, r.scanned_at
         FROM scan_results r
         WHERE r.subnet_id = :sid
-          AND r.scanned_at >= (
-              SELECT datetime(MAX(scanned_at), '-60 seconds') FROM scan_results WHERE subnet_id = :sid2
-          )
+          AND r.scanned_at >= :cutoff
         ORDER BY r.ip
     ");
-    $st->execute([':sid' => $subnetId, ':sid2' => $subnetId]);
+    $st->execute([':sid' => $subnetId, ':cutoff' => $cutoff]);
     api_json($st->fetchAll());
 }
 
@@ -2206,9 +2221,13 @@ function api_scan_history(PDO $db): never
     if ($subnetId <= 0) api_error(400, 'subnet_id is required.');
     $limit = max(1, min(200, to_int($_GET['limit'] ?? 50)));
 
+    // Minute-precision truncation: SUBSTR(scanned_at, 1, 16) yields
+    // 'YYYY-MM-DD HH:MM' on both SQLite (TEXT column) and MySQL (DATETIME
+    // auto-converted to string in a string-function context). Portable
+    // equivalent of SQLite's strftime('%Y-%m-%d %H:%M', ...).
     $st = $db->prepare("
         SELECT
-            strftime('%Y-%m-%dT%H:%M:00', scanned_at) AS run_minute,
+            SUBSTR(scanned_at, 1, 16) AS run_minute,
             COUNT(*) AS total,
             SUM(is_up) AS up_count,
             COUNT(*) - SUM(is_up) AS down_count,
@@ -2342,7 +2361,7 @@ function api_scan_run(PDO $db, array $apiKey): never
 
     $stats = ipam_scan_subnet($db, $subnetId, $method, $tcpPort);
 
-    $db->prepare("UPDATE scan_schedules SET last_run_at = datetime('now') WHERE subnet_id = :sid")
+    $db->prepare("UPDATE scan_schedules SET last_run_at = " . ipam_dialect()->now() . " WHERE subnet_id = :sid")
        ->execute([':sid' => $subnetId]);
 
     api_audit($db, $apiKey, 'scan.run', 'subnet', $subnetId,

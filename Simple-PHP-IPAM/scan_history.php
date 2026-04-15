@@ -31,7 +31,7 @@ $runs = [];
 if ($subnet !== null) {
     $st = $db->prepare("
         SELECT
-            strftime('%Y-%m-%d %H:%M:00', scanned_at) AS run_minute,
+            SUBSTR(scanned_at, 1, 16) AS run_minute,
             COUNT(*) AS total,
             SUM(is_up) AS up_count,
             COUNT(*) - SUM(is_up) AS down_count,

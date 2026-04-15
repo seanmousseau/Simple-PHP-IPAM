@@ -152,6 +152,21 @@ interface Dialect
     public function pragma_foreign_keys(bool $on): ?string;
 
     /**
+     * SQL fragment for a null-safe equality comparison between a column
+     * and a placeholder — both NULLs should compare equal.
+     *
+     *  - SQLite  : `col IS :ph`   (SQLite's `IS` is null-safe)
+     *  - MySQL   : `col <=> :ph`  (MySQL's spaceship operator)
+     *  - Postgres: `col IS NOT DISTINCT FROM :ph`
+     *
+     * Introduced in v2.10.0 (#384) for the duplicate-CIDR / duplicate-VLAN
+     * checks that need to treat `vrf_id IS NULL` as equal to `:vrf = NULL`.
+     * SQLite's `IS :ph` syntax is SQLite-specific and must not leak into
+     * any query that might run on MySQL or Postgres.
+     */
+    public function null_safe_eq(string $column, string $placeholder): string;
+
+    /**
      * Driver identifier, for logging and one-off branching.
      *
      * @return 'sqlite'|'mysql'|'pgsql'

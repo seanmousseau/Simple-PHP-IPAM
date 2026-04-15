@@ -90,7 +90,9 @@ final class MysqlDialect implements Dialect
         if ($conflictCols === []) {
             throw new InvalidArgumentException('upsert_or_ignore() requires at least one conflict column');
         }
-        $first = $conflictCols[0];
+        // Backtick-quote the column name so reserved words (notably
+        // `settings.key`) do not trigger an ER_PARSE_ERROR on MySQL.
+        $first = '`' . $conflictCols[0] . '`';
         return "ON DUPLICATE KEY UPDATE $first = $first";
     }
 
@@ -183,6 +185,11 @@ final class MysqlDialect implements Dialect
     public function pragma_foreign_keys(bool $on): string
     {
         return 'SET FOREIGN_KEY_CHECKS = ' . ($on ? '1' : '0');
+    }
+
+    public function null_safe_eq(string $column, string $placeholder): string
+    {
+        return "$column <=> $placeholder";
     }
 
     public function driver_name(): string

@@ -49,7 +49,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $err = 'Valid VLAN ID (1–4094) and name are required.';
         } else {
             try {
-                $st = $db->prepare("UPDATE vlans SET vlan_id=:vid, name=:n, description=:d, site_id=:sid, updated_at=datetime('now') WHERE id=:id");
+                $st = $db->prepare("UPDATE vlans SET vlan_id=:vid, name=:n, description=:d, site_id=:sid, updated_at=" . ipam_dialect()->now() . " WHERE id=:id");
                 $st->execute([':vid' => $vlanId, ':n' => $name, ':d' => $desc, ':sid' => $siteId, ':id' => $id]);
                 audit($db, 'vlan.update', 'vlan', $id, "vlan_id=$vlanId name=$name");
                 flash_set("VLAN $vlanId updated.");
@@ -116,7 +116,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $err = 'VLAN min must not exceed VLAN max.';
         } else {
             try {
-                $st = $db->prepare("UPDATE vlan_ranges SET name=:n, vlan_min=:min, vlan_max=:max, description=:d, site_id=:sid, updated_at=datetime('now') WHERE id=:id");
+                $st = $db->prepare("UPDATE vlan_ranges SET name=:n, vlan_min=:min, vlan_max=:max, description=:d, site_id=:sid, updated_at=" . ipam_dialect()->now() . " WHERE id=:id");
                 $st->execute([':n' => $rName, ':min' => $rMin, ':max' => $rMax, ':d' => $rDesc, ':sid' => $rSiteId, ':id' => $rId]);
                 audit($db, 'vlan.range_update', 'vlan_range', $rId, "name=$rName min=$rMin max=$rMax");
                 flash_set("VLAN range \"$rName\" updated.");

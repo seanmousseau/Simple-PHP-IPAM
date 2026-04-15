@@ -199,7 +199,7 @@ if (to_int($user['is_active']) !== 1) {
 
 // ---- All checks passed — log in ----
 login_user(to_int($user['id']), to_str($user['username']), to_str($user['role']));
-$db->prepare("UPDATE users SET last_login_at=datetime('now') WHERE id=:id")
+$db->prepare("UPDATE users SET last_login_at=" . ipam_dialect()->now() . " WHERE id=:id")
    ->execute([':id' => to_int($user['id'])]);
 audit($db, 'auth.oidc_login', 'user', to_int($user['id']), 'sub=' . $sub);
 

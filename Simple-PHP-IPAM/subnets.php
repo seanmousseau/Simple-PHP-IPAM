@@ -86,7 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 try {
                     // UNIQUE(cidr, vrf_id) treats NULL as distinct from NULL in SQLite,
                     // so check for duplicates explicitly before inserting.
-                    $dupChk = $db->prepare("SELECT id FROM subnets WHERE cidr = :cidr AND vrf_id IS :vrf");
+                    $dupChk = $db->prepare("SELECT id FROM subnets WHERE cidr = :cidr AND " . ipam_dialect()->null_safe_eq("vrf_id", ":vrf") . "");
                     $dupChk->execute([':cidr' => $normalized, ':vrf' => $vrfId]);
                     if ($dupChk->fetch()) {
                         $err = 'A subnet with this CIDR already exists.';
@@ -168,7 +168,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'site_id' => $siteId ?? 0, 'vlan_fk' => $vlanFk ?? 0, 'vrf_id' => $vrfId ?? 0,
                 ];
             } else {
-                $dupChk = $db->prepare("SELECT id FROM subnets WHERE cidr = :cidr AND vrf_id IS :vrf AND id != :self");
+                $dupChk = $db->prepare("SELECT id FROM subnets WHERE cidr = :cidr AND " . ipam_dialect()->null_safe_eq("vrf_id", ":vrf") . " AND id != :self");
                 $dupChk->execute([':cidr' => $normalized, ':vrf' => $vrfId, ':self' => $id]);
                 if ($dupChk->fetch()) {
                     $err = 'A subnet with this CIDR already exists.';

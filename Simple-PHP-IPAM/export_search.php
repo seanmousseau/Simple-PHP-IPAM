@@ -18,7 +18,7 @@ $where = [];
 $params = [];
 
 if ($q !== '') {
-    $where[] = "(a.ip LIKE :q ESCAPE '\\' OR a.hostname LIKE :q ESCAPE '\\' OR a.owner LIKE :q ESCAPE '\\' OR a.note LIKE :q ESCAPE '\\' OR a.grp LIKE :q ESCAPE '\\' OR a.mac LIKE :q ESCAPE '\\')";
+    $where[] = "(a.ip LIKE :q ESCAPE '!' OR a.hostname LIKE :q ESCAPE '!' OR a.owner LIKE :q ESCAPE '!' OR a.note LIKE :q ESCAPE '!' OR a.grp LIKE :q ESCAPE '!' OR a.mac LIKE :q ESCAPE '!')";
     $params[':q'] = '%' . like_escape($q) . '%';
 }
 if ($status !== '') {

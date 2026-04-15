@@ -46,10 +46,12 @@ if (is_file(__DIR__ . '/vendor/autoload.php')) {
 // ...) because STDIN/STDOUT/STDERR are only defined under CLI and phpdbg SAPIs
 // — referencing them under Apache or PHP-FPM would throw a fatal error.
 require_once __DIR__ . '/dialects/Dialect.php';
+// v2.10.0 (#382) — supported drivers: 'sqlite' (default) and 'mysql'
+// (experimental beta). Postgres lands in v2.11.0 (#386). Unknown values are
+// rejected here before the request touches any DB code.
 $_ipam_db_driver = (string)($config['db_driver'] ?? 'sqlite');
 $_ipam_driver_error = match ($_ipam_db_driver) {
-    'sqlite' => null,
-    'mysql'  => 'db_driver=mysql is experimental and lands in v2.10.0 (#384)',
+    'sqlite', 'mysql' => null,
     'pgsql'  => 'db_driver=pgsql is experimental and lands in v2.11.0 (#388)',
     default  => "Unknown db_driver: {$_ipam_db_driver}",
 };
@@ -63,8 +65,17 @@ if ($_ipam_driver_error !== null) {
     }
     exit(2);
 }
+// Load the concrete dialect class and stash an instance under
+// $GLOBALS['ipam_dialect'] so any code that calls ipam_dialect() before
+// ipam_db($config) runs (HTTPS redirect, session setup, early helpers) sees
+// the right driver rather than the SqliteDialect fallback.
 require_once __DIR__ . '/dialects/SqliteDialect.php';
-$GLOBALS['ipam_dialect'] = new SqliteDialect();
+if ($_ipam_db_driver === 'mysql') {
+    require_once __DIR__ . '/dialects/MysqlDialect.php';
+    $GLOBALS['ipam_dialect'] = new MysqlDialect();
+} else {
+    $GLOBALS['ipam_dialect'] = new SqliteDialect();
+}
 unset($_ipam_db_driver, $_ipam_driver_error);
 
 // Seed a UTC default so any pre-DB date/time operations (HTTPS redirect, session
