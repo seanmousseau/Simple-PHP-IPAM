@@ -6,9 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
-## [Unreleased]
+## [2.10.0] - 2026-04-15
 
-v2.10.0 work in progress — experimental MySQL 8.0+ driver on top of the v2.9.0 Dialect foundation. Opt-in via `db_driver = 'mysql'`; SQLite remains the default. Feature branches landing on `dev`:
+Experimental MySQL 8.0.22+ driver on top of the v2.9.0 Dialect foundation. Opt-in via `db_driver = 'mysql'`; SQLite remains the default and is unchanged. The MySQL path is beta-quality — labelled as such in the install docs and with a dismissible admin banner on every page when active — and exists so real users can validate it against their data before v3.0.0 commits to the contract.
 
 ### Added
 - **#482** — `Dialect::upsert_or_ignore(table, conflictCols)` for `INSERT … ON CONFLICT DO NOTHING` semantics, distinct from `upsert()` which updates on conflict. SQLite emits `ON CONFLICT(col, ...) DO NOTHING`; MySQL emits `ON DUPLICATE KEY UPDATE firstCol = firstCol` (no-op self-assign). Refactors the last deferred literal in `migrations.php:673` (v2.8.0-alert-recipients closure). 4 new `DialectTest` cases.
@@ -16,6 +16,9 @@ v2.10.0 work in progress — experimental MySQL 8.0+ driver on top of the v2.9.0
 - **#382** — `MysqlDialect` implementation of every `Dialect` method. `now()` → `UTC_TIMESTAMP()`; `upsert()` → `ON DUPLICATE KEY UPDATE col = VALUES(col)`; `autoincrement()` → `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY`; `binary_type(16)` → `VARBINARY(16)`; `case_sensitive_collation()` → `COLLATE utf8mb4_bin`; `append_only_trigger()` → two `BEFORE UPDATE/DELETE ... SIGNAL SQLSTATE '45000'` triggers (requires MySQL 8.0.22+ for `CREATE TRIGGER IF NOT EXISTS`); `pragma_foreign_keys()` → `SET FOREIGN_KEY_CHECKS = 1|0`. 20 new string-output tests in `tests/MysqlDialectTest.php`. **Effective minimum MySQL version: 8.0.22.**
 - **#383** — `Simple-PHP-IPAM/schema.mysql.sql`: authoritative 19-table MySQL schema mirroring the fully-migrated SQLite state through `2.9.0-blob-affinity`. InnoDB on every table, `utf8mb4_bin` on case-sensitive columns, `VARBINARY(16)` for binary IP columns (native length, never padded). Ends with a pre-seed of all 28 historical migration version rows so `apply_migrations()` is a no-op on fresh MySQL installs — historical SQLite-only migration closures never execute on MySQL. End-to-end validated against MySQL 8.0.45 during development (bootstrap, binary IP round-trip on the three #410 vectors, append-only trigger enforcement, byte-wise `ORDER BY ip_bin` sort).
 - **#385** — "MySQL (experimental)" section in `docs/install.md` with version requirements, grant list, connection example, and a known-issues list. New dismissible admin UI beta banner in `page_header()` that appears on every page while `db_driver=mysql` is active. Dismiss state is per-browser + per-app-version so upgrading the app resurfaces the banner. Uses the existing `.admin-notice` family with a new `--warning` variant.
+- **#384** — Per-commit CI matrix slot running the full PHP QA suite (lint, PHPStan, PHPCS, PHPUnit, Semgrep) and `test_api.sh` against a MySQL 8.0 service container. Matrix is `fail-fast: false` across `[sqlite, mysql]` so a MySQL regression never masks a SQLite failure or vice-versa.
+- **#433** — Nightly Playwright matrix slot for MySQL on top of the v2.5.2 containerized harness. `testing/playwright/bootstrap-app.sh` accepts `mysql` and provisions a `mysql:8.0` service container alongside the Apache/PHP container on a shared Docker network. `testing/playwright/fixtures/test-config-mysql.php` pins `db_driver=mysql` with a DSN targeting the service container. Four specs that exercise SQLite-format dumps or pre-v2.0.0 upgrade paths (`db-tools`, `large-db` ×2, `upgrade`) skip cleanly on MySQL via an `IS_MYSQL` guard.
+- **Polish follow-ups (#497)** — 10 proactive Semgrep rules in `.semgrep/rules.yml` catching the SQLite-specific idioms swept out during the MySQL work (`datetime('now')`, `BEGIN EXCLUSIVE`, `sqlite_sequence`, `PRAGMA table_info`, `INSERT OR IGNORE`, `strftime`, `datetime('now', '-N days')`, `IS :param`, unquoted `settings.key`, `LIKE ... ESCAPE '\\'`). Each rule excludes the files where the idiom is correct by design (`schema.sql`, `migrations.php`, `SqliteDialect.php`) using Semgrepignore-v2-compliant `**/` globs. New top-level `Makefile` with a `gate` target that runs the full local PHP gate in one command.
 
 ### Changed
 - **#483** — Routed the last five `PRAGMA foreign_keys` literals in `lib.php` through `Dialect::pragma_foreign_keys()`. Sites: `ipam_db()` post-connection enable; four inside `apply_migrations()` (FK-off pre-BEGIN + three restore paths). Dialect returns `null` on engines without a per-connection toggle (Postgres via deferred constraints, v2.11.0) and the call sites null-check before executing. `lib.php:2198` and `:2269` in `ipam_db_dump_stream()` stay as SQLite-format backup output by design.
@@ -699,6 +702,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[2.10.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.9.2...v2.10.0
 [2.9.2]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.9.1...v2.9.2
 [2.9.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.9.0...v2.9.1
 [2.9.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.8.0...v2.9.0
