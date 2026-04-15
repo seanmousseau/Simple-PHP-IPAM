@@ -1,6 +1,13 @@
 {
     "name": "seanmousseau/simple-php-ipam",
     "description": "Simple PHP IPAM — lightweight IPv4/IPv6 address management",
+    "type": "project",
+    "license": "MIT",
+    "prefer-stable": true,
+    "minimum-stability": "stable",
+    "require": {
+        "php": ">=8.2"
+    },
     "require-dev": {
         "phpstan/phpstan": "^2.0",
         "squizlabs/php_codesniffer": "^4.0",
@@ -10,6 +17,9 @@
         "platform": {
             "php": "8.2"
         },
+        "platform-check": true,
+        "optimize-autoloader": true,
+        "sort-packages": true,
         "allow-plugins": {}
     }
 }

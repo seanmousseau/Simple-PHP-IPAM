@@ -20,8 +20,16 @@ jobs:
           extensions: pdo_sqlite, mbstring, openssl
           coverage: none
 
+      - name: Validate composer.json
+        run: composer validate --strict
+
       - name: Install Composer dependencies
         run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Composer audit (security advisories)
+        # #416: fail the build on any known CVE in a runtime or dev dep.
+        # Runs after install so the lock file's resolved versions are checked.
+        run: composer audit --no-dev --locked
 
       - name: PHP Lint
         run: find Simple-PHP-IPAM -name '*.php' -not -path '*/data/*' | sort | xargs -n1 php -l

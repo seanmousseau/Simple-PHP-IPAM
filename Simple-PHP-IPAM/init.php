@@ -4,6 +4,15 @@ declare(strict_types=1);
 /** @var IpamConfig $config */
 $config = require __DIR__ . '/config.php';
 
+// Composer autoloader (#416). Conditional because v2.9.0 ships with an empty
+// require {} — vendor/autoload.php only exists in release tarballs (built by
+// releases/make_releases.sh) and in dev environments where the tester has run
+// `composer install`. A fresh git clone without composer install must still
+// boot, so we skip silently if the file is absent.
+if (is_file(__DIR__ . '/vendor/autoload.php')) {
+    require_once __DIR__ . '/vendor/autoload.php';
+}
+
 // Seed a UTC default so any pre-DB date/time operations (HTTPS redirect, session
 // setup) are deterministic. The real timezone is applied from the DB settings
 // (branding.timezone) once $db is open and lib.php is loaded — see below.

@@ -54,6 +54,10 @@ VERSION="${2:-}"
 [[ -n "$RELEASE_DIR" && -n "$VERSION" ]] || { usage; exit 2; }
 RELEASE_DIR="$(cd "$RELEASE_DIR" && pwd)" || { echo "Bad release dir" >&2; exit 2; }
 
+# Repo root is the parent of $RELEASE_DIR (which is .../Simple-PHP-IPAM/).
+# composer.json + composer.lock live at the repo root.
+REPO_ROOT="$(dirname "$RELEASE_DIR")"
+
 need() { command -v "$1" >/dev/null 2>&1 || { echo "Missing dependency: $1" >&2; exit 2; }; }
 
 need rsync
@@ -65,6 +69,7 @@ need sed
 need head
 need mkdir
 need mv
+need composer
 
 # --- tar selection (macOS prefers gtar) ---
 OS="$(uname -s)"
@@ -98,7 +103,9 @@ PAYLOAD="$STAGE/$TOPDIR"
 
 mkdir -p "$PAYLOAD"
 
-# Copy release tree into staging payload
+# Copy release tree into staging payload. Exclude vendor/ from the source
+# rsync — we install production deps into the payload separately below so
+# the developer's local vendor/ (which has dev deps) is never bundled.
 rsync -a \
   --exclude '*.sqlite' --exclude '*.db' \
   --exclude 'data/ipam.sqlite' --exclude 'data/ipam.sqlite-wal' --exclude 'data/ipam.sqlite-shm' \
@@ -107,8 +114,50 @@ rsync -a \
   --exclude 'data/cron.lock' --exclude 'data/backups/' \
   --exclude 'data/.db_initialized' \
   --exclude 'data/tmp/*' \
+  --exclude 'vendor/' \
   --exclude '.git/' --exclude '.github/' --exclude '.DS_Store' \
   "$RELEASE_DIR/" "$PAYLOAD/"
+
+# --- Composer production install (#416) ---
+# Build vendor/ in a scratch directory using composer.json + composer.lock
+# from the repo root so the bundle gets a clean prod-only autoloader without
+# touching the developer's repo-root vendor/ (which has dev deps).
+if [[ -f "$REPO_ROOT/composer.json" ]]; then
+  COMPOSER_TMP="$TMP/composer-prod"
+  mkdir -p "$COMPOSER_TMP"
+  cp "$REPO_ROOT/composer.json" "$COMPOSER_TMP/composer.json"
+  if [[ -f "$REPO_ROOT/composer.lock" ]]; then
+    cp "$REPO_ROOT/composer.lock" "$COMPOSER_TMP/composer.lock"
+  fi
+  (
+    cd "$COMPOSER_TMP"
+    COMPOSER_ALLOW_SUPERUSER=1 composer install \
+      --no-dev \
+      --optimize-autoloader \
+      --no-interaction \
+      --no-progress \
+      --no-scripts \
+      --prefer-dist
+  )
+  if [[ -d "$COMPOSER_TMP/vendor" ]]; then
+    mkdir -p "$PAYLOAD/vendor"
+    rsync -a "$COMPOSER_TMP/vendor/" "$PAYLOAD/vendor/"
+    # Belt-and-suspenders: deny direct HTTP access to bundled library source.
+    cat > "$PAYLOAD/vendor/.htaccess" <<'HTACCESS'
+# Deny all direct web access to bundled Composer libraries.
+# The application autoloads them via vendor/autoload.php; nothing here
+# should be reachable as a URL.
+<IfModule mod_authz_core.c>
+  Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+  Order allow,deny
+  Deny from all
+</IfModule>
+HTACCESS
+    chmod 0644 "$PAYLOAD/vendor/.htaccess"
+  fi
+fi
 
 # --- Permission sanitization ---
 find "$PAYLOAD" -type d -exec chmod 0755 {} \;
