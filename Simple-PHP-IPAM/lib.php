@@ -71,7 +71,10 @@ function ipam_db(string $path): PDO
 
     $pdo->exec("PRAGMA journal_mode = WAL;");
     $pdo->exec("PRAGMA busy_timeout = 30000;");
-    $pdo->exec("PRAGMA foreign_keys = ON;");
+    $fk = ipam_dialect()->pragma_foreign_keys(true);
+    if ($fk !== null) {
+        $pdo->exec($fk);
+    }
     return $pdo;
 }
 
@@ -1372,23 +1375,36 @@ function apply_migrations(PDO $db): array
         // transactional so ROLLBACK cleanly undoes any partial work.
         $lastErr  = null;
         $applied  = false;
+        // Route FK toggling through the dialect so non-SQLite engines (MySQL
+        // via SET FOREIGN_KEY_CHECKS, Postgres via null / deferred constraints)
+        // get the engine-appropriate statement. Null means the engine has no
+        // per-connection FK toggle and we rely on other mechanisms instead.
+        $dialect = ipam_dialect();
+        $fkOff   = $dialect->pragma_foreign_keys(false);
+        $fkOn    = $dialect->pragma_foreign_keys(true);
+        $toggleFk = static function (PDO $db, ?string $stmt): void {
+            if ($stmt !== null) {
+                $db->exec($stmt);
+            }
+        };
         for ($attempt = 0; $attempt < 60 && !$applied; $attempt++) {
             if ($attempt > 0) {
                 sleep(1);
             }
 
-            // PRAGMA foreign_keys cannot be changed inside a transaction — it must
-            // be set here, outside BEGIN. When it is ON, SQLite executes an implicit
-            // DELETE on every row before DROP TABLE, which triggers ON DELETE CASCADE
-            // on all child tables (addresses, subnet_tags, etc.), wiping all data.
-            // Disabling it for the duration of each migration prevents that cascade.
-            // FK enforcement is restored unconditionally after the transaction ends.
-            $db->exec("PRAGMA foreign_keys = OFF");
+            // FK enforcement must be toggled outside the transaction. On
+            // SQLite, PRAGMA foreign_keys cannot be changed inside BEGIN; and
+            // with FK ON, DROP TABLE triggers an implicit row-by-row DELETE
+            // that cascades ON DELETE CASCADE children (addresses,
+            // subnet_tags, etc.), wiping all data. Disabling around each
+            // migration prevents the cascade. FK enforcement is restored
+            // unconditionally in every exit path.
+            $toggleFk($db, $fkOff);
 
             try {
                 $db->exec("BEGIN EXCLUSIVE");
             } catch (Throwable $e) {
-                $db->exec("PRAGMA foreign_keys = ON");
+                $toggleFk($db, $fkOn);
                 $lastErr = $e;
                 if (stripos($e->getMessage(), 'locked') !== false || stripos($e->getMessage(), 'busy') !== false) {
                     continue;
@@ -1406,14 +1422,14 @@ function apply_migrations(PDO $db): array
                 $lastErr = null;
             } catch (Throwable $e) {
                 try { $db->exec("ROLLBACK"); } catch (Throwable) {}
-                $db->exec("PRAGMA foreign_keys = ON");
+                $toggleFk($db, $fkOn);
                 $lastErr = $e;
                 if (stripos($e->getMessage(), 'locked') !== false || stripos($e->getMessage(), 'busy') !== false) {
                     continue;
                 }
                 throw $e;
             }
-            $db->exec("PRAGMA foreign_keys = ON");
+            $toggleFk($db, $fkOn);
         }
 
         if ($lastErr !== null) {
