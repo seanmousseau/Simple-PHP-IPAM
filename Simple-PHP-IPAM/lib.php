@@ -3361,7 +3361,7 @@ function demo_seed_data(PDO $db): void
         [$idByIp['10.10.2.31'] ?? 0, 4],
         // fw-lon-dmz → Critical
         [$idByIp['10.10.3.1']  ?? 0, 3],
-    ] as $t) {
+        ] as $t) {
         if ($t[0] > 0) $at->execute($t);
     }
 
