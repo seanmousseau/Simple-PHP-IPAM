@@ -20,10 +20,11 @@ import {
 } from '../fixtures/ipam';
 
 // v2.10.0 #433: db_tools.php SQL import/export uses ipam_db_dump_stream()
-// which emits SQLite-format dumps by design. Cross-engine dump/restore
-// lands in v3.0.0 migrate_db.php (#392). Skip the whole suite on MySQL
-// until then.
-test.skip(IS_MYSQL, 'db_tools SQL dump is SQLite-format only (v3.0.0 migrate_db.php scope)');
+// which emits SQLite-format dumps by design. On MySQL, db_tools.php now
+// gates both actions with a user-facing notice; the large-db round-trip
+// scenarios only make sense on SQLite. The gating itself is verified in
+// db-tools.spec.ts:"db_tools shows SQL-only notice on non-sqlite driver".
+test.skip(IS_MYSQL, 'large-db round-trip is SQLite-only; MySQL gating is covered in db-tools.spec.ts');
 
 let ctx: BrowserContext;
 let page: Page;

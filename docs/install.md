@@ -127,7 +127,7 @@ At minimum, **change the default admin password** before the site receives any t
 
 **Requirements:**
 
-- MySQL **8.0.22** or newer (the installer rejects earlier versions). 8.0.22 is the effective floor because the bootstrap path uses `CREATE TRIGGER IF NOT EXISTS`, which landed in that release.
+- MySQL **8.0.29** or newer (the installer rejects earlier versions). 8.0.29 is the effective floor because the bootstrap path uses `CREATE TRIGGER IF NOT EXISTS`, which landed in that release.
 - The default connection charset must be `utf8mb4`. `utf8mb4_general_ci` for the database default collation is fine — the application explicitly pins `utf8mb4_bin` on case-sensitive columns (usernames, CIDRs, hostnames, IP text, API key hashes) so cross-engine string comparison stays consistent with SQLite.
 - An InnoDB-backed database. Every table in `schema.mysql.sql` declares `ENGINE=InnoDB` explicitly.
 - A dedicated MySQL account with these privileges on the IPAM database: `CREATE`, `ALTER`, `INDEX`, `INSERT`, `UPDATE`, `DELETE`, `SELECT`, `REFERENCES`, `TRIGGER`. `DROP` is only needed if you intend to run `db_tools.php` import/export or uninstall the application — omit it otherwise to narrow the blast radius.
@@ -171,7 +171,7 @@ On the first request, the installer loads `schema.mysql.sql`, creates the bootst
 - **Binary binding requires PDO `PARAM_LOB`.** The application already does this everywhere internally via `ipam_bind_binary()`. If you write a custom script that talks to `ipam.sqlite`-style columns (`ip_bin`, `network_bin`), bind with `PDO::PARAM_LOB` or your values will be string-escaped and corrupted.
 - **Backups are SQLite-format only.** `db_tools.php` export produces a SQLite dump that can only be imported back into a SQLite install. Cross-engine migration (MySQL ↔ SQLite ↔ Postgres) lands in v3.0.0 via a dedicated `migrate_db.php` tool. For now, use native MySQL tools (`mysqldump`) for MySQL-to-MySQL backups.
 - **CHECK constraints require MySQL 8.0.16+.** The schema declares CHECK constraints on enum columns (`role`, `theme`, `status`, `level`, `method`) and range columns (`vlan_id`, `tcp_port`, prefix delegation). Versions below 8.0.16 silently ignore them, leaving invariant enforcement to the application layer only.
-- **No Playwright CI coverage yet against MySQL.** v2.10.0 ships with MySQL unit + integration tests in the per-commit matrix, but the nightly end-to-end Playwright suite is SQLite-only. MySQL gets a dedicated matrix slot during the v2.10.0 soak period — track progress at [#433](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/433).
+- **Nightly Playwright MySQL matrix slot is new in v2.10.0 and under soak.** v2.10.0 ships both a per-commit MySQL CI slot (PHP QA + `test_api.sh`) and a nightly Playwright MySQL matrix slot covering the full 329-test end-to-end suite against a containerized `mysql:8.0` service. The release gate is **7 consecutive green nightly runs** — until that bar is cleared, treat any MySQL regression the nightly matrix surfaces as release-blocking. Track progress at [#433](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/433).
 
 ---
 

@@ -139,17 +139,17 @@ function ipam_db(array $config): PDO
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
                 PDO::ATTR_EMULATE_PREPARES => false,
             ]);
-            // 8.0.22 is the effective minimum. ensure_audit_log_table()
+            // 8.0.29 is the effective minimum. ensure_audit_log_table()
             // and MysqlDialect::append_only_trigger() both emit
             // `CREATE TRIGGER IF NOT EXISTS`, a syntax feature added in
-            // MySQL 8.0.22. Earlier 8.0.x servers pass a naive `8.0.0`
+            // MySQL 8.0.29. Earlier 8.0.x servers pass a naive `8.0.0`
             // check and then crash on the first self-heal bootstrap.
             // Reject at connect time so failures are clear and immediate.
             $serverVersionRaw = $pdo->getAttribute(PDO::ATTR_SERVER_VERSION);
             $serverVersion = is_string($serverVersionRaw) ? $serverVersionRaw : '';
-            if ($serverVersion === '' || version_compare($serverVersion, '8.0.22', '<')) {
+            if ($serverVersion === '' || version_compare($serverVersion, '8.0.29', '<')) {
                 throw new RuntimeException(
-                    "MySQL 8.0.22+ is required (server reports '$serverVersion')"
+                    "MySQL 8.0.29+ is required (server reports '$serverVersion')"
                 );
             }
             break;
@@ -195,7 +195,7 @@ function ensure_audit_log_table(PDO $db): void
     ");
     // CREATE INDEX IF NOT EXISTS is a SQLite idiom. MySQL 8.0.0–8.0.28 do
     // not accept it (IF NOT EXISTS on CREATE INDEX landed in 8.0.29, which
-    // is above our effective 8.0.22 floor), so we use a helper that swallows
+    // is above our effective 8.0.29 floor), so we use a helper that swallows
     // the MySQL "Duplicate key name" error (errno 1061). On SQLite the
     // IF NOT EXISTS is native and the catch never fires.
     $createIndex = static function (PDO $db, string $name, string $table, string $col): void {
@@ -228,8 +228,8 @@ function ensure_audit_log_table(PDO $db): void
         try {
             $db->exec($stmt);
         } catch (PDOException $e) {
-            // MySQL 8.0.0–8.0.21 do not support CREATE TRIGGER IF NOT EXISTS
-            // (added in 8.0.22). Swallow "Trigger already exists" (errno 1359)
+            // MySQL 8.0.0–8.0.28 do not support CREATE TRIGGER IF NOT EXISTS
+            // (added in 8.0.29). Swallow "Trigger already exists" (errno 1359)
             // so the self-heal path is idempotent on every supported 8.0.x.
             if (stripos($e->getMessage(), 'already exists') === false) {
                 throw $e;
@@ -1974,13 +1974,11 @@ function prune_audit_log(PDO $db, int $retentionDays): int
     if ($retentionDays <= 0) return 0;
     $cutoff = date('Y-m-d H:i:s', (int)strtotime("-{$retentionDays} days"));
 
-    // The audit_log triggers block DELETE. Drop triggers, DELETE directly, recreate.
-    // This avoids ALTER TABLE RENAME (which can implicitly commit in SQLite)
-    // and SELECT * column-ordering risks.
+    // Drop triggers, DELETE directly, recreate via the active dialect so the
+    // retention job works on every engine (SQLite RAISE(ABORT), MySQL
+    // SIGNAL SQLSTATE '45000'). Hardcoding SQLite trigger SQL here would
+    // leave audit_log mutable on MySQL after the first prune.
     try {
-        $oldCount = to_int(($db->query("SELECT COUNT(*) FROM audit_log")
-            ?: throw new \RuntimeException('Query failed'))->fetchColumn());
-
         $db->exec("DROP TRIGGER IF EXISTS audit_log_no_update");
         $db->exec("DROP TRIGGER IF EXISTS audit_log_no_delete");
 
@@ -1988,25 +1986,13 @@ function prune_audit_log(PDO $db, int $retentionDays): int
         $st->execute([':cutoff' => $cutoff]);
         $pruned = $st->rowCount();
 
-        // Recreate append-only triggers
-        $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_update
-            BEFORE UPDATE ON audit_log
-            BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
-        $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
-            BEFORE DELETE ON audit_log
-            BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
+        ensure_audit_log_table($db);
 
         return $pruned;
     } catch (Throwable $e) {
-        // Attempt to restore triggers even on failure
-        try {
-            $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_update
-                BEFORE UPDATE ON audit_log
-                BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
-            $db->exec("CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
-                BEFORE DELETE ON audit_log
-                BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END");
-        } catch (Throwable) {}
+        // Attempt to restore triggers even on failure so a partial prune
+        // does not leave audit_log writable.
+        try { ensure_audit_log_table($db); } catch (Throwable) {}
         error_log('audit_log prune failed: ' . $e->getMessage());
         return 0;
     }
@@ -2402,6 +2388,18 @@ function backup_info(array $config): array
  */
 function ipam_db_dump_stream(PDO $db, callable $write): void
 {
+    // SQLite-format dump only. Every query in this function depends on
+    // sqlite_master and SQLite-specific PRAGMA output. Cross-engine
+    // dump/restore lands in v3.0.0 via migrate_db.php (#392). db_tools.php
+    // gates the entry point on driver; this is defence-in-depth for any
+    // direct caller that slips past it.
+    if (ipam_dialect()->driver_name() !== 'sqlite') {
+        throw new \RuntimeException(
+            'ipam_db_dump_stream() is SQLite-only. Use engine-native tooling '
+            . '(mysqldump / pg_dump) on other drivers until v3.0.0 migrate_db.php.'
+        );
+    }
+
     $write("-- Simple PHP IPAM database dump\n");
     $write("-- Generated: " . date('Y-m-d H:i:s') . "\n\n");
     $write("PRAGMA foreign_keys=OFF;\n");
@@ -2861,20 +2859,26 @@ function auto_reserve_subnet_ips(PDO $db, int $subnetId, string $cidr, ?string $
         "INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, status, owner, note, grp, mac)
          VALUES (:sid, :ip, :ipbin, :host, 'reserved', '', 'Auto-reserved', '', '') $ignoreClause"
     );
-    $reserveBind = function (int $sid, string $ip, string $bin, string $host) use ($ins): void {
+    // Returns the new row's id on a fresh insert, or 0 when the row was
+    // ignored by the upsert-or-ignore clause. Using rowCount() instead of
+    // lastInsertId() is critical: on MySQL, lastInsertId() after a
+    // duplicate-key no-op returns the previous successful insert id, which
+    // would otherwise produce a bogus address.create audit entry.
+    $reserveBind = function (int $sid, string $ip, string $bin, string $host) use ($ins, $db): int {
         $ins->bindValue(':sid',  $sid,  PDO::PARAM_INT);
         $ins->bindValue(':ip',   $ip,   PDO::PARAM_STR);
         ipam_bind_binary($ins, ':ipbin', $bin);
         $ins->bindValue(':host', $host, PDO::PARAM_STR);
         $ins->execute();
+        return $ins->rowCount() > 0 ? (int)$db->lastInsertId() : 0;
     };
 
     // Network address
     $netIp  = $p['network'];
     $netBin = $p['net_bin'];
-    $reserveBind($subnetId, $netIp, $netBin, 'network');
-    if ($db->lastInsertId()) {
-        audit($db, 'address.create', 'address', (int)$db->lastInsertId(), "auto-reserve network $netIp in subnet $subnetId");
+    $newId = $reserveBind($subnetId, $netIp, $netBin, 'network');
+    if ($newId > 0) {
+        audit($db, 'address.create', 'address', $newId, "auto-reserve network $netIp in subnet $subnetId");
     }
 
     if ($p['version'] === 4) {
@@ -2885,9 +2889,9 @@ function auto_reserve_subnet_ips(PDO $db, int $subnetId, string $cidr, ?string $
         if ($bcastBin !== null) {
             $bcastIp = inet_ntop($bcastBin) ?: '';
             if ($bcastIp !== '' && $bcastIp !== $netIp) {
-                $reserveBind($subnetId, $bcastIp, $bcastBin, 'broadcast');
-                if ($db->lastInsertId()) {
-                    audit($db, 'address.create', 'address', (int)$db->lastInsertId(), "auto-reserve broadcast $bcastIp in subnet $subnetId");
+                $newId = $reserveBind($subnetId, $bcastIp, $bcastBin, 'broadcast');
+                if ($newId > 0) {
+                    audit($db, 'address.create', 'address', $newId, "auto-reserve broadcast $bcastIp in subnet $subnetId");
                 }
             }
         }
@@ -2897,9 +2901,9 @@ function auto_reserve_subnet_ips(PDO $db, int $subnetId, string $cidr, ?string $
     if ($gateway !== null && $gateway !== '') {
         $gwNorm = normalize_ip($gateway);
         if ($gwNorm && ip_in_cidr($gwNorm['ip'], $p['network'], $p['prefix'])) {
-            $reserveBind($subnetId, $gwNorm['ip'], $gwNorm['bin'], 'gateway');
-            if ($db->lastInsertId()) {
-                audit($db, 'address.create', 'address', (int)$db->lastInsertId(), "auto-reserve gateway {$gwNorm['ip']} in subnet $subnetId");
+            $newId = $reserveBind($subnetId, $gwNorm['ip'], $gwNorm['bin'], 'gateway');
+            if ($newId > 0) {
+                audit($db, 'address.create', 'address', $newId, "auto-reserve gateway {$gwNorm['ip']} in subnet $subnetId");
             }
         }
     }
@@ -3110,17 +3114,23 @@ function demo_reset_db(PDO $db): void
     }
     foreach ($tables as $t) {
         $db->exec("DELETE FROM $t");
-        // SQLite tracks AUTOINCREMENT counters in sqlite_sequence; clear them
-        // so subsequent inserts start at 1. MySQL / Postgres have their own
-        // mechanisms (ALTER TABLE ... AUTO_INCREMENT = 1, ALTER SEQUENCE
-        // ... RESTART) and reset automatically when explicit IDs are
-        // inserted — which demo_seed_data does — so no reset is needed.
+        // Rewind the table's auto-increment counter so subsequent inserts
+        // start at 1 and the fixture IDs that demo_seed_data passes
+        // explicitly land deterministically on every reset. Critical on
+        // MySQL: DELETE alone does NOT rewind AUTO_INCREMENT, so on a
+        // second reset any row inserted WITHOUT an explicit id (e.g. the
+        // audit rows written by audit()) would carry a drifted id and
+        // break fixtures that reference it by id.
         if ($driver === 'sqlite') {
             $db->exec("DELETE FROM sqlite_sequence WHERE name='$t'");
+        } elseif ($driver === 'mysql') {
+            $db->exec("ALTER TABLE $t AUTO_INCREMENT = 1");
         }
     }
     if ($driver === 'sqlite') {
         $db->exec("DELETE FROM sqlite_sequence WHERE name='audit_log'");
+    } elseif ($driver === 'mysql') {
+        $db->exec("ALTER TABLE audit_log AUTO_INCREMENT = 1");
     }
     apply_migrations($db);
     demo_seed_data($db);

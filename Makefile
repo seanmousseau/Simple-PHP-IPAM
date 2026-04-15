@@ -30,18 +30,22 @@ gate-mysql: pw-mysql
 	@echo "✓ MySQL gate green."
 
 pw-sqlite:
-	@bash testing/playwright/bootstrap-app.sh sqlite
-	@cd testing/playwright && \
-	  IPAM_BASE_URL=https://127.0.0.1:8443 \
-	  IPAM_ADMIN_USER=demo IPAM_ADMIN_PASS=demo \
-	  npx playwright test
-	@bash testing/playwright/teardown-app.sh
+	@set -e; \
+	  root="$$(pwd)"; \
+	  trap 'bash "$$root/testing/playwright/teardown-app.sh"' EXIT; \
+	  bash "$$root/testing/playwright/bootstrap-app.sh" sqlite; \
+	  ( cd "$$root/testing/playwright" && \
+	    IPAM_BASE_URL=https://127.0.0.1:8443 \
+	    IPAM_ADMIN_USER=demo IPAM_ADMIN_PASS=demo \
+	    npx playwright test )
 
 pw-mysql:
-	@bash testing/playwright/bootstrap-app.sh mysql
-	@cd testing/playwright && \
-	  IPAM_BASE_URL=https://127.0.0.1:8443 \
-	  IPAM_ADMIN_USER=demo IPAM_ADMIN_PASS=demo \
-	  IPAM_DRIVER=mysql \
-	  npx playwright test
-	@bash testing/playwright/teardown-app.sh
+	@set -e; \
+	  root="$$(pwd)"; \
+	  trap 'bash "$$root/testing/playwright/teardown-app.sh"' EXIT; \
+	  bash "$$root/testing/playwright/bootstrap-app.sh" mysql; \
+	  ( cd "$$root/testing/playwright" && \
+	    IPAM_BASE_URL=https://127.0.0.1:8443 \
+	    IPAM_ADMIN_USER=demo IPAM_ADMIN_PASS=demo \
+	    IPAM_DRIVER=mysql \
+	    npx playwright test )

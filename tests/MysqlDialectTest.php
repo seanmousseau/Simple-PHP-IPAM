@@ -180,7 +180,7 @@ final class MysqlDialectTest extends TestCase
 
     public function testAppendOnlyTriggerStatementsAreIdempotent(): void
     {
-        // CREATE TRIGGER IF NOT EXISTS is supported on MySQL 8.0.22+, which
+        // CREATE TRIGGER IF NOT EXISTS is supported on MySQL 8.0.29+, which
         // v2.10.0 effectively targets (the bootstrap path calls the
         // self-heal on every request).
         $stmts = $this->mysql->append_only_trigger('audit_log');

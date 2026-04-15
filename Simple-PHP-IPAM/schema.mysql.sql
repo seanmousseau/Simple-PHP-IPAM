@@ -18,12 +18,12 @@
 --   - DATETIME columns default to (UTC_TIMESTAMP()) so stored values are
 --     UTC regardless of session timezone, matching SQLite's datetime('now')
 --   - Append-only tables (audit_log) enforced via BEFORE UPDATE/DELETE
---     triggers using SIGNAL SQLSTATE '45000' (MySQL 8.0.22+)
+--     triggers using SIGNAL SQLSTATE '45000' (MySQL 8.0.29+)
 --   - *_updated_at triggers use BEFORE UPDATE FOR EACH ROW SET NEW.updated_at
 --     which is the idiomatic MySQL form; SQLite's AFTER UPDATE + recursive
 --     UPDATE is a workaround that is not needed here.
 --   - CHECK constraints honoured starting MySQL 8.0.16; v2.10.0 effective
---     minimum is 8.0.22 so all CHECKs are active
+--     minimum is 8.0.29 so all CHECKs are active
 --   - oidc_sub uniqueness: MySQL UNIQUE treats NULLs as distinct so a
 --     plain UNIQUE KEY allows multiple NULLs without the partial-index
 --     trick SQLite uses

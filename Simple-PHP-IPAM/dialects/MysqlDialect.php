@@ -156,10 +156,10 @@ final class MysqlDialect implements Dialect
      *
      * Trigger names embed the table name for namespace safety.
      *
-     * Note: CREATE TRIGGER IF NOT EXISTS requires MySQL 8.0.22+. Earlier
+     * Note: CREATE TRIGGER IF NOT EXISTS requires MySQL 8.0.29+. Earlier
      * 8.0 minor versions will fail on re-run because ensure_audit_log_table()
      * is called idempotently on every bootstrap. v2.10.0 effectively targets
-     * 8.0.22+.
+     * 8.0.29+.
      *
      * @return list<string>
      */

@@ -10,14 +10,21 @@ import {
 } from '../fixtures/ipam';
 
 // v2.10.0 #433: SQL export/import via ipam_db_dump_stream() is SQLite-format
-// only. Cross-engine dump lands in v3.0.0 migrate_db.php (#392).
-test.skip(IS_MYSQL, 'db_tools SQL dump is SQLite-format only (v3.0.0 migrate_db.php scope)');
+// only. On MySQL, db_tools.php shows a user-facing "SQL export/import is
+// SQLite-only" notice and the export/import POST handlers short-circuit
+// with an HTTP 400. Round-trip specs live in a describe that skips on
+// MySQL; the MySQL-only gating assertions live in their own describe at
+// the bottom. Do NOT use a file-level test.skip() — that would silently
+// skip the gating assertions too.
 
 let ctx: BrowserContext;
 let page: Page;
 let exportedSql = '';
 
-test.beforeAll(async ({ browser }: { browser: Browser }) => {
+test.describe('db_tools SQLite round-trip', () => {
+  test.skip(IS_MYSQL, 'SQLite round-trip is SQLite-only; MySQL gating covered at the bottom of this file');
+
+  test.beforeAll(async ({ browser }: { browser: Browser }) => {
   ctx = await newAuthContext(browser);
   page = await ctx.newPage();
   await login(page, ADMIN_USER, ADMIN_PASS);
@@ -125,4 +132,49 @@ test('db_tools security banner can be dismissed', async () => {
   } else {
     test.skip();
   }
+});
+});  // end of "db_tools SQLite round-trip" describe
+
+// v2.10.0 #433: MySQL-only gating assertion. Lives in its own describe so
+// the SQLite round-trip describe's test.skip(IS_MYSQL) does not also skip
+// these tests on the MySQL matrix slot.
+test.describe('db_tools MySQL SQL-dump gating', () => {
+  test.skip(!IS_MYSQL, 'MySQL-only assertion');
+
+  test('shows a user-facing SQL-only notice on the page', async ({ browser }) => {
+    const ctx = await newAuthContext(browser);
+    const page = await ctx.newPage();
+    try {
+      await login(page, ADMIN_USER, ADMIN_PASS);
+      await page.goto('db_tools.php');
+      const notice = page.locator('.admin-notice--warning', {
+        hasText: /SQL export\/import is SQLite-only/i,
+      });
+      await expect(notice).toBeVisible();
+      // Both buttons must be present but disabled so the user cannot POST.
+      await expect(page.locator('button[type="submit"]', { hasText: /Download SQL Dump/i })).toBeDisabled();
+      await expect(page.locator('button[type="submit"]', { hasText: /Import .* Replace/i })).toBeDisabled();
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('POST action=export short-circuits with the SQL-only notice and no dump body', async ({ browser }) => {
+    const ctx = await newAuthContext(browser);
+    const page = await ctx.newPage();
+    try {
+      await login(page, ADMIN_USER, ADMIN_PASS);
+      // Must visit db_tools.php first so fetchPost can read its CSRF token.
+      await page.goto('db_tools.php');
+      const r = await fetchPost(page, appUrl('db_tools.php'), { action: 'export' });
+      // The body must carry the user-facing notice and must NOT carry the
+      // SQLite dump header line — if the gate regresses, the dump text
+      // leaks through here and the assertion below catches it.
+      expect(r.body).toContain('SQL export/import is only supported on the SQLite driver');
+      expect(r.body).not.toContain('-- Simple PHP IPAM database dump');
+      expect(r.body).not.toContain('BEGIN TRANSACTION');
+    } finally {
+      await ctx.close();
+    }
+  });
 });

@@ -63,7 +63,17 @@ $backupPath = '';
 /* ------------------------------------------------------------------ *
  * POST: export                                                         *
  * ------------------------------------------------------------------ */
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'export') {
+// ipam_db_dump_stream() and the import path below both hardcode
+// sqlite_master queries. SQL-format dump/restore on MySQL lands in v3.0.0's
+// migrate_db.php (#392). Until then, gate both actions with a clear
+// user-facing message on non-SQLite drivers instead of letting the request
+// reach the hardcoded SQLite queries and 500.
+$sqlDumpSupported = ipam_dialect()->driver_name() === 'sqlite';
+$sqlDumpUnsupportedMsg = 'SQL export/import is only supported on the SQLite driver. '
+    . 'The MySQL driver uses engine-native tools (mysqldump / mysql); '
+    . 'cross-engine dump/restore will land in v3.0.0 via migrate_db.php.';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'export' && $sqlDumpSupported) {
     csrf_require();
     audit($db, 'db.export', 'system', null, 'Manual database export initiated');
 
@@ -78,7 +88,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'expor
 /* ------------------------------------------------------------------ *
  * POST: import                                                         *
  * ------------------------------------------------------------------ */
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'import') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST'
+    && in_array($_POST['action'] ?? '', ['export', 'import'], true)
+    && !$sqlDumpSupported
+) {
+    csrf_require();
+    $err = $sqlDumpUnsupportedMsg;
+    // Fall through to the HTML render below so the user sees the notice
+    // inline on the page, matching the feedback pattern for every other
+    // db_tools error path.
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'import') {
     csrf_require();
 
     $confirmed = !empty($_POST['confirmed']);
@@ -308,6 +327,14 @@ render_security_banner('db_tools', 'Database import will overwrite all existing 
   <p class='success'><?= e($msg) ?></p>
 <?php endif; ?>
 
+<?php if (!$sqlDumpSupported): ?>
+  <div class='admin-notice admin-notice--warning mt-16' role='status'>
+    <strong>SQL export/import is SQLite-only.</strong>
+    The MySQL driver uses engine-native tools (<code>mysqldump</code> / <code>mysql</code>).
+    Cross-engine dump/restore will land in v3.0.0 via <code>migrate_db.php</code> (#392).
+  </div>
+<?php endif; ?>
+
 <div class='grid cols-2 mt-16'>
 
   <!-- Export -->
@@ -317,7 +344,7 @@ render_security_banner('db_tools', 'Database import will overwrite all existing 
     <form method='post'>
       <input type='hidden' name='csrf' value='<?= e(csrf_token()) ?>'>
       <input type='hidden' name='action' value='export'>
-      <button type='submit'>⬇ Download SQL Dump</button>
+      <button type='submit'<?= $sqlDumpSupported ? '' : ' disabled' ?>>⬇ Download SQL Dump</button>
     </form>
   </div>
 
@@ -337,7 +364,7 @@ render_security_banner('db_tools', 'Database import will overwrite all existing 
           I understand this will overwrite all existing data
         </label>
         <div>
-          <button type='submit' class='button-danger'>⬆ Import &amp; Replace</button>
+          <button type='submit' class='button-danger'<?= $sqlDumpSupported ? '' : ' disabled' ?>>⬆ Import &amp; Replace</button>
         </div>
       </div>
     </form>
