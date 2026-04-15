@@ -139,15 +139,17 @@ function ipam_db(array $config): PDO
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
                 PDO::ATTR_EMULATE_PREPARES => false,
             ]);
-            // MySQL 8.0 minimum. Versions before that lack utf8mb4 defaults,
-            // modern JSON support, and the looser InnoDB key prefix limit
-            // this project relies on. Rejecting at connect keeps bootstrap
-            // failures clear and immediate.
+            // 8.0.22 is the effective minimum. ensure_audit_log_table()
+            // and MysqlDialect::append_only_trigger() both emit
+            // `CREATE TRIGGER IF NOT EXISTS`, a syntax feature added in
+            // MySQL 8.0.22. Earlier 8.0.x servers pass a naive `8.0.0`
+            // check and then crash on the first self-heal bootstrap.
+            // Reject at connect time so failures are clear and immediate.
             $serverVersionRaw = $pdo->getAttribute(PDO::ATTR_SERVER_VERSION);
             $serverVersion = is_string($serverVersionRaw) ? $serverVersionRaw : '';
-            if ($serverVersion === '' || version_compare($serverVersion, '8.0.0', '<')) {
+            if ($serverVersion === '' || version_compare($serverVersion, '8.0.22', '<')) {
                 throw new RuntimeException(
-                    "MySQL 8.0+ is required (server reports '$serverVersion')"
+                    "MySQL 8.0.22+ is required (server reports '$serverVersion')"
                 );
             }
             break;
@@ -4040,18 +4042,20 @@ function page_header(string $title, array $opts = []): void
 
     // MySQL experimental driver banner — admin only, dismissible (v2.10.0 #385).
     // Appears whenever db_driver=mysql is active so operators always know the
-    // driver is in beta. Dismiss state is per-session + per-server-version so
-    // upgrading the driver re-shows the banner. Uses existing .warning styling.
+    // driver is in beta. The banner key is suffixed with IPAM_VERSION so the
+    // localStorage dismiss state is per app version: upgrading the app
+    // changes the key and the banner re-surfaces until dismissed on the
+    // new version. Dismiss state lives only in the browser; the server
+    // doesn't track it (client-side, stateless, survives the request cycle
+    // without a session write).
     if ($role === 'admin' && ipam_dialect()->driver_name() === 'mysql') {
-        $dismissKey = 'mysql_beta_banner_dismissed_' . IPAM_VERSION;
-        if (empty($_SESSION[$dismissKey])) {
-            echo "<div class='admin-notice admin-notice--warning' role='alert' data-banner='mysql-beta'>"
-               . "⚠ <strong>MySQL driver (experimental)</strong> — MySQL support is beta in v" . e(IPAM_VERSION) . ". "
-               . "Report issues at <a href='https://github.com/seanmousseau/Simple-PHP-IPAM/issues' target='_blank' rel='noopener'>the GitHub tracker</a>. "
-               . "See <a href='https://github.com/seanmousseau/Simple-PHP-IPAM/blob/main/docs/install.md#mysql-experimental' target='_blank' rel='noopener'>docs/install.md</a> for current limitations. "
-               . "<button type='button' class='admin-notice-dismiss' data-dismiss-banner='mysql-beta' aria-label='Dismiss'>✕</button>"
-               . "</div>";
-        }
+        $bannerKey = 'mysql-beta-' . IPAM_VERSION;
+        echo "<div class='admin-notice admin-notice--warning' role='alert' data-banner='" . e($bannerKey) . "'>"
+           . "⚠ <strong>MySQL driver (experimental)</strong> — MySQL support is beta in v" . e(IPAM_VERSION) . ". "
+           . "Report issues at <a href='https://github.com/seanmousseau/Simple-PHP-IPAM/issues' target='_blank' rel='noopener'>the GitHub tracker</a>. "
+           . "See <a href='https://github.com/seanmousseau/Simple-PHP-IPAM/blob/main/docs/install.md#mysql-experimental' target='_blank' rel='noopener'>docs/install.md</a> for current limitations. "
+           . "<button type='button' class='admin-notice-dismiss' data-dismiss-banner='" . e($bannerKey) . "' aria-label='Dismiss'>✕</button>"
+           . "</div>";
     }
 
     // Default bootstrap admin password warning (admin only)
