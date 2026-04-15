@@ -29,6 +29,35 @@ final class DialectTest extends TestCase
         $this->assertSame('sqlite', $this->sqlite->driver_name());
     }
 
+    public function testDialectFromConfigDefaultsToSqlite(): void
+    {
+        require_once dirname(__DIR__) . '/Simple-PHP-IPAM/lib.php';
+        $this->assertInstanceOf(SqliteDialect::class, ipam_dialect_from_config([]));
+        $this->assertInstanceOf(SqliteDialect::class, ipam_dialect_from_config(['db_driver' => 'sqlite']));
+        $this->assertInstanceOf(SqliteDialect::class, ipam_dialect_from_config(['db_driver' => '']));
+    }
+
+    public function testDialectFromConfigSelectsMysql(): void
+    {
+        require_once dirname(__DIR__) . '/Simple-PHP-IPAM/lib.php';
+        require_once dirname(__DIR__) . '/Simple-PHP-IPAM/dialects/MysqlDialect.php';
+        $this->assertInstanceOf(MysqlDialect::class, ipam_dialect_from_config(['db_driver' => 'mysql']));
+    }
+
+    public function testDialectFromConfigRejectsUnknownDriver(): void
+    {
+        require_once dirname(__DIR__) . '/Simple-PHP-IPAM/lib.php';
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('Unsupported db_driver: oracle');
+        ipam_dialect_from_config(['db_driver' => 'oracle']);
+    }
+
+    protected function tearDown(): void
+    {
+        // Reset the cached dialect so later tests get a fresh SqliteDialect.
+        unset($GLOBALS['ipam_dialect']);
+    }
+
     public function testNowReturnsSqliteDatetimeExpression(): void
     {
         $this->assertSame("datetime('now')", $this->sqlite->now());

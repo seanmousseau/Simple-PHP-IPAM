@@ -81,7 +81,7 @@ register_shutdown_function(static function () use ($cronLockHandle): void {
     }
 });
 
-$db       = ipam_db(to_str($config['db_path']));
+$db       = ipam_db($config);
 
 // Apply admin-configured timezone from DB settings now that $db is open. All
 // downstream date() calls in this cron run pick up the new zone.

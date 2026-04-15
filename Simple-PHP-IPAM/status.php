@@ -20,7 +20,7 @@ require __DIR__ . '/version.php';
 $dbOk = false;
 $schemaVersion = null;
 try {
-    $pdo = ipam_db(to_str($config['db_path']));
+    $pdo = ipam_db($config);
     ($pdo->query('SELECT 1') ?: throw new \RuntimeException('Query failed'))->fetch();
     $dbOk = true;
     /** @var array<string, mixed>|false $row */
