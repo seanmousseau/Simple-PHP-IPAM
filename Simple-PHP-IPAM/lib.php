@@ -1483,6 +1483,16 @@ function ipam_config_defaults(): array
             'comment' => "reCAPTCHA Enterprise (v3). Set login_protection.method = 'recaptcha' and enable this block to use the Enterprise API for backend verification. project_id: GCP project ID. api_key: server-side API key. expected_action: action name from widget. score_threshold: 0.0–1.0 (default 0.5).",
         ],
         'import_csv_max_mb'    => ['default' => null, 'comment' => ''],
+        // v2.9.2: auto-populate import_sql_max_mb on upgrade. The key was
+        // missing from the registry, so ipam_config_sync() silently skipped
+        // it on upgrades from older releases, and db_tools.php's unguarded
+        // read produced an E_WARNING cascade when the key was absent.
+        'import_sql_max_mb' => [
+            'default' => 200,
+            'comment' => 'Maximum SQL import file size (MB). App-level soft cap '
+                . 'enforced by db_tools.php. If you raise it above .htaccess '
+                . 'post_max_size / upload_max_filesize, raise those values too.',
+        ],
         'tmp_cleanup_ttl_seconds' => ['default' => null, 'comment' => ''],
         'audit_log_retention_days' => [
             'default' => 0,
