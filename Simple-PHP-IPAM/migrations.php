@@ -18,11 +18,17 @@ function ipam_migrations(): array
             $st->execute();
             $rows = $st->fetchAll();
 
+            // #380/#410: bind network_bin via ipam_bind_binary() (PARAM_LOB) so
+            // the backfilled rows are BLOB affinity from the start. The
+            // 2.9.0-blob-affinity migration would otherwise need to re-rewrite
+            // every row that this migration inserted.
             $up = $db->prepare("UPDATE subnets SET network_bin = :b WHERE id = :id");
             foreach ($rows as $r) {
                 $bin = @inet_pton(to_str($r['network']));
                 if ($bin === false) continue;
-                $up->execute([':b' => $bin, ':id' => to_int($r['id'])]);
+                ipam_bind_binary($up, ':b', $bin);
+                $up->bindValue(':id', to_int($r['id']), PDO::PARAM_INT);
+                $up->execute();
             }
 
             $db->exec("CREATE INDEX IF NOT EXISTS idx_subnets_ver_prefix_netbin ON subnets(ip_version, prefix, network_bin)");
