@@ -41,6 +41,23 @@ There are **no additional dependencies** for v2.x features. VLANs, VRFs, contact
 
 Optional: `php` CLI (for automatic DB migrations), `chown` (for ownership alignment).
 
+### Upload limits for DB import
+
+**⚙ Admin → Database Tools** lets you export and re-import the full SQLite database as a SQL dump. The bundled `Simple-PHP-IPAM/.htaccess` sets reasonable defaults (`upload_max_filesize 512M`, `post_max_size 520M`) that cover typical installs, but a dump with long audit history or a very large address space can exceed them.
+
+If you hit a "413 — Uploaded file too large" error page, raise **both** values in one of the following places (both must be raised; `post_max_size` should be slightly larger than `upload_max_filesize`):
+
+| Server type | Where to set |
+|---|---|
+| Apache + mod_php | `Simple-PHP-IPAM/.htaccess` — edit the `php_value` lines at the top |
+| PHP-FPM | `/etc/php/*/fpm/pool.d/*.conf` via `php_admin_value[...]` |
+| nginx / Caddy with PHP-FPM | Same as PHP-FPM above — `.htaccess` does not apply |
+| CGI or other SAPI | System `php.ini` |
+
+After raising the limits, restart the FPM pool or web server for the change to take effect. Apache + mod_php picks up `.htaccess` changes on the next request.
+
+The application itself also enforces a soft cap via the `import_sql_max_mb` setting in `config.php` (default **200 MB**), which prevents db_tools.php from accepting a file larger than this value even if PHP would allow it. Raise that value too if you need to import a larger dump.
+
 ---
 
 ## Step 1 — Download a release

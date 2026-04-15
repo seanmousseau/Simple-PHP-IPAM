@@ -1,6 +1,24 @@
-# Increase upload limits for db_tools.php SQL import
-php_value upload_max_filesize 200M
-php_value post_max_size 210M
+# Upload limits for db_tools.php SQL import.
+#
+# SQL dumps can be large on installs with long audit history, many subnets,
+# or extensive demo seed data. If your dump exceeds these limits, raise
+# both values here (they must both be raised — post_max_size must be at
+# least slightly larger than upload_max_filesize).
+#
+# These php_value directives only apply under Apache + mod_php. Under PHP-FPM
+# or CGI, set the same values in php.ini or the FPM pool config instead.
+php_value upload_max_filesize 512M
+php_value post_max_size 520M
+
+# Suppress PHP's request-startup warnings (e.g. "POST Content-Length ...
+# exceeds the limit of ..."). Those warnings are written to stdout BEFORE
+# any PHP script runs, which commits the HTTP response headers and causes
+# a cascade of "headers already sent" errors when init.php later calls
+# session_start(). db_tools.php has its own graceful handling for oversized
+# uploads via an early CONTENT_LENGTH check — suppressing startup warnings
+# lets that handler actually run. Startup errors still go to the PHP error
+# log for operators to see.
+php_flag display_startup_errors Off
 
 # Options -Indexes works for Apache.
 # Note: OpenLiteSpeed ignores this. For OLS, disable "Auto Index" in the WebAdmin Console.

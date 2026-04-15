@@ -1,5 +1,56 @@
 <?php
 declare(strict_types=1);
+
+// Early guard: if this is a POST whose Content-Length exceeds php.ini's
+// post_max_size, PHP silently discards $_POST / $_FILES and emits a
+// "Request Startup" warning to stdout before any script runs. That warning
+// commits the HTTP response body, so every subsequent header()/session_start()
+// call from init.php cascades into "headers already sent" errors. Detect the
+// condition here before requiring init.php and emit a clean 413 with
+// actionable guidance (the PHP warning is suppressed at the server level via
+// `php_flag display_startup_errors Off` in .htaccess).
+$_contentLenRaw = $_SERVER['CONTENT_LENGTH'] ?? '0';
+$_contentLen    = is_numeric($_contentLenRaw) ? (int) $_contentLenRaw : 0;
+if (
+    ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST'
+    && $_contentLen > 0
+    && $_POST === []
+    && $_FILES === []
+) {
+    /** @return int bytes — parses '512M', '2G', '4096k', '1024' */
+    $parseIniBytes = static function (string $raw): int {
+        $raw = trim($raw);
+        if ($raw === '') return 0;
+        $last = strtolower($raw[strlen($raw) - 1]);
+        $n = (int) $raw;
+        return match ($last) {
+            'g'     => $n * 1024 * 1024 * 1024,
+            'm'     => $n * 1024 * 1024,
+            'k'     => $n * 1024,
+            default => $n,
+        };
+    };
+    $postMaxBytes = $parseIniBytes((string) ini_get('post_max_size'));
+    if ($postMaxBytes > 0 && $_contentLen > $postMaxBytes) {
+        http_response_code(413);
+        header('Content-Type: text/html; charset=utf-8');
+        $mbLimit = (int) round($postMaxBytes / 1024 / 1024);
+        $mbSent  = (int) round($_contentLen / 1024 / 1024);
+        echo '<!DOCTYPE html><meta charset="utf-8"><title>Upload too large</title>';
+        echo '<style>body{font:16px system-ui,sans-serif;max-width:640px;margin:60px auto;padding:0 20px;color:#222}h1{font-size:24px}code{background:#f4f4f4;padding:2px 6px;border-radius:3px}</style>';
+        echo '<h1>413 — Uploaded file too large</h1>';
+        echo "<p>The upload was approximately <strong>{$mbSent}&nbsp;MB</strong>, which exceeds this server's <code>post_max_size</code> limit of <strong>{$mbLimit}&nbsp;MB</strong>.</p>";
+        echo '<p>To import a larger SQL dump, raise both <code>post_max_size</code> and <code>upload_max_filesize</code> in one of the following places and try again:</p>';
+        echo '<ul>';
+        echo '  <li><code>Simple-PHP-IPAM/.htaccess</code> (Apache + mod_php)</li>';
+        echo '  <li>PHP-FPM pool config (<code>/etc/php/*/fpm/pool.d/*.conf</code>)</li>';
+        echo '  <li><code>php.ini</code> (CGI / other SAPIs)</li>';
+        echo '</ul>';
+        echo '<p><a href="db_tools.php">&larr; Back to Database Tools</a></p>';
+        exit;
+    }
+}
+
 require __DIR__ . '/init.php';
 /** @var \PDO $db */
 /** @var IpamConfig $config */
