@@ -25,6 +25,66 @@ set_error_handler(static function (int $severity, string $message, string $file,
     return true;
 }, E_WARNING | E_NOTICE | E_USER_WARNING | E_USER_NOTICE | E_DEPRECATED | E_USER_DEPRECATED);
 
+// Global exception handler (v2.10.0 #536). Any Throwable that escapes a
+// page script — most commonly a RuntimeException out of ipam_db() because
+// the MySQL version is wrong, the DSN points at MariaDB, the credentials
+// are invalid, or the server is unreachable — used to bubble up to PHP's
+// default fatal handler. The default handler:
+//
+//   1. Does NOT set an HTTP status code → Apache returns 200 OK with the
+//      fatal error in the response body. Uptime monitors see "success"
+//      and never alert.
+//   2. Emits the full Throwable::__toString() including absolute server
+//      paths, line numbers, and stack traces. Information disclosure on
+//      every misconfigured install.
+//
+// This handler routes every uncaught Throwable to:
+//   - error_log() with the FULL trace (operator keeps the debug info)
+//   - An HTTP 500 response body that contains ONLY the exception message
+//     (which is already operator-written and actionable — "MariaDB is not
+//     supported in v2.10.0", "MySQL 8.0.29+ is required", etc.) plus a
+//     small user-facing shell. No paths, no trace, no PHP fatal markup.
+//
+// Note: parse errors and some fatal errors (memory exhaustion, max
+// execution time) still bypass user handlers — the handler catches what
+// PHP lets us catch, which is every Throwable thrown from PHP code.
+set_exception_handler(static function (\Throwable $e): void {
+    // Log the full exception for operators — absolute paths, line numbers,
+    // full stack trace, previous exceptions. This is the ONLY place those
+    // end up; the HTTP response body never contains them.
+    error_log(sprintf(
+        "Simple-PHP-IPAM uncaught %s: %s in %s:%d\n%s",
+        get_class($e),
+        $e->getMessage(),
+        $e->getFile(),
+        $e->getLine(),
+        $e->getTraceAsString()
+    ));
+
+    // HTTP 500 + user-safe body. Use htmlspecialchars() directly rather
+    // than e() because lib.php may not have loaded yet when this handler
+    // fires (e.g. an exception thrown from ipam_db() before lib.php's
+    // helpers are in scope).
+    if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg' && !headers_sent()) {
+        http_response_code(500);
+        header('Content-Type: text/html; charset=utf-8');
+        header('Cache-Control: no-store');
+    }
+
+    $msg = htmlspecialchars($e->getMessage(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    echo '<!doctype html><html lang="en"><head><meta charset="utf-8">';
+    echo '<meta name="viewport" content="width=device-width,initial-scale=1">';
+    echo '<title>Simple PHP IPAM — Configuration error</title>';
+    echo '<style>body{font:16px system-ui,-apple-system,sans-serif;max-width:720px;margin:80px auto;padding:0 24px;color:#1e293b;background:#f8fafc}h1{font-size:24px;margin:0 0 16px;color:#991b1b}.msg{background:#fef2f2;border:1px solid #fecaca;border-left:4px solid #dc2626;padding:16px 20px;border-radius:6px;margin:20px 0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px;word-break:break-word}.hint{color:#64748b;font-size:14px;margin-top:24px}</style>';
+    echo '</head><body>';
+    echo '<h1>Configuration error</h1>';
+    echo '<p>Simple PHP IPAM could not start. The server reports:</p>';
+    echo '<div class="msg">' . $msg . '</div>';
+    echo '<p class="hint">An administrator should check the PHP error log for full diagnostic details.</p>';
+    echo '</body></html>';
+    exit(1);
+});
+
 /** @var IpamConfig $config */
 $config = require __DIR__ . '/config.php';
 
