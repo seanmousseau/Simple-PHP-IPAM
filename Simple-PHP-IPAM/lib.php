@@ -4556,6 +4556,20 @@ function page_header(string $title, array $opts = []): void
     }
 }
 
+function ipam_skeleton_flush(int $rows = 8): void
+{
+    echo '<div id="skeleton-shell" class="skeleton-shell" aria-hidden="true">';
+    for ($i = 0; $i < $rows; $i++) echo '<div class="skeleton-row"></div>';
+    echo '</div>';
+    if (ob_get_level() > 0) ob_flush();
+    flush();
+}
+
+function ipam_skeleton_remove(): void
+{
+    echo '<script>document.getElementById("skeleton-shell")?.remove();</script>';
+}
+
 function page_footer(): void
 {
     global $config;

@@ -356,6 +356,7 @@ if ($selectedSubnet && to_int($selectedSubnet['ip_version']) === 4) {
 }
 
 page_header('Addresses', ['page' => 'addresses']);
+ipam_skeleton_flush();
 ?>
 
 <div class="breadcrumbs">
@@ -629,4 +630,4 @@ page_header('Addresses', ['page' => 'addresses']);
   <?php endif; ?>
 </div>
 
-<?php page_footer();
+<?php ipam_skeleton_remove(); page_footer();

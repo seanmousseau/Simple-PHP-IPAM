@@ -811,6 +811,7 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
 }
 
 page_header('Subnets');
+ipam_skeleton_flush();
 ?>
 
 <div class="breadcrumbs">
@@ -957,4 +958,4 @@ page_header('Subnets');
   <?php endif; ?>
 </div>
 
-<?php page_footer();
+<?php ipam_skeleton_remove(); page_footer();

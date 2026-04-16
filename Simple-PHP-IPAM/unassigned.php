@@ -154,6 +154,7 @@ function build_query_unassigned(array $overrides = []): string {
 }
 
 page_header('Unassigned IPs');
+ipam_skeleton_flush();
 ?>
 
 <div class="breadcrumbs">
@@ -281,4 +282,4 @@ page_header('Unassigned IPs');
   </div>
 <?php endif; ?>
 
-<?php page_footer();
+<?php ipam_skeleton_remove(); page_footer();
