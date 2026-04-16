@@ -1,7 +1,7 @@
 :root{
   --bg:#ffffff;
   --fg:#111111;
-  --muted:#667085;
+  --muted:#586174;
   --border:#d9dde5;
   --border-strong:#c5cbd6;
   --card:#fafbfc;
@@ -45,7 +45,7 @@
 html[data-theme="light"]{
   --bg:#ffffff;
   --fg:#111111;
-  --muted:#667085;
+  --muted:#586174;
   --border:#d9dde5;
   --border-strong:#c5cbd6;
   --card:#fafbfc;
