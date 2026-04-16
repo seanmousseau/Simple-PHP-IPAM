@@ -466,12 +466,16 @@ function ipv4_unassigned_summary_local(PDO $db): array
         if ($prefix <= 30 && $assignedCount > 0) {
             // Exclude network/broadcast addresses from the count
             $bcast = ipv4_broadcast_bin_local($netBin, $prefix);
+            // #410/#388: bind ip_bin via ipam_bind_binary() (PARAM_LOB).
             $exclSt = $db->prepare(
                 "SELECT COUNT(*) AS c FROM addresses
                  WHERE subnet_id = :sid AND status IN ('used','reserved')
                    AND (ip_bin = :net OR ip_bin = :bcast)"
             );
-            $exclSt->execute([':sid' => $sid, ':net' => $netBin, ':bcast' => $bcast]);
+            $exclSt->bindValue(':sid', $sid, PDO::PARAM_INT);
+            ipam_bind_binary($exclSt, ':net', $netBin);
+            ipam_bind_binary($exclSt, ':bcast', $bcast);
+            $exclSt->execute();
             /** @var array<string, mixed>|false $cntRow */
 
             $cntRow = $exclSt->fetch();
