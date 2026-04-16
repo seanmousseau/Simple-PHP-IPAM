@@ -186,19 +186,22 @@ fi
 
 # ---- Step 4: Copy config template ----
 
+BOOT_USER="${STAGING_BOOTSTRAP_USER:-admin}"
+BOOT_PASS="${STAGING_BOOTSTRAP_PASS:-$(openssl rand -base64 18)}"
+
 log "Deploying $DRIVER config template..."
 TMPCONF=$(mktemp)
 cp "$TEMPLATE" "$TMPCONF"
 php -r '
     $f = $argv[1];
     $c = file_get_contents($f);
-    $c = str_replace("__BOOTSTRAP_ADMIN_USER__", "admin", $c);
-    $c = str_replace("__BOOTSTRAP_ADMIN_PASS__", "ChangeMeNow!12345", $c);
+    $c = str_replace("__BOOTSTRAP_ADMIN_USER__", $argv[2], $c);
+    $c = str_replace("__BOOTSTRAP_ADMIN_PASS__", $argv[3], $c);
     file_put_contents($f, $c);
-' "$TMPCONF"
+' "$TMPCONF" "$BOOT_USER" "$BOOT_PASS"
 scp -q "$TMPCONF" "$SSH_HOST:$TARGET/config.php"
 rm -f "$TMPCONF"
-pass "Config template deployed"
+pass "Config template deployed (bootstrap: $BOOT_USER / $BOOT_PASS)"
 
 # ---- Step 5: Substitute DB credentials for mysql/pgsql ----
 
@@ -222,20 +225,18 @@ if [[ "$DRIVER" == "mysql" || "$DRIVER" == "pgsql" ]]; then
         warn "STAGING_DB_DSN, STAGING_DB_USER, or STAGING_DB_PASS not set"
         warn "Tokens left as placeholders in config.php — edit manually on the server"
     else
-        local tmpconf
         tmpconf=$(mktemp)
         cp "$TEMPLATE" "$tmpconf"
-        # Substitute locally to avoid shell metachar issues with remote sed
         php -r '
             $f = $argv[1];
             $c = file_get_contents($f);
             $c = str_replace("__DB_DSN__",  $argv[2], $c);
             $c = str_replace("__DB_USER__", $argv[3], $c);
             $c = str_replace("__DB_PASS__", $argv[4], $c);
-            $c = str_replace("__BOOTSTRAP_ADMIN_USER__", "admin", $c);
-            $c = str_replace("__BOOTSTRAP_ADMIN_PASS__", "ChangeMeNow!12345", $c);
+            $c = str_replace("__BOOTSTRAP_ADMIN_USER__", $argv[5], $c);
+            $c = str_replace("__BOOTSTRAP_ADMIN_PASS__", $argv[6], $c);
             file_put_contents($f, $c);
-        ' "$tmpconf" "$DB_DSN" "$DB_USER" "$DB_PASS"
+        ' "$tmpconf" "$DB_DSN" "$DB_USER" "$DB_PASS" "$BOOT_USER" "$BOOT_PASS"
         scp -q "$tmpconf" "$SSH_HOST:$TARGET/config.php"
         rm -f "$tmpconf"
         pass "Database credentials substituted"

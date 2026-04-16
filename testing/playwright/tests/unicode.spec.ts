@@ -76,18 +76,19 @@ test.afterAll(async () => {
       // Clean up stale tags created by this spec
       await page.goto('tags.php');
       for (const f of UNICODE_FIXTURES) {
-        const ids = await page.evaluate((label) => {
+        const tagName = `pw-u-${f.text}`.substring(0, 50);
+        const ids = await page.evaluate((name) => {
           const ids: string[] = [];
           for (const form of document.querySelectorAll<HTMLFormElement>('form')) {
             const act = form.querySelector<HTMLInputElement>('[name=action]');
             const id  = form.querySelector<HTMLInputElement>('[name=id]');
             if (act?.value === 'delete' && id) {
               const row = form.closest('tr');
-              if (row?.innerText.includes(`pw-u-${label}`)) ids.push(id.value);
+              if (row?.innerText.includes(name)) ids.push(id.value);
             }
           }
           return ids;
-        }, f.label);
+        }, tagName);
         for (const id of ids) {
           await fetchPost(page, appUrl('tags.php'), { action: 'delete', id });
         }
@@ -150,27 +151,30 @@ test.describe('address hostname round-trip', () => {
         expires_at: '',
       });
 
-      // Reload and verify
-      await page.goto(`addresses.php?subnet_id=${subnetId}`);
-      await expect(page.getByText(fixture.text).first()).toBeVisible();
-
-      // Clean up: find the address ID and delete it
-      const addrId = await page.evaluate((targetIp) => {
-        for (const a of document.querySelectorAll<HTMLAnchorElement>('a[href*="address_id"]')) {
-          const row = a.closest('tr');
-          if (row?.innerText.includes(targetIp)) {
-            const m = a.href.match(/address_id=([0-9]+)/);
-            if (m) return parseInt(m[1], 10);
+      try {
+        // Reload and verify
+        await page.goto(`addresses.php?subnet_id=${subnetId}`);
+        await expect(page.getByText(fixture.text).first()).toBeVisible();
+      } finally {
+        // Clean up: find the address ID and delete it
+        await page.goto(`addresses.php?subnet_id=${subnetId}`);
+        const addrId = await page.evaluate((targetIp) => {
+          for (const a of document.querySelectorAll<HTMLAnchorElement>('a[href*="address_id"]')) {
+            const row = a.closest('tr');
+            if (row?.innerText.includes(targetIp)) {
+              const m = a.href.match(/address_id=([0-9]+)/);
+              if (m) return parseInt(m[1], 10);
+            }
           }
+          return null;
+        }, ip);
+        if (addrId) {
+          await fetchPost(page, appUrl('addresses.php'), {
+            action: 'delete',
+            subnet_id: String(subnetId!),
+            id: String(addrId),
+          });
         }
-        return null;
-      }, ip);
-      if (addrId) {
-        await fetchPost(page, appUrl('addresses.php'), {
-          action: 'delete',
-          subnet_id: String(subnetId!),
-          id: String(addrId),
-        });
       }
     });
   }
@@ -191,23 +195,25 @@ test.describe('contact name round-trip', () => {
       await createCard.locator('input[name=email]').fill('unicode-test@example.com');
       await createCard.locator('button[type=submit]').click();
 
-      await page.waitForURL(/contacts\.php/);
-      await expect(page.locator('table')).toContainText(fixture.text);
-
-      // Clean up: find and delete the contact
-      const deleteId = await page.evaluate((name) => {
-        for (const f of document.querySelectorAll<HTMLFormElement>('form')) {
-          const act = f.querySelector<HTMLInputElement>('[name=action]');
-          const id  = f.querySelector<HTMLInputElement>('[name=id]');
-          if (act?.value === 'delete' && id) {
-            const row = f.closest('tr');
-            if (row?.innerText.includes(name)) return id.value;
+      try {
+        await page.waitForURL(/contacts\.php/);
+        await expect(page.locator('table')).toContainText(fixture.text);
+      } finally {
+        await page.goto('contacts.php');
+        const deleteId = await page.evaluate((name) => {
+          for (const f of document.querySelectorAll<HTMLFormElement>('form')) {
+            const act = f.querySelector<HTMLInputElement>('[name=action]');
+            const id  = f.querySelector<HTMLInputElement>('[name=id]');
+            if (act?.value === 'delete' && id) {
+              const row = f.closest('tr');
+              if (row?.innerText.includes(name)) return id.value;
+            }
           }
+          return null;
+        }, contactName);
+        if (deleteId) {
+          await fetchPost(page, appUrl('contacts.php'), { action: 'delete', id: deleteId });
         }
-        return null;
-      }, contactName);
-      if (deleteId) {
-        await fetchPost(page, appUrl('contacts.php'), { action: 'delete', id: deleteId });
       }
     });
   }
@@ -231,23 +237,25 @@ test.describe('tag name round-trip', () => {
       );
       await createCard.locator('button[type=submit]').click();
 
-      await page.waitForURL(/tags\.php/);
-      await expect(page.locator('table')).toContainText(tagName);
-
-      // Delete after to avoid UNIQUE conflicts on re-runs
-      const deleteId = await page.evaluate((name) => {
-        for (const f of document.querySelectorAll<HTMLFormElement>('form')) {
-          const act = f.querySelector<HTMLInputElement>('[name=action]');
-          const id  = f.querySelector<HTMLInputElement>('[name=id]');
-          if (act?.value === 'delete' && id) {
-            const row = f.closest('tr');
-            if (row?.innerText.includes(name)) return id.value;
+      try {
+        await page.waitForURL(/tags\.php/);
+        await expect(page.locator('table')).toContainText(tagName);
+      } finally {
+        await page.goto('tags.php');
+        const deleteId = await page.evaluate((name) => {
+          for (const f of document.querySelectorAll<HTMLFormElement>('form')) {
+            const act = f.querySelector<HTMLInputElement>('[name=action]');
+            const id  = f.querySelector<HTMLInputElement>('[name=id]');
+            if (act?.value === 'delete' && id) {
+              const row = f.closest('tr');
+              if (row?.innerText.includes(name)) return id.value;
+            }
           }
+          return null;
+        }, tagName);
+        if (deleteId) {
+          await fetchPost(page, appUrl('tags.php'), { action: 'delete', id: deleteId });
         }
-        return null;
-      }, tagName);
-      if (deleteId) {
-        await fetchPost(page, appUrl('tags.php'), { action: 'delete', id: deleteId });
       }
     });
   }
@@ -278,28 +286,30 @@ test.describe('search round-trip', () => {
         expires_at: '',
       });
 
-      // Search for the Unicode text
-      await page.goto(`search.php?q=${encodeURIComponent(fixture.text)}`);
-      await expect(page.getByText(fixture.text).first()).toBeVisible();
-
-      // Clean up the address
-      await page.goto(`addresses.php?subnet_id=${subnetId}`);
-      const addrId = await page.evaluate((targetIp) => {
-        for (const a of document.querySelectorAll<HTMLAnchorElement>('a[href*="address_id"]')) {
-          const row = a.closest('tr');
-          if (row?.innerText.includes(targetIp)) {
-            const m = a.href.match(/address_id=([0-9]+)/);
-            if (m) return parseInt(m[1], 10);
+      try {
+        // Search for the Unicode text — assert a result link contains the hostname
+        await page.goto(`search.php?q=${encodeURIComponent(fixture.text)}`);
+        await expect(page.locator('table').getByText(fixture.text).first()).toBeVisible();
+      } finally {
+        // Clean up the address
+        await page.goto(`addresses.php?subnet_id=${subnetId}`);
+        const addrId = await page.evaluate((targetIp) => {
+          for (const a of document.querySelectorAll<HTMLAnchorElement>('a[href*="address_id"]')) {
+            const row = a.closest('tr');
+            if (row?.innerText.includes(targetIp)) {
+              const m = a.href.match(/address_id=([0-9]+)/);
+              if (m) return parseInt(m[1], 10);
+            }
           }
+          return null;
+        }, ip);
+        if (addrId) {
+          await fetchPost(page, appUrl('addresses.php'), {
+            action: 'delete',
+            subnet_id: String(subnetId!),
+            id: String(addrId),
+          });
         }
-        return null;
-      }, ip);
-      if (addrId) {
-        await fetchPost(page, appUrl('addresses.php'), {
-          action: 'delete',
-          subnet_id: String(subnetId!),
-          id: String(addrId),
-        });
       }
     });
   }
