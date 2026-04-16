@@ -71,8 +71,9 @@ $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM'
   <link rel="icon" type="image/webp" sizes="32x32" href="assets/favicon-32.webp">
   <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
   <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
-  <link rel="stylesheet" href="assets/app.css?v=2.12.0">
-  <script defer src="assets/app.js?v=2.12.0"></script>
+  <link rel="stylesheet" href="assets/vendor/open-props.min.css?v=2.13.0">
+  <link rel="stylesheet" href="assets/app.css?v=2.13.0">
+  <script defer src="assets/app.js?v=2.13.0"></script>
 </head>
 <body>
 <div class="gate-wrap">
