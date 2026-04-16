@@ -1,4 +1,8 @@
 (function(){
+  // Remove skeleton loader if present (CSP-safe, no inline script)
+  var skel = document.getElementById("skeleton-shell");
+  if (skel) skel.remove();
+
   var key = "ipam_theme";
   // Seed localStorage from server-side theme meta tag (CSP-safe, replaces inline script)
   var metaTheme = document.querySelector("meta[name='ipam-server-theme']");
@@ -318,8 +322,13 @@
       if (e.defaultPrevented) return;
       var form = e.target;
       if (form.method !== "post" || form.hasAttribute("data-no-loading")) return;
-      var btn = form.querySelector("button[type=submit], input[type=submit]");
+      var btn = e.submitter || form.querySelector("button[type=submit], input[type=submit]");
       if (!btn || btn.disabled) return;
+      if (btn.name && btn.value) {
+        var h = document.createElement("input");
+        h.type = "hidden"; h.name = btn.name; h.value = btn.value;
+        form.appendChild(h);
+      }
       btn.disabled = true;
       btn.setAttribute("aria-busy", "true");
       btn.dataset.originalLabel = btn.textContent;
