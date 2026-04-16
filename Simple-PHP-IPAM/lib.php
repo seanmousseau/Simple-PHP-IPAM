@@ -106,6 +106,20 @@ function ipam_bind_binary(PDOStatement $stmt, int|string $param, string $bin): v
  * redirect URLs, tag saving, and every cascading operation that
  * references the newly-inserted row). v2.11.0 #388.
  */
+/**
+ * Return the settings.key column quoted for the active SQL dialect.
+ *
+ * `key` is a reserved word in MySQL (index keyword) and must be quoted.
+ * MySQL uses backticks; Postgres and SQLite use double quotes (SQL
+ * standard). There is no single quoting syntax that works on all three
+ * engines without a SQL-mode change, so we branch on the driver. Called
+ * by every settings query in lib.php and migrations.php. v2.11.0 #388.
+ */
+function ipam_key_col(): string
+{
+    return ipam_dialect()->driver_name() === 'mysql' ? '`key`' : '"key"';
+}
+
 function ipam_last_insert_id(PDO $db, string $table, string $column = 'id'): int
 {
     if (ipam_dialect()->driver_name() === 'pgsql') {
@@ -1279,7 +1293,7 @@ function ipam_setting(string $key, mixed $default = null): mixed
     try {
         $db = $GLOBALS['db'] ?? null;
         if ($db instanceof PDO) {
-            $st = $db->prepare("SELECT value, type FROM settings WHERE `key` = :k");
+            $st = $db->prepare("SELECT value, type FROM settings WHERE ".ipam_key_col()." = :k");
             $st->execute([':k' => $key]);
             $row = $st->fetch();
             if (is_array($row)) {
@@ -1328,7 +1342,7 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
 
     $oldRaw = null;
     $oldType = $type;
-    $st = $db->prepare("SELECT value, type FROM settings WHERE `key` = :k");
+    $st = $db->prepare("SELECT value, type FROM settings WHERE ".ipam_key_col()." = :k");
     $st->execute([':k' => $key]);
     $prev = $st->fetch();
     if (is_array($prev)) {
@@ -1342,7 +1356,7 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
     $d = ipam_dialect();
     $upsertClause = $d->upsert('settings', ['key'], ['value', 'type', 'updated_at', 'updated_by']);
     $up = $db->prepare(
-        "INSERT INTO settings (`key`, value, type, updated_at, updated_by)
+        "INSERT INTO settings (".ipam_key_col().", value, type, updated_at, updated_by)
          VALUES (:k, :v, :t, {$d->now()}, :u)
          $upsertClause"
     );
@@ -1436,7 +1450,7 @@ function ipam_setting_all(): array
 function ipam_setting_source(PDO $db, string $key): string
 {
     try {
-        $st = $db->prepare("SELECT 1 FROM settings WHERE `key` = :k");
+        $st = $db->prepare("SELECT 1 FROM settings WHERE ".ipam_key_col()." = :k");
         $st->execute([':k' => $key]);
         if ($st->fetchColumn() !== false) return 'db';
     } catch (\Throwable) {
@@ -1490,7 +1504,7 @@ function ipam_setting_deprecated_keys(): array
         // runs on both engines. Without the quotes, MySQL would throw a
         // syntax error that the catch below would silently swallow,
         // returning [] and hiding every deprecation from the UI banner.
-        $st   = $db->query("SELECT `key` FROM settings");
+        $st   = $db->query("SELECT ".ipam_key_col()." FROM settings");
         $rows = $st !== false ? $st->fetchAll(PDO::FETCH_COLUMN) : [];
     } catch (\Throwable) {
         return [];
