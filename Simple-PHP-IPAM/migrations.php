@@ -860,9 +860,18 @@ function ipam_migrations(): array
                 $hasCol = (bool)$st->fetch();
             }
             if (!$hasCol) {
-                $db->exec("ALTER TABLE login_attempts ADD COLUMN username TEXT DEFAULT NULL");
+                $colType = ($driver === 'mysql') ? 'VARCHAR(191) DEFAULT NULL' : 'TEXT DEFAULT NULL';
+                $db->exec("ALTER TABLE login_attempts ADD COLUMN username {$colType}");
             }
-            $db->exec("CREATE INDEX IF NOT EXISTS idx_login_attempts_username_time ON login_attempts(username, attempted_at)");
+            if ($driver === 'mysql') {
+                $idx = $db->prepare("SHOW INDEX FROM login_attempts WHERE Key_name = 'idx_login_attempts_username_time'");
+                $idx->execute();
+                if (!$idx->fetch()) {
+                    $db->exec("CREATE INDEX idx_login_attempts_username_time ON login_attempts(username, attempted_at)");
+                }
+            } else {
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_login_attempts_username_time ON login_attempts(username, attempted_at)");
+            }
         },
     ];
 }

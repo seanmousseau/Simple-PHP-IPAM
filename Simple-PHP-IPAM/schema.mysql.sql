@@ -289,7 +289,7 @@ CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
 CREATE TABLE IF NOT EXISTS login_attempts (
   id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   ip           VARCHAR(45) NOT NULL,
-  username     VARCHAR(64) DEFAULT NULL,
+  username     VARCHAR(191) COLLATE utf8mb4_bin DEFAULT NULL,
   attempted_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   KEY idx_login_attempts_ip_time (ip, attempted_at),
   KEY idx_login_attempts_username_time (username, attempted_at)

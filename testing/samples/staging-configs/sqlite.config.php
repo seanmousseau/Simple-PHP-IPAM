@@ -6,8 +6,8 @@ return [
     'proxy_trust' => false,
     'app_name' => 'Simple PHP IPAM (staging)',
     'bootstrap_admin' => [
-        'username' => 'admin',
-        'password' => 'ChangeMeNow!12345',
+        'username' => '__BOOTSTRAP_ADMIN_USER__',
+        'password' => '__BOOTSTRAP_ADMIN_PASS__',
     ],
     'session_idle_seconds' => 1800,
     'login_max_attempts' => 5,

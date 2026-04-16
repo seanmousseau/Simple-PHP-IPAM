@@ -218,7 +218,7 @@ test.describe('contact name round-trip', () => {
 test.describe('tag name round-trip', () => {
   for (const fixture of UNICODE_FIXTURES) {
     // Keep under 50 chars (tags.name max). Prefix with pw-u- for cleanup.
-    const tagName = `pw-u-${fixture.label}`.substring(0, 49);
+    const tagName = `pw-u-${fixture.text}`.substring(0, 50);
 
     test(`${fixture.label}: "${tagName}"`, async () => {
       await page.goto('tags.php');

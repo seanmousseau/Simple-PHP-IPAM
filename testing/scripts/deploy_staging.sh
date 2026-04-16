@@ -173,7 +173,6 @@ log "Syncing application files..."
 rsync -az --delete \
     --exclude='data/' \
     --exclude='config.php' \
-    --exclude='.htaccess' \
     "$APP_DIR/" "$SSH_HOST:$TARGET/"
 pass "Rsync complete"
 
@@ -188,7 +187,17 @@ fi
 # ---- Step 4: Copy config template ----
 
 log "Deploying $DRIVER config template..."
-scp -q "$TEMPLATE" "$SSH_HOST:$TARGET/config.php"
+TMPCONF=$(mktemp)
+cp "$TEMPLATE" "$TMPCONF"
+php -r '
+    $f = $argv[1];
+    $c = file_get_contents($f);
+    $c = str_replace("__BOOTSTRAP_ADMIN_USER__", "admin", $c);
+    $c = str_replace("__BOOTSTRAP_ADMIN_PASS__", "ChangeMeNow!12345", $c);
+    file_put_contents($f, $c);
+' "$TMPCONF"
+scp -q "$TMPCONF" "$SSH_HOST:$TARGET/config.php"
+rm -f "$TMPCONF"
 pass "Config template deployed"
 
 # ---- Step 5: Substitute DB credentials for mysql/pgsql ----
@@ -213,11 +222,22 @@ if [[ "$DRIVER" == "mysql" || "$DRIVER" == "pgsql" ]]; then
         warn "STAGING_DB_DSN, STAGING_DB_USER, or STAGING_DB_PASS not set"
         warn "Tokens left as placeholders in config.php — edit manually on the server"
     else
-        ssh "$SSH_HOST" "sed -i \
-            -e 's|__DB_DSN__|${DB_DSN}|g' \
-            -e 's|__DB_USER__|${DB_USER}|g' \
-            -e 's|__DB_PASS__|${DB_PASS}|g' \
-            $TARGET/config.php"
+        local tmpconf
+        tmpconf=$(mktemp)
+        cp "$TEMPLATE" "$tmpconf"
+        # Substitute locally to avoid shell metachar issues with remote sed
+        php -r '
+            $f = $argv[1];
+            $c = file_get_contents($f);
+            $c = str_replace("__DB_DSN__",  $argv[2], $c);
+            $c = str_replace("__DB_USER__", $argv[3], $c);
+            $c = str_replace("__DB_PASS__", $argv[4], $c);
+            $c = str_replace("__BOOTSTRAP_ADMIN_USER__", "admin", $c);
+            $c = str_replace("__BOOTSTRAP_ADMIN_PASS__", "ChangeMeNow!12345", $c);
+            file_put_contents($f, $c);
+        ' "$tmpconf" "$DB_DSN" "$DB_USER" "$DB_PASS"
+        scp -q "$tmpconf" "$SSH_HOST:$TARGET/config.php"
+        rm -f "$tmpconf"
         pass "Database credentials substituted"
     fi
 fi
@@ -231,10 +251,12 @@ pass "Ownership set to www-data"
 # ---- Step 7: Run migrations ----
 
 log "Running migrations..."
-MIGRATE_OUTPUT=$(ssh "$SSH_HOST" "docker exec $CONTAINER php $CONTAINER_PATH/migrate.php" 2>&1) || true
-if [[ -n "$MIGRATE_OUTPUT" ]]; then
-    echo "  $MIGRATE_OUTPUT"
+if ! MIGRATE_OUTPUT=$(ssh "$SSH_HOST" "docker exec $CONTAINER php $CONTAINER_PATH/migrate.php" 2>&1); then
+    [[ -n "$MIGRATE_OUTPUT" ]] && echo "  $MIGRATE_OUTPUT"
+    fail "Migrations failed"
+    exit 1
 fi
+[[ -n "$MIGRATE_OUTPUT" ]] && echo "  $MIGRATE_OUTPUT"
 pass "Migrations complete"
 
 # ---- Done ----
