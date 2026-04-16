@@ -1,24 +1,18 @@
-name: Playwright (nightly)
+name: Playwright
 
-# Nightly containerized Playwright harness for Simple PHP IPAM.
+# Containerized Playwright harness for Simple PHP IPAM.
 #
-# - `containerized-playwright` runs the full suite against a Dockerized Apache+PHP
-#   instance seeded from demo_seed.php. SQLite is the only driver in v2.5.2;
-#   v2.10.0 added mysql and v2.11.0 adds pgsql to the matrix (#388). All three
-#   drivers now run the same ~330-test suite against real service containers
-#   on every nightly run.
-# - `htaccess-subset` runs a small HTTP-level test that verifies .htaccess deny
-#   rules work correctly against the same image.
-# - `api-tests` runs testing/scripts/test_api.sh against the same image (#451,
-#   v2.9.0). API regression coverage that previously only ran against the
-#   shared dev-direct host now runs in CI on every PR.
+# Runs on PRs targeting dev/main and on manual dispatch. Four-engine matrix
+# (sqlite, mysql, mariadb, pgsql) exercises the full ~400-test suite against
+# real service containers inside Dockerized Apache+PHP.
 #
-# All three jobs use testing/playwright/Dockerfile.apache so the realism gap
-# between `php -S` and production Apache does not exist.
+# - `containerized-playwright` — full E2E suite per engine
+# - `htaccess-subset` — HTTP-level .htaccess deny rule verification
+# - `api-tests` — testing/scripts/test_api.sh API regression suite
+#
+# All jobs use testing/playwright/Dockerfile.apache.
 
 on:
-  schedule:
-    - cron: '0 7 * * *'   # 07:00 UTC daily
   workflow_dispatch:
   pull_request:
     branches: [main, dev]
@@ -26,10 +20,10 @@ on:
       - 'Simple-PHP-IPAM/**'
       - 'testing/playwright/**'
       - 'testing/scripts/**'
-      - '.github/workflows/playwright-nightly.yml'
+      - '.github/workflows/playwright.yml'
 
 concurrency:
-  group: playwright-nightly-${{ github.ref }}
+  group: playwright-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

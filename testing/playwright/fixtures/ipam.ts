@@ -9,7 +9,7 @@ export const ADMIN_USER = process.env.IPAM_ADMIN_USER || 'admin';
 export const ADMIN_PASS = process.env.IPAM_ADMIN_PASS || 'admin';
 
 // ── Active database driver (v2.10.0 #433) ─────────────────────────────────────
-// Set by the Playwright nightly workflow when a non-SQLite matrix slot runs.
+// Set by the Playwright CI workflow when a non-SQLite matrix slot runs.
 // Unset or 'sqlite' means the SQLite driver is active. Tests that exercise
 // SQLite-specific behaviour (ipam_db_dump_stream SQL format, pre-v2.0.0
 // upgrade path, etc.) use IS_SQLITE to skip on MySQL and Postgres.

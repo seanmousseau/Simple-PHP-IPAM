@@ -148,7 +148,7 @@ jobs:
       # catches MySQL-specific breakage in the page handlers (bound
       # parameters, pagination SQL, REST API endpoints) that unit tests
       # alone do not exercise. The sqlite slot already has Playwright
-      # coverage via playwright-nightly.yml and does not need this step.
+      # coverage via playwright.yml and does not need this step.
       - name: Bootstrap php -S + config for test_api.sh (mysql)
         if: matrix.engine == 'mysql'
         run: |

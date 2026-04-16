@@ -47,7 +47,7 @@ RewriteRule ^(config\.php|init\.php|lib\.php|PgsqlStatement\.php|schema\.sql|sch
 # on OLS. Blocking at the ROOT context closes the gap because root-level
 # rewrite rules run before handler dispatch on both Apache and OLS.
 # v2.11.0 #500. See testing/playwright/tests/htaccess.spec.ts and the
-# containerized OLS regression guard in playwright-nightly.yml.
+# containerized OLS regression guard in playwright.yml.
 RewriteRule ^dialects(/|$) - [F,L,NC]
 RewriteRule ^vendor(/|$) - [F,L,NC]
 

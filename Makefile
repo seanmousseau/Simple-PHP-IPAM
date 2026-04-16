@@ -23,7 +23,7 @@ sec:
 # MySQL gate — spins up a fresh mysql:8.0 service container via the
 # containerized Playwright harness and runs the full Playwright suite
 # against db_driver=mysql. Mirrors the CI matrix slot in
-# playwright-nightly.yml. Slower (~2 min). Optional — CI runs the same
+# playwright.yml. Slower (~2 min). Optional — CI runs the same
 # path on every PR, but handy when editing the Dialect layer or any
 # cross-engine SQL site.
 gate-mysql: pw-mysql
