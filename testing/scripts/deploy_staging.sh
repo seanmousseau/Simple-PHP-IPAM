@@ -167,6 +167,26 @@ else
     exit 1
 fi
 
+# ---- Pre-flight: validate DB credentials for mysql/pgsql ----
+
+if [[ "$DRIVER" == "mysql" || "$DRIVER" == "pgsql" ]]; then
+    SECRETS_FILE="${HOME}/.claude/dev-secrets.env"
+    if [[ -f "$SECRETS_FILE" ]]; then
+        set -a
+        # shellcheck disable=SC1090
+        source "$SECRETS_FILE"
+        set +a
+    fi
+    DB_DSN="${STAGING_DB_DSN:-}"
+    DB_USER="${STAGING_DB_USER:-}"
+    DB_PASS="${STAGING_DB_PASS:-}"
+    if [[ -z "$DB_DSN" || -z "$DB_USER" || -z "$DB_PASS" ]]; then
+        fail "STAGING_DB_DSN, STAGING_DB_USER, and STAGING_DB_PASS are required for driver=$DRIVER"
+        log "Set them in env or in $SECRETS_FILE"
+        exit 1
+    fi
+fi
+
 # ---- Step 2: Rsync application files ----
 
 log "Syncing application files..."
@@ -212,40 +232,21 @@ pass "Config template deployed (bootstrap user: $BOOT_USER)"
 
 if [[ "$DRIVER" == "mysql" || "$DRIVER" == "pgsql" ]]; then
     log "Substituting database credentials in remote config.php..."
-
-    # Source secrets if available
-    SECRETS_FILE="${HOME}/.claude/dev-secrets.env"
-    if [[ -f "$SECRETS_FILE" ]]; then
-        set -a
-        # shellcheck disable=SC1090
-        source "$SECRETS_FILE"
-        set +a
-    fi
-
-    DB_DSN="${STAGING_DB_DSN:-}"
-    DB_USER="${STAGING_DB_USER:-}"
-    DB_PASS="${STAGING_DB_PASS:-}"
-
-    if [[ -z "$DB_DSN" || -z "$DB_USER" || -z "$DB_PASS" ]]; then
-        warn "STAGING_DB_DSN, STAGING_DB_USER, or STAGING_DB_PASS not set"
-        warn "Tokens left as placeholders in config.php — edit manually on the server"
-    else
-        tmpconf=$(mktemp)
-        cp "$TEMPLATE" "$tmpconf"
-        php -r '
-            $f = $argv[1];
-            $c = file_get_contents($f);
-            $c = str_replace("__DB_DSN__",  $argv[2], $c);
-            $c = str_replace("__DB_USER__", $argv[3], $c);
-            $c = str_replace("__DB_PASS__", $argv[4], $c);
-            $c = str_replace("__BOOTSTRAP_ADMIN_USER__", $argv[5], $c);
-            $c = str_replace("__BOOTSTRAP_ADMIN_PASS__", $argv[6], $c);
-            file_put_contents($f, $c);
-        ' "$tmpconf" "$DB_DSN" "$DB_USER" "$DB_PASS" "$BOOT_USER" "$BOOT_PASS"
-        scp -q "$tmpconf" "$SSH_HOST:$TARGET/config.php"
-        rm -f "$tmpconf"
-        pass "Database credentials substituted"
-    fi
+    tmpconf=$(mktemp)
+    cp "$TEMPLATE" "$tmpconf"
+    php -r '
+        $f = $argv[1];
+        $c = file_get_contents($f);
+        $c = str_replace("__DB_DSN__",  $argv[2], $c);
+        $c = str_replace("__DB_USER__", $argv[3], $c);
+        $c = str_replace("__DB_PASS__", $argv[4], $c);
+        $c = str_replace("__BOOTSTRAP_ADMIN_USER__", $argv[5], $c);
+        $c = str_replace("__BOOTSTRAP_ADMIN_PASS__", $argv[6], $c);
+        file_put_contents($f, $c);
+    ' "$tmpconf" "$DB_DSN" "$DB_USER" "$DB_PASS" "$BOOT_USER" "$BOOT_PASS"
+    scp -q "$tmpconf" "$SSH_HOST:$TARGET/config.php"
+    rm -f "$tmpconf"
+    pass "Database credentials substituted"
 fi
 
 # ---- Step 6: Fix ownership ----
