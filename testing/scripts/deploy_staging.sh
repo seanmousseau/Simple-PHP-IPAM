@@ -210,30 +210,14 @@ BOOT_USER="${STAGING_BOOTSTRAP_USER:-admin}"
 BOOT_PASS="${STAGING_BOOTSTRAP_PASS:-$(openssl rand -base64 18)}"
 
 TMPCONF=""
-tmpconf=""
-cleanup_tmpfiles() { [[ -n "${TMPCONF:-}" ]] && rm -f "$TMPCONF"; [[ -n "${tmpconf:-}" ]] && rm -f "$tmpconf"; }
+cleanup_tmpfiles() { [[ -n "${TMPCONF:-}" ]] && rm -f "$TMPCONF"; }
 trap cleanup_tmpfiles EXIT
 
 log "Deploying $DRIVER config template..."
 TMPCONF=$(mktemp)
 cp "$TEMPLATE" "$TMPCONF"
-php -r '
-    $f = $argv[1];
-    $c = file_get_contents($f);
-    $c = str_replace("__BOOTSTRAP_ADMIN_USER__", $argv[2], $c);
-    $c = str_replace("__BOOTSTRAP_ADMIN_PASS__", $argv[3], $c);
-    file_put_contents($f, $c);
-' "$TMPCONF" "$BOOT_USER" "$BOOT_PASS"
-scp -q "$TMPCONF" "$SSH_HOST:$TARGET/config.php"
-rm -f "$TMPCONF"
-pass "Config template deployed (bootstrap user: $BOOT_USER)"
-
-# ---- Step 5: Substitute DB credentials for mysql/pgsql ----
 
 if [[ "$DRIVER" == "mysql" || "$DRIVER" == "pgsql" ]]; then
-    log "Substituting database credentials in remote config.php..."
-    tmpconf=$(mktemp)
-    cp "$TEMPLATE" "$tmpconf"
     php -r '
         $f = $argv[1];
         $c = file_get_contents($f);
@@ -243,11 +227,20 @@ if [[ "$DRIVER" == "mysql" || "$DRIVER" == "pgsql" ]]; then
         $c = str_replace("__BOOTSTRAP_ADMIN_USER__", $argv[5], $c);
         $c = str_replace("__BOOTSTRAP_ADMIN_PASS__", $argv[6], $c);
         file_put_contents($f, $c);
-    ' "$tmpconf" "$DB_DSN" "$DB_USER" "$DB_PASS" "$BOOT_USER" "$BOOT_PASS"
-    scp -q "$tmpconf" "$SSH_HOST:$TARGET/config.php"
-    rm -f "$tmpconf"
-    pass "Database credentials substituted"
+    ' "$TMPCONF" "$DB_DSN" "$DB_USER" "$DB_PASS" "$BOOT_USER" "$BOOT_PASS"
+else
+    php -r '
+        $f = $argv[1];
+        $c = file_get_contents($f);
+        $c = str_replace("__BOOTSTRAP_ADMIN_USER__", $argv[2], $c);
+        $c = str_replace("__BOOTSTRAP_ADMIN_PASS__", $argv[3], $c);
+        file_put_contents($f, $c);
+    ' "$TMPCONF" "$BOOT_USER" "$BOOT_PASS"
 fi
+
+scp -q "$TMPCONF" "$SSH_HOST:$TARGET/config.php"
+rm -f "$TMPCONF"
+pass "Config template deployed (bootstrap user: $BOOT_USER)"
 
 # ---- Step 6: Fix ownership ----
 
