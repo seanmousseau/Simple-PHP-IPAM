@@ -4,7 +4,9 @@ name: Playwright (nightly)
 #
 # - `containerized-playwright` runs the full suite against a Dockerized Apache+PHP
 #   instance seeded from demo_seed.php. SQLite is the only driver in v2.5.2;
-#   v2.10.0 adds mysql and v2.11.0 adds pgsql to the matrix.
+#   v2.10.0 added mysql and v2.11.0 adds pgsql to the matrix (#388). All three
+#   drivers now run the same ~330-test suite against real service containers
+#   on every nightly run.
 # - `htaccess-subset` runs a small HTTP-level test that verifies .htaccess deny
 #   rules work correctly against the same image.
 # - `api-tests` runs testing/scripts/test_api.sh against the same image (#451,
@@ -38,7 +40,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        driver: [sqlite, mysql]   # v2.11.0 appends 'pgsql' (#388)
+        driver: [sqlite, mysql, pgsql]
     env:
       DRIVER: ${{ matrix.driver }}
     steps:
@@ -89,9 +91,13 @@ jobs:
           retention-days: 7
 
   htaccess-subset:
-    name: .htaccess coverage
+    name: .htaccess coverage (${{ matrix.webserver }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        webserver: [apache, openlitespeed]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
@@ -110,29 +116,70 @@ jobs:
         working-directory: testing/playwright
         run: npx playwright install --with-deps chromium
 
-      - name: Bootstrap containerized IPAM
+      # Apache: boots the full Dockerized Apache+PHP harness on HTTPS :8443
+      # with a seeded SQLite database. Postgres/MySQL matrix slots do not
+      # apply here — the .htaccess assertions are HTTP-level and don't care
+      # about the backing driver.
+      - name: Bootstrap containerized IPAM (apache)
+        if: matrix.webserver == 'apache'
         run: bash testing/playwright/bootstrap-app.sh sqlite
 
-      - name: Run .htaccess spec only
+      # OpenLiteSpeed (v2.11.0 #500): boots the stock
+      # litespeedtech/openlitespeed image with the Simple-PHP-IPAM tree
+      # mounted read-only at the Example vhost docroot. No database, no
+      # seeding — the .htaccess regression guard is HTTP-level. OLS has a
+      # known quirk where lsphp dispatches PHP files BEFORE a subdirectory
+      # .htaccess rewrite rule fires, so blocking `/dialects/*.php` and
+      # `/vendor/*.php` requires root-level RewriteRules rather than the
+      # subdirectory `Require all denied` pattern Apache honours. This job
+      # is the regression guard that keeps the root-level blocks in place.
+      - name: Bootstrap containerized IPAM (openlitespeed)
+        if: matrix.webserver == 'openlitespeed'
+        run: bash testing/playwright/bootstrap-ols.sh
+
+      - name: Run .htaccess spec (apache)
+        if: matrix.webserver == 'apache'
         working-directory: testing/playwright
         env:
           IPAM_BASE_URL: https://127.0.0.1:8443
           CI: 'true'
         run: npx playwright test tests/htaccess.spec.ts
 
-      - name: Container logs on failure
-        if: failure()
+      - name: Run .htaccess spec (openlitespeed)
+        if: matrix.webserver == 'openlitespeed'
+        working-directory: testing/playwright
+        env:
+          # OLS's Example vhost listens on plain HTTP :8088 out of the box
+          # (bootstrap-ols.sh maps it to host :8089 to avoid colliding with
+          # the Apache harness on machines running both side-by-side). The
+          # htaccess spec sends `X-Forwarded-Proto: https` on every request
+          # so the root-level force-HTTPS redirect skips and every other
+          # deny rule still fires.
+          IPAM_BASE_URL: http://127.0.0.1:8089
+          CI: 'true'
+        run: npx playwright test tests/htaccess.spec.ts
+
+      - name: Container logs on failure (apache)
+        if: failure() && matrix.webserver == 'apache'
         run: docker logs ipam-pw-test || true
 
-      - name: Tear down containerized IPAM
-        if: always()
+      - name: Container logs on failure (openlitespeed)
+        if: failure() && matrix.webserver == 'openlitespeed'
+        run: docker logs ipam-ols-test || true
+
+      - name: Tear down containerized IPAM (apache)
+        if: always() && matrix.webserver == 'apache'
         run: bash testing/playwright/teardown-app.sh
+
+      - name: Tear down containerized IPAM (openlitespeed)
+        if: always() && matrix.webserver == 'openlitespeed'
+        run: bash testing/playwright/teardown-ols.sh
 
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: playwright-report-htaccess
+          name: playwright-report-htaccess-${{ matrix.webserver }}
           path: testing/playwright/playwright-report/
           retention-days: 7
 

@@ -30,7 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             try {
                 $st = $db->prepare("INSERT INTO vrfs (name, description, rd, asn, rt_import, rt_export, enforce_unique) VALUES (:n,:d,:rd,:asn,:rti,:rte,:eu)");
                 $st->execute([':n' => $name, ':d' => $desc, ':rd' => $rd, ':asn' => $asn, ':rti' => $rtImport, ':rte' => $rtExport, ':eu' => $enforceUnique]);
-                $newId = (int)$db->lastInsertId();
+                $newId = ipam_last_insert_id($db, 'vrfs');
                 audit($db, 'vrf.create', 'vrf', $newId, "name=$name");
                 flash_set("VRF \"$name\" created.");
                 header('Location: vrfs.php');

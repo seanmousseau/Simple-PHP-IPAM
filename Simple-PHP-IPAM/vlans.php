@@ -29,7 +29,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             try {
                 $st = $db->prepare("INSERT INTO vlans (vlan_id, name, description, site_id) VALUES (:vid,:n,:d,:sid)");
                 $st->execute([':vid' => $vlanId, ':n' => $name, ':d' => $desc, ':sid' => $siteId]);
-                $newId = (int)$db->lastInsertId();
+                $newId = ipam_last_insert_id($db, 'vlans');
                 audit($db, 'vlan.create', 'vlan', $newId, "vlan_id=$vlanId name=$name");
                 flash_set("VLAN $vlanId created.");
                 header('Location: vlans.php');
@@ -91,7 +91,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             try {
                 $st = $db->prepare("INSERT INTO vlan_ranges (name, vlan_min, vlan_max, description, site_id) VALUES (:n,:min,:max,:d,:sid)");
                 $st->execute([':n' => $rName, ':min' => $rMin, ':max' => $rMax, ':d' => $rDesc, ':sid' => $rSiteId]);
-                $newId = (int)$db->lastInsertId();
+                $newId = ipam_last_insert_id($db, 'vlan_ranges');
                 audit($db, 'vlan.range_create', 'vlan_range', $newId, "name=$rName min=$rMin max=$rMax");
                 flash_set("VLAN range \"$rName\" created.");
             } catch (PDOException $e) {

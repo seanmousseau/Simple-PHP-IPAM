@@ -103,7 +103,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $ipBin = ipv4_int_to_bin($ipInt);
                             $ipStr = (string)inet_ntop($ipBin);
 
-                            $stCheck->execute([':sid' => $subnetId, ':b' => $ipBin]);
+                            // #410/#388: bind ip_bin via ipam_bind_binary() (PARAM_LOB).
+                            $stCheck->bindValue(':sid', $subnetId, PDO::PARAM_INT);
+                            ipam_bind_binary($stCheck, ':b', $ipBin);
+                            $stCheck->execute();
                             /** @var array<string, mixed>|false $existing */
                             $existing = $stCheck->fetch();
 
@@ -115,10 +118,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                     $updated++;
                                 }
                             } else {
-                                $stIns->execute([
-                                    ':sid' => $subnetId, ':ip' => $ipStr,
-                                    ':b'   => $ipBin,    ':n'  => $note,
-                                ]);
+                                $stIns->bindValue(':sid', $subnetId, PDO::PARAM_INT);
+                                $stIns->bindValue(':ip', $ipStr);
+                                ipam_bind_binary($stIns, ':b', $ipBin);
+                                $stIns->bindValue(':n', $note);
+                                $stIns->execute();
                                 $created++;
                             }
                         }
@@ -237,7 +241,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             "DELETE FROM addresses WHERE subnet_id = :sid AND ip_bin = :b AND status = 'reserved'"
                         );
                         for ($ipInt = $startInt; $ipInt <= $endInt; $ipInt++) {
-                            $stDel->execute([':sid' => $subnetId, ':b' => ipv4_int_to_bin($ipInt)]);
+                            $stDel->bindValue(':sid', $subnetId, PDO::PARAM_INT);
+                            ipam_bind_binary($stDel, ':b', ipv4_int_to_bin($ipInt));
+                            $stDel->execute();
                             $deleted += $stDel->rowCount();
                         }
                         $db->commit();

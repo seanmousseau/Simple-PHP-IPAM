@@ -43,8 +43,8 @@ $st = $db->prepare("
     LEFT JOIN addresses a ON a.subnet_id = s.id AND a.status IN ('used','reserved')
     WHERE s.ip_version = 4 AND s.prefix BETWEEN 8 AND 32
     GROUP BY s.id
-    HAVING used_count > 0
-    ORDER BY used_count DESC
+    HAVING COUNT(a.id) > 0
+    ORDER BY COUNT(a.id) DESC
     LIMIT 50
 ");
 $st->execute();

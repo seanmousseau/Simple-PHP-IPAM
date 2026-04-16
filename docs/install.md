@@ -173,6 +173,68 @@ On the first request, the installer loads `schema.mysql.sql`, creates the bootst
 - **CHECK constraints require MySQL 8.0.16+.** The schema declares CHECK constraints on enum columns (`role`, `theme`, `status`, `level`, `method`) and range columns (`vlan_id`, `tcp_port`, prefix delegation). Versions below 8.0.16 silently ignore them, leaving invariant enforcement to the application layer only.
 - **Nightly Playwright MySQL matrix slot is new in v2.10.0 and under soak.** v2.10.0 ships both a per-commit MySQL CI slot (PHP QA + `test_api.sh`) and a nightly Playwright MySQL matrix slot covering the full 329-test end-to-end suite against a containerized `mysql:8.0` service. The release gate is **7 consecutive green nightly runs** — until that bar is cleared, treat any MySQL regression the nightly matrix surfaces as release-blocking. Track progress at [#433](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/433).
 
+### PostgreSQL (experimental)
+
+> ⚠️ **PostgreSQL support is experimental in v2.11.0 and will be promoted to stable in v3.0.0.** The default driver is SQLite; you must opt in explicitly. Report bugs at the [GitHub tracker](https://github.com/seanmousseau/Simple-PHP-IPAM/issues). See the [Known issues](#postgresql-known-issues) list below for current limitations.
+
+**Requirements:**
+
+- PostgreSQL **14** or newer (the installer rejects earlier versions). 14 is the effective floor because the bootstrap path uses `CREATE OR REPLACE TRIGGER`, which landed in that release and removes the drop-and-recreate race window from the append-only self-heal path.
+- A cluster initialised with a **deterministic collation**. Standard `initdb` defaults (`C`, `POSIX`, `en_US.UTF-8`, `en_US.utf8`) all qualify. ICU non-deterministic collations are **not** supported — the schema pins `COLLATE "C"` on byte-comparable columns (usernames, CIDRs, IP text, hashes, settings keys) so exact-equality, uniqueness, and ordering stay deterministic regardless of the cluster's default.
+- `pdo_pgsql` PHP extension (Debian/Ubuntu: `apt install php-pgsql`; RHEL/Rocky: `dnf install php-pgsql`). Verify with `php -m | grep pdo_pgsql`.
+- A dedicated Postgres role with **`CONNECT`** on the database, **`CREATE`** on the `public` schema (for first-run schema install), and standard DML (`SELECT`, `INSERT`, `UPDATE`, `DELETE`) on the application tables. Once the schema is installed you can revoke `CREATE` if you prefer a tighter lockdown — migrations are stamped on first run so v2.11.0 does not need `CREATE` at runtime.
+
+**Prepare the database:**
+
+```sql
+CREATE DATABASE ipam;
+CREATE USER ipam WITH PASSWORD 'a-strong-random-password';
+GRANT CONNECT ON DATABASE ipam TO ipam;
+\c ipam
+GRANT CREATE, USAGE ON SCHEMA public TO ipam;
+```
+
+After the first request (which creates every table), you can optionally tighten the grants:
+
+```sql
+REVOKE CREATE ON SCHEMA public FROM ipam;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ipam;
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO ipam;
+```
+
+**`config.php` stub for PostgreSQL:**
+
+```php
+<?php
+return [
+    'db_driver' => 'pgsql',
+    'db_dsn'    => 'pgsql:host=127.0.0.1;port=5432;dbname=ipam',
+    'db_user'   => 'ipam',
+    'db_pass'   => 'a-strong-random-password',
+
+    // Bootstrap admin used on the very first page load only.
+    'bootstrap_admin' => [
+        'username' => 'admin',
+        'password' => 'ChangeMeNow!12345',
+    ],
+
+    // Rest of the file is identical to the SQLite example.
+    // session_idle_seconds, force_https, oidc, etc.
+];
+```
+
+On the first request, the installer loads `schema.pgsql.sql`, creates the bootstrap admin account, and pre-seeds `schema_migrations` with every historical version so subsequent migration runs are no-ops. An **admin UI beta banner** appears on every page while `db_driver=pgsql` is active — you can dismiss it per browser, and it resurfaces whenever you upgrade the application.
+
+<a id="postgresql-known-issues"></a>
+**Known issues and current limitations:**
+
+- **BYTEA columns are returned as PHP streams.** pdo_pgsql returns `ip_bin` and `network_bin` as stream resources instead of byte strings. The application auto-unwraps this at the PDO layer via a `PgsqlStatement` subclass installed on the pgsql connection, so every built-in call site works transparently. If you write a **custom** PHP script that talks to an IPAM Postgres database, remember to call `stream_get_contents()` on any BYTEA column you read — or attach the `PgsqlStatement` class yourself via `$pdo->setAttribute(PDO::ATTR_STATEMENT_CLASS, [PgsqlStatement::class])`.
+- **Binary binding requires PDO `PARAM_LOB`.** Same rule as MySQL: the application already does this everywhere via `ipam_bind_binary()`. Custom scripts inserting into `ip_bin` / `network_bin` must bind with `PDO::PARAM_LOB` or Postgres will reject the byte string with `invalid byte sequence for encoding "UTF8"` the moment a non-ASCII byte shows up.
+- **`GENERATED BY DEFAULT AS IDENTITY` sequences.** The schema uses modern IDENTITY columns (PG10+). Explicit `INSERT ... (id, ...) VALUES (N, ...)` is accepted, but does **not** advance the backing sequence — subsequent implicit inserts would collide at id=1. The demo seed and test fixtures handle this by calling `setval(pg_get_serial_sequence('t', 'id'), MAX(id))` after bulk-inserting explicit ids. Custom scripts doing the same pattern must do the equivalent.
+- **Backups are SQLite-format only.** `db_tools.php` export produces a SQLite dump that can only be imported back into a SQLite install. Cross-engine migration (SQLite ↔ MySQL ↔ Postgres) lands in v3.0.0 via a dedicated `migrate_db.php` tool. For now, use native Postgres tools (`pg_dump` / `pg_restore`) for Postgres-to-Postgres backups.
+- **No per-connection FK enforcement toggle.** Unlike SQLite (`PRAGMA foreign_keys`) and MySQL (`SET FOREIGN_KEY_CHECKS`), Postgres has no session-level FK switch. The application does not need to disable FKs for normal operation — the v2.1.0-vrfs table-rebuild migration that forced the SQLite PRAGMA-off dance is pre-stamped on fresh Postgres installs and never re-runs, so the schema stays consistent under `ON DELETE CASCADE` / `SET NULL` / `RESTRICT`.
+- **Nightly Playwright PostgreSQL matrix slot is new in v2.11.0 and under soak.** v2.11.0 ships both a per-commit Postgres CI slot (PHP QA + `test_api.sh`) and a nightly Playwright Postgres matrix slot covering the full ~330-test end-to-end suite against a containerized `postgres:14-alpine` service. The release gate is **7 consecutive green nightly runs** — until that bar is cleared, treat any Postgres regression the nightly matrix surfaces as release-blocking. Track progress at [#388](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/388).
+
 ---
 
 ## Step 4 — Configure your web server
@@ -301,6 +363,19 @@ ipam.example.com {
     file_server
 }
 ```
+
+### OpenLiteSpeed
+
+OpenLiteSpeed honours `.htaccess` rewrite rules for the Example vhost out of the box — the `Simple-PHP-IPAM/.htaccess` that ships with the release tarball works unmodified on OLS. All the deny rules (force-HTTPS, block sensitive files, block `/data/`, block `/dialects/`, block `/vendor/`) fire correctly under the OLS 1.8+ rewrite engine.
+
+**One OLS-specific gotcha to be aware of** (handled automatically by the shipped `.htaccess`): OLS's lsphp handler dispatches PHP files **before** a subdirectory-level `.htaccess` rewrite rule fires. A per-directory `dialects/.htaccess` deny rule is therefore insufficient to block direct execution of `.php` files under that path — OLS will execute the file anyway. The v2.11.0 `.htaccess` closes this gap by adding **root-level** `RewriteRule ^dialects(/|$) - [F,L]` and `^vendor(/|$) - [F,L]` entries. Root-level rewrites run before handler dispatch on both Apache and OLS, so the same rule set protects both web servers. You do not need to configure anything in the OLS WebAdmin Console for this to work.
+
+**Two additional OLS-specific settings worth verifying** in the WebAdmin Console when you first deploy:
+
+1. **Auto Index** → **Off**. The `Options -Indexes` directive in the shipped `.htaccess` is Apache-specific — OLS ignores it. Disable directory listing per-vhost in the OLS WebAdmin (Virtual Host → Basic → Index Files → Auto Index → No).
+2. **Rewrite Engine** → **Enabled**. This is the default for the stock Example vhost but double-check it on a custom vhost (Virtual Host → Rewrite → Rewrite Control → Enable Rewrite → Yes).
+
+Regression protection: `.github/workflows/playwright-nightly.yml` includes a containerized OpenLiteSpeed matrix slot (`htaccess-subset` job, `matrix.webserver = openlitespeed`) that boots a stock `litespeedtech/openlitespeed:latest` image with the Simple-PHP-IPAM tree mounted at the Example vhost docroot and runs the same `tests/htaccess.spec.ts` assertions the Apache slot uses. Both slots must be green on every nightly run — any rewrite-rule regression that breaks OLS but keeps working on Apache (or vice versa) lights up immediately.
 
 ---
 

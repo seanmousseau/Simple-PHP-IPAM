@@ -5,16 +5,17 @@
 #   bootstrap-app.sh [driver]
 #
 # Positional args:
-#   driver   Database driver: 'sqlite' (default) or 'mysql' (v2.10.0 #433).
-#            Postgres slot lands in v2.11.0 (#388). Unknown values exit 2.
+#   driver   Database driver: 'sqlite' (default), 'mysql' (v2.10.0 #433), or
+#            'pgsql' (v2.11.0 #388). Unknown values exit 2.
 #
 # Environment overrides:
-#   IPAM_TEST_PORT        Host port to bind the container's :443 to (default: 8443).
-#   IPAM_TEST_IMAGE       Docker image tag to build (default: ipam-pw-apache:local).
-#   IPAM_TEST_NAME        Apache container name (default: ipam-pw-test).
-#   IPAM_TEST_NETWORK     Docker network name for the mysql driver (default:
-#                         ipam-pw-net). Unused on sqlite.
-#   IPAM_TEST_MYSQL_NAME  MySQL service container name (default: ipam-pw-mysql).
+#   IPAM_TEST_PORT         Host port to bind the container's :443 to (default: 8443).
+#   IPAM_TEST_IMAGE        Docker image tag to build (default: ipam-pw-apache:local).
+#   IPAM_TEST_NAME         Apache container name (default: ipam-pw-test).
+#   IPAM_TEST_NETWORK      Docker network name for the mysql/pgsql drivers
+#                          (default: ipam-pw-net). Unused on sqlite.
+#   IPAM_TEST_MYSQL_NAME   MySQL service container name (default: ipam-pw-mysql).
+#   IPAM_TEST_PGSQL_NAME   Postgres service container name (default: ipam-pw-pgsql).
 #
 # Side effects:
 #   - Overwrites Simple-PHP-IPAM/config.php with a test config (the real config.php
@@ -31,9 +32,9 @@ set -euo pipefail
 
 driver="${1:-sqlite}"
 case "$driver" in
-    sqlite|mysql) ;;
+    sqlite|mysql|pgsql) ;;
     *)
-        echo "bootstrap-app.sh: unsupported driver '$driver' (expected sqlite or mysql)" >&2
+        echo "bootstrap-app.sh: unsupported driver '$driver' (expected sqlite, mysql, or pgsql)" >&2
         exit 2
         ;;
 esac
@@ -47,6 +48,7 @@ image="${IPAM_TEST_IMAGE:-ipam-pw-apache:local}"
 port="${IPAM_TEST_PORT:-8443}"
 network="${IPAM_TEST_NETWORK:-ipam-pw-net}"
 mysql_name="${IPAM_TEST_MYSQL_NAME:-ipam-pw-mysql}"
+pgsql_name="${IPAM_TEST_PGSQL_NAME:-ipam-pw-pgsql}"
 
 if ! command -v docker >/dev/null 2>&1; then
     echo "bootstrap-app.sh: docker is required but not found in PATH" >&2
@@ -71,6 +73,9 @@ case "$driver" in
     mysql)
         cp "$script_dir/fixtures/test-config-mysql.php" "$app_dir/config.php"
         ;;
+    pgsql)
+        cp "$script_dir/fixtures/test-config-pgsql.php" "$app_dir/config.php"
+        ;;
 esac
 
 # Flip demo_mode on for seeding. sed with two distinct markers would be safer,
@@ -90,12 +95,14 @@ set_demo_mode "true"
 echo "bootstrap-app: building $image"
 docker build --quiet -t "$image" -f "$script_dir/Dockerfile.apache" "$script_dir" >/dev/null
 
-# 3. For mysql, spin up a docker network + MySQL 8.0 service container and
-#    wait for it to accept connections before seeding.
-if [[ "$driver" == "mysql" ]]; then
+# 3. For mysql/pgsql, spin up a docker network + the DB service container
+#    and wait for it to accept connections before seeding.
+if [[ "$driver" != "sqlite" ]]; then
     echo "bootstrap-app: creating docker network $network"
     docker network create "$network" >/dev/null 2>&1 || true
+fi
 
+if [[ "$driver" == "mysql" ]]; then
     echo "bootstrap-app: starting MySQL 8.0 service container $mysql_name"
     docker rm -f "$mysql_name" >/dev/null 2>&1 || true
     docker run -d --rm --name "$mysql_name" \
@@ -119,13 +126,39 @@ if [[ "$driver" == "mysql" ]]; then
     done
 fi
 
+if [[ "$driver" == "pgsql" ]]; then
+    echo "bootstrap-app: starting Postgres 14 service container $pgsql_name"
+    docker rm -f "$pgsql_name" >/dev/null 2>&1 || true
+    docker run -d --rm --name "$pgsql_name" \
+        --network "$network" \
+        --network-alias ipam-pw-pgsql \
+        -e POSTGRES_PASSWORD=testpw \
+        -e POSTGRES_USER=ipam \
+        -e POSTGRES_DB=ipam_pw \
+        postgres:14-alpine >/dev/null
+
+    echo "bootstrap-app: waiting for Postgres ready (up to 60s)"
+    for i in $(seq 1 30); do
+        if docker exec "$pgsql_name" pg_isready -U ipam -d ipam_pw >/dev/null 2>&1; then
+            echo "bootstrap-app: Postgres ready"
+            break
+        fi
+        if [[ "$i" -eq 30 ]]; then
+            echo "bootstrap-app: Postgres did not become ready in 60s" >&2
+            docker logs "$pgsql_name" >&2 || true
+            exit 1
+        fi
+        sleep 2
+    done
+fi
+
 # 4. Run migrate + demo seed inside a throwaway container so there is no host
 #    PHP version dependency. Uses the same image the long-running container uses.
 #    For mysql, the throwaway container joins the docker network so it can
 #    resolve the MySQL hostname.
 echo "bootstrap-app: running migrate.php and demo_seed.php"
 seed_docker_args=(-v "$app_dir:/var/www/html" -w /var/www/html)
-if [[ "$driver" == "mysql" ]]; then
+if [[ "$driver" != "sqlite" ]]; then
     seed_docker_args+=(--network "$network")
 fi
 docker run --rm "${seed_docker_args[@]}" "$image" \
@@ -136,6 +169,9 @@ docker run --rm "${seed_docker_args[@]}" "$image" \
         if [[ "$driver" == "mysql" ]]; then
             echo "bootstrap-app: MySQL container log:" >&2
             docker logs "$mysql_name" >&2 || true
+        elif [[ "$driver" == "pgsql" ]]; then
+            echo "bootstrap-app: Postgres container log:" >&2
+            docker logs "$pgsql_name" >&2 || true
         fi
         exit 1
     }
@@ -153,7 +189,7 @@ echo "bootstrap-app: starting container $container on https://127.0.0.1:$port"
 run_docker_args=(-d --rm --name "$container"
     -v "$app_dir:/var/www/html"
     -p "127.0.0.1:$port:443")
-if [[ "$driver" == "mysql" ]]; then
+if [[ "$driver" != "sqlite" ]]; then
     run_docker_args+=(--network "$network")
 fi
 docker run "${run_docker_args[@]}" "$image" >/dev/null

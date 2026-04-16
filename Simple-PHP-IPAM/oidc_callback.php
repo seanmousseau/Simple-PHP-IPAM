@@ -170,7 +170,7 @@ if (!$user && $autoLink) {
                 $newUsername = $baseUsername . '_' . ($attempt + 2);
             }
         }
-        $newId = (int)$db->lastInsertId();
+        $newId = ipam_last_insert_id($db, 'users');
         audit($db, 'auth.oidc_provision', 'user', $newId, 'username=' . $newUsername . ' sub=' . $sub);
 
         $st3 = $db->prepare("SELECT id, username, role, is_active FROM users WHERE id = :id");

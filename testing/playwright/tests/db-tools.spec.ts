@@ -6,23 +6,22 @@ import { test, expect, type Browser, type BrowserContext, type Page } from '@pla
 import {
   login, fetchPost, fetchPostForm, deleteSubnet, appUrl,
   ADMIN_USER, ADMIN_PASS, TEST_CIDR1,
-  newAuthContext, IS_MYSQL,
+  newAuthContext, IS_SQLITE,
 } from '../fixtures/ipam';
 
-// v2.10.0 #433: SQL export/import via ipam_db_dump_stream() is SQLite-format
-// only. On MySQL, db_tools.php shows a user-facing "SQL export/import is
-// SQLite-only" notice and the export/import POST handlers short-circuit
-// with an HTTP 400. Round-trip specs live in a describe that skips on
-// MySQL; the MySQL-only gating assertions live in their own describe at
-// the bottom. Do NOT use a file-level test.skip() — that would silently
-// skip the gating assertions too.
+// v2.10.0 #433 / v2.11.0 #388: SQL export/import via ipam_db_dump_stream()
+// is SQLite-format only. On MySQL and Postgres, db_tools.php shows a
+// user-facing "SQL export/import is SQLite-only" notice and the
+// export/import POST handlers short-circuit with an HTTP 400. Round-trip
+// specs live in a describe that skips on non-SQLite; the MySQL-only
+// gating assertions live in their own describe at the bottom.
 
 let ctx: BrowserContext;
 let page: Page;
 let exportedSql = '';
 
 test.describe('db_tools SQLite round-trip', () => {
-  test.skip(IS_MYSQL, 'SQLite round-trip is SQLite-only; MySQL gating covered at the bottom of this file');
+  test.skip(!IS_SQLITE, 'SQLite round-trip is SQLite-only; MySQL gating covered at the bottom of this file');
 
   test.beforeAll(async ({ browser }: { browser: Browser }) => {
   ctx = await newAuthContext(browser);
@@ -135,11 +134,12 @@ test('db_tools security banner can be dismissed', async () => {
 });
 });  // end of "db_tools SQLite round-trip" describe
 
-// v2.10.0 #433: MySQL-only gating assertion. Lives in its own describe so
-// the SQLite round-trip describe's test.skip(IS_MYSQL) does not also skip
-// these tests on the MySQL matrix slot.
-test.describe('db_tools MySQL SQL-dump gating', () => {
-  test.skip(!IS_MYSQL, 'MySQL-only assertion');
+// v2.10.0 #433 / v2.11.0 #388: non-SQLite gating assertion. Lives in its own
+// describe so the SQLite round-trip describe's skip does not also skip these
+// tests on the MySQL or Postgres matrix slots. Both engines show the same
+// "SQL export/import is SQLite-only" notice with disabled buttons.
+test.describe('db_tools non-SQLite SQL-dump gating', () => {
+  test.skip(IS_SQLITE, 'Runs only on MySQL/Postgres');
 
   test('shows a user-facing SQL-only notice on the page', async ({ browser }) => {
     const ctx = await newAuthContext(browser);

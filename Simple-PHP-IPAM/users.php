@@ -70,7 +70,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $st->execute([':u' => $username, ':h' => $hash, ':r' => $role, ':n' => $name, ':e' => $email]);
                     $details = "username=$username role=$role";
                 }
-                audit($db, 'user.create', 'user', (int)$db->lastInsertId(), $details);
+                audit($db, 'user.create', 'user', ipam_last_insert_id($db, 'users'), $details);
                 $msg = 'User created.';
                 // Reset form data after successful creation
                 $formData = ['username' => '', 'name' => '', 'email' => '', 'role' => 'readonly', 'sso_only' => false, 'oidc_sub' => ''];

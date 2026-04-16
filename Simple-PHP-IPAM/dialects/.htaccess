@@ -1,10 +1,28 @@
 # Deny direct HTTP access to dialect class source.
 # These files are loaded via require_once from init.php / lib.php; nothing
 # here should be reachable as a URL. Mirrors the policy in vendor/.htaccess.
-<IfModule mod_authz_core.c>
-  Require all denied
+#
+# Uses a RewriteRule-based deny primarily so that OpenLiteSpeed honours it —
+# OLS ignores `Require all denied` / `Order allow,deny` directives but
+# processes mod_rewrite rules. On Apache both the RewriteRule and the
+# authz_core fallback apply; the rewrite hits first and returns 403.
+# v2.11.0 #500 closed the OLS gap by switching from authz-only to
+# rewrite-first. See testing/playwright/tests/htaccess.spec.ts and the
+# containerized OLS matrix slot in playwright-nightly.yml for the
+# regression guard.
+
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteRule ^.*$ - [F,L]
 </IfModule>
-<IfModule !mod_authz_core.c>
-  Order allow,deny
-  Deny from all
+
+# Apache fallback when mod_rewrite is not loaded.
+<IfModule !mod_rewrite.c>
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
 </IfModule>

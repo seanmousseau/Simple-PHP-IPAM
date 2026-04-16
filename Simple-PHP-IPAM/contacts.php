@@ -27,7 +27,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $st = $db->prepare("INSERT INTO contacts (name, email, phone, org, note) VALUES (:n,:e,:p,:o,:nt)");
             $st->execute([':n' => $name, ':e' => $email, ':p' => $phone, ':o' => $org, ':nt' => $note]);
-            $newId = (int)$db->lastInsertId();
+            $newId = ipam_last_insert_id($db, 'contacts');
             audit($db, 'contact.create', 'contact', $newId, "name=$name");
             flash_set("Contact \"$name\" created.");
             header('Location: contacts.php');

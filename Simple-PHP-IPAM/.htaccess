@@ -38,7 +38,18 @@ RewriteCond %{HTTP:X-Forwarded-Proto} !=https
 RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
 
 # Block direct access to specific PHP and SQL files
-RewriteRule ^(config\.php|init\.php|lib\.php|schema\.sql|migrations\.php|migrate\.php|version\.php|tmp_cleanup\.php)$ - [F,L,NC]
+RewriteRule ^(config\.php|init\.php|lib\.php|PgsqlStatement\.php|schema\.sql|schema\.mysql\.sql|schema\.pgsql\.sql|migrations\.php|migrate\.php|version\.php|tmp_cleanup\.php)$ - [F,L,NC]
+
+# Block direct access to internal source directories. OpenLiteSpeed's lsphp
+# handler dispatches PHP files BEFORE a subdirectory-level .htaccess rewrite
+# rule fires, so the per-directory `dialects/.htaccess` and `vendor/.htaccess`
+# deny rules do not block direct execution of .php files under those paths
+# on OLS. Blocking at the ROOT context closes the gap because root-level
+# rewrite rules run before handler dispatch on both Apache and OLS.
+# v2.11.0 #500. See testing/playwright/tests/htaccess.spec.ts and the
+# containerized OLS regression guard in playwright-nightly.yml.
+RewriteRule ^dialects(/|$) - [F,L,NC]
+RewriteRule ^vendor(/|$) - [F,L,NC]
 
 # Block download of upgrade/build artifacts, scripts, and databases
 RewriteRule \.(sh|tar\.gz|tgz|zip|sqlite|db|txt|tar|sql)$ - [F,L,NC]

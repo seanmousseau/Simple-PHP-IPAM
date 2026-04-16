@@ -106,13 +106,12 @@ if (is_file(__DIR__ . '/vendor/autoload.php')) {
 // ...) because STDIN/STDOUT/STDERR are only defined under CLI and phpdbg SAPIs
 // — referencing them under Apache or PHP-FPM would throw a fatal error.
 require_once __DIR__ . '/dialects/Dialect.php';
-// v2.10.0 (#382) — supported drivers: 'sqlite' (default) and 'mysql'
-// (experimental beta). Postgres lands in v2.11.0 (#386). Unknown values are
-// rejected here before the request touches any DB code.
+// v2.11.0 (#386) — supported drivers: 'sqlite' (default), 'mysql', and
+// 'pgsql' (both experimental beta). Unknown values are rejected here before
+// the request touches any DB code.
 $_ipam_db_driver = (string)($config['db_driver'] ?? 'sqlite');
 $_ipam_driver_error = match ($_ipam_db_driver) {
-    'sqlite', 'mysql' => null,
-    'pgsql'  => 'db_driver=pgsql is experimental and lands in v2.11.0 (#388)',
+    'sqlite', 'mysql', 'pgsql' => null,
     default  => "Unknown db_driver: {$_ipam_db_driver}",
 };
 if ($_ipam_driver_error !== null) {
@@ -133,6 +132,9 @@ require_once __DIR__ . '/dialects/SqliteDialect.php';
 if ($_ipam_db_driver === 'mysql') {
     require_once __DIR__ . '/dialects/MysqlDialect.php';
     $GLOBALS['ipam_dialect'] = new MysqlDialect();
+} elseif ($_ipam_db_driver === 'pgsql') {
+    require_once __DIR__ . '/dialects/PgsqlDialect.php';
+    $GLOBALS['ipam_dialect'] = new PgsqlDialect();
 } else {
     $GLOBALS['ipam_dialect'] = new SqliteDialect();
 }

@@ -37,7 +37,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 try {
                     $st = $db->prepare("INSERT INTO pd_pools (parent_subnet_id, delegation_prefix, description, site_id) VALUES (:sid,:pfx,:desc,:siteid)");
                     $st->execute([':sid' => $subnetId, ':pfx' => $delPrefix, ':desc' => $desc, ':siteid' => $siteId]);
-                    $newId = (int)$db->lastInsertId();
+                    $newId = ipam_last_insert_id($db, 'pd_pools');
                     audit($db, 'pd_pool.create', 'pd_pool', $newId, "subnet=$subnetId prefix=/$delPrefix");
                     flash_set("PD pool created.");
                     header('Location: pd_pools.php');
@@ -75,7 +75,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 try {
                     $st = $db->prepare("INSERT INTO pd_delegations (pool_id, cidr, subscriber_id, expires_at, notes) VALUES (:pid,:cidr,:sub,:exp,:notes)");
                     $st->execute([':pid' => $poolId, ':cidr' => $parsed['network'] . '/' . $parsed['prefix'], ':sub' => $contactId, ':exp' => $expiresAt, ':notes' => $notes]);
-                    $newId = (int)$db->lastInsertId();
+                    $newId = ipam_last_insert_id($db, 'pd_delegations');
                     audit($db, 'pd_pool.delegate', 'pd_delegation', $newId, "pool=$poolId cidr=$cidr");
                     flash_set("Prefix delegated.");
                     header('Location: pd_pools.php?pool_id=' . $poolId);

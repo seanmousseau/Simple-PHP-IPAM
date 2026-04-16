@@ -29,7 +29,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             try {
                 $st = $db->prepare("INSERT INTO tags (name, colour) VALUES (:n, :c)");
                 $st->execute([':n' => $name, ':c' => $colour]);
-                audit($db, 'tag.create', 'tag', (int)$db->lastInsertId(), "name=$name");
+                audit($db, 'tag.create', 'tag', ipam_last_insert_id($db, 'tags'), "name=$name");
                 flash_set("Tag \"$name\" created.");
                 header('Location: tags.php');
                 exit;

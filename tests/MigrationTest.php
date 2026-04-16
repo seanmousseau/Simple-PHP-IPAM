@@ -481,4 +481,127 @@ class MigrationTest extends TestCase
         )->fetchColumn();
         $this->assertNotFalse($marker, 'schema_migrations marker must be re-recorded after re-run');
     }
+
+    // -------------------------------------------------------------------------
+    // v2.11.0 #409 — migration-replay idempotency against the fresh schema
+    // -------------------------------------------------------------------------
+
+    /**
+     * Load the current schema.sql end-to-end into an empty DB, stamp every
+     * migration as already applied (matching what ipam_db_init() does on a
+     * fresh install), then call apply_migrations() a second time and assert
+     * it is a complete no-op: no exceptions, no new rows in schema_migrations,
+     * no schema changes. This catches the bug class where a new migration
+     * is added without PRAGMA table_info() / sqlite_master guards and
+     * therefore is not safe to re-run against a DB that already has the
+     * target schema shape.
+     *
+     * This is a lighter, SQLite-scoped companion to SchemaParityTest #409:
+     * parity catches cross-engine drift, this catches migration-guard
+     * regressions on the SQLite branch that still runs every historical
+     * migration closure.
+     */
+    public function testAllMigrationsAreIdempotentOnFreshSchema(): void
+    {
+        require_once dirname(__DIR__) . '/Simple-PHP-IPAM/lib.php';
+        require_once dirname(__DIR__) . '/Simple-PHP-IPAM/migrations.php';
+
+        // Save globals so we can restore them at the end — avoids making
+        // later tests order-dependent on this test's stub state.
+        $hadConfig  = array_key_exists('config', $GLOBALS);
+        $prevConfig = $GLOBALS['config'] ?? null;
+        $hadDialect  = array_key_exists('ipam_dialect', $GLOBALS);
+        $prevDialect = $GLOBALS['ipam_dialect'] ?? null;
+
+        $GLOBALS['config'] = ['proxy_trust' => false];
+
+        $db = $this->makeDb();
+        $schema = file_get_contents(dirname(__DIR__) . '/Simple-PHP-IPAM/schema.sql');
+        $this->assertNotFalse($schema);
+        $db->exec($schema);
+        // Pin SqliteDialect so ipam_dialect() calls inside the migration
+        // closures resolve on this in-memory DB without needing a full
+        // $config bootstrap.
+        require_once dirname(__DIR__) . '/Simple-PHP-IPAM/dialects/SqliteDialect.php';
+        $GLOBALS['ipam_dialect'] = new SqliteDialect();
+
+        // Stamp every historical migration, matching ipam_db_init's
+        // fresh-install behaviour. Use the dialect's upsert-or-ignore
+        // so the call is robust if schema.sql ever pre-seeds some
+        // migrations itself.
+        $ignore = ipam_dialect()->upsert_or_ignore('schema_migrations', ['version']);
+        $stamp = $db->prepare("INSERT INTO schema_migrations (version) VALUES (:v) $ignore");
+        foreach (array_keys(ipam_migrations()) as $ver) {
+            $stamp->execute([':v' => $ver]);
+        }
+
+        // Snapshot the structural column shape of every table. We compare
+        // column names and SQLite type-affinity strings rather than the
+        // raw sqlite_master DDL because some migration closures re-call
+        // ensure_audit_log_table(), which rewrites the audit_log triggers
+        // via SqliteDialect::append_only_trigger(). That produces a
+        // whitespace-different but semantically identical CREATE TRIGGER,
+        // which would trip a byte-for-byte compare for no real-world reason.
+        // Structural column shape is the signal we actually care about.
+        $snapshot = function (PDO $db): array {
+            $tables = [];
+            $rows = $db->query(
+                "SELECT name FROM sqlite_master "
+                . "WHERE type = 'table' AND name NOT LIKE 'sqlite_%' "
+                . "ORDER BY name"
+            )->fetchAll();
+            foreach ($rows as $r) {
+                $tn = (string)$r['name'];
+                $cols = [];
+                foreach ($db->query("PRAGMA table_info(\"$tn\")")->fetchAll() as $c) {
+                    $cols[(string)$c['name']] = [
+                        'type'    => strtoupper((string)$c['type']),
+                        'notnull' => (int)$c['notnull'],
+                        'pk'      => (int)$c['pk'],
+                    ];
+                }
+                ksort($cols);
+                $tables[$tn] = $cols;
+            }
+            return $tables;
+        };
+        $before = $snapshot($db);
+        $migCountBefore = (int)$db->query("SELECT COUNT(*) FROM schema_migrations")->fetchColumn();
+
+        // Force a replay by clearing schema_migrations (as if upgrading
+        // from an install where the version stamps were lost) and calling
+        // apply_migrations(). Every migration closure MUST detect that its
+        // target schema already exists and short-circuit without throwing
+        // or mutating structure.
+        $db->exec("DELETE FROM schema_migrations");
+        apply_migrations($db);
+
+        $after = $snapshot($db);
+        $migCountAfter = (int)$db->query("SELECT COUNT(*) FROM schema_migrations")->fetchColumn();
+
+        $this->assertSame(
+            $before,
+            $after,
+            'apply_migrations() must be a no-op on top of the fresh schema — '
+            . 'a new migration probably forgot its PRAGMA table_info() / '
+            . 'sqlite_master existence guard'
+        );
+        $this->assertGreaterThan(
+            $migCountBefore - 1, // We deleted schema_migrations entirely,
+            $migCountAfter,      // so "at least" the count we started with.
+            'every migration closure must re-stamp itself in schema_migrations after replay'
+        );
+
+        // Restore globals so later tests are not order-dependent.
+        if ($hadConfig) {
+            $GLOBALS['config'] = $prevConfig;
+        } else {
+            unset($GLOBALS['config']);
+        }
+        if ($hadDialect) {
+            $GLOBALS['ipam_dialect'] = $prevDialect;
+        } else {
+            unset($GLOBALS['ipam_dialect']);
+        }
+    }
 }

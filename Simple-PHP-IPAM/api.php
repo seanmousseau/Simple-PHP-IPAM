@@ -345,12 +345,15 @@ function api_subnets(PDO $db): never
               COALESCE(ac.free_count, 0) AS free_count"
         : '';
 
+    // v2.11.0 #388: `SUM(status = 'used')` treats booleans as 0/1 on
+    // SQLite/MySQL but Postgres raises "function sum(boolean) does not
+    // exist". CASE WHEN works on all three engines.
     $countsJoin = $withCounts
         ? "LEFT JOIN (
                SELECT subnet_id,
-                      SUM(status = 'used')     AS used_count,
-                      SUM(status = 'reserved') AS reserved_count,
-                      SUM(status = 'free')     AS free_count
+                      SUM(CASE WHEN status = 'used'     THEN 1 ELSE 0 END) AS used_count,
+                      SUM(CASE WHEN status = 'reserved' THEN 1 ELSE 0 END) AS reserved_count,
+                      SUM(CASE WHEN status = 'free'     THEN 1 ELSE 0 END) AS free_count
                FROM addresses
                GROUP BY subnet_id
            ) ac ON ac.subnet_id = s.id"
@@ -720,7 +723,7 @@ function api_vlans_create(PDO $db, array $apiKey, array $body): never
 
     $db->prepare("INSERT INTO vlans (vlan_id, name, description, site_id) VALUES (:vid, :n, :d, :sid)")
        ->execute([':vid' => $vlanId, ':n' => $name, ':d' => $desc, ':sid' => $siteId]);
-    $newId = (int)$db->lastInsertId();
+    $newId = ipam_last_insert_id($db, 'vlans');
     api_audit($db, $apiKey, 'vlan.create', 'vlan', $newId, "vlan_id=$vlanId name=$name");
     http_response_code(201);
     api_json(['id' => $newId]);
@@ -822,7 +825,7 @@ function api_vrfs_create(PDO $db, array $apiKey, array $body): never
     try {
         $st = $db->prepare("INSERT INTO vrfs (name, description, rd) VALUES (:n,:d,:rd)");
         $st->execute([':n' => $name, ':d' => $desc, ':rd' => $rd]);
-        $newId = (int)$db->lastInsertId();
+        $newId = ipam_last_insert_id($db, 'vrfs');
         audit($db, 'vrf.create', 'vrf', $newId, "name=$name");
     } catch (PDOException $e) {
         api_error(409, 'A VRF with that name already exists.');
@@ -965,7 +968,7 @@ function api_contacts_create(PDO $db, array $apiKey, array $body): never
     if ($name === '') api_error(400, 'name is required.');
     $st = $db->prepare("INSERT INTO contacts (name, email, phone, org, note) VALUES (:n,:e,:p,:o,:nt)");
     $st->execute([':n' => $name, ':e' => $email, ':p' => $phone, ':o' => $org, ':nt' => $note]);
-    $newId = (int)$db->lastInsertId();
+    $newId = ipam_last_insert_id($db, 'contacts');
     audit($db, 'contact.create', 'contact', $newId, "name=$name");
     http_response_code(201);
     $st = $db->prepare("SELECT id, name, email, phone, org, note, created_at, updated_at FROM contacts WHERE id = :id");
@@ -1068,7 +1071,7 @@ function api_tags_create(PDO $db, array $apiKey, array $body): never
 
     $db->prepare("INSERT INTO tags (name, colour) VALUES (:n, :c)")
        ->execute([':n' => $name, ':c' => $colour]);
-    $newId = (int)$db->lastInsertId();
+    $newId = ipam_last_insert_id($db, 'tags');
     api_audit($db, $apiKey, 'tag.create', 'tag', $newId, "name={$name}");
     http_response_code(201);
     api_json(['id' => $newId, 'name' => $name, 'colour' => $colour]);
@@ -1543,22 +1546,32 @@ function api_addresses_bulk_create(PDO $db, array $apiKey, array $body, int $bul
             continue;
         }
 
+        // #410/#388: bind ip_bin via ipam_bind_binary() — see the
+        // single-address create path below for the full rationale.
         $dupSt = $db->prepare("SELECT id FROM addresses WHERE subnet_id = :sid AND ip_bin = :b");
-        $dupSt->execute([':sid' => $subnetId, ':b' => $n['bin']]);
+        $dupSt->bindValue(':sid', $subnetId, PDO::PARAM_INT);
+        ipam_bind_binary($dupSt, ':b', to_str($n['bin']));
+        $dupSt->execute();
         if ($dupSt->fetch()) { $results[] = ['success' => false, 'error' => 'Address already exists in this subnet.']; continue; }
 
         try {
-            $db->prepare(
+            $bulkIns = $db->prepare(
                 "INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, grp, mac, expires_at, status)
                  VALUES (:sid, :ip, :b, :hn, :ow, :nt, :grp, :mac, :exp, :st)"
-            )->execute([
-                ':sid' => $subnetId, ':ip' => $n['ip'], ':b' => $n['bin'],
-                ':hn'  => $hostname,  ':ow' => $owner,   ':nt' => $note,
-                ':grp' => $grp,       ':mac' => $mac,
-                ':exp' => $expiresAt !== '' ? $expiresAt : null,
-                ':st'  => $status,
-            ]);
-            $newId = (int)$db->lastInsertId();
+            );
+            $bulkIns->bindValue(':sid', $subnetId, PDO::PARAM_INT);
+            $bulkIns->bindValue(':ip',  $n['ip']);
+            ipam_bind_binary($bulkIns, ':b', to_str($n['bin']));
+            $bulkIns->bindValue(':hn',  $hostname);
+            $bulkIns->bindValue(':ow',  $owner);
+            $bulkIns->bindValue(':nt',  $note);
+            $bulkIns->bindValue(':grp', $grp);
+            $bulkIns->bindValue(':mac', $mac);
+            $bulkIns->bindValue(':exp', $expiresAt !== '' ? $expiresAt : null,
+                $expiresAt !== '' ? PDO::PARAM_STR : PDO::PARAM_NULL);
+            $bulkIns->bindValue(':st',  $status);
+            $bulkIns->execute();
+            $newId = ipam_last_insert_id($db, 'addresses');
 
             api_audit($db, $apiKey, 'address.create', 'address', $newId,
                 "bulk ip={$n['ip']} subnet_id={$subnetId} status={$status}");
@@ -1637,22 +1650,24 @@ function api_subnets_bulk_create(PDO $db, array $apiKey, array $body, int $bulkL
         if ($inheritedSiteId !== null) $siteId = $inheritedSiteId;
 
         try {
-            $db->prepare(
+                        // #410/#388: bind network_bin via ipam_bind_binary() — see the
+            // single-subnet create path below for the full rationale.
+            $bulkIns = $db->prepare(
                 "INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, notes, site_id, vlan_id, vrf_id)
                  VALUES (:cidr, :ver, :net, :nbin, :pfx, :desc, :notes, :sid, :vlan, :vrf)"
-            )->execute([
-                ':cidr'  => $normalized,
-                ':ver'   => $p['version'],
-                ':net'   => $p['network'],
-                ':nbin'  => $p['net_bin'],
-                ':pfx'   => $p['prefix'],
-                ':desc'  => $description,
-                ':notes' => $notes,
-                ':sid'   => $siteId,
-                ':vlan'  => $vlanId,
-                ':vrf'   => $vrfId,
-            ]);
-            $newId = (int)$db->lastInsertId();
+            );
+            $bulkIns->bindValue(':cidr',  $normalized);
+            $bulkIns->bindValue(':ver',   $p['version'], PDO::PARAM_INT);
+            $bulkIns->bindValue(':net',   $p['network']);
+            ipam_bind_binary($bulkIns, ':nbin', to_str($p['net_bin']));
+            $bulkIns->bindValue(':pfx',   $p['prefix'],  PDO::PARAM_INT);
+            $bulkIns->bindValue(':desc',  $description);
+            $bulkIns->bindValue(':notes', $notes);
+            $bulkIns->bindValue(':sid',   $siteId,       $siteId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+            $bulkIns->bindValue(':vlan',  $vlanId,       $vlanId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+            $bulkIns->bindValue(':vrf',   $vrfId,        $vrfId  === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+            $bulkIns->execute();
+            $newId = ipam_last_insert_id($db, 'subnets');
 
             api_audit($db, $apiKey, 'subnet.create', 'subnet', $newId, "bulk cidr={$normalized}");
 
@@ -1695,7 +1710,7 @@ function api_sites_create(PDO $db, array $apiKey, array $body): never
 
     $db->prepare("INSERT INTO sites (name, description, parent_id) VALUES (:n, :d, :p)")
        ->execute([':n' => $name, ':d' => $desc, ':p' => $parentId]);
-    $newId = (int)$db->lastInsertId();
+    $newId = ipam_last_insert_id($db, 'sites');
     api_audit($db, $apiKey, 'site.create', 'site', $newId, "name=$name");
     http_response_code(201);
     api_json(['id' => $newId]);
@@ -1816,22 +1831,35 @@ function api_addresses_create(PDO $db, array $apiKey, array $body): never
         api_error(400, 'IP is not within the specified subnet (' . to_str($subnet['cidr']) . ')');
     }
 
-    // Check for duplicate
+    // Check for duplicate. ip_bin is BYTEA on pgsql / VARBINARY on mysql /
+    // BLOB on sqlite — must bind via ipam_bind_binary() so high bytes
+    // round-trip the WHERE comparison correctly.
     $dupSt = $db->prepare("SELECT id FROM addresses WHERE subnet_id = :sid AND ip_bin = :b");
-    $dupSt->execute([':sid' => $subnetId, ':b' => $n['bin']]);
+    $dupSt->bindValue(':sid', $subnetId, PDO::PARAM_INT);
+    ipam_bind_binary($dupSt, ':b', to_str($n['bin']));
+    $dupSt->execute();
     if ($dupSt->fetch()) api_error(409, 'An address record for this IP already exists in the subnet.');
 
-    $db->prepare(
+    // #410/#388: bind ip_bin via ipam_bind_binary() (PARAM_LOB).
+    $ins = $db->prepare(
         "INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, owner_contact_id, note, grp, mac, expires_at, status)
          VALUES (:sid, :ip, :b, :hn, :ow, :cid, :nt, :grp, :mac, :exp, :st)"
-    )->execute([
-        ':sid' => $subnetId, ':ip' => $n['ip'], ':b' => $n['bin'],
-        ':hn'  => $hostname,  ':ow' => $owner,  ':cid' => $ownerContactId,
-        ':nt'  => $note,      ':grp' => $grp,   ':mac' => $mac,
-        ':exp' => $expiresAt !== '' ? $expiresAt : null,
-        ':st'  => $status,
-    ]);
-    $newId = (int)$db->lastInsertId();
+    );
+    $ins->bindValue(':sid', $subnetId, PDO::PARAM_INT);
+    $ins->bindValue(':ip',  $n['ip']);
+    ipam_bind_binary($ins, ':b', to_str($n['bin']));
+    $ins->bindValue(':hn',  $hostname);
+    $ins->bindValue(':ow',  $owner);
+    $ins->bindValue(':cid', $ownerContactId,
+        $ownerContactId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+    $ins->bindValue(':nt',  $note);
+    $ins->bindValue(':grp', $grp);
+    $ins->bindValue(':mac', $mac);
+    $ins->bindValue(':exp', $expiresAt !== '' ? $expiresAt : null,
+        $expiresAt !== '' ? PDO::PARAM_STR : PDO::PARAM_NULL);
+    $ins->bindValue(':st',  $status);
+    $ins->execute();
+    $newId = ipam_last_insert_id($db, 'addresses');
 
     // #310 + CodeRabbit m1: tag_ids[] validated up-front.
     if ($validatedTagIds !== null) {
@@ -2000,22 +2028,27 @@ function api_subnets_create(PDO $db, array $apiKey, array $body): never
     $inheritedSiteId = find_parent_site_id($db, $normalized, null, $vrfId);
     if ($inheritedSiteId !== null) $siteId = $inheritedSiteId;
 
-    $db->prepare(
+    // #410/#388: bind network_bin via ipam_bind_binary() (PARAM_LOB) so the
+    // stored value has BLOB affinity on SQLite, round-trips high bytes
+    // correctly through MySQL VARBINARY, and does not UTF-8-validate on
+    // Postgres BYTEA. Positional execute() binds PARAM_STR, which Postgres
+    // rejects on any network_bin containing a non-ASCII byte.
+    $insSt = $db->prepare(
         "INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, notes, site_id, vlan_id, vrf_id)
          VALUES (:cidr, :ver, :net, :nbin, :pfx, :desc, :notes, :sid, :vlan, :vrf)"
-    )->execute([
-        ':cidr'  => $p['network'] . '/' . $p['prefix'],
-        ':ver'   => $p['version'],
-        ':net'   => $p['network'],
-        ':nbin'  => $p['net_bin'],
-        ':pfx'   => $p['prefix'],
-        ':desc'  => $description,
-        ':notes' => $notes,
-        ':sid'   => $siteId,
-        ':vlan'  => $vlanId,
-        ':vrf'   => $vrfId,
-    ]);
-    $newId = (int)$db->lastInsertId();
+    );
+    $insSt->bindValue(':cidr',  $p['network'] . '/' . $p['prefix']);
+    $insSt->bindValue(':ver',   $p['version'],  PDO::PARAM_INT);
+    $insSt->bindValue(':net',   $p['network']);
+    ipam_bind_binary($insSt, ':nbin', to_str($p['net_bin']));
+    $insSt->bindValue(':pfx',   $p['prefix'],   PDO::PARAM_INT);
+    $insSt->bindValue(':desc',  $description);
+    $insSt->bindValue(':notes', $notes);
+    $insSt->bindValue(':sid',   $siteId,        $siteId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+    $insSt->bindValue(':vlan',  $vlanId,        $vlanId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+    $insSt->bindValue(':vrf',   $vrfId,         $vrfId  === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+    $insSt->execute();
+    $newId = ipam_last_insert_id($db, 'subnets');
 
     // #310 + CodeRabbit m1: tag_ids[] is validated up-front (see below) so
     // we already know every ID exists; the only DB work left is the join.
@@ -2238,13 +2271,18 @@ function api_scan_history(PDO $db): never
     if ($subnetId <= 0) api_error(400, 'subnet_id is required.');
     $limit = max(1, min(200, to_int($_GET['limit'] ?? 50)));
 
-    // Minute-precision truncation: SUBSTR(scanned_at, 1, 16) yields
-    // 'YYYY-MM-DD HH:MM' on both SQLite (TEXT column) and MySQL (DATETIME
-    // auto-converted to string in a string-function context). Portable
-    // equivalent of SQLite's strftime('%Y-%m-%d %H:%M', ...).
+    // Minute-precision truncation. SQLite stores scanned_at as TEXT so
+    // SUBSTR works natively. MySQL auto-coerces DATETIME to string in
+    // string-function contexts. Postgres rejects SUBSTR(timestamp) so we
+    // cast via ::text. No portable CAST target exists: MySQL's CAST AS
+    // CHAR is variable-length, Postgres's CAST AS CHAR is CHAR(1) and
+    // would truncate. v2.11.0 #388.
+    $scannedAtText = ipam_dialect()->driver_name() === 'pgsql'
+        ? '(scanned_at)::text'
+        : 'scanned_at';
     $st = $db->prepare("
         SELECT
-            SUBSTR(scanned_at, 1, 16) AS run_minute,
+            SUBSTR($scannedAtText, 1, 16) AS run_minute,
             COUNT(*) AS total,
             SUM(is_up) AS up_count,
             COUNT(*) - SUM(is_up) AS down_count,
