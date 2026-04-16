@@ -122,7 +122,9 @@ function ipam_key_col(): string
 
 function ipam_last_insert_id(PDO $db, string $table, string $column = 'id'): int
 {
-    if (ipam_dialect()->driver_name() === 'pgsql') {
+    $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    $driver = is_string($driverRaw) ? $driverRaw : '';
+    if ($driver === 'pgsql') {
         return (int)$db->lastInsertId("{$table}_{$column}_seq");
     }
     return (int)$db->lastInsertId();
