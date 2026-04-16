@@ -314,12 +314,12 @@ page_header('Search');
         <tr>
           <td><?= $r['site_name'] !== null ? e(to_str($r['site_name'])) : '<span class="muted">—</span>' ?></td>
           <td><?= e(to_str($r['subnet_cidr'])) ?></td>
-          <td><?= e(to_str($r['ip'])) ?></td>
+          <td class="ip-cell"><?= e(to_str($r['ip'])) ?></td>
           <td><?= e(to_str($r['hostname'])) ?></td>
           <td><?= e(to_str($r['owner'])) ?></td>
           <td><span class="status-<?= e(to_str($r['status'])) ?>"><?= e(to_str($r['status'])) ?></span></td>
           <td><?= $r['grp'] !== '' ? '<span class="badge">' . e(to_str($r['grp'])) . '</span>' : '' ?></td>
-          <td class="muted"><?= e(to_str($r['mac'])) ?></td>
+          <td class="muted ip-cell"><?= e(to_str($r['mac'])) ?></td>
           <td class="muted"><?= e(to_str($r['expires_at'] ?? '')) ?></td>
           <td><?= e(to_str($r['note'])) ?></td>
           <td class="muted"><?= e(display_datetime(to_str($r['updated_at']))) ?></td>
@@ -352,7 +352,7 @@ page_header('Search');
     <tbody>
     <?php foreach ($subnetResults as $sr): ?>
       <tr>
-        <td><a href="addresses.php?subnet_id=<?= to_int($sr['id']) ?>"><?= e(to_str($sr['cidr'])) ?></a></td>
+        <td class="ip-cell"><a href="addresses.php?subnet_id=<?= to_int($sr['id']) ?>"><?= e(to_str($sr['cidr'])) ?></a></td>
         <td><?= e(to_str($sr['description'])) ?></td>
         <td>IPv<?= to_int($sr['ip_version']) ?></td>
         <td><?= $sr['vlan_id'] !== null ? e(to_str($sr['vlan_id'])) : '<span class="muted">—</span>' ?></td>

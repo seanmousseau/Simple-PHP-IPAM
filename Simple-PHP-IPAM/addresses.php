@@ -525,7 +525,7 @@ ipam_skeleton_flush();
           $rowClasses = array_filter([$isHighlighted ? 'highlight-row' : '', $isExpired ? 'expired-row' : '']);
       ?>
         <tr id="addr-<?= $aid ?>"<?= $rowClasses ? ' class="' . e(implode(' ', $rowClasses)) . '"' : '' ?>>
-          <td><?= e(to_str($a['ip'])) ?><?php
+          <td class="ip-cell"><?= e(to_str($a['ip'])) ?><?php
             $ipBin = is_string($a['ip_bin'] ?? null) ? $a['ip_bin'] : '';
             if ($ipBin !== '') {
                 if ($networkBin !== null && hash_equals($networkBin, $ipBin)) echo ' <span class="badge badge-network" title="Network address">Net</span>';
@@ -552,7 +552,7 @@ ipam_skeleton_flush();
             echo "<span class='status-badge status-{$addrStatus}'{$canToggle} title='Click to cycle status'>{$addrStatus}</span>";
           ?></td>
           <td<?= $isWrite ? ' data-editable="grp" data-addr-id="' . $aid . '"' : '' ?>><?php if ($a['grp'] !== ''): ?><span class="badge"><?= e(to_str($a['grp'])) ?></span><?php endif; ?></td>
-          <td class="muted"><?= e(to_str($a['mac'])) ?></td>
+          <td class="muted ip-cell"><?= e(to_str($a['mac'])) ?></td>
           <td class="muted"><?= e(to_str($a['expires_at'] ?? '')) ?></td>
           <td<?= $isWrite ? ' data-editable="note" data-addr-id="' . $aid . '"' : '' ?>><?= e(to_str($a['note'])) ?></td>
           <td class="muted"><?= e(display_datetime(to_str($a['updated_at']))) ?></td>

@@ -168,7 +168,7 @@ page_header('Audit Log');
           <td><?= e(to_str($r['username'] ?? '')) ?></td>
           <td><?= e(to_str($r['action'])) ?></td>
           <td><?= e(to_str($r['entity_type'])) ?>#<?= e(to_str($r['entity_id'] ?? '')) ?></td>
-          <td class="muted"><?= $r['ip'] !== null ? e(to_str($r['ip'])) : '—' ?></td>
+          <td class="muted ip-cell"><?= $r['ip'] !== null ? e(to_str($r['ip'])) : '—' ?></td>
           <td class="muted"><span class="audit-details" title="<?= e(to_str($r['details'] ?? '')) ?>"><?= e(to_str($r['details'] ?? '')) ?></span></td>
         </tr>
       <?php endforeach; ?>

@@ -234,7 +234,7 @@ page_header('Scan History');
             $misses = to_int($a['consecutive_misses']);
         ?>
         <tr>
-          <td><a href="addresses.php?subnet_id=<?= (int)$subnetId ?>"><?= e(to_str($a['ip'])) ?></a></td>
+          <td class="ip-cell"><a href="addresses.php?subnet_id=<?= (int)$subnetId ?>"><?= e(to_str($a['ip'])) ?></a></td>
           <td><?= e(to_str($a['hostname'])) ?></td>
           <td>
             <?php if ($stale): ?>
