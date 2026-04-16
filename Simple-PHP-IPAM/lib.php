@@ -3329,12 +3329,16 @@ function demo_reset_db(PDO $db): void
             $db->exec("DELETE FROM sqlite_sequence WHERE name='$t'");
         } elseif ($driver === 'mysql') {
             $db->exec("ALTER TABLE $t AUTO_INCREMENT = 1");
+        } elseif ($driver === 'pgsql') {
+            $db->exec("ALTER SEQUENCE {$t}_id_seq RESTART WITH 1");
         }
     }
     if ($driver === 'sqlite') {
         $db->exec("DELETE FROM sqlite_sequence WHERE name='audit_log'");
     } elseif ($driver === 'mysql') {
         $db->exec("ALTER TABLE audit_log AUTO_INCREMENT = 1");
+    } elseif ($driver === 'pgsql') {
+        $db->exec("ALTER SEQUENCE audit_log_id_seq RESTART WITH 1");
     }
     apply_migrations($db);
     demo_seed_data($db);

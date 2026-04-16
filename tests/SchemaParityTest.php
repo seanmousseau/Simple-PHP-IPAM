@@ -323,7 +323,8 @@ final class SchemaParityTest extends TestCase
         $dbName = $this->extractDbNameFromDsn($dsn);
         $this->assertNotSame('', $dbName, 'DSN must include dbname');
 
-        $adminDsn = preg_replace('/;dbname=[^;]+/', '', $dsn);
+        $adminDsn = preg_replace('/(^mysql:|;)dbname=[^;]+;?/', '$1', $dsn);
+        $adminDsn = rtrim((string)$adminDsn, ';');
         $this->assertIsString($adminDsn);
         $admin = new PDO($adminDsn, $user, $pass, [
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,

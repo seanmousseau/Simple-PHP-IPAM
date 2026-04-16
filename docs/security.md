@@ -158,7 +158,7 @@ The included `.htaccess` (Apache / LiteSpeed) blocks direct HTTP access to:
 - `data/` directory and `*.sqlite` / `*.db` files
 - `dialects/` directory (internal `Dialect` class hierarchy — `SqliteDialect`, `MysqlDialect`, `PgsqlDialect`, never meant to be served as a URL)
 - `vendor/` directory (bundled Composer runtime libraries, starting v2.9.0)
-- `*.sh`, `*.sql`, `*.json` files
+- `*.sh`, `*.sql` files
 - `config.php`, `lib.php`, `init.php`, `schema*.sql`, `PgsqlStatement.php`, `migrate.php`, `tmp_cleanup.php` at the web root
 - Build and release artefacts (`*.tar.gz`, `*.zip`, `*.bundle.txt`, `SHA256SUMS`)
 
