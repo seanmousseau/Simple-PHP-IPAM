@@ -454,51 +454,58 @@ function ipv4_unassigned_summary_local(PDO $db): array
         $countBySubnet[to_int($r['subnet_id'])] = to_int($r['c']);
     }
 
-    // Pre-compute network/broadcast exclusions in a single batch query
-    // instead of one query per subnet (N+1 fix, #530).
-    /** @var array<int, array{net: string, bcast: string}> $exclTuples */
-    $exclTuples = [];
+    // Exclude network/broadcast addresses from utilization counts (#530).
+    // Two parameter-free join queries instead of per-subnet or OR-chained queries.
+    $excludedBySubnet = [];
+
+    // 1. Network address exclusion: addresses where ip_bin = subnet's network_bin
+    $netExcl = $db->query(
+        "SELECT a.subnet_id, COUNT(*) AS c
+         FROM addresses a
+         JOIN subnets s ON s.id = a.subnet_id
+         WHERE s.ip_version = 4 AND s.prefix <= 30
+           AND a.status IN ('used','reserved')
+           AND a.ip_bin = s.network_bin
+         GROUP BY a.subnet_id"
+    );
+    if ($netExcl !== false) {
+        foreach ($netExcl->fetchAll() as $r) {
+            $excludedBySubnet[to_int($r['subnet_id'])] = to_int($r['c']);
+        }
+    }
+
+    // 2. Broadcast address exclusion: compute broadcast bins in PHP, load
+    //    into a temp table, then join. Avoids OR-clause approach that
+    //    scaled poorly (330ms at 450 subnets).
+    /** @var array<int, string> $bcastBins */
+    $bcastBins = [];
     foreach ($subs as $s) {
         $sid    = to_int($s['id']);
         $prefix = to_int($s['prefix']);
         if ($prefix <= 30 && isset($countBySubnet[$sid])) {
-            $netBin = to_str($s['network_bin']);
-            $exclTuples[$sid] = [
-                'net'   => $netBin,
-                'bcast' => ipv4_broadcast_bin_local($netBin, $prefix),
-            ];
+            $bcastBins[$sid] = ipv4_broadcast_bin_local(to_str($s['network_bin']), $prefix);
         }
     }
-
-    $excludedBySubnet = [];
-    if ($exclTuples !== []) {
-        $chunks = array_chunk($exclTuples, 200, true);
-        foreach ($chunks as $chunk) {
-            $clauses = [];
-            /** @var array<string, array{v: int|string, bin: bool}> $params */
-            $params  = [];
-            $i = 0;
-            foreach ($chunk as $sid => $bins) {
-                $clauses[] = "(subnet_id = :s{$i} AND ip_bin IN (:n{$i}, :b{$i}))";
-                $params[":s{$i}"] = ['v' => $sid, 'bin' => false];
-                $params[":n{$i}"] = ['v' => $bins['net'],   'bin' => true];
-                $params[":b{$i}"] = ['v' => $bins['bcast'], 'bin' => true];
-                $i++;
-            }
-            $sql = "SELECT subnet_id, COUNT(*) AS c FROM addresses
-                    WHERE status IN ('used','reserved') AND (" . implode(' OR ', $clauses) . ")
-                    GROUP BY subnet_id";
-            $st = $db->prepare($sql);
-            foreach ($params as $k => $p) {
-                if ($p['bin']) {
-                    ipam_bind_binary($st, $k, (string)$p['v']);
-                } else {
-                    $st->bindValue($k, (int)$p['v'], PDO::PARAM_INT);
-                }
-            }
-            $st->execute();
-            foreach ($st->fetchAll() as $r) {
-                $excludedBySubnet[to_int($r['subnet_id'])] = to_int($r['c']);
+    if ($bcastBins !== []) {
+        $db->exec("CREATE TEMPORARY TABLE IF NOT EXISTS _bcast_excl (subnet_id INTEGER NOT NULL, bcast_bin BLOB NOT NULL)");
+        $db->exec("DELETE FROM _bcast_excl");
+        $ins = $db->prepare("INSERT INTO _bcast_excl (subnet_id, bcast_bin) VALUES (:s, :b)");
+        foreach ($bcastBins as $sid => $bcast) {
+            $ins->bindValue(':s', $sid, PDO::PARAM_INT);
+            ipam_bind_binary($ins, ':b', $bcast);
+            $ins->execute();
+        }
+        $bcastExcl = $db->query(
+            "SELECT a.subnet_id, COUNT(*) AS c
+             FROM addresses a
+             JOIN _bcast_excl t ON t.subnet_id = a.subnet_id AND t.bcast_bin = a.ip_bin
+             WHERE a.status IN ('used','reserved')
+             GROUP BY a.subnet_id"
+        );
+        if ($bcastExcl !== false) {
+            foreach ($bcastExcl->fetchAll() as $r) {
+                $sid = to_int($r['subnet_id']);
+                $excludedBySubnet[$sid] = ($excludedBySubnet[$sid] ?? 0) + to_int($r['c']);
             }
         }
     }
