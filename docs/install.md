@@ -173,6 +173,48 @@ On the first request, the installer loads `schema.mysql.sql`, creates the bootst
 - **CHECK constraints require MySQL 8.0.16+.** The schema declares CHECK constraints on enum columns (`role`, `theme`, `status`, `level`, `method`) and range columns (`vlan_id`, `tcp_port`, prefix delegation). Versions below 8.0.16 silently ignore them, leaving invariant enforcement to the application layer only.
 - **Nightly Playwright MySQL matrix slot is new in v2.10.0 and under soak.** v2.10.0 ships both a per-commit MySQL CI slot (PHP QA + `test_api.sh`) and a nightly Playwright MySQL matrix slot covering the full 329-test end-to-end suite against a containerized `mysql:8.0` service. The release gate is **7 consecutive green nightly runs** — until that bar is cleared, treat any MySQL regression the nightly matrix surfaces as release-blocking. Track progress at [#433](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/433).
 
+### MariaDB (experimental)
+
+> ⚠️ **MariaDB support is experimental in v2.12.0 and will be promoted to stable in v3.0.0.** MariaDB uses the same `mysql` PDO driver and `db_driver => 'mysql'` config key as MySQL. The default driver is SQLite; you must opt in explicitly. Report bugs at the [GitHub tracker](https://github.com/seanmousseau/Simple-PHP-IPAM/issues).
+
+**Requirements:**
+
+- MariaDB **10.11** or newer (the installer rejects earlier versions). 10.11 is the minimum because it is the current LTS branch with `CREATE TRIGGER IF NOT EXISTS` support and full `utf8mb4` defaults.
+- All MySQL requirements above apply: `utf8mb4` charset, InnoDB storage engine, identical privilege set.
+
+**Prepare the database:**
+
+```sql
+CREATE DATABASE ipam CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+CREATE USER 'ipam'@'localhost' IDENTIFIED BY 'a-strong-random-password';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES, TRIGGER
+  ON ipam.* TO 'ipam'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+**`config.php` stub for MariaDB:**
+
+```php
+<?php
+return [
+    'db_driver' => 'mysql',
+    'db_dsn'    => 'mysql:host=127.0.0.1;port=3306;dbname=ipam;charset=utf8mb4',
+    'db_user'   => 'ipam',
+    'db_pass'   => 'a-strong-random-password',
+
+    'bootstrap_admin' => [
+        'username' => 'admin',
+        'password' => 'ChangeMeNow!12345',
+    ],
+];
+```
+
+Configuration is identical to MySQL — MariaDB speaks the same wire protocol and uses the same PDO `mysql` driver. The application auto-detects MariaDB from the server version string and enforces the 10.11+ floor.
+
+**Known issues:** Same as MySQL above. Additionally:
+
+- **MariaDB version strings contain a `5.5.5-` prefix** in some deployments (historical protocol compatibility lie). The application strips this prefix automatically — no user action needed.
+
 ### PostgreSQL (experimental)
 
 > ⚠️ **PostgreSQL support is experimental in v2.11.0 and will be promoted to stable in v3.0.0.** The default driver is SQLite; you must opt in explicitly. Report bugs at the [GitHub tracker](https://github.com/seanmousseau/Simple-PHP-IPAM/issues). See the [Known issues](#postgresql-known-issues) list below for current limitations.

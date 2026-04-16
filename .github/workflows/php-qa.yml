@@ -35,7 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        engine: [sqlite, mysql, pgsql]
+        engine: [sqlite, mysql, mariadb, pgsql]
 
     # Service containers. GitHub Actions does not support matrix-gated
     # services, so all of them are always started and simply unused on the
@@ -49,6 +49,18 @@ jobs:
           MYSQL_DATABASE: ipam_ci
         ports:
           - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -prootpw --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MARIADB_ROOT_PASSWORD: rootpw
+          MARIADB_DATABASE: ipam_ci
+        ports:
+          - 3307:3306
         options: >-
           --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -prootpw --silent"
           --health-interval=5s
@@ -69,12 +81,13 @@ jobs:
           --health-retries=12
 
     env:
-      IPAM_DB_DRIVER: ${{ matrix.engine }}
+      IPAM_DB_DRIVER: ${{ matrix.engine == 'mariadb' && 'mysql' || matrix.engine }}
       # Smoke tests skip when the matching DSN env var is empty, so each
       # matrix slot naturally exercises only its own engine's server.
-      IPAM_MYSQL_DSN: ${{ matrix.engine == 'mysql' && 'mysql:host=127.0.0.1;port=3306;dbname=ipam_ci;charset=utf8mb4' || '' }}
-      IPAM_MYSQL_USER: ${{ matrix.engine == 'mysql' && 'root' || '' }}
-      IPAM_MYSQL_PASS: ${{ matrix.engine == 'mysql' && 'rootpw' || '' }}
+      # MariaDB reuses the mysql driver and DSN env vars on port 3307.
+      IPAM_MYSQL_DSN: ${{ (matrix.engine == 'mysql' && 'mysql:host=127.0.0.1;port=3306;dbname=ipam_ci;charset=utf8mb4') || (matrix.engine == 'mariadb' && 'mysql:host=127.0.0.1;port=3307;dbname=ipam_ci;charset=utf8mb4') || '' }}
+      IPAM_MYSQL_USER: ${{ (matrix.engine == 'mysql' || matrix.engine == 'mariadb') && 'root' || '' }}
+      IPAM_MYSQL_PASS: ${{ (matrix.engine == 'mysql' || matrix.engine == 'mariadb') && 'rootpw' || '' }}
       IPAM_PGSQL_DSN:  ${{ matrix.engine == 'pgsql' && 'pgsql:host=127.0.0.1;port=5432;dbname=ipam_ci' || '' }}
       IPAM_PGSQL_USER: ${{ matrix.engine == 'pgsql' && 'postgres' || '' }}
       IPAM_PGSQL_PASS: ${{ matrix.engine == 'pgsql' && 'rootpw' || '' }}
@@ -196,6 +209,74 @@ jobs:
 
       - name: Stop php -S (mysql)
         if: always() && matrix.engine == 'mysql'
+        run: |
+          if [ -f /tmp/php-s.pid ]; then
+            kill "$(cat /tmp/php-s.pid)" 2>/dev/null || true
+          fi
+
+      # ----- MariaDB slot only: test_api.sh against php -S backed by MariaDB -----
+      #
+      # v2.12.0 #534: first-class MariaDB 10.11+ support. Reuses the mysql
+      # PDO driver on port 3307 (the MariaDB service container).
+      - name: Bootstrap php -S + config for test_api.sh (mariadb)
+        if: matrix.engine == 'mariadb'
+        run: |
+          cat > Simple-PHP-IPAM/config.php <<'PHP'
+          <?php
+          return [
+              'db_driver' => 'mysql',
+              'db_dsn'    => 'mysql:host=127.0.0.1;port=3307;dbname=ipam_ci;charset=utf8mb4',
+              'db_user'   => 'root',
+              'db_pass'   => 'rootpw',
+              'bootstrap_admin' => [
+                  'username' => 'admin',
+                  'password' => 'ChangeMeNow!12345',
+              ],
+              'force_https' => false,
+              'session_idle_seconds' => 1800,
+          ];
+          PHP
+
+      - name: Start php -S (mariadb)
+        if: matrix.engine == 'mariadb'
+        run: |
+          php -S 127.0.0.1:8080 -t Simple-PHP-IPAM > /tmp/php-s.log 2>&1 &
+          echo $! > /tmp/php-s.pid
+          for i in $(seq 1 30); do
+            if curl -sSf http://127.0.0.1:8080/status.php > /tmp/status.json 2>/dev/null; then
+              echo "php -S ready"
+              cat /tmp/status.json
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "php -S failed to start" >&2
+          cat /tmp/php-s.log >&2
+          exit 1
+
+      - name: Create temp API key in MariaDB for test_api.sh
+        if: matrix.engine == 'mariadb'
+        id: mariadb-api-key
+        run: |
+          export IPAM_API_KEY="ci-mariadb-$(date +%s)-$RANDOM"
+          export IPAM_API_KEY_HASH="$(php -r 'echo hash("sha256", getenv("IPAM_API_KEY"));')"
+          php -r '
+            $db = new PDO(getenv("IPAM_MYSQL_DSN"), getenv("IPAM_MYSQL_USER"), getenv("IPAM_MYSQL_PASS"), [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+            $db->exec("DELETE FROM api_keys WHERE name = \"test-runner\"");
+            $st = $db->prepare("INSERT INTO api_keys (name, key_hash, is_active, created_by) VALUES (\"test-runner\", :h, 1, \"ci\")");
+            $st->execute([":h" => getenv("IPAM_API_KEY_HASH")]);
+            echo "inserted\n";
+          '
+          echo "key=$IPAM_API_KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Run test_api.sh against MariaDB-backed php -S
+        if: matrix.engine == 'mariadb'
+        env:
+          API_KEY: ${{ steps.mariadb-api-key.outputs.key }}
+        run: bash testing/scripts/test_api.sh http://127.0.0.1:8080
+
+      - name: Stop php -S (mariadb)
+        if: always() && matrix.engine == 'mariadb'
         run: |
           if [ -f /tmp/php-s.pid ]; then
             kill "$(cat /tmp/php-s.pid)" 2>/dev/null || true

@@ -32,9 +32,9 @@ set -euo pipefail
 
 driver="${1:-sqlite}"
 case "$driver" in
-    sqlite|mysql|pgsql) ;;
+    sqlite|mysql|mariadb|pgsql) ;;
     *)
-        echo "bootstrap-app.sh: unsupported driver '$driver' (expected sqlite, mysql, or pgsql)" >&2
+        echo "bootstrap-app.sh: unsupported driver '$driver' (expected sqlite, mysql, mariadb, or pgsql)" >&2
         exit 2
         ;;
 esac
@@ -48,6 +48,7 @@ image="${IPAM_TEST_IMAGE:-ipam-pw-apache:local}"
 port="${IPAM_TEST_PORT:-8443}"
 network="${IPAM_TEST_NETWORK:-ipam-pw-net}"
 mysql_name="${IPAM_TEST_MYSQL_NAME:-ipam-pw-mysql}"
+mariadb_name="${IPAM_TEST_MARIADB_NAME:-ipam-pw-mariadb}"
 pgsql_name="${IPAM_TEST_PGSQL_NAME:-ipam-pw-pgsql}"
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -72,6 +73,9 @@ case "$driver" in
         ;;
     mysql)
         cp "$script_dir/fixtures/test-config-mysql.php" "$app_dir/config.php"
+        ;;
+    mariadb)
+        cp "$script_dir/fixtures/test-config-mariadb.php" "$app_dir/config.php"
         ;;
     pgsql)
         cp "$script_dir/fixtures/test-config-pgsql.php" "$app_dir/config.php"
@@ -126,6 +130,31 @@ if [[ "$driver" == "mysql" ]]; then
     done
 fi
 
+if [[ "$driver" == "mariadb" ]]; then
+    echo "bootstrap-app: starting MariaDB 10.11 service container $mariadb_name"
+    docker rm -f "$mariadb_name" >/dev/null 2>&1 || true
+    docker run -d --rm --name "$mariadb_name" \
+        --network "$network" \
+        --network-alias ipam-pw-mariadb \
+        -e MARIADB_ROOT_PASSWORD=testpw \
+        -e MARIADB_DATABASE=ipam_pw \
+        mariadb:10.11 >/dev/null
+
+    echo "bootstrap-app: waiting for MariaDB ready (up to 90s)"
+    for i in $(seq 1 45); do
+        if docker exec "$mariadb_name" healthcheck.sh --connect --innodb_initialized >/dev/null 2>&1; then
+            echo "bootstrap-app: MariaDB ready"
+            break
+        fi
+        if [[ "$i" -eq 45 ]]; then
+            echo "bootstrap-app: MariaDB did not become ready in 90s" >&2
+            docker logs "$mariadb_name" >&2 || true
+            exit 1
+        fi
+        sleep 2
+    done
+fi
+
 if [[ "$driver" == "pgsql" ]]; then
     echo "bootstrap-app: starting Postgres 14 service container $pgsql_name"
     docker rm -f "$pgsql_name" >/dev/null 2>&1 || true
@@ -169,6 +198,9 @@ docker run --rm "${seed_docker_args[@]}" "$image" \
         if [[ "$driver" == "mysql" ]]; then
             echo "bootstrap-app: MySQL container log:" >&2
             docker logs "$mysql_name" >&2 || true
+        elif [[ "$driver" == "mariadb" ]]; then
+            echo "bootstrap-app: MariaDB container log:" >&2
+            docker logs "$mariadb_name" >&2 || true
         elif [[ "$driver" == "pgsql" ]]; then
             echo "bootstrap-app: Postgres container log:" >&2
             docker logs "$pgsql_name" >&2 || true

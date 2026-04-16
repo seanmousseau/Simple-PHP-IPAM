@@ -194,22 +194,22 @@ function ipam_db(array $config): PDO
             $serverVersionRaw = $pdo->getAttribute(PDO::ATTR_SERVER_VERSION);
             $serverVersion = is_string($serverVersionRaw) ? $serverVersionRaw : '';
 
-            // v2.10.0 #499 CR-sweep fix: reject MariaDB explicitly before
-            // the version_compare. PDO::ATTR_SERVER_VERSION returns e.g.
-            // "10.11.6-MariaDB" or "5.5.5-10.11.6-MariaDB" (the 5.5.5
-            // prefix is a historical protocol-compat lie). version_compare
-            // treats those as "10.11.6.MariaDB" or "5.5.5.10.11.6.MariaDB"
-            // and compares only the numeric prefix: 10 > 8 passes the
-            // floor check even though we have not tested MariaDB at all.
-            // First-class MariaDB support is tracked at #534 (v2.12.0).
-            // Until then, detect and reject explicitly so users get a
-            // clear actionable error instead of a later runtime crash.
+            // v2.12.0 #534: first-class MariaDB 10.11+ support.
+            // PDO::ATTR_SERVER_VERSION returns e.g. "10.11.6-MariaDB" or
+            // "5.5.5-10.11.6-MariaDB" (the 5.5.5 prefix is a historical
+            // protocol-compat lie). Detect MariaDB, strip the prefix, and
+            // enforce a separate version floor.
             if ($serverVersion !== '' && stripos($serverVersion, 'mariadb') !== false) {
-                throw new RuntimeException(
-                    "MariaDB is not supported in v2.10.0 (server reports '$serverVersion'). "
-                    . 'First-class MariaDB support is tracked at #534 and will land in v2.12.0. '
-                    . 'For v2.10.0, use MySQL 8.0.29+ or stay on the SQLite driver.'
-                );
+                $cleaned = preg_replace('/^5\.5\.5-/', '', $serverVersion);
+                $cleaned = is_string($cleaned) ? $cleaned : $serverVersion;
+                preg_match('/^(\d+\.\d+\.\d+)/', $cleaned, $mariaMatch);
+                $mariaVersion = $mariaMatch[1] ?? '0.0.0';
+                if (version_compare($mariaVersion, '10.11.0', '<')) {
+                    throw new RuntimeException(
+                        "MariaDB 10.11.0+ is required (server reports '$serverVersion')"
+                    );
+                }
+                break;
             }
 
             if ($serverVersion === '' || version_compare($serverVersion, '8.0.29', '<')) {
@@ -685,16 +685,40 @@ function login_rate_limited(PDO $db, string $ip, int $maxAttempts, int $windowSe
     return (is_array($countRow) ? to_int($countRow['c']) : 0) >= $maxAttempts;
 }
 
-function record_login_failure(PDO $db, string $ip): void
+function record_login_failure(PDO $db, string $ip, string $username = ''): void
 {
-    $db->prepare("INSERT INTO login_attempts (ip) VALUES (:ip)")
-       ->execute([':ip' => $ip]);
+    $db->prepare("INSERT INTO login_attempts (ip, username) VALUES (:ip, :username)")
+       ->execute([':ip' => $ip, ':username' => $username !== '' ? $username : null]);
 }
 
 function clear_login_failures(PDO $db, string $ip): void
 {
     $db->prepare("DELETE FROM login_attempts WHERE ip = :ip")
        ->execute([':ip' => $ip]);
+}
+
+function account_locked_out(PDO $db, string $username, int $maxAttempts, int $windowSeconds): bool
+{
+    $cutoff = date('Y-m-d H:i:s', time() - $windowSeconds);
+    $st = $db->prepare(
+        "SELECT COUNT(*) AS c FROM login_attempts WHERE username = :u AND attempted_at >= :cutoff"
+    );
+    $st->execute([':u' => $username, ':cutoff' => $cutoff]);
+    /** @var array<string, mixed>|false $row */
+    $row = $st->fetch();
+    return (is_array($row) ? to_int($row['c']) : 0) >= $maxAttempts;
+}
+
+function clear_account_lockout(PDO $db, string $username): void
+{
+    $db->prepare("DELETE FROM login_attempts WHERE username = :u")
+       ->execute([':u' => $username]);
+}
+
+/** @param IpamConfig $config */
+function recovery_mode_enabled(array $config): bool
+{
+    return (bool)($config['recovery_mode'] ?? false);
 }
 
 function purge_old_login_attempts(PDO $db, int $windowSeconds): void
@@ -4307,15 +4331,21 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=2.11.0'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=2.12.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=2.11.0'></script>";
+    echo "<script defer src='assets/app.js?v=2.12.0'></script>";
     $pageAttr = isset($opts['page']) && $opts['page'] !== ''
         ? " data-page='" . e(to_str($opts['page'])) . "'"
         : '';
     echo "</head><body{$pageAttr}>";
+
+    /** @var IpamConfig $gConf */
+    $gConf = $GLOBALS['config'];
+    if (recovery_mode_enabled($gConf)) {
+        echo "<div class='recovery-banner'>RECOVERY MODE ACTIVE &mdash; disable <code>recovery_mode</code> in config.php after use</div>";
+    }
 
     echo "<div class='topbar'><div class='nav-wrap'>";
     echo "<a href='dashboard.php' class='nav-brand'>"

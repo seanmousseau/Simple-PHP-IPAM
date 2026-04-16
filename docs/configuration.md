@@ -26,6 +26,9 @@ The keys below are seeded into the `settings` table by the v2.6.0 migration and 
 | `security.session_idle_seconds` | int | `1800` | Session idle timeout before auto-logout. |
 | `security.login_max_attempts` | int | `5` | Failed logins per window before IP lockout. |
 | `security.login_lockout_seconds` | int | `900` | Lockout window length. |
+| *(config.php only)* `account_lockout_max_attempts` | int | `10` | Failed logins per username before account lockout. |
+| *(config.php only)* `account_lockout_seconds` | int | `900` | Account lockout window length. |
+| *(config.php only)* `recovery_mode` | bool | `false` | Emergency login recovery mode (see below). |
 | `alert.recipient_user_ids` | json | `[]` | (v2.8.0+) Active user IDs that receive utilization alerts. Picked from a multi-select on **Settings → Alerting**; only users with a non-empty email are eligible. Inactive users / cleared emails drop out automatically at send time. |
 | `alert.email` | string | *(empty)* | **Deprecated in v2.8.0** — replaced by `alert.recipient_user_ids`. The 2.8.0 migration auto-maps a matching active user; unmappable values produce a `settings.alert_email_unmigrated` audit row. Hidden from the UI. Removal in v3.0.0. |
 | `alert.util_warn_pct` | int | `80` | Subnet utilization warn threshold. |
@@ -293,6 +296,39 @@ Maximum number of consecutive failed login attempts from a single IP address bef
 How long an IP address is locked out after exceeding `login_max_attempts`. Stale attempt records are purged automatically.
 
 Locked-out login attempts are recorded in the audit log as `auth.login_blocked`.
+
+---
+
+### `account_lockout_max_attempts`
+
+**Default:** `10`
+
+Maximum number of failed login attempts for a specific username (across all source IPs) before the account is locked out. Independent of the per-IP `login_max_attempts` rate limiter — both must pass for login to succeed. Set in `config.php` only (not in the Settings UI).
+
+---
+
+### `account_lockout_seconds`
+
+**Default:** `900` (15 minutes)
+
+How long a username is locked out after exceeding `account_lockout_max_attempts`. Admins can manually unlock a locked account from `users.php`. The unlock action is audit-logged as `user.unlock`.
+
+---
+
+### `recovery_mode`
+
+**Default:** `false` (not present in config.php by default)
+
+Emergency break-glass escape hatch. When set to `true` in `config.php`:
+
+- The local login form is always shown (overrides `oidc.disable_local_login`).
+- CAPTCHA (`login_protection`) is disabled.
+- IP rate limiting and per-account lockout are bypassed.
+- Submitting the `bootstrap_admin` credentials from `config.php` resets the matching admin user's password hash and logs in. If the admin user was deleted, it is recreated.
+- A red sticky banner warns on every page: **RECOVERY MODE ACTIVE**.
+- All recovery actions are audit-logged (`auth.recovery_login`, `auth.recovery_reset`, `auth.recovery_provision`).
+
+**Security:** This intentionally weakens security. Disable it in `config.php` immediately after use. Never leave `recovery_mode => true` in production.
 
 ---
 

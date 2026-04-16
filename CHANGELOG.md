@@ -6,7 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
-## [2.11.0] - unreleased
+## [2.12.0] - 2026-04-16
+
+Post-multi-engine cleanup and hardening release. Security improvements, performance optimization, first-class MariaDB support, and test infrastructure upgrades.
+
+### Added
+- **#534** — First-class MariaDB 10.11+ support. The `ipam_db()` version gate now detects MariaDB (stripping the historical `5.5.5-` prefix), enforces a 10.11.0 floor, and reuses the `mysql` PDO driver. CI gains `mariadb:10.11` in both the PHP QA matrix (`php-qa.yml`) and the nightly Playwright matrix (`playwright-nightly.yml`). `bootstrap-app.sh` and `teardown-app.sh` learn a `mariadb` driver that spins a `mariadb:10.11` service container. New `test-config-mariadb.php` fixture and `docs/install.md` MariaDB section.
+- **#543** — Per-account login lockout. Failed login attempts now track the submitted `username` in `login_attempts` (new column + index via `2.12.0-account-lockout` migration). After `account_lockout_max_attempts` failures (default 10) within `account_lockout_seconds` (default 900), the account is locked regardless of source IP. `users.php` shows a "Locked" badge and an "Unlock" button that clears the lockout and audit-logs `user.unlock`. New config keys: `account_lockout_max_attempts`, `account_lockout_seconds`.
+- **#540** — Emergency `recovery_mode` config key. When `'recovery_mode' => true` in `config.php`: the local login form is always shown (overrides `disable_local_login`), CAPTCHA is disabled, IP and account rate limiting are bypassed, and submitting the `bootstrap_admin` credentials resets the admin password (or recreates the admin if deleted). A red sticky banner warns on every page. Audit-logged as `auth.recovery_login` / `auth.recovery_reset` / `auth.recovery_provision`.
+- **#413** — `testing/scripts/deploy_staging.sh` helper for ad-hoc staging deploys to dev-direct. CLI: `--name=<slug> [--driver=sqlite|mysql|pgsql] [--fresh] [--yes]`. Validates slug, refuses `--name=ipam`, rsync → config template → chown → migrate. Config templates in `testing/samples/staging-configs/`.
+- **#466** — `tests/ConcurrencyTest.php` — write-race concurrency PHPUnit class. Four test methods exercise SQLite WAL mode with dual PDO connections: UNIQUE violation on concurrent insert, scan lock vs short save, snapshot isolation on uncommitted writes, and last-writer-wins semantics.
+- **#463** — `testing/playwright/tests/unicode.spec.ts` — 30 parameterized Playwright round-trip tests. Six Unicode fixtures (Cyrillic, CJK, Arabic RTL, emoji, combining diacriticals, ZWJ sequences) × five entity types (subnet description, address hostname, contact name, tag name, search). Catches `utf8` vs `utf8mb4` collation bugs on MySQL/MariaDB.
+
+### Changed
+- **#530** — `ipv4_unassigned_summary_local()` N+1 query optimization. The per-subnet exclusion query (network/broadcast address deduction) is replaced with a single batched query chunked at 200 subnets per round-trip. Targets ≥60% TTFB reduction on 500-subnet deployments.
+
+## [2.11.0] - 2026-04-15
 
 Experimental PostgreSQL 14+ driver on top of the v2.9.0 Dialect foundation and the v2.10.0 MySQL work. Opt-in via `db_driver = 'pgsql'`; SQLite remains the default and is unchanged. Postgres is the third engine to ship against the shared Dialect contract — the path is beta-quality and labelled as such in the install docs and with a dismissible admin banner on every page when active. By the time v2.11.0 ships, all three drivers (SQLite, MySQL, PostgreSQL) run the same per-commit CI matrix and nightly containerized Playwright suite so cross-engine regressions are caught within hours of landing.
 
@@ -725,6 +740,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[2.12.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.11.0...v2.12.0
 [2.11.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.10.0...v2.11.0
 [2.10.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.9.2...v2.10.0
 [2.9.2]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.9.1...v2.9.2

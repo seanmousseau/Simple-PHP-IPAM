@@ -3,8 +3,8 @@
 # and restore any pre-bootstrap config.php that was saved during setup.
 # Idempotent — safe to run when nothing is running.
 #
-# Extended in v2.10.0 #433 to tear down the MySQL service container and
-# in v2.11.0 #388 to tear down the Postgres service container. The docker
+# Extended in v2.10.0 #433 to tear down the MySQL service container,
+# in v2.11.0 #388 for Postgres, and v2.12.0 #534 for MariaDB. The docker
 # network removal is idempotent and only succeeds when no containers are
 # attached — both drivers' service containers are gone by then.
 
@@ -12,6 +12,7 @@ set -euo pipefail
 
 container="${IPAM_TEST_NAME:-ipam-pw-test}"
 mysql_name="${IPAM_TEST_MYSQL_NAME:-ipam-pw-mysql}"
+mariadb_name="${IPAM_TEST_MARIADB_NAME:-ipam-pw-mariadb}"
 pgsql_name="${IPAM_TEST_PGSQL_NAME:-ipam-pw-pgsql}"
 network="${IPAM_TEST_NETWORK:-ipam-pw-net}"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,6 +21,7 @@ app_dir="$(cd "$script_dir/../.." && pwd)/Simple-PHP-IPAM"
 if command -v docker >/dev/null 2>&1; then
     docker rm -f "$container" >/dev/null 2>&1 || true
     docker rm -f "$mysql_name" >/dev/null 2>&1 || true
+    docker rm -f "$mariadb_name" >/dev/null 2>&1 || true
     docker rm -f "$pgsql_name" >/dev/null 2>&1 || true
     docker network rm "$network" >/dev/null 2>&1 || true
 fi
