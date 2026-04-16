@@ -1096,8 +1096,13 @@ function ipam_setting_definitions(): array
             'default'     => 'readonly',
             'sensitive'   => false,
             'config_key'  => ['oidc', 'default_role'],
+            // v2.11.0 #501: 'netops' added. The users.role column and the
+            // demo seed already include a 'netops' role, but the OIDC
+            // dropdown was missing it so IdP-provisioned users could not
+            // be auto-assigned NetOps and had to be manually flipped.
             'options'     => [
                 'readonly' => 'Read-only',
+                'netops'   => 'Network operator',
                 'admin'    => 'Administrator',
             ],
         ],
