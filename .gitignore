@@ -28,3 +28,5 @@ test-results/
 .remember/
 stubs/
 *.png
+# Allow Playwright visual regression baselines
+!testing/playwright/tests/**/*.png
