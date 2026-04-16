@@ -2156,14 +2156,19 @@ function prune_audit_log(PDO $db, int $retentionDays): int
 
             $db->exec("SET @ipam_bypass_append_only = NULL");
         } elseif ($driver === 'pgsql') {
-            $db->beginTransaction();
+            $ownTx = !$db->inTransaction();
+            if ($ownTx) {
+                $db->beginTransaction();
+            }
             $db->exec("SET LOCAL ipam.bypass_append_only = '1'");
 
             $st = $db->prepare("DELETE FROM audit_log WHERE created_at < :cutoff");
             $st->execute([':cutoff' => $cutoff]);
             $pruned = $st->rowCount();
 
-            $db->commit();
+            if ($ownTx) {
+                $db->commit();
+            }
         } else {
             throw new \RuntimeException("prune_audit_log: unsupported driver '$driver'");
         }
@@ -2176,7 +2181,9 @@ function prune_audit_log(PDO $db, int $retentionDays): int
         } elseif ($driver === 'mysql') {
             try { $db->exec("SET @ipam_bypass_append_only = NULL"); } catch (Throwable) {}
         } elseif ($driver === 'pgsql') {
-            try { $db->rollBack(); } catch (Throwable) {}
+            if (isset($ownTx) && $ownTx && $db->inTransaction()) {
+                try { $db->rollBack(); } catch (Throwable) {}
+            }
         }
         error_log('audit_log prune failed: ' . $e->getMessage());
         return 0;

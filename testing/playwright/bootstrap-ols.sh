@@ -12,7 +12,7 @@
 #                   (which binds 8088 to its Postgres admin etc.) does not
 #                   collide. CI gets a clean container and can use any port.
 #   IPAM_OLS_NAME   Container name (default: ipam-ols-test).
-#   IPAM_OLS_IMAGE  OLS image to run (default: litespeedtech/openlitespeed:latest).
+#   IPAM_OLS_IMAGE  OLS image to run (default: litespeedtech/openlitespeed:1.8.5-lsphp83).
 #
 # Side effects:
 #   - Starts a long-running OpenLiteSpeed container. Tear it down with
@@ -50,6 +50,11 @@ image="${IPAM_OLS_IMAGE:-litespeedtech/openlitespeed:1.8.5-lsphp83}"
 
 if ! command -v docker >/dev/null 2>&1; then
     echo "bootstrap-ols: docker is required but not found in PATH" >&2
+    exit 3
+fi
+
+if ! command -v curl >/dev/null 2>&1; then
+    echo "bootstrap-ols: curl is required for readiness polling but not found in PATH" >&2
     exit 3
 fi
 
