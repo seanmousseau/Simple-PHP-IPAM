@@ -2,7 +2,7 @@
  * .htaccess coverage — verifies that web-server deny rules in Simple-PHP-IPAM/.htaccess
  * and Simple-PHP-IPAM/data/.htaccess behave as intended against a real Apache instance.
  *
- * Runs as the `htaccess-subset` CI job in .github/workflows/playwright-nightly.yml.
+ * Runs as the `htaccess-subset` CI job in .github/workflows/playwright.yml.
  * Does not require login, a database, or any seed state — pure HTTP-level checks.
  *
  * Context: tests 1..6 cover the root .htaccess RewriteRules that block direct access

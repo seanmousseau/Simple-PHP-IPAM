@@ -47,11 +47,11 @@ The matrix uses `fail-fast: false` so one engine's failure does not cancel the o
 
 **Why path-filtered, not nightly-only:** catches regressions on the PR that caused them. Unrelated PRs are not taxed with 5–10 minutes of I/O-heavy test work.
 
-## Tier 3 — nightly on `main` (informational)
+## Tier 3 — Playwright end-to-end (PR-gated)
 
-**Workflow:** `.github/workflows/playwright-nightly.yml` (existing) + future `nightly.yml`
+**Workflow:** `.github/workflows/playwright.yml`
 
-**Trigger:** `schedule:` cron at 07:00 UTC daily. Also fires on PRs that touch `Simple-PHP-IPAM/**` or `testing/playwright/**` (the playwright job's own path filter — separate from Tier 1).
+**Trigger:** fires on PRs that touch `Simple-PHP-IPAM/**` or `testing/playwright/**` (the playwright job's own path filter — separate from Tier 1).
 
 **What runs:**
 
@@ -78,7 +78,7 @@ These run from a developer machine following `CLAUDE.md` → "Manual against dev
 - **Always-on, fast:** add it to the `qa` job in `php-qa.yml`. Keep wall clock under 8 minutes per matrix slot.
 - **Engine-specific:** add it to the same job — it inherits the matrix automatically and reports per engine.
 - **Slow but conditional:** wait for Tier 2 (v3.0.0) and add path filters.
-- **Best-effort overnight:** add it to the nightly workflow and document the cron in this file.
+- **Best-effort, heavier:** add it to `playwright.yml` (runs on PRs that touch app or test code) and document it in this file.
 
 ## How to debug a failing matrix slot
 

@@ -8,7 +8,7 @@
 # authz_core fallback apply; the rewrite hits first and returns 403.
 # v2.11.0 #500 closed the OLS gap by switching from authz-only to
 # rewrite-first. See testing/playwright/tests/htaccess.spec.ts and the
-# containerized OLS matrix slot in playwright-nightly.yml for the
+# containerized OLS matrix slot in playwright.yml for the
 # regression guard.
 
 <IfModule mod_rewrite.c>

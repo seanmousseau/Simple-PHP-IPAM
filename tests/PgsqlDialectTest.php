@@ -13,7 +13,7 @@ require_once dirname(__DIR__) . '/Simple-PHP-IPAM/dialects/PgsqlDialect.php';
  * every assertion is against the exact SQL fragment PgsqlDialect emits,
  * which is deterministic and stateless. End-to-end DDL validation against
  * a real Postgres 14 service container is wired up by #388 (per-commit CI
- * job) and the nightly containerized Playwright Postgres matrix slot.
+ * job) and the containerized Playwright Postgres matrix slot.
  *
  * Structure mirrors MysqlDialectTest so that when a new interface method is
  * added, all three dialect test files get the parallel coverage.

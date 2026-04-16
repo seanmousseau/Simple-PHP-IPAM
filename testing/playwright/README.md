@@ -16,7 +16,7 @@ testing/playwright/
 ├── Dockerfile.apache         # php:8.2-apache with pdo_sqlite, mod_ssl, self-signed cert
 ├── scripts/flake-rate.mjs    # computes flake rate from playwright-report/results.json
 ├── MIGRATION_NOTES.md        # portability notes, target matrix, contributor checklist
-├── SEED_AUDIT.md             # running log of seed/test mismatches discovered via nightly CI
+├── SEED_AUDIT.md             # running log of seed/test mismatches discovered via CI
 └── README.md                 # this file
 ```
 
@@ -64,7 +64,7 @@ for the full invocation including the seven recurring footguns
 
 ### CI
 
-The nightly workflow `.github/workflows/playwright-nightly.yml` runs two jobs:
+The workflow `.github/workflows/playwright.yml` runs two jobs:
 
 1. **`containerized-playwright`** — full suite against the Dockerized app.
    Matrix is `driver: [sqlite]` today; gains `mysql` in v2.10.0 and `pgsql` in
@@ -146,7 +146,7 @@ The annotation is metadata only. It doesn't skip or change how the test runs.
 
 ### 3. Flake budget
 
-Run `node testing/playwright/scripts/flake-rate.mjs` after each nightly to print
+Run `node testing/playwright/scripts/flake-rate.mjs` after each CI run to print
 a flake rate and exit with a traffic-light code:
 
 | Zone | Rate | Exit | Action |

@@ -13,7 +13,7 @@ require_once dirname(__DIR__) . '/Simple-PHP-IPAM/dialects/MysqlDialect.php';
  * every assertion is against the exact SQL fragment MysqlDialect emits,
  * which is deterministic and stateless. End-to-end DDL validation against
  * a real MySQL 8.0 service container is wired up by #384 (per-commit CI
- * job) and #433 (nightly Playwright MySQL matrix).
+ * job) and #433 (Playwright MySQL matrix).
  *
  * Structure mirrors DialectTest so that when a new interface method is
  * added, both files get the parallel coverage.

@@ -12,7 +12,7 @@ to know when running against different targets.
 | Target | `IPAM_BASE_URL` | HTTP Basic Auth | Admin creds |
 |---|---|---|---|
 | Local containerized (`bootstrap-app.sh`) | `http://127.0.0.1:8080` | off (no `IPAM_BASIC_USER`) | `demo` / `demo` (seeded by `demo_seed.php`) |
-| CI nightly (`playwright-nightly.yml`) | `http://127.0.0.1:8080` | off | `demo` / `demo` |
+| CI (`playwright.yml`) | `http://127.0.0.1:8080` | off | `demo` / `demo` |
 | Dev-direct manual | `https://dev-direct.seanmousseau.com:8343/claude/ipam` | on (from `~/.claude/dev-secrets.env`) | `IPAM_ADMIN_USER` / `IPAM_ADMIN_PASS` from secrets |
 
 The choice is entirely driven by environment variables — nothing is hardcoded in

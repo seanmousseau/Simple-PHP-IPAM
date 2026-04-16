@@ -519,7 +519,7 @@ Two paths exist as of v2.5.2:
      npx playwright test)
    bash testing/playwright/teardown-app.sh
    ```
-   The nightly `.github/workflows/playwright-nightly.yml` CI job runs the same commands against the same image; a failing CI run can almost always be reproduced locally verbatim.
+   The `.github/workflows/playwright.yml` CI job runs the same commands against the same image; a failing CI run can almost always be reproduced locally verbatim.
 
 2. **Manual against dev-direct** — the shared test server at `https://dev-direct.seanmousseau.com:8343/claude/ipam`. Needed for `test_api.sh`, real-IdP OIDC scenarios, and any quick verification against a "real" install. The dev environment is shared, stateful, and has multiple footguns that have caused repeated false failures — read this whole section before invoking the suites. All commands assume cwd is the repo root.
 
@@ -619,7 +619,7 @@ DOCKER_CONTAINER=ipam-pw-test bash testing/scripts/test_api.sh https://127.0.0.1
 bash testing/playwright/teardown-app.sh
 ```
 
-No SSH, no shared state, no `BASIC_AUTH`. The same flow runs in CI's `api-tests` job under `playwright-nightly.yml`.
+No SSH, no shared state, no `BASIC_AUTH`. The same flow runs in CI's `api-tests` job under `playwright.yml`.
 
 **Against dev-direct (use only when you need the shared deployment):**
 
@@ -658,7 +658,7 @@ bash -c 'set -a; source ~/.claude/dev-secrets.env; set +a; \
 
 ### Local gate — required before opening a PR
 
-Starting in v2.5.2, the containerized Playwright harness runs automatically on every PR targeting `dev` or `main` via `.github/workflows/playwright-nightly.yml` (full suite + `.htaccess` subset, both against a fresh Dockerized Apache+PHP instance). That changes what has to be run locally.
+Starting in v2.5.2, the containerized Playwright harness runs automatically on every PR targeting `dev` or `main` via `.github/workflows/playwright.yml` (full suite + `.htaccess` subset, both against a fresh Dockerized Apache+PHP instance). That changes what has to be run locally.
 
 **Required every PR — must be green before pushing:**
 ```bash

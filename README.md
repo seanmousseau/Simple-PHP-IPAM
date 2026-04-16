@@ -12,7 +12,7 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 **Post-multi-engine cleanup and hardening.** Security improvements, performance optimization, first-class MariaDB support, and test infrastructure upgrades.
 
-- **First-class MariaDB 10.11+ support (#534).** MariaDB uses the same `mysql` PDO driver and `db_driver => 'mysql'` config key as MySQL. The version gate detects MariaDB (stripping the `5.5.5-` prefix), enforces a 10.11.0 floor, and the CI matrix now runs both `mariadb:10.11` and `mysql:8.0` in the PHP QA and nightly Playwright pipelines.
+- **First-class MariaDB 10.11+ support (#534).** MariaDB uses the same `mysql` PDO driver and `db_driver => 'mysql'` config key as MySQL. The version gate detects MariaDB (stripping the `5.5.5-` prefix), enforces a 10.11.0 floor, and the CI matrix now runs both `mariadb:10.11` and `mysql:8.0` in the PHP QA and Playwright CI pipelines.
 - **Per-account login lockout (#543).** Failed attempts now track the submitted username. After 10 failures (configurable) the account is locked regardless of source IP. Admins see a "Locked" badge on `users.php` and can unlock with one click. New config keys: `account_lockout_max_attempts`, `account_lockout_seconds`.
 - **Emergency `recovery_mode` (#540).** A config.php-only break-glass key that shows the local login form, disables CAPTCHA and rate limiting, and lets the `bootstrap_admin` credentials reset the admin password — even if the admin was deleted. A red sticky banner warns on every page while active.
 - **Subnets N+1 query fix (#530).** The per-subnet exclusion query in `ipv4_unassigned_summary_local()` is replaced with a single batched query, targeting ≥60% TTFB reduction on large subnet counts.

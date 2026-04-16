@@ -164,7 +164,7 @@ The included `.htaccess` (Apache / LiteSpeed) blocks direct HTTP access to:
 
 **Nginx users** must replicate these rules manually — Nginx does not process `.htaccess` files. See the [install guide](install.md#nginx) for the rules to translate.
 
-**OpenLiteSpeed users** get full coverage out of the box — the shipped `.htaccess` uses root-level `RewriteRule` entries for `dialects/` and `vendor/` because OLS's lsphp handler dispatches PHP files before subdirectory-level rewrites fire (v2.11.0 #500). See the [OpenLiteSpeed setup notes](install.md#openlitespeed) for the one WebAdmin setting worth verifying (Auto Index → Off) and the automated regression guard (`.github/workflows/playwright-nightly.yml` runs the `.htaccess` assertion spec against a containerized OLS image on every nightly run alongside the Apache slot).
+**OpenLiteSpeed users** get full coverage out of the box — the shipped `.htaccess` uses root-level `RewriteRule` entries for `dialects/` and `vendor/` because OLS's lsphp handler dispatches PHP files before subdirectory-level rewrites fire (v2.11.0 #500). See the [OpenLiteSpeed setup notes](install.md#openlitespeed) for the one WebAdmin setting worth verifying (Auto Index → Off) and the automated regression guard (`.github/workflows/playwright.yml` runs the `.htaccess` assertion spec against a containerized OLS image on every PR alongside the Apache slot).
 
 The recommended file permissions further limit exposure:
 

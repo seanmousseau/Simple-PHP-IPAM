@@ -2,7 +2,7 @@
 
 Log of findings from running the Playwright suite against a freshly-seeded database
 (via `testing/playwright/bootstrap-app.sh`). This document is populated over time as
-nightly CI runs expose gaps between `demo_seed.php` and what the tests expect.
+CI runs expose gaps between `demo_seed.php` and what the tests expect.
 
 ## Audit process
 
