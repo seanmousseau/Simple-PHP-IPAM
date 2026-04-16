@@ -75,7 +75,7 @@
   --font-size-9xl:1.9rem;
 
   --focus-ring:0 0 0 2px var(--bg), 0 0 0 4px var(--link);
-  --font-mono:'Fira Code',ui-monospace,SFMono-Regular,Consolas,monospace;
+  --font-mono:'Fira Code',ui-monospace,'SFMono-Regular','Consolas',monospace;
 }
 
 @font-face{font-family:'Fira Code';src:url('fonts/fira-code-subset.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap}

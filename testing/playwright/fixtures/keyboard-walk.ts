@@ -27,7 +27,7 @@ export async function walkFocusableElements(
 
   for (let i = 0; i < maxStops; i++) {
     await page.keyboard.press('Tab');
-    await page.waitForTimeout(50);
+    await page.evaluate(() => new Promise(r => requestAnimationFrame(r)));
 
     const stop = await page.evaluate(() => {
       const el = document.activeElement;
