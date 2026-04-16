@@ -44,7 +44,9 @@ app_dir="$repo_root/Simple-PHP-IPAM"
 container="${IPAM_OLS_NAME:-ipam-ols-test}"
 port="${IPAM_OLS_PORT:-8089}"
 # Pin to a specific version for CI reproducibility (#500 CR feedback).
-image="${IPAM_OLS_IMAGE:-litespeedtech/openlitespeed:1.8.5}"
+# Tags include the lsphp suffix; 1.8.5-lsphp83 is what :latest resolved
+# to at the time of v2.11.0 development.
+image="${IPAM_OLS_IMAGE:-litespeedtech/openlitespeed:1.8.5-lsphp83}"
 
 if ! command -v docker >/dev/null 2>&1; then
     echo "bootstrap-ols: docker is required but not found in PATH" >&2
