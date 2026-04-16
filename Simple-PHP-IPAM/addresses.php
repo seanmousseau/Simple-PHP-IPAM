@@ -99,7 +99,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $ins->bindValue(':cid', $ownerContactId,
                         $ownerContactId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                     $ins->execute();
-                    $aid = (int)$db->lastInsertId();
+                    $aid = ipam_last_insert_id($db, 'addresses');
 
                     history_log_address($db, 'create', $subnetId, $norm['ip'], $aid, null, [
                         'hostname'        => $hostname,

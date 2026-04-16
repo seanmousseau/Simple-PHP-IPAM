@@ -106,7 +106,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $st->bindValue(':vfk',   $vlanFk, $vlanFk === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                     $st->bindValue(':vrf',   $vrfId,  $vrfId  === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                     $st->execute();
-                    $newSubnetId = (int)$db->lastInsertId();
+                    $newSubnetId = ipam_last_insert_id($db, 'subnets');
                     audit($db, 'subnet.create', 'subnet', $newSubnetId, $normalized);
 
                     if ($doAutoReserve) {

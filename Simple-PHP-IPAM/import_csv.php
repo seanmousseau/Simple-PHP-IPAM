@@ -820,7 +820,7 @@ if (demo_mode_enabled()) {
                 $ins->bindValue(':exp',  $insExpAt, $insExpAt === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
                 $ins->bindValue(':st',   to_str($r['status'] ?? 'used'));
                 $ins->execute();
-                $aid = (int)$db->lastInsertId();
+                $aid = ipam_last_insert_id($db, 'addresses');
 
                 history_log_address($db, 'import_create', $subnetId, $ip, $aid, null, [
                     'hostname' => to_str($r['hostname'] ?? ''),

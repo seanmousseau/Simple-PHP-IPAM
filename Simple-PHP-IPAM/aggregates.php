@@ -37,7 +37,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $st->bindValue(':rir',   $rir);
                 $st->bindValue(':notes', $notes);
                 $st->execute();
-                $newId = (int)$db->lastInsertId();
+                $newId = ipam_last_insert_id($db, 'aggregates');
                 audit($db, 'aggregate.create', 'aggregate', $newId, "cidr={$cidr}");
                 flash_set("Aggregate $cidr created.");
                 header('Location: aggregates.php');

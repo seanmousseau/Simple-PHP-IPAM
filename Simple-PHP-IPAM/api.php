@@ -723,7 +723,7 @@ function api_vlans_create(PDO $db, array $apiKey, array $body): never
 
     $db->prepare("INSERT INTO vlans (vlan_id, name, description, site_id) VALUES (:vid, :n, :d, :sid)")
        ->execute([':vid' => $vlanId, ':n' => $name, ':d' => $desc, ':sid' => $siteId]);
-    $newId = (int)$db->lastInsertId();
+    $newId = ipam_last_insert_id($db, 'vlans');
     api_audit($db, $apiKey, 'vlan.create', 'vlan', $newId, "vlan_id=$vlanId name=$name");
     http_response_code(201);
     api_json(['id' => $newId]);
@@ -825,7 +825,7 @@ function api_vrfs_create(PDO $db, array $apiKey, array $body): never
     try {
         $st = $db->prepare("INSERT INTO vrfs (name, description, rd) VALUES (:n,:d,:rd)");
         $st->execute([':n' => $name, ':d' => $desc, ':rd' => $rd]);
-        $newId = (int)$db->lastInsertId();
+        $newId = ipam_last_insert_id($db, 'vrfs');
         audit($db, 'vrf.create', 'vrf', $newId, "name=$name");
     } catch (PDOException $e) {
         api_error(409, 'A VRF with that name already exists.');
@@ -968,7 +968,7 @@ function api_contacts_create(PDO $db, array $apiKey, array $body): never
     if ($name === '') api_error(400, 'name is required.');
     $st = $db->prepare("INSERT INTO contacts (name, email, phone, org, note) VALUES (:n,:e,:p,:o,:nt)");
     $st->execute([':n' => $name, ':e' => $email, ':p' => $phone, ':o' => $org, ':nt' => $note]);
-    $newId = (int)$db->lastInsertId();
+    $newId = ipam_last_insert_id($db, 'contacts');
     audit($db, 'contact.create', 'contact', $newId, "name=$name");
     http_response_code(201);
     $st = $db->prepare("SELECT id, name, email, phone, org, note, created_at, updated_at FROM contacts WHERE id = :id");
@@ -1071,7 +1071,7 @@ function api_tags_create(PDO $db, array $apiKey, array $body): never
 
     $db->prepare("INSERT INTO tags (name, colour) VALUES (:n, :c)")
        ->execute([':n' => $name, ':c' => $colour]);
-    $newId = (int)$db->lastInsertId();
+    $newId = ipam_last_insert_id($db, 'tags');
     api_audit($db, $apiKey, 'tag.create', 'tag', $newId, "name={$name}");
     http_response_code(201);
     api_json(['id' => $newId, 'name' => $name, 'colour' => $colour]);
@@ -1571,7 +1571,7 @@ function api_addresses_bulk_create(PDO $db, array $apiKey, array $body, int $bul
                 $expiresAt !== '' ? PDO::PARAM_STR : PDO::PARAM_NULL);
             $bulkIns->bindValue(':st',  $status);
             $bulkIns->execute();
-            $newId = (int)$db->lastInsertId();
+            $newId = ipam_last_insert_id($db, 'addresses');
 
             api_audit($db, $apiKey, 'address.create', 'address', $newId,
                 "bulk ip={$n['ip']} subnet_id={$subnetId} status={$status}");
@@ -1667,7 +1667,7 @@ function api_subnets_bulk_create(PDO $db, array $apiKey, array $body, int $bulkL
             $bulkIns->bindValue(':vlan',  $vlanId,       $vlanId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
             $bulkIns->bindValue(':vrf',   $vrfId,        $vrfId  === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
             $bulkIns->execute();
-            $newId = (int)$db->lastInsertId();
+            $newId = ipam_last_insert_id($db, 'subnets');
 
             api_audit($db, $apiKey, 'subnet.create', 'subnet', $newId, "bulk cidr={$normalized}");
 
@@ -1710,7 +1710,7 @@ function api_sites_create(PDO $db, array $apiKey, array $body): never
 
     $db->prepare("INSERT INTO sites (name, description, parent_id) VALUES (:n, :d, :p)")
        ->execute([':n' => $name, ':d' => $desc, ':p' => $parentId]);
-    $newId = (int)$db->lastInsertId();
+    $newId = ipam_last_insert_id($db, 'sites');
     api_audit($db, $apiKey, 'site.create', 'site', $newId, "name=$name");
     http_response_code(201);
     api_json(['id' => $newId]);
@@ -1859,7 +1859,7 @@ function api_addresses_create(PDO $db, array $apiKey, array $body): never
         $expiresAt !== '' ? PDO::PARAM_STR : PDO::PARAM_NULL);
     $ins->bindValue(':st',  $status);
     $ins->execute();
-    $newId = (int)$db->lastInsertId();
+    $newId = ipam_last_insert_id($db, 'addresses');
 
     // #310 + CodeRabbit m1: tag_ids[] validated up-front.
     if ($validatedTagIds !== null) {
@@ -2048,7 +2048,7 @@ function api_subnets_create(PDO $db, array $apiKey, array $body): never
     $insSt->bindValue(':vlan',  $vlanId,        $vlanId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
     $insSt->bindValue(':vrf',   $vrfId,         $vrfId  === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
     $insSt->execute();
-    $newId = (int)$db->lastInsertId();
+    $newId = ipam_last_insert_id($db, 'subnets');
 
     // #310 + CodeRabbit m1: tag_ids[] is validated up-front (see below) so
     // we already know every ID exists; the only DB work left is the join.

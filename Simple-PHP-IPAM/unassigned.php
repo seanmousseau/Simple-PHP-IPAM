@@ -121,7 +121,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add' 
                     $ins->bindValue(':nt',  $note);
                     $ins->bindValue(':st',  $status);
                     $ins->execute();
-                    $aid = (int)$db->lastInsertId();
+                    $aid = ipam_last_insert_id($db, 'addresses');
 
                     history_log_address($db, 'create', $subnetId, $norm['ip'], $aid, null, [
                         'hostname' => $hostname,
