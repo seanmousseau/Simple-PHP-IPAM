@@ -189,6 +189,11 @@ fi
 BOOT_USER="${STAGING_BOOTSTRAP_USER:-admin}"
 BOOT_PASS="${STAGING_BOOTSTRAP_PASS:-$(openssl rand -base64 18)}"
 
+TMPCONF=""
+tmpconf=""
+cleanup_tmpfiles() { [[ -n "${TMPCONF:-}" ]] && rm -f "$TMPCONF"; [[ -n "${tmpconf:-}" ]] && rm -f "$tmpconf"; }
+trap cleanup_tmpfiles EXIT
+
 log "Deploying $DRIVER config template..."
 TMPCONF=$(mktemp)
 cp "$TEMPLATE" "$TMPCONF"
@@ -201,7 +206,7 @@ php -r '
 ' "$TMPCONF" "$BOOT_USER" "$BOOT_PASS"
 scp -q "$TMPCONF" "$SSH_HOST:$TARGET/config.php"
 rm -f "$TMPCONF"
-pass "Config template deployed (bootstrap: $BOOT_USER / $BOOT_PASS)"
+pass "Config template deployed (bootstrap user: $BOOT_USER)"
 
 # ---- Step 5: Substitute DB credentials for mysql/pgsql ----
 

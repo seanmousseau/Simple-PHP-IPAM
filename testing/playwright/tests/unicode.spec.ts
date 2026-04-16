@@ -287,9 +287,10 @@ test.describe('search round-trip', () => {
       });
 
       try {
-        // Search for the Unicode text — assert a result link contains the hostname
+        // Search for the Unicode text — assert the created address row contains the hostname
         await page.goto(`search.php?q=${encodeURIComponent(fixture.text)}`);
-        await expect(page.locator('table').getByText(fixture.text).first()).toBeVisible();
+        const resultRow = page.locator('tr', { hasText: ip });
+        await expect(resultRow).toContainText(fixture.text);
       } finally {
         // Clean up the address
         await page.goto(`addresses.php?subnet_id=${subnetId}`);
