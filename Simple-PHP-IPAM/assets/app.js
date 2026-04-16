@@ -1,4 +1,8 @@
 (function(){
+  // Remove skeleton loader if present (CSP-safe, no inline script)
+  var skel = document.getElementById("skeleton-shell");
+  if (skel) skel.remove();
+
   var key = "ipam_theme";
   // Seed localStorage from server-side theme meta tag (CSP-safe, replaces inline script)
   var metaTheme = document.querySelector("meta[name='ipam-server-theme']");

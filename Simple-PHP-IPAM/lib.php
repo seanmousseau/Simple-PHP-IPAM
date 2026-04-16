@@ -4568,7 +4568,7 @@ function ipam_skeleton_flush(int $rows = 8): void
 
 function ipam_skeleton_remove(): void
 {
-    echo '<script>document.getElementById("skeleton-shell")?.remove();</script>';
+    // Skeleton removal is handled by app.js (CSP-safe, no inline script).
 }
 
 function page_footer(): void
