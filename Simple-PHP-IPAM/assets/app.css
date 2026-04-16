@@ -1251,6 +1251,13 @@ body.pw-toggle-hidden .pw-wrap .pw-input{padding-right:36px}
 .button-loading{min-width:80px;position:relative;color:transparent !important}
 .button-loading::after{content:"";position:absolute;left:50%;top:50%;width:16px;height:16px;margin:-8px 0 0 -8px;border:2px solid var(--btnfg);border-top-color:transparent;border-radius:50%;animation:spin .6s linear infinite}
 
+/* --- #508: skeleton loaders for slow tables --- */
+.skeleton-shell{padding:var(--space-8) 0}
+.skeleton-row{height:18px;margin:var(--space-6) 0;border-radius:var(--radius-sm);background:linear-gradient(90deg,var(--card-2) 25%,var(--border) 50%,var(--card-2) 75%);background-size:200% 100%;animation:shimmer 1.5s ease-in-out infinite}
+.skeleton-row:nth-child(odd){width:90%}
+.skeleton-row:nth-child(even){width:70%}
+@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
 /* --- prefers-reduced-motion: suppress all animations/transitions --- */
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{
