@@ -313,6 +313,21 @@
       }
     });
 
+    // --- Loading state on POST form submit (#507) ---
+    document.addEventListener("submit", function(e) {
+      if (e.defaultPrevented) return;
+      var form = e.target;
+      if (form.method !== "post" || form.hasAttribute("data-no-loading")) return;
+      var btn = form.querySelector("button[type=submit], input[type=submit]");
+      if (!btn || btn.disabled) return;
+      btn.disabled = true;
+      btn.setAttribute("aria-busy", "true");
+      btn.dataset.originalLabel = btn.textContent;
+      var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      btn.textContent = reduced ? "Working\u2026" : "";
+      if (!reduced) btn.classList.add("button-loading");
+    });
+
     // --- Confirm on buttons/links (data-confirm on non-form elements) ---
     document.addEventListener("click", function(e) {
       var el = e.target.closest("[data-confirm]:not(form)");

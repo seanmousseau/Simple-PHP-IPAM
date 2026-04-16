@@ -1247,6 +1247,10 @@ body.pw-toggle-hidden .pw-wrap .pw-input{padding-right:36px}
 /* --- #317: keyboard shortcut hint badge --- */
 .kbd-hint{display:inline-block;margin-left:0.4em;padding:0 0.35em;border:1px solid var(--border);border-radius:var(--radius-xs);font:0.78em/1.4 ui-monospace,Menlo,monospace;color:var(--muted);background:transparent;vertical-align:middle}
 
+/* --- #507: loading state on POST form submit --- */
+.button-loading{min-width:80px;position:relative;color:transparent !important}
+.button-loading::after{content:"";position:absolute;left:50%;top:50%;width:16px;height:16px;margin:-8px 0 0 -8px;border:2px solid var(--btnfg);border-top-color:transparent;border-radius:50%;animation:spin .6s linear infinite}
+
 /* --- prefers-reduced-motion: suppress all animations/transitions --- */
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{
