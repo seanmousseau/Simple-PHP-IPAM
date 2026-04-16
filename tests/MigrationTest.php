@@ -506,9 +506,13 @@ class MigrationTest extends TestCase
         require_once dirname(__DIR__) . '/Simple-PHP-IPAM/lib.php';
         require_once dirname(__DIR__) . '/Simple-PHP-IPAM/migrations.php';
 
-        // Minimal $config stub so client_ip() / other config-reading
-        // helpers invoked from migration audit paths don't trigger
-        // "Undefined global variable $config" warnings.
+        // Save globals so we can restore them at the end — avoids making
+        // later tests order-dependent on this test's stub state.
+        $hadConfig  = array_key_exists('config', $GLOBALS);
+        $prevConfig = $GLOBALS['config'] ?? null;
+        $hadDialect  = array_key_exists('ipam_dialect', $GLOBALS);
+        $prevDialect = $GLOBALS['ipam_dialect'] ?? null;
+
         $GLOBALS['config'] = ['proxy_trust' => false];
 
         $db = $this->makeDb();
@@ -587,5 +591,17 @@ class MigrationTest extends TestCase
             $migCountAfter,      // so "at least" the count we started with.
             'every migration closure must re-stamp itself in schema_migrations after replay'
         );
+
+        // Restore globals so later tests are not order-dependent.
+        if ($hadConfig) {
+            $GLOBALS['config'] = $prevConfig;
+        } else {
+            unset($GLOBALS['config']);
+        }
+        if ($hadDialect) {
+            $GLOBALS['ipam_dialect'] = $prevDialect;
+        } else {
+            unset($GLOBALS['ipam_dialect']);
+        }
     }
 }

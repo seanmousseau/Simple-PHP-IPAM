@@ -2121,7 +2121,13 @@ function prune_audit_log(PDO $db, int $retentionDays): int
     //             every other write is still blocked. No drop/recreate
     //             needed; the triggers stay in place the entire time.
     //
-    //   Postgres (v2.11.0) — TBD; pg_advisory_xact_lock() or similar.
+    //   Postgres (v2.11.0 #388) — SET LOCAL ipam.bypass_append_only = '1'
+    //             inside a transaction. The custom GUC is checked by the
+    //             PL/pgSQL trigger function (current_setting('ipam.bypass_
+    //             append_only', true) IS DISTINCT FROM '1'). SET LOCAL is
+    //             per-transaction so the bypass automatically unsets on
+    //             COMMIT/ROLLBACK — no explicit cleanup needed and no leak
+    //             risk to other connections or subsequent transactions.
     //
     // Error paths always attempt to restore a safe state: clear the
     // MySQL session variable, recreate SQLite triggers via
@@ -2147,21 +2153,28 @@ function prune_audit_log(PDO $db, int $retentionDays): int
             $pruned = $st->rowCount();
 
             $db->exec("SET @ipam_bypass_append_only = NULL");
+        } elseif ($driver === 'pgsql') {
+            $db->beginTransaction();
+            $db->exec("SET LOCAL ipam.bypass_append_only = '1'");
+
+            $st = $db->prepare("DELETE FROM audit_log WHERE created_at < :cutoff");
+            $st->execute([':cutoff' => $cutoff]);
+            $pruned = $st->rowCount();
+
+            $db->commit();
         } else {
-            // Unknown driver — refuse rather than expose a partial write
-            // path. Future engines add their own branch here.
             throw new \RuntimeException("prune_audit_log: unsupported driver '$driver'");
         }
 
         return $pruned;
     } catch (Throwable $e) {
-        // Best-effort restore to a safe state. Each branch is independently
-        // guarded because ROLLBACK / UNSET may also throw.
         if ($driver === 'sqlite') {
             try { $db->exec("ROLLBACK"); } catch (Throwable) {}
             try { ensure_audit_log_table($db); } catch (Throwable) {}
         } elseif ($driver === 'mysql') {
             try { $db->exec("SET @ipam_bypass_append_only = NULL"); } catch (Throwable) {}
+        } elseif ($driver === 'pgsql') {
+            try { $db->rollBack(); } catch (Throwable) {}
         }
         error_log('audit_log prune failed: ' . $e->getMessage());
         return 0;

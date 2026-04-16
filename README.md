@@ -92,11 +92,11 @@ See [CHANGELOG.md](CHANGELOG.md) for full release history, [docs/install.md](doc
 | Requirement | Details |
 |---|---|
 | **PHP** | 8.2 or later (8.3 recommended) |
-| **PHP extensions** | `pdo`, `openssl`, plus one of `pdo_sqlite` (default) or `pdo_mysql` (experimental, v2.10.0+) |
-| **Web server** | Apache, LiteSpeed, nginx, or Caddy (see [install.md](docs/install.md)) |
-| **Database** | SQLite 3.x (default) **or** MySQL 8.0.29+ (experimental, opt-in via `db_driver = 'mysql'`; see [install.md#mysql-experimental](docs/install.md#mysql-experimental)) |
+| **PHP extensions** | `pdo`, `openssl`, plus one of `pdo_sqlite` (default), `pdo_mysql` (experimental, v2.10.0+), or `pdo_pgsql` (experimental, v2.11.0+) |
+| **Web server** | Apache, OpenLiteSpeed, nginx, or Caddy (see [install.md](docs/install.md)) |
+| **Database** | SQLite 3.x (default), **or** MySQL 8.0.29+ (experimental, opt-in via `db_driver = 'mysql'`; see [install.md#mysql-experimental](docs/install.md#mysql-experimental)), **or** PostgreSQL 14+ (experimental, opt-in via `db_driver = 'pgsql'`; see [install.md#postgresql-experimental](docs/install.md#postgresql-experimental)) |
 | **HTTPS** | Required — HTTP is redirected to HTTPS |
-| **Writable `data/` dir** | Web server user requires read/write access to `data/` (SQLite only — MySQL stores its own data files) |
+| **Writable `data/` dir** | Web server user requires read/write access to `data/` (SQLite only — MySQL/Postgres store their own data files) |
 
 ---
 

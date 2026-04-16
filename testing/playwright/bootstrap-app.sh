@@ -131,6 +131,7 @@ if [[ "$driver" == "pgsql" ]]; then
     docker rm -f "$pgsql_name" >/dev/null 2>&1 || true
     docker run -d --rm --name "$pgsql_name" \
         --network "$network" \
+        --network-alias ipam-pw-pgsql \
         -e POSTGRES_PASSWORD=testpw \
         -e POSTGRES_USER=ipam \
         -e POSTGRES_DB=ipam_pw \
