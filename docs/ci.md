@@ -47,11 +47,11 @@ The matrix uses `fail-fast: false` so one engine's failure does not cancel the o
 
 **Why path-filtered, not nightly-only:** catches regressions on the PR that caused them. Unrelated PRs are not taxed with 5–10 minutes of I/O-heavy test work.
 
-## Tier 3 — Playwright end-to-end (PR-gated)
+## Tier 3 — Playwright end-to-end (PR-triggered, non-blocking)
 
 **Workflow:** `.github/workflows/playwright.yml`
 
-**Trigger:** fires on PRs that touch `Simple-PHP-IPAM/**` or `testing/playwright/**` (the playwright job's own path filter — separate from Tier 1).
+**Trigger:** fires on PRs that touch `Simple-PHP-IPAM/**` or `testing/playwright/**` (path-filtered, separate from Tier 1) and on manual `workflow_dispatch`.
 
 **What runs:**
 
