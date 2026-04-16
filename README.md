@@ -8,19 +8,21 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v2.12.0
+## What's new in v2.13.0
 
-**Post-multi-engine cleanup and hardening.** Security improvements, performance optimization, first-class MariaDB support, and test infrastructure upgrades.
+**UI/UX accessibility and design token foundation.** Non-visual rework laying the groundwork for the v3.8.0 visual overhaul. Theme: *"Fix what's broken, don't touch the vibe."*
 
-- **First-class MariaDB 10.11+ support (#534).** MariaDB uses the same `mysql` PDO driver and `db_driver => 'mysql'` config key as MySQL. The version gate detects MariaDB (stripping the `5.5.5-` prefix), enforces a 10.11.0 floor, and the CI matrix now runs both `mariadb:10.11` and `mysql:8.0` in the PHP QA and Playwright CI pipelines.
-- **Per-account login lockout (#543).** Failed attempts now track the submitted username. After 10 failures (configurable) the account is locked regardless of source IP. Admins see a "Locked" badge on `users.php` and can unlock with one click. New config keys: `account_lockout_max_attempts`, `account_lockout_seconds`.
-- **Emergency `recovery_mode` (#540).** A config.php-only break-glass key that shows the local login form, disables CAPTCHA and rate limiting, and lets the `bootstrap_admin` credentials reset the admin password — even if the admin was deleted. A red sticky banner warns on every page while active.
-- **Subnets N+1 query fix (#530).** The per-subnet exclusion query in `ipv4_unassigned_summary_local()` is replaced with a single batched query, targeting ≥60% TTFB reduction on large subnet counts.
-- **Write-race concurrency tests (#466).** New `ConcurrencyTest.php` exercises SQLite WAL mode with dual PDO connections: UNIQUE violations, scan-lock isolation, snapshot reads, and last-writer-wins.
-- **Unicode round-trip Playwright tests (#463).** 30 parameterized tests across 6 Unicode fixtures (Cyrillic, CJK, RTL Arabic, emoji, combining chars, ZWJ) × 5 entity types. Catches `utf8`/`utf8mb4` bugs on MySQL/MariaDB.
-- **Staging deploy helper (#413).** `testing/scripts/deploy_staging.sh` automates ad-hoc staging deploys with driver selection and config templating.
+- **Design token scales (#506).** Five CSS custom property scales (spacing, z-index, border-radius, font-size, focus-ring) with [Open Props](https://open-props.style) (~29KB, MIT) vendored as the primitive source. 210 hardcoded CSS literals replaced — zero visual delta.
+- **ARIA landmarks + skip-to-content (#504).** Proper `<header>`, `<nav>`, `<main>`, `<footer>` landmarks in every page. `:focus-visible` rings on all interactive elements. Skip-to-content link for keyboard users.
+- **Reduced-motion respect (#505).** Global `@media (prefers-reduced-motion: reduce)` block suppresses all CSS animations and transitions.
+- **Form loading states (#507).** Every POST form disables its submit button and shows a CSS spinner on submit. Multi-button forms (e.g. ARP import preview/apply) preserved via hidden input injection.
+- **Skeleton loaders (#508).** Shimmer placeholders on subnets, addresses, and unassigned pages during TTFB wait.
+- **Monospace IP columns (#509).** Self-hosted Fira Code woff2 subset (~6.7KB) for IP/CIDR/MAC alignment across 6 pages.
+- **Contrast fix (#510).** `--muted` darkened to 6.2:1 ratio (WCAG AA compliant).
+- **Gateway/broadcast badges (#546).** Visual identification of network, broadcast, and gateway addresses on the addresses page.
+- **Utilization fix (#547).** `status='free'` addresses no longer inflate subnet utilization percentages.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release history and [docs/install.md](docs/install.md#mariadb-experimental) for MariaDB setup.
+See [CHANGELOG.md](CHANGELOG.md) for full release history.
 
 ---
 
