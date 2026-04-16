@@ -3855,6 +3855,14 @@ function ipam_compute_broadcast_bin(string $netBin, int $prefix): ?string
     return $out;
 }
 
+function ipam_compute_gateway_bin(string $netBin, int $prefix): ?string
+{
+    if (strlen($netBin) !== 4) return null;
+    if ($prefix > 30) return null;
+    $int = ipv4_bin_to_int($netBin);
+    return ipv4_int_to_bin($int + 1);
+}
+
 function ip_in_cidr(string $ip, string $network, int $prefix): bool
 {
     $ipBin = @inet_pton(trim($ip));

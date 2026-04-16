@@ -536,4 +536,43 @@ class UtilTest extends TestCase
         $this->assertNotNull($net);
         $this->assertNull(ipam_compute_broadcast_bin($net['net_bin'], $net['prefix']));
     }
+
+    public function testGatewayBinSlash24(): void
+    {
+        $net = parse_cidr('192.168.1.0/24');
+        $this->assertNotNull($net);
+        $gw = ipam_compute_gateway_bin($net['net_bin'], $net['prefix']);
+        $this->assertNotNull($gw);
+        $this->assertSame('192.168.1.1', inet_ntop($gw));
+    }
+
+    public function testGatewayBinSlash30(): void
+    {
+        $net = parse_cidr('10.1.2.4/30');
+        $this->assertNotNull($net);
+        $gw = ipam_compute_gateway_bin($net['net_bin'], $net['prefix']);
+        $this->assertNotNull($gw);
+        $this->assertSame('10.1.2.5', inet_ntop($gw));
+    }
+
+    public function testGatewayBinSlash31ReturnsNull(): void
+    {
+        $net = parse_cidr('10.0.0.0/31');
+        $this->assertNotNull($net);
+        $this->assertNull(ipam_compute_gateway_bin($net['net_bin'], $net['prefix']));
+    }
+
+    public function testGatewayBinSlash32ReturnsNull(): void
+    {
+        $net = parse_cidr('10.0.0.5/32');
+        $this->assertNotNull($net);
+        $this->assertNull(ipam_compute_gateway_bin($net['net_bin'], $net['prefix']));
+    }
+
+    public function testGatewayBinIpv6ReturnsNull(): void
+    {
+        $net = parse_cidr('2001:db8::/64');
+        $this->assertNotNull($net);
+        $this->assertNull(ipam_compute_gateway_bin($net['net_bin'], $net['prefix']));
+    }
 }
