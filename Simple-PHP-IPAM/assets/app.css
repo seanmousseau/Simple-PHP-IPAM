@@ -156,6 +156,15 @@ html[data-theme="dark"] ::-webkit-calendar-picker-indicator{
 
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
+
+/* --- #504: skip-to-content link --- */
+.skip-link{position:absolute;top:-100%;left:var(--space-8);padding:var(--space-4) var(--space-8);background:var(--link);color:#fff;border-radius:var(--radius-sm);z-index:var(--z-page-overlay);font-weight:600;text-decoration:none}
+.skip-link:focus{top:var(--space-4)}
+
+/* --- #504: focus-visible rings on all interactive elements --- */
+:focus-visible{outline:none;box-shadow:var(--focus-ring)}
+input:focus-visible,select:focus-visible,textarea:focus-visible{box-shadow:var(--focus-ring)}
+.nav-pill:focus-visible,.action-pill:focus-visible,.badge:focus-visible{box-shadow:var(--focus-ring);border-radius:var(--radius-2xl)}
 body{
   background:var(--bg);
   color:var(--fg);
@@ -1236,7 +1245,7 @@ td[data-editable].cell-saving{opacity:.5;}
 .pw-wrap .pw-input{padding-right:76px}
 .pw-toggle{position:absolute;right:36px;top:50%;transform:translateY(-50%);background:transparent;border:0;padding:var(--space-2);margin:0;cursor:pointer;color:var(--muted);display:inline-flex;align-items:center;justify-content:center;border-radius:var(--radius-sm)}
 .pw-toggle:hover,.pw-toggle:focus{color:var(--fg);outline:none}
-.pw-toggle:focus-visible{box-shadow:0 0 0 2px var(--link)}
+.pw-toggle:focus-visible{box-shadow:var(--focus-ring)}
 .pw-eye{display:inline-block;vertical-align:middle}
 .pw-eye--closed{display:none}
 .pw-toggle[aria-pressed="true"] .pw-eye--open{display:none}
