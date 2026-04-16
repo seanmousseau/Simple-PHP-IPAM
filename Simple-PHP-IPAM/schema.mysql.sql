@@ -289,8 +289,10 @@ CREATE TRIGGER IF NOT EXISTS audit_log_no_delete
 CREATE TABLE IF NOT EXISTS login_attempts (
   id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   ip           VARCHAR(45) NOT NULL,
+  username     VARCHAR(64) DEFAULT NULL,
   attempted_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
-  KEY idx_login_attempts_ip_time (ip, attempted_at)
+  KEY idx_login_attempts_ip_time (ip, attempted_at),
+  KEY idx_login_attempts_username_time (username, attempted_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- ---------------------------------------------------------------------------
@@ -493,6 +495,7 @@ INSERT INTO schema_migrations (version) VALUES
   ('2.6.0-settings'),
   ('2.8.0-subnet-notes'),
   ('2.8.0-alert-recipients'),
-  ('2.9.0-blob-affinity');
+  ('2.9.0-blob-affinity'),
+  ('2.12.0-account-lockout');
 
 SET FOREIGN_KEY_CHECKS = 1;

@@ -196,10 +196,12 @@ END;
 CREATE TABLE IF NOT EXISTS login_attempts (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   ip           TEXT NOT NULL,
+  username     TEXT,
   attempted_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_login_attempts_ip_time ON login_attempts(ip, attempted_at);
+CREATE INDEX IF NOT EXISTS idx_login_attempts_username_time ON login_attempts(username, attempted_at);
 
 CREATE TABLE IF NOT EXISTS api_keys (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,

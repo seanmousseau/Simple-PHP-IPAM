@@ -828,6 +828,42 @@ function ipam_migrations(): array
                 }
             }
         },
+
+        '2.12.0-account-lockout' => function(PDO $db): void {
+            $driver = ipam_dialect()->driver_name();
+
+            // Guard: table may not exist in partial test fixtures
+            if ($driver === 'sqlite') {
+                $tblCheck = $db->query("SELECT name FROM sqlite_master WHERE type='table' AND name='login_attempts'");
+                if ($tblCheck === false || !$tblCheck->fetch()) return;
+            }
+
+            $hasCol = false;
+            if ($driver === 'sqlite') {
+                $pragmaResult = $db->query("PRAGMA table_info(login_attempts)");
+                if ($pragmaResult !== false) {
+                    /** @var array<string, mixed> $col */
+                    foreach ($pragmaResult as $col) {
+                        if (($col['name'] ?? '') === 'username') { $hasCol = true; break; }
+                    }
+                }
+            } elseif ($driver === 'mysql') {
+                $st = $db->prepare("SHOW COLUMNS FROM login_attempts LIKE 'username'");
+                $st->execute();
+                $hasCol = (bool)$st->fetch();
+            } else {
+                $st = $db->prepare(
+                    "SELECT column_name FROM information_schema.columns
+                     WHERE table_name = 'login_attempts' AND column_name = 'username'"
+                );
+                $st->execute();
+                $hasCol = (bool)$st->fetch();
+            }
+            if (!$hasCol) {
+                $db->exec("ALTER TABLE login_attempts ADD COLUMN username TEXT DEFAULT NULL");
+            }
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_login_attempts_username_time ON login_attempts(username, attempted_at)");
+        },
     ];
 }
 

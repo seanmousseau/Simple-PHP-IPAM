@@ -454,33 +454,65 @@ function ipv4_unassigned_summary_local(PDO $db): array
         $countBySubnet[to_int($r['subnet_id'])] = to_int($r['c']);
     }
 
+    // Pre-compute network/broadcast exclusions in a single batch query
+    // instead of one query per subnet (N+1 fix, #530).
+    /** @var array<int, array{net: string, bcast: string}> $exclTuples */
+    $exclTuples = [];
+    foreach ($subs as $s) {
+        $sid    = to_int($s['id']);
+        $prefix = to_int($s['prefix']);
+        if ($prefix <= 30 && isset($countBySubnet[$sid])) {
+            $netBin = to_str($s['network_bin']);
+            $exclTuples[$sid] = [
+                'net'   => $netBin,
+                'bcast' => ipv4_broadcast_bin_local($netBin, $prefix),
+            ];
+        }
+    }
+
+    $excludedBySubnet = [];
+    if ($exclTuples !== []) {
+        $chunks = array_chunk($exclTuples, 200, true);
+        foreach ($chunks as $chunk) {
+            $clauses = [];
+            /** @var array<string, array{v: int|string, bin: bool}> $params */
+            $params  = [];
+            $i = 0;
+            foreach ($chunk as $sid => $bins) {
+                $clauses[] = "(subnet_id = :s{$i} AND ip_bin IN (:n{$i}, :b{$i}))";
+                $params[":s{$i}"] = ['v' => $sid, 'bin' => false];
+                $params[":n{$i}"] = ['v' => $bins['net'],   'bin' => true];
+                $params[":b{$i}"] = ['v' => $bins['bcast'], 'bin' => true];
+                $i++;
+            }
+            $sql = "SELECT subnet_id, COUNT(*) AS c FROM addresses
+                    WHERE status IN ('used','reserved') AND (" . implode(' OR ', $clauses) . ")
+                    GROUP BY subnet_id";
+            $st = $db->prepare($sql);
+            foreach ($params as $k => $p) {
+                if ($p['bin']) {
+                    ipam_bind_binary($st, $k, (string)$p['v']);
+                } else {
+                    $st->bindValue($k, (int)$p['v'], PDO::PARAM_INT);
+                }
+            }
+            $st->execute();
+            foreach ($st->fetchAll() as $r) {
+                $excludedBySubnet[to_int($r['subnet_id'])] = to_int($r['c']);
+            }
+        }
+    }
+
     $out = [];
     foreach ($subs as $s) {
         $sid    = to_int($s['id']);
         $prefix = to_int($s['prefix']);
-        $netBin = to_str($s['network_bin']);
 
         $assignableTotal = ipv4_assignable_count($prefix);
         $assignedCount   = $countBySubnet[$sid] ?? 0;
 
         if ($prefix <= 30 && $assignedCount > 0) {
-            // Exclude network/broadcast addresses from the count
-            $bcast = ipv4_broadcast_bin_local($netBin, $prefix);
-            // #410/#388: bind ip_bin via ipam_bind_binary() (PARAM_LOB).
-            $exclSt = $db->prepare(
-                "SELECT COUNT(*) AS c FROM addresses
-                 WHERE subnet_id = :sid AND status IN ('used','reserved')
-                   AND (ip_bin = :net OR ip_bin = :bcast)"
-            );
-            $exclSt->bindValue(':sid', $sid, PDO::PARAM_INT);
-            ipam_bind_binary($exclSt, ':net', $netBin);
-            ipam_bind_binary($exclSt, ':bcast', $bcast);
-            $exclSt->execute();
-            /** @var array<string, mixed>|false $cntRow */
-
-            $cntRow = $exclSt->fetch();
-
-            $excluded = is_array($cntRow) ? to_int($cntRow['c']) : 0;
+            $excluded = $excludedBySubnet[$sid] ?? 0;
             $assignedAssignable = $assignedCount - $excluded;
         } else {
             $assignedAssignable = $assignedCount;

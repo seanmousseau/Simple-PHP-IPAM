@@ -190,6 +190,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $msg = 'OIDC link removed.';
         }
 
+    } elseif ($action === 'unlock_account') {
+        $id = to_int($_POST['id'] ?? 0);
+        $tSt = $db->prepare("SELECT username FROM users WHERE id = :id");
+        $tSt->execute([':id' => $id]);
+        /** @var array<string, mixed>|false $target */
+        $target = $tSt->fetch();
+        if ($target) {
+            clear_account_lockout($db, to_str($target['username']));
+            audit($db, 'user.unlock', 'user', $id, '');
+            $msg = 'Account unlocked.';
+        }
+
     } elseif ($action === 'delete') {
         $id = to_int($_POST['id'] ?? 0);
         if ($id === $self['id']) {
@@ -228,6 +240,20 @@ $st = $db->prepare(
 $st->execute();
 /** @var list<array<string, mixed>> $users */
 $users = $st->fetchAll();
+
+$acctMaxAttempts = to_int($config['account_lockout_max_attempts'] ?? 10);
+$acctLockoutSecs = to_int($config['account_lockout_seconds'] ?? 900);
+$lockedUsers = [];
+$cutoff = date('Y-m-d H:i:s', time() - $acctLockoutSecs);
+$lockSt = $db->prepare(
+    "SELECT username, COUNT(*) AS c FROM login_attempts
+     WHERE username IS NOT NULL AND attempted_at >= :cutoff
+     GROUP BY username HAVING COUNT(*) >= :max"
+);
+$lockSt->execute([':cutoff' => $cutoff, ':max' => $acctMaxAttempts]);
+foreach ($lockSt->fetchAll() as $lr) {
+    $lockedUsers[to_str($lr['username'])] = true;
+}
 
 page_header('Users');
 ?>
@@ -288,6 +314,7 @@ page_header('Users');
       <th>Email</th>
       <?php echo sort_th('role',       'Role',       $userSort['col'], $userSort['dir'], '?'); ?>
       <th>Active</th>
+      <th>Locked</th>
       <th>SSO</th>
       <?php echo sort_th('last_login', 'Last Login', $userSort['col'], $userSort['dir'], '?'); ?>
       <th>Created</th>
@@ -302,6 +329,9 @@ page_header('Users');
       <td><?= e(to_str($u['email'])) ?></td>
       <td><?= e(to_str($u['role'])) ?></td>
       <td><?= (to_int($u['is_active']) === 1) ? 'yes' : 'no' ?></td>
+      <td><?php $isLocked = isset($lockedUsers[to_str($u['username'])]); ?>
+        <?= $isLocked ? '<span class="danger font-sm">Locked</span>' : '<span class="muted">—</span>' ?>
+      </td>
       <td>
         <?php if ($u['oidc_sub'] !== null): ?>
           <span class="success" title="<?= e(to_str($u['oidc_sub'])) ?>">linked</span>
@@ -374,6 +404,15 @@ page_header('Users');
                 <input name="oidc_sub" placeholder="IdP subject ID (sub claim)" class="mw-220">
                 <button type="submit" class="button-secondary">Link SSO</button>
               </form>
+            <?php endif; ?>
+
+            <?php if ($isLocked): ?>
+            <form method="post" action="users.php" class="row gap-6">
+              <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+              <input type="hidden" name="action" value="unlock_account">
+              <input type="hidden" name="id"     value="<?= to_int($u['id']) ?>">
+              <button type="submit" class="button-secondary">Unlock</button>
+            </form>
             <?php endif; ?>
 
             <?php if (to_int($u['id']) !== $self['id']): ?>

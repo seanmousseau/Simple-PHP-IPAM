@@ -9,14 +9,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 
 $maxAttempts   = to_int(ipam_setting('security.login_max_attempts'));
 $lockoutSeconds = to_int(ipam_setting('security.login_lockout_seconds'));
+$acctMaxAttempts  = to_int($config['account_lockout_max_attempts'] ?? 10);
+$acctLockoutSecs  = to_int($config['account_lockout_seconds'] ?? 900);
 
 $error    = '';
 $timedOut = !empty($_GET['timeout']);
+$isRecovery = recovery_mode_enabled($config);
 
 // Login protection setup (#124) — widget HTML also sets time_check session ts on GET
-$lpMethod     = to_str(ipam_setting('login_protection.method'));
-$lpWidgetHtml = login_protection_widget_html($config);
-$lpCsp        = login_protection_extra_csp($config);
+$lpMethod     = $isRecovery ? '' : to_str(ipam_setting('login_protection.method'));
+$lpWidgetHtml = $isRecovery ? '' : login_protection_widget_html($config);
+$lpCsp        = $isRecovery ? ['script_src' => '', 'frame_src' => ''] : login_protection_extra_csp($config);
 
 // Consume any OIDC error flash set by oidc_callback.php or oidc_login.php
 if (!empty($_SESSION['oidc_error'])) {
@@ -32,10 +35,10 @@ try {
     $firstRun = true; // treat as first-run if audit_log is temporarily unavailable
 }
 $oidcActive            = oidc_enabled($config) && !demo_mode_enabled();
-$disableLocal          = $oidcActive && (bool)ipam_setting('oidc.disable_local_login');
+$disableLocal          = $isRecovery ? false : ($oidcActive && (bool)ipam_setting('oidc.disable_local_login'));
 $disableEmergencyBypass= $oidcActive && (bool)ipam_setting('oidc.disable_emergency_bypass');
 $hideEmergencyLink     = $oidcActive && (bool)ipam_setting('oidc.hide_emergency_link');
-$localForceShown       = isset($_GET['local']) && !$disableEmergencyBypass;
+$localForceShown       = $isRecovery || (isset($_GET['local']) && !$disableEmergencyBypass);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $username = trim(to_str($_POST['username'] ?? ''));
@@ -77,14 +80,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Purge stale attempts opportunistically (keep rows 2× the lockout window)
         purge_old_login_attempts($db, $lockoutSeconds * 2);
 
-        if (login_rate_limited($db, $ip, $maxAttempts, $lockoutSeconds)) {
+        if (!$isRecovery && login_rate_limited($db, $ip, $maxAttempts, $lockoutSeconds)) {
             $error = 'Too many failed login attempts. Please try again later.';
             audit($db, 'auth.login_blocked', 'user', null, 'ip=' . $ip);
+        } elseif (!$isRecovery && $username !== '' && account_locked_out($db, $username, $acctMaxAttempts, $acctLockoutSecs)) {
+            $error = 'This account is temporarily locked due to too many failed attempts.';
+            audit($db, 'auth.account_locked', 'user', null, '');
         } else {
             $st = $db->prepare("SELECT id, username, password_hash, role, is_active FROM users WHERE username = :u");
             $st->execute([':u' => $username]);
             /** @var array<string, mixed>|false $user */
             $user = $st->fetch();
+
+            // Recovery mode: bootstrap_admin credentials reset the user's password
+            $bootstrapUser = to_str($config['bootstrap_admin']['username']);
+            $bootstrapPass = to_str($config['bootstrap_admin']['password']);
+            if ($isRecovery && $bootstrapUser !== '' && $username === $bootstrapUser && $password === $bootstrapPass) {
+                if (!$user) {
+                    // Recreate admin user if deleted
+                    $hash = password_hash($bootstrapPass, PASSWORD_DEFAULT);
+                    $db->prepare("INSERT INTO users (username, password_hash, role, is_active) VALUES (:u, :h, 'admin', 1)")
+                       ->execute([':u' => $bootstrapUser, ':h' => $hash]);
+                    $uid = (int)$db->lastInsertId();
+                    audit($db, 'auth.recovery_provision', 'user', $uid, 'recovery_mode recreated bootstrap admin');
+                } else {
+                    $uid = to_int($user['id']);
+                    $hash = password_hash($bootstrapPass, PASSWORD_DEFAULT);
+                    $db->prepare("UPDATE users SET password_hash = :h, is_active = 1 WHERE id = :id")
+                       ->execute([':h' => $hash, ':id' => $uid]);
+                    audit($db, 'auth.recovery_reset', 'user', $uid, 'recovery_mode reset password');
+                }
+                clear_login_failures($db, $ip);
+                clear_account_lockout($db, $username);
+                login_user($uid, $bootstrapUser, 'admin');
+                $db->prepare("UPDATE users SET last_login_at=" . ipam_dialect()->now() . " WHERE id=:id")
+                   ->execute([':id' => $uid]);
+                audit($db, 'auth.recovery_login', 'user', $uid, 'recovery_mode');
+                header('Location: dashboard.php');
+                exit;
+            }
 
             if ($user && to_int($user['is_active']) === 1 && password_verify($password, to_str($user['password_hash']))) {
                 if (password_needs_rehash(to_str($user['password_hash']), PASSWORD_DEFAULT)) {
@@ -93,6 +127,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $up->execute([':h' => $new, ':id' => $user['id']]);
                 }
                 clear_login_failures($db, $ip);
+                clear_account_lockout($db, $username);
                 login_user(to_int($user['id']), to_str($user['username']), to_str($user['role']));
                 $db->prepare("UPDATE users SET last_login_at=" . ipam_dialect()->now() . " WHERE id=:id")
                    ->execute([':id' => to_int($user['id'])]);
@@ -106,7 +141,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 password_verify($password, '$2y$12$' . str_repeat('a', 53));
             }
 
-            record_login_failure($db, $ip);
+            record_login_failure($db, $ip, $username);
             $error = 'Invalid username or password.';
             audit($db, 'auth.login_failed', 'user', null, ''); // #117: do not log submitted username
         }
