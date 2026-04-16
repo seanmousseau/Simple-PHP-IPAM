@@ -18,10 +18,8 @@ test.describe('a11y infrastructure smoke tests', () => {
     await expectNoA11yViolations(page, {
       disableRules: [
         'color-contrast',
-        'landmark-one-main',
         'page-has-heading-one',
         'region',
-        'html-has-lang',
         'aria-dialog-name',
         'aria-hidden-focus',
         'link-in-text-block',
@@ -66,10 +64,8 @@ test.describe('a11y infrastructure smoke tests', () => {
     await expectNoA11yViolations(page, {
       disableRules: [
         'color-contrast',
-        'landmark-one-main',
         'page-has-heading-one',
         'region',
-        'html-has-lang',
         'aria-dialog-name',
         'aria-hidden-focus',
         'link-in-text-block',

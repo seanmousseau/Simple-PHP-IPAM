@@ -23,7 +23,7 @@ export async function walkFocusableElements(
   maxStops = 100,
 ): Promise<FocusStop[]> {
   const stops: FocusStop[] = [];
-  const seen = new Set<string>();
+  let firstKey: string | null = null;
 
   for (let i = 0; i < maxStops; i++) {
     await page.keyboard.press('Tab');
@@ -67,8 +67,11 @@ export async function walkFocusableElements(
     if (!stop) break;
 
     const key = stop.selector + stop.text;
-    if (seen.has(key)) break;
-    seen.add(key);
+    if (firstKey === null) {
+      firstKey = key;
+    } else if (key === firstKey) {
+      break;
+    }
 
     stops.push({ index: i, ...stop });
   }

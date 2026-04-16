@@ -12,10 +12,9 @@ export async function expectLoadingButton(
   formSelector: string,
 ): Promise<void> {
   const form = page.locator(formSelector);
-  const btn = form.locator('button[type="submit"]');
+  const btn = form.locator('button[type="submit"], input[type="submit"]').first();
 
-  await btn.click();
-  await page.waitForTimeout(100);
+  await btn.click({ noWaitAfter: true });
 
   await expect(btn).toBeDisabled();
   await expect(btn).toHaveAttribute('aria-busy', 'true');
