@@ -251,8 +251,8 @@ jobs:
           export IPAM_API_KEY_HASH="$(php -r 'echo hash("sha256", getenv("IPAM_API_KEY"));')"
           php -r '
             $db = new PDO(getenv("IPAM_PGSQL_DSN"), getenv("IPAM_PGSQL_USER"), getenv("IPAM_PGSQL_PASS"), [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
-            $db->exec("DELETE FROM api_keys WHERE name = \"test-runner\"");
-            $st = $db->prepare("INSERT INTO api_keys (name, key_hash, is_active, created_by) VALUES (\"test-runner\", :h, 1, \"ci\")");
+            $db->exec("DELETE FROM api_keys WHERE name = '"'"'test-runner'"'"'");
+            $st = $db->prepare("INSERT INTO api_keys (name, key_hash, is_active, created_by) VALUES ('"'"'test-runner'"'"', :h, 1, '"'"'ci'"'"')");
             $st->execute([":h" => getenv("IPAM_API_KEY_HASH")]);
             echo "inserted\n";
           '
