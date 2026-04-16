@@ -156,10 +156,15 @@ The `audit_log` table is **append-only**. SQLite triggers prevent any `UPDATE` o
 The included `.htaccess` (Apache / LiteSpeed) blocks direct HTTP access to:
 
 - `data/` directory and `*.sqlite` / `*.db` files
-- `*.sh`, `*.sql`, `*.json` files
+- `dialects/` directory (internal `Dialect` class hierarchy — `SqliteDialect`, `MysqlDialect`, `PgsqlDialect`, never meant to be served as a URL)
+- `vendor/` directory (bundled Composer runtime libraries, starting v2.9.0)
+- `*.sh`, `*.sql` files
+- `config.php`, `lib.php`, `init.php`, `schema*.sql`, `PgsqlStatement.php`, `migrate.php`, `tmp_cleanup.php` at the web root
 - Build and release artefacts (`*.tar.gz`, `*.zip`, `*.bundle.txt`, `SHA256SUMS`)
 
 **Nginx users** must replicate these rules manually — Nginx does not process `.htaccess` files. See the [install guide](install.md#nginx) for the rules to translate.
+
+**OpenLiteSpeed users** get full coverage out of the box — the shipped `.htaccess` uses root-level `RewriteRule` entries for `dialects/` and `vendor/` because OLS's lsphp handler dispatches PHP files before subdirectory-level rewrites fire (v2.11.0 #500). See the [OpenLiteSpeed setup notes](install.md#openlitespeed) for the one WebAdmin setting worth verifying (Auto Index → Off) and the automated regression guard (`.github/workflows/playwright-nightly.yml` runs the `.htaccess` assertion spec against a containerized OLS image on every nightly run alongside the Apache slot).
 
 The recommended file permissions further limit exposure:
 

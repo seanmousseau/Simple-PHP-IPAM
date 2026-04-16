@@ -39,12 +39,16 @@ CREATE INDEX IF NOT EXISTS idx_sites_parent_id ON sites(parent_id);
 
 -- v2.1.0: VRFs (defined before subnets for FK clarity)
 CREATE TABLE IF NOT EXISTS vrfs (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  name        TEXT NOT NULL UNIQUE,
-  description TEXT NOT NULL DEFAULT '',
-  rd          TEXT NOT NULL DEFAULT '',             -- Route Distinguisher, free-form (e.g. "65000:1")
-  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  name           TEXT NOT NULL UNIQUE,
+  description    TEXT NOT NULL DEFAULT '',
+  rd             TEXT NOT NULL DEFAULT '',             -- Route Distinguisher, free-form (e.g. "65000:1")
+  asn            TEXT NOT NULL DEFAULT '',             -- v2.4.0 #2.4.0-vrf-bgp: BGP ASN attribute
+  rt_import      TEXT NOT NULL DEFAULT '',             -- v2.4.0 #2.4.0-vrf-bgp: Route Target import list
+  rt_export      TEXT NOT NULL DEFAULT '',             -- v2.4.0 #2.4.0-vrf-bgp: Route Target export list
+  enforce_unique INTEGER NOT NULL DEFAULT 1,           -- v2.4.0 #2.4.0-vrf-bgp: enforce VRF CIDR uniqueness
+  created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_vrfs_name ON vrfs(name);
@@ -65,7 +69,7 @@ CREATE TABLE IF NOT EXISTS subnets (
   prefix      INTEGER NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   notes       TEXT NOT NULL DEFAULT '',             -- v2.8.0 #316: long-form operational notes (textarea)
-  site_id     INTEGER,
+  site_id     INTEGER REFERENCES sites(id) ON DELETE SET NULL, -- v2.11.0 #409: FK backfilled; schema.mysql.sql and schema.pgsql.sql have enforced this since v2.10.0
   vlan_id     INTEGER,                              -- 802.1Q VLAN ID (1–4094), legacy integer field
   vlan_fk     INTEGER REFERENCES vlans(id) ON DELETE SET NULL,  -- v2.0.0: FK to vlans table
   vrf_id      INTEGER REFERENCES vrfs(id) ON DELETE RESTRICT,   -- v2.1.0: FK to vrfs table; RESTRICT prevents orphaned subnets moving to global VRF
@@ -293,6 +297,63 @@ CREATE TABLE IF NOT EXISTS scan_results (
 
 CREATE INDEX IF NOT EXISTS idx_scan_results_subnet_time ON scan_results(subnet_id, scanned_at DESC);
 CREATE INDEX IF NOT EXISTS idx_scan_results_address ON scan_results(address_id, scanned_at DESC);
+
+-- v2.4.0 tables — backfilled from migrations into the fresh-install schema
+-- in v2.11.0 #409 so fresh SQLite installs match schema.mysql.sql and
+-- schema.pgsql.sql. Prior to v2.11.0 these were only created by migrations,
+-- but because ipam_db_init() stamps every migration as applied on fresh
+-- install, a brand-new SQLite DB shipped without them — leaving the
+-- vlan_ranges / aggregates / pd_pools / pd_delegations features latently
+-- broken. Column definitions match migrations.php line-for-line.
+
+CREATE TABLE IF NOT EXISTS vlan_ranges (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  vlan_min    INTEGER NOT NULL CHECK(vlan_min >= 1 AND vlan_min <= 4094),
+  vlan_max    INTEGER NOT NULL CHECK(vlan_max >= 1 AND vlan_max <= 4094),
+  description TEXT NOT NULL DEFAULT '',
+  site_id     INTEGER REFERENCES sites(id) ON DELETE SET NULL,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  CHECK(vlan_min <= vlan_max)
+);
+
+CREATE TABLE IF NOT EXISTS aggregates (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  cidr        TEXT NOT NULL UNIQUE,
+  ip_version  INTEGER NOT NULL,
+  network     TEXT NOT NULL,
+  network_bin BLOB NOT NULL,
+  prefix      INTEGER NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  rir         TEXT NOT NULL DEFAULT '',
+  date_added  TEXT NOT NULL DEFAULT (date('now')),
+  notes       TEXT NOT NULL DEFAULT '',
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS pd_pools (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  parent_subnet_id  INTEGER NOT NULL REFERENCES subnets(id) ON DELETE CASCADE,
+  delegation_prefix INTEGER NOT NULL CHECK(delegation_prefix BETWEEN 1 AND 128),
+  description       TEXT NOT NULL DEFAULT '',
+  site_id           INTEGER REFERENCES sites(id) ON DELETE SET NULL,
+  created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(parent_subnet_id)
+);
+
+CREATE TABLE IF NOT EXISTS pd_delegations (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  pool_id       INTEGER NOT NULL REFERENCES pd_pools(id) ON DELETE CASCADE,
+  cidr          TEXT NOT NULL,
+  subscriber_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,
+  delegated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at    TEXT,
+  notes         TEXT NOT NULL DEFAULT '',
+  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
 
 CREATE TABLE IF NOT EXISTS schema_migrations (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,

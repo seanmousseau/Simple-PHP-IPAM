@@ -12,14 +12,14 @@ csv_out(['cidr', 'description', 'site', 'ip_version', 'vlan_id', 'used', 'reserv
 $st = $db->query("
     SELECT s.cidr, s.description, s.ip_version, s.prefix, s.vlan_id,
            COALESCE(si.name, '') AS site_name,
-           COALESCE(SUM(a.status = 'used'),     0) AS used_count,
-           COALESCE(SUM(a.status = 'reserved'), 0) AS reserved_count,
-           COALESCE(SUM(a.status = 'free'),     0) AS free_count,
+           COALESCE(SUM(CASE WHEN a.status = 'used'     THEN 1 ELSE 0 END), 0) AS used_count,
+           COALESCE(SUM(CASE WHEN a.status = 'reserved' THEN 1 ELSE 0 END), 0) AS reserved_count,
+           COALESCE(SUM(CASE WHEN a.status = 'free'     THEN 1 ELSE 0 END), 0) AS free_count,
            COUNT(a.id) AS total_count
     FROM subnets s
     LEFT JOIN sites si ON si.id = s.site_id
     LEFT JOIN addresses a ON a.subnet_id = s.id
-    GROUP BY s.id
+    GROUP BY s.id, si.name
     ORDER BY s.ip_version, s.network_bin
 ");
 if ($st === false) exit;

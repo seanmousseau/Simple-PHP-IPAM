@@ -21,11 +21,26 @@ import { existsSync } from 'fs';
 import { resolve } from 'path';
 
 const APP_ROOT = resolve(__dirname, '..', '..', '..', 'Simple-PHP-IPAM');
-const hasVendor = existsSync(resolve(APP_ROOT, 'vendor'));
+// v2.11.0 #500: /vendor/ is blocked at the root .htaccess regardless of
+// whether the directory exists on disk, so the hasVendor gate is gone.
 const hasDialects = existsSync(resolve(APP_ROOT, 'dialects'));
 
+// v2.11.0 #500: containerized OpenLiteSpeed ships a plain-HTTP listener on
+// :8088 mapped to the Example vhost; the stock OLS image has no HTTPS on
+// that vhost out of the box, so this spec can only hit it over HTTP.
+// The root .htaccess force-HTTPS rewrite would return 301 on a plain-HTTP
+// request, which is not "blocked" — it just redirects. Sending
+// `X-Forwarded-Proto: https` skips that specific redirect rule while
+// leaving every other deny rule in effect. Apache runs over real HTTPS
+// so the header is a no-op there. The helper sends it unconditionally.
+const proxyHeaders = { 'X-Forwarded-Proto': 'https' };
+
 async function expectBlocked(request: import('@playwright/test').APIRequestContext, path: string): Promise<void> {
-  const res = await request.get(path, { ignoreHTTPSErrors: true, maxRedirects: 0 });
+  const res = await request.get(path, {
+    ignoreHTTPSErrors: true,
+    maxRedirects: 0,
+    headers: proxyHeaders,
+  });
   // Apache RewriteRule [F] returns 403. A 404 would also be acceptable (file
   // did not exist at all); the one thing that must not happen is a 200 with the
   // file contents served. Treat anything >= 400 as "blocked".
@@ -59,7 +74,11 @@ test.describe('.htaccess deny rules', () => {
   });
 
   test('blocks the data/ directory index', async ({ request }) => {
-    const res = await request.get('/data/', { ignoreHTTPSErrors: true, maxRedirects: 0 });
+    const res = await request.get('/data/', {
+      ignoreHTTPSErrors: true,
+      maxRedirects: 0,
+      headers: proxyHeaders,
+    });
     expect(res.status()).toBeGreaterThanOrEqual(400);
     expect(res.status()).toBeLessThan(500);
   });
@@ -86,13 +105,51 @@ test.describe('.htaccess deny rules', () => {
     await expectBlocked(request, '/SHA256SUMS');
   });
 
-  test('blocks /vendor/ when present', async ({ request }) => {
-    test.skip(!hasVendor, 'vendor/ does not exist until v2.9.0');
+  test('blocks /vendor/autoload.php via root-level rewrite', async ({ request }) => {
+    // v2.11.0 #500: blocked at the root .htaccess (`RewriteRule ^vendor(/|$)`)
+    // rather than via vendor/.htaccess alone. OpenLiteSpeed's lsphp handler
+    // dispatches PHP files BEFORE subdirectory .htaccess rewrites run, so
+    // the subdirectory-level deny was insufficient. Root-level blocks fire
+    // before handler dispatch on both Apache and OLS. Request must return
+    // blocked regardless of whether vendor/ exists on disk.
     await expectBlocked(request, '/vendor/autoload.php');
   });
 
-  test('blocks /dialects/ when present', async ({ request }) => {
+  test('blocks arbitrary paths under /vendor/', async ({ request }) => {
+    await expectBlocked(request, '/vendor/phpmailer/anything.php');
+  });
+
+  test('blocks /dialects/SqliteDialect.php via root-level rewrite', async ({ request }) => {
     test.skip(!hasDialects, 'dialects/ does not exist until v2.9.0');
     await expectBlocked(request, '/dialects/SqliteDialect.php');
+  });
+
+  test('blocks /dialects/MysqlDialect.php via root-level rewrite', async ({ request }) => {
+    test.skip(!hasDialects, 'dialects/ does not exist until v2.10.0');
+    await expectBlocked(request, '/dialects/MysqlDialect.php');
+  });
+
+  test('blocks /dialects/PgsqlDialect.php via root-level rewrite', async ({ request }) => {
+    test.skip(!hasDialects, 'dialects/ does not exist until v2.11.0');
+    await expectBlocked(request, '/dialects/PgsqlDialect.php');
+  });
+
+  test('blocks /dialects/Dialect.php (interface) via root-level rewrite', async ({ request }) => {
+    test.skip(!hasDialects, 'dialects/ does not exist until v2.9.0');
+    await expectBlocked(request, '/dialects/Dialect.php');
+  });
+
+  test('blocks /PgsqlStatement.php at the web root', async ({ request }) => {
+    // v2.11.0 #386 PDOStatement subclass — loaded via require_once from
+    // ipam_db(), not via HTTP. Root .htaccess explicit-file deny covers it.
+    await expectBlocked(request, '/PgsqlStatement.php');
+  });
+
+  test('blocks /schema.mysql.sql at the web root', async ({ request }) => {
+    await expectBlocked(request, '/schema.mysql.sql');
+  });
+
+  test('blocks /schema.pgsql.sql at the web root', async ({ request }) => {
+    await expectBlocked(request, '/schema.pgsql.sql');
   });
 });

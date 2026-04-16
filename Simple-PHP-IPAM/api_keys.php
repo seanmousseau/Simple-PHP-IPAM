@@ -32,7 +32,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $keyHash = hash('sha256', $rawKey);
             $st = $db->prepare("INSERT INTO api_keys (name, description, is_readonly, key_hash, created_by) VALUES (:n,:d,:ro,:h,:by)");
             $st->execute([':n' => $name, ':d' => $desc, ':ro' => $isReadonly, ':h' => $keyHash, ':by' => $u['username']]);
-            audit($db, 'apikey.create', 'apikey', (int)$db->lastInsertId(), 'name=' . $name);
+            audit($db, 'apikey.create', 'apikey', ipam_last_insert_id($db, 'api_keys'), 'name=' . $name);
             $newKey = $rawKey; // shown once only
         }
     }

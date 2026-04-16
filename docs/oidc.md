@@ -73,7 +73,7 @@ Add the following to your `config.php`:
 | `redirect_uri` | yes | Must match exactly what is registered with the IdP |
 | `scopes` | no | Space-separated scopes (default: `openid email profile`) |
 | `auto_provision` | no | Create a local user on first OIDC login if none exists (default: `false`) |
-| `default_role` | no | Role assigned to auto-provisioned users: `admin` or `readonly` (default: `readonly`) |
+| `default_role` | no | Role assigned to auto-provisioned users: `admin`, `netops`, or `readonly` (default: `readonly`). The `netops` value was added to the dropdown in v2.11.0 (#501) — prior releases only offered `admin` / `readonly` even though the schema and demo seed already carried a `netops` role. |
 | `disable_local_login` | no | Hide the password form when OIDC is enabled (default: `false`). See [Disabling local login](#disabling-local-login) |
 
 ---

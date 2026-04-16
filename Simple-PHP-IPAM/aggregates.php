@@ -26,18 +26,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $err = 'Invalid CIDR notation.';
         } else {
             try {
+                // #410/#388: bind network_bin via ipam_bind_binary() (PARAM_LOB).
                 $st = $db->prepare("INSERT INTO aggregates (cidr, ip_version, network, network_bin, prefix, description, rir, notes) VALUES (:cidr,:ver,:net,:bin,:pfx,:desc,:rir,:notes)");
-                $st->execute([
-                    ':cidr'  => $parsed['network'] . '/' . $parsed['prefix'],
-                    ':ver'   => $parsed['version'],
-                    ':net'   => $parsed['network'],
-                    ':bin'   => $parsed['net_bin'],
-                    ':pfx'   => $parsed['prefix'],
-                    ':desc'  => $desc,
-                    ':rir'   => $rir,
-                    ':notes' => $notes,
-                ]);
-                $newId = (int)$db->lastInsertId();
+                $st->bindValue(':cidr',  $parsed['network'] . '/' . $parsed['prefix']);
+                $st->bindValue(':ver',   $parsed['version'], PDO::PARAM_INT);
+                $st->bindValue(':net',   $parsed['network']);
+                ipam_bind_binary($st, ':bin', to_str($parsed['net_bin']));
+                $st->bindValue(':pfx',   $parsed['prefix'],  PDO::PARAM_INT);
+                $st->bindValue(':desc',  $desc);
+                $st->bindValue(':rir',   $rir);
+                $st->bindValue(':notes', $notes);
+                $st->execute();
+                $newId = ipam_last_insert_id($db, 'aggregates');
                 audit($db, 'aggregate.create', 'aggregate', $newId, "cidr={$cidr}");
                 flash_set("Aggregate $cidr created.");
                 header('Location: aggregates.php');

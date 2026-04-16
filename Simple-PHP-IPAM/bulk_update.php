@@ -264,7 +264,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 ':mac'  => $doMac       ? $newMac      : '',
                                 ':exp'  => $insExpAt,
                             ]);
-                            $newId = (int)$db->lastInsertId();
+                            $newId = ipam_last_insert_id($db, 'addresses');
                             $insertedUnconf++;
                             $after = [
                                 'hostname'   => $doHostname  ? $newHostname : '',

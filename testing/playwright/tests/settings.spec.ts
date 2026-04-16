@@ -151,6 +151,19 @@ test.describe('Settings page', () => {
     }
   });
 
+  test('#501 oidc.default_role offers readonly, netops, and admin', async () => {
+    // v2.11.0 #501: the dropdown had been missing `netops` since v2.9.0
+    // even though the users.role column and demo seed already carried
+    // the role. Regression guard — this test fails if anyone narrows
+    // the enum again.
+    await page.goto(appUrl('settings.php'));
+    const select = page.locator('select[name="k_oidc__default_role"]');
+    await expect(select).toBeVisible();
+    for (const value of ['readonly', 'netops', 'admin']) {
+      await expect(select.locator(`option[value="${value}"]`)).toHaveCount(1);
+    }
+  });
+
   test('#442 branding.timezone renders as a dropdown seeded with PHP zoneinfo', async () => {
     await page.goto(appUrl('settings.php'));
     const select = page.locator('select[name="k_branding__timezone"]');

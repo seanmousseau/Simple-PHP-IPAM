@@ -29,9 +29,15 @@ if ($subnetId > 0) {
 /** @var list<array<string, mixed>> $runs */
 $runs = [];
 if ($subnet !== null) {
+    // v2.11.0 #388: Postgres rejects SUBSTR(timestamp) — cast to text via
+    // ::text on pgsql, leave bare on the other two engines (which
+    // auto-coerce). No portable CAST target works across all three.
+    $scannedAtText = ipam_dialect()->driver_name() === 'pgsql'
+        ? '(scanned_at)::text'
+        : 'scanned_at';
     $st = $db->prepare("
         SELECT
-            SUBSTR(scanned_at, 1, 16) AS run_minute,
+            SUBSTR($scannedAtText, 1, 16) AS run_minute,
             COUNT(*) AS total,
             SUM(is_up) AS up_count,
             COUNT(*) - SUM(is_up) AS down_count,

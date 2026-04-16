@@ -25,7 +25,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             try {
                 $st = $db->prepare("INSERT INTO sites (name, description, parent_id) VALUES (:n, :d, :pid)");
                 $st->execute([':n' => $name, ':d' => $desc, ':pid' => $parentId]);
-                audit($db, 'site.create', 'site', (int)$db->lastInsertId(), "name=$name");
+                audit($db, 'site.create', 'site', ipam_last_insert_id($db, 'sites'), "name=$name");
                 flash_set('Site created.');
                 header('Location: sites.php');
                 exit;

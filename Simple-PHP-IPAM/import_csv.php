@@ -807,20 +807,20 @@ if (demo_mode_enabled()) {
                     continue;
                 }
 
+                // #410/#388: bind ip_bin via ipam_bind_binary() (PARAM_LOB).
                 $insExpAt = isset($r['expires_at']) && to_str($r['expires_at']) !== '' ? to_str($r['expires_at']) : null;
-                $ins->execute([
-                    ':sid'  => $subnetId,
-                    ':ip'   => $ip,
-                    ':bin'  => $norm['bin'],
-                    ':hn'   => to_str($r['hostname'] ?? ''),
-                    ':ow'   => to_str($r['owner'] ?? ''),
-                    ':nt'   => to_str($r['note'] ?? ''),
-                    ':grp'  => to_str($r['grp'] ?? ''),
-                    ':mac'  => to_str($r['mac'] ?? ''),
-                    ':exp'  => $insExpAt,
-                    ':st'   => to_str($r['status'] ?? 'used'),
-                ]);
-                $aid = (int)$db->lastInsertId();
+                $ins->bindValue(':sid',  $subnetId, PDO::PARAM_INT);
+                $ins->bindValue(':ip',   $ip);
+                ipam_bind_binary($ins, ':bin', to_str($norm['bin']));
+                $ins->bindValue(':hn',   to_str($r['hostname'] ?? ''));
+                $ins->bindValue(':ow',   to_str($r['owner'] ?? ''));
+                $ins->bindValue(':nt',   to_str($r['note'] ?? ''));
+                $ins->bindValue(':grp',  to_str($r['grp'] ?? ''));
+                $ins->bindValue(':mac',  to_str($r['mac'] ?? ''));
+                $ins->bindValue(':exp',  $insExpAt, $insExpAt === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
+                $ins->bindValue(':st',   to_str($r['status'] ?? 'used'));
+                $ins->execute();
+                $aid = ipam_last_insert_id($db, 'addresses');
 
                 history_log_address($db, 'import_create', $subnetId, $ip, $aid, null, [
                     'hostname' => to_str($r['hostname'] ?? ''),

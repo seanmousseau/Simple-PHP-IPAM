@@ -6,9 +6,8 @@ name: PHP QA
 # Runs on every push to dev/main and every PR targeting dev or main. Target
 # wall clock: 5–8 minutes. Blocks merge.
 #
-# Engine matrix: SQLite only in v2.9.0. Placeholder comments mark where the
-# MySQL slot lands in v2.10.0 (#384) and the Postgres slot lands in v2.11.0
-# (#388). `fail-fast: false` means one engine's failure does not cancel the
+# Engine matrix: SQLite (v2.9.0), MySQL (v2.10.0 #384), Postgres (v2.11.0
+# #388). `fail-fast: false` means one engine's failure does not cancel the
 # others' runs — we want to see all engine failures at once.
 #
 # Tier 2 (path-filtered migration round-trip tests) and Tier 3 (nightly,
@@ -36,13 +35,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        engine: [sqlite, mysql]
-        # v2.11.0 (#388) appends 'pgsql'
+        engine: [sqlite, mysql, pgsql]
 
-    # MySQL 8.0 service container. GitHub Actions does not support matrix-
-    # gated services, so the container is always started and simply unused
-    # on the sqlite slot. Cold-start overhead is ~15 seconds, amortized by
-    # the runner cache on warm hits.
+    # Service containers. GitHub Actions does not support matrix-gated
+    # services, so all of them are always started and simply unused on the
+    # slots that don't need them. Cold-start overhead is ~15–20 seconds
+    # per service, amortized by the runner cache on warm hits.
     services:
       mysql:
         image: mysql:8.0
@@ -56,14 +54,30 @@ jobs:
           --health-interval=5s
           --health-timeout=5s
           --health-retries=12
+      postgres:
+        image: postgres:14-alpine
+        env:
+          POSTGRES_PASSWORD: rootpw
+          POSTGRES_USER: postgres
+          POSTGRES_DB: ipam_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d ipam_ci"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
 
     env:
       IPAM_DB_DRIVER: ${{ matrix.engine }}
-      # tests/MysqlSmokeTest.php skips when IPAM_MYSQL_DSN is empty, so the
-      # sqlite slot ignores these fields naturally.
+      # Smoke tests skip when the matching DSN env var is empty, so each
+      # matrix slot naturally exercises only its own engine's server.
       IPAM_MYSQL_DSN: ${{ matrix.engine == 'mysql' && 'mysql:host=127.0.0.1;port=3306;dbname=ipam_ci;charset=utf8mb4' || '' }}
       IPAM_MYSQL_USER: ${{ matrix.engine == 'mysql' && 'root' || '' }}
       IPAM_MYSQL_PASS: ${{ matrix.engine == 'mysql' && 'rootpw' || '' }}
+      IPAM_PGSQL_DSN:  ${{ matrix.engine == 'pgsql' && 'pgsql:host=127.0.0.1;port=5432;dbname=ipam_ci' || '' }}
+      IPAM_PGSQL_USER: ${{ matrix.engine == 'pgsql' && 'postgres' || '' }}
+      IPAM_PGSQL_PASS: ${{ matrix.engine == 'pgsql' && 'rootpw' || '' }}
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -72,7 +86,7 @@ jobs:
         uses: shivammathur/setup-php@accd6127cb78bee3e8082180cb391013d204ef9f # v2
         with:
           php-version: '8.2'
-          extensions: pdo_sqlite, pdo_mysql, mbstring, openssl
+          extensions: pdo_sqlite, pdo_mysql, pdo_pgsql, mbstring, openssl
           coverage: none
 
       # ----- Composer cache (#411) -----
@@ -187,6 +201,78 @@ jobs:
             kill "$(cat /tmp/php-s.pid)" 2>/dev/null || true
           fi
 
-      # SchemaParityTest lands in v2.10.0 (#409) once the MySQL schema file
-      # exists. It will run inside this matrix slot and assert that every
-      # engine's schema file produces structurally equivalent tables.
+      # ----- Postgres slot only: test_api.sh against php -S backed by Postgres -----
+      #
+      # Parallels the MySQL slot above. Runs the full ~150-assertion API
+      # regression suite against a fresh php -S webserver pointed at the
+      # Postgres service container. v2.11.0 #388.
+      - name: Bootstrap php -S + config for test_api.sh (pgsql)
+        if: matrix.engine == 'pgsql'
+        run: |
+          cat > Simple-PHP-IPAM/config.php <<'PHP'
+          <?php
+          return [
+              'db_driver' => 'pgsql',
+              'db_dsn'    => 'pgsql:host=127.0.0.1;port=5432;dbname=ipam_ci',
+              'db_user'   => 'postgres',
+              'db_pass'   => 'rootpw',
+              'bootstrap_admin' => [
+                  'username' => 'admin',
+                  'password' => 'ChangeMeNow!12345',
+              ],
+              'force_https' => false,
+              'session_idle_seconds' => 1800,
+          ];
+          PHP
+
+      - name: Start php -S (pgsql)
+        if: matrix.engine == 'pgsql'
+        run: |
+          php -S 127.0.0.1:8080 -t Simple-PHP-IPAM > /tmp/php-s.log 2>&1 &
+          echo $! > /tmp/php-s.pid
+          # Wait for readiness (up to 30 s)
+          for i in $(seq 1 30); do
+            if curl -sSf http://127.0.0.1:8080/status.php > /tmp/status.json 2>/dev/null; then
+              echo "php -S ready"
+              cat /tmp/status.json
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "php -S failed to start" >&2
+          cat /tmp/php-s.log >&2
+          exit 1
+
+      - name: Create temp API key in Postgres for test_api.sh
+        if: matrix.engine == 'pgsql'
+        id: pgsql-api-key
+        run: |
+          export IPAM_API_KEY="ci-pgsql-$(date +%s)-$RANDOM"
+          export IPAM_API_KEY_HASH="$(php -r 'echo hash("sha256", getenv("IPAM_API_KEY"));')"
+          php -r '
+            $db = new PDO(getenv("IPAM_PGSQL_DSN"), getenv("IPAM_PGSQL_USER"), getenv("IPAM_PGSQL_PASS"), [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+            $db->exec("DELETE FROM api_keys WHERE name = '"'"'test-runner'"'"'");
+            $st = $db->prepare("INSERT INTO api_keys (name, key_hash, is_active, created_by) VALUES ('"'"'test-runner'"'"', :h, 1, '"'"'ci'"'"')");
+            $st->execute([":h" => getenv("IPAM_API_KEY_HASH")]);
+            echo "inserted\n";
+          '
+          echo "key=$IPAM_API_KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Run test_api.sh against Postgres-backed php -S
+        if: matrix.engine == 'pgsql'
+        env:
+          API_KEY: ${{ steps.pgsql-api-key.outputs.key }}
+        run: bash testing/scripts/test_api.sh http://127.0.0.1:8080
+
+      - name: Stop php -S (pgsql)
+        if: always() && matrix.engine == 'pgsql'
+        run: |
+          if [ -f /tmp/php-s.pid ]; then
+            kill "$(cat /tmp/php-s.pid)" 2>/dev/null || true
+          fi
+
+      # SchemaParityTest runs inside this matrix slot (via `vendor/bin/phpunit`
+      # above). Each slot exercises its own engine's canonicalisation; the
+      # assertion that all three schema.*.sql files converge is exercised
+      # implicitly because the SQLite path always runs and the MySQL/Postgres
+      # paths activate via IPAM_*_DSN on their respective matrix slots.

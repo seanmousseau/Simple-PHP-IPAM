@@ -103,9 +103,32 @@ else
     EFFECTIVE_DB_PATH="$DB_PATH"
 fi
 
+# When running inside the containerized harness (DOCKER_CONTAINER set), route
+# all api_keys DDL/DML through the app's own ipam_db($config) so the script
+# works against whichever driver the container is configured for — sqlite,
+# mysql, or pgsql. v2.11.0 #388. The local-disk and SSH paths stay
+# sqlite-only (they always were, and adding driver detection on those paths
+# would complicate test scenarios that don't need it).
+container_api_key_php() {
+    local code="$1"
+    # Prefix the supplied snippet with the config + lib bootstrap so
+    # $config and $db (= ipam_db($config)) are in scope.
+    cat <<PHP
+\$config = require '/var/www/html/config.php';
+require_once '/var/www/html/lib.php';
+\$db = ipam_db(\$config);
+\$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+$code
+PHP
+}
+
 cleanup() {
     [[ -n "$PHP_PID" ]] && kill "$PHP_PID" 2>/dev/null || true
-    db_php "\$db = new PDO('sqlite:$EFFECTIVE_DB_PATH'); \$db->exec(\"DELETE FROM api_keys WHERE name IN ('test-runner','test-readonly')\");" 2>/dev/null || true
+    if [[ -n "$DOCKER_CONTAINER" ]]; then
+        db_php "$(container_api_key_php "\$db->exec(\"DELETE FROM api_keys WHERE name IN ('test-runner','test-readonly')\");")" 2>/dev/null || true
+    else
+        db_php "\$db = new PDO('sqlite:$EFFECTIVE_DB_PATH'); \$db->exec(\"DELETE FROM api_keys WHERE name IN ('test-runner','test-readonly')\");" 2>/dev/null || true
+    fi
 }
 trap cleanup EXIT
 
@@ -140,27 +163,37 @@ if [[ -z "${API_KEY:-}" ]]; then
     # not meaningful.
     [[ "$IS_REMOTE" -eq 0 && -z "$DOCKER_CONTAINER" ]] && { [[ -f "$DB_PATH" ]] || { echo "ERROR: No database at $DB_PATH" >&2; exit 1; }; }
 
-    # Clean up any stale test keys from previous runs
-    db_php "\$db = new PDO('sqlite:$local_db'); \$db->exec(\"DELETE FROM api_keys WHERE name IN ('test-runner','test-readonly')\");" 2>/dev/null || true
-
     API_KEY="test-key-$(date +%s)-$$"
-    db_php "
-        \$db = new PDO('sqlite:$local_db');
-        \$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-        \$h = hash('sha256', '$API_KEY');
-        \$db->prepare(\"INSERT INTO api_keys (name, key_hash, is_active, created_by) VALUES ('test-runner', :h, 1, 'test_api.sh')\")->execute([':h' => \$h]);
-    "
-    log "Created temp API key"
-
-    # Create a read-only key for permission tests
     READONLY_KEY="test-readonly-$(date +%s)-$$"
-    db_php "
-        \$db = new PDO('sqlite:$local_db');
-        \$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-        \$h = hash('sha256', '$READONLY_KEY');
-        \$db->prepare(\"INSERT INTO api_keys (name, description, is_readonly, key_hash, is_active, created_by) VALUES ('test-readonly', 'test suite readonly key', 1, :h, 1, 'test_api.sh')\")->execute([':h' => \$h]);
-    "
-    log "Created temp read-only API key"
+
+    if [[ -n "$DOCKER_CONTAINER" ]]; then
+        # Containerized harness path — engine-agnostic via ipam_db($config).
+        # Clean up stale keys first, then insert the two fresh ones in a
+        # single php invocation.
+        db_php "$(container_api_key_php "
+            \$db->exec(\"DELETE FROM api_keys WHERE name IN ('test-runner','test-readonly')\");
+            \$h1 = hash('sha256', '$API_KEY');
+            \$db->prepare(\"INSERT INTO api_keys (name, key_hash, is_active, created_by) VALUES ('test-runner', :h, 1, 'test_api.sh')\")->execute([':h' => \$h1]);
+            \$h2 = hash('sha256', '$READONLY_KEY');
+            \$db->prepare(\"INSERT INTO api_keys (name, description, is_readonly, key_hash, is_active, created_by) VALUES ('test-readonly', 'test suite readonly key', 1, :h, 1, 'test_api.sh')\")->execute([':h' => \$h2]);
+        ")"
+    else
+        # Local-disk SQLite or SSH-remote SQLite path. Unchanged from pre-v2.11.0.
+        db_php "\$db = new PDO('sqlite:$local_db'); \$db->exec(\"DELETE FROM api_keys WHERE name IN ('test-runner','test-readonly')\");" 2>/dev/null || true
+        db_php "
+            \$db = new PDO('sqlite:$local_db');
+            \$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+            \$h = hash('sha256', '$API_KEY');
+            \$db->prepare(\"INSERT INTO api_keys (name, key_hash, is_active, created_by) VALUES ('test-runner', :h, 1, 'test_api.sh')\")->execute([':h' => \$h]);
+        "
+        db_php "
+            \$db = new PDO('sqlite:$local_db');
+            \$db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+            \$h = hash('sha256', '$READONLY_KEY');
+            \$db->prepare(\"INSERT INTO api_keys (name, description, is_readonly, key_hash, is_active, created_by) VALUES ('test-readonly', 'test suite readonly key', 1, :h, 1, 'test_api.sh')\")->execute([':h' => \$h]);
+        "
+    fi
+    log "Created temp API keys (runner + readonly)"
 fi
 
 # ---- Helpers ----
