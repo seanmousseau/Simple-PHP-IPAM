@@ -487,7 +487,8 @@ function ipv4_unassigned_summary_local(PDO $db): array
         }
     }
     if ($bcastBins !== []) {
-        $db->exec("CREATE TEMPORARY TABLE IF NOT EXISTS _bcast_excl (subnet_id INTEGER NOT NULL, bcast_bin BLOB NOT NULL)");
+        $binType = ipam_dialect()->binary_type(4);
+        $db->exec("CREATE TEMPORARY TABLE IF NOT EXISTS _bcast_excl (subnet_id INTEGER NOT NULL, bcast_bin $binType NOT NULL)");
         $db->exec("DELETE FROM _bcast_excl");
         $ins = $db->prepare("INSERT INTO _bcast_excl (subnet_id, bcast_bin) VALUES (:s, :b)");
         foreach ($bcastBins as $sid => $bcast) {
