@@ -143,16 +143,30 @@ if [[ -f "$REPO_ROOT/composer.json" ]]; then
     mkdir -p "$PAYLOAD/vendor"
     rsync -a "$COMPOSER_TMP/vendor/" "$PAYLOAD/vendor/"
     # Belt-and-suspenders: deny direct HTTP access to bundled library source.
+    # Uses a RewriteRule-based deny primarily so OpenLiteSpeed honours it —
+    # OLS ignores `Require all denied` / `Order allow,deny` but processes
+    # mod_rewrite rules. On Apache both the RewriteRule and the authz_core
+    # fallback apply; the rewrite hits first and returns 403. v2.11.0 #500
+    # closed the OLS gap by switching from authz-only to rewrite-first.
     cat > "$PAYLOAD/vendor/.htaccess" <<'HTACCESS'
 # Deny all direct web access to bundled Composer libraries.
 # The application autoloads them via vendor/autoload.php; nothing here
 # should be reachable as a URL.
-<IfModule mod_authz_core.c>
-  Require all denied
+
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteRule ^.*$ - [F,L]
 </IfModule>
-<IfModule !mod_authz_core.c>
-  Order allow,deny
-  Deny from all
+
+# Apache fallback when mod_rewrite is not loaded.
+<IfModule !mod_rewrite.c>
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
 </IfModule>
 HTACCESS
     chmod 0644 "$PAYLOAD/vendor/.htaccess"

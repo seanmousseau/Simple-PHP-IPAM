@@ -364,6 +364,19 @@ ipam.example.com {
 }
 ```
 
+### OpenLiteSpeed
+
+OpenLiteSpeed honours `.htaccess` rewrite rules for the Example vhost out of the box — the `Simple-PHP-IPAM/.htaccess` that ships with the release tarball works unmodified on OLS. All the deny rules (force-HTTPS, block sensitive files, block `/data/`, block `/dialects/`, block `/vendor/`) fire correctly under the OLS 1.8+ rewrite engine.
+
+**One OLS-specific gotcha to be aware of** (handled automatically by the shipped `.htaccess`): OLS's lsphp handler dispatches PHP files **before** a subdirectory-level `.htaccess` rewrite rule fires. A per-directory `dialects/.htaccess` deny rule is therefore insufficient to block direct execution of `.php` files under that path — OLS will execute the file anyway. The v2.11.0 `.htaccess` closes this gap by adding **root-level** `RewriteRule ^dialects(/|$) - [F,L]` and `^vendor(/|$) - [F,L]` entries. Root-level rewrites run before handler dispatch on both Apache and OLS, so the same rule set protects both web servers. You do not need to configure anything in the OLS WebAdmin Console for this to work.
+
+**Two additional OLS-specific settings worth verifying** in the WebAdmin Console when you first deploy:
+
+1. **Auto Index** → **Off**. The `Options -Indexes` directive in the shipped `.htaccess` is Apache-specific — OLS ignores it. Disable directory listing per-vhost in the OLS WebAdmin (Virtual Host → Basic → Index Files → Auto Index → No).
+2. **Rewrite Engine** → **Enabled**. This is the default for the stock Example vhost but double-check it on a custom vhost (Virtual Host → Rewrite → Rewrite Control → Enable Rewrite → Yes).
+
+Regression protection: `.github/workflows/playwright-nightly.yml` includes a containerized OpenLiteSpeed matrix slot (`htaccess-subset` job, `matrix.webserver = openlitespeed`) that boots a stock `litespeedtech/openlitespeed:latest` image with the Simple-PHP-IPAM tree mounted at the Example vhost docroot and runs the same `tests/htaccess.spec.ts` assertions the Apache slot uses. Both slots must be green on every nightly run — any rewrite-rule regression that breaks OLS but keeps working on Apache (or vice versa) lights up immediately.
+
 ---
 
 ## Step 5 — Verify the install
