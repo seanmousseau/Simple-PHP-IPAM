@@ -79,21 +79,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $err = 'Invalid status.';
             } else {
                 try {
+                    // #410/#388: bind ip_bin via ipam_bind_binary() (PARAM_LOB)
+                    // so the stored value has BLOB affinity on SQLite,
+                    // round-trips high bytes correctly through MySQL
+                    // VARBINARY, and does not UTF-8-validate on Postgres BYTEA.
                     $ins = $db->prepare("INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, grp, mac, expires_at, status, owner_contact_id)
                                          VALUES (:sid,:ip,:bin,:hn,:ow,:nt,:grp,:mac,:exp,:st,:cid)");
-                    $ins->execute([
-                        ':sid' => $subnetId,
-                        ':ip'  => $norm['ip'],
-                        ':bin' => $norm['bin'],
-                        ':hn'  => $hostname,
-                        ':ow'  => $owner,
-                        ':nt'  => $note,
-                        ':grp' => $grp,
-                        ':mac' => $mac,
-                        ':exp' => $expiresAt !== '' ? $expiresAt : null,
-                        ':st'  => $status,
-                        ':cid' => $ownerContactId,
-                    ]);
+                    $ins->bindValue(':sid', $subnetId, PDO::PARAM_INT);
+                    $ins->bindValue(':ip',  $norm['ip']);
+                    ipam_bind_binary($ins, ':bin', to_str($norm['bin']));
+                    $ins->bindValue(':hn',  $hostname);
+                    $ins->bindValue(':ow',  $owner);
+                    $ins->bindValue(':nt',  $note);
+                    $ins->bindValue(':grp', $grp);
+                    $ins->bindValue(':mac', $mac);
+                    $ins->bindValue(':exp', $expiresAt !== '' ? $expiresAt : null,
+                        $expiresAt !== '' ? PDO::PARAM_STR : PDO::PARAM_NULL);
+                    $ins->bindValue(':st',  $status);
+                    $ins->bindValue(':cid', $ownerContactId,
+                        $ownerContactId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                    $ins->execute();
                     $aid = (int)$db->lastInsertId();
 
                     history_log_address($db, 'create', $subnetId, $norm['ip'], $aid, null, [

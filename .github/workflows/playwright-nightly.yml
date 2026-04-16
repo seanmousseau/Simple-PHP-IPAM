@@ -4,7 +4,9 @@ name: Playwright (nightly)
 #
 # - `containerized-playwright` runs the full suite against a Dockerized Apache+PHP
 #   instance seeded from demo_seed.php. SQLite is the only driver in v2.5.2;
-#   v2.10.0 adds mysql and v2.11.0 adds pgsql to the matrix.
+#   v2.10.0 added mysql and v2.11.0 adds pgsql to the matrix (#388). All three
+#   drivers now run the same ~330-test suite against real service containers
+#   on every nightly run.
 # - `htaccess-subset` runs a small HTTP-level test that verifies .htaccess deny
 #   rules work correctly against the same image.
 # - `api-tests` runs testing/scripts/test_api.sh against the same image (#451,
@@ -38,7 +40,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        driver: [sqlite, mysql]   # v2.11.0 appends 'pgsql' (#388)
+        driver: [sqlite, mysql, pgsql]
     env:
       DRIVER: ${{ matrix.driver }}
     steps:

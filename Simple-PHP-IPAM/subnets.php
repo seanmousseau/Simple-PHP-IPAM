@@ -91,21 +91,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if ($dupChk->fetch()) {
                         $err = 'A subnet with this CIDR already exists.';
                     } else {
+                    // #410/#388: bind network_bin via ipam_bind_binary() (PARAM_LOB).
                     $st = $db->prepare("INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, notes, site_id, vlan_id, vlan_fk, vrf_id)
                                         VALUES (:cidr,:ver,:net,:nb,:pre,:d,:notes,:site,:vlan,:vfk,:vrf)");
-                    $st->execute([
-                        ':cidr'  => $normalized,
-                        ':ver'   => $p['version'],
-                        ':net'   => $p['network'],
-                        ':nb'    => $p['net_bin'],
-                        ':pre'   => $p['prefix'],
-                        ':d'     => $desc,
-                        ':notes' => $notes,
-                        ':site'  => $siteId,
-                        ':vlan'  => $vlanId,
-                        ':vfk'   => $vlanFk,
-                        ':vrf'   => $vrfId,
-                    ]);
+                    $st->bindValue(':cidr',  $normalized);
+                    $st->bindValue(':ver',   $p['version'], PDO::PARAM_INT);
+                    $st->bindValue(':net',   $p['network']);
+                    ipam_bind_binary($st, ':nb', to_str($p['net_bin']));
+                    $st->bindValue(':pre',   $p['prefix'],  PDO::PARAM_INT);
+                    $st->bindValue(':d',     $desc);
+                    $st->bindValue(':notes', $notes);
+                    $st->bindValue(':site',  $siteId, $siteId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                    $st->bindValue(':vlan',  $vlanId, $vlanId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                    $st->bindValue(':vfk',   $vlanFk, $vlanFk === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                    $st->bindValue(':vrf',   $vrfId,  $vrfId  === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                    $st->execute();
                     $newSubnetId = (int)$db->lastInsertId();
                     audit($db, 'subnet.create', 'subnet', $newSubnetId, $normalized);
 
@@ -174,23 +174,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $err = 'A subnet with this CIDR already exists.';
                 } else {
                     try {
+                        // #410/#388: bind network_bin via ipam_bind_binary() (PARAM_LOB).
                         $st = $db->prepare("UPDATE subnets
                                             SET cidr=:cidr, ip_version=:ver, network=:net, network_bin=:nb, prefix=:pre, description=:d, notes=:notes, site_id=:site, vlan_id=:vlan, vlan_fk=:vfk, vrf_id=:vrf
                                             WHERE id=:id");
-                        $st->execute([
-                            ':cidr'  => $normalized,
-                            ':ver'   => $p['version'],
-                            ':net'   => $p['network'],
-                            ':nb'    => $p['net_bin'],
-                            ':pre'   => $p['prefix'],
-                            ':d'     => $desc,
-                            ':notes' => $notes,
-                            ':site'  => $siteId,
-                            ':vlan'  => $vlanId,
-                            ':vfk'   => $vlanFk,
-                            ':vrf'   => $vrfId,
-                            ':id'    => $id,
-                        ]);
+                        $st->bindValue(':cidr',  $normalized);
+                        $st->bindValue(':ver',   $p['version'], PDO::PARAM_INT);
+                        $st->bindValue(':net',   $p['network']);
+                        ipam_bind_binary($st, ':nb', to_str($p['net_bin']));
+                        $st->bindValue(':pre',   $p['prefix'],  PDO::PARAM_INT);
+                        $st->bindValue(':d',     $desc);
+                        $st->bindValue(':notes', $notes);
+                        $st->bindValue(':site',  $siteId, $siteId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                        $st->bindValue(':vlan',  $vlanId, $vlanId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                        $st->bindValue(':vfk',   $vlanFk, $vlanFk === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                        $st->bindValue(':vrf',   $vrfId,  $vrfId  === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                        $st->bindValue(':id',    $id,    PDO::PARAM_INT);
+                        $st->execute();
                         audit($db, 'subnet.update', 'subnet', $id, $normalized);
                         $msg = 'Subnet updated.';
                         if ($inheritedSiteId !== null) {

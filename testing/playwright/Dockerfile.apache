@@ -4,8 +4,8 @@
 FROM php:8.2-apache
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libsqlite3-dev openssl ca-certificates \
-    && docker-php-ext-install pdo_sqlite pdo_mysql \
+    && apt-get install -y --no-install-recommends libsqlite3-dev libpq-dev openssl ca-certificates \
+    && docker-php-ext-install pdo_sqlite pdo_mysql pdo_pgsql \
     && a2enmod rewrite ssl headers \
     && a2ensite default-ssl \
     && openssl req -x509 -nodes -days 3650 \

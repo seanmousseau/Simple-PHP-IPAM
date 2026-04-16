@@ -110,17 +110,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add' 
                 if ($sel->fetch()) {
                     $err = "Address already exists.";
                 } else {
+                    // #410/#388: bind ip_bin via ipam_bind_binary() (PARAM_LOB).
                     $ins = $db->prepare("INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, status)
                                          VALUES (:sid,:ip,:bin,:hn,:ow,:nt,:st)");
-                    $ins->execute([
-                        ':sid' => $subnetId,
-                        ':ip'  => $norm['ip'],
-                        ':bin' => $norm['bin'],
-                        ':hn'  => $hostname,
-                        ':ow'  => $owner,
-                        ':nt'  => $note,
-                        ':st'  => $status,
-                    ]);
+                    $ins->bindValue(':sid', $subnetId, PDO::PARAM_INT);
+                    $ins->bindValue(':ip',  $norm['ip']);
+                    ipam_bind_binary($ins, ':bin', to_str($norm['bin']));
+                    $ins->bindValue(':hn',  $hostname);
+                    $ins->bindValue(':ow',  $owner);
+                    $ins->bindValue(':nt',  $note);
+                    $ins->bindValue(':st',  $status);
+                    $ins->execute();
                     $aid = (int)$db->lastInsertId();
 
                     history_log_address($db, 'create', $subnetId, $norm['ip'], $aid, null, [
