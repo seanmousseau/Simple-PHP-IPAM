@@ -37,6 +37,10 @@ function ipam_dialect_from_config(array $config): Dialect
             require_once __DIR__ . '/dialects/MysqlDialect.php';
             $dialect = new MysqlDialect();
             break;
+        case 'pgsql':
+            require_once __DIR__ . '/dialects/PgsqlDialect.php';
+            $dialect = new PgsqlDialect();
+            break;
         case 'sqlite':
         case '':
             require_once __DIR__ . '/dialects/SqliteDialect.php';
@@ -96,7 +100,9 @@ function ipam_bind_binary(PDOStatement $stmt, int|string $param, string $bin): v
  * Supported drivers:
  *   - 'sqlite' (default) — uses $config['db_path'] as the file path.
  *   - 'mysql' (experimental, v2.10.0 #382) — uses $config['db_dsn'],
- *     $config['db_user'], $config['db_pass']. Requires MySQL 8.0+.
+ *     $config['db_user'], $config['db_pass']. Requires MySQL 8.0.29+.
+ *   - 'pgsql' (experimental, v2.11.0 #386) — uses $config['db_dsn'],
+ *     $config['db_user'], $config['db_pass']. Requires PostgreSQL 14+.
  *
  * @param array<string, mixed> $config
  */
@@ -171,6 +177,57 @@ function ipam_db(array $config): PDO
                     "MySQL 8.0.29+ is required (server reports '$serverVersion')"
                 );
             }
+            break;
+
+        case 'pgsql':
+            // v2.11.0 #386 experimental Postgres driver. Uses the same
+            // $config['db_dsn'] / $config['db_user'] / $config['db_pass']
+            // keys as the MySQL branch so config.php shape is symmetric.
+            $dsnRaw  = $config['db_dsn']  ?? '';
+            $userRaw = $config['db_user'] ?? '';
+            $passRaw = $config['db_pass'] ?? '';
+            $dsn  = is_string($dsnRaw)  ? $dsnRaw  : '';
+            $user = is_string($userRaw) ? $userRaw : '';
+            $pass = is_string($passRaw) ? $passRaw : '';
+            if ($dsn === '') {
+                throw new RuntimeException('ipam_db: pgsql driver requires $config[\'db_dsn\']');
+            }
+            $pdo = new PDO($dsn, $user, $pass, [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_EMULATE_PREPARES => false,
+            ]);
+            // 14 is the effective minimum. PgsqlDialect::append_only_trigger()
+            // emits `CREATE OR REPLACE TRIGGER`, a syntax feature added in
+            // PG14. Earlier Postgres servers would fail on the first
+            // ensure_audit_log_table() self-heal. Reject at connect time so
+            // failures are clear and immediate.
+            //
+            // PDO::ATTR_SERVER_VERSION on pdo_pgsql returns a bare numeric
+            // string like "14.10" or "17.2" (no "-MariaDB"-style suffix
+            // concerns). version_compare handles these cleanly.
+            $serverVersionRaw = $pdo->getAttribute(PDO::ATTR_SERVER_VERSION);
+            $serverVersion = is_string($serverVersionRaw) ? $serverVersionRaw : '';
+            if ($serverVersion === '' || version_compare($serverVersion, '14.0', '<')) {
+                throw new RuntimeException(
+                    "PostgreSQL 14+ is required (server reports '$serverVersion'). "
+                    . 'For v2.11.0, use Postgres 14+ or stay on the SQLite driver.'
+                );
+            }
+            // Force client_encoding to UTF-8 so binary IP round-trips and
+            // text comparisons are deterministic regardless of the server's
+            // default. Matches the implicit UTF-8 assumption on SQLite and
+            // MySQL (utf8mb4).
+            $pdo->exec("SET client_encoding = 'UTF8'");
+            // pdo_pgsql returns BYTEA columns as PHP stream resources rather
+            // than strings, regardless of how they were bound. Without an
+            // auto-unwrap, every `ip_bin` / `network_bin` SELECT in the
+            // codebase would break on pgsql. Install a custom PDOStatement
+            // subclass that walks each fetched row and stream_get_contents()
+            // any resource values. This keeps the ~80 existing call sites
+            // unchanged. Surfaced by PgsqlSmokeTest during v2.11.0 #387.
+            require_once __DIR__ . '/PgsqlStatement.php';
+            $pdo->setAttribute(PDO::ATTR_STATEMENT_CLASS, [PgsqlStatement::class]);
             break;
 
         default:
@@ -306,6 +363,8 @@ function ipam_db_init(PDO $db): void
         $schemaFile = __DIR__ . '/schema.sql';
         if ($driver === 'mysql') {
             $schemaFile = __DIR__ . '/schema.mysql.sql';
+        } elseif ($driver === 'pgsql') {
+            $schemaFile = __DIR__ . '/schema.pgsql.sql';
         }
         $schema = file_get_contents($schemaFile);
         if ($schema === false) throw new RuntimeException("Cannot read " . basename($schemaFile));

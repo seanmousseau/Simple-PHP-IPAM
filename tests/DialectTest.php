@@ -44,6 +44,13 @@ final class DialectTest extends TestCase
         $this->assertInstanceOf(MysqlDialect::class, ipam_dialect_from_config(['db_driver' => 'mysql']));
     }
 
+    public function testDialectFromConfigSelectsPgsql(): void
+    {
+        require_once dirname(__DIR__) . '/Simple-PHP-IPAM/lib.php';
+        require_once dirname(__DIR__) . '/Simple-PHP-IPAM/dialects/PgsqlDialect.php';
+        $this->assertInstanceOf(PgsqlDialect::class, ipam_dialect_from_config(['db_driver' => 'pgsql']));
+    }
+
     public function testDialectFromConfigRejectsUnknownDriver(): void
     {
         require_once dirname(__DIR__) . '/Simple-PHP-IPAM/lib.php';
