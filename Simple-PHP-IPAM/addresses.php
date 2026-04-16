@@ -319,7 +319,7 @@ if ($selectedSubnetId > 0) {
 
     $p = paginate($total, $page, $pageSize);
 
-    $st = $db->prepare("SELECT a.id, a.ip, a.hostname, a.owner, a.note, a.grp, a.mac, a.expires_at, a.status, a.updated_at,
+    $st = $db->prepare("SELECT a.id, a.ip, a.ip_bin, a.hostname, a.owner, a.note, a.grp, a.mac, a.expires_at, a.status, a.updated_at,
                                a.owner_contact_id, c.name AS owner_contact_name, c.email AS owner_contact_email,
                                a.last_seen_at, a.is_stale
                         FROM addresses a
@@ -333,6 +333,19 @@ if ($selectedSubnetId > 0) {
     $st->execute();
     /** @var list<array<string, mixed>> $addresses */
     $addresses = $st->fetchAll();
+}
+
+// Compute network/broadcast/gateway bins for badge rendering
+$networkBin = null;
+$broadcastBin = null;
+$gatewayBin = null;
+if ($selectedSubnet) {
+    $parsed = parse_cidr(to_str($selectedSubnet['cidr']));
+    if ($parsed !== null) {
+        $networkBin = $parsed['net_bin'];
+        $broadcastBin = ipam_compute_broadcast_bin($parsed['net_bin'], $parsed['prefix']);
+        $gatewayBin = ipam_compute_gateway_bin($parsed['net_bin'], $parsed['prefix']);
+    }
 }
 
 // Next available IP (IPv4 only, for subnets with room)
@@ -511,8 +524,14 @@ page_header('Addresses', ['page' => 'addresses']);
           $rowClasses = array_filter([$isHighlighted ? 'highlight-row' : '', $isExpired ? 'expired-row' : '']);
       ?>
         <tr id="addr-<?= $aid ?>"<?= $rowClasses ? ' class="' . e(implode(' ', $rowClasses)) . '"' : '' ?>>
-          <td><?= e(to_str($a['ip'])) ?>
-            <?php if (!empty($a['is_stale'])): ?><span class="badge" style="background:var(--danger);color:#fff;font-size:.7rem" title="Host missed recent scans">Stale</span><?php endif ?>
+          <td><?= e(to_str($a['ip'])) ?><?php
+            $ipBin = is_string($a['ip_bin'] ?? null) ? $a['ip_bin'] : '';
+            if ($ipBin !== '') {
+                if ($networkBin !== null && hash_equals($networkBin, $ipBin)) echo ' <span class="badge badge-network" title="Network address">Net</span>';
+                if ($broadcastBin !== null && hash_equals($broadcastBin, $ipBin)) echo ' <span class="badge badge-broadcast" title="Broadcast address">Bcast</span>';
+                if ($gatewayBin !== null && hash_equals($gatewayBin, $ipBin)) echo ' <span class="badge badge-gateway" title="Gateway address">GW</span>';
+            }
+            if (!empty($a['is_stale'])): ?> <span class="badge" style="background:var(--danger);color:#fff;font-size:.7rem" title="Host missed recent scans">Stale</span><?php endif ?>
           </td>
           <td<?= $isWrite ? ' data-editable="hostname" data-addr-id="' . $aid . '"' : '' ?>><?= e(to_str($a['hostname'])) ?></td>
           <td<?= $isWrite ? ' data-editable="owner" data-addr-id="' . $aid . '"' : '' ?>><?php
