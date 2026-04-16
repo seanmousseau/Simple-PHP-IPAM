@@ -8,6 +8,8 @@ Simple-PHP-IPAM/data/backups/
 
 # Composer / dev tools
 vendor/
+# Allow vendored client-side assets (Open Props, etc.)
+!Simple-PHP-IPAM/assets/vendor/
 
 # PHPStan cache
 .phpstan/
