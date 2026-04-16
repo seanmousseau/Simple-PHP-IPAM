@@ -239,7 +239,7 @@ ipam_skeleton_flush();
         <tbody>
         <?php foreach ($items as $ip): ?>
           <tr>
-            <td><b><?= e($ip) ?></b></td>
+            <td class="ip-cell"><b><?= e($ip) ?></b></td>
             <td>
               <form method="post" action="unassigned.php?<?= e(build_query_unassigned()) ?>" class="row gap-6">
                 <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
