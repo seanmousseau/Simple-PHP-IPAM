@@ -35,7 +35,7 @@ $st = $db->prepare("
     LEFT JOIN sites si ON si.id = s.site_id
     LEFT JOIN addresses a ON a.subnet_id = s.id
     $whereSql
-    GROUP BY s.id
+    GROUP BY s.id, si.name
     ORDER BY s.ip_version ASC, s.network_bin ASC
 ");
 $st->execute($params);

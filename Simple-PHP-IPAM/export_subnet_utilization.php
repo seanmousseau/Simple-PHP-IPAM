@@ -19,7 +19,7 @@ $st = $db->query("
     FROM subnets s
     LEFT JOIN sites si ON si.id = s.site_id
     LEFT JOIN addresses a ON a.subnet_id = s.id
-    GROUP BY s.id
+    GROUP BY s.id, si.name
     ORDER BY s.ip_version, s.network_bin
 ");
 if ($st === false) exit;

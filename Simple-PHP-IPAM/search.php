@@ -163,7 +163,7 @@ if ($q !== '') {
         LEFT JOIN sites si ON si.id = s.site_id
         LEFT JOIN addresses a ON a.subnet_id = s.id
         $subWhereSql
-        GROUP BY s.id
+        GROUP BY s.id, si.name
         ORDER BY s.ip_version ASC, s.cidr ASC
         LIMIT 50
     ");
