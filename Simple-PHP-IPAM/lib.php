@@ -4238,11 +4238,11 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=2.10.0'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=2.11.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=2.10.0'></script>";
+    echo "<script defer src='assets/app.js?v=2.11.0'></script>";
     $pageAttr = isset($opts['page']) && $opts['page'] !== ''
         ? " data-page='" . e(to_str($opts['page'])) . "'"
         : '';
@@ -4358,23 +4358,28 @@ function page_header(string $title, array $opts = []): void
            . "</div>";
     }
 
-    // MySQL experimental driver banner — admin only, dismissible (v2.10.0 #385).
-    // Appears whenever db_driver=mysql is active so operators always know the
-    // driver is in beta. The banner key is suffixed with IPAM_VERSION so the
-    // localStorage dismiss state is per app version: upgrading the app
-    // changes the key and the banner re-surfaces until dismissed on the
-    // new version. Dismiss state lives only in the browser; the server
-    // doesn't track it (client-side, stateless, survives the request cycle
-    // without a session write).
-    if ($role === 'admin' && ipam_dialect()->driver_name() === 'mysql') {
-        require_once __DIR__ . '/version.php';
-        $bannerKey = 'mysql-beta-' . IPAM_VERSION;
-        echo "<div class='admin-notice admin-notice--warning' role='alert' data-banner='" . e($bannerKey) . "'>"
-           . "⚠ <strong>MySQL driver (experimental)</strong> — MySQL support is beta in v" . e(IPAM_VERSION) . ". "
-           . "Report issues at <a href='https://github.com/seanmousseau/Simple-PHP-IPAM/issues' target='_blank' rel='noopener'>the GitHub tracker</a>. "
-           . "See <a href='https://github.com/seanmousseau/Simple-PHP-IPAM/blob/main/docs/install.md#mysql-experimental' target='_blank' rel='noopener'>docs/install.md</a> for current limitations. "
-           . "<button type='button' class='admin-notice-dismiss' data-dismiss-banner='" . e($bannerKey) . "' aria-label='Dismiss'>✕</button>"
-           . "</div>";
+    // MySQL / Postgres experimental driver banner — admin only, dismissible
+    // (v2.10.0 #385 for MySQL, v2.11.0 #389 extended for Postgres). Appears
+    // whenever a non-SQLite driver is active so operators always know the
+    // driver is in beta. The banner key is suffixed with the engine name
+    // and IPAM_VERSION so dismiss state is per engine + per app version:
+    // upgrading the app OR switching engines changes the key and the banner
+    // re-surfaces. Dismiss state lives only in the browser; the server
+    // doesn't track it (client-side, stateless).
+    if ($role === 'admin') {
+        $activeDriver = ipam_dialect()->driver_name();
+        if ($activeDriver === 'mysql' || $activeDriver === 'pgsql') {
+            require_once __DIR__ . '/version.php';
+            $engineLabel = $activeDriver === 'mysql' ? 'MySQL' : 'PostgreSQL';
+            $docsAnchor  = $activeDriver === 'mysql' ? 'mysql-experimental' : 'postgresql-experimental';
+            $bannerKey   = $activeDriver . '-beta-' . IPAM_VERSION;
+            echo "<div class='admin-notice admin-notice--warning' role='alert' data-banner='" . e($bannerKey) . "'>"
+               . "⚠ <strong>" . e($engineLabel) . " driver (experimental)</strong> — " . e($engineLabel) . " support is beta in v" . e(IPAM_VERSION) . ". "
+               . "Report issues at <a href='https://github.com/seanmousseau/Simple-PHP-IPAM/issues' target='_blank' rel='noopener'>the GitHub tracker</a>. "
+               . "See <a href='https://github.com/seanmousseau/Simple-PHP-IPAM/blob/main/docs/install.md#" . e($docsAnchor) . "' target='_blank' rel='noopener'>docs/install.md</a> for current limitations. "
+               . "<button type='button' class='admin-notice-dismiss' data-dismiss-banner='" . e($bannerKey) . "' aria-label='Dismiss'>✕</button>"
+               . "</div>";
+        }
     }
 
     // Default bootstrap admin password warning (admin only)
