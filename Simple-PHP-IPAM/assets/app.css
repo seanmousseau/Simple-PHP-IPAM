@@ -1246,3 +1246,13 @@ body.pw-toggle-hidden .pw-wrap .pw-input{padding-right:36px}
 
 /* --- #317: keyboard shortcut hint badge --- */
 .kbd-hint{display:inline-block;margin-left:0.4em;padding:0 0.35em;border:1px solid var(--border);border-radius:var(--radius-xs);font:0.78em/1.4 ui-monospace,Menlo,monospace;color:var(--muted);background:transparent;vertical-align:middle}
+
+/* --- prefers-reduced-motion: suppress all animations/transitions --- */
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{
+    animation-duration:0.01ms !important;
+    animation-iteration-count:1 !important;
+    transition-duration:0.01ms !important;
+    scroll-behavior:auto !important;
+  }
+}

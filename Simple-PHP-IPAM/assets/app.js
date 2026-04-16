@@ -864,7 +864,7 @@
         activeIdx = Math.max(-1, Math.min(idx, items.length - 1));
         if (activeIdx >= 0 && items[activeIdx]) {
           items[activeIdx].classList.add("active");
-          items[activeIdx].scrollIntoView({block: "nearest"});
+          items[activeIdx].scrollIntoView({block: "nearest", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"});
         }
       }
 
