@@ -619,6 +619,7 @@ button:disabled{opacity:.6;cursor:not-allowed}
 }
 .site-group-toggle[aria-expanded="false"] .site-group-caret{transform:rotate(-90deg)}
 .site-group-toggle[aria-expanded="false"]+.site-group-body{display:none}
+.site-group-body{margin-left:var(--space-8)}
 
 summary{
   cursor:pointer;
