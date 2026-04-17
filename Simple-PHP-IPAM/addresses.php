@@ -601,7 +601,7 @@ ipam_skeleton_flush();
             $ownContactName  = to_str($a['owner_contact_name'] ?? '');
             $ownContactEmail = to_str($a['owner_contact_email'] ?? '');
             if ($ownContactId > 0 && $ownContactName !== '') {
-                echo '<a href="contacts.php">' . e($ownContactName) . '</a>';
+                echo '<a href="contacts.php" class="contact-card-trigger" data-contact-id="' . $ownContactId . '">' . e($ownContactName) . '</a>';
                 if ($ownContactEmail !== '') echo ' <a href="mailto:' . e($ownContactEmail) . '" class="muted" title="' . e($ownContactEmail) . '">✉</a>';
             } else {
                 echo e(to_str($a['owner']));

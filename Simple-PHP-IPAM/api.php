@@ -70,12 +70,12 @@ if (preg_match('/^Bearer\s+(\S+)$/i', $authHeader, $m)) {
     header('X-Deprecation-Reason: API key via query parameter is deprecated. Use Authorization: Bearer header.');
 }
 
-// Session-based auth for contacts typeahead (no API key required from browser sessions)
+// Session-based auth for contacts typeahead + popover (no API key required from browser sessions)
 $sessionApiKey = null;
 if ($rawKey === '') {
     $resourcePeek = strtolower(trim(to_str($_GET['resource'] ?? '')));
     $methodPeek   = strtoupper(to_str($_SERVER['REQUEST_METHOD'] ?? 'GET'));
-    if ($resourcePeek === 'contacts' && $methodPeek === 'GET' && isset($_GET['q'])) {
+    if ($resourcePeek === 'contacts' && $methodPeek === 'GET' && (isset($_GET['q']) || isset($_GET['id']))) {
         session_name(to_str($config['session_name']));
         session_set_cookie_params(['lifetime' => 0, 'path' => '/', 'domain' => '', 'secure' => true, 'httponly' => true, 'samesite' => 'Strict']);
         ini_set('session.use_strict_mode', '1');

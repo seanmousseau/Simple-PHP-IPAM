@@ -1086,6 +1086,28 @@ td[data-editable].cell-saving{opacity:.5;}
   opacity:1;
 }
 
+/* ── Contact card popover (#561) ─────────────────────────────────────────── */
+#contact-card{
+  display:none;
+  position:fixed;
+  z-index:var(--z-dropdown);
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  box-shadow:0 4px 16px rgba(0,0,0,.18);
+  padding:var(--space-6) var(--space-7);
+  max-width:320px;
+  min-width:200px;
+  font-size:var(--font-size-base);
+  line-height:1.5;
+}
+#contact-card.visible{display:block}
+.cc-name{font-weight:700;font-size:var(--font-size-xl);margin-bottom:var(--space-2)}
+.cc-row{color:var(--muted);margin-top:var(--space-1);word-break:break-word}
+.cc-row a{color:var(--link)}
+.cc-label{font-weight:600;color:var(--fg);margin-right:var(--space-2)}
+.contact-card-trigger{cursor:pointer}
+
 /* ---- Footer logo ---- */
 .footer-logo{vertical-align:middle;opacity:.7;}
 
