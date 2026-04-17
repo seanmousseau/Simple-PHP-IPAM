@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.0.1] - 2026-04-17
+
+### Fixed
+- **Config stub migration writes `__DIR__`-relative db_path** — the v3.0.0 migration resolved `__DIR__ . '/data/ipam.sqlite'` to an absolute path at migration time. On Docker or container setups where the host and container filesystem paths differ, this broke the app after upgrade. The migration now detects paths relative to config.php's directory and preserves the `__DIR__` prefix.
+
 ## [3.0.0] - 2026-04-17
 
 **Breaking release.** Multi-engine database support promoted to stable, `config.php` reduced to a bootstrap stub, deprecated API auth method removed.
@@ -817,6 +822,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.0.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.0.0...v3.0.1
 [3.0.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.14.0...v3.0.0
 [2.14.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.13.0...v2.14.0
 [2.13.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.12.0...v2.13.0
