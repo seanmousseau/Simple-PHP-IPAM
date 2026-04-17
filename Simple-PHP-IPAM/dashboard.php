@@ -36,69 +36,19 @@ $verCounts = [4 => 0, 6 => 0];
 foreach ($st->fetchAll() as $r) $verCounts[to_int($r['ip_version'])] = to_int($r['c']);
 
 /* --- Top IPv4 subnets by utilization % (/8–/32 only) --- */
-// Exclude network addresses from the count in SQL; broadcast exclusion
-// requires PHP computation and a second pass (#566).
-$st = $db->prepare("
-    SELECT s.id, s.cidr, s.prefix, s.description, s.network_bin,
-           COUNT(a.id) AS used_count
-    FROM subnets s
-    LEFT JOIN addresses a ON a.subnet_id = s.id
-         AND a.status IN ('used','reserved')
-         AND (s.prefix > 30 OR a.ip_bin != s.network_bin)
-    WHERE s.ip_version = 4 AND s.prefix BETWEEN 8 AND 32
-    GROUP BY s.id
-    HAVING COUNT(a.id) > 0
-    ORDER BY COUNT(a.id) DESC
-    LIMIT 50
-");
+// Reuse the shared utilization function that excludes infrastructure IPs (#566)
+$utilData = ipv4_unassigned_summary($db);
+$st = $db->prepare("SELECT id, cidr, prefix, description FROM subnets WHERE ip_version = 4 AND prefix BETWEEN 8 AND 32");
 $st->execute();
 /** @var list<array<string, mixed>> $topSubnets */
-$topSubnets = $st->fetchAll();
-
-// Subtract broadcast address from count for /8–/30 subnets.
-// Compute broadcast bins in PHP, batch-query which ones have a matching address row.
-/** @var array<int, string> $bcastLookup */
-$bcastLookup = [];
-foreach ($topSubnets as $s) {
-    $prefix = to_int($s['prefix']);
-    if ($prefix <= 30) {
-        $bcast = ipam_compute_broadcast_bin(to_str($s['network_bin']), $prefix);
-        if ($bcast !== null) $bcastLookup[to_int($s['id'])] = $bcast;
-    }
+$topSubnets = [];
+foreach ($st->fetchAll() as $row) {
+    $sid = to_int($row['id']);
+    $u   = $utilData[$sid] ?? null;
+    if ($u === null || $u['assigned_assignable'] <= 0) continue;
+    $row['used_count'] = $u['assigned_assignable'];
+    $topSubnets[] = $row;
 }
-/** @var array<int, int> $bcastExclBySubnet */
-$bcastExclBySubnet = [];
-if ($bcastLookup !== []) {
-    $binType = ipam_dialect()->binary_type(4);
-    $db->exec("CREATE TEMPORARY TABLE IF NOT EXISTS _dash_bcast (subnet_id INTEGER NOT NULL, bcast_bin $binType NOT NULL)");
-    $db->exec("DELETE FROM _dash_bcast");
-    $ins = $db->prepare("INSERT INTO _dash_bcast (subnet_id, bcast_bin) VALUES (:s, :b)");
-    foreach ($bcastLookup as $sid => $bcast) {
-        $ins->bindValue(':s', $sid, PDO::PARAM_INT);
-        ipam_bind_binary($ins, ':b', $bcast);
-        $ins->execute();
-    }
-    $bcastExcl = $db->query(
-        "SELECT a.subnet_id, COUNT(*) AS c
-         FROM addresses a
-         JOIN _dash_bcast t ON t.subnet_id = a.subnet_id AND t.bcast_bin = a.ip_bin
-         WHERE a.status IN ('used','reserved')
-         GROUP BY a.subnet_id"
-    );
-    if ($bcastExcl !== false) {
-        foreach ($bcastExcl->fetchAll() as $r) {
-            $bcastExclBySubnet[to_int($r['subnet_id'])] = to_int($r['c']);
-        }
-    }
-}
-
-// Apply broadcast exclusion and compute final assigned count
-foreach ($topSubnets as &$s) {
-    $sid = to_int($s['id']);
-    $excl = $bcastExclBySubnet[$sid] ?? 0;
-    $s['used_count'] = max(0, to_int($s['used_count']) - $excl);
-}
-unset($s);
 
 // Sort by utilization percentage (highest first)
 usort($topSubnets, function (array $a, array $b): int {
