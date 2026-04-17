@@ -2,18 +2,18 @@
 
 ## Where configuration lives
 
-Starting in **v2.6.0**, configuration lives in two places:
+Configuration lives in two places:
 
-1. **`config.php`** — bootstrap keys only. These are values the app needs before it can open the database, and they will always live on disk: `db_path`, `session_name`, `proxy_trust`, and the HTTPS / base URL settings. Edit by hand on the server.
+1. **`config.php`** — bootstrap keys only. These are values the app needs before it can open the database: `db_driver`, `db_dsn`, `db_user`, `db_pass`, `session_name`, `force_https`. See `config.php.example` for the full template. Edit by hand on the server.
 2. **Database (`settings` table)** — everything else. Edited through the admin UI under **⚙ Admin → Settings**. Reads are cached per-request.
 
-When the app reads a setting it checks each source in order and returns the first match: `settings` table row → `config.php` value at the same key (or nested path) → default from `ipam_setting_definitions()`. The admin page shows a source badge next to every setting — 🟢 Database, 🟡 config.php, or ⚪ Default — so you can see where the effective value comes from.
+When the app reads a setting it checks: `settings` table row → default from `ipam_setting_definitions()`. The admin page shows a source badge next to every setting — 🟢 Database or ⚪ Default.
 
 ### Transition from `config.php` (v2.6 → v2.7 → v3.0)
 
 - **v2.6.0** — groundwork release. Introduces the `settings` table, the `ipam_setting()` helper, the registry, and the `settings.php` admin UI. The migration seeds every registered key into the table on first boot using the current `config.php` value (or the registry default). Wherever `ipam_setting()` is called, the database row takes precedence over `config.php`. The runtime subsystems (OIDC, alerting, branding, login protection, update checker) are not yet rewired to call `ipam_setting()`, though, so they keep reading straight from `$config` at request time — saving a value in the admin UI lands it in the `settings` table correctly, but most subsystems still behave as if you had edited `config.php`.
-- **v2.7.0** — **(current)** every subsystem (OIDC, alerting, branding, login protection, update checker, reCAPTCHA Enterprise, security) routes through `ipam_setting()`, so edits in the admin UI take effect on the next request without a `config.php` change or a restart. `config.php` continues to work as a fallback. Admin UI now shows a deprecation banner listing any registered key still being served from `config.php` with a one-click **Import to database** action; the dashboard shows a matching warning card for admins.
-- **v3.0.0** — the `config.php` fallback is removed. Only bootstrap keys are still read from the file. An upgrade-time migration copies any stragglers into the database.
+- **v2.7.0** — every subsystem routes through `ipam_setting()`, so edits in the admin UI take effect on the next request. `config.php` continued to work as a fallback through v2.x.
+- **v3.0.0** — **(current)** the `config.php` fallback is removed. Only bootstrap keys (`db_driver`, `db_dsn`, `db_user`, `db_pass`, `session_name`, `force_https`) are read from the file. An upgrade-time migration copies any customised values into the database and rewrites `config.php` to stub format. See [docs/upgrading.md](upgrading.md#v300) for the full upgrade guide.
 
 ### Settings reference (database-backed)
 
@@ -26,8 +26,8 @@ The keys below are seeded into the `settings` table by the v2.6.0 migration and 
 | `security.session_idle_seconds` | int | `1800` | Session idle timeout before auto-logout. |
 | `security.login_max_attempts` | int | `5` | Failed logins per window before IP lockout. |
 | `security.login_lockout_seconds` | int | `900` | Lockout window length. |
-| *(config.php only)* `account_lockout_max_attempts` | int | `10` | Failed logins per username before account lockout. |
-| *(config.php only)* `account_lockout_seconds` | int | `900` | Account lockout window length. |
+| `security.account_lockout_max_attempts` | int | `10` | Failed logins per username before account lockout. |
+| `security.account_lockout_seconds` | int | `900` | Account lockout window length. |
 | *(config.php only)* `recovery_mode` | bool | `false` | Emergency login recovery mode (see below). |
 | `alert.recipient_user_ids` | json | `[]` | (v2.8.0+) Active user IDs that receive utilization alerts. Picked from a multi-select on **Settings → Alerting**; only users with a non-empty email are eligible. Inactive users / cleared emails drop out automatically at send time. |
 | `alert.email` | string | *(empty)* | **Deprecated in v2.8.0** — replaced by `alert.recipient_user_ids`. The 2.8.0 migration auto-maps a matching active user; unmappable values produce a `settings.alert_email_unmigrated` audit row. Hidden from the UI. Removal in v3.0.0. |
