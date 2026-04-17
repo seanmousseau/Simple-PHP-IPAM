@@ -8,19 +8,15 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v2.13.0
+## What's new in v2.14.0
 
-**UI/UX accessibility and design token foundation.** Non-visual rework laying the groundwork for the v3.8.0 visual overhaul. Theme: *"Fix what's broken, don't touch the vibe."*
+**UX polish, performance, and bug fixes.**
 
-- **Design token scales (#506).** Five CSS custom property scales (spacing, z-index, border-radius, font-size, focus-ring) with [Open Props](https://open-props.style) (~29KB, MIT) vendored as the primitive source. 210 hardcoded CSS literals replaced — zero visual delta.
-- **ARIA landmarks + skip-to-content (#504).** Proper `<header>`, `<nav>`, `<main>`, `<footer>` landmarks in every page. `:focus-visible` rings on all interactive elements. Skip-to-content link for keyboard users.
-- **Reduced-motion respect (#505).** Global `@media (prefers-reduced-motion: reduce)` block suppresses all CSS animations and transitions.
-- **Form loading states (#507).** Every POST form disables its submit button and shows a CSS spinner on submit. Multi-button forms (e.g. ARP import preview/apply) preserved via hidden input injection.
-- **Skeleton loaders (#508).** Shimmer placeholders on subnets, addresses, and unassigned pages during TTFB wait.
-- **Monospace IP columns (#509).** Self-hosted Fira Code woff2 subset (~6.7KB) for IP/CIDR/MAC alignment across 6 pages.
-- **Contrast fix (#510).** `--muted` darkened to 6.2:1 ratio (WCAG AA compliant).
-- **Gateway/broadcast badges (#546).** Visual identification of network, broadcast, and gateway addresses on the addresses page.
-- **Utilization fix (#547).** `status='free'` addresses no longer inflate subnet utilization percentages.
+- **Contact popover (#561).** Click a linked contact name in the address Owner column to see email, phone, org, and note in a floating card — no page navigation required.
+- **Contact browse picker (#562).** "Browse" button next to the Owner field opens a searchable overlay of all contacts for easy selection.
+- **Expandable audit details (#564).** Click truncated audit log entries to expand/collapse the full detail text inline.
+- **Subnets page performance (#565, #567).** Tree structure renders immediately with skeleton placeholders; counts and utilization populate asynchronously. Edit forms moved to a shared drawer, cutting page size from 6.5MB to ~780KB on 500-subnet deployments.
+- **Utilization fix (#566).** Dashboard and utilization alerts no longer count infrastructure IPs (network, broadcast, gateway) against assignable capacity — fixes impossible >100% fill on small subnets.
 
 See [CHANGELOG.md](CHANGELOG.md) for full release history.
 

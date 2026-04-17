@@ -503,8 +503,11 @@ ipam_skeleton_flush();
       <label>IP<br><input name="ip" value="<?= e($prefillIp) ?>" placeholder="<?= ($selectedSubnet && to_int($selectedSubnet['ip_version'])===6) ? '2001:db8::10' : '10.0.0.10' ?>" required data-validate="ip"></label>
       <label>Hostname<br><input name="hostname" maxlength="253"></label>
       <label>Owner<br>
-        <input name="owner" maxlength="255" autocomplete="off" data-contact-typeahead>
-        <input type="hidden" name="owner_contact_id" value="0">
+        <span class="contact-typeahead-wrap">
+          <input name="owner" maxlength="255" autocomplete="off" data-contact-typeahead>
+          <input type="hidden" name="owner_contact_id" value="0">
+          <button type="button" class="contact-browse-btn" title="Browse contacts">Browse</button>
+        </span>
       </label>
       <label>Group<br><input name="grp" maxlength="100" placeholder="e.g. web-tier" class="mw-160"></label>
       <label>MAC<br><input name="mac" maxlength="64" placeholder="e.g. aa:bb:cc:dd:ee:ff" class="mw-160"></label>
@@ -601,7 +604,7 @@ ipam_skeleton_flush();
             $ownContactName  = to_str($a['owner_contact_name'] ?? '');
             $ownContactEmail = to_str($a['owner_contact_email'] ?? '');
             if ($ownContactId > 0 && $ownContactName !== '') {
-                echo '<a href="contacts.php">' . e($ownContactName) . '</a>';
+                echo '<a href="contacts.php" class="contact-card-trigger" data-contact-id="' . $ownContactId . '">' . e($ownContactName) . '</a>';
                 if ($ownContactEmail !== '') echo ' <a href="mailto:' . e($ownContactEmail) . '" class="muted" title="' . e($ownContactEmail) . '">✉</a>';
             } else {
                 echo e(to_str($a['owner']));

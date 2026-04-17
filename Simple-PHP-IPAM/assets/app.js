@@ -755,12 +755,14 @@
       });
       document.addEventListener("click", function() { drop.classList.remove("visible"); gear.setAttribute("aria-expanded","false"); });
 
-      // Insert gear before table or into a toolbar if present
+      // Insert gear into a toolbar if present, or before the table-wrap container
       var toolbar = table.closest(".card") && table.closest(".card").querySelector(".toolbar");
       if (toolbar) {
         toolbar.appendChild(wrapper);
       } else {
-        table.parentNode.insertBefore(wrapper, table);
+        var tableWrap = table.closest(".table-wrap");
+        var insertTarget = tableWrap || table;
+        insertTarget.parentNode.insertBefore(wrapper, insertTarget);
       }
 
       // Apply persisted hidden columns
@@ -797,6 +799,7 @@
       cell.title = "Click to edit";
       cell.classList.add("th-sortable");
       cell.addEventListener("click", function(e) {
+        if (e.target.closest(".contact-card-trigger")) return;
         if (cell.querySelector("input")) return; // already editing
         var field   = cell.dataset.editable;
         var addrId  = cell.dataset.addrId;
@@ -1037,6 +1040,429 @@
         el.addEventListener("mouseleave", hideTip);
         el.addEventListener("focusout",   hideTip);
       });
+    }());
+
+    /* ---- Audit log: expand truncated details (#564) ---- */
+    document.addEventListener("click", function(e) {
+      var el = e.target.closest(".audit-details");
+      if (!el) return;
+      el.classList.toggle("audit-details--expanded");
+    });
+    document.addEventListener("keydown", function(e) {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      var el = e.target.closest(".audit-details");
+      if (!el) return;
+      e.preventDefault();
+      el.classList.toggle("audit-details--expanded");
+    });
+
+    /* ---- Subnet edit drawer (#567) ---- */
+    (function() {
+      var editDrawer = document.getElementById("subnet-edit-drawer");
+      if (!editDrawer || !formDrawer) return;
+
+      var siteWrap = document.getElementById("subnet-edit-site-wrap");
+      var siteLocked = document.getElementById("subnet-edit-site-locked");
+      var siteSelect = document.getElementById("subnet-edit-site");
+      var siteHidden = document.getElementById("subnet-edit-site-hidden");
+      var siteBadge = document.getElementById("subnet-edit-site-badge");
+
+      document.addEventListener("click", function(e) {
+        var btn = e.target.closest(".subnet-edit-btn");
+        if (!btn) return;
+        var d = btn.dataset;
+
+        document.getElementById("subnet-edit-id").value = d.sid;
+        document.getElementById("subnet-delete-id").value = d.sid;
+        document.getElementById("subnet-edit-cidr").value = d.cidr;
+        document.getElementById("subnet-edit-description").value = d.description;
+        document.getElementById("subnet-edit-notes").value = d.notes;
+        var vlanSel = document.getElementById("subnet-edit-vlan");
+        if (vlanSel) vlanSel.value = d.vlanFk;
+        var vrfSel = document.getElementById("subnet-edit-vrf");
+        if (vrfSel) vrfSel.value = d.vrfId;
+
+        if (parseInt(d.depth, 10) > 0 && siteLocked && siteWrap) {
+          siteWrap.hidden = true;
+          if (siteSelect) siteSelect.disabled = true;
+          siteLocked.hidden = false;
+          if (siteHidden) { siteHidden.value = d.siteId; siteHidden.disabled = false; }
+          if (siteBadge) {
+            var opt = siteSelect && siteSelect.querySelector("option[value='" + d.siteId + "']");
+            siteBadge.textContent = (opt ? opt.textContent : "(none)") + " \u2191";
+            siteBadge.title = "Inherited from parent subnet";
+          }
+        } else if (siteWrap && siteLocked) {
+          siteWrap.hidden = false;
+          if (siteSelect) { siteSelect.disabled = false; siteSelect.value = d.siteId; }
+          siteLocked.hidden = true;
+          if (siteHidden) siteHidden.disabled = true;
+        }
+
+        editDrawer.hidden = false;
+        var titleEl = formDrawer.querySelector(".drawer-title");
+        if (titleEl) titleEl.textContent = "Edit " + d.cidr;
+        var body = document.getElementById("form-drawer-body");
+        if (body) {
+          while (body.firstChild) body.removeChild(body.firstChild);
+          body.appendChild(editDrawer);
+        }
+        formDrawer.classList.add("drawer--open");
+        var overlay = document.querySelector(".form-drawer-overlay");
+        if (overlay) overlay.classList.add("visible");
+      });
+    }());
+
+    /* ---- Subnet stats async load (#565) ---- */
+    (function() {
+      var placeholders = document.querySelectorAll("[data-subnet-counts]");
+      if (!placeholders.length) return;
+      fetch("api.php?resource=subnet_stats", {credentials: "same-origin"})
+        .then(function(r) { return r.json(); })
+        .then(function(resp) {
+          var data = resp.data || resp;
+          document.querySelectorAll("[data-subnet-counts]").forEach(function(el) {
+            var id = el.dataset.subnetCounts;
+            var d = data.direct[id] || {used:0,reserved:0,free:0,total:0};
+            var a = data.agg[id] || d;
+            var hasChildren = el.dataset.hasChildren === "1";
+            el.textContent = "";
+            el.classList.remove("subnet-stats-placeholder");
+
+            function mkSpan(cls, text) {
+              var s = document.createElement("span");
+              s.className = cls;
+              s.textContent = text;
+              return s;
+            }
+            el.appendChild(mkSpan("status-used", d.used + " used"));
+            el.appendChild(document.createTextNode(" \u00b7 "));
+            el.appendChild(mkSpan("status-reserved", d.reserved + " reserved"));
+            el.appendChild(document.createTextNode(" \u00b7 "));
+            el.appendChild(mkSpan("status-free", d.free + " free"));
+            if (hasChildren && a.total !== d.total) {
+              el.appendChild(document.createTextNode(" "));
+              el.appendChild(mkSpan("muted", "(subtree: " + a.used + "u / " + a.reserved + "r / " + a.free + "f)"));
+            }
+          });
+
+          document.querySelectorAll("[data-subnet-util]").forEach(function(el) {
+            var id = el.dataset.subnetUtil;
+            var hasChildren = el.dataset.hasChildren === "1";
+            var u = hasChildren ? (data.utilAgg[id] || null) : (data.util[id] || null);
+            el.textContent = "";
+            el.classList.remove("subnet-stats-placeholder");
+            if (!u || u.assignable_total <= 0) return;
+            var pct = Math.round(u.assigned_assignable / u.assignable_total * 100);
+            var warnThresh = 80;
+            var critThresh = 95;
+            var barClass = pct >= critThresh ? "util-bar-fill--crit" : (pct >= warnThresh ? "util-bar-fill--warn" : "");
+            var pctClass = pct >= critThresh ? "danger" : (pct >= warnThresh ? "warning" : "");
+
+            var info = document.createElement("span");
+            info.className = "muted";
+            info.textContent = "Assignable: " + u.assignable_total + " | Assigned: " + u.assigned_assignable + " | Unassigned: ";
+            var bold = document.createElement("b");
+            bold.textContent = String(u.unassigned_assignable);
+            info.appendChild(bold);
+            el.appendChild(info);
+
+            if (hasChildren) {
+              el.appendChild(document.createTextNode(" "));
+              var note = document.createElement("span");
+              note.className = "muted";
+              note.textContent = "(incl. subnets)";
+              el.appendChild(note);
+            }
+
+            el.appendChild(document.createTextNode(" "));
+            var bar = document.createElement("span");
+            bar.className = "util-bar";
+            var fill = document.createElement("span");
+            fill.className = "util-bar-fill " + barClass;
+            fill.dataset.pct = String(pct);
+            fill.style.width = Math.min(pct, 100) + "%";
+            bar.appendChild(fill);
+            el.appendChild(bar);
+
+            el.appendChild(document.createTextNode(" "));
+            var pctEl = document.createElement("span");
+            if (pctClass) pctEl.className = pctClass;
+            pctEl.textContent = pct + "%";
+            el.appendChild(pctEl);
+          });
+
+          // Also populate map view util bars
+          document.querySelectorAll("[data-map-util]").forEach(function(el) {
+            var id = el.dataset.mapUtil;
+            var u = data.utilAgg[id] || data.util[id] || null;
+            var pct = 0;
+            if (u && u.assignable_total > 0) {
+              pct = Math.round(u.assigned_assignable / u.assignable_total * 100);
+            } else {
+              var d2 = data.agg[id] || {used:0,reserved:0,total:0};
+              pct = d2.total > 0 ? Math.round((d2.used + d2.reserved) / Math.max(1, d2.total) * 100) : 0;
+            }
+            var cls = pct >= 90 ? "util-bar-fill--crit" : (pct >= 75 ? "util-bar-fill--warn" : "");
+            var fill2 = el.querySelector(".util-bar-fill");
+            if (fill2) {
+              fill2.className = "util-bar-fill " + cls;
+              fill2.dataset.pct = String(pct);
+              fill2.style.width = pct + "%";
+            }
+            var pctSpan = el.querySelector(".map-pct");
+            if (pctSpan) pctSpan.textContent = pct + "%";
+          });
+        })
+        .catch(function(err) {
+          document.querySelectorAll(".subnet-stats-placeholder").forEach(function(el) {
+            el.textContent = "Error loading stats";
+            el.classList.remove("subnet-stats-placeholder");
+          });
+        });
+    }());
+
+    /* ---- Contact browse overlay (#562) ---- */
+    (function() {
+      var overlay = null;
+      var list = null;
+      var input = null;
+      var targetOwnerInput = null;
+      var targetContactIdInput = null;
+      var allContacts = null;
+
+      function ensureOverlay() {
+        if (overlay) return;
+        overlay = document.createElement("div");
+        overlay.id = "contact-browse-overlay";
+
+        var box = document.createElement("div");
+        box.className = "cb-box";
+
+        var close = document.createElement("button");
+        close.className = "cb-close";
+        close.textContent = "\u00d7";
+        close.title = "Close";
+        close.addEventListener("click", hideOverlay);
+        box.appendChild(close);
+
+        input = document.createElement("input");
+        input.id = "contact-browse-input";
+        input.type = "text";
+        input.placeholder = "Filter contacts\u2026";
+        input.autocomplete = "off";
+        input.addEventListener("input", filterList);
+        box.appendChild(input);
+
+        list = document.createElement("ul");
+        list.id = "contact-browse-list";
+        box.appendChild(list);
+
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+
+        overlay.addEventListener("click", function(e) {
+          if (e.target === overlay) hideOverlay();
+        });
+      }
+
+      function hideOverlay() {
+        if (overlay) overlay.classList.remove("visible");
+      }
+
+      function filterList() {
+        if (!allContacts) return;
+        var q = input.value.trim().toLowerCase();
+        while (list.firstChild) list.removeChild(list.firstChild);
+        var filtered = allContacts.filter(function(c) {
+          if (!q) return true;
+          return (c.name && c.name.toLowerCase().indexOf(q) !== -1)
+            || (c.email && c.email.toLowerCase().indexOf(q) !== -1)
+            || (c.org && c.org.toLowerCase().indexOf(q) !== -1);
+        });
+        if (filtered.length === 0) {
+          var empty = document.createElement("li");
+          empty.className = "cb-empty";
+          empty.textContent = q ? "No contacts match" : "No contacts found";
+          list.appendChild(empty);
+          return;
+        }
+        filtered.forEach(function(c) {
+          var li = document.createElement("li");
+          li.className = "cb-item";
+          var name = document.createElement("div");
+          name.className = "cb-item-name";
+          name.textContent = c.name;
+          li.appendChild(name);
+          if (c.email || c.org) {
+            var meta = document.createElement("div");
+            meta.className = "cb-item-meta";
+            var parts = [];
+            if (c.email) parts.push(c.email);
+            if (c.org) parts.push(c.org);
+            meta.textContent = parts.join(" \u2014 ");
+            li.appendChild(meta);
+          }
+          li.addEventListener("click", function() {
+            if (targetOwnerInput) targetOwnerInput.value = c.name;
+            if (targetContactIdInput) targetContactIdInput.value = c.id;
+            hideOverlay();
+          });
+          list.appendChild(li);
+        });
+      }
+
+      document.addEventListener("click", function(e) {
+        var btn = e.target.closest(".contact-browse-btn");
+        if (!btn) return;
+        e.preventDefault();
+        ensureOverlay();
+
+        var wrap = btn.closest("label") || btn.closest(".contact-typeahead-wrap") || btn.parentElement;
+        targetOwnerInput = wrap.querySelector("input[name=owner]");
+        targetContactIdInput = wrap.querySelector("input[name=owner_contact_id]");
+
+        input.value = "";
+        while (list.firstChild) list.removeChild(list.firstChild);
+
+        var loading = document.createElement("li");
+        loading.className = "cb-empty";
+        loading.textContent = "Loading\u2026";
+        list.appendChild(loading);
+
+        overlay.classList.add("visible");
+        input.focus();
+
+        if (allContacts) {
+          filterList();
+          return;
+        }
+        fetch("api.php?resource=contacts&limit=200", {credentials: "same-origin"})
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            allContacts = data.contacts || [];
+            filterList();
+          })
+          .catch(function() {
+            while (list.firstChild) list.removeChild(list.firstChild);
+            var err = document.createElement("li");
+            err.className = "cb-empty";
+            err.textContent = "Error loading contacts";
+            list.appendChild(err);
+          });
+      });
+
+      document.addEventListener("keydown", function(e) {
+        if (e.key === "Escape" && overlay && overlay.classList.contains("visible")) {
+          hideOverlay();
+        }
+      });
+    }());
+
+    /* ---- Contact card popover (#561) ---- */
+    (function() {
+      var card = null;
+      var cache = {};
+      var activeCid = null;
+
+      function ensureCard() {
+        if (card) return;
+        card = document.createElement("div");
+        card.id = "contact-card";
+        document.body.appendChild(card);
+      }
+
+      function hideCard() {
+        if (card) card.classList.remove("visible");
+      }
+
+      function positionCard(trigger) {
+        var r = trigger.getBoundingClientRect();
+        var top = r.bottom + 6;
+        var left = r.left;
+        if (left + 320 > window.innerWidth) left = window.innerWidth - 328;
+        if (left < 8) left = 8;
+        if (top + 200 > window.innerHeight) top = r.top - 206;
+        card.style.top = top + "px";
+        card.style.left = left + "px";
+      }
+
+      function clearCard() {
+        while (card.firstChild) card.removeChild(card.firstChild);
+      }
+
+      function addRow(label, value, isLink) {
+        var row = document.createElement("div");
+        row.className = "cc-row";
+        var lbl = document.createElement("span");
+        lbl.className = "cc-label";
+        lbl.textContent = label;
+        row.appendChild(lbl);
+        if (isLink) {
+          var a = document.createElement("a");
+          a.href = "mailto:" + value;
+          a.textContent = value;
+          row.appendChild(a);
+        } else {
+          row.appendChild(document.createTextNode(value));
+        }
+        card.appendChild(row);
+      }
+
+      function renderCard(c) {
+        clearCard();
+        var name = document.createElement("div");
+        name.className = "cc-name";
+        name.textContent = c.name;
+        card.appendChild(name);
+        if (c.email) addRow("Email", c.email, true);
+        if (c.phone) addRow("Phone", c.phone, false);
+        if (c.org) addRow("Org", c.org, false);
+        if (c.note) addRow("Note", c.note, false);
+      }
+
+      function showMessage(msg) {
+        clearCard();
+        var row = document.createElement("div");
+        row.className = "cc-row";
+        row.textContent = msg;
+        card.appendChild(row);
+      }
+
+      document.addEventListener("click", function(e) {
+        var trigger = e.target.closest(".contact-card-trigger");
+        if (!trigger) { hideCard(); return; }
+        e.preventDefault();
+        ensureCard();
+        var cid = trigger.dataset.contactId;
+        activeCid = cid;
+        if (cache[cid]) {
+          renderCard(cache[cid]);
+          positionCard(trigger);
+          card.classList.add("visible");
+          return;
+        }
+        showMessage("Loading\u2026");
+        positionCard(trigger);
+        card.classList.add("visible");
+        fetch("api.php?resource=contacts&id=" + encodeURIComponent(cid), {credentials: "same-origin"})
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            if (activeCid !== cid) return;
+            if (data.contact) {
+              cache[cid] = data.contact;
+              renderCard(data.contact);
+            } else {
+              showMessage("Contact not found");
+            }
+          })
+          .catch(function() { if (activeCid === cid) showMessage("Error loading contact"); });
+      });
+
+      document.addEventListener("keydown", function(e) {
+        if (e.key === "Escape") hideCard();
+      });
+      window.addEventListener("scroll", hideCard, true);
     }());
 
   });

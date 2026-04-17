@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [2.14.0] - 2026-04-17
+
+UX polish, performance, and bug fix release. Contact interaction improvements on the addresses page, subnets page performance overhaul, and a utilization calculation fix.
+
+### Added
+- **#564** — Expandable audit log details. Click or keyboard-activate truncated audit detail cells to toggle full text inline.
+- **#561** — Contact details popover on address rows. Click a linked contact name in the Owner column to view email, phone, org, and note in a floating card without leaving the page.
+- **#562** — Contact picker browse button. "Browse" button next to the Owner field opens a searchable overlay of all contacts for easy selection.
+- **#565** — Async subnet stats loading. Subnet tree renders immediately with skeleton placeholders; counts and utilization bars populate via a new `subnet_stats` session-auth API endpoint. Page size reduced ~90% on large deployments by moving edit forms to a shared drawer (#567).
+- **#567** — Shared subnet edit drawer. VLAN/VRF/site `<select>` dropdowns rendered once instead of per-node, cutting page size from 6.5MB to ~780KB on 500-subnet deployments.
+
+### Fixed
+- **#566** — Dashboard "Top Subnets" widget and utilization alerts counted infrastructure IPs (network, broadcast, gateway) against assignable capacity, producing impossible >100% fill values on small subnets. Both now use the shared `ipv4_unassigned_summary()` function that excludes infrastructure addresses.
+- Session-auth in `api.php` now correctly derives session name, cookie path, and save path to match `init.php`, fixing session-auth failures on installs not at the web root.
+- Column visibility gear dropdown no longer clipped by `overflow:auto` on the table wrapper.
+- Subnet edit drawer no longer clears `site_id` on save (duplicate form field bug).
+
+### Changed
+- Subnet tree helper functions (`build_subnet_tree`, `subnet_direct_counts`, `subnet_aggregated_counts`, `ipv4_unassigned_summary`, `ipv4_unassigned_aggregated`, `ipv4_broadcast_bin`) moved from `subnets.php` to `lib.php` for reuse by dashboard, API, and alert system.
+- Subnets page cards wrap each subnet node with indented hierarchy (28px per depth level, site group indent).
+
 ## [2.13.0] - 2026-04-16
 
 UI/UX accessibility and design token foundation release. Theme: *"Fix what's broken, don't touch the vibe."* Non-visual rework laying the groundwork for the v3.8.0 visual overhaul.
@@ -762,6 +783,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[2.14.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.13.0...v2.14.0
 [2.13.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.12.0...v2.13.0
 [2.12.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.11.0...v2.12.0
 [2.11.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.10.0...v2.11.0

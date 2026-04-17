@@ -36,20 +36,20 @@ $verCounts = [4 => 0, 6 => 0];
 foreach ($st->fetchAll() as $r) $verCounts[to_int($r['ip_version'])] = to_int($r['c']);
 
 /* --- Top IPv4 subnets by utilization % (/8–/32 only) --- */
-$st = $db->prepare("
-    SELECT s.id, s.cidr, s.prefix, s.description,
-           COUNT(a.id) AS used_count
-    FROM subnets s
-    LEFT JOIN addresses a ON a.subnet_id = s.id AND a.status IN ('used','reserved')
-    WHERE s.ip_version = 4 AND s.prefix BETWEEN 8 AND 32
-    GROUP BY s.id
-    HAVING COUNT(a.id) > 0
-    ORDER BY COUNT(a.id) DESC
-    LIMIT 50
-");
+// Reuse the shared utilization function that excludes infrastructure IPs (#566)
+$utilData = ipv4_unassigned_summary($db);
+$st = $db->prepare("SELECT id, cidr, prefix, description FROM subnets WHERE ip_version = 4 AND prefix BETWEEN 8 AND 32");
 $st->execute();
 /** @var list<array<string, mixed>> $topSubnets */
-$topSubnets = $st->fetchAll();
+$topSubnets = [];
+foreach ($st->fetchAll() as $row) {
+    $sid = to_int($row['id']);
+    $u   = $utilData[$sid] ?? null;
+    if ($u === null || $u['assigned_assignable'] <= 0) continue;
+    $row['used_count'] = $u['assigned_assignable'];
+    $topSubnets[] = $row;
+}
+
 // Sort by utilization percentage (highest first)
 usort($topSubnets, function (array $a, array $b): int {
     $capA = ipv4_assignable_count(to_int($a['prefix']));

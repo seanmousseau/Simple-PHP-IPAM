@@ -246,19 +246,9 @@ export async function subnetIdFor(page: Page, cidr: string): Promise<number | nu
  * Must be called while subnets.php is the active page.
  */
 export async function deleteSubnet(page: Page, cidr: string): Promise<void> {
-  const subId = await page.evaluate((cidr) => {
-    for (const f of document.querySelectorAll<HTMLFormElement>('form')) {
-      const act = f.querySelector<HTMLInputElement>('[name=action]');
-      const id  = f.querySelector<HTMLInputElement>('[name=id]');
-      if (act?.value === 'delete' && id) {
-        const node = f.closest<HTMLElement>('.subnet-node');
-        if (node?.innerText.includes(cidr)) return id.value;
-      }
-    }
-    return null;
-  }, cidr);
+  const subId = await subnetIdFor(page, cidr);
   if (subId) {
-    await fetchPost(page, appUrl('subnets.php'), { action: 'delete', id: subId });
+    await fetchPost(page, appUrl('subnets.php'), { action: 'delete', id: String(subId) });
   }
 }
 

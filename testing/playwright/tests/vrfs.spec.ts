@@ -180,23 +180,23 @@ test('vrfs: cannot delete VRF with assigned subnets', async () => {
 });
 
 test('vrfs: delete subnet then delete VRF', async () => {
-  // Delete the test subnet
+  // Delete the test subnet — find its ID from the subnet-node link, then POST delete
   await page.goto('subnets.php');
-  const subnetForms = await page.evaluate((cidr) => {
+  const subnetIds = await page.evaluate((cidr) => {
     const ids: string[] = [];
-    for (const f of document.querySelectorAll<HTMLFormElement>('form')) {
-      const act = f.querySelector<HTMLInputElement>('[name=action]');
-      const id  = f.querySelector<HTMLInputElement>('[name=id]');
-      if (act?.value === 'delete' && id) {
-        const node = f.closest<HTMLElement>('.subnet-node');
-        if (node?.innerText.includes(cidr)) ids.push(id.value);
+    for (const node of document.querySelectorAll<HTMLElement>('.subnet-node')) {
+      if (node.innerText.includes(cidr)) {
+        const a = node.querySelector<HTMLAnchorElement>('a[href*="subnet_id"]');
+        if (a) {
+          const m = a.href.match(/subnet_id=([0-9]+)/);
+          if (m) ids.push(m[1]);
+        }
       }
     }
     return ids;
   }, TEST_VRF_CIDR);
 
-  for (const id of subnetForms) {
-    // fetchPost uses JS fetch — no browser dialog fires; no page.once needed here
+  for (const id of subnetIds) {
     await fetchPost(page, appUrl('subnets.php'), { action: 'delete', id });
   }
 

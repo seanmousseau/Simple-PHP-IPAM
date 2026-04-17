@@ -2277,15 +2277,23 @@ function check_utilization_alerts(PDO $db, array $config): void
     $critPct = to_int(ipam_setting('alert.util_crit_pct'));
     $appName = to_str(ipam_setting('branding.site_name'));
 
-    // Compute direct address counts per subnet (used+reserved)
-    $rows = ($db->query("
-        SELECT s.id, s.cidr, s.prefix,
-               SUM(CASE WHEN a.status IN ('used','reserved') THEN 1 ELSE 0 END) AS assigned
-        FROM subnets s
-        LEFT JOIN addresses a ON a.subnet_id = s.id
-        WHERE s.ip_version = 4
-        GROUP BY s.id
-    ") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+    // Use the shared utilization function that excludes infrastructure IPs (#566)
+    $utilData = ipv4_unassigned_summary($db);
+
+    // Build rows from utilData for the alert loop
+    $subnetRows = ($db->query("SELECT id, cidr, prefix FROM subnets WHERE ip_version = 4")
+        ?: throw new \RuntimeException('Query failed'))->fetchAll();
+    $rows = [];
+    foreach ($subnetRows as $sr) {
+        $sid = to_int($sr['id']);
+        $u = $utilData[$sid] ?? null;
+        $rows[] = [
+            'id'     => $sr['id'],
+            'cidr'   => $sr['cidr'],
+            'prefix' => $sr['prefix'],
+            'assigned' => $u !== null ? $u['assigned_assignable'] : 0,
+        ];
+    }
 
     // Load existing alert state
     $stateRows = ($db->query("SELECT subnet_id, level, last_alerted_at FROM alert_state")
@@ -3923,6 +3931,279 @@ function ipv4_assignable_count(int $prefix): int
     return ($assignable > 0) ? (int)$assignable : 0;
 }
 
+/* ── Subnet tree + utilization helpers (shared by subnets.php, dashboard, API) ── */
+
+function subnet_contains_bin(string $parentNetBin, int $parentPrefix, string $childNetBin): bool
+{
+    $masked = apply_prefix_mask($childNetBin, $parentPrefix);
+    return hash_equals($masked, $parentNetBin);
+}
+
+/**
+ * @param array<int, array<string, mixed>> $rows
+ * @return array{roots: list<int>, children: array<int, list<int>>, byId: array<int, array<string, mixed>>}
+ */
+function build_subnet_tree(array $rows): array
+{
+    $byId = [];
+    foreach ($rows as $r) $byId[to_int($r['id'])] = $r;
+
+    $sorted = $byId;
+    uasort($sorted, function(array $a, array $b): int {
+        $vrfa = $a['vrf_id'] !== null ? to_int($a['vrf_id']) : 0;
+        $vrfb = $b['vrf_id'] !== null ? to_int($b['vrf_id']) : 0;
+        if ($vrfa !== $vrfb) return $vrfa <=> $vrfb;
+        $va = to_int($a['ip_version']); $vb = to_int($b['ip_version']);
+        if ($va !== $vb) return $va <=> $vb;
+        $pa = to_int($a['prefix']); $pb = to_int($b['prefix']);
+        if ($pa !== $pb) return $pa <=> $pb;
+        return strcmp(to_str($a['network_bin']), to_str($b['network_bin']));
+    });
+
+    $children = [];
+    $roots = [];
+    $stack = [];
+
+    foreach ($sorted as $id => $row) {
+        $ver    = to_int($row['ip_version']);
+        $prefix = to_int($row['prefix']);
+        $netBin = to_str($row['network_bin']);
+        $curVrf = $row['vrf_id'] !== null ? to_int($row['vrf_id']) : 0;
+
+        while (!empty($stack)) {
+            $top    = end($stack);
+            $topVrf = $top['vrf_id'] !== null ? to_int($top['vrf_id']) : 0;
+            if ($topVrf !== $curVrf || to_int($top['ip_version']) !== $ver) {
+                $stack = [];
+                break;
+            }
+            if (to_int($top['prefix']) < $prefix
+                && subnet_contains_bin(to_str($top['network_bin']), to_int($top['prefix']), $netBin)) {
+                break;
+            }
+            array_pop($stack);
+        }
+
+        if (!empty($stack)) {
+            $parent = end($stack);
+            $children[to_int($parent['id'])][] = $id;
+        } else {
+            $roots[] = $id;
+        }
+
+        $stack[] = ['id' => $id, 'ip_version' => $ver, 'prefix' => $prefix, 'network_bin' => $netBin, 'vrf_id' => $row['vrf_id']];
+    }
+
+    $cmpFn = function(int $a, int $b) use ($byId): int {
+        $ra = $byId[$a]; $rb = $byId[$b];
+        $va = to_int($ra['ip_version']); $vb = to_int($rb['ip_version']);
+        if ($va !== $vb) return $va <=> $vb;
+        $c = strcmp(to_str($ra['network_bin']), to_str($rb['network_bin']));
+        if ($c !== 0) return $c;
+        return to_int($ra['prefix']) <=> to_int($rb['prefix']);
+    };
+
+    usort($roots, $cmpFn);
+    foreach ($children as $pid => $arr) {
+        usort($arr, $cmpFn);
+        $children[$pid] = $arr;
+    }
+
+    return ['roots' => $roots, 'children' => $children, 'byId' => $byId];
+}
+
+/** @return array<int, array{used: int, reserved: int, free: int, total: int}> */
+function subnet_direct_counts(PDO $db): array
+{
+    $st = $db->prepare("SELECT subnet_id, status, COUNT(*) AS c FROM addresses GROUP BY subnet_id, status");
+    $st->execute();
+    $out = [];
+    foreach ($st->fetchAll() as $r) {
+        $sid = to_int($r['subnet_id']);
+        $status = to_str($r['status']);
+        $c = to_int($r['c']);
+        $out[$sid] ??= ['used'=>0,'reserved'=>0,'free'=>0,'total'=>0];
+        if (isset($out[$sid][$status])) $out[$sid][$status] += $c;
+        $out[$sid]['total'] += $c;
+    }
+    return $out;
+}
+
+/**
+ * @param array{roots: list<int>, children: array<int, list<int>>, byId: array<int, array<string, mixed>>} $tree
+ * @param array<int, array{used: int, reserved: int, free: int, total: int}> $directCounts
+ * @return array<int, array{used: int, reserved: int, free: int, total: int}>
+ */
+function subnet_aggregated_counts(array $tree, array $directCounts): array
+{
+    $children = $tree['children'];
+    $agg = [];
+
+    $sumNode = function(int $id) use (&$sumNode, &$agg, $children, $directCounts): array {
+        if (isset($agg[$id])) return $agg[$id];
+
+        $base = $directCounts[$id] ?? ['used'=>0,'reserved'=>0,'free'=>0,'total'=>0];
+        $sum = $base;
+
+        foreach (($children[$id] ?? []) as $cid) {
+            $c = $sumNode((int)$cid);
+            $sum['used'] += $c['used'];
+            $sum['reserved'] += $c['reserved'];
+            $sum['free'] += $c['free'];
+            $sum['total'] += $c['total'];
+        }
+        return $agg[$id] = $sum;
+    };
+
+    foreach ($tree['byId'] as $id => $_row) $sumNode((int)$id);
+    return $agg;
+}
+
+function ipv4_broadcast_bin(string $netBin, int $prefix): string
+{
+    $hostBits = 32 - $prefix;
+    if ($hostBits <= 0) return $netBin;
+
+    $unpacked = unpack('N', $netBin);
+    $n = $unpacked !== false ? $unpacked[1] : 0;
+    $hostMask = ($hostBits === 32) ? 0xFFFFFFFF : ((1 << $hostBits) - 1);
+    $b = ($n | $hostMask) & 0xFFFFFFFF;
+
+    return pack('N', $b);
+}
+
+/** @return array<int, array{assignable_total: int, assigned_assignable: int, unassigned_assignable: int}> */
+function ipv4_unassigned_summary(PDO $db): array
+{
+    $st = $db->prepare("SELECT id, prefix, network_bin FROM subnets WHERE ip_version=4");
+    $st->execute();
+    /** @var list<array<string, mixed>> $subs */
+    $subs = $st->fetchAll();
+    if (!$subs) return [];
+
+    $cntSt = $db->prepare(
+        "SELECT a.subnet_id, COUNT(*) AS c
+         FROM addresses a JOIN subnets s ON s.id = a.subnet_id
+         WHERE s.ip_version = 4 AND a.status IN ('used','reserved')
+         GROUP BY a.subnet_id"
+    );
+    $cntSt->execute();
+    $countBySubnet = [];
+    foreach ($cntSt->fetchAll() as $r) {
+        $countBySubnet[to_int($r['subnet_id'])] = to_int($r['c']);
+    }
+
+    $excludedBySubnet = [];
+
+    $netExcl = $db->query(
+        "SELECT a.subnet_id, COUNT(*) AS c
+         FROM addresses a
+         JOIN subnets s ON s.id = a.subnet_id
+         WHERE s.ip_version = 4 AND s.prefix <= 30
+           AND a.status IN ('used','reserved')
+           AND a.ip_bin = s.network_bin
+         GROUP BY a.subnet_id"
+    );
+    if ($netExcl !== false) {
+        foreach ($netExcl->fetchAll() as $r) {
+            $excludedBySubnet[to_int($r['subnet_id'])] = to_int($r['c']);
+        }
+    }
+
+    /** @var array<int, string> $bcastBins */
+    $bcastBins = [];
+    foreach ($subs as $s) {
+        $sid    = to_int($s['id']);
+        $prefix = to_int($s['prefix']);
+        if ($prefix <= 30 && isset($countBySubnet[$sid])) {
+            $bcastBins[$sid] = ipv4_broadcast_bin(to_str($s['network_bin']), $prefix);
+        }
+    }
+    if ($bcastBins !== []) {
+        $binType = ipam_dialect()->binary_type(4);
+        $db->exec("CREATE TEMPORARY TABLE IF NOT EXISTS _bcast_excl (subnet_id INTEGER NOT NULL, bcast_bin $binType NOT NULL)");
+        $db->exec("DELETE FROM _bcast_excl");
+        $ins = $db->prepare("INSERT INTO _bcast_excl (subnet_id, bcast_bin) VALUES (:s, :b)");
+        foreach ($bcastBins as $sid => $bcast) {
+            $ins->bindValue(':s', $sid, PDO::PARAM_INT);
+            ipam_bind_binary($ins, ':b', $bcast);
+            $ins->execute();
+        }
+        $bcastExcl = $db->query(
+            "SELECT a.subnet_id, COUNT(*) AS c
+             FROM addresses a
+             JOIN _bcast_excl t ON t.subnet_id = a.subnet_id AND t.bcast_bin = a.ip_bin
+             WHERE a.status IN ('used','reserved')
+             GROUP BY a.subnet_id"
+        );
+        if ($bcastExcl !== false) {
+            foreach ($bcastExcl->fetchAll() as $r) {
+                $sid = to_int($r['subnet_id']);
+                $excludedBySubnet[$sid] = ($excludedBySubnet[$sid] ?? 0) + to_int($r['c']);
+            }
+        }
+    }
+
+    $out = [];
+    foreach ($subs as $s) {
+        $sid    = to_int($s['id']);
+        $prefix = to_int($s['prefix']);
+
+        $assignableTotal = ipv4_assignable_count($prefix);
+        $assignedCount   = $countBySubnet[$sid] ?? 0;
+
+        if ($prefix <= 30 && $assignedCount > 0) {
+            $excluded = $excludedBySubnet[$sid] ?? 0;
+            $assignedAssignable = $assignedCount - $excluded;
+        } else {
+            $assignedAssignable = $assignedCount;
+        }
+
+        if ($assignedAssignable < 0) $assignedAssignable = 0;
+        $unassigned = $assignableTotal - $assignedAssignable;
+        if ($unassigned < 0) $unassigned = 0;
+
+        $out[$sid] = [
+            'assignable_total'      => (int)$assignableTotal,
+            'assigned_assignable'   => (int)$assignedAssignable,
+            'unassigned_assignable' => (int)$unassigned,
+        ];
+    }
+    return $out;
+}
+
+/**
+ * @param array{roots: list<int>, children: array<int, list<int>>, byId: array<int, array<string, mixed>>} $tree
+ * @param array<int, array{assignable_total: int, assigned_assignable: int, unassigned_assignable: int}> $directUnassigned
+ * @return array<int, array{assignable_total: int, assigned_assignable: int, unassigned_assignable: int}>
+ */
+function ipv4_unassigned_aggregated(array $tree, array $directUnassigned): array
+{
+    $children = $tree['children'];
+    $agg = [];
+
+    $sumNode = function(int $id) use (&$sumNode, &$agg, $children, $directUnassigned, $tree): array {
+        if (isset($agg[$id])) return $agg[$id];
+
+        $ipVer = to_int($tree['byId'][$id]['ip_version'] ?? 0);
+        $base = ($ipVer === 4 && isset($directUnassigned[$id]))
+            ? $directUnassigned[$id]
+            : ['assignable_total' => 0, 'assigned_assignable' => 0, 'unassigned_assignable' => 0];
+
+        $sum = $base;
+        foreach (($children[$id] ?? []) as $cid) {
+            $c = $sumNode((int)$cid);
+            $sum['assignable_total']      += $c['assignable_total'];
+            $sum['assigned_assignable']   += $c['assigned_assignable'];
+            $sum['unassigned_assignable'] += $c['unassigned_assignable'];
+        }
+        return $agg[$id] = $sum;
+    };
+
+    foreach ($tree['byId'] as $id => $_row) $sumNode((int)$id);
+    return $agg;
+}
+
 /**
  * Find the first unassigned IPv4 host address in a subnet.
  * Returns the IP as text, or null if none available.
@@ -4339,12 +4620,12 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/vendor/open-props.min.css?v=2.13.0'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=2.13.0'>";
+    echo "<link rel='stylesheet' href='assets/vendor/open-props.min.css?v=2.14.0'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=2.14.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=2.13.0'></script>";
+    echo "<script defer src='assets/app.js?v=2.14.0'></script>";
     $pageAttr = isset($opts['page']) && $opts['page'] !== ''
         ? " data-page='" . e(to_str($opts['page'])) . "'"
         : '';
