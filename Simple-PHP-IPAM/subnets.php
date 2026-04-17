@@ -345,7 +345,7 @@ function render_subnet_map_nodes(array $tree, array $roots, int $depth, array &$
 function render_subnet_node_local(array $tree, array $siteMap, array $siteList, array $vlanList, array $vrfList, int $id, int $depth = 0): void
 {
     $row = $tree['byId'][$id];
-    $pad = $depth * 18;
+    $pad = $depth * 28;
     $siteName = '';
     $siteId = to_int($row['site_id'] ?? 0);
     if ($siteId > 0) $siteName = $siteMap[$siteId] ?? '';

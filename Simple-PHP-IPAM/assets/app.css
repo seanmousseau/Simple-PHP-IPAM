@@ -761,7 +761,7 @@ details > summary::-webkit-details-marker{display:none}
 /* Dynamic utilization bar fill — width set via data-pct attribute in app.js */
 .util-bar-fill[data-pct]{width:0}
 /* Subnet hierarchy node (indent is set dynamically via data-indent in app.js) */
-.subnet-node{border-left:2px solid var(--border);padding-left:var(--space-5);margin-top:var(--space-4)}
+.subnet-node{margin-top:var(--space-4)}
 /* Demo gate standalone page */
 .gate-wrap{max-width:480px;margin:var(--space-13) auto;padding:0 var(--space-8)}
 
@@ -1267,22 +1267,23 @@ td[data-editable].cell-saving{opacity:.5;}
 .util-bar-fill[data-pct="99"]{width:99%}
 .util-bar-fill[data-pct="100"]{width:100%}
 
-/* Subnet list-view node indentation via data-indent (step 18px, depth 0–15) */
+/* Subnet list-view node indentation via data-indent (step 28px, depth 0–15) */
 .subnet-node[data-indent="0"]{margin-left:0}
-.subnet-node[data-indent="18"]{margin-left:18px}
-.subnet-node[data-indent="36"]{margin-left:36px}
-.subnet-node[data-indent="54"]{margin-left:54px}
-.subnet-node[data-indent="72"]{margin-left:72px}
-.subnet-node[data-indent="90"]{margin-left:90px}
-.subnet-node[data-indent="108"]{margin-left:108px}
-.subnet-node[data-indent="126"]{margin-left:126px}
-.subnet-node[data-indent="144"]{margin-left:144px}
-.subnet-node[data-indent="162"]{margin-left:162px}
-.subnet-node[data-indent="180"]{margin-left:180px}
-.subnet-node[data-indent="198"]{margin-left:198px}
-.subnet-node[data-indent="216"]{margin-left:216px}
-.subnet-node[data-indent="234"]{margin-left:234px}
+.subnet-node[data-indent="28"]{margin-left:28px}
+.subnet-node[data-indent="56"]{margin-left:56px}
+.subnet-node[data-indent="84"]{margin-left:84px}
+.subnet-node[data-indent="112"]{margin-left:112px}
+.subnet-node[data-indent="140"]{margin-left:140px}
+.subnet-node[data-indent="168"]{margin-left:168px}
+.subnet-node[data-indent="196"]{margin-left:196px}
+.subnet-node[data-indent="224"]{margin-left:224px}
 .subnet-node[data-indent="252"]{margin-left:252px}
+.subnet-node[data-indent="280"]{margin-left:280px}
+.subnet-node[data-indent="308"]{margin-left:308px}
+.subnet-node[data-indent="336"]{margin-left:336px}
+.subnet-node[data-indent="364"]{margin-left:364px}
+.subnet-node[data-indent="392"]{margin-left:392px}
+.subnet-node[data-indent="420"]{margin-left:420px}
 
 /* Subnet map-view node indentation via data-indent (step 22px, depth 0–15) */
 .map-node-inner[data-indent="0"]{margin-left:0}
