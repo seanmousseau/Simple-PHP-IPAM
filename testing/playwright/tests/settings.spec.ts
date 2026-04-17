@@ -5,7 +5,6 @@
  * assertion must be self-sufficient rather than depend on a prior test.
  */
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
-import { execFileSync } from 'child_process';
 import {
   login, appUrl, ADMIN_USER, ADMIN_PASS,
   newAuthContext,
@@ -20,30 +19,6 @@ import {
  * container is not running so the rest of the spec still skips cleanly
  * under dev-direct.
  */
-function deleteSettingRowInContainer(key: string): void {
-  // Key is hardcoded in the call site below; guard anyway in case the
-  // function is reused so a stray quote can never break out of the PHP
-  // string literal.
-  if (!/^[a-z_][a-z0-9_.]*$/.test(key)) return;
-  try {
-    execFileSync(
-      'docker',
-      [
-        'exec', 'ipam-pw-test',
-        'php', '-r',
-        // Backtick-quote `key` so the DELETE works on both SQLite and MySQL
-        // (MySQL reserves `key` as a keyword). Matches the convention used
-        // across Simple-PHP-IPAM/lib.php for settings queries.
-        'require "/var/www/html/init.php"; ' +
-        '$db->prepare("DELETE FROM settings WHERE `key` = :k")->execute([":k" => "' + key + '"]);',
-      ],
-      { stdio: 'pipe' },
-    );
-  } catch {
-    // Swallow — the test will detect the absent banner and skip itself.
-  }
-}
-
 let ctx: BrowserContext;
 let page: Page;
 
@@ -173,51 +148,16 @@ test.describe('Settings page', () => {
     }
   });
 
-  test('#376 deprecation banner lists a customised config.php key', async () => {
-    // The v2.6.0 migration seeds every registered key into the settings
-    // table on install, so on a pristine container nothing is deprecated.
-    // Force a deprecated state by dropping a specific row so its value
-    // falls back to config.php (which is "0" / false in the test fixture
-    // but "true" in the registry default — different, so flagged).
-    deleteSettingRowInContainer('update_check.enabled');
+  test('v3.0.0: no deprecation banner on clean install (config.php is a stub)', async () => {
     await page.goto(appUrl('settings.php'));
-    const banner = page.locator('#deprecated-banner');
-    await expect(banner).toBeVisible();
-    await expect(banner.locator('h2')).toContainText('config.php settings to migrate');
-    const row = banner.locator('tr', { hasText: 'update_check.enabled' });
-    await expect(row).toBeVisible();
+    const oldBanner = page.locator('#deprecated-banner');
+    await expect(oldBanner).toHaveCount(0);
   });
 
-  test('#376 Import to database persists the value and drops the row', async () => {
-    deleteSettingRowInContainer('update_check.enabled');
+  test('v3.0.0: setting source badges show Database or Default only', async () => {
     await page.goto(appUrl('settings.php'));
-    const banner = page.locator('#deprecated-banner');
-    if (await banner.count() === 0) {
-      test.skip(true, 'could not force a deprecated state — container not running?');
-      return;
-    }
-    const row = banner.locator('tr', { hasText: 'update_check.enabled' });
-    await expect(row).toBeVisible();
-
-    await row.locator('button[type="submit"]').click();
-    await page.waitForURL(/settings\.php/);
-    await expect(page.locator('body')).toContainText('Imported');
-    const bannerAfter = page.locator('#deprecated-banner');
-    if (await bannerAfter.count() > 0) {
-      await expect(bannerAfter.locator('tr', { hasText: 'update_check.enabled' })).toHaveCount(0);
-    }
-  });
-
-  test('#376 dashboard shows a deprecation warning card for admin', async () => {
-    deleteSettingRowInContainer('update_check.enabled');
-    await page.goto(appUrl('dashboard.php'));
-    const warning = page.locator('.admin-notice--warning', { hasText: 'Settings migration needed' });
-    if (await warning.count() === 0) {
-      test.skip(true, 'could not force a deprecated state — container not running?');
-      return;
-    }
-    await expect(warning).toBeVisible();
-    await expect(warning.locator('a[href*="settings.php"]')).toHaveCount(1);
+    const configBadges = page.locator('.badge', { hasText: 'config.php' });
+    await expect(configBadges).toHaveCount(0);
   });
 
   test('#442 out-of-set login_protection.method is rejected server-side', async () => {
