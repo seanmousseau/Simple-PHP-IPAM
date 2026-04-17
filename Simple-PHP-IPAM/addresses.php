@@ -378,16 +378,18 @@ if ($selectedSubnet && to_int($selectedSubnet['ip_version']) === 4) {
         to_str($selectedSubnet['network']), to_int($selectedSubnet['prefix']));
 }
 
-// Check if network/broadcast/gateway are missing (for "Reserve infra" button)
+// Check if network/broadcast are missing (for "Reserve infra" button)
 $missingInfra = false;
 if ($selectedSubnetId > 0 && $networkBin !== null) {
-    $infraBins = array_filter([$networkBin, $broadcastBin]);
+    $infraBins = array_values(array_filter([$networkBin, $broadcastBin]));
     if ($infraBins) {
         $placeholders = implode(',', array_fill(0, count($infraBins), '?'));
         $chk = $db->prepare("SELECT ip_bin FROM addresses WHERE subnet_id = ? AND ip_bin IN ($placeholders)");
-        $params = [$selectedSubnetId];
-        foreach ($infraBins as $b) $params[] = $b;
-        $chk->execute($params);
+        $chk->bindValue(1, $selectedSubnetId, PDO::PARAM_INT);
+        foreach ($infraBins as $i => $b) {
+            ipam_bind_binary($chk, $i + 2, $b);
+        }
+        $chk->execute();
         $found = $chk->fetchAll(PDO::FETCH_COLUMN);
         $missingInfra = count($found) < count($infraBins);
     }

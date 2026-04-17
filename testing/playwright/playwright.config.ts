@@ -16,6 +16,7 @@ export default defineConfig({
   // and slower I/O than a warm dev-direct target); 0 locally so flaky tests
   // surface immediately during development.
   retries: process.env.CI ? 2 : 0,
+  maxFailures: process.env.CI ? 10 : 0,
   timeout: 60_000,
   expect: {
     timeout: 10_000,
