@@ -76,22 +76,16 @@ class SettingsTest extends TestCase
         $this->assertFalse(ipam_setting('oidc.enabled'));
     }
 
-    public function testReadFallsBackToConfigWhenDbEmpty(): void
+    public function testRegistryDefaultWhenDbEmpty(): void
     {
-        $GLOBALS['config'] = [
-            'app_name' => 'Acme IPAM',
-            'oidc'     => ['enabled' => true, 'client_id' => 'abc123'],
-        ];
         ipam_setting_cache_bust();
-
-        $this->assertSame('Acme IPAM', ipam_setting('branding.site_name'));
-        $this->assertTrue(ipam_setting('oidc.enabled'));
-        $this->assertSame('abc123', ipam_setting('oidc.client_id'));
+        $this->assertSame('Simple PHP IPAM', ipam_setting('branding.site_name'));
+        $this->assertFalse(ipam_setting('oidc.enabled'));
+        $this->assertSame('', ipam_setting('oidc.client_id'));
     }
 
-    public function testDbValueOverridesConfigFallback(): void
+    public function testDbValueOverridesRegistryDefault(): void
     {
-        $GLOBALS['config'] = ['app_name' => 'From Config'];
         ipam_setting_set($this->db, 'branding.site_name', 'From DB');
         ipam_setting_cache_bust();
 
@@ -184,12 +178,9 @@ class SettingsTest extends TestCase
         $this->assertSame('After', ipam_setting('branding.site_name'));
     }
 
-    public function testSettingSourceReportsDbConfigOrDefault(): void
+    public function testSettingSourceReportsDbOrDefault(): void
     {
         $this->assertSame('default', ipam_setting_source($this->db, 'branding.site_name'));
-
-        $GLOBALS['config'] = ['app_name' => 'Configged'];
-        $this->assertSame('config', ipam_setting_source($this->db, 'branding.site_name'));
 
         ipam_setting_set($this->db, 'branding.site_name', 'From DB');
         $this->assertSame('db', ipam_setting_source($this->db, 'branding.site_name'));
@@ -291,49 +282,27 @@ class SettingsTest extends TestCase
     {
         // v2.7.0 #374: alerting thresholds must follow the DB → config.php →
         // registry default chain so an admin can override either way.
-        $GLOBALS['config'] = [];
         $this->assertSame(80, ipam_setting('alert.util_warn_pct'), 'registry default');
         $this->assertSame(95, ipam_setting('alert.util_crit_pct'), 'registry default');
         $this->assertSame(3600, ipam_setting('alert.interval_seconds'), 'registry default');
 
-        $GLOBALS['config'] = [
-            'alert_util_warn_pct'    => 70,
-            'alert_util_crit_pct'    => 88,
-            'alert_interval_seconds' => 900,
-            'alert_email'            => 'ops@example.com',
-        ];
-        ipam_setting_cache_bust();
-        $this->assertSame(70, ipam_setting('alert.util_warn_pct'), 'config fallback honoured');
-        $this->assertSame(88, ipam_setting('alert.util_crit_pct'));
-        $this->assertSame(900, ipam_setting('alert.interval_seconds'));
-        $this->assertSame('ops@example.com', ipam_setting('alert.email'));
-
-        // DB value wins over config.
         ipam_setting_set($this->db, 'alert.util_warn_pct', 60);
         ipam_setting_cache_bust();
         $this->assertSame(60, ipam_setting('alert.util_warn_pct'));
     }
 
-    public function testOidcEnabledFallsBackToConfigPhpWhenDbEmpty(): void
+    public function testOidcEnabledUsesDbSettings(): void
     {
-        // Back-compat guarantee for v2.7.0: admins who have not touched the
-        // settings UI yet must still see OIDC work with pure config.php.
-        $GLOBALS['config'] = [
-            'oidc' => [
-                'enabled'       => true,
-                'client_id'     => 'cid',
-                'client_secret' => 'secret',
-                'discovery_url' => 'https://idp.example/',
-                'redirect_uri'  => 'https://app.example/oidc_callback.php',
-            ],
-        ];
+        ipam_setting_cache_bust();
+        $this->assertFalse(oidc_enabled([]), 'disabled by default');
+
+        ipam_setting_set($this->db, 'oidc.enabled', true);
+        ipam_setting_set($this->db, 'oidc.client_id', 'cid');
+        ipam_setting_set($this->db, 'oidc.client_secret', 'secret');
+        ipam_setting_set($this->db, 'oidc.discovery_url', 'https://idp.example/');
+        ipam_setting_set($this->db, 'oidc.redirect_uri', 'https://app.example/oidc_callback.php');
         ipam_setting_cache_bust();
         $this->assertTrue(oidc_enabled([]));
-
-        // Remove one required key — back to disabled.
-        $GLOBALS['config']['oidc']['client_secret'] = '';
-        ipam_setting_cache_bust();
-        $this->assertFalse(oidc_enabled([]));
     }
 
     public function testLoginProtectionMethodAdvertisesStaticOptions(): void

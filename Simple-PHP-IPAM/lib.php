@@ -1607,18 +1607,6 @@ function ipam_setting(string $key, mixed $default = null): mixed
         error_log("ipam_setting: read failed for key {$key}: " . $e->getMessage());
     }
 
-    $config = $GLOBALS['config'] ?? null;
-    if (is_array($config) && $def !== null) {
-        $configKey = $def['config_key'] ?? null;
-        if ($configKey !== null && (is_string($configKey) || is_array($configKey))) {
-            $cfgVal = ipam_setting_config_fallback($config, $configKey);
-            if ($cfgVal !== null) {
-                ipam_setting_cache_storage($key, false, $cfgVal, true);
-                return $cfgVal;
-            }
-        }
-    }
-
     ipam_setting_cache_storage($key, false, $fallback, true);
     return $fallback;
 }
@@ -1753,22 +1741,37 @@ function ipam_setting_source(PDO $db, string $key): string
         $st->execute([':k' => $key]);
         if ($st->fetchColumn() !== false) return 'db';
     } catch (\Throwable) {
-        // Fall through to config/default classification.
-    }
-
-    $definitions = ipam_setting_definitions();
-    $def = $definitions[$key] ?? null;
-    $config = $GLOBALS['config'] ?? null;
-    if (is_array($config) && $def !== null) {
-        $cfgKey = $def['config_key'] ?? null;
-        if ($cfgKey !== null && (is_string($cfgKey) || is_array($cfgKey))) {
-            if (ipam_setting_config_fallback($config, $cfgKey) !== null) return 'config';
-        }
     }
     return 'default';
 }
 
 /**
+ * v3.0.0: detect non-bootstrap keys still present in config.php after the
+ * stub migration. Returns a list of key names that should be removed.
+ *
+ * @param array<string, mixed> $config
+ * @return list<string>
+ */
+function ipam_config_stale_keys(array $config): array
+{
+    $bootstrap = [
+        'db_driver', 'db_dsn', 'db_user', 'db_pass', 'db_path',
+        'session_name', 'session_cookie_path', 'force_https',
+        'proxy_trust', 'base_url', 'bootstrap_admin',
+        'recovery_mode', 'demo_mode',
+    ];
+    $stale = [];
+    foreach (array_keys($config) as $key) {
+        if (!in_array($key, $bootstrap, true)) {
+            $stale[] = to_str($key);
+        }
+    }
+    return $stale;
+}
+
+/**
+ * @deprecated v3.0.0 — config.php fallback removed. Kept only for the
+ * 3.0.0-config-stub migration closure which needs to read old config values.
  * Return the list of registered settings that are still being served from
  * $config (config.php) instead of the database. Drives the v2.7.0 deprecation
  * banner in settings.php, the init.php boot-time log warning, and the
@@ -2053,14 +2056,10 @@ function apply_migrations(PDO $db): array
     return $appliedNow;
 }
 
-/* ---------------- Config auto-population ---------------- */
-
 /**
- * Returns the canonical defaults map for all config keys that should exist in
- * config.php. Each entry: ['default' => mixed, 'comment' => string].
- * Only top-level keys are tracked; nested sub-keys are managed per-key.
+ * @deprecated v3.0.0 — ipam_config_sync removed; config.php is now a bootstrap stub.
+ * @return array<string, array{default: mixed, comment: string}>
  */
-/** @return array<string, array{default: mixed, comment: string}> */
 function ipam_config_defaults(): array
 {
     return [
