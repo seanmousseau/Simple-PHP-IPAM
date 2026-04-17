@@ -83,6 +83,8 @@ if ($rawKey === '') {
             if ($sn !== '') { $d = str_replace('\\', '/', dirname($sn)); $cookiePath = ($d === '' || $d === '.' || $d === '/') ? '/' : $d . '/'; } else { $cookiePath = '/'; }
         }
         session_set_cookie_params(['lifetime' => 0, 'path' => $cookiePath, 'domain' => '', 'secure' => true, 'httponly' => true, 'samesite' => 'Strict']);
+        $sesDir = __DIR__ . '/data/sessions';
+        if (is_dir($sesDir) && is_writable($sesDir)) ini_set('session.save_path', $sesDir);
         ini_set('session.use_strict_mode', '1');
         ini_set('session.use_only_cookies', '1');
         @session_start();
