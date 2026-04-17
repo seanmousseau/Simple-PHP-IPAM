@@ -1369,3 +1369,6 @@ body.pw-toggle-hidden .pw-wrap .pw-input{padding-right:36px}
     scroll-behavior:auto !important;
   }
 }
+
+/* --- Sparklines (v3.1.0 #311) --- */
+.sparkline{display:inline-block;vertical-align:middle}

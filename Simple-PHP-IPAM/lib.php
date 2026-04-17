@@ -1320,6 +1320,16 @@ function ipam_setting_definitions(): array
             'config_key'  => 'address_history_retention_days',
             'min'         => 0,
         ],
+        'housekeeping.snapshot_retention_days' => [
+            'label'       => 'Utilization snapshot retention (days)',
+            'description' => 'Utilization snapshot rows older than this are pruned during housekeeping. 0 = keep forever.',
+            'type'        => 'int',
+            'group'       => 'housekeeping',
+            'default'     => 365,
+            'sensitive'   => false,
+            'config_key'  => 'snapshot_retention_days',
+            'min'         => 0,
+        ],
 
         // --- Backup ---
         'backup.enabled' => [
@@ -2915,6 +2925,7 @@ function run_housekeeping_if_due(array $config, ?PDO $db = null): void
             if ($histRetention > 0) {
                 prune_address_history($db, $histRetention);
             }
+            capture_utilization_snapshot($db);
         }
 
         housekeeping_mark_ran();
@@ -2922,6 +2933,54 @@ function run_housekeeping_if_due(array $config, ?PDO $db = null): void
         @flock($lock, LOCK_UN);
         @fclose($lock);
     }
+}
+
+/**
+ * Capture a utilization snapshot for every IPv4 subnet (/8–/32).
+ * Called from run_housekeeping_if_due() when housekeeping fires.
+ * Returns the number of rows inserted.
+ */
+function capture_utilization_snapshot(PDO $db): int
+{
+    $utilData = ipv4_unassigned_summary($db);
+    $st = $db->prepare("SELECT id, prefix FROM subnets WHERE ip_version = 4 AND prefix BETWEEN 8 AND 32");
+    $st->execute();
+    /** @var list<array<string, mixed>> $subnets */
+    $subnets = $st->fetchAll();
+
+    $now = gmdate('Y-m-d H:i:s');
+    $ins = $db->prepare(
+        "INSERT INTO utilization_snapshots (subnet_id, snapped_at, used_count, free_count, total_hosts)
+         VALUES (:sid, :ts, :used, :free, :total)"
+    );
+    $count = 0;
+    foreach ($subnets as $row) {
+        $sid = to_int($row['id']);
+        $u = $utilData[$sid] ?? null;
+        if ($u === null) continue;
+        $prefix = to_int($row['prefix']);
+        $total  = ipv4_assignable_count($prefix);
+        if ($total <= 0) continue;
+        $used = to_int($u['assigned_assignable']);
+        $ins->execute([
+            ':sid'   => $sid,
+            ':ts'    => $now,
+            ':used'  => $used,
+            ':free'  => max(0, $total - $used),
+            ':total' => $total,
+        ]);
+        $count++;
+    }
+
+    // Prune old snapshots
+    $retention = to_int(ipam_setting('housekeeping.snapshot_retention_days'));
+    if ($retention > 0) {
+        $cutoff = gmdate('Y-m-d H:i:s', time() - $retention * 86400);
+        $db->prepare("DELETE FROM utilization_snapshots WHERE snapped_at < :cutoff")
+           ->execute([':cutoff' => $cutoff]);
+    }
+
+    return $count;
 }
 
 /**
@@ -5251,6 +5310,7 @@ function page_header(string $title, array $opts = []): void
             echo "<a class='nav-dropdown-item' href='api_keys.php'>🔑 API Keys</a>";
             echo "<a class='nav-dropdown-item' href='import_csv.php'>⬆ Import CSV</a>";
             echo "<a class='nav-dropdown-item' href='import_arp.php'>📡 ARP Import</a>";
+            echo "<a class='nav-dropdown-item' href='reports.php'>📊 Reports</a>";
             echo "<a class='nav-dropdown-item' href='db_tools.php'>🗄 Database Tools</a>";
             echo "<hr class='nav-dropdown-divider'>";
             echo "<a class='nav-dropdown-item' href='settings.php'>⚙ Settings</a>";

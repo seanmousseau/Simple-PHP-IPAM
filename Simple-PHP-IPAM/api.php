@@ -221,8 +221,9 @@ match ($resource) {
         default  => api_error(405, 'Method not allowed.'),
     },
     'scan_run'        => $method === 'POST' ? api_scan_run($db, $apiKey) : api_error(405, 'Method not allowed.'),
-    'subnet_stats'    => $method === 'GET' ? api_subnet_stats($db) : api_error(405, 'Method not allowed.'),
-    default      => api_error(404, 'Unknown resource. Valid: subnets, addresses, sites, vlans, vrfs, contacts, tags, subnet_tags, address_tags, history, search, audit, unassigned, scan_results, scan_history, scan_schedules, scan_run, subnet_stats'),
+    'subnet_stats'           => $method === 'GET' ? api_subnet_stats($db)           : api_error(405, 'Method not allowed.'),
+    'utilization_snapshots'  => $method === 'GET' ? api_utilization_snapshots($db)  : api_error(405, 'Method not allowed.'),
+    default      => api_error(404, 'Unknown resource. Valid: subnets, addresses, sites, vlans, vrfs, contacts, tags, subnet_tags, address_tags, history, search, audit, unassigned, scan_results, scan_history, scan_schedules, scan_run, subnet_stats, utilization_snapshots'),
 };
 
 // ---- Helpers ----
@@ -2494,4 +2495,40 @@ function api_subnet_stats(PDO $db): never
             'utilAgg' => $uaOut,
         ],
     ]);
+}
+
+function api_utilization_snapshots(PDO $db): never
+{
+    $subnetId = to_int($_GET['subnet_id'] ?? 0);
+    if ($subnetId <= 0) {
+        api_error(400, 'subnet_id is required.');
+    }
+    $days   = max(1, min(365, to_int($_GET['days'] ?? 30)));
+    $cutoff = gmdate('Y-m-d H:i:s', time() - $days * 86400);
+
+    $st = $db->prepare(
+        "SELECT id, subnet_id, snapped_at, used_count, free_count, total_hosts
+         FROM utilization_snapshots
+         WHERE subnet_id = :sid AND snapped_at >= :cutoff
+         ORDER BY snapped_at ASC"
+    );
+    $st->bindValue(':sid',    $subnetId, PDO::PARAM_INT);
+    $st->bindValue(':cutoff', $cutoff);
+    $st->execute();
+
+    $rows = array_map(function(array $r): array {
+        $total = to_int($r['total_hosts']);
+        $used  = to_int($r['used_count']);
+        return [
+            'id'              => to_int($r['id']),
+            'subnet_id'       => to_int($r['subnet_id']),
+            'snapped_at'      => to_str($r['snapped_at']),
+            'used_count'      => $used,
+            'free_count'      => to_int($r['free_count']),
+            'total_hosts'     => $total,
+            'utilization_pct' => $total > 0 ? round($used / $total * 100, 2) : 0.0,
+        ];
+    }, $st->fetchAll());
+
+    api_json(['utilization_snapshots' => $rows, 'count' => count($rows), 'subnet_id' => $subnetId, 'days' => $days]);
 }

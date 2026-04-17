@@ -287,6 +287,17 @@ CREATE TABLE IF NOT EXISTS alert_state (
   PRIMARY KEY (subnet_id, level)
 );
 
+-- v3.1.0: Utilization snapshots for sparkline history
+CREATE TABLE IF NOT EXISTS utilization_snapshots (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  subnet_id   INTEGER NOT NULL REFERENCES subnets(id) ON DELETE CASCADE,
+  snapped_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+  used_count  INTEGER NOT NULL,
+  free_count  INTEGER NOT NULL,
+  total_hosts INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_util_snap_subnet_time ON utilization_snapshots(subnet_id, snapped_at);
+
 -- v2.3.0: Network scanning
 CREATE TABLE IF NOT EXISTS scan_schedules (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,

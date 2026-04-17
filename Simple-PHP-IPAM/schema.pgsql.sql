@@ -396,6 +396,20 @@ CREATE TABLE IF NOT EXISTS alert_state (
 );
 
 -- ---------------------------------------------------------------------------
+-- utilization_snapshots (v3.1.0, sparkline history)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS utilization_snapshots (
+  id          SERIAL PRIMARY KEY,
+  subnet_id   INTEGER NOT NULL REFERENCES subnets(id) ON DELETE CASCADE,
+  snapped_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  used_count  INTEGER NOT NULL,
+  free_count  INTEGER NOT NULL,
+  total_hosts INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_util_snap_subnet_time ON utilization_snapshots(subnet_id, snapped_at);
+
+-- ---------------------------------------------------------------------------
 -- aggregates (v2.4.0, RIR-assigned supernet tracking)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS aggregates (
@@ -553,5 +567,6 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.0.0-config-stub'),
   ('3.0.0-config-stub-rewrite'),
   ('3.0.0-site-contacts'),
-  ('3.0.0-subnet-contacts')
+  ('3.0.0-subnet-contacts'),
+  ('3.1.0-utilization-snapshots')
 ON CONFLICT (version) DO NOTHING;

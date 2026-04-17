@@ -60,6 +60,29 @@ usort($topSubnets, function (array $a, array $b): int {
 });
 $topSubnets = array_slice($topSubnets, 0, 10);
 
+/* --- Sparkline data for top subnets --- */
+/** @var array<int, list<float>> $sparklines */
+$sparklines = [];
+if ($topSubnets) {
+    $topIds = array_map(fn($r) => to_int($r['id']), $topSubnets);
+    $placeholders = implode(',', array_fill(0, count($topIds), '?'));
+    $spkSt = $db->prepare(
+        "SELECT subnet_id, used_count, total_hosts
+         FROM utilization_snapshots
+         WHERE subnet_id IN ($placeholders)
+         ORDER BY subnet_id, snapped_at ASC"
+    );
+    foreach ($topIds as $i => $sid) {
+        $spkSt->bindValue($i + 1, $sid, PDO::PARAM_INT);
+    }
+    $spkSt->execute();
+    foreach ($spkSt->fetchAll() as $r) {
+        $sid   = to_int($r['subnet_id']);
+        $total = to_int($r['total_hosts']);
+        $sparklines[$sid][] = $total > 0 ? (float)round(to_int($r['used_count']) / $total * 100, 1) : 0.0;
+    }
+}
+
 /* --- Address counts grouped by site --- */
 $st = $db->prepare("
     SELECT COALESCE(si.name, 'Ungrouped') AS site_name,
@@ -122,6 +145,29 @@ $cntExpired = is_array($expRow) ? to_int($expRow['cnt_expired']) : 0;
 $cnt7d      = is_array($expRow) ? to_int($expRow['cnt_7d'])      : 0;
 $cnt30d     = is_array($expRow) ? to_int($expRow['cnt_30d'])     : 0;
 
+/**
+ * Render a small inline SVG sparkline from percentage values (0–100).
+ *
+ * @param list<float> $points percentage values 0–100
+ */
+function render_sparkline(array $points, int $w = 80, int $h = 24): string
+{
+    if (count($points) < 2) {
+        return '<span class="muted" style="font-size:.75rem">Collecting&hellip;</span>';
+    }
+    $n   = count($points);
+    $pts = [];
+    foreach ($points as $i => $v) {
+        $x     = (int)round($i / ($n - 1) * $w);
+        $y     = (int)round($h - ($v / 100.0) * $h);
+        $pts[] = "$x,$y";
+    }
+    $poly = implode(' ', $pts);
+    return '<svg width="' . $w . '" height="' . $h . '" viewBox="0 0 ' . $w . ' ' . $h . '" class="sparkline" aria-hidden="true">'
+         . '<polyline points="' . htmlspecialchars($poly, ENT_QUOTES) . '" fill="none" stroke="var(--link)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>'
+         . '</svg>';
+}
+
 page_header('Dashboard');
 ?>
 
@@ -181,7 +227,7 @@ if ($_staleKeys && current_user()['role'] === 'admin'):
     <?php else: ?>
       <table>
         <thead>
-          <tr><th>Subnet</th><th>Description</th><th>Used</th><th>Capacity</th><th>Fill</th></tr>
+          <tr><th>Subnet</th><th>Description</th><th>Used</th><th>Capacity</th><th>Fill</th><th>Trend</th></tr>
         </thead>
         <tbody>
         <?php
@@ -205,6 +251,7 @@ if ($_staleKeys && current_user()['role'] === 'admin'):
               </div>
               <span class="muted font-xs"><?= $pct ?>%</span>
             </td>
+            <td><?= render_sparkline($sparklines[to_int($s['id'])] ?? []) ?></td>
           </tr>
         <?php endforeach; ?>
         </tbody>
