@@ -308,14 +308,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $st->execute([':id' => $subnetId]);
         $subRow = $st->fetch();
         if ($subRow) {
-            $parsed = parse_cidr(to_str($subRow['cidr']));
-            $gwIp = null;
-            if ($parsed && $parsed['version'] === 4 && $parsed['prefix'] <= 30) {
-                $gwBin = ipam_compute_gateway_bin($parsed['net_bin'], $parsed['prefix']);
-                if ($gwBin !== null) $gwIp = inet_ntop($gwBin) ?: null;
+            $gwIp = trim(to_str($_POST['gateway_ip'] ?? ''));
+            if ($gwIp === '') $gwIp = null;
+            if ($gwIp !== null) {
+                $gwNorm = normalize_ip($gwIp);
+                $parsed = parse_cidr(to_str($subRow['cidr']));
+                if (!$gwNorm || !$parsed || !ip_in_cidr($gwNorm['ip'], $parsed['network'], $parsed['prefix'])) {
+                    $gwIp = null;
+                    flash_set('Gateway IP is not in this subnet — skipped. Network and broadcast reserved.', 'warning');
+                } else {
+                    $gwIp = $gwNorm['ip'];
+                }
             }
             auto_reserve_subnet_ips($db, $subnetId, to_str($subRow['cidr']), $gwIp);
-            flash_set('Network, broadcast, and gateway addresses reserved.');
+            if (!isset($_SESSION['flash'])) flash_set('Infrastructure addresses reserved.');
         }
         header('Location: addresses.php?subnet_id=' . $subnetId);
         exit;
@@ -356,13 +362,11 @@ if ($selectedSubnetId > 0) {
 // Compute network/broadcast/gateway bins for badge rendering
 $networkBin = null;
 $broadcastBin = null;
-$gatewayBin = null;
 if ($selectedSubnet) {
     $parsed = parse_cidr(to_str($selectedSubnet['cidr']));
     if ($parsed !== null) {
         $networkBin = $parsed['net_bin'];
         $broadcastBin = ipam_compute_broadcast_bin($parsed['net_bin'], $parsed['prefix']);
-        $gatewayBin = ipam_compute_gateway_bin($parsed['net_bin'], $parsed['prefix']);
     }
 }
 
@@ -376,7 +380,7 @@ if ($selectedSubnet && to_int($selectedSubnet['ip_version']) === 4) {
 // Check if network/broadcast/gateway are missing (for "Reserve infra" button)
 $missingInfra = false;
 if ($selectedSubnetId > 0 && $networkBin !== null) {
-    $infraBins = array_filter([$networkBin, $broadcastBin, $gatewayBin]);
+    $infraBins = array_filter([$networkBin, $broadcastBin]);
     if ($infraBins) {
         $placeholders = implode(',', array_fill(0, count($infraBins), '?'));
         $chk = $db->prepare("SELECT ip_bin FROM addresses WHERE subnet_id = ? AND ip_bin IN ($placeholders)");
@@ -417,12 +421,7 @@ ipam_skeleton_flush();
       <a class="action-pill" href="#add-address" data-open-drawer="add-address" data-drawer-title="Add Address">➕ Add Address <kbd class="kbd-hint">⌘N</kbd></a>
       <a class="action-pill" href="bulk_update.php?subnet_id=<?= (int)$selectedSubnetId ?>">✏ Bulk Update</a>
       <?php if ($missingInfra): ?>
-        <form method="post" action="addresses.php" style="display:inline">
-          <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
-          <input type="hidden" name="action" value="reserve_infra">
-          <input type="hidden" name="subnet_id" value="<?= (int)$selectedSubnetId ?>">
-          <button type="submit" class="action-pill" data-confirm="Reserve network, broadcast, and gateway addresses for this subnet?">🔒 Reserve Infra IPs</button>
-        </form>
+        <a class="action-pill" href="#reserve-infra" data-open-drawer="reserve-infra" data-drawer-title="Reserve Infrastructure IPs">🔒 Reserve Infra IPs</a>
       <?php endif; ?>
     <?php endif; ?>
     <?php if ($selectedSubnet && to_int($selectedSubnet['ip_version']) === 4): ?>
@@ -530,6 +529,24 @@ ipam_skeleton_flush();
   </form>
 </div>
 
+<?php if ($missingInfra && $selectedSubnet): ?>
+<div class="card mt-16 drawer-form-card" id="reserve-infra">
+  <h2>Reserve infrastructure IPs</h2>
+  <p class="muted">Creates reserved address records for the network and broadcast addresses (determined from the CIDR). Gateway is optional — enter an IP if this subnet has a known gateway.</p>
+  <form method="post" action="addresses.php">
+    <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+    <input type="hidden" name="action" value="reserve_infra">
+    <input type="hidden" name="subnet_id" value="<?= (int)$selectedSubnetId ?>">
+    <div class="row">
+      <label>Gateway IP (optional)<br>
+        <input name="gateway_ip" placeholder="<?= e(to_str($selectedSubnet['network'])) ?>" data-validate="ip">
+      </label>
+    </div>
+    <p><button type="submit">Reserve</button></p>
+  </form>
+</div>
+<?php endif; ?>
+
 <div class="card mt-16">
   <h2>List</h2>
   <?php if ($selectedSubnetId <= 0): ?>
@@ -571,8 +588,8 @@ ipam_skeleton_flush();
             if ($ipBin !== '') {
                 if ($networkBin !== null && hash_equals($networkBin, $ipBin)) echo ' <span class="badge badge-network" title="Network address">Net</span>';
                 if ($broadcastBin !== null && hash_equals($broadcastBin, $ipBin)) echo ' <span class="badge badge-broadcast" title="Broadcast address">Bcast</span>';
-                if ($gatewayBin !== null && hash_equals($gatewayBin, $ipBin)) echo ' <span class="badge badge-gateway" title="Gateway address">GW</span>';
             }
+            if (to_str($a['hostname'] ?? '') === 'gateway') echo ' <span class="badge badge-gateway" title="Gateway address">GW</span>';
             if (!empty($a['is_stale'])): ?> <span class="badge" style="background:var(--danger);color:#fff;font-size:.7rem" title="Host missed recent scans">Stale</span><?php endif ?>
           </td>
           <td<?= $isWrite ? ' data-editable="hostname" data-addr-id="' . $aid . '"' : '' ?>><?= e(to_str($a['hostname'])) ?></td>
