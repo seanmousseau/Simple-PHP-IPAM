@@ -33,6 +33,10 @@ foreach ($vlanList as $vl) {
 /** @var list<array<string, mixed>> $vrfList */
 $vrfList = ($db->query("SELECT id, name FROM vrfs ORDER BY name ASC") ?: throw new \RuntimeException('Query failed'))->fetchAll();
 
+$_cSt = $db->query("SELECT id, name, email FROM contacts ORDER BY name");
+/** @var list<array<string, mixed>> $contactList */
+$contactList = $_cSt !== false ? $_cSt->fetchAll() : [];
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = to_str($_POST['action'] ?? '');
 
@@ -348,7 +352,7 @@ function render_subnet_map_nodes(array $tree, array $roots, int $depth, array &$
  * @param list<array<string, mixed>> $vlanList
  * @param list<array<string, mixed>> $vrfList
  */
-function render_subnet_node_local(array $tree, array $siteMap, array $siteList, array $vlanList, array $vrfList, int $id, int $depth = 0): void
+function render_subnet_node_local(PDO $db, array $tree, array $siteMap, array $siteList, array $vlanList, array $vrfList, int $id, int $depth = 0): void
 {
     $row = $tree['byId'][$id];
     $pad = $depth * 28;
@@ -395,6 +399,8 @@ function render_subnet_node_local(array $tree, array $siteMap, array $siteList, 
     }
     echo "</div>";
 
+    $subnetContacts = render_contact_badges($db, 'subnet', to_int($row['id']));
+    if ($subnetContacts) echo "<div class='mt-4'>" . $subnetContacts . "</div>";
     echo "<div class='muted'>Updated " . e(display_datetime(to_str($row['updated_at']))) . "</div>";
 
     echo "<div class='page-actions mt-8'>";
@@ -408,6 +414,7 @@ function render_subnet_node_local(array $tree, array $siteMap, array $siteList, 
            . " data-vrf-id='" . to_int($row['vrf_id'] ?? 0) . "'"
            . " data-site-id='" . $siteId . "'"
            . " data-depth='" . $depth . "'"
+           . " data-contacts='" . e(json_encode(get_contacts_for_entity($db, 'subnet', to_int($row['id'])), JSON_UNESCAPED_SLASHES) ?: '[]') . "'"
            . ">Edit</button>";
     }
 
@@ -424,7 +431,7 @@ function render_subnet_node_local(array $tree, array $siteMap, array $siteList, 
     }
 
     foreach (($tree['children'][$id] ?? []) as $cid) {
-        render_subnet_node_local($tree, $siteMap, $siteList, $vlanList, $vrfList, (int)$cid, $depth + 1);
+        render_subnet_node_local($db, $tree, $siteMap, $siteList, $vlanList, $vrfList, (int)$cid, $depth + 1);
     }
 
     echo "</div></details></div>";
@@ -526,6 +533,15 @@ ipam_skeleton_flush();
       </label>
       <button type="submit" <?= (current_user()['role']==='readonly')?'disabled':'' ?>>Add</button>
     </div>
+    <?php if ($contactList): ?>
+    <div class="row mt-8">
+      <div class="contact-picker" data-contacts='<?= e(json_encode(array_map(fn($c) => ['id' => to_int($c['id']), 'name' => to_str($c['name']), 'email' => to_str($c['email'])], $contactList), JSON_UNESCAPED_SLASHES) ?: '[]') ?>'>
+        <label>Contacts</label>
+        <div class="contact-picker-rows"></div>
+        <button type="button" class="button-secondary btn-sm contact-picker-add">+ Add contact</button>
+      </div>
+    </div>
+    <?php endif; ?>
     <?php $autoReserveDefault = (bool)ipam_setting('display.auto_reserve_network_broadcast'); ?>
     <div class="row mt-8">
       <label class="row-inline">
@@ -559,7 +575,7 @@ ipam_skeleton_flush();
         </button>
         <div class="site-group-body">
           <?php foreach ($group['roots'] as $rid): ?>
-            <?php render_subnet_node_local($tree, $siteMap, $siteList, $vlanList, $vrfList, (int)$rid, 0); ?>
+            <?php render_subnet_node_local($db, $tree, $siteMap, $siteList, $vlanList, $vrfList, (int)$rid, 0); ?>
           <?php endforeach; ?>
         </div>
       </div>
@@ -617,6 +633,13 @@ ipam_skeleton_flush();
       <input type="hidden" name="site_id" id="subnet-edit-site-hidden" value="" disabled>
       <label>Site<br><span class="badge" id="subnet-edit-site-badge"></span></label>
     </div>
+    <?php if ($contactList): ?>
+    <div class="contact-picker" id="subnet-edit-contacts" data-contacts='<?= e(json_encode(array_map(fn($c) => ['id' => to_int($c['id']), 'name' => to_str($c['name']), 'email' => to_str($c['email'])], $contactList), JSON_UNESCAPED_SLASHES) ?: '[]') ?>' data-existing='[]'>
+      <label>Contacts</label>
+      <div class="contact-picker-rows"></div>
+      <button type="button" class="button-secondary btn-sm contact-picker-add">+ Add contact</button>
+    </div>
+    <?php endif; ?>
     <button type="submit">Save</button>
   </form>
   <form method="post" action="subnets.php" data-confirm="Delete subnet and all its addresses?" class="mt-8" id="subnet-delete-form">
