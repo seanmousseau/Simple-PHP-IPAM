@@ -1027,6 +1027,35 @@ function ipam_migrations(): array
             )" . ($driver === 'mysql' ? ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4' : ''));
         },
 
+        '3.1.0-subnet-alerts-enabled' => function(PDO $db): void {
+            $driver = ipam_dialect()->driver_name();
+            $hasCol = false;
+            if ($driver === 'sqlite') {
+                $res = $db->query("PRAGMA table_info(subnets)");
+                if ($res !== false) {
+                    /** @var array<string, mixed> $col */
+                    foreach ($res as $col) {
+                        if (($col['name'] ?? '') === 'alerts_enabled') { $hasCol = true; break; }
+                    }
+                }
+            } elseif ($driver === 'mysql') {
+                $st = $db->prepare("SHOW COLUMNS FROM subnets LIKE 'alerts_enabled'");
+                $st->execute();
+                $hasCol = (bool)$st->fetch();
+            } else {
+                $st = $db->prepare(
+                    "SELECT column_name FROM information_schema.columns
+                     WHERE table_name = 'subnets' AND column_name = 'alerts_enabled'"
+                );
+                $st->execute();
+                $hasCol = (bool)$st->fetch();
+            }
+            if (!$hasCol) {
+                $colType = ($driver === 'mysql') ? 'TINYINT(1) NOT NULL DEFAULT 1' : 'INTEGER NOT NULL DEFAULT 1';
+                $db->exec("ALTER TABLE subnets ADD COLUMN alerts_enabled {$colType}");
+            }
+        },
+
         '3.0.0-subnet-contacts' => function(PDO $db): void {
             $driver = ipam_dialect()->driver_name();
             if ($driver === 'sqlite') {

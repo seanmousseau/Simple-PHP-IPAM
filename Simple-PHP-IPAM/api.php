@@ -368,7 +368,7 @@ function api_subnets(PDO $db): never
         : '';
 
     $baseSql = "SELECT s.id, s.cidr, s.ip_version, s.network, s.prefix,
-                       s.description, s.notes, s.vlan_id, s.vlan_fk, s.site_id, s.vrf_id, s.created_at,
+                       s.description, s.notes, s.vlan_id, s.vlan_fk, s.site_id, s.vrf_id, s.alerts_enabled, s.created_at,
                        si.name AS site, v.vlan_id AS vlan_number, v.name AS vlan_name,
                        vr.name AS vrf_name$countsSelect
                 FROM subnets s
@@ -488,8 +488,9 @@ function fmt_subnet(array $r, bool $withCounts = false, array $tags = []): array
         'vrf_name'    => $vrfId !== null ? to_str($r['vrf_name'] ?? '') : null,
         'site_id'     => $r['site_id'] !== null ? to_int($r['site_id']) : null,
         'site'        => $r['site'],
-        'tags'        => $tags,
-        'created_at'  => $r['created_at'],
+        'tags'           => $tags,
+        'alerts_enabled' => (bool) to_int($r['alerts_enabled'] ?? 1),
+        'created_at'     => $r['created_at'],
     ];
     if ($withCounts) {
         $used     = to_int($r['used_count']);
@@ -2088,7 +2089,7 @@ function api_subnets_update(PDO $db, array $apiKey, int $id, array $body): never
 {
     if ($id <= 0) api_error(400, 'id is required as a query parameter.');
 
-    $st = $db->prepare("SELECT id, cidr, description, notes, site_id, vlan_id, vlan_fk, vrf_id FROM subnets WHERE id = :id");
+    $st = $db->prepare("SELECT id, cidr, description, notes, site_id, vlan_id, vlan_fk, vrf_id, alerts_enabled FROM subnets WHERE id = :id");
     $st->execute([':id' => $id]);
     /** @var array<string, mixed>|false $subnet */
     $subnet = $st->fetch();
@@ -2115,6 +2116,13 @@ function api_subnets_update(PDO $db, array $apiKey, int $id, array $body): never
     $vrfId = array_key_exists('vrf_id', $body)
         ? ($body['vrf_id'] !== null ? to_int($body['vrf_id']) : null)
         : ($subnet['vrf_id'] !== null ? to_int($subnet['vrf_id']) : null);
+    if (array_key_exists('alerts_enabled', $body)) {
+        $alertsEnabled = filter_var($body['alerts_enabled'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+        if ($alertsEnabled === null) api_error(400, 'alerts_enabled must be a boolean.');
+        $alertsEnabled = $alertsEnabled ? 1 : 0;
+    } else {
+        $alertsEnabled = to_int($subnet['alerts_enabled'] ?? 1);
+    }
 
     if ($vlanId !== null && ($vlanId < 1 || $vlanId > 4094)) {
         api_error(400, 'vlan_id must be between 1 and 4094.');
@@ -2143,8 +2151,11 @@ function api_subnets_update(PDO $db, array $apiKey, int $id, array $body): never
     if ($inheritedSiteId !== null) $siteId = $inheritedSiteId;
 
     $db->prepare(
-        "UPDATE subnets SET description = :desc, notes = :notes, site_id = :sid, vlan_id = :vlan, vlan_fk = :vfk, vrf_id = :vrf WHERE id = :id"
-    )->execute([':desc' => $description, ':notes' => $notes, ':sid' => $siteId, ':vlan' => $vlanId, ':vfk' => $vlanFk, ':vrf' => $vrfId, ':id' => $id]);
+        "UPDATE subnets SET description = :desc, notes = :notes, site_id = :sid, vlan_id = :vlan, vlan_fk = :vfk, vrf_id = :vrf, alerts_enabled = :ae WHERE id = :id"
+    )->execute([':desc' => $description, ':notes' => $notes, ':sid' => $siteId, ':vlan' => $vlanId, ':vfk' => $vlanFk, ':vrf' => $vrfId, ':ae' => $alertsEnabled, ':id' => $id]);
+    if ($alertsEnabled === 0) {
+        $db->prepare("DELETE FROM alert_state WHERE subnet_id = :sid")->execute([':sid' => $id]);
+    }
 
     // #310 + CodeRabbit m1: tag_ids[] validated up-front; null = no-op.
     if ($validatedTagIds !== null) {

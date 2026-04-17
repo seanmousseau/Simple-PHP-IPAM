@@ -2709,8 +2709,8 @@ function check_utilization_alerts(PDO $db, array $config): void
     // Use the shared utilization function that excludes infrastructure IPs (#566)
     $utilData = ipv4_unassigned_summary($db);
 
-    // Build rows from utilData for the alert loop
-    $subnetRows = ($db->query("SELECT id, cidr, prefix FROM subnets WHERE ip_version = 4")
+    // Build rows from utilData for the alert loop (#457: skip subnets with alerts_enabled = 0)
+    $subnetRows = ($db->query("SELECT id, cidr, prefix FROM subnets WHERE ip_version = 4 AND alerts_enabled = 1")
         ?: throw new \RuntimeException('Query failed'))->fetchAll();
     $rows = [];
     foreach ($subnetRows as $sr) {

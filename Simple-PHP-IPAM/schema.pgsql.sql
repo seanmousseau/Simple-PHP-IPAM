@@ -159,7 +159,8 @@ CREATE TABLE IF NOT EXISTS subnets (
   site_id     BIGINT NULL REFERENCES sites(id) ON DELETE SET NULL,
   vlan_id     INTEGER NULL,
   vlan_fk     BIGINT NULL REFERENCES vlans(id) ON DELETE SET NULL,
-  vrf_id      BIGINT NULL REFERENCES vrfs(id)  ON DELETE RESTRICT,
+  vrf_id          BIGINT NULL REFERENCES vrfs(id)  ON DELETE RESTRICT,
+  alerts_enabled  SMALLINT NOT NULL DEFAULT 1,
   created_at  TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
   updated_at  TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
   CONSTRAINT uq_subnets_cidr_vrf UNIQUE (cidr, vrf_id)

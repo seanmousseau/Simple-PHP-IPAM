@@ -1099,6 +1099,9 @@
           if (siteHidden) siteHidden.disabled = true;
         }
 
+        var alertsCb = document.getElementById("subnet-edit-alerts");
+        if (alertsCb) alertsCb.checked = (d.alertsEnabled !== "0");
+
         var contactPicker = document.getElementById("subnet-edit-contacts");
         if (contactPicker) {
           var existingContacts = [];

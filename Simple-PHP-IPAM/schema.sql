@@ -72,7 +72,8 @@ CREATE TABLE IF NOT EXISTS subnets (
   site_id     INTEGER REFERENCES sites(id) ON DELETE SET NULL, -- v2.11.0 #409: FK backfilled; schema.mysql.sql and schema.pgsql.sql have enforced this since v2.10.0
   vlan_id     INTEGER,                              -- 802.1Q VLAN ID (1–4094), legacy integer field
   vlan_fk     INTEGER REFERENCES vlans(id) ON DELETE SET NULL,  -- v2.0.0: FK to vlans table
-  vrf_id      INTEGER REFERENCES vrfs(id) ON DELETE RESTRICT,   -- v2.1.0: FK to vrfs table; RESTRICT prevents orphaned subnets moving to global VRF
+  vrf_id          INTEGER REFERENCES vrfs(id) ON DELETE RESTRICT,   -- v2.1.0: FK to vrfs table; RESTRICT prevents orphaned subnets moving to global VRF
+  alerts_enabled  INTEGER NOT NULL DEFAULT 1,                       -- v3.1.0 #457: 0 disables utilization alerts for this subnet
   created_at  TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(cidr, vrf_id)
