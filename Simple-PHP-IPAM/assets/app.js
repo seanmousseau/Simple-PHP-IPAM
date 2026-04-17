@@ -1083,8 +1083,9 @@
 
         if (parseInt(d.depth, 10) > 0 && siteLocked && siteWrap) {
           siteWrap.hidden = true;
+          if (siteSelect) siteSelect.disabled = true;
           siteLocked.hidden = false;
-          if (siteHidden) siteHidden.value = d.siteId;
+          if (siteHidden) { siteHidden.value = d.siteId; siteHidden.disabled = false; }
           if (siteBadge) {
             var opt = siteSelect && siteSelect.querySelector("option[value='" + d.siteId + "']");
             siteBadge.textContent = (opt ? opt.textContent : "(none)") + " \u2191";
@@ -1092,8 +1093,9 @@
           }
         } else if (siteWrap && siteLocked) {
           siteWrap.hidden = false;
+          if (siteSelect) { siteSelect.disabled = false; siteSelect.value = d.siteId; }
           siteLocked.hidden = true;
-          if (siteSelect) siteSelect.value = d.siteId;
+          if (siteHidden) siteHidden.disabled = true;
         }
 
         editDrawer.hidden = false;

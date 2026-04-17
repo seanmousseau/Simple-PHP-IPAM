@@ -608,7 +608,7 @@ ipam_skeleton_flush();
       </select></label>
     </div>
     <div id="subnet-edit-site-locked" hidden>
-      <input type="hidden" name="site_id" id="subnet-edit-site-hidden" value="">
+      <input type="hidden" name="site_id" id="subnet-edit-site-hidden" value="" disabled>
       <label>Site<br><span class="badge" id="subnet-edit-site-badge"></span></label>
     </div>
     <button type="submit">Save</button>
