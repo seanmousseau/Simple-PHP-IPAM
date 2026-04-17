@@ -38,13 +38,14 @@ Simple-PHP-IPAM exposes a JSON REST API (`api.php`). Read endpoints are availabl
 
 ## Authentication
 
-Every request must include a valid API key via the `Authorization` header:
+Most API requests must include a valid API key via the `Authorization` header:
 
-```
+```http
 Authorization: Bearer <key>
 ```
 
-> **Breaking change (v3.0.0):** Query parameter authentication (`?api_key=<key>`) was removed in v3.0.0. If you were using query-param auth, switch to the `Authorization: Bearer` header.
+> **Breaking change (v3.0.0):** Query parameter authentication (`?api_key=<key>`) was removed in v3.0.0. Use `Authorization: Bearer <key>`.
+> **Note:** The `contacts` and `subnet_stats` GET endpoints also accept browser session authentication (no API key required when logged in).
 
 API keys are created by administrators at **Admin → API Keys** (`api_keys.php`).
 Each key is a 64-character hex string generated with `random_bytes(32)`. Only a

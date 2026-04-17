@@ -342,8 +342,8 @@ CREATE TABLE IF NOT EXISTS address_tags (
 -- site_contacts / subnet_contacts (multi-contact assignments, v3.0.0)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS site_contacts (
-  site_id    INT          NOT NULL,
-  contact_id INT          NOT NULL,
+  site_id    BIGINT UNSIGNED NOT NULL,
+  contact_id BIGINT UNSIGNED NOT NULL,
   role       VARCHAR(191) NOT NULL DEFAULT '',
   PRIMARY KEY (site_id, contact_id),
   CONSTRAINT fk_site_contacts_site    FOREIGN KEY (site_id)    REFERENCES sites(id)    ON DELETE CASCADE,
@@ -351,8 +351,8 @@ CREATE TABLE IF NOT EXISTS site_contacts (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 CREATE TABLE IF NOT EXISTS subnet_contacts (
-  subnet_id  INT          NOT NULL,
-  contact_id INT          NOT NULL,
+  subnet_id  BIGINT UNSIGNED NOT NULL,
+  contact_id BIGINT UNSIGNED NOT NULL,
   role       VARCHAR(191) NOT NULL DEFAULT '',
   PRIMARY KEY (subnet_id, contact_id),
   CONSTRAINT fk_subnet_contacts_subnet  FOREIGN KEY (subnet_id)  REFERENCES subnets(id)  ON DELETE CASCADE,

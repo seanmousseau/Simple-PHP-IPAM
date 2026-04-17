@@ -39,8 +39,8 @@ ipam_db_init($db);
 
 // ---- API key authentication ----
 
-$apiMaxAttempts   = to_int(ipam_setting('api.max_attempts'));
-$apiLockoutSeconds = to_int(ipam_setting('api.lockout_seconds'));
+$apiMaxAttempts    = max(1, to_int(ipam_setting('api.max_attempts')));
+$apiLockoutSeconds = max(1, to_int(ipam_setting('api.lockout_seconds')));
 if (!empty($config['proxy_trust']) && !empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
     $xffParts  = array_map('trim', explode(',', to_str($_SERVER['HTTP_X_FORWARDED_FOR'])));
     $xffFirst  = $xffParts[0];
@@ -128,7 +128,7 @@ if ($sessionApiKey !== null) {
 $resource  = strtolower(trim(to_str($_GET['resource'] ?? '')));
 $method    = strtoupper(to_str($_SERVER['REQUEST_METHOD'] ?? 'GET'));
 $isBulk    = !empty($_GET['bulk']);
-$bulkLimit = to_int(ipam_setting('api.bulk_limit'));
+$bulkLimit = max(1, to_int(ipam_setting('api.bulk_limit')));
 
 if (to_int($apiKey['is_readonly'] ?? 0) === 1 && in_array($method, ['POST', 'PUT', 'DELETE'], true)) {
     api_error(403, 'This API key is read-only.');

@@ -922,17 +922,17 @@ function ipam_migrations(): array
             }
 
             $driver = to_str($config['db_driver'] ?? 'sqlite');
-            if ($driver === 'sqlite') {
-                $dsn = 'sqlite:' . to_str($config['db_path'] ?? (__DIR__ . '/data/ipam.sqlite'));
-            } else {
-                $dsn = to_str($config['db_dsn'] ?? '');
-            }
             $stub = "<?php\ndeclare(strict_types=1);\n\nreturn [\n"
-                . "    'db_driver'    => " . var_export($driver, true) . ",\n"
-                . "    'db_dsn'       => " . var_export($dsn, true) . ",\n"
-                . "    'db_user'      => " . var_export(to_str($config['db_user'] ?? ''), true) . ",\n"
-                . "    'db_pass'      => " . var_export(to_str($config['db_pass'] ?? ''), true) . ",\n"
-                . "    'session_name' => " . var_export(to_str($config['session_name'] ?? 'IPAMSESSID'), true) . ",\n"
+                . "    'db_driver'    => " . var_export($driver, true) . ",\n";
+            if ($driver === 'sqlite') {
+                $dbPath = to_str($config['db_path'] ?? (__DIR__ . '/data/ipam.sqlite'));
+                $stub .= "    'db_path'      => " . var_export($dbPath, true) . ",\n";
+            } else {
+                $stub .= "    'db_dsn'       => " . var_export(to_str($config['db_dsn'] ?? ''), true) . ",\n"
+                    . "    'db_user'      => " . var_export(to_str($config['db_user'] ?? ''), true) . ",\n"
+                    . "    'db_pass'      => " . var_export(to_str($config['db_pass'] ?? ''), true) . ",\n";
+            }
+            $stub .= "    'session_name' => " . var_export(to_str($config['session_name'] ?? 'IPAMSESSID'), true) . ",\n"
                 . "    'force_https'  => " . var_export((bool)($config['force_https'] ?? true), true) . ",\n";
 
             if (!empty($config['proxy_trust'])) {
@@ -990,14 +990,19 @@ function ipam_migrations(): array
                 $tbl->execute();
                 if ($tbl->fetch()) return;
             }
-            $intType = ($driver === 'mysql') ? 'INT' : 'INTEGER';
+            $intType = ($driver === 'mysql') ? 'BIGINT UNSIGNED' : ($driver === 'pgsql' ? 'BIGINT' : 'INTEGER');
             $roleType = ($driver === 'mysql') ? "VARCHAR(191) NOT NULL DEFAULT ''" : "TEXT NOT NULL DEFAULT ''";
+            $fk = ($driver === 'mysql')
+                ? ", CONSTRAINT fk_site_contacts_site FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE, CONSTRAINT fk_site_contacts_contact FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE"
+                : '';
+            $inlineRef = ($driver === 'mysql') ? '' : ' REFERENCES sites(id) ON DELETE CASCADE';
+            $inlineRef2 = ($driver === 'mysql') ? '' : ' REFERENCES contacts(id) ON DELETE CASCADE';
             $db->exec("CREATE TABLE site_contacts (
-                site_id    {$intType} NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
-                contact_id {$intType} NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+                site_id    {$intType} NOT NULL{$inlineRef},
+                contact_id {$intType} NOT NULL{$inlineRef2},
                 role       {$roleType},
-                PRIMARY KEY (site_id, contact_id)
-            )");
+                PRIMARY KEY (site_id, contact_id){$fk}
+            )" . ($driver === 'mysql' ? ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4' : ''));
         },
 
         '3.0.0-subnet-contacts' => function(PDO $db): void {
@@ -1013,14 +1018,19 @@ function ipam_migrations(): array
                 $tbl->execute();
                 if ($tbl->fetch()) return;
             }
-            $intType = ($driver === 'mysql') ? 'INT' : 'INTEGER';
+            $intType = ($driver === 'mysql') ? 'BIGINT UNSIGNED' : ($driver === 'pgsql' ? 'BIGINT' : 'INTEGER');
             $roleType = ($driver === 'mysql') ? "VARCHAR(191) NOT NULL DEFAULT ''" : "TEXT NOT NULL DEFAULT ''";
+            $fk = ($driver === 'mysql')
+                ? ", CONSTRAINT fk_subnet_contacts_subnet FOREIGN KEY (subnet_id) REFERENCES subnets(id) ON DELETE CASCADE, CONSTRAINT fk_subnet_contacts_contact FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE"
+                : '';
+            $inlineRef = ($driver === 'mysql') ? '' : ' REFERENCES subnets(id) ON DELETE CASCADE';
+            $inlineRef2 = ($driver === 'mysql') ? '' : ' REFERENCES contacts(id) ON DELETE CASCADE';
             $db->exec("CREATE TABLE subnet_contacts (
-                subnet_id  {$intType} NOT NULL REFERENCES subnets(id) ON DELETE CASCADE,
-                contact_id {$intType} NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+                subnet_id  {$intType} NOT NULL{$inlineRef},
+                contact_id {$intType} NOT NULL{$inlineRef2},
                 role       {$roleType},
-                PRIMARY KEY (subnet_id, contact_id)
-            )");
+                PRIMARY KEY (subnet_id, contact_id){$fk}
+            )" . ($driver === 'mysql' ? ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4' : ''));
         },
     ];
 }
