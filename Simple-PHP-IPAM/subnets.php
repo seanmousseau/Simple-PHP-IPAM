@@ -33,6 +33,10 @@ foreach ($vlanList as $vl) {
 /** @var list<array<string, mixed>> $vrfList */
 $vrfList = ($db->query("SELECT id, name FROM vrfs ORDER BY name ASC") ?: throw new \RuntimeException('Query failed'))->fetchAll();
 
+$_cSt = $db->query("SELECT id, name, email FROM contacts ORDER BY name");
+/** @var list<array<string, mixed>> $contactList */
+$contactList = $_cSt !== false ? $_cSt->fetchAll() : [];
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = to_str($_POST['action'] ?? '');
 
@@ -72,6 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($hasOverlaps && empty($_POST['confirm_overlap'])) {
                 $overlapWarning = subnet_overlap_warning_text($overlaps);
                 $pendingAction = 'create';
+                $pendingContacts = !empty($_POST['contact_id_present']) ? parse_contact_assignments($_POST) : [];
                 $pendingData = [
                     'cidr'         => $cidr,
                     'description'  => $desc,
@@ -81,6 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'vrf_id'       => $vrfId ?? 0,
                     'auto_reserve' => $doAutoReserve ? '1' : '0',
                     'gateway'      => $gateway ?? '',
+                    'contacts'     => json_encode($pendingContacts),
                 ];
             } else {
                 try {
@@ -107,7 +113,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $st->bindValue(':vrf',   $vrfId,  $vrfId  === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                     $st->execute();
                     $newSubnetId = ipam_last_insert_id($db, 'subnets');
-                    if (isset($_POST['contact_id'])) {
+                    if (!empty($_POST['contact_id_present'])) {
                         save_contacts_for_entity($db, 'subnet', $newSubnetId, parse_contact_assignments($_POST));
                     }
                     audit($db, 'subnet.create', 'subnet', $newSubnetId, $normalized);
@@ -166,9 +172,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($hasOverlaps && empty($_POST['confirm_overlap'])) {
                 $overlapWarning = subnet_overlap_warning_text($overlaps);
                 $pendingAction = 'update';
+                $pendingContacts = !empty($_POST['contact_id_present']) ? parse_contact_assignments($_POST) : [];
                 $pendingData = [
                     'id' => $id, 'cidr' => $cidr, 'description' => $desc, 'notes' => $notes,
                     'site_id' => $siteId ?? 0, 'vlan_fk' => $vlanFk ?? 0, 'vrf_id' => $vrfId ?? 0,
+                    'contacts' => json_encode($pendingContacts),
                 ];
             } else {
                 $dupChk = $db->prepare("SELECT id FROM subnets WHERE cidr = :cidr AND " . ipam_dialect()->null_safe_eq("vrf_id", ":vrf") . " AND id != :self");
@@ -194,7 +202,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $st->bindValue(':vrf',   $vrfId,  $vrfId  === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                         $st->bindValue(':id',    $id,    PDO::PARAM_INT);
                         $st->execute();
-                        if (isset($_POST['contact_id'])) {
+                        if (!empty($_POST['contact_id_present'])) {
                             save_contacts_for_entity($db, 'subnet', $id, parse_contact_assignments($_POST));
                         }
                         audit($db, 'subnet.update', 'subnet', $id, $normalized);
@@ -348,7 +356,7 @@ function render_subnet_map_nodes(array $tree, array $roots, int $depth, array &$
  * @param list<array<string, mixed>> $vlanList
  * @param list<array<string, mixed>> $vrfList
  */
-function render_subnet_node_local(array $tree, array $siteMap, array $siteList, array $vlanList, array $vrfList, int $id, int $depth = 0): void
+function render_subnet_node_local(PDO $db, array $tree, array $siteMap, array $siteList, array $vlanList, array $vrfList, int $id, int $depth = 0): void
 {
     $row = $tree['byId'][$id];
     $pad = $depth * 28;
@@ -395,6 +403,8 @@ function render_subnet_node_local(array $tree, array $siteMap, array $siteList, 
     }
     echo "</div>";
 
+    $subnetContacts = render_contact_badges($db, 'subnet', to_int($row['id']));
+    if ($subnetContacts) echo "<div class='mt-4'>" . $subnetContacts . "</div>";
     echo "<div class='muted'>Updated " . e(display_datetime(to_str($row['updated_at']))) . "</div>";
 
     echo "<div class='page-actions mt-8'>";
@@ -408,6 +418,7 @@ function render_subnet_node_local(array $tree, array $siteMap, array $siteList, 
            . " data-vrf-id='" . to_int($row['vrf_id'] ?? 0) . "'"
            . " data-site-id='" . $siteId . "'"
            . " data-depth='" . $depth . "'"
+           . " data-contacts='" . e(json_encode(get_contacts_for_entity($db, 'subnet', to_int($row['id'])), JSON_UNESCAPED_SLASHES) ?: '[]') . "'"
            . ">Edit</button>";
     }
 
@@ -424,7 +435,7 @@ function render_subnet_node_local(array $tree, array $siteMap, array $siteList, 
     }
 
     foreach (($tree['children'][$id] ?? []) as $cid) {
-        render_subnet_node_local($tree, $siteMap, $siteList, $vlanList, $vrfList, (int)$cid, $depth + 1);
+        render_subnet_node_local($db, $tree, $siteMap, $siteList, $vlanList, $vrfList, (int)$cid, $depth + 1);
     }
 
     echo "</div></details></div>";
@@ -481,6 +492,17 @@ ipam_skeleton_flush();
         <input type="hidden" name="gateway" value="<?= e(to_str($pendingData['gateway'] ?? '')) ?>">
       <?php endif; ?>
       <input type="hidden" name="confirm_overlap" value="1">
+      <?php if (!empty($pendingData['contacts'])):
+        $pContacts = json_decode(to_str($pendingData['contacts']), true);
+        if (is_array($pContacts)):
+          echo '<input type="hidden" name="contact_id_present" value="1">';
+          /** @var array{contact_id: int, role: string} $pc */
+          foreach ($pContacts as $pc):
+            echo '<input type="hidden" name="contact_id[]" value="' . to_int($pc['contact_id']) . '">';
+            echo '<input type="hidden" name="contact_role[]" value="' . e(to_str($pc['role'])) . '">';
+          endforeach;
+        endif;
+      endif; ?>
       <button type="submit">Save anyway</button>
       <a class="action-pill" href="subnets.php">Cancel</a>
     </form>
@@ -526,6 +548,16 @@ ipam_skeleton_flush();
       </label>
       <button type="submit" <?= (current_user()['role']==='readonly')?'disabled':'' ?>>Add</button>
     </div>
+    <?php if ($contactList): ?>
+    <div class="row mt-8">
+      <input type="hidden" name="contact_id_present" value="1">
+      <div class="contact-picker" data-contacts='<?= e(json_encode(array_map(fn($c) => ['id' => to_int($c['id']), 'name' => to_str($c['name']), 'email' => to_str($c['email'])], $contactList), JSON_UNESCAPED_SLASHES) ?: '[]') ?>'>
+        <label>Contacts</label>
+        <div class="contact-picker-rows"></div>
+        <button type="button" class="button-secondary btn-sm contact-picker-add">+ Add contact</button>
+      </div>
+    </div>
+    <?php endif; ?>
     <?php $autoReserveDefault = (bool)ipam_setting('display.auto_reserve_network_broadcast'); ?>
     <div class="row mt-8">
       <label class="row-inline">
@@ -557,9 +589,12 @@ ipam_skeleton_flush();
         <button type="button" class="site-group-toggle" aria-expanded="true" data-sg-key="<?= e((string)$key) ?>">
           <?= e(to_str($group['label'])) ?><span class="site-group-caret" aria-hidden="true">&#9660;</span>
         </button>
+        <?php if ($key !== 'ungrouped'): ?>
+          <?= render_contact_badges($db, 'site', to_int($key)) ?>
+        <?php endif; ?>
         <div class="site-group-body">
           <?php foreach ($group['roots'] as $rid): ?>
-            <?php render_subnet_node_local($tree, $siteMap, $siteList, $vlanList, $vrfList, (int)$rid, 0); ?>
+            <?php render_subnet_node_local($db, $tree, $siteMap, $siteList, $vlanList, $vrfList, (int)$rid, 0); ?>
           <?php endforeach; ?>
         </div>
       </div>
@@ -617,6 +652,14 @@ ipam_skeleton_flush();
       <input type="hidden" name="site_id" id="subnet-edit-site-hidden" value="" disabled>
       <label>Site<br><span class="badge" id="subnet-edit-site-badge"></span></label>
     </div>
+    <?php if ($contactList): ?>
+    <input type="hidden" name="contact_id_present" value="1">
+    <div class="contact-picker" id="subnet-edit-contacts" data-contacts='<?= e(json_encode(array_map(fn($c) => ['id' => to_int($c['id']), 'name' => to_str($c['name']), 'email' => to_str($c['email'])], $contactList), JSON_UNESCAPED_SLASHES) ?: '[]') ?>' data-existing='[]'>
+      <label>Contacts</label>
+      <div class="contact-picker-rows"></div>
+      <button type="button" class="button-secondary btn-sm contact-picker-add">+ Add contact</button>
+    </div>
+    <?php endif; ?>
     <button type="submit">Save</button>
   </form>
   <form method="post" action="subnets.php" data-confirm="Delete subnet and all its addresses?" class="mt-8" id="subnet-delete-form">

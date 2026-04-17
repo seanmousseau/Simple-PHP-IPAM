@@ -1099,6 +1099,16 @@
           if (siteHidden) siteHidden.disabled = true;
         }
 
+        var contactPicker = document.getElementById("subnet-edit-contacts");
+        if (contactPicker) {
+          var existingContacts = [];
+          try { existingContacts = JSON.parse(d.contacts || "[]"); } catch(ex) {}
+          var rowsDiv = contactPicker.querySelector(".contact-picker-rows");
+          if (rowsDiv) rowsDiv.textContent = "";
+          contactPicker.setAttribute("data-existing", JSON.stringify(existingContacts));
+          contactPicker.dispatchEvent(new CustomEvent("reinit"));
+        }
+
         editDrawer.hidden = false;
         var titleEl = formDrawer.querySelector(".drawer-title");
         if (titleEl) titleEl.textContent = "Edit " + d.cidr;
@@ -1518,6 +1528,12 @@
       if (addBtn) addBtn.addEventListener("click", function() { addRow(0, ""); });
       picker.addEventListener("click", function(e) {
         if (e.target.classList.contains("contact-picker-remove")) e.target.closest(".contact-picker-row").remove();
+      });
+      picker.addEventListener("reinit", function() {
+        rows.textContent = "";
+        var fresh = [];
+        try { fresh = JSON.parse(picker.getAttribute("data-existing") || "[]"); } catch(ex) {}
+        fresh.forEach(function(c) { addRow(c.id, c.role); });
       });
     });
 
