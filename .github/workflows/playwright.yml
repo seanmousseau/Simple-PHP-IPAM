@@ -66,7 +66,7 @@ jobs:
           IPAM_ADMIN_PASS: demo
           IPAM_DRIVER: ${{ matrix.driver }}
           CI: 'true'
-        run: npx playwright test
+        run: npx playwright test --project=chromium
 
       - name: Container logs on failure
         if: failure()
@@ -108,7 +108,7 @@ jobs:
 
       - name: Install Playwright browsers
         working-directory: testing/playwright
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       # Apache: boots the full Dockerized Apache+PHP harness on HTTPS :8443
       # with a seeded SQLite database. Postgres/MySQL matrix slots do not

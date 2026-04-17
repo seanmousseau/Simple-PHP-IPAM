@@ -16,6 +16,7 @@ export default defineConfig({
   // and slower I/O than a warm dev-direct target); 0 locally so flaky tests
   // surface immediately during development.
   retries: process.env.CI ? 2 : 0,
+  maxFailures: process.env.CI ? 10 : 0,
   timeout: 60_000,
   expect: {
     timeout: 10_000,
@@ -40,7 +41,44 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
+      testIgnore: /visual-regression/,
       use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'vr-1440',
+      testMatch: /visual-regression/,
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 1440, height: 900 },
+        deviceScaleFactor: 1,
+      },
+    },
+    {
+      name: 'vr-1024',
+      testMatch: /visual-regression/,
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 1024, height: 768 },
+        deviceScaleFactor: 1,
+      },
+    },
+    {
+      name: 'vr-768',
+      testMatch: /visual-regression/,
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 768, height: 1024 },
+        deviceScaleFactor: 1,
+      },
+    },
+    {
+      name: 'vr-375',
+      testMatch: /visual-regression/,
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 375, height: 812 },
+        deviceScaleFactor: 1,
+      },
     },
   ],
 });

@@ -1,4 +1,8 @@
 (function(){
+  // Remove skeleton loader if present (CSP-safe, no inline script)
+  var skel = document.getElementById("skeleton-shell");
+  if (skel) skel.remove();
+
   var key = "ipam_theme";
   // Seed localStorage from server-side theme meta tag (CSP-safe, replaces inline script)
   var metaTheme = document.querySelector("meta[name='ipam-server-theme']");
@@ -313,6 +317,26 @@
       }
     });
 
+    // --- Loading state on POST form submit (#507) ---
+    document.addEventListener("submit", function(e) {
+      if (e.defaultPrevented) return;
+      var form = e.target;
+      if (form.method !== "post" || form.hasAttribute("data-no-loading")) return;
+      var btn = e.submitter || form.querySelector("button[type=submit], input[type=submit]");
+      if (!btn || btn.disabled) return;
+      if (btn.name && btn.value) {
+        var h = document.createElement("input");
+        h.type = "hidden"; h.name = btn.name; h.value = btn.value;
+        form.appendChild(h);
+      }
+      btn.disabled = true;
+      btn.setAttribute("aria-busy", "true");
+      btn.dataset.originalLabel = btn.textContent;
+      var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      btn.textContent = reduced ? "Working\u2026" : "";
+      if (!reduced) btn.classList.add("button-loading");
+    });
+
     // --- Confirm on buttons/links (data-confirm on non-form elements) ---
     document.addEventListener("click", function(e) {
       var el = e.target.closest("[data-confirm]:not(form)");
@@ -518,6 +542,17 @@
         });
       });
     }
+
+    // --- "Use next IP" fill helper (data-fill-ip on addresses.php) ---
+    document.addEventListener("click", function(e) {
+      var el = e.target.closest("[data-fill-ip]");
+      if (!el) return;
+      e.preventDefault();
+      var card = el.closest(".drawer-form-card, .card");
+      if (!card) return;
+      var inp = card.querySelector('input[name="ip"]');
+      if (inp) { inp.value = el.dataset.fillIp; inp.focus(); }
+    });
 
     // --- Import spinner overlay (data-import-form) ---
     var importForm = document.querySelector("[data-import-form]");
@@ -864,7 +899,7 @@
         activeIdx = Math.max(-1, Math.min(idx, items.length - 1));
         if (activeIdx >= 0 && items[activeIdx]) {
           items[activeIdx].classList.add("active");
-          items[activeIdx].scrollIntoView({block: "nearest"});
+          items[activeIdx].scrollIntoView({block: "nearest", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"});
         }
       }
 

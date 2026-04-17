@@ -8,6 +8,8 @@ Simple-PHP-IPAM/data/backups/
 
 # Composer / dev tools
 vendor/
+# Allow vendored client-side assets (Open Props, etc.)
+!Simple-PHP-IPAM/assets/vendor/
 
 # PHPStan cache
 .phpstan/
@@ -28,3 +30,5 @@ test-results/
 .remember/
 stubs/
 *.png
+# Allow Playwright visual regression baselines
+!testing/playwright/tests/**/*.png

@@ -301,6 +301,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         flash_set('Address deleted.');
         header('Location: addresses.php?subnet_id=' . $subnetId);
         exit;
+    } elseif ($action === 'reserve_infra') {
+        require_write_access();
+        $subnetId = to_int($_POST['subnet_id'] ?? 0);
+        $st = $db->prepare("SELECT cidr FROM subnets WHERE id = :id");
+        $st->execute([':id' => $subnetId]);
+        /** @var array<string, mixed>|false $subRow */
+        $subRow = $st->fetch();
+        if (is_array($subRow)) {
+            $gwIp = trim(to_str($_POST['gateway_ip'] ?? ''));
+            if ($gwIp === '') $gwIp = null;
+            if ($gwIp !== null) {
+                $gwNorm = normalize_ip($gwIp);
+                $parsed = parse_cidr(to_str($subRow['cidr']));
+                if (!$gwNorm || !$parsed || !ip_in_cidr($gwNorm['ip'], $parsed['network'], $parsed['prefix'])) {
+                    $gwIp = null;
+                    flash_set('Gateway IP is not in this subnet — skipped. Network and broadcast reserved.', 'warning');
+                } else {
+                    $gwIp = $gwNorm['ip'];
+                }
+            }
+            auto_reserve_subnet_ips($db, $subnetId, to_str($subRow['cidr']), $gwIp);
+            if (!isset($_SESSION['flash'])) flash_set('Infrastructure addresses reserved.');
+        }
+        header('Location: addresses.php?subnet_id=' . $subnetId);
+        exit;
     }
 }
 
@@ -319,7 +344,7 @@ if ($selectedSubnetId > 0) {
 
     $p = paginate($total, $page, $pageSize);
 
-    $st = $db->prepare("SELECT a.id, a.ip, a.hostname, a.owner, a.note, a.grp, a.mac, a.expires_at, a.status, a.updated_at,
+    $st = $db->prepare("SELECT a.id, a.ip, a.ip_bin, a.hostname, a.owner, a.note, a.grp, a.mac, a.expires_at, a.status, a.updated_at,
                                a.owner_contact_id, c.name AS owner_contact_name, c.email AS owner_contact_email,
                                a.last_seen_at, a.is_stale
                         FROM addresses a
@@ -335,6 +360,17 @@ if ($selectedSubnetId > 0) {
     $addresses = $st->fetchAll();
 }
 
+// Compute network/broadcast/gateway bins for badge rendering
+$networkBin = null;
+$broadcastBin = null;
+if ($selectedSubnet) {
+    $parsed = parse_cidr(to_str($selectedSubnet['cidr']));
+    if ($parsed !== null) {
+        $networkBin = $parsed['net_bin'];
+        $broadcastBin = ipam_compute_broadcast_bin($parsed['net_bin'], $parsed['prefix']);
+    }
+}
+
 // Next available IP (IPv4 only, for subnets with room)
 $nextAvailableIp = null;
 if ($selectedSubnet && to_int($selectedSubnet['ip_version']) === 4) {
@@ -342,7 +378,25 @@ if ($selectedSubnet && to_int($selectedSubnet['ip_version']) === 4) {
         to_str($selectedSubnet['network']), to_int($selectedSubnet['prefix']));
 }
 
+// Check if network/broadcast are missing (for "Reserve infra" button)
+$missingInfra = false;
+if ($selectedSubnetId > 0 && $networkBin !== null) {
+    $infraBins = array_values(array_filter([$networkBin, $broadcastBin]));
+    if ($infraBins) {
+        $placeholders = implode(',', array_fill(0, count($infraBins), '?'));
+        $chk = $db->prepare("SELECT ip_bin FROM addresses WHERE subnet_id = ? AND ip_bin IN ($placeholders)");
+        $chk->bindValue(1, $selectedSubnetId, PDO::PARAM_INT);
+        foreach ($infraBins as $i => $b) {
+            ipam_bind_binary($chk, $i + 2, $b);
+        }
+        $chk->execute();
+        $found = $chk->fetchAll(PDO::FETCH_COLUMN);
+        $missingInfra = count($found) < count($infraBins);
+    }
+}
+
 page_header('Addresses', ['page' => 'addresses']);
+ipam_skeleton_flush();
 ?>
 
 <div class="breadcrumbs">
@@ -369,6 +423,9 @@ page_header('Addresses', ['page' => 'addresses']);
     <?php if (current_user()['role'] !== 'readonly'): ?>
       <a class="action-pill" href="#add-address" data-open-drawer="add-address" data-drawer-title="Add Address">➕ Add Address <kbd class="kbd-hint">⌘N</kbd></a>
       <a class="action-pill" href="bulk_update.php?subnet_id=<?= (int)$selectedSubnetId ?>">✏ Bulk Update</a>
+      <?php if ($missingInfra): ?>
+        <a class="action-pill" href="#reserve-infra" data-open-drawer="reserve-infra" data-drawer-title="Reserve Infrastructure IPs">🔒 Reserve Infra IPs</a>
+      <?php endif; ?>
     <?php endif; ?>
     <?php if ($selectedSubnet && to_int($selectedSubnet['ip_version']) === 4): ?>
       <a class="action-pill" href="unassigned.php?subnet_id=<?= (int)$selectedSubnetId ?>">✨ Unassigned</a>
@@ -434,7 +491,7 @@ page_header('Addresses', ['page' => 'addresses']);
   <h2>Add address</h2>
   <?php if ($nextAvailableIp): ?>
     <p class="muted">Next available: <b><?= e($nextAvailableIp) ?></b>
-      <a class="action-pill" href="addresses.php?subnet_id=<?= (int)$selectedSubnetId ?>&next_ip=<?= urlencode($nextAvailableIp) ?>#add-address">Use</a>
+      <a class="action-pill" href="#" data-fill-ip="<?= e($nextAvailableIp) ?>">Use</a>
     </p>
   <?php endif; ?>
   <form method="post" action="addresses.php" id="add-address">
@@ -475,6 +532,24 @@ page_header('Addresses', ['page' => 'addresses']);
   </form>
 </div>
 
+<?php if ($missingInfra && $selectedSubnet): ?>
+<div class="card mt-16 drawer-form-card" id="reserve-infra">
+  <h2>Reserve infrastructure IPs</h2>
+  <p class="muted">Creates reserved address records for the network and broadcast addresses (determined from the CIDR). Gateway is optional — enter an IP if this subnet has a known gateway.</p>
+  <form method="post" action="addresses.php">
+    <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+    <input type="hidden" name="action" value="reserve_infra">
+    <input type="hidden" name="subnet_id" value="<?= (int)$selectedSubnetId ?>">
+    <div class="row">
+      <label>Gateway IP (optional)<br>
+        <input name="gateway_ip" placeholder="<?= e(to_str($selectedSubnet['network'])) ?>" data-validate="ip">
+      </label>
+    </div>
+    <p><button type="submit">Reserve</button></p>
+  </form>
+</div>
+<?php endif; ?>
+
 <div class="card mt-16">
   <h2>List</h2>
   <?php if ($selectedSubnetId <= 0): ?>
@@ -511,8 +586,14 @@ page_header('Addresses', ['page' => 'addresses']);
           $rowClasses = array_filter([$isHighlighted ? 'highlight-row' : '', $isExpired ? 'expired-row' : '']);
       ?>
         <tr id="addr-<?= $aid ?>"<?= $rowClasses ? ' class="' . e(implode(' ', $rowClasses)) . '"' : '' ?>>
-          <td><?= e(to_str($a['ip'])) ?>
-            <?php if (!empty($a['is_stale'])): ?><span class="badge" style="background:var(--danger);color:#fff;font-size:.7rem" title="Host missed recent scans">Stale</span><?php endif ?>
+          <td class="ip-cell"><?= e(to_str($a['ip'])) ?><?php
+            $ipBin = is_string($a['ip_bin'] ?? null) ? $a['ip_bin'] : '';
+            if ($ipBin !== '') {
+                if ($networkBin !== null && hash_equals($networkBin, $ipBin)) echo ' <span class="badge badge-network" title="Network address">Net</span>';
+                if ($broadcastBin !== null && hash_equals($broadcastBin, $ipBin)) echo ' <span class="badge badge-broadcast" title="Broadcast address">Bcast</span>';
+            }
+            if (to_str($a['hostname'] ?? '') === 'gateway') echo ' <span class="badge badge-gateway" title="Gateway address">GW</span>';
+            if (!empty($a['is_stale'])): ?> <span class="badge" style="background:var(--danger);color:#fff;font-size:.7rem" title="Host missed recent scans">Stale</span><?php endif ?>
           </td>
           <td<?= $isWrite ? ' data-editable="hostname" data-addr-id="' . $aid . '"' : '' ?>><?= e(to_str($a['hostname'])) ?></td>
           <td<?= $isWrite ? ' data-editable="owner" data-addr-id="' . $aid . '"' : '' ?>><?php
@@ -532,7 +613,7 @@ page_header('Addresses', ['page' => 'addresses']);
             echo "<span class='status-badge status-{$addrStatus}'{$canToggle} title='Click to cycle status'>{$addrStatus}</span>";
           ?></td>
           <td<?= $isWrite ? ' data-editable="grp" data-addr-id="' . $aid . '"' : '' ?>><?php if ($a['grp'] !== ''): ?><span class="badge"><?= e(to_str($a['grp'])) ?></span><?php endif; ?></td>
-          <td class="muted"><?= e(to_str($a['mac'])) ?></td>
+          <td class="muted ip-cell"><?= e(to_str($a['mac'])) ?></td>
           <td class="muted"><?= e(to_str($a['expires_at'] ?? '')) ?></td>
           <td<?= $isWrite ? ' data-editable="note" data-addr-id="' . $aid . '"' : '' ?>><?= e(to_str($a['note'])) ?></td>
           <td class="muted"><?= e(display_datetime(to_str($a['updated_at']))) ?></td>
@@ -610,4 +691,4 @@ page_header('Addresses', ['page' => 'addresses']);
   <?php endif; ?>
 </div>
 
-<?php page_footer();
+<?php ipam_skeleton_remove(); page_footer();

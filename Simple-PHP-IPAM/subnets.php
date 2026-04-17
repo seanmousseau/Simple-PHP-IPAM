@@ -617,7 +617,16 @@ function render_subnet_map_nodes(array $tree, array $agg, array $unassignedAgg, 
             $pct = (int)round(to_int($u['assigned_assignable']) / to_int($u['assignable_total']) * 100);
         } else {
             $a   = $agg[$id] ?? ['used' => 0, 'reserved' => 0, 'free' => 0, 'total' => 0];
-            $pct = (int)round((to_int($a['used']) + to_int($a['reserved'])) / max(1, to_int($a['total'])) * 100);
+            $assigned = to_int($a['used']) + to_int($a['reserved']);
+            $prefix = to_int($row['prefix']);
+            $ipVer = to_int($row['ip_version']);
+            if ($ipVer === 4 && $prefix <= 32) {
+                $rawHosts = 2 ** (32 - $prefix);
+                $capacity = $prefix >= 31 ? $rawHosts : max(1, $rawHosts - 2);
+            } else {
+                $capacity = max(1, $assigned);
+            }
+            $pct = (int)round($assigned / $capacity * 100);
         }
         $cls = $pct >= 90 ? 'util-bar-fill--crit' : ($pct >= 75 ? 'util-bar-fill--warn' : '');
         $indent = $depth * 22;
@@ -802,6 +811,7 @@ function render_subnet_node_local(array $tree, array $direct, array $agg, array 
 }
 
 page_header('Subnets');
+ipam_skeleton_flush();
 ?>
 
 <div class="breadcrumbs">
@@ -948,4 +958,4 @@ page_header('Subnets');
   <?php endif; ?>
 </div>
 
-<?php page_footer();
+<?php ipam_skeleton_remove(); page_footer();

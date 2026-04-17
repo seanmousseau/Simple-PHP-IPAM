@@ -3855,6 +3855,14 @@ function ipam_compute_broadcast_bin(string $netBin, int $prefix): ?string
     return $out;
 }
 
+function ipam_compute_gateway_bin(string $netBin, int $prefix): ?string
+{
+    if (strlen($netBin) !== 4) return null;
+    if ($prefix < 0 || $prefix > 30) return null;
+    $int = ipv4_bin_to_int($netBin);
+    return ipv4_int_to_bin($int + 1);
+}
+
 function ip_in_cidr(string $ip, string $network, int $prefix): bool
 {
     $ipBin = @inet_pton(trim($ip));
@@ -4325,21 +4333,23 @@ function page_header(string $title, array $opts = []): void
     header('X-Content-Type-Options: nosniff');
     header('Referrer-Policy: strict-origin-when-cross-origin');
 
-    echo "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
+    echo "<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
     echo "<title>" . e($appName) . " \u{2014} " . e($title) . "</title>";
     echo "<link rel='icon' type='image/webp' sizes='32x32' href='assets/favicon-32.webp'>";
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=2.12.0'>";
+    echo "<link rel='stylesheet' href='assets/vendor/open-props.min.css?v=2.13.0'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=2.13.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=2.12.0'></script>";
+    echo "<script defer src='assets/app.js?v=2.13.0'></script>";
     $pageAttr = isset($opts['page']) && $opts['page'] !== ''
         ? " data-page='" . e(to_str($opts['page'])) . "'"
         : '';
     echo "</head><body{$pageAttr}>";
+    echo "<a class='skip-link' href='#main-content'>Skip to main content</a>";
 
     /** @var IpamConfig $gConf */
     $gConf = $GLOBALS['config'];
@@ -4347,12 +4357,12 @@ function page_header(string $title, array $opts = []): void
         echo "<div class='recovery-banner'>RECOVERY MODE ACTIVE &mdash; disable <code>recovery_mode</code> in config.php after use</div>";
     }
 
-    echo "<div class='topbar'><div class='nav-wrap'>";
+    echo "<header role='banner'><div class='topbar'><div class='nav-wrap'>";
     echo "<a href='dashboard.php' class='nav-brand'>"
        . "<picture><source srcset='assets/logo.webp' type='image/webp'><img src='assets/logo.png' alt='' class='nav-logo' aria-hidden='true' width='161' height='48'></picture>"
        . "</a>";
     echo "<button class='nav-toggle' id='nav-toggle' aria-label='Open menu' aria-expanded='false' aria-controls='nav-drawer'>&#9776;</button>";
-    echo "<div class='nav-links'>";
+    echo "<nav class='nav-links' role='navigation' aria-label='Primary'>";
     if ($u) {
         echo "<a class='nav-pill' href='dashboard.php'>🏠 Dashboard</a>";
         echo "<a class='nav-pill' href='subnets.php'>🌐 Subnets</a>";
@@ -4384,7 +4394,7 @@ function page_header(string $title, array $opts = []): void
     } else {
         echo "<a class='nav-pill' href='login.php'>🔐 Login</a>";
     }
-    echo "</div>";
+    echo "</nav>";
 
     if ($u) {
         echo "<div class='nav-right'>";
@@ -4401,7 +4411,7 @@ function page_header(string $title, array $opts = []): void
         echo "</div>";
     }
 
-    echo "</div></div>";
+    echo "</div></div></header>";
 
     // Mobile nav drawer (hidden on desktop, slides in on mobile)
     echo "<div id='nav-drawer' aria-hidden='true'>";
@@ -4448,7 +4458,7 @@ function page_header(string $title, array $opts = []): void
     echo "</div>";
     echo "</div>";
 
-    echo "<div class='page'>";
+    echo "<main id='main-content' class='page'>";
 
     // Demo mode banner (non-dismissible)
     if (demo_mode_enabled()) {
@@ -4547,12 +4557,26 @@ function page_header(string $title, array $opts = []): void
     }
 }
 
+function ipam_skeleton_flush(int $rows = 8): void
+{
+    echo '<div id="skeleton-shell" class="skeleton-shell" aria-hidden="true">';
+    for ($i = 0; $i < $rows; $i++) echo '<div class="skeleton-row"></div>';
+    echo '</div>';
+    if (ob_get_level() > 0) ob_flush();
+    flush();
+}
+
+function ipam_skeleton_remove(): void
+{
+    // Skeleton removal is handled by app.js (CSP-safe, no inline script).
+}
+
 function page_footer(): void
 {
     global $config;
     require_once __DIR__ . '/version.php';
 
-    echo "<hr><div class='muted footer-meta'>";
+    echo "</main><footer role='contentinfo'><hr><div class='muted footer-meta'>";
     echo "<a href='https://github.com/seanmousseau/Simple-PHP-IPAM' target='_blank' rel='noopener' class='link-plain'>"
        . "<picture><source srcset='assets/logo.webp' type='image/webp'><img src='assets/logo.png' alt='Simple PHP IPAM' width='81' height='24' class='footer-logo'></picture>"
        . "</a> v" . e(IPAM_VERSION)
@@ -4566,6 +4590,8 @@ function page_footer(): void
            . "Update available v{$uv}</a>";
     }
 
+    echo "</div></footer>";
+
     // Slide-in form drawer container (populated by JS openFormDrawer())
     echo "<div id='form-drawer' role='dialog' aria-modal='true' aria-labelledby='drawer-title-text'>";
     echo "<div class='drawer-header'>";
@@ -4576,7 +4602,7 @@ function page_footer(): void
     echo "</div>";
     echo "<div class='form-drawer-overlay'></div>";
 
-    echo "</div></div></body></html>";
+    echo "</body></html>";
 }
 
 /**

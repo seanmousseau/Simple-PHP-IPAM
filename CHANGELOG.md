@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [2.13.0] - 2026-04-16
+
+UI/UX accessibility and design token foundation release. Theme: *"Fix what's broken, don't touch the vibe."* Non-visual rework laying the groundwork for the v3.8.0 visual overhaul.
+
+### Added
+- **#506** — Design token scales (`--space-*`, `--z-*`, `--radius-*`, `--font-size-*`, `--focus-ring`) with [Open Props](https://open-props.style) (~29KB, MIT) vendored under `assets/vendor/`. 210 hardcoded CSS literals replaced with semantic tokens — zero visual delta.
+- **#504** — `:focus-visible` rings on all interactive elements using `--focus-ring` token (double-ring shadow). ARIA landmarks (`<header>`, `<nav>`, `<main>`, `<footer>`) in `page_header()`/`page_footer()`. Skip-to-content link. `lang="en"` on `<html>`.
+- **#505** — `prefers-reduced-motion` respect. Global `@media` block suppresses all CSS animations/transitions. JS `scrollIntoView()` uses `behavior:'auto'` under reduced motion.
+- **#507** — Loading states on every POST form. Delegated submit handler disables button + shows CSS spinner (static "Working…" under reduced motion). Preserves multi-button `name`/`value` via hidden input injection.
+- **#508** — Skeleton loaders on subnets, addresses, and unassigned pages via early output flush. CSS-only shimmer animation, removed by `app.js` (CSP-safe).
+- **#509** — Monospace font for IP/CIDR/MAC columns. Self-hosted Fira Code woff2 subset (~6.7KB, OFL-1.1) with `--font-mono` token and `.ip-cell` utility class applied to 6 pages.
+- **#525** — Playwright a11y test infrastructure: `@axe-core/playwright`, keyboard-walk helper, focus-ring detection, form loading-state assertions.
+- **#526** — Playwright visual regression baseline: 40 screenshots (5 pages × 2 themes × 4 viewports) for zero-delta verification.
+- **#546** — Gateway and broadcast address badges on the addresses page. New `ipam_compute_gateway_bin()` helper with 5 unit tests.
+
+### Fixed
+- **#510** — Light-mode contrast: `--muted` darkened from `#667085` to `#586174` (4.8:1 → 6.2:1 on `--bg`, now comfortably above WCAG AA 4.5:1).
+- **#547** — Subnet utilization map view no longer counts `status='free'` addresses in the denominator. Capacity is now computed from prefix length.
+
+### Changed
+- **CI** — Playwright suite restricted to `--project=chromium` (excludes local-only visual regression projects). `.htaccess` job skips system font install for ~30s speedup.
+
 ## [2.12.0] - 2026-04-16
 
 Post-multi-engine cleanup and hardening release. Security improvements, performance optimization, first-class MariaDB support, and test infrastructure upgrades.
@@ -740,6 +762,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[2.13.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.12.0...v2.13.0
 [2.12.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.11.0...v2.12.0
 [2.11.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.10.0...v2.11.0
 [2.10.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.9.2...v2.10.0
