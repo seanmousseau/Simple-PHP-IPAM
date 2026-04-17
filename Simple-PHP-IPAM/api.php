@@ -64,10 +64,6 @@ $rawKey = '';
 $authHeader = to_str($_SERVER['HTTP_AUTHORIZATION'] ?? '');
 if (preg_match('/^Bearer\s+(\S+)$/i', $authHeader, $m)) {
     $rawKey = $m[1];
-} elseif (!empty($_GET['api_key'])) {
-    $rawKey = to_str($_GET['api_key']);
-    header('Deprecation: true');
-    header('X-Deprecation-Reason: API key via query parameter is deprecated. Use Authorization: Bearer header.');
 }
 
 // Session-based auth for browser-only GET endpoints (no API key required)
