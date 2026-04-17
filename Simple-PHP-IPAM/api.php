@@ -554,6 +554,16 @@ function api_addresses(PDO $db): never
         $where[]             = 'a.owner_contact_id = :contact_id';
         $params[':contact_id'] = to_int($_GET['contact_id']);
     }
+    if (isset($_GET['expired']) && to_int($_GET['expired']) === 1) {
+        $where[] = "(a.expires_at IS NOT NULL AND a.expires_at < :exp_today)";
+        $params[':exp_today'] = date('Y-m-d');
+    }
+    if (isset($_GET['expiring_days'])) {
+        $expDays = max(1, min(365, to_int($_GET['expiring_days'])));
+        $where[] = "(a.expires_at IS NOT NULL AND a.expires_at >= :exp_from AND a.expires_at <= :exp_to)";
+        $params[':exp_from'] = date('Y-m-d');
+        $params[':exp_to']   = date('Y-m-d', (int)strtotime("+{$expDays} days"));
+    }
 
     $joins   = ($joinSite ? ' JOIN subnets s ON s.id = a.subnet_id' : '');
     $joins  .= ($joinTag  ? ' JOIN address_tags atf ON atf.address_id = a.id JOIN tags tf ON tf.id = atf.tag_id' : '');

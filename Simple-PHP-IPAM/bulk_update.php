@@ -171,7 +171,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 foreach ($beforeRows as $r) $beforeMap[to_int($r['id'])] = $r;
             }
 
-            if ($action === 'delete') {
+            if (in_array($action, ['extend_expiry_30', 'extend_expiry_60', 'extend_expiry_90', 'clear_expiry'], true)) {
+                if (!$in) {
+                    $db->rollBack();
+                    $err = "No existing addresses selected.";
+                } else {
+                    if ($action === 'clear_expiry') {
+                        $upd = $db->prepare("UPDATE addresses SET expires_at = NULL WHERE subnet_id = :sid AND id IN (" . implode(',', $in) . ")");
+                        $upd->execute($paramsBefore);
+                        $auditDetail = "clear_expiry";
+                    } else {
+                        $days = match ($action) { 'extend_expiry_30' => 30, 'extend_expiry_60' => 60, default => 90 };
+                        $extParams = $paramsBefore;
+                        $extParams[':days'] = "+{$days} days";
+                        $upd = $db->prepare("UPDATE addresses SET expires_at = date(COALESCE(expires_at, date('now')), :days) WHERE subnet_id = :sid AND id IN (" . implode(',', $in) . ")");
+                        $upd->execute($extParams);
+                        $auditDetail = "extend_expiry_{$days}d";
+                    }
+                    $affected = $upd->rowCount();
+                    audit($db, 'address.bulk_update', 'address', null,
+                        "subnet_id=$subnetId selected=" . count($ids) . " affected=$affected fields={$auditDetail}"
+                    );
+                    $db->commit();
+                    header('Location: bulk_update.php?subnet_id=' . $subnetId . '&q=' . urlencode($q));
+                    exit;
+                }
+            } elseif ($action === 'delete') {
                 // Unconfigured IPs have nothing to delete — only process existing IDs
                 if (!$in) {
                     $db->rollBack();
@@ -526,6 +551,10 @@ page_header('Bulk Update');
         <select name="bulk_action">
           <option value="update" selected>Update selected</option>
           <option value="delete">Delete selected</option>
+          <option value="extend_expiry_30">Extend expiry by 30 days</option>
+          <option value="extend_expiry_60">Extend expiry by 60 days</option>
+          <option value="extend_expiry_90">Extend expiry by 90 days</option>
+          <option value="clear_expiry">Clear expiry date</option>
         </select>
       </label>
 

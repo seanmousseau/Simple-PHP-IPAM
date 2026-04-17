@@ -103,6 +103,25 @@ $st->execute();
 /** @var list<array<string, mixed>> $recentAudit */
 $recentAudit = $st->fetchAll();
 
+/* --- Address expiry counts --- */
+$today  = date('Y-m-d');
+$in7d   = date('Y-m-d', (int)strtotime('+7 days'));
+$in30d  = date('Y-m-d', (int)strtotime('+30 days'));
+$expSt = $db->prepare("
+    SELECT
+        SUM(CASE WHEN expires_at < :today                         THEN 1 ELSE 0 END) AS cnt_expired,
+        SUM(CASE WHEN expires_at >= :f7 AND expires_at <= :t7     THEN 1 ELSE 0 END) AS cnt_7d,
+        SUM(CASE WHEN expires_at >= :f30 AND expires_at <= :t30   THEN 1 ELSE 0 END) AS cnt_30d
+    FROM addresses
+    WHERE expires_at IS NOT NULL
+");
+$expSt->execute([':today' => $today, ':f7' => $today, ':t7' => $in7d, ':f30' => $today, ':t30' => $in30d]);
+/** @var array<string, mixed>|false $expRow */
+$expRow     = $expSt->fetch();
+$cntExpired = is_array($expRow) ? to_int($expRow['cnt_expired']) : 0;
+$cnt7d      = is_array($expRow) ? to_int($expRow['cnt_7d'])      : 0;
+$cnt30d     = is_array($expRow) ? to_int($expRow['cnt_30d'])     : 0;
+
 page_header('Dashboard');
 ?>
 
@@ -260,5 +279,46 @@ if ($_staleKeys && current_user()['role'] === 'admin'):
     <div class="mt-10"><a class="action-pill" href="audit.php">📜 Full Audit Log</a></div>
   <?php endif; ?>
 </div>
+
+<?php if ($cntExpired > 0 || $cnt7d > 0 || $cnt30d > 0): ?>
+<div class="card mt-16" data-widget="expiring-addresses">
+  <div class="widget-header">
+    <h2>Expiring Addresses</h2>
+    <button class="widget-hide-btn" data-widget-key="expiring-addresses" title="Hide widget">&#10005;</button>
+  </div>
+  <div class="grid cols-3">
+    <div class="metric">
+      <div class="label">Expired</div>
+      <div class="value<?= $cntExpired > 0 ? ' danger' : '' ?>">
+        <?php if ($cntExpired > 0): ?>
+          <a href="addresses.php?filter=expired" style="color:inherit"><?= e((string)$cntExpired) ?></a>
+        <?php else: ?>
+          0
+        <?php endif; ?>
+      </div>
+    </div>
+    <div class="metric">
+      <div class="label">Expiring ≤7 days</div>
+      <div class="value<?= $cnt7d > 0 ? ' warn' : '' ?>">
+        <?php if ($cnt7d > 0): ?>
+          <a href="addresses.php?filter=expiring&amp;days=7" style="color:inherit"><?= e((string)$cnt7d) ?></a>
+        <?php else: ?>
+          0
+        <?php endif; ?>
+      </div>
+    </div>
+    <div class="metric">
+      <div class="label">Expiring ≤30 days</div>
+      <div class="value">
+        <?php if ($cnt30d > 0): ?>
+          <a href="addresses.php?filter=expiring&amp;days=30" style="color:inherit"><?= e((string)$cnt30d) ?></a>
+        <?php else: ?>
+          0
+        <?php endif; ?>
+      </div>
+    </div>
+  </div>
+</div>
+<?php endif; ?>
 
 <?php page_footer();
