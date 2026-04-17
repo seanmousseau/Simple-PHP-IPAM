@@ -352,7 +352,7 @@ if (!empty($config['demo_mode']['enabled'])
 }
 
 // Run database backup if due (configurable frequency)
-if (!empty($config['backup']['enabled'])) {
+if ((bool)ipam_setting('backup.enabled')) {
     run_db_backup_if_due($db, $config);
 }
 

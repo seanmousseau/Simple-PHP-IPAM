@@ -170,8 +170,8 @@ page_header('Dashboard');
         </thead>
         <tbody>
         <?php
-            $dashWarn = to_int($config['utilization_warn']);
-            $dashCrit = to_int($config['utilization_critical']);
+            $dashWarn = to_int(ipam_setting('display.utilization_warn'));
+            $dashCrit = to_int(ipam_setting('display.utilization_critical'));
         ?>
         <?php foreach ($topSubnets as $s):
             $cap  = ipv4_assignable_count(to_int($s['prefix']));

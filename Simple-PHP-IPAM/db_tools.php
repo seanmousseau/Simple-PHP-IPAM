@@ -124,7 +124,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
         // is not writable by the web server user (so ipam_config_sync() could
         // not auto-populate it on boot). Fallback prevents a "headers already
         // sent" cascade even if the global error handler is not yet installed.
-        $maxMb    = to_int($config['import_sql_max_mb'] ?? 200);
+        $maxMb    = to_int(ipam_setting('limits.import_sql_max_mb'));
         $maxBytes = $maxMb * 1024 * 1024;
 
         if ($fileSize === false || $fileSize > $maxBytes) {
@@ -306,7 +306,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'backu
 
     if (@copy($dbPath, $dest)) {
         @chmod($dest, 0600);
-        $retention = max(1, to_int($config['backup']['retention']));
+        $retention = max(1, to_int(ipam_setting('backup.retention')));
         $files = glob($bdir . '/ipam-*.sqlite');
         if (is_array($files)) {
             rsort($files);
@@ -324,7 +324,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'backu
 /* ------------------------------------------------------------------ *
  * Gather backup info for display                                       *
  * ------------------------------------------------------------------ */
-$backupEnabled = !empty($config['backup']['enabled']);
+$backupEnabled = (bool)ipam_setting('backup.enabled');
 $bInfo         = backup_info($config);
 
 page_header('Database Tools');
@@ -388,11 +388,11 @@ render_security_banner('db_tools', 'Database import will overwrite all existing 
 <div class='card mt-16'>
   <h2>Automatic Backups</h2>
   <?php if (!$backupEnabled): ?>
-    <p class='muted'>Automatic backups are <strong>disabled</strong>. Enable them by setting <code>'backup' => ['enabled' => true, ...]</code> in config.php.</p>
+    <p class='muted'>Automatic backups are <strong>disabled</strong>. Enable them in <strong>Admin &rarr; Settings &rarr; Database backup</strong>.</p>
   <?php else: ?>
     <p>
-      Frequency: <strong><?= e(ucfirst(to_str($config['backup']['frequency']))) ?></strong>
-      &nbsp;|&nbsp; Retention: <strong><?= e(to_str($config['backup']['retention'])) ?> backups</strong>
+      Frequency: <strong><?= e(ucfirst(to_str(ipam_setting('backup.frequency')))) ?></strong>
+      &nbsp;|&nbsp; Retention: <strong><?= e(to_str(ipam_setting('backup.retention'))) ?> backups</strong>
       &nbsp;|&nbsp; Directory: <code><?= e(to_str($bInfo['dir'])) ?></code>
     </p>
   <?php endif; ?>

@@ -109,7 +109,7 @@ $fail = function (string $task, string $msg) use (&$exitCode): void {
 // Task 1: Temp file cleanup
 // ---------------------------------------------------------------------------
 try {
-    $ttl = to_int($config['tmp_cleanup_ttl_seconds']);
+    $ttl = to_int(ipam_setting('housekeeping.tmp_cleanup_ttl_seconds'));
     if ($ttl < 3600) $ttl = 3600;
 
     $filesRemoved = cleanup_tmp_import_files($ttl);
@@ -129,7 +129,7 @@ try {
 // Task 2: Audit log pruning
 // ---------------------------------------------------------------------------
 try {
-    $retentionDays = to_int($config['audit_log_retention_days']);
+    $retentionDays = to_int(ipam_setting('housekeeping.audit_log_retention_days'));
     if ($retentionDays > 0) {
         $pruned = prune_audit_log($db, $retentionDays);
         $emit(['task' => 'prune_audit_log', 'pruned' => $pruned, 'ts' => $now]);
@@ -144,7 +144,7 @@ try {
 // Task 3: Address history pruning
 // ---------------------------------------------------------------------------
 try {
-    $histRetention = to_int($config['address_history_retention_days']);
+    $histRetention = to_int(ipam_setting('housekeeping.address_history_retention_days'));
     if ($histRetention > 0) {
         $pruned = prune_address_history($db, $histRetention);
         $emit(['task' => 'prune_address_history', 'pruned' => $pruned, 'ts' => $now]);
@@ -174,7 +174,7 @@ try {
 // Task 5: Database backup
 // ---------------------------------------------------------------------------
 try {
-    $backupEnabled = !empty($config['backup']['enabled']);
+    $backupEnabled = (bool)ipam_setting('backup.enabled');
     if ($backupEnabled) {
         $ran = run_db_backup_if_due($db, $config);
         $emit(['task' => 'db_backup', 'ran' => $ran, 'ts' => $now]);

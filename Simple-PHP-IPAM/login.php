@@ -9,8 +9,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 
 $maxAttempts   = to_int(ipam_setting('security.login_max_attempts'));
 $lockoutSeconds = to_int(ipam_setting('security.login_lockout_seconds'));
-$acctMaxAttempts  = to_int($config['account_lockout_max_attempts'] ?? 10);
-$acctLockoutSecs  = to_int($config['account_lockout_seconds'] ?? 900);
+$acctMaxAttempts  = to_int(ipam_setting('security.account_lockout_max_attempts'));
+$acctLockoutSecs  = to_int(ipam_setting('security.account_lockout_seconds'));
 
 $error    = '';
 $timedOut = !empty($_GET['timeout']);
@@ -198,7 +198,7 @@ $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM'
   <?php endif; ?>
 </div><!-- /.login-card -->
 <?php
-$idleSeconds = to_int($config['session_idle_seconds']);
+$idleSeconds = to_int(ipam_setting('security.session_idle_seconds'));
 if ($idleSeconds > 0):
     $idleMins = (int)round($idleSeconds / 60);
     $idleLabel = $idleMins >= 60

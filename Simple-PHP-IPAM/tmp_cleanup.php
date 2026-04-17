@@ -11,8 +11,7 @@ if (PHP_SAPI !== 'cli') {
 
 require __DIR__ . '/init.php';
 
-$config = require __DIR__ . '/config.php';
-$ttl = to_int($config['tmp_cleanup_ttl_seconds'] ?? 86400);
+$ttl = to_int(ipam_setting('housekeeping.tmp_cleanup_ttl_seconds'));
 if ($ttl < 3600) $ttl = 3600;
 
 $deletedCsv = cleanup_tmp_import_files($ttl);

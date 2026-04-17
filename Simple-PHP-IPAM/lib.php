@@ -2315,39 +2315,27 @@ function ipam_config_sync(string $configPath, array $loaded): array
 function ipam_validate_config(array $config): array
 {
     $warnings = [];
-
-    $sessionIdle = to_int($config['session_idle_seconds']);
-    if ($sessionIdle < 60) {
-        $warnings[] = "session_idle_seconds is {$sessionIdle}; minimum is 60.";
+    $checks = [
+        ['security.session_idle_seconds',  60, '>=', 'session_idle_seconds'],
+        ['security.login_max_attempts',     1, '>=', 'login_max_attempts'],
+        ['security.login_lockout_seconds',  1, '>=', 'login_lockout_seconds'],
+        ['housekeeping.audit_log_retention_days', 0, '>=', 'audit_log_retention_days'],
+    ];
+    foreach ($checks as [$key, $min, $op, $label]) {
+        $val = to_int(ipam_setting($key));
+        if ($val < $min) {
+            $warnings[] = "{$label} is {$val}; minimum is {$min}.";
+        }
     }
-
-    $loginMax = to_int($config['login_max_attempts']);
-    if ($loginMax < 1) {
-        $warnings[] = "login_max_attempts is {$loginMax}; minimum is 1.";
-    }
-
-    $lockout = to_int($config['login_lockout_seconds']);
-    if ($lockout < 1) {
-        $warnings[] = "login_lockout_seconds is {$lockout}; minimum is 1.";
-    }
-
-    $auditRetention = to_int($config['audit_log_retention_days']);
-    if ($auditRetention < 0) {
-        $warnings[] = "audit_log_retention_days is {$auditRetention}; must be 0 or greater.";
-    }
-
-    $backup = $config['backup'];
-    if (!empty($backup['enabled'])) {
-        $retention = to_int($backup['retention']);
+    if ((bool)ipam_setting('backup.enabled')) {
+        $retention = to_int(ipam_setting('backup.retention'));
         if ($retention < 1) {
             $warnings[] = "backup.retention is {$retention}; minimum is 1.";
         }
     }
-
     foreach ($warnings as $w) {
         error_log("Simple PHP IPAM config warning: {$w}");
     }
-
     return $warnings;
 }
 
@@ -2364,10 +2352,9 @@ function housekeeping_state_path(): string
  */
 function housekeeping_should_run(array $config): bool
 {
-    $hk = $config['housekeeping'];
-    if (empty($hk['enabled'])) return false;
+    if (!(bool)ipam_setting('housekeeping.enabled')) return false;
 
-    $interval = to_int($hk['interval_seconds']);
+    $interval = to_int(ipam_setting('housekeeping.interval_seconds'));
     if ($interval < 3600) $interval = 3600;
 
     $path = housekeeping_state_path();
@@ -2683,18 +2670,18 @@ function run_housekeeping_if_due(array $config, ?PDO $db = null): void
     try {
         if (!housekeeping_should_run($config)) return;
 
-        $ttl = to_int($config['tmp_cleanup_ttl_seconds']);
+        $ttl = to_int(ipam_setting('housekeeping.tmp_cleanup_ttl_seconds'));
         if ($ttl < 3600) $ttl = 3600;
 
         cleanup_tmp_import_files($ttl);
         cleanup_tmp_import_plans($ttl);
 
         if ($db !== null) {
-            $retentionDays = to_int($config['audit_log_retention_days']);
+            $retentionDays = to_int(ipam_setting('housekeeping.audit_log_retention_days'));
             if ($retentionDays > 0) {
                 prune_audit_log($db, $retentionDays);
             }
-            $histRetention = to_int($config['address_history_retention_days']);
+            $histRetention = to_int(ipam_setting('housekeeping.address_history_retention_days'));
             if ($histRetention > 0) {
                 prune_address_history($db, $histRetention);
             }
@@ -2732,7 +2719,7 @@ function run_demo_reset_if_due(PDO $db): void
 /** @param IpamConfig $config */
 function backup_dir(array $config): string
 {
-    $d = trim($config['backup']['dir']);
+    $d = trim(to_str(ipam_setting('backup.dir')));
     if ($d === '') {
         return __DIR__ . '/data/backups';
     }
@@ -2757,7 +2744,7 @@ function backup_state_path(): string
 /** @param IpamConfig $config */
 function backup_interval_seconds(array $config): int
 {
-    $freq = strtolower(trim($config['backup']['frequency']));
+    $freq = strtolower(trim(to_str(ipam_setting('backup.frequency'))));
     return match ($freq) {
         'weekly' => 604800,
         default  => 86400,  // 'daily'
@@ -2770,8 +2757,7 @@ function backup_interval_seconds(array $config): int
  */
 function backup_is_due(array $config): bool
 {
-    $bk = $config['backup'];
-    if (empty($bk['enabled'])) return false;
+    if (!(bool)ipam_setting('backup.enabled')) return false;
 
     $path = backup_state_path();
     if (!is_file($path)) return true;
@@ -2845,7 +2831,7 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             $wrote = true;
 
             // Prune old backups according to retention policy
-            $retention = max(1, $config['backup']['retention']);
+            $retention = max(1, to_int(ipam_setting('backup.retention')));
             $files = glob($dir . '/ipam-*.sqlite');
             if (is_array($files)) {
                 rsort($files); // newest first (lexicographic = chronological for our format)
@@ -4572,7 +4558,7 @@ function ipv6_enumerate_first_n(PDO $db, int $subnetId, string $networkBin, int 
 /** @param IpamConfig $config */
 function import_max_bytes(array $config): int
 {
-    $mb = to_int($config['import_csv_max_mb']);
+    $mb = to_int(ipam_setting('limits.import_csv_max_mb'));
     if ($mb < 5) $mb = 5;
     if ($mb > 50) $mb = 50;
     return $mb * 1024 * 1024;
