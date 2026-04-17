@@ -660,29 +660,48 @@ bash -c 'set -a; source ~/.claude/dev-secrets.env; set +a; \
 
 Starting in v2.5.2, the containerized Playwright harness runs automatically on every PR targeting `dev` or `main` via `.github/workflows/playwright.yml` (full suite + `.htaccess` subset, both against a fresh Dockerized Apache+PHP instance). That changes what has to be run locally.
 
-**Required every PR — must be green before pushing:**
-```bash
-# For every changed PHP file
-php -l Simple-PHP-IPAM/<file>.php
+**Required every push — must ALL be green before `git push`:**
 
-# Full local PHP gate
+**Step 1: Static analysis (fast, ~5s):**
+```bash
+php -l Simple-PHP-IPAM/<file>.php   # each changed file
 vendor/bin/phpstan analyse --memory-limit=1G
 vendor/bin/phpcs
 vendor/bin/phpunit
 semgrep --config=.semgrep/rules.yml --error Simple-PHP-IPAM/
 ```
 
-These are fast (~5s total after the first PHPStan cold run), deterministic, and have no Docker or dev-server dependency. Do not push a PR without this gate green — CI repeats all five checks so you're just saving a round trip.
+**Step 2: Containerized test suite (required, ~2–10 min per driver):**
 
-**Recommended (optional) for PRs that touch UI, JS, CSS, migrations, or session/auth flow:**
+GitHub Action minutes are a finite paid resource. **Never push to `dev` or open a PR without a full local dockerized pass.** Run against every DB driver your changes could affect:
+
 ```bash
+# SQLite (always required)
 bash testing/playwright/bootstrap-app.sh sqlite
+DOCKER_CONTAINER=ipam-pw-test bash testing/scripts/test_api.sh https://127.0.0.1:8443
 (cd testing/playwright && \
   IPAM_BASE_URL=https://127.0.0.1:8443 IPAM_ADMIN_USER=demo IPAM_ADMIN_PASS=demo \
-  npx playwright test)
+  npx playwright test --project=chromium)
+bash testing/playwright/teardown-app.sh
+
+# MySQL (required if changes touch migrations, schema, dialects, or multi-engine code)
+bash testing/playwright/bootstrap-app.sh mysql
+DOCKER_CONTAINER=ipam-pw-test bash testing/scripts/test_api.sh https://127.0.0.1:8443
+(cd testing/playwright && \
+  IPAM_BASE_URL=https://127.0.0.1:8443 IPAM_ADMIN_USER=demo IPAM_ADMIN_PASS=demo \
+  npx playwright test --project=chromium)
+bash testing/playwright/teardown-app.sh
+
+# PostgreSQL (required if changes touch migrations, schema, dialects, or multi-engine code)
+bash testing/playwright/bootstrap-app.sh pgsql
+DOCKER_CONTAINER=ipam-pw-test bash testing/scripts/test_api.sh https://127.0.0.1:8443
+(cd testing/playwright && \
+  IPAM_BASE_URL=https://127.0.0.1:8443 IPAM_ADMIN_USER=demo IPAM_ADMIN_PASS=demo \
+  npx playwright test --project=chromium)
 bash testing/playwright/teardown-app.sh
 ```
-Runs the same image CI runs, ~1.5 min wall clock on a warm Docker cache. If this is green locally, the PR check will be green. If you skip it, you'll find out when CI reports in ~4 minutes.
+
+Do not push until **all drivers are green**. A failing CI run wastes Action minutes and creates PR noise.
 
 **Manual dev-direct testing is only needed when:**
 - You need `testing/scripts/test_api.sh` against a real deployment specifically (the containerized `DOCKER_CONTAINER=ipam-pw-test` path in CI covers regression on every PR via #451 — see the **test_api.sh** subsection above)
