@@ -306,8 +306,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $subnetId = to_int($_POST['subnet_id'] ?? 0);
         $st = $db->prepare("SELECT cidr FROM subnets WHERE id = :id");
         $st->execute([':id' => $subnetId]);
+        /** @var array<string, mixed>|false $subRow */
         $subRow = $st->fetch();
-        if ($subRow) {
+        if (is_array($subRow)) {
             $gwIp = trim(to_str($_POST['gateway_ip'] ?? ''));
             if ($gwIp === '') $gwIp = null;
             if ($gwIp !== null) {
