@@ -8,6 +8,8 @@
 - [Environment variables](#environment-variables)
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
+- [Version-specific upgrade notes](#version-specific-upgrade-notes)
+  - [v3.0.0](#v300) — **breaking changes**, config.php stub, driver promotion
 
 ---
 
@@ -88,6 +90,75 @@ The backup is left in place after a successful upgrade. You can remove it manual
 ---
 
 ## Version-specific upgrade notes
+
+### v3.0.0
+
+**This is a breaking release.** Read these notes carefully before upgrading.
+
+#### What changed
+
+- **`config.php` is now a bootstrap stub.** All non-bootstrap settings (OIDC, alerting, passwords, housekeeping, backup, etc.) live in the `settings` database table and are managed through **Admin → Settings**. The upgrade migration automatically imports your customised values from the old `config.php` into the database and rewrites the file to stub format.
+- **`?api_key=` query-parameter authentication removed.** Use the `Authorization: Bearer <key>` header instead. The deprecation headers have shipped since v2.x.
+- **MySQL and PostgreSQL drivers are now stable.** The experimental/beta banners are removed. Minimum versions: MySQL 8.0, PostgreSQL 14.
+- **`migrate_db.php`** — new CLI tool for migrating between database engines (all 6 direction pairs).
+- **Multi-contact assignments** on sites and subnets (new `site_contacts` and `subnet_contacts` tables).
+
+#### Pre-upgrade checklist
+
+1. **Back up your database** — `upgrade.sh` does this automatically, but make a manual copy too
+2. **Back up `config.php`** — the migration rewrites it; a `.bak-v3upgrade` copy is created automatically
+3. **Check PHP version** — PHP 8.2+ required (unchanged from v2.x)
+4. **Check API clients** — any client using `?api_key=` must switch to `Authorization: Bearer` header
+
+#### Upgrade paths
+
+**Path 1: Stay on SQLite (default)**
+
+Run `upgrade.sh` as usual. The migration:
+1. Imports customised `config.php` values into the settings table
+2. Backs up old `config.php` as `config.php.bak-v3upgrade`
+3. Rewrites `config.php` to stub format
+4. Creates new tables (`site_contacts`, `subnet_contacts`)
+
+No manual action required.
+
+**Path 2: Migrate to MySQL or PostgreSQL during the upgrade**
+
+After running `upgrade.sh`:
+
+```bash
+# 1. Provision the target schema
+mysql -u ipam -p ipam_db < Simple-PHP-IPAM/schema.mysql.sql
+# or: psql -U ipam ipam_db < Simple-PHP-IPAM/schema.pgsql.sql
+
+# 2. Run the migration tool
+php Simple-PHP-IPAM/migrate_db.php \
+  --from=sqlite --from-dsn="sqlite:Simple-PHP-IPAM/data/ipam.sqlite" \
+  --to=mysql --to-dsn="mysql:host=127.0.0.1;dbname=ipam_db" \
+  --to-user=ipam --to-pass=secret
+
+# 3. Update config.php with the new driver
+# (migrate_db.php prints the exact lines to change)
+
+# 4. Restart Apache / PHP-FPM
+```
+
+#### Post-upgrade verification
+
+1. Admin login works
+2. Settings page loads — verify your imported settings are correct
+3. Create a test subnet and address
+4. Run `php migrate.php` — should be a no-op
+5. If using OIDC, verify SSO login still works
+
+#### Rollback
+
+If something goes wrong:
+1. Restore `config.php.bak-v3upgrade` → `config.php`
+2. Restore the database backup created by `upgrade.sh`
+3. Redeploy the v2.x release bundle
+
+---
 
 ### v2.9.0
 
