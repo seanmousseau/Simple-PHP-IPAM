@@ -1119,7 +1119,8 @@
       if (!placeholders.length) return;
       fetch("api.php?resource=subnet_stats", {credentials: "same-origin"})
         .then(function(r) { return r.json(); })
-        .then(function(data) {
+        .then(function(resp) {
+          var data = resp.data || resp;
           document.querySelectorAll("[data-subnet-counts]").forEach(function(el) {
             var id = el.dataset.subnetCounts;
             var d = data.direct[id] || {used:0,reserved:0,free:0,total:0};

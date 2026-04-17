@@ -2470,9 +2470,11 @@ function api_subnet_stats(PDO $db): never
     foreach ($utilAgg as $sid => $v) $uaOut[(string)$sid] = $v;
 
     api_json([
-        'direct'  => $dOut,
-        'agg'     => $aOut,
-        'util'    => $uOut,
-        'utilAgg' => $uaOut,
+        'data' => [
+            'direct'  => $dOut,
+            'agg'     => $aOut,
+            'util'    => $uOut,
+            'utilAgg' => $uaOut,
+        ],
     ]);
 }
