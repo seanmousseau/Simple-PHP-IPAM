@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.1.0] - 2026-04-17
+
+### Added
+
+- **#571** — Contact popover × close button. Dismisses the popover card without requiring a click-outside; existing Escape and scroll-dismiss behaviour unchanged.
+- **#415** — PHPMailer direct SMTP support. New `smtp.*` settings group (`smtp.enabled`, host, port, encryption, auth, from, verify_peer, timeout). New `ipam_send_mail()` function replaces native `mail()` when enabled. Admin test endpoint `smtp_test.php` sends a validation email and returns JSON result. Fallback to native `mail()` when SMTP disabled.
+- **#457** — Per-subnet `alerts_enabled` toggle. New `alerts_enabled INTEGER NOT NULL DEFAULT 1` column on `subnets`. Checkbox in the subnet edit drawer; disabling clears existing `alert_state` rows. Bell-off SVG badge in the subnet list. Bulk "Enable all / Disable all alerts" pills (admin, respects site filter). `alerts_enabled` exposed in GET/POST/PUT API and CSV export.
+- **#458** — MailHog end-to-end test harness (`IPAM_TEST_MAILHOG=1`). `bootstrap-app.sh` / `teardown-app.sh` start and stop a `mailhog/mailhog` container on the Docker bridge network. New `alerts-smtp.spec.ts` Playwright spec: alert fires → MailHog receives it, 24 h cooldown dedup, `alerts_enabled=0` silences subnet. New `alerts-smtp` CI job.
+- **#414** — Per-user timezone preference. New nullable `timezone TEXT` column on `users`. Timezone select on the Change Password page grouped by region. Timestamps display in the resolved user timezone (`users.timezone` → `branding.timezone` setting → PHP default → UTC). New `ipam_user_timezone()` and `ipam_format_datetime()` helpers; `display_datetime()` delegates to the new function.
+- **#315** — Expiring Addresses dashboard widget. Three KPI tiles (Expired, ≤7 days, ≤30 days), each linking to `addresses.php?filter=expired` or `?filter=expiring&days=N`. New bulk expiry actions in Bulk Update: extend by 30 / 60 / 90 days and clear expiry. API `GET ?resource=addresses` gains `?expired=1` and `?expiring_days=N` filters. CSS `.expired-row` highlight.
+- **#311** — Utilization snapshot history + sparklines. New `utilization_snapshots` table captures per-subnet used/free/total on every housekeeping run. Retention pruning via `housekeeping.snapshot_retention_days` (default 365 days). Dashboard top-subnets table gains a Trend column with inline SVG sparklines. New `reports.php` (admin): full history table with date range and per-subnet filter. New `export_utilization_history.php`: CSV with `?subnet_id=N` and `?days=N` params. API `GET ?resource=utilization_snapshots&subnet_id=N&days=N`.
+
 ## [3.0.1] - 2026-04-17
 
 ### Fixed
@@ -822,6 +834,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.1.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.0.1...v3.1.0
 [3.0.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.0.0...v3.0.1
 [3.0.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.14.0...v3.0.0
 [2.14.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.13.0...v2.14.0
