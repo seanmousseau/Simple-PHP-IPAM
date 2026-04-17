@@ -448,7 +448,7 @@ ipam_skeleton_flush();
   <h2>Add address</h2>
   <?php if ($nextAvailableIp): ?>
     <p class="muted">Next available: <b><?= e($nextAvailableIp) ?></b>
-      <a class="action-pill" href="addresses.php?subnet_id=<?= (int)$selectedSubnetId ?>&next_ip=<?= urlencode($nextAvailableIp) ?>#add-address">Use</a>
+      <a class="action-pill" href="#" data-fill-ip="<?= e($nextAvailableIp) ?>">Use</a>
     </p>
   <?php endif; ?>
   <form method="post" action="addresses.php" id="add-address">

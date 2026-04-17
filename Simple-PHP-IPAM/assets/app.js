@@ -543,6 +543,17 @@
       });
     }
 
+    // --- "Use next IP" fill helper (data-fill-ip on addresses.php) ---
+    document.addEventListener("click", function(e) {
+      var el = e.target.closest("[data-fill-ip]");
+      if (!el) return;
+      e.preventDefault();
+      var card = el.closest(".drawer-form-card, .card");
+      if (!card) return;
+      var inp = card.querySelector('input[name="ip"]');
+      if (inp) { inp.value = el.dataset.fillIp; inp.focus(); }
+    });
+
     // --- Import spinner overlay (data-import-form) ---
     var importForm = document.querySelector("[data-import-form]");
     if (importForm) {
