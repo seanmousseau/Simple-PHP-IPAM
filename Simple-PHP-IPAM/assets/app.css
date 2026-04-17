@@ -1086,6 +1086,10 @@ td[data-editable].cell-saving{opacity:.5;}
   opacity:1;
 }
 
+/* ── Subnet stats placeholder (#565) ────────────────────────────────────── */
+.subnet-stats-placeholder{display:inline-block;min-width:180px;height:1em;border-radius:var(--radius-xs);background:linear-gradient(90deg,var(--card-2) 25%,var(--border) 50%,var(--card-2) 75%);background-size:200% 100%;animation:shimmer 1.5s ease-in-out infinite}
+@media(prefers-reduced-motion:reduce){.subnet-stats-placeholder{animation:none}}
+
 /* ── Contact card popover (#561) ─────────────────────────────────────────── */
 #contact-card{
   display:none;

@@ -70,12 +70,12 @@ if (preg_match('/^Bearer\s+(\S+)$/i', $authHeader, $m)) {
     header('X-Deprecation-Reason: API key via query parameter is deprecated. Use Authorization: Bearer header.');
 }
 
-// Session-based auth for contacts GET (typeahead, popover, browse — no API key required)
+// Session-based auth for browser-only GET endpoints (no API key required)
 $sessionApiKey = null;
 if ($rawKey === '') {
     $resourcePeek = strtolower(trim(to_str($_GET['resource'] ?? '')));
     $methodPeek   = strtoupper(to_str($_SERVER['REQUEST_METHOD'] ?? 'GET'));
-    if ($resourcePeek === 'contacts' && $methodPeek === 'GET') {
+    if ($methodPeek === 'GET' && in_array($resourcePeek, ['contacts', 'subnet_stats'], true)) {
         session_name(to_str($config['session_name']));
         session_set_cookie_params(['lifetime' => 0, 'path' => '/', 'domain' => '', 'secure' => true, 'httponly' => true, 'samesite' => 'Strict']);
         ini_set('session.use_strict_mode', '1');
@@ -214,7 +214,8 @@ match ($resource) {
         default  => api_error(405, 'Method not allowed.'),
     },
     'scan_run'        => $method === 'POST' ? api_scan_run($db, $apiKey) : api_error(405, 'Method not allowed.'),
-    default      => api_error(404, 'Unknown resource. Valid: subnets, addresses, sites, vlans, vrfs, contacts, tags, subnet_tags, address_tags, history, search, audit, unassigned, scan_results, scan_history, scan_schedules, scan_run'),
+    'subnet_stats'    => $method === 'GET' ? api_subnet_stats($db) : api_error(405, 'Method not allowed.'),
+    default      => api_error(404, 'Unknown resource. Valid: subnets, addresses, sites, vlans, vrfs, contacts, tags, subnet_tags, address_tags, history, search, audit, unassigned, scan_results, scan_history, scan_schedules, scan_run, subnet_stats'),
 };
 
 // ---- Helpers ----
@@ -2423,4 +2424,44 @@ function api_scan_run(PDO $db, array $apiKey): never
         "method=$method scanned={$stats['scanned']} up={$stats['up']} down={$stats['down']}");
 
     api_json(array_merge(['subnet_id' => $subnetId, 'cidr' => to_str($subnet['cidr'] ?? '')], $stats));
+}
+
+/** GET ?resource=subnet_stats — session-auth only, returns counts + utilization for all subnets */
+function api_subnet_stats(PDO $db): never
+{
+    $st = $db->prepare(
+        "SELECT s.id, s.cidr, s.ip_version, s.network, s.network_bin, s.prefix,
+                s.description, s.site_id, s.vlan_id, s.vlan_fk, s.vrf_id
+         FROM subnets s
+         ORDER BY s.ip_version ASC, s.prefix ASC, s.network_bin ASC"
+    );
+    $st->execute();
+    /** @var list<array<string, mixed>> $list */
+    $list = $st->fetchAll();
+
+    $tree    = build_subnet_tree($list);
+    $direct  = subnet_direct_counts($db);
+    $agg     = subnet_aggregated_counts($tree, $direct);
+    $util    = ipv4_unassigned_summary($db);
+    $utilAgg = ipv4_unassigned_aggregated($tree, $util);
+
+    /** @var array<string, array<string, mixed>> $dOut */
+    $dOut = [];
+    foreach ($direct as $sid => $v) $dOut[(string)$sid] = $v;
+    /** @var array<string, array<string, mixed>> $aOut */
+    $aOut = [];
+    foreach ($agg as $sid => $v) $aOut[(string)$sid] = $v;
+    /** @var array<string, array<string, mixed>> $uOut */
+    $uOut = [];
+    foreach ($util as $sid => $v) $uOut[(string)$sid] = $v;
+    /** @var array<string, array<string, mixed>> $uaOut */
+    $uaOut = [];
+    foreach ($utilAgg as $sid => $v) $uaOut[(string)$sid] = $v;
+
+    api_json([
+        'direct'  => $dOut,
+        'agg'     => $aOut,
+        'util'    => $uOut,
+        'utilAgg' => $uaOut,
+    ]);
 }
