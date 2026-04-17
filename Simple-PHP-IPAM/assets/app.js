@@ -1421,6 +1421,13 @@
 
       function renderCard(c) {
         clearCard();
+        var closeBtn = document.createElement("button");
+        closeBtn.type = "button";
+        closeBtn.className = "cc-close";
+        closeBtn.setAttribute("aria-label", "Close");
+        closeBtn.textContent = "\u00d7";
+        closeBtn.addEventListener("click", function(e) { e.stopPropagation(); hideCard(); });
+        card.appendChild(closeBtn);
         var name = document.createElement("div");
         name.className = "cc-name";
         name.textContent = c.name;
