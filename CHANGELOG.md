@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.0.0] - 2026-04-17
+
+**Breaking release.** Multi-engine database support promoted to stable, `config.php` reduced to a bootstrap stub, deprecated API auth method removed.
+
+### Breaking
+
+- **#341** — `config.php` reduced to a bootstrap stub containing only `db_driver`, `db_dsn`, `db_user`, `db_pass`, `session_name`, and `force_https`. All other settings live in the `settings` database table and are managed through Admin → Settings. An upgrade-time migration automatically imports customised values and rewrites the file. A `.bak-v3upgrade` backup is created.
+- **#340** — Removed `?api_key=` query-parameter authentication from `api.php`. Use the `Authorization: Bearer <key>` header instead. Deprecation headers shipped since v2.x.
+
+### Added
+
+- **#390** — `migrate_db.php` bidirectional CLI migration tool. Supports all 6 direction pairs between SQLite, MySQL 8.0+, and PostgreSQL 14+. Batched copies, binary blob round-trip via `PARAM_LOB`, row count verification, `--dry-run` mode.
+- **#563** — Multi-contact assignments on sites and subnets. New `site_contacts` and `subnet_contacts` join tables with optional role labels. Contact picker UI on sites page, contact badges in site/subnet tables.
+- **#391** — Integration test harness for `migrate_db.php` round-trips (`testing/scripts/test_migrate_db.sh`) and `tests/tools/db_diff.php` for comparing databases.
+- **#393** — `docs/upgrading.md` gains a dedicated "Upgrading to 3.0" section with pre-upgrade checklist, two upgrade paths (stay SQLite vs migrate to MySQL/Postgres), post-upgrade verification, and rollback instructions.
+- `config.php.example` — new stub-format template with SQLite, MySQL, and PostgreSQL example stanzas.
+- 30+ new settings registered in `ipam_setting_definitions()`: housekeeping, backup, limits, API, password policy, display, and account lockout groups.
+
+### Changed
+
+- **#392** — MySQL 8.0+ and PostgreSQL 14+ drivers promoted from experimental to stable. Beta banners removed from the admin UI.
+- **#393** — `upgrade.sh` now offers optional driver migration after schema migrations complete. Prompts for target engine, DSN, and credentials when run interactively.
+- `docs/configuration.md` updated to reflect the v3.0.0 two-tier precedence chain (DB → registry default, no config.php fallback).
+- `ipam_validate_config()` rewritten to use `ipam_setting()` instead of direct `$config` reads.
+- `settings.php` deprecation banner and import handler removed (superseded by the migration).
+- Settings source badge simplified to 🟢 Database or ⚪ Default (no more 🟡 config.php).
+
+### Removed
+
+- `ipam_config_sync()` — config.php auto-population on boot (superseded by settings table).
+- `ipam_setting_deprecated_keys()` — config.php deprecation scanner (no longer needed).
+- `?api_key=` query-parameter API authentication.
+- MySQL/PostgreSQL experimental driver banners.
+
 ## [2.14.0] - 2026-04-17
 
 UX polish, performance, and bug fix release. Contact interaction improvements on the addresses page, subnets page performance overhaul, and a utilization calculation fix.
@@ -783,6 +817,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.0.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.14.0...v3.0.0
 [2.14.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.13.0...v2.14.0
 [2.13.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.12.0...v2.13.0
 [2.12.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.11.0...v2.12.0
