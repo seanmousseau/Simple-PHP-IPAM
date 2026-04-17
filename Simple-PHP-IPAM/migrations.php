@@ -942,7 +942,13 @@ function ipam_migrations(): array
                 . "    'db_driver'    => " . var_export($driver, true) . ",\n";
             if ($driver === 'sqlite') {
                 $dbPath = to_str($config['db_path'] ?? (__DIR__ . '/data/ipam.sqlite'));
-                $stub .= "    'db_path'      => " . var_export($dbPath, true) . ",\n";
+                $configDir = dirname($configPath);
+                if (str_starts_with($dbPath, $configDir . '/')) {
+                    $relPath = substr($dbPath, strlen($configDir));
+                    $stub .= "    'db_path'      => __DIR__ . " . var_export($relPath, true) . ",\n";
+                } else {
+                    $stub .= "    'db_path'      => " . var_export($dbPath, true) . ",\n";
+                }
             } else {
                 $stub .= "    'db_dsn'       => " . var_export(to_str($config['db_dsn'] ?? ''), true) . ",\n"
                     . "    'db_user'      => " . var_export(to_str($config['db_user'] ?? ''), true) . ",\n"
