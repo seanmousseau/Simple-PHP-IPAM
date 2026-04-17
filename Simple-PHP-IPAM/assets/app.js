@@ -755,12 +755,14 @@
       });
       document.addEventListener("click", function() { drop.classList.remove("visible"); gear.setAttribute("aria-expanded","false"); });
 
-      // Insert gear before table or into a toolbar if present
+      // Insert gear into a toolbar if present, or before the table-wrap container
       var toolbar = table.closest(".card") && table.closest(".card").querySelector(".toolbar");
       if (toolbar) {
         toolbar.appendChild(wrapper);
       } else {
-        table.parentNode.insertBefore(wrapper, table);
+        var tableWrap = table.closest(".table-wrap");
+        var insertTarget = tableWrap || table;
+        insertTarget.parentNode.insertBefore(wrapper, insertTarget);
       }
 
       // Apply persisted hidden columns
