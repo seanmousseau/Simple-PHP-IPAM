@@ -14,6 +14,7 @@ container="${IPAM_TEST_NAME:-ipam-pw-test}"
 mysql_name="${IPAM_TEST_MYSQL_NAME:-ipam-pw-mysql}"
 mariadb_name="${IPAM_TEST_MARIADB_NAME:-ipam-pw-mariadb}"
 pgsql_name="${IPAM_TEST_PGSQL_NAME:-ipam-pw-pgsql}"
+mailhog_name="${IPAM_TEST_MAILHOG_NAME:-ipam-pw-mailhog}"
 network="${IPAM_TEST_NETWORK:-ipam-pw-net}"
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 app_dir="$(cd "$script_dir/../.." && pwd)/Simple-PHP-IPAM"
@@ -23,6 +24,7 @@ if command -v docker >/dev/null 2>&1; then
     docker rm -f "$mysql_name" >/dev/null 2>&1 || true
     docker rm -f "$mariadb_name" >/dev/null 2>&1 || true
     docker rm -f "$pgsql_name" >/dev/null 2>&1 || true
+    docker rm -f "$mailhog_name" >/dev/null 2>&1 || true
     docker network rm "$network" >/dev/null 2>&1 || true
 fi
 
