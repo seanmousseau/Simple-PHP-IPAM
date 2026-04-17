@@ -1108,6 +1108,42 @@ td[data-editable].cell-saving{opacity:.5;}
 .cc-label{font-weight:600;color:var(--fg);margin-right:var(--space-2)}
 .contact-card-trigger{cursor:pointer}
 
+/* ── Contact browse overlay (#562) ──────────────────────────────────────── */
+.contact-browse-btn{
+  background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);
+  cursor:pointer;padding:var(--space-1) var(--space-4);font-size:var(--font-size-sm);
+  color:var(--link);vertical-align:middle;margin-left:var(--space-2);
+}
+.contact-browse-btn:hover{background:var(--btn);color:var(--btnfg)}
+#contact-browse-overlay{
+  display:none;position:fixed;inset:0;z-index:var(--z-col-vis);
+  background:rgba(0,0,0,.45);align-items:flex-start;justify-content:center;
+  padding-top:12vh;
+}
+#contact-browse-overlay.visible{display:flex}
+.cb-box{
+  width:min(480px,94vw);background:var(--card);border:1px solid var(--border);
+  border-radius:var(--radius-lg);box-shadow:0 8px 32px rgba(0,0,0,.3);overflow:hidden;
+  position:relative;
+}
+.cb-close{
+  position:absolute;right:10px;top:10px;background:none;border:none;
+  font-size:1.4rem;cursor:pointer;color:var(--muted);line-height:1;z-index:1;
+}
+#contact-browse-input{
+  display:block;width:100%;box-sizing:border-box;
+  padding:var(--space-7) var(--space-12) var(--space-7) var(--space-8);font-size:1rem;
+  background:var(--card);color:var(--fg);border:none;border-bottom:1px solid var(--border);outline:none;
+}
+#contact-browse-list{list-style:none;margin:0;padding:0;max-height:360px;overflow-y:auto}
+.cb-item{padding:var(--space-5) var(--space-7);cursor:pointer;border-bottom:1px solid var(--border)}
+.cb-item:last-child{border-bottom:none}
+.cb-item:hover,.cb-item.active{background:var(--btn);color:var(--btnfg)}
+.cb-item-name{font-weight:600}
+.cb-item-meta{font-size:var(--font-size-sm);color:var(--muted)}
+.cb-item:hover .cb-item-meta,.cb-item.active .cb-item-meta{color:inherit;opacity:.8}
+.cb-empty{padding:var(--space-7) var(--space-8);color:var(--muted);text-align:center}
+
 /* ---- Footer logo ---- */
 .footer-logo{vertical-align:middle;opacity:.7;}
 
