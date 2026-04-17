@@ -976,6 +976,52 @@ function ipam_migrations(): array
                 }
             }
         },
+
+        '3.0.0-site-contacts' => function(PDO $db): void {
+            $driver = ipam_dialect()->driver_name();
+            if ($driver === 'sqlite') {
+                $tbl = $db->query("SELECT name FROM sqlite_master WHERE type='table' AND name='site_contacts'");
+                if ($tbl !== false && $tbl->fetch()) return;
+            } elseif ($driver === 'mysql') {
+                $tbl = $db->query("SHOW TABLES LIKE 'site_contacts'");
+                if ($tbl !== false && $tbl->fetch()) return;
+            } else {
+                $tbl = $db->prepare("SELECT 1 FROM information_schema.tables WHERE table_name='site_contacts'");
+                $tbl->execute();
+                if ($tbl->fetch()) return;
+            }
+            $intType = ($driver === 'mysql') ? 'INT' : 'INTEGER';
+            $roleType = ($driver === 'mysql') ? "VARCHAR(191) NOT NULL DEFAULT ''" : "TEXT NOT NULL DEFAULT ''";
+            $db->exec("CREATE TABLE site_contacts (
+                site_id    {$intType} NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+                contact_id {$intType} NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+                role       {$roleType},
+                PRIMARY KEY (site_id, contact_id)
+            )");
+        },
+
+        '3.0.0-subnet-contacts' => function(PDO $db): void {
+            $driver = ipam_dialect()->driver_name();
+            if ($driver === 'sqlite') {
+                $tbl = $db->query("SELECT name FROM sqlite_master WHERE type='table' AND name='subnet_contacts'");
+                if ($tbl !== false && $tbl->fetch()) return;
+            } elseif ($driver === 'mysql') {
+                $tbl = $db->query("SHOW TABLES LIKE 'subnet_contacts'");
+                if ($tbl !== false && $tbl->fetch()) return;
+            } else {
+                $tbl = $db->prepare("SELECT 1 FROM information_schema.tables WHERE table_name='subnet_contacts'");
+                $tbl->execute();
+                if ($tbl->fetch()) return;
+            }
+            $intType = ($driver === 'mysql') ? 'INT' : 'INTEGER';
+            $roleType = ($driver === 'mysql') ? "VARCHAR(191) NOT NULL DEFAULT ''" : "TEXT NOT NULL DEFAULT ''";
+            $db->exec("CREATE TABLE subnet_contacts (
+                subnet_id  {$intType} NOT NULL REFERENCES subnets(id) ON DELETE CASCADE,
+                contact_id {$intType} NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+                role       {$roleType},
+                PRIMARY KEY (subnet_id, contact_id)
+            )");
+        },
     ];
 }
 

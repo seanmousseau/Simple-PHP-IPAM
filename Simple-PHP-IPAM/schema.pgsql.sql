@@ -366,6 +366,23 @@ CREATE TABLE IF NOT EXISTS address_tags (
 CREATE INDEX IF NOT EXISTS idx_address_tags_tag ON address_tags(tag_id);
 
 -- ---------------------------------------------------------------------------
+-- site_contacts / subnet_contacts (multi-contact assignments, v3.0.0)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS site_contacts (
+  site_id    BIGINT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+  contact_id BIGINT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  role       TEXT   NOT NULL DEFAULT '',
+  PRIMARY KEY (site_id, contact_id)
+);
+
+CREATE TABLE IF NOT EXISTS subnet_contacts (
+  subnet_id  BIGINT NOT NULL REFERENCES subnets(id) ON DELETE CASCADE,
+  contact_id BIGINT NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  role       TEXT   NOT NULL DEFAULT '',
+  PRIMARY KEY (subnet_id, contact_id)
+);
+
+-- ---------------------------------------------------------------------------
 -- alert_state (utilization alert tracker, v2.0.0)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS alert_state (

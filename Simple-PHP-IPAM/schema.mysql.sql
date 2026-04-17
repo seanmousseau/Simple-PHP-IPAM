@@ -339,6 +339,27 @@ CREATE TABLE IF NOT EXISTS address_tags (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- ---------------------------------------------------------------------------
+-- site_contacts / subnet_contacts (multi-contact assignments, v3.0.0)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS site_contacts (
+  site_id    INT          NOT NULL,
+  contact_id INT          NOT NULL,
+  role       VARCHAR(191) NOT NULL DEFAULT '',
+  PRIMARY KEY (site_id, contact_id),
+  CONSTRAINT fk_site_contacts_site    FOREIGN KEY (site_id)    REFERENCES sites(id)    ON DELETE CASCADE,
+  CONSTRAINT fk_site_contacts_contact FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE IF NOT EXISTS subnet_contacts (
+  subnet_id  INT          NOT NULL,
+  contact_id INT          NOT NULL,
+  role       VARCHAR(191) NOT NULL DEFAULT '',
+  PRIMARY KEY (subnet_id, contact_id),
+  CONSTRAINT fk_subnet_contacts_subnet  FOREIGN KEY (subnet_id)  REFERENCES subnets(id)  ON DELETE CASCADE,
+  CONSTRAINT fk_subnet_contacts_contact FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- ---------------------------------------------------------------------------
 -- alert_state (utilization alert tracker, v2.0.0)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS alert_state (
