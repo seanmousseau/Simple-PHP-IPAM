@@ -103,9 +103,8 @@ if (is_file(__DIR__ . '/vendor/autoload.php')) {
 // ...) because STDIN/STDOUT/STDERR are only defined under CLI and phpdbg SAPIs
 // — referencing them under Apache or PHP-FPM would throw a fatal error.
 require_once __DIR__ . '/dialects/Dialect.php';
-// v2.11.0 (#386) — supported drivers: 'sqlite' (default), 'mysql', and
-// 'pgsql' (both experimental beta). Unknown values are rejected here before
-// the request touches any DB code.
+// Supported drivers: 'sqlite' (default), 'mysql', and 'pgsql' (all stable
+// as of v3.0.0). Unknown values are rejected here before any DB code runs.
 $_ipam_db_driver = (string)($config['db_driver'] ?? 'sqlite');
 $_ipam_driver_error = match ($_ipam_db_driver) {
     'sqlite', 'mysql', 'pgsql' => null,
