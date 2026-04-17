@@ -256,7 +256,7 @@ if [[ -n "$PHP_BIN" && -f "$TARGET_DIR/migrate.php" ]]; then
       if [[ -z "$target_dsn" ]]; then
         echo "No DSN provided. Skipping driver migration."
       else
-        local src_dsn
+        src_dsn=""
         if [[ "$current_driver" == "sqlite" ]]; then
           src_dsn="sqlite:$TARGET_DIR/data/ipam.sqlite"
         else
@@ -277,7 +277,6 @@ if [[ -n "$PHP_BIN" && -f "$TARGET_DIR/migrate.php" ]]; then
           export IPAM_NEW_USER="$target_user"
           export IPAM_NEW_PASS="$target_pass"
           "$PHP_BIN" -r '
-            $path = getenv("TARGET_DIR") ?: "'$TARGET_DIR'/config.php";
             $path = "'$TARGET_DIR'/config.php";
             $cfg = require $path;
             $cfg["db_driver"] = getenv("IPAM_NEW_DRIVER");

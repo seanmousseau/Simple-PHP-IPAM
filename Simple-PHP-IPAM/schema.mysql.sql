@@ -517,6 +517,10 @@ INSERT INTO schema_migrations (version) VALUES
   ('2.8.0-subnet-notes'),
   ('2.8.0-alert-recipients'),
   ('2.9.0-blob-affinity'),
-  ('2.12.0-account-lockout');
+  ('2.12.0-account-lockout'),
+  ('3.0.0-config-stub'),
+  ('3.0.0-config-stub-rewrite'),
+  ('3.0.0-site-contacts'),
+  ('3.0.0-subnet-contacts');
 
 SET FOREIGN_KEY_CHECKS = 1;

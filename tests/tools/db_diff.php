@@ -67,13 +67,20 @@ try {
     exit(2);
 }
 
+function qi_dsn(string $dsn, string $name): string
+{
+    return str_starts_with($dsn, 'mysql') ? '`' . $name . '`' : '"' . $name . '"';
+}
+
 $diffs = 0;
 
 foreach ($tables as $table) {
+    $srcQ = qi_dsn($srcDsn, $table);
+    $dstQ = qi_dsn($dstDsn, $table);
     $srcExists = true;
     $dstExists = true;
-    try { $src->query("SELECT 1 FROM \"{$table}\" LIMIT 0"); } catch (\Throwable) { $srcExists = false; }
-    try { $dst->query("SELECT 1 FROM \"{$table}\" LIMIT 0"); } catch (\Throwable) { $dstExists = false; }
+    try { $src->query("SELECT 1 FROM {$srcQ} LIMIT 0"); } catch (\Throwable) { $srcExists = false; }
+    try { $dst->query("SELECT 1 FROM {$dstQ} LIMIT 0"); } catch (\Throwable) { $dstExists = false; }
 
     if (!$srcExists && !$dstExists) continue;
     if (!$srcExists || !$dstExists) {
@@ -82,8 +89,8 @@ foreach ($tables as $table) {
         continue;
     }
 
-    $srcCount = (int)$src->query("SELECT COUNT(*) FROM \"{$table}\"")->fetchColumn();
-    $dstCount = (int)$dst->query("SELECT COUNT(*) FROM \"{$table}\"")->fetchColumn();
+    $srcCount = (int)$src->query("SELECT COUNT(*) FROM {$srcQ}")->fetchColumn();
+    $dstCount = (int)$dst->query("SELECT COUNT(*) FROM {$dstQ}")->fetchColumn();
 
     if ($srcCount !== $dstCount) {
         echo "DIFF {$table}: row count src={$srcCount} dst={$dstCount}\n";
@@ -93,8 +100,10 @@ foreach ($tables as $table) {
 
     if (isset($binaryCols[$table]) && $srcCount > 0) {
         $col = $binaryCols[$table];
-        $srcBins = $src->query("SELECT \"{$col}\" FROM \"{$table}\" ORDER BY id")->fetchAll(PDO::FETCH_COLUMN);
-        $dstBins = $dst->query("SELECT \"{$col}\" FROM \"{$table}\" ORDER BY id")->fetchAll(PDO::FETCH_COLUMN);
+        $srcColQ = qi_dsn($srcDsn, $col);
+        $dstColQ = qi_dsn($dstDsn, $col);
+        $srcBins = $src->query("SELECT {$srcColQ} FROM {$srcQ} ORDER BY id")->fetchAll(PDO::FETCH_COLUMN);
+        $dstBins = $dst->query("SELECT {$dstColQ} FROM {$dstQ} ORDER BY id")->fetchAll(PDO::FETCH_COLUMN);
         $mismatches = 0;
         for ($i = 0, $n = count($srcBins); $i < $n; $i++) {
             if (!hash_equals((string)($srcBins[$i] ?? ''), (string)($dstBins[$i] ?? ''))) {
