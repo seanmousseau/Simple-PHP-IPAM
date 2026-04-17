@@ -391,8 +391,9 @@ function render_subnet_node_local(array $tree, array $siteMap, array $siteList, 
 
     echo "<div class='muted'>Updated " . e(display_datetime(to_str($row['updated_at']))) . "</div>";
 
+    echo "<div class='page-actions mt-8'>";
     if (current_user()['role'] !== 'readonly') {
-        echo "<button type='button' class='action-pill subnet-edit-btn mt-8'"
+        echo "<button type='button' class='action-pill subnet-edit-btn'"
            . " data-sid='" . to_int($row['id']) . "'"
            . " data-cidr='" . e(to_str($row['cidr'])) . "'"
            . " data-description='" . e(to_str($row['description'])) . "'"
@@ -409,7 +410,8 @@ function render_subnet_node_local(array $tree, array $siteMap, array $siteList, 
     $schedLabel = $hasSched
         ? ($scanActive ? " <span class='badge badge--success'>Active</span>" : " <span class='badge'>Inactive</span>")
         : '';
-    echo "<a href='scan_history.php?subnet_id=" . to_int($row['id']) . "' class='action-pill mt-8'>Scan History &amp; Schedule" . $schedLabel . "</a>";
+    echo "<a href='scan_history.php?subnet_id=" . to_int($row['id']) . "' class='action-pill'>Scan History &amp; Schedule" . $schedLabel . "</a>";
+    echo "</div>";
 
     if (current_user()['role'] === 'readonly') {
         echo "<p class='muted'>Read-only account.</p>";
