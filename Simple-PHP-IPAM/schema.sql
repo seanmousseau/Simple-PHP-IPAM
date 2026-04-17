@@ -262,6 +262,21 @@ CREATE TABLE IF NOT EXISTS address_tags (
   PRIMARY KEY (address_id, tag_id)
 );
 
+-- v3.0.0: Multi-contact assignments on sites and subnets
+CREATE TABLE IF NOT EXISTS site_contacts (
+  site_id    INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  role       TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (site_id, contact_id)
+);
+
+CREATE TABLE IF NOT EXISTS subnet_contacts (
+  subnet_id  INTEGER NOT NULL REFERENCES subnets(id) ON DELETE CASCADE,
+  contact_id INTEGER NOT NULL REFERENCES contacts(id) ON DELETE CASCADE,
+  role       TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (subnet_id, contact_id)
+);
+
 -- v2.0.0: Utilization alert state tracker
 CREATE TABLE IF NOT EXISTS alert_state (
   subnet_id      INTEGER NOT NULL REFERENCES subnets(id) ON DELETE CASCADE,

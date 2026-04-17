@@ -3192,6 +3192,83 @@ function save_tags_for_entity(PDO $db, string $type, int $id, array $tagIds): vo
     }
 }
 
+/**
+ * Get contacts assigned to a site or subnet.
+ * @return list<array{id: int, name: string, email: string, role: string}>
+ */
+function get_contacts_for_entity(PDO $db, string $type, int $id): array
+{
+    if ($type === 'site') {
+        $sql = "SELECT c.id, c.name, c.email, sc.role FROM contacts c JOIN site_contacts sc ON sc.contact_id = c.id WHERE sc.site_id = :id ORDER BY c.name";
+    } elseif ($type === 'subnet') {
+        $sql = "SELECT c.id, c.name, c.email, sc.role FROM contacts c JOIN subnet_contacts sc ON sc.contact_id = c.id WHERE sc.subnet_id = :id ORDER BY c.name";
+    } else {
+        return [];
+    }
+    $st = $db->prepare($sql);
+    $st->execute([':id' => $id]);
+    /** @var list<array<string, mixed>> $rows */
+    $rows = $st->fetchAll();
+    return array_map(fn($r) => [
+        'id'    => to_int($r['id']),
+        'name'  => to_str($r['name']),
+        'email' => to_str($r['email']),
+        'role'  => to_str($r['role']),
+    ], $rows);
+}
+
+/**
+ * Replace all contact assignments for a site or subnet.
+ * @param list<array{contact_id: int, role: string}> $contacts
+ */
+function save_contacts_for_entity(PDO $db, string $type, int $id, array $contacts): void
+{
+    if ($type === 'site') {
+        $db->prepare("DELETE FROM site_contacts WHERE site_id = :id")->execute([':id' => $id]);
+        $ins = $db->prepare("INSERT INTO site_contacts (site_id, contact_id, role) VALUES (:eid, :cid, :role)");
+    } elseif ($type === 'subnet') {
+        $db->prepare("DELETE FROM subnet_contacts WHERE subnet_id = :id")->execute([':id' => $id]);
+        $ins = $db->prepare("INSERT INTO subnet_contacts (subnet_id, contact_id, role) VALUES (:eid, :cid, :role)");
+    } else {
+        return;
+    }
+    foreach ($contacts as $c) {
+        $ins->execute([':eid' => $id, ':cid' => $c['contact_id'], ':role' => $c['role']]);
+    }
+}
+
+/** Render contact badges for a site or subnet (HTML-safe). */
+function render_contact_badges(PDO $db, string $type, int $id): string
+{
+    $contacts = get_contacts_for_entity($db, $type, $id);
+    if (!$contacts) return '';
+    $out = '<span class="contact-badges">';
+    foreach ($contacts as $c) {
+        $label = e($c['name']);
+        if ($c['role'] !== '') $label .= ' <span class="muted">(' . e($c['role']) . ')</span>';
+        $out .= '<span class="badge contact-badge" data-contact-id="' . $c['id'] . '">' . $label . '</span> ';
+    }
+    return $out . '</span>';
+}
+
+/**
+ * Parse contact_id[] and contact_role[] from POST data.
+ * @param array<string, mixed> $post
+ * @return list<array{contact_id: int, role: string}>
+ */
+function parse_contact_assignments(array $post): array
+{
+    $ids   = (array)($post['contact_id'] ?? []);
+    $roles = (array)($post['contact_role'] ?? []);
+    $out = [];
+    foreach ($ids as $i => $raw) {
+        $cid = to_int($raw);
+        if ($cid <= 0) continue;
+        $out[] = ['contact_id' => $cid, 'role' => trim(to_str($roles[$i] ?? ''))];
+    }
+    return $out;
+}
+
 /** Render coloured tag badges for a list of tags (HTML-safe). */
 function render_tag_badges(PDO $db, string $type, int $id): string
 {
