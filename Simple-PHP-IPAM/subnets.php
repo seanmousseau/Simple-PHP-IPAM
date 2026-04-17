@@ -374,7 +374,7 @@ function render_subnet_node_local(array $tree, array $siteMap, array $siteList, 
     }
     echo "</summary>";
 
-    echo "<div class='mt-10'>";
+    echo "<div class='card mt-10'>";
     echo "<div class='page-actions mb-10'>";
     echo "<a class='action-pill' href='addresses.php?subnet_id=" . to_int($row['id']) . "'>🧾 View Addresses</a>";
     if (to_int($row['ip_version']) === 4) {
