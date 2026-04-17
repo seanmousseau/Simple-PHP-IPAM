@@ -346,7 +346,6 @@ function render_subnet_node_local(array $tree, array $siteMap, array $siteList, 
 {
     $row = $tree['byId'][$id];
     $pad = $depth * 18;
-    $disabled = (current_user()['role'] === 'readonly') ? "disabled" : "";
     $siteName = '';
     $siteId = to_int($row['site_id'] ?? 0);
     if ($siteId > 0) $siteName = $siteMap[$siteId] ?? '';
@@ -392,68 +391,25 @@ function render_subnet_node_local(array $tree, array $siteMap, array $siteList, 
 
     echo "<div class='muted'>Updated " . e(display_datetime(to_str($row['updated_at']))) . "</div>";
 
-    echo "<form method='post' action='subnets.php' class='row mt-8'>";
-    echo "<input type='hidden' name='csrf' value='" . e(csrf_token()) . "'>";
-    echo "<input type='hidden' name='action' value='update'>";
-    echo "<input type='hidden' name='id' value='" . to_int($row['id']) . "'>";
-    echo "<label>CIDR<br><input name='cidr' value='" . e(to_str($row['cidr'])) . "' required></label>";
-    echo "<label>Description<br><input name='description' value='" . e(to_str($row['description'])) . "'></label>";
-    echo "<label class='subnet-notes-edit'>Notes<br><textarea name='notes' rows='4' placeholder='Long-form operational notes, runbook links, ownership context…'>" . e(to_str($row['notes'] ?? '')) . "</textarea></label>";
-    if ($vlanList) {
-        $curVlanFk = to_int($row['vlan_fk'] ?? 0);
-        echo "<label>VLAN<br><select name='vlan_fk'><option value='0'>(none)</option>";
-        foreach ($vlanList as $vl) {
-            $vlId = to_int($vl['id']);
-            $sel  = $vlId === $curVlanFk ? " selected" : "";
-            echo "<option value='" . $vlId . "'" . $sel . ">" . to_int($vl['vlan_id']) . " \u{2014} " . e(to_str($vl['name'])) . "</option>";
-        }
-        echo "</select></label>";
+    if (current_user()['role'] !== 'readonly') {
+        echo "<button type='button' class='action-pill subnet-edit-btn mt-8'"
+           . " data-sid='" . to_int($row['id']) . "'"
+           . " data-cidr='" . e(to_str($row['cidr'])) . "'"
+           . " data-description='" . e(to_str($row['description'])) . "'"
+           . " data-notes='" . e(to_str($row['notes'] ?? '')) . "'"
+           . " data-vlan-fk='" . to_int($row['vlan_fk'] ?? 0) . "'"
+           . " data-vrf-id='" . to_int($row['vrf_id'] ?? 0) . "'"
+           . " data-site-id='" . $siteId . "'"
+           . " data-depth='" . $depth . "'"
+           . ">Edit</button>";
     }
 
-    if ($vrfList) {
-        $curVrfId = to_int($row['vrf_id'] ?? 0);
-        echo "<label>VRF<br><select name='vrf_id'><option value='0'>(global)</option>";
-        foreach ($vrfList as $vr) {
-            $vrId = to_int($vr['id']);
-            $sel  = $vrId === $curVrfId ? " selected" : "";
-            echo "<option value='" . $vrId . "'" . $sel . ">" . e(to_str($vr['name'])) . "</option>";
-        }
-        echo "</select></label>";
-    }
-
-    if ($depth > 0) {
-        // Child subnet: site is inherited from parent and cannot be changed here
-        $lockedSiteName = ($siteId > 0 && isset($siteMap[$siteId])) ? $siteMap[$siteId] : '(none)';
-        echo "<input type='hidden' name='site_id' value='" . $siteId . "'>";
-        echo "<label>Site<br><span class='badge' title='Inherited from parent subnet'>" . e($lockedSiteName) . " ↑</span></label>";
-    } else {
-        echo "<label>Site<br><select name='site_id'>";
-        echo "<option value='0' " . ($siteId === 0 ? "selected" : "") . ">(none)</option>";
-        foreach ($siteList as $s) {
-            $sid = to_int($s['id']);
-            $sel = ($sid === $siteId) ? "selected" : "";
-            echo "<option value='" . $sid . "' $sel>" . e(to_str($s['name'])) . "</option>";
-        }
-        echo "</select></label>";
-    }
-
-    echo "<button type='submit' $disabled>Save</button>";
-    echo "</form>";
-
-    echo "<form method='post' action='subnets.php' data-confirm='Delete subnet and all its addresses?' class='mt-8'>";
-    echo "<input type='hidden' name='csrf' value='" . e(csrf_token()) . "'>";
-    echo "<input type='hidden' name='action' value='delete'>";
-    echo "<input type='hidden' name='id' value='" . to_int($row['id']) . "'>";
-    echo "<button type='submit' class='button-danger' $disabled>Delete</button>";
-    echo "</form>";
-
-    // Scan schedule is now managed on scan_history.php (#356)
     $hasSched   = $row['scan_method'] !== null;
     $scanActive = (bool)($row['scan_active'] ?? false);
     $schedLabel = $hasSched
         ? ($scanActive ? " <span class='badge badge--success'>Active</span>" : " <span class='badge'>Inactive</span>")
         : '';
-    echo "<a href='scan_history.php?subnet_id=" . to_int($row['id']) . "' class='action-pill mt-8'>📡 Scan History &amp; Schedule" . $schedLabel . "</a>";
+    echo "<a href='scan_history.php?subnet_id=" . to_int($row['id']) . "' class='action-pill mt-8'>Scan History &amp; Schedule" . $schedLabel . "</a>";
 
     if (current_user()['role'] === 'readonly') {
         echo "<p class='muted'>Read-only account.</p>";
@@ -613,5 +569,55 @@ ipam_skeleton_flush();
     </div>
   <?php endif; ?>
 </div>
+
+<!-- Shared subnet edit drawer (#567) -->
+<?php if (current_user()['role'] !== 'readonly'): ?>
+<div id="subnet-edit-drawer" hidden>
+  <h3 id="subnet-edit-title">Edit Subnet</h3>
+  <form method="post" action="subnets.php" id="subnet-edit-form">
+    <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+    <input type="hidden" name="action" value="update">
+    <input type="hidden" name="id" id="subnet-edit-id" value="">
+    <label>CIDR<br><input name="cidr" id="subnet-edit-cidr" required></label>
+    <label>Description<br><input name="description" id="subnet-edit-description"></label>
+    <label class="subnet-notes-edit">Notes<br><textarea name="notes" id="subnet-edit-notes" rows="4" placeholder="Long-form operational notes, runbook links, ownership context…"></textarea></label>
+    <?php if ($vlanList): ?>
+    <label>VLAN<br><select name="vlan_fk" id="subnet-edit-vlan">
+      <option value="0">(none)</option>
+      <?php foreach ($vlanList as $vl): ?>
+        <option value="<?= to_int($vl['id']) ?>"><?= to_int($vl['vlan_id']) ?> — <?= e(to_str($vl['name'])) ?></option>
+      <?php endforeach; ?>
+    </select></label>
+    <?php endif; ?>
+    <?php if ($vrfList): ?>
+    <label>VRF<br><select name="vrf_id" id="subnet-edit-vrf">
+      <option value="0">(global)</option>
+      <?php foreach ($vrfList as $vr): ?>
+        <option value="<?= to_int($vr['id']) ?>"><?= e(to_str($vr['name'])) ?></option>
+      <?php endforeach; ?>
+    </select></label>
+    <?php endif; ?>
+    <div id="subnet-edit-site-wrap">
+      <label>Site<br><select name="site_id" id="subnet-edit-site">
+        <option value="0">(none)</option>
+        <?php foreach ($siteList as $s): ?>
+          <option value="<?= to_int($s['id']) ?>"><?= e(to_str($s['name'])) ?></option>
+        <?php endforeach; ?>
+      </select></label>
+    </div>
+    <div id="subnet-edit-site-locked" hidden>
+      <input type="hidden" name="site_id" id="subnet-edit-site-hidden" value="">
+      <label>Site<br><span class="badge" id="subnet-edit-site-badge"></span></label>
+    </div>
+    <button type="submit">Save</button>
+  </form>
+  <form method="post" action="subnets.php" data-confirm="Delete subnet and all its addresses?" class="mt-8" id="subnet-delete-form">
+    <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+    <input type="hidden" name="action" value="delete">
+    <input type="hidden" name="id" id="subnet-delete-id" value="">
+    <button type="submit" class="button-danger">Delete</button>
+  </form>
+</div>
+<?php endif; ?>
 
 <?php ipam_skeleton_remove(); page_footer();

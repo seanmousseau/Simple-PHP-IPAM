@@ -1055,6 +1055,61 @@
       el.classList.toggle("audit-details--expanded");
     });
 
+    /* ---- Subnet edit drawer (#567) ---- */
+    (function() {
+      var editDrawer = document.getElementById("subnet-edit-drawer");
+      if (!editDrawer || !formDrawer) return;
+
+      var siteWrap = document.getElementById("subnet-edit-site-wrap");
+      var siteLocked = document.getElementById("subnet-edit-site-locked");
+      var siteSelect = document.getElementById("subnet-edit-site");
+      var siteHidden = document.getElementById("subnet-edit-site-hidden");
+      var siteBadge = document.getElementById("subnet-edit-site-badge");
+
+      document.addEventListener("click", function(e) {
+        var btn = e.target.closest(".subnet-edit-btn");
+        if (!btn) return;
+        var d = btn.dataset;
+
+        document.getElementById("subnet-edit-id").value = d.sid;
+        document.getElementById("subnet-delete-id").value = d.sid;
+        document.getElementById("subnet-edit-cidr").value = d.cidr;
+        document.getElementById("subnet-edit-description").value = d.description;
+        document.getElementById("subnet-edit-notes").value = d.notes;
+        var vlanSel = document.getElementById("subnet-edit-vlan");
+        if (vlanSel) vlanSel.value = d.vlanFk;
+        var vrfSel = document.getElementById("subnet-edit-vrf");
+        if (vrfSel) vrfSel.value = d.vrfId;
+
+        if (parseInt(d.depth, 10) > 0 && siteLocked && siteWrap) {
+          siteWrap.hidden = true;
+          siteLocked.hidden = false;
+          if (siteHidden) siteHidden.value = d.siteId;
+          if (siteBadge) {
+            var opt = siteSelect && siteSelect.querySelector("option[value='" + d.siteId + "']");
+            siteBadge.textContent = (opt ? opt.textContent : "(none)") + " \u2191";
+            siteBadge.title = "Inherited from parent subnet";
+          }
+        } else if (siteWrap && siteLocked) {
+          siteWrap.hidden = false;
+          siteLocked.hidden = true;
+          if (siteSelect) siteSelect.value = d.siteId;
+        }
+
+        editDrawer.hidden = false;
+        var titleEl = formDrawer.querySelector(".drawer-title");
+        if (titleEl) titleEl.textContent = "Edit " + d.cidr;
+        var body = document.getElementById("form-drawer-body");
+        if (body) {
+          while (body.firstChild) body.removeChild(body.firstChild);
+          body.appendChild(editDrawer);
+        }
+        formDrawer.classList.add("drawer--open");
+        var overlay = document.querySelector(".form-drawer-overlay");
+        if (overlay) overlay.classList.add("visible");
+      });
+    }());
+
     /* ---- Subnet stats async load (#565) ---- */
     (function() {
       var placeholders = document.querySelectorAll("[data-subnet-counts]");
