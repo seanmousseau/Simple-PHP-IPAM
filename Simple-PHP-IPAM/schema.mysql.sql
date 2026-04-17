@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS users (
   last_login_at       DATETIME NULL,
   password_changed_at DATETIME NULL,
   theme               VARCHAR(10)  NOT NULL DEFAULT 'auto',
+  timezone            VARCHAR(64)  DEFAULT NULL,
   created_at          DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   updated_at          DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   UNIQUE KEY idx_users_oidc_sub (oidc_sub)

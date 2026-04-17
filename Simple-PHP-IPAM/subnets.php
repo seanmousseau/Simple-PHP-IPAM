@@ -441,7 +441,7 @@ function render_subnet_node_local(PDO $db, array $tree, array $siteMap, array $s
 
     $subnetContacts = render_contact_badges($db, 'subnet', to_int($row['id']));
     if ($subnetContacts) echo "<div class='mt-4'>" . $subnetContacts . "</div>";
-    echo "<div class='muted'>Updated " . e(display_datetime(to_str($row['updated_at']))) . "</div>";
+    echo "<div class='muted'>Updated " . e(ipam_format_datetime(to_str($row['updated_at']))) . "</div>";
 
     if (current_user()['role'] === 'readonly') {
         echo "<p class='muted'>Read-only account.</p>";

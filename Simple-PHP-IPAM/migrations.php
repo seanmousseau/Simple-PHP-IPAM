@@ -1027,6 +1027,33 @@ function ipam_migrations(): array
             )" . ($driver === 'mysql' ? ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4' : ''));
         },
 
+        '3.1.0-user-timezone' => function(PDO $db): void {
+            $driver = ipam_dialect()->driver_name();
+            $hasCol = false;
+            if ($driver === 'sqlite') {
+                $tblSt = $db->query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'");
+                $tbl = $tblSt ? $tblSt->fetch() : false;
+                if (!$tbl) return;
+                foreach (($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll() as $col) {
+                    if (to_str($col['name']) === 'timezone') { $hasCol = true; break; }
+                }
+            } elseif ($driver === 'mysql') {
+                $st = $db->prepare("SHOW COLUMNS FROM users LIKE 'timezone'");
+                $st->execute();
+                $hasCol = $st->fetch() !== false;
+            } else {
+                $st = $db->prepare(
+                    "SELECT 1 FROM information_schema.columns
+                     WHERE table_name='users' AND column_name='timezone'"
+                );
+                $st->execute();
+                $hasCol = $st->fetch() !== false;
+            }
+            if (!$hasCol) {
+                $db->exec("ALTER TABLE users ADD COLUMN timezone TEXT");
+            }
+        },
+
         '3.1.0-subnet-alerts-enabled' => function(PDO $db): void {
             $driver = ipam_dialect()->driver_name();
             $hasCol = false;

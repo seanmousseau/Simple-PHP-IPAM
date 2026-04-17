@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS users (
   last_login_at        TEXT,
   password_changed_at  TEXT,                        -- updated on every local password change; NULL for SSO-only accounts
   theme         TEXT NOT NULL DEFAULT 'auto',       -- persisted UI theme: auto|light|dark
+  timezone      TEXT,                                -- per-user display timezone; NULL = use app default
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );

@@ -517,15 +517,72 @@ if (!function_exists('to_str')) {
  */
 function display_datetime(string $utcStr, string $format = 'Y-m-d H:i:s'): string
 {
-    if ($utcStr === '') return '';
+    return ipam_format_datetime($utcStr, $format);
+}
+
+/**
+ * Resolve the effective display timezone for a user.
+ *
+ * Fallback chain: per-user users.timezone → branding.timezone setting → PHP default → UTC.
+ * Result is cached per userId per request to avoid redundant DB queries.
+ */
+function ipam_user_timezone(?int $userId = null): string
+{
+    static $userCache = [];
+
+    if ($userId === null) {
+        $uid = isset($_SESSION) ? to_int($_SESSION['uid'] ?? 0) : 0;
+        $userId = $uid > 0 ? $uid : null;
+    }
+
+    // Cache per-user DB lookups only; ipam_setting() has its own cache.
+    if ($userId !== null && isset($userCache[$userId])) {
+        return $userCache[$userId];
+    }
+
+    $tz = '';
+
+    if ($userId !== null) {
+        /** @var \PDO|null $globalDb */
+        $globalDb = $GLOBALS['db'] ?? null;
+        if ($globalDb instanceof \PDO) {
+            try {
+                $st = $globalDb->prepare("SELECT timezone FROM users WHERE id = :id");
+                $st->execute([':id' => $userId]);
+                $row = $st->fetch();
+                if (is_array($row) && isset($row['timezone']) && is_string($row['timezone']) && $row['timezone'] !== '') {
+                    $tz = $row['timezone'];
+                }
+            } catch (\Exception) {}
+        }
+    }
+
+    if ($tz === '') $tz = to_str(ipam_setting('branding.timezone'));
+    if ($tz === '') $tz = date_default_timezone_get() ?: 'UTC';
+
+    try { new \DateTimeZone($tz); } catch (\Exception) { $tz = 'UTC'; }
+
+    if ($userId !== null) $userCache[$userId] = $tz;
+    return $tz;
+}
+
+/**
+ * Format a UTC timestamp string for display in the current user's timezone.
+ *
+ * Default format includes the TZ abbreviation ('Y-m-d H:i T'). Pass $fmt to
+ * override, or $userId to render in a specific user's timezone rather than the
+ * session user's.
+ */
+function ipam_format_datetime(string $utc, ?string $fmt = null, ?int $userId = null): string
+{
+    if ($utc === '') return '';
+    $fmt = $fmt ?? 'Y-m-d H:i T';
     try {
-        $dt = new DateTime($utcStr, new DateTimeZone('UTC'));
-        $tz = to_str(ipam_setting('branding.timezone'));
-        if ($tz === '') $tz = 'UTC';
-        $dt->setTimezone(new DateTimeZone($tz));
-        return $dt->format($format);
+        $dt = new \DateTime($utc, new \DateTimeZone('UTC'));
+        $dt->setTimezone(new \DateTimeZone(ipam_user_timezone($userId)));
+        return $dt->format($fmt);
     } catch (\Exception) {
-        return $utcStr; // return raw value on parse failure
+        return $utc;
     }
 }
 

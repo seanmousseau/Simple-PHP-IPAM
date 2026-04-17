@@ -322,7 +322,7 @@ page_header('Search');
           <td class="muted ip-cell"><?= e(to_str($r['mac'])) ?></td>
           <td class="muted"><?= e(to_str($r['expires_at'] ?? '')) ?></td>
           <td><?= e(to_str($r['note'])) ?></td>
-          <td class="muted"><?= e(display_datetime(to_str($r['updated_at']))) ?></td>
+          <td class="muted"><?= e(ipam_format_datetime(to_str($r['updated_at']))) ?></td>
           <td><a href="addresses.php?subnet_id=<?= to_int($r['subnet_id']) ?>&highlight=<?= to_int($r['id']) ?>#addr-<?= to_int($r['id']) ?>">Edit</a> <a href="address_history.php?address_id=<?= to_int($r['id']) ?>">History</a></td>
         </tr>
       <?php endforeach; ?>

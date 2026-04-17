@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS users (
   last_login_at       TIMESTAMP NULL,
   password_changed_at TIMESTAMP NULL,
   theme               TEXT NOT NULL DEFAULT 'auto',
+  timezone            TEXT,
   created_at          TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
   updated_at          TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
   -- No CHECK on role or theme: schema.sql (SQLite) has none, and
