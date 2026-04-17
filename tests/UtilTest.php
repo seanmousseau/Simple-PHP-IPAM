@@ -421,13 +421,13 @@ class UtilTest extends TestCase
 
     public function testDisplayDatetimeEmptyStringReturnsEmpty(): void
     {
-        $GLOBALS['config']['timezone'] = 'UTC';
+        ipam_setting_cache_storage('branding.timezone', false, 'UTC', true);
         $this->assertSame('', display_datetime(''));
     }
 
     public function testDisplayDatetimeUtcPassthrough(): void
     {
-        $GLOBALS['config']['timezone'] = 'UTC';
+        ipam_setting_cache_storage('branding.timezone', false, 'UTC', true);
         $this->assertSame('2024-06-15 10:30:00', display_datetime('2024-06-15 10:30:00'));
     }
 
@@ -435,7 +435,7 @@ class UtilTest extends TestCase
     {
         // Asia/Tokyo = UTC+9, no DST — unambiguous conversion.
         // 03:00 UTC → 12:00 JST
-        $GLOBALS['config']['timezone'] = 'Asia/Tokyo';
+        ipam_setting_cache_storage('branding.timezone', false, 'Asia/Tokyo', true);
         $this->assertSame('2024-01-15 12:00:00', display_datetime('2024-01-15 03:00:00'));
     }
 
@@ -443,33 +443,33 @@ class UtilTest extends TestCase
     {
         // America/New_York in January = EST (UTC-5).
         // 17:00 UTC → 12:00 EST
-        $GLOBALS['config']['timezone'] = 'America/New_York';
+        ipam_setting_cache_storage('branding.timezone', false, 'America/New_York', true);
         $this->assertSame('2024-01-15 12:00:00', display_datetime('2024-01-15 17:00:00'));
     }
 
     public function testDisplayDatetimeCustomFormat(): void
     {
-        $GLOBALS['config']['timezone'] = 'UTC';
+        ipam_setting_cache_storage('branding.timezone', false, 'UTC', true);
         $this->assertSame('15/06/2024', display_datetime('2024-06-15 10:30:00', 'd/m/Y'));
     }
 
     public function testDisplayDatetimeFallsBackOnInvalidInput(): void
     {
-        $GLOBALS['config']['timezone'] = 'UTC';
+        ipam_setting_cache_storage('branding.timezone', false, 'UTC', true);
         // Invalid datetime — should return the raw input rather than throwing.
         $this->assertSame('not-a-date', display_datetime('not-a-date'));
     }
 
     public function testDisplayDatetimeEmptyTimezoneDefaultsToUtc(): void
     {
-        $GLOBALS['config']['timezone'] = '';
+        ipam_setting_cache_storage('branding.timezone', false, '', true);
         $this->assertSame('2024-06-15 10:30:00', display_datetime('2024-06-15 10:30:00'));
     }
 
     public function testDisplayDatetimeMidnightBoundary(): void
     {
         // UTC+9: 2024-01-16 00:00:00 JST = 2024-01-15 15:00:00 UTC
-        $GLOBALS['config']['timezone'] = 'Asia/Tokyo';
+        ipam_setting_cache_storage('branding.timezone', false, 'Asia/Tokyo', true);
         $this->assertSame('2024-01-16 00:00:00', display_datetime('2024-01-15 15:00:00'));
     }
 

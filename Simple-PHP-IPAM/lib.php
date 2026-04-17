@@ -520,9 +520,7 @@ function display_datetime(string $utcStr, string $format = 'Y-m-d H:i:s'): strin
     if ($utcStr === '') return '';
     try {
         $dt = new DateTime($utcStr, new DateTimeZone('UTC'));
-        /** @var IpamConfig $gConf */
-        $gConf = $GLOBALS['config'];
-        $tz = to_str($gConf['timezone'] ?? 'UTC');
+        $tz = to_str(ipam_setting('branding.timezone'));
         if ($tz === '') $tz = 'UTC';
         $dt->setTimezone(new DateTimeZone($tz));
         return $dt->format($format);
@@ -561,9 +559,7 @@ function require_login(): void
         header('Location: login.php');
         exit;
     }
-    /** @var IpamConfig $gConf */
-    $gConf = $GLOBALS['config'];
-    $idle = $gConf['session_idle_seconds'];
+    $idle = to_int(ipam_setting('security.session_idle_seconds'));
     if (isset($_SESSION['last_active']) && (time() - to_int($_SESSION['last_active'])) > $idle) {
         logout_user();
         header('Location: login.php?timeout=1');
@@ -571,9 +567,7 @@ function require_login(): void
     }
     $_SESSION['last_active'] = time();
 
-    // Password expiry check — local accounts only, skip on change_password / logout pages
-    $policy  = $gConf['password_policy'];
-    $maxAge  = $policy['max_password_age_days'];
+    $maxAge = to_int(ipam_setting('password_policy.max_password_age_days'));
     if ($maxAge > 0) {
         $page = basename(to_str($_SERVER['SCRIPT_FILENAME'] ?? ''));
         if (!in_array($page, ['change_password.php', 'logout.php'], true)) {
