@@ -44,16 +44,19 @@ function open_db(string $dsn, string $user, string $pass): PDO
 }
 
 $tables = [
-    'users', 'sites', 'vrfs', 'vlans', 'contacts', 'subnets', 'addresses',
-    'subnet_tags', 'address_tags', 'site_contacts', 'subnet_contacts',
+    'users', 'sites', 'vrfs', 'vlans', 'vlan_ranges', 'tags', 'contacts',
+    'subnets', 'addresses', 'subnet_tags', 'address_tags',
+    'site_contacts', 'subnet_contacts',
+    'aggregates', 'pd_pools', 'pd_delegations',
     'audit_log', 'address_history', 'alert_state', 'api_keys',
     'scan_schedules', 'scan_results', 'login_attempts', 'settings',
     'schema_migrations',
 ];
 
 $binaryCols = [
-    'subnets'   => 'network_bin',
-    'addresses' => 'ip_bin',
+    'subnets'    => 'network_bin',
+    'addresses'  => 'ip_bin',
+    'aggregates' => 'network_bin',
 ];
 
 try {

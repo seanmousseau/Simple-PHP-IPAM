@@ -3482,16 +3482,34 @@ function get_contacts_for_entity(PDO $db, string $type, int $id): array
 function save_contacts_for_entity(PDO $db, string $type, int $id, array $contacts): void
 {
     if ($type === 'site') {
-        $db->prepare("DELETE FROM site_contacts WHERE site_id = :id")->execute([':id' => $id]);
-        $ins = $db->prepare("INSERT INTO site_contacts (site_id, contact_id, role) VALUES (:eid, :cid, :role)");
+        $delSql = "DELETE FROM site_contacts WHERE site_id = :id";
+        $insSql = "INSERT INTO site_contacts (site_id, contact_id, role) VALUES (:eid, :cid, :role)";
     } elseif ($type === 'subnet') {
-        $db->prepare("DELETE FROM subnet_contacts WHERE subnet_id = :id")->execute([':id' => $id]);
-        $ins = $db->prepare("INSERT INTO subnet_contacts (subnet_id, contact_id, role) VALUES (:eid, :cid, :role)");
+        $delSql = "DELETE FROM subnet_contacts WHERE subnet_id = :id";
+        $insSql = "INSERT INTO subnet_contacts (subnet_id, contact_id, role) VALUES (:eid, :cid, :role)";
     } else {
         return;
     }
+    $seen = [];
+    $deduped = [];
     foreach ($contacts as $c) {
-        $ins->execute([':eid' => $id, ':cid' => $c['contact_id'], ':role' => $c['role']]);
+        $cid = $c['contact_id'];
+        if (isset($seen[$cid])) continue;
+        $seen[$cid] = true;
+        $deduped[] = $c;
+    }
+    $wasInTxn = $db->inTransaction();
+    if (!$wasInTxn) $db->beginTransaction();
+    try {
+        $db->prepare($delSql)->execute([':id' => $id]);
+        $ins = $db->prepare($insSql);
+        foreach ($deduped as $c) {
+            $ins->execute([':eid' => $id, ':cid' => $c['contact_id'], ':role' => $c['role']]);
+        }
+        if (!$wasInTxn) $db->commit();
+    } catch (\Throwable $e) {
+        if (!$wasInTxn && $db->inTransaction()) $db->rollBack();
+        throw $e;
     }
 }
 

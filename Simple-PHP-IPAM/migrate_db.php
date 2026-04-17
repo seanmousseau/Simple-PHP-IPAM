@@ -16,9 +16,10 @@ require_once __DIR__ . '/dialects/MysqlDialect.php';
 require_once __DIR__ . '/dialects/PgsqlDialect.php';
 
 $COPY_ORDER = [
-    'users', 'sites', 'vrfs', 'vlans', 'vlan_ranges', 'contacts',
+    'users', 'sites', 'vrfs', 'vlans', 'vlan_ranges', 'tags', 'contacts',
     'subnets', 'addresses', 'subnet_tags', 'address_tags',
     'site_contacts', 'subnet_contacts',
+    'aggregates', 'pd_pools', 'pd_delegations',
     'address_history', 'alert_state', 'api_keys',
     'scan_schedules', 'scan_results',
     'login_attempts', 'settings', 'schema_migrations',
@@ -93,6 +94,11 @@ function dialect_for(string $driver): Dialect
     };
 }
 
+function qi(string $driver, string $name): string
+{
+    return ($driver === 'mysql') ? '`' . $name . '`' : '"' . $name . '"';
+}
+
 function table_exists(PDO $db, string $driver, string $table): bool
 {
     if ($driver === 'sqlite') {
@@ -108,9 +114,10 @@ function table_exists(PDO $db, string $driver, string $table): bool
     return (bool)$st->fetch();
 }
 
-function row_count(PDO $db, string $table): int
+function row_count(PDO $db, string $driver, string $table): int
 {
-    $st = $db->query("SELECT COUNT(*) FROM \"{$table}\"");
+    $q = qi($driver, $table);
+    $st = $db->query("SELECT COUNT(*) FROM {$q}");
     return $st !== false ? (int)$st->fetchColumn() : 0;
 }
 
@@ -148,18 +155,36 @@ if ($fromDriver === 'sqlite') {
 if (!$force) {
     $checkTables = ['subnets', 'addresses', 'users'];
     foreach ($checkTables as $ct) {
-        if (table_exists($dstDb, $toDriver, $ct) && row_count($dstDb, $ct) > 0) {
+        if (table_exists($dstDb, $toDriver, $ct) && row_count($dstDb, $toDriver, $ct) > 0) {
             $err("Target has data in '{$ct}'. Use --force to overwrite.");
             exit(1);
         }
     }
 }
 
+$srcDialect = dialect_for($fromDriver);
 $dstDialect = dialect_for($toDriver);
 
 $allTables = array_merge($COPY_ORDER, $APPEND_ONLY_TABLES);
 $srcCounts = [];
 $dstCounts = [];
+
+if (!$dryRun && $force) {
+    $info('Dropping append-only triggers on target before force-clear ...');
+    foreach ($APPEND_ONLY_TABLES as $aot) {
+        if (!table_exists($dstDb, $toDriver, $aot)) continue;
+        if ($toDriver === 'sqlite') {
+            $dstDb->exec("DROP TRIGGER IF EXISTS {$aot}_no_update");
+            $dstDb->exec("DROP TRIGGER IF EXISTS {$aot}_no_delete");
+        } elseif ($toDriver === 'mysql') {
+            $dstDb->exec("DROP TRIGGER IF EXISTS {$aot}_no_update");
+            $dstDb->exec("DROP TRIGGER IF EXISTS {$aot}_no_delete");
+        } else {
+            $dstDb->exec("DROP TRIGGER IF EXISTS {$aot}_no_update ON " . qi($toDriver, $aot));
+            $dstDb->exec("DROP TRIGGER IF EXISTS {$aot}_no_delete ON " . qi($toDriver, $aot));
+        }
+    }
+}
 
 foreach ($allTables as $table) {
     if (!table_exists($srcDb, $fromDriver, $table)) {
@@ -167,7 +192,7 @@ foreach ($allTables as $table) {
         continue;
     }
 
-    $srcCount = row_count($srcDb, $table);
+    $srcCount = row_count($srcDb, $fromDriver, $table);
     $srcCounts[$table] = $srcCount;
 
     if ($srcCount === 0) {
@@ -179,8 +204,10 @@ foreach ($allTables as $table) {
     $info("COPY {$table}: {$srcCount} rows ...");
 
     $binCols = $BINARY_COLUMNS[$table] ?? [];
+    $srcQ = qi($fromDriver, $table);
+    $dstQ = qi($toDriver, $table);
 
-    $colSt = $srcDb->query("SELECT * FROM \"{$table}\" LIMIT 0");
+    $colSt = $srcDb->query("SELECT * FROM {$srcQ} LIMIT 0");
     if ($colSt === false) continue;
     $colCount = $colSt->columnCount();
     $columns = [];
@@ -195,11 +222,12 @@ foreach ($allTables as $table) {
         continue;
     }
 
-    $quotedCols = array_map(fn($c) => '"' . $c . '"', $columns);
+    $srcQuotedCols = array_map(fn($c) => qi($fromDriver, $c), $columns);
+    $dstQuotedCols = array_map(fn($c) => qi($toDriver, $c), $columns);
     $placeholders = array_map(fn($c) => ':' . $c, $columns);
 
-    $selectSql = "SELECT " . implode(', ', $quotedCols) . " FROM \"{$table}\"";
-    $insertSql = "INSERT INTO \"{$table}\" (" . implode(', ', $quotedCols) . ") VALUES (" . implode(', ', $placeholders) . ")";
+    $selectSql = "SELECT " . implode(', ', $srcQuotedCols) . " FROM {$srcQ}";
+    $insertSql = "INSERT INTO {$dstQ} (" . implode(', ', $dstQuotedCols) . ") VALUES (" . implode(', ', $placeholders) . ")";
 
     if ($dryRun) {
         $info("  DRY RUN: would copy {$srcCount} rows");
@@ -210,7 +238,7 @@ foreach ($allTables as $table) {
     if ($force && table_exists($dstDb, $toDriver, $table)) {
         $fkOff = $dstDialect->pragma_foreign_keys(false);
         if ($fkOff !== null) $dstDb->exec($fkOff);
-        $dstDb->exec("DELETE FROM \"{$table}\"");
+        $dstDb->exec("DELETE FROM {$dstQ}");
         $fkOn = $dstDialect->pragma_foreign_keys(true);
         if ($fkOn !== null) $dstDb->exec($fkOn);
     }
@@ -263,7 +291,7 @@ $mismatch = false;
 foreach ($allTables as $table) {
     if (!isset($srcCounts[$table])) continue;
     $src = $srcCounts[$table];
-    $dst = $dryRun ? ($dstCounts[$table] ?? 0) : (table_exists($dstDb, $toDriver, $table) ? row_count($dstDb, $table) : 0);
+    $dst = $dryRun ? ($dstCounts[$table] ?? 0) : (table_exists($dstDb, $toDriver, $table) ? row_count($dstDb, $toDriver, $table) : 0);
     $ok = $src === $dst;
     $status = $ok ? 'OK' : 'MISMATCH';
     $info(sprintf("  %-25s src=%-6d dst=%-6d %s", $table, $src, $dst, $status));

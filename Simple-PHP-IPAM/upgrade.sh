@@ -256,29 +256,42 @@ if [[ -n "$PHP_BIN" && -f "$TARGET_DIR/migrate.php" ]]; then
       if [[ -z "$target_dsn" ]]; then
         echo "No DSN provided. Skipping driver migration."
       else
+        local src_dsn
+        if [[ "$current_driver" == "sqlite" ]]; then
+          src_dsn="sqlite:$TARGET_DIR/data/ipam.sqlite"
+        else
+          src_dsn=$("$PHP_BIN" -r "echo (require '$TARGET_DIR/config.php')['db_dsn'] ?? '';" 2>/dev/null)
+        fi
+
         echo "Running migrate_db.php..."
+        migrate_ok=0
         "$PHP_BIN" "$TARGET_DIR/migrate_db.php" \
-          --from="$current_driver" \
-          --from-dsn="$([[ "$current_driver" == "sqlite" ]] && echo "sqlite:$TARGET_DIR/data/ipam.sqlite" || "$PHP_BIN" -r "echo (require '$TARGET_DIR/config.php')['db_dsn'] ?? '';")" \
+          --from="$current_driver" --from-dsn="$src_dsn" \
           --to="$target_driver" --to-dsn="$target_dsn" \
           --to-user="$target_user" --to-pass="$target_pass" \
-          --force || {
-            echo "Driver migration failed. Your original database is unchanged."
-            echo "You can retry manually: php $TARGET_DIR/migrate_db.php --help"
-          }
+          --force && migrate_ok=1
 
-        if [[ $? -eq 0 ]]; then
-          # Update config.php stub to point at new driver
-          "$PHP_BIN" -r "
-            \$path = '$TARGET_DIR/config.php';
-            \$cfg = require \$path;
-            \$cfg['db_driver'] = '$target_driver';
-            \$cfg['db_dsn'] = '$target_dsn';
-            \$cfg['db_user'] = '$target_user';
-            \$cfg['db_pass'] = '$target_pass';
-            \$out = \"<?php\ndeclare(strict_types=1);\n\nreturn \" . var_export(\$cfg, true) . \";\n\";
-            file_put_contents(\$path, \$out, LOCK_EX);
-          " 2>/dev/null && echo "config.php updated to $target_driver driver." || echo "Warning: could not update config.php automatically. Edit it manually."
+        if [[ "$migrate_ok" -eq 1 ]]; then
+          export IPAM_NEW_DRIVER="$target_driver"
+          export IPAM_NEW_DSN="$target_dsn"
+          export IPAM_NEW_USER="$target_user"
+          export IPAM_NEW_PASS="$target_pass"
+          "$PHP_BIN" -r '
+            $path = getenv("TARGET_DIR") ?: "'$TARGET_DIR'/config.php";
+            $path = "'$TARGET_DIR'/config.php";
+            $cfg = require $path;
+            $cfg["db_driver"] = getenv("IPAM_NEW_DRIVER");
+            $cfg["db_dsn"]    = getenv("IPAM_NEW_DSN");
+            $cfg["db_user"]   = getenv("IPAM_NEW_USER");
+            $cfg["db_pass"]   = getenv("IPAM_NEW_PASS");
+            unset($cfg["db_path"]);
+            $out = "<?php\ndeclare(strict_types=1);\n\nreturn " . var_export($cfg, true) . ";\n";
+            file_put_contents($path, $out, LOCK_EX);
+          ' 2>/dev/null && echo "config.php updated to $target_driver driver." || echo "Warning: could not update config.php automatically. Edit it manually."
+          unset IPAM_NEW_DRIVER IPAM_NEW_DSN IPAM_NEW_USER IPAM_NEW_PASS
+        else
+          echo "Driver migration failed. Your original database is unchanged."
+          echo "You can retry manually: php $TARGET_DIR/migrate_db.php --help"
         fi
       fi
     fi

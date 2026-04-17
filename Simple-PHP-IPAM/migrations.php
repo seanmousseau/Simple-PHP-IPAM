@@ -916,6 +916,22 @@ function ipam_migrations(): array
                 $imported++;
             }
 
+            $GLOBALS['_ipam_v3_config_stub_pending'] = [
+                'config_path' => $configPath,
+                'config'      => $config,
+                'imported'    => $imported,
+            ];
+        },
+
+        '3.0.0-config-stub-rewrite' => function(PDO $db): void {
+            $pending = $GLOBALS['_ipam_v3_config_stub_pending'] ?? null;
+            if (!is_array($pending)) return;
+            unset($GLOBALS['_ipam_v3_config_stub_pending']);
+
+            $configPath = to_str($pending['config_path']);
+            $config     = (array)$pending['config'];
+            $imported   = to_int($pending['imported']);
+
             $bakPath = $configPath . '.bak-v3upgrade';
             if (!is_file($bakPath)) {
                 @copy($configPath, $bakPath);

@@ -107,7 +107,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $st->bindValue(':vrf',   $vrfId,  $vrfId  === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                     $st->execute();
                     $newSubnetId = ipam_last_insert_id($db, 'subnets');
-                    save_contacts_for_entity($db, 'subnet', $newSubnetId, parse_contact_assignments($_POST));
+                    if (isset($_POST['contact_id'])) {
+                        save_contacts_for_entity($db, 'subnet', $newSubnetId, parse_contact_assignments($_POST));
+                    }
                     audit($db, 'subnet.create', 'subnet', $newSubnetId, $normalized);
 
                     if ($doAutoReserve) {
@@ -192,7 +194,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $st->bindValue(':vrf',   $vrfId,  $vrfId  === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                         $st->bindValue(':id',    $id,    PDO::PARAM_INT);
                         $st->execute();
-                        save_contacts_for_entity($db, 'subnet', $id, parse_contact_assignments($_POST));
+                        if (isset($_POST['contact_id'])) {
+                            save_contacts_for_entity($db, 'subnet', $id, parse_contact_assignments($_POST));
+                        }
                         audit($db, 'subnet.update', 'subnet', $id, $normalized);
                         $msg = 'Subnet updated.';
                         if ($inheritedSiteId !== null) {
