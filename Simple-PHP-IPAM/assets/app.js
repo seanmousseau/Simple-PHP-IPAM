@@ -799,6 +799,7 @@
       cell.title = "Click to edit";
       cell.classList.add("th-sortable");
       cell.addEventListener("click", function(e) {
+        if (e.target.closest(".contact-card-trigger")) return;
         if (cell.querySelector("input")) return; // already editing
         var field   = cell.dataset.editable;
         var addrId  = cell.dataset.addrId;
