@@ -77,7 +77,12 @@ if ($rawKey === '') {
     $methodPeek   = strtoupper(to_str($_SERVER['REQUEST_METHOD'] ?? 'GET'));
     if ($methodPeek === 'GET' && in_array($resourcePeek, ['contacts', 'subnet_stats'], true)) {
         session_name(to_str($config['session_name']));
-        session_set_cookie_params(['lifetime' => 0, 'path' => '/', 'domain' => '', 'secure' => true, 'httponly' => true, 'samesite' => 'Strict']);
+        $cookiePath = to_str($config['session_cookie_path'] ?? '');
+        if ($cookiePath === '') {
+            $sn = to_str($_SERVER['SCRIPT_NAME'] ?? '');
+            if ($sn !== '') { $d = str_replace('\\', '/', dirname($sn)); $cookiePath = ($d === '' || $d === '.' || $d === '/') ? '/' : $d . '/'; } else { $cookiePath = '/'; }
+        }
+        session_set_cookie_params(['lifetime' => 0, 'path' => $cookiePath, 'domain' => '', 'secure' => true, 'httponly' => true, 'samesite' => 'Strict']);
         ini_set('session.use_strict_mode', '1');
         ini_set('session.use_only_cookies', '1');
         @session_start();
