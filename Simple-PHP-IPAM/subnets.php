@@ -76,6 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($hasOverlaps && empty($_POST['confirm_overlap'])) {
                 $overlapWarning = subnet_overlap_warning_text($overlaps);
                 $pendingAction = 'create';
+                $pendingContacts = !empty($_POST['contact_id_present']) ? parse_contact_assignments($_POST) : [];
                 $pendingData = [
                     'cidr'         => $cidr,
                     'description'  => $desc,
@@ -85,6 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'vrf_id'       => $vrfId ?? 0,
                     'auto_reserve' => $doAutoReserve ? '1' : '0',
                     'gateway'      => $gateway ?? '',
+                    'contacts'     => json_encode($pendingContacts),
                 ];
             } else {
                 try {
@@ -111,7 +113,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $st->bindValue(':vrf',   $vrfId,  $vrfId  === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                     $st->execute();
                     $newSubnetId = ipam_last_insert_id($db, 'subnets');
-                    if (isset($_POST['contact_id'])) {
+                    if (!empty($_POST['contact_id_present'])) {
                         save_contacts_for_entity($db, 'subnet', $newSubnetId, parse_contact_assignments($_POST));
                     }
                     audit($db, 'subnet.create', 'subnet', $newSubnetId, $normalized);
@@ -170,9 +172,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($hasOverlaps && empty($_POST['confirm_overlap'])) {
                 $overlapWarning = subnet_overlap_warning_text($overlaps);
                 $pendingAction = 'update';
+                $pendingContacts = !empty($_POST['contact_id_present']) ? parse_contact_assignments($_POST) : [];
                 $pendingData = [
                     'id' => $id, 'cidr' => $cidr, 'description' => $desc, 'notes' => $notes,
                     'site_id' => $siteId ?? 0, 'vlan_fk' => $vlanFk ?? 0, 'vrf_id' => $vrfId ?? 0,
+                    'contacts' => json_encode($pendingContacts),
                 ];
             } else {
                 $dupChk = $db->prepare("SELECT id FROM subnets WHERE cidr = :cidr AND " . ipam_dialect()->null_safe_eq("vrf_id", ":vrf") . " AND id != :self");
@@ -198,7 +202,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $st->bindValue(':vrf',   $vrfId,  $vrfId  === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                         $st->bindValue(':id',    $id,    PDO::PARAM_INT);
                         $st->execute();
-                        if (isset($_POST['contact_id'])) {
+                        if (!empty($_POST['contact_id_present'])) {
                             save_contacts_for_entity($db, 'subnet', $id, parse_contact_assignments($_POST));
                         }
                         audit($db, 'subnet.update', 'subnet', $id, $normalized);
@@ -488,6 +492,17 @@ ipam_skeleton_flush();
         <input type="hidden" name="gateway" value="<?= e(to_str($pendingData['gateway'] ?? '')) ?>">
       <?php endif; ?>
       <input type="hidden" name="confirm_overlap" value="1">
+      <?php if (!empty($pendingData['contacts'])):
+        $pContacts = json_decode(to_str($pendingData['contacts']), true);
+        if (is_array($pContacts)):
+          echo '<input type="hidden" name="contact_id_present" value="1">';
+          /** @var array{contact_id: int, role: string} $pc */
+          foreach ($pContacts as $pc):
+            echo '<input type="hidden" name="contact_id[]" value="' . to_int($pc['contact_id']) . '">';
+            echo '<input type="hidden" name="contact_role[]" value="' . e(to_str($pc['role'])) . '">';
+          endforeach;
+        endif;
+      endif; ?>
       <button type="submit">Save anyway</button>
       <a class="action-pill" href="subnets.php">Cancel</a>
     </form>
@@ -535,6 +550,7 @@ ipam_skeleton_flush();
     </div>
     <?php if ($contactList): ?>
     <div class="row mt-8">
+      <input type="hidden" name="contact_id_present" value="1">
       <div class="contact-picker" data-contacts='<?= e(json_encode(array_map(fn($c) => ['id' => to_int($c['id']), 'name' => to_str($c['name']), 'email' => to_str($c['email'])], $contactList), JSON_UNESCAPED_SLASHES) ?: '[]') ?>'>
         <label>Contacts</label>
         <div class="contact-picker-rows"></div>
@@ -637,6 +653,7 @@ ipam_skeleton_flush();
       <label>Site<br><span class="badge" id="subnet-edit-site-badge"></span></label>
     </div>
     <?php if ($contactList): ?>
+    <input type="hidden" name="contact_id_present" value="1">
     <div class="contact-picker" id="subnet-edit-contacts" data-contacts='<?= e(json_encode(array_map(fn($c) => ['id' => to_int($c['id']), 'name' => to_str($c['name']), 'email' => to_str($c['email'])], $contactList), JSON_UNESCAPED_SLASHES) ?: '[]') ?>' data-existing='[]'>
       <label>Contacts</label>
       <div class="contact-picker-rows"></div>
