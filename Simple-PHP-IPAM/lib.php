@@ -1458,6 +1458,107 @@ function ipam_setting_definitions(): array
             'sensitive'   => false,
             'config_key'  => 'status_hide_version',
         ],
+
+        // --- SMTP / Email Delivery ---
+        'smtp.enabled' => [
+            'label'       => 'SMTP enabled',
+            'description' => 'Send mail via direct SMTP instead of the server\'s native mail() function.',
+            'type'        => 'bool',
+            'group'       => 'smtp',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
+        'smtp.host' => [
+            'label'       => 'SMTP host',
+            'description' => 'Hostname or IP of the SMTP server (e.g. smtp.gmail.com).',
+            'type'        => 'string',
+            'group'       => 'smtp',
+            'default'     => '',
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
+        'smtp.port' => [
+            'label'       => 'SMTP port',
+            'description' => 'TCP port — 587 (STARTTLS), 465 (SSL), or 25 (unencrypted).',
+            'type'        => 'int',
+            'group'       => 'smtp',
+            'default'     => 587,
+            'sensitive'   => false,
+            'config_key'  => null,
+            'min'         => 1,
+            'max'         => 65535,
+        ],
+        'smtp.encryption' => [
+            'label'       => 'Encryption',
+            'description' => 'Transport-layer encryption type.',
+            'type'        => 'string',
+            'group'       => 'smtp',
+            'default'     => 'starttls',
+            'sensitive'   => false,
+            'config_key'  => null,
+            'options'     => [
+                'starttls' => 'STARTTLS (recommended)',
+                'ssl'      => 'SSL/TLS',
+                'none'     => 'None (unencrypted)',
+            ],
+        ],
+        'smtp.auth_user' => [
+            'label'       => 'SMTP username',
+            'description' => 'Login username for SMTP authentication. Leave blank for anonymous relay.',
+            'type'        => 'string',
+            'group'       => 'smtp',
+            'default'     => '',
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
+        'smtp.auth_pass' => [
+            'label'       => 'SMTP password',
+            'description' => 'Login password for SMTP authentication.',
+            'type'        => 'string',
+            'group'       => 'smtp',
+            'default'     => '',
+            'sensitive'   => true,
+            'config_key'  => null,
+        ],
+        'smtp.from_address' => [
+            'label'       => 'From address',
+            'description' => 'Envelope From address for outbound mail (e.g. ipam@example.com).',
+            'type'        => 'string',
+            'group'       => 'smtp',
+            'default'     => '',
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
+        'smtp.from_name' => [
+            'label'       => 'From name',
+            'description' => 'Display name shown in the From header (e.g. IPAM Alerts).',
+            'type'        => 'string',
+            'group'       => 'smtp',
+            'default'     => '',
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
+        'smtp.verify_peer' => [
+            'label'       => 'Verify TLS certificate',
+            'description' => 'Reject connections with invalid or self-signed certificates. Disable only in dev/test environments.',
+            'type'        => 'bool',
+            'group'       => 'smtp',
+            'default'     => true,
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
+        'smtp.timeout_seconds' => [
+            'label'       => 'Connection timeout (seconds)',
+            'description' => 'Maximum seconds to wait for the SMTP server to respond.',
+            'type'        => 'int',
+            'group'       => 'smtp',
+            'default'     => 10,
+            'sensitive'   => false,
+            'config_key'  => null,
+            'min'         => 1,
+            'max'         => 120,
+        ],
     ];
 }
 
@@ -1482,6 +1583,7 @@ function ipam_setting_groups(): array
         'limits'               => ['label' => 'Upload limits',        'description' => 'Maximum file sizes for CSV and SQL imports.'],
         'api'                  => ['label' => 'API',                  'description' => 'Rate limiting and bulk write limits for the REST API.'],
         'display'              => ['label' => 'Display',              'description' => 'Utilization thresholds, auto-reserve defaults, and UI toggles.'],
+        'smtp'                 => ['label' => 'SMTP / Email Delivery', 'description' => 'Direct SMTP delivery for utilization alerts. Falls back to native mail() when disabled.'],
     ];
 }
 
@@ -2519,6 +2621,80 @@ function ipam_resolve_alert_recipients(PDO $db): array
     return $out;
 }
 
+/**
+ * Send an email via SMTP (PHPMailer) or native mail(), based on smtp.enabled setting.
+ *
+ * @return array{success: bool, error: ?string, transport: string}
+ */
+function ipam_send_mail(string $to, string $subject, string $bodyText, string $bodyHtml = ''): array
+{
+    $smtpEnabled = (bool) ipam_setting('smtp.enabled');
+
+    if ($smtpEnabled) {
+        if (!class_exists('PHPMailer\PHPMailer\PHPMailer')) {
+            $autoload = __DIR__ . '/../vendor/autoload.php';
+            if (file_exists($autoload)) require_once $autoload;
+        }
+
+        try {
+            $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
+            $mail->isSMTP();
+            $mail->Host    = to_str(ipam_setting('smtp.host'));
+            $mail->Port    = to_int(ipam_setting('smtp.port'));
+            $mail->Timeout = to_int(ipam_setting('smtp.timeout_seconds'));
+
+            $enc = to_str(ipam_setting('smtp.encryption'));
+            if ($enc === 'ssl') {
+                $mail->SMTPSecure = \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_SMTPS;
+            } elseif ($enc === 'starttls') {
+                $mail->SMTPSecure = \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS;
+            } else {
+                $mail->SMTPSecure = '';
+                $mail->SMTPAutoTLS = false;
+            }
+
+            $authUser = to_str(ipam_setting('smtp.auth_user'));
+            $authPass = to_str(ipam_setting('smtp.auth_pass'));
+            if ($authUser !== '') {
+                $mail->SMTPAuth = true;
+                $mail->Username = $authUser;
+                $mail->Password = $authPass;
+            }
+
+            if (!(bool) ipam_setting('smtp.verify_peer')) {
+                $mail->SMTPOptions = ['ssl' => ['verify_peer' => false, 'verify_peer_name' => false, 'allow_self_signed' => true]];
+            }
+
+            $fromAddr = to_str(ipam_setting('smtp.from_address'));
+            $fromName = to_str(ipam_setting('smtp.from_name'));
+            if ($fromAddr !== '') {
+                $mail->setFrom($fromAddr, $fromName ?: $fromAddr);
+            }
+
+            $mail->addAddress($to);
+            $mail->Subject = $subject;
+            if ($bodyHtml !== '') {
+                $mail->isHTML(true);
+                $mail->Body    = $bodyHtml;
+                $mail->AltBody = $bodyText;
+            } else {
+                $mail->Body = $bodyText;
+            }
+
+            $mail->send();
+            return ['success' => true, 'error' => null, 'transport' => 'smtp'];
+        } catch (\PHPMailer\PHPMailer\Exception $e) {
+            return ['success' => false, 'error' => $e->getMessage(), 'transport' => 'smtp'];
+        }
+    }
+
+    // Native mail() fallback
+    $safeSubject = preg_replace('/[\r\n]/', '', $subject) ?? '';
+    $safeTo      = preg_replace('/[\r\n]/', '', $to) ?? '';
+    $ok = @mail($safeTo, $safeSubject, $bodyText); // nosemgrep
+    return ['success' => (bool) $ok, 'error' => null, 'transport' => 'mail'];
+}
+
 /** @param IpamConfig $config */
 function check_utilization_alerts(PDO $db, array $config): void
 {
@@ -2602,8 +2778,12 @@ function check_utilization_alerts(PDO $db, array $config): void
             // each send produces its own audit row so failures are debuggable.
             foreach ($recipients as $recipient) {
                 $safeEmail = preg_replace('/[\r\n]/', '', $recipient) ?? '';
-                @mail($safeEmail, $safeSubject, $body);
-                audit($db, 'alert.send', 'subnet', $sid, "level={$lvl} pct={$pct} email={$safeEmail}");
+                $result = ipam_send_mail($safeEmail, $safeSubject, $body);
+                if ($result['success']) {
+                    audit($db, 'alert.send', 'subnet', $sid, "level={$lvl} pct={$pct} email={$safeEmail} transport={$result['transport']}");
+                } else {
+                    audit($db, 'mail.send_failed', 'subnet', $sid, "level={$lvl} pct={$pct} email={$safeEmail} transport={$result['transport']} error=" . json_encode($result['error']));
+                }
             }
 
             $now = date('Y-m-d H:i:s');
@@ -2829,7 +3009,7 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             if (is_array($files)) {
                 rsort($files); // newest first (lexicographic = chronological for our format)
                 foreach (array_slice($files, $retention) as $old) {
-                    @unlink($old);
+                    @unlink($old); // nosemgrep: path from glob() constrained to data dir
                 }
             }
 

@@ -443,6 +443,34 @@ page_header('Settings');
         <button type="submit" class="button-primary">Save <?= e($groupLabel) ?></button>
       </div>
     </form>
+    <?php if ($groupKey === 'smtp'): ?>
+    <div class="row" style="margin-top:0.75rem;gap:0.5rem;align-items:center;">
+      <button type="button" id="smtp-test-btn" class="button-secondary">Send test email</button>
+      <span id="smtp-test-result" class="muted"></span>
+    </div>
+    <script>
+    (function(){
+      var btn = document.getElementById('smtp-test-btn');
+      var out = document.getElementById('smtp-test-result');
+      if (!btn) return;
+      btn.addEventListener('click', function(){
+        btn.disabled = true;
+        out.textContent = 'Sending…';
+        out.className = 'muted';
+        var fd = new FormData();
+        fd.append('csrf', <?= json_encode(csrf_token()) ?>);
+        fetch('smtp_test.php', {method:'POST', body:fd})
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            out.textContent = d.message || (d.ok ? 'Sent.' : 'Failed.');
+            out.className = d.ok ? 'success' : 'danger';
+          })
+          .catch(function(e){ out.textContent = 'Request failed: ' + e; out.className = 'danger'; })
+          .finally(function(){ btn.disabled = false; });
+      });
+    })();
+    </script>
+    <?php endif; ?>
   </div>
 <?php endforeach; ?>
 
