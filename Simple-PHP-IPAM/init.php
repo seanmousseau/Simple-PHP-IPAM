@@ -8,13 +8,10 @@ declare(strict_types=1);
 // session_start() call to cascade with "headers already sent".
 //
 // This has bitten v2.9.x twice already: once on oversized uploads exceeding
-// post_max_size (fixed in v2.9.1), and once on a config.php missing a newer
-// registry key like `import_sql_max_mb` on an install where `config.php`
-// is not writable by the web server user (so `ipam_config_sync()` cannot
-// auto-populate the missing key). Rather than hunt every unguarded
-// $config[...] read, install a global handler that swallows these non-fatal
-// errors and logs them. Fatal errors (E_ERROR / parse errors) still exit
-// because they bypass the user handler.
+// post_max_size (fixed in v2.9.1), and once on an undefined array key in
+// $config. Rather than hunt every unguarded read, install a global handler
+// that swallows these non-fatal errors and logs them. Fatal errors
+// (E_ERROR / parse errors) still exit because they bypass the user handler.
 //
 // Operators should monitor the PHP error log — any missing config key still
 // surfaces there, just not in the user's browser.
@@ -284,14 +281,6 @@ if ($tz === '' || !@date_default_timezone_set($tz)) {
 }
 unset($tz);
 
-// Auto-populate any missing config keys with their defaults
-$_addedConfigKeys = ipam_config_sync(__DIR__ . '/config.php', $config);
-if ($_addedConfigKeys && isset($_SESSION) && ($_SESSION['role'] ?? '') === 'admin') {
-    $_SESSION['config_notice'] = 'New configuration keys were automatically added to config.php: '
-        . implode(', ', array_map(fn($k) => "'{$k}'", $_addedConfigKeys)) . '.';
-}
-unset($_addedConfigKeys);
-
 // Validate config values on every boot; surface warnings to admins in the UI
 $_configWarnings = ipam_validate_config($config);
 if ($_configWarnings) {
@@ -299,33 +288,12 @@ if ($_configWarnings) {
 }
 unset($_configWarnings);
 
-// #376: surface a rate-limited server-log warning listing any registered
-// settings still being served from config.php. Touch a marker file so we
-// emit at most one line per hour regardless of traffic. Missing/unwritable
-// data/tmp/ silently falls through to the "no marker" path so the warning
-// still fires once per request — preferable to failing silently.
-$_deprecated = ipam_setting_deprecated_keys();
-if ($_deprecated) {
-    $_markerPath = __DIR__ . '/data/tmp/deprecation_warning.txt';
-    $_shouldLog  = true;
-    if (is_file($_markerPath) && (time() - (int)@filemtime($_markerPath)) < 3600) {
-        $_shouldLog = false;
-    }
-    if ($_shouldLog) {
-        $_keyList = implode(', ', array_map(fn($d) => $d['key'], $_deprecated));
-        error_log(
-            'Simple-PHP-IPAM: ' . count($_deprecated)
-            . ' registered setting(s) still served from config.php — will break at v3.0.0. Keys: '
-            . $_keyList
-            . '. Migrate via Admin → Settings.'
-        );
-        @ensure_tmp_dir();
-        @touch($_markerPath);
-        @chmod($_markerPath, 0600);
-    }
-    unset($_markerPath, $_shouldLog, $_keyList);
+// v3.0.0: detect non-bootstrap keys left in config.php after migration
+$_staleConfigKeys = ipam_config_stale_keys($config);
+if ($_staleConfigKeys) {
+    $GLOBALS['config_stale_keys'] = $_staleConfigKeys;
 }
-unset($_deprecated);
+unset($_staleConfigKeys);
 
 // Run best-effort housekeeping at most once/day (configurable)
 run_housekeeping_if_due($config, $db);
@@ -352,7 +320,7 @@ if (!empty($config['demo_mode']['enabled'])
 }
 
 // Run database backup if due (configurable frequency)
-if (!empty($config['backup']['enabled'])) {
+if ((bool)ipam_setting('backup.enabled')) {
     run_db_backup_if_due($db, $config);
 }
 

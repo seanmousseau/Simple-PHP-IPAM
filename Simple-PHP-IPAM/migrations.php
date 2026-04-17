@@ -873,6 +873,109 @@ function ipam_migrations(): array
                 $db->exec("CREATE INDEX IF NOT EXISTS idx_login_attempts_username_time ON login_attempts(username, attempted_at)");
             }
         },
+        '3.0.0-config-stub' => function(PDO $db): void {
+            $configPath = __DIR__ . '/config.php';
+            if (!is_file($configPath)) return;
+
+            $config = (array)(require $configPath);
+
+            $definitions = ipam_setting_definitions();
+            $existing = [];
+            $kc = ipam_key_col();
+            $allRows = $db->query("SELECT {$kc} AS k FROM settings");
+            if ($allRows !== false) {
+                /** @var array<string, mixed> $r */
+                foreach ($allRows as $r) {
+                    $existing[to_str($r['k'] ?? '')] = true;
+                }
+            }
+
+            $imported = 0;
+            foreach ($definitions as $key => $def) {
+                if (isset($existing[$key])) continue;
+                /** @var string|array<mixed>|null $configKey */
+                $configKey = $def['config_key'] ?? null;
+                if ($configKey === null) continue;
+                $cfgVal = ipam_setting_config_fallback($config, $configKey);
+                if ($cfgVal === null) continue;
+
+                $default = $def['default'] ?? null;
+                /** @var string $type */
+                $type = $def['type'] ?? 'string';
+                /** @var mixed $cfgVal */
+                /** @var mixed $default */
+                $same = match ($type) {
+                    'bool'   => (bool)$cfgVal === (bool)$default,
+                    'int'    => (int)(is_numeric($cfgVal) ? $cfgVal : 0) === (int)(is_numeric($default) ? $default : 0),
+                    'json'   => $cfgVal === $default,
+                    default  => (is_scalar($cfgVal) ? (string)$cfgVal : '') === (is_scalar($default) ? (string)$default : ''),
+                };
+                if ($same) continue;
+
+                ipam_setting_set($db, $key, $cfgVal, null);
+                $imported++;
+            }
+
+            $bakPath = $configPath . '.bak-v3upgrade';
+            if (!is_file($bakPath)) {
+                @copy($configPath, $bakPath);
+            }
+
+            $driver = to_str($config['db_driver'] ?? 'sqlite');
+            if ($driver === 'sqlite') {
+                $dsn = 'sqlite:' . to_str($config['db_path'] ?? (__DIR__ . '/data/ipam.sqlite'));
+            } else {
+                $dsn = to_str($config['db_dsn'] ?? '');
+            }
+            $stub = "<?php\ndeclare(strict_types=1);\n\nreturn [\n"
+                . "    'db_driver'    => " . var_export($driver, true) . ",\n"
+                . "    'db_dsn'       => " . var_export($dsn, true) . ",\n"
+                . "    'db_user'      => " . var_export(to_str($config['db_user'] ?? ''), true) . ",\n"
+                . "    'db_pass'      => " . var_export(to_str($config['db_pass'] ?? ''), true) . ",\n"
+                . "    'session_name' => " . var_export(to_str($config['session_name'] ?? 'IPAMSESSID'), true) . ",\n"
+                . "    'force_https'  => " . var_export((bool)($config['force_https'] ?? true), true) . ",\n";
+
+            if (!empty($config['proxy_trust'])) {
+                $stub .= "    'proxy_trust'  => true,\n";
+            }
+            if (!empty($config['base_url'])) {
+                $stub .= "    'base_url'     => " . var_export(to_str($config['base_url']), true) . ",\n";
+            }
+            if (!empty($config['session_cookie_path'])) {
+                $stub .= "    'session_cookie_path' => " . var_export(to_str($config['session_cookie_path']), true) . ",\n";
+            }
+            if (!empty($config['recovery_mode'])) {
+                $stub .= "    'recovery_mode' => true,\n";
+            }
+            if (isset($config['bootstrap_admin'])) {
+                $ba = (array)$config['bootstrap_admin'];
+                $stub .= "    'bootstrap_admin' => [\n"
+                    . "        'username' => " . var_export(to_str($ba['username'] ?? 'admin'), true) . ",\n"
+                    . "        'password' => " . var_export(to_str($ba['password'] ?? 'ChangeMeNow!12345'), true) . ",\n"
+                    . "    ],\n";
+            }
+            if (isset($config['demo_mode'])) {
+                $dm = (array)$config['demo_mode'];
+                $stub .= "    'demo_mode' => [\n"
+                    . "        'enabled'    => " . var_export((bool)($dm['enabled'] ?? false), true) . ",\n"
+                    . "        'gate'       => " . var_export($dm['gate'] ?? null, true) . ",\n"
+                    . "        'site_key'   => " . var_export(to_str($dm['site_key'] ?? ''), true) . ",\n"
+                    . "        'secret_key' => " . var_export(to_str($dm['secret_key'] ?? ''), true) . ",\n"
+                    . "    ],\n";
+            }
+            $stub .= "];\n";
+
+            @file_put_contents($configPath, $stub, LOCK_EX);
+
+            if ($imported > 0) {
+                try {
+                    audit($db, 'config.migrate_to_stub', 'system', null,
+                        "Migrated {$imported} setting(s) from config.php to settings table.");
+                } catch (\Throwable $e) {
+                    error_log('config.migrate_to_stub audit failed: ' . $e->getMessage());
+                }
+            }
+        },
     ];
 }
 

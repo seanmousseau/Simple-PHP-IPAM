@@ -520,7 +520,7 @@ ipam_skeleton_flush();
       </label>
       <button type="submit" <?= (current_user()['role']==='readonly')?'disabled':'' ?>>Add</button>
     </div>
-    <?php $autoReserveDefault = (bool)($config['auto_reserve_network_broadcast'] ?? true); ?>
+    <?php $autoReserveDefault = (bool)ipam_setting('display.auto_reserve_network_broadcast'); ?>
     <div class="row mt-8">
       <label class="row-inline">
         <input type="checkbox" name="auto_reserve" value="1" <?= $autoReserveDefault ? 'checked' : '' ?>>

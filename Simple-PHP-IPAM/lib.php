@@ -877,6 +877,27 @@ function ipam_setting_definitions(): array
             'min'         => 60,
         ],
 
+        'security.account_lockout_max_attempts' => [
+            'label'       => 'Account lockout attempts',
+            'description' => 'Lock a username after this many failed login attempts within the window.',
+            'type'        => 'int',
+            'group'       => 'security',
+            'default'     => 10,
+            'sensitive'   => false,
+            'config_key'  => 'account_lockout_max_attempts',
+            'min'         => 1,
+        ],
+        'security.account_lockout_seconds' => [
+            'label'       => 'Account lockout window (seconds)',
+            'description' => 'Duration of per-username lockout after too many failed login attempts.',
+            'type'        => 'int',
+            'group'       => 'security',
+            'default'     => 900,
+            'sensitive'   => false,
+            'config_key'  => 'account_lockout_seconds',
+            'min'         => 1,
+        ],
+
         // --- Alerting ---
         // Deprecated in v2.8.0 by alert.recipient_user_ids. Kept in the
         // registry so the v2.8.0 migration can read its current value and
@@ -1197,6 +1218,252 @@ function ipam_setting_definitions(): array
             'sensitive'   => false,
             'config_key'  => ['oidc', 'hide_emergency_link'],
         ],
+
+        // --- Housekeeping ---
+        'housekeeping.enabled' => [
+            'label'       => 'Lazy housekeeping enabled',
+            'description' => 'Run temp cleanup, log pruning, and alert checks on normal page loads at the configured interval.',
+            'type'        => 'bool',
+            'group'       => 'housekeeping',
+            'default'     => true,
+            'sensitive'   => false,
+            'config_key'  => ['housekeeping', 'enabled'],
+        ],
+        'housekeeping.interval_seconds' => [
+            'label'       => 'Housekeeping interval (seconds)',
+            'description' => 'Minimum seconds between lazy housekeeping runs. Default: 86400 (once per day).',
+            'type'        => 'int',
+            'group'       => 'housekeeping',
+            'default'     => 86400,
+            'sensitive'   => false,
+            'config_key'  => ['housekeeping', 'interval_seconds'],
+            'min'         => 60,
+        ],
+        'housekeeping.tmp_cleanup_ttl_seconds' => [
+            'label'       => 'Temp file TTL (seconds)',
+            'description' => 'Files in data/tmp/ older than this are deleted during housekeeping.',
+            'type'        => 'int',
+            'group'       => 'housekeeping',
+            'default'     => 86400,
+            'sensitive'   => false,
+            'config_key'  => 'tmp_cleanup_ttl_seconds',
+            'min'         => 60,
+        ],
+        'housekeeping.audit_log_retention_days' => [
+            'label'       => 'Audit log retention (days)',
+            'description' => 'Entries older than this are pruned during housekeeping. 0 = keep forever.',
+            'type'        => 'int',
+            'group'       => 'housekeeping',
+            'default'     => 0,
+            'sensitive'   => false,
+            'config_key'  => 'audit_log_retention_days',
+            'min'         => 0,
+        ],
+        'housekeeping.address_history_retention_days' => [
+            'label'       => 'Address history retention (days)',
+            'description' => 'History entries older than this are pruned during housekeeping. 0 = keep forever.',
+            'type'        => 'int',
+            'group'       => 'housekeeping',
+            'default'     => 0,
+            'sensitive'   => false,
+            'config_key'  => 'address_history_retention_days',
+            'min'         => 0,
+        ],
+
+        // --- Backup ---
+        'backup.enabled' => [
+            'label'       => 'Automatic backups',
+            'description' => 'Write database backups to disk on page load when the interval has elapsed.',
+            'type'        => 'bool',
+            'group'       => 'backup',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => ['backup', 'enabled'],
+        ],
+        'backup.frequency' => [
+            'label'       => 'Backup frequency',
+            'description' => 'How often to create automatic backups.',
+            'type'        => 'string',
+            'group'       => 'backup',
+            'default'     => 'daily',
+            'sensitive'   => false,
+            'config_key'  => ['backup', 'frequency'],
+            'options'     => ['daily' => 'Daily', 'weekly' => 'Weekly'],
+        ],
+        'backup.retention' => [
+            'label'       => 'Backup retention count',
+            'description' => 'Number of most-recent backups to keep. Older backups are deleted.',
+            'type'        => 'int',
+            'group'       => 'backup',
+            'default'     => 7,
+            'sensitive'   => false,
+            'config_key'  => ['backup', 'retention'],
+            'min'         => 1,
+        ],
+        'backup.dir' => [
+            'label'       => 'Backup directory',
+            'description' => 'Path to store backups. Empty = data/backups/ relative to the app root.',
+            'type'        => 'string',
+            'group'       => 'backup',
+            'default'     => '',
+            'sensitive'   => false,
+            'config_key'  => ['backup', 'dir'],
+        ],
+
+        // --- Limits ---
+        'limits.import_csv_max_mb' => [
+            'label'       => 'CSV import max file size (MB)',
+            'description' => 'Maximum upload size for CSV imports.',
+            'type'        => 'int',
+            'group'       => 'limits',
+            'default'     => 5,
+            'sensitive'   => false,
+            'config_key'  => 'import_csv_max_mb',
+            'min'         => 1,
+            'max'         => 50,
+        ],
+        'limits.import_sql_max_mb' => [
+            'label'       => 'SQL import max file size (MB)',
+            'description' => 'Maximum upload size for SQL database imports. Also update upload_max_filesize in php.ini.',
+            'type'        => 'int',
+            'group'       => 'limits',
+            'default'     => 200,
+            'sensitive'   => false,
+            'config_key'  => 'import_sql_max_mb',
+            'min'         => 1,
+        ],
+
+        // --- API ---
+        'api.max_attempts' => [
+            'label'       => 'Max failed API key attempts',
+            'description' => 'Lock out an IP after this many failed API key attempts.',
+            'type'        => 'int',
+            'group'       => 'api',
+            'default'     => 20,
+            'sensitive'   => false,
+            'config_key'  => 'api_max_attempts',
+            'min'         => 1,
+        ],
+        'api.lockout_seconds' => [
+            'label'       => 'API lockout window (seconds)',
+            'description' => 'Duration of API key lockout after too many failed attempts.',
+            'type'        => 'int',
+            'group'       => 'api',
+            'default'     => 300,
+            'sensitive'   => false,
+            'config_key'  => 'api_lockout_seconds',
+            'min'         => 1,
+        ],
+        'api.bulk_limit' => [
+            'label'       => 'Bulk API write limit',
+            'description' => 'Maximum records per bulk API write request.',
+            'type'        => 'int',
+            'group'       => 'api',
+            'default'     => 500,
+            'sensitive'   => false,
+            'config_key'  => 'api_bulk_limit',
+            'min'         => 1,
+        ],
+
+        // --- Password policy ---
+        'password_policy.min_length' => [
+            'label'       => 'Minimum password length',
+            'description' => 'Minimum number of characters required.',
+            'type'        => 'int',
+            'group'       => 'password_policy',
+            'default'     => 12,
+            'sensitive'   => false,
+            'config_key'  => ['password_policy', 'min_length'],
+            'min'         => 8,
+        ],
+        'password_policy.require_uppercase' => [
+            'label'       => 'Require uppercase letter',
+            'description' => 'Password must contain at least one uppercase letter.',
+            'type'        => 'bool',
+            'group'       => 'password_policy',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => ['password_policy', 'require_uppercase'],
+        ],
+        'password_policy.require_lowercase' => [
+            'label'       => 'Require lowercase letter',
+            'description' => 'Password must contain at least one lowercase letter.',
+            'type'        => 'bool',
+            'group'       => 'password_policy',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => ['password_policy', 'require_lowercase'],
+        ],
+        'password_policy.require_number' => [
+            'label'       => 'Require digit',
+            'description' => 'Password must contain at least one digit.',
+            'type'        => 'bool',
+            'group'       => 'password_policy',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => ['password_policy', 'require_number'],
+        ],
+        'password_policy.require_symbol' => [
+            'label'       => 'Require special character',
+            'description' => 'Password must contain at least one symbol.',
+            'type'        => 'bool',
+            'group'       => 'password_policy',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => ['password_policy', 'require_symbol'],
+        ],
+        'password_policy.max_password_age_days' => [
+            'label'       => 'Password expiry (days)',
+            'description' => 'Force a password change after this many days. 0 = never expires.',
+            'type'        => 'int',
+            'group'       => 'password_policy',
+            'default'     => 0,
+            'sensitive'   => false,
+            'config_key'  => ['password_policy', 'max_password_age_days'],
+            'min'         => 0,
+        ],
+
+        // --- Display ---
+        'display.utilization_warn' => [
+            'label'       => 'Utilization warning threshold (%)',
+            'description' => 'Subnet utilization bars turn yellow at this percentage.',
+            'type'        => 'int',
+            'group'       => 'display',
+            'default'     => 80,
+            'sensitive'   => false,
+            'config_key'  => 'utilization_warn',
+            'min'         => 0,
+            'max'         => 100,
+        ],
+        'display.utilization_critical' => [
+            'label'       => 'Utilization critical threshold (%)',
+            'description' => 'Subnet utilization bars turn red at this percentage.',
+            'type'        => 'int',
+            'group'       => 'display',
+            'default'     => 95,
+            'sensitive'   => false,
+            'config_key'  => 'utilization_critical',
+            'min'         => 0,
+            'max'         => 100,
+        ],
+        'display.auto_reserve_network_broadcast' => [
+            'label'       => 'Auto-reserve network/broadcast/gateway',
+            'description' => 'Pre-check the auto-reserve checkbox on the Add Subnet form.',
+            'type'        => 'bool',
+            'group'       => 'display',
+            'default'     => true,
+            'sensitive'   => false,
+            'config_key'  => 'auto_reserve_network_broadcast',
+        ],
+        'display.status_hide_version' => [
+            'label'       => 'Hide version in status endpoint',
+            'description' => 'Remove the version field from the /status.php health check response.',
+            'type'        => 'bool',
+            'group'       => 'display',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => 'status_hide_version',
+        ],
     ];
 }
 
@@ -1210,11 +1477,17 @@ function ipam_setting_groups(): array
     return [
         'branding'             => ['label' => 'Branding',             'description' => 'Display name and timezone shown across the UI.'],
         'security'             => ['label' => 'Security',             'description' => 'Session lifetime and login lockout policy.'],
+        'password_policy'      => ['label' => 'Password policy',      'description' => 'Complexity requirements and rotation for local passwords.'],
         'alert'                => ['label' => 'Alerting',             'description' => 'Subnet utilization email alerts.'],
         'update_check'         => ['label' => 'Update checker',       'description' => 'GitHub release checker for the in-app upgrade banner.'],
         'login_protection'     => ['label' => 'Login protection',     'description' => 'Bot and abuse mitigation on the login form.'],
         'recaptcha_enterprise' => ['label' => 'reCAPTCHA Enterprise', 'description' => "Backend verification via Google's reCAPTCHA Enterprise API."],
         'oidc'                 => ['label' => 'OIDC / SSO',           'description' => 'OpenID Connect single sign-on.'],
+        'housekeeping'         => ['label' => 'Housekeeping',         'description' => 'Temp cleanup, log pruning, and alert check intervals.'],
+        'backup'               => ['label' => 'Database backup',      'description' => 'Automatic database backup schedule and retention.'],
+        'limits'               => ['label' => 'Upload limits',        'description' => 'Maximum file sizes for CSV and SQL imports.'],
+        'api'                  => ['label' => 'API',                  'description' => 'Rate limiting and bulk write limits for the REST API.'],
+        'display'              => ['label' => 'Display',              'description' => 'Utilization thresholds, auto-reserve defaults, and UI toggles.'],
     ];
 }
 
@@ -1332,18 +1605,6 @@ function ipam_setting(string $key, mixed $default = null): mixed
         }
     } catch (\Throwable $e) {
         error_log("ipam_setting: read failed for key {$key}: " . $e->getMessage());
-    }
-
-    $config = $GLOBALS['config'] ?? null;
-    if (is_array($config) && $def !== null) {
-        $configKey = $def['config_key'] ?? null;
-        if ($configKey !== null && (is_string($configKey) || is_array($configKey))) {
-            $cfgVal = ipam_setting_config_fallback($config, $configKey);
-            if ($cfgVal !== null) {
-                ipam_setting_cache_storage($key, false, $cfgVal, true);
-                return $cfgVal;
-            }
-        }
     }
 
     ipam_setting_cache_storage($key, false, $fallback, true);
@@ -1480,22 +1741,37 @@ function ipam_setting_source(PDO $db, string $key): string
         $st->execute([':k' => $key]);
         if ($st->fetchColumn() !== false) return 'db';
     } catch (\Throwable) {
-        // Fall through to config/default classification.
-    }
-
-    $definitions = ipam_setting_definitions();
-    $def = $definitions[$key] ?? null;
-    $config = $GLOBALS['config'] ?? null;
-    if (is_array($config) && $def !== null) {
-        $cfgKey = $def['config_key'] ?? null;
-        if ($cfgKey !== null && (is_string($cfgKey) || is_array($cfgKey))) {
-            if (ipam_setting_config_fallback($config, $cfgKey) !== null) return 'config';
-        }
     }
     return 'default';
 }
 
 /**
+ * v3.0.0: detect non-bootstrap keys still present in config.php after the
+ * stub migration. Returns a list of key names that should be removed.
+ *
+ * @param array<string, mixed> $config
+ * @return list<string>
+ */
+function ipam_config_stale_keys(array $config): array
+{
+    $bootstrap = [
+        'db_driver', 'db_dsn', 'db_user', 'db_pass', 'db_path',
+        'session_name', 'session_cookie_path', 'force_https',
+        'proxy_trust', 'base_url', 'bootstrap_admin',
+        'recovery_mode', 'demo_mode',
+    ];
+    $stale = [];
+    foreach (array_keys($config) as $key) {
+        if (!in_array($key, $bootstrap, true)) {
+            $stale[] = to_str($key);
+        }
+    }
+    return $stale;
+}
+
+/**
+ * @deprecated v3.0.0 — config.php fallback removed. Kept only for the
+ * 3.0.0-config-stub migration closure which needs to read old config values.
  * Return the list of registered settings that are still being served from
  * $config (config.php) instead of the database. Drives the v2.7.0 deprecation
  * banner in settings.php, the init.php boot-time log warning, and the
@@ -1780,14 +2056,10 @@ function apply_migrations(PDO $db): array
     return $appliedNow;
 }
 
-/* ---------------- Config auto-population ---------------- */
-
 /**
- * Returns the canonical defaults map for all config keys that should exist in
- * config.php. Each entry: ['default' => mixed, 'comment' => string].
- * Only top-level keys are tracked; nested sub-keys are managed per-key.
+ * @deprecated v3.0.0 — ipam_config_sync removed; config.php is now a bootstrap stub.
+ * @return array<string, array{default: mixed, comment: string}>
  */
-/** @return array<string, array{default: mixed, comment: string}> */
 function ipam_config_defaults(): array
 {
     return [
@@ -2042,39 +2314,27 @@ function ipam_config_sync(string $configPath, array $loaded): array
 function ipam_validate_config(array $config): array
 {
     $warnings = [];
-
-    $sessionIdle = to_int($config['session_idle_seconds']);
-    if ($sessionIdle < 60) {
-        $warnings[] = "session_idle_seconds is {$sessionIdle}; minimum is 60.";
+    $checks = [
+        ['security.session_idle_seconds',  60, '>=', 'session_idle_seconds'],
+        ['security.login_max_attempts',     1, '>=', 'login_max_attempts'],
+        ['security.login_lockout_seconds',  1, '>=', 'login_lockout_seconds'],
+        ['housekeeping.audit_log_retention_days', 0, '>=', 'audit_log_retention_days'],
+    ];
+    foreach ($checks as [$key, $min, $op, $label]) {
+        $val = to_int(ipam_setting($key));
+        if ($val < $min) {
+            $warnings[] = "{$label} is {$val}; minimum is {$min}.";
+        }
     }
-
-    $loginMax = to_int($config['login_max_attempts']);
-    if ($loginMax < 1) {
-        $warnings[] = "login_max_attempts is {$loginMax}; minimum is 1.";
-    }
-
-    $lockout = to_int($config['login_lockout_seconds']);
-    if ($lockout < 1) {
-        $warnings[] = "login_lockout_seconds is {$lockout}; minimum is 1.";
-    }
-
-    $auditRetention = to_int($config['audit_log_retention_days']);
-    if ($auditRetention < 0) {
-        $warnings[] = "audit_log_retention_days is {$auditRetention}; must be 0 or greater.";
-    }
-
-    $backup = $config['backup'];
-    if (!empty($backup['enabled'])) {
-        $retention = to_int($backup['retention']);
+    if ((bool)ipam_setting('backup.enabled')) {
+        $retention = to_int(ipam_setting('backup.retention'));
         if ($retention < 1) {
             $warnings[] = "backup.retention is {$retention}; minimum is 1.";
         }
     }
-
     foreach ($warnings as $w) {
         error_log("Simple PHP IPAM config warning: {$w}");
     }
-
     return $warnings;
 }
 
@@ -2091,10 +2351,9 @@ function housekeeping_state_path(): string
  */
 function housekeeping_should_run(array $config): bool
 {
-    $hk = $config['housekeeping'];
-    if (empty($hk['enabled'])) return false;
+    if (!(bool)ipam_setting('housekeeping.enabled')) return false;
 
-    $interval = to_int($hk['interval_seconds']);
+    $interval = to_int(ipam_setting('housekeeping.interval_seconds'));
     if ($interval < 3600) $interval = 3600;
 
     $path = housekeeping_state_path();
@@ -2410,18 +2669,18 @@ function run_housekeeping_if_due(array $config, ?PDO $db = null): void
     try {
         if (!housekeeping_should_run($config)) return;
 
-        $ttl = to_int($config['tmp_cleanup_ttl_seconds']);
+        $ttl = to_int(ipam_setting('housekeeping.tmp_cleanup_ttl_seconds'));
         if ($ttl < 3600) $ttl = 3600;
 
         cleanup_tmp_import_files($ttl);
         cleanup_tmp_import_plans($ttl);
 
         if ($db !== null) {
-            $retentionDays = to_int($config['audit_log_retention_days']);
+            $retentionDays = to_int(ipam_setting('housekeeping.audit_log_retention_days'));
             if ($retentionDays > 0) {
                 prune_audit_log($db, $retentionDays);
             }
-            $histRetention = to_int($config['address_history_retention_days']);
+            $histRetention = to_int(ipam_setting('housekeeping.address_history_retention_days'));
             if ($histRetention > 0) {
                 prune_address_history($db, $histRetention);
             }
@@ -2459,7 +2718,7 @@ function run_demo_reset_if_due(PDO $db): void
 /** @param IpamConfig $config */
 function backup_dir(array $config): string
 {
-    $d = trim($config['backup']['dir']);
+    $d = trim(to_str(ipam_setting('backup.dir')));
     if ($d === '') {
         return __DIR__ . '/data/backups';
     }
@@ -2484,7 +2743,7 @@ function backup_state_path(): string
 /** @param IpamConfig $config */
 function backup_interval_seconds(array $config): int
 {
-    $freq = strtolower(trim($config['backup']['frequency']));
+    $freq = strtolower(trim(to_str(ipam_setting('backup.frequency'))));
     return match ($freq) {
         'weekly' => 604800,
         default  => 86400,  // 'daily'
@@ -2497,8 +2756,7 @@ function backup_interval_seconds(array $config): int
  */
 function backup_is_due(array $config): bool
 {
-    $bk = $config['backup'];
-    if (empty($bk['enabled'])) return false;
+    if (!(bool)ipam_setting('backup.enabled')) return false;
 
     $path = backup_state_path();
     if (!is_file($path)) return true;
@@ -2572,7 +2830,7 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             $wrote = true;
 
             // Prune old backups according to retention policy
-            $retention = max(1, $config['backup']['retention']);
+            $retention = max(1, to_int(ipam_setting('backup.retention')));
             $files = glob($dir . '/ipam-*.sqlite');
             if (is_array($files)) {
                 rsort($files); // newest first (lexicographic = chronological for our format)
@@ -4299,7 +4557,7 @@ function ipv6_enumerate_first_n(PDO $db, int $subnetId, string $networkBin, int 
 /** @param IpamConfig $config */
 function import_max_bytes(array $config): int
 {
-    $mb = to_int($config['import_csv_max_mb']);
+    $mb = to_int(ipam_setting('limits.import_csv_max_mb'));
     if ($mb < 5) $mb = 5;
     if ($mb > 50) $mb = 50;
     return $mb * 1024 * 1024;

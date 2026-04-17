@@ -1,0 +1,37 @@
+<?php
+declare(strict_types=1);
+
+// Simple PHP IPAM — bootstrap configuration.
+//
+// This file contains ONLY the keys needed before the database is available.
+// All other settings live in the settings table and are managed through
+// Admin → Settings in the web UI.
+//
+// Copy this file to config.php and edit the values for your environment.
+
+return [
+    // --- Database ---
+    // SQLite (default):
+    'db_driver' => 'sqlite',
+    'db_dsn'    => 'sqlite:' . __DIR__ . '/data/ipam.sqlite',
+    'db_user'   => '',
+    'db_pass'   => '',
+
+    // MySQL 8.0+:
+    // 'db_driver' => 'mysql',
+    // 'db_dsn'    => 'mysql:host=127.0.0.1;port=3306;dbname=ipam;charset=utf8mb4',
+    // 'db_user'   => 'ipam',
+    // 'db_pass'   => 'secret',
+
+    // PostgreSQL 14+:
+    // 'db_driver' => 'pgsql',
+    // 'db_dsn'    => 'pgsql:host=127.0.0.1;port=5432;dbname=ipam',
+    // 'db_user'   => 'ipam',
+    // 'db_pass'   => 'secret',
+
+    // --- Session ---
+    'session_name' => 'IPAMSESSID',
+
+    // --- HTTPS ---
+    'force_https' => true,
+];
