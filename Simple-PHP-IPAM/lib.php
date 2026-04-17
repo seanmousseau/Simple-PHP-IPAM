@@ -4620,12 +4620,12 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/vendor/open-props.min.css?v=2.13.0'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=2.13.0'>";
+    echo "<link rel='stylesheet' href='assets/vendor/open-props.min.css?v=2.14.0'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=2.14.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=2.13.0'></script>";
+    echo "<script defer src='assets/app.js?v=2.14.0'></script>";
     $pageAttr = isset($opts['page']) && $opts['page'] !== ''
         ? " data-page='" . e(to_str($opts['page'])) . "'"
         : '';
