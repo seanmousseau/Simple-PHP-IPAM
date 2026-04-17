@@ -1361,6 +1361,7 @@
     (function() {
       var card = null;
       var cache = {};
+      var activeCid = null;
 
       function ensureCard() {
         if (card) return;
@@ -1432,6 +1433,7 @@
         e.preventDefault();
         ensureCard();
         var cid = trigger.dataset.contactId;
+        activeCid = cid;
         if (cache[cid]) {
           renderCard(cache[cid]);
           positionCard(trigger);
@@ -1444,6 +1446,7 @@
         fetch("api.php?resource=contacts&id=" + encodeURIComponent(cid), {credentials: "same-origin"})
           .then(function(r) { return r.json(); })
           .then(function(data) {
+            if (activeCid !== cid) return;
             if (data.contact) {
               cache[cid] = data.contact;
               renderCard(data.contact);
@@ -1451,7 +1454,7 @@
               showMessage("Contact not found");
             }
           })
-          .catch(function() { showMessage("Error loading contact"); });
+          .catch(function() { if (activeCid === cid) showMessage("Error loading contact"); });
       });
 
       document.addEventListener("keydown", function(e) {
