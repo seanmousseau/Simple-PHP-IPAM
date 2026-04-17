@@ -301,6 +301,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         flash_set('Address deleted.');
         header('Location: addresses.php?subnet_id=' . $subnetId);
         exit;
+    } elseif ($action === 'reserve_infra') {
+        require_write_access();
+        $subnetId = to_int($_POST['subnet_id'] ?? 0);
+        $st = $db->prepare("SELECT cidr FROM subnets WHERE id = :id");
+        $st->execute([':id' => $subnetId]);
+        $subRow = $st->fetch();
+        if ($subRow) {
+            $parsed = parse_cidr(to_str($subRow['cidr']));
+            $gwIp = null;
+            if ($parsed && $parsed['version'] === 4 && $parsed['prefix'] <= 30) {
+                $gwBin = ipam_compute_gateway_bin($parsed['net_bin'], $parsed['prefix']);
+                if ($gwBin !== null) $gwIp = inet_ntop($gwBin) ?: null;
+            }
+            auto_reserve_subnet_ips($db, $subnetId, to_str($subRow['cidr']), $gwIp);
+            flash_set('Network, broadcast, and gateway addresses reserved.');
+        }
+        header('Location: addresses.php?subnet_id=' . $subnetId);
+        exit;
     }
 }
 
@@ -355,6 +373,21 @@ if ($selectedSubnet && to_int($selectedSubnet['ip_version']) === 4) {
         to_str($selectedSubnet['network']), to_int($selectedSubnet['prefix']));
 }
 
+// Check if network/broadcast/gateway are missing (for "Reserve infra" button)
+$missingInfra = false;
+if ($selectedSubnetId > 0 && $networkBin !== null) {
+    $infraBins = array_filter([$networkBin, $broadcastBin, $gatewayBin]);
+    if ($infraBins) {
+        $placeholders = implode(',', array_fill(0, count($infraBins), '?'));
+        $chk = $db->prepare("SELECT ip_bin FROM addresses WHERE subnet_id = ? AND ip_bin IN ($placeholders)");
+        $params = [$selectedSubnetId];
+        foreach ($infraBins as $b) $params[] = $b;
+        $chk->execute($params);
+        $found = $chk->fetchAll(PDO::FETCH_COLUMN);
+        $missingInfra = count($found) < count($infraBins);
+    }
+}
+
 page_header('Addresses', ['page' => 'addresses']);
 ipam_skeleton_flush();
 ?>
@@ -383,6 +416,14 @@ ipam_skeleton_flush();
     <?php if (current_user()['role'] !== 'readonly'): ?>
       <a class="action-pill" href="#add-address" data-open-drawer="add-address" data-drawer-title="Add Address">➕ Add Address <kbd class="kbd-hint">⌘N</kbd></a>
       <a class="action-pill" href="bulk_update.php?subnet_id=<?= (int)$selectedSubnetId ?>">✏ Bulk Update</a>
+      <?php if ($missingInfra): ?>
+        <form method="post" action="addresses.php" style="display:inline">
+          <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+          <input type="hidden" name="action" value="reserve_infra">
+          <input type="hidden" name="subnet_id" value="<?= (int)$selectedSubnetId ?>">
+          <button type="submit" class="action-pill" data-confirm="Reserve network, broadcast, and gateway addresses for this subnet?">🔒 Reserve Infra IPs</button>
+        </form>
+      <?php endif; ?>
     <?php endif; ?>
     <?php if ($selectedSubnet && to_int($selectedSubnet['ip_version']) === 4): ?>
       <a class="action-pill" href="unassigned.php?subnet_id=<?= (int)$selectedSubnetId ?>">✨ Unassigned</a>
