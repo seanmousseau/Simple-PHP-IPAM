@@ -13,8 +13,7 @@ set -euo pipefail
 #   ./test_api.sh                                                              # auto-start local server
 #   ./test_api.sh https://ipam.example.com                                     # test remote instance
 #   API_KEY=abc123 ./test_api.sh https://ipam.example.com                      # with explicit key
-#   AUTH_MODE=query API_KEY=abc123 ./test_api.sh https://ipam.example.com      # query param auth
-#   BASIC_AUTH=user:pass AUTH_MODE=query ./test_api.sh https://ipam.example.com # behind HTTP Basic Auth
+#   BASIC_AUTH=user:pass ./test_api.sh https://ipam.example.com                 # behind HTTP Basic Auth
 #
 # For the dev server, source ~/.claude/dev-secrets.env first:
 #   source ~/.claude/dev-secrets.env
@@ -200,9 +199,6 @@ fi
 
 HTTP_CODE=""; BODY=""
 
-# Auth mode: header (default) or query param (for proxies that strip Authorization)
-AUTH_MODE="${AUTH_MODE:-header}"
-
 # Optional HTTP Basic Auth for servers behind a gateway (e.g. BASIC_AUTH=user:pass)
 BASIC_AUTH="${BASIC_AUTH:-}"
 
@@ -227,12 +223,7 @@ call() {
     [[ -n "$CURL_INSECURE" ]] && args+=(-k)
     [[ -n "$CURL_EXTRA_HEADER" ]] && args+=(-H "$CURL_EXTRA_HEADER")
     [[ -n "$BASIC_AUTH" ]] && args+=(-u "$BASIC_AUTH")
-    if [[ "$AUTH_MODE" == "query" ]]; then
-        # Append api_key as query parameter (for proxies that strip Authorization header)
-        [[ "$url" == *"?"* ]] && url="${url}&api_key=$API_KEY" || url="${url}?api_key=$API_KEY"
-    else
-        args+=(-H "Authorization: Bearer $API_KEY")
-    fi
+    args+=(-H "Authorization: Bearer $API_KEY")
     [[ -n "$body" ]] && args+=(-d "$body")
     args+=("$url")
     HTTP_CODE=$(curl "${args[@]}")
@@ -586,11 +577,11 @@ call "PATCH" "${API}?resource=subnets" ""
 assert_http 405 "PATCH → 405"
 
 # ====================================================================
-log "=== Deprecation Warning ==="
+log "=== Query Param Auth Removed (v3.0.0) ==="
 # ====================================================================
 
-DEP_HEADER=$(curl -s --noproxy '*' "${_ba_args[@]+"${_ba_args[@]}"}" -D - -o /dev/null "${API}?resource=subnets&api_key=$API_KEY" 2>/dev/null | grep -i 'deprecation' || echo "")
-[[ -n "$DEP_HEADER" ]] && pass "Query param API key sends Deprecation header" || skip "Deprecation header not found (may need header-only auth)"
+QP_CODE=$(curl -s --noproxy '*' "${_ba_args[@]+"${_ba_args[@]}"}" -o /dev/null -w '%{http_code}' "${API}?resource=subnets&api_key=$API_KEY" 2>/dev/null)
+[[ "$QP_CODE" == "401" ]] && pass "Query param ?api_key= rejected with 401" || fail "Expected 401 for query param auth, got $QP_CODE"
 
 # ====================================================================
 log "=== Read-only Key Enforcement ==="
