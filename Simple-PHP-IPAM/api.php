@@ -76,7 +76,11 @@ if ($rawKey === '') {
     $resourcePeek = strtolower(trim(to_str($_GET['resource'] ?? '')));
     $methodPeek   = strtoupper(to_str($_SERVER['REQUEST_METHOD'] ?? 'GET'));
     if ($methodPeek === 'GET' && in_array($resourcePeek, ['contacts', 'subnet_stats'], true)) {
-        session_name(to_str($config['session_name']));
+        $sesName = to_str($config['session_name']);
+        if ($sesName === '' || $sesName === 'IPAMSESSID') {
+            $sesName = 'IPAMSESSID_' . substr(hash('sha256', __DIR__), 0, 8);
+        }
+        session_name($sesName);
         $cookiePath = to_str($config['session_cookie_path'] ?? '');
         if ($cookiePath === '') {
             $sn = to_str($_SERVER['SCRIPT_NAME'] ?? '');
