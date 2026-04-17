@@ -25,7 +25,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             try {
                 $st = $db->prepare("INSERT INTO sites (name, description, parent_id) VALUES (:n, :d, :pid)");
                 $st->execute([':n' => $name, ':d' => $desc, ':pid' => $parentId]);
-                audit($db, 'site.create', 'site', ipam_last_insert_id($db, 'sites'), "name=$name");
+                $newSiteId = ipam_last_insert_id($db, 'sites');
+                save_contacts_for_entity($db, 'site', $newSiteId, parse_contact_assignments($_POST));
+                audit($db, 'site.create', 'site', $newSiteId, "name=$name");
                 flash_set('Site created.');
                 header('Location: sites.php');
                 exit;
@@ -47,6 +49,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             try {
                 $st = $db->prepare("UPDATE sites SET name = :n, description = :d, parent_id = :pid WHERE id = :id");
                 $st->execute([':n' => $name, ':d' => $desc, ':pid' => $parentId, ':id' => $id]);
+                save_contacts_for_entity($db, 'site', $id, parse_contact_assignments($_POST));
                 audit($db, 'site.update', 'site', $id, "name=$name");
                 $msg = 'Site updated.';
             } catch (PDOException $e) {
@@ -84,6 +87,10 @@ $st = $db->prepare("
 $st->execute();
 /** @var list<array<string, mixed>> $sites */
 $sites = $st->fetchAll();
+
+$_cSt = $db->query("SELECT id, name, email FROM contacts ORDER BY name");
+/** @var list<array<string, mixed>> $allContacts */
+$allContacts = $_cSt !== false ? $_cSt->fetchAll() : [];
 
 // Build a quick map for the parent picker — only root sites are valid parents (depth limit = 2)
 /** @var list<array<string, mixed>> $rootSites */
@@ -145,6 +152,16 @@ page_header('Sites');
         <?php endif; ?>
       </div>
 
+      <?php if ($allContacts): ?>
+      <div class="row">
+        <label>Contacts</label>
+      </div>
+      <div class="contact-picker" data-contacts='<?= e(json_encode(array_map(fn($c) => ['id' => to_int($c['id']), 'name' => to_str($c['name']), 'email' => to_str($c['email'])], $allContacts), JSON_UNESCAPED_SLASHES) ?: '[]') ?>'>
+        <div class="contact-picker-rows"></div>
+        <button type="button" class="button-secondary btn-sm contact-picker-add">+ Add contact</button>
+      </div>
+      <?php endif; ?>
+
       <p><button type="submit">Create Site</button></p>
     </form>
   </div>
@@ -180,6 +197,7 @@ page_header('Sites');
           ?>
           <th>Parent</th>
           <th>Description</th>
+          <th>Contacts</th>
           <th>Subnets</th>
           <th>Actions</th>
         </tr>
@@ -195,6 +213,7 @@ page_header('Sites');
           <td class="muted"><?= e(display_datetime(to_str($site['created_at']))) ?></td>
           <td><?= $site['parent_name'] ? e(to_str($site['parent_name'])) : '<span class="muted">—</span>' ?></td>
           <td><?= e(to_str($site['description'])) ?></td>
+          <td><?= render_contact_badges($db, 'site', to_int($site['id'])) ?: '<span class="muted">—</span>' ?></td>
           <td><?= e(to_str($site['subnet_count'])) ?></td>
           <td>
             <details>
@@ -220,6 +239,14 @@ page_header('Sites');
                     <?php endforeach; ?>
                   </select>
                 </label>
+                <?php endif; ?>
+                <?php if ($allContacts):
+                  $existing = get_contacts_for_entity($db, 'site', to_int($site['id']));
+                ?>
+                <div class="contact-picker" data-contacts='<?= e(json_encode(array_map(fn($c) => ['id' => to_int($c['id']), 'name' => to_str($c['name']), 'email' => to_str($c['email'])], $allContacts), JSON_UNESCAPED_SLASHES) ?: '[]') ?>' data-existing='<?= e(json_encode($existing, JSON_UNESCAPED_SLASHES) ?: '[]') ?>'>
+                  <div class="contact-picker-rows"></div>
+                  <button type="button" class="button-secondary btn-sm contact-picker-add">+ Add contact</button>
+                </div>
                 <?php endif; ?>
                 <button type="submit">Save</button>
               </form>

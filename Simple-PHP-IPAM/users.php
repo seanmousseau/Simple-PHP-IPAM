@@ -17,7 +17,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = to_str($_POST['action'] ?? '');
 
     $validRoles = ['admin', 'netops', 'readonly'];
-    $pwPolicy   = (array)$config['password_policy'];
+    $pwPolicy   = [
+        'min_length'            => to_int(ipam_setting('password_policy.min_length')),
+        'require_uppercase'     => (bool)ipam_setting('password_policy.require_uppercase'),
+        'require_lowercase'     => (bool)ipam_setting('password_policy.require_lowercase'),
+        'require_number'        => (bool)ipam_setting('password_policy.require_number'),
+        'require_symbol'        => (bool)ipam_setting('password_policy.require_symbol'),
+        'max_password_age_days' => to_int(ipam_setting('password_policy.max_password_age_days')),
+    ];
 
     // Demo mode: block all mutations
     if (demo_mode_enabled() && in_array($action, ['create', 'delete', 'toggle_active', 'set_role'], true)) {
@@ -241,8 +248,8 @@ $st->execute();
 /** @var list<array<string, mixed>> $users */
 $users = $st->fetchAll();
 
-$acctMaxAttempts = to_int($config['account_lockout_max_attempts'] ?? 10);
-$acctLockoutSecs = to_int($config['account_lockout_seconds'] ?? 900);
+$acctMaxAttempts = to_int(ipam_setting('security.account_lockout_max_attempts'));
+$acctLockoutSecs = to_int(ipam_setting('security.account_lockout_seconds'));
 $lockedUsers = [];
 $cutoff = date('Y-m-d H:i:s', time() - $acctLockoutSecs);
 $lockSt = $db->prepare(

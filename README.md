@@ -8,17 +8,18 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v2.14.0
+## What's new in v3.0.0
 
-**UX polish, performance, and bug fixes.**
+**Breaking release — multi-engine database support is now stable.**
 
-- **Contact popover (#561).** Click a linked contact name in the address Owner column to see email, phone, org, and note in a floating card — no page navigation required.
-- **Contact browse picker (#562).** "Browse" button next to the Owner field opens a searchable overlay of all contacts for easy selection.
-- **Expandable audit details (#564).** Click truncated audit log entries to expand/collapse the full detail text inline.
-- **Subnets page performance (#565, #567).** Tree structure renders immediately with skeleton placeholders; counts and utilization populate asynchronously. Edit forms moved to a shared drawer, cutting page size from 6.5MB to ~780KB on 500-subnet deployments.
-- **Utilization fix (#566).** Dashboard and utilization alerts no longer count infrastructure IPs (network, broadcast, gateway) against assignable capacity — fixes impossible >100% fill on small subnets.
+- **MySQL & PostgreSQL promoted to stable (#392).** MySQL 8.0+ and PostgreSQL 14+ are fully supported first-class engines. Experimental banners removed.
+- **`migrate_db.php` (#390).** New CLI tool for migrating between database engines — all 6 direction pairs (SQLite ↔ MySQL ↔ PostgreSQL), batched copies, binary blob round-trip, row count verification.
+- **`config.php` reduced to bootstrap stub (#341).** All settings now live in the database, managed through Admin → Settings. Upgrade migration auto-imports your values.
+- **Multi-contact assignments (#563).** Assign multiple contacts with role labels to sites and subnets.
+- **`?api_key=` auth removed (#340).** Use `Authorization: Bearer` header instead.
+- **`upgrade.sh` driver migration (#393).** Interactive prompt to migrate to MySQL/PostgreSQL during upgrade.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release history.
+See [CHANGELOG.md](CHANGELOG.md) for full release history and [docs/upgrading.md](docs/upgrading.md#v300) for the upgrade guide.
 
 ---
 

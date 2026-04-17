@@ -39,8 +39,8 @@ ipam_db_init($db);
 
 // ---- API key authentication ----
 
-$apiMaxAttempts   = to_int($config['api_max_attempts']   ?? 20);
-$apiLockoutSeconds = to_int($config['api_lockout_seconds'] ?? 300);
+$apiMaxAttempts    = max(1, to_int(ipam_setting('api.max_attempts')));
+$apiLockoutSeconds = max(1, to_int(ipam_setting('api.lockout_seconds')));
 if (!empty($config['proxy_trust']) && !empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
     $xffParts  = array_map('trim', explode(',', to_str($_SERVER['HTTP_X_FORWARDED_FOR'])));
     $xffFirst  = $xffParts[0];
@@ -64,10 +64,6 @@ $rawKey = '';
 $authHeader = to_str($_SERVER['HTTP_AUTHORIZATION'] ?? '');
 if (preg_match('/^Bearer\s+(\S+)$/i', $authHeader, $m)) {
     $rawKey = $m[1];
-} elseif (!empty($_GET['api_key'])) {
-    $rawKey = to_str($_GET['api_key']);
-    header('Deprecation: true');
-    header('X-Deprecation-Reason: API key via query parameter is deprecated. Use Authorization: Bearer header.');
 }
 
 // Session-based auth for browser-only GET endpoints (no API key required)
@@ -132,7 +128,7 @@ if ($sessionApiKey !== null) {
 $resource  = strtolower(trim(to_str($_GET['resource'] ?? '')));
 $method    = strtoupper(to_str($_SERVER['REQUEST_METHOD'] ?? 'GET'));
 $isBulk    = !empty($_GET['bulk']);
-$bulkLimit = isset($config['api_bulk_limit']) ? max(1, min(500, to_int($config['api_bulk_limit']))) : 500;
+$bulkLimit = max(1, to_int(ipam_setting('api.bulk_limit')));
 
 if (to_int($apiKey['is_readonly'] ?? 0) === 1 && in_array($method, ['POST', 'PUT', 'DELETE'], true)) {
     api_error(403, 'This API key is read-only.');

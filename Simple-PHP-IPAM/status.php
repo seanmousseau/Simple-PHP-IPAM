@@ -20,11 +20,12 @@ require __DIR__ . '/version.php';
 $dbOk = false;
 $schemaVersion = null;
 try {
-    $pdo = ipam_db($config);
-    ($pdo->query('SELECT 1') ?: throw new \RuntimeException('Query failed'))->fetch();
+    $db = ipam_db($config);
+    $GLOBALS['db'] = $db;
+    ($db->query('SELECT 1') ?: throw new \RuntimeException('Query failed'))->fetch();
     $dbOk = true;
     /** @var array<string, mixed>|false $row */
-    $row = ($pdo->query("SELECT MAX(version) AS v FROM schema_migrations")
+    $row = ($db->query("SELECT MAX(version) AS v FROM schema_migrations")
         ?: throw new \RuntimeException('Query failed'))->fetch();
     if ($row && $row['v'] !== null) {
         $schemaVersion = to_str($row['v']);
@@ -40,7 +41,7 @@ $response = [
     'status' => $status,
     'db'     => $dbOk ? 'ok' : 'error',
 ];
-if (empty($config['status_hide_version'])) {
+if (!(bool)ipam_setting('display.status_hide_version')) {
     $response['version'] = IPAM_VERSION;
     if ($schemaVersion !== null) {
         $response['schema_version'] = $schemaVersion;

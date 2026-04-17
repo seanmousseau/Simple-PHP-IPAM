@@ -117,21 +117,17 @@ page_header('Dashboard');
   </div>
 </div>
 
-<?php if (current_user()['role'] === 'admin'):
-    // v2.7.0 #376: nudge admins to migrate any customised config.php values
-    // into the database before v3.0.0 removes the fallback. The settings
-    // page has the real banner with per-key import buttons — this card just
-    // gets the admin to click over and see it.
-    $_deprecatedDash = ipam_setting_deprecated_keys();
-    if ($_deprecatedDash):
+<?php
+/** @var list<string> $_staleKeys */
+$_staleKeys = $GLOBALS['config_stale_keys'] ?? [];
+if ($_staleKeys && current_user()['role'] === 'admin'):
 ?>
   <div class="admin-notice admin-notice--warning" role="alert">
-    &#9888; <strong>Settings migration needed:</strong>
-    <?= count($_deprecatedDash) ?> registered setting(s) are still being read from
-    <code>config.php</code>. These will stop working at v3.0.0.
-    <a href="settings.php#deprecated-banner">Review and migrate in Settings &rsaquo;</a>
+    &#9888; <strong>config.php cleanup needed:</strong>
+    <?= count($_staleKeys) ?> non-bootstrap key(s) found in <code>config.php</code> that are no longer read.
+    Remove them manually: <code><?= e(implode(', ', $_staleKeys)) ?></code>
   </div>
-    <?php endif; unset($_deprecatedDash); endif; ?>
+<?php endif; unset($_staleKeys); ?>
 
 <div class="page-actions">
   <a class="action-pill" href="subnets.php#add-subnet">➕ Add Subnet</a>
@@ -170,8 +166,8 @@ page_header('Dashboard');
         </thead>
         <tbody>
         <?php
-            $dashWarn = to_int($config['utilization_warn']);
-            $dashCrit = to_int($config['utilization_critical']);
+            $dashWarn = to_int(ipam_setting('display.utilization_warn'));
+            $dashCrit = to_int(ipam_setting('display.utilization_critical'));
         ?>
         <?php foreach ($topSubnets as $s):
             $cap  = ipv4_assignable_count(to_int($s['prefix']));

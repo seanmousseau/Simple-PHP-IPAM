@@ -107,6 +107,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $st->bindValue(':vrf',   $vrfId,  $vrfId  === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                     $st->execute();
                     $newSubnetId = ipam_last_insert_id($db, 'subnets');
+                    if (isset($_POST['contact_id'])) {
+                        save_contacts_for_entity($db, 'subnet', $newSubnetId, parse_contact_assignments($_POST));
+                    }
                     audit($db, 'subnet.create', 'subnet', $newSubnetId, $normalized);
 
                     if ($doAutoReserve) {
@@ -191,6 +194,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $st->bindValue(':vrf',   $vrfId,  $vrfId  === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                         $st->bindValue(':id',    $id,    PDO::PARAM_INT);
                         $st->execute();
+                        if (isset($_POST['contact_id'])) {
+                            save_contacts_for_entity($db, 'subnet', $id, parse_contact_assignments($_POST));
+                        }
                         audit($db, 'subnet.update', 'subnet', $id, $normalized);
                         $msg = 'Subnet updated.';
                         if ($inheritedSiteId !== null) {
@@ -520,7 +526,7 @@ ipam_skeleton_flush();
       </label>
       <button type="submit" <?= (current_user()['role']==='readonly')?'disabled':'' ?>>Add</button>
     </div>
-    <?php $autoReserveDefault = (bool)($config['auto_reserve_network_broadcast'] ?? true); ?>
+    <?php $autoReserveDefault = (bool)ipam_setting('display.auto_reserve_network_broadcast'); ?>
     <div class="row mt-8">
       <label class="row-inline">
         <input type="checkbox" name="auto_reserve" value="1" <?= $autoReserveDefault ? 'checked' : '' ?>>

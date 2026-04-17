@@ -38,7 +38,7 @@ RewriteCond %{HTTP:X-Forwarded-Proto} !=https
 RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
 
 # Block direct access to specific PHP and SQL files
-RewriteRule ^(config\.php|init\.php|lib\.php|PgsqlStatement\.php|schema\.sql|schema\.mysql\.sql|schema\.pgsql\.sql|migrations\.php|migrate\.php|version\.php|tmp_cleanup\.php)$ - [F,L,NC]
+RewriteRule ^(config\.php|init\.php|lib\.php|PgsqlStatement\.php|schema\.sql|schema\.mysql\.sql|schema\.pgsql\.sql|migrations\.php|migrate\.php|migrate_db\.php|version\.php|tmp_cleanup\.php)$ - [F,L,NC]
 
 # Block direct access to internal source directories. OpenLiteSpeed's lsphp
 # handler dispatches PHP files BEFORE a subdirectory-level .htaccess rewrite

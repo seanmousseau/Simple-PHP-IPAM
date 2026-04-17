@@ -873,6 +873,181 @@ function ipam_migrations(): array
                 $db->exec("CREATE INDEX IF NOT EXISTS idx_login_attempts_username_time ON login_attempts(username, attempted_at)");
             }
         },
+        '3.0.0-config-stub' => function(PDO $db): void {
+            $configPath = __DIR__ . '/config.php';
+            if (!is_file($configPath)) return;
+
+            $config = (array)(require $configPath);
+
+            $definitions = ipam_setting_definitions();
+            $existing = [];
+            $kc = ipam_key_col();
+            $allRows = $db->query("SELECT {$kc} AS k FROM settings");
+            if ($allRows !== false) {
+                /** @var array<string, mixed> $r */
+                foreach ($allRows as $r) {
+                    $existing[to_str($r['k'] ?? '')] = true;
+                }
+            }
+
+            $imported = 0;
+            foreach ($definitions as $key => $def) {
+                if (isset($existing[$key])) continue;
+                /** @var string|array<mixed>|null $configKey */
+                $configKey = $def['config_key'] ?? null;
+                if ($configKey === null) continue;
+                $cfgVal = ipam_setting_config_fallback($config, $configKey);
+                if ($cfgVal === null) continue;
+
+                $default = $def['default'] ?? null;
+                /** @var string $type */
+                $type = $def['type'] ?? 'string';
+                /** @var mixed $cfgVal */
+                /** @var mixed $default */
+                $same = match ($type) {
+                    'bool'   => (bool)$cfgVal === (bool)$default,
+                    'int'    => (int)(is_numeric($cfgVal) ? $cfgVal : 0) === (int)(is_numeric($default) ? $default : 0),
+                    'json'   => $cfgVal === $default,
+                    default  => (is_scalar($cfgVal) ? (string)$cfgVal : '') === (is_scalar($default) ? (string)$default : ''),
+                };
+                if ($same) continue;
+
+                ipam_setting_set($db, $key, $cfgVal, null);
+                $imported++;
+            }
+
+            $GLOBALS['_ipam_v3_config_stub_pending'] = [
+                'config_path' => $configPath,
+                'config'      => $config,
+                'imported'    => $imported,
+            ];
+        },
+
+        '3.0.0-config-stub-rewrite' => function(PDO $db): void {
+            $pending = $GLOBALS['_ipam_v3_config_stub_pending'] ?? null;
+            if (!is_array($pending)) return;
+            unset($GLOBALS['_ipam_v3_config_stub_pending']);
+
+            $configPath = to_str($pending['config_path']);
+            $config     = (array)$pending['config'];
+            $imported   = to_int($pending['imported']);
+
+            $bakPath = $configPath . '.bak-v3upgrade';
+            if (!is_file($bakPath)) {
+                @copy($configPath, $bakPath);
+            }
+
+            $driver = to_str($config['db_driver'] ?? 'sqlite');
+            $stub = "<?php\ndeclare(strict_types=1);\n\nreturn [\n"
+                . "    'db_driver'    => " . var_export($driver, true) . ",\n";
+            if ($driver === 'sqlite') {
+                $dbPath = to_str($config['db_path'] ?? (__DIR__ . '/data/ipam.sqlite'));
+                $stub .= "    'db_path'      => " . var_export($dbPath, true) . ",\n";
+            } else {
+                $stub .= "    'db_dsn'       => " . var_export(to_str($config['db_dsn'] ?? ''), true) . ",\n"
+                    . "    'db_user'      => " . var_export(to_str($config['db_user'] ?? ''), true) . ",\n"
+                    . "    'db_pass'      => " . var_export(to_str($config['db_pass'] ?? ''), true) . ",\n";
+            }
+            $stub .= "    'session_name' => " . var_export(to_str($config['session_name'] ?? 'IPAMSESSID'), true) . ",\n"
+                . "    'force_https'  => " . var_export((bool)($config['force_https'] ?? true), true) . ",\n";
+
+            if (!empty($config['proxy_trust'])) {
+                $stub .= "    'proxy_trust'  => true,\n";
+            }
+            if (!empty($config['base_url'])) {
+                $stub .= "    'base_url'     => " . var_export(to_str($config['base_url']), true) . ",\n";
+            }
+            if (!empty($config['session_cookie_path'])) {
+                $stub .= "    'session_cookie_path' => " . var_export(to_str($config['session_cookie_path']), true) . ",\n";
+            }
+            if (!empty($config['recovery_mode'])) {
+                $stub .= "    'recovery_mode' => true,\n";
+            }
+            if (isset($config['bootstrap_admin'])) {
+                $ba = (array)$config['bootstrap_admin'];
+                $stub .= "    'bootstrap_admin' => [\n"
+                    . "        'username' => " . var_export(to_str($ba['username'] ?? 'admin'), true) . ",\n"
+                    . "        'password' => " . var_export(to_str($ba['password'] ?? 'ChangeMeNow!12345'), true) . ",\n"
+                    . "    ],\n";
+            }
+            if (isset($config['demo_mode'])) {
+                $dm = (array)$config['demo_mode'];
+                $stub .= "    'demo_mode' => [\n"
+                    . "        'enabled'    => " . var_export((bool)($dm['enabled'] ?? false), true) . ",\n"
+                    . "        'gate'       => " . var_export($dm['gate'] ?? null, true) . ",\n"
+                    . "        'site_key'   => " . var_export(to_str($dm['site_key'] ?? ''), true) . ",\n"
+                    . "        'secret_key' => " . var_export(to_str($dm['secret_key'] ?? ''), true) . ",\n"
+                    . "    ],\n";
+            }
+            $stub .= "];\n";
+
+            @file_put_contents($configPath, $stub, LOCK_EX);
+
+            if ($imported > 0) {
+                try {
+                    audit($db, 'config.migrate_to_stub', 'system', null,
+                        "Migrated {$imported} setting(s) from config.php to settings table.");
+                } catch (\Throwable $e) {
+                    error_log('config.migrate_to_stub audit failed: ' . $e->getMessage());
+                }
+            }
+        },
+
+        '3.0.0-site-contacts' => function(PDO $db): void {
+            $driver = ipam_dialect()->driver_name();
+            if ($driver === 'sqlite') {
+                $tbl = $db->query("SELECT name FROM sqlite_master WHERE type='table' AND name='site_contacts'");
+                if ($tbl !== false && $tbl->fetch()) return;
+            } elseif ($driver === 'mysql') {
+                $tbl = $db->query("SHOW TABLES LIKE 'site_contacts'");
+                if ($tbl !== false && $tbl->fetch()) return;
+            } else {
+                $tbl = $db->prepare("SELECT 1 FROM information_schema.tables WHERE table_name='site_contacts'");
+                $tbl->execute();
+                if ($tbl->fetch()) return;
+            }
+            $intType = ($driver === 'mysql') ? 'BIGINT UNSIGNED' : ($driver === 'pgsql' ? 'BIGINT' : 'INTEGER');
+            $roleType = ($driver === 'mysql') ? "VARCHAR(191) NOT NULL DEFAULT ''" : "TEXT NOT NULL DEFAULT ''";
+            $fk = ($driver === 'mysql')
+                ? ", CONSTRAINT fk_site_contacts_site FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE CASCADE, CONSTRAINT fk_site_contacts_contact FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE"
+                : '';
+            $inlineRef = ($driver === 'mysql') ? '' : ' REFERENCES sites(id) ON DELETE CASCADE';
+            $inlineRef2 = ($driver === 'mysql') ? '' : ' REFERENCES contacts(id) ON DELETE CASCADE';
+            $db->exec("CREATE TABLE site_contacts (
+                site_id    {$intType} NOT NULL{$inlineRef},
+                contact_id {$intType} NOT NULL{$inlineRef2},
+                role       {$roleType},
+                PRIMARY KEY (site_id, contact_id){$fk}
+            )" . ($driver === 'mysql' ? ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4' : ''));
+        },
+
+        '3.0.0-subnet-contacts' => function(PDO $db): void {
+            $driver = ipam_dialect()->driver_name();
+            if ($driver === 'sqlite') {
+                $tbl = $db->query("SELECT name FROM sqlite_master WHERE type='table' AND name='subnet_contacts'");
+                if ($tbl !== false && $tbl->fetch()) return;
+            } elseif ($driver === 'mysql') {
+                $tbl = $db->query("SHOW TABLES LIKE 'subnet_contacts'");
+                if ($tbl !== false && $tbl->fetch()) return;
+            } else {
+                $tbl = $db->prepare("SELECT 1 FROM information_schema.tables WHERE table_name='subnet_contacts'");
+                $tbl->execute();
+                if ($tbl->fetch()) return;
+            }
+            $intType = ($driver === 'mysql') ? 'BIGINT UNSIGNED' : ($driver === 'pgsql' ? 'BIGINT' : 'INTEGER');
+            $roleType = ($driver === 'mysql') ? "VARCHAR(191) NOT NULL DEFAULT ''" : "TEXT NOT NULL DEFAULT ''";
+            $fk = ($driver === 'mysql')
+                ? ", CONSTRAINT fk_subnet_contacts_subnet FOREIGN KEY (subnet_id) REFERENCES subnets(id) ON DELETE CASCADE, CONSTRAINT fk_subnet_contacts_contact FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE"
+                : '';
+            $inlineRef = ($driver === 'mysql') ? '' : ' REFERENCES subnets(id) ON DELETE CASCADE';
+            $inlineRef2 = ($driver === 'mysql') ? '' : ' REFERENCES contacts(id) ON DELETE CASCADE';
+            $db->exec("CREATE TABLE subnet_contacts (
+                subnet_id  {$intType} NOT NULL{$inlineRef},
+                contact_id {$intType} NOT NULL{$inlineRef2},
+                role       {$roleType},
+                PRIMARY KEY (subnet_id, contact_id){$fk}
+            )" . ($driver === 'mysql' ? ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4' : ''));
+        },
     ];
 }
 

@@ -1344,6 +1344,13 @@ body.pw-toggle-hidden .pw-wrap .pw-input{padding-right:36px}
 .ip-badge{font-family:var(--font-mono);font-size:var(--font-size-base)}
 .monospace{font-family:var(--font-mono)}
 
+/* Contact picker (v3.0.0 #563) */
+.contact-badge{background:var(--badge-bg);font-size:.85em;padding:2px 8px;border-radius:4px;white-space:nowrap}
+.contact-badges{display:flex;flex-wrap:wrap;gap:4px}
+.contact-picker-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.contact-picker-row select{min-width:200px}
+.contact-picker-remove{min-width:32px;min-height:32px;padding:0;line-height:1}
+
 /* --- prefers-reduced-motion: suppress all animations/transitions --- */
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{

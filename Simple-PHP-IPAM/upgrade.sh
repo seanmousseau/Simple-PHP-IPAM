@@ -84,21 +84,9 @@ else
     die "PHP 8.2+ is required. Found: $("$PHP_BIN" -r 'echo PHP_VERSION;' 2>/dev/null || echo 'unknown')"
   fi
 
-  # Check required PHP extensions
-  missing_exts=()
-  for ext in pdo pdo_sqlite; do
-    if ! "$PHP_BIN" -m 2>/dev/null | grep -qi "^${ext}$"; then
-      missing_exts+=("$ext")
-    fi
-  done
-  if [[ ${#missing_exts[@]} -gt 0 ]]; then
-    die "Missing required PHP extensions: ${missing_exts[*]}
-  Install them (e.g. apt install php-sqlite3) and retry."
-  fi
-
-  # Quick smoke test: can PHP open a SQLite database?
-  if ! "$PHP_BIN" -r "new PDO('sqlite::memory:');" 2>/dev/null; then
-    die "PHP PDO SQLite smoke test failed. Verify pdo_sqlite is working."
+  # Check required PHP extensions (pdo is always needed; driver-specific checked later)
+  if ! "$PHP_BIN" -m 2>/dev/null | grep -qi "^pdo$"; then
+    die "Missing required PHP extension: pdo"
   fi
 fi
 
@@ -237,10 +225,76 @@ if [[ -n "$CHOWN_BIN" ]]; then
 fi
 
 if [[ -n "$PHP_BIN" && -f "$TARGET_DIR/migrate.php" ]]; then
+  echo "Running database migrations..."
   ( cd "$TARGET_DIR" && "$PHP_BIN" migrate.php ) || {
+    echo "Migration failed. Restoring from backup..."
     rsync -a --delete "$BACKUP_DIR/" "$TARGET_DIR/"
     exit 10
   }
+  echo "Migrations complete."
+
+  # v3.0.0: offer optional driver migration
+  if [[ -f "$TARGET_DIR/migrate_db.php" && -t 0 ]]; then
+    current_driver=$("$PHP_BIN" -r "echo (require '$TARGET_DIR/config.php')['db_driver'] ?? 'sqlite';" 2>/dev/null || echo "sqlite")
+    echo ""
+    echo "Current database driver: $current_driver"
+    echo "Would you like to migrate to a different engine?"
+    echo "  [s] Stay on $current_driver (default)"
+    echo "  [m] Migrate to MySQL"
+    echo "  [p] Migrate to PostgreSQL"
+    read -r -p "Choice [s/m/p]: " driver_choice </dev/tty 2>/dev/null || driver_choice="s"
+    driver_choice="${driver_choice:-s}"
+
+    if [[ "$driver_choice" == "m" || "$driver_choice" == "p" ]]; then
+      target_driver=$([[ "$driver_choice" == "m" ]] && echo "mysql" || echo "pgsql")
+      echo ""
+      read -r -p "Target DSN (e.g. mysql:host=127.0.0.1;dbname=ipam): " target_dsn </dev/tty
+      read -r -p "Target username: " target_user </dev/tty
+      read -r -s -p "Target password: " target_pass </dev/tty
+      echo ""
+
+      if [[ -z "$target_dsn" ]]; then
+        echo "No DSN provided. Skipping driver migration."
+      else
+        src_dsn=""
+        if [[ "$current_driver" == "sqlite" ]]; then
+          src_dsn="sqlite:$TARGET_DIR/data/ipam.sqlite"
+        else
+          src_dsn=$("$PHP_BIN" -r "echo (require '$TARGET_DIR/config.php')['db_dsn'] ?? '';" 2>/dev/null)
+        fi
+
+        echo "Running migrate_db.php..."
+        migrate_ok=0
+        "$PHP_BIN" "$TARGET_DIR/migrate_db.php" \
+          --from="$current_driver" --from-dsn="$src_dsn" \
+          --to="$target_driver" --to-dsn="$target_dsn" \
+          --to-user="$target_user" --to-pass="$target_pass" \
+          --force && migrate_ok=1
+
+        if [[ "$migrate_ok" -eq 1 ]]; then
+          export IPAM_NEW_DRIVER="$target_driver"
+          export IPAM_NEW_DSN="$target_dsn"
+          export IPAM_NEW_USER="$target_user"
+          export IPAM_NEW_PASS="$target_pass"
+          "$PHP_BIN" -r '
+            $path = "'$TARGET_DIR'/config.php";
+            $cfg = require $path;
+            $cfg["db_driver"] = getenv("IPAM_NEW_DRIVER");
+            $cfg["db_dsn"]    = getenv("IPAM_NEW_DSN");
+            $cfg["db_user"]   = getenv("IPAM_NEW_USER");
+            $cfg["db_pass"]   = getenv("IPAM_NEW_PASS");
+            unset($cfg["db_path"]);
+            $out = "<?php\ndeclare(strict_types=1);\n\nreturn " . var_export($cfg, true) . ";\n";
+            file_put_contents($path, $out, LOCK_EX);
+          ' 2>/dev/null && echo "config.php updated to $target_driver driver." || echo "Warning: could not update config.php automatically. Edit it manually."
+          unset IPAM_NEW_DRIVER IPAM_NEW_DSN IPAM_NEW_USER IPAM_NEW_PASS
+        else
+          echo "Driver migration failed. Your original database is unchanged."
+          echo "You can retry manually: php $TARGET_DIR/migrate_db.php --help"
+        fi
+      fi
+    fi
+  fi
 fi
 
 if [[ "$CLEANUP_ARTIFACTS" == "1" ]]; then
