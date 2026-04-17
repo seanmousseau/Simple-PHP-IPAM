@@ -573,6 +573,9 @@ ipam_skeleton_flush();
         <button type="button" class="site-group-toggle" aria-expanded="true" data-sg-key="<?= e((string)$key) ?>">
           <?= e(to_str($group['label'])) ?><span class="site-group-caret" aria-hidden="true">&#9660;</span>
         </button>
+        <?php if ($key !== 'ungrouped'): ?>
+          <?= render_contact_badges($db, 'site', to_int($key)) ?>
+        <?php endif; ?>
         <div class="site-group-body">
           <?php foreach ($group['roots'] as $rid): ?>
             <?php render_subnet_node_local($db, $tree, $siteMap, $siteList, $vlanList, $vrfList, (int)$rid, 0); ?>

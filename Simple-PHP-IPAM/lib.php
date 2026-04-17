@@ -3516,7 +3516,7 @@ function render_contact_badges(PDO $db, string $type, int $id): string
     foreach ($contacts as $c) {
         $label = e($c['name']);
         if ($c['role'] !== '') $label .= ' <span class="muted">(' . e($c['role']) . ')</span>';
-        $out .= '<span class="badge contact-badge" data-contact-id="' . $c['id'] . '">' . $label . '</span> ';
+        $out .= '<a href="#" class="badge contact-badge contact-card-trigger" data-contact-id="' . $c['id'] . '">' . $label . '</a> ';
     }
     return $out . '</span>';
 }
