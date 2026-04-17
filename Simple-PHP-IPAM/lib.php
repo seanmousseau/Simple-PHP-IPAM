@@ -139,9 +139,9 @@ function ipam_last_insert_id(PDO $db, string $table, string $column = 'id'): int
  *
  * Supported drivers:
  *   - 'sqlite' (default) — uses $config['db_path'] as the file path.
- *   - 'mysql' (experimental, v2.10.0 #382) — uses $config['db_dsn'],
+ *   - 'mysql' (stable, v3.0.0) — uses $config['db_dsn'],
  *     $config['db_user'], $config['db_pass']. Requires MySQL 8.0.29+.
- *   - 'pgsql' (experimental, v2.11.0 #386) — uses $config['db_dsn'],
+ *   - 'pgsql' (stable, v3.0.0) — uses $config['db_dsn'],
  *     $config['db_user'], $config['db_pass']. Requires PostgreSQL 14+.
  *
  * @param array<string, mixed> $config
@@ -5081,30 +5081,6 @@ function page_header(string $title, array $opts = []): void
         echo "<div class='admin-notice admin-notice--info text-center' role='alert'>"
            . "🧪 <strong>Demo mode</strong> — Explore freely. Destructive actions are disabled. Data resets nightly at midnight."
            . "</div>";
-    }
-
-    // MySQL / Postgres experimental driver banner — admin only, dismissible
-    // (v2.10.0 #385 for MySQL, v2.11.0 #389 extended for Postgres). Appears
-    // whenever a non-SQLite driver is active so operators always know the
-    // driver is in beta. The banner key is suffixed with the engine name
-    // and IPAM_VERSION so dismiss state is per engine + per app version:
-    // upgrading the app OR switching engines changes the key and the banner
-    // re-surfaces. Dismiss state lives only in the browser; the server
-    // doesn't track it (client-side, stateless).
-    if ($role === 'admin') {
-        $activeDriver = ipam_dialect()->driver_name();
-        if ($activeDriver === 'mysql' || $activeDriver === 'pgsql') {
-            require_once __DIR__ . '/version.php';
-            $engineLabel = $activeDriver === 'mysql' ? 'MySQL' : 'PostgreSQL';
-            $docsAnchor  = $activeDriver === 'mysql' ? 'mysql-experimental' : 'postgresql-experimental';
-            $bannerKey   = $activeDriver . '-beta-' . IPAM_VERSION;
-            echo "<div class='admin-notice admin-notice--warning' role='alert' data-banner='" . e($bannerKey) . "'>"
-               . "⚠ <strong>" . e($engineLabel) . " driver (experimental)</strong> — " . e($engineLabel) . " support is beta in v" . e(IPAM_VERSION) . ". "
-               . "Report issues at <a href='https://github.com/seanmousseau/Simple-PHP-IPAM/issues' target='_blank' rel='noopener'>the GitHub tracker</a>. "
-               . "See <a href='https://github.com/seanmousseau/Simple-PHP-IPAM/blob/main/docs/install.md#" . e($docsAnchor) . "' target='_blank' rel='noopener'>docs/install.md</a> for current limitations. "
-               . "<button type='button' class='admin-notice-dismiss' data-dismiss-banner='" . e($bannerKey) . "' aria-label='Dismiss'>✕</button>"
-               . "</div>";
-        }
     }
 
     // Default bootstrap admin password warning (admin only)
