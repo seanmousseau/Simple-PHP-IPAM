@@ -5342,6 +5342,7 @@ function page_header(string $title, array $opts = []): void
             echo "<a class='nav-dropdown-item' href='aggregates.php'>🗂 Aggregates</a>";
             echo "<a class='nav-dropdown-item' href='pd_pools.php'>🔷 PD Pools</a>";
             echo "<a class='nav-dropdown-item' href='tags.php'>🔖 Tags</a>";
+            echo "<a class='nav-dropdown-item' href='devices.php'>🖥 Devices</a>";
             echo "<a class='nav-dropdown-item' href='contacts.php'>📇 Contacts</a>";
             echo "<a class='nav-dropdown-item' href='users.php'>👤 Users</a>";
             echo "<a class='nav-dropdown-item' href='api_keys.php'>🔑 API Keys</a>";
@@ -5393,6 +5394,7 @@ function page_header(string $title, array $opts = []): void
             echo "<a href='vrfs.php'>&#127760; VRFs</a>";
             echo "<a href='vlans.php'>&#127991; VLANs</a>";
             echo "<a href='tags.php'>&#128278; Tags</a>";
+            echo "<a href='devices.php'>&#128421; Devices</a>";
             echo "<a href='contacts.php'>&#128215; Contacts</a>";
             echo "<a href='users.php'>&#128100; Users</a>";
             echo "<a href='api_keys.php'>&#128273; API Keys</a>";
