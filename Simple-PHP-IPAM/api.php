@@ -33,6 +33,7 @@ header('Content-Type: application/json; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
 header('Referrer-Policy: strict-origin-when-cross-origin');
+header('X-IPAM-API-Version: 1');
 
 $db = ipam_db($config);
 ipam_db_init($db);
@@ -237,7 +238,8 @@ match ($resource) {
         'DELETE' => api_device_interfaces_delete($db, $apiKey, to_int($_GET['id'] ?? 0)),
         default  => api_error(405, 'Method not allowed.'),
     },
-    default      => api_error(404, 'Unknown resource. Valid: subnets, addresses, sites, vlans, vrfs, contacts, tags, subnet_tags, address_tags, history, search, audit, unassigned, scan_results, scan_history, scan_schedules, scan_run, subnet_stats, utilization_snapshots, devices, device_interfaces'),
+    'spec'       => $method === 'GET' ? api_spec()                 : api_error(405, 'Method not allowed.'),
+    default      => api_error(404, 'Unknown resource. Valid: subnets, addresses, sites, vlans, vrfs, contacts, tags, subnet_tags, address_tags, history, search, audit, unassigned, scan_results, scan_history, scan_schedules, scan_run, subnet_stats, utilization_snapshots, devices, device_interfaces, spec'),
 };
 
 // ---- Helpers ----
@@ -2863,4 +2865,16 @@ function api_device_interfaces_delete(PDO $db, array $apiKey, int $id): never
     audit($db, 'device_interface.delete', 'device_interface', $id, 'name=' . to_str($row['name']));
     http_response_code(204);
     api_json([]);
+}
+
+function api_spec(): never
+{
+    $specPath = __DIR__ . '/../docs/api-spec.yaml';
+    if (!file_exists($specPath)) api_error(404, 'OpenAPI spec not found.');
+    $yaml = file_get_contents($specPath);
+    if ($yaml === false) api_error(500, 'Unable to read OpenAPI spec.');
+    header('Content-Type: application/yaml; charset=utf-8');
+    header('Cache-Control: public, max-age=3600');
+    echo $yaml;
+    exit;
 }
