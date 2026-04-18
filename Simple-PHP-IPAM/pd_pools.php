@@ -255,7 +255,7 @@ page_header('PD Pools');
           <td>
             <a href="pd_pools.php?pool_id=<?= to_int($p['id']) ?>"><?= to_int($p['delegation_count']) ?> delegation<?= to_int($p['delegation_count']) !== 1 ? 's' : '' ?></a>
           </td>
-          <td class="muted"><?= e(display_datetime(to_str($p['created_at']))) ?></td>
+          <td class="muted"><?= e(ipam_format_datetime(to_str($p['created_at']))) ?></td>
           <td>
             <form method="post" action="pd_pools.php"
                   data-confirm="Delete this PD pool and all its delegations?">
@@ -321,7 +321,7 @@ page_header('PD Pools');
         <tr class="<?= $expired ? 'danger' : '' ?>">
           <td><b><?= e(to_str($d['cidr'])) ?></b></td>
           <td><?= to_str($d['subscriber_name']) !== '' ? e(to_str($d['subscriber_name'])) : '<span class="muted">—</span>' ?></td>
-          <td class="muted"><?= e(display_datetime(to_str($d['delegated_at']))) ?></td>
+          <td class="muted"><?= e(ipam_format_datetime(to_str($d['delegated_at']))) ?></td>
           <td class="<?= $expired ? 'danger' : ($d['expires_at'] === null ? 'muted' : '') ?>">
             <?= $d['expires_at'] !== null ? e(to_str($d['expires_at'])) : '—' ?>
             <?= $expired ? '<span class="badge" style="background:var(--danger);color:#fff">Expired</span>' : '' ?>

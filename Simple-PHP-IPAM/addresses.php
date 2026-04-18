@@ -25,6 +25,19 @@ $addrSortCols = ['ip' => 'ip_bin', 'hostname' => 'hostname', 'owner' => 'owner',
                  'status' => 'status', 'updated' => 'updated_at'];
 $addrSort = parse_sort($addrSortCols, 'ip');
 
+$filterType = to_str($_GET['filter'] ?? '');
+$filterDays = max(1, min(365, to_int($_GET['days'] ?? 30)));
+$filterWhere = '';
+$filterParams = [];
+if ($filterType === 'expired') {
+    $filterWhere = " AND (a.expires_at IS NOT NULL AND a.expires_at < :flt_today)";
+    $filterParams[':flt_today'] = date('Y-m-d');
+} elseif ($filterType === 'expiring') {
+    $filterWhere = " AND (a.expires_at IS NOT NULL AND a.expires_at >= :flt_from AND a.expires_at < :flt_to)";
+    $filterParams[':flt_from'] = date('Y-m-d');
+    $filterParams[':flt_to']   = date('Y-m-d', (int)strtotime("+{$filterDays} days"));
+}
+
 $selectedSubnet = null;
 if ($selectedSubnetId > 0) {
     $st = $db->prepare("SELECT id, cidr, network, prefix, ip_version, description, notes FROM subnets WHERE id = :id");
@@ -334,11 +347,13 @@ $total = 0;
 $p = null;
 
 if ($selectedSubnetId > 0) {
-    $st = $db->prepare("SELECT COUNT(*) AS c FROM addresses WHERE subnet_id = :sid");
-    $st->execute([':sid' => $selectedSubnetId]);
+    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM addresses a WHERE a.subnet_id = :sid{$filterWhere}");
+    $cntSt->bindValue(':sid', $selectedSubnetId, PDO::PARAM_INT);
+    foreach ($filterParams as $k => $v) $cntSt->bindValue($k, $v);
+    $cntSt->execute();
     /** @var array<string, mixed>|false $cntRow */
 
-    $cntRow = $st->fetch();
+    $cntRow = $cntSt->fetch();
 
     $total = is_array($cntRow) ? to_int($cntRow['c']) : 0;
 
@@ -349,10 +364,11 @@ if ($selectedSubnetId > 0) {
                                a.last_seen_at, a.is_stale
                         FROM addresses a
                         LEFT JOIN contacts c ON c.id = a.owner_contact_id
-                        WHERE a.subnet_id = :sid
+                        WHERE a.subnet_id = :sid{$filterWhere}
                         ORDER BY {$addrSort['sql']}
                         LIMIT :lim OFFSET :off");
     $st->bindValue(':sid', $selectedSubnetId, PDO::PARAM_INT);
+    foreach ($filterParams as $k => $v) $st->bindValue($k, $v);
     $st->bindValue(':lim', $p['limit'], PDO::PARAM_INT);
     $st->bindValue(':off', $p['offset'], PDO::PARAM_INT);
     $st->execute();
@@ -564,7 +580,10 @@ ipam_skeleton_flush();
     <table data-col-table="addresses">
       <thead>
         <tr>
-          <?php $addrQs = '?subnet_id=' . $selectedSubnetId . '&page_size=' . $pageSize;
+          <?php $addrQsParams = ['subnet_id' => $selectedSubnetId, 'page_size' => $pageSize];
+                if ($filterType !== '') { $addrQsParams['filter'] = $filterType; }
+                if ($filterType === 'expiring') { $addrQsParams['days'] = $filterDays; }
+                $addrQs = '?' . http_build_query($addrQsParams);
                 echo sort_th('ip',       'IP',       $addrSort['col'], $addrSort['dir'], $addrQs, 'ip');
                 echo sort_th('hostname', 'Hostname', $addrSort['col'], $addrSort['dir'], $addrQs, 'hostname');
                 echo sort_th('owner',    'Owner',    $addrSort['col'], $addrSort['dir'], $addrQs, 'owner');
@@ -619,8 +638,8 @@ ipam_skeleton_flush();
           <td class="muted ip-cell"><?= e(to_str($a['mac'])) ?></td>
           <td class="muted"><?= e(to_str($a['expires_at'] ?? '')) ?></td>
           <td<?= $isWrite ? ' data-editable="note" data-addr-id="' . $aid . '"' : '' ?>><?= e(to_str($a['note'])) ?></td>
-          <td class="muted"><?= e(display_datetime(to_str($a['updated_at']))) ?></td>
-          <td data-col="last-seen" class="muted"><?= isset($a['last_seen_at']) && to_str($a['last_seen_at']) !== '' ? e(display_datetime(to_str($a['last_seen_at']))) : '—' ?></td>
+          <td class="muted"><?= e(ipam_format_datetime(to_str($a['updated_at']))) ?></td>
+          <td data-col="last-seen" class="muted"><?= isset($a['last_seen_at']) && to_str($a['last_seen_at']) !== '' ? e(ipam_format_datetime(to_str($a['last_seen_at']))) : '—' ?></td>
           <td>
             <div class="actions-inline">
               <a href="address_history.php?address_id=<?= to_int($a['id']) ?>">History</a>
@@ -681,6 +700,8 @@ ipam_skeleton_flush();
     <?php
       $qsBase = ['subnet_id' => $selectedSubnetId, 'page_size' => $pageSize,
                  'sort' => $addrSort['col'], 'dir' => $addrSort['dir']];
+      if ($filterType !== '') $qsBase['filter'] = $filterType;
+      if ($filterType === 'expiring') $qsBase['days'] = $filterDays;
       $base = 'addresses.php?' . http_build_query($qsBase);
     ?>
     <p class="mt-12">

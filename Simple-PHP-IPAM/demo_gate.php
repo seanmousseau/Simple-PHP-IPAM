@@ -53,8 +53,9 @@ $widgetHtml = login_protection_widget_html($gateConfig);
 $gateCsp    = login_protection_extra_csp($gateConfig);
 
 $extraScriptSrc = $gateCsp['script_src'] !== '' ? ' ' . $gateCsp['script_src'] : '';
+$extraStyleSrc  = $gateCsp['style_src']  !== '' ? ' ' . $gateCsp['style_src'] : '';
 $extraFrameSrc  = $gateCsp['frame_src']  !== '' ? " frame-src 'self' " . $gateCsp['frame_src'] . ';' : '';
-header("Content-Security-Policy: default-src 'self'; script-src 'self'{$extraScriptSrc}; style-src 'self'; img-src 'self' data:;{$extraFrameSrc} frame-ancestors 'none'");
+header("Content-Security-Policy: default-src 'self'; script-src 'self'{$extraScriptSrc}; style-src 'self'{$extraStyleSrc}; img-src 'self' data:;{$extraFrameSrc} frame-ancestors 'none'");
 header('X-Frame-Options: DENY');
 header('X-Content-Type-Options: nosniff');
 header('Referrer-Policy: strict-origin-when-cross-origin');
@@ -71,9 +72,9 @@ $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM'
   <link rel="icon" type="image/webp" sizes="32x32" href="assets/favicon-32.webp">
   <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
   <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
-  <link rel="stylesheet" href="assets/vendor/open-props.min.css?v=3.0.0">
-  <link rel="stylesheet" href="assets/app.css?v=3.0.0">
-  <script defer src="assets/app.js?v=3.0.0"></script>
+  <link rel="stylesheet" href="assets/vendor/open-props.min.css?v=3.1.0">
+  <link rel="stylesheet" href="assets/app.css?v=3.1.0">
+  <script defer src="assets/app.js?v=3.1.0"></script>
 </head>
 <body>
 <div class="gate-wrap">

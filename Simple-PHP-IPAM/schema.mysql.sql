@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS users (
   last_login_at       DATETIME NULL,
   password_changed_at DATETIME NULL,
   theme               VARCHAR(10)  NOT NULL DEFAULT 'auto',
+  timezone            TEXT         DEFAULT NULL,
   created_at          DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   updated_at          DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   UNIQUE KEY idx_users_oidc_sub (oidc_sub)
@@ -150,7 +151,8 @@ CREATE TABLE IF NOT EXISTS subnets (
   site_id     BIGINT UNSIGNED NULL,
   vlan_id     INT          NULL,
   vlan_fk     BIGINT UNSIGNED NULL,
-  vrf_id      BIGINT UNSIGNED NULL,
+  vrf_id          BIGINT UNSIGNED NULL,
+  alerts_enabled  TINYINT(1) NOT NULL DEFAULT 1,
   created_at  DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   updated_at  DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   UNIQUE KEY uq_subnets_cidr_vrf (cidr, vrf_id),
@@ -372,6 +374,21 @@ CREATE TABLE IF NOT EXISTS alert_state (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- ---------------------------------------------------------------------------
+-- utilization_snapshots (v3.1.0, sparkline history)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS utilization_snapshots (
+  id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  subnet_id   BIGINT UNSIGNED NOT NULL,
+  snapped_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  used_count  INT NOT NULL,
+  free_count  INT NOT NULL,
+  total_hosts INT NOT NULL,
+  CONSTRAINT fk_util_snap_subnet FOREIGN KEY (subnet_id) REFERENCES subnets(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE INDEX idx_util_snap_subnet_time ON utilization_snapshots(subnet_id, snapped_at);
+
+-- ---------------------------------------------------------------------------
 -- aggregates (v2.4.0, RIR-assigned supernet tracking)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS aggregates (
@@ -521,6 +538,9 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.0.0-config-stub'),
   ('3.0.0-config-stub-rewrite'),
   ('3.0.0-site-contacts'),
-  ('3.0.0-subnet-contacts');
+  ('3.0.0-subnet-contacts'),
+  ('3.1.0-user-timezone'),
+  ('3.1.0-subnet-alerts-enabled'),
+  ('3.1.0-utilization-snapshots');
 
 SET FOREIGN_KEY_CHECKS = 1;

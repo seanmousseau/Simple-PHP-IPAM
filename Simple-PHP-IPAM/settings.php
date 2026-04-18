@@ -443,6 +443,12 @@ page_header('Settings');
         <button type="submit" class="button-primary">Save <?= e($groupLabel) ?></button>
       </div>
     </form>
+    <?php if ($groupKey === 'smtp'): ?>
+    <div class="row" style="margin-top:0.75rem;gap:0.5rem;align-items:center;">
+      <button type="button" id="smtp-test-btn" class="button-secondary">Send test email</button>
+      <span id="smtp-test-result" class="muted"></span>
+    </div>
+    <?php endif; ?>
   </div>
 <?php endforeach; ?>
 

@@ -155,6 +155,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $vrfId = to_int($_POST['vrf_id'] ?? 0) ?: null;
+        $alertsEnabled = isset($_POST['alerts_enabled']) ? 1 : 0;
 
         $p = parse_cidr($cidr);
         if (!$p) {
@@ -176,6 +177,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pendingData = [
                     'id' => $id, 'cidr' => $cidr, 'description' => $desc, 'notes' => $notes,
                     'site_id' => $siteId ?? 0, 'vlan_fk' => $vlanFk ?? 0, 'vrf_id' => $vrfId ?? 0,
+                    'alerts_enabled' => $alertsEnabled,
                     'contacts' => json_encode($pendingContacts),
                 ];
             } else {
@@ -187,7 +189,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     try {
                         // #410/#388: bind network_bin via ipam_bind_binary() (PARAM_LOB).
                         $st = $db->prepare("UPDATE subnets
-                                            SET cidr=:cidr, ip_version=:ver, network=:net, network_bin=:nb, prefix=:pre, description=:d, notes=:notes, site_id=:site, vlan_id=:vlan, vlan_fk=:vfk, vrf_id=:vrf
+                                            SET cidr=:cidr, ip_version=:ver, network=:net, network_bin=:nb, prefix=:pre, description=:d, notes=:notes, site_id=:site, vlan_id=:vlan, vlan_fk=:vfk, vrf_id=:vrf, alerts_enabled=:ae
                                             WHERE id=:id");
                         $st->bindValue(':cidr',  $normalized);
                         $st->bindValue(':ver',   $p['version'], PDO::PARAM_INT);
@@ -200,12 +202,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $st->bindValue(':vlan',  $vlanId, $vlanId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                         $st->bindValue(':vfk',   $vlanFk, $vlanFk === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                         $st->bindValue(':vrf',   $vrfId,  $vrfId  === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                        $st->bindValue(':ae',    $alertsEnabled, PDO::PARAM_INT);
                         $st->bindValue(':id',    $id,    PDO::PARAM_INT);
                         $st->execute();
+                        // Clear alert_state rows when alerts are disabled (#457)
+                        if ($alertsEnabled === 0) {
+                            $db->prepare("DELETE FROM alert_state WHERE subnet_id = :sid")->execute([':sid' => $id]);
+                        }
                         if (!empty($_POST['contact_id_present'])) {
                             save_contacts_for_entity($db, 'subnet', $id, parse_contact_assignments($_POST));
                         }
-                        audit($db, 'subnet.update', 'subnet', $id, $normalized);
+                        $auditDetails = $normalized . ($alertsEnabled ? '' : ' alerts_disabled');
+                        audit($db, 'subnet.update', 'subnet', $id, $auditDetails);
                         $msg = 'Subnet updated.';
                         if ($inheritedSiteId !== null) {
                             $inheritedName = $siteMap[$inheritedSiteId] ?? "site #$inheritedSiteId";
@@ -284,7 +292,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $st = $db->prepare("
-    SELECT s.id, s.cidr, s.ip_version, s.network, s.network_bin, s.prefix, s.description, s.notes, s.updated_at, s.site_id, s.vlan_id, s.vlan_fk, s.vrf_id,
+    SELECT s.id, s.cidr, s.ip_version, s.network, s.network_bin, s.prefix, s.description, s.notes, s.updated_at, s.site_id, s.vlan_id, s.vlan_fk, s.vrf_id, s.alerts_enabled,
            v.name AS vlan_name, vr.name AS vrf_name,
            ss.method AS scan_method, ss.tcp_port AS scan_tcp_port,
            ss.interval_minutes AS scan_interval, ss.is_active AS scan_active,
@@ -380,6 +388,16 @@ function render_subnet_node_local(PDO $db, array $tree, array $siteMap, array $s
     if ($vlanLabel !== '') echo " <span class='badge'>" . e($vlanLabel) . "</span>";
     $vrfName = to_str($row['vrf_name'] ?? '');
     if ($vrfName !== '') echo " <span class='badge'>VRF: " . e($vrfName) . "</span>";
+    if (!to_int($row['alerts_enabled'] ?? 1)) {
+        echo " <span class='badge badge-muted' title='Utilization alerts disabled'>"
+           . "<svg viewBox='0 0 24 24' width='12' height='12' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true' style='vertical-align:-1px'>"
+           . "<path d='M13.73 21a2 2 0 0 1-3.46 0'/>"
+           . "<path d='M18.63 13A17.89 17.89 0 0 1 18 8'/>"
+           . "<path d='M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14'/>"
+           . "<path d='M18 8a6 6 0 0 0-9.33-5'/>"
+           . "<line x1='1' y1='1' x2='23' y2='23'/>"
+           . "</svg> Alerts off</span>";
+    }
     if (($row['description'] ?? '') !== '') echo " - " . e(to_str($row['description']));
     $hasChildren = !empty($tree['children'][$id]);
     echo "<br><span data-subnet-counts='" . $id . "' data-has-children='" . ($hasChildren ? '1' : '0') . "' class='subnet-stats-placeholder'></span>";
@@ -390,24 +408,6 @@ function render_subnet_node_local(PDO $db, array $tree, array $siteMap, array $s
 
     echo "<div class='mt-10'>";
     echo "<div class='page-actions mb-10'>";
-    echo "<a class='action-pill' href='addresses.php?subnet_id=" . to_int($row['id']) . "'>🧾 View Addresses</a>";
-    if (to_int($row['ip_version']) === 4) {
-        echo "<a class='action-pill' href='unassigned.php?subnet_id=" . to_int($row['id']) . "'>✨ Unassigned</a>";
-    }
-    echo "<a class='action-pill' href='scan_history.php?subnet_id=" . to_int($row['id']) . "'>📡 Scan History</a>";
-    if (current_user()['role'] !== 'readonly') {
-        echo "<a class='action-pill' href='bulk_update.php?subnet_id=" . to_int($row['id']) . "'>✏ Bulk Update</a>";
-        if (to_int($row['ip_version']) === 4) {
-            echo "<a class='action-pill' href='dhcp_pool.php?subnet_id=" . to_int($row['id']) . "'>🔒 DHCP Pool</a>";
-        }
-    }
-    echo "</div>";
-
-    $subnetContacts = render_contact_badges($db, 'subnet', to_int($row['id']));
-    if ($subnetContacts) echo "<div class='mt-4'>" . $subnetContacts . "</div>";
-    echo "<div class='muted'>Updated " . e(display_datetime(to_str($row['updated_at']))) . "</div>";
-
-    echo "<div class='page-actions mt-8'>";
     if (current_user()['role'] !== 'readonly') {
         echo "<button type='button' class='action-pill subnet-edit-btn'"
            . " data-sid='" . to_int($row['id']) . "'"
@@ -419,16 +419,30 @@ function render_subnet_node_local(PDO $db, array $tree, array $siteMap, array $s
            . " data-site-id='" . $siteId . "'"
            . " data-depth='" . $depth . "'"
            . " data-contacts='" . e(json_encode(get_contacts_for_entity($db, 'subnet', to_int($row['id'])), JSON_UNESCAPED_SLASHES) ?: '[]') . "'"
+           . " data-alerts-enabled='" . (to_int($row['alerts_enabled'] ?? 1) ? '1' : '0') . "'"
            . ">Edit</button>";
     }
-
+    echo "<a class='action-pill' href='addresses.php?subnet_id=" . to_int($row['id']) . "'>View Addresses</a>";
+    if (to_int($row['ip_version']) === 4) {
+        echo "<a class='action-pill' href='unassigned.php?subnet_id=" . to_int($row['id']) . "'>Unassigned</a>";
+    }
     $hasSched   = $row['scan_method'] !== null;
     $scanActive = (bool)($row['scan_active'] ?? false);
-    $schedLabel = $hasSched
+    $schedBadge = $hasSched
         ? ($scanActive ? " <span class='badge badge--success'>Active</span>" : " <span class='badge'>Inactive</span>")
         : '';
-    echo "<a href='scan_history.php?subnet_id=" . to_int($row['id']) . "' class='action-pill'>Scan History &amp; Schedule" . $schedLabel . "</a>";
+    echo "<a href='scan_history.php?subnet_id=" . to_int($row['id']) . "' class='action-pill'>Scan History &amp; Schedule" . $schedBadge . "</a>";
+    if (current_user()['role'] !== 'readonly') {
+        echo "<a class='action-pill' href='bulk_update.php?subnet_id=" . to_int($row['id']) . "'>Bulk Update</a>";
+        if (to_int($row['ip_version']) === 4) {
+            echo "<a class='action-pill' href='dhcp_pool.php?subnet_id=" . to_int($row['id']) . "'>DHCP Pool</a>";
+        }
+    }
     echo "</div>";
+
+    $subnetContacts = render_contact_badges($db, 'subnet', to_int($row['id']));
+    if ($subnetContacts) echo "<div class='mt-4'>" . $subnetContacts . "</div>";
+    echo "<div class='muted'>Updated " . e(ipam_format_datetime(to_str($row['updated_at']))) . "</div>";
 
     if (current_user()['role'] === 'readonly') {
         echo "<p class='muted'>Read-only account.</p>";
@@ -487,6 +501,7 @@ ipam_skeleton_flush();
       <input type="hidden" name="site_id" value="<?= to_int($pendingData['site_id']) ?>">
       <input type="hidden" name="vlan_fk" value="<?= to_int($pendingData['vlan_fk'] ?? 0) ?>">
       <input type="hidden" name="vrf_id" value="<?= to_int($pendingData['vrf_id'] ?? 0) ?>">
+      <input type="hidden" name="alerts_enabled" value="<?= to_int($pendingData['alerts_enabled'] ?? 1) ?>">
       <?php if (isset($pendingData['auto_reserve'])): ?>
         <input type="hidden" name="auto_reserve" value="<?= to_int($pendingData['auto_reserve']) ?>">
         <input type="hidden" name="gateway" value="<?= e(to_str($pendingData['gateway'] ?? '')) ?>">
@@ -660,6 +675,10 @@ ipam_skeleton_flush();
       <button type="button" class="button-secondary btn-sm contact-picker-add">+ Add contact</button>
     </div>
     <?php endif; ?>
+    <label class="form-check" style="margin-top:0.5rem;">
+      <input type="checkbox" name="alerts_enabled" value="1" id="subnet-edit-alerts" checked>
+      Send utilization alerts for this subnet
+    </label>
     <button type="submit">Save</button>
   </form>
   <form method="post" action="subnets.php" data-confirm="Delete subnet and all its addresses?" class="mt-8" id="subnet-delete-form">

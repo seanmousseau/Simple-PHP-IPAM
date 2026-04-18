@@ -50,6 +50,12 @@ network="${IPAM_TEST_NETWORK:-ipam-pw-net}"
 mysql_name="${IPAM_TEST_MYSQL_NAME:-ipam-pw-mysql}"
 mariadb_name="${IPAM_TEST_MARIADB_NAME:-ipam-pw-mariadb}"
 pgsql_name="${IPAM_TEST_PGSQL_NAME:-ipam-pw-pgsql}"
+# MailHog opt-in (#458): set IPAM_TEST_MAILHOG=1 to start a mailhog container.
+# The MailHog SMTP port (1025) is only reachable from within the docker network.
+# The HTTP API port is exposed on the host at IPAM_TEST_MAILHOG_WEB_PORT (default 8026).
+mailhog_enabled="${IPAM_TEST_MAILHOG:-0}"
+mailhog_name="${IPAM_TEST_MAILHOG_NAME:-ipam-pw-mailhog}"
+mailhog_web_port="${IPAM_TEST_MAILHOG_WEB_PORT:-8026}"
 
 if ! command -v docker >/dev/null 2>&1; then
     echo "bootstrap-app.sh: docker is required but not found in PATH" >&2
@@ -181,14 +187,37 @@ if [[ "$driver" == "pgsql" ]]; then
     done
 fi
 
+# 3b. MailHog SMTP trap (opt-in via IPAM_TEST_MAILHOG=1).
+# SQLite driver does not create a network in step 3, so create it here.
+if [[ "$mailhog_enabled" == "1" ]]; then
+    if [[ "$driver" == "sqlite" ]]; then
+        echo "bootstrap-app: creating docker network $network (for MailHog)"
+        docker network create "$network" >/dev/null 2>&1 || true
+    fi
+    echo "bootstrap-app: starting MailHog SMTP trap $mailhog_name"
+    docker rm -f "$mailhog_name" >/dev/null 2>&1 || true
+    docker run -d --rm --name "$mailhog_name" \
+        --network "$network" \
+        --network-alias mailhog \
+        -p "127.0.0.1:${mailhog_web_port}:8025" \
+        mailhog/mailhog:latest >/dev/null
+    echo "bootstrap-app: MailHog web UI available at http://127.0.0.1:${mailhog_web_port}"
+fi
+
 # 4. Run migrate + demo seed inside a throwaway container so there is no host
 #    PHP version dependency. Uses the same image the long-running container uses.
 #    For mysql, the throwaway container joins the docker network so it can
 #    resolve the MySQL hostname.
 echo "bootstrap-app: running migrate.php and demo_seed.php"
 seed_docker_args=(-v "$app_dir:/var/www/html" -w /var/www/html)
-if [[ "$driver" != "sqlite" ]]; then
+if [[ "$driver" != "sqlite" ]] || [[ "$mailhog_enabled" == "1" ]]; then
     seed_docker_args+=(--network "$network")
+fi
+# Mount vendor/ for optional runtime dependencies (e.g. PHPMailer for SMTP).
+# Only added when vendor/ exists on the host — absent in the default playwright
+# matrix which skips composer install. The alerts-smtp CI job installs it first.
+if [[ -d "$repo_root/vendor" ]]; then
+    seed_docker_args+=(-v "$repo_root/vendor:/var/www/vendor:ro")
 fi
 docker run --rm "${seed_docker_args[@]}" "$image" \
     bash -c 'php migrate.php && php demo_seed.php && chmod -R a+rwX data' \
@@ -221,8 +250,11 @@ echo "bootstrap-app: starting container $container on https://127.0.0.1:$port"
 run_docker_args=(-d --rm --name "$container"
     -v "$app_dir:/var/www/html"
     -p "127.0.0.1:$port:443")
-if [[ "$driver" != "sqlite" ]]; then
+if [[ "$driver" != "sqlite" ]] || [[ "$mailhog_enabled" == "1" ]]; then
     run_docker_args+=(--network "$network")
+fi
+if [[ -d "$repo_root/vendor" ]]; then
+    run_docker_args+=(-v "$repo_root/vendor:/var/www/vendor:ro")
 fi
 docker run "${run_docker_args[@]}" "$image" >/dev/null
 

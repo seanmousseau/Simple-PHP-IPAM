@@ -128,7 +128,7 @@ page_header('Scan History');
           <span class="badge">Inactive</span>
         <?php endif ?>
         <?php if ($schedLast !== ''): ?>
-          <span class="muted" style="font-size:.85rem">Last run: <?= e(display_datetime($schedLast)) ?></span>
+          <span class="muted" style="font-size:.85rem">Last run: <?= e(ipam_format_datetime($schedLast)) ?></span>
         <?php endif ?>
       <?php else: ?>
         <span class="muted">No schedule configured.</span>
@@ -246,7 +246,7 @@ page_header('Scan History');
             <?php endif ?>
           </td>
           <td class="<?= to_str($a['last_seen_at']) === '' || $a['last_seen_at'] === null ? 'muted' : '' ?>">
-            <?= $a['last_seen_at'] !== null ? e(display_datetime(to_str($a['last_seen_at']))) : '—' ?>
+            <?= $a['last_seen_at'] !== null ? e(ipam_format_datetime(to_str($a['last_seen_at']))) : '—' ?>
           </td>
           <td class="<?= $misses > 0 ? 'danger' : 'muted' ?>"><?= $misses ?></td>
           <td class="muted"><?= to_int($a['total_scans']) ?></td>

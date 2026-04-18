@@ -1099,6 +1099,9 @@
           if (siteHidden) siteHidden.disabled = true;
         }
 
+        var alertsCb = document.getElementById("subnet-edit-alerts");
+        if (alertsCb) alertsCb.checked = (d.alertsEnabled !== "0");
+
         var contactPicker = document.getElementById("subnet-edit-contacts");
         if (contactPicker) {
           var existingContacts = [];
@@ -1421,6 +1424,13 @@
 
       function renderCard(c) {
         clearCard();
+        var closeBtn = document.createElement("button");
+        closeBtn.type = "button";
+        closeBtn.className = "cc-close";
+        closeBtn.setAttribute("aria-label", "Close");
+        closeBtn.textContent = "\u00d7";
+        closeBtn.addEventListener("click", function(e) { e.stopPropagation(); hideCard(); });
+        card.appendChild(closeBtn);
         var name = document.createElement("div");
         name.className = "cc-name";
         name.textContent = c.name;
@@ -1538,4 +1548,28 @@
     });
 
   });
+
+  // SMTP test button on settings.php
+  var smtpTestBtn = document.getElementById("smtp-test-btn");
+  if (smtpTestBtn) {
+    smtpTestBtn.addEventListener("click", function() {
+      var out = document.getElementById("smtp-test-result");
+      var csrfInput = document.querySelector("input[name=csrf]");
+      if (!out || !csrfInput) return;
+      smtpTestBtn.disabled = true;
+      out.textContent = "Sending\u2026";
+      out.className = "muted";
+      var fd = new FormData();
+      fd.append("csrf", csrfInput.value);
+      fetch("smtp_test.php", {method: "POST", body: fd})
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+          out.textContent = d.message || (d.ok ? "Sent." : "Failed.");
+          out.className = d.ok ? "success" : "danger";
+        })
+        .catch(function(e) { out.textContent = "Request failed: " + e; out.className = "danger"; })
+        .finally(function() { smtpTestBtn.disabled = false; });
+    });
+  }
+
 })();

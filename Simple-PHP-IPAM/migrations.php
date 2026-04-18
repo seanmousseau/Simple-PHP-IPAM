@@ -1027,6 +1027,106 @@ function ipam_migrations(): array
             )" . ($driver === 'mysql' ? ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4' : ''));
         },
 
+        '3.1.0-user-timezone' => function(PDO $db): void {
+            $driver = ipam_dialect()->driver_name();
+            $hasCol = false;
+            if ($driver === 'sqlite') {
+                $tblSt = $db->query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'");
+                $tbl = $tblSt ? $tblSt->fetch() : false;
+                if (!$tbl) return;
+                foreach (($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll() as $col) {
+                    if (to_str($col['name']) === 'timezone') { $hasCol = true; break; }
+                }
+            } elseif ($driver === 'mysql') {
+                $st = $db->prepare("SHOW COLUMNS FROM users LIKE 'timezone'");
+                $st->execute();
+                $hasCol = $st->fetch() !== false;
+            } else {
+                $st = $db->prepare(
+                    "SELECT 1 FROM information_schema.columns
+                     WHERE table_name='users' AND column_name='timezone'"
+                );
+                $st->execute();
+                $hasCol = $st->fetch() !== false;
+            }
+            if (!$hasCol) {
+                $db->exec("ALTER TABLE users ADD COLUMN timezone TEXT");
+            }
+        },
+
+        '3.1.0-subnet-alerts-enabled' => function(PDO $db): void {
+            $driver = ipam_dialect()->driver_name();
+            $hasCol = false;
+            if ($driver === 'sqlite') {
+                $res = $db->query("PRAGMA table_info(subnets)");
+                if ($res !== false) {
+                    /** @var array<string, mixed> $col */
+                    foreach ($res as $col) {
+                        if (($col['name'] ?? '') === 'alerts_enabled') { $hasCol = true; break; }
+                    }
+                }
+            } elseif ($driver === 'mysql') {
+                $st = $db->prepare("SHOW COLUMNS FROM subnets LIKE 'alerts_enabled'");
+                $st->execute();
+                $hasCol = (bool)$st->fetch();
+            } else {
+                $st = $db->prepare(
+                    "SELECT column_name FROM information_schema.columns
+                     WHERE table_name = 'subnets' AND column_name = 'alerts_enabled'"
+                );
+                $st->execute();
+                $hasCol = (bool)$st->fetch();
+            }
+            if (!$hasCol) {
+                $colType = ($driver === 'mysql') ? 'TINYINT(1) NOT NULL DEFAULT 1' : 'INTEGER NOT NULL DEFAULT 1';
+                $db->exec("ALTER TABLE subnets ADD COLUMN alerts_enabled {$colType}");
+            }
+        },
+
+        '3.1.0-utilization-snapshots' => function(PDO $db): void {
+            $driver = ipam_dialect()->driver_name();
+            if ($driver === 'sqlite') {
+                $tbl = $db->query("SELECT name FROM sqlite_master WHERE type='table' AND name='utilization_snapshots'");
+                if ($tbl !== false && $tbl->fetch()) return;
+                $db->exec("CREATE TABLE IF NOT EXISTS utilization_snapshots (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    subnet_id   INTEGER NOT NULL REFERENCES subnets(id) ON DELETE CASCADE,
+                    snapped_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+                    used_count  INTEGER NOT NULL,
+                    free_count  INTEGER NOT NULL,
+                    total_hosts INTEGER NOT NULL
+                )");
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_util_snap_subnet_time ON utilization_snapshots(subnet_id, snapped_at)");
+            } elseif ($driver === 'mysql') {
+                $tbl = $db->query("SHOW TABLES LIKE 'utilization_snapshots'");
+                if ($tbl !== false && $tbl->fetch()) return;
+                $db->exec("CREATE TABLE IF NOT EXISTS utilization_snapshots (
+                    id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                    subnet_id   BIGINT UNSIGNED NOT NULL,
+                    snapped_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    used_count  INT NOT NULL,
+                    free_count  INT NOT NULL,
+                    total_hosts INT NOT NULL,
+                    CONSTRAINT fk_util_snap_subnet FOREIGN KEY (subnet_id) REFERENCES subnets(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+                $db->exec("CREATE INDEX idx_util_snap_subnet_time ON utilization_snapshots(subnet_id, snapped_at)");
+            } else {
+                // pgsql
+                $tbl = $db->prepare("SELECT 1 FROM information_schema.tables WHERE table_name='utilization_snapshots'");
+                $tbl->execute();
+                if ($tbl->fetch()) return;
+                $db->exec("CREATE TABLE IF NOT EXISTS utilization_snapshots (
+                    id          BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                    subnet_id   BIGINT NOT NULL REFERENCES subnets(id) ON DELETE CASCADE,
+                    snapped_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    used_count  INTEGER NOT NULL,
+                    free_count  INTEGER NOT NULL,
+                    total_hosts INTEGER NOT NULL
+                )");
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_util_snap_subnet_time ON utilization_snapshots(subnet_id, snapped_at)");
+            }
+        },
+
         '3.0.0-subnet-contacts' => function(PDO $db): void {
             $driver = ipam_dialect()->driver_name();
             if ($driver === 'sqlite') {

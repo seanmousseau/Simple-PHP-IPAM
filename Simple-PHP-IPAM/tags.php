@@ -158,7 +158,7 @@ page_header('Tags');
           </td>
           <td><?= to_int($tag['subnet_count']) ?></td>
           <td><?= to_int($tag['address_count']) ?></td>
-          <td class="muted"><?= e(display_datetime(to_str($tag['created_at']))) ?></td>
+          <td class="muted"><?= e(ipam_format_datetime(to_str($tag['created_at']))) ?></td>
           <td>
             <details>
               <summary>Edit/Delete</summary>

@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS users (
   last_login_at        TEXT,
   password_changed_at  TEXT,                        -- updated on every local password change; NULL for SSO-only accounts
   theme         TEXT NOT NULL DEFAULT 'auto',       -- persisted UI theme: auto|light|dark
+  timezone      TEXT,                                -- per-user display timezone; NULL = use app default
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -72,7 +73,8 @@ CREATE TABLE IF NOT EXISTS subnets (
   site_id     INTEGER REFERENCES sites(id) ON DELETE SET NULL, -- v2.11.0 #409: FK backfilled; schema.mysql.sql and schema.pgsql.sql have enforced this since v2.10.0
   vlan_id     INTEGER,                              -- 802.1Q VLAN ID (1–4094), legacy integer field
   vlan_fk     INTEGER REFERENCES vlans(id) ON DELETE SET NULL,  -- v2.0.0: FK to vlans table
-  vrf_id      INTEGER REFERENCES vrfs(id) ON DELETE RESTRICT,   -- v2.1.0: FK to vrfs table; RESTRICT prevents orphaned subnets moving to global VRF
+  vrf_id          INTEGER REFERENCES vrfs(id) ON DELETE RESTRICT,   -- v2.1.0: FK to vrfs table; RESTRICT prevents orphaned subnets moving to global VRF
+  alerts_enabled  INTEGER NOT NULL DEFAULT 1,                       -- v3.1.0 #457: 0 disables utilization alerts for this subnet
   created_at  TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(cidr, vrf_id)
@@ -284,6 +286,17 @@ CREATE TABLE IF NOT EXISTS alert_state (
   last_alerted_at TEXT NOT NULL,
   PRIMARY KEY (subnet_id, level)
 );
+
+-- v3.1.0: Utilization snapshots for sparkline history
+CREATE TABLE IF NOT EXISTS utilization_snapshots (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  subnet_id   INTEGER NOT NULL REFERENCES subnets(id) ON DELETE CASCADE,
+  snapped_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+  used_count  INTEGER NOT NULL,
+  free_count  INTEGER NOT NULL,
+  total_hosts INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_util_snap_subnet_time ON utilization_snapshots(subnet_id, snapped_at);
 
 -- v2.3.0: Network scanning
 CREATE TABLE IF NOT EXISTS scan_schedules (

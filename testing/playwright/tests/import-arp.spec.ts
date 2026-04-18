@@ -82,7 +82,8 @@ test('import_arp.php is in admin nav dropdown', async () => {
   await page.goto('subnets.php');
   // Open admin dropdown (first .nav-dropdown-toggle is the ⚙ Admin button)
   await page.locator('button.nav-dropdown-toggle').first().click();
-  await expect(page.locator('a[href="import_arp.php"]')).toBeVisible();
+  // Scope to the desktop dropdown menu to avoid matching the mobile drawer link
+  await expect(page.locator('.nav-dropdown-menu a[href="import_arp.php"]')).toBeVisible();
 });
 
 test('ARP import preview shows parsed entries', async () => {

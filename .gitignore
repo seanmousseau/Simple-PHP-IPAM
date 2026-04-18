@@ -29,6 +29,8 @@ test-results/
 # Session/scratch files
 .remember/
 stubs/
+# Website theme — tracked in its own repo (simple-php-ipam-website)
+website/
 *.png
 # Allow Playwright visual regression baselines
 !testing/playwright/tests/**/*.png

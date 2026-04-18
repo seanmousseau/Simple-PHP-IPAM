@@ -89,6 +89,7 @@ Dev tooling at the repo root (not deployed): `composer.json`, `composer.lock`, `
 | `export_address_history.php` | yes | any | CSV export: per-address change history |
 | `export_subnet_utilization.php` | yes | any | CSV export: subnet utilization summary across all subnets |
 | export_audit.php, export_search.php, export_subnets.php, export_unassigned.php, export_import_report.php | yes | any | Other CSV export endpoints |
+| `smtp_test.php` | yes | admin | AJAX POST (CSRF-required): sends a test email via configured SMTP/mail() to the logged-in admin's email; returns JSON `{ok, message, transport}` |
 | `index.php` | — | — | Redirects to dashboard (if logged in) or login |
 | `status.php` | — | — | Health check JSON endpoint (`{"status":"ok"}`) for load balancers/uptime monitors |
 | `set_theme.php` | yes | any | AJAX POST: persists theme preference to `users.theme` |
@@ -252,9 +253,9 @@ A new dep must meet **all** of the following criteria:
 
 | Package | Version | Purpose | Justified in |
 |---|---|---|---|
-| (none yet — policy introduced in v2.9.0 as infrastructure; first dep lands in v3.1.0) | — | — | — |
+| phpmailer/phpmailer | ^6.9 | Direct SMTP delivery (replaces native `mail()` when smtp.enabled=true). Hand-rolling SMTP+TLS+AUTH is error-prone and a security risk; PHPMailer has >5 years of active maintenance, is used by WordPress/Joomla/Drupal, has zero transitive runtime deps, and is licensed LGPL-2.1-or-later with an explicit bundling exception (PHPMailer FAQ). | #415, v3.1.0 |
 
-First dep expected to land in v3.1.0 (#415, PHPMailer for SMTP). Future candidates to be evaluated on a case-by-case basis as feature work surfaces them.
+Future candidates to be evaluated on a case-by-case basis as feature work surfaces them.
 
 **Explicitly not adopted (deliberate choices):**
 

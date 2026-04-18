@@ -517,15 +517,72 @@ if (!function_exists('to_str')) {
  */
 function display_datetime(string $utcStr, string $format = 'Y-m-d H:i:s'): string
 {
-    if ($utcStr === '') return '';
+    return ipam_format_datetime($utcStr, $format);
+}
+
+/**
+ * Resolve the effective display timezone for a user.
+ *
+ * Fallback chain: per-user users.timezone → branding.timezone setting → PHP default → UTC.
+ * Result is cached per userId per request to avoid redundant DB queries.
+ */
+function ipam_user_timezone(?int $userId = null): string
+{
+    static $userCache = [];
+
+    if ($userId === null) {
+        $uid = isset($_SESSION) ? to_int($_SESSION['uid'] ?? 0) : 0;
+        $userId = $uid > 0 ? $uid : null;
+    }
+
+    // Cache per-user DB lookups only; ipam_setting() has its own cache.
+    if ($userId !== null && isset($userCache[$userId])) {
+        return $userCache[$userId];
+    }
+
+    $tz = '';
+
+    if ($userId !== null) {
+        /** @var \PDO|null $globalDb */
+        $globalDb = $GLOBALS['db'] ?? null;
+        if ($globalDb instanceof \PDO) {
+            try {
+                $st = $globalDb->prepare("SELECT timezone FROM users WHERE id = :id");
+                $st->execute([':id' => $userId]);
+                $row = $st->fetch();
+                if (is_array($row) && isset($row['timezone']) && is_string($row['timezone']) && $row['timezone'] !== '') {
+                    $tz = $row['timezone'];
+                }
+            } catch (\Exception) {}
+        }
+    }
+
+    if ($tz === '') $tz = to_str(ipam_setting('branding.timezone'));
+    if ($tz === '') $tz = date_default_timezone_get() ?: 'UTC';
+
+    try { new \DateTimeZone($tz); } catch (\Exception) { $tz = 'UTC'; }
+
+    if ($userId !== null) $userCache[$userId] = $tz;
+    return $tz;
+}
+
+/**
+ * Format a UTC timestamp string for display in the current user's timezone.
+ *
+ * Default format includes the TZ abbreviation ('Y-m-d H:i T'). Pass $fmt to
+ * override, or $userId to render in a specific user's timezone rather than the
+ * session user's.
+ */
+function ipam_format_datetime(string $utc, ?string $fmt = null, ?int $userId = null): string
+{
+    if ($utc === '') return '';
+    $fmt = $fmt ?? 'Y-m-d H:i T';
     try {
-        $dt = new DateTime($utcStr, new DateTimeZone('UTC'));
-        $tz = to_str(ipam_setting('branding.timezone'));
-        if ($tz === '') $tz = 'UTC';
-        $dt->setTimezone(new DateTimeZone($tz));
-        return $dt->format($format);
+        $dt = new \DateTime($utc, new \DateTimeZone('UTC'));
+        $dt->setTimezone(new \DateTimeZone(ipam_user_timezone($userId)));
+        return $dt->format($fmt);
     } catch (\Exception) {
-        return $utcStr; // return raw value on parse failure
+        return $utc;
     }
 }
 
@@ -1263,6 +1320,16 @@ function ipam_setting_definitions(): array
             'config_key'  => 'address_history_retention_days',
             'min'         => 0,
         ],
+        'housekeeping.snapshot_retention_days' => [
+            'label'       => 'Utilization snapshot retention (days)',
+            'description' => 'Utilization snapshot rows older than this are pruned during housekeeping. 0 = keep forever.',
+            'type'        => 'int',
+            'group'       => 'housekeeping',
+            'default'     => 365,
+            'sensitive'   => false,
+            'config_key'  => 'snapshot_retention_days',
+            'min'         => 0,
+        ],
 
         // --- Backup ---
         'backup.enabled' => [
@@ -1458,6 +1525,107 @@ function ipam_setting_definitions(): array
             'sensitive'   => false,
             'config_key'  => 'status_hide_version',
         ],
+
+        // --- SMTP / Email Delivery ---
+        'smtp.enabled' => [
+            'label'       => 'SMTP enabled',
+            'description' => 'Send mail via direct SMTP instead of the server\'s native mail() function.',
+            'type'        => 'bool',
+            'group'       => 'smtp',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
+        'smtp.host' => [
+            'label'       => 'SMTP host',
+            'description' => 'Hostname or IP of the SMTP server (e.g. smtp.gmail.com).',
+            'type'        => 'string',
+            'group'       => 'smtp',
+            'default'     => '',
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
+        'smtp.port' => [
+            'label'       => 'SMTP port',
+            'description' => 'TCP port — 587 (STARTTLS), 465 (SSL), or 25 (unencrypted).',
+            'type'        => 'int',
+            'group'       => 'smtp',
+            'default'     => 587,
+            'sensitive'   => false,
+            'config_key'  => null,
+            'min'         => 1,
+            'max'         => 65535,
+        ],
+        'smtp.encryption' => [
+            'label'       => 'Encryption',
+            'description' => 'Transport-layer encryption type.',
+            'type'        => 'string',
+            'group'       => 'smtp',
+            'default'     => 'starttls',
+            'sensitive'   => false,
+            'config_key'  => null,
+            'options'     => [
+                'starttls' => 'STARTTLS (recommended)',
+                'ssl'      => 'SSL/TLS',
+                'none'     => 'None (unencrypted)',
+            ],
+        ],
+        'smtp.auth_user' => [
+            'label'       => 'SMTP username',
+            'description' => 'Login username for SMTP authentication. Leave blank for anonymous relay.',
+            'type'        => 'string',
+            'group'       => 'smtp',
+            'default'     => '',
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
+        'smtp.auth_pass' => [
+            'label'       => 'SMTP password',
+            'description' => 'Login password for SMTP authentication.',
+            'type'        => 'string',
+            'group'       => 'smtp',
+            'default'     => '',
+            'sensitive'   => true,
+            'config_key'  => null,
+        ],
+        'smtp.from_address' => [
+            'label'       => 'From address',
+            'description' => 'Envelope From address for outbound mail (e.g. ipam@example.com).',
+            'type'        => 'string',
+            'group'       => 'smtp',
+            'default'     => '',
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
+        'smtp.from_name' => [
+            'label'       => 'From name',
+            'description' => 'Display name shown in the From header (e.g. IPAM Alerts).',
+            'type'        => 'string',
+            'group'       => 'smtp',
+            'default'     => '',
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
+        'smtp.verify_peer' => [
+            'label'       => 'Verify TLS certificate',
+            'description' => 'Reject connections with invalid or self-signed certificates. Disable only in dev/test environments.',
+            'type'        => 'bool',
+            'group'       => 'smtp',
+            'default'     => true,
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
+        'smtp.timeout_seconds' => [
+            'label'       => 'Connection timeout (seconds)',
+            'description' => 'Maximum seconds to wait for the SMTP server to respond.',
+            'type'        => 'int',
+            'group'       => 'smtp',
+            'default'     => 10,
+            'sensitive'   => false,
+            'config_key'  => null,
+            'min'         => 1,
+            'max'         => 120,
+        ],
     ];
 }
 
@@ -1482,6 +1650,7 @@ function ipam_setting_groups(): array
         'limits'               => ['label' => 'Upload limits',        'description' => 'Maximum file sizes for CSV and SQL imports.'],
         'api'                  => ['label' => 'API',                  'description' => 'Rate limiting and bulk write limits for the REST API.'],
         'display'              => ['label' => 'Display',              'description' => 'Utilization thresholds, auto-reserve defaults, and UI toggles.'],
+        'smtp'                 => ['label' => 'SMTP / Email Delivery', 'description' => 'Direct SMTP delivery for utilization alerts. Falls back to native mail() when disabled.'],
     ];
 }
 
@@ -2519,6 +2688,89 @@ function ipam_resolve_alert_recipients(PDO $db): array
     return $out;
 }
 
+/**
+ * Send an email via SMTP (PHPMailer) or native mail(), based on smtp.enabled setting.
+ *
+ * @return array{success: bool, error: ?string, transport: string}
+ */
+function ipam_send_mail(string $to, string $subject, string $bodyText, string $bodyHtml = ''): array
+{
+    $smtpEnabled = (bool) ipam_setting('smtp.enabled');
+
+    if ($smtpEnabled) {
+        if (!class_exists('PHPMailer\PHPMailer\PHPMailer')) {
+            // Primary: vendor/ bundled inside the web root (release tarball installs).
+            // Fallback: vendor/ at the project root, one level above the web root
+            // (dev/Docker setups where vendor is mounted outside the web root).
+            $autoload = __DIR__ . '/vendor/autoload.php';
+            if (!file_exists($autoload)) {
+                $autoload = dirname(__DIR__) . '/vendor/autoload.php';
+            }
+            if (file_exists($autoload)) require_once $autoload;
+        }
+        if (!class_exists('PHPMailer\PHPMailer\PHPMailer')) {
+            return ['success' => false, 'error' => 'PHPMailer is not available (check vendor/autoload.php)', 'transport' => 'smtp'];
+        }
+
+        try {
+            $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
+            $mail->isSMTP();
+            $mail->Host    = to_str(ipam_setting('smtp.host'));
+            $mail->Port    = to_int(ipam_setting('smtp.port'));
+            $mail->Timeout = to_int(ipam_setting('smtp.timeout_seconds'));
+
+            $enc = to_str(ipam_setting('smtp.encryption'));
+            if ($enc === 'ssl') {
+                $mail->SMTPSecure = \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_SMTPS;
+            } elseif ($enc === 'starttls') {
+                $mail->SMTPSecure = \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS;
+            } else {
+                $mail->SMTPSecure = '';
+                $mail->SMTPAutoTLS = false;
+            }
+
+            $authUser = to_str(ipam_setting('smtp.auth_user'));
+            $authPass = to_str(ipam_setting('smtp.auth_pass'));
+            if ($authUser !== '') {
+                $mail->SMTPAuth = true;
+                $mail->Username = $authUser;
+                $mail->Password = $authPass;
+            }
+
+            if (!(bool) ipam_setting('smtp.verify_peer')) {
+                $mail->SMTPOptions = ['ssl' => ['verify_peer' => false, 'verify_peer_name' => false, 'allow_self_signed' => true]];
+            }
+
+            $fromAddr = to_str(ipam_setting('smtp.from_address'));
+            $fromName = to_str(ipam_setting('smtp.from_name'));
+            if ($fromAddr !== '') {
+                $mail->setFrom($fromAddr, $fromName ?: $fromAddr);
+            }
+
+            $mail->addAddress($to);
+            $mail->Subject = $subject;
+            if ($bodyHtml !== '') {
+                $mail->isHTML(true);
+                $mail->Body    = $bodyHtml;
+                $mail->AltBody = $bodyText;
+            } else {
+                $mail->Body = $bodyText;
+            }
+
+            $mail->send();
+            return ['success' => true, 'error' => null, 'transport' => 'smtp'];
+        } catch (\Throwable $e) {
+            return ['success' => false, 'error' => $e->getMessage(), 'transport' => 'smtp'];
+        }
+    }
+
+    // Native mail() fallback
+    $safeSubject = preg_replace('/[\r\n]/', '', $subject) ?? '';
+    $safeTo      = preg_replace('/[\r\n]/', '', $to) ?? '';
+    $ok = @mail($safeTo, $safeSubject, $bodyText); // nosemgrep
+    return ['success' => (bool) $ok, 'error' => null, 'transport' => 'mail'];
+}
+
 /** @param IpamConfig $config */
 function check_utilization_alerts(PDO $db, array $config): void
 {
@@ -2533,8 +2785,8 @@ function check_utilization_alerts(PDO $db, array $config): void
     // Use the shared utilization function that excludes infrastructure IPs (#566)
     $utilData = ipv4_unassigned_summary($db);
 
-    // Build rows from utilData for the alert loop
-    $subnetRows = ($db->query("SELECT id, cidr, prefix FROM subnets WHERE ip_version = 4")
+    // Build rows from utilData for the alert loop (#457: skip subnets with alerts_enabled = 0)
+    $subnetRows = ($db->query("SELECT id, cidr, prefix FROM subnets WHERE ip_version = 4 AND alerts_enabled = 1")
         ?: throw new \RuntimeException('Query failed'))->fetchAll();
     $rows = [];
     foreach ($subnetRows as $sr) {
@@ -2600,23 +2852,34 @@ function check_utilization_alerts(PDO $db, array $config): void
             // #443: loop-per-recipient delivery. Best-effort: a bad address
             // for one recipient does not block delivery to the others, and
             // each send produces its own audit row so failures are debuggable.
+            $anyDelivered = false;
             foreach ($recipients as $recipient) {
-                $safeEmail = preg_replace('/[\r\n]/', '', $recipient) ?? '';
-                @mail($safeEmail, $safeSubject, $body);
-                audit($db, 'alert.send', 'subnet', $sid, "level={$lvl} pct={$pct} email={$safeEmail}");
+                $safeEmail   = preg_replace('/[\r\n]/', '', $recipient) ?? '';
+                $maskedEmail = preg_replace('/(^.).*(@.*$)/', '$1***$2', $safeEmail) ?? '';
+                $result = ipam_send_mail($safeEmail, $safeSubject, $body);
+                if ($result['success']) {
+                    $anyDelivered = true;
+                    audit($db, 'alert.send', 'subnet', $sid, "level={$lvl} pct={$pct} email={$maskedEmail} transport={$result['transport']}");
+                } else {
+                    audit($db, 'mail.send_failed', 'subnet', $sid, "level={$lvl} pct={$pct} email={$maskedEmail} transport={$result['transport']} error=" . json_encode($result['error']));
+                }
             }
 
-            $now = date('Y-m-d H:i:s');
-            // #379: route through the dialect's upsert() so v2.10.0+ can
-            // swap to ON DUPLICATE KEY UPDATE / ON CONFLICT DO UPDATE
-            // without touching this call site.
-            $alertUpsert = ipam_dialect()->upsert('alert_state', ['subnet_id', 'level'], ['last_alerted_at']);
-            $db->prepare(
-                "INSERT INTO alert_state (subnet_id, level, last_alerted_at)
-                 VALUES (:sid, :lvl, :now)
-                 $alertUpsert"
-            )->execute([':sid' => $sid, ':lvl' => $lvl, ':now' => $now]);
-            $alertState[$sid][$lvl] = $now;
+            // Only consume the 24h cooldown when at least one delivery succeeded;
+            // a fully-failed send must be retried on the next housekeeping run.
+            if ($anyDelivered) {
+                $now = date('Y-m-d H:i:s');
+                // #379: route through the dialect's upsert() so v2.10.0+ can
+                // swap to ON DUPLICATE KEY UPDATE / ON CONFLICT DO UPDATE
+                // without touching this call site.
+                $alertUpsert = ipam_dialect()->upsert('alert_state', ['subnet_id', 'level'], ['last_alerted_at']);
+                $db->prepare(
+                    "INSERT INTO alert_state (subnet_id, level, last_alerted_at)
+                     VALUES (:sid, :lvl, :now)
+                     $alertUpsert"
+                )->execute([':sid' => $sid, ':lvl' => $lvl, ':now' => $now]);
+                $alertState[$sid][$lvl] = $now;
+            }
         }
     }
 }
@@ -2678,6 +2941,7 @@ function run_housekeeping_if_due(array $config, ?PDO $db = null): void
             if ($histRetention > 0) {
                 prune_address_history($db, $histRetention);
             }
+            capture_utilization_snapshot($db);
         }
 
         housekeeping_mark_ran();
@@ -2685,6 +2949,62 @@ function run_housekeeping_if_due(array $config, ?PDO $db = null): void
         @flock($lock, LOCK_UN);
         @fclose($lock);
     }
+}
+
+/**
+ * Capture a utilization snapshot for every IPv4 subnet (/8–/32).
+ * Called from run_housekeeping_if_due() when housekeeping fires.
+ * Returns the number of rows inserted.
+ */
+function capture_utilization_snapshot(PDO $db): int
+{
+    $utilData = ipv4_unassigned_summary($db);
+    $st = $db->prepare("SELECT id, prefix FROM subnets WHERE ip_version = 4 AND prefix BETWEEN 8 AND 32");
+    $st->execute();
+    /** @var list<array<string, mixed>> $subnets */
+    $subnets = $st->fetchAll();
+
+    $today = gmdate('Y-m-d');
+    $now   = $today . ' ' . gmdate('H:i:s');
+    // Build set of subnet IDs already snapped today to avoid duplicate daily rows.
+    $doneStmt = $db->prepare(
+        "SELECT DISTINCT subnet_id FROM utilization_snapshots WHERE snapped_at >= :day"
+    );
+    $doneStmt->execute([':day' => $today . ' 00:00:00']);
+    $alreadyDone = array_flip(array_column($doneStmt->fetchAll(), 'subnet_id'));
+    $ins = $db->prepare(
+        "INSERT INTO utilization_snapshots (subnet_id, snapped_at, used_count, free_count, total_hosts)
+         VALUES (:sid, :ts, :used, :free, :total)"
+    );
+    $count = 0;
+    foreach ($subnets as $row) {
+        $sid = to_int($row['id']);
+        if (isset($alreadyDone[$sid])) continue;
+        $u = $utilData[$sid] ?? null;
+        if ($u === null) continue;
+        $prefix = to_int($row['prefix']);
+        $total  = ipv4_assignable_count($prefix);
+        if ($total <= 0) continue;
+        $used = to_int($u['assigned_assignable']);
+        $ins->execute([
+            ':sid'   => $sid,
+            ':ts'    => $now,
+            ':used'  => $used,
+            ':free'  => max(0, $total - $used),
+            ':total' => $total,
+        ]);
+        $count++;
+    }
+
+    // Prune old snapshots
+    $retention = to_int(ipam_setting('housekeeping.snapshot_retention_days'));
+    if ($retention > 0) {
+        $cutoff = gmdate('Y-m-d H:i:s', time() - $retention * 86400);
+        $db->prepare("DELETE FROM utilization_snapshots WHERE snapped_at < :cutoff")
+           ->execute([':cutoff' => $cutoff]);
+    }
+
+    return $count;
 }
 
 /**
@@ -2829,7 +3149,7 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             if (is_array($files)) {
                 rsort($files); // newest first (lexicographic = chronological for our format)
                 foreach (array_slice($files, $retention) as $old) {
-                    @unlink($old);
+                    @unlink($old); // nosemgrep: path from glob() constrained to data dir
                 }
             }
 
@@ -3134,14 +3454,17 @@ function recaptcha_expected_action_resolved(): string
  * or a non-empty error string that should be shown to the user.
  * Fails open on network errors so a broken CAPTCHA provider never blocks login.
  *
- * @param LoginProtectionConfig $config Unused since v2.7.0 — config flows
- *                                      through ipam_setting().
+ * @param array<string, mixed> $config Stub config (demo_gate) or empty array (login.php); falls back to ipam_setting().
  * @param array<string, mixed> $post
  */
 function login_protection_verify(array $config, array $post): ?string
 {
-    unset($config);
-    $method = to_str(ipam_setting('login_protection.method'));
+    // demo_gate.php passes its own stub; fall back to ipam_setting() for login.php
+    $raw = $config['login_protection'] ?? [];
+    $lp  = is_array($raw) ? $raw : [];
+    $cfg = fn(string $k): mixed => array_key_exists($k, $lp) ? $lp[$k] : ipam_setting("login_protection.{$k}");
+
+    $method = to_str($cfg('method'));
     if ($method === '' || $method === 'null') return null;
 
     if ($method === 'honeypot') {
@@ -3149,7 +3472,7 @@ function login_protection_verify(array $config, array $post): ?string
     }
 
     if ($method === 'time_check') {
-        $min = max(1, to_int(ipam_setting('login_protection.min_seconds')));
+        $min = max(1, to_int($cfg('min_seconds')));
         $ts  = to_int($_SESSION['login_form_at'] ?? 0);
         unset($_SESSION['login_form_at']);
         if ($ts === 0 || (time() - $ts) < $min) {
@@ -3158,7 +3481,8 @@ function login_protection_verify(array $config, array $post): ?string
         return null;
     }
 
-    $secretKey = to_str(ipam_setting('login_protection.secret_key'));
+    $secretKey = to_str($cfg('secret_key'));
+    $siteKey   = to_str($cfg('site_key'));
 
     if ($method === 'turnstile') {
         $token = to_str($post['cf-turnstile-response'] ?? '');
@@ -3208,7 +3532,7 @@ function login_protection_verify(array $config, array $post): ?string
                 'expected_action' => recaptcha_expected_action_resolved(),
                 'score_threshold' => is_numeric($rawThreshold) ? (float)$rawThreshold : 0.5,
             ];
-            return recaptcha_enterprise_verify($token, to_str(ipam_setting('login_protection.site_key')), $enterprise);
+            return recaptcha_enterprise_verify($token, $siteKey, $enterprise);
         }
 
         try {
@@ -3232,7 +3556,7 @@ function login_protection_verify(array $config, array $post): ?string
             $resp = oidc_http_post('https://api.friendlycaptcha.com/api/v1/siteverify', [
                 'secret'  => $secretKey,
                 'solution'=> $token,
-                'sitekey' => to_str(ipam_setting('login_protection.site_key')),
+                'sitekey' => $siteKey,
             ]);
         } catch (Throwable $e) {
             error_log('FriendlyCaptcha verify error: ' . $e->getMessage());
@@ -3248,13 +3572,16 @@ function login_protection_verify(array $config, array $post): ?string
  * Return the HTML widget snippet to embed in the login/gate form.
  * For time_check, also sets the session timestamp on GET requests.
  *
- * @param LoginProtectionConfig $config Unused since v2.7.0 — kept for signature stability.
+ * @param array<string, mixed> $config Stub config (demo_gate) or empty array (login.php); falls back to ipam_setting().
  */
 function login_protection_widget_html(array $config): string
 {
-    unset($config);
-    $method  = to_str(ipam_setting('login_protection.method'));
-    $siteKey = e(to_str(ipam_setting('login_protection.site_key')));
+    $raw = $config['login_protection'] ?? [];
+    $lp  = is_array($raw) ? $raw : [];
+    $cfg = fn(string $k): mixed => array_key_exists($k, $lp) ? $lp[$k] : ipam_setting("login_protection.{$k}");
+
+    $method  = to_str($cfg('method'));
+    $siteKey = e(to_str($cfg('site_key')));
 
     switch ($method) {
         case 'honeypot':
@@ -3271,7 +3598,7 @@ function login_protection_widget_html(array $config): string
             return "<script src='https://js.hcaptcha.com/1/api.js' async defer></script>"
                  . "<div class='h-captcha' data-sitekey='{$siteKey}'></div>";
         case 'recaptcha':
-            $ver   = to_int(ipam_setting('login_protection.version'));
+            $ver   = to_int($cfg('version'));
             $isEnt = (bool)ipam_setting('recaptcha_enterprise.enabled');
             if ($ver === 3) {
                 $scriptSrc    = $isEnt
@@ -3300,31 +3627,36 @@ function login_protection_widget_html(array $config): string
  * be explicitly allowed; Friendly Captcha uses Web Components (no iframe needed).
  */
 /**
- * @param LoginProtectionConfig $config Unused since v2.7.0 — kept for signature stability.
- * @return array{script_src: string, frame_src: string}
+ * @param array<string, mixed> $config Stub config (demo_gate) or empty array (login.php); falls back to ipam_setting().
+ * @return array{script_src: string, style_src: string, frame_src: string}
  */
 function login_protection_extra_csp(array $config): array
 {
-    unset($config);
-    $method = to_str(ipam_setting('login_protection.method'));
+    $raw = $config['login_protection'] ?? [];
+    $lp  = is_array($raw) ? $raw : [];
+    $method = to_str(array_key_exists('method', $lp) ? $lp['method'] : ipam_setting('login_protection.method'));
     return match ($method) {
         'turnstile'        => [
             'script_src' => 'https://challenges.cloudflare.com',
+            'style_src'  => "'unsafe-inline'",
             'frame_src'  => 'https://challenges.cloudflare.com',
         ],
         'hcaptcha'         => [
             'script_src' => 'https://hcaptcha.com https://assets.hcaptcha.com',
+            'style_src'  => '',
             'frame_src'  => 'https://newassets.hcaptcha.com',
         ],
         'recaptcha'        => [
             'script_src' => 'https://www.google.com https://www.gstatic.com',
+            'style_src'  => '',
             'frame_src'  => 'https://www.google.com',
         ],
         'friendly_captcha' => [
             'script_src' => 'https://cdn.jsdelivr.net',
+            'style_src'  => '',
             'frame_src'  => '',
         ],
-        default            => ['script_src' => '', 'frame_src' => ''],
+        default            => ['script_src' => '', 'style_src' => '', 'frame_src' => ''],
     };
 }
 
@@ -4955,8 +5287,9 @@ function page_header(string $title, array $opts = []): void
     $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
 
     $extraScriptSrc = isset($opts['extra_script_src']) && $opts['extra_script_src'] !== '' ? ' ' . $opts['extra_script_src'] : '';
+    $extraStyleSrc  = isset($opts['extra_style_src'])  && $opts['extra_style_src']  !== '' ? ' ' . $opts['extra_style_src']  : '';
     $frameSrc       = isset($opts['extra_frame_src'])  && $opts['extra_frame_src']  !== '' ? " frame-src 'self' " . $opts['extra_frame_src'] . ';' : '';
-    header("Content-Security-Policy: default-src 'self'; script-src 'self'{$extraScriptSrc}; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:;{$frameSrc} frame-ancestors 'none'");
+    header("Content-Security-Policy: default-src 'self'; script-src 'self'{$extraScriptSrc}; style-src 'self'{$extraStyleSrc}; style-src-attr 'unsafe-inline'; img-src 'self' data:;{$frameSrc} frame-ancestors 'none'");
     header('X-Frame-Options: DENY');
     header('X-Content-Type-Options: nosniff');
     header('Referrer-Policy: strict-origin-when-cross-origin');
@@ -4967,12 +5300,12 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/vendor/open-props.min.css?v=3.0.0'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=3.0.0'>";
+    echo "<link rel='stylesheet' href='assets/vendor/open-props.min.css?v=3.1.0'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=3.1.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=3.0.0'></script>";
+    echo "<script defer src='assets/app.js?v=3.1.0'></script>";
     $pageAttr = isset($opts['page']) && $opts['page'] !== ''
         ? " data-page='" . e(to_str($opts['page'])) . "'"
         : '';
@@ -5014,6 +5347,7 @@ function page_header(string $title, array $opts = []): void
             echo "<a class='nav-dropdown-item' href='api_keys.php'>🔑 API Keys</a>";
             echo "<a class='nav-dropdown-item' href='import_csv.php'>⬆ Import CSV</a>";
             echo "<a class='nav-dropdown-item' href='import_arp.php'>📡 ARP Import</a>";
+            echo "<a class='nav-dropdown-item' href='reports.php'>📊 Reports</a>";
             echo "<a class='nav-dropdown-item' href='db_tools.php'>🗄 Database Tools</a>";
             echo "<hr class='nav-dropdown-divider'>";
             echo "<a class='nav-dropdown-item' href='settings.php'>⚙ Settings</a>";
@@ -5062,7 +5396,9 @@ function page_header(string $title, array $opts = []): void
             echo "<a href='contacts.php'>&#128215; Contacts</a>";
             echo "<a href='users.php'>&#128100; Users</a>";
             echo "<a href='api_keys.php'>&#128273; API Keys</a>";
+            echo "<a href='import_arp.php'>&#128200; ARP Import</a>";
             echo "<a href='import_csv.php'>&#8679; Import CSV</a>";
+            echo "<a href='reports.php'>&#128202; Reports</a>";
             echo "<a href='db_tools.php'>&#128444; Database Tools</a>";
             echo "<a href='settings.php'>&#9881; Settings</a>";
         }
@@ -5181,10 +5517,10 @@ function page_footer(): void
     require_once __DIR__ . '/version.php';
 
     echo "</main><footer role='contentinfo'><hr><div class='muted footer-meta'>";
-    echo "<a href='https://github.com/seanmousseau/Simple-PHP-IPAM' target='_blank' rel='noopener' class='link-plain'>"
+    echo "<a href='https://simplephpipam.com' target='_blank' rel='noopener' class='link-plain'>"
        . "<picture><source srcset='assets/logo.webp' type='image/webp'><img src='assets/logo.png' alt='Simple PHP IPAM' width='81' height='24' class='footer-logo'></picture>"
        . "</a> v" . e(IPAM_VERSION)
-       . " &middot; <a href='https://seanmousseau.github.io/Simple-PHP-IPAM/' target='_blank' rel='noopener'>Docs</a>";
+       . " &middot; <a href='https://simplephpipam.com/docs/' target='_blank' rel='noopener'>Docs</a>";
 
     $update = ipam_update_check($config ?? []);
     if ($update) {
