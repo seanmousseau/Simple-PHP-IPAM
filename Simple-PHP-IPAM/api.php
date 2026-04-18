@@ -2665,7 +2665,12 @@ function api_devices_create(PDO $db, array $apiKey, array $body): never
     $validTypes = ['router', 'switch', 'server', 'vm', 'firewall', 'other'];
     $name   = trim(to_str($body['name']    ?? ''));
     $type   = to_str($body['type']   ?? 'other');
-    $siteId = isset($body['site_id']) && to_int($body['site_id']) > 0 ? to_int($body['site_id']) : null;
+    if (isset($body['site_id']) && $body['site_id'] !== '') {
+        $siteId = to_int($body['site_id']);
+        if ($siteId <= 0) api_error(400, 'site_id must be a positive integer.');
+    } else {
+        $siteId = null;
+    }
     $vendor = trim(to_str($body['vendor']  ?? ''));
     $model  = trim(to_str($body['model']   ?? ''));
     $serial = trim(to_str($body['serial']  ?? ''));
@@ -2718,9 +2723,16 @@ function api_devices_update(PDO $db, array $apiKey, int $id, array $body): never
     $model  = array_key_exists('model',   $body) ? trim(to_str($body['model']))   : to_str($existing['model']);
     $serial = array_key_exists('serial',  $body) ? trim(to_str($body['serial']))  : to_str($existing['serial']);
     $note   = array_key_exists('note',    $body) ? trim(to_str($body['note']))    : to_str($existing['note']);
-    $siteId = array_key_exists('site_id', $body)
-        ? (to_int($body['site_id']) > 0 ? to_int($body['site_id']) : null)
-        : ($existing['site_id'] !== null ? to_int($existing['site_id']) : null);
+    if (array_key_exists('site_id', $body)) {
+        if ($body['site_id'] === null || $body['site_id'] === '') {
+            $siteId = null;
+        } else {
+            $siteId = to_int($body['site_id']);
+            if ($siteId <= 0) api_error(400, 'site_id must be a positive integer.');
+        }
+    } else {
+        $siteId = $existing['site_id'] !== null ? to_int($existing['site_id']) : null;
+    }
     if ($name === '') api_error(400, 'name is required.');
     if (!in_array($type, $validTypes, true)) api_error(400, 'Invalid type.');
     if ($siteId !== null) {

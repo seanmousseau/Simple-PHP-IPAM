@@ -1289,7 +1289,7 @@ There is no URL path versioning â€” all endpoints remain at `api.php?resource=â€
 
 The full OpenAPI 3.1 spec is served at:
 
-```
+```http
 GET /api.php?resource=spec
 ```
 

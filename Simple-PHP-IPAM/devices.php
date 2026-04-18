@@ -77,8 +77,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 try {
                     $st = $db->prepare("UPDATE devices SET name=:n, type=:t, site_id=:sid, vendor=:v, model=:m, serial=:sr, note=:nt, updated_at=" . ipam_dialect()->now() . " WHERE id=:id");
                     $st->execute([':n' => $name, ':t' => $type, ':sid' => $siteId, ':v' => $vendor, ':m' => $model, ':sr' => $serial, ':nt' => $note, ':id' => $id]);
-                    audit($db, 'device.update', 'device', $id, "name=$name");
-                    flash_set("Device \"$name\" updated.");
+                    if ($st->rowCount() > 0) {
+                        audit($db, 'device.update', 'device', $id, "name=$name");
+                        flash_set("Device \"$name\" updated.");
+                    } else {
+                        flash_set('Device not found.', 'danger');
+                    }
                     header('Location: devices.php');
                     exit;
                 } catch (PDOException) {
@@ -94,9 +98,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             /** @var array<string,mixed>|false $dev */
             $dev = $row->fetch();
             // ON DELETE CASCADE removes device_interfaces; ON DELETE SET NULL clears addresses.device_id
-            $db->prepare("DELETE FROM devices WHERE id=:id")->execute([':id' => $id]);
-            audit($db, 'device.delete', 'device', $id, $dev ? 'name=' . to_str($dev['name']) : '');
-            flash_set('Device deleted.');
+            $delSt = $db->prepare("DELETE FROM devices WHERE id=:id");
+            $delSt->execute([':id' => $id]);
+            if ($delSt->rowCount() > 0) {
+                audit($db, 'device.delete', 'device', $id, $dev ? 'name=' . to_str($dev['name']) : '');
+                flash_set('Device deleted.');
+            } else {
+                flash_set('Device not found.', 'danger');
+            }
             header('Location: devices.php');
             exit;
         }
@@ -112,14 +121,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($deviceId <= 0 || $ifName === '') {
             $err = 'Interface name is required.';
         } else {
-            try {
-                $st = $db->prepare("INSERT INTO device_interfaces (device_id, name, description) VALUES (:did,:n,:d)");
-                $st->execute([':did' => $deviceId, ':n' => $ifName, ':d' => $ifDesc]);
-                $newId = ipam_last_insert_id($db, 'device_interfaces');
-                audit($db, 'device_interface.create', 'device_interface', $newId, "device_id=$deviceId name=$ifName");
-                flash_set("Interface \"$ifName\" added.");
-            } catch (PDOException) {
-                $err = 'Could not add interface (duplicate name on this device?).';
+            $parentSt = $db->prepare("SELECT id FROM devices WHERE id=:id");
+            $parentSt->execute([':id' => $deviceId]);
+            if (!$parentSt->fetch()) {
+                $err = 'Device not found.';
+            } else {
+                try {
+                    $st = $db->prepare("INSERT INTO device_interfaces (device_id, name, description) VALUES (:did,:n,:d)");
+                    $st->execute([':did' => $deviceId, ':n' => $ifName, ':d' => $ifDesc]);
+                    $newId = ipam_last_insert_id($db, 'device_interfaces');
+                    audit($db, 'device_interface.create', 'device_interface', $newId, "device_id=$deviceId name=$ifName");
+                    flash_set("Interface \"$ifName\" added.");
+                } catch (PDOException) {
+                    $err = 'Could not add interface (duplicate name on this device?).';
+                }
             }
         }
         $anchor = $deviceId > 0 ? '#device-' . $deviceId : '';
@@ -129,14 +144,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $ifId     = to_int($_POST['if_id']     ?? 0);
         $deviceId = to_int($_POST['device_id'] ?? 0);
         if ($ifId > 0) {
-            $row = $db->prepare("SELECT name FROM device_interfaces WHERE id=:id");
-            $row->execute([':id' => $ifId]);
+            $row = $db->prepare("SELECT name FROM device_interfaces WHERE id=:id AND device_id=:did");
+            $row->execute([':id' => $ifId, ':did' => $deviceId]);
             /** @var array<string,mixed>|false $iface */
             $iface = $row->fetch();
             // ON DELETE SET NULL clears addresses.interface_id
-            $db->prepare("DELETE FROM device_interfaces WHERE id=:id")->execute([':id' => $ifId]);
-            audit($db, 'device_interface.delete', 'device_interface', $ifId, $iface ? 'name=' . to_str($iface['name']) : '');
-            flash_set('Interface deleted.');
+            $delIfSt = $db->prepare("DELETE FROM device_interfaces WHERE id=:id");
+            $delIfSt->execute([':id' => $ifId]);
+            if ($delIfSt->rowCount() > 0) {
+                audit($db, 'device_interface.delete', 'device_interface', $ifId, $iface ? 'name=' . to_str($iface['name']) : '');
+                flash_set('Interface deleted.');
+            } else {
+                flash_set('Interface not found.', 'danger');
+            }
         }
         $anchor = $deviceId > 0 ? '#device-' . $deviceId : '';
         header('Location: devices.php' . $anchor);

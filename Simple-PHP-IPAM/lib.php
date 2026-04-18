@@ -6335,9 +6335,12 @@ function ipam_apply_arp_import(PDO $db, array $entries, int $subnetId): array
  */
 function ipam_app_base_url(): string
 {
-    $cfg  = $GLOBALS['config'];
+    $cfg  = $GLOBALS['config'] ?? null;
     $base = is_array($cfg) ? rtrim(to_str($cfg['base_url'] ?? ''), '/') : '';
-    return $base; // empty string when base_url not configured; callers must guard
+    if ($base === '' || !preg_match('~^https://~i', $base)) {
+        throw new RuntimeException('config.base_url must be set to an https:// URL for email links.');
+    }
+    return $base;
 }
 
 /**
@@ -6349,25 +6352,33 @@ function ipam_app_base_url(): string
  */
 function ipam_create_reset_token(PDO $db, int $userId): ?string
 {
-    $rateWindowStart = gmdate('Y-m-d H:i:s', time() - 3600);
-    $rateSt = $db->prepare(
-        "SELECT COUNT(*) FROM password_reset_tokens
-          WHERE user_id = :uid AND created_at > :window AND used_at IS NULL"
-    );
-    $rateSt->execute([':uid' => $userId, ':window' => $rateWindowStart]);
-    $recentCount = (int)$rateSt->fetchColumn();
-    if ($recentCount >= 3) {
-        return null;
-    }
-
     $rawToken  = bin2hex(random_bytes(32));
     $tokenHash = hash('sha256', $rawToken);
     $expiresAt = gmdate('Y-m-d H:i:s', time() + 3600);
+    $rateWindowStart = gmdate('Y-m-d H:i:s', time() - 3600);
 
-    $db->prepare(
-        "INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
-         VALUES (:uid, :hash, :exp)"
-    )->execute([':uid' => $userId, ':hash' => $tokenHash, ':exp' => $expiresAt]);
+    $db->beginTransaction();
+    try {
+        $rateSt = $db->prepare(
+            "SELECT COUNT(*) FROM password_reset_tokens
+              WHERE user_id = :uid AND created_at > :window AND used_at IS NULL"
+        );
+        $rateSt->execute([':uid' => $userId, ':window' => $rateWindowStart]);
+        if ((int)$rateSt->fetchColumn() >= 3) {
+            $db->rollBack();
+            return null;
+        }
+
+        $db->prepare(
+            "INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+             VALUES (:uid, :hash, :exp)"
+        )->execute([':uid' => $userId, ':hash' => $tokenHash, ':exp' => $expiresAt]);
+
+        $db->commit();
+    } catch (\Exception $e) {
+        $db->rollBack();
+        throw $e;
+    }
 
     return $rawToken;
 }
@@ -6424,8 +6435,9 @@ function ipam_consume_reset_token(PDO $db, string $rawToken): ?int
 function ipam_send_reset_email(string $toAddress, string $toName, string $rawToken): bool
 {
     $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
-    $base    = ipam_app_base_url();
-    if ($base === '') {
+    try {
+        $base = ipam_app_base_url();
+    } catch (\RuntimeException) {
         return false;
     }
     $link    = $base . '/reset_password.php?token=' . rawurlencode($rawToken);
@@ -6456,8 +6468,9 @@ function ipam_send_reset_email(string $toAddress, string $toName, string $rawTok
 function ipam_send_email_verification(PDO $db, int $userId, string $newEmail): bool
 {
     $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
-    $base    = ipam_app_base_url();
-    if ($base === '') {
+    try {
+        $base = ipam_app_base_url();
+    } catch (\RuntimeException) {
         return false;
     }
 
