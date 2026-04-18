@@ -13,6 +13,9 @@ CREATE TABLE IF NOT EXISTS users (
   password_changed_at  TEXT,                        -- updated on every local password change; NULL for SSO-only accounts
   theme         TEXT NOT NULL DEFAULT 'auto',       -- persisted UI theme: auto|light|dark
   timezone      TEXT,                                -- per-user display timezone; NULL = use app default
+  pending_email            TEXT,                   -- v3.2.0: unverified email change pending confirmation
+  pending_email_token_hash TEXT,                   -- v3.2.0: SHA-256 hash of the email-verification token
+  pending_email_expires_at TEXT,                   -- v3.2.0: expiry datetime for the pending email token
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -128,6 +131,8 @@ CREATE TABLE IF NOT EXISTS addresses (
   owner_contact_id INTEGER REFERENCES contacts(id) ON DELETE SET NULL,  -- v2.1.0: FK to contacts
   last_seen_at     TEXT,                                  -- v2.3.0: last successful scan response timestamp
   is_stale         INTEGER NOT NULL DEFAULT 0,            -- v2.3.0: 1 = host missed N consecutive scans
+  device_id        INTEGER REFERENCES devices(id) ON DELETE SET NULL,         -- v3.2.0: FK to devices
+  interface_id     INTEGER REFERENCES device_interfaces(id) ON DELETE SET NULL, -- v3.2.0: FK to device_interfaces
   created_at       TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(subnet_id, ip),
@@ -141,6 +146,8 @@ CREATE INDEX IF NOT EXISTS idx_addresses_status ON addresses(status);
 CREATE INDEX IF NOT EXISTS idx_addresses_grp ON addresses(grp);
 CREATE INDEX IF NOT EXISTS idx_addresses_owner_contact_id ON addresses(owner_contact_id);
 CREATE INDEX IF NOT EXISTS idx_addresses_is_stale ON addresses(is_stale);
+CREATE INDEX IF NOT EXISTS idx_addresses_device_id    ON addresses(device_id);
+CREATE INDEX IF NOT EXISTS idx_addresses_interface_id ON addresses(interface_id);
 
 CREATE TRIGGER IF NOT EXISTS addresses_updated_at
 AFTER UPDATE ON addresses
@@ -384,6 +391,58 @@ CREATE TABLE IF NOT EXISTS pd_delegations (
   notes         TEXT NOT NULL DEFAULT '',
   created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- v3.2.0: Devices
+CREATE TABLE IF NOT EXISTS devices (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  type        TEXT NOT NULL DEFAULT 'other',
+  site_id     INTEGER REFERENCES sites(id) ON DELETE SET NULL,
+  vendor      TEXT NOT NULL DEFAULT '',
+  model       TEXT NOT NULL DEFAULT '',
+  serial      TEXT NOT NULL DEFAULT '',
+  note        TEXT NOT NULL DEFAULT '',
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_devices_name ON devices(name);
+
+CREATE TRIGGER IF NOT EXISTS devices_updated_at
+AFTER UPDATE ON devices
+FOR EACH ROW
+BEGIN
+  UPDATE devices SET updated_at = datetime('now') WHERE id = OLD.id;
+END;
+
+CREATE TABLE IF NOT EXISTS device_interfaces (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  device_id   INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(device_id, name)
+);
+
+CREATE TRIGGER IF NOT EXISTS device_interfaces_updated_at
+AFTER UPDATE ON device_interfaces
+FOR EACH ROW
+BEGIN
+  UPDATE device_interfaces SET updated_at = datetime('now') WHERE id = OLD.id;
+END;
+
+-- v3.2.0: Password reset tokens
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TEXT NOT NULL,
+  used_at    TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_prt_user ON password_reset_tokens(user_id);
 
 CREATE TABLE IF NOT EXISTS schema_migrations (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -45,7 +45,10 @@ CREATE TABLE IF NOT EXISTS users (
   last_login_at       DATETIME NULL,
   password_changed_at DATETIME NULL,
   theme               VARCHAR(10)  NOT NULL DEFAULT 'auto',
-  timezone            TEXT         DEFAULT NULL,
+  timezone                 TEXT         DEFAULT NULL,
+  pending_email            VARCHAR(255) NULL,
+  pending_email_token_hash VARCHAR(64)  COLLATE utf8mb4_bin NULL,
+  pending_email_expires_at DATETIME     NULL,
   created_at          DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   updated_at          DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   UNIQUE KEY idx_users_oidc_sub (oidc_sub)
@@ -207,6 +210,8 @@ CREATE TABLE IF NOT EXISTS addresses (
   owner_contact_id BIGINT UNSIGNED NULL,
   last_seen_at     DATETIME     NULL,
   is_stale         TINYINT      NOT NULL DEFAULT 0,
+  device_id        BIGINT UNSIGNED NULL,
+  interface_id     BIGINT UNSIGNED NULL,
   created_at       DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   updated_at       DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   UNIQUE KEY uq_addresses_subnet_ip (subnet_id, ip),
@@ -217,8 +222,12 @@ CREATE TABLE IF NOT EXISTS addresses (
   KEY idx_addresses_grp (grp),
   KEY idx_addresses_owner_contact_id (owner_contact_id),
   KEY idx_addresses_is_stale (is_stale),
-  CONSTRAINT fk_addresses_subnet  FOREIGN KEY (subnet_id)        REFERENCES subnets(id)  ON DELETE CASCADE,
-  CONSTRAINT fk_addresses_contact FOREIGN KEY (owner_contact_id) REFERENCES contacts(id) ON DELETE SET NULL
+  KEY idx_addresses_device_id    (device_id),
+  KEY idx_addresses_interface_id (interface_id),
+  CONSTRAINT fk_addresses_subnet    FOREIGN KEY (subnet_id)        REFERENCES subnets(id)           ON DELETE CASCADE,
+  CONSTRAINT fk_addresses_contact   FOREIGN KEY (owner_contact_id) REFERENCES contacts(id)          ON DELETE SET NULL,
+  CONSTRAINT fk_addresses_device    FOREIGN KEY (device_id)        REFERENCES devices(id)           ON DELETE SET NULL,
+  CONSTRAINT fk_addresses_interface FOREIGN KEY (interface_id)     REFERENCES device_interfaces(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 CREATE TRIGGER IF NOT EXISTS addresses_updated_at
@@ -475,6 +484,57 @@ CREATE TABLE IF NOT EXISTS scan_results (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- ---------------------------------------------------------------------------
+-- devices + device_interfaces (v3.2.0, #394)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS devices (
+  id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  name       VARCHAR(191) COLLATE utf8mb4_bin NOT NULL,
+  type       VARCHAR(64)  NOT NULL DEFAULT 'other',
+  site_id    BIGINT UNSIGNED NULL,
+  vendor     VARCHAR(191) NOT NULL DEFAULT '',
+  model      VARCHAR(191) NOT NULL DEFAULT '',
+  serial     VARCHAR(191) NOT NULL DEFAULT '',
+  note       TEXT         NOT NULL DEFAULT (''),
+  created_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  updated_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  UNIQUE KEY uq_devices_name (name),
+  CONSTRAINT fk_devices_site FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TRIGGER IF NOT EXISTS devices_updated_at
+  BEFORE UPDATE ON devices FOR EACH ROW
+  SET NEW.updated_at = UTC_TIMESTAMP();
+
+CREATE TABLE IF NOT EXISTS device_interfaces (
+  id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  device_id   BIGINT UNSIGNED NOT NULL,
+  name        VARCHAR(191) NOT NULL,
+  description TEXT         NOT NULL DEFAULT (''),
+  created_at  DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  updated_at  DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  UNIQUE KEY uq_device_interfaces_dev_name (device_id, name),
+  CONSTRAINT fk_device_interfaces_device FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TRIGGER IF NOT EXISTS device_interfaces_updated_at
+  BEFORE UPDATE ON device_interfaces FOR EACH ROW
+  SET NEW.updated_at = UTC_TIMESTAMP();
+
+-- ---------------------------------------------------------------------------
+-- password_reset_tokens (v3.2.0, #541)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  user_id    BIGINT UNSIGNED NOT NULL,
+  token_hash VARCHAR(64) COLLATE utf8mb4_bin NOT NULL UNIQUE,
+  expires_at DATETIME NOT NULL,
+  used_at    DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  KEY idx_prt_user (user_id),
+  CONSTRAINT fk_prt_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- ---------------------------------------------------------------------------
 -- schema_migrations (pre-seeded below with every historical version)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -541,6 +601,8 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.0.0-subnet-contacts'),
   ('3.1.0-user-timezone'),
   ('3.1.0-subnet-alerts-enabled'),
-  ('3.1.0-utilization-snapshots');
+  ('3.1.0-utilization-snapshots'),
+  ('3.2.0-devices'),
+  ('3.2.0-password-reset');
 
 SET FOREIGN_KEY_CHECKS = 1;
