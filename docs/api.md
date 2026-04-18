@@ -617,7 +617,7 @@ Returns `400` if `address_id` is missing. If the address has been deleted, the e
 GET /api.php?resource=search&q=<query>
 ```
 
-Search addresses by IP, hostname, owner, note, or group.
+Search addresses by IP, hostname, owner, note, or group. The web app's global search (`search.php`) also searches device names and interface names — see [Devices](devices.md) for details.
 
 **Query parameters**
 

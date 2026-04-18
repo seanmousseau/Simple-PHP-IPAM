@@ -1,4 +1,4 @@
-# Network Scanning — Simple PHP IPAM v2.3.0
+# Network Scanning
 
 Simple PHP IPAM includes a built-in network scanner that probes IP addresses via ICMP ping or TCP connect. Scanning requires no daemons, no root privileges (for TCP mode), and no PHP extensions beyond the standard `proc_open` / `fsockopen` functions.
 
