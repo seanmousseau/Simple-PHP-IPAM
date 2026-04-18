@@ -9,6 +9,7 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
+  - [v3.2.0](#v320) — devices, password recovery, OpenAPI spec (no breaking changes)
   - [v3.0.0](#v300) — **breaking changes**, config.php stub, driver promotion
 
 ---
@@ -90,6 +91,26 @@ The backup is left in place after a successful upgrade. You can remove it manual
 ---
 
 ## Version-specific upgrade notes
+
+### v3.2.0
+
+**No breaking changes.** Run `upgrade.sh` as normal — no manual steps required.
+
+**New pages added:**
+- `devices.php` — device and interface management (admin-only)
+- `forgot_password.php` / `reset_password.php` — email-based password recovery (unauthenticated)
+
+**New features:**
+- Device & interface records: link IP addresses to named equipment. Includes admin CRUD, REST API resources (`devices`, `device_interfaces`), device search, and CSV import columns `device_name` / `interface_name`.
+- Email password recovery with SHA-256 token, 1-hour expiry, and rate limiting (max 3 requests per hour per user). Requires SMTP configured under Admin → Settings.
+- Email change verification: users can update their email on the Account page and must verify via a link sent to the new address.
+- Utilization CSV export now supports `?include_trend=1&trend_days=N` to include delta columns from snapshot history.
+- All API responses now include `X-IPAM-API-Version: 1` header.
+- OpenAPI 3.1 spec available at `api.php?resource=spec` and committed to `docs/api-spec.yaml`.
+
+**Nav change:** The "Password" link in the user dropdown is now labelled "Account". The URL (`change_password.php`) is unchanged.
+
+---
 
 ### v3.0.0
 

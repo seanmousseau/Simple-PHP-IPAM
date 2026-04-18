@@ -20,10 +20,12 @@ A lightweight, self-hosted IP Address Management (IPAM) tool built with **PHP 8.
 - **DNS zone export** — BIND-format A/AAAA and PTR records
 - **CSV import/export** — bulk address management
 - **ARP table import** — reconcile MACs from router output
-- **REST API** — read-only and read-write key authentication
+- **Device & interface tracking** — link addresses to named devices and interfaces
+- **REST API** — read-only and read-write key authentication; OpenAPI 3.1 spec at `?resource=spec`
 - **OIDC/SSO** — PKCE flow, no Composer packages required
 - **Audit log** — append-only, full change history
 - **Utilisation alerts** — email when subnets exceed thresholds
+- **Email password recovery** — token-based reset flow with rate limiting
 - **Dark mode** — automatic, light, and dark themes
 
 ## Quick start
@@ -38,8 +40,10 @@ See the [Installation guide](install.md) to get up and running in minutes.
 | [Configuration](configuration.md) | All `config.php` keys explained |
 | [Scanning](scanning.md) | Network discovery and scheduled scanning |
 | [Advanced Networking](advanced-networking.md) | VRF BGP, VLAN ranges, aggregates, PD pools, DNS export |
-| [REST API](api.md) | Endpoint reference, authentication, examples |
+| [REST API](api.md) | Endpoint reference, authentication, examples, OpenAPI spec |
+| [Devices](devices.md) | Device & interface tracking, CSV import, API |
 | [OIDC / SSO](oidc.md) | PKCE flow setup with Keycloak, Azure AD, Okta, etc. |
+| [SMTP & Email](smtp.md) | SMTP configuration, alerts, password recovery |
 | [Security](security.md) | Hardening checklist, CSP, HTTPS, firewall |
 | [Upgrading](upgrading.md) | Version upgrade instructions and changelog |
 
