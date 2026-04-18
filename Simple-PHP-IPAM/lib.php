@@ -6352,7 +6352,7 @@ function ipam_create_reset_token(PDO $db, int $userId): ?string
     $rateWindowStart = gmdate('Y-m-d H:i:s', time() - 3600);
     $rateSt = $db->prepare(
         "SELECT COUNT(*) FROM password_reset_tokens
-          WHERE user_id = :uid AND created_at > :window"
+          WHERE user_id = :uid AND created_at > :window AND used_at IS NULL"
     );
     $rateSt->execute([':uid' => $userId, ':window' => $rateWindowStart]);
     $recentCount = (int)$rateSt->fetchColumn();
@@ -6400,7 +6400,7 @@ function ipam_consume_reset_token(PDO $db, string $rawToken): ?int
         }
 
         $upd = $db->prepare(
-            "UPDATE password_reset_tokens SET used_at = " . ipam_dialect()->now() . " WHERE id = :id"
+            "UPDATE password_reset_tokens SET used_at = " . ipam_dialect()->now() . " WHERE id = :id AND used_at IS NULL"
         );
         $upd->execute([':id' => to_int($row['id'])]);
 
@@ -6478,17 +6478,23 @@ function ipam_send_email_verification(PDO $db, int $userId, string $newEmail): b
         . "<p>If you did not request this change, you can safely ignore this email.</p>"
         . "<p>— " . htmlspecialchars($appName, ENT_QUOTES) . "</p>";
 
-    $result = ipam_send_mail($newEmail, $subject, $text, $html);
-    if (!$result['success']) {
-        return false;
-    }
-
     $db->prepare(
         "UPDATE users SET pending_email = :email,
                           pending_email_token_hash = :hash,
                           pending_email_expires_at = :exp
           WHERE id = :id"
     )->execute([':email' => $newEmail, ':hash' => $tokenHash, ':exp' => $expiresAt, ':id' => $userId]);
+
+    $result = ipam_send_mail($newEmail, $subject, $text, $html);
+    if (!$result['success']) {
+        $db->prepare(
+            "UPDATE users SET pending_email = NULL,
+                              pending_email_token_hash = NULL,
+                              pending_email_expires_at = NULL
+              WHERE id = :id"
+        )->execute([':id' => $userId]);
+        return false;
+    }
 
     return true;
 }

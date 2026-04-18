@@ -2606,8 +2606,8 @@ function api_devices(PDO $db): never
         $q = trim(to_str($_GET['q']));
         if ($q !== '') {
             $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $q) . '%';
-            $where[] = '(d.name LIKE :q OR d.vendor LIKE :q2 OR d.model LIKE :q3)';
-            $params[':q'] = $like; $params[':q2'] = $like; $params[':q3'] = $like;
+            $where[] = '(d.name LIKE :q OR d.vendor LIKE :q2 OR d.model LIKE :q3 OR d.serial LIKE :q4)';
+            $params[':q'] = $like; $params[':q2'] = $like; $params[':q3'] = $like; $params[':q4'] = $like;
         }
     }
 
@@ -2672,11 +2672,20 @@ function api_devices_create(PDO $db, array $apiKey, array $body): never
     $note   = trim(to_str($body['note']    ?? ''));
     if ($name === '') api_error(400, 'name is required.');
     if (!in_array($type, $validTypes, true)) api_error(400, 'Invalid type.');
+    if ($siteId !== null) {
+        $siteSt = $db->prepare("SELECT id FROM sites WHERE id = :id");
+        $siteSt->execute([':id' => $siteId]);
+        if (!$siteSt->fetch()) api_error(404, 'Site not found.');
+    }
     try {
         $st = $db->prepare("INSERT INTO devices (name, type, site_id, vendor, model, serial, note) VALUES (:n,:t,:sid,:v,:m,:sr,:nt)");
         $st->execute([':n' => $name, ':t' => $type, ':sid' => $siteId, ':v' => $vendor, ':m' => $model, ':sr' => $serial, ':nt' => $note]);
-    } catch (PDOException) {
-        api_error(409, 'A device with that name already exists.');
+    } catch (PDOException $e) {
+        $code = $e->getCode();
+        if ($code === '23000' || $code === '23505' || str_contains($e->getMessage(), 'UNIQUE')) {
+            api_error(409, 'A device with that name already exists.');
+        }
+        api_error(500, 'Database error.');
     }
     $newId = ipam_last_insert_id($db, 'devices');
     api_audit($db, $apiKey, 'device.create', 'device', $newId, "name=$name type=$type");
@@ -2714,11 +2723,20 @@ function api_devices_update(PDO $db, array $apiKey, int $id, array $body): never
         : ($existing['site_id'] !== null ? to_int($existing['site_id']) : null);
     if ($name === '') api_error(400, 'name is required.');
     if (!in_array($type, $validTypes, true)) api_error(400, 'Invalid type.');
+    if ($siteId !== null) {
+        $siteSt = $db->prepare("SELECT id FROM sites WHERE id = :id");
+        $siteSt->execute([':id' => $siteId]);
+        if (!$siteSt->fetch()) api_error(404, 'Site not found.');
+    }
     try {
         $st = $db->prepare("UPDATE devices SET name=:n, type=:t, site_id=:sid, vendor=:v, model=:m, serial=:sr, note=:nt, updated_at=" . ipam_dialect()->now() . " WHERE id=:id");
         $st->execute([':n' => $name, ':t' => $type, ':sid' => $siteId, ':v' => $vendor, ':m' => $model, ':sr' => $serial, ':nt' => $note, ':id' => $id]);
-    } catch (PDOException) {
-        api_error(409, 'Duplicate device name.');
+    } catch (PDOException $e) {
+        $code = $e->getCode();
+        if ($code === '23000' || $code === '23505' || str_contains($e->getMessage(), 'UNIQUE')) {
+            api_error(409, 'Duplicate device name.');
+        }
+        api_error(500, 'Database error.');
     }
     api_audit($db, $apiKey, 'device.update', 'device', $id, "name=$name");
     $st = $db->prepare("SELECT d.*, s.name AS site_name, (SELECT COUNT(*) FROM device_interfaces di WHERE di.device_id = d.id) AS interface_count FROM devices d LEFT JOIN sites s ON s.id = d.site_id WHERE d.id = :id");
@@ -2756,7 +2774,7 @@ function api_device_interfaces(PDO $db): never
         /** @var array<string,mixed>|false $row */
         $row = $st->fetch();
         if (!$row) api_error(404, 'Interface not found.');
-        api_json(['device_interface' => fmt_device_interface($row)]);
+        api_json(['interface' => fmt_device_interface($row)]);
     }
 
     $where  = [];

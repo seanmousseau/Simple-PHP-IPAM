@@ -34,16 +34,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($name === '') {
             $err = 'Device name is required.';
         } else {
-            try {
-                $st = $db->prepare("INSERT INTO devices (name, type, site_id, vendor, model, serial, note) VALUES (:n,:t,:sid,:v,:m,:sr,:nt)");
-                $st->execute([':n' => $name, ':t' => $type, ':sid' => $siteId, ':v' => $vendor, ':m' => $model, ':sr' => $serial, ':nt' => $note]);
-                $newId = ipam_last_insert_id($db, 'devices');
-                audit($db, 'device.create', 'device', $newId, "name=$name type=$type");
-                flash_set("Device \"$name\" created.");
-                header('Location: devices.php');
-                exit;
-            } catch (PDOException) {
-                $err = 'Could not create device (a device with that name already exists?).';
+            if ($siteId !== null) {
+                $sc = $db->prepare("SELECT id FROM sites WHERE id=:id");
+                $sc->execute([':id' => $siteId]);
+                if (!$sc->fetch()) $err = 'Selected site does not exist.';
+            }
+            if ($err === '') {
+                try {
+                    $st = $db->prepare("INSERT INTO devices (name, type, site_id, vendor, model, serial, note) VALUES (:n,:t,:sid,:v,:m,:sr,:nt)");
+                    $st->execute([':n' => $name, ':t' => $type, ':sid' => $siteId, ':v' => $vendor, ':m' => $model, ':sr' => $serial, ':nt' => $note]);
+                    $newId = ipam_last_insert_id($db, 'devices');
+                    audit($db, 'device.create', 'device', $newId, "name=$name type=$type");
+                    flash_set("Device \"$name\" created.");
+                    header('Location: devices.php');
+                    exit;
+                } catch (PDOException) {
+                    $err = 'Could not create device (a device with that name already exists?).';
+                }
             }
         }
     } elseif ($action === 'update') {
@@ -61,15 +68,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($id <= 0 || $name === '') {
             $err = 'Device name is required.';
         } else {
-            try {
-                $st = $db->prepare("UPDATE devices SET name=:n, type=:t, site_id=:sid, vendor=:v, model=:m, serial=:sr, note=:nt, updated_at=" . ipam_dialect()->now() . " WHERE id=:id");
-                $st->execute([':n' => $name, ':t' => $type, ':sid' => $siteId, ':v' => $vendor, ':m' => $model, ':sr' => $serial, ':nt' => $note, ':id' => $id]);
-                audit($db, 'device.update', 'device', $id, "name=$name");
-                flash_set("Device \"$name\" updated.");
-                header('Location: devices.php');
-                exit;
-            } catch (PDOException) {
-                $err = 'Could not update device (duplicate name?).';
+            if ($siteId !== null) {
+                $sc = $db->prepare("SELECT id FROM sites WHERE id=:id");
+                $sc->execute([':id' => $siteId]);
+                if (!$sc->fetch()) $err = 'Selected site does not exist.';
+            }
+            if ($err === '') {
+                try {
+                    $st = $db->prepare("UPDATE devices SET name=:n, type=:t, site_id=:sid, vendor=:v, model=:m, serial=:sr, note=:nt, updated_at=" . ipam_dialect()->now() . " WHERE id=:id");
+                    $st->execute([':n' => $name, ':t' => $type, ':sid' => $siteId, ':v' => $vendor, ':m' => $model, ':sr' => $serial, ':nt' => $note, ':id' => $id]);
+                    audit($db, 'device.update', 'device', $id, "name=$name");
+                    flash_set("Device \"$name\" updated.");
+                    header('Location: devices.php');
+                    exit;
+                } catch (PDOException) {
+                    $err = 'Could not update device (duplicate name?).';
+                }
             }
         }
     } elseif ($action === 'delete') {

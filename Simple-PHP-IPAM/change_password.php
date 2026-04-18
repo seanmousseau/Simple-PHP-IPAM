@@ -27,25 +27,43 @@ if (isset($_GET['verify_email'])) {
             "SELECT id, pending_email FROM users
               WHERE id = :uid
                 AND pending_email_token_hash = :hash
-                AND pending_email_expires_at > datetime('now')"
+                AND pending_email_expires_at > " . ipam_dialect()->now()
         );
         $verSt->execute([':uid' => $cur['id'], ':hash' => $verHash]);
         /** @var array<string, mixed>|false $verRow */
         $verRow = $verSt->fetch();
         $pendingAddr = $verRow ? to_str($verRow['pending_email']) : '';
         if ($verRow && $pendingAddr !== '') {
-            $dupCheckSt = $db->prepare("SELECT id FROM users WHERE email = :email AND id != :id");
-            $dupCheckSt->execute([':email' => $pendingAddr, ':id' => $cur['id']]);
+            $dupCheckSt = $db->prepare(
+                "SELECT id FROM users WHERE (email = :email OR pending_email = :email2) AND id != :id"
+            );
+            $dupCheckSt->execute([':email' => $pendingAddr, ':email2' => $pendingAddr, ':id' => $cur['id']]);
             if (!$dupCheckSt->fetch()) {
-                $db->prepare(
+                $upd = $db->prepare(
                     "UPDATE users SET email = :email,
                                       pending_email = NULL,
                                       pending_email_token_hash = NULL,
                                       pending_email_expires_at = NULL
-                      WHERE id = :id"
-                )->execute([':email' => $pendingAddr, ':id' => $cur['id']]);
-                audit($db, 'user.update_email', 'user', to_int($cur['id']), '');
-                flash_set('Email address verified and updated.');
+                      WHERE id = :id
+                        AND NOT EXISTS (
+                            SELECT 1 FROM users u2
+                             WHERE (u2.email = :email2 OR u2.pending_email = :email3)
+                               AND u2.id != :id2
+                        )"
+                );
+                $upd->execute([
+                    ':email'  => $pendingAddr,
+                    ':email2' => $pendingAddr,
+                    ':email3' => $pendingAddr,
+                    ':id'     => $cur['id'],
+                    ':id2'    => $cur['id'],
+                ]);
+                if ($upd->rowCount() === 1) {
+                    audit($db, 'user.update_email', 'user', to_int($cur['id']), '');
+                    flash_set('Email address verified and updated.');
+                } else {
+                    flash_set('Verification link is invalid or has expired.', 'danger');
+                }
             } else {
                 flash_set('Verification link is invalid or has expired.', 'danger');
             }
@@ -122,13 +140,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && array_key_exists('new_email', $_POS
     } elseif (filter_var($newEmail, FILTER_VALIDATE_EMAIL) === false) {
         flash_set('Invalid email address format.', 'danger');
     } else {
-        $dupSt = $db->prepare("SELECT id FROM users WHERE email = :email AND id != :id");
-        $dupSt->execute([':email' => $newEmail, ':id' => $cur['id']]);
+        $dupSt = $db->prepare(
+            "SELECT id FROM users WHERE (email = :email OR pending_email = :email2) AND id != :id"
+        );
+        $dupSt->execute([':email' => $newEmail, ':email2' => $newEmail, ':id' => $cur['id']]);
         if ($dupSt->fetch()) {
             flash_set('That email address is already in use.', 'danger');
         } else {
             $sent = ipam_send_email_verification($db, to_int($cur['id']), $newEmail);
             if ($sent) {
+                audit($db, 'user.email_change_initiated', 'user', to_int($cur['id']), 'new_email=' . $newEmail);
                 flash_set('Verification email sent to ' . $newEmail . '. Check your inbox and spam folder.');
             } else {
                 flash_set('Could not send verification email. Ensure SMTP and base_url are configured.', 'danger');

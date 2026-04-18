@@ -70,6 +70,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $deviceId    = to_int($_POST['device_id']    ?? 0) ?: null;
         $interfaceId = to_int($_POST['interface_id'] ?? 0) ?: null;
         if ($deviceId === null) $interfaceId = null;
+        if ($deviceId !== null) {
+            $devchk = $db->prepare("SELECT id FROM devices WHERE id=:id");
+            $devchk->execute([':id' => $deviceId]);
+            if (!$devchk->fetch()) { $deviceId = null; $interfaceId = null; }
+        }
         if ($interfaceId !== null) {
             $dchk = $db->prepare("SELECT id FROM device_interfaces WHERE id=:id AND device_id=:did");
             $dchk->execute([':id' => $interfaceId, ':did' => $deviceId]);
@@ -169,6 +174,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $deviceId    = to_int($_POST['device_id']    ?? 0) ?: null;
         $interfaceId = to_int($_POST['interface_id'] ?? 0) ?: null;
         if ($deviceId === null) $interfaceId = null;
+        if ($deviceId !== null) {
+            $devchk = $db->prepare("SELECT id FROM devices WHERE id=:id");
+            $devchk->execute([':id' => $deviceId]);
+            if (!$devchk->fetch()) { $deviceId = null; $interfaceId = null; }
+        }
         if ($interfaceId !== null) {
             $dchk = $db->prepare("SELECT id FROM device_interfaces WHERE id=:id AND device_id=:did");
             $dchk->execute([':id' => $interfaceId, ':did' => $deviceId]);

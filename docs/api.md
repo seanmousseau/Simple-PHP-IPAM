@@ -1318,9 +1318,9 @@ GET ?resource=devices&q=core
 | `id` | integer | — | Return a single device |
 | `type` | string | — | Filter: `router`, `switch`, `server`, `vm`, `firewall`, `other` |
 | `site_id` | integer | — | Filter by site |
-| `q` | string | — | Free-text search on name, vendor, model, serial, note |
+| `q` | string | — | Free-text search on name, vendor, model, serial |
 | `page` | integer | 1 | Pagination page |
-| `limit` | integer | 100 | Results per page (max 500) |
+| `limit` | integer | 50 | Results per page (max 200) |
 
 **Single device response:**
 
