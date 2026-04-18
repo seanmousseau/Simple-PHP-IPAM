@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.2.0] - 2026-04-18
+
+### Added
+
+- **#394** — Devices schema. New `devices` table (name, type, site FK, vendor, model, serial, note) and `device_interfaces` table (device FK, name, description). New nullable `device_id` and `interface_id` FK columns on `addresses` (SET NULL on device delete). Migration key `3.2.0-devices`.
+- **#395** — Devices admin CRUD UI (`devices.php`). Admin-only page with filter bar (type, site, free-text), device table with type badges, inline expand for edit/delete, nested interface sub-table with add/delete per device. Linked from the ⚙ Admin dropdown.
+- **#396** — Devices REST API resources. `?resource=devices` (list with `?type=`, `?site_id=`, `?search=`, pagination; single with `?id=`; POST/PUT/DELETE) and `?resource=device_interfaces` (list by `?device_id=`; single `?id=`; POST/PUT/DELETE).
+- **#397** — Device search in global search. `search.php` now includes matching devices and interfaces in a dedicated "Matching Devices" result card. CSV import (`import_csv.php`) gains optional `device_name` and `interface_name` columns; on import, devices and interfaces are looked up by name (created if missing) and linked to the imported address rows.
+- **#541** — Email-based password recovery. New `forgot_password.php` and `reset_password.php`. Tokens are single-use (stored as SHA-256 hash), expire in 1 hour, rate-limited to 3 requests per user per hour. Always returns the same UI response regardless of whether the username/email exists (prevents user enumeration). Login page gains a "Forgot password?" link. New migration key `3.2.0-password-reset` adds `password_reset_tokens` table and pending-email columns to `users`.
+- **#542** — Email change verification. Users can update their email address on the Change Password page; a verification link is sent to the new address. The change is applied only after clicking the link. Pending state (with expiry display) shown while verification is outstanding.
+- **#318** — Subnet utilization CSV export trend delta. `export_subnet_utilization.php` accepts `?include_trend=1&trend_days=N` (1–365, default 30). Appends four columns: `used_Nd_ago`, `free_Nd_ago`, `delta_used`, `delta_pct`, sourced from a batch-loaded snapshot at the cutoff date.
+- **#427** — API versioning header. Every `api.php` response now includes `X-IPAM-API-Version: 1`. Current stable API = v1; breaking changes will increment to v2.
+- **#312** — OpenAPI 3.1 spec. Full machine-readable spec served at `?resource=spec` as `Content-Type: application/yaml` (no auth required). Covers all v3.2.0 resources including devices, device interfaces, and the spec endpoint itself. Swagger UI compatible. New file `docs/api-spec.yaml`.
+
+### Fixed
+
+- **#574** — Utilization bars not rendering on subnet list page. CSS specificity fix for `.util-bar-fill[data-pct]` rules.
+
 ## [3.1.0] - 2026-04-17
 
 ### Added
@@ -834,6 +852,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.2.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.0.1...v3.1.0
 [3.0.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.0.0...v3.0.1
 [3.0.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v2.14.0...v3.0.0

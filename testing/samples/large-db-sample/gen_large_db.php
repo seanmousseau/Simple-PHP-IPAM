@@ -17,9 +17,9 @@ $dbPath = __DIR__ . '/../../../Simple-PHP-IPAM/data/ipam.sqlite';
 
 // Remove old DB if present
 if (file_exists($dbPath)) {
-    unlink($dbPath);
-    @unlink($dbPath . '-wal');
-    @unlink($dbPath . '-shm');
+    unlink($dbPath); // nosemgrep
+    @unlink($dbPath . '-wal'); // nosemgrep
+    @unlink($dbPath . '-shm'); // nosemgrep
 }
 
 $db = new PDO('sqlite:' . $dbPath, '', '', [
@@ -481,11 +481,63 @@ $db->query("UPDATE addresses SET is_stale=1
     )");
 echo "Stale addresses flagged.\n";
 
+// --- Devices and interfaces (v3.2.0) ---
+$deviceTypes = ['router', 'switch', 'server', 'vm', 'firewall', 'other'];
+$deviceVendors = ['Cisco', 'Juniper', 'Arista', 'Dell', 'HP', 'VMware', 'Palo Alto', 'Fortinet'];
+$siteIds = $db->query("SELECT id FROM sites LIMIT 10")->fetchAll(\PDO::FETCH_COLUMN);
+$stDev = $db->prepare("INSERT INTO devices (name, type, site_id, vendor, model, serial, note) VALUES (:n, :t, :s, :v, :m, :ser, :nt)");
+$stIface = $db->prepare("INSERT INTO device_interfaces (device_id, name, description) VALUES (:did, :n, :d)");
+$deviceCount = 0;
+$ifaceCount = 0;
+$db->beginTransaction();
+$deviceNames = [];
+for ($i = 1; $i <= 60; $i++) {
+    $type   = $deviceTypes[($i - 1) % count($deviceTypes)];
+    $vendor = $deviceVendors[array_rand($deviceVendors)];
+    $name   = $type . '-' . str_pad((string)$i, 2, '0', STR_PAD_LEFT);
+    $siteId = $siteIds ? $siteIds[array_rand($siteIds)] : null;
+    $stDev->execute([
+        ':n' => $name, ':t' => $type, ':s' => $siteId,
+        ':v' => $vendor, ':m' => $vendor . ' ' . strtoupper($type) . $i,
+        ':ser' => strtoupper(bin2hex(random_bytes(4))),
+        ':nt' => '',
+    ]);
+    $devId = (int)$db->lastInsertId();
+    $deviceNames[$devId] = $name;
+    $deviceCount++;
+    $ifaceNames = match ($type) {
+        'router', 'switch' => ['GigabitEthernet0/0', 'GigabitEthernet0/1', 'GigabitEthernet0/2', 'Management0'],
+        'firewall'         => ['eth0', 'eth1', 'mgmt'],
+        'server', 'vm'     => ['eth0', 'eth1'],
+        default            => ['port1'],
+    };
+    foreach ($ifaceNames as $iname) {
+        $stIface->execute([':did' => $devId, ':n' => $iname, ':d' => '']);
+        $ifaceCount++;
+    }
+}
+$db->commit();
+echo "$deviceCount devices and $ifaceCount interfaces created.\n";
+
+// Link a sample of addresses to devices
+$db->beginTransaction();
+$devRows = $db->query("SELECT id FROM devices ORDER BY RANDOM() LIMIT 20")->fetchAll(\PDO::FETCH_COLUMN);
+$addrRows = $db->query("SELECT a.id, di.id AS iface_id FROM addresses a JOIN device_interfaces di ON di.device_id = (SELECT id FROM devices ORDER BY RANDOM() LIMIT 1) WHERE a.device_id IS NULL LIMIT 200")->fetchAll();
+$linked = 0;
+foreach ($addrRows as $ar) {
+    $db->prepare("UPDATE addresses SET device_id = (SELECT device_id FROM device_interfaces WHERE id = :iid), interface_id = :iid WHERE id = :aid")
+       ->execute([':iid' => $ar['iface_id'], ':aid' => $ar['id']]);
+    $linked++;
+}
+$db->commit();
+echo "$linked addresses linked to devices.\n";
+
 // --- Stamp schema migrations ---
 $versions = ['0.3', '0.7', '0.9', '0.11', '0.12', '0.13', '0.14',
              '1.4', '1.9', '1.11', '1.12', '1.13', '1.19.0',
              '2.0.0-alert-state', '2.0.0-site-hierarchy', '2.0.0-tags', '2.0.0-vlans',
-             '2.1.0-contacts', '2.1.0-vrfs', '2.3.0-scanning'];
+             '2.1.0-contacts', '2.1.0-vrfs', '2.3.0-scanning',
+             '3.2.0-devices', '3.2.0-password-reset'];
 $stMig = $db->prepare("INSERT OR IGNORE INTO schema_migrations (version) VALUES (:v)");
 foreach ($versions as $v) {
     $stMig->execute([':v' => $v]);
@@ -494,7 +546,7 @@ echo count($versions) . " migration versions stamped.\n";
 
 // Final stats
 $stats = [];
-foreach (['users', 'sites', 'vrfs', 'vlans', 'contacts', 'tags', 'subnets', 'addresses', 'audit_log', 'address_history', 'scan_schedules', 'scan_results'] as $t) {
+foreach (['users', 'sites', 'vrfs', 'vlans', 'contacts', 'tags', 'subnets', 'addresses', 'audit_log', 'address_history', 'scan_schedules', 'scan_results', 'devices', 'device_interfaces'] as $t) {
     $stats[$t] = (int)$db->query("SELECT COUNT(*) FROM $t")->fetchColumn();
 }
 $dbSize = filesize($dbPath);

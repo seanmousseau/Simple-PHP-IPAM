@@ -33,6 +33,10 @@ Simple-PHP-IPAM exposes a JSON REST API (`api.php`). Read endpoints are availabl
 - [Pagination](#pagination)
 - [Managing API keys](#managing-api-keys)
 - [Examples](#examples)
+- [API versioning](#api-versioning)
+- [Machine-readable spec](#machine-readable-spec)
+- [Devices](#devices)
+- [Device interfaces](#device-interfaces)
 
 ---
 
@@ -1270,3 +1274,147 @@ $subnets = (Invoke-RestMethod "$base`?resource=subnets" -Headers $headers).subne
 # List addresses for a subnet
 $addresses = (Invoke-RestMethod "$base`?resource=addresses&subnet_id=3" -Headers $headers).addresses
 ```
+
+---
+
+## API versioning
+
+Every response includes the `X-IPAM-API-Version: 1` header. The current stable API is version 1. Breaking changes (e.g. tenant scoping in v4.0) will increment to v2. Integrators who want advance notice of breaking changes should pin this header in their monitoring.
+
+There is no URL path versioning — all endpoints remain at `api.php?resource=…`.
+
+---
+
+## Machine-readable spec
+
+The full OpenAPI 3.1 spec is served at:
+
+```
+GET /api.php?resource=spec
+```
+
+No authentication required. Response is `Content-Type: application/yaml; charset=utf-8`. Compatible with Swagger UI and other OpenAPI tooling.
+
+The spec covers all v3.2.0 resources including `devices`, `device_interfaces`, and the `spec` endpoint itself.
+
+---
+
+## Devices
+
+Devices represent physical or virtual network equipment (routers, switches, servers, VMs, firewalls). Addresses can be linked to a device and optionally a device interface.
+
+### List devices
+
+```
+GET ?resource=devices
+GET ?resource=devices&id=N
+GET ?resource=devices&type=router
+GET ?resource=devices&site_id=2
+GET ?resource=devices&search=core
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `id` | integer | — | Return a single device |
+| `type` | string | — | Filter: `router`, `switch`, `server`, `vm`, `firewall`, `other` |
+| `site_id` | integer | — | Filter by site |
+| `search` | string | — | Free-text search on name, vendor, model, serial |
+| `page` | integer | 1 | Pagination page |
+| `limit` | integer | 100 | Results per page (max 500) |
+
+**Single device response:**
+
+```json
+{
+  "device": {
+    "id": 1,
+    "name": "core-sw-01",
+    "type": "switch",
+    "site_id": 2,
+    "site_name": "New York",
+    "vendor": "Cisco",
+    "model": "Catalyst 9300",
+    "serial": "FOC1234X567",
+    "note": "",
+    "interface_count": 4,
+    "created_at": "2026-04-18T00:00:00Z"
+  }
+}
+```
+
+### Create a device
+
+```
+POST ?resource=devices
+Content-Type: application/json
+
+{
+  "name": "core-sw-01",
+  "type": "switch",
+  "site_id": 2,
+  "vendor": "Cisco",
+  "model": "Catalyst 9300",
+  "serial": "FOC1234X567",
+  "note": ""
+}
+```
+
+Write key required. `name` is required and must be unique. `type` defaults to `other`.
+
+### Update a device
+
+```
+PUT ?resource=devices&id=N
+```
+
+Same body as POST. All fields optional; omitted fields are unchanged.
+
+### Delete a device
+
+```
+DELETE ?resource=devices&id=N
+```
+
+Cascades `device_interfaces` (all interfaces deleted). Address `device_id` / `interface_id` columns are SET NULL.
+
+---
+
+## Device interfaces
+
+Interfaces belong to a device and can be linked to individual address records.
+
+### List interfaces
+
+```
+GET ?resource=device_interfaces&device_id=N
+GET ?resource=device_interfaces&id=N
+```
+
+### Create an interface
+
+```
+POST ?resource=device_interfaces
+Content-Type: application/json
+
+{
+  "device_id": 1,
+  "name": "GigabitEthernet0/0",
+  "description": "uplink to core"
+}
+```
+
+`device_id` and `name` are required. `name` must be unique within the device.
+
+### Update an interface
+
+```
+PUT ?resource=device_interfaces&id=N
+```
+
+### Delete an interface
+
+```
+DELETE ?resource=device_interfaces&id=N
+```
+
+Linked address `interface_id` columns are SET NULL.
