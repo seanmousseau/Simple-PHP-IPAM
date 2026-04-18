@@ -577,6 +577,16 @@ button:disabled{opacity:.6;cursor:not-allowed}
   color:var(--warn);
   border-color:color-mix(in srgb,var(--warn) 40%,var(--border) 60%);
 }
+/* Device type badges (v3.2.0) */
+.badge-type-router{background:color-mix(in srgb,var(--link) 15%,var(--badge-bg) 85%);color:var(--link);border-color:color-mix(in srgb,var(--link) 40%,var(--border) 60%)}
+.badge-type-switch{background:color-mix(in srgb,var(--success) 15%,var(--badge-bg) 85%);color:var(--success);border-color:color-mix(in srgb,var(--success) 40%,var(--border) 60%)}
+.badge-type-server{background:color-mix(in srgb,var(--warn) 15%,var(--badge-bg) 85%);color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,var(--border) 60%)}
+.badge-type-vm{background:color-mix(in srgb,var(--muted) 25%,var(--badge-bg) 75%);color:var(--fg);border-color:var(--border)}
+.badge-type-firewall{background:color-mix(in srgb,var(--danger) 15%,var(--badge-bg) 85%);color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,var(--border) 60%)}
+.badge-type-other{background:var(--badge-bg);color:var(--muted);border-color:var(--border)}
+/* Compact nested table for device interfaces */
+.table-compact td,.table-compact th{padding:4px var(--space-8);font-size:.85rem}
+.device-ifaces h4{margin:0 0 var(--space-8);font-size:.875rem;font-weight:600;color:var(--muted)}
 .util-bar{
   display:inline-block;
   width:60px;
@@ -588,6 +598,7 @@ button:disabled{opacity:.6;cursor:not-allowed}
   margin-left:var(--space-2);
 }
 .util-bar-fill{
+  display:block;
   height:100%;
   background:var(--success);
   border-radius:var(--radius-xs);

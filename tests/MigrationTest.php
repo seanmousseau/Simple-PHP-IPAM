@@ -322,6 +322,42 @@ class MigrationTest extends TestCase
     }
 
     /**
+     * 3.2.0-devices migration must add device_id + interface_id to addresses
+     * without deleting any existing address rows, and must create the devices
+     * and device_interfaces tables.
+     */
+    public function testDevicesMigrationAddsColumnsAndPreservesAddresses(): void
+    {
+        $db = $this->makePreVrfDb();
+        apply_migrations($db);
+
+        // Row count must be unchanged — nullable ALTER TABLE ADD COLUMN is safe,
+        // but this guards against any future refactor that rebuilds addresses.
+        $this->assertSame(
+            5,
+            (int)$db->query("SELECT count(*) FROM addresses")->fetchColumn(),
+            '3.2.0-devices must not delete any addresses'
+        );
+
+        // Verify new columns are present on addresses.
+        $addrCols = array_column(
+            $db->query("PRAGMA table_info(addresses)")->fetchAll(PDO::FETCH_ASSOC),
+            'name'
+        );
+        $this->assertContains('device_id',    $addrCols, 'addresses.device_id must exist after 3.2.0-devices');
+        $this->assertContains('interface_id', $addrCols, 'addresses.interface_id must exist after 3.2.0-devices');
+
+        // Verify the new tables were created.
+        $tables = array_column(
+            $db->query("SELECT name FROM sqlite_master WHERE type='table'")->fetchAll(PDO::FETCH_ASSOC),
+            'name'
+        );
+        $this->assertContains('devices',           $tables, 'devices table must exist after 3.2.0-devices');
+        $this->assertContains('device_interfaces', $tables, 'device_interfaces table must exist after 3.2.0-devices');
+        $this->assertContains('password_reset_tokens', $tables, 'password_reset_tokens table must exist after 3.2.0-password-reset');
+    }
+
+    /**
      * After the migration the UNIQUE(cidr, vrf_id) constraint must be enforced:
      * inserting a duplicate CIDR within the same non-NULL VRF must fail.
      *

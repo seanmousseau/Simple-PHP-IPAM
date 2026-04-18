@@ -8,17 +8,16 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.1.0
+## What's new in v3.2.0
 
-**Alerting, utilization history, and per-user timezone.**
+**Devices, password recovery, API spec, and export trends.**
 
-- **Direct SMTP delivery (#415).** PHPMailer replaces `mail()` for utilization alerts. Configure SMTP host/port/encryption/credentials in Admin → Settings. Native `mail()` remains the fallback when SMTP is not configured. "Send test email" button included.
-- **Per-subnet alert toggle (#457).** Each subnet has an "Enable utilization alerts" checkbox. When disabled, no alert is sent and the alert state is cleared. Bell-slash badge in the subnet list. Bulk enable/disable for all subnets at once (admin-only).
-- **Per-user timezone preference (#414).** Users can choose their display timezone from Admin → Profile (Change Password page). Timestamps render in the user's local time everywhere in the UI. App-wide default configurable in Admin → Settings. API timestamps remain UTC.
-- **Address expiry widget + bulk actions (#315).** New "Expiring Addresses" dashboard card shows Expired / Expiring ≤7d / Expiring ≤30d counts with links to filtered address views. Bulk actions: extend expiry by 30/60/90 days, or clear expiry.
-- **Utilization snapshots + sparklines (#311).** Daily snapshots of subnet utilization are captured automatically. Dashboard top-subnets table shows inline SVG sparklines. `reports.php` (Admin → Reports) shows full trend history with per-subnet drill-down and configurable date range. CSV export at `export_utilization_history.php`.
-- **MailHog end-to-end test harness (#458).** Playwright test suite gains an optional MailHog container for smoke-testing the SMTP alert pipeline in CI.
-- **Contact popover close button (#571).** The contact card popup now has an × button in addition to click-outside and Escape dismiss.
+- **Device records (#394–397).** First-class `devices` and `device_interfaces` tables. Admin CRUD UI at Admin → Devices with type badges (router / switch / server / vm / firewall / other), per-site filtering, and inline interface management. REST API at `?resource=devices` and `?resource=device_interfaces`. Global search returns matching devices. CSV import supports optional `device_name` and `interface_name` columns.
+- **Email password recovery (#541).** New "Forgot password?" flow: single-use token, 1-hour expiry, rate-limited, timing-safe (no username enumeration). `forgot_password.php` + `reset_password.php`.
+- **Email change verification (#542).** Users can update their email address on the Change Password page; a verification link is sent to the new address before the change is applied.
+- **Subnet utilization export trend delta (#318).** `export_subnet_utilization.php` gains `?include_trend=1&trend_days=N`. Appends four columns comparing current utilization to a historical snapshot.
+- **OpenAPI 3.1 spec (#312).** Full machine-readable spec at `?resource=spec` (`Content-Type: application/yaml`). Covers all v3.2.0 resources; Swagger UI compatible.
+- **API versioning header (#427).** Every API response includes `X-IPAM-API-Version: 1`.
 
 See [CHANGELOG.md](CHANGELOG.md) for full release history and [docs/upgrading.md](docs/upgrading.md) for the upgrade guide.
 

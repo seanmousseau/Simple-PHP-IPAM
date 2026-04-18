@@ -29,10 +29,28 @@ declare(strict_types=1);
 $config = require __DIR__ . '/config.php';
 require __DIR__ . '/lib.php';
 
+// Public endpoint: OpenAPI spec — serve before JSON headers or auth
+if (strtolower(trim(to_str($_GET['resource'] ?? ''))) === 'spec'
+    && in_array(strtoupper(to_str($_SERVER['REQUEST_METHOD'] ?? 'GET')), ['GET', 'HEAD'], true)) {
+    header('X-Content-Type-Options: nosniff');
+    header('X-Frame-Options: DENY');
+    header('Referrer-Policy: strict-origin-when-cross-origin');
+    header('X-IPAM-API-Version: 1');
+    $specPath = __DIR__ . '/assets/api-spec.yaml';
+    if (!file_exists($specPath)) { http_response_code(404); echo '404 Not Found'; exit; }
+    $yaml = file_get_contents($specPath);
+    if ($yaml === false) { http_response_code(500); echo '500 Error'; exit; }
+    header('Content-Type: application/yaml; charset=utf-8');
+    header('Cache-Control: public, max-age=3600');
+    echo $yaml;
+    exit;
+}
+
 header('Content-Type: application/json; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
 header('Referrer-Policy: strict-origin-when-cross-origin');
+header('X-IPAM-API-Version: 1');
 
 $db = ipam_db($config);
 ipam_db_init($db);
@@ -223,7 +241,22 @@ match ($resource) {
     'scan_run'        => $method === 'POST' ? api_scan_run($db, $apiKey) : api_error(405, 'Method not allowed.'),
     'subnet_stats'           => $method === 'GET' ? api_subnet_stats($db)           : api_error(405, 'Method not allowed.'),
     'utilization_snapshots'  => $method === 'GET' ? api_utilization_snapshots($db)  : api_error(405, 'Method not allowed.'),
-    default      => api_error(404, 'Unknown resource. Valid: subnets, addresses, sites, vlans, vrfs, contacts, tags, subnet_tags, address_tags, history, search, audit, unassigned, scan_results, scan_history, scan_schedules, scan_run, subnet_stats, utilization_snapshots'),
+    'devices' => match ($method) {
+        'GET'    => api_devices($db),
+        'POST'   => api_devices_create($db, $apiKey, $body),
+        'PUT'    => api_devices_update($db, $apiKey, to_int($_GET['id'] ?? 0), $body),
+        'DELETE' => api_devices_delete($db, $apiKey, to_int($_GET['id'] ?? 0)),
+        default  => api_error(405, 'Method not allowed.'),
+    },
+    'device_interfaces' => match ($method) {
+        'GET'    => api_device_interfaces($db),
+        'POST'   => api_device_interfaces_create($db, $apiKey, $body),
+        'PUT'    => api_device_interfaces_update($db, $apiKey, to_int($_GET['id'] ?? 0), $body),
+        'DELETE' => api_device_interfaces_delete($db, $apiKey, to_int($_GET['id'] ?? 0)),
+        default  => api_error(405, 'Method not allowed.'),
+    },
+    'spec'       => api_error(405, 'Method not allowed.'),  // GET/HEAD handled before auth above
+    default      => api_error(404, 'Unknown resource. Valid: subnets, addresses, sites, vlans, vrfs, contacts, tags, subnet_tags, address_tags, history, search, audit, unassigned, scan_results, scan_history, scan_schedules, scan_run, subnet_stats, utilization_snapshots, devices, device_interfaces, spec'),
 };
 
 // ---- Helpers ----
@@ -846,7 +879,7 @@ function api_vrfs_create(PDO $db, array $apiKey, array $body): never
         $st = $db->prepare("INSERT INTO vrfs (name, description, rd) VALUES (:n,:d,:rd)");
         $st->execute([':n' => $name, ':d' => $desc, ':rd' => $rd]);
         $newId = ipam_last_insert_id($db, 'vrfs');
-        audit($db, 'vrf.create', 'vrf', $newId, "name=$name");
+        api_audit($db, $apiKey, 'vrf.create', 'vrf', $newId, "name=$name");
     } catch (PDOException $e) {
         api_error(409, 'A VRF with that name already exists.');
     }
@@ -876,7 +909,7 @@ function api_vrfs_update(PDO $db, array $apiKey, int $id, array $body): never
     try {
         $st = $db->prepare("UPDATE vrfs SET name=:n, description=:d, rd=:rd, updated_at=" . ipam_dialect()->now() . " WHERE id=:id");
         $st->execute([':n' => $name, ':d' => $desc, ':rd' => $rd, ':id' => $id]);
-        audit($db, 'vrf.update', 'vrf', $id, "name=$name");
+        api_audit($db, $apiKey, 'vrf.update', 'vrf', $id, "name=$name");
     } catch (PDOException $e) {
         api_error(409, 'A VRF with that name already exists.');
     }
@@ -902,7 +935,7 @@ function api_vrfs_delete(PDO $db, array $apiKey, int $id): never
     $row = $nameSt->fetch();
     if (!$row) api_error(404, 'VRF not found.');
     $db->prepare("DELETE FROM vrfs WHERE id = :id")->execute([':id' => $id]);
-    audit($db, 'vrf.delete', 'vrf', $id, 'name=' . to_str($row['name']));
+    api_audit($db, $apiKey, 'vrf.delete', 'vrf', $id, 'name=' . to_str($row['name']));
     http_response_code(204);
     api_json(['deleted' => true]);
 }
@@ -989,7 +1022,7 @@ function api_contacts_create(PDO $db, array $apiKey, array $body): never
     $st = $db->prepare("INSERT INTO contacts (name, email, phone, org, note) VALUES (:n,:e,:p,:o,:nt)");
     $st->execute([':n' => $name, ':e' => $email, ':p' => $phone, ':o' => $org, ':nt' => $note]);
     $newId = ipam_last_insert_id($db, 'contacts');
-    audit($db, 'contact.create', 'contact', $newId, "name=$name");
+    api_audit($db, $apiKey, 'contact.create', 'contact', $newId, "name=$name");
     http_response_code(201);
     $st = $db->prepare("SELECT id, name, email, phone, org, note, created_at, updated_at FROM contacts WHERE id = :id");
     $st->execute([':id' => $newId]);
@@ -1017,7 +1050,7 @@ function api_contacts_update(PDO $db, array $apiKey, int $id, array $body): neve
     if (!$checkSt->fetch()) api_error(404, 'Contact not found.');
     $st = $db->prepare("UPDATE contacts SET name=:n, email=:e, phone=:p, org=:o, note=:nt, updated_at=" . ipam_dialect()->now() . " WHERE id=:id");
     $st->execute([':n' => $name, ':e' => $email, ':p' => $phone, ':o' => $org, ':nt' => $note, ':id' => $id]);
-    audit($db, 'contact.update', 'contact', $id, "name=$name");
+    api_audit($db, $apiKey, 'contact.update', 'contact', $id, "name=$name");
     $st = $db->prepare("SELECT id, name, email, phone, org, note, created_at, updated_at FROM contacts WHERE id = :id");
     $st->execute([':id' => $id]);
     /** @var array<string, mixed>|false $row */
@@ -1036,7 +1069,7 @@ function api_contacts_delete(PDO $db, array $apiKey, int $id): never
     $row = $nameSt->fetch();
     if (!$row) api_error(404, 'Contact not found.');
     $db->prepare("DELETE FROM contacts WHERE id = :id")->execute([':id' => $id]);
-    audit($db, 'contact.delete', 'contact', $id, 'name=' . to_str($row['name']));
+    api_audit($db, $apiKey, 'contact.delete', 'contact', $id, 'name=' . to_str($row['name']));
     http_response_code(204);
     api_json(['deleted' => true]);
 }
@@ -2536,4 +2569,348 @@ function api_utilization_snapshots(PDO $db): never
     }, $st->fetchAll());
 
     api_json(['utilization_snapshots' => $rows, 'count' => count($rows), 'subnet_id' => $subnetId, 'days' => $days]);
+}
+
+// ── Devices (#394 / #396) ─────────────────────────────────────────────────────
+
+/** GET ?resource=devices[&id=N][&type=][&site_id=][&q=][&page=][&limit=] */
+function api_devices(PDO $db): never
+{
+    /** @var list<string> $validTypes */
+    $validTypes = ['router', 'switch', 'server', 'vm', 'firewall', 'other'];
+
+    if (isset($_GET['id'])) {
+        $id  = to_int($_GET['id']);
+        $st  = $db->prepare("SELECT d.*, s.name AS site_name, (SELECT COUNT(*) FROM device_interfaces di WHERE di.device_id = d.id) AS interface_count FROM devices d LEFT JOIN sites s ON s.id = d.site_id WHERE d.id = :id");
+        $st->execute([':id' => $id]);
+        /** @var array<string,mixed>|false $row */
+        $row = $st->fetch();
+        if (!$row) api_error(404, 'Device not found.');
+        api_json(['device' => fmt_device($row)]);
+    }
+
+    $where  = [];
+    $params = [];
+
+    if (isset($_GET['type'])) {
+        $t = to_str($_GET['type']);
+        if (!in_array($t, $validTypes, true)) api_error(400, 'Invalid type.');
+        $where[] = 'd.type = :type';
+        $params[':type'] = $t;
+    }
+    if (isset($_GET['site_id']) && to_int($_GET['site_id']) > 0) {
+        $where[] = 'd.site_id = :sid';
+        $params[':sid'] = to_int($_GET['site_id']);
+    }
+    if (isset($_GET['q'])) {
+        $q = trim(to_str($_GET['q']));
+        if ($q !== '') {
+            $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $q) . '%';
+            $where[] = '(d.name LIKE :q OR d.vendor LIKE :q2 OR d.model LIKE :q3 OR d.serial LIKE :q4)';
+            $params[':q'] = $like; $params[':q2'] = $like; $params[':q3'] = $like; $params[':q4'] = $like;
+        }
+    }
+
+    $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
+    $page   = max(1, to_int($_GET['page']  ?? 1));
+    $limit  = max(1, min(200, to_int($_GET['limit'] ?? 50)));
+    $offset = ($page - 1) * $limit;
+
+    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM devices d $whereSql");
+    $cntSt->execute($params);
+    /** @var array<string,mixed>|false $cntRow */
+    $cntRow = $cntSt->fetch();
+    $total = is_array($cntRow) ? to_int($cntRow['c']) : 0;
+
+    $st = $db->prepare("SELECT d.*, s.name AS site_name, (SELECT COUNT(*) FROM device_interfaces di WHERE di.device_id = d.id) AS interface_count FROM devices d LEFT JOIN sites s ON s.id = d.site_id $whereSql ORDER BY d.name LIMIT :lim OFFSET :off");
+    foreach ($params as $k => $v) {
+        $st->bindValue($k, $v, PDO::PARAM_STR);
+    }
+    $st->bindValue(':lim', $limit, PDO::PARAM_INT);
+    $st->bindValue(':off', $offset, PDO::PARAM_INT);
+    $st->execute();
+    api_json(api_paginated_response('devices', array_map('fmt_device', $st->fetchAll()), $total, $page, $limit));
+}
+
+/**
+ * @param array<string,mixed> $r
+ * @return array<string,mixed>
+ */
+function fmt_device(array $r): array
+{
+    return [
+        'id'              => to_int($r['id']),
+        'name'            => to_str($r['name']),
+        'type'            => to_str($r['type']),
+        'site_id'         => $r['site_id'] !== null ? to_int($r['site_id']) : null,
+        'site_name'       => isset($r['site_name']) ? to_str($r['site_name']) : null,
+        'vendor'          => to_str($r['vendor']),
+        'model'           => to_str($r['model']),
+        'serial'          => to_str($r['serial']),
+        'note'            => to_str($r['note']),
+        'interface_count' => isset($r['interface_count']) ? to_int($r['interface_count']) : 0,
+        'created_at'      => $r['created_at'],
+        'updated_at'      => $r['updated_at'],
+    ];
+}
+
+/**
+ * @param array<string,mixed> $apiKey
+ * @param array<string,mixed> $body
+ */
+function api_devices_create(PDO $db, array $apiKey, array $body): never
+{
+    if (to_int($apiKey['is_readonly'] ?? 0) === 1) api_error(403, 'Read-only key.');
+    /** @var list<string> $validTypes */
+    $validTypes = ['router', 'switch', 'server', 'vm', 'firewall', 'other'];
+    $name   = trim(to_str($body['name']    ?? ''));
+    $type   = to_str($body['type']   ?? 'other');
+    if (isset($body['site_id']) && $body['site_id'] !== '') {
+        $siteId = to_int($body['site_id']);
+        if ($siteId <= 0) api_error(400, 'site_id must be a positive integer.');
+    } else {
+        $siteId = null;
+    }
+    $vendor = trim(to_str($body['vendor']  ?? ''));
+    $model  = trim(to_str($body['model']   ?? ''));
+    $serial = trim(to_str($body['serial']  ?? ''));
+    $note   = trim(to_str($body['note']    ?? ''));
+    if ($name === '') api_error(400, 'name is required.');
+    if (!in_array($type, $validTypes, true)) api_error(400, 'Invalid type.');
+    if ($siteId !== null) {
+        $siteSt = $db->prepare("SELECT id FROM sites WHERE id = :id");
+        $siteSt->execute([':id' => $siteId]);
+        if (!$siteSt->fetch()) api_error(404, 'Site not found.');
+    }
+    try {
+        $st = $db->prepare("INSERT INTO devices (name, type, site_id, vendor, model, serial, note) VALUES (:n,:t,:sid,:v,:m,:sr,:nt)");
+        $st->execute([':n' => $name, ':t' => $type, ':sid' => $siteId, ':v' => $vendor, ':m' => $model, ':sr' => $serial, ':nt' => $note]);
+    } catch (PDOException $e) {
+        $code = $e->getCode();
+        if ($code === '23000' || $code === '23505' || str_contains($e->getMessage(), 'UNIQUE')) {
+            api_error(409, 'A device with that name already exists.');
+        }
+        api_error(500, 'Database error.');
+    }
+    $newId = ipam_last_insert_id($db, 'devices');
+    api_audit($db, $apiKey, 'device.create', 'device', $newId, "name=$name type=$type");
+    http_response_code(201);
+    $st = $db->prepare("SELECT d.*, s.name AS site_name, (SELECT COUNT(*) FROM device_interfaces di WHERE di.device_id = d.id) AS interface_count FROM devices d LEFT JOIN sites s ON s.id = d.site_id WHERE d.id = :id");
+    $st->execute([':id' => $newId]);
+    /** @var array<string,mixed>|false $row */
+    $row = $st->fetch();
+    api_json(['device' => fmt_device($row ?: [])]);
+}
+
+/**
+ * @param array<string,mixed> $apiKey
+ * @param array<string,mixed> $body
+ */
+function api_devices_update(PDO $db, array $apiKey, int $id, array $body): never
+{
+    if (to_int($apiKey['is_readonly'] ?? 0) === 1) api_error(403, 'Read-only key.');
+    if ($id <= 0) api_error(400, 'id is required.');
+    /** @var list<string> $validTypes */
+    $validTypes = ['router', 'switch', 'server', 'vm', 'firewall', 'other'];
+    $existSt = $db->prepare("SELECT * FROM devices WHERE id = :id");
+    $existSt->execute([':id' => $id]);
+    /** @var array<string,mixed>|false $existing */
+    $existing = $existSt->fetch();
+    if (!$existing) api_error(404, 'Device not found.');
+    $name   = array_key_exists('name',    $body) ? trim(to_str($body['name']))   : to_str($existing['name']);
+    $type   = array_key_exists('type',    $body) ? to_str($body['type'])          : to_str($existing['type']);
+    $vendor = array_key_exists('vendor',  $body) ? trim(to_str($body['vendor']))  : to_str($existing['vendor']);
+    $model  = array_key_exists('model',   $body) ? trim(to_str($body['model']))   : to_str($existing['model']);
+    $serial = array_key_exists('serial',  $body) ? trim(to_str($body['serial']))  : to_str($existing['serial']);
+    $note   = array_key_exists('note',    $body) ? trim(to_str($body['note']))    : to_str($existing['note']);
+    if (array_key_exists('site_id', $body)) {
+        if ($body['site_id'] === null || $body['site_id'] === '') {
+            $siteId = null;
+        } else {
+            $siteId = to_int($body['site_id']);
+            if ($siteId <= 0) api_error(400, 'site_id must be a positive integer.');
+        }
+    } else {
+        $siteId = $existing['site_id'] !== null ? to_int($existing['site_id']) : null;
+    }
+    if ($name === '') api_error(400, 'name is required.');
+    if (!in_array($type, $validTypes, true)) api_error(400, 'Invalid type.');
+    if ($siteId !== null) {
+        $siteSt = $db->prepare("SELECT id FROM sites WHERE id = :id");
+        $siteSt->execute([':id' => $siteId]);
+        if (!$siteSt->fetch()) api_error(404, 'Site not found.');
+    }
+    try {
+        $st = $db->prepare("UPDATE devices SET name=:n, type=:t, site_id=:sid, vendor=:v, model=:m, serial=:sr, note=:nt, updated_at=" . ipam_dialect()->now() . " WHERE id=:id");
+        $st->execute([':n' => $name, ':t' => $type, ':sid' => $siteId, ':v' => $vendor, ':m' => $model, ':sr' => $serial, ':nt' => $note, ':id' => $id]);
+    } catch (PDOException $e) {
+        $code = $e->getCode();
+        if ($code === '23000' || $code === '23505' || str_contains($e->getMessage(), 'UNIQUE')) {
+            api_error(409, 'Duplicate device name.');
+        }
+        api_error(500, 'Database error.');
+    }
+    api_audit($db, $apiKey, 'device.update', 'device', $id, "name=$name");
+    $st = $db->prepare("SELECT d.*, s.name AS site_name, (SELECT COUNT(*) FROM device_interfaces di WHERE di.device_id = d.id) AS interface_count FROM devices d LEFT JOIN sites s ON s.id = d.site_id WHERE d.id = :id");
+    $st->execute([':id' => $id]);
+    /** @var array<string,mixed>|false $row */
+    $row = $st->fetch();
+    api_json(['device' => fmt_device($row ?: [])]);
+}
+
+/** @param array<string,mixed> $apiKey */
+function api_devices_delete(PDO $db, array $apiKey, int $id): never
+{
+    if (to_int($apiKey['is_readonly'] ?? 0) === 1) api_error(403, 'Read-only key.');
+    if ($id <= 0) api_error(400, 'id is required.');
+    $st = $db->prepare("SELECT name FROM devices WHERE id = :id");
+    $st->execute([':id' => $id]);
+    /** @var array<string,mixed>|false $row */
+    $row = $st->fetch();
+    if (!$row) api_error(404, 'Device not found.');
+    $db->prepare("DELETE FROM devices WHERE id = :id")->execute([':id' => $id]);
+    api_audit($db, $apiKey, 'device.delete', 'device', $id, 'name=' . to_str($row['name']));
+    http_response_code(204);
+    api_json([]);
+}
+
+// ── Device Interfaces (#394 / #396) ───────────────────────────────────────────
+
+/** GET ?resource=device_interfaces[&id=N][&device_id=N] */
+function api_device_interfaces(PDO $db): never
+{
+    if (isset($_GET['id'])) {
+        $id  = to_int($_GET['id']);
+        $st  = $db->prepare("SELECT * FROM device_interfaces WHERE id = :id");
+        $st->execute([':id' => $id]);
+        /** @var array<string,mixed>|false $row */
+        $row = $st->fetch();
+        if (!$row) api_error(404, 'Interface not found.');
+        api_json(['interface' => fmt_device_interface($row)]);
+    }
+
+    $where  = [];
+    $params = [];
+
+    if (isset($_GET['device_id']) && to_int($_GET['device_id']) > 0) {
+        $did = to_int($_GET['device_id']);
+        $chk = $db->prepare("SELECT id FROM devices WHERE id = :id");
+        $chk->execute([':id' => $did]);
+        if (!$chk->fetch()) api_error(404, 'Device not found.');
+        $where[] = 'device_id = :did';
+        $params[':did'] = $did;
+    }
+
+    $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
+    $page   = max(1, to_int($_GET['page']  ?? 1));
+    $limit  = max(1, min(200, to_int($_GET['limit'] ?? 50)));
+    $offset = ($page - 1) * $limit;
+
+    $cntSt = $db->prepare("SELECT COUNT(*) AS c FROM device_interfaces $whereSql");
+    $cntSt->execute($params);
+    /** @var array<string,mixed>|false $cntRow */
+    $cntRow = $cntSt->fetch();
+    $total  = is_array($cntRow) ? to_int($cntRow['c']) : 0;
+
+    $st = $db->prepare("SELECT * FROM device_interfaces $whereSql ORDER BY name LIMIT :lim OFFSET :off");
+    foreach ($params as $k => $v) {
+        $st->bindValue($k, $v, PDO::PARAM_STR);
+    }
+    $st->bindValue(':lim', $limit, PDO::PARAM_INT);
+    $st->bindValue(':off', $offset, PDO::PARAM_INT);
+    $st->execute();
+    api_json(api_paginated_response('device_interfaces', array_map('fmt_device_interface', $st->fetchAll()), $total, $page, $limit));
+}
+
+/**
+ * @param array<string,mixed> $r
+ * @return array<string,mixed>
+ */
+function fmt_device_interface(array $r): array
+{
+    return [
+        'id'          => to_int($r['id']),
+        'device_id'   => to_int($r['device_id']),
+        'name'        => to_str($r['name']),
+        'description' => to_str($r['description']),
+        'created_at'  => $r['created_at'],
+        'updated_at'  => $r['updated_at'],
+    ];
+}
+
+/**
+ * @param array<string,mixed> $apiKey
+ * @param array<string,mixed> $body
+ */
+function api_device_interfaces_create(PDO $db, array $apiKey, array $body): never
+{
+    if (to_int($apiKey['is_readonly'] ?? 0) === 1) api_error(403, 'Read-only key.');
+    $deviceId = to_int($body['device_id'] ?? 0);
+    $name     = trim(to_str($body['name']        ?? ''));
+    $desc     = trim(to_str($body['description'] ?? ''));
+    if ($deviceId <= 0) api_error(400, 'device_id is required.');
+    if ($name === '')   api_error(400, 'name is required.');
+    $chk = $db->prepare("SELECT id FROM devices WHERE id = :id");
+    $chk->execute([':id' => $deviceId]);
+    if (!$chk->fetch()) api_error(404, 'Device not found.');
+    try {
+        $st = $db->prepare("INSERT INTO device_interfaces (device_id, name, description) VALUES (:did,:n,:d)");
+        $st->execute([':did' => $deviceId, ':n' => $name, ':d' => $desc]);
+    } catch (PDOException) {
+        api_error(409, 'An interface with that name already exists on this device.');
+    }
+    $newId = ipam_last_insert_id($db, 'device_interfaces');
+    api_audit($db, $apiKey, 'device_interface.create', 'device_interface', $newId, "device_id=$deviceId name=$name");
+    http_response_code(201);
+    $st = $db->prepare("SELECT * FROM device_interfaces WHERE id = :id");
+    $st->execute([':id' => $newId]);
+    /** @var array<string,mixed>|false $row */
+    $row = $st->fetch();
+    api_json(['interface' => fmt_device_interface($row ?: [])]);
+}
+
+/**
+ * @param array<string,mixed> $apiKey
+ * @param array<string,mixed> $body
+ */
+function api_device_interfaces_update(PDO $db, array $apiKey, int $id, array $body): never
+{
+    if (to_int($apiKey['is_readonly'] ?? 0) === 1) api_error(403, 'Read-only key.');
+    if ($id <= 0) api_error(400, 'id is required.');
+    $existSt = $db->prepare("SELECT * FROM device_interfaces WHERE id = :id");
+    $existSt->execute([':id' => $id]);
+    /** @var array<string,mixed>|false $existIf */
+    $existIf = $existSt->fetch();
+    if (!$existIf) api_error(404, 'Interface not found.');
+    $name = array_key_exists('name',        $body) ? trim(to_str($body['name']))        : to_str($existIf['name']);
+    $desc = array_key_exists('description', $body) ? trim(to_str($body['description'])) : to_str($existIf['description']);
+    if ($name === '') api_error(400, 'name is required.');
+    try {
+        $st = $db->prepare("UPDATE device_interfaces SET name=:n, description=:d, updated_at=" . ipam_dialect()->now() . " WHERE id=:id");
+        $st->execute([':n' => $name, ':d' => $desc, ':id' => $id]);
+    } catch (PDOException) {
+        api_error(409, 'Duplicate interface name on this device.');
+    }
+    api_audit($db, $apiKey, 'device_interface.update', 'device_interface', $id, "name=$name");
+    $st = $db->prepare("SELECT * FROM device_interfaces WHERE id = :id");
+    $st->execute([':id' => $id]);
+    /** @var array<string,mixed>|false $row */
+    $row = $st->fetch();
+    api_json(['interface' => fmt_device_interface($row ?: [])]);
+}
+
+/** @param array<string,mixed> $apiKey */
+function api_device_interfaces_delete(PDO $db, array $apiKey, int $id): never
+{
+    if (to_int($apiKey['is_readonly'] ?? 0) === 1) api_error(403, 'Read-only key.');
+    if ($id <= 0) api_error(400, 'id is required.');
+    $st = $db->prepare("SELECT name FROM device_interfaces WHERE id = :id");
+    $st->execute([':id' => $id]);
+    /** @var array<string,mixed>|false $row */
+    $row = $st->fetch();
+    if (!$row) api_error(404, 'Interface not found.');
+    $db->prepare("DELETE FROM device_interfaces WHERE id = :id")->execute([':id' => $id]);
+    api_audit($db, $apiKey, 'device_interface.delete', 'device_interface', $id, 'name=' . to_str($row['name']));
+    http_response_code(204);
+    api_json([]);
 }

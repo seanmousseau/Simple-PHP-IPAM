@@ -5300,12 +5300,12 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/vendor/open-props.min.css?v=3.1.0'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=3.1.0'>";
+    echo "<link rel='stylesheet' href='assets/vendor/open-props.min.css?v=3.2.0'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=3.2.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=3.1.0'></script>";
+    echo "<script defer src='assets/app.js?v=3.2.0'></script>";
     $pageAttr = isset($opts['page']) && $opts['page'] !== ''
         ? " data-page='" . e(to_str($opts['page'])) . "'"
         : '';
@@ -5342,6 +5342,7 @@ function page_header(string $title, array $opts = []): void
             echo "<a class='nav-dropdown-item' href='aggregates.php'>🗂 Aggregates</a>";
             echo "<a class='nav-dropdown-item' href='pd_pools.php'>🔷 PD Pools</a>";
             echo "<a class='nav-dropdown-item' href='tags.php'>🔖 Tags</a>";
+            echo "<a class='nav-dropdown-item' href='devices.php'>🖥 Devices</a>";
             echo "<a class='nav-dropdown-item' href='contacts.php'>📇 Contacts</a>";
             echo "<a class='nav-dropdown-item' href='users.php'>👤 Users</a>";
             echo "<a class='nav-dropdown-item' href='api_keys.php'>🔑 API Keys</a>";
@@ -5367,7 +5368,7 @@ function page_header(string $title, array $opts = []): void
         echo "<div class='nav-dropdown-menu nav-dropdown-menu--right'>";
         echo "<button type='button' class='nav-dropdown-item' id='theme-toggle'>🌓 Theme</button>";
         echo "<hr class='nav-dropdown-divider'>";
-        echo "<a class='nav-dropdown-item' href='change_password.php'>🔐 Password</a>";
+        echo "<a class='nav-dropdown-item' href='change_password.php'>🔐 Account</a>";
         echo "<a class='nav-dropdown-item' href='logout.php'>↩ Logout</a>";
         echo "</div></div>";
         echo "</div>";
@@ -5393,6 +5394,7 @@ function page_header(string $title, array $opts = []): void
             echo "<a href='vrfs.php'>&#127760; VRFs</a>";
             echo "<a href='vlans.php'>&#127991; VLANs</a>";
             echo "<a href='tags.php'>&#128278; Tags</a>";
+            echo "<a href='devices.php'>&#128421; Devices</a>";
             echo "<a href='contacts.php'>&#128215; Contacts</a>";
             echo "<a href='users.php'>&#128100; Users</a>";
             echo "<a href='api_keys.php'>&#128273; API Keys</a>";
@@ -5404,7 +5406,7 @@ function page_header(string $title, array $opts = []): void
         }
         echo "<hr>";
         echo "<span class='nav-drawer-section'>Account</span>";
-        echo "<a href='change_password.php'>&#128272; Password</a>";
+        echo "<a href='change_password.php'>&#128272; Account</a>";
         echo "<a href='logout.php'>&#8617; Logout</a>";
     } else {
         echo "<a href='login.php'>&#128272; Login</a>";
@@ -6323,4 +6325,197 @@ function ipam_apply_arp_import(PDO $db, array $entries, int $subnetId): array
         $stats['updated']++;
     }
     return $stats;
+}
+
+// ── Password reset + email verification helpers (v3.2.0) ─────────────────────
+
+/**
+ * Return the canonical HTTPS base URL of this install (no trailing slash).
+ * Used to build absolute links in emails.
+ */
+function ipam_app_base_url(): string
+{
+    $cfg  = $GLOBALS['config'] ?? null;
+    $base = is_array($cfg) ? rtrim(to_str($cfg['base_url'] ?? ''), '/') : '';
+    $parsed = parse_url($base);
+    if ($base === '' || ($parsed['scheme'] ?? '') !== 'https' || empty($parsed['host'])) {
+        throw new RuntimeException('config.base_url must be set to an https:// URL for email links.');
+    }
+    return $base;
+}
+
+/**
+ * Create a password-reset token for the given user.
+ * Returns the raw (unhashed) token to embed in the reset link.
+ *
+ * Enforces max 3 active tokens per user per hour (rate limit).
+ * Token hash is stored with 1-hour expiry; raw token is returned to caller.
+ */
+function ipam_create_reset_token(PDO $db, int $userId): ?string
+{
+    $rawToken  = bin2hex(random_bytes(32));
+    $tokenHash = hash('sha256', $rawToken);
+    $expiresAt = gmdate('Y-m-d H:i:s', time() + 3600);
+    $rateWindowStart = gmdate('Y-m-d H:i:s', time() - 3600);
+
+    $db->beginTransaction();
+    try {
+        // On MySQL/Postgres, lock the user row so concurrent reset requests for
+        // the same user are serialized. SQLite serializes via its write lock.
+        if ($db->getAttribute(\PDO::ATTR_DRIVER_NAME) !== 'sqlite') {
+            $db->prepare("SELECT id FROM users WHERE id = :uid FOR UPDATE")
+               ->execute([':uid' => $userId]);
+        }
+
+        $rateSt = $db->prepare(
+            "SELECT COUNT(*) FROM password_reset_tokens
+              WHERE user_id = :uid AND created_at > :window AND used_at IS NULL"
+        );
+        $rateSt->execute([':uid' => $userId, ':window' => $rateWindowStart]);
+        if ((int)$rateSt->fetchColumn() >= 3) {
+            $db->rollBack();
+            return null;
+        }
+
+        $db->prepare(
+            "INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+             VALUES (:uid, :hash, :exp)"
+        )->execute([':uid' => $userId, ':hash' => $tokenHash, ':exp' => $expiresAt]);
+
+        $db->commit();
+    } catch (\Exception $e) {
+        $db->rollBack();
+        throw $e;
+    }
+
+    return $rawToken;
+}
+
+/**
+ * Validate and consume a password-reset token.
+ * Returns the user_id if the token is valid, not expired, and not used.
+ * Marks the token as used (single-use).
+ */
+function ipam_consume_reset_token(PDO $db, string $rawToken): ?int
+{
+    $tokenHash = hash('sha256', $rawToken);
+    $now       = gmdate('Y-m-d H:i:s');
+
+    $db->beginTransaction();
+    try {
+        $st = $db->prepare(
+            "SELECT id, user_id FROM password_reset_tokens
+              WHERE token_hash = :hash
+                AND used_at IS NULL
+                AND expires_at > :now"
+        );
+        $st->execute([':hash' => $tokenHash, ':now' => $now]);
+        /** @var array<string, mixed>|false $row */
+        $row = $st->fetch();
+
+        if (!$row) {
+            $db->rollBack();
+            return null;
+        }
+
+        $upd = $db->prepare(
+            "UPDATE password_reset_tokens SET used_at = " . ipam_dialect()->now() . " WHERE id = :id AND used_at IS NULL"
+        );
+        $upd->execute([':id' => to_int($row['id'])]);
+
+        if ($upd->rowCount() !== 1) {
+            $db->rollBack();
+            return null;
+        }
+
+        $db->commit();
+        return to_int($row['user_id']);
+    } catch (\Throwable $e) {
+        $db->rollBack();
+        throw $e;
+    }
+}
+
+/**
+ * Send a password-reset link email to the given address.
+ * Returns true on success.
+ */
+function ipam_send_reset_email(string $toAddress, string $toName, string $rawToken): bool
+{
+    $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
+    try {
+        $base = ipam_app_base_url();
+    } catch (\RuntimeException) {
+        return false;
+    }
+    $link    = $base . '/reset_password.php?token=' . rawurlencode($rawToken);
+
+    $subject = $appName . ' — Password Reset';
+
+    $text = "Hi " . ($toName ?: $toAddress) . ",\n\n"
+        . "A password reset was requested for your " . $appName . " account.\n\n"
+        . "Reset link (valid for 1 hour):\n" . $link . "\n\n"
+        . "If you did not request this, you can safely ignore this email.\n\n"
+        . "— " . $appName;
+
+    $html = "<p>Hi " . e($toName ?: $toAddress) . ",</p>"
+        . "<p>A password reset was requested for your <strong>" . e($appName) . "</strong> account.</p>"
+        . "<p><a href=\"" . e($link) . "\">Reset your password</a> (link valid for 1 hour).</p>"
+        . "<p>If you did not request this, you can safely ignore this email.</p>"
+        . "<p>— " . e($appName) . "</p>";
+
+    $result = ipam_send_mail($toAddress, $subject, $text, $html);
+    return $result['success'];
+}
+
+/**
+ * Initiate an email-change verification for $userId.
+ * Stores pending_email + token hash + expiry on the user row and sends
+ * a verification email to the NEW address.
+ */
+function ipam_send_email_verification(PDO $db, int $userId, string $newEmail): bool
+{
+    $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
+    try {
+        $base = ipam_app_base_url();
+    } catch (\RuntimeException) {
+        return false;
+    }
+
+    $rawToken  = bin2hex(random_bytes(32));
+    $tokenHash = hash('sha256', $rawToken);
+    $expiresAt = gmdate('Y-m-d H:i:s', time() + 3600);
+    $link      = $base . '/change_password.php?verify_email=' . rawurlencode($rawToken);
+
+    $subject = $appName . ' — Verify your new email address';
+
+    $text = "Please verify your new email address for " . $appName . ".\n\n"
+        . "Verification link (valid for 1 hour):\n" . $link . "\n\n"
+        . "If you did not request this change, you can safely ignore this email.\n\n"
+        . "— " . $appName;
+
+    $html = "<p>Please verify your new email address for <strong>" . e($appName) . "</strong>.</p>"
+        . "<p><a href=\"" . e($link) . "\">Verify email address</a> (link valid for 1 hour).</p>"
+        . "<p>If you did not request this change, you can safely ignore this email.</p>"
+        . "<p>— " . e($appName) . "</p>";
+
+    $db->prepare(
+        "UPDATE users SET pending_email = :email,
+                          pending_email_token_hash = :hash,
+                          pending_email_expires_at = :exp
+          WHERE id = :id"
+    )->execute([':email' => $newEmail, ':hash' => $tokenHash, ':exp' => $expiresAt, ':id' => $userId]);
+
+    $result = ipam_send_mail($newEmail, $subject, $text, $html);
+    if (!$result['success']) {
+        $db->prepare(
+            "UPDATE users SET pending_email = NULL,
+                              pending_email_token_hash = NULL,
+                              pending_email_expires_at = NULL
+              WHERE id = :id"
+        )->execute([':id' => $userId]);
+        return false;
+    }
+
+    return true;
 }

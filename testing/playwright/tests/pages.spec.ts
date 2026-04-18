@@ -26,7 +26,7 @@ const PAGES: Array<[string, string]> = [
   ['db_tools.php',    'Database'],
   ['unassigned.php',  'Unassigned'],
   ['bulk_update.php', 'Bulk'],
-  ['change_password.php', 'Password'],
+  ['change_password.php', 'Account'],
   ['scan_history.php', 'Scan'],
   ['settings.php',     'Settings'],
 ];

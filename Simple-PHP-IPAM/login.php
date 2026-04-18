@@ -186,6 +186,11 @@ $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM'
       <div class="mt-10"><?= $lpWidgetHtml ?></div>
     <?php endif; ?>
     <p><button type="submit">Login</button></p>
+    <?php if (demo_mode_enabled()): ?>
+      <p class="muted" style="margin-top:8px;font-size:.85rem;">Demo credentials: <strong>demo</strong> / <strong>demo</strong></p>
+    <?php else: ?>
+      <p class="muted" style="margin-top:6px;font-size:.85rem;"><a href="forgot_password.php">Forgot password?</a></p>
+    <?php endif; ?>
     <?php if ($firstRun): ?>
       <p class="muted" style="margin-top:10px;">First run: use bootstrap admin from <code>config.php</code>, then change it.</p>
     <?php endif; ?>

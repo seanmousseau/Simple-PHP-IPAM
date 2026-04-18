@@ -33,7 +33,7 @@ Two cheap calls. The first loads your profile + preferences. The second returns 
 
 ## Project overview
 
-> **Current shipped version: v2.7.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v2.8.0 → v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v2.8.0 describes future work — **do not apply it to current v2.7.x code**. Current-state rules are the ones that do not cite a future version.
+> **Current shipped version: v3.1.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v3.2.0 → v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v3.2.0 describes future work — **do not apply it to current v3.1.x code**. Current-state rules are the ones that do not cite a future version.
 
 Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application built with **PHP 8.2+ and SQLite**. It has **no npm build step** — all CSS and JavaScript are vanilla. Starting in v2.9.0, the application will ship a small, carefully curated set of Composer-managed runtime dependencies bundled into the release tarball, so end users still deploy by extracting the tarball with no build step. The web root is `Simple-PHP-IPAM/` (the subdirectory, not the repo root).
 
@@ -184,7 +184,7 @@ Migrations live in `migrations.php` as an associative array of version string �
 
 **When adding a new version:** add the migration closure, bump `version.php`, update `CHANGELOG.md` (keepachangelog format).
 
-> **Current shipped version: v2.7.0.** The three subsections below (`Creating new data tables in post-v4.0.0 releases`, `Modifying the schema (multi-engine, from v2.9.0 onward)`, `Runtime dependencies`) describe **forward-looking policy** for unreleased versions. Do not apply them to work targeting v2.7.x or earlier. The rules become active on the version indicated in each heading; until then, treat them as design intent to preserve when new work approaches that version.
+> **Current shipped version: v3.1.0.** The three subsections below (`Creating new data tables in post-v4.0.0 releases`, `Modifying the schema (multi-engine, from v2.9.0 onward)`, `Runtime dependencies`) describe **forward-looking policy** for unreleased versions. Do not apply them to work targeting v3.1.x or earlier. The rules become active on the version indicated in each heading; until then, treat them as design intent to preserve when new work approaches that version.
 
 ### Creating new data tables in post-v4.0.0 releases *(applies from v4.1.0+)*
 
@@ -810,6 +810,25 @@ If CodeRabbit or a human reviewer asks for a change on the open PR:
      --notes "<markdown body>"
    ```
 5. Verify the release is live: `gh release view vX.Y.Z --json url,assets`.
+6. **Deploy to demo site** (`demo.simplephpipam.com`, OpenLiteSpeed on `root@192.168.80.23`):
+   ```bash
+   rsync -az --delete \
+     --exclude='data/' --exclude='config.php' \
+     Simple-PHP-IPAM/ root@192.168.80.23:/usr/local/lsws/vhosts/demo.simplephpipam.com/html/
+   ssh root@192.168.80.23 "chown -R nobody:nogroup /usr/local/lsws/vhosts/demo.simplephpipam.com/html/ && php /usr/local/lsws/vhosts/demo.simplephpipam.com/html/migrate.php"
+   ```
+   Verify: browse `https://demo.simplephpipam.com/` and confirm the version shown in the footer.
+7. **Deploy website theme** if any theme files changed (`website/` in the main repo, tracked in the private `simple-php-ipam-website` repo). From inside `website/`:
+   ```bash
+   git push origin main
+   ssh root@192.168.80.23 "cd /usr/local/lsws/vhosts/simplephpipam.com/html/wp-content/themes/simple-php-ipam && git pull"
+   ```
+   Or rsync directly:
+   ```bash
+   rsync -az --delete \
+     website/ root@192.168.80.23:/usr/local/lsws/vhosts/simplephpipam.com/html/wp-content/themes/simple-php-ipam/
+   ssh root@192.168.80.23 "chown -R nobody:nogroup /usr/local/lsws/vhosts/simplephpipam.com/html/wp-content/themes/simple-php-ipam/"
+   ```
 
 ### Commit style
 ```

@@ -67,6 +67,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $cck->execute([':id' => $ownerContactId]);
             if (!$cck->fetch()) $ownerContactId = null;
         }
+        $deviceId    = to_int($_POST['device_id']    ?? 0) ?: null;
+        $interfaceId = to_int($_POST['interface_id'] ?? 0) ?: null;
+        if ($deviceId === null) $interfaceId = null;
+        if ($deviceId !== null) {
+            $devchk = $db->prepare("SELECT id FROM devices WHERE id=:id");
+            $devchk->execute([':id' => $deviceId]);
+            if (!$devchk->fetch()) { $deviceId = null; $interfaceId = null; }
+        }
+        if ($interfaceId !== null) {
+            $dchk = $db->prepare("SELECT id FROM device_interfaces WHERE id=:id AND device_id=:did");
+            $dchk->execute([':id' => $interfaceId, ':did' => $deviceId]);
+            if (!$dchk->fetch()) $interfaceId = null;
+        }
         $expiresAt = trim(to_str($_POST['expires_at'] ?? ''));
         if ($expiresAt !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $expiresAt)) {
             $expiresAt = '';
@@ -96,8 +109,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // so the stored value has BLOB affinity on SQLite,
                     // round-trips high bytes correctly through MySQL
                     // VARBINARY, and does not UTF-8-validate on Postgres BYTEA.
-                    $ins = $db->prepare("INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, grp, mac, expires_at, status, owner_contact_id)
-                                         VALUES (:sid,:ip,:bin,:hn,:ow,:nt,:grp,:mac,:exp,:st,:cid)");
+                    $ins = $db->prepare("INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, grp, mac, expires_at, status, owner_contact_id, device_id, interface_id)
+                                         VALUES (:sid,:ip,:bin,:hn,:ow,:nt,:grp,:mac,:exp,:st,:cid,:did,:iid)");
                     $ins->bindValue(':sid', $subnetId, PDO::PARAM_INT);
                     $ins->bindValue(':ip',  $norm['ip']);
                     ipam_bind_binary($ins, ':bin', to_str($norm['bin']));
@@ -111,6 +124,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $ins->bindValue(':st',  $status);
                     $ins->bindValue(':cid', $ownerContactId,
                         $ownerContactId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                    $ins->bindValue(':did', $deviceId,
+                        $deviceId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                    $ins->bindValue(':iid', $interfaceId,
+                        $interfaceId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                     $ins->execute();
                     $aid = ipam_last_insert_id($db, 'addresses');
 
@@ -123,6 +140,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'expires_at'      => $expiresAt !== '' ? $expiresAt : null,
                         'status'          => $status,
                         'owner_contact_id' => $ownerContactId,
+                        'device_id'       => $deviceId,
+                        'interface_id'    => $interfaceId,
                     ]);
                     audit($db, 'address.create', 'address', $aid, "ip={$norm['ip']} subnet_id=$subnetId");
 
@@ -152,6 +171,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $cck->execute([':id' => $ownerContactId]);
             if (!$cck->fetch()) $ownerContactId = null;
         }
+        $deviceId    = to_int($_POST['device_id']    ?? 0) ?: null;
+        $interfaceId = to_int($_POST['interface_id'] ?? 0) ?: null;
+        if ($deviceId === null) $interfaceId = null;
+        if ($deviceId !== null) {
+            $devchk = $db->prepare("SELECT id FROM devices WHERE id=:id");
+            $devchk->execute([':id' => $deviceId]);
+            if (!$devchk->fetch()) { $deviceId = null; $interfaceId = null; }
+        }
+        if ($interfaceId !== null) {
+            $dchk = $db->prepare("SELECT id FROM device_interfaces WHERE id=:id AND device_id=:did");
+            $dchk->execute([':id' => $interfaceId, ':did' => $deviceId]);
+            if (!$dchk->fetch()) $interfaceId = null;
+        }
         $expiresAt = trim(to_str($_POST['expires_at'] ?? ''));
         if ($expiresAt !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $expiresAt)) {
             $expiresAt = '';
@@ -161,7 +193,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!in_array($status, ['used','reserved','free'], true)) {
             $err = 'Invalid status.';
         } else {
-            $sel = $db->prepare("SELECT id, ip, hostname, owner, note, grp, mac, expires_at, status, owner_contact_id FROM addresses WHERE id=:id AND subnet_id=:sid");
+            $sel = $db->prepare("SELECT id, ip, hostname, owner, note, grp, mac, expires_at, status, owner_contact_id, device_id, interface_id FROM addresses WHERE id=:id AND subnet_id=:sid");
             $sel->execute([':id' => $id, ':sid' => $subnetId]);
             /** @var array<string, mixed>|false $before */
             $before = $sel->fetch();
@@ -170,20 +202,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $err = 'Address not found.';
             } else {
                 $up = $db->prepare("UPDATE addresses
-                                    SET hostname=:hn, owner=:ow, note=:nt, grp=:grp, mac=:mac, expires_at=:exp, status=:st, owner_contact_id=:cid
+                                    SET hostname=:hn, owner=:ow, note=:nt, grp=:grp, mac=:mac, expires_at=:exp, status=:st, owner_contact_id=:cid, device_id=:did, interface_id=:iid
                                     WHERE id=:id AND subnet_id=:sid");
-                $up->execute([
-                    ':hn'  => $hostname,
-                    ':ow'  => $owner,
-                    ':nt'  => $note,
-                    ':grp' => $grp,
-                    ':mac' => $mac,
-                    ':exp' => $expiresAt !== '' ? $expiresAt : null,
-                    ':st'  => $status,
-                    ':cid' => $ownerContactId,
-                    ':id'  => $id,
-                    ':sid' => $subnetId,
-                ]);
+                $up->bindValue(':hn',  $hostname);
+                $up->bindValue(':ow',  $owner);
+                $up->bindValue(':nt',  $note);
+                $up->bindValue(':grp', $grp);
+                $up->bindValue(':mac', $mac);
+                $up->bindValue(':exp', $expiresAt !== '' ? $expiresAt : null,
+                    $expiresAt !== '' ? PDO::PARAM_STR : PDO::PARAM_NULL);
+                $up->bindValue(':st',  $status);
+                $up->bindValue(':cid', $ownerContactId,
+                    $ownerContactId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                $up->bindValue(':did', $deviceId,
+                    $deviceId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                $up->bindValue(':iid', $interfaceId,
+                    $interfaceId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                $up->bindValue(':id',  $id,        PDO::PARAM_INT);
+                $up->bindValue(':sid', $subnetId,  PDO::PARAM_INT);
+                $up->execute();
 
                 history_log_address($db, 'update', $subnetId, to_str($before['ip']), $id,
                     [
@@ -195,6 +232,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'expires_at'      => isset($before['expires_at']) ? to_str($before['expires_at']) : null,
                         'status'          => to_str($before['status']),
                         'owner_contact_id' => $before['owner_contact_id'] !== null ? to_int($before['owner_contact_id']) : null,
+                        'device_id'       => $before['device_id'] !== null ? to_int($before['device_id']) : null,
+                        'interface_id'    => $before['interface_id'] !== null ? to_int($before['interface_id']) : null,
                     ],
                     [
                         'hostname'        => $hostname,
@@ -205,6 +244,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'expires_at'      => $expiresAt !== '' ? $expiresAt : null,
                         'status'          => $status,
                         'owner_contact_id' => $ownerContactId,
+                        'device_id'       => $deviceId,
+                        'interface_id'    => $interfaceId,
                     ]
                 );
 
@@ -279,7 +320,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $after
         );
         audit($db, 'address.update', 'address', $id, "inline_cell=$field");
-        echo json_encode(['ok' => true, 'value' => $value]);
+        echo json_encode(['ok' => true, 'value' => $value]); // nosemgrep: php.lang.security.xss
         exit;
     } elseif ($action === 'delete') {
         require_write_access();
@@ -361,9 +402,13 @@ if ($selectedSubnetId > 0) {
 
     $st = $db->prepare("SELECT a.id, a.ip, a.ip_bin, a.hostname, a.owner, a.note, a.grp, a.mac, a.expires_at, a.status, a.updated_at,
                                a.owner_contact_id, c.name AS owner_contact_name, c.email AS owner_contact_email,
-                               a.last_seen_at, a.is_stale
+                               a.last_seen_at, a.is_stale,
+                               a.device_id, a.interface_id,
+                               dv.name AS device_name, di.name AS interface_name
                         FROM addresses a
                         LEFT JOIN contacts c ON c.id = a.owner_contact_id
+                        LEFT JOIN devices dv ON dv.id = a.device_id
+                        LEFT JOIN device_interfaces di ON di.id = a.interface_id
                         WHERE a.subnet_id = :sid{$filterWhere}
                         ORDER BY {$addrSort['sql']}
                         LIMIT :lim OFFSET :off");
@@ -408,6 +453,21 @@ if ($selectedSubnetId > 0 && $networkBin !== null) {
         $chk->execute();
         $found = $chk->fetchAll(PDO::FETCH_COLUMN);
         $missingInfra = count($found) < count($infraBins);
+    }
+}
+
+// Devices + interfaces for dropdowns (keyed by device_id for JS)
+/** @var list<array<string,mixed>> $deviceList */
+$deviceList = ($db->query("SELECT id, name FROM devices ORDER BY name") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+/** @var array<int,list<array<string,mixed>>> $ifacesByDeviceId */
+$ifacesByDeviceId = [];
+if ($deviceList) {
+    $dids = array_map(fn($d) => to_int($d['id']), $deviceList);
+    $dph  = implode(',', array_fill(0, count($dids), '?'));
+    $difs = $db->prepare("SELECT id, device_id, name FROM device_interfaces WHERE device_id IN ($dph) ORDER BY name");
+    $difs->execute($dids);
+    foreach ($difs->fetchAll() as $dif) {
+        $ifacesByDeviceId[to_int($dif['device_id'])][] = ['id' => to_int($dif['id']), 'name' => to_str($dif['name'])];
     }
 }
 
@@ -539,6 +599,23 @@ ipam_skeleton_flush();
     <div class="row">
       <label class="flex-1">Note<br><input name="note" maxlength="1000" class="w-full"></label>
     </div>
+    <?php if ($deviceList): ?>
+    <div class="row">
+      <label>Device<br>
+        <select name="device_id" class="addr-device-select" data-iface-target="add-iface-select">
+          <option value="0">(none)</option>
+          <?php foreach ($deviceList as $dv): ?>
+            <option value="<?= to_int($dv['id']) ?>"><?= e(to_str($dv['name'])) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </label>
+      <label>Interface<br>
+        <select name="interface_id" id="add-iface-select">
+          <option value="0">(none)</option>
+        </select>
+      </label>
+    </div>
+    <?php endif; ?>
 
     <p>
       <button type="submit"
@@ -595,6 +672,7 @@ ipam_skeleton_flush();
           <th data-col="note">Note</th>
           <?php echo sort_th('updated', 'Updated', $addrSort['col'], $addrSort['dir'], $addrQs, 'updated'); ?>
           <th data-col="last-seen" data-col-default-hidden="1">Last Seen</th>
+          <th data-col="device" data-col-default-hidden="1">Device</th>
           <th>Actions</th>
         </tr>
       </thead>
@@ -640,6 +718,14 @@ ipam_skeleton_flush();
           <td<?= $isWrite ? ' data-editable="note" data-addr-id="' . $aid . '"' : '' ?>><?= e(to_str($a['note'])) ?></td>
           <td class="muted"><?= e(ipam_format_datetime(to_str($a['updated_at']))) ?></td>
           <td data-col="last-seen" class="muted"><?= isset($a['last_seen_at']) && to_str($a['last_seen_at']) !== '' ? e(ipam_format_datetime(to_str($a['last_seen_at']))) : '—' ?></td>
+          <td data-col="device" class="muted"><?php
+            $devName  = to_str($a['device_name']    ?? '');
+            $ifName   = to_str($a['interface_name'] ?? '');
+            if ($devName !== '') {
+                echo '<a href="devices.php" class="muted">' . e($devName) . '</a>';
+                if ($ifName !== '') echo '<br><span class="muted" style="font-size:.8em">' . e($ifName) . '</span>';
+            } else { echo '—'; }
+          ?></td>
           <td>
             <div class="actions-inline">
               <a href="address_history.php?address_id=<?= to_int($a['id']) ?>">History</a>
@@ -678,6 +764,28 @@ ipam_skeleton_flush();
                 <div class="row">
                   <label class="flex-1">Note<br><input name="note" maxlength="1000" class="w-full" value="<?= e(to_str($a['note'])) ?>"></label>
                 </div>
+                <?php if ($deviceList): ?>
+                <div class="row">
+                  <label>Device<br>
+                    <select name="device_id" class="addr-device-select" data-iface-target="iface-select-<?= $aid ?>">
+                      <option value="0">(none)</option>
+                      <?php foreach ($deviceList as $dv):
+                            $dvId = to_int($dv['id']); ?>
+                        <option value="<?= $dvId ?>"<?= to_int($a['device_id'] ?? 0) === $dvId ? ' selected' : '' ?>><?= e(to_str($dv['name'])) ?></option>
+                      <?php endforeach; ?>
+                    </select>
+                  </label>
+                  <label>Interface<br>
+                    <select name="interface_id" id="iface-select-<?= $aid ?>">
+                      <option value="0">(none)</option>
+                      <?php $curDid = to_int($a['device_id'] ?? 0);
+                            foreach ($ifacesByDeviceId[$curDid] ?? [] as $dif): ?>
+                        <option value="<?= to_int($dif['id']) ?>"<?= to_int($a['interface_id'] ?? 0) === to_int($dif['id']) ? ' selected' : '' ?>><?= e(to_str($dif['name'])) ?></option>
+                            <?php endforeach; ?>
+                    </select>
+                  </label>
+                </div>
+                <?php endif; ?>
 
                 <button type="submit" <?= (current_user()['role']==='readonly')?'disabled':'' ?>>Save</button>
               </form>
@@ -715,4 +823,27 @@ ipam_skeleton_flush();
   <?php endif; ?>
 </div>
 
+<?php if ($deviceList): ?>
+<script>
+(function () {
+  var ifaceMap = <?= json_encode($ifacesByDeviceId, JSON_HEX_TAG | JSON_HEX_AMP) ?>; // nosemgrep: php.lang.security.xss
+  document.addEventListener('change', function (e) {
+    var sel = e.target;
+    if (!sel || !sel.classList.contains('addr-device-select')) return;
+    var targetId = sel.getAttribute('data-iface-target');
+    var target = targetId ? document.getElementById(targetId) : null;
+    if (!target) return;
+    var devId = parseInt(sel.value, 10);
+    var ifaces = (devId && ifaceMap[devId]) ? ifaceMap[devId] : [];
+    target.innerHTML = '<option value="0">(none)</option>';
+    ifaces.forEach(function (iface) {
+      var opt = document.createElement('option');
+      opt.value = iface.id;
+      opt.textContent = iface.name;
+      target.appendChild(opt);
+    });
+  });
+}());
+</script>
+<?php endif; ?>
 <?php ipam_skeleton_remove(); page_footer();
