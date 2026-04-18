@@ -157,30 +157,36 @@ test('contact popover: × close button visible and dismisses card (#571)', async
   });
   if (!contactId) test.skip();
 
-  // Inject only a trigger element — app.js wires the click via its document listener
+  // Inject trigger and fire a click via the page JS context.
+  // Using trigger.click() inside evaluate (rather than locator.click()) avoids
+  // Playwright's scroll-into-view + pointer-event sequence, which races the
+  // synchronous visible-class addition in the app.js handler.
+  // The trigger is position:fixed so positionCard() places the popover inside
+  // the viewport regardless of how tall the page is.
   await page.evaluate((cid: number) => {
     const trigger = document.createElement('a');
     trigger.href = '#';
     trigger.className = 'contact-card-trigger';
+    trigger.style.position = 'fixed';
+    trigger.style.top = '80px';
+    trigger.style.left = '80px';
     trigger.textContent = 'Test Contact';
     trigger.setAttribute('data-contact-id', String(cid));
     document.body.appendChild(trigger);
+    trigger.click();
   }, contactId as number);
-
-  // Click the trigger — app.js fetches the contact and calls renderCard()
-  await page.locator('.contact-card-trigger').last().click();
 
   const card = page.locator('#contact-card');
   const closeBtn = card.locator('.cc-close');
 
-  // Wait for the real app.js renderCard() to populate and show the card
-  await expect(card).toHaveClass(/visible/, { timeout: 5000 });
+  // Card becomes visible synchronously in the click handler (before the API fetch)
+  await expect(card).toHaveClass(/visible/, { timeout: 3000 });
 
-  // Close button must be visible with accessible label
-  await expect(closeBtn).toBeVisible();
+  // Wait for renderCard() after the contact API fetch completes
+  await expect(closeBtn).toBeVisible({ timeout: 5000 });
   await expect(closeBtn).toHaveAttribute('aria-label', 'Close');
 
-  // Clicking × removes the visible class (dismisses card)
+  // Clicking × removes the visible class
   await closeBtn.click();
   await expect(card).not.toHaveClass(/visible/);
 });
