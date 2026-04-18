@@ -29,6 +29,23 @@ declare(strict_types=1);
 $config = require __DIR__ . '/config.php';
 require __DIR__ . '/lib.php';
 
+// Public endpoint: OpenAPI spec — serve before JSON headers or auth
+if (strtolower(trim(to_str($_GET['resource'] ?? ''))) === 'spec'
+    && in_array(strtoupper(to_str($_SERVER['REQUEST_METHOD'] ?? 'GET')), ['GET', 'HEAD'], true)) {
+    header('X-Content-Type-Options: nosniff');
+    header('X-Frame-Options: DENY');
+    header('Referrer-Policy: strict-origin-when-cross-origin');
+    header('X-IPAM-API-Version: 1');
+    $specPath = __DIR__ . '/assets/api-spec.yaml';
+    if (!file_exists($specPath)) { http_response_code(404); echo '404 Not Found'; exit; }
+    $yaml = file_get_contents($specPath);
+    if ($yaml === false) { http_response_code(500); echo '500 Error'; exit; }
+    header('Content-Type: application/yaml; charset=utf-8');
+    header('Cache-Control: public, max-age=3600');
+    echo $yaml;
+    exit;
+}
+
 header('Content-Type: application/json; charset=utf-8');
 header('X-Content-Type-Options: nosniff');
 header('X-Frame-Options: DENY');
@@ -2673,7 +2690,7 @@ function api_devices_create(PDO $db, array $apiKey, array $body): never
     $st->execute([':id' => $newId]);
     /** @var array<string,mixed>|false $row */
     $row = $st->fetch();
-    api_json(fmt_device($row ?: [], $db));
+    api_json(['device' => fmt_device($row ?: [], $db)]);
 }
 
 /**
@@ -2688,14 +2705,20 @@ function api_devices_update(PDO $db, array $apiKey, int $id, array $body): never
     $validTypes = ['router', 'switch', 'server', 'vm', 'firewall', 'other'];
     $chk = $db->prepare("SELECT id FROM devices WHERE id = :id");
     $chk->execute([':id' => $id]);
-    if (!$chk->fetch()) api_error(404, 'Device not found.');
-    $name   = trim(to_str($body['name']    ?? ''));
-    $type   = to_str($body['type']   ?? 'other');
-    $siteId = isset($body['site_id']) && to_int($body['site_id']) > 0 ? to_int($body['site_id']) : null;
-    $vendor = trim(to_str($body['vendor']  ?? ''));
-    $model  = trim(to_str($body['model']   ?? ''));
-    $serial = trim(to_str($body['serial']  ?? ''));
-    $note   = trim(to_str($body['note']    ?? ''));
+    $existSt = $db->prepare("SELECT * FROM devices WHERE id = :id");
+    $existSt->execute([':id' => $id]);
+    /** @var array<string,mixed>|false $existing */
+    $existing = $existSt->fetch();
+    if (!$existing) api_error(404, 'Device not found.');
+    $name   = array_key_exists('name',    $body) ? trim(to_str($body['name']))   : to_str($existing['name']);
+    $type   = array_key_exists('type',    $body) ? to_str($body['type'])          : to_str($existing['type']);
+    $vendor = array_key_exists('vendor',  $body) ? trim(to_str($body['vendor']))  : to_str($existing['vendor']);
+    $model  = array_key_exists('model',   $body) ? trim(to_str($body['model']))   : to_str($existing['model']);
+    $serial = array_key_exists('serial',  $body) ? trim(to_str($body['serial']))  : to_str($existing['serial']);
+    $note   = array_key_exists('note',    $body) ? trim(to_str($body['note']))    : to_str($existing['note']);
+    $siteId = array_key_exists('site_id', $body)
+        ? (to_int($body['site_id']) > 0 ? to_int($body['site_id']) : null)
+        : ($existing['site_id'] !== null ? to_int($existing['site_id']) : null);
     if ($name === '') api_error(400, 'name is required.');
     if (!in_array($type, $validTypes, true)) api_error(400, 'Invalid type.');
     try {
@@ -2709,7 +2732,7 @@ function api_devices_update(PDO $db, array $apiKey, int $id, array $body): never
     $st->execute([':id' => $id]);
     /** @var array<string,mixed>|false $row */
     $row = $st->fetch();
-    api_json(fmt_device($row ?: [], $db));
+    api_json(['device' => fmt_device($row ?: [], $db)]);
 }
 
 /** @param array<string,mixed> $apiKey */
@@ -2820,7 +2843,7 @@ function api_device_interfaces_create(PDO $db, array $apiKey, array $body): neve
     $st->execute([':id' => $newId]);
     /** @var array<string,mixed>|false $row */
     $row = $st->fetch();
-    api_json(fmt_device_interface($row ?: []));
+    api_json(['interface' => fmt_device_interface($row ?: [])]);
 }
 
 /**
@@ -2831,11 +2854,13 @@ function api_device_interfaces_update(PDO $db, array $apiKey, int $id, array $bo
 {
     if (to_int($apiKey['is_readonly'] ?? 0) === 1) api_error(403, 'Read-only key.');
     if ($id <= 0) api_error(400, 'id is required.');
-    $chk = $db->prepare("SELECT id FROM device_interfaces WHERE id = :id");
-    $chk->execute([':id' => $id]);
-    if (!$chk->fetch()) api_error(404, 'Interface not found.');
-    $name = trim(to_str($body['name']        ?? ''));
-    $desc = trim(to_str($body['description'] ?? ''));
+    $existSt = $db->prepare("SELECT * FROM device_interfaces WHERE id = :id");
+    $existSt->execute([':id' => $id]);
+    /** @var array<string,mixed>|false $existIf */
+    $existIf = $existSt->fetch();
+    if (!$existIf) api_error(404, 'Interface not found.');
+    $name = array_key_exists('name',        $body) ? trim(to_str($body['name']))        : to_str($existIf['name']);
+    $desc = array_key_exists('description', $body) ? trim(to_str($body['description'])) : to_str($existIf['description']);
     if ($name === '') api_error(400, 'name is required.');
     try {
         $st = $db->prepare("UPDATE device_interfaces SET name=:n, description=:d, updated_at=" . ipam_dialect()->now() . " WHERE id=:id");
@@ -2848,7 +2873,7 @@ function api_device_interfaces_update(PDO $db, array $apiKey, int $id, array $bo
     $st->execute([':id' => $id]);
     /** @var array<string,mixed>|false $row */
     $row = $st->fetch();
-    api_json(fmt_device_interface($row ?: []));
+    api_json(['interface' => fmt_device_interface($row ?: [])]);
 }
 
 /** @param array<string,mixed> $apiKey */
@@ -2869,7 +2894,7 @@ function api_device_interfaces_delete(PDO $db, array $apiKey, int $id): never
 
 function api_spec(): never
 {
-    $specPath = __DIR__ . '/../docs/api-spec.yaml';
+    $specPath = __DIR__ . '/assets/api-spec.yaml';
     if (!file_exists($specPath)) api_error(404, 'OpenAPI spec not found.');
     $yaml = file_get_contents($specPath);
     if ($yaml === false) api_error(500, 'Unable to read OpenAPI spec.');
