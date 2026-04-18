@@ -2708,6 +2708,9 @@ function ipam_send_mail(string $to, string $subject, string $bodyText, string $b
             }
             if (file_exists($autoload)) require_once $autoload;
         }
+        if (!class_exists('PHPMailer\PHPMailer\PHPMailer')) {
+            return ['success' => false, 'error' => 'PHPMailer is not available (check vendor/autoload.php)', 'transport' => 'smtp'];
+        }
 
         try {
             $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
@@ -2756,7 +2759,7 @@ function ipam_send_mail(string $to, string $subject, string $bodyText, string $b
 
             $mail->send();
             return ['success' => true, 'error' => null, 'transport' => 'smtp'];
-        } catch (\PHPMailer\PHPMailer\Exception $e) {
+        } catch (\Throwable $e) {
             return ['success' => false, 'error' => $e->getMessage(), 'transport' => 'smtp'];
         }
     }
@@ -2851,13 +2854,14 @@ function check_utilization_alerts(PDO $db, array $config): void
             // each send produces its own audit row so failures are debuggable.
             $anyDelivered = false;
             foreach ($recipients as $recipient) {
-                $safeEmail = preg_replace('/[\r\n]/', '', $recipient) ?? '';
+                $safeEmail   = preg_replace('/[\r\n]/', '', $recipient) ?? '';
+                $maskedEmail = preg_replace('/(^.).*(@.*$)/', '$1***$2', $safeEmail) ?? '';
                 $result = ipam_send_mail($safeEmail, $safeSubject, $body);
                 if ($result['success']) {
                     $anyDelivered = true;
-                    audit($db, 'alert.send', 'subnet', $sid, "level={$lvl} pct={$pct} email={$safeEmail} transport={$result['transport']}");
+                    audit($db, 'alert.send', 'subnet', $sid, "level={$lvl} pct={$pct} email={$maskedEmail} transport={$result['transport']}");
                 } else {
-                    audit($db, 'mail.send_failed', 'subnet', $sid, "level={$lvl} pct={$pct} email={$safeEmail} transport={$result['transport']} error=" . json_encode($result['error']));
+                    audit($db, 'mail.send_failed', 'subnet', $sid, "level={$lvl} pct={$pct} email={$maskedEmail} transport={$result['transport']} error=" . json_encode($result['error']));
                 }
             }
 
@@ -3478,6 +3482,7 @@ function login_protection_verify(array $config, array $post): ?string
     }
 
     $secretKey = to_str($cfg('secret_key'));
+    $siteKey   = to_str($cfg('site_key'));
 
     if ($method === 'turnstile') {
         $token = to_str($post['cf-turnstile-response'] ?? '');
@@ -3527,7 +3532,7 @@ function login_protection_verify(array $config, array $post): ?string
                 'expected_action' => recaptcha_expected_action_resolved(),
                 'score_threshold' => is_numeric($rawThreshold) ? (float)$rawThreshold : 0.5,
             ];
-            return recaptcha_enterprise_verify($token, to_str(ipam_setting('login_protection.site_key')), $enterprise);
+            return recaptcha_enterprise_verify($token, $siteKey, $enterprise);
         }
 
         try {
@@ -3551,7 +3556,7 @@ function login_protection_verify(array $config, array $post): ?string
             $resp = oidc_http_post('https://api.friendlycaptcha.com/api/v1/siteverify', [
                 'secret'  => $secretKey,
                 'solution'=> $token,
-                'sitekey' => to_str(ipam_setting('login_protection.site_key')),
+                'sitekey' => $siteKey,
             ]);
         } catch (Throwable $e) {
             error_log('FriendlyCaptcha verify error: ' . $e->getMessage());
@@ -5282,8 +5287,9 @@ function page_header(string $title, array $opts = []): void
     $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
 
     $extraScriptSrc = isset($opts['extra_script_src']) && $opts['extra_script_src'] !== '' ? ' ' . $opts['extra_script_src'] : '';
+    $extraStyleSrc  = isset($opts['extra_style_src'])  && $opts['extra_style_src']  !== '' ? ' ' . $opts['extra_style_src']  : '';
     $frameSrc       = isset($opts['extra_frame_src'])  && $opts['extra_frame_src']  !== '' ? " frame-src 'self' " . $opts['extra_frame_src'] . ';' : '';
-    header("Content-Security-Policy: default-src 'self'; script-src 'self'{$extraScriptSrc}; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:;{$frameSrc} frame-ancestors 'none'");
+    header("Content-Security-Policy: default-src 'self'; script-src 'self'{$extraScriptSrc}; style-src 'self'{$extraStyleSrc}; style-src-attr 'unsafe-inline'; img-src 'self' data:;{$frameSrc} frame-ancestors 'none'");
     header('X-Frame-Options: DENY');
     header('X-Content-Type-Options: nosniff');
     header('Referrer-Policy: strict-origin-when-cross-origin');

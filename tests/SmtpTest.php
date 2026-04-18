@@ -26,7 +26,7 @@ class SmtpTest extends TestCase
             CREATE TABLE settings (
                 key        TEXT PRIMARY KEY,
                 value      TEXT,
-                type       TEXT NOT NULL DEFAULT 'string',
+                type       TEXT NOT NULL DEFAULT 'string' CHECK(type IN ('string','int','bool','json')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_by INTEGER
             );

@@ -120,7 +120,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full release history and [docs/upgrading.md
 | **Web server** | Apache, OpenLiteSpeed, nginx, or Caddy (see [install.md](docs/install.md)) |
 | **Database** | SQLite 3.x (default), **or** MySQL 8.0.29+ / MariaDB 10.11+ (opt-in via `db_driver = 'mysql'`), **or** PostgreSQL 14+ (opt-in via `db_driver = 'pgsql'`) — see [install.md](docs/install.md) |
 | **HTTPS** | Required — HTTP is redirected to HTTPS |
-| **Writable `data/` dir** | Web server user requires read/write access to `data/` (SQLite only) |
+| **Writable `data/` dir** | Web server user needs read and write access to `data/` (SQLite only) |
 
 ---
 

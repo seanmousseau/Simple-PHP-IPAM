@@ -146,40 +146,35 @@ test('every POST form on admin pages carries a CSRF token input', async () => {
 // -- #571 contact popover × close button -------------------------------------
 
 test('contact popover: × close button visible and dismisses card (#571)', async () => {
-  // Navigate to a page that loads app.js (contacts.php has the full app loaded)
+  // Navigate to a page that loads app.js
   await page.goto(appUrl('contacts.php'));
 
-  // Inject a contact trigger and simulate the popover rendering via JS
-  await page.evaluate(() => {
-    // Simulate what the contact popover JS does: create the card and make it visible
-    const card = document.createElement('div');
-    card.id = 'contact-card';
-    document.body.appendChild(card);
-
-    // Replicate renderCard() logic for a test contact
-    const closeBtn = document.createElement('button');
-    closeBtn.type = 'button';
-    closeBtn.className = 'cc-close';
-    closeBtn.setAttribute('aria-label', 'Close');
-    closeBtn.textContent = '\u00d7';
-    closeBtn.addEventListener('click', function(e) {
-      e.stopPropagation();
-      card.classList.remove('visible');
-    });
-    card.appendChild(closeBtn);
-
-    const name = document.createElement('div');
-    name.className = 'cc-name';
-    name.textContent = 'Test Contact';
-    card.appendChild(name);
-
-    card.style.top = '100px';
-    card.style.left = '100px';
-    card.classList.add('visible');
+  // Get a real contact ID via the session-authed API so the popover fetch succeeds
+  const contactId = await page.evaluate(async (): Promise<number | null> => {
+    const r = await fetch('api.php?resource=contacts', { credentials: 'same-origin' });
+    const d = await r.json() as { contacts?: Array<{ id: number }> };
+    return d.contacts?.[0]?.id ?? null;
   });
+  if (!contactId) test.skip();
+
+  // Inject only a trigger element — app.js wires the click via its document listener
+  await page.evaluate((cid: number) => {
+    const trigger = document.createElement('a');
+    trigger.href = '#';
+    trigger.className = 'contact-card-trigger';
+    trigger.textContent = 'Test Contact';
+    trigger.setAttribute('data-contact-id', String(cid));
+    document.body.appendChild(trigger);
+  }, contactId as number);
+
+  // Click the trigger — app.js fetches the contact and calls renderCard()
+  await page.locator('.contact-card-trigger').last().click();
 
   const card = page.locator('#contact-card');
   const closeBtn = card.locator('.cc-close');
+
+  // Wait for the real app.js renderCard() to populate and show the card
+  await expect(card).toHaveClass(/visible/, { timeout: 5000 });
 
   // Close button must be visible with accessible label
   await expect(closeBtn).toBeVisible();

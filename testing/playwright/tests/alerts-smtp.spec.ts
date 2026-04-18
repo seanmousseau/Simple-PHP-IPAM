@@ -141,9 +141,9 @@ test.describe('Utilization alerts SMTP delivery (#458)', () => {
       `);
     }
 
-    // Restore admin email to its original value
-    const safeEmail = restoredAdminEmail.replace(/'/g, "\\'");
-    dockerPhp(`${BOOT} $db->exec("UPDATE users SET email = '${safeEmail}' WHERE id = 1");`);
+    // Restore admin email to its original value (use prepared statement to avoid injection)
+    const emailB64 = Buffer.from(restoredAdminEmail).toString('base64');
+    dockerPhp(`${BOOT} $db->prepare("UPDATE users SET email = :e WHERE id = 1")->execute([':e' => base64_decode('${emailB64}')]);`);
 
     dockerPhp(`${BOOT} $db->exec('DELETE FROM alert_state');`);
     await clearMailHog();

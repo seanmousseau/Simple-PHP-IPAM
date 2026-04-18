@@ -19,7 +19,7 @@ $isRecovery = recovery_mode_enabled($config);
 // Login protection setup (#124) — widget HTML also sets time_check session ts on GET
 $lpMethod     = $isRecovery ? '' : to_str(ipam_setting('login_protection.method'));
 $lpWidgetHtml = $isRecovery ? '' : login_protection_widget_html($config);
-$lpCsp        = $isRecovery ? ['script_src' => '', 'frame_src' => ''] : login_protection_extra_csp($config);
+$lpCsp        = $isRecovery ? ['script_src' => '', 'style_src' => '', 'frame_src' => ''] : login_protection_extra_csp($config);
 
 // Consume any OIDC error flash set by oidc_callback.php or oidc_login.php
 if (!empty($_SESSION['oidc_error'])) {
@@ -151,6 +151,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 render_page:
 page_header('Login', array_filter([
     'extra_script_src' => $lpCsp['script_src'],
+    'extra_style_src'  => $lpCsp['style_src'],
     'extra_frame_src'  => $lpCsp['frame_src'],
 ]));
 $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
