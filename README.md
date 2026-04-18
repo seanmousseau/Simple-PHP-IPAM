@@ -105,7 +105,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full release history and [docs/upgrading.md
 
 ## Demo Site
 
-- https://dev.seanmousseau.com/ipam-demo/
+- https://demo.simplephpipam.com/
 - Username: demo
 - Password: demo
 

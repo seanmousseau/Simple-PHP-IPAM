@@ -539,6 +539,8 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.0.0-config-stub-rewrite'),
   ('3.0.0-site-contacts'),
   ('3.0.0-subnet-contacts'),
+  ('3.1.0-user-timezone'),
+  ('3.1.0-subnet-alerts-enabled'),
   ('3.1.0-utilization-snapshots');
 
 SET FOREIGN_KEY_CHECKS = 1;

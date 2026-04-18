@@ -3444,14 +3444,17 @@ function recaptcha_expected_action_resolved(): string
  * or a non-empty error string that should be shown to the user.
  * Fails open on network errors so a broken CAPTCHA provider never blocks login.
  *
- * @param LoginProtectionConfig $config Unused since v2.7.0 — config flows
- *                                      through ipam_setting().
+ * @param array<string, mixed> $config Stub config (demo_gate) or empty array (login.php); falls back to ipam_setting().
  * @param array<string, mixed> $post
  */
 function login_protection_verify(array $config, array $post): ?string
 {
-    unset($config);
-    $method = to_str(ipam_setting('login_protection.method'));
+    // demo_gate.php passes its own stub; fall back to ipam_setting() for login.php
+    $raw = $config['login_protection'] ?? [];
+    $lp  = is_array($raw) ? $raw : [];
+    $cfg = fn(string $k): mixed => array_key_exists($k, $lp) ? $lp[$k] : ipam_setting("login_protection.{$k}");
+
+    $method = to_str($cfg('method'));
     if ($method === '' || $method === 'null') return null;
 
     if ($method === 'honeypot') {
@@ -3459,7 +3462,7 @@ function login_protection_verify(array $config, array $post): ?string
     }
 
     if ($method === 'time_check') {
-        $min = max(1, to_int(ipam_setting('login_protection.min_seconds')));
+        $min = max(1, to_int($cfg('min_seconds')));
         $ts  = to_int($_SESSION['login_form_at'] ?? 0);
         unset($_SESSION['login_form_at']);
         if ($ts === 0 || (time() - $ts) < $min) {
@@ -3468,7 +3471,7 @@ function login_protection_verify(array $config, array $post): ?string
         return null;
     }
 
-    $secretKey = to_str(ipam_setting('login_protection.secret_key'));
+    $secretKey = to_str($cfg('secret_key'));
 
     if ($method === 'turnstile') {
         $token = to_str($post['cf-turnstile-response'] ?? '');
@@ -3558,13 +3561,16 @@ function login_protection_verify(array $config, array $post): ?string
  * Return the HTML widget snippet to embed in the login/gate form.
  * For time_check, also sets the session timestamp on GET requests.
  *
- * @param LoginProtectionConfig $config Unused since v2.7.0 — kept for signature stability.
+ * @param array<string, mixed> $config Stub config (demo_gate) or empty array (login.php); falls back to ipam_setting().
  */
 function login_protection_widget_html(array $config): string
 {
-    unset($config);
-    $method  = to_str(ipam_setting('login_protection.method'));
-    $siteKey = e(to_str(ipam_setting('login_protection.site_key')));
+    $raw = $config['login_protection'] ?? [];
+    $lp  = is_array($raw) ? $raw : [];
+    $cfg = fn(string $k): mixed => array_key_exists($k, $lp) ? $lp[$k] : ipam_setting("login_protection.{$k}");
+
+    $method  = to_str($cfg('method'));
+    $siteKey = e(to_str($cfg('site_key')));
 
     switch ($method) {
         case 'honeypot':
@@ -3581,7 +3587,7 @@ function login_protection_widget_html(array $config): string
             return "<script src='https://js.hcaptcha.com/1/api.js' async defer></script>"
                  . "<div class='h-captcha' data-sitekey='{$siteKey}'></div>";
         case 'recaptcha':
-            $ver   = to_int(ipam_setting('login_protection.version'));
+            $ver   = to_int($cfg('version'));
             $isEnt = (bool)ipam_setting('recaptcha_enterprise.enabled');
             if ($ver === 3) {
                 $scriptSrc    = $isEnt
@@ -3610,31 +3616,36 @@ function login_protection_widget_html(array $config): string
  * be explicitly allowed; Friendly Captcha uses Web Components (no iframe needed).
  */
 /**
- * @param LoginProtectionConfig $config Unused since v2.7.0 — kept for signature stability.
- * @return array{script_src: string, frame_src: string}
+ * @param array<string, mixed> $config Stub config (demo_gate) or empty array (login.php); falls back to ipam_setting().
+ * @return array{script_src: string, style_src: string, frame_src: string}
  */
 function login_protection_extra_csp(array $config): array
 {
-    unset($config);
-    $method = to_str(ipam_setting('login_protection.method'));
+    $raw = $config['login_protection'] ?? [];
+    $lp  = is_array($raw) ? $raw : [];
+    $method = to_str(array_key_exists('method', $lp) ? $lp['method'] : ipam_setting('login_protection.method'));
     return match ($method) {
         'turnstile'        => [
             'script_src' => 'https://challenges.cloudflare.com',
+            'style_src'  => "'unsafe-inline'",
             'frame_src'  => 'https://challenges.cloudflare.com',
         ],
         'hcaptcha'         => [
             'script_src' => 'https://hcaptcha.com https://assets.hcaptcha.com',
+            'style_src'  => '',
             'frame_src'  => 'https://newassets.hcaptcha.com',
         ],
         'recaptcha'        => [
             'script_src' => 'https://www.google.com https://www.gstatic.com',
+            'style_src'  => '',
             'frame_src'  => 'https://www.google.com',
         ],
         'friendly_captcha' => [
             'script_src' => 'https://cdn.jsdelivr.net',
+            'style_src'  => '',
             'frame_src'  => '',
         ],
-        default            => ['script_src' => '', 'frame_src' => ''],
+        default            => ['script_src' => '', 'style_src' => '', 'frame_src' => ''],
     };
 }
 

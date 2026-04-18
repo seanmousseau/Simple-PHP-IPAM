@@ -8,6 +8,9 @@ $subnetId = to_int($_GET['subnet_id'] ?? 0);
 $days     = max(1, min(365, to_int($_GET['days'] ?? 90)));
 $cutoff   = gmdate('Y-m-d H:i:s', time() - $days * 86400);
 
+audit($db, 'export.utilization_history', 'utilization_snapshots', $subnetId ?: null,
+    "days={$days}" . ($subnetId > 0 ? " subnet_id={$subnetId}" : ''));
+
 $filename = safe_export_filename('ipam-utilization-history');
 csv_download_headers($filename);
 
@@ -29,7 +32,8 @@ $st = $db->prepare(
 );
 $st->execute($params);
 
-foreach ($st->fetchAll() as $r) {
+/** @var array<string, mixed> $r */
+while (($r = $st->fetch(PDO::FETCH_ASSOC)) !== false) {
     $total  = to_int($r['total_hosts']);
     $used   = to_int($r['used_count']);
     $pct    = $total > 0 ? round($used / $total * 100, 2) : 0.0;

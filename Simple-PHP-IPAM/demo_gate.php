@@ -53,8 +53,9 @@ $widgetHtml = login_protection_widget_html($gateConfig);
 $gateCsp    = login_protection_extra_csp($gateConfig);
 
 $extraScriptSrc = $gateCsp['script_src'] !== '' ? ' ' . $gateCsp['script_src'] : '';
+$extraStyleSrc  = $gateCsp['style_src']  !== '' ? ' ' . $gateCsp['style_src'] : '';
 $extraFrameSrc  = $gateCsp['frame_src']  !== '' ? " frame-src 'self' " . $gateCsp['frame_src'] . ';' : '';
-header("Content-Security-Policy: default-src 'self'; script-src 'self'{$extraScriptSrc}; style-src 'self'; img-src 'self' data:;{$extraFrameSrc} frame-ancestors 'none'");
+header("Content-Security-Policy: default-src 'self'; script-src 'self'{$extraScriptSrc}; style-src 'self'{$extraStyleSrc}; img-src 'self' data:;{$extraFrameSrc} frame-ancestors 'none'");
 header('X-Frame-Options: DENY');
 header('X-Content-Type-Options: nosniff');
 header('Referrer-Policy: strict-origin-when-cross-origin');

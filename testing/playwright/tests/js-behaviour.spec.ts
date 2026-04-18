@@ -173,6 +173,8 @@ test('contact popover: × close button visible and dismisses card (#571)', async
     name.textContent = 'Test Contact';
     card.appendChild(name);
 
+    card.style.top = '100px';
+    card.style.left = '100px';
     card.classList.add('visible');
   });
 

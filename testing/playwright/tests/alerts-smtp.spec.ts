@@ -176,8 +176,8 @@ test.describe('Utilization alerts SMTP delivery (#458)', () => {
     await clearMailHog();
     dockerPhp(`${BOOT} check_utilization_alerts($db, $config);`);
 
-    await new Promise(res => setTimeout(res, 1500));
-    const msgs = await getMessages();
+    // Poll up to 2.5s; if any message arrives we'll catch it here, then assert 0
+    const msgs = await waitForMessages(1, 2500);
     expect(msgs.length).toBe(0);
   });
 
@@ -215,9 +215,9 @@ test.describe('Utilization alerts SMTP delivery (#458)', () => {
 
     await clearMailHog();
     dockerPhp(`${BOOT} check_utilization_alerts($db, $config);`);
-    await new Promise(res => setTimeout(res, 1500));
 
-    const msgs = await getMessages();
+    // Poll up to 2.5s; if any message arrives we'll catch it here, then assert 0
+    const msgs = await waitForMessages(1, 2500);
     // No message should reference the silenced subnet's CIDR in its subject
     for (const msg of msgs) {
       const subject = msg.Content?.Headers?.Subject?.[0] ?? '';

@@ -33,7 +33,7 @@ if ($filterType === 'expired') {
     $filterWhere = " AND (a.expires_at IS NOT NULL AND a.expires_at < :flt_today)";
     $filterParams[':flt_today'] = date('Y-m-d');
 } elseif ($filterType === 'expiring') {
-    $filterWhere = " AND (a.expires_at IS NOT NULL AND a.expires_at >= :flt_from AND a.expires_at <= :flt_to)";
+    $filterWhere = " AND (a.expires_at IS NOT NULL AND a.expires_at >= :flt_from AND a.expires_at < :flt_to)";
     $filterParams[':flt_from'] = date('Y-m-d');
     $filterParams[':flt_to']   = date('Y-m-d', (int)strtotime("+{$filterDays} days"));
 }
