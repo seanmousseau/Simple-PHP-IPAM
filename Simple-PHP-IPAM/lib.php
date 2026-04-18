@@ -5368,7 +5368,7 @@ function page_header(string $title, array $opts = []): void
         echo "<div class='nav-dropdown-menu nav-dropdown-menu--right'>";
         echo "<button type='button' class='nav-dropdown-item' id='theme-toggle'>🌓 Theme</button>";
         echo "<hr class='nav-dropdown-divider'>";
-        echo "<a class='nav-dropdown-item' href='change_password.php'>🔐 Password</a>";
+        echo "<a class='nav-dropdown-item' href='change_password.php'>🔐 Account</a>";
         echo "<a class='nav-dropdown-item' href='logout.php'>↩ Logout</a>";
         echo "</div></div>";
         echo "</div>";
@@ -5406,7 +5406,7 @@ function page_header(string $title, array $opts = []): void
         }
         echo "<hr>";
         echo "<span class='nav-drawer-section'>Account</span>";
-        echo "<a href='change_password.php'>&#128272; Password</a>";
+        echo "<a href='change_password.php'>&#128272; Account</a>";
         echo "<a href='logout.php'>&#8617; Logout</a>";
     } else {
         echo "<a href='login.php'>&#128272; Login</a>";

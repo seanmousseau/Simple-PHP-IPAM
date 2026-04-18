@@ -7,8 +7,8 @@ require_login();
 if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 
 if (demo_mode_enabled()) {
-    page_header('Change Password');
-    echo "<h1>Change Password</h1>";
+    page_header('Account');
+    echo "<h1>Account</h1>";
     echo "<p class='warning'>Password changes are disabled in demo mode.</p>";
     page_footer();
     exit;
@@ -189,14 +189,14 @@ $actSt->execute([':uid' => $viewUserId]);
 /** @var list<array<string, mixed>> $activityRows */
 $activityRows = $actSt->fetchAll();
 
-page_header('Change Password');
+page_header('Account');
 ?>
 <div class="breadcrumbs">
   <a href="dashboard.php">Dashboard</a><span class="sep">›</span>
-  <span>Change Password</span>
+  <span>Account</span>
 </div>
 
-<h1>Change Password</h1>
+<h1>Account</h1>
 <?php if ($isSsoOnly): ?>
   <p class="muted">Your account authenticates via SSO. Password changes are managed through your identity provider.</p>
 <?php else: ?>
