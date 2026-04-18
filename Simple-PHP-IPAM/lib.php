@@ -2699,7 +2699,13 @@ function ipam_send_mail(string $to, string $subject, string $bodyText, string $b
 
     if ($smtpEnabled) {
         if (!class_exists('PHPMailer\PHPMailer\PHPMailer')) {
+            // Primary: vendor/ bundled inside the web root (release tarball installs).
+            // Fallback: vendor/ at the project root, one level above the web root
+            // (dev/Docker setups where vendor is mounted outside the web root).
             $autoload = __DIR__ . '/vendor/autoload.php';
+            if (!file_exists($autoload)) {
+                $autoload = dirname(__DIR__) . '/vendor/autoload.php';
+            }
             if (file_exists($autoload)) require_once $autoload;
         }
 
