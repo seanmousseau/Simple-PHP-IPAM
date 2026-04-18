@@ -18,8 +18,46 @@ $errors = [];
 $msg = '';
 $cur = current_user();
 
+// Handle email verification token (?verify_email=TOKEN)
+if (isset($_GET['verify_email'])) {
+    $verifyRaw = trim(to_str($_GET['verify_email']));
+    if (preg_match('/^[0-9a-f]{64}$/i', $verifyRaw)) {
+        $verHash = hash('sha256', $verifyRaw);
+        $verSt   = $db->prepare(
+            "SELECT id, pending_email FROM users
+              WHERE id = :uid
+                AND pending_email_token_hash = :hash
+                AND pending_email_expires_at > datetime('now')"
+        );
+        $verSt->execute([':uid' => $cur['id'], ':hash' => $verHash]);
+        /** @var array<string, mixed>|false $verRow */
+        $verRow = $verSt->fetch();
+        if ($verRow && to_str($verRow['pending_email']) !== '') {
+            $db->prepare(
+                "UPDATE users SET email = :email,
+                                  pending_email = NULL,
+                                  pending_email_token_hash = NULL,
+                                  pending_email_expires_at = NULL
+                  WHERE id = :id"
+            )->execute([':email' => to_str($verRow['pending_email']), ':id' => $cur['id']]);
+            audit($db, 'user.update_email', 'user', to_int($cur['id']), '');
+            flash_set('Email address verified and updated.');
+        } else {
+            flash_set('Verification link is invalid or has expired.', 'danger');
+        }
+    } else {
+        flash_set('Verification link is invalid.', 'danger');
+    }
+    header('Location: change_password.php');
+    exit;
+}
+
 // Fetch the full user row to check for SSO-only account
-$st = $db->prepare("SELECT password_hash, oidc_sub, timezone FROM users WHERE id = :id");
+$st = $db->prepare(
+    "SELECT password_hash, oidc_sub, timezone, email,
+            pending_email, pending_email_expires_at
+       FROM users WHERE id = :id"
+);
 $st->execute([':id' => $cur['id']]);
 /** @var array<string, mixed>|false $userRow */
 $userRow = $st->fetch();
@@ -64,6 +102,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && array_key_exists('timezone', $_POST
         flash_set('Timezone preference saved.');
     } else {
         flash_set('Invalid timezone identifier.', 'danger');
+    }
+    header('Location: change_password.php');
+    exit;
+}
+
+// Email change request (POST with new_email field)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && array_key_exists('new_email', $_POST)) {
+    $newEmail = trim(to_str($_POST['new_email'] ?? ''));
+    if ($newEmail === '') {
+        flash_set('Email address cannot be empty.', 'danger');
+    } elseif (filter_var($newEmail, FILTER_VALIDATE_EMAIL) === false) {
+        flash_set('Invalid email address format.', 'danger');
+    } else {
+        $dupSt = $db->prepare("SELECT id FROM users WHERE email = :email AND id != :id");
+        $dupSt->execute([':email' => $newEmail, ':id' => $cur['id']]);
+        if ($dupSt->fetch()) {
+            flash_set('That email address is already in use.', 'danger');
+        } else {
+            ipam_send_email_verification($db, to_int($cur['id']), $newEmail);
+            flash_set('Verification email sent to ' . $newEmail . '. Check your inbox and spam folder.');
+        }
     }
     header('Location: change_password.php');
     exit;
@@ -170,6 +229,36 @@ $appTz = to_str(ipam_setting('branding.timezone')) ?: 'UTC';
       </label>
     </div>
     <p><button type="submit">Save timezone</button></p>
+  </form>
+</div>
+
+<?php
+$currentEmail  = to_str($userRow['email'] ?? '');
+$pendingEmail  = to_str($userRow['pending_email'] ?? '');
+$pendingExpiry = to_str($userRow['pending_email_expires_at'] ?? '');
+$pendingActive = $pendingEmail !== '' && $pendingExpiry !== ''
+    && strtotime($pendingExpiry) > time();
+?>
+<div class="card mt-16">
+  <h2>Email Address</h2>
+  <?php if ($currentEmail !== ''): ?>
+    <p>Current: <strong><?= e($currentEmail) ?></strong></p>
+  <?php else: ?>
+    <p class="muted">No email address set.</p>
+  <?php endif; ?>
+  <?php if ($pendingActive): ?>
+    <p class="warning">Pending verification: <strong><?= e($pendingEmail) ?></strong>
+      — check your inbox for the verification link. Expires <?= e(ipam_format_datetime($pendingExpiry)) ?>.</p>
+  <?php endif; ?>
+  <form method="post" action="change_password.php" class="mt-10">
+    <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+    <div class="row">
+      <label>New email address<br>
+        <input type="email" name="new_email" required placeholder="user@example.com" style="min-width:220px;">
+      </label>
+    </div>
+    <p class="muted">A verification link will be sent to the new address. The change takes effect after clicking the link.</p>
+    <p><button type="submit">Send verification email</button></p>
   </form>
 </div>
 
