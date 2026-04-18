@@ -1305,7 +1305,7 @@ Devices represent physical or virtual network equipment (routers, switches, serv
 
 ### List devices
 
-```
+```http
 GET ?resource=devices
 GET ?resource=devices&id=N
 GET ?resource=devices&type=router
@@ -1344,7 +1344,7 @@ GET ?resource=devices&q=core
 
 ### Create a device
 
-```
+```http
 POST ?resource=devices
 Content-Type: application/json
 
@@ -1363,7 +1363,7 @@ Write key required. `name` is required and must be unique. `type` defaults to `o
 
 ### Update a device
 
-```
+```http
 PUT ?resource=devices&id=N
 ```
 
@@ -1371,7 +1371,7 @@ Same body as POST. All fields optional; omitted fields are unchanged.
 
 ### Delete a device
 
-```
+```http
 DELETE ?resource=devices&id=N
 ```
 
@@ -1385,14 +1385,14 @@ Interfaces belong to a device and can be linked to individual address records.
 
 ### List interfaces
 
-```
+```http
 GET ?resource=device_interfaces&device_id=N
 GET ?resource=device_interfaces&id=N
 ```
 
 ### Create an interface
 
-```
+```http
 POST ?resource=device_interfaces
 Content-Type: application/json
 
@@ -1407,13 +1407,13 @@ Content-Type: application/json
 
 ### Update an interface
 
-```
+```http
 PUT ?resource=device_interfaces&id=N
 ```
 
 ### Delete an interface
 
-```
+```http
 DELETE ?resource=device_interfaces&id=N
 ```
 

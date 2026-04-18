@@ -6337,7 +6337,8 @@ function ipam_app_base_url(): string
 {
     $cfg  = $GLOBALS['config'] ?? null;
     $base = is_array($cfg) ? rtrim(to_str($cfg['base_url'] ?? ''), '/') : '';
-    if ($base === '' || !preg_match('~^https://~i', $base)) {
+    $parsed = parse_url($base);
+    if ($base === '' || ($parsed['scheme'] ?? '') !== 'https' || empty($parsed['host'])) {
         throw new RuntimeException('config.base_url must be set to an https:// URL for email links.');
     }
     return $base;
@@ -6359,6 +6360,13 @@ function ipam_create_reset_token(PDO $db, int $userId): ?string
 
     $db->beginTransaction();
     try {
+        // On MySQL/Postgres, lock the user row so concurrent reset requests for
+        // the same user are serialized. SQLite serializes via its write lock.
+        if ($db->getAttribute(\PDO::ATTR_DRIVER_NAME) !== 'sqlite') {
+            $db->prepare("SELECT id FROM users WHERE id = :uid FOR UPDATE")
+               ->execute([':uid' => $userId]);
+        }
+
         $rateSt = $db->prepare(
             "SELECT COUNT(*) FROM password_reset_tokens
               WHERE user_id = :uid AND created_at > :window AND used_at IS NULL"
@@ -6450,11 +6458,11 @@ function ipam_send_reset_email(string $toAddress, string $toName, string $rawTok
         . "If you did not request this, you can safely ignore this email.\n\n"
         . "— " . $appName;
 
-    $html = "<p>Hi " . htmlspecialchars($toName ?: $toAddress, ENT_QUOTES) . ",</p>"
-        . "<p>A password reset was requested for your <strong>" . htmlspecialchars($appName, ENT_QUOTES) . "</strong> account.</p>"
-        . "<p><a href=\"" . htmlspecialchars($link, ENT_QUOTES) . "\">Reset your password</a> (link valid for 1 hour).</p>"
+    $html = "<p>Hi " . e($toName ?: $toAddress) . ",</p>"
+        . "<p>A password reset was requested for your <strong>" . e($appName) . "</strong> account.</p>"
+        . "<p><a href=\"" . e($link) . "\">Reset your password</a> (link valid for 1 hour).</p>"
         . "<p>If you did not request this, you can safely ignore this email.</p>"
-        . "<p>— " . htmlspecialchars($appName, ENT_QUOTES) . "</p>";
+        . "<p>— " . e($appName) . "</p>";
 
     $result = ipam_send_mail($toAddress, $subject, $text, $html);
     return $result['success'];
@@ -6486,10 +6494,10 @@ function ipam_send_email_verification(PDO $db, int $userId, string $newEmail): b
         . "If you did not request this change, you can safely ignore this email.\n\n"
         . "— " . $appName;
 
-    $html = "<p>Please verify your new email address for <strong>" . htmlspecialchars($appName, ENT_QUOTES) . "</strong>.</p>"
-        . "<p><a href=\"" . htmlspecialchars($link, ENT_QUOTES) . "\">Verify email address</a> (link valid for 1 hour).</p>"
+    $html = "<p>Please verify your new email address for <strong>" . e($appName) . "</strong>.</p>"
+        . "<p><a href=\"" . e($link) . "\">Verify email address</a> (link valid for 1 hour).</p>"
         . "<p>If you did not request this change, you can safely ignore this email.</p>"
-        . "<p>— " . htmlspecialchars($appName, ENT_QUOTES) . "</p>";
+        . "<p>— " . e($appName) . "</p>";
 
     $db->prepare(
         "UPDATE users SET pending_email = :email,

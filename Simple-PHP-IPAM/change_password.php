@@ -269,7 +269,7 @@ $currentEmail  = to_str($userRow['email'] ?? '');
 $pendingEmail  = to_str($userRow['pending_email'] ?? '');
 $pendingExpiry = to_str($userRow['pending_email_expires_at'] ?? '');
 $pendingActive = $pendingEmail !== '' && $pendingExpiry !== ''
-    && strtotime($pendingExpiry) > time();
+    && strtotime($pendingExpiry . ' UTC') > time();
 ?>
 <div class="card mt-16">
   <h2>Email Address</h2>

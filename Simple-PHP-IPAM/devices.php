@@ -23,7 +23,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'create') {
         $name   = trim(to_str($_POST['name']   ?? ''));
         $type   = to_str($_POST['type']   ?? 'other');
-        $siteId = to_int($_POST['site_id'] ?? 0) ?: null;
+        $rawSiteId = to_str($_POST['site_id'] ?? '');
+        $siteId = null;
+        if ($rawSiteId !== '' && $rawSiteId !== '0') {
+            $siteId = to_int($rawSiteId);
+            if ($siteId <= 0) $err = 'Invalid site selected.';
+        }
         $vendor = trim(to_str($_POST['vendor'] ?? ''));
         $model  = trim(to_str($_POST['model']  ?? ''));
         $serial = trim(to_str($_POST['serial'] ?? ''));
@@ -48,8 +53,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     flash_set("Device \"$name\" created.");
                     header('Location: devices.php');
                     exit;
-                } catch (PDOException) {
-                    $err = 'Could not create device (a device with that name already exists?).';
+                } catch (PDOException $e) {
+                    $code = $e->getCode();
+                    $err  = ($code === '23000' || $code === '23505' || str_contains($e->getMessage(), 'UNIQUE'))
+                        ? 'A device with that name already exists.'
+                        : 'Could not create device. Database error.';
                 }
             }
         }
@@ -57,7 +65,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $id     = to_int($_POST['id']      ?? 0);
         $name   = trim(to_str($_POST['name']   ?? ''));
         $type   = to_str($_POST['type']   ?? 'other');
-        $siteId = to_int($_POST['site_id'] ?? 0) ?: null;
+        $rawSiteId = to_str($_POST['site_id'] ?? '');
+        $siteId = null;
+        if ($rawSiteId !== '' && $rawSiteId !== '0') {
+            $siteId = to_int($rawSiteId);
+            if ($siteId <= 0) $err = 'Invalid site selected.';
+        }
         $vendor = trim(to_str($_POST['vendor'] ?? ''));
         $model  = trim(to_str($_POST['model']  ?? ''));
         $serial = trim(to_str($_POST['serial'] ?? ''));
@@ -85,8 +98,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                     header('Location: devices.php');
                     exit;
-                } catch (PDOException) {
-                    $err = 'Could not update device (duplicate name?).';
+                } catch (PDOException $e) {
+                    $code = $e->getCode();
+                    $err  = ($code === '23000' || $code === '23505' || str_contains($e->getMessage(), 'UNIQUE'))
+                        ? 'A device with that name already exists.'
+                        : 'Could not update device. Database error.';
                 }
             }
         }
@@ -137,6 +153,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
         }
+        if ($err !== '') flash_set($err, 'danger');
         $anchor = $deviceId > 0 ? '#device-' . $deviceId : '';
         header('Location: devices.php' . $anchor);
         exit;
@@ -148,12 +165,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $row->execute([':id' => $ifId, ':did' => $deviceId]);
             /** @var array<string,mixed>|false $iface */
             $iface = $row->fetch();
-            // ON DELETE SET NULL clears addresses.interface_id
-            $delIfSt = $db->prepare("DELETE FROM device_interfaces WHERE id=:id");
-            $delIfSt->execute([':id' => $ifId]);
-            if ($delIfSt->rowCount() > 0) {
-                audit($db, 'device_interface.delete', 'device_interface', $ifId, $iface ? 'name=' . to_str($iface['name']) : '');
-                flash_set('Interface deleted.');
+            if ($iface) {
+                // ON DELETE SET NULL clears addresses.interface_id
+                $delIfSt = $db->prepare("DELETE FROM device_interfaces WHERE id=:id AND device_id=:did");
+                $delIfSt->execute([':id' => $ifId, ':did' => $deviceId]);
+                if ($delIfSt->rowCount() > 0) {
+                    audit($db, 'device_interface.delete', 'device_interface', $ifId, 'name=' . to_str($iface['name']));
+                    flash_set('Interface deleted.');
+                } else {
+                    flash_set('Interface not found.', 'danger');
+                }
             } else {
                 flash_set('Interface not found.', 'danger');
             }
