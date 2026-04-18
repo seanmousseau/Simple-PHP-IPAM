@@ -894,13 +894,15 @@ if (demo_mode_enabled()) {
                 $aid = ipam_last_insert_id($db, 'addresses');
 
                 history_log_address($db, 'import_create', $subnetId, $ip, $aid, null, [
-                    'hostname' => to_str($r['hostname'] ?? ''),
-                    'owner' => to_str($r['owner'] ?? ''),
-                    'note' => to_str($r['note'] ?? ''),
-                    'grp' => to_str($r['grp'] ?? ''),
-                    'mac' => to_str($r['mac'] ?? ''),
-                    'expires_at' => $insExpAt,
-                    'status' => to_str($r['status'] ?? 'used'),
+                    'hostname'     => to_str($r['hostname'] ?? ''),
+                    'owner'        => to_str($r['owner'] ?? ''),
+                    'note'         => to_str($r['note'] ?? ''),
+                    'grp'          => to_str($r['grp'] ?? ''),
+                    'mac'          => to_str($r['mac'] ?? ''),
+                    'expires_at'   => $insExpAt,
+                    'status'       => to_str($r['status'] ?? 'used'),
+                    'device_id'    => $devLink['device_id'],
+                    'interface_id' => $devLink['interface_id'],
                 ]);
                 $createdAddresses++;
 
@@ -960,22 +962,26 @@ if (demo_mode_enabled()) {
                 }
 
                 $before = [
-                    'hostname' => to_str($existing['hostname']),
-                    'owner' => to_str($existing['owner']),
-                    'note' => to_str($existing['note']),
-                    'grp' => to_str($existing['grp']),
-                    'mac' => to_str($existing['mac']),
-                    'expires_at' => $existing['expires_at'] !== null ? to_str($existing['expires_at']) : null,
-                    'status' => to_str($existing['status']),
+                    'hostname'     => to_str($existing['hostname']),
+                    'owner'        => to_str($existing['owner']),
+                    'note'         => to_str($existing['note']),
+                    'grp'          => to_str($existing['grp']),
+                    'mac'          => to_str($existing['mac']),
+                    'expires_at'   => $existing['expires_at'] !== null ? to_str($existing['expires_at']) : null,
+                    'status'       => to_str($existing['status']),
+                    'device_id'    => $existing['device_id'] !== null ? to_int($existing['device_id']) : null,
+                    'interface_id' => $existing['interface_id'] !== null ? to_int($existing['interface_id']) : null,
                 ];
                 $after = [
-                    'hostname' => $newHn,
-                    'owner' => $newOw,
-                    'note' => $newNt,
-                    'grp' => $newGrp,
-                    'mac' => $newMac,
-                    'expires_at' => $newExpAt,
-                    'status' => $newSt,
+                    'hostname'     => $newHn,
+                    'owner'        => $newOw,
+                    'note'         => $newNt,
+                    'grp'          => $newGrp,
+                    'mac'          => $newMac,
+                    'expires_at'   => $newExpAt,
+                    'status'       => $newSt,
+                    'device_id'    => $newDevId,
+                    'interface_id' => $newIfaceId,
                 ];
 
                 $upd->bindValue(':hn',  $newHn);

@@ -255,7 +255,7 @@ match ($resource) {
         'DELETE' => api_device_interfaces_delete($db, $apiKey, to_int($_GET['id'] ?? 0)),
         default  => api_error(405, 'Method not allowed.'),
     },
-    'spec'       => $method === 'GET' ? api_spec()                 : api_error(405, 'Method not allowed.'),
+    'spec'       => api_error(405, 'Method not allowed.'),  // GET/HEAD handled before auth above
     default      => api_error(404, 'Unknown resource. Valid: subnets, addresses, sites, vlans, vrfs, contacts, tags, subnet_tags, address_tags, history, search, audit, unassigned, scan_results, scan_history, scan_schedules, scan_run, subnet_stats, utilization_snapshots, devices, device_interfaces, spec'),
 };
 
@@ -2581,12 +2581,12 @@ function api_devices(PDO $db): never
 
     if (isset($_GET['id'])) {
         $id  = to_int($_GET['id']);
-        $st  = $db->prepare("SELECT d.*, s.name AS site_name FROM devices d LEFT JOIN sites s ON s.id = d.site_id WHERE d.id = :id");
+        $st  = $db->prepare("SELECT d.*, s.name AS site_name, (SELECT COUNT(*) FROM device_interfaces di WHERE di.device_id = d.id) AS interface_count FROM devices d LEFT JOIN sites s ON s.id = d.site_id WHERE d.id = :id");
         $st->execute([':id' => $id]);
         /** @var array<string,mixed>|false $row */
         $row = $st->fetch();
         if (!$row) api_error(404, 'Device not found.');
-        api_json(['device' => fmt_device($row, $db)]);
+        api_json(['device' => fmt_device($row)]);
     }
 
     $where  = [];
@@ -2622,29 +2622,24 @@ function api_devices(PDO $db): never
     $cntRow = $cntSt->fetch();
     $total = is_array($cntRow) ? to_int($cntRow['c']) : 0;
 
-    $st = $db->prepare("SELECT d.*, s.name AS site_name FROM devices d LEFT JOIN sites s ON s.id = d.site_id $whereSql ORDER BY d.name LIMIT :lim OFFSET :off");
+    $st = $db->prepare("SELECT d.*, s.name AS site_name, (SELECT COUNT(*) FROM device_interfaces di WHERE di.device_id = d.id) AS interface_count FROM devices d LEFT JOIN sites s ON s.id = d.site_id $whereSql ORDER BY d.name LIMIT :lim OFFSET :off");
     foreach ($params as $k => $v) {
         $st->bindValue($k, $v, PDO::PARAM_STR);
     }
     $st->bindValue(':lim', $limit, PDO::PARAM_INT);
     $st->bindValue(':off', $offset, PDO::PARAM_INT);
     $st->execute();
-    api_json(api_paginated_response('devices', array_map(fn($r) => fmt_device($r, $db), $st->fetchAll()), $total, $page, $limit));
+    api_json(api_paginated_response('devices', array_map('fmt_device', $st->fetchAll()), $total, $page, $limit));
 }
 
 /**
  * @param array<string,mixed> $r
  * @return array<string,mixed>
  */
-function fmt_device(array $r, PDO $db): array
+function fmt_device(array $r): array
 {
-    $id = to_int($r['id']);
-    $ifSt = $db->prepare("SELECT COUNT(*) AS c FROM device_interfaces WHERE device_id = :id");
-    $ifSt->execute([':id' => $id]);
-    /** @var array<string,mixed>|false $ifRow */
-    $ifRow = $ifSt->fetch();
     return [
-        'id'              => $id,
+        'id'              => to_int($r['id']),
         'name'            => to_str($r['name']),
         'type'            => to_str($r['type']),
         'site_id'         => $r['site_id'] !== null ? to_int($r['site_id']) : null,
@@ -2653,7 +2648,7 @@ function fmt_device(array $r, PDO $db): array
         'model'           => to_str($r['model']),
         'serial'          => to_str($r['serial']),
         'note'            => to_str($r['note']),
-        'interface_count' => is_array($ifRow) ? to_int($ifRow['c']) : 0,
+        'interface_count' => isset($r['interface_count']) ? to_int($r['interface_count']) : 0,
         'created_at'      => $r['created_at'],
         'updated_at'      => $r['updated_at'],
     ];
@@ -2686,11 +2681,11 @@ function api_devices_create(PDO $db, array $apiKey, array $body): never
     $newId = ipam_last_insert_id($db, 'devices');
     api_audit($db, $apiKey, 'device.create', 'device', $newId, "name=$name type=$type");
     http_response_code(201);
-    $st = $db->prepare("SELECT d.*, s.name AS site_name FROM devices d LEFT JOIN sites s ON s.id = d.site_id WHERE d.id = :id");
+    $st = $db->prepare("SELECT d.*, s.name AS site_name, (SELECT COUNT(*) FROM device_interfaces di WHERE di.device_id = d.id) AS interface_count FROM devices d LEFT JOIN sites s ON s.id = d.site_id WHERE d.id = :id");
     $st->execute([':id' => $newId]);
     /** @var array<string,mixed>|false $row */
     $row = $st->fetch();
-    api_json(['device' => fmt_device($row ?: [], $db)]);
+    api_json(['device' => fmt_device($row ?: [])]);
 }
 
 /**
@@ -2703,8 +2698,6 @@ function api_devices_update(PDO $db, array $apiKey, int $id, array $body): never
     if ($id <= 0) api_error(400, 'id is required.');
     /** @var list<string> $validTypes */
     $validTypes = ['router', 'switch', 'server', 'vm', 'firewall', 'other'];
-    $chk = $db->prepare("SELECT id FROM devices WHERE id = :id");
-    $chk->execute([':id' => $id]);
     $existSt = $db->prepare("SELECT * FROM devices WHERE id = :id");
     $existSt->execute([':id' => $id]);
     /** @var array<string,mixed>|false $existing */
@@ -2728,11 +2721,11 @@ function api_devices_update(PDO $db, array $apiKey, int $id, array $body): never
         api_error(409, 'Duplicate device name.');
     }
     api_audit($db, $apiKey, 'device.update', 'device', $id, "name=$name");
-    $st = $db->prepare("SELECT d.*, s.name AS site_name FROM devices d LEFT JOIN sites s ON s.id = d.site_id WHERE d.id = :id");
+    $st = $db->prepare("SELECT d.*, s.name AS site_name, (SELECT COUNT(*) FROM device_interfaces di WHERE di.device_id = d.id) AS interface_count FROM devices d LEFT JOIN sites s ON s.id = d.site_id WHERE d.id = :id");
     $st->execute([':id' => $id]);
     /** @var array<string,mixed>|false $row */
     $row = $st->fetch();
-    api_json(['device' => fmt_device($row ?: [], $db)]);
+    api_json(['device' => fmt_device($row ?: [])]);
 }
 
 /** @param array<string,mixed> $apiKey */
@@ -2890,16 +2883,4 @@ function api_device_interfaces_delete(PDO $db, array $apiKey, int $id): never
     api_audit($db, $apiKey, 'device_interface.delete', 'device_interface', $id, 'name=' . to_str($row['name']));
     http_response_code(204);
     api_json([]);
-}
-
-function api_spec(): never
-{
-    $specPath = __DIR__ . '/assets/api-spec.yaml';
-    if (!file_exists($specPath)) api_error(404, 'OpenAPI spec not found.');
-    $yaml = file_get_contents($specPath);
-    if ($yaml === false) api_error(500, 'Unable to read OpenAPI spec.');
-    header('Content-Type: application/yaml; charset=utf-8');
-    header('Cache-Control: public, max-age=3600');
-    echo $yaml;
-    exit;
 }
