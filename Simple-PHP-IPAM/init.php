@@ -266,6 +266,15 @@ ini_set('session.use_only_cookies', '1');
 
 session_start();
 
+// LiteSpeed Server-Side Cache bypass: LiteSpeed ignores the standard
+// Cache-Control: no-store header for its own ESI/full-page cache. All PHP
+// pages in this app carry session state and CSRF tokens so they must never
+// be served from cache. X-LiteSpeed-Cache-Control is the authoritative
+// opt-out that LiteSpeed actually respects.
+if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
+    header('X-LiteSpeed-Cache-Control: no-cache');
+}
+
 require __DIR__ . '/lib.php';
 
 $db = ipam_db($config);
