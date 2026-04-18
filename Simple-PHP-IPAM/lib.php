@@ -6326,3 +6326,151 @@ function ipam_apply_arp_import(PDO $db, array $entries, int $subnetId): array
     }
     return $stats;
 }
+
+// ── Password reset + email verification helpers (v3.2.0) ─────────────────────
+
+/**
+ * Return the canonical HTTPS base URL of this install (no trailing slash).
+ * Used to build absolute links in emails.
+ */
+function ipam_app_base_url(): string
+{
+    $cfg  = $GLOBALS['config'];
+    $base = is_array($cfg) ? rtrim(to_str($cfg['base_url'] ?? ''), '/') : '';
+    if ($base !== '') {
+        return $base;
+    }
+    $host = to_str($_SERVER['HTTP_HOST'] ?? '');
+    return 'https://' . $host;
+}
+
+/**
+ * Create a password-reset token for the given user.
+ * Returns the raw (unhashed) token to embed in the reset link.
+ *
+ * Enforces max 3 active tokens per user per hour (rate limit).
+ * Token hash is stored with 1-hour expiry; raw token is returned to caller.
+ */
+function ipam_create_reset_token(PDO $db, int $userId): ?string
+{
+    $rateSt = $db->prepare(
+        "SELECT COUNT(*) FROM password_reset_tokens
+          WHERE user_id = :uid AND created_at > datetime('now', '-1 hour')"
+    );
+    $rateSt->execute([':uid' => $userId]);
+    $recentCount = (int)$rateSt->fetchColumn();
+    if ($recentCount >= 3) {
+        return null;
+    }
+
+    $rawToken  = bin2hex(random_bytes(32));
+    $tokenHash = hash('sha256', $rawToken);
+    $expiresAt = gmdate('Y-m-d H:i:s', time() + 3600);
+
+    $db->prepare(
+        "INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+         VALUES (:uid, :hash, :exp)"
+    )->execute([':uid' => $userId, ':hash' => $tokenHash, ':exp' => $expiresAt]);
+
+    return $rawToken;
+}
+
+/**
+ * Validate and consume a password-reset token.
+ * Returns the user_id if the token is valid, not expired, and not used.
+ * Marks the token as used (single-use).
+ */
+function ipam_consume_reset_token(PDO $db, string $rawToken): ?int
+{
+    $tokenHash = hash('sha256', $rawToken);
+
+    $st = $db->prepare(
+        "SELECT id, user_id, expires_at, used_at
+           FROM password_reset_tokens
+          WHERE token_hash = :hash"
+    );
+    $st->execute([':hash' => $tokenHash]);
+    /** @var array<string, mixed>|false $row */
+    $row = $st->fetch();
+
+    if (!$row) {
+        return null;
+    }
+    if ($row['used_at'] !== null) {
+        return null;
+    }
+    if (strtotime(to_str($row['expires_at'])) < time()) {
+        return null;
+    }
+
+    // Mark as used
+    $db->prepare("UPDATE password_reset_tokens SET used_at = datetime('now') WHERE id = :id")
+       ->execute([':id' => to_int($row['id'])]);
+
+    return to_int($row['user_id']);
+}
+
+/**
+ * Send a password-reset link email to the given address.
+ * Returns true on success.
+ */
+function ipam_send_reset_email(string $toAddress, string $toName, string $rawToken): bool
+{
+    $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
+    $base    = ipam_app_base_url();
+    $link    = $base . '/reset_password.php?token=' . rawurlencode($rawToken);
+
+    $subject = $appName . ' — Password Reset';
+
+    $text = "Hi " . ($toName ?: $toAddress) . ",\n\n"
+        . "A password reset was requested for your " . $appName . " account.\n\n"
+        . "Reset link (valid for 1 hour):\n" . $link . "\n\n"
+        . "If you did not request this, you can safely ignore this email.\n\n"
+        . "— " . $appName;
+
+    $html = "<p>Hi " . htmlspecialchars($toName ?: $toAddress, ENT_QUOTES) . ",</p>"
+        . "<p>A password reset was requested for your <strong>" . htmlspecialchars($appName, ENT_QUOTES) . "</strong> account.</p>"
+        . "<p><a href=\"" . htmlspecialchars($link, ENT_QUOTES) . "\">Reset your password</a> (link valid for 1 hour).</p>"
+        . "<p>If you did not request this, you can safely ignore this email.</p>"
+        . "<p>— " . htmlspecialchars($appName, ENT_QUOTES) . "</p>";
+
+    $result = ipam_send_mail($toAddress, $subject, $text, $html);
+    return $result['success'];
+}
+
+/**
+ * Initiate an email-change verification for $userId.
+ * Stores pending_email + token hash + expiry on the user row and sends
+ * a verification email to the NEW address.
+ */
+function ipam_send_email_verification(PDO $db, int $userId, string $newEmail): void
+{
+    $rawToken  = bin2hex(random_bytes(32));
+    $tokenHash = hash('sha256', $rawToken);
+    $expiresAt = gmdate('Y-m-d H:i:s', time() + 3600);
+
+    $db->prepare(
+        "UPDATE users SET pending_email = :email,
+                          pending_email_token_hash = :hash,
+                          pending_email_expires_at = :exp
+          WHERE id = :id"
+    )->execute([':email' => $newEmail, ':hash' => $tokenHash, ':exp' => $expiresAt, ':id' => $userId]);
+
+    $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
+    $base    = ipam_app_base_url();
+    $link    = $base . '/change_password.php?verify_email=' . rawurlencode($rawToken);
+
+    $subject = $appName . ' — Verify your new email address';
+
+    $text = "Please verify your new email address for " . $appName . ".\n\n"
+        . "Verification link (valid for 1 hour):\n" . $link . "\n\n"
+        . "If you did not request this change, you can safely ignore this email.\n\n"
+        . "— " . $appName;
+
+    $html = "<p>Please verify your new email address for <strong>" . htmlspecialchars($appName, ENT_QUOTES) . "</strong>.</p>"
+        . "<p><a href=\"" . htmlspecialchars($link, ENT_QUOTES) . "\">Verify email address</a> (link valid for 1 hour).</p>"
+        . "<p>If you did not request this change, you can safely ignore this email.</p>"
+        . "<p>— " . htmlspecialchars($appName, ENT_QUOTES) . "</p>";
+
+    ipam_send_mail($newEmail, $subject, $text, $html);
+}
