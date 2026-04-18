@@ -133,6 +133,32 @@ $st->execute();
 /** @var list<array<string, mixed>> $rows */
 $rows = $st->fetchAll();
 
+/* --- Device search (always runs when $q is non-empty) --- */
+/** @var list<array<string, mixed>> $deviceResults */
+$deviceResults = [];
+if ($q !== '') {
+    $dLike = '%' . like_escape($q) . '%';
+    $dst = $db->prepare("
+        SELECT DISTINCT d.id, d.name, d.type, d.vendor, d.model,
+               COALESCE(s.name, '') AS site_name,
+               (SELECT COUNT(*) FROM device_interfaces di WHERE di.device_id = d.id) AS iface_count
+        FROM devices d
+        LEFT JOIN sites s ON s.id = d.site_id
+        LEFT JOIN device_interfaces dif ON dif.device_id = d.id
+        WHERE (d.name LIKE :dq1 ESCAPE '!'
+            OR d.vendor LIKE :dq2 ESCAPE '!'
+            OR d.model  LIKE :dq3 ESCAPE '!'
+            OR d.serial LIKE :dq4 ESCAPE '!'
+            OR d.note   LIKE :dq5 ESCAPE '!'
+            OR dif.name LIKE :dq6 ESCAPE '!')
+        ORDER BY d.name
+        LIMIT 50
+    ");
+    $dst->execute([':dq1' => $dLike, ':dq2' => $dLike, ':dq3' => $dLike,
+                   ':dq4' => $dLike, ':dq5' => $dLike, ':dq6' => $dLike]);
+    $deviceResults = $dst->fetchAll();
+}
+
 /* --- Subnet search (always runs when $q is non-empty) --- */
 $subnetResults = [];
 if ($q !== '') {
@@ -340,6 +366,34 @@ page_header('Search');
     </p>
   <?php endif; ?>
 </div>
+
+<?php if ($deviceResults): ?>
+<div class="card mt-16">
+  <h2>Matching Devices (<?= count($deviceResults) ?>)</h2>
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Name</th><th>Type</th><th>Site</th><th>Vendor / Model</th><th>Interfaces</th><th></th></tr>
+    </thead>
+    <tbody>
+    <?php foreach ($deviceResults as $dr): ?>
+      <tr>
+        <td><b><?= e(to_str($dr['name'])) ?></b></td>
+        <td><span class="badge badge-type-<?= e(to_str($dr['type'])) ?>"><?= e(ucfirst(to_str($dr['type']))) ?></span></td>
+        <td><?= $dr['site_name'] !== '' ? e(to_str($dr['site_name'])) : '<span class="muted">—</span>' ?></td>
+        <td><?php
+          $vm = trim(e(to_str($dr['vendor'])) . ' ' . e(to_str($dr['model'])));
+          echo $vm !== '' ? $vm : '<span class="muted">—</span>';
+        ?></td>
+        <td><?= to_int($dr['iface_count']) ?></td>
+        <td><a href="devices.php">Manage</a></td>
+      </tr>
+    <?php endforeach; ?>
+    </tbody>
+  </table>
+  </div>
+</div>
+<?php endif; ?>
 
 <?php if ($subnetResults): ?>
 <div class="card mt-16">

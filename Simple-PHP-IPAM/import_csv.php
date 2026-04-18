@@ -173,6 +173,8 @@ function analyze_import(PDO $db, array $wiz): array
             'subnet_description' => trim(to_str($get('description') ?? '')),
             'prefix_hint' => trim(to_str($get('prefix') ?? '')),
             'netmask_hint' => trim(to_str($get('netmask') ?? '')),
+            'device_name' => substr(trim(to_str($get('device_name') ?? '')), 0, 255),
+            'interface_name' => substr(trim(to_str($get('interface_name') ?? '')), 0, 255),
         ];
 
         $rawExpires = trim(to_str($get('expires_at') ?? ''));
@@ -556,6 +558,8 @@ if ($step === 2) {
             'prefix' => 'Prefix length (optional)',
             'netmask' => 'IPv4 netmask (optional)',
             'description' => 'Subnet description (optional, used only when creating subnet)',
+            'device_name' => 'Device name (optional)',
+            'interface_name' => 'Interface name (optional, requires device name)',
         ];
 
         echo "<table><tbody>";
@@ -716,10 +720,60 @@ if (demo_mode_enabled()) {
 
         $db->beginTransaction();
 
-        $sel = $db->prepare("SELECT id, ip, hostname, owner, note, grp, mac, expires_at, status FROM addresses WHERE subnet_id=:sid AND ip=:ip");
-        $ins = $db->prepare("INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, grp, mac, expires_at, status)
-                             VALUES (:sid,:ip,:bin,:hn,:ow,:nt,:grp,:mac,:exp,:st)");
-        $upd = $db->prepare("UPDATE addresses SET hostname=:hn, owner=:ow, note=:nt, grp=:grp, mac=:mac, expires_at=:exp, status=:st WHERE id=:id");
+        $sel = $db->prepare("SELECT id, ip, hostname, owner, note, grp, mac, expires_at, status, device_id, interface_id FROM addresses WHERE subnet_id=:sid AND ip=:ip");
+        $ins = $db->prepare("INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, grp, mac, expires_at, status, device_id, interface_id)
+                             VALUES (:sid,:ip,:bin,:hn,:ow,:nt,:grp,:mac,:exp,:st,:did,:iid)");
+        $upd = $db->prepare("UPDATE addresses SET hostname=:hn, owner=:ow, note=:nt, grp=:grp, mac=:mac, expires_at=:exp, status=:st, device_id=:did, interface_id=:iid WHERE id=:id");
+
+        // Device/interface lookup+create helpers used inside the row loop
+        $selDevice = $db->prepare("SELECT id FROM devices WHERE name=:name");
+        $insDevice = $db->prepare("INSERT INTO devices (name, type) VALUES (:name, 'other')");
+        $selIface  = $db->prepare("SELECT id FROM device_interfaces WHERE device_id=:did AND name=:name");
+        $insIface  = $db->prepare("INSERT INTO device_interfaces (device_id, name) VALUES (:did, :name)");
+
+        /**
+         * @param \PDOStatement $selDev
+         * @param \PDOStatement $insDev
+         * @param \PDOStatement $selIf
+         * @param \PDOStatement $insIf
+         * @return array{device_id:int|null,interface_id:int|null}
+         */
+        $resolveDevice = static function (string $devName, string $ifaceName,
+            \PDOStatement $selDev, \PDOStatement $insDev,
+            \PDOStatement $selIf, \PDOStatement $insIf): array {
+            if ($devName === '') {
+                return ['device_id' => null, 'interface_id' => null];
+            }
+            $selDev->execute([':name' => $devName]);
+            /** @var array<string,mixed>|false $dr */
+            $dr = $selDev->fetch();
+            if (!$dr) {
+                $insDev->execute([':name' => $devName]);
+                $selDev->execute([':name' => $devName]);
+                /** @var array<string,mixed>|false $dr */
+                $dr = $selDev->fetch();
+            }
+            if (!$dr) {
+                return ['device_id' => null, 'interface_id' => null];
+            }
+            $deviceId = to_int($dr['id']);
+            $interfaceId = null;
+            if ($ifaceName !== '') {
+                $selIf->execute([':did' => $deviceId, ':name' => $ifaceName]);
+                /** @var array<string,mixed>|false $ir */
+                $ir = $selIf->fetch();
+                if (!$ir) {
+                    $insIf->execute([':did' => $deviceId, ':name' => $ifaceName]);
+                    $selIf->execute([':did' => $deviceId, ':name' => $ifaceName]);
+                    /** @var array<string,mixed>|false $ir */
+                    $ir = $selIf->fetch();
+                }
+                if ($ir) {
+                    $interfaceId = to_int($ir['id']);
+                }
+            }
+            return ['device_id' => $deviceId, 'interface_id' => $interfaceId];
+        };
 
         foreach ($rows as $r) {
             $result = [
@@ -807,6 +861,11 @@ if (demo_mode_enabled()) {
                     continue;
                 }
 
+                $devLink = $resolveDevice(
+                    to_str($r['device_name'] ?? ''), to_str($r['interface_name'] ?? ''),
+                    $selDevice, $insDevice, $selIface, $insIface
+                );
+
                 // #410/#388: bind ip_bin via ipam_bind_binary() (PARAM_LOB).
                 $insExpAt = isset($r['expires_at']) && to_str($r['expires_at']) !== '' ? to_str($r['expires_at']) : null;
                 $ins->bindValue(':sid',  $subnetId, PDO::PARAM_INT);
@@ -819,6 +878,8 @@ if (demo_mode_enabled()) {
                 $ins->bindValue(':mac',  to_str($r['mac'] ?? ''));
                 $ins->bindValue(':exp',  $insExpAt, $insExpAt === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
                 $ins->bindValue(':st',   to_str($r['status'] ?? 'used'));
+                $ins->bindValue(':did',  $devLink['device_id'], $devLink['device_id'] === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                $ins->bindValue(':iid',  $devLink['interface_id'], $devLink['interface_id'] === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                 $ins->execute();
                 $aid = ipam_last_insert_id($db, 'addresses');
 
@@ -856,6 +917,21 @@ if (demo_mode_enabled()) {
                 $newExpAt = isset($r['expires_at']) && to_str($r['expires_at']) !== '' ? to_str($r['expires_at']) : null;
                 $newSt = to_str($r['status'] ?? 'used');
 
+                $devLink = $resolveDevice(
+                    to_str($r['device_name'] ?? ''), to_str($r['interface_name'] ?? ''),
+                    $selDevice, $insDevice, $selIface, $insIface
+                );
+                // If no device_name provided, keep existing device linkage
+                $rawExistDevId   = $existing['device_id'];
+                $rawExistIfaceId = $existing['interface_id'];
+                if (to_str($r['device_name'] ?? '') !== '') {
+                    $newDevId   = $devLink['device_id'];
+                    $newIfaceId = $devLink['interface_id'];
+                } else {
+                    $newDevId   = $rawExistDevId   !== null ? to_int($rawExistDevId)   : null;
+                    $newIfaceId = $rawExistIfaceId !== null ? to_int($rawExistIfaceId) : null;
+                }
+
                 // Fix semantics: fill_empty does NOT overwrite status
                 if ($dupMode === 'fill_empty') {
                     $newHn = (to_str($existing['hostname']) === '') ? $newHn : to_str($existing['hostname']);
@@ -865,6 +941,11 @@ if (demo_mode_enabled()) {
                     $newMac = (to_str($existing['mac']) === '') ? $newMac : to_str($existing['mac']);
                     $newExpAt = ($existing['expires_at'] === null) ? $newExpAt : to_str($existing['expires_at']);
                     $newSt = to_str($existing['status']);
+                    // fill_empty: only set device linkage if not already linked
+                    if ($existing['device_id'] !== null) {
+                        $newDevId = to_int($existing['device_id']);
+                        $newIfaceId = $existing['interface_id'] !== null ? to_int($existing['interface_id']) : null;
+                    }
                 }
 
                 $before = [
@@ -886,16 +967,17 @@ if (demo_mode_enabled()) {
                     'status' => $newSt,
                 ];
 
-                $upd->execute([
-                    ':hn'  => $newHn,
-                    ':ow'  => $newOw,
-                    ':nt'  => $newNt,
-                    ':grp' => $newGrp,
-                    ':mac' => $newMac,
-                    ':exp' => $newExpAt,
-                    ':st'  => $newSt,
-                    ':id'  => to_int($existing['id']),
-                ]);
+                $upd->bindValue(':hn',  $newHn);
+                $upd->bindValue(':ow',  $newOw);
+                $upd->bindValue(':nt',  $newNt);
+                $upd->bindValue(':grp', $newGrp);
+                $upd->bindValue(':mac', $newMac);
+                $upd->bindValue(':exp', $newExpAt, $newExpAt === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
+                $upd->bindValue(':st',  $newSt);
+                $upd->bindValue(':did', $newDevId, $newDevId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                $upd->bindValue(':iid', $newIfaceId, $newIfaceId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                $upd->bindValue(':id',  to_int($existing['id']), PDO::PARAM_INT);
+                $upd->execute();
 
                 history_log_address($db, 'import_update', $subnetId, $ip, to_int($existing['id']), $before, $after);
                 $updatedAddresses++;
