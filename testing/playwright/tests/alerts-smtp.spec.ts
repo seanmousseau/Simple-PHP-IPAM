@@ -56,7 +56,7 @@ async function waitForMessages(count: number, timeoutMs = 10000): Promise<MailHo
 
 // Uses spawnSync (array args, no shell) — not vulnerable to injection.
 function dockerPhp(code: string): string {
-  const r = spawnSync('docker', ['exec', CONTAINER, 'php', '-r', code], { encoding: 'utf8' });
+  const r = spawnSync('docker', ['exec', CONTAINER, 'php', '-r', code], { encoding: 'utf8', timeout: 10000 });
   if (r.status !== 0) throw new Error(`docker php: ${(r.stderr || r.stdout || '').trim()}`);
   return r.stdout.trim();
 }
@@ -70,11 +70,12 @@ $db = ipam_db($config);
 // ── Suite ─────────────────────────────────────────────────────────────────────
 
 test.describe('Utilization alerts SMTP delivery (#458)', () => {
-  let mailhogAvailable = false;
-  let restoredWarnPct  = '80';
-  let restoredCritPct  = '95';
-  let restoredRecips   = '[]';
-  let silencedSubnetId = 0;
+  let mailhogAvailable  = false;
+  let restoredWarnPct   = '80';
+  let restoredCritPct   = '95';
+  let restoredRecips    = '[]';
+  let restoredAdminEmail = '';
+  let silencedSubnetId  = 0;
 
   test.beforeAll(async () => {
     mailhogAvailable = await isMailHogAvailable();
@@ -104,9 +105,10 @@ test.describe('Utilization alerts SMTP delivery (#458)', () => {
       ipam_setting_set($db, 'alert.recipient_user_ids', [1]);
     `);
 
-    // Ensure user 1 (demo admin) has an email address
+    // Snapshot and ensure user 1 (demo admin) has an email address
+    restoredAdminEmail = dockerPhp(`${BOOT} $row = $db->query("SELECT email FROM users WHERE id = 1")->fetch(); echo (string)($row['email'] ?? '');`);
     dockerPhp(`${BOOT}
-      $db->exec("UPDATE users SET email = 'admin@test.local' WHERE id = 1 AND (email IS NULL OR email = '')");
+      $db->exec("UPDATE users SET email = 'admin@test.local' WHERE id = 1");
     `);
 
     // Clear stale alert_state so alerts fire on the first run
@@ -138,6 +140,10 @@ test.describe('Utilization alerts SMTP delivery (#458)', () => {
         $db->exec("UPDATE subnets SET alerts_enabled = 1 WHERE id = ${silencedSubnetId}");
       `);
     }
+
+    // Restore admin email to its original value
+    const safeEmail = restoredAdminEmail.replace(/'/g, "\\'");
+    dockerPhp(`${BOOT} $db->exec("UPDATE users SET email = '${safeEmail}' WHERE id = 1");`);
 
     dockerPhp(`${BOOT} $db->exec('DELETE FROM alert_state');`);
     await clearMailHog();

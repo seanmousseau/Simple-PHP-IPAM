@@ -2843,27 +2843,33 @@ function check_utilization_alerts(PDO $db, array $config): void
             // #443: loop-per-recipient delivery. Best-effort: a bad address
             // for one recipient does not block delivery to the others, and
             // each send produces its own audit row so failures are debuggable.
+            $anyDelivered = false;
             foreach ($recipients as $recipient) {
                 $safeEmail = preg_replace('/[\r\n]/', '', $recipient) ?? '';
                 $result = ipam_send_mail($safeEmail, $safeSubject, $body);
                 if ($result['success']) {
+                    $anyDelivered = true;
                     audit($db, 'alert.send', 'subnet', $sid, "level={$lvl} pct={$pct} email={$safeEmail} transport={$result['transport']}");
                 } else {
                     audit($db, 'mail.send_failed', 'subnet', $sid, "level={$lvl} pct={$pct} email={$safeEmail} transport={$result['transport']} error=" . json_encode($result['error']));
                 }
             }
 
-            $now = date('Y-m-d H:i:s');
-            // #379: route through the dialect's upsert() so v2.10.0+ can
-            // swap to ON DUPLICATE KEY UPDATE / ON CONFLICT DO UPDATE
-            // without touching this call site.
-            $alertUpsert = ipam_dialect()->upsert('alert_state', ['subnet_id', 'level'], ['last_alerted_at']);
-            $db->prepare(
-                "INSERT INTO alert_state (subnet_id, level, last_alerted_at)
-                 VALUES (:sid, :lvl, :now)
-                 $alertUpsert"
-            )->execute([':sid' => $sid, ':lvl' => $lvl, ':now' => $now]);
-            $alertState[$sid][$lvl] = $now;
+            // Only consume the 24h cooldown when at least one delivery succeeded;
+            // a fully-failed send must be retried on the next housekeeping run.
+            if ($anyDelivered) {
+                $now = date('Y-m-d H:i:s');
+                // #379: route through the dialect's upsert() so v2.10.0+ can
+                // swap to ON DUPLICATE KEY UPDATE / ON CONFLICT DO UPDATE
+                // without touching this call site.
+                $alertUpsert = ipam_dialect()->upsert('alert_state', ['subnet_id', 'level'], ['last_alerted_at']);
+                $db->prepare(
+                    "INSERT INTO alert_state (subnet_id, level, last_alerted_at)
+                     VALUES (:sid, :lvl, :now)
+                     $alertUpsert"
+                )->execute([':sid' => $sid, ':lvl' => $lvl, ':now' => $now]);
+                $alertState[$sid][$lvl] = $now;
+            }
         }
     }
 }
@@ -5367,7 +5373,9 @@ function page_header(string $title, array $opts = []): void
             echo "<a href='contacts.php'>&#128215; Contacts</a>";
             echo "<a href='users.php'>&#128100; Users</a>";
             echo "<a href='api_keys.php'>&#128273; API Keys</a>";
+            echo "<a href='import_arp.php'>&#128200; ARP Import</a>";
             echo "<a href='import_csv.php'>&#8679; Import CSV</a>";
+            echo "<a href='reports.php'>&#128202; Reports</a>";
             echo "<a href='db_tools.php'>&#128444; Database Tools</a>";
             echo "<a href='settings.php'>&#9881; Settings</a>";
         }
@@ -5486,10 +5494,10 @@ function page_footer(): void
     require_once __DIR__ . '/version.php';
 
     echo "</main><footer role='contentinfo'><hr><div class='muted footer-meta'>";
-    echo "<a href='https://github.com/seanmousseau/Simple-PHP-IPAM' target='_blank' rel='noopener' class='link-plain'>"
+    echo "<a href='https://simplephpipam.com' target='_blank' rel='noopener' class='link-plain'>"
        . "<picture><source srcset='assets/logo.webp' type='image/webp'><img src='assets/logo.png' alt='Simple PHP IPAM' width='81' height='24' class='footer-logo'></picture>"
        . "</a> v" . e(IPAM_VERSION)
-       . " &middot; <a href='https://seanmousseau.github.io/Simple-PHP-IPAM/' target='_blank' rel='noopener'>Docs</a>";
+       . " &middot; <a href='https://simplephpipam.com/docs/' target='_blank' rel='noopener'>Docs</a>";
 
     $update = ipam_update_check($config ?? []);
     if ($update) {

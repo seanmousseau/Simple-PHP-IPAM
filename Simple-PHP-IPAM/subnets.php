@@ -177,6 +177,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pendingData = [
                     'id' => $id, 'cidr' => $cidr, 'description' => $desc, 'notes' => $notes,
                     'site_id' => $siteId ?? 0, 'vlan_fk' => $vlanFk ?? 0, 'vrf_id' => $vrfId ?? 0,
+                    'alerts_enabled' => $alertsEnabled,
                     'contacts' => json_encode($pendingContacts),
                 ];
             } else {
@@ -500,6 +501,7 @@ ipam_skeleton_flush();
       <input type="hidden" name="site_id" value="<?= to_int($pendingData['site_id']) ?>">
       <input type="hidden" name="vlan_fk" value="<?= to_int($pendingData['vlan_fk'] ?? 0) ?>">
       <input type="hidden" name="vrf_id" value="<?= to_int($pendingData['vrf_id'] ?? 0) ?>">
+      <input type="hidden" name="alerts_enabled" value="<?= to_int($pendingData['alerts_enabled'] ?? 1) ?>">
       <?php if (isset($pendingData['auto_reserve'])): ?>
         <input type="hidden" name="auto_reserve" value="<?= to_int($pendingData['auto_reserve']) ?>">
         <input type="hidden" name="gateway" value="<?= e(to_str($pendingData['gateway'] ?? '')) ?>">
