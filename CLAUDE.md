@@ -33,7 +33,7 @@ Two cheap calls. The first loads your profile + preferences. The second returns 
 
 ## Project overview
 
-> **Current shipped version: v3.1.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v3.2.0 → v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v3.2.0 describes future work — **do not apply it to current v3.1.x code**. Current-state rules are the ones that do not cite a future version.
+> **Current shipped version: v3.2.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v3.3.0 → v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v3.3.0 describes future work — **do not apply it to current v3.2.x code**. Current-state rules are the ones that do not cite a future version.
 
 Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application built with **PHP 8.2+ and SQLite**. It has **no npm build step** — all CSS and JavaScript are vanilla. Starting in v2.9.0, the application will ship a small, carefully curated set of Composer-managed runtime dependencies bundled into the release tarball, so end users still deploy by extracting the tarball with no build step. The web root is `Simple-PHP-IPAM/` (the subdirectory, not the repo root).
 
@@ -73,7 +73,10 @@ Dev tooling at the repo root (not deployed): `composer.json`, `composer.lock`, `
 | `tags.php` | yes | admin | Tag management (colour-coded tags attached to subnets and addresses) |
 | `users.php` | yes | admin | User management |
 | `api_keys.php` | yes | admin | REST API key management |
-| `change_password.php` | yes | any | Self-service password change |
+| `change_password.php` | yes | any | Account page: self-service password change, timezone preference, email change with verification (nav label: "Account") |
+| `forgot_password.php` | — | — | Email-based password recovery: submit username/email, sends reset link |
+| `reset_password.php` | — | — | Consumes password reset token, shows new-password form |
+| `devices.php` | yes | admin | Device and interface management (CRUD, filter by type/site, interface sub-section) |
 | `address_history.php` | yes | any | Per-address change history |
 | `oidc_login.php` | — | — | Initiates OIDC auth flow (PKCE) |
 | `oidc_callback.php` | — | — | Handles OIDC redirect callback |
@@ -184,7 +187,7 @@ Migrations live in `migrations.php` as an associative array of version string �
 
 **When adding a new version:** add the migration closure, bump `version.php`, update `CHANGELOG.md` (keepachangelog format).
 
-> **Current shipped version: v3.1.0.** The three subsections below (`Creating new data tables in post-v4.0.0 releases`, `Modifying the schema (multi-engine, from v2.9.0 onward)`, `Runtime dependencies`) describe **forward-looking policy** for unreleased versions. Do not apply them to work targeting v3.1.x or earlier. The rules become active on the version indicated in each heading; until then, treat them as design intent to preserve when new work approaches that version.
+> **Current shipped version: v3.2.0.** The three subsections below (`Creating new data tables in post-v4.0.0 releases`, `Modifying the schema (multi-engine, from v2.9.0 onward)`, `Runtime dependencies`) describe **forward-looking policy** for unreleased versions. Do not apply them to work targeting v3.2.x or earlier. The rules become active on the version indicated in each heading; until then, treat them as design intent to preserve when new work approaches that version.
 
 ### Creating new data tables in post-v4.0.0 releases *(applies from v4.1.0+)*
 
@@ -724,37 +727,46 @@ Normal feature PRs into `dev` through the session. Every feature/fix/docs commit
 
 Once everything that belongs in `vX.Y.Z` is on `dev`, do the following **in order** on `dev`:
 
-1. Update `docs/` (`api.md`, `configuration.md`, `oidc.md`, etc.) for any changed features or config keys.
-2. Update `testing/samples/large-db-sample/gen_large_db.php` and sample datasets if schema or data model changed.
-3. Update `testing/scripts/test_api.sh` if API endpoints were added or changed.
-4. Bump `Simple-PHP-IPAM/version.php` to `X.Y.Z`.
-5. Bump the asset cache-buster `?v=X.Y.Z` in `page_header()` (`lib.php`) **and** `demo_gate.php:74-75` if any CSS/JS changed.
-6. Update `CHANGELOG.md` with the full `## [X.Y.Z] - YYYY-MM-DD` entry and add the comparison link at the bottom.
-7. Update `README.md` — replace the existing `## What's new in vA.B.C` block **in place** with a vX.Y.Z summary (README only ever carries the single latest release).
-8. Run the full local gate until clean:
-   ```bash
-   for f in Simple-PHP-IPAM/<changed>.php; do php -l "$f"; done
-   vendor/bin/phpstan analyse --memory-limit=1G
-   vendor/bin/phpcs
-   vendor/bin/phpunit
-   semgrep --config=.semgrep/rules.yml --error Simple-PHP-IPAM/
-   ```
-9. Run the containerized Playwright harness end-to-end — not just the new spec. The full suite is the gate on release-readiness, not feature-completeness:
-   ```bash
-   bash testing/playwright/bootstrap-app.sh sqlite
-   (cd testing/playwright && \
-     IPAM_BASE_URL=https://127.0.0.1:8443 IPAM_ADMIN_USER=demo IPAM_ADMIN_PASS=demo \
-     npx playwright test)
-   bash testing/playwright/teardown-app.sh
-   ```
-   Only proceed if the full suite is green (pre-existing flaky tests excepted — log them in the PR description).
-10. Run the dev-direct pipeline only if the release touches something the containerized harness can't cover (real-IdP OIDC, `test_api.sh` regressions, `timezone.spec.ts`).
-11. **Clean `Simple-PHP-IPAM/data/` of any local test debris** before building — the release script excludes `*.sqlite` but **not** `*.sqlite.*.bak`, `demo_last_reset.txt`, or any other runtime artifacts. Stray files get baked into the tarball otherwise:
+1. **Documentation audit — required, not optional.** Review every file in `docs/` and update for any changed features, new config keys, new pages, renamed UI elements, or deprecated behaviour. Specific checks:
+   - `docs/index.md` — features list and documentation table (add new guides, update feature bullets)
+   - `docs/api.md` — new resources, changed parameters, updated examples
+   - `docs/upgrading.md` — add a `### vX.Y.Z` section at the top of "Version-specific upgrade notes" listing new pages, features, breaking changes (if any), and nav/URL changes
+   - `docs/configuration.md` — new settings, changed defaults
+   - `docs/scanning.md`, `docs/smtp.md`, `docs/security.md`, `docs/oidc.md` — any area the release touched
+   - Any new `docs/*.md` file for a new major feature (e.g. `docs/devices.md`)
+   - **Stale version strings** — grep for the old version number: `grep -r "vX.(Y-1)" docs/`
+2. **Update `CLAUDE.md`** — update the "Current shipped version" line near the top, the page inventory table if new pages were added, and any policy section affected by the release. This file is the agent's source of truth; keeping it current prevents bad decisions in future sessions.
+3. **Update Memory MCP** — create or update the release entity `project:simple-php-ipam:roadmap:vX.Y.Z` with an observation recording what was built. Close out the previous roadmap entity with a "RELEASED" observation including the merge commit hash and bundle SHA256. Update the bare `project:simple-php-ipam` entity with the new current version if it has a version observation.
+4. Update `testing/samples/large-db-sample/gen_large_db.php` and sample datasets if schema or data model changed.
+5. Update `testing/scripts/test_api.sh` if API endpoints were added or changed.
+6. Bump `Simple-PHP-IPAM/version.php` to `X.Y.Z`.
+7. Bump the asset cache-buster `?v=X.Y.Z` in `page_header()` (`lib.php`) **and** `demo_gate.php:74-75` if any CSS/JS changed.
+8. Update `CHANGELOG.md` with the full `## [X.Y.Z] - YYYY-MM-DD` entry and add the comparison link at the bottom.
+9. Update `README.md` — replace the existing `## What's new in vA.B.C` block **in place** with a vX.Y.Z summary (README only ever carries the single latest release).
+10. Run the full local gate until clean:
+    ```bash
+    for f in Simple-PHP-IPAM/<changed>.php; do php -l "$f"; done
+    vendor/bin/phpstan analyse --memory-limit=1G
+    vendor/bin/phpcs
+    vendor/bin/phpunit
+    semgrep --config=.semgrep/rules.yml --error Simple-PHP-IPAM/
+    ```
+11. Run the containerized Playwright harness end-to-end — not just the new spec. The full suite is the gate on release-readiness, not feature-completeness:
+    ```bash
+    bash testing/playwright/bootstrap-app.sh sqlite
+    (cd testing/playwright && \
+      IPAM_BASE_URL=https://127.0.0.1:8443 IPAM_ADMIN_USER=demo IPAM_ADMIN_PASS=demo \
+      npx playwright test)
+    bash testing/playwright/teardown-app.sh
+    ```
+    Only proceed if the full suite is green (pre-existing flaky tests excepted — log them in the PR description).
+12. Run the dev-direct pipeline only if the release touches something the containerized harness can't cover (real-IdP OIDC, `test_api.sh` regressions, `timezone.spec.ts`).
+13. **Clean `Simple-PHP-IPAM/data/` of any local test debris** before building — the release script excludes `*.sqlite` but **not** `*.sqlite.*.bak`, `demo_last_reset.txt`, or any other runtime artifacts. Stray files get baked into the tarball otherwise:
     ```bash
     rm -f Simple-PHP-IPAM/data/*.bak Simple-PHP-IPAM/data/demo_last_reset.txt
     ls Simple-PHP-IPAM/data/   # expect only ipam.sqlite, tmp/, possibly .htaccess
     ```
-12. **Build the bundle:**
+14. **Build the bundle:**
     ```bash
     ./releases/make_releases.sh Simple-PHP-IPAM X.Y.Z
     ```
@@ -763,7 +775,7 @@ Once everything that belongs in `vX.Y.Z` is on `dev`, do the following **in orde
     - Both `.htaccess` files (root and `data/`)
     - `settings.php`, `lib.php`, and any other newly-added PHP files
     - **No** `data/ipam.sqlite`, no `data/.db_initialized`, no `data/*.bak`
-13. Move the bundle into its permanent home and commit:
+15. Move the bundle into its permanent home and commit:
     ```bash
     mkdir -p releases/ipam-X.Y.Z
     mv ipam-X.Y.Z/ipam-X.Y.Z.tar.gz ipam-X.Y.Z/SHA256SUMS releases/ipam-X.Y.Z/
@@ -771,7 +783,7 @@ Once everything that belongs in `vX.Y.Z` is on `dev`, do the following **in orde
     git add releases/ipam-X.Y.Z/
     git commit -m "chore(release): add vX.Y.Z release bundle and SHA256SUMS"
     ```
-14. Push `dev` and open the release PR `dev → main`. CodeRabbit + CI review the full changeset — code, docs, tests, and bundle — in one cycle.
+16. Push `dev` and open the release PR `dev → main`. CodeRabbit + CI review the full changeset — code, docs, tests, and bundle — in one cycle.
 
 #### Phase 3 — responding to review comments
 
@@ -818,17 +830,34 @@ If CodeRabbit or a human reviewer asks for a change on the open PR:
    ssh root@192.168.80.23 "chown -R nobody:nogroup /usr/local/lsws/vhosts/demo.simplephpipam.com/html/ && php /usr/local/lsws/vhosts/demo.simplephpipam.com/html/migrate.php"
    ```
    Verify: browse `https://demo.simplephpipam.com/` and confirm the version shown in the footer.
-7. **Deploy website theme** if any theme files changed (`website/` in the main repo, tracked in the private `simple-php-ipam-website` repo). From inside `website/`:
+7. **Deploy to 4 testing instances** (`root@192.168.80.15`):
    ```bash
+   for dir in ipam ipam-maria ipam-mysql ipam-postgres; do
+     rsync -az --delete --exclude='data/' --exclude='config.php' \
+       Simple-PHP-IPAM/ root@192.168.80.15:/opt/container_data/dev.seanmousseau.com/html/testing/$dir/
+     ssh root@192.168.80.15 "chown -R www-data:www-data /opt/container_data/dev.seanmousseau.com/html/testing/$dir/ && docker exec dev_seanmousseau_com-apache-php-1 php /var/www/html/testing/$dir/migrate.php"
+   done
+   ```
+8. **Update the marketing website** (`simplephpipam.com`) — required on every release, not optional. The version number appears in multiple places in `website/front-page.php`:
+   - Hero badge: `vX.Y.Z — <tagline>`
+   - Download button label (appears twice: hero CTA and quickstart section)
+   - Quickstart `tar` command: `ipam-X.Y.Z.tar.gz`
+   - Update or add feature cards for significant new features
+   Then push and deploy:
+   ```bash
+   cd website/
+   git add -A && git commit -m "chore(release): bump to vX.Y.Z, update feature cards"
    git push origin main
-   ssh root@192.168.80.23 "cd /usr/local/lsws/vhosts/simplephpipam.com/html/wp-content/themes/simple-php-ipam && git pull"
-   ```
-   Or rsync directly:
-   ```bash
+   cd ..
    rsync -az --delete \
-     website/ root@192.168.80.23:/usr/local/lsws/vhosts/simplephpipam.com/html/wp-content/themes/simple-php-ipam/
-   ssh root@192.168.80.23 "chown -R nobody:nogroup /usr/local/lsws/vhosts/simplephpipam.com/html/wp-content/themes/simple-php-ipam/"
+     website/ root@192.168.80.23:/usr/local/lsws/vhosts/simplephpipam.com/html/wp-content/themes/simplephpipam/
+   ssh root@192.168.80.23 "chown -R nobody:nogroup /usr/local/lsws/vhosts/simplephpipam.com/html/wp-content/themes/simplephpipam/"
    ```
+9. **Close milestone issues** — close every GitHub issue in the vX.Y.Z milestone:
+   ```bash
+   gh issue close <N> --comment "Released in vX.Y.Z. See https://github.com/seanmousseau/Simple-PHP-IPAM/releases/tag/vX.Y.Z"
+   ```
+10. **Update Memory MCP** — write a final "RELEASED" observation to the `project:simple-php-ipam:roadmap:vX.Y.Z` entity with: merge commit hash, bundle SHA256, tag, deploy confirmation, and all issues closed. Also update the bare `project:simple-php-ipam` entity if it has a "current version" observation.
 
 ### Commit style
 ```
