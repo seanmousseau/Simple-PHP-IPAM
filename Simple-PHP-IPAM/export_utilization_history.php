@@ -2,7 +2,7 @@
 declare(strict_types=1);
 require __DIR__ . '/init.php';
 /** @var \PDO $db */
-require_login();
+require_role('admin');
 
 $subnetId = to_int($_GET['subnet_id'] ?? 0);
 $days     = max(1, min(365, to_int($_GET['days'] ?? 90)));

@@ -2699,7 +2699,7 @@ function ipam_send_mail(string $to, string $subject, string $bodyText, string $b
 
     if ($smtpEnabled) {
         if (!class_exists('PHPMailer\PHPMailer\PHPMailer')) {
-            $autoload = __DIR__ . '/../vendor/autoload.php';
+            $autoload = __DIR__ . '/vendor/autoload.php';
             if (file_exists($autoload)) require_once $autoload;
         }
 
@@ -2948,7 +2948,14 @@ function capture_utilization_snapshot(PDO $db): int
     /** @var list<array<string, mixed>> $subnets */
     $subnets = $st->fetchAll();
 
-    $now = gmdate('Y-m-d H:i:s');
+    $today = gmdate('Y-m-d');
+    $now   = $today . ' ' . gmdate('H:i:s');
+    // Build set of subnet IDs already snapped today to avoid duplicate daily rows.
+    $doneStmt = $db->prepare(
+        "SELECT DISTINCT subnet_id FROM utilization_snapshots WHERE snapped_at >= :day"
+    );
+    $doneStmt->execute([':day' => $today . ' 00:00:00']);
+    $alreadyDone = array_flip(array_column($doneStmt->fetchAll(), 'subnet_id'));
     $ins = $db->prepare(
         "INSERT INTO utilization_snapshots (subnet_id, snapped_at, used_count, free_count, total_hosts)
          VALUES (:sid, :ts, :used, :free, :total)"
@@ -2956,6 +2963,7 @@ function capture_utilization_snapshot(PDO $db): int
     $count = 0;
     foreach ($subnets as $row) {
         $sid = to_int($row['id']);
+        if (isset($alreadyDone[$sid])) continue;
         $u = $utilData[$sid] ?? null;
         if ($u === null) continue;
         $prefix = to_int($row['prefix']);

@@ -580,7 +580,10 @@ ipam_skeleton_flush();
     <table data-col-table="addresses">
       <thead>
         <tr>
-          <?php $addrQs = '?subnet_id=' . $selectedSubnetId . '&page_size=' . $pageSize;
+          <?php $addrQsParams = ['subnet_id' => $selectedSubnetId, 'page_size' => $pageSize];
+                if ($filterType !== '') { $addrQsParams['filter'] = $filterType; }
+                if ($filterType === 'expiring') { $addrQsParams['days'] = $filterDays; }
+                $addrQs = '?' . http_build_query($addrQsParams);
                 echo sort_th('ip',       'IP',       $addrSort['col'], $addrSort['dir'], $addrQs, 'ip');
                 echo sort_th('hostname', 'Hostname', $addrSort['col'], $addrSort['dir'], $addrQs, 'hostname');
                 echo sort_th('owner',    'Owner',    $addrSort['col'], $addrSort['dir'], $addrQs, 'owner');
@@ -697,6 +700,8 @@ ipam_skeleton_flush();
     <?php
       $qsBase = ['subnet_id' => $selectedSubnetId, 'page_size' => $pageSize,
                  'sort' => $addrSort['col'], 'dir' => $addrSort['dir']];
+      if ($filterType !== '') $qsBase['filter'] = $filterType;
+      if ($filterType === 'expiring') $qsBase['days'] = $filterDays;
       $base = 'addresses.php?' . http_build_query($qsBase);
     ?>
     <p class="mt-12">

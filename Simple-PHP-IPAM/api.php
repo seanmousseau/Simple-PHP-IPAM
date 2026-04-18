@@ -561,7 +561,7 @@ function api_addresses(PDO $db): never
     }
     if (isset($_GET['expiring_days'])) {
         $expDays = max(1, min(365, to_int($_GET['expiring_days'])));
-        $where[] = "(a.expires_at IS NOT NULL AND a.expires_at >= :exp_from AND a.expires_at <= :exp_to)";
+        $where[] = "(a.expires_at IS NOT NULL AND a.expires_at >= :exp_from AND a.expires_at < :exp_to)";
         $params[':exp_from'] = date('Y-m-d');
         $params[':exp_to']   = date('Y-m-d', (int)strtotime("+{$expDays} days"));
     }
@@ -2502,6 +2502,11 @@ function api_utilization_snapshots(PDO $db): never
     $subnetId = to_int($_GET['subnet_id'] ?? 0);
     if ($subnetId <= 0) {
         api_error(400, 'subnet_id is required.');
+    }
+    $subnetRow = $db->prepare("SELECT id FROM subnets WHERE id = :id");
+    $subnetRow->execute([':id' => $subnetId]);
+    if (!$subnetRow->fetch()) {
+        api_error(404, 'Subnet not found.');
     }
     $days   = max(1, min(365, to_int($_GET['days'] ?? 30)));
     $cutoff = gmdate('Y-m-d H:i:s', time() - $days * 86400);

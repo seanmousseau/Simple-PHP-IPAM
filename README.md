@@ -2,7 +2,7 @@
 
 # Simple-PHP-IPAM
 
-A lightweight **IP Address Management (IPAM)** web application built with PHP 8.2+ and SQLite — or **MySQL 8.0.29+** / **MariaDB 10.11+** / **PostgreSQL 14+**. Designed for small to mid-sized environments that need straightforward subnet and address tracking without the complexity of a full enterprise IPAM platform.
+A lightweight **IP Address Management (IPAM)** web application built with PHP 8.2+ and SQLite — or **MySQL 8.0.29+**, **MariaDB 10.11+**, or **PostgreSQL 14+**. Designed for small to mid-sized environments that need straightforward subnet and address tracking without the complexity of a full enterprise IPAM platform.
 
 No npm, no build step — just PHP and a web server. Runtime Composer dependencies are pre-bundled into the release tarball, so end users still deploy by extracting and running.
 
@@ -118,7 +118,7 @@ See [CHANGELOG.md](CHANGELOG.md) for full release history and [docs/upgrading.md
 | **PHP** | 8.2 or later (8.3 recommended) |
 | **PHP extensions** | `pdo`, `openssl`, plus one of `pdo_sqlite` (default), `pdo_mysql`, or `pdo_pgsql` |
 | **Web server** | Apache, OpenLiteSpeed, nginx, or Caddy (see [install.md](docs/install.md)) |
-| **Database** | SQLite 3.x (default), **or** MySQL 8.0.29+ (opt-in via `db_driver = 'mysql'`), **or** PostgreSQL 14+ (opt-in via `db_driver = 'pgsql'`) — see [install.md](docs/install.md) |
+| **Database** | SQLite 3.x (default), **or** MySQL 8.0.29+ / MariaDB 10.11+ (opt-in via `db_driver = 'mysql'`), **or** PostgreSQL 14+ (opt-in via `db_driver = 'pgsql'`) — see [install.md](docs/install.md) |
 | **HTTPS** | Required — HTTP is redirected to HTTPS |
 | **Writable `data/` dir** | Web server user requires read/write access to `data/` (SQLite only) |
 

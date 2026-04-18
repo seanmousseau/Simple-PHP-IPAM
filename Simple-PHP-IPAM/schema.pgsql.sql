@@ -400,7 +400,7 @@ CREATE TABLE IF NOT EXISTS alert_state (
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS utilization_snapshots (
   id          SERIAL PRIMARY KEY,
-  subnet_id   INTEGER NOT NULL REFERENCES subnets(id) ON DELETE CASCADE,
+  subnet_id   BIGINT NOT NULL REFERENCES subnets(id) ON DELETE CASCADE,
   snapped_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   used_count  INTEGER NOT NULL,
   free_count  INTEGER NOT NULL,
