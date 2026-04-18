@@ -1199,7 +1199,7 @@ function ipam_migrations(): array
                         vendor     VARCHAR(191) NOT NULL DEFAULT '',
                         model      VARCHAR(191) NOT NULL DEFAULT '',
                         serial     VARCHAR(191) NOT NULL DEFAULT '',
-                        note       TEXT NOT NULL DEFAULT '',
+                        note       VARCHAR(1000) NOT NULL DEFAULT '',
                         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                         UNIQUE KEY uq_devices_name (name),
@@ -1255,7 +1255,7 @@ function ipam_migrations(): array
                         id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
                         device_id   BIGINT UNSIGNED NOT NULL,
                         name        VARCHAR(191) NOT NULL,
-                        description TEXT NOT NULL DEFAULT '',
+                        description VARCHAR(1000) NOT NULL DEFAULT '',
                         created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                         updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                         UNIQUE KEY uq_di_device_name (device_id, name),
@@ -1311,24 +1311,32 @@ function ipam_migrations(): array
                     $db->exec(
                         "ALTER TABLE addresses
                          ADD COLUMN device_id BIGINT UNSIGNED NULL,
-                         ADD CONSTRAINT fk_addresses_device FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE SET NULL"
+                         ADD CONSTRAINT fk_addresses_device FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE SET NULL,
+                         ADD INDEX idx_addresses_device_id (device_id)"
                     );
+                } elseif ($driver === 'pgsql') {
+                    $db->exec("ALTER TABLE addresses ADD COLUMN device_id BIGINT REFERENCES devices(id) ON DELETE SET NULL");
+                    $db->exec("CREATE INDEX IF NOT EXISTS idx_addresses_device_id ON addresses(device_id)");
                 } else {
                     $db->exec("ALTER TABLE addresses ADD COLUMN device_id INTEGER REFERENCES devices(id) ON DELETE SET NULL");
+                    $db->exec("CREATE INDEX IF NOT EXISTS idx_addresses_device_id ON addresses(device_id)");
                 }
-                $db->exec("CREATE INDEX IF NOT EXISTS idx_addresses_device_id ON addresses(device_id)");
             }
             if (!$hasInterfaceId) {
                 if ($driver === 'mysql') {
                     $db->exec(
                         "ALTER TABLE addresses
                          ADD COLUMN interface_id BIGINT UNSIGNED NULL,
-                         ADD CONSTRAINT fk_addresses_interface FOREIGN KEY (interface_id) REFERENCES device_interfaces(id) ON DELETE SET NULL"
+                         ADD CONSTRAINT fk_addresses_interface FOREIGN KEY (interface_id) REFERENCES device_interfaces(id) ON DELETE SET NULL,
+                         ADD INDEX idx_addresses_interface_id (interface_id)"
                     );
+                } elseif ($driver === 'pgsql') {
+                    $db->exec("ALTER TABLE addresses ADD COLUMN interface_id BIGINT REFERENCES device_interfaces(id) ON DELETE SET NULL");
+                    $db->exec("CREATE INDEX IF NOT EXISTS idx_addresses_interface_id ON addresses(interface_id)");
                 } else {
                     $db->exec("ALTER TABLE addresses ADD COLUMN interface_id INTEGER REFERENCES device_interfaces(id) ON DELETE SET NULL");
+                    $db->exec("CREATE INDEX IF NOT EXISTS idx_addresses_interface_id ON addresses(interface_id)");
                 }
-                $db->exec("CREATE INDEX IF NOT EXISTS idx_addresses_interface_id ON addresses(interface_id)");
             }
         },
 
@@ -1364,13 +1372,13 @@ function ipam_migrations(): array
                     $db->exec("CREATE TABLE IF NOT EXISTS password_reset_tokens (
                         id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
                         user_id    BIGINT UNSIGNED NOT NULL,
-                        token_hash VARCHAR(191) NOT NULL UNIQUE,
+                        token_hash VARCHAR(64) COLLATE utf8mb4_bin NOT NULL UNIQUE,
                         expires_at DATETIME NOT NULL,
                         used_at    DATETIME NULL,
                         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                         CONSTRAINT fk_prt_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
                         KEY idx_prt_user (user_id)
-                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
                 } else {
                     $db->exec("CREATE TABLE IF NOT EXISTS password_reset_tokens (
                         id         BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
@@ -1409,12 +1417,12 @@ function ipam_migrations(): array
                 $st = $db->prepare("SHOW COLUMNS FROM users LIKE 'pending_email'");
                 $st->execute();
                 if (!$st->fetch()) {
-                    $db->exec("ALTER TABLE users ADD COLUMN pending_email VARCHAR(191)");
+                    $db->exec("ALTER TABLE users ADD COLUMN pending_email VARCHAR(255)");
                 }
                 $st = $db->prepare("SHOW COLUMNS FROM users LIKE 'pending_email_token_hash'");
                 $st->execute();
                 if (!$st->fetch()) {
-                    $db->exec("ALTER TABLE users ADD COLUMN pending_email_token_hash VARCHAR(191)");
+                    $db->exec("ALTER TABLE users ADD COLUMN pending_email_token_hash VARCHAR(64) COLLATE utf8mb4_bin");
                 }
                 $st = $db->prepare("SHOW COLUMNS FROM users LIKE 'pending_email_expires_at'");
                 $st->execute();

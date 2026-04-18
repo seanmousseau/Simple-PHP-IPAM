@@ -208,9 +208,9 @@ page_header('Devices');
 
 <?php if ($err): ?><p class="danger"><?= e($err) ?></p><?php endif; ?>
 
-<details class="card" id="add-device">
-  <summary><strong>Add Device</strong></summary>
-  <form method="post" action="devices.php" class="mt-8">
+<div class="card" id="add-device">
+  <h2>Add Device</h2>
+  <form method="post" action="devices.php">
     <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
     <input type="hidden" name="action" value="create">
     <div class="row">
@@ -243,7 +243,7 @@ page_header('Devices');
     </div>
     <p><button type="submit">Create Device</button></p>
   </form>
-</details>
+</div>
 
 <div class="card mt-16">
   <form method="get" action="devices.php" class="filter-bar">

@@ -6337,11 +6337,7 @@ function ipam_app_base_url(): string
 {
     $cfg  = $GLOBALS['config'];
     $base = is_array($cfg) ? rtrim(to_str($cfg['base_url'] ?? ''), '/') : '';
-    if ($base !== '') {
-        return $base;
-    }
-    $host = to_str($_SERVER['HTTP_HOST'] ?? '');
-    return 'https://' . $host;
+    return $base; // empty string when base_url not configured; callers must guard
 }
 
 /**
@@ -6384,31 +6380,41 @@ function ipam_create_reset_token(PDO $db, int $userId): ?string
 function ipam_consume_reset_token(PDO $db, string $rawToken): ?int
 {
     $tokenHash = hash('sha256', $rawToken);
+    $now       = gmdate('Y-m-d H:i:s');
 
-    $st = $db->prepare(
-        "SELECT id, user_id, expires_at, used_at
-           FROM password_reset_tokens
-          WHERE token_hash = :hash"
-    );
-    $st->execute([':hash' => $tokenHash]);
-    /** @var array<string, mixed>|false $row */
-    $row = $st->fetch();
+    $db->beginTransaction();
+    try {
+        $st = $db->prepare(
+            "SELECT id, user_id FROM password_reset_tokens
+              WHERE token_hash = :hash
+                AND used_at IS NULL
+                AND expires_at > :now"
+        );
+        $st->execute([':hash' => $tokenHash, ':now' => $now]);
+        /** @var array<string, mixed>|false $row */
+        $row = $st->fetch();
 
-    if (!$row) {
-        return null;
+        if (!$row) {
+            $db->rollBack();
+            return null;
+        }
+
+        $upd = $db->prepare(
+            "UPDATE password_reset_tokens SET used_at = " . ipam_dialect()->now() . " WHERE id = :id"
+        );
+        $upd->execute([':id' => to_int($row['id'])]);
+
+        if ($upd->rowCount() !== 1) {
+            $db->rollBack();
+            return null;
+        }
+
+        $db->commit();
+        return to_int($row['user_id']);
+    } catch (\Throwable $e) {
+        $db->rollBack();
+        throw $e;
     }
-    if ($row['used_at'] !== null) {
-        return null;
-    }
-    if (strtotime(to_str($row['expires_at'])) < time()) {
-        return null;
-    }
-
-    // Mark as used
-    $db->prepare("UPDATE password_reset_tokens SET used_at = datetime('now') WHERE id = :id")
-       ->execute([':id' => to_int($row['id'])]);
-
-    return to_int($row['user_id']);
 }
 
 /**
@@ -6419,6 +6425,9 @@ function ipam_send_reset_email(string $toAddress, string $toName, string $rawTok
 {
     $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
     $base    = ipam_app_base_url();
+    if ($base === '') {
+        return false;
+    }
     $link    = $base . '/reset_password.php?token=' . rawurlencode($rawToken);
 
     $subject = $appName . ' — Password Reset';
@@ -6444,22 +6453,18 @@ function ipam_send_reset_email(string $toAddress, string $toName, string $rawTok
  * Stores pending_email + token hash + expiry on the user row and sends
  * a verification email to the NEW address.
  */
-function ipam_send_email_verification(PDO $db, int $userId, string $newEmail): void
+function ipam_send_email_verification(PDO $db, int $userId, string $newEmail): bool
 {
+    $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
+    $base    = ipam_app_base_url();
+    if ($base === '') {
+        return false;
+    }
+
     $rawToken  = bin2hex(random_bytes(32));
     $tokenHash = hash('sha256', $rawToken);
     $expiresAt = gmdate('Y-m-d H:i:s', time() + 3600);
-
-    $db->prepare(
-        "UPDATE users SET pending_email = :email,
-                          pending_email_token_hash = :hash,
-                          pending_email_expires_at = :exp
-          WHERE id = :id"
-    )->execute([':email' => $newEmail, ':hash' => $tokenHash, ':exp' => $expiresAt, ':id' => $userId]);
-
-    $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
-    $base    = ipam_app_base_url();
-    $link    = $base . '/change_password.php?verify_email=' . rawurlencode($rawToken);
+    $link      = $base . '/change_password.php?verify_email=' . rawurlencode($rawToken);
 
     $subject = $appName . ' — Verify your new email address';
 
@@ -6473,5 +6478,17 @@ function ipam_send_email_verification(PDO $db, int $userId, string $newEmail): v
         . "<p>If you did not request this change, you can safely ignore this email.</p>"
         . "<p>— " . htmlspecialchars($appName, ENT_QUOTES) . "</p>";
 
-    ipam_send_mail($newEmail, $subject, $text, $html);
+    $result = ipam_send_mail($newEmail, $subject, $text, $html);
+    if (!$result['success']) {
+        return false;
+    }
+
+    $db->prepare(
+        "UPDATE users SET pending_email = :email,
+                          pending_email_token_hash = :hash,
+                          pending_email_expires_at = :exp
+          WHERE id = :id"
+    )->execute([':email' => $newEmail, ':hash' => $tokenHash, ':exp' => $expiresAt, ':id' => $userId]);
+
+    return true;
 }

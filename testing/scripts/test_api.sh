@@ -1031,8 +1031,9 @@ fi
 log "=== Devices API ==="
 # ====================================================================
 
-# POST device
-call_api POST "devices" '{"name":"api-test-router","type":"router","vendor":"Cisco","model":"ISR4321","serial":"TST001","note":""}'
+# POST device — unique name avoids collisions on repeated runs
+_DEV_TS=$(date +%s)
+call_api POST "devices" "{\"name\":\"api-test-router-$_DEV_TS\",\"type\":\"router\",\"vendor\":\"Cisco\",\"model\":\"ISR4321\",\"serial\":\"TST001\",\"note\":\"\"}"
 assert_http 201 "POST device"
 DEV_ID=$(python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('device',{}).get('id',''))" <<< "$BODY" 2>/dev/null || echo "")
 [[ -n "$DEV_ID" && "$DEV_ID" != "None" ]] && pass "POST device: id=$DEV_ID" || fail "POST device: no id in response"
@@ -1042,7 +1043,7 @@ if [[ -n "${DEV_ID:-}" && "$DEV_ID" != "None" ]]; then
     call_api GET "devices&id=$DEV_ID"
     assert_http 200 "GET device by id"
     DEV_NAME=$(python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('device',{}).get('name',''))" <<< "$BODY" 2>/dev/null || echo "")
-    [[ "$DEV_NAME" == "api-test-router" ]] && pass "GET device: name correct" || fail "GET device: name='$DEV_NAME'"
+    [[ "$DEV_NAME" == "api-test-router-$_DEV_TS" ]] && pass "GET device: name correct" || fail "GET device: name='$DEV_NAME'"
 
     # GET list with type filter
     call_api GET "devices&type=router"
@@ -1096,9 +1097,9 @@ log "=== OpenAPI Spec ==="
 # ====================================================================
 
 # GET spec (no auth required)
-SPEC_HTTP=$(curl -s --noproxy '*' -k -o /tmp/_ipam_spec.yaml -w '%{http_code}' "$BASE_URL/api.php?resource=spec")
+SPEC_HTTP=$(curl -s --noproxy '*' "${_ba_args[@]+"${_ba_args[@]}"}" -k -o /tmp/_ipam_spec.yaml -w '%{http_code}' "$BASE_URL/api.php?resource=spec")
 [[ "$SPEC_HTTP" == "200" ]] && pass "GET ?resource=spec HTTP 200" || fail "GET ?resource=spec HTTP $SPEC_HTTP"
-SPEC_CT=$(curl -s --noproxy '*' -k -I "$BASE_URL/api.php?resource=spec" 2>/dev/null | grep -i '^content-type' | head -1 || echo "")
+SPEC_CT=$(curl -s --noproxy '*' "${_ba_args[@]+"${_ba_args[@]}"}" -k -I "$BASE_URL/api.php?resource=spec" 2>/dev/null | grep -i '^content-type' | head -1 || echo "")
 [[ "$SPEC_CT" == *"application/yaml"* ]] && pass "spec Content-Type: application/yaml" || fail "spec Content-Type unexpected: $SPEC_CT"
 SPEC_OPENAPI=$(python3 -c "import sys; data=open('/tmp/_ipam_spec.yaml').read(); print('ok' if 'openapi: ' in data else 'missing')" 2>/dev/null || echo "missing")
 [[ "$SPEC_OPENAPI" == "ok" ]] && pass "spec body contains 'openapi:' key" || fail "spec body missing 'openapi:' key"

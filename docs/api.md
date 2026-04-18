@@ -1310,7 +1310,7 @@ GET ?resource=devices
 GET ?resource=devices&id=N
 GET ?resource=devices&type=router
 GET ?resource=devices&site_id=2
-GET ?resource=devices&search=core
+GET ?resource=devices&q=core
 ```
 
 | Parameter | Type | Default | Description |
@@ -1318,7 +1318,7 @@ GET ?resource=devices&search=core
 | `id` | integer | — | Return a single device |
 | `type` | string | — | Filter: `router`, `switch`, `server`, `vm`, `firewall`, `other` |
 | `site_id` | integer | — | Filter by site |
-| `search` | string | — | Free-text search on name, vendor, model, serial |
+| `q` | string | — | Free-text search on name, vendor, model, serial, note |
 | `page` | integer | 1 | Pagination page |
 | `limit` | integer | 100 | Results per page (max 500) |
 

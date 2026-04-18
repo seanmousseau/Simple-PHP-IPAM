@@ -138,6 +138,18 @@ $rows = $st->fetchAll();
 $deviceResults = [];
 if ($q !== '') {
     $dLike = '%' . like_escape($q) . '%';
+    $dWhere  = ["(d.name LIKE :dq1 ESCAPE '!'
+            OR d.vendor LIKE :dq2 ESCAPE '!'
+            OR d.model  LIKE :dq3 ESCAPE '!'
+            OR d.serial LIKE :dq4 ESCAPE '!'
+            OR d.note   LIKE :dq5 ESCAPE '!'
+            OR dif.name LIKE :dq6 ESCAPE '!')"];
+    $dParams = [':dq1' => $dLike, ':dq2' => $dLike, ':dq3' => $dLike,
+                ':dq4' => $dLike, ':dq5' => $dLike, ':dq6' => $dLike];
+    if ($siteId > 0) {
+        $dWhere[]           = 'd.site_id = :dsite';
+        $dParams[':dsite']  = $siteId;
+    }
     $dst = $db->prepare("
         SELECT DISTINCT d.id, d.name, d.type, d.vendor, d.model,
                COALESCE(s.name, '') AS site_name,
@@ -145,17 +157,11 @@ if ($q !== '') {
         FROM devices d
         LEFT JOIN sites s ON s.id = d.site_id
         LEFT JOIN device_interfaces dif ON dif.device_id = d.id
-        WHERE (d.name LIKE :dq1 ESCAPE '!'
-            OR d.vendor LIKE :dq2 ESCAPE '!'
-            OR d.model  LIKE :dq3 ESCAPE '!'
-            OR d.serial LIKE :dq4 ESCAPE '!'
-            OR d.note   LIKE :dq5 ESCAPE '!'
-            OR dif.name LIKE :dq6 ESCAPE '!')
+        WHERE " . implode(' AND ', $dWhere) . "
         ORDER BY d.name
         LIMIT 50
     ");
-    $dst->execute([':dq1' => $dLike, ':dq2' => $dLike, ':dq3' => $dLike,
-                   ':dq4' => $dLike, ':dq5' => $dLike, ':dq6' => $dLike]);
+    $dst->execute($dParams);
     $deviceResults = $dst->fetchAll();
 }
 

@@ -521,12 +521,13 @@ echo "$deviceCount devices and $ifaceCount interfaces created.\n";
 
 // Link a sample of addresses to devices
 $db->beginTransaction();
-$devRows = $db->query("SELECT id FROM devices ORDER BY RANDOM() LIMIT 20")->fetchAll(\PDO::FETCH_COLUMN);
-$addrRows = $db->query("SELECT a.id, di.id AS iface_id FROM addresses a JOIN device_interfaces di ON di.device_id = (SELECT id FROM devices ORDER BY RANDOM() LIMIT 1) WHERE a.device_id IS NULL LIMIT 200")->fetchAll();
+$ifaceRows = $db->query("SELECT id, device_id FROM device_interfaces ORDER BY RANDOM() LIMIT 200")->fetchAll();
+$addrIds   = $db->query("SELECT id FROM addresses WHERE device_id IS NULL ORDER BY RANDOM() LIMIT 200")->fetchAll(\PDO::FETCH_COLUMN);
 $linked = 0;
-foreach ($addrRows as $ar) {
-    $db->prepare("UPDATE addresses SET device_id = (SELECT device_id FROM device_interfaces WHERE id = :iid), interface_id = :iid WHERE id = :aid")
-       ->execute([':iid' => $ar['iface_id'], ':aid' => $ar['id']]);
+$updAddr = $db->prepare("UPDATE addresses SET device_id = :did, interface_id = :iid WHERE id = :aid");
+foreach ($addrIds as $i => $addrId) {
+    if (!isset($ifaceRows[$i])) break;
+    $updAddr->execute([':did' => $ifaceRows[$i]['device_id'], ':iid' => $ifaceRows[$i]['id'], ':aid' => $addrId]);
     $linked++;
 }
 $db->commit();

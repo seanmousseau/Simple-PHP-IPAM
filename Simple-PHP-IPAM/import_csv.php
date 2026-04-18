@@ -173,8 +173,8 @@ function analyze_import(PDO $db, array $wiz): array
             'subnet_description' => trim(to_str($get('description') ?? '')),
             'prefix_hint' => trim(to_str($get('prefix') ?? '')),
             'netmask_hint' => trim(to_str($get('netmask') ?? '')),
-            'device_name' => substr(trim(to_str($get('device_name') ?? '')), 0, 255),
-            'interface_name' => substr(trim(to_str($get('interface_name') ?? '')), 0, 255),
+            'device_name' => $get('device_name') !== null ? substr(trim(to_str($get('device_name'))), 0, 255) : null,
+            'interface_name' => $get('interface_name') !== null ? substr(trim(to_str($get('interface_name'))), 0, 255) : null,
         ];
 
         $rawExpires = trim(to_str($get('expires_at') ?? ''));
@@ -738,17 +738,19 @@ if (demo_mode_enabled()) {
          * @param \PDOStatement $insIf
          * @return array{device_id:int|null,interface_id:int|null}
          */
-        $resolveDevice = static function (string $devName, string $ifaceName,
+        $resolveDevice = function (?string $devName, ?string $ifaceName,
             \PDOStatement $selDev, \PDOStatement $insDev,
-            \PDOStatement $selIf, \PDOStatement $insIf): array {
-            if ($devName === '') {
+            \PDOStatement $selIf, \PDOStatement $insIf) use ($db): array {
+            if ($devName === null || $devName === '') {
                 return ['device_id' => null, 'interface_id' => null];
             }
             $selDev->execute([':name' => $devName]);
             /** @var array<string,mixed>|false $dr */
             $dr = $selDev->fetch();
+            $createdDevice = false;
             if (!$dr) {
                 $insDev->execute([':name' => $devName]);
+                $createdDevice = true;
                 $selDev->execute([':name' => $devName]);
                 /** @var array<string,mixed>|false $dr */
                 $dr = $selDev->fetch();
@@ -757,8 +759,11 @@ if (demo_mode_enabled()) {
                 return ['device_id' => null, 'interface_id' => null];
             }
             $deviceId = to_int($dr['id']);
+            if ($createdDevice) {
+                audit($db, 'device.create', 'device', $deviceId, "name=$devName source=csv_import");
+            }
             $interfaceId = null;
-            if ($ifaceName !== '') {
+            if ($ifaceName !== null && $ifaceName !== '') {
                 $selIf->execute([':did' => $deviceId, ':name' => $ifaceName]);
                 /** @var array<string,mixed>|false $ir */
                 $ir = $selIf->fetch();
@@ -767,6 +772,10 @@ if (demo_mode_enabled()) {
                     $selIf->execute([':did' => $deviceId, ':name' => $ifaceName]);
                     /** @var array<string,mixed>|false $ir */
                     $ir = $selIf->fetch();
+                    if ($ir) {
+                        audit($db, 'device_interface.create', 'device_interface', to_int($ir['id']),
+                            "device_id=$deviceId name=$ifaceName source=csv_import");
+                    }
                 }
                 if ($ir) {
                     $interfaceId = to_int($ir['id']);
@@ -862,7 +871,8 @@ if (demo_mode_enabled()) {
                 }
 
                 $devLink = $resolveDevice(
-                    to_str($r['device_name'] ?? ''), to_str($r['interface_name'] ?? ''),
+                    isset($r['device_name']) ? to_str($r['device_name']) : null,
+                    isset($r['interface_name']) ? to_str($r['interface_name']) : null,
                     $selDevice, $insDevice, $selIface, $insIface
                 );
 
@@ -918,13 +928,14 @@ if (demo_mode_enabled()) {
                 $newSt = to_str($r['status'] ?? 'used');
 
                 $devLink = $resolveDevice(
-                    to_str($r['device_name'] ?? ''), to_str($r['interface_name'] ?? ''),
+                    isset($r['device_name']) ? to_str($r['device_name']) : null,
+                    isset($r['interface_name']) ? to_str($r['interface_name']) : null,
                     $selDevice, $insDevice, $selIface, $insIface
                 );
-                // If no device_name provided, keep existing device linkage
+                // If device_name column was absent (null), keep existing device linkage
                 $rawExistDevId   = $existing['device_id'];
                 $rawExistIfaceId = $existing['interface_id'];
-                if (to_str($r['device_name'] ?? '') !== '') {
+                if ($r['device_name'] !== null) {
                     $newDevId   = $devLink['device_id'];
                     $newIfaceId = $devLink['interface_id'];
                 } else {

@@ -879,7 +879,7 @@ function api_vrfs_create(PDO $db, array $apiKey, array $body): never
         $st = $db->prepare("INSERT INTO vrfs (name, description, rd) VALUES (:n,:d,:rd)");
         $st->execute([':n' => $name, ':d' => $desc, ':rd' => $rd]);
         $newId = ipam_last_insert_id($db, 'vrfs');
-        audit($db, 'vrf.create', 'vrf', $newId, "name=$name");
+        api_audit($db, $apiKey, 'vrf.create', 'vrf', $newId, "name=$name");
     } catch (PDOException $e) {
         api_error(409, 'A VRF with that name already exists.');
     }
@@ -909,7 +909,7 @@ function api_vrfs_update(PDO $db, array $apiKey, int $id, array $body): never
     try {
         $st = $db->prepare("UPDATE vrfs SET name=:n, description=:d, rd=:rd, updated_at=" . ipam_dialect()->now() . " WHERE id=:id");
         $st->execute([':n' => $name, ':d' => $desc, ':rd' => $rd, ':id' => $id]);
-        audit($db, 'vrf.update', 'vrf', $id, "name=$name");
+        api_audit($db, $apiKey, 'vrf.update', 'vrf', $id, "name=$name");
     } catch (PDOException $e) {
         api_error(409, 'A VRF with that name already exists.');
     }
@@ -935,7 +935,7 @@ function api_vrfs_delete(PDO $db, array $apiKey, int $id): never
     $row = $nameSt->fetch();
     if (!$row) api_error(404, 'VRF not found.');
     $db->prepare("DELETE FROM vrfs WHERE id = :id")->execute([':id' => $id]);
-    audit($db, 'vrf.delete', 'vrf', $id, 'name=' . to_str($row['name']));
+    api_audit($db, $apiKey, 'vrf.delete', 'vrf', $id, 'name=' . to_str($row['name']));
     http_response_code(204);
     api_json(['deleted' => true]);
 }
@@ -1022,7 +1022,7 @@ function api_contacts_create(PDO $db, array $apiKey, array $body): never
     $st = $db->prepare("INSERT INTO contacts (name, email, phone, org, note) VALUES (:n,:e,:p,:o,:nt)");
     $st->execute([':n' => $name, ':e' => $email, ':p' => $phone, ':o' => $org, ':nt' => $note]);
     $newId = ipam_last_insert_id($db, 'contacts');
-    audit($db, 'contact.create', 'contact', $newId, "name=$name");
+    api_audit($db, $apiKey, 'contact.create', 'contact', $newId, "name=$name");
     http_response_code(201);
     $st = $db->prepare("SELECT id, name, email, phone, org, note, created_at, updated_at FROM contacts WHERE id = :id");
     $st->execute([':id' => $newId]);
@@ -1050,7 +1050,7 @@ function api_contacts_update(PDO $db, array $apiKey, int $id, array $body): neve
     if (!$checkSt->fetch()) api_error(404, 'Contact not found.');
     $st = $db->prepare("UPDATE contacts SET name=:n, email=:e, phone=:p, org=:o, note=:nt, updated_at=" . ipam_dialect()->now() . " WHERE id=:id");
     $st->execute([':n' => $name, ':e' => $email, ':p' => $phone, ':o' => $org, ':nt' => $note, ':id' => $id]);
-    audit($db, 'contact.update', 'contact', $id, "name=$name");
+    api_audit($db, $apiKey, 'contact.update', 'contact', $id, "name=$name");
     $st = $db->prepare("SELECT id, name, email, phone, org, note, created_at, updated_at FROM contacts WHERE id = :id");
     $st->execute([':id' => $id]);
     /** @var array<string, mixed>|false $row */
@@ -1069,7 +1069,7 @@ function api_contacts_delete(PDO $db, array $apiKey, int $id): never
     $row = $nameSt->fetch();
     if (!$row) api_error(404, 'Contact not found.');
     $db->prepare("DELETE FROM contacts WHERE id = :id")->execute([':id' => $id]);
-    audit($db, 'contact.delete', 'contact', $id, 'name=' . to_str($row['name']));
+    api_audit($db, $apiKey, 'contact.delete', 'contact', $id, 'name=' . to_str($row['name']));
     http_response_code(204);
     api_json(['deleted' => true]);
 }
@@ -2684,7 +2684,7 @@ function api_devices_create(PDO $db, array $apiKey, array $body): never
         api_error(409, 'A device with that name already exists.');
     }
     $newId = ipam_last_insert_id($db, 'devices');
-    audit($db, 'device.create', 'device', $newId, "name=$name type=$type");
+    api_audit($db, $apiKey, 'device.create', 'device', $newId, "name=$name type=$type");
     http_response_code(201);
     $st = $db->prepare("SELECT d.*, s.name AS site_name FROM devices d LEFT JOIN sites s ON s.id = d.site_id WHERE d.id = :id");
     $st->execute([':id' => $newId]);
@@ -2727,7 +2727,7 @@ function api_devices_update(PDO $db, array $apiKey, int $id, array $body): never
     } catch (PDOException) {
         api_error(409, 'Duplicate device name.');
     }
-    audit($db, 'device.update', 'device', $id, "name=$name");
+    api_audit($db, $apiKey, 'device.update', 'device', $id, "name=$name");
     $st = $db->prepare("SELECT d.*, s.name AS site_name FROM devices d LEFT JOIN sites s ON s.id = d.site_id WHERE d.id = :id");
     $st->execute([':id' => $id]);
     /** @var array<string,mixed>|false $row */
@@ -2746,7 +2746,7 @@ function api_devices_delete(PDO $db, array $apiKey, int $id): never
     $row = $st->fetch();
     if (!$row) api_error(404, 'Device not found.');
     $db->prepare("DELETE FROM devices WHERE id = :id")->execute([':id' => $id]);
-    audit($db, 'device.delete', 'device', $id, 'name=' . to_str($row['name']));
+    api_audit($db, $apiKey, 'device.delete', 'device', $id, 'name=' . to_str($row['name']));
     http_response_code(204);
     api_json([]);
 }
@@ -2837,7 +2837,7 @@ function api_device_interfaces_create(PDO $db, array $apiKey, array $body): neve
         api_error(409, 'An interface with that name already exists on this device.');
     }
     $newId = ipam_last_insert_id($db, 'device_interfaces');
-    audit($db, 'device_interface.create', 'device_interface', $newId, "device_id=$deviceId name=$name");
+    api_audit($db, $apiKey, 'device_interface.create', 'device_interface', $newId, "device_id=$deviceId name=$name");
     http_response_code(201);
     $st = $db->prepare("SELECT * FROM device_interfaces WHERE id = :id");
     $st->execute([':id' => $newId]);
@@ -2868,7 +2868,7 @@ function api_device_interfaces_update(PDO $db, array $apiKey, int $id, array $bo
     } catch (PDOException) {
         api_error(409, 'Duplicate interface name on this device.');
     }
-    audit($db, 'device_interface.update', 'device_interface', $id, "name=$name");
+    api_audit($db, $apiKey, 'device_interface.update', 'device_interface', $id, "name=$name");
     $st = $db->prepare("SELECT * FROM device_interfaces WHERE id = :id");
     $st->execute([':id' => $id]);
     /** @var array<string,mixed>|false $row */
@@ -2887,7 +2887,7 @@ function api_device_interfaces_delete(PDO $db, array $apiKey, int $id): never
     $row = $st->fetch();
     if (!$row) api_error(404, 'Interface not found.');
     $db->prepare("DELETE FROM device_interfaces WHERE id = :id")->execute([':id' => $id]);
-    audit($db, 'device_interface.delete', 'device_interface', $id, 'name=' . to_str($row['name']));
+    api_audit($db, $apiKey, 'device_interface.delete', 'device_interface', $id, 'name=' . to_str($row['name']));
     http_response_code(204);
     api_json([]);
 }

@@ -189,7 +189,7 @@ components:
 
 paths:
   # ── Subnets ──────────────────────────────────────────────────────────────
-  "/?resource=subnets":
+  /subnets:
     get:
       summary: List subnets
       parameters:
@@ -203,6 +203,7 @@ paths:
         "200":
           description: OK
           headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
             X-Total-Count: { $ref: "#/components/headers/X-Total-Count" }
           content:
             application/json:
@@ -227,24 +228,33 @@ paths:
                 vlan_fk: { type: integer }
                 vrf_id: { type: integer }
       responses:
-        "201": { description: Created }
+        "201":
+          description: Created
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
     put:
       summary: Update subnet
       parameters:
         - { in: query, name: resource, required: true, schema: { type: string, enum: [subnets] } }
         - { in: query, name: id, required: true, schema: { type: integer } }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
     delete:
       summary: Delete subnet
       parameters:
         - { in: query, name: resource, required: true, schema: { type: string, enum: [subnets] } }
         - { in: query, name: id, required: true, schema: { type: integer } }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
 
   # ── Addresses ────────────────────────────────────────────────────────────
-  "/?resource=addresses":
+  /addresses:
     get:
       summary: List addresses
       parameters:
@@ -264,7 +274,7 @@ paths:
                 items: { $ref: "#/components/schemas/Address" }
 
   # ── Devices ──────────────────────────────────────────────────────────────
-  "/?resource=devices":
+  /devices:
     get:
       summary: List or get a single device
       parameters:
@@ -305,24 +315,33 @@ paths:
                 serial: { type: string }
                 note: { type: string }
       responses:
-        "201": { description: Created }
+        "201":
+          description: Created
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
     put:
       summary: Update device
       parameters:
         - { in: query, name: resource, required: true, schema: { type: string, enum: [devices] } }
         - { in: query, name: id, required: true, schema: { type: integer } }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
     delete:
       summary: Delete device
       parameters:
         - { in: query, name: resource, required: true, schema: { type: string, enum: [devices] } }
         - { in: query, name: id, required: true, schema: { type: integer } }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
 
   # ── Device interfaces ────────────────────────────────────────────────────
-  "/?resource=device_interfaces":
+  /device_interfaces:
     get:
       summary: List or get device interfaces
       parameters:
@@ -355,24 +374,33 @@ paths:
                 name: { type: string }
                 description: { type: string }
       responses:
-        "201": { description: Created }
+        "201":
+          description: Created
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
     put:
       summary: Update interface
       parameters:
         - { in: query, name: resource, required: true, schema: { type: string, enum: [device_interfaces] } }
         - { in: query, name: id, required: true, schema: { type: integer } }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
     delete:
       summary: Delete interface
       parameters:
         - { in: query, name: resource, required: true, schema: { type: string, enum: [device_interfaces] } }
         - { in: query, name: id, required: true, schema: { type: integer } }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
 
   # ── Other read-only resources ────────────────────────────────────────────
-  "/?resource=sites":
+  /sites:
     get:
       summary: List sites
       parameters:
@@ -387,39 +415,51 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/Site" }
 
-  "/?resource=vlans":
+  /vlans:
     get:
       summary: List VLANs
       parameters:
         - { in: query, name: resource, required: true, schema: { type: string, enum: [vlans] } }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
 
-  "/?resource=vrfs":
+  /vrfs:
     get:
       summary: List VRFs
       parameters:
         - { in: query, name: resource, required: true, schema: { type: string, enum: [vrfs] } }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
 
-  "/?resource=contacts":
+  /contacts:
     get:
       summary: List contacts
       parameters:
         - { in: query, name: resource, required: true, schema: { type: string, enum: [contacts] } }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
 
-  "/?resource=tags":
+  /tags:
     get:
       summary: List tags
       parameters:
         - { in: query, name: resource, required: true, schema: { type: string, enum: [tags] } }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
 
-  "/?resource=subnet_stats":
+  /subnet_stats:
     get:
       summary: Subnet utilization stats
       parameters:
@@ -436,7 +476,7 @@ paths:
                   - type: array
                     items: { $ref: "#/components/schemas/SubnetStats" }
 
-  "/?resource=utilization_snapshots":
+  /utilization_snapshots:
     get:
       summary: Historical utilization snapshots
       parameters:
@@ -444,18 +484,24 @@ paths:
         - { in: query, name: subnet_id, schema: { type: integer } }
         - { in: query, name: limit, schema: { type: integer, default: 90 } }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
 
-  "/?resource=search":
+  /search:
     get:
       summary: Search addresses and subnets
       parameters:
         - { in: query, name: resource, required: true, schema: { type: string, enum: [search] } }
         - { in: query, name: q, required: true, schema: { type: string } }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
 
-  "/?resource=audit":
+  /audit:
     get:
       summary: Audit log
       parameters:
@@ -471,16 +517,19 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/AuditEntry" }
 
-  "/?resource=unassigned":
+  /unassigned:
     get:
       summary: Unassigned host IPs
       parameters:
         - { in: query, name: resource, required: true, schema: { type: string, enum: [unassigned] } }
         - { in: query, name: subnet_id, schema: { type: integer } }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
 
-  "/?resource=spec":
+  /spec:
     get:
       summary: OpenAPI 3.1 machine-readable spec (this document)
       security: []
@@ -494,49 +543,67 @@ paths:
               schema:
                 type: string
 
-  "/?resource=history":
+  /history:
     get:
       summary: Address change history
       parameters:
         - { in: query, name: resource, required: true, schema: { type: string, enum: [history] } }
         - { in: query, name: address_id, schema: { type: integer } }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
 
-  "/?resource=scan_results":
+  /scan_results:
     get:
       summary: Scan results
       parameters:
         - { in: query, name: resource, required: true, schema: { type: string, enum: [scan_results] } }
         - { in: query, name: subnet_id, schema: { type: integer } }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
 
-  "/?resource=scan_schedules":
+  /scan_schedules:
     get:
       summary: Scan schedules
       parameters:
         - { in: query, name: resource, required: true, schema: { type: string, enum: [scan_schedules] } }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
     post:
       summary: Create or update scan schedule
       parameters:
         - { in: query, name: resource, required: true, schema: { type: string, enum: [scan_schedules] } }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
     delete:
       summary: Delete scan schedule
       parameters:
         - { in: query, name: resource, required: true, schema: { type: string, enum: [scan_schedules] } }
         - { in: query, name: subnet_id, required: true, schema: { type: integer } }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
 
-  "/?resource=scan_run":
+  /scan_run:
     post:
       summary: Trigger an on-demand subnet scan (sync, max /28)
       parameters:
         - { in: query, name: resource, required: true, schema: { type: string, enum: [scan_run] } }
       responses:
-        "200": { description: OK }
+        "200":
+          description: OK
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }

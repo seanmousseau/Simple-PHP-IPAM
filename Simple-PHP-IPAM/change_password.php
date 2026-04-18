@@ -32,16 +32,23 @@ if (isset($_GET['verify_email'])) {
         $verSt->execute([':uid' => $cur['id'], ':hash' => $verHash]);
         /** @var array<string, mixed>|false $verRow */
         $verRow = $verSt->fetch();
-        if ($verRow && to_str($verRow['pending_email']) !== '') {
-            $db->prepare(
-                "UPDATE users SET email = :email,
-                                  pending_email = NULL,
-                                  pending_email_token_hash = NULL,
-                                  pending_email_expires_at = NULL
-                  WHERE id = :id"
-            )->execute([':email' => to_str($verRow['pending_email']), ':id' => $cur['id']]);
-            audit($db, 'user.update_email', 'user', to_int($cur['id']), '');
-            flash_set('Email address verified and updated.');
+        $pendingAddr = $verRow ? to_str($verRow['pending_email']) : '';
+        if ($verRow && $pendingAddr !== '') {
+            $dupCheckSt = $db->prepare("SELECT id FROM users WHERE email = :email AND id != :id");
+            $dupCheckSt->execute([':email' => $pendingAddr, ':id' => $cur['id']]);
+            if (!$dupCheckSt->fetch()) {
+                $db->prepare(
+                    "UPDATE users SET email = :email,
+                                      pending_email = NULL,
+                                      pending_email_token_hash = NULL,
+                                      pending_email_expires_at = NULL
+                      WHERE id = :id"
+                )->execute([':email' => $pendingAddr, ':id' => $cur['id']]);
+                audit($db, 'user.update_email', 'user', to_int($cur['id']), '');
+                flash_set('Email address verified and updated.');
+            } else {
+                flash_set('Verification link is invalid or has expired.', 'danger');
+            }
         } else {
             flash_set('Verification link is invalid or has expired.', 'danger');
         }
@@ -120,8 +127,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && array_key_exists('new_email', $_POS
         if ($dupSt->fetch()) {
             flash_set('That email address is already in use.', 'danger');
         } else {
-            ipam_send_email_verification($db, to_int($cur['id']), $newEmail);
-            flash_set('Verification email sent to ' . $newEmail . '. Check your inbox and spam folder.');
+            $sent = ipam_send_email_verification($db, to_int($cur['id']), $newEmail);
+            if ($sent) {
+                flash_set('Verification email sent to ' . $newEmail . '. Check your inbox and spam folder.');
+            } else {
+                flash_set('Could not send verification email. Ensure SMTP and base_url are configured.', 'danger');
+            }
         }
     }
     header('Location: change_password.php');
