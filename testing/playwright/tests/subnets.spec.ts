@@ -185,3 +185,18 @@ test('subnets: scan history & schedule action pill is present for admin', async 
     .filter({ hasText: /Schedule/i });
   await expect(pill).toBeVisible();
 });
+
+// ── #574 utilization bar regression ──────────────────────────────────────────
+// Regression guard for the util-bar-fill display:block fix. Before the fix,
+// .util-bar-fill was display:inline (default span), causing width to be
+// ignored and the colored fill to be invisible inside the bar track.
+
+test('subnets: utilization bar fill has non-zero width after stats load (#574)', async () => {
+  // The demo seed creates subnets with assigned addresses, so util data exists.
+  await page.goto('subnets.php');
+  // Wait for the async subnet_stats fetch to populate at least one util bar.
+  const fill = page.locator('.util-bar .util-bar-fill').first();
+  await expect(fill).toBeVisible({ timeout: 8000 });
+  const width = await fill.evaluate((el: HTMLElement) => el.getBoundingClientRect().width);
+  expect(width).toBeGreaterThan(0);
+});

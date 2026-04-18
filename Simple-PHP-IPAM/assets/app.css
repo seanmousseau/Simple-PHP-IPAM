@@ -588,6 +588,7 @@ button:disabled{opacity:.6;cursor:not-allowed}
   margin-left:var(--space-2);
 }
 .util-bar-fill{
+  display:block;
   height:100%;
   background:var(--success);
   border-radius:var(--radius-xs);
