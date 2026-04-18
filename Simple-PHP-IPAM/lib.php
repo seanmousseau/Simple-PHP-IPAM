@@ -6353,11 +6353,12 @@ function ipam_app_base_url(): string
  */
 function ipam_create_reset_token(PDO $db, int $userId): ?string
 {
+    $rateWindowStart = gmdate('Y-m-d H:i:s', time() - 3600);
     $rateSt = $db->prepare(
         "SELECT COUNT(*) FROM password_reset_tokens
-          WHERE user_id = :uid AND created_at > datetime('now', '-1 hour')"
+          WHERE user_id = :uid AND created_at > :window"
     );
-    $rateSt->execute([':uid' => $userId]);
+    $rateSt->execute([':uid' => $userId, ':window' => $rateWindowStart]);
     $recentCount = (int)$rateSt->fetchColumn();
     if ($recentCount >= 3) {
         return null;
