@@ -544,7 +544,7 @@ CREATE TABLE IF NOT EXISTS webhooks (
   secret                VARCHAR(255) NOT NULL,
   events                TEXT NOT NULL,
   is_active             TINYINT(1) NOT NULL DEFAULT 1,
-  created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at            DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   last_delivery_at      DATETIME NULL,
   last_delivery_status  SMALLINT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -559,7 +559,7 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
   http_status   SMALLINT NULL,
   response_body TEXT NULL,
   error         TEXT NULL,
-  created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at    DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   delivered_at  DATETIME NULL,
   KEY idx_wh_deliveries_wh (webhook_id, created_at),
   KEY idx_wh_deliveries_pending (delivered_at, attempt),

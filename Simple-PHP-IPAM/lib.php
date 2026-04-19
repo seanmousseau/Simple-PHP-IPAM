@@ -5443,7 +5443,19 @@ function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $confi
         }
 
         foreach ($rows as $hook) {
+            $now = gmdate('Y-m-d H:i:s');
             if (!ipam_validate_webhook_url((string)$hook['url'], $config)) {
+                // Log a permanently-failed delivery row (attempt=3 prevents retries)
+                $db->prepare(
+                    "INSERT INTO webhook_deliveries
+                        (webhook_id, event_type, payload, signature, attempt, error, created_at)
+                     VALUES (:wid, :ev, :pl, :sig, 3, :err, :now)"
+                )->execute([
+                    ':wid' => $hook['id'], ':ev' => $event,
+                    ':pl'  => $payload,    ':sig' => '',
+                    ':err' => 'URL blocked: failed SSRF validation',
+                    ':now' => $now,
+                ]);
                 continue;
             }
             $sig = ipam_webhook_sign($payload, (string)$hook['secret']);
@@ -5454,7 +5466,6 @@ function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $confi
                     (webhook_id, event_type, payload, signature, attempt, created_at)
                  VALUES (:wid, :ev, :pl, :sig, 1, :now)"
             );
-            $now = gmdate('Y-m-d H:i:s');
             $ins->execute([':wid' => $hook['id'], ':ev' => $event, ':pl' => $payload, ':sig' => $sig, ':now' => $now]);
             $delId = (int)$db->lastInsertId();
 
@@ -5494,7 +5505,7 @@ function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $confi
 
 /**
  * Retry pending webhook deliveries (called from cron.php).
- * Applies exponential backoff: attempt 2 waits 1 min, attempt 3 waits 5 min.
+ * Backoff: attempt 2 at T+1min, attempt 3 at T+6min (5 min after attempt 2).
  * Returns count of delivery rows attempted.
  *
  * @param array<string, mixed> $config
@@ -5502,7 +5513,7 @@ function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $confi
 function ipam_webhook_retry_pending(PDO $db, array $config = []): int
 {
     $cutoff1min  = gmdate('Y-m-d H:i:s', time() - 60);
-    $cutoff5min  = gmdate('Y-m-d H:i:s', time() - 300);
+    $cutoff6min  = gmdate('Y-m-d H:i:s', time() - 360);
     $due = $db->prepare(
         "SELECT d.id, d.webhook_id, d.event_type, d.payload, d.signature, d.attempt,
                 w.url, w.secret
@@ -5513,10 +5524,10 @@ function ipam_webhook_retry_pending(PDO $db, array $config = []): int
            AND w.is_active = 1
            AND (
                (d.attempt = 1 AND d.created_at <= :c1)
-            OR (d.attempt = 2 AND d.created_at <= :c5)
+            OR (d.attempt = 2 AND d.created_at <= :c6)
            )"
     );
-    $due->execute([':c1' => $cutoff1min, ':c5' => $cutoff5min]);
+    $due->execute([':c1' => $cutoff1min, ':c6' => $cutoff6min]);
     if ($due === false) {
         return 0;
     }
@@ -5524,6 +5535,10 @@ function ipam_webhook_retry_pending(PDO $db, array $config = []): int
     $count = 0;
     foreach ($rows as $row) {
         if (!ipam_validate_webhook_url((string)$row['url'], $config)) {
+            // Mark row exhausted so it is not retried again
+            $db->prepare(
+                "UPDATE webhook_deliveries SET attempt = 3, error = :err WHERE id = :id"
+            )->execute([':err' => 'URL blocked: failed SSRF validation', ':id' => $row['id']]);
             continue;
         }
         $hook    = ['url' => $row['url'], 'secret' => $row['secret'], 'id' => $row['webhook_id']];
@@ -5702,6 +5717,7 @@ function page_header(string $title, array $opts = []): void
             echo "<a href='contacts.php'>&#128215; Contacts</a>";
             echo "<a href='users.php'>&#128100; Users</a>";
             echo "<a href='api_keys.php'>&#128273; API Keys</a>";
+            echo "<a href='webhooks.php'>&#128276; Webhooks</a>";
             echo "<a href='import_arp.php'>&#128200; ARP Import</a>";
             echo "<a href='import_csv.php'>&#8679; Import CSV</a>";
             echo "<a href='reports.php'>&#128202; Reports</a>";
