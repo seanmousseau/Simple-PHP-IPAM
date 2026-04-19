@@ -296,6 +296,74 @@ page_header('DHCP Pools');
 <?php if ($msg): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
 
 <div class="card mt-16">
+  <h2>Export DHCP Config</h2>
+  <p class="muted">Generate a server-ready config from your DHCP pool reservations. Reservations with a MAC address are included; addresses without a MAC are skipped.</p>
+
+  <details id="dhcp-export-subnet-picker" style="margin-bottom:0.75rem;">
+    <summary style="cursor:pointer;font-weight:600;">Subnets to include <span class="muted font-xs" id="dhcp-export-count">(all <?= count($subnets) ?>)</span></summary>
+    <div style="margin-top:0.5rem;display:flex;flex-direction:column;gap:0.25rem;max-height:200px;overflow-y:auto;" id="dhcp-export-checklist">
+      <?php foreach ($subnets as $es): ?>
+        <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;">
+          <input type="checkbox" class="dhcp-export-subnet-cb" value="<?= to_int($es['id']) ?>" checked>
+          <span><?= e(to_str($es['cidr'])) ?><?= $es['description'] ? ' — ' . e(to_str($es['description'])) : '' ?></span>
+        </label>
+      <?php endforeach; ?>
+    </div>
+  </details>
+
+  <div class="page-actions" style="flex-wrap:wrap;">
+    <button type="button" class="action-pill" id="dhcp-export-dhcpd">Download dhcpd.conf</button>
+    <button type="button" class="action-pill" id="dhcp-export-kea">Download Kea JSON</button>
+    <button type="button" class="action-pill button-secondary" id="dhcp-preview-btn">Preview</button>
+  </div>
+  <textarea id="dhcp-preview-output" readonly style="display:none;width:100%;margin-top:0.75rem;height:220px;font-family:var(--font-mono);font-size:0.8rem;resize:vertical;" spellcheck="false"></textarea>
+</div>
+
+<script>
+(function() {
+  function selectedIds() {
+    return Array.from(document.querySelectorAll(".dhcp-export-subnet-cb:checked")).map(function(cb) { return cb.value; });
+  }
+  function buildUrl(format, preview) {
+    var ids = selectedIds();
+    var url = "export_dhcp.php?format=" + format;
+    if (ids.length > 0 && ids.length < <?= count($subnets) ?>) {
+      url += "&subnets=" + ids.join(",");
+    }
+    if (preview) url += "&preview=1";
+    return url;
+  }
+  function updateCount() {
+    var total = document.querySelectorAll(".dhcp-export-subnet-cb").length;
+    var checked = selectedIds().length;
+    var el = document.getElementById("dhcp-export-count");
+    if (el) el.textContent = checked === total ? "(all " + total + ")" : "(" + checked + " of " + total + ")";
+  }
+  document.querySelectorAll(".dhcp-export-subnet-cb").forEach(function(cb) {
+    cb.addEventListener("change", updateCount);
+  });
+  var exportBtn = document.getElementById("dhcp-export-dhcpd");
+  if (exportBtn) exportBtn.addEventListener("click", function() { window.location.href = buildUrl("dhcpd", false); });
+  var keaBtn = document.getElementById("dhcp-export-kea");
+  if (keaBtn) keaBtn.addEventListener("click", function() { window.location.href = buildUrl("kea", false); });
+  var previewBtn = document.getElementById("dhcp-preview-btn");
+  var previewOut = document.getElementById("dhcp-preview-output");
+  if (previewBtn && previewOut) {
+    previewBtn.addEventListener("click", function() {
+      if (previewOut.style.display !== "none") { previewOut.style.display = "none"; previewBtn.textContent = "Preview"; return; }
+      previewOut.style.display = "block";
+      previewOut.value = "Loading\u2026";
+      previewBtn.textContent = "Hide Preview";
+      fetch(buildUrl("dhcpd", true), {credentials: "same-origin"})
+        .then(function(r) { return r.text(); })
+        .then(function(t) { previewOut.value = t; })
+        .catch(function() { previewOut.value = "Error loading preview."; });
+    });
+  }
+})();
+</script>
+
+<div class="card mt-16">
   <h2>DHCP Pool</h2>
   <form method="get" action="dhcp_pool.php">
     <div class="row gap-10">

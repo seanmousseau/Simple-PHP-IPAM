@@ -1,4 +1,8 @@
-<img src="logo/banner.svg" alt="Simple PHP IPAM" width="320">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="logo/banner-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="logo/banner.svg">
+  <img src="logo/banner.svg" alt="Simple PHP IPAM" width="320">
+</picture>
 
 # Simple-PHP-IPAM
 
@@ -8,13 +12,11 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.3.0
+## What's new in v3.4.0
 
-**Outbound webhooks, login history, and brand polish.**
+**DHCP config export — generate server-ready configs from subnet data.**
 
-- **Outbound webhooks (#337).** HTTP callbacks fired on address and subnet mutations, HMAC-SHA256 signed (`X-IPAM-Signature`). Admin UI at Admin → Webhooks with test-fire, delivery log, and per-delivery retry. Cron-based retry (up to 3 attempts). SSRF protection blocks private IPs by default.
-- **Login history (#544).** Account page shows last 20 logins. Admins can view any user's login history from the Users table. Audit log gains `?user_id` and `?action` deep-link filters.
-- **Brand polish (#578).** Navigation and footer use the `SimplePHPIPAM` text logo in Fira Code monospace. Dark mode primary buttons and success colors now match the marketing-site brand green.
+- **DHCP Config Export (#338).** Generate ISC `dhcpd.conf` or Kea 2.x JSON directly from your subnet options and reservations. Set routers, DNS servers, domain name, lease times, and PXE boot options per-subnet via the subnet edit drawer. Any reserved address with a MAC is included as a host reservation. Download from Admin → DHCP Pools. See [docs/dhcp-export.md](docs/dhcp-export.md).
 
 See [CHANGELOG.md](CHANGELOG.md) for full release history and [docs/upgrading.md](docs/upgrading.md) for the upgrade guide.
 

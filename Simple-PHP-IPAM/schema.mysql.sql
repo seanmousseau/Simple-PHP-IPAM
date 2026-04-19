@@ -156,6 +156,13 @@ CREATE TABLE IF NOT EXISTS subnets (
   vlan_fk     BIGINT UNSIGNED NULL,
   vrf_id          BIGINT UNSIGNED NULL,
   alerts_enabled  TINYINT(1) NOT NULL DEFAULT 1,
+  dhcp_routers     TEXT DEFAULT NULL,                                -- v3.4.0 #402: comma-sep gateway IPs
+  dhcp_dns_servers TEXT DEFAULT NULL,                                -- v3.4.0 #402: comma-sep DNS IPs
+  dhcp_domain_name TEXT DEFAULT NULL,                                -- v3.4.0 #402: domain name
+  dhcp_lease_default INT DEFAULT NULL,                               -- v3.4.0 #402: seconds (default-lease-time)
+  dhcp_lease_max   INT DEFAULT NULL,                                 -- v3.4.0 #402: seconds (max-lease-time)
+  dhcp_next_server TEXT DEFAULT NULL,                                -- v3.4.0 #402: TFTP server IP (PXE)
+  dhcp_boot_filename TEXT DEFAULT NULL,                              -- v3.4.0 #402: boot filename (PXE)
   created_at  DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   updated_at  DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   UNIQUE KEY uq_subnets_cidr_vrf (cidr, vrf_id),

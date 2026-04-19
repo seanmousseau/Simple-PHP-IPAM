@@ -9,6 +9,7 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
+    - [v3.4.0](#v340) — DHCP config export (no breaking changes)
   - [v3.3.0](#v330) — webhooks, login history, brand polish (no breaking changes)
   - [v3.2.0](#v320) — devices, password recovery, OpenAPI spec (no breaking changes)
   - [v3.0.0](#v300) — **breaking changes**, config.php stub, driver promotion
@@ -92,6 +93,17 @@ The backup is left in place after a successful upgrade. You can remove it manual
 ---
 
 ## Version-specific upgrade notes
+
+### v3.4.0
+
+**No breaking changes.** Run `upgrade.sh` as normal — no manual steps required.
+
+**New schema columns on `subnets`:** `dhcp_routers`, `dhcp_dns_servers`, `dhcp_domain_name`, `dhcp_lease_default`, `dhcp_lease_max`, `dhcp_next_server`, `dhcp_boot_filename`. All nullable. Added automatically by migration `3.4.0-dhcp-options`.
+
+**New page added:**
+- `export_dhcp.php` — DHCP config export endpoint (write-role required). Accessible from Admin → DHCP Pools.
+
+---
 
 ### v3.3.0
 

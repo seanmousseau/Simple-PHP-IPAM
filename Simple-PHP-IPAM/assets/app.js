@@ -1102,6 +1102,22 @@
         var alertsCb = document.getElementById("subnet-edit-alerts");
         if (alertsCb) alertsCb.checked = (d.alertsEnabled !== "0");
 
+        var dhcpFields = [
+          ["dhcp-routers", "dhcpRouters"], ["dhcp-dns-servers", "dhcpDnsServers"],
+          ["dhcp-domain-name", "dhcpDomainName"], ["dhcp-lease-default", "dhcpLeaseDefault"],
+          ["dhcp-lease-max", "dhcpLeaseMax"], ["dhcp-next-server", "dhcpNextServer"],
+          ["dhcp-boot-filename", "dhcpBootFilename"]
+        ];
+        dhcpFields.forEach(function(pair) {
+          var el = document.getElementById("subnet-edit-" + pair[0]);
+          if (el) el.value = d[pair[1]] || "";
+        });
+        var dhcpDetails = document.querySelector(".dhcp-options-group");
+        if (dhcpDetails) {
+          var anySet = dhcpFields.some(function(pair) { return !!(d[pair[1]]); });
+          dhcpDetails.open = anySet;
+        }
+
         var contactPicker = document.getElementById("subnet-edit-contacts");
         if (contactPicker) {
           var existingContacts = [];

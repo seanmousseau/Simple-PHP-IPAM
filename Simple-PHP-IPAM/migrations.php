@@ -1568,6 +1568,46 @@ function ipam_migrations(): array
                 }
             }
         },
+
+        // 3.4.0-dhcp-options: add 7 nullable DHCP option columns to subnets (#402)
+        '3.4.0-dhcp-options' => function(PDO $db): void {
+            $driver = ipam_dialect()->driver_name();
+            $cols = [
+                'dhcp_routers'      => ($driver === 'mysql') ? 'TEXT DEFAULT NULL' : 'TEXT',
+                'dhcp_dns_servers'  => ($driver === 'mysql') ? 'TEXT DEFAULT NULL' : 'TEXT',
+                'dhcp_domain_name'  => ($driver === 'mysql') ? 'TEXT DEFAULT NULL' : 'TEXT',
+                'dhcp_lease_default'=> ($driver === 'mysql') ? 'INT DEFAULT NULL'  : 'INTEGER',
+                'dhcp_lease_max'    => ($driver === 'mysql') ? 'INT DEFAULT NULL'  : 'INTEGER',
+                'dhcp_next_server'  => ($driver === 'mysql') ? 'TEXT DEFAULT NULL' : 'TEXT',
+                'dhcp_boot_filename'=> ($driver === 'mysql') ? 'TEXT DEFAULT NULL' : 'TEXT',
+            ];
+            foreach ($cols as $col => $colType) {
+                $exists = false;
+                if ($driver === 'sqlite') {
+                    $res = $db->query("PRAGMA table_info(subnets)");
+                    if ($res !== false) {
+                        /** @var array<string, mixed> $row */
+                        foreach ($res as $row) {
+                            if (($row['name'] ?? '') === $col) { $exists = true; break; }
+                        }
+                    }
+                } elseif ($driver === 'mysql') {
+                    $st = $db->prepare("SHOW COLUMNS FROM subnets LIKE :col");
+                    $st->execute([':col' => $col]);
+                    $exists = (bool)$st->fetch();
+                } else {
+                    $st = $db->prepare(
+                        "SELECT column_name FROM information_schema.columns
+                         WHERE table_name = 'subnets' AND column_name = :col"
+                    );
+                    $st->execute([':col' => $col]);
+                    $exists = (bool)$st->fetch();
+                }
+                if (!$exists) {
+                    $db->exec("ALTER TABLE subnets ADD COLUMN {$col} {$colType}");
+                }
+            }
+        },
     ];
 }
 

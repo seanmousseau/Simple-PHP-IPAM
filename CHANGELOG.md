@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.4.0] - 2026-04-18
+
+### Added
+
+- **#338 / #402–#405** — DHCP config export. Generate server-ready DHCP configuration files directly from subnet options and address reservations.
+  - New schema columns on `subnets`: `dhcp_routers`, `dhcp_dns_servers`, `dhcp_domain_name`, `dhcp_lease_default`, `dhcp_lease_max`, `dhcp_next_server`, `dhcp_boot_filename`. All nullable; migration key `3.4.0-dhcp-options` is idempotent across SQLite, MySQL, and PostgreSQL.
+  - **ISC DHCP** (`dhcpd.conf`) format: subnet blocks with `option routers`, `option domain-name-servers`, `option domain-name`, `default-lease-time`, `max-lease-time`, `next-server`, `filename`, and per-address `host` entries (`hardware ethernet` / `fixed-address`) for all `status=reserved` addresses with a non-empty MAC.
+  - **ISC Kea 2.x JSON** format: `Dhcp4.subnet4` array with `option-data`, `valid-lifetime`, `max-valid-lifetime`, and `reservations` per subnet.
+  - **DHCP Options** collapsible section in the subnet edit drawer. Fields auto-expand when any value is set. IP fields (routers, DNS, next-server) are validated server-side.
+  - **Export card** on the DHCP Pools page with IPv4 subnet picker (checkboxes, all selected by default), "Download dhcpd.conf", "Download Kea JSON", and "Preview" buttons. Preview fetches inline without triggering a download.
+  - New endpoint `export_dhcp.php` (write-role required): supports `?format=dhcpd|kea`, `?subnets=N,N,N`, `?subnet_id=N`, and `?preview=1`. Audited as `export.dhcp` / `export.kea`.
+  - IPv4 only — IPv6 subnets are silently skipped.
+  - New unit tests in `tests/DhcpRenderTest.php` (20 assertions). New E2E spec `testing/playwright/tests/dhcp-export.spec.ts`.
+  - New documentation at [`docs/dhcp-export.md`](docs/dhcp-export.md).
+
 ## [3.3.0] - 2026-04-18
 
 ### Added
