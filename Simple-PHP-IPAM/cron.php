@@ -276,7 +276,32 @@ try {
 }
 
 // ---------------------------------------------------------------------------
-// Task 7: Demo mode database reset
+// Task 7: Webhook delivery retry (attempt pending deliveries up to 3 times)
+// ---------------------------------------------------------------------------
+try {
+    $retried = ipam_webhook_retry_pending($db, $config);
+    $emit(['task' => 'webhook_retry', 'retried' => $retried, 'ts' => $now]);
+} catch (Throwable $e) {
+    $fail('webhook_retry', $e->getMessage());
+}
+
+// ---------------------------------------------------------------------------
+// Task 8: Webhook delivery log prune (per webhook.retention_days setting)
+// ---------------------------------------------------------------------------
+try {
+    $retentionDays = to_int(ipam_setting('webhook.retention_days'));
+    if ($retentionDays > 0) {
+        $pruned = ipam_webhook_prune($db, $retentionDays);
+        $emit(['task' => 'webhook_prune', 'pruned' => $pruned, 'retention_days' => $retentionDays, 'ts' => $now]);
+    } else {
+        $emit(['task' => 'webhook_prune', 'skipped' => true, 'reason' => 'retention_days=0', 'ts' => $now]);
+    }
+} catch (Throwable $e) {
+    $fail('webhook_prune', $e->getMessage());
+}
+
+// ---------------------------------------------------------------------------
+// Task 9: Demo mode database reset (was Task 7 pre-v3.3.0)
 // ---------------------------------------------------------------------------
 try {
     $demoEnabled = !empty($config['demo_mode']['enabled']);

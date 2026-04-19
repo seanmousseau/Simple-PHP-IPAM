@@ -50,10 +50,7 @@ page_header('Forgot Password');
 <div class="login-wrap">
 <div class="login-card">
   <div class="login-logo">
-    <picture>
-      <source srcset="assets/logo.webp" type="image/webp">
-      <img src="assets/logo.png" alt="<?= e($appName) ?>" width="200" height="60">
-    </picture>
+    <a href="login.php" class="nav-brand">Simple<span class="nav-brand-php">PHP</span>IPAM</a>
   </div>
   <h1>Reset Password</h1>
 

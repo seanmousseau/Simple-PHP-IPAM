@@ -12,6 +12,16 @@ if ($filterPrefix !== '' && !in_array($filterPrefix, AUDIT_PREFIXES, true)) {
     $filterPrefix = '';
 }
 
+// --- Exact action filter (e.g. ?action=auth.login from login-history links) ---
+$filterAction = trim(to_str($_GET['action'] ?? ''));
+// Validate: must be non-empty and match <prefix>.<verb> pattern (no injection surface)
+if ($filterAction !== '' && !preg_match('/^[a-z_]+\.[a-z_]+$/', $filterAction)) {
+    $filterAction = '';
+}
+
+// --- User ID filter (e.g. ?user_id=3 from users.php login-history link) ---
+$filterUserId = to_int($_GET['user_id'] ?? 0);
+
 // --- Date range filter (sanitised through strtotime → Y-m-d) ---
 $filterFrom = '';
 $filterTo   = '';
@@ -37,6 +47,14 @@ $params = [];
 if ($filterPrefix !== '') {
     $wheres[] = 'action LIKE :pfx';
     $params[':pfx'] = $filterPrefix . '.%';
+}
+if ($filterAction !== '') {
+    $wheres[] = 'action = :act';
+    $params[':act'] = $filterAction;
+}
+if ($filterUserId > 0) {
+    $wheres[] = 'user_id = :uid';
+    $params[':uid'] = $filterUserId;
 }
 if ($filterFrom !== '') {
     $wheres[] = 'created_at >= :from';
@@ -78,16 +96,20 @@ $rows = $st->fetchAll();
 
 // Build a query string preserving all filters across pagination links
 function audit_qs(int $page, int $limit, string $prefix, string $from, string $to,
-                  string $sort = 'time', string $dir = 'desc'): string
+                  string $sort = 'time', string $dir = 'desc',
+                  string $action = '', int $userId = 0): string
 {
     $p = ['page' => $page, 'page_size' => $limit, 'sort' => $sort, 'dir' => $dir];
-    if ($prefix !== '') $p['prefix'] = $prefix;
-    if ($from   !== '') $p['from']   = $from;
-    if ($to     !== '') $p['to']     = $to;
+    if ($prefix !== '') $p['prefix']  = $prefix;
+    if ($from   !== '') $p['from']    = $from;
+    if ($to     !== '') $p['to']      = $to;
+    if ($action !== '') $p['action']  = $action;
+    if ($userId  > 0)   $p['user_id'] = $userId;
     return '?' . http_build_query($p);
 }
 
-$hasFilter = $filterPrefix !== '' || $filterFrom !== '' || $filterTo !== '';
+$hasFilter = $filterPrefix !== '' || $filterFrom !== '' || $filterTo !== ''
+          || $filterAction !== '' || $filterUserId > 0;
 
 page_header('Audit Log');
 ?>
@@ -149,13 +171,15 @@ page_header('Audit Log');
           <?php $auditQsBase = '?' . http_build_query(array_filter([
                     'page_size' => $limit,
                     'prefix'    => $filterPrefix !== '' ? $filterPrefix : null,
+                    'action'    => $filterAction !== '' ? $filterAction : null,
+                    'user_id'   => $filterUserId > 0 ? $filterUserId : null,
                     'from'      => $filterFrom !== '' ? $filterFrom : null,
                     'to'        => $filterTo !== '' ? $filterTo : null,
                 ], fn($v) => $v !== null));
-                echo sort_th('time',   'Time',      $auditSort['col'], $auditSort['dir'], $auditQsBase);
-                echo sort_th('user',   'User',      $auditSort['col'], $auditSort['dir'], $auditQsBase);
-                echo sort_th('action', 'Action',    $auditSort['col'], $auditSort['dir'], $auditQsBase);
-                echo sort_th('entity', 'Entity',    $auditSort['col'], $auditSort['dir'], $auditQsBase);
+                echo sort_th('time',   'Time',      $auditSort['col'], $auditSort['dir'], $auditQsBase); // nosemgrep: php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag
+                echo sort_th('user',   'User',      $auditSort['col'], $auditSort['dir'], $auditQsBase); // nosemgrep: php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag
+                echo sort_th('action', 'Action',    $auditSort['col'], $auditSort['dir'], $auditQsBase); // nosemgrep: php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag
+                echo sort_th('entity', 'Entity',    $auditSort['col'], $auditSort['dir'], $auditQsBase); // nosemgrep: php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag
           ?>
           <th>Client IP</th>
           <th>Details</th>
@@ -178,10 +202,10 @@ page_header('Audit Log');
 
     <p class="mt-12">
       <?php if ($page > 1): ?>
-        <a href="<?= e(audit_qs($page - 1, $limit, $filterPrefix, $filterFrom, $filterTo, $auditSort['col'], $auditSort['dir'])) ?>">&laquo; Prev</a>
+        <a href="<?= e(audit_qs($page - 1, $limit, $filterPrefix, $filterFrom, $filterTo, $auditSort['col'], $auditSort['dir'], $filterAction, $filterUserId)) ?>">&laquo; Prev</a>
       <?php endif; ?>
       <?php if ($page < $pages): ?>
-        <a href="<?= e(audit_qs($page + 1, $limit, $filterPrefix, $filterFrom, $filterTo, $auditSort['col'], $auditSort['dir'])) ?>" class="ml-12">Next &raquo;</a>
+        <a href="<?= e(audit_qs($page + 1, $limit, $filterPrefix, $filterFrom, $filterTo, $auditSort['col'], $auditSort['dir'], $filterAction, $filterUserId)) ?>" class="ml-12">Next &raquo;</a>
       <?php endif; ?>
     </p>
   <?php endif; ?>

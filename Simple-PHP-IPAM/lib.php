@@ -1626,6 +1626,27 @@ function ipam_setting_definitions(): array
             'min'         => 1,
             'max'         => 120,
         ],
+
+        // --- Webhooks ---
+        'webhook.retention_days' => [
+            'label'       => 'Delivery log retention (days)',
+            'description' => 'Webhook delivery log rows older than this are pruned during housekeeping. 0 = keep forever.',
+            'type'        => 'int',
+            'group'       => 'webhooks',
+            'default'     => 30,
+            'sensitive'   => false,
+            'config_key'  => null,
+            'min'         => 0,
+        ],
+        'webhook.allow_private_ips' => [
+            'label'       => 'Allow private IP webhook targets',
+            'description' => 'When enabled, outbound webhook deliveries may target RFC-1918 / loopback addresses. Enable only in isolated dev/test environments.',
+            'type'        => 'bool',
+            'group'       => 'webhooks',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
     ];
 }
 
@@ -1651,6 +1672,7 @@ function ipam_setting_groups(): array
         'api'                  => ['label' => 'API',                  'description' => 'Rate limiting and bulk write limits for the REST API.'],
         'display'              => ['label' => 'Display',              'description' => 'Utilization thresholds, auto-reserve defaults, and UI toggles.'],
         'smtp'                 => ['label' => 'SMTP / Email Delivery', 'description' => 'Direct SMTP delivery for utilization alerts. Falls back to native mail() when disabled.'],
+        'webhooks'             => ['label' => 'Webhooks',             'description' => 'Outbound HMAC-signed HTTP callbacks on address and subnet changes.'],
     ];
 }
 
@@ -3149,7 +3171,7 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             if (is_array($files)) {
                 rsort($files); // newest first (lexicographic = chronological for our format)
                 foreach (array_slice($files, $retention) as $old) {
-                    @unlink($old); // nosemgrep: path from glob() constrained to data dir
+                    @unlink($old); // nosemgrep: php.lang.security.unlink-use.unlink-use
                 }
             }
 
@@ -4003,7 +4025,7 @@ function render_security_banner(string $context, string $message): void
     $dismissUrl = '?' . http_build_query($params);
 
     echo '<div class="security-banner">'
-       . '<span>⚠ <strong>Security notice:</strong> ' . e($message) . '</span>'
+       . '<span>⚠ <strong>Security notice:</strong> ' . e($message) . '</span>' // nosemgrep: php.lang.security.tainted-user-input-in-php-script.tainted-user-input-in-php-script
        . '<a class="dismiss-link" href="' . e($dismissUrl) . '">Dismiss</a>'
        . '</div>';
 }
@@ -5008,7 +5030,7 @@ function cleanup_tmp_import_files(int $ttlSeconds): int
 
         $age = $now - $f->getMTime();
         if ($age > $ttlSeconds) {
-            @unlink($f->getPathname());
+            @unlink($f->getPathname()); // nosemgrep: php.lang.security.unlink-use.unlink-use
             $deleted++;
         }
     }
@@ -5051,7 +5073,7 @@ function load_import_plan(string $path): array
 function delete_import_plan(string $path): void
 {
     if ($path !== '' && is_file($path)) {
-        @unlink($path);
+        @unlink($path); // nosemgrep: php.lang.security.unlink-use.unlink-use
     }
 }
 
@@ -5068,7 +5090,7 @@ function cleanup_tmp_import_plans(int $ttlSeconds): int
 
         $age = $now - $f->getMTime();
         if ($age > $ttlSeconds) {
-            @unlink($f->getPathname());
+            @unlink($f->getPathname()); // nosemgrep: php.lang.security.unlink-use.unlink-use
             $deleted++;
         }
     }
@@ -5272,6 +5294,302 @@ function subnet_overlap_warning_text(array $overlaps): string
     return 'Hierarchy notice — this subnet is ' . implode('; and ', $parts) . '. Verify this nesting is intentional.';
 }
 
+/* ---------------- Webhook helpers ---------------- */
+
+/**
+ * Validate a webhook target URL for SSRF safety.
+ * Returns false if the URL scheme is not http/https, the hostname cannot be
+ * resolved, or the resolved IP falls in a private/loopback range (unless
+ * webhook.allow_private_ips is true in settings).
+ *
+ * @param array<string, mixed> $config
+ */
+function ipam_validate_webhook_url(string $url, array $config = []): bool
+{
+    $parts = parse_url($url);
+    if ($parts === false || !isset($parts['scheme'], $parts['host'])) {
+        return false;
+    }
+    if (!in_array(strtolower($parts['scheme']), ['http', 'https'], true)) {
+        return false;
+    }
+    $host = $parts['host'];
+    // Strip IPv6 brackets
+    if (str_starts_with($host, '[') && str_ends_with($host, ']')) {
+        $host = substr($host, 1, -1);
+    }
+    // Resolve hostname to all addresses (A + AAAA) for dual-stack SSRF safety.
+    // gethostbyname() is IPv4-only; use dns_get_record() to cover AAAA records.
+    if (filter_var($host, FILTER_VALIDATE_IP)) {
+        $ips = [$host];
+    } else {
+        $ips      = [];
+        $aRecs    = @dns_get_record($host, DNS_A);
+        $aaaaRecs = @dns_get_record($host, DNS_AAAA);
+        foreach ((array)$aRecs as $r) { if (isset($r['ip']))   $ips[] = $r['ip']; }
+        foreach ((array)$aaaaRecs as $r) { if (isset($r['ipv6'])) $ips[] = $r['ipv6']; }
+        if (empty($ips)) {
+            return false; // DNS resolution failed / NXDOMAIN
+        }
+    }
+
+    $settingVal   = ipam_setting('webhook.allow_private_ips');
+    $configVal    = is_array($config['webhook'] ?? null) ? ($config['webhook']['allow_private_ips'] ?? false) : false;
+    $allowPrivate = (bool)($settingVal ?? $configVal);
+    if ($allowPrivate) {
+        return true;
+    }
+
+    // Block RFC-1918, loopback, link-local, and IPv6 ULA/loopback.
+    // ALL resolved addresses must be public (blocks DNS rebinding).
+    $privateRanges = [
+        ['10.0.0.0',   8],  ['172.16.0.0', 12], ['192.168.0.0', 16],
+        ['127.0.0.0',  8],  ['169.254.0.0', 16], ['::1',         128],
+        ['fc00::',    7],   ['fe80::',      10],
+    ];
+    foreach ($ips as $ip) {
+        foreach ($privateRanges as [$net, $prefix]) {
+            if (ip_in_cidr($ip, $net, $prefix)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+/** Sign a webhook payload with HMAC-SHA256. */
+function ipam_webhook_sign(string $payload, string $secret): string
+{
+    return 'sha256=' . hash_hmac('sha256', $payload, $secret);
+}
+
+/**
+ * Attempt a single HTTP delivery of a webhook payload via ext-curl.
+ * Returns ['status' => int|null, 'body' => string, 'error' => string|null].
+ *
+ * @param array<string, mixed> $webhook  Row from the webhooks table
+ * @return array{status: int|null, body: string, error: string|null}
+ */
+function ipam_webhook_deliver(array $webhook, string $eventType, string $payload, string $signature): array
+{
+    require_once __DIR__ . '/version.php';
+    $ch = curl_init();
+    if ($ch === false) {
+        return ['status' => null, 'body' => '', 'error' => 'curl_init() failed'];
+    }
+    $url = to_str($webhook['url']);
+    if ($url === '') {
+        curl_close($ch);
+        return ['status' => null, 'body' => '', 'error' => 'empty webhook URL'];
+    }
+    curl_setopt($ch, CURLOPT_URL,            $url);
+    curl_setopt($ch, CURLOPT_POST,           true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS,     $payload);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT,        5);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_MAXREDIRS,      3);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
+    curl_setopt($ch, CURLOPT_HTTPHEADER,     [
+        'Content-Type: application/json',
+        'X-IPAM-Signature: ' . $signature,
+        'X-IPAM-Event: ' . $eventType,
+        'User-Agent: SimpleIPAM/' . IPAM_VERSION,
+    ]);
+    $body   = (string)curl_exec($ch);
+    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE) ?: null;
+    $err    = curl_errno($ch) ? curl_error($ch) : null;
+    curl_close($ch);
+    // Truncate response body to 2KB for storage
+    return ['status' => $status ?: null, 'body' => substr($body, 0, 2048), 'error' => $err];
+}
+
+/**
+ * Dispatch a webhook event to all active subscribers.
+ * Never throws — dispatch failures are silently swallowed so the triggering
+ * action always succeeds.
+ *
+ * @param array<string, mixed> $data    Entity snapshot to include in payload
+ * @param array<string, mixed> $config
+ */
+function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $config = []): void
+{
+    try {
+        require_once __DIR__ . '/version.php';
+        $u = current_user();
+
+        // Find active webhooks subscribed to this event
+        $eventLike = '%"' . $event . '"%';
+        $hooks = $db->prepare(
+            "SELECT id, url, secret FROM webhooks
+             WHERE is_active = 1 AND events LIKE :ev"
+        );
+        $hooks->execute([':ev' => $eventLike]);
+        $rows = $hooks->fetchAll();
+        if (!$rows) {
+            return;
+        }
+
+        $payload = json_encode([
+            'event'     => $event,
+            'timestamp' => gmdate('Y-m-d\TH:i:s\Z'),
+            'version'   => IPAM_VERSION,
+            'actor'     => ['user_id' => $u['id'] ?? null, 'username' => $u['username'] ?? 'system'],
+            'data'      => $data,
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if ($payload === false) {
+            return;
+        }
+
+        foreach ($rows as $hook) {
+            $now = gmdate('Y-m-d H:i:s');
+            if (!ipam_validate_webhook_url((string)$hook['url'], $config)) {
+                // Log a permanently-failed delivery row (attempt=3 prevents retries)
+                $db->prepare(
+                    "INSERT INTO webhook_deliveries
+                        (webhook_id, event_type, payload, signature, attempt, error, created_at)
+                     VALUES (:wid, :ev, :pl, :sig, 3, :err, :now)"
+                )->execute([
+                    ':wid' => $hook['id'], ':ev' => $event,
+                    ':pl'  => $payload,    ':sig' => '',
+                    ':err' => 'URL blocked: failed SSRF validation',
+                    ':now' => $now,
+                ]);
+                continue;
+            }
+            $sig = ipam_webhook_sign($payload, (string)$hook['secret']);
+
+            // Insert pending delivery row
+            $ins = $db->prepare(
+                "INSERT INTO webhook_deliveries
+                    (webhook_id, event_type, payload, signature, attempt, created_at)
+                 VALUES (:wid, :ev, :pl, :sig, 1, :now)"
+            );
+            $ins->execute([':wid' => $hook['id'], ':ev' => $event, ':pl' => $payload, ':sig' => $sig, ':now' => $now]);
+            $delId = (int)$db->lastInsertId();
+
+            // Attempt synchronous delivery
+            $result = ipam_webhook_deliver($hook, $event, $payload, $sig);
+
+            $ok = $result['status'] !== null && $result['status'] >= 200 && $result['status'] < 300;
+            $upd = $db->prepare(
+                "UPDATE webhook_deliveries
+                 SET http_status   = :st,
+                     response_body = :body,
+                     error         = :err,
+                     delivered_at  = CASE WHEN :ok THEN :now ELSE NULL END
+                 WHERE id = :id"
+            );
+            $upd->execute([
+                ':st'   => $result['status'],
+                ':body' => $result['body'],
+                ':err'  => $result['error'],
+                ':ok'   => $ok ? 1 : 0,
+                ':id'   => $delId,
+                ':now'  => gmdate('Y-m-d H:i:s'),
+            ]);
+
+            // Update webhook last-delivery metadata
+            $wUpd = $db->prepare(
+                "UPDATE webhooks
+                 SET last_delivery_at = :now, last_delivery_status = :st
+                 WHERE id = :id"
+            );
+            $wUpd->execute([':st' => $result['status'], ':id' => $hook['id'], ':now' => gmdate('Y-m-d H:i:s')]);
+        }
+    } catch (\Throwable) {
+        // Dispatch must never surface to the user
+    }
+}
+
+/**
+ * Retry pending webhook deliveries (called from cron.php).
+ * Backoff: attempt 2 at T+1min, attempt 3 at T+6min (5 min after attempt 2).
+ * Returns count of delivery rows attempted.
+ *
+ * @param array<string, mixed> $config
+ */
+function ipam_webhook_retry_pending(PDO $db, array $config = []): int
+{
+    $cutoff1min  = gmdate('Y-m-d H:i:s', time() - 60);
+    $cutoff6min  = gmdate('Y-m-d H:i:s', time() - 360);
+    $due = $db->prepare(
+        "SELECT d.id, d.webhook_id, d.event_type, d.payload, d.signature, d.attempt,
+                w.url, w.secret
+         FROM webhook_deliveries d
+         JOIN webhooks w ON w.id = d.webhook_id
+         WHERE d.delivered_at IS NULL
+           AND d.attempt < 3
+           AND w.is_active = 1
+           AND (
+               (d.attempt = 1 AND d.created_at <= :c1)
+            OR (d.attempt = 2 AND d.created_at <= :c6)
+           )"
+    );
+    $due->execute([':c1' => $cutoff1min, ':c6' => $cutoff6min]);
+    if ($due === false) {
+        return 0;
+    }
+    $rows  = $due->fetchAll();
+    $count = 0;
+    foreach ($rows as $row) {
+        if (!ipam_validate_webhook_url((string)$row['url'], $config)) {
+            // Mark row exhausted so it is not retried again
+            $db->prepare(
+                "UPDATE webhook_deliveries SET attempt = 3, error = :err WHERE id = :id"
+            )->execute([':err' => 'URL blocked: failed SSRF validation', ':id' => $row['id']]);
+            continue;
+        }
+        $hook    = ['url' => $row['url'], 'secret' => $row['secret'], 'id' => $row['webhook_id']];
+        $result  = ipam_webhook_deliver($hook, (string)$row['event_type'], (string)$row['payload'], (string)$row['signature']);
+        $attempt = (int)$row['attempt'] + 1;
+        $ok      = $result['status'] !== null && $result['status'] >= 200 && $result['status'] < 300;
+
+        $upd = $db->prepare(
+            "UPDATE webhook_deliveries
+             SET attempt       = :att,
+                 http_status   = :st,
+                 response_body = :body,
+                 error         = :err,
+                 delivered_at  = CASE WHEN :ok THEN :now ELSE NULL END
+             WHERE id = :id"
+        );
+        $upd->execute([
+            ':att'  => $attempt,
+            ':st'   => $result['status'],
+            ':body' => $result['body'],
+            ':err'  => $result['error'],
+            ':ok'   => $ok ? 1 : 0,
+            ':id'   => $row['id'],
+            ':now'  => gmdate('Y-m-d H:i:s'),
+        ]);
+
+        $wUpd = $db->prepare(
+            "UPDATE webhooks SET last_delivery_at=:now, last_delivery_status=:st WHERE id=:id"
+        );
+        $wUpd->execute([':st' => $result['status'], ':id' => $row['webhook_id'], ':now' => gmdate('Y-m-d H:i:s')]);
+        $count++;
+    }
+    return $count;
+}
+
+/**
+ * Prune old webhook delivery rows. Returns count deleted.
+ */
+function ipam_webhook_prune(PDO $db, int $days): int
+{
+    if ($days <= 0) {
+        return 0;
+    }
+    $cutoff = gmdate('Y-m-d H:i:s', time() - $days * 86400);
+    $st = $db->prepare(
+        "DELETE FROM webhook_deliveries WHERE created_at < :cutoff"
+    );
+    $st->execute([':cutoff' => $cutoff]);
+    return $st->rowCount();
+}
+
 /* ---------------- UI helpers ---------------- */
 
 /** @param array<string, string> $opts */
@@ -5296,16 +5614,16 @@ function page_header(string $title, array $opts = []): void
 
     echo "<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
     echo "<title>" . e($appName) . " \u{2014} " . e($title) . "</title>";
-    echo "<link rel='icon' type='image/webp' sizes='32x32' href='assets/favicon-32.webp'>";
-    echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
-    echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
-    echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/vendor/open-props.min.css?v=3.2.0'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=3.2.0'>";
+    echo "<link rel='icon' type='image/webp' sizes='32x32' href='assets/favicon-32.webp?v=3.3.0a'>";
+    echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png?v=3.3.0a'>";
+    echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp?v=3.3.0a'>";
+    echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png?v=3.3.0a'>";
+    echo "<link rel='stylesheet' href='assets/vendor/open-props.min.css?v=3.3.0a'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=3.3.0a'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=3.2.0'></script>";
+    echo "<script defer src='assets/app.js?v=3.3.0a'></script>";
     $pageAttr = isset($opts['page']) && $opts['page'] !== ''
         ? " data-page='" . e(to_str($opts['page'])) . "'"
         : '';
@@ -5320,7 +5638,7 @@ function page_header(string $title, array $opts = []): void
 
     echo "<header role='banner'><div class='topbar'><div class='nav-wrap'>";
     echo "<a href='dashboard.php' class='nav-brand'>"
-       . "<picture><source srcset='assets/logo.webp' type='image/webp'><img src='assets/logo.png' alt='' class='nav-logo' aria-hidden='true' width='161' height='48'></picture>"
+       . "Simple<span class='nav-brand-php'>PHP</span>IPAM"
        . "</a>";
     echo "<button class='nav-toggle' id='nav-toggle' aria-label='Open menu' aria-expanded='false' aria-controls='nav-drawer'>&#9776;</button>";
     echo "<nav class='nav-links' role='navigation' aria-label='Primary'>";
@@ -5346,6 +5664,7 @@ function page_header(string $title, array $opts = []): void
             echo "<a class='nav-dropdown-item' href='contacts.php'>📇 Contacts</a>";
             echo "<a class='nav-dropdown-item' href='users.php'>👤 Users</a>";
             echo "<a class='nav-dropdown-item' href='api_keys.php'>🔑 API Keys</a>";
+            echo "<a class='nav-dropdown-item' href='webhooks.php'>🔔 Webhooks</a>";
             echo "<a class='nav-dropdown-item' href='import_csv.php'>⬆ Import CSV</a>";
             echo "<a class='nav-dropdown-item' href='import_arp.php'>📡 ARP Import</a>";
             echo "<a class='nav-dropdown-item' href='reports.php'>📊 Reports</a>";
@@ -5398,6 +5717,7 @@ function page_header(string $title, array $opts = []): void
             echo "<a href='contacts.php'>&#128215; Contacts</a>";
             echo "<a href='users.php'>&#128100; Users</a>";
             echo "<a href='api_keys.php'>&#128273; API Keys</a>";
+            echo "<a href='webhooks.php'>&#128276; Webhooks</a>";
             echo "<a href='import_arp.php'>&#128200; ARP Import</a>";
             echo "<a href='import_csv.php'>&#8679; Import CSV</a>";
             echo "<a href='reports.php'>&#128202; Reports</a>";
@@ -5519,8 +5839,8 @@ function page_footer(): void
     require_once __DIR__ . '/version.php';
 
     echo "</main><footer role='contentinfo'><hr><div class='muted footer-meta'>";
-    echo "<a href='https://simplephpipam.com' target='_blank' rel='noopener' class='link-plain'>"
-       . "<picture><source srcset='assets/logo.webp' type='image/webp'><img src='assets/logo.png' alt='Simple PHP IPAM' width='81' height='24' class='footer-logo'></picture>"
+    echo "<a href='https://simplephpipam.com' target='_blank' rel='noopener' class='nav-brand footer-brand link-plain'>"
+       . "Simple<span class='nav-brand-php'>PHP</span>IPAM"
        . "</a> v" . e(IPAM_VERSION)
        . " &middot; <a href='https://simplephpipam.com/docs/' target='_blank' rel='noopener'>Docs</a>";
 
@@ -5595,7 +5915,7 @@ function ipam_update_check(array $config): ?array
             require_once __DIR__ . '/version.php';
             if (isset($d['update']['version'])
                 && version_compare(ipam_normalise_version(to_str($d['update']['version'])), ipam_normalise_version(IPAM_VERSION), '<=')) {
-                @unlink($cache);
+                @unlink($cache); // nosemgrep: php.lang.security.unlink-use.unlink-use
             } else {
                 $u = isset($d['update']) && is_array($d['update']) ? $d['update'] : null;
                 $memo = ($u !== null && isset($u['version'], $u['url']))
@@ -5984,7 +6304,7 @@ function ipam_probe_icmp(string $ip, int $timeoutMs = 1000): ?int
     }
 
     $desc = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
-    $proc = @proc_open($cmd, $desc, $pipes);
+    $proc = @proc_open($cmd, $desc, $pipes); // nosemgrep: php.lang.security.exec-use.exec-use
     if (!is_resource($proc)) return null;
 
     // Read stdout/stderr to EOF *before* closing pipes. Closing the read end

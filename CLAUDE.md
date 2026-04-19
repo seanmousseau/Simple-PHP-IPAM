@@ -33,7 +33,7 @@ Two cheap calls. The first loads your profile + preferences. The second returns 
 
 ## Project overview
 
-> **Current shipped version: v3.2.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v3.3.0 → v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v3.3.0 describes future work — **do not apply it to current v3.2.x code**. Current-state rules are the ones that do not cite a future version.
+> **Current shipped version: v3.3.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v3.4.0 → v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v3.4.0 describes future work — **do not apply it to current v3.3.x code**. Current-state rules are the ones that do not cite a future version.
 
 Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application built with **PHP 8.2+ and SQLite**. It has **no npm build step** — all CSS and JavaScript are vanilla. Starting in v2.9.0, the application will ship a small, carefully curated set of Composer-managed runtime dependencies bundled into the release tarball, so end users still deploy by extracting the tarball with no build step. The web root is `Simple-PHP-IPAM/` (the subdirectory, not the repo root).
 
@@ -73,6 +73,7 @@ Dev tooling at the repo root (not deployed): `composer.json`, `composer.lock`, `
 | `tags.php` | yes | admin | Tag management (colour-coded tags attached to subnets and addresses) |
 | `users.php` | yes | admin | User management |
 | `api_keys.php` | yes | admin | REST API key management |
+| `webhooks.php` | yes | admin | Outbound webhook management: create, edit, toggle, delete, test-fire, delivery log, retry (v3.3.0) |
 | `change_password.php` | yes | any | Account page: self-service password change, timezone preference, email change with verification (nav label: "Account") |
 | `forgot_password.php` | — | — | Email-based password recovery: submit username/email, sends reset link |
 | `reset_password.php` | — | — | Consumes password reset token, shows new-password form |
@@ -187,7 +188,7 @@ Migrations live in `migrations.php` as an associative array of version string �
 
 **When adding a new version:** add the migration closure, bump `version.php`, update `CHANGELOG.md` (keepachangelog format).
 
-> **Current shipped version: v3.2.0.** The three subsections below (`Creating new data tables in post-v4.0.0 releases`, `Modifying the schema (multi-engine, from v2.9.0 onward)`, `Runtime dependencies`) describe **forward-looking policy** for unreleased versions. Do not apply them to work targeting v3.2.x or earlier. The rules become active on the version indicated in each heading; until then, treat them as design intent to preserve when new work approaches that version.
+> **Current shipped version: v3.3.0.** The three subsections below (`Creating new data tables in post-v4.0.0 releases`, `Modifying the schema (multi-engine, from v2.9.0 onward)`, `Runtime dependencies`) describe **forward-looking policy** for unreleased versions. Do not apply them to work targeting v3.3.x or earlier. The rules become active on the version indicated in each heading; until then, treat them as design intent to preserve when new work approaches that version.
 
 ### Creating new data tables in post-v4.0.0 releases *(applies from v4.1.0+)*
 
@@ -354,7 +355,7 @@ Asset cache-buster: update `?v=X.Y.Z` in the `<link>` and `<script>` tags in `pa
 ### Nav structure
 - Left: nav-links (Dashboard, Subnets, Addresses, Search, Audit, ⚙ Admin dropdown)
 - Right: user dropdown (username + role badge → Theme, Password, Logout)
-- Admin dropdown items: Sites, VLANs, VRFs, Tags, Contacts, Users, DHCP Pools, API Keys, Import CSV, Database Tools
+- Admin dropdown items: Sites, VLANs, VRFs, Tags, Contacts, Users, DHCP Pools, API Keys, Webhooks, Import CSV, Database Tools
 
 ---
 

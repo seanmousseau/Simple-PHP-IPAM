@@ -458,3 +458,36 @@ CREATE TABLE IF NOT EXISTS settings (
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
+
+-- v3.3.0: Outbound webhooks
+CREATE TABLE IF NOT EXISTS webhooks (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  name                  TEXT NOT NULL,
+  url                   TEXT NOT NULL,
+  secret                TEXT NOT NULL,
+  events                TEXT NOT NULL DEFAULT '[]',
+  is_active             INTEGER NOT NULL DEFAULT 1,
+  created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+  last_delivery_at      TEXT,
+  last_delivery_status  INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  webhook_id    INTEGER NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
+  event_type    TEXT NOT NULL,
+  payload       TEXT NOT NULL,
+  signature     TEXT NOT NULL,
+  attempt       INTEGER NOT NULL DEFAULT 1,
+  http_status   INTEGER,
+  response_body TEXT,
+  error         TEXT,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  delivered_at  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_deliveries_wh
+  ON webhook_deliveries(webhook_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_wh_deliveries_pending
+  ON webhook_deliveries(delivered_at, attempt);

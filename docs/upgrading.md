@@ -9,6 +9,7 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
+  - [v3.3.0](#v330) — webhooks, login history, brand polish (no breaking changes)
   - [v3.2.0](#v320) — devices, password recovery, OpenAPI spec (no breaking changes)
   - [v3.0.0](#v300) — **breaking changes**, config.php stub, driver promotion
 
@@ -91,6 +92,22 @@ The backup is left in place after a successful upgrade. You can remove it manual
 ---
 
 ## Version-specific upgrade notes
+
+### v3.3.0
+
+**No breaking changes.** Run `upgrade.sh` as normal — no manual steps required.
+
+**New pages added:**
+- `webhooks.php` — outbound webhook management (admin-only)
+
+**New features:**
+- Outbound webhooks: configure HTTP callbacks fired on address/subnet mutations. HMAC-SHA256 signed. Admin UI at Admin → Webhooks with test-fire, delivery log, and retry. Cron retries failed deliveries (up to 3 attempts). See [Webhooks guide](webhooks.md).
+- Login history: Account page now shows last 20 login events. Users table gains a "Login history" link per user. Audit log accepts `?user_id=N` and `?action=auth.login` deep-link filters.
+- Brand polish: nav and footer use text logo (`SimplePHPIPAM`) in Fira Code monospace; dark mode buttons match marketing-site brand green.
+
+**New settings (Settings → Webhooks):**
+- `webhook.retention_days` — delivery log retention in days (default 30; set to 0 to disable pruning)
+- `webhook.allow_private_ips` — allow private-IP webhook targets (default false; enable for lab environments)
 
 ### v3.2.0
 

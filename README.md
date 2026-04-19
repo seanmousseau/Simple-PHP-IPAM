@@ -1,4 +1,4 @@
-<img width="200" draggable="false" oncontextmenu="return false;" src="https://media.seanmousseau.com/file/seanmousseau/assets/logos/ipam/logo-readme.webp" alt="logo_readme" />
+<img src="logo/banner.svg" alt="Simple PHP IPAM" width="320">
 
 # Simple-PHP-IPAM
 
@@ -8,16 +8,13 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.2.0
+## What's new in v3.3.0
 
-**Devices, password recovery, API spec, and export trends.**
+**Outbound webhooks, login history, and brand polish.**
 
-- **Device records (#394–397).** First-class `devices` and `device_interfaces` tables. Admin CRUD UI at Admin → Devices with type badges (router / switch / server / vm / firewall / other), per-site filtering, and inline interface management. REST API at `?resource=devices` and `?resource=device_interfaces`. Global search returns matching devices. CSV import supports optional `device_name` and `interface_name` columns.
-- **Email password recovery (#541).** New "Forgot password?" flow: single-use token, 1-hour expiry, rate-limited, timing-safe (no username enumeration). `forgot_password.php` + `reset_password.php`.
-- **Email change verification (#542).** Users can update their email address on the Change Password page; a verification link is sent to the new address before the change is applied.
-- **Subnet utilization export trend delta (#318).** `export_subnet_utilization.php` gains `?include_trend=1&trend_days=N`. Appends four columns comparing current utilization to a historical snapshot.
-- **OpenAPI 3.1 spec (#312).** Full machine-readable spec at `?resource=spec` (`Content-Type: application/yaml`). Covers all v3.2.0 resources; Swagger UI compatible.
-- **API versioning header (#427).** Every API response includes `X-IPAM-API-Version: 1`.
+- **Outbound webhooks (#337).** HTTP callbacks fired on address and subnet mutations, HMAC-SHA256 signed (`X-IPAM-Signature`). Admin UI at Admin → Webhooks with test-fire, delivery log, and per-delivery retry. Cron-based retry (up to 3 attempts). SSRF protection blocks private IPs by default.
+- **Login history (#544).** Account page shows last 20 logins. Admins can view any user's login history from the Users table. Audit log gains `?user_id` and `?action` deep-link filters.
+- **Brand polish (#578).** Navigation and footer use the `SimplePHPIPAM` text logo in Fira Code monospace. Dark mode primary buttons and success colors now match the marketing-site brand green.
 
 See [CHANGELOG.md](CHANGELOG.md) for full release history and [docs/upgrading.md](docs/upgrading.md) for the upgrade guide.
 

@@ -14,6 +14,7 @@
   --btnfg:#ffffff;
   --btn-secondary:#eef1f5;
   --btn-secondary-fg:#111111;
+  --brand:#16a34a;
   --badge-bg:#eef1f5;
   --input-bg:#ffffff;
   --shadow:0 1px 2px rgba(0,0,0,.05), 0 6px 16px rgba(0,0,0,.04);
@@ -91,10 +92,11 @@
     --card-2:#1b2230;
     --link:#7ab0ff;
     --danger:#ff5c7a;
-    --success:#42c97a;
+    --success:#22C55E;
     --warn:#ffbf66;
-    --btn:#2b6cff;
-    --btnfg:#ffffff;
+    --btn:#22C55E;
+    --btnfg:#0a1a0d;
+    --brand:#22C55E;
     --btn-secondary:#1b2230;
     --btn-secondary-fg:#e7eaf0;
     --badge-bg:#1b2230;
@@ -117,6 +119,7 @@ html[data-theme="light"]{
   --warn:#b26a00;
   --btn:#111111;
   --btnfg:#ffffff;
+  --brand:#16a34a;
   --btn-secondary:#eef1f5;
   --btn-secondary-fg:#111111;
   --badge-bg:#eef1f5;
@@ -134,10 +137,11 @@ html[data-theme="dark"]{
   --card-2:#1b2230;
   --link:#7ab0ff;
   --danger:#ff5c7a;
-  --success:#42c97a;
+  --success:#22C55E;
   --warn:#ffbf66;
-  --btn:#2b6cff;
-  --btnfg:#ffffff;
+  --btn:#22C55E;
+  --btnfg:#0a1a0d;
+  --brand:#22C55E;
   --btn-secondary:#1b2230;
   --btn-secondary-fg:#e7eaf0;
   --badge-bg:#1b2230;
@@ -206,19 +210,21 @@ h3{font-size:var(--font-size-5xl)}
 .nav-brand{
   display:flex;
   align-items:center;
-  gap:var(--space-3);
+  font-family:var(--font-mono);
   font-weight:600;
   font-size:var(--font-size-4xl);
   color:var(--fg);
   text-decoration:none;
   white-space:nowrap;
   flex-shrink:0;
+  letter-spacing:-.01em;
 }
 .nav-brand:hover{opacity:.8;text-decoration:none}
-.nav-logo{height:48px;width:auto;max-width:220px}
+.nav-brand-php{color:var(--brand)}
+.footer-brand{font-size:var(--font-size-xl);opacity:.85}
 .login-wrap{max-width:400px;margin:var(--space-11) auto 0;padding:0 var(--space-8)}
 .login-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-2xl);padding:36px var(--space-11);box-shadow:var(--shadow)}
-.login-logo{text-align:center;margin-bottom:var(--space-9)}
+.login-logo{text-align:center;margin-bottom:var(--space-9);display:flex;justify-content:center}
 .login-logo img{max-width:200px;height:auto}
 .login-wrap h1{text-align:center;margin:0 0 var(--space-10);font-size:var(--font-size-8xl)}
 .login-wrap .row{flex-direction:column;gap:var(--space-7)}
@@ -767,7 +773,7 @@ details > summary::-webkit-details-marker{display:none}
 .security-banner a.dismiss-link{white-space:nowrap;color:var(--muted);text-decoration:none;font-size:.85em}
 .security-banner a.dismiss-link:hover{text-decoration:underline}
 /* Footer metadata bar */
-.footer-meta{display:flex;align-items:center;gap:var(--space-5);flex-wrap:wrap}
+.footer-meta{display:flex;align-items:center;gap:var(--space-5);flex-wrap:wrap;max-width:1280px;margin:0 auto;padding:var(--space-5) var(--space-9)}
 .footer-meta img{height:24px;width:auto;flex-shrink:0}
 /* Full-width utilization bar (dashboard top-subnets table) */
 .util-bar-block{background:var(--border);border-radius:var(--radius-sm);height:8px;overflow:hidden}
@@ -799,6 +805,7 @@ html[data-theme=dark] .expired-row td{background:rgba(255,80,80,.08)}
 /* Mobile — 768px breakpoint */
 @media (max-width: 768px){
   .page{padding:var(--space-7)}
+  .footer-meta{padding:var(--space-4) var(--space-7)}
   .nav-wrap{
     padding:var(--space-5) var(--space-7);
     gap:var(--space-4);
@@ -827,6 +834,7 @@ html[data-theme=dark] .expired-row td{background:rgba(255,80,80,.08)}
 /* Mobile — 480px breakpoint (small phones) */
 @media (max-width: 480px){
   .page{padding:var(--space-5)}
+  .footer-meta{padding:var(--space-3) var(--space-5)}
   .nav-wrap{padding:var(--space-4) var(--space-5)}
   .nav-pill{padding:var(--space-3) var(--space-4);font-size:var(--font-size-lg)}
   h1{font-size:1.25rem}
@@ -1170,8 +1178,6 @@ td[data-editable].cell-saving{opacity:.5;}
 .cb-item:hover .cb-item-meta,.cb-item.active .cb-item-meta{color:inherit;opacity:.8}
 .cb-empty{padding:var(--space-7) var(--space-8);color:var(--muted);text-align:center}
 
-/* ---- Footer logo ---- */
-.footer-logo{vertical-align:middle;opacity:.7;}
 
 /* ---- CSP-safe utility classes (replaces JS inline style assignments) ---- */
 .hidden{display:none !important;}
