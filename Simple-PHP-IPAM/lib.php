@@ -5440,9 +5440,10 @@ function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $confi
             $ins = $db->prepare(
                 "INSERT INTO webhook_deliveries
                     (webhook_id, event_type, payload, signature, attempt, created_at)
-                 VALUES (:wid, :ev, :pl, :sig, 1, datetime('now'))"
+                 VALUES (:wid, :ev, :pl, :sig, 1, :now)"
             );
-            $ins->execute([':wid' => $hook['id'], ':ev' => $event, ':pl' => $payload, ':sig' => $sig]);
+            $now = gmdate('Y-m-d H:i:s');
+            $ins->execute([':wid' => $hook['id'], ':ev' => $event, ':pl' => $payload, ':sig' => $sig, ':now' => $now]);
             $delId = (int)$db->lastInsertId();
 
             // Attempt synchronous delivery
@@ -5454,7 +5455,7 @@ function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $confi
                  SET http_status   = :st,
                      response_body = :body,
                      error         = :err,
-                     delivered_at  = CASE WHEN :ok THEN datetime('now') ELSE NULL END
+                     delivered_at  = CASE WHEN :ok THEN :now ELSE NULL END
                  WHERE id = :id"
             );
             $upd->execute([
@@ -5463,15 +5464,16 @@ function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $confi
                 ':err'  => $result['error'],
                 ':ok'   => $ok ? 1 : 0,
                 ':id'   => $delId,
+                ':now'  => gmdate('Y-m-d H:i:s'),
             ]);
 
             // Update webhook last-delivery metadata
             $wUpd = $db->prepare(
                 "UPDATE webhooks
-                 SET last_delivery_at = datetime('now'), last_delivery_status = :st
+                 SET last_delivery_at = :now, last_delivery_status = :st
                  WHERE id = :id"
             );
-            $wUpd->execute([':st' => $result['status'], ':id' => $hook['id']]);
+            $wUpd->execute([':st' => $result['status'], ':id' => $hook['id'], ':now' => gmdate('Y-m-d H:i:s')]);
         }
     } catch (\Throwable) {
         // Dispatch must never surface to the user
@@ -5523,7 +5525,7 @@ function ipam_webhook_retry_pending(PDO $db, array $config = []): int
                  http_status   = :st,
                  response_body = :body,
                  error         = :err,
-                 delivered_at  = CASE WHEN :ok THEN datetime('now') ELSE NULL END
+                 delivered_at  = CASE WHEN :ok THEN :now ELSE NULL END
              WHERE id = :id"
         );
         $upd->execute([
@@ -5533,12 +5535,13 @@ function ipam_webhook_retry_pending(PDO $db, array $config = []): int
             ':err'  => $result['error'],
             ':ok'   => $ok ? 1 : 0,
             ':id'   => $row['id'],
+            ':now'  => gmdate('Y-m-d H:i:s'),
         ]);
 
         $wUpd = $db->prepare(
-            "UPDATE webhooks SET last_delivery_at=datetime('now'), last_delivery_status=:st WHERE id=:id"
+            "UPDATE webhooks SET last_delivery_at=:now, last_delivery_status=:st WHERE id=:id"
         );
-        $wUpd->execute([':st' => $result['status'], ':id' => $row['webhook_id']]);
+        $wUpd->execute([':st' => $result['status'], ':id' => $row['webhook_id'], ':now' => gmdate('Y-m-d H:i:s')]);
         $count++;
     }
     return $count;
@@ -5552,10 +5555,11 @@ function ipam_webhook_prune(PDO $db, int $days): int
     if ($days <= 0) {
         return 0;
     }
+    $cutoff = gmdate('Y-m-d H:i:s', time() - $days * 86400);
     $st = $db->prepare(
-        "DELETE FROM webhook_deliveries WHERE created_at < datetime('now', :offset)"
+        "DELETE FROM webhook_deliveries WHERE created_at < :cutoff"
     );
-    $st->execute([':offset' => '-' . $days . ' days']);
+    $st->execute([':cutoff' => $cutoff]);
     return $st->rowCount();
 }
 

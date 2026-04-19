@@ -415,7 +415,8 @@ function wh_status_badge(mixed $status): string
             >Test</button>
 
             <form method='post' style='display:inline'
-              onsubmit="return confirm('Delete webhook <?= e(to_str($wh['name'])) ?>? This will also delete all delivery history.')">
+              data-wh-name='<?= e(to_str($wh['name'])) ?>'
+              onsubmit="return confirm('Delete webhook ' + this.dataset.whName + '? This will also delete all delivery history.')">
               <input type='hidden' name='csrf' value='<?= e(csrf_token()) ?>'>
               <input type='hidden' name='action' value='delete'>
               <input type='hidden' name='id' value='<?= to_int($wh['id']) ?>'>
@@ -572,11 +573,16 @@ function wh_status_badge(mixed $status): string
         .then(d => {
           const colour = d.ok ? '#065f46' : '#991b1b';
           const status = d.status ? `HTTP ${d.status}` : 'No response';
+          function escHtml(s) {
+            const t = document.createElement('div');
+            t.textContent = typeof s === 'string' ? s : String(s);
+            return t.innerHTML;
+          }
           testResult.innerHTML =
             `<p style="color:${colour};font-weight:600">${d.ok ? '✓ Delivered' : '✗ Failed'} &mdash; ${status}</p>` +
-            (d.error ? `<p class="muted">Error: ${d.error}</p>` : '') +
-            `<p class="muted" style="font-size:.8rem">Signature: <code>${d.signature ?? ''}</code></p>` +
-            (d.body ? `<pre style="font-size:.75rem;overflow-x:auto;max-height:120px">${d.body.substring(0,500)}</pre>` : '');
+            (d.error ? `<p class="muted">Error: ${escHtml(d.error)}</p>` : '') +
+            `<p class="muted" style="font-size:.8rem">Signature: <code>${escHtml(d.signature ?? '')}</code></p>` +
+            (d.body ? `<pre style="font-size:.75rem;overflow-x:auto;max-height:120px">${escHtml(d.body.substring(0,500))}</pre>` : '');
         })
         .catch(() => { testResult.textContent = 'Request failed.'; });
     });

@@ -535,6 +535,38 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- ---------------------------------------------------------------------------
+-- webhooks + webhook_deliveries (v3.3.0, #337)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS webhooks (
+  id                    BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  name                  VARCHAR(255) NOT NULL,
+  url                   TEXT NOT NULL,
+  secret                TEXT NOT NULL,
+  events                TEXT NOT NULL DEFAULT '[]',
+  is_active             TINYINT(1) NOT NULL DEFAULT 1,
+  created_at            DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  last_delivery_at      DATETIME NULL,
+  last_delivery_status  INT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  webhook_id    BIGINT UNSIGNED NOT NULL,
+  event_type    VARCHAR(64) NOT NULL,
+  payload       MEDIUMTEXT NOT NULL,
+  signature     VARCHAR(80) NOT NULL,
+  attempt       INT NOT NULL DEFAULT 1,
+  http_status   INT NULL,
+  response_body TEXT NULL,
+  error         TEXT NULL,
+  created_at    DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  delivered_at  DATETIME NULL,
+  KEY idx_wh_deliveries_wh (webhook_id, created_at),
+  KEY idx_wh_deliveries_pending (delivered_at, attempt),
+  CONSTRAINT fk_wd_webhook FOREIGN KEY (webhook_id) REFERENCES webhooks(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- ---------------------------------------------------------------------------
 -- schema_migrations (pre-seeded below with every historical version)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -603,6 +635,7 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.1.0-subnet-alerts-enabled'),
   ('3.1.0-utilization-snapshots'),
   ('3.2.0-devices'),
-  ('3.2.0-password-reset');
+  ('3.2.0-password-reset'),
+  ('3.3.0-webhooks');
 
 SET FOREIGN_KEY_CHECKS = 1;
