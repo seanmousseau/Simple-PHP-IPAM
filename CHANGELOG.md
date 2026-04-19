@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.4.1] - 2026-04-19
+
+### Fixed
+
+- **Migration `3.4.0-dhcp-options`** — replaced `SHOW COLUMNS FROM subnets LIKE :col` with an `information_schema.columns` query for MySQL/MariaDB idempotency check. `SHOW` statements cannot be used as native prepared statements on some MariaDB versions, causing a migration failure (`SQLSTATE[42000]: near '?'`). The `information_schema` approach is portable across all MySQL 5.7+/MariaDB 10.x/MySQL 8.x versions.
+
 ## [3.4.0] - 2026-04-18
 
 ### Added
@@ -879,6 +885,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.4.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.4.0...v3.4.1
 [3.4.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.3.0...v3.4.0
 [3.2.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.0.1...v3.1.0
