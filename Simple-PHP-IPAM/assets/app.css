@@ -224,7 +224,7 @@ h3{font-size:var(--font-size-5xl)}
 .footer-brand{font-size:var(--font-size-xl);opacity:.85}
 .login-wrap{max-width:400px;margin:var(--space-11) auto 0;padding:0 var(--space-8)}
 .login-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius-2xl);padding:36px var(--space-11);box-shadow:var(--shadow)}
-.login-logo{text-align:center;margin-bottom:var(--space-9)}
+.login-logo{text-align:center;margin-bottom:var(--space-9);display:flex;justify-content:center}
 .login-logo img{max-width:200px;height:auto}
 .login-wrap h1{text-align:center;margin:0 0 var(--space-10);font-size:var(--font-size-8xl)}
 .login-wrap .row{flex-direction:column;gap:var(--space-7)}
