@@ -5318,11 +5318,20 @@ function ipam_validate_webhook_url(string $url, array $config = []): bool
     if (str_starts_with($host, '[') && str_ends_with($host, ']')) {
         $host = substr($host, 1, -1);
     }
-    $resolved = gethostbyname($host);
-    if ($resolved === $host && !filter_var($host, FILTER_VALIDATE_IP)) {
-        return false; // DNS resolution failed
+    // Resolve hostname to all addresses (A + AAAA) for dual-stack SSRF safety.
+    // gethostbyname() is IPv4-only; use dns_get_record() to cover AAAA records.
+    if (filter_var($host, FILTER_VALIDATE_IP)) {
+        $ips = [$host];
+    } else {
+        $ips      = [];
+        $aRecs    = @dns_get_record($host, DNS_A);
+        $aaaaRecs = @dns_get_record($host, DNS_AAAA);
+        foreach ((array)$aRecs as $r) { if (isset($r['ip']))   $ips[] = $r['ip']; }
+        foreach ((array)$aaaaRecs as $r) { if (isset($r['ipv6'])) $ips[] = $r['ipv6']; }
+        if (empty($ips)) {
+            return false; // DNS resolution failed / NXDOMAIN
+        }
     }
-    $ip = filter_var($resolved, FILTER_VALIDATE_IP) ? $resolved : $host;
 
     $settingVal   = ipam_setting('webhook.allow_private_ips');
     $configVal    = is_array($config['webhook'] ?? null) ? ($config['webhook']['allow_private_ips'] ?? false) : false;
@@ -5331,15 +5340,18 @@ function ipam_validate_webhook_url(string $url, array $config = []): bool
         return true;
     }
 
-    // Block RFC-1918, loopback, link-local, and IPv6 ULA/loopback
+    // Block RFC-1918, loopback, link-local, and IPv6 ULA/loopback.
+    // ALL resolved addresses must be public (blocks DNS rebinding).
     $privateRanges = [
         ['10.0.0.0',   8],  ['172.16.0.0', 12], ['192.168.0.0', 16],
         ['127.0.0.0',  8],  ['169.254.0.0', 16], ['::1',         128],
         ['fc00::',    7],   ['fe80::',      10],
     ];
-    foreach ($privateRanges as [$net, $prefix]) {
-        if (ip_in_cidr($ip, $net, $prefix)) {
-            return false;
+    foreach ($ips as $ip) {
+        foreach ($privateRanges as [$net, $prefix]) {
+            if (ip_in_cidr($ip, $net, $prefix)) {
+                return false;
+            }
         }
     }
     return true;

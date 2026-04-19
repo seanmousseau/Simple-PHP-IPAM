@@ -563,9 +563,9 @@ CREATE TABLE IF NOT EXISTS webhooks (
   secret                TEXT NOT NULL,
   events                TEXT NOT NULL DEFAULT '[]',
   is_active             SMALLINT NOT NULL DEFAULT 1,
-  created_at            TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
-  last_delivery_at      TIMESTAMP NULL,
-  last_delivery_status  INT NULL
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_delivery_at      TIMESTAMPTZ,
+  last_delivery_status  SMALLINT
 );
 
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
@@ -574,12 +574,12 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
   event_type    TEXT NOT NULL,
   payload       TEXT NOT NULL,
   signature     TEXT NOT NULL,
-  attempt       INT NOT NULL DEFAULT 1,
-  http_status   INT NULL,
-  response_body TEXT NULL,
-  error         TEXT NULL,
-  created_at    TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
-  delivered_at  TIMESTAMP NULL
+  attempt       SMALLINT NOT NULL DEFAULT 1,
+  http_status   SMALLINT,
+  response_body TEXT,
+  error         TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  delivered_at  TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_wh_deliveries_wh ON webhook_deliveries(webhook_id, created_at DESC);

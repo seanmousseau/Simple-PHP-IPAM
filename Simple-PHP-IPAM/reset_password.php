@@ -64,7 +64,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $appName  = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
 $pwPolicy = $config['password_policy'];
-$minLen   = $pwPolicy['min_length'];
+$minLen   = max(1, $pwPolicy['min_length']);
 
 page_header('Reset Password');
 ?>

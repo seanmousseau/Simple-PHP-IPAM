@@ -1489,7 +1489,7 @@ function ipam_migrations(): array
                         name                  VARCHAR(255) NOT NULL,
                         url                   TEXT NOT NULL,
                         secret                VARCHAR(255) NOT NULL,
-                        events                TEXT NOT NULL DEFAULT ('[]'),
+                        events                TEXT NOT NULL,
                         is_active             TINYINT(1) NOT NULL DEFAULT 1,
                         created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                         last_delivery_at      DATETIME NULL,

@@ -12,7 +12,7 @@ return [
     ],
     'demo_mode' => [
         'enabled'    => false,
-        'gate'       => null,
+        'gate'       => NULL,
         'site_key'   => '',
         'secret_key' => '',
     ],

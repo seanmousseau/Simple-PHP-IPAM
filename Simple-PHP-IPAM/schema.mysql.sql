@@ -541,30 +541,30 @@ CREATE TABLE IF NOT EXISTS webhooks (
   id                    BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   name                  VARCHAR(255) NOT NULL,
   url                   TEXT NOT NULL,
-  secret                TEXT NOT NULL,
-  events                TEXT NOT NULL DEFAULT '[]',
+  secret                VARCHAR(255) NOT NULL,
+  events                TEXT NOT NULL,
   is_active             TINYINT(1) NOT NULL DEFAULT 1,
-  created_at            DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   last_delivery_at      DATETIME NULL,
-  last_delivery_status  INT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+  last_delivery_status  SMALLINT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   webhook_id    BIGINT UNSIGNED NOT NULL,
-  event_type    VARCHAR(64) NOT NULL,
+  event_type    VARCHAR(100) NOT NULL,
   payload       MEDIUMTEXT NOT NULL,
-  signature     VARCHAR(80) NOT NULL,
-  attempt       INT NOT NULL DEFAULT 1,
-  http_status   INT NULL,
+  signature     VARCHAR(100) NOT NULL,
+  attempt       TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  http_status   SMALLINT NULL,
   response_body TEXT NULL,
   error         TEXT NULL,
-  created_at    DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   delivered_at  DATETIME NULL,
   KEY idx_wh_deliveries_wh (webhook_id, created_at),
   KEY idx_wh_deliveries_pending (delivered_at, attempt),
   CONSTRAINT fk_wd_webhook FOREIGN KEY (webhook_id) REFERENCES webhooks(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------------
 -- schema_migrations (pre-seeded below with every historical version)
