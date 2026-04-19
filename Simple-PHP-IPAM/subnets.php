@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require __DIR__ . '/init.php';
 /** @var \PDO $db */
+/** @var array<string, mixed> $config */
 require_login();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
@@ -117,6 +118,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         save_contacts_for_entity($db, 'subnet', $newSubnetId, parse_contact_assignments($_POST));
                     }
                     audit($db, 'subnet.create', 'subnet', $newSubnetId, $normalized);
+                    ipam_webhook_dispatch($db, 'subnet.create', ['id' => $newSubnetId, 'cidr' => $normalized, 'description' => $desc], $config);
 
                     if ($doAutoReserve) {
                         auto_reserve_subnet_ips($db, $newSubnetId, $normalized, $gateway);
@@ -214,6 +216,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         }
                         $auditDetails = $normalized . ($alertsEnabled ? '' : ' alerts_disabled');
                         audit($db, 'subnet.update', 'subnet', $id, $auditDetails);
+                        ipam_webhook_dispatch($db, 'subnet.update', ['id' => $id, 'cidr' => $normalized, 'description' => $desc], $config);
                         $msg = 'Subnet updated.';
                         if ($inheritedSiteId !== null) {
                             $inheritedName = $siteMap[$inheritedSiteId] ?? "site #$inheritedSiteId";
@@ -238,6 +241,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $st = $db->prepare("DELETE FROM subnets WHERE id = :id");
         $st->execute([':id' => $id]);
         audit($db, 'subnet.delete', 'subnet', $id, "addresses_deleted={$addrCount}");
+        ipam_webhook_dispatch($db, 'subnet.delete', ['id' => $id, 'addresses_deleted' => $addrCount], $config);
         header('Location: subnets.php');
         exit;
     } elseif ($action === 'save_scan_schedule') {

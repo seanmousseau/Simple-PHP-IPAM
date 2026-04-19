@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require __DIR__ . '/init.php';
 /** @var \PDO $db */
+/** @var array<string, mixed> $config */
 require_login();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -144,6 +145,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'interface_id'    => $interfaceId,
                     ]);
                     audit($db, 'address.create', 'address', $aid, "ip={$norm['ip']} subnet_id=$subnetId");
+                    ipam_webhook_dispatch($db, 'address.create', ['id' => $aid, 'ip' => $norm['ip'], 'subnet_id' => $subnetId], $config);
 
                     flash_set('Address created.');
                     header('Location: addresses.php?subnet_id=' . $subnetId);
@@ -250,6 +252,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 );
 
                 audit($db, 'address.update', 'address', $id, "subnet_id=$subnetId");
+                ipam_webhook_dispatch($db, 'address.update', ['id' => $id, 'subnet_id' => $subnetId], $config);
                 $msg = 'Address updated.';
             }
         }
@@ -269,7 +272,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             audit($db, 'address.update', 'address', $id, "status=$newStatus via inline toggle");
         }
         header('Content-Type: application/json');
-        echo json_encode(['ok' => true, 'status' => $newStatus]); // nosemgrep: php.lang.security.xss
+        echo json_encode(['ok' => true, 'status' => $newStatus]); // nosemgrep: php.lang.security.xss,php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag
         exit;
     } elseif ($action === 'update_cell') {
         // Inline cell edit — JSON response; CSRF already verified above
@@ -320,7 +323,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $after
         );
         audit($db, 'address.update', 'address', $id, "inline_cell=$field");
-        echo json_encode(['ok' => true, 'value' => $value]); // nosemgrep: php.lang.security.xss
+        echo json_encode(['ok' => true, 'value' => $value]); // nosemgrep: php.lang.security.xss,php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag
         exit;
     } elseif ($action === 'delete') {
         require_write_access();
@@ -352,6 +355,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         audit($db, 'address.delete', 'address', $id, "subnet_id=$subnetId");
+        ipam_webhook_dispatch($db, 'address.delete', ['id' => $id, 'subnet_id' => $subnetId], $config);
         flash_set('Address deleted.');
         header('Location: addresses.php?subnet_id=' . $subnetId);
         exit;

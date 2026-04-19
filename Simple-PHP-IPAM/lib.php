@@ -1626,6 +1626,27 @@ function ipam_setting_definitions(): array
             'min'         => 1,
             'max'         => 120,
         ],
+
+        // --- Webhooks ---
+        'webhook.retention_days' => [
+            'label'       => 'Delivery log retention (days)',
+            'description' => 'Webhook delivery log rows older than this are pruned during housekeeping. 0 = keep forever.',
+            'type'        => 'int',
+            'group'       => 'webhooks',
+            'default'     => 30,
+            'sensitive'   => false,
+            'config_key'  => null,
+            'min'         => 0,
+        ],
+        'webhook.allow_private_ips' => [
+            'label'       => 'Allow private IP webhook targets',
+            'description' => 'When enabled, outbound webhook deliveries may target RFC-1918 / loopback addresses. Enable only in isolated dev/test environments.',
+            'type'        => 'bool',
+            'group'       => 'webhooks',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
     ];
 }
 
@@ -1651,6 +1672,7 @@ function ipam_setting_groups(): array
         'api'                  => ['label' => 'API',                  'description' => 'Rate limiting and bulk write limits for the REST API.'],
         'display'              => ['label' => 'Display',              'description' => 'Utilization thresholds, auto-reserve defaults, and UI toggles.'],
         'smtp'                 => ['label' => 'SMTP / Email Delivery', 'description' => 'Direct SMTP delivery for utilization alerts. Falls back to native mail() when disabled.'],
+        'webhooks'             => ['label' => 'Webhooks',             'description' => 'Outbound HMAC-signed HTTP callbacks on address and subnet changes.'],
     ];
 }
 
@@ -5270,6 +5292,268 @@ function subnet_overlap_warning_text(array $overlaps): string
         $parts[] = 'parent of: ' . $list;
     }
     return 'Hierarchy notice — this subnet is ' . implode('; and ', $parts) . '. Verify this nesting is intentional.';
+}
+
+/* ---------------- Webhook helpers ---------------- */
+
+/**
+ * Validate a webhook target URL for SSRF safety.
+ * Returns false if the URL scheme is not http/https, the hostname cannot be
+ * resolved, or the resolved IP falls in a private/loopback range (unless
+ * webhook.allow_private_ips is true in settings).
+ *
+ * @param array<string, mixed> $config
+ */
+function ipam_validate_webhook_url(string $url, array $config = []): bool
+{
+    $parts = parse_url($url);
+    if ($parts === false || !isset($parts['scheme'], $parts['host'])) {
+        return false;
+    }
+    if (!in_array(strtolower($parts['scheme']), ['http', 'https'], true)) {
+        return false;
+    }
+    $host = $parts['host'];
+    // Strip IPv6 brackets
+    if (str_starts_with($host, '[') && str_ends_with($host, ']')) {
+        $host = substr($host, 1, -1);
+    }
+    $resolved = gethostbyname($host);
+    if ($resolved === $host && !filter_var($host, FILTER_VALIDATE_IP)) {
+        return false; // DNS resolution failed
+    }
+    $ip = filter_var($resolved, FILTER_VALIDATE_IP) ? $resolved : $host;
+
+    $settingVal   = ipam_setting('webhook.allow_private_ips');
+    $configVal    = is_array($config['webhook'] ?? null) ? ($config['webhook']['allow_private_ips'] ?? false) : false;
+    $allowPrivate = (bool)($settingVal ?? $configVal);
+    if ($allowPrivate) {
+        return true;
+    }
+
+    // Block RFC-1918, loopback, link-local, and IPv6 ULA/loopback
+    $privateRanges = [
+        ['10.0.0.0',   8],  ['172.16.0.0', 12], ['192.168.0.0', 16],
+        ['127.0.0.0',  8],  ['169.254.0.0', 16], ['::1',         128],
+        ['fc00::',    7],   ['fe80::',      10],
+    ];
+    foreach ($privateRanges as [$net, $prefix]) {
+        if (ip_in_cidr($ip, $net, $prefix)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/** Sign a webhook payload with HMAC-SHA256. */
+function ipam_webhook_sign(string $payload, string $secret): string
+{
+    return 'sha256=' . hash_hmac('sha256', $payload, $secret);
+}
+
+/**
+ * Attempt a single HTTP delivery of a webhook payload via ext-curl.
+ * Returns ['status' => int|null, 'body' => string, 'error' => string|null].
+ *
+ * @param array<string, mixed> $webhook  Row from the webhooks table
+ * @return array{status: int|null, body: string, error: string|null}
+ */
+function ipam_webhook_deliver(array $webhook, string $eventType, string $payload, string $signature): array
+{
+    require_once __DIR__ . '/version.php';
+    $ch = curl_init();
+    if ($ch === false) {
+        return ['status' => null, 'body' => '', 'error' => 'curl_init() failed'];
+    }
+    $url = to_str($webhook['url']);
+    if ($url === '') {
+        curl_close($ch);
+        return ['status' => null, 'body' => '', 'error' => 'empty webhook URL'];
+    }
+    curl_setopt($ch, CURLOPT_URL,            $url);
+    curl_setopt($ch, CURLOPT_POST,           true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS,     $payload);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT,        5);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_MAXREDIRS,      3);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
+    curl_setopt($ch, CURLOPT_HTTPHEADER,     [
+        'Content-Type: application/json',
+        'X-IPAM-Signature: ' . $signature,
+        'X-IPAM-Event: ' . $eventType,
+        'User-Agent: SimpleIPAM/' . IPAM_VERSION,
+    ]);
+    $body   = (string)curl_exec($ch);
+    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE) ?: null;
+    $err    = curl_errno($ch) ? curl_error($ch) : null;
+    curl_close($ch);
+    // Truncate response body to 2KB for storage
+    return ['status' => $status ?: null, 'body' => substr($body, 0, 2048), 'error' => $err];
+}
+
+/**
+ * Dispatch a webhook event to all active subscribers.
+ * Never throws — dispatch failures are silently swallowed so the triggering
+ * action always succeeds.
+ *
+ * @param array<string, mixed> $data    Entity snapshot to include in payload
+ * @param array<string, mixed> $config
+ */
+function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $config = []): void
+{
+    try {
+        require_once __DIR__ . '/version.php';
+        $u = current_user();
+
+        // Find active webhooks subscribed to this event
+        $eventLike = '%"' . $event . '"%';
+        $hooks = $db->prepare(
+            "SELECT id, url, secret FROM webhooks
+             WHERE is_active = 1 AND events LIKE :ev"
+        );
+        $hooks->execute([':ev' => $eventLike]);
+        $rows = $hooks->fetchAll();
+        if (!$rows) {
+            return;
+        }
+
+        $payload = json_encode([
+            'event'     => $event,
+            'timestamp' => gmdate('Y-m-d\TH:i:s\Z'),
+            'version'   => IPAM_VERSION,
+            'actor'     => ['user_id' => $u['id'] ?? null, 'username' => $u['username'] ?? 'system'],
+            'data'      => $data,
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if ($payload === false) {
+            return;
+        }
+
+        foreach ($rows as $hook) {
+            if (!ipam_validate_webhook_url((string)$hook['url'], $config)) {
+                continue;
+            }
+            $sig = ipam_webhook_sign($payload, (string)$hook['secret']);
+
+            // Insert pending delivery row
+            $ins = $db->prepare(
+                "INSERT INTO webhook_deliveries
+                    (webhook_id, event_type, payload, signature, attempt, created_at)
+                 VALUES (:wid, :ev, :pl, :sig, 1, datetime('now'))"
+            );
+            $ins->execute([':wid' => $hook['id'], ':ev' => $event, ':pl' => $payload, ':sig' => $sig]);
+            $delId = (int)$db->lastInsertId();
+
+            // Attempt synchronous delivery
+            $result = ipam_webhook_deliver($hook, $event, $payload, $sig);
+
+            $ok = $result['status'] !== null && $result['status'] >= 200 && $result['status'] < 300;
+            $upd = $db->prepare(
+                "UPDATE webhook_deliveries
+                 SET http_status   = :st,
+                     response_body = :body,
+                     error         = :err,
+                     delivered_at  = CASE WHEN :ok THEN datetime('now') ELSE NULL END
+                 WHERE id = :id"
+            );
+            $upd->execute([
+                ':st'   => $result['status'],
+                ':body' => $result['body'],
+                ':err'  => $result['error'],
+                ':ok'   => $ok ? 1 : 0,
+                ':id'   => $delId,
+            ]);
+
+            // Update webhook last-delivery metadata
+            $wUpd = $db->prepare(
+                "UPDATE webhooks
+                 SET last_delivery_at = datetime('now'), last_delivery_status = :st
+                 WHERE id = :id"
+            );
+            $wUpd->execute([':st' => $result['status'], ':id' => $hook['id']]);
+        }
+    } catch (\Throwable) {
+        // Dispatch must never surface to the user
+    }
+}
+
+/**
+ * Retry pending webhook deliveries (called from cron.php).
+ * Applies exponential backoff: attempt 2 waits 1 min, attempt 3 waits 5 min.
+ * Returns count of delivery rows attempted.
+ *
+ * @param array<string, mixed> $config
+ */
+function ipam_webhook_retry_pending(PDO $db, array $config = []): int
+{
+    $due = $db->query(
+        "SELECT d.id, d.webhook_id, d.event_type, d.payload, d.signature, d.attempt,
+                w.url, w.secret
+         FROM webhook_deliveries d
+         JOIN webhooks w ON w.id = d.webhook_id
+         WHERE d.delivered_at IS NULL
+           AND d.attempt < 3
+           AND w.is_active = 1
+           AND (
+               (d.attempt = 1 AND d.created_at <= datetime('now', '-1 minute'))
+            OR (d.attempt = 2 AND d.created_at <= datetime('now', '-5 minutes'))
+           )"
+    );
+    if ($due === false) {
+        return 0;
+    }
+    $rows  = $due->fetchAll();
+    $count = 0;
+    foreach ($rows as $row) {
+        if (!ipam_validate_webhook_url((string)$row['url'], $config)) {
+            continue;
+        }
+        $hook    = ['url' => $row['url'], 'secret' => $row['secret'], 'id' => $row['webhook_id']];
+        $result  = ipam_webhook_deliver($hook, (string)$row['event_type'], (string)$row['payload'], (string)$row['signature']);
+        $attempt = (int)$row['attempt'] + 1;
+        $ok      = $result['status'] !== null && $result['status'] >= 200 && $result['status'] < 300;
+
+        $upd = $db->prepare(
+            "UPDATE webhook_deliveries
+             SET attempt       = :att,
+                 http_status   = :st,
+                 response_body = :body,
+                 error         = :err,
+                 delivered_at  = CASE WHEN :ok THEN datetime('now') ELSE NULL END
+             WHERE id = :id"
+        );
+        $upd->execute([
+            ':att'  => $attempt,
+            ':st'   => $result['status'],
+            ':body' => $result['body'],
+            ':err'  => $result['error'],
+            ':ok'   => $ok ? 1 : 0,
+            ':id'   => $row['id'],
+        ]);
+
+        $wUpd = $db->prepare(
+            "UPDATE webhooks SET last_delivery_at=datetime('now'), last_delivery_status=:st WHERE id=:id"
+        );
+        $wUpd->execute([':st' => $result['status'], ':id' => $row['webhook_id']]);
+        $count++;
+    }
+    return $count;
+}
+
+/**
+ * Prune old webhook delivery rows. Returns count deleted.
+ */
+function ipam_webhook_prune(PDO $db, int $days): int
+{
+    if ($days <= 0) {
+        return 0;
+    }
+    $st = $db->prepare(
+        "DELETE FROM webhook_deliveries WHERE created_at < datetime('now', :offset)"
+    );
+    $st->execute([':offset' => '-' . $days . ' days']);
+    return $st->rowCount();
 }
 
 /* ---------------- UI helpers ---------------- */

@@ -273,7 +273,7 @@ page_header('Users');
 <h1>Users</h1>
 <?php if ($errors): ?>
   <ul class="danger list-indent">
-    <?php foreach ($errors as $e_msg): ?><li><?= e(to_str($e_msg)) ?></li><?php endforeach; ?>
+    <?php foreach ($errors as $e_msg): ?><li><?= e(to_str($e_msg)) ?></li><?php endforeach; // nosemgrep: php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag ?>
   </ul>
 <?php endif; ?>
 <?php if ($msg): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
@@ -431,6 +431,8 @@ page_header('Users');
                 <button type="submit" class="button-danger">Delete user</button>
               </form>
             <?php endif; ?>
+
+            <a class="button-secondary" href="<?= e('audit.php?user_id=' . to_int($u['id']) . '&action=auth.login') ?>">Login history</a>
 
           </div>
         </details>
