@@ -1,4 +1,4 @@
-<img width="200" draggable="false" oncontextmenu="return false;" src="https://media.seanmousseau.com/file/seanmousseau/assets/logos/ipam/logo-readme.webp" alt="logo_readme" />
+<img src="logo/banner.svg" alt="Simple PHP IPAM" width="320">
 
 # Simple-PHP-IPAM
 

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 56" width="340" height="56" role="img" aria-label="Simple PHP IPAM">
+  <!-- Dark-context version: light text + bright green PHP accent -->
+  <!-- Use on dark/navy backgrounds -->
+  <text x="8" y="42"
+        font-family="'Fira Code','JetBrains Mono','Menlo','Monaco','Consolas',monospace"
+        font-size="38"
+        font-weight="500">
+    <tspan fill="#e7eaf0">Simple</tspan><tspan fill="#22C55E">PHP</tspan><tspan fill="#e7eaf0">IPAM</tspan>
+  </text>
+</svg>
