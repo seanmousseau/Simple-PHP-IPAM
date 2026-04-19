@@ -5300,12 +5300,12 @@ function page_header(string $title, array $opts = []): void
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png'>";
-    echo "<link rel='stylesheet' href='assets/vendor/open-props.min.css?v=3.2.0'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=3.2.0'>";
+    echo "<link rel='stylesheet' href='assets/vendor/open-props.min.css?v=3.3.0'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=3.3.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=3.2.0'></script>";
+    echo "<script defer src='assets/app.js?v=3.3.0'></script>";
     $pageAttr = isset($opts['page']) && $opts['page'] !== ''
         ? " data-page='" . e(to_str($opts['page'])) . "'"
         : '';
@@ -5320,7 +5320,7 @@ function page_header(string $title, array $opts = []): void
 
     echo "<header role='banner'><div class='topbar'><div class='nav-wrap'>";
     echo "<a href='dashboard.php' class='nav-brand'>"
-       . "<picture><source srcset='assets/logo.webp' type='image/webp'><img src='assets/logo.png' alt='' class='nav-logo' aria-hidden='true' width='161' height='48'></picture>"
+       . "Simple<span class='nav-brand-php'>PHP</span>IPAM"
        . "</a>";
     echo "<button class='nav-toggle' id='nav-toggle' aria-label='Open menu' aria-expanded='false' aria-controls='nav-drawer'>&#9776;</button>";
     echo "<nav class='nav-links' role='navigation' aria-label='Primary'>";
@@ -5346,6 +5346,7 @@ function page_header(string $title, array $opts = []): void
             echo "<a class='nav-dropdown-item' href='contacts.php'>📇 Contacts</a>";
             echo "<a class='nav-dropdown-item' href='users.php'>👤 Users</a>";
             echo "<a class='nav-dropdown-item' href='api_keys.php'>🔑 API Keys</a>";
+            echo "<a class='nav-dropdown-item' href='webhooks.php'>🔔 Webhooks</a>";
             echo "<a class='nav-dropdown-item' href='import_csv.php'>⬆ Import CSV</a>";
             echo "<a class='nav-dropdown-item' href='import_arp.php'>📡 ARP Import</a>";
             echo "<a class='nav-dropdown-item' href='reports.php'>📊 Reports</a>";
@@ -5519,8 +5520,8 @@ function page_footer(): void
     require_once __DIR__ . '/version.php';
 
     echo "</main><footer role='contentinfo'><hr><div class='muted footer-meta'>";
-    echo "<a href='https://simplephpipam.com' target='_blank' rel='noopener' class='link-plain'>"
-       . "<picture><source srcset='assets/logo.webp' type='image/webp'><img src='assets/logo.png' alt='Simple PHP IPAM' width='81' height='24' class='footer-logo'></picture>"
+    echo "<a href='https://simplephpipam.com' target='_blank' rel='noopener' class='nav-brand footer-brand link-plain'>"
+       . "Simple<span class='nav-brand-php'>PHP</span>IPAM"
        . "</a> v" . e(IPAM_VERSION)
        . " &middot; <a href='https://simplephpipam.com/docs/' target='_blank' rel='noopener'>Docs</a>";
 
