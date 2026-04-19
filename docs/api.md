@@ -1422,3 +1422,10 @@ DELETE ?resource=device_interfaces&id=N
 ```
 
 Linked address `interface_id` columns are SET NULL.
+
+
+---
+
+## DHCP config export
+
+DHCP configuration export (ISC `dhcpd.conf` and Kea 2.x JSON) is available via the `export_dhcp.php` endpoint. This is a UI-only feature in v3.4.0 and is not part of the `api.php` REST API. See [DHCP Config Export](dhcp-export.md) for full documentation.

@@ -1,2 +1,6 @@
 parameters:
 	ignoreErrors:
+		-
+			message: '#Variable \$db might not be defined\.#'
+			path: Simple-PHP-IPAM/export_dhcp.php
+			count: 3

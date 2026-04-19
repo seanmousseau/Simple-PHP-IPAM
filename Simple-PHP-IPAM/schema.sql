@@ -78,6 +78,13 @@ CREATE TABLE IF NOT EXISTS subnets (
   vlan_fk     INTEGER REFERENCES vlans(id) ON DELETE SET NULL,  -- v2.0.0: FK to vlans table
   vrf_id          INTEGER REFERENCES vrfs(id) ON DELETE RESTRICT,   -- v2.1.0: FK to vrfs table; RESTRICT prevents orphaned subnets moving to global VRF
   alerts_enabled  INTEGER NOT NULL DEFAULT 1,                       -- v3.1.0 #457: 0 disables utilization alerts for this subnet
+  dhcp_routers     TEXT,                                             -- v3.4.0 #402: comma-sep gateway IPs → dhcpd option routers
+  dhcp_dns_servers TEXT,                                             -- v3.4.0 #402: comma-sep DNS IPs → option domain-name-servers
+  dhcp_domain_name TEXT,                                             -- v3.4.0 #402: domain name → option domain-name
+  dhcp_lease_default INTEGER,                                        -- v3.4.0 #402: seconds → default-lease-time
+  dhcp_lease_max   INTEGER,                                          -- v3.4.0 #402: seconds → max-lease-time
+  dhcp_next_server TEXT,                                             -- v3.4.0 #402: TFTP server IP → next-server (PXE)
+  dhcp_boot_filename TEXT,                                           -- v3.4.0 #402: boot file → filename (PXE)
   created_at  TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(cidr, vrf_id)

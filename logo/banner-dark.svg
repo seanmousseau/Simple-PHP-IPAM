@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 80" width="400" height="80" role="img" aria-label="Simple PHP IPAM">
+  <!-- Combined lockup: network mark + text logo — dark-context version -->
+  <!-- Use on dark backgrounds (GitHub dark mode README, dark docs) -->
+
+  <!-- Network mark — scaled to 72×72, vertically centred in 80px height -->
+  <!-- Dark variant: transparent background, light-tinted node fills -->
+  <g transform="translate(0, 4) scale(0.72)">
+    <rect width="100" height="100" rx="18" fill="none"/>
+    <line x1="32" y1="50" x2="70" y2="26" stroke="#22C55E" stroke-width="6" stroke-linecap="round"/>
+    <line x1="32" y1="50" x2="70" y2="74" stroke="#22C55E" stroke-width="6" stroke-linecap="round"/>
+    <line x1="70" y1="26" x2="70" y2="74" stroke="#22C55E" stroke-width="6" stroke-linecap="round"/>
+    <circle cx="32" cy="50" r="11" fill="#22C55E"/>
+    <circle cx="70" cy="26" r="8" fill="#22C55E"/>
+    <circle cx="70" cy="74" r="8" fill="#22C55E"/>
+  </g>
+
+  <!-- Text logo — baseline aligned to cap-height centre of the mark -->
+  <text x="86" y="52"
+        font-family="'Fira Code','JetBrains Mono','Menlo','Monaco','Consolas',monospace"
+        font-size="38"
+        font-weight="500">
+    <tspan fill="#e7eaf0">Simple</tspan><tspan fill="#22C55E">PHP</tspan><tspan fill="#e7eaf0">IPAM</tspan>
+  </text>
+</svg>

@@ -159,11 +159,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $vrfId = to_int($_POST['vrf_id'] ?? 0) ?: null;
         $alertsEnabled = isset($_POST['alerts_enabled']) ? 1 : 0;
 
+        // DHCP options — nullable; empty string → NULL stored
+        $dhcpRouters      = trim(to_str($_POST['dhcp_routers'] ?? '')) ?: null;
+        $dhcpDnsServers   = trim(to_str($_POST['dhcp_dns_servers'] ?? '')) ?: null;
+        $dhcpDomainName   = trim(to_str($_POST['dhcp_domain_name'] ?? '')) ?: null;
+        $dhcpLeaseDefaultRaw = trim(to_str($_POST['dhcp_lease_default'] ?? ''));
+        $dhcpLeaseMaxRaw     = trim(to_str($_POST['dhcp_lease_max'] ?? ''));
+        $dhcpLeaseDefault    = $dhcpLeaseDefaultRaw === '' ? null : to_int($dhcpLeaseDefaultRaw);
+        $dhcpLeaseMax        = $dhcpLeaseMaxRaw     === '' ? null : to_int($dhcpLeaseMaxRaw);
+        $dhcpNextServer   = trim(to_str($_POST['dhcp_next_server'] ?? '')) ?: null;
+        $dhcpBootFilename = trim(to_str($_POST['dhcp_boot_filename'] ?? '')) ?: null;
+
+        if ($dhcpRouters !== null) {
+            foreach (array_map('trim', explode(',', $dhcpRouters)) as $dhcpIp) {
+                if ($dhcpIp !== '' && !filter_var($dhcpIp, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                    $err = 'Invalid IP in DHCP routers: ' . e($dhcpIp);
+                    break;
+                }
+            }
+        }
+        if (!$err && $dhcpDnsServers !== null) {
+            foreach (array_map('trim', explode(',', $dhcpDnsServers)) as $dhcpIp) {
+                if ($dhcpIp !== '' && !filter_var($dhcpIp, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                    $err = 'Invalid IP in DHCP DNS servers (IPv4 only): ' . e($dhcpIp);
+                    break;
+                }
+            }
+        }
+        if (!$err && $dhcpNextServer !== null && !filter_var($dhcpNextServer, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            $err = 'Invalid DHCP next-server IP.';
+        }
+        if (!$err && $dhcpLeaseDefault !== null && $dhcpLeaseDefault < 60) {
+            $err = 'Default DHCP lease must be at least 60 seconds.';
+        }
+        if (!$err && $dhcpLeaseMax !== null && $dhcpLeaseMax < 60) {
+            $err = 'Max DHCP lease must be at least 60 seconds.';
+        }
+        if (!$err && $dhcpLeaseDefault !== null && $dhcpLeaseMax !== null && $dhcpLeaseDefault > $dhcpLeaseMax) {
+            $err = 'Default DHCP lease cannot exceed max lease time.';
+        }
+
         $p = parse_cidr($cidr);
         if (!$p) {
             $err = 'Invalid CIDR.';
         }
-        if (!$err) {
+        if ($p !== null && !$err) {
             $normalized = $p['network'] . '/' . $p['prefix'];
             $overlaps = detect_subnet_overlaps($db, $normalized, $id, $vrfId);
             // Inherit site from tightest parent if one exists
@@ -181,6 +221,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'site_id' => $siteId ?? 0, 'vlan_fk' => $vlanFk ?? 0, 'vrf_id' => $vrfId ?? 0,
                     'alerts_enabled' => $alertsEnabled,
                     'contacts' => json_encode($pendingContacts),
+                    'dhcp_routers' => $dhcpRouters, 'dhcp_dns_servers' => $dhcpDnsServers,
+                    'dhcp_domain_name' => $dhcpDomainName, 'dhcp_lease_default' => $dhcpLeaseDefault,
+                    'dhcp_lease_max' => $dhcpLeaseMax, 'dhcp_next_server' => $dhcpNextServer,
+                    'dhcp_boot_filename' => $dhcpBootFilename,
                 ];
             } else {
                 $dupChk = $db->prepare("SELECT id FROM subnets WHERE cidr = :cidr AND " . ipam_dialect()->null_safe_eq("vrf_id", ":vrf") . " AND id != :self");
@@ -191,7 +235,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     try {
                         // #410/#388: bind network_bin via ipam_bind_binary() (PARAM_LOB).
                         $st = $db->prepare("UPDATE subnets
-                                            SET cidr=:cidr, ip_version=:ver, network=:net, network_bin=:nb, prefix=:pre, description=:d, notes=:notes, site_id=:site, vlan_id=:vlan, vlan_fk=:vfk, vrf_id=:vrf, alerts_enabled=:ae
+                                            SET cidr=:cidr, ip_version=:ver, network=:net, network_bin=:nb, prefix=:pre, description=:d, notes=:notes, site_id=:site, vlan_id=:vlan, vlan_fk=:vfk, vrf_id=:vrf, alerts_enabled=:ae,
+                                                dhcp_routers=:dr, dhcp_dns_servers=:dds, dhcp_domain_name=:ddn,
+                                                dhcp_lease_default=:dld, dhcp_lease_max=:dlm,
+                                                dhcp_next_server=:dns2, dhcp_boot_filename=:dbf
                                             WHERE id=:id");
                         $st->bindValue(':cidr',  $normalized);
                         $st->bindValue(':ver',   $p['version'], PDO::PARAM_INT);
@@ -205,6 +252,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $st->bindValue(':vfk',   $vlanFk, $vlanFk === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                         $st->bindValue(':vrf',   $vrfId,  $vrfId  === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                         $st->bindValue(':ae',    $alertsEnabled, PDO::PARAM_INT);
+                        $st->bindValue(':dr',    $dhcpRouters,      $dhcpRouters      === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
+                        $st->bindValue(':dds',   $dhcpDnsServers,   $dhcpDnsServers   === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
+                        $st->bindValue(':ddn',   $dhcpDomainName,   $dhcpDomainName   === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
+                        $st->bindValue(':dld',   $dhcpLeaseDefault, $dhcpLeaseDefault === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                        $st->bindValue(':dlm',   $dhcpLeaseMax,     $dhcpLeaseMax     === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                        $st->bindValue(':dns2',  $dhcpNextServer,   $dhcpNextServer   === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
+                        $st->bindValue(':dbf',   $dhcpBootFilename, $dhcpBootFilename === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
                         $st->bindValue(':id',    $id,    PDO::PARAM_INT);
                         $st->execute();
                         // Clear alert_state rows when alerts are disabled (#457)
@@ -297,6 +351,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $st = $db->prepare("
     SELECT s.id, s.cidr, s.ip_version, s.network, s.network_bin, s.prefix, s.description, s.notes, s.updated_at, s.site_id, s.vlan_id, s.vlan_fk, s.vrf_id, s.alerts_enabled,
+           s.dhcp_routers, s.dhcp_dns_servers, s.dhcp_domain_name,
+           s.dhcp_lease_default, s.dhcp_lease_max, s.dhcp_next_server, s.dhcp_boot_filename,
            v.name AS vlan_name, vr.name AS vrf_name,
            ss.method AS scan_method, ss.tcp_port AS scan_tcp_port,
            ss.interval_minutes AS scan_interval, ss.is_active AS scan_active,
@@ -424,6 +480,13 @@ function render_subnet_node_local(PDO $db, array $tree, array $siteMap, array $s
            . " data-depth='" . $depth . "'"
            . " data-contacts='" . e(json_encode(get_contacts_for_entity($db, 'subnet', to_int($row['id'])), JSON_UNESCAPED_SLASHES) ?: '[]') . "'"
            . " data-alerts-enabled='" . (to_int($row['alerts_enabled'] ?? 1) ? '1' : '0') . "'"
+           . " data-dhcp-routers='" . e(to_str($row['dhcp_routers'] ?? '')) . "'"
+           . " data-dhcp-dns-servers='" . e(to_str($row['dhcp_dns_servers'] ?? '')) . "'"
+           . " data-dhcp-domain-name='" . e(to_str($row['dhcp_domain_name'] ?? '')) . "'"
+           . " data-dhcp-lease-default='" . e(to_str($row['dhcp_lease_default'] ?? '')) . "'"
+           . " data-dhcp-lease-max='" . e(to_str($row['dhcp_lease_max'] ?? '')) . "'"
+           . " data-dhcp-next-server='" . e(to_str($row['dhcp_next_server'] ?? '')) . "'"
+           . " data-dhcp-boot-filename='" . e(to_str($row['dhcp_boot_filename'] ?? '')) . "'"
            . ">Edit</button>";
     }
     echo "<a class='action-pill' href='addresses.php?subnet_id=" . to_int($row['id']) . "'>View Addresses</a>";
@@ -506,6 +569,16 @@ ipam_skeleton_flush();
       <input type="hidden" name="vlan_fk" value="<?= to_int($pendingData['vlan_fk'] ?? 0) ?>">
       <input type="hidden" name="vrf_id" value="<?= to_int($pendingData['vrf_id'] ?? 0) ?>">
       <input type="hidden" name="alerts_enabled" value="<?= to_int($pendingData['alerts_enabled'] ?? 1) ?>">
+      <?php foreach (['dhcp_routers','dhcp_dns_servers','dhcp_domain_name','dhcp_next_server','dhcp_boot_filename'] as $_dhcpKey): ?>
+        <?php if (isset($pendingData[$_dhcpKey])): ?>
+          <input type="hidden" name="<?= e($_dhcpKey) ?>" value="<?= e(to_str($pendingData[$_dhcpKey])) ?>">
+        <?php endif; ?>
+      <?php endforeach; ?>
+      <?php foreach (['dhcp_lease_default','dhcp_lease_max'] as $_dhcpKey): ?>
+        <?php if (isset($pendingData[$_dhcpKey])): ?>
+          <input type="hidden" name="<?= e($_dhcpKey) ?>" value="<?= to_int($pendingData[$_dhcpKey]) ?>">
+        <?php endif; ?>
+      <?php endforeach; ?>
       <?php if (isset($pendingData['auto_reserve'])): ?>
         <input type="hidden" name="auto_reserve" value="<?= to_int($pendingData['auto_reserve']) ?>">
         <input type="hidden" name="gateway" value="<?= e(to_str($pendingData['gateway'] ?? '')) ?>">
@@ -683,6 +756,27 @@ ipam_skeleton_flush();
       <input type="checkbox" name="alerts_enabled" value="1" id="subnet-edit-alerts" checked>
       Send utilization alerts for this subnet
     </label>
+    <details class="dhcp-options-group" style="margin-top:1rem;">
+      <summary style="cursor:pointer;font-weight:600;">DHCP Options <span class="muted font-xs">(optional — IPv4 only)</span></summary>
+      <div style="margin-top:0.5rem;display:flex;flex-direction:column;gap:0.5rem;">
+        <label>Default gateway(s) <span class="muted font-xs">comma-separated IPs</span><br>
+          <input name="dhcp_routers" id="subnet-edit-dhcp-routers" placeholder="e.g. 10.0.0.1"></label>
+        <label>DNS server(s) <span class="muted font-xs">comma-separated IPs</span><br>
+          <input name="dhcp_dns_servers" id="subnet-edit-dhcp-dns-servers" placeholder="e.g. 8.8.8.8, 8.8.4.4"></label>
+        <label>Domain name<br>
+          <input name="dhcp_domain_name" id="subnet-edit-dhcp-domain-name" placeholder="e.g. example.com"></label>
+        <div style="display:flex;gap:0.75rem;">
+          <label style="flex:1">Default lease <span class="muted font-xs">seconds</span><br>
+            <input name="dhcp_lease_default" id="subnet-edit-dhcp-lease-default" type="number" min="60" placeholder="e.g. 3600"></label>
+          <label style="flex:1">Max lease <span class="muted font-xs">seconds</span><br>
+            <input name="dhcp_lease_max" id="subnet-edit-dhcp-lease-max" type="number" min="60" placeholder="e.g. 86400"></label>
+        </div>
+        <label>TFTP next-server <span class="muted font-xs">PXE boot</span><br>
+          <input name="dhcp_next_server" id="subnet-edit-dhcp-next-server" placeholder="e.g. 10.0.0.1"></label>
+        <label>Boot filename <span class="muted font-xs">PXE boot</span><br>
+          <input name="dhcp_boot_filename" id="subnet-edit-dhcp-boot-filename" placeholder="e.g. pxelinux.0"></label>
+      </div>
+    </details>
     <button type="submit">Save</button>
   </form>
   <form method="post" action="subnets.php" data-confirm="Delete subnet and all its addresses?" class="mt-8" id="subnet-delete-form">

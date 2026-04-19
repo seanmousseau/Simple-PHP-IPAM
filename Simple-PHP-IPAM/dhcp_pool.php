@@ -296,6 +296,31 @@ page_header('DHCP Pools');
 <?php if ($msg): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
 
 <div class="card mt-16">
+  <h2>Export DHCP Config</h2>
+  <p class="muted">Generate a server-ready config from your DHCP pool reservations. Reservations with a MAC address are included; addresses without a MAC are skipped.</p>
+
+  <details id="dhcp-export-subnet-picker" style="margin-bottom:0.75rem;">
+    <summary style="cursor:pointer;font-weight:600;">Subnets to include <span class="muted font-xs" id="dhcp-export-count">(all <?= count($subnets) ?>)</span></summary>
+    <div style="margin-top:0.5rem;display:flex;flex-direction:column;gap:0.25rem;max-height:200px;overflow-y:auto;" id="dhcp-export-checklist" data-total="<?= count($subnets) ?>">
+      <?php foreach ($subnets as $es): ?>
+        <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;">
+          <input type="checkbox" class="dhcp-export-subnet-cb" value="<?= to_int($es['id']) ?>" checked>
+          <span><?= e(to_str($es['cidr'])) ?><?= $es['description'] ? ' — ' . e(to_str($es['description'])) : '' ?></span>
+        </label>
+      <?php endforeach; ?>
+    </div>
+  </details>
+
+  <div class="page-actions" style="flex-wrap:wrap;">
+    <button type="button" class="action-pill" id="dhcp-export-dhcpd">Download dhcpd.conf</button>
+    <button type="button" class="action-pill" id="dhcp-export-kea">Download Kea JSON</button>
+    <button type="button" class="action-pill button-secondary" id="dhcp-preview-btn">Preview</button>
+  </div>
+  <textarea id="dhcp-preview-output" readonly style="display:none;width:100%;margin-top:0.75rem;height:220px;font-family:var(--font-mono);font-size:0.8rem;resize:vertical;" spellcheck="false"></textarea>
+</div>
+
+
+<div class="card mt-16">
   <h2>DHCP Pool</h2>
   <form method="get" action="dhcp_pool.php">
     <div class="row gap-10">

@@ -165,6 +165,13 @@ CREATE TABLE IF NOT EXISTS subnets (
   vlan_fk     BIGINT NULL REFERENCES vlans(id) ON DELETE SET NULL,
   vrf_id          BIGINT NULL REFERENCES vrfs(id)  ON DELETE RESTRICT,
   alerts_enabled  SMALLINT NOT NULL DEFAULT 1,
+  dhcp_routers     TEXT,                                             -- v3.4.0 #402: comma-sep gateway IPs
+  dhcp_dns_servers TEXT,                                             -- v3.4.0 #402: comma-sep DNS IPs
+  dhcp_domain_name TEXT,                                             -- v3.4.0 #402: domain name
+  dhcp_lease_default INTEGER,                                        -- v3.4.0 #402: seconds (default-lease-time)
+  dhcp_lease_max   INTEGER,                                          -- v3.4.0 #402: seconds (max-lease-time)
+  dhcp_next_server TEXT,                                             -- v3.4.0 #402: TFTP server IP (PXE)
+  dhcp_boot_filename TEXT,                                           -- v3.4.0 #402: boot filename (PXE)
   created_at  TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
   updated_at  TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
   CONSTRAINT uq_subnets_cidr_vrf UNIQUE (cidr, vrf_id)
@@ -658,5 +665,6 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.1.0-utilization-snapshots'),
   ('3.2.0-devices'),
   ('3.2.0-password-reset'),
-  ('3.3.0-webhooks')
+  ('3.3.0-webhooks'),
+  ('3.4.0-dhcp-options')
 ON CONFLICT (version) DO NOTHING;
