@@ -6913,8 +6913,9 @@ function ipam_render_dhcpd_conf(PDO $db, array $subnetIds): string
         foreach (ipam_dhcp_load_reservations($db, to_int($s['id'])) as $r) {
             $mac  = ipam_normalize_mac_for_dhcp(to_str($r['mac']));
             if ($mac === null) continue;
-            $raw  = $r['hostname'] !== '' ? to_str($r['hostname']) : 'host-' . str_replace('.', '-', to_str($r['ip']));
-            $name = preg_replace('/[^a-zA-Z0-9\-]/', '-', $raw) ?? $raw;
+            $raw    = $r['hostname'] !== '' ? to_str($r['hostname']) : 'host';
+            $suffix = str_replace('.', '-', to_str($r['ip']));
+            $name   = (preg_replace('/[^a-zA-Z0-9\-]/', '-', $raw) ?? 'host') . '-' . $suffix;
             $lines[] = '  host ' . $name . ' {';
             $lines[] = '    hardware ethernet ' . $mac . ';';
             $lines[] = '    fixed-address ' . to_str($r['ip']) . ';';
@@ -7000,7 +7001,9 @@ function ipam_render_kea_json(PDO $db, array $subnetIds): string
     }
 
     $doc = ['Dhcp4' => ['subnet4' => $subnet4]];
-    return (string)json_encode($doc, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $json = json_encode($doc, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+    if ($json === false) throw new RuntimeException('json_encode failed: ' . json_last_error_msg());
+    return $json;
 }
 
 /**

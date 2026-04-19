@@ -136,7 +136,7 @@ class DhcpRenderTest extends TestCase
     public function testDhcpdConfIncludesReservedWithMac(): void
     {
         $output = ipam_render_dhcpd_conf($this->db, []);
-        $this->assertStringContainsString('host server1 {', $output);
+        $this->assertStringContainsString('host server1-10-0-0-5 {', $output);
         $this->assertStringContainsString('hardware ethernet aa:bb:cc:dd:ee:ff;', $output);
         $this->assertStringContainsString('fixed-address 10.0.0.5;', $output);
     }
