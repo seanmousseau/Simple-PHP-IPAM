@@ -133,6 +133,10 @@ Both shapes always include the `X-Total-Count` header, so a polling client can u
 
 ---
 
+## Webhooks
+
+Webhook management is **admin UI only** in v3.3.0 — there is no REST API resource for creating or managing webhooks. See the [Webhooks guide](webhooks.md) for configuration, payload format, and signature verification.
+
 ## Resources
 
 ### Subnets

@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.3.0] - 2026-04-18
+
+### Added
+
+- **#337 / #398–#401** — Outbound webhooks. Configurable HTTP callbacks fired on address and subnet mutations (`address.create`, `address.update`, `address.delete`, `subnet.create`, `subnet.update`, `subnet.delete`). Payloads are HMAC-SHA256 signed (`X-IPAM-Signature: sha256=…`). Admin UI (`webhooks.php`) supports create, edit, delete, enable/disable, test-fire with inline result panel, and per-webhook delivery log (last 50 deliveries with status badges). Failed deliveries are retried by the cron runner (up to 3 attempts, ~1 min / ~5 min backoff). Delivery log retention configurable via `webhook.retention_days` (default 30 days). SSRF protection blocks private/loopback/link-local targets; `webhook.allow_private_ips` config overrides for lab environments.
+- **#544** — Login history. The Account page (`change_password.php`) now shows a "Recent Login Activity" table (last 20 logins/OIDC logins). Admins can view any user's activity via `?user_id=N`. Users table gains a "Login history" link per user row that opens `audit.php` filtered to that user's login events.
+- **#578** — Brand polish. Navigation and footer now render a `SimplePHPIPAM` text logo in Fira Code / JetBrains Mono monospace, with "PHP" highlighted in brand green (`--brand`). Dark-mode primary button and success colors aligned to the marketing-site brand green (`#22C55E`). `--brand` CSS custom property added for use across themes.
+
+### Changed
+
+- `audit.php` now accepts `?user_id=N` and `?action=auth.login` query parameters, enabling direct deep-links from the users table and Account page. Filters compose with existing prefix/date-range filters.
+
 ## [3.2.0] - 2026-04-18
 
 ### Added

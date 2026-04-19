@@ -21,6 +21,7 @@ A lightweight, self-hosted IP Address Management (IPAM) tool built with **PHP 8.
 - **CSV import/export** — bulk address management
 - **ARP table import** — reconcile MACs from router output
 - **Device & interface tracking** — link addresses to named devices and interfaces
+- **Outbound webhooks** — HMAC-signed HTTP callbacks on address/subnet mutations with retry and delivery log
 - **REST API** — read-only and read-write key authentication; OpenAPI 3.1 spec at `?resource=spec`
 - **OIDC/SSO** — PKCE flow, no Composer packages required
 - **Audit log** — append-only, full change history
@@ -41,6 +42,7 @@ See the [Installation guide](install.md) to get up and running in minutes.
 | [Scanning](scanning.md) | Network discovery and scheduled scanning |
 | [Advanced Networking](advanced-networking.md) | VRF BGP, VLAN ranges, aggregates, PD pools, DNS export |
 | [REST API](api.md) | Endpoint reference, authentication, examples, OpenAPI spec |
+| [Webhooks](webhooks.md) | Outbound webhooks: events, payload, signing, retry, SSRF protection |
 | [Devices](devices.md) | Device & interface tracking, CSV import, API |
 | [OIDC / SSO](oidc.md) | PKCE flow setup with Keycloak, Azure AD, Okta, etc. |
 | [SMTP & Email](smtp.md) | SMTP configuration, alerts, password recovery |
