@@ -12,11 +12,12 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.4.0
+## What's new in v3.4.1
 
-**DHCP config export — generate server-ready configs from subnet data.**
+**Patch fix for MySQL/MariaDB migration compatibility.**
 
-- **DHCP Config Export (#338).** Generate ISC `dhcpd.conf` or Kea 2.x JSON directly from your subnet options and reservations. Set routers, DNS servers, domain name, lease times, and PXE boot options per-subnet via the subnet edit drawer. Any reserved address with a MAC is included as a host reservation. Download from Admin → DHCP Pools. See [docs/dhcp-export.md](docs/dhcp-export.md).
+- **Migration fix.** `3.4.0-dhcp-options` migration now uses `information_schema.columns` instead of `SHOW COLUMNS LIKE ?` for the idempotency check. Resolves a `SQLSTATE[42000]` error that occurred on some MariaDB versions where `SHOW` statements cannot be used as native prepared statements.
+- v3.4.0: **DHCP Config Export (#338).** Generate ISC `dhcpd.conf` or Kea 2.x JSON directly from your subnet options and reservations. Set routers, DNS servers, domain name, lease times, and PXE boot options per-subnet via the subnet edit drawer. Any reserved address with a MAC is included as a host reservation. Download from Admin → DHCP Pools. See [docs/dhcp-export.md](docs/dhcp-export.md).
 
 See [CHANGELOG.md](CHANGELOG.md) for full release history and [docs/upgrading.md](docs/upgrading.md) for the upgrade guide.
 
