@@ -1592,7 +1592,10 @@ function ipam_migrations(): array
                         }
                     }
                 } elseif ($driver === 'mysql') {
-                    $st = $db->prepare("SHOW COLUMNS FROM subnets LIKE :col");
+                    $st = $db->prepare(
+                        "SELECT column_name FROM information_schema.columns
+                         WHERE table_schema = DATABASE() AND table_name = 'subnets' AND column_name = :col"
+                    );
                     $st->execute([':col' => $col]);
                     $exists = (bool)$st->fetch();
                 } else {
