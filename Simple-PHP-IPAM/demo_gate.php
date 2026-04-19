@@ -79,11 +79,7 @@ $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM'
 <body>
 <div class="gate-wrap">
   <div style="text-align:center;margin-bottom:12px;">
-    <picture>
-      <source srcset="assets/logo.webp" type="image/webp">
-      <img src="assets/logo.png" alt="<?= e($appName) ?>" width="300" style="max-width:100%;height:auto;">
-    </picture>
-    <p class="muted" style="margin:4px 0 0;"><?= e($appName) ?></p>
+    <div class="nav-brand" style="font-size:2rem;display:block;">Simple<span class="nav-brand-php">PHP</span>IPAM</div>
   </div>
   <h1>Almost there…</h1>
   <?php render_security_banner('demo_gate', 'This is a demo environment. Do not enter real IP data or credentials.'); ?>
