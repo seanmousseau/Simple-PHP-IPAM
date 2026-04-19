@@ -665,5 +665,6 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.1.0-utilization-snapshots'),
   ('3.2.0-devices'),
   ('3.2.0-password-reset'),
-  ('3.3.0-webhooks')
+  ('3.3.0-webhooks'),
+  ('3.4.0-dhcp-options')
 ON CONFLICT (version) DO NOTHING;
