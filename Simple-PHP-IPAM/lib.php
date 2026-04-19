@@ -6864,14 +6864,25 @@ function ipam_render_dhcpd_conf(PDO $db, array $subnetIds): string
         $lines[] = 'subnet ' . to_str($s['network']) . ' netmask ' . $netmask . ' {';
 
         if (!empty($s['dhcp_routers'])) {
-            $lines[] = '  option routers ' . trim(to_str($s['dhcp_routers'])) . ';';
+            $safeIps = implode(', ', array_filter(
+                array_map('trim', explode(',', to_str($s['dhcp_routers']))),
+                fn($t) => $t !== '' && filter_var($t, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false
+            ));
+            if ($safeIps !== '') $lines[] = '  option routers ' . $safeIps . ';';
         }
         if (!empty($s['dhcp_dns_servers'])) {
-            $lines[] = '  option domain-name-servers ' . trim(to_str($s['dhcp_dns_servers'])) . ';';
+            $safeIps = implode(', ', array_filter(
+                array_map('trim', explode(',', to_str($s['dhcp_dns_servers']))),
+                fn($t) => $t !== '' && filter_var($t, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false
+            ));
+            if ($safeIps !== '') $lines[] = '  option domain-name-servers ' . $safeIps . ';';
         }
         if (!empty($s['dhcp_domain_name'])) {
-            $quoted  = str_replace(['\\', '"'], ['\\\\', '\\"'], trim(to_str($s['dhcp_domain_name'])));
-            $lines[] = '  option domain-name "' . $quoted . '";';
+            $domain = trim(to_str($s['dhcp_domain_name']));
+            if (preg_match('/^[a-zA-Z0-9]([a-zA-Z0-9\-.]{0,253}[a-zA-Z0-9])?$/', $domain)) {
+                $quoted  = str_replace(['\\', '"'], ['\\\\', '\\"'], $domain);
+                $lines[] = '  option domain-name "' . $quoted . '";';
+            }
         }
         if ($s['dhcp_lease_default'] !== null && $s['dhcp_lease_default'] !== '') {
             $lines[] = '  default-lease-time ' . to_int($s['dhcp_lease_default']) . ';';
@@ -6880,11 +6891,17 @@ function ipam_render_dhcpd_conf(PDO $db, array $subnetIds): string
             $lines[] = '  max-lease-time ' . to_int($s['dhcp_lease_max']) . ';';
         }
         if (!empty($s['dhcp_next_server'])) {
-            $lines[] = '  next-server ' . trim(to_str($s['dhcp_next_server'])) . ';';
+            $nextSrv = trim(to_str($s['dhcp_next_server']));
+            if (filter_var($nextSrv, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false) {
+                $lines[] = '  next-server ' . $nextSrv . ';';
+            }
         }
         if (!empty($s['dhcp_boot_filename'])) {
-            $quoted  = str_replace(['\\', '"'], ['\\\\', '\\"'], trim(to_str($s['dhcp_boot_filename'])));
-            $lines[] = '  filename "' . $quoted . '";';
+            $bootFile = preg_replace('/[;\n\r{}]/', '', trim(to_str($s['dhcp_boot_filename']))) ?? '';
+            if ($bootFile !== '') {
+                $quoted  = str_replace(['\\', '"'], ['\\\\', '\\"'], $bootFile);
+                $lines[] = '  filename "' . $quoted . '";';
+            }
         }
 
         foreach (ipam_dhcp_load_reservations($db, to_int($s['id'])) as $r) {
@@ -6927,6 +6944,12 @@ function ipam_render_kea_json(PDO $db, array $subnetIds): string
         }
         if (!empty($s['dhcp_domain_name'])) {
             $optionData[] = ['name' => 'domain-name', 'data' => trim(to_str($s['dhcp_domain_name']))];
+        }
+        if (!empty($s['dhcp_next_server'])) {
+            $optionData[] = ['name' => 'tftp-server-name', 'data' => trim(to_str($s['dhcp_next_server']))];
+        }
+        if (!empty($s['dhcp_boot_filename'])) {
+            $optionData[] = ['name' => 'boot-file-name', 'data' => trim(to_str($s['dhcp_boot_filename']))];
         }
         if (!empty($optionData)) {
             $entry['option-data'] = $optionData;

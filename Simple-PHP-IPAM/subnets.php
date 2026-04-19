@@ -163,8 +163,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $dhcpRouters      = trim(to_str($_POST['dhcp_routers'] ?? '')) ?: null;
         $dhcpDnsServers   = trim(to_str($_POST['dhcp_dns_servers'] ?? '')) ?: null;
         $dhcpDomainName   = trim(to_str($_POST['dhcp_domain_name'] ?? '')) ?: null;
-        $dhcpLeaseDefault = (int)(to_str($_POST['dhcp_lease_default'] ?? '')) ?: null;
-        $dhcpLeaseMax     = (int)(to_str($_POST['dhcp_lease_max'] ?? '')) ?: null;
+        $dhcpLeaseDefaultRaw = trim(to_str($_POST['dhcp_lease_default'] ?? ''));
+        $dhcpLeaseMaxRaw     = trim(to_str($_POST['dhcp_lease_max'] ?? ''));
+        $dhcpLeaseDefault    = $dhcpLeaseDefaultRaw === '' ? null : to_int($dhcpLeaseDefaultRaw);
+        $dhcpLeaseMax        = $dhcpLeaseMaxRaw     === '' ? null : to_int($dhcpLeaseMaxRaw);
         $dhcpNextServer   = trim(to_str($_POST['dhcp_next_server'] ?? '')) ?: null;
         $dhcpBootFilename = trim(to_str($_POST['dhcp_boot_filename'] ?? '')) ?: null;
 
@@ -178,14 +180,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if (!$err && $dhcpDnsServers !== null) {
             foreach (array_map('trim', explode(',', $dhcpDnsServers)) as $dhcpIp) {
-                if ($dhcpIp !== '' && !filter_var($dhcpIp, FILTER_VALIDATE_IP)) {
-                    $err = 'Invalid IP in DHCP DNS servers: ' . e($dhcpIp);
+                if ($dhcpIp !== '' && !filter_var($dhcpIp, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                    $err = 'Invalid IP in DHCP DNS servers (IPv4 only): ' . e($dhcpIp);
                     break;
                 }
             }
         }
         if (!$err && $dhcpNextServer !== null && !filter_var($dhcpNextServer, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
             $err = 'Invalid DHCP next-server IP.';
+        }
+        if (!$err && $dhcpLeaseDefault !== null && $dhcpLeaseDefault < 60) {
+            $err = 'Default DHCP lease must be at least 60 seconds.';
+        }
+        if (!$err && $dhcpLeaseMax !== null && $dhcpLeaseMax < 60) {
+            $err = 'Max DHCP lease must be at least 60 seconds.';
+        }
+        if (!$err && $dhcpLeaseDefault !== null && $dhcpLeaseMax !== null && $dhcpLeaseDefault > $dhcpLeaseMax) {
+            $err = 'Default DHCP lease cannot exceed max lease time.';
         }
 
         $p = parse_cidr($cidr);

@@ -9,7 +9,8 @@ $format  = in_array($_GET['format'] ?? '', ['dhcpd', 'kea'], true) ? to_str($_GE
 $preview = !empty($_GET['preview']);
 
 // Parse optional subnet filter: ?subnet_id=N or ?subnets=N,N,N
-$subnetIds = [];
+$subnetIds      = [];
+$filterRequested = isset($_GET['subnet_id']) || isset($_GET['subnets']);
 if (!empty($_GET['subnet_id'])) {
     $sid = to_int($_GET['subnet_id']);
     if ($sid > 0) $subnetIds[] = $sid;
@@ -18,6 +19,11 @@ if (!empty($_GET['subnet_id'])) {
         $sid = to_int(trim($raw));
         if ($sid > 0) $subnetIds[] = $sid;
     }
+}
+$subnetIds = array_values(array_unique($subnetIds));
+if ($filterRequested && $subnetIds === []) {
+    http_response_code(400);
+    exit('No valid subnet IDs supplied.');
 }
 
 if ($format === 'dhcpd') {
@@ -36,10 +42,14 @@ $subnetLabel = empty($subnetIds) ? 'all' : implode(',', $subnetIds);
 audit($db, $auditKey, 'dhcp_config', null, "format={$format} subnets={$subnetLabel}");
 
 if ($preview) {
+    header('Cache-Control: private, no-store, max-age=0');
+    header('Pragma: no-cache');
     header('Content-Type: text/plain; charset=utf-8');
     header('X-Content-Type-Options: nosniff');
 } else {
     $safe = safe_export_filename($filename);
+    header('Cache-Control: private, no-store, max-age=0');
+    header('Pragma: no-cache');
     header("Content-Type: {$mime}; charset=utf-8");
     header("Content-Disposition: attachment; filename=\"{$safe}\"");
     header('X-Content-Type-Options: nosniff');

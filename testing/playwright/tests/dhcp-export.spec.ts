@@ -66,6 +66,21 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
       note:      '',
       grp:       '',
     });
+
+    // Set DHCP options so all tests can assert on them without order dependency
+    await fetchPost(page, appUrl('subnets.php'), {
+      action:             'update',
+      id:                 String(testSubnetId),
+      cidr:               TEST_DHCP_CIDR,
+      description:        'dhcp export spec test subnet',
+      dhcp_routers:       DHCP_ROUTERS,
+      dhcp_dns_servers:   DHCP_DNS,
+      dhcp_domain_name:   DHCP_DOMAIN,
+      dhcp_lease_default: DHCP_LEASE_DEF,
+      dhcp_lease_max:     DHCP_LEASE_MAX,
+      dhcp_next_server:   DHCP_NEXT_SERVER,
+      dhcp_boot_filename: DHCP_BOOT_FILE,
+    });
   }
 });
 
@@ -189,22 +204,7 @@ test('subnet edit: DHCP options section exists in edit drawer', async () => {
 test('subnet edit: DHCP options can be saved and round-trip', async () => {
   expect(testSubnetId).toBeGreaterThan(0);
 
-  // Save DHCP options via POST
-  await fetchPost(page, appUrl('subnets.php'), {
-    action:             'update',
-    id:                 String(testSubnetId),
-    cidr:               TEST_DHCP_CIDR,
-    description:        'dhcp export spec test subnet',
-    dhcp_routers:       DHCP_ROUTERS,
-    dhcp_dns_servers:   DHCP_DNS,
-    dhcp_domain_name:   DHCP_DOMAIN,
-    dhcp_lease_default: DHCP_LEASE_DEF,
-    dhcp_lease_max:     DHCP_LEASE_MAX,
-    dhcp_next_server:   DHCP_NEXT_SERVER,
-    dhcp_boot_filename: DHCP_BOOT_FILE,
-  });
-
-  // Re-open edit drawer and verify populated fields
+  // DHCP options were set in beforeAll — open drawer and verify round-trip
   await page.goto('subnets.php');
   const editBtn = page.locator(`.subnet-edit-btn[data-id="${testSubnetId}"]`);
   await editBtn.click();
@@ -288,7 +288,9 @@ test('dhcp_pool page: preview button toggles textarea visible', async () => {
   await previewBtn.click();
 
   await expect(previewOutput).toBeVisible({ timeout: 5000 });
-  // Textarea should have content (fetch completed)
+  // Wait for fetch to complete — textarea leaves the "Loading…" placeholder
+  await expect(previewOutput).not.toHaveValue('Loading\u2026', { timeout: 10000 });
+  await expect(previewOutput).not.toHaveValue('', { timeout: 1000 });
   const content = await previewOutput.inputValue();
   expect(content.length).toBeGreaterThan(0);
   expect(content).toContain('subnet');

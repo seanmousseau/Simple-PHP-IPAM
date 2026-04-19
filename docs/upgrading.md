@@ -9,7 +9,7 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
-    - [v3.4.0](#v340) — DHCP config export (no breaking changes)
+  - [v3.4.0](#v340) — DHCP config export (no breaking changes)
   - [v3.3.0](#v330) — webhooks, login history, brand polish (no breaking changes)
   - [v3.2.0](#v320) — devices, password recovery, OpenAPI spec (no breaking changes)
   - [v3.0.0](#v300) — **breaking changes**, config.php stub, driver promotion

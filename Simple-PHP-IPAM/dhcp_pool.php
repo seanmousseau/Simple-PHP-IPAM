@@ -326,8 +326,9 @@ page_header('DHCP Pools');
   }
   function buildUrl(format, preview) {
     var ids = selectedIds();
+    if (ids.length === 0) return null;
     var url = "export_dhcp.php?format=" + format;
-    if (ids.length > 0 && ids.length < <?= count($subnets) ?>) {
+    if (ids.length < <?= count($subnets) ?>) {
       url += "&subnets=" + ids.join(",");
     }
     if (preview) url += "&preview=1";
@@ -343,18 +344,28 @@ page_header('DHCP Pools');
     cb.addEventListener("change", updateCount);
   });
   var exportBtn = document.getElementById("dhcp-export-dhcpd");
-  if (exportBtn) exportBtn.addEventListener("click", function() { window.location.href = buildUrl("dhcpd", false); });
+  if (exportBtn) exportBtn.addEventListener("click", function() {
+    var url = buildUrl("dhcpd", false);
+    if (!url) return;
+    window.location.href = url;
+  });
   var keaBtn = document.getElementById("dhcp-export-kea");
-  if (keaBtn) keaBtn.addEventListener("click", function() { window.location.href = buildUrl("kea", false); });
+  if (keaBtn) keaBtn.addEventListener("click", function() {
+    var url = buildUrl("kea", false);
+    if (!url) return;
+    window.location.href = url;
+  });
   var previewBtn = document.getElementById("dhcp-preview-btn");
   var previewOut = document.getElementById("dhcp-preview-output");
   if (previewBtn && previewOut) {
     previewBtn.addEventListener("click", function() {
       if (previewOut.style.display !== "none") { previewOut.style.display = "none"; previewBtn.textContent = "Preview"; return; }
+      var previewUrl = buildUrl("dhcpd", true);
+      if (!previewUrl) { previewOut.value = "Select at least one subnet."; previewOut.style.display = "block"; return; }
       previewOut.style.display = "block";
       previewOut.value = "Loading\u2026";
       previewBtn.textContent = "Hide Preview";
-      fetch(buildUrl("dhcpd", true), {credentials: "same-origin"})
+      fetch(previewUrl, {credentials: "same-origin"})
         .then(function(r) { return r.text(); })
         .then(function(t) { previewOut.value = t; })
         .catch(function() { previewOut.value = "Error loading preview."; });
