@@ -5,6 +5,7 @@
     <file>Simple-PHP-IPAM</file>
     <exclude-pattern>Simple-PHP-IPAM/data/*</exclude-pattern>
     <exclude-pattern>Simple-PHP-IPAM/vendor/*</exclude-pattern>
+    <exclude-pattern>Simple-PHP-IPAM/config.php</exclude-pattern>
 
     <arg name="extensions" value="php"/>
 

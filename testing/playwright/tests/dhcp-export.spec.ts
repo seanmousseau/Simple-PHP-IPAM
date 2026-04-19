@@ -73,6 +73,7 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
       id:                 String(testSubnetId),
       cidr:               TEST_DHCP_CIDR,
       description:        'dhcp export spec test subnet',
+      confirm_overlap:    '1',
       dhcp_routers:       DHCP_ROUTERS,
       dhcp_dns_servers:   DHCP_DNS,
       dhcp_domain_name:   DHCP_DOMAIN,
@@ -193,7 +194,7 @@ test('export kea: preview mode returns 200 with JSON content', async () => {
 test('subnet edit: DHCP options section exists in edit drawer', async () => {
   expect(testSubnetId).toBeGreaterThan(0);
   await page.goto('subnets.php');
-  const editBtn = page.locator(`.subnet-edit-btn[data-id="${testSubnetId}"]`);
+  const editBtn = page.locator(`.subnet-edit-btn[data-sid="${testSubnetId}"]`);
   await expect(editBtn).toBeVisible();
   await editBtn.click();
   const drawer = page.locator('#subnet-edit-drawer');
@@ -206,7 +207,7 @@ test('subnet edit: DHCP options can be saved and round-trip', async () => {
 
   // DHCP options were set in beforeAll — open drawer and verify round-trip
   await page.goto('subnets.php');
-  const editBtn = page.locator(`.subnet-edit-btn[data-id="${testSubnetId}"]`);
+  const editBtn = page.locator(`.subnet-edit-btn[data-sid="${testSubnetId}"]`);
   await editBtn.click();
   const drawer = page.locator('#subnet-edit-drawer');
   await expect(drawer).toBeVisible();
@@ -223,7 +224,7 @@ test('subnet edit: DHCP options can be saved and round-trip', async () => {
 test('subnet edit: DHCP options details auto-opens when values are set', async () => {
   expect(testSubnetId).toBeGreaterThan(0);
   await page.goto('subnets.php');
-  const editBtn = page.locator(`.subnet-edit-btn[data-id="${testSubnetId}"]`);
+  const editBtn = page.locator(`.subnet-edit-btn[data-sid="${testSubnetId}"]`);
   await editBtn.click();
   const details = page.locator('.dhcp-options-group');
   // details[open] attribute should be present when any DHCP field is set
@@ -234,7 +235,7 @@ test('export dhcpd: DHCP options appear in subnet block after saving', async () 
   expect(testSubnetId).toBeGreaterThan(0);
   const r = await fetchGet(page, appUrl(`export_dhcp.php?format=dhcpd&subnets=${testSubnetId}`));
   expect(r.body).toContain(`option routers ${DHCP_ROUTERS}`);
-  expect(r.body).toContain(`option domain-name-servers ${DHCP_DNS}`);
+  expect(r.body).toContain(`option domain-name-servers ${DHCP_DNS.split(',').join(', ')}`);
   expect(r.body).toContain(`option domain-name "${DHCP_DOMAIN}"`);
   expect(r.body).toContain(`default-lease-time ${DHCP_LEASE_DEF}`);
   expect(r.body).toContain(`max-lease-time ${DHCP_LEASE_MAX}`);
