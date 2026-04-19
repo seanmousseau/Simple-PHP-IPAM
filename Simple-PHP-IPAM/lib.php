@@ -3946,11 +3946,16 @@ function paginate(int $total, int $page, int $pageSize): array
 
 function safe_export_filename(string $base): string
 {
-    $base = strtolower($base);
-    $base = preg_replace('/[^a-z0-9._-]+/', '-', $base) ?? 'export';
-    $base = trim($base, '-.');
-    if ($base === '') $base = 'export';
-    return $base . '-' . date('Y-m-d-His') . '.csv';
+    // Preserve original extension (e.g. .conf, .json) — strip it, sanitize
+    // the stem, then re-attach so non-CSV downloads keep the right extension.
+    $ext  = pathinfo($base, PATHINFO_EXTENSION);
+    $stem = pathinfo($base, PATHINFO_FILENAME);
+    $ext  = $ext !== '' ? '.' . strtolower(preg_replace('/[^a-z0-9]+/i', '', $ext) ?? '') : '.csv';
+    $stem = strtolower($stem);
+    $stem = preg_replace('/[^a-z0-9._-]+/', '-', $stem) ?? 'export';
+    $stem = trim($stem, '-.');
+    if ($stem === '') $stem = 'export';
+    return $stem . '-' . date('Y-m-d-His') . $ext;
 }
 
 function csv_download_headers(string $filename): void
@@ -6907,6 +6912,7 @@ function ipam_render_dhcpd_conf(PDO $db, array $subnetIds): string
 
         foreach (ipam_dhcp_load_reservations($db, to_int($s['id'])) as $r) {
             $mac  = ipam_normalize_mac_for_dhcp(to_str($r['mac']));
+            if ($mac === null) continue;
             $raw  = $r['hostname'] !== '' ? to_str($r['hostname']) : 'host-' . str_replace('.', '-', to_str($r['ip']));
             $name = preg_replace('/[^a-zA-Z0-9\-]/', '-', $raw) ?? $raw;
             $lines[] = '  host ' . $name . ' {';
@@ -6938,10 +6944,18 @@ function ipam_render_kea_json(PDO $db, array $subnetIds): string
 
         $optionData = [];
         if (!empty($s['dhcp_routers'])) {
-            $optionData[] = ['name' => 'routers', 'data' => trim(to_str($s['dhcp_routers']))];
+            $safeRouters = implode(',', array_filter(
+                array_map('trim', explode(',', to_str($s['dhcp_routers']))),
+                fn($t) => $t !== '' && filter_var($t, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false
+            ));
+            if ($safeRouters !== '') $optionData[] = ['name' => 'routers', 'data' => $safeRouters];
         }
         if (!empty($s['dhcp_dns_servers'])) {
-            $optionData[] = ['name' => 'domain-name-servers', 'data' => trim(to_str($s['dhcp_dns_servers']))];
+            $safeDns = implode(',', array_filter(
+                array_map('trim', explode(',', to_str($s['dhcp_dns_servers']))),
+                fn($t) => $t !== '' && filter_var($t, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false
+            ));
+            if ($safeDns !== '') $optionData[] = ['name' => 'domain-name-servers', 'data' => $safeDns];
         }
         if (!empty($s['dhcp_domain_name'])) {
             $optionData[] = ['name' => 'domain-name', 'data' => trim(to_str($s['dhcp_domain_name']))];
@@ -6967,9 +6981,11 @@ function ipam_render_kea_json(PDO $db, array $subnetIds): string
         if (!empty($reservations)) {
             $resArr = [];
             foreach ($reservations as $r) {
+                $mac = ipam_normalize_mac_for_dhcp(to_str($r['mac']));
+                if ($mac === null) continue;
                 /** @var array<string,mixed> $resEntry */
                 $resEntry = [
-                    'hw-address' => ipam_normalize_mac_for_dhcp(to_str($r['mac'])),
+                    'hw-address' => $mac,
                     'ip-address' => to_str($r['ip']),
                 ];
                 if (to_str($r['hostname']) !== '') {
@@ -7042,9 +7058,9 @@ function ipam_prefix_to_netmask(int $prefix): string
 }
 
 /** Normalise any MAC address format to colon-separated lowercase octets. */
-function ipam_normalize_mac_for_dhcp(string $mac): string
+function ipam_normalize_mac_for_dhcp(string $mac): ?string
 {
     $hex = preg_replace('/[^0-9a-fA-F]/', '', $mac);
-    if (!is_string($hex) || strlen($hex) !== 12) return strtolower($mac);
+    if (!is_string($hex) || strlen($hex) !== 12) return null;
     return implode(':', str_split(strtolower($hex), 2));
 }

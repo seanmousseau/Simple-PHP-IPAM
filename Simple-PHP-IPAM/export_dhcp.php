@@ -44,7 +44,7 @@ audit($db, $auditKey, 'dhcp_config', null, "format={$format} subnets={$subnetLab
 if ($preview) {
     header('Cache-Control: private, no-store, max-age=0');
     header('Pragma: no-cache');
-    header('Content-Type: text/plain; charset=utf-8');
+    header("Content-Type: {$mime}; charset=utf-8");
     header('X-Content-Type-Options: nosniff');
 } else {
     $safe = safe_export_filename($filename);
