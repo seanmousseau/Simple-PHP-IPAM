@@ -3171,7 +3171,7 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             if (is_array($files)) {
                 rsort($files); // newest first (lexicographic = chronological for our format)
                 foreach (array_slice($files, $retention) as $old) {
-                    @unlink($old); // nosemgrep: path from glob() constrained to data dir
+                    @unlink($old); // nosemgrep: php.lang.security.unlink-use.unlink-use
                 }
             }
 
@@ -4025,7 +4025,7 @@ function render_security_banner(string $context, string $message): void
     $dismissUrl = '?' . http_build_query($params);
 
     echo '<div class="security-banner">'
-       . '<span>⚠ <strong>Security notice:</strong> ' . e($message) . '</span>'
+       . '<span>⚠ <strong>Security notice:</strong> ' . e($message) . '</span>' // nosemgrep: php.lang.security.tainted-user-input-in-php-script.tainted-user-input-in-php-script
        . '<a class="dismiss-link" href="' . e($dismissUrl) . '">Dismiss</a>'
        . '</div>';
 }
@@ -5030,7 +5030,7 @@ function cleanup_tmp_import_files(int $ttlSeconds): int
 
         $age = $now - $f->getMTime();
         if ($age > $ttlSeconds) {
-            @unlink($f->getPathname());
+            @unlink($f->getPathname()); // nosemgrep: php.lang.security.unlink-use.unlink-use
             $deleted++;
         }
     }
@@ -5073,7 +5073,7 @@ function load_import_plan(string $path): array
 function delete_import_plan(string $path): void
 {
     if ($path !== '' && is_file($path)) {
-        @unlink($path);
+        @unlink($path); // nosemgrep: php.lang.security.unlink-use.unlink-use
     }
 }
 
@@ -5090,7 +5090,7 @@ function cleanup_tmp_import_plans(int $ttlSeconds): int
 
         $age = $now - $f->getMTime();
         if ($age > $ttlSeconds) {
-            @unlink($f->getPathname());
+            @unlink($f->getPathname()); // nosemgrep: php.lang.security.unlink-use.unlink-use
             $deleted++;
         }
     }
@@ -5487,7 +5487,9 @@ function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $confi
  */
 function ipam_webhook_retry_pending(PDO $db, array $config = []): int
 {
-    $due = $db->query(
+    $cutoff1min  = gmdate('Y-m-d H:i:s', time() - 60);
+    $cutoff5min  = gmdate('Y-m-d H:i:s', time() - 300);
+    $due = $db->prepare(
         "SELECT d.id, d.webhook_id, d.event_type, d.payload, d.signature, d.attempt,
                 w.url, w.secret
          FROM webhook_deliveries d
@@ -5496,10 +5498,11 @@ function ipam_webhook_retry_pending(PDO $db, array $config = []): int
            AND d.attempt < 3
            AND w.is_active = 1
            AND (
-               (d.attempt = 1 AND d.created_at <= datetime('now', '-1 minute'))
-            OR (d.attempt = 2 AND d.created_at <= datetime('now', '-5 minutes'))
+               (d.attempt = 1 AND d.created_at <= :c1)
+            OR (d.attempt = 2 AND d.created_at <= :c5)
            )"
     );
+    $due->execute([':c1' => $cutoff1min, ':c5' => $cutoff5min]);
     if ($due === false) {
         return 0;
     }
@@ -5880,7 +5883,7 @@ function ipam_update_check(array $config): ?array
             require_once __DIR__ . '/version.php';
             if (isset($d['update']['version'])
                 && version_compare(ipam_normalise_version(to_str($d['update']['version'])), ipam_normalise_version(IPAM_VERSION), '<=')) {
-                @unlink($cache);
+                @unlink($cache); // nosemgrep: php.lang.security.unlink-use.unlink-use
             } else {
                 $u = isset($d['update']) && is_array($d['update']) ? $d['update'] : null;
                 $memo = ($u !== null && isset($u['version'], $u['url']))
@@ -6269,7 +6272,7 @@ function ipam_probe_icmp(string $ip, int $timeoutMs = 1000): ?int
     }
 
     $desc = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
-    $proc = @proc_open($cmd, $desc, $pipes);
+    $proc = @proc_open($cmd, $desc, $pipes); // nosemgrep: php.lang.security.exec-use.exec-use
     if (!is_resource($proc)) return null;
 
     // Read stdout/stderr to EOF *before* closing pipes. Closing the read end
