@@ -7216,6 +7216,88 @@ function validate_custom_fields_payload(array $defs, array $payload): array
 }
 
 /**
+ * Validate a custom_fields payload arriving from the JSON API.
+ * Values are already typed (int, float, bool, string, null) — no coercion is done.
+ * Unknown keys are rejected. Required fields must be non-null.
+ *
+ * @param list<array<string,mixed>> $defs     Output of custom_field_def_list()
+ * @param array<mixed,mixed>        $payload  Decoded JSON object (key→typed value)
+ * @return array<string,mixed>
+ * @throws \InvalidArgumentException on the first type mismatch, unknown key, or missing required field
+ */
+function validate_custom_fields_api_payload(array $defs, array $payload): array
+{
+    $defKeys = [];
+    foreach ($defs as $def) {
+        $defKeys[to_str($def['key'])] = $def;
+    }
+
+    // Reject unknown keys
+    foreach (array_keys($payload) as $k) {
+        if (!isset($defKeys[$k])) {
+            throw new \InvalidArgumentException($k . ': unknown custom field key');
+        }
+    }
+
+    $result = [];
+    foreach ($defs as $def) {
+        $key      = to_str($def['key']);
+        $type     = to_str($def['type']);
+        $required = (bool)$def['is_required'];
+
+        $present = array_key_exists($key, $payload);
+        $val     = $present ? $payload[$key] : null;
+
+        if ($val === null) {
+            if ($required) {
+                throw new \InvalidArgumentException($key . ': this field is required');
+            }
+            $result[$key] = null;
+            continue;
+        }
+
+        switch ($type) {
+            case 'text':
+                if (!is_string($val)) {
+                    throw new \InvalidArgumentException($key . ': expected string, got ' . gettype($val));
+                }
+                $result[$key] = $val;
+                break;
+            case 'number':
+                if (!is_int($val) && !is_float($val)) {
+                    throw new \InvalidArgumentException($key . ': expected number, got ' . gettype($val));
+                }
+                $result[$key] = $val;
+                break;
+            case 'date':
+                if (!is_string($val) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $val)) {
+                    throw new \InvalidArgumentException($key . ': expected YYYY-MM-DD string');
+                }
+                $result[$key] = $val;
+                break;
+            case 'boolean':
+                if (!is_bool($val)) {
+                    throw new \InvalidArgumentException($key . ': expected boolean, got ' . gettype($val));
+                }
+                $result[$key] = $val;
+                break;
+            case 'select':
+                if (!is_string($val)) {
+                    throw new \InvalidArgumentException($key . ': expected string, got ' . gettype($val));
+                }
+                $options = json_decode(to_str($def['options'] ?? '[]'), true);
+                $options = is_array($options) ? $options : [];
+                if (!in_array($val, $options, true)) {
+                    throw new \InvalidArgumentException($key . ': not a valid option');
+                }
+                $result[$key] = $val;
+                break;
+        }
+    }
+    return $result;
+}
+
+/**
  * Render HTML form inputs for a set of custom field definitions.
  * The name of each input is "{$namePrefix}{$key}".
  * Returns '' when $defs is empty (no heading rendered).

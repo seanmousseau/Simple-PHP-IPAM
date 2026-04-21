@@ -403,6 +403,7 @@ function api_subnets(PDO $db): never
 
     $baseSql = "SELECT s.id, s.cidr, s.ip_version, s.network, s.prefix,
                        s.description, s.notes, s.vlan_id, s.vlan_fk, s.site_id, s.vrf_id, s.alerts_enabled, s.created_at,
+                       s.custom_fields,
                        si.name AS site, v.vlan_id AS vlan_number, v.name AS vlan_name,
                        vr.name AS vrf_name$countsSelect
                 FROM subnets s
@@ -524,6 +525,7 @@ function fmt_subnet(array $r, bool $withCounts = false, array $tags = []): array
         'site'        => $r['site'],
         'tags'           => $tags,
         'alerts_enabled' => (bool) to_int($r['alerts_enabled'] ?? 1),
+        'custom_fields'  => (object) parse_custom_fields_row(to_str($r['custom_fields'] ?? '{}')),
         'created_at'     => $r['created_at'],
     ];
     if ($withCounts) {
@@ -618,7 +620,7 @@ function api_addresses(PDO $db): never
 
     $sql = "SELECT a.id, a.subnet_id, a.ip, a.hostname, a.owner,
                    a.status, a.note, a.grp, a.mac, a.expires_at, a.created_at, a.updated_at,
-                   a.owner_contact_id, co.name AS owner_contact_name
+                   a.custom_fields, a.owner_contact_id, co.name AS owner_contact_name
             FROM addresses a$joins $whereSql
             ORDER BY a.ip_bin
             LIMIT :lim OFFSET :off";
@@ -652,6 +654,7 @@ function api_addresses(PDO $db): never
             'group'              => to_str($r['grp']),
             'mac'                => to_str($r['mac']),
             'expires_at'         => isset($r['expires_at']) ? to_str($r['expires_at']) : null,
+            'custom_fields'      => (object) parse_custom_fields_row(to_str($r['custom_fields'] ?? '{}')),
             'tags'               => $tagsByAddr[$id] ?? [],
             'created_at'         => $r['created_at'],
             'updated_at'         => $r['updated_at'],
@@ -1843,6 +1846,18 @@ function api_addresses_create(PDO $db, array $apiKey, array $body): never
     } else {
         $validatedTagIds = null;
     }
+    // Validate custom_fields up-front (key-present → must be object; absent → no-op)
+    if (array_key_exists('custom_fields', $body)) {
+        if (!is_array($body['custom_fields'])) api_error(400, 'custom_fields must be an object.');
+        $cfAddrDefs = custom_field_def_list($db, 'address');
+        try {
+            $cfValues = validate_custom_fields_api_payload($cfAddrDefs, $body['custom_fields']);
+        } catch (\InvalidArgumentException $ex) {
+            api_error(422, $ex->getMessage());
+        }
+    } else {
+        $cfValues = null;
+    }
     $hostname       = trim(to_str($body['hostname']        ?? ''));
     $owner          = trim(to_str($body['owner']           ?? ''));
     $ownerContactId = isset($body['owner_contact_id']) ? to_int($body['owner_contact_id']) : null;
@@ -1895,8 +1910,8 @@ function api_addresses_create(PDO $db, array $apiKey, array $body): never
 
     // #410/#388: bind ip_bin via ipam_bind_binary() (PARAM_LOB).
     $ins = $db->prepare(
-        "INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, owner_contact_id, note, grp, mac, expires_at, status)
-         VALUES (:sid, :ip, :b, :hn, :ow, :cid, :nt, :grp, :mac, :exp, :st)"
+        "INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, owner_contact_id, note, grp, mac, expires_at, status, custom_fields)
+         VALUES (:sid, :ip, :b, :hn, :ow, :cid, :nt, :grp, :mac, :exp, :st, :cf)"
     );
     $ins->bindValue(':sid', $subnetId, PDO::PARAM_INT);
     $ins->bindValue(':ip',  $n['ip']);
@@ -1911,6 +1926,7 @@ function api_addresses_create(PDO $db, array $apiKey, array $body): never
     $ins->bindValue(':exp', $expiresAt !== '' ? $expiresAt : null,
         $expiresAt !== '' ? PDO::PARAM_STR : PDO::PARAM_NULL);
     $ins->bindValue(':st',  $status);
+    $ins->bindValue(':cf',  $cfValues !== null ? serialize_custom_fields_row($cfValues) : '{}');
     $ins->execute();
     $newId = ipam_last_insert_id($db, 'addresses');
 
@@ -1941,7 +1957,7 @@ function api_addresses_update(PDO $db, array $apiKey, int $id, array $body): nev
 {
     if ($id <= 0) api_error(400, 'id is required as a query parameter.');
 
-    $st = $db->prepare("SELECT id, ip, subnet_id, hostname, owner, note, grp, mac, expires_at, status FROM addresses WHERE id = :id");
+    $st = $db->prepare("SELECT id, ip, subnet_id, hostname, owner, note, grp, mac, expires_at, status, custom_fields FROM addresses WHERE id = :id");
     $st->execute([':id' => $id]);
     /** @var array<string, mixed>|false $addr */
     $addr = $st->fetch();
@@ -1953,6 +1969,20 @@ function api_addresses_update(PDO $db, array $apiKey, int $id, array $body): nev
         $validatedTagIds = api_validate_tag_ids($db, $body['tag_ids']);
     } else {
         $validatedTagIds = null;
+    }
+    // custom_fields: key-present → validate; absent → preserve existing
+    if (array_key_exists('custom_fields', $body)) {
+        if (!is_array($body['custom_fields'])) api_error(400, 'custom_fields must be an object.');
+        $cfAddrDefs = custom_field_def_list($db, 'address');
+        try {
+            $cfJson = serialize_custom_fields_row(
+                validate_custom_fields_api_payload($cfAddrDefs, $body['custom_fields'])
+            );
+        } catch (\InvalidArgumentException $ex) {
+            api_error(422, $ex->getMessage());
+        }
+    } else {
+        $cfJson = to_str($addr['custom_fields'] ?? '{}');
     }
     $hostname  = array_key_exists('hostname',   $body) ? trim(to_str($body['hostname']))   : to_str($addr['hostname']);
     $owner     = array_key_exists('owner',      $body) ? trim(to_str($body['owner']))      : to_str($addr['owner']);
@@ -1972,9 +2002,9 @@ function api_addresses_update(PDO $db, array $apiKey, int $id, array $body): nev
     }
 
     $db->prepare(
-        "UPDATE addresses SET hostname = :hn, owner = :ow, note = :nt, grp = :grp, mac = :mac, expires_at = :exp, status = :st WHERE id = :id"
+        "UPDATE addresses SET hostname = :hn, owner = :ow, note = :nt, grp = :grp, mac = :mac, expires_at = :exp, status = :st, custom_fields = :cf WHERE id = :id"
     )->execute([':hn' => $hostname, ':ow' => $owner, ':nt' => $note, ':grp' => $grp,
-                ':mac' => $mac, ':exp' => $expiresAt, ':st' => $status, ':id' => $id]);
+                ':mac' => $mac, ':exp' => $expiresAt, ':st' => $status, ':cf' => $cfJson, ':id' => $id]);
 
     // #310 + CodeRabbit m1: tag_ids[] validated up-front.
     if ($validatedTagIds !== null) {
@@ -2047,6 +2077,18 @@ function api_subnets_create(PDO $db, array $apiKey, array $body): never
     } else {
         $validatedTagIds = null;
     }
+    // Validate custom_fields up-front (key-present → must be object; absent → no-op)
+    if (array_key_exists('custom_fields', $body)) {
+        if (!is_array($body['custom_fields'])) api_error(400, 'custom_fields must be an object.');
+        $cfSubnetDefs = custom_field_def_list($db, 'subnet');
+        try {
+            $cfValues = validate_custom_fields_api_payload($cfSubnetDefs, $body['custom_fields']);
+        } catch (\InvalidArgumentException $ex) {
+            api_error(422, $ex->getMessage());
+        }
+    } else {
+        $cfValues = null;
+    }
     $vlanId      = isset($body['vlan_id']) ? to_int($body['vlan_id']) : null;
     $vrfId       = isset($body['vrf_id'])  ? to_int($body['vrf_id'])  : null;
 
@@ -2087,8 +2129,8 @@ function api_subnets_create(PDO $db, array $apiKey, array $body): never
     // Postgres BYTEA. Positional execute() binds PARAM_STR, which Postgres
     // rejects on any network_bin containing a non-ASCII byte.
     $insSt = $db->prepare(
-        "INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, notes, site_id, vlan_id, vrf_id)
-         VALUES (:cidr, :ver, :net, :nbin, :pfx, :desc, :notes, :sid, :vlan, :vrf)"
+        "INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, notes, site_id, vlan_id, vrf_id, custom_fields)
+         VALUES (:cidr, :ver, :net, :nbin, :pfx, :desc, :notes, :sid, :vlan, :vrf, :cf)"
     );
     $insSt->bindValue(':cidr',  $p['network'] . '/' . $p['prefix']);
     $insSt->bindValue(':ver',   $p['version'],  PDO::PARAM_INT);
@@ -2100,6 +2142,7 @@ function api_subnets_create(PDO $db, array $apiKey, array $body): never
     $insSt->bindValue(':sid',   $siteId,        $siteId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
     $insSt->bindValue(':vlan',  $vlanId,        $vlanId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
     $insSt->bindValue(':vrf',   $vrfId,         $vrfId  === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+    $insSt->bindValue(':cf',    $cfValues !== null ? serialize_custom_fields_row($cfValues) : '{}');
     $insSt->execute();
     $newId = ipam_last_insert_id($db, 'subnets');
 
@@ -2133,7 +2176,7 @@ function api_subnets_update(PDO $db, array $apiKey, int $id, array $body): never
 {
     if ($id <= 0) api_error(400, 'id is required as a query parameter.');
 
-    $st = $db->prepare("SELECT id, cidr, description, notes, site_id, vlan_id, vlan_fk, vrf_id, alerts_enabled FROM subnets WHERE id = :id");
+    $st = $db->prepare("SELECT id, cidr, description, notes, site_id, vlan_id, vlan_fk, vrf_id, alerts_enabled, custom_fields FROM subnets WHERE id = :id");
     $st->execute([':id' => $id]);
     /** @var array<string, mixed>|false $subnet */
     $subnet = $st->fetch();
@@ -2147,6 +2190,20 @@ function api_subnets_update(PDO $db, array $apiKey, int $id, array $body): never
         $validatedTagIds = api_validate_tag_ids($db, $body['tag_ids']);
     } else {
         $validatedTagIds = null;
+    }
+    // custom_fields: key-present → validate; absent → preserve existing
+    if (array_key_exists('custom_fields', $body)) {
+        if (!is_array($body['custom_fields'])) api_error(400, 'custom_fields must be an object.');
+        $cfSubnetDefs = custom_field_def_list($db, 'subnet');
+        try {
+            $cfJson = serialize_custom_fields_row(
+                validate_custom_fields_api_payload($cfSubnetDefs, $body['custom_fields'])
+            );
+        } catch (\InvalidArgumentException $ex) {
+            api_error(422, $ex->getMessage());
+        }
+    } else {
+        $cfJson = to_str($subnet['custom_fields'] ?? '{}');
     }
     $siteId = array_key_exists('site_id', $body)
         ? ($body['site_id'] !== null ? to_int($body['site_id']) : null)
@@ -2195,8 +2252,8 @@ function api_subnets_update(PDO $db, array $apiKey, int $id, array $body): never
     if ($inheritedSiteId !== null) $siteId = $inheritedSiteId;
 
     $db->prepare(
-        "UPDATE subnets SET description = :desc, notes = :notes, site_id = :sid, vlan_id = :vlan, vlan_fk = :vfk, vrf_id = :vrf, alerts_enabled = :ae WHERE id = :id"
-    )->execute([':desc' => $description, ':notes' => $notes, ':sid' => $siteId, ':vlan' => $vlanId, ':vfk' => $vlanFk, ':vrf' => $vrfId, ':ae' => $alertsEnabled, ':id' => $id]);
+        "UPDATE subnets SET description = :desc, notes = :notes, site_id = :sid, vlan_id = :vlan, vlan_fk = :vfk, vrf_id = :vrf, alerts_enabled = :ae, custom_fields = :cf WHERE id = :id"
+    )->execute([':desc' => $description, ':notes' => $notes, ':sid' => $siteId, ':vlan' => $vlanId, ':vfk' => $vlanFk, ':vrf' => $vrfId, ':ae' => $alertsEnabled, ':cf' => $cfJson, ':id' => $id]);
     if ($alertsEnabled === 0) {
         $db->prepare("DELETE FROM alert_state WHERE subnet_id = :sid")->execute([':sid' => $id]);
     }
