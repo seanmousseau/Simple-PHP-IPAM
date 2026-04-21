@@ -61,9 +61,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             if ($err === '') {
                 try {
+                    $kc = ipam_key_col();
                     $st = $db->prepare(
                         "INSERT INTO custom_field_defs
-                             (entity_type, key, label, type, options, sort_order, is_required)
+                             (entity_type, $kc, label, type, options, sort_order, is_required)
                          VALUES (:et, :k, :lbl, :t, :opts, :so, :req)"
                     );
                     $st->execute([
@@ -139,7 +140,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($action === 'delete') {
         $id = to_int($_POST['id'] ?? 0);
         if ($id > 0) {
-            $defSt = $db->prepare("SELECT key, label, entity_type FROM custom_field_defs WHERE id = :id");
+            $kc2 = ipam_key_col();
+            $defSt = $db->prepare("SELECT $kc2 AS key, label, entity_type FROM custom_field_defs WHERE id = :id");
             $defSt->execute([':id' => $id]);
             /** @var array<string,mixed>|false $def */
             $def = $defSt->fetch();

@@ -7080,16 +7080,17 @@ function ipam_normalize_mac_for_dhcp(string $mac): ?string
  */
 function custom_field_def_list(PDO $db, ?string $entityType = null): array
 {
+    $k = ipam_key_col();
     if ($entityType !== null) {
         $st = $db->prepare(
             "SELECT * FROM custom_field_defs WHERE is_deleted = 0 AND entity_type = :et
-             ORDER BY sort_order, key"
+             ORDER BY sort_order, $k"
         );
         $st->execute([':et' => $entityType]);
     } else {
         $st = $db->query(
             "SELECT * FROM custom_field_defs WHERE is_deleted = 0
-             ORDER BY entity_type, sort_order, key"
+             ORDER BY entity_type, sort_order, $k"
         );
         if ($st === false) throw new \RuntimeException('Query failed');
     }
