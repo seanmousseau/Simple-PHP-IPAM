@@ -28,6 +28,8 @@ The keys below are seeded into the `settings` table by the v2.6.0 migration and 
 | `security.login_lockout_seconds` | int | `900` | Lockout window length. |
 | `security.account_lockout_max_attempts` | int | `10` | Failed logins per username before account lockout. |
 | `security.account_lockout_seconds` | int | `900` | Account lockout window length. |
+| `api.rate_limit_window_seconds` | int | `60` | Sliding window size (seconds) for per-API-key rate limiting. *(v3.6.0)* |
+| `api.rate_limit_requests` | int | `300` | Max requests per window per API key before HTTP 429. *(v3.6.0)* |
 | *(config.php only)* `recovery_mode` | bool | `false` | Emergency login recovery mode (see below). |
 | `alert.recipient_user_ids` | json | `[]` | (v2.8.0+) Active user IDs that receive utilization alerts. Picked from a multi-select on **Settings → Alerting**; only users with a non-empty email are eligible. Inactive users / cleared emails drop out automatically at send time. |
 | `alert.email` | string | *(empty)* | **Deprecated in v2.8.0** — replaced by `alert.recipient_user_ids`. The 2.8.0 migration auto-maps a matching active user; unmappable values produce a `settings.alert_email_unmigrated` audit row. Hidden from the UI. Removal in v3.0.0. |
@@ -77,6 +79,9 @@ New configuration keys are added automatically when you upgrade: on the first pa
 
 - [Full example](#full-example)
 - [Settings reference](#settings-reference)
+- [`app_secret`](#app_secret) *(v3.6.0)*
+- [`session`](#session) *(v3.6.0)*
+- [`auth`](#auth) *(v3.6.0)*
 - [`login_protection`](#login_protection)
 - [`demo_mode`](#demo_mode)
 - [`password_policy`](#password_policy)
@@ -115,6 +120,21 @@ return [
     // Session idle timeout (seconds). Users are logged out after this
     // much inactivity. Default: 1800 (30 minutes).
     'session_idle_seconds' => 1800,
+
+    // Encryption key for TOTP 2FA secrets. Required before enabling 2FA.
+    // Generate: php -r "echo bin2hex(random_bytes(32));"
+    'app_secret' => '',
+
+    // Absolute session lifetime (minutes). 0 = no limit. Default: 8 hours.
+    'session' => [
+        'absolute_lifetime_minutes' => 480,
+    ],
+
+    // Persistent lockout after repeated 2FA failures.
+    'auth' => [
+        'lockout_after_failures'   => 10,
+        'lockout_duration_minutes' => 30,
+    ],
 
     // Login rate limiting: lock out an IP after this many consecutive
     // failed attempts within the lockout window.
@@ -270,6 +290,70 @@ Credentials for the initial admin account. This account is created automatically
 Once any user exists in the database, changes to this setting have no effect.
 
 A security warning banner is displayed to all logged-in admins until the password is changed away from the default value.
+
+---
+
+### `app_secret`
+
+*(Added in v3.6.0)*
+
+**Default:** `''` (empty — 2FA disabled)
+
+Encryption key used to encrypt TOTP secrets stored in the database. This key is **required before any user can enable two-factor authentication**. If left empty, the 2FA enrollment option is hidden and cannot be activated.
+
+Generate a suitable value:
+
+```bash
+php -r "echo bin2hex(random_bytes(32));"
+```
+
+```php
+'app_secret' => 'your-64-character-hex-string-here',
+```
+
+**Important:** Changing `app_secret` after users have enrolled in 2FA will invalidate all existing TOTP secrets. Users will not be able to complete the 2FA challenge and will need an admin to reset their 2FA before they can log in. Set this value once and do not change it.
+
+---
+
+### `session`
+
+*(Added in v3.6.0)*
+
+Controls session lifetime settings beyond the idle timeout.
+
+```php
+'session' => [
+    'absolute_lifetime_minutes' => 480,
+],
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `absolute_lifetime_minutes` | `480` | Maximum session duration in minutes, regardless of activity. Users are logged out and redirected to the login page when this limit is reached. Set to `0` to disable the absolute lifetime limit (sessions expire only via idle timeout). |
+
+The default of 480 minutes (8 hours) ensures that sessions do not persist indefinitely when users leave their browsers open overnight.
+
+---
+
+### `auth`
+
+*(Added in v3.6.0)*
+
+Controls authentication hardening behaviour, specifically the persistent 2FA lockout.
+
+```php
+'auth' => [
+    'lockout_after_failures'   => 10,
+    'lockout_duration_minutes' => 30,
+],
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `lockout_after_failures` | `10` | Number of consecutive 2FA failures before the account is persistently locked. |
+| `lockout_duration_minutes` | `30` | How long the persistent lockout lasts in minutes. Admins can unlock early from the Users admin page. |
+
+The persistent 2FA lockout is separate from the IP-based and per-account login lockouts. It tracks failures at the 2FA challenge step and persists across server restarts via `users.locked_until` and `users.lock_reason`. The Users admin page shows a "Locked (2FA)" badge for affected accounts.
 
 ---
 

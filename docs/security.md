@@ -1,19 +1,48 @@
-# Security Notes
+# Security
+
+Simple PHP IPAM is designed for deployment on trusted internal networks. This guide covers the security model, available hardening options, and a configuration reference for all security-related settings.
 
 ## Contents
 
+- [Threat model](#threat-model)
 - [HTTPS](#https)
 - [Content Security Policy](#content-security-policy)
 - [Authentication](#authentication)
-- [Login rate limiting](#login-rate-limiting)
+  - [Local accounts](#local-accounts)
+  - [OIDC single sign-on](#oidc-single-sign-on)
+  - [Two-factor authentication (TOTP)](#two-factor-authentication-totp)
+- [Session security](#session-security)
+- [Account lockout](#account-lockout)
 - [Login form protection](#login-form-protection)
-- [Session management](#session-management)
+- [API security](#api-security)
 - [CSRF protection](#csrf-protection)
+- [Output encoding](#output-encoding)
+- [SQL injection](#sql-injection)
 - [Database access](#database-access)
 - [Audit log integrity](#audit-log-integrity)
 - [File system hardening](#file-system-hardening)
-- [REST API keys](#rest-api-keys)
 - [Reverse proxy considerations](#reverse-proxy-considerations)
+- [Security configuration reference](#security-configuration-reference)
+
+---
+
+## Threat model
+
+Simple PHP IPAM is designed to protect against:
+
+- **Unauthenticated access** — every page (except login, OIDC callback, and the health check) requires an authenticated session.
+- **CSRF attacks** — every POST form is protected by a per-session CSRF token.
+- **XSS** — all user-controlled output is HTML-escaped via `e()` before rendering; there is no `unsafe-inline` in the Content Security Policy.
+- **SQL injection** — all queries use PDO prepared statements; direct string interpolation into SQL is prohibited and caught by Semgrep rules in CI.
+- **Brute-force login** — IP-based and per-account rate limiting, with optional 2FA to prevent credential-stuffing from gaining access even with a known password.
+- **Session hijacking** — session IDs are regenerated on login and on password change; cookies are `Secure`, `HttpOnly`, and `SameSite=Strict`.
+- **Audit trail tampering** — the `audit_log` table is append-only via database triggers.
+
+**What it is not designed for:**
+
+- **Public internet deployment without additional hardening.** If the instance faces the internet, put it behind a reverse proxy with HTTP Basic Auth, IP allowlisting, or a WAF. The application's own authentication is not hardened against nation-state adversaries or automated credential-stuffing at scale.
+- **Multi-tenant use.** All authenticated users share the same IP address database. Role separation (`admin` vs `readonly`) provides coarse access control, not tenant isolation.
+- **Compliance certification.** The application provides the building blocks (audit log, 2FA, session timeouts) but has not been audited against any formal compliance framework.
 
 ---
 
@@ -40,7 +69,7 @@ Content-Security-Policy:
 
 Key points:
 
-- **No `unsafe-inline`** in either `script-src` or `style-src`. All JavaScript uses event delegation via `data-*` attributes in `app.js`. All styling uses external CSS classes — no inline `style=""` attributes remain in any template (v1.6 removed inline scripts; v1.9 removed inline styles).
+- **No `unsafe-inline`** in either `script-src` or `style-src`. All JavaScript uses event delegation via `data-*` attributes in `app.js`. All styling uses external CSS classes — no inline `style=""` attributes remain in any template.
 - **`frame-ancestors 'none'`** prevents the app from being embedded in an iframe (equivalent to `X-Frame-Options: DENY`).
 - **Login page extension:** when a widget-based `login_protection` method (Turnstile, hCaptcha, reCAPTCHA, Friendly Captcha) is active, `script-src` is extended on `login.php` only to include the provider's domain. All other pages remain unaffected.
 
@@ -56,66 +85,195 @@ Additional headers set on every response:
 
 ## Authentication
 
+### Local accounts
+
 - Passwords are stored using PHP's `password_hash()` with `PASSWORD_DEFAULT` (bcrypt).
 - `password_needs_rehash()` is checked on every login — hashes are silently upgraded if the cost factor changes.
 - Session cookies are set with `Secure`, `HttpOnly`, and `SameSite=Strict`.
 - `session.use_strict_mode` and `session.use_only_cookies` are enabled.
 - The session ID is regenerated on login (`session_regenerate_id(true)`).
-- **Timing normalisation:** when a username is not found or the account is inactive, a dummy `password_verify()` call is made so that response time does not reveal whether the username exists (v1.9).
+- **Timing normalisation:** when a username is not found or the account is inactive, a dummy `password_verify()` call is made so that response time does not reveal whether the username exists.
+- **Default credentials:** change the bootstrap admin password before the site receives any traffic. The default credentials (`admin` / `ChangeMeNow!12345`) are well-known and must not be used in production. A security warning banner is displayed to all admins until the password is changed.
 
 ### OIDC single sign-on
 
 OIDC Authorization Code + PKCE is supported as an alternative to local passwords. ID token signatures are verified in-process using `openssl` — no network calls beyond the discovery and JWKS fetches.
 
-- `preferred_username` and other claims are sanitised (characters outside `[a-zA-Z0-9._@\-]` stripped) before use as local usernames (v1.9).
-- Email-based auto-link uses an email-only query — a username that happens to match another user's email cannot trigger a cross-account link (v1.9).
-
 Auto-provisioned OIDC accounts are assigned an unusable random password and cannot log in locally unless an admin sets one. See the [OIDC guide](oidc.md).
 
-### Default credentials
+### Two-factor authentication (TOTP)
 
-Change the bootstrap admin password **before** the site receives any traffic. The default credentials (`admin` / `ChangeMeNow!12345`) are well-known and must not be used in production.
+*(Added in v3.6.0)*
+
+TOTP (RFC 6238) 2FA is available for all local accounts. It uses time-based one-time passwords compatible with any standard authenticator app (Google Authenticator, Authy, 1Password, Bitwarden, etc.).
+
+#### Requirements
+
+`app_secret` must be set in `config.php` before any user can enable 2FA. This key is used to encrypt stored TOTP secrets at rest. Changing `app_secret` after users have enrolled will invalidate all existing secrets and lock those users out until an admin resets their 2FA.
+
+Generate a suitable key:
+
+```bash
+php -r "echo bin2hex(random_bytes(32));"
+```
+
+Add it to `config.php`:
+
+```php
+'app_secret' => 'your-64-character-hex-string-here',
+```
+
+#### Enrollment
+
+1. Log in and go to **Account** (user menu, top right).
+2. In the **Two-Factor Authentication** section, click **Enable 2FA**.
+3. Scan the QR code with your authenticator app, or enter the manual key shown below it.
+4. Enter the 6-digit code from your app to confirm enrollment.
+5. Save the **backup codes** displayed after confirmation — these are shown once and cannot be recovered.
+
+#### Mid-login challenge
+
+After entering username and password, if 2FA is enabled the user is redirected to `totp_verify.php` to enter the 6-digit code from their authenticator app. The password verification and 2FA check are separate steps so that a failed 2FA attempt does not count against the IP-based login rate limiter.
+
+#### Backup codes
+
+Eight single-use backup codes are generated at enrollment. Each code is in `XXXXXXXX-XXXXXXXX` format. Backup codes can be used on the 2FA challenge screen instead of the 6-digit TOTP code. Each code is valid once only and is consumed on use.
+
+When all backup codes are used, new ones can be generated from the Account page (this re-enrolls 2FA with a fresh secret and new backup codes).
+
+Store backup codes securely — in a password manager, not in the same location as the device running the authenticator app.
+
+#### Admin reset
+
+Admins can reset another user's 2FA from **Admin → Users**. The reset action:
+
+- Disables 2FA for that user.
+- Deletes all of that user's backup codes.
+- Is recorded in the audit log as `user.totp_reset`.
+
+Use this when a user loses access to their authenticator app and has no backup codes.
+
+#### Disabling 2FA
+
+Users can disable their own 2FA from the Account page. This requires entering the current 6-digit TOTP code to confirm. Disabling 2FA also deletes all backup codes.
 
 ---
 
-## Login rate limiting
+## Session security
+
+### Idle timeout
+
+Configurable via `security.session_idle_seconds` (database setting, editable at Admin → Settings). Default: 1800 seconds (30 minutes). On expiry the user is redirected to the login page with an informational message. The idle timer is refreshed on every authenticated page load.
+
+### Absolute session lifetime
+
+*(Added in v3.6.0)*
+
+Regardless of activity, sessions expire after `session.absolute_lifetime_minutes` (default: 480 minutes / 8 hours). This prevents a session from persisting indefinitely if a user leaves their browser open. Setting to `0` disables the absolute limit.
+
+Configured via `config.php`:
+
+```php
+'session' => [
+    'absolute_lifetime_minutes' => 480,
+],
+```
+
+### Session rotation
+
+The session ID is regenerated on login (`session_regenerate_id(true)`) and on password change, preventing session fixation attacks.
+
+### Session isolation
+
+Each IPAM install uses a unique session cookie name derived from the filesystem path of the install directory, preventing session sharing between multiple IPAM instances on the same server.
+
+---
+
+## Account lockout
+
+### IP-based login rate limiting
 
 Failed login attempts are tracked per IP address in the `login_attempts` table.
 
-- After `login_max_attempts` consecutive failures (default: **5**) within the lockout window, the IP is blocked for `login_lockout_seconds` (default: **15 minutes**).
+- After `security.login_max_attempts` consecutive failures (default: 5) within the lockout window, the IP is blocked for `security.login_lockout_seconds` (default: 15 minutes).
 - A successful login clears the failure counter for that IP.
 - Blocked attempts are recorded in the audit log as `auth.login_blocked`.
-- Rate limiting applies in demo mode as well as normal mode.
-- Stale records are purged automatically — no cron job or manual cleanup is required.
-- **Audit log privacy:** failed login entries record the IP address but not the submitted username, preventing mistyped passwords from appearing in logs (v1.9).
+- Stale records are purged automatically — no cron job is required.
+- Failed login entries record the IP address but not the submitted username, preventing mistyped passwords from appearing in logs.
+
+### Per-account lockout
+
+After `security.account_lockout_max_attempts` consecutive failed login attempts for a specific username (default: 10, across all source IPs), the account is locked for `security.account_lockout_seconds` (default: 15 minutes). Admins can unlock an account manually from Users admin.
+
+### Persistent 2FA lockout
+
+*(Added in v3.6.0)*
+
+After `auth.lockout_after_failures` consecutive 2FA failures (default: 10) against a single account, the account is locked until `auth.lockout_duration_minutes` (default: 30 minutes) elapses or an admin unlocks it.
+
+This lockout is distinct from the IP-based and per-account login lockouts:
+
+- It tracks failures at the 2FA challenge step, not the password step.
+- It is stored persistently in `users.locked_until` and `users.lock_reason`, so it survives server restarts.
+- The Users admin page shows a "Locked (2FA)" badge for affected accounts.
+- Admin unlock from the Users page clears both the time-windowed lockout and the persistent 2FA lockout.
+
+Configured via `config.php`:
+
+```php
+'auth' => [
+    'lockout_after_failures'  => 10,
+    'lockout_duration_minutes' => 30,
+],
+```
 
 ---
 
 ## Login form protection
 
-*(Added in v1.9)*
-
 Optional bot mitigation on the login form is available via the `login_protection` config block. This is separate from and complementary to IP-based rate limiting.
 
 Supported methods: `honeypot`, `turnstile` (Cloudflare), `hcaptcha`, `recaptcha` (Google v2/v3), and `friendly_captcha`. See [`login_protection`](configuration.md#login_protection) in the configuration reference for available methods and setup instructions.
 
-**Google reCAPTCHA Enterprise** is supported in addition to the standard reCAPTCHA v2/v3 service. When `recaptcha_enterprise.enabled` is `true`, the assessment is sent to the Enterprise API for scoring. See [`recaptcha_enterprise`](configuration.md#recaptcha_enterprise) for configuration details.
-
-**Demo mode gate:** when the `demo_mode.gate` option is configured, the pre-login gate page (`demo_gate.php`) applies the same bot-mitigation widget before allowing access to the login form. This is distinct from login page protection and is configured under `demo_mode.gate` in `config.php`.
-
 ---
 
-## Session management
+## API security
 
-- Sessions expire after `session_idle_seconds` of inactivity (default: **30 minutes**).
-- On expiry the user is redirected to the login page with an informational message.
-- The idle timeout is refreshed on every authenticated page load.
+### API key authentication
+
+All API endpoints require a valid `Authorization: Bearer <key>` header. Keys are generated using `random_bytes(32)` (256 bits of entropy). Only a SHA-256 hash of the key is stored — the raw key cannot be recovered from the database.
+
+### Per-API-key rate limiting
+
+*(Added in v3.6.0)*
+
+A sliding-window rate limit is applied per API key, stored in the `rate_limit_buckets` table.
+
+- Default: 300 requests per 60-second window.
+- Exceeding the limit returns HTTP 429 with a `Retry-After` header indicating when the window resets.
+- Configurable via Admin → Settings:
+  - `api.rate_limit_window_seconds` — window size (default: 60)
+  - `api.rate_limit_requests` — max requests per window (default: 300)
+
+The existing IP-based login rate limiter continues to apply independently.
 
 ---
 
 ## CSRF protection
 
-All POST endpoints call `csrf_require()`, which validates a per-session token stored in `$_SESSION['csrf']`. Requests with a missing or mismatched token are rejected with HTTP 403 and redirected to the login page so users with stale tabs can recover gracefully.
+All POST endpoints call `csrf_require()`, which validates a per-session token stored in `$_SESSION['csrf']`. Requests with a missing or mismatched token are rejected with HTTP 403. Users with stale tabs are redirected to the login page rather than receiving a bare error, so they can recover gracefully.
+
+---
+
+## Output encoding
+
+All user-controlled data is run through `e()` (wraps `htmlspecialchars`) before output. Semgrep rules in CI (`ipam-xss-unsanitized-echo`) enforce this — `e()` is registered as an XSS sanitizer so correct usage is never flagged as a false positive.
+
+---
+
+## SQL injection
+
+All database queries use PDO prepared statements with named parameters. Direct string concatenation into SQL is prohibited. Semgrep rule `ipam-sqli-raw-concat` catches violations in CI.
 
 ---
 
@@ -124,17 +282,7 @@ All POST endpoints call `csrf_require()`, which validates a per-session token st
 - All queries use **PDO prepared statements** — no string interpolation of user input into SQL.
 - SQLite WAL mode is enabled for better concurrency and crash safety.
 - Foreign key enforcement is enabled (`PRAGMA foreign_keys = ON`).
-
----
-
-## Binary IP storage
-
-IP addresses and network prefixes are stored as raw 4-byte (IPv4) or 16-byte (IPv6) binary blobs in `network_bin` (subnets) and `ip_bin` (addresses) columns. This provides:
-
-- **Correct sort order** — binary comparison of raw network addresses sorts numerically, not lexicographically.
-- **Fast range queries** — containment checks use direct binary comparison, not string manipulation.
-
-The text `ip` and `network` columns are stored alongside the blobs for display. `inet_pton()` encodes and `inet_ntop()` decodes at the application layer. Blobs are never compared with `==` — the code uses `hash_equals()` for safe timing-safe comparison where needed.
+- Binary IP columns (`ip_bin`, `network_bin`) use `PDO::PARAM_LOB` binding to ensure correct BLOB affinity storage and sort order.
 
 ---
 
@@ -143,8 +291,9 @@ The text `ip` and `network` columns are stored alongside the blobs for display. 
 The `audit_log` table is **append-only**. SQLite triggers prevent any `UPDATE` or `DELETE` on audit rows — even the database owner cannot silently alter past entries. The audit log records:
 
 - Login, logout, and failed login events (including rate-limited blocks)
-- All create / update / delete operations on subnets, addresses, sites, users, VLANs, VRFs, contacts, and tags *(v2.0+)*
-- Database export and import events *(v2.0+)*
+- 2FA enrollment, disable, and admin reset events
+- All create / update / delete operations on subnets, addresses, sites, users, VLANs, VRFs, contacts, and tags
+- Database export and import events
 - CSV import events (dry-run and apply)
 - Export actions
 - API key lifecycle events (create, deactivate, activate, delete)
@@ -156,17 +305,15 @@ The `audit_log` table is **append-only**. SQLite triggers prevent any `UPDATE` o
 The included `.htaccess` (Apache / LiteSpeed) blocks direct HTTP access to:
 
 - `data/` directory and `*.sqlite` / `*.db` files
-- `dialects/` directory (internal `Dialect` class hierarchy — `SqliteDialect`, `MysqlDialect`, `PgsqlDialect`, never meant to be served as a URL)
-- `vendor/` directory (bundled Composer runtime libraries, starting v2.9.0)
+- `dialects/` directory (internal `Dialect` class hierarchy)
+- `vendor/` directory (bundled Composer runtime libraries)
 - `*.sh`, `*.sql` files
-- `config.php`, `lib.php`, `init.php`, `schema*.sql`, `PgsqlStatement.php`, `migrate.php`, `tmp_cleanup.php` at the web root
-- Build and release artefacts (`*.tar.gz`, `*.zip`, `*.bundle.txt`, `SHA256SUMS`)
+- `config.php`, `lib.php`, `init.php`, `schema*.sql`, `migrate.php`, `tmp_cleanup.php` at the web root
+- Build and release artefacts (`*.tar.gz`, `*.zip`, `SHA256SUMS`)
 
-**Nginx users** must replicate these rules manually — Nginx does not process `.htaccess` files. See the [install guide](install.md#nginx) for the rules to translate.
+**Nginx users** must replicate these rules manually. See the [install guide](install.md#nginx).
 
-**OpenLiteSpeed users** get full coverage out of the box — the shipped `.htaccess` uses root-level `RewriteRule` entries for `dialects/` and `vendor/` because OLS's lsphp handler dispatches PHP files before subdirectory-level rewrites fire (v2.11.0 #500). See the [OpenLiteSpeed setup notes](install.md#openlitespeed) for the one WebAdmin setting worth verifying (Auto Index → Off) and the automated regression guard (`.github/workflows/playwright.yml` runs the `.htaccess` assertion spec against a containerized OLS image on every PR alongside the Apache slot).
-
-The recommended file permissions further limit exposure:
+The recommended file permissions:
 
 | Path | Permissions |
 |------|------------|
@@ -178,21 +325,6 @@ See the full [permissions reference](install.md#file-permissions-reference).
 
 ---
 
-## REST API keys
-
-API keys grant read-only access to the JSON API (`api.php`).
-
-- Keys are generated using `random_bytes(32)` (256 bits of entropy) and encoded as 64-character hex strings.
-- Only a **SHA-256 hash** of the key is stored — the raw key cannot be recovered from the database.
-- If a key is lost, delete it and generate a new one.
-- Keys can be deactivated instantly from **Admin → API Keys** without deleting them.
-- All key lifecycle events are recorded in the audit log.
-- The API is **read-only** — no write operations are exposed.
-
-Pass keys via the `Authorization: Bearer <key>` header. Avoid passing them as query parameters in environments where URLs may appear in server logs or browser history.
-
----
-
 ## Reverse proxy considerations
 
 If you place a reverse proxy (nginx, Caddy, HAProxy, AWS ALB, etc.) in front of the application:
@@ -200,3 +332,51 @@ If you place a reverse proxy (nginx, Caddy, HAProxy, AWS ALB, etc.) in front of 
 - Set `'proxy_trust' => true` in `config.php` only if the proxy reliably strips or overwrites `X-Forwarded-Proto` from untrusted clients.
 - Ensure the proxy forwards the real client IP in `REMOTE_ADDR` or a trusted header — the login rate limiter keys on `REMOTE_ADDR`. If all requests appear to come from a single proxy IP, the rate limiter will be ineffective.
 - Apply rate limiting or WAF rules at the proxy layer as an additional defence-in-depth measure.
+
+---
+
+## Security configuration reference
+
+### `config.php` keys
+
+These are set directly in `config.php` on the server. They are read before the database is opened and cannot be changed via the admin UI.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `app_secret` | `''` | Encryption key for stored TOTP secrets. Required before enabling 2FA. Generate with: `php -r "echo bin2hex(random_bytes(32));"`. Changing this after enrollment invalidates all existing 2FA secrets. |
+| `session.absolute_lifetime_minutes` | `480` | Absolute maximum session duration in minutes. Sessions expire at this point regardless of activity. Set to `0` to disable the absolute limit. |
+| `auth.lockout_after_failures` | `10` | Number of consecutive 2FA failures that trigger a persistent account lockout. |
+| `auth.lockout_duration_minutes` | `30` | How long a 2FA-triggered persistent lockout lasts in minutes. Admins can unlock early from the Users admin page. |
+
+Example `config.php` additions for v3.6.0:
+
+```php
+// Encryption key for TOTP secrets. Required if enabling 2FA.
+// Generate: php -r "echo bin2hex(random_bytes(32));"
+'app_secret' => '',
+
+// Absolute session lifetime. Default: 480 minutes (8 hours). 0 = disabled.
+'session' => [
+    'absolute_lifetime_minutes' => 480,
+],
+
+// Persistent lockout for repeated 2FA failures.
+'auth' => [
+    'lockout_after_failures'   => 10,
+    'lockout_duration_minutes' => 30,
+],
+```
+
+### Database settings
+
+These are configured via **Admin → Settings** and take effect on the next request without a server restart.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `security.session_idle_seconds` | `1800` | Idle session timeout in seconds. Users are logged out after this much inactivity. |
+| `security.login_max_attempts` | `5` | Consecutive login failures per IP before IP lockout. |
+| `security.login_lockout_seconds` | `900` | IP lockout duration in seconds (default: 15 minutes). |
+| `security.account_lockout_max_attempts` | `10` | Consecutive login failures per username before per-account lockout. |
+| `security.account_lockout_seconds` | `900` | Per-account lockout duration in seconds (default: 15 minutes). |
+| `api.rate_limit_window_seconds` | `60` | Sliding window size for per-API-key rate limiting. *(v3.6.0)* |
+| `api.rate_limit_requests` | `300` | Maximum requests per window per API key. *(v3.6.0)* |
