@@ -9,6 +9,7 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
+  - [v3.5.0](#v350) — Custom fields (no breaking changes)
   - [v3.4.0](#v340) — DHCP config export (no breaking changes)
   - [v3.3.0](#v330) — webhooks, login history, brand polish (no breaking changes)
   - [v3.2.0](#v320) — devices, password recovery, OpenAPI spec (no breaking changes)
@@ -93,6 +94,26 @@ The backup is left in place after a successful upgrade. You can remove it manual
 ---
 
 ## Version-specific upgrade notes
+
+### v3.5.0
+
+**No breaking changes.** Run `upgrade.sh` as normal — no manual steps required.
+
+**New admin page:**
+- `custom_fields.php` — Admin-only. Accessible from Admin → Custom Fields. Manage per-entity custom field definitions (create, edit, delete, reorder).
+
+**New schema** (applied automatically by migration `3.5.0-custom-fields`):
+- New table `custom_field_defs` — stores field definitions (key, label, entity type, type, options, sort order, required flag).
+- `subnets.custom_fields TEXT NOT NULL DEFAULT '{}'` — JSON object of custom field values.
+- `addresses.custom_fields TEXT NOT NULL DEFAULT '{}'` — same for addresses.
+
+**API change (additive):** Subnet and address responses now include a `custom_fields` object. Existing clients that do not inspect this key are unaffected. `PUT` requests now accept `custom_fields`; unknown keys or type mismatches return HTTP 422.
+
+**CSV change (additive):** A `custom_fields` column is appended to `export_addresses.php` output. The import wizard accepts an optional `custom_fields` mapping column. Existing import files without this column continue to work.
+
+See the [Custom Fields guide](custom-fields.md) for full documentation.
+
+---
 
 ### v3.4.0
 
