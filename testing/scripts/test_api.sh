@@ -1173,6 +1173,88 @@ else
 fi
 
 # ====================================================================
+log "=== Custom Fields CSV Export (v3.5.0) ==="
+# ====================================================================
+
+# Seed an address CF definition, run API + CSV export round-trip, then clean up
+CF_ADDR_DEF_ID=""
+if [[ -n "${DOCKER_CONTAINER:-}" ]]; then
+    CF_ADDR_DEF_ID=$(db_php "$(container_api_key_php "
+\$stmt = \$db->prepare(\"INSERT INTO custom_field_defs (entity_type, key, label, type, options, sort_order, is_required) VALUES ('address','csv_test_txt','CSV Test','text','[]',97,0)\");
+\$stmt->execute();
+echo ipam_last_insert_id(\$db, 'custom_field_defs');
+")" 2>/dev/null | tr -d '[:space:]')
+fi
+
+if [[ -n "${CF_ADDR_DEF_ID:-}" && "$CF_ADDR_DEF_ID" != "" && -n "${ADDR_ID:-}" && "$ADDR_ID" != "None" && -n "${SUBNET_ID:-}" && "$SUBNET_ID" != "None" ]]; then
+    # Valid text value → 200, verify via DB (GET addresses has no id filter — list endpoint only)
+    call_api PUT "addresses&id=$ADDR_ID" '{"custom_fields":{"csv_test_txt":"hello-csv"}}'
+    assert_http 200 "PUT address with text cf value → 200"
+
+    ADDR_TXT_VAL=$(db_php "$(container_api_key_php "
+\$st = \$db->prepare(\"SELECT custom_fields FROM addresses WHERE id = :id\");
+\$st->execute([':id' => $ADDR_ID]);
+\$r = \$st->fetch();
+\$cf = json_decode(\$r ? \$r['custom_fields'] : '{}', true);
+echo \$cf['csv_test_txt'] ?? 'MISSING';
+")" 2>/dev/null | tr -d '[:space:]')
+    [[ "$ADDR_TXT_VAL" == "hello-csv" ]] && pass "address text cf stored in DB: 'hello-csv'" || fail "address text cf not stored: $ADDR_TXT_VAL"
+
+    # Type violation: integer in text field → 422
+    call_api PUT "addresses&id=$ADDR_ID" '{"custom_fields":{"csv_test_txt":123}}'
+    [[ "$HTTP_CODE" == "422" ]] && pass "PUT address with integer in text field → 422" || fail "PUT address with integer in text field → expected 422, got $HTTP_CODE"
+
+    # Session login to download the CSV export
+    _SESS_JAR=$(mktemp /tmp/ipam_sess_XXXXXXXX.txt)
+    _ADMIN_USER="${IPAM_ADMIN_USER:-demo}"
+    _ADMIN_PASS="${IPAM_ADMIN_PASS:-demo}"
+    LOGIN_HTML=$(curl -s --noproxy '*' "${_ba_args[@]+"${_ba_args[@]}"}" -k \
+        -c "$_SESS_JAR" -b "$_SESS_JAR" \
+        "$BASE_URL/login.php" 2>/dev/null || echo "")
+    LOGIN_CSRF=$(echo "$LOGIN_HTML" | grep -oE 'name="csrf" value="[^"]*"' | head -1 | sed 's/.*value="//;s/"//' || echo "")
+
+    if [[ -n "$LOGIN_CSRF" ]]; then
+        curl -s --noproxy '*' "${_ba_args[@]+"${_ba_args[@]}"}" -k \
+            -c "$_SESS_JAR" -b "$_SESS_JAR" -L \
+            --data-urlencode "username=$_ADMIN_USER" \
+            --data-urlencode "password=$_ADMIN_PASS" \
+            --data-urlencode "csrf=$LOGIN_CSRF" \
+            -o /dev/null "$BASE_URL/login.php" 2>/dev/null || true
+
+        # Download the per-subnet CSV export
+        SUBNET_CSV=$(curl -s --noproxy '*' "${_ba_args[@]+"${_ba_args[@]}"}" -k \
+            -c "$_SESS_JAR" -b "$_SESS_JAR" \
+            "$BASE_URL/export_addresses.php?subnet_id=$SUBNET_ID" 2>/dev/null || echo "")
+
+        CSV_HEADER=$(echo "$SUBNET_CSV" | head -1)
+        [[ "$CSV_HEADER" == *"custom_fields"* ]] && pass "export_addresses.php CSV header contains 'custom_fields'" || fail "export_addresses.php CSV header missing 'custom_fields': $CSV_HEADER"
+
+        CSV_CF_VAL=$(python3 -c "
+import csv, io, sys
+data = sys.stdin.read()
+reader = csv.DictReader(io.StringIO(data))
+for row in reader:
+    print(row.get('custom_fields', 'MISSING'))
+    break
+" <<< "$SUBNET_CSV" 2>/dev/null || echo "MISSING")
+        [[ "$CSV_CF_VAL" == *"hello-csv"* ]] && pass "export CSV row custom_fields contains 'hello-csv'" || fail "export CSV row custom_fields: expected 'hello-csv', got $CSV_CF_VAL"
+    else
+        skip "CSV export download — could not get session CSRF token"
+    fi
+    rm -f "$_SESS_JAR"
+
+    # Clean up address CF def and reset address custom_fields
+    db_php "$(container_api_key_php "
+\$db->prepare(\"DELETE FROM custom_field_defs WHERE id = :id\")->execute([':id' => $CF_ADDR_DEF_ID]);
+\$db->prepare(\"UPDATE addresses SET custom_fields = '{}' WHERE id = :id\")->execute([':id' => $ADDR_ID]);
+")" 2>/dev/null || true
+    pass "Cleaned up address CF definition (id=$CF_ADDR_DEF_ID)"
+else
+    [[ -z "${CF_ADDR_DEF_ID:-}" ]] && skip "CSV CF tests — DB seed skipped (not containerized)" \
+                                    || skip "CSV CF tests — no ADDR_ID or SUBNET_ID"
+fi
+
+# ====================================================================
 log "=== OpenAPI Spec ==="
 # ====================================================================
 

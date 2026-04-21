@@ -68,7 +68,7 @@ test('export subnets: 200 response, CSV content', async () => {
   expect(r.body).toContain(TEST_CIDR2);
 });
 
-test('export addresses: contains test IP + mac + expires_at columns', async () => {
+test('export addresses: contains test IP + mac + expires_at + custom_fields columns', async () => {
   if (!subnetId) { test.skip(); return; }
   await page.goto(`addresses.php?subnet_id=${subnetId}`);
   const r = await fetchGet(page, appUrl(`export_addresses.php?subnet_id=${subnetId}`));
@@ -78,6 +78,7 @@ test('export addresses: contains test IP + mac + expires_at columns', async () =
   // Column headers
   expect(r.body.toLowerCase()).toContain('mac');
   expect(r.body.toLowerCase()).toContain('expires_at');
+  expect(r.body.toLowerCase()).toContain('custom_fields');
 });
 
 test('export audit: 200 response, CSV content', async () => {

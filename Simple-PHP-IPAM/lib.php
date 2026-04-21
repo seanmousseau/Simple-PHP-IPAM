@@ -7145,7 +7145,7 @@ function parse_custom_fields_row(string $json): array
  * Canonical JSON serialization for the custom_fields column.
  * Null values are stripped so the stored JSON stays compact.
  *
- * @param array<string,mixed> $values
+ * @param array<mixed,mixed> $values
  */
 function serialize_custom_fields_row(array $values): string
 {
@@ -7159,7 +7159,7 @@ function serialize_custom_fields_row(array $values): string
  * Throws InvalidArgumentException on the first type mismatch or missing required field.
  *
  * @param list<array<string,mixed>> $defs     Output of custom_field_def_list()
- * @param array<string,mixed>       $payload  Flat key→raw-value map from $_POST (keys without the 'cf_' prefix)
+ * @param array<mixed,mixed>        $payload  Flat key→raw-value map from $_POST or json_decode (keys without the 'cf_' prefix)
  * @return array<string,mixed>
  */
 function validate_custom_fields_payload(array $defs, array $payload): array

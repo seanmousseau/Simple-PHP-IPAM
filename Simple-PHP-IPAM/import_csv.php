@@ -121,6 +121,9 @@ function analyze_import(PDO $db, array $wiz): array
         'duplicate_in_csv' => 0,
     ];
 
+    /** @var list<array<string,mixed>> $addressDefs */
+    $addressDefs = custom_field_def_list($db, 'address');
+
     /** @var list<array<string, mixed>> $existingSubnets */
     $existingSubnets = ($db->query("SELECT id, cidr FROM subnets")
         ?: throw new \RuntimeException('Query failed'))->fetchAll();
@@ -175,11 +178,32 @@ function analyze_import(PDO $db, array $wiz): array
             'netmask_hint' => trim(to_str($get('netmask') ?? '')),
             'device_name' => $get('device_name') !== null ? substr(trim(to_str($get('device_name'))), 0, 255) : null,
             'interface_name' => $get('interface_name') !== null ? substr(trim(to_str($get('interface_name'))), 0, 255) : null,
+            'custom_fields' => '{}',
         ];
 
         $rawExpires = trim(to_str($get('expires_at') ?? ''));
         if ($rawExpires !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $rawExpires)) {
             $entry['expires_at'] = $rawExpires;
+        }
+
+        $rawCf = trim(to_str($get('custom_fields') ?? ''));
+        if ($rawCf !== '' && $rawCf !== '{}') {
+            $parsedCf = json_decode($rawCf, true);
+            if (!is_array($parsedCf)) {
+                $entry['reason'] = 'custom_fields: invalid JSON';
+                $summary['invalid']++;
+                $planRows[] = $entry;
+                continue;
+            }
+            try {
+                validate_custom_fields_payload($addressDefs, $parsedCf);
+                $entry['custom_fields'] = serialize_custom_fields_row($parsedCf);
+            } catch (\InvalidArgumentException $ex) {
+                $entry['reason'] = 'custom_fields: ' . $ex->getMessage();
+                $summary['invalid']++;
+                $planRows[] = $entry;
+                continue;
+            }
         }
 
         // Field length validation
@@ -560,6 +584,7 @@ if ($step === 2) {
             'description' => 'Subnet description (optional, used only when creating subnet)',
             'device_name' => 'Device name (optional)',
             'interface_name' => 'Interface name (optional, requires device name)',
+            'custom_fields' => 'Custom fields (JSON, optional)',
         ];
 
         echo "<table><tbody>";
@@ -720,10 +745,10 @@ if (demo_mode_enabled()) {
 
         $db->beginTransaction();
 
-        $sel = $db->prepare("SELECT id, ip, hostname, owner, note, grp, mac, expires_at, status, device_id, interface_id FROM addresses WHERE subnet_id=:sid AND ip=:ip");
-        $ins = $db->prepare("INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, grp, mac, expires_at, status, device_id, interface_id)
-                             VALUES (:sid,:ip,:bin,:hn,:ow,:nt,:grp,:mac,:exp,:st,:did,:iid)");
-        $upd = $db->prepare("UPDATE addresses SET hostname=:hn, owner=:ow, note=:nt, grp=:grp, mac=:mac, expires_at=:exp, status=:st, device_id=:did, interface_id=:iid WHERE id=:id");
+        $sel = $db->prepare("SELECT id, ip, hostname, owner, note, grp, mac, expires_at, status, device_id, interface_id, custom_fields FROM addresses WHERE subnet_id=:sid AND ip=:ip");
+        $ins = $db->prepare("INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, grp, mac, expires_at, status, device_id, interface_id, custom_fields)
+                             VALUES (:sid,:ip,:bin,:hn,:ow,:nt,:grp,:mac,:exp,:st,:did,:iid,:cf)");
+        $upd = $db->prepare("UPDATE addresses SET hostname=:hn, owner=:ow, note=:nt, grp=:grp, mac=:mac, expires_at=:exp, status=:st, device_id=:did, interface_id=:iid, custom_fields=:cf WHERE id=:id");
 
         // Device/interface lookup+create helpers used inside the row loop
         $selDevice = $db->prepare("SELECT id FROM devices WHERE name=:name");
@@ -890,6 +915,7 @@ if (demo_mode_enabled()) {
                 $ins->bindValue(':st',   to_str($r['status'] ?? 'used'));
                 $ins->bindValue(':did',  $devLink['device_id'], $devLink['device_id'] === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                 $ins->bindValue(':iid',  $devLink['interface_id'], $devLink['interface_id'] === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                $ins->bindValue(':cf',   to_str($r['custom_fields'] ?? '{}'));
                 $ins->execute();
                 $aid = ipam_last_insert_id($db, 'addresses');
 
@@ -903,6 +929,7 @@ if (demo_mode_enabled()) {
                     'status'       => to_str($r['status'] ?? 'used'),
                     'device_id'    => $devLink['device_id'],
                     'interface_id' => $devLink['interface_id'],
+                    'custom_fields' => to_str($r['custom_fields'] ?? '{}'),
                 ]);
                 $createdAddresses++;
 
@@ -928,6 +955,7 @@ if (demo_mode_enabled()) {
                 $newMac = to_str($r['mac'] ?? '');
                 $newExpAt = isset($r['expires_at']) && to_str($r['expires_at']) !== '' ? to_str($r['expires_at']) : null;
                 $newSt = to_str($r['status'] ?? 'used');
+                $newCf = to_str($r['custom_fields'] ?? '{}');
 
                 $devLink = $resolveDevice(
                     isset($r['device_name']) ? to_str($r['device_name']) : null,
@@ -959,29 +987,36 @@ if (demo_mode_enabled()) {
                         $newDevId = to_int($existing['device_id']);
                         $newIfaceId = $existing['interface_id'] !== null ? to_int($existing['interface_id']) : null;
                     }
+                    // fill_empty: keep existing custom_fields if already populated
+                    $existingCf = to_str($existing['custom_fields'] ?? '{}');
+                    if ($existingCf !== '' && $existingCf !== '{}') {
+                        $newCf = $existingCf;
+                    }
                 }
 
                 $before = [
-                    'hostname'     => to_str($existing['hostname']),
-                    'owner'        => to_str($existing['owner']),
-                    'note'         => to_str($existing['note']),
-                    'grp'          => to_str($existing['grp']),
-                    'mac'          => to_str($existing['mac']),
-                    'expires_at'   => $existing['expires_at'] !== null ? to_str($existing['expires_at']) : null,
-                    'status'       => to_str($existing['status']),
-                    'device_id'    => $existing['device_id'] !== null ? to_int($existing['device_id']) : null,
-                    'interface_id' => $existing['interface_id'] !== null ? to_int($existing['interface_id']) : null,
+                    'hostname'      => to_str($existing['hostname']),
+                    'owner'         => to_str($existing['owner']),
+                    'note'          => to_str($existing['note']),
+                    'grp'           => to_str($existing['grp']),
+                    'mac'           => to_str($existing['mac']),
+                    'expires_at'    => $existing['expires_at'] !== null ? to_str($existing['expires_at']) : null,
+                    'status'        => to_str($existing['status']),
+                    'device_id'     => $existing['device_id'] !== null ? to_int($existing['device_id']) : null,
+                    'interface_id'  => $existing['interface_id'] !== null ? to_int($existing['interface_id']) : null,
+                    'custom_fields' => to_str($existing['custom_fields'] ?? '{}'),
                 ];
                 $after = [
-                    'hostname'     => $newHn,
-                    'owner'        => $newOw,
-                    'note'         => $newNt,
-                    'grp'          => $newGrp,
-                    'mac'          => $newMac,
-                    'expires_at'   => $newExpAt,
-                    'status'       => $newSt,
-                    'device_id'    => $newDevId,
-                    'interface_id' => $newIfaceId,
+                    'hostname'      => $newHn,
+                    'owner'         => $newOw,
+                    'note'          => $newNt,
+                    'grp'           => $newGrp,
+                    'mac'           => $newMac,
+                    'expires_at'    => $newExpAt,
+                    'status'        => $newSt,
+                    'device_id'     => $newDevId,
+                    'interface_id'  => $newIfaceId,
+                    'custom_fields' => $newCf,
                 ];
 
                 $upd->bindValue(':hn',  $newHn);
@@ -993,6 +1028,7 @@ if (demo_mode_enabled()) {
                 $upd->bindValue(':st',  $newSt);
                 $upd->bindValue(':did', $newDevId, $newDevId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                 $upd->bindValue(':iid', $newIfaceId, $newIfaceId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                $upd->bindValue(':cf',  $newCf);
                 $upd->bindValue(':id',  to_int($existing['id']), PDO::PARAM_INT);
                 $upd->execute();
 
