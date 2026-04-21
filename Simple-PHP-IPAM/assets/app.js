@@ -1128,6 +1128,22 @@
           contactPicker.dispatchEvent(new CustomEvent("reinit"));
         }
 
+        // Fill custom field inputs from data-custom-fields JSON
+        var cfContainer = document.getElementById("subnet-edit-cf-inputs");
+        if (cfContainer) {
+          var cfValues = {};
+          try { cfValues = JSON.parse(d.customFields || "{}"); } catch(ex) {}
+          cfContainer.querySelectorAll("[data-cf-key]").forEach(function(inp) {
+            var cfKey = inp.getAttribute("data-cf-key");
+            var val = cfValues[cfKey];
+            if (inp.type === "checkbox") {
+              inp.checked = val === true || val === 1 || val === "1";
+            } else {
+              inp.value = (val !== null && val !== undefined) ? String(val) : "";
+            }
+          });
+        }
+
         editDrawer.hidden = false;
         var titleEl = formDrawer.querySelector(".drawer-title");
         if (titleEl) titleEl.textContent = "Edit " + d.cidr;

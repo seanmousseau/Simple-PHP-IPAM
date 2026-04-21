@@ -61,11 +61,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $doAutoReserve = !empty($_POST['auto_reserve']);
         $gateway       = trim(to_str($_POST['gateway'] ?? '')) ?: null;
 
+        // Custom fields validation
+        $cfDefs = custom_field_def_list($db, 'subnet');
+        $cfValues = [];
+        if ($cfDefs) {
+            $cfPayload = [];
+            foreach ($_POST as $k => $v) {
+                if (is_string($k) && str_starts_with($k, 'cf_')) $cfPayload[substr($k, 3)] = to_str($v);
+            }
+            try {
+                $cfValues = validate_custom_fields_payload($cfDefs, $cfPayload);
+            } catch (\InvalidArgumentException $cfEx) {
+                $err = 'Custom field error: ' . $cfEx->getMessage();
+            }
+        }
+
         $p = parse_cidr($cidr);
         if (!$p) {
             $err = 'Invalid CIDR. Examples: 192.168.1.0/24 or 2001:db8::/64';
         }
-        if (!$err) {
+        if (!$err && $p !== null) {
             $normalized = $p['network'] . '/' . $p['prefix'];
             $overlaps = detect_subnet_overlaps($db, $normalized, null, $vrfId);
             // Inherit site from tightest parent if one exists
@@ -99,8 +114,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $err = 'A subnet with this CIDR already exists.';
                     } else {
                     // #410/#388: bind network_bin via ipam_bind_binary() (PARAM_LOB).
-                    $st = $db->prepare("INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, notes, site_id, vlan_id, vlan_fk, vrf_id)
-                                        VALUES (:cidr,:ver,:net,:nb,:pre,:d,:notes,:site,:vlan,:vfk,:vrf)");
+                    $st = $db->prepare("INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description, notes, site_id, vlan_id, vlan_fk, vrf_id, custom_fields)
+                                        VALUES (:cidr,:ver,:net,:nb,:pre,:d,:notes,:site,:vlan,:vfk,:vrf,:cf)");
                     $st->bindValue(':cidr',  $normalized);
                     $st->bindValue(':ver',   $p['version'], PDO::PARAM_INT);
                     $st->bindValue(':net',   $p['network']);
@@ -112,6 +127,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $st->bindValue(':vlan',  $vlanId, $vlanId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                     $st->bindValue(':vfk',   $vlanFk, $vlanFk === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                     $st->bindValue(':vrf',   $vrfId,  $vrfId  === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                    $st->bindValue(':cf',    serialize_custom_fields_row($cfValues));
                     $st->execute();
                     $newSubnetId = ipam_last_insert_id($db, 'subnets');
                     if (!empty($_POST['contact_id_present'])) {
@@ -199,6 +215,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $err = 'Default DHCP lease cannot exceed max lease time.';
         }
 
+        // Custom fields validation (before touching the DB)
+        $cfDefs = custom_field_def_list($db, 'subnet');
+        $cfValues = [];
+        if (!$err && $cfDefs) {
+            $cfPayload = [];
+            foreach ($_POST as $k => $v) {
+                if (is_string($k) && str_starts_with($k, 'cf_')) $cfPayload[substr($k, 3)] = to_str($v);
+            }
+            try {
+                $cfValues = validate_custom_fields_payload($cfDefs, $cfPayload);
+            } catch (\InvalidArgumentException $cfEx) {
+                $err = 'Custom field error: ' . $cfEx->getMessage();
+            }
+        }
+
         $p = parse_cidr($cidr);
         if (!$p) {
             $err = 'Invalid CIDR.';
@@ -238,7 +269,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                             SET cidr=:cidr, ip_version=:ver, network=:net, network_bin=:nb, prefix=:pre, description=:d, notes=:notes, site_id=:site, vlan_id=:vlan, vlan_fk=:vfk, vrf_id=:vrf, alerts_enabled=:ae,
                                                 dhcp_routers=:dr, dhcp_dns_servers=:dds, dhcp_domain_name=:ddn,
                                                 dhcp_lease_default=:dld, dhcp_lease_max=:dlm,
-                                                dhcp_next_server=:dns2, dhcp_boot_filename=:dbf
+                                                dhcp_next_server=:dns2, dhcp_boot_filename=:dbf,
+                                                custom_fields=:cf
                                             WHERE id=:id");
                         $st->bindValue(':cidr',  $normalized);
                         $st->bindValue(':ver',   $p['version'], PDO::PARAM_INT);
@@ -259,6 +291,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $st->bindValue(':dlm',   $dhcpLeaseMax,     $dhcpLeaseMax     === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                         $st->bindValue(':dns2',  $dhcpNextServer,   $dhcpNextServer   === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
                         $st->bindValue(':dbf',   $dhcpBootFilename, $dhcpBootFilename === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
+                        $st->bindValue(':cf',    serialize_custom_fields_row($cfValues));
                         $st->bindValue(':id',    $id,    PDO::PARAM_INT);
                         $st->execute();
                         // Clear alert_state rows when alerts are disabled (#457)
@@ -351,6 +384,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $st = $db->prepare("
     SELECT s.id, s.cidr, s.ip_version, s.network, s.network_bin, s.prefix, s.description, s.notes, s.updated_at, s.site_id, s.vlan_id, s.vlan_fk, s.vrf_id, s.alerts_enabled,
+           s.custom_fields,
            s.dhcp_routers, s.dhcp_dns_servers, s.dhcp_domain_name,
            s.dhcp_lease_default, s.dhcp_lease_max, s.dhcp_next_server, s.dhcp_boot_filename,
            v.name AS vlan_name, vr.name AS vrf_name,
@@ -366,6 +400,9 @@ $st = $db->prepare("
 $st->execute();
 /** @var list<array<string, mixed>> $list */
 $list = $st->fetchAll();
+
+/** @var list<array<string,mixed>> $subnetCfDefs */
+$subnetCfDefs = custom_field_def_list($db, 'subnet');
 
 // Tree building is fast (O(N log N)); counts + utilization loaded async via JS (#565)
 $tree = build_subnet_tree($list);
@@ -487,6 +524,7 @@ function render_subnet_node_local(PDO $db, array $tree, array $siteMap, array $s
            . " data-dhcp-lease-max='" . e(to_str($row['dhcp_lease_max'] ?? '')) . "'"
            . " data-dhcp-next-server='" . e(to_str($row['dhcp_next_server'] ?? '')) . "'"
            . " data-dhcp-boot-filename='" . e(to_str($row['dhcp_boot_filename'] ?? '')) . "'"
+           . " data-custom-fields='" . e(to_str($row['custom_fields'] ?? '{}')) . "'"
            . ">Edit</button>";
     }
     echo "<a class='action-pill' href='addresses.php?subnet_id=" . to_int($row['id']) . "'>View Addresses</a>";
@@ -640,6 +678,9 @@ ipam_skeleton_flush();
       </label>
       <button type="submit" <?= (current_user()['role']==='readonly')?'disabled':'' ?>>Add</button>
     </div>
+    <?php if ($subnetCfDefs): ?>
+    <?= render_custom_field_inputs($subnetCfDefs, []) ?>
+    <?php endif; ?>
     <?php if ($contactList): ?>
     <div class="row mt-8">
       <input type="hidden" name="contact_id_present" value="1">
@@ -712,6 +753,7 @@ ipam_skeleton_flush();
   <form method="post" action="subnets.php" id="subnet-edit-form">
     <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
     <input type="hidden" name="action" value="update">
+    <input type="hidden" name="confirm_overlap" value="1">
     <input type="hidden" name="id" id="subnet-edit-id" value="">
     <label>CIDR<br><input name="cidr" id="subnet-edit-cidr" required></label>
     <label>Description<br><input name="description" id="subnet-edit-description"></label>
@@ -777,6 +819,11 @@ ipam_skeleton_flush();
           <input name="dhcp_boot_filename" id="subnet-edit-dhcp-boot-filename" placeholder="e.g. pxelinux.0"></label>
       </div>
     </details>
+    <?php if ($subnetCfDefs): ?>
+    <div id="subnet-edit-cf-inputs">
+      <?= render_custom_field_inputs($subnetCfDefs, []) ?>
+    </div>
+    <?php endif; ?>
     <button type="submit">Save</button>
   </form>
   <form method="post" action="subnets.php" data-confirm="Delete subnet and all its addresses?" class="mt-8" id="subnet-delete-form">
