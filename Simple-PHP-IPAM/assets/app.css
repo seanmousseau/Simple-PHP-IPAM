@@ -375,6 +375,7 @@ tr.highlight{
   border-radius:var(--radius-2xl);
   background:var(--card-2);
   border:1px solid var(--border);
+  color:var(--fg);
 }
 .action-pill:hover{
   text-decoration:none;
