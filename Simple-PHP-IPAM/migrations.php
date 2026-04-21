@@ -1726,6 +1726,69 @@ function ipam_migrations(): array
                 }
             }
         },
+
+        // 3.6.0-totp: TOTP 2FA enrollment columns + backup codes table (#418)
+        '3.6.0-totp' => function(PDO $db): void {
+            $tables = array_column(
+                ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(PDO::FETCH_ASSOC),
+                'name'
+            );
+            if (in_array('users', $tables, true)) {
+                $cols = array_column(
+                    ($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll(PDO::FETCH_ASSOC),
+                    'name'
+                );
+                if (!in_array('totp_secret_enc', $cols, true)) {
+                    $db->exec("ALTER TABLE users ADD COLUMN totp_secret_enc TEXT");
+                }
+                if (!in_array('totp_enabled', $cols, true)) {
+                    $db->exec("ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0");
+                }
+            }
+            $db->exec("CREATE TABLE IF NOT EXISTS totp_backup_codes (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                code_hash   TEXT NOT NULL,
+                used_at     TEXT
+            )");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_totp_backup_codes_user ON totp_backup_codes(user_id)");
+        },
+
+        // 3.6.0-rate-limit: sliding-window rate-limit bucket table (#419)
+        '3.6.0-rate-limit' => function(PDO $db): void {
+            $db->exec("CREATE TABLE IF NOT EXISTS rate_limit_buckets (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                bucket_key   TEXT NOT NULL,
+                window_start TEXT NOT NULL,
+                count        INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(bucket_key, window_start)
+            )");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_rate_limit_key_window ON rate_limit_buckets(bucket_key, window_start)");
+        },
+
+        // 3.6.0-lockout: persistent account lockout columns (#421)
+        '3.6.0-lockout' => function(PDO $db): void {
+            $tables = array_column(
+                ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(PDO::FETCH_ASSOC),
+                'name'
+            );
+            if (!in_array('users', $tables, true)) {
+                return;
+            }
+            $cols = array_column(
+                ($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll(PDO::FETCH_ASSOC),
+                'name'
+            );
+            if (!in_array('failed_auth_count', $cols, true)) {
+                $db->exec("ALTER TABLE users ADD COLUMN failed_auth_count INTEGER NOT NULL DEFAULT 0");
+            }
+            if (!in_array('locked_until', $cols, true)) {
+                $db->exec("ALTER TABLE users ADD COLUMN locked_until TEXT");
+            }
+            if (!in_array('lock_reason', $cols, true)) {
+                $db->exec("ALTER TABLE users ADD COLUMN lock_reason TEXT");
+            }
+        },
     ];
 }
 

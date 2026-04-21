@@ -16,6 +16,11 @@ CREATE TABLE IF NOT EXISTS users (
   pending_email            TEXT,                   -- v3.2.0: unverified email change pending confirmation
   pending_email_token_hash TEXT,                   -- v3.2.0: SHA-256 hash of the email-verification token
   pending_email_expires_at TEXT,                   -- v3.2.0: expiry datetime for the pending email token
+  totp_secret_enc          TEXT,                   -- v3.6.0: AES-256-CBC encrypted TOTP secret; NULL = not enrolled
+  totp_enabled             INTEGER NOT NULL DEFAULT 0,  -- v3.6.0: 1 when 2FA is active
+  failed_auth_count        INTEGER NOT NULL DEFAULT 0,  -- v3.6.0: cumulative 2FA failure count
+  locked_until             TEXT,                   -- v3.6.0: persistent lockout expiry datetime; NULL = not locked
+  lock_reason              TEXT,                   -- v3.6.0: failed_login|failed_2fa|admin|NULL
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -525,3 +530,24 @@ FOR EACH ROW
 BEGIN
   UPDATE custom_field_defs SET updated_at = datetime('now') WHERE id = OLD.id;
 END;
+
+-- v3.6.0 #418: TOTP backup codes (one-time recovery codes, bcrypt-hashed)
+CREATE TABLE IF NOT EXISTS totp_backup_codes (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id   INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  code_hash TEXT NOT NULL,
+  used_at   TEXT                                          -- NULL = unused
+);
+
+CREATE INDEX IF NOT EXISTS idx_totp_backup_codes_user ON totp_backup_codes(user_id);
+
+-- v3.6.0 #419: Sliding-window rate-limit buckets
+CREATE TABLE IF NOT EXISTS rate_limit_buckets (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  bucket_key   TEXT    NOT NULL,
+  window_start TEXT    NOT NULL,
+  count        INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(bucket_key, window_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rate_limit_key_window ON rate_limit_buckets(bucket_key, window_start);
