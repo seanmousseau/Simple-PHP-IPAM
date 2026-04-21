@@ -260,6 +260,13 @@ A new dep must meet **all** of the following criteria:
 | Package | Version | Purpose | Justified in |
 |---|---|---|---|
 | phpmailer/phpmailer | ^6.9 | Direct SMTP delivery (replaces native `mail()` when smtp.enabled=true). Hand-rolling SMTP+TLS+AUTH is error-prone and a security risk; PHPMailer has >5 years of active maintenance, is used by WordPress/Joomla/Drupal, has zero transitive runtime deps, and is licensed LGPL-2.1-or-later with an explicit bundling exception (PHPMailer FAQ). | #415, v3.1.0 |
+| robthree/twofactorauth | ^2.1 | TOTP (RFC 6238) secret generation, code verification, otpauth:// URI for QR enrollment. Hand-rolling TOTP is error-prone (time-sync drift, HMAC, counter management); this library has zero transitive runtime deps, MIT license, pure PHP 8. | #418, v3.6.0 |
+
+**Vendored frontend assets (assets/vendor/):**
+
+| File | Size | Source | Purpose | Justified in |
+|---|---|---|---|---|
+| `qrcode.min.js` | ~20KB | cdnjs (qrcodejs 1.0.0, MIT) | QR code canvas rendering for TOTP enrollment — generates the `otpauth://` QR code in the browser so users can scan with any authenticator app. Self-hosted, single file, zero deps, no build step. Qualifies under the data-visualization primitives carve-out. | #418, v3.6.0 |
 
 Future candidates to be evaluated on a case-by-case basis as feature work surfaces them.
 
