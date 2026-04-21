@@ -33,7 +33,7 @@ Two cheap calls. The first loads your profile + preferences. The second returns 
 
 ## Project overview
 
-> **Current shipped version: v3.4.1** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v3.5.0 → v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v3.5.0 describes future work — **do not apply it to current v3.4.x code**. Current-state rules are the ones that do not cite a future version.
+> **Current shipped version: v3.5.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v3.6.0 → v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v3.6.0 describes future work — **do not apply it to current v3.5.x code**. Current-state rules are the ones that do not cite a future version.
 
 Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application built with **PHP 8.2+ and SQLite**. It has **no npm build step** — all CSS and JavaScript are vanilla. Starting in v2.9.0, the application will ship a small, carefully curated set of Composer-managed runtime dependencies bundled into the release tarball, so end users still deploy by extracting the tarball with no build step. The web root is `Simple-PHP-IPAM/` (the subdirectory, not the repo root).
 
@@ -71,6 +71,7 @@ Dev tooling at the repo root (not deployed): `composer.json`, `composer.lock`, `
 | `pd_pools.php` | yes | admin | IPv6 Prefix Delegation pool management (RFC 3633); per-pool delegation list with subscriber linking and expiry (v2.4.0) |
 | `contacts.php` | yes | admin | Contact management (first-class contact records linked to addresses via `owner_contact_id`) |
 | `tags.php` | yes | admin | Tag management (colour-coded tags attached to subnets and addresses) |
+| `custom_fields.php` | yes | admin | Custom field definitions: create/edit/delete per-entity key/value metadata fields for subnets and addresses (v3.5.0) |
 | `users.php` | yes | admin | User management |
 | `api_keys.php` | yes | admin | REST API key management |
 | `webhooks.php` | yes | admin | Outbound webhook management: create, edit, toggle, delete, test-fire, delivery log, retry (v3.3.0) |
@@ -189,7 +190,7 @@ Migrations live in `migrations.php` as an associative array of version string �
 
 **When adding a new version:** add the migration closure, bump `version.php`, update `CHANGELOG.md` (keepachangelog format).
 
-> **Current shipped version: v3.4.1.** The three subsections below (`Creating new data tables in post-v4.0.0 releases`, `Modifying the schema (multi-engine, from v2.9.0 onward)`, `Runtime dependencies`) describe **forward-looking policy** for unreleased versions. Do not apply them to work targeting v3.4.x or earlier. The rules become active on the version indicated in each heading; until then, treat them as design intent to preserve when new work approaches that version.
+> **Current shipped version: v3.5.0.** The three subsections below (`Creating new data tables in post-v4.0.0 releases`, `Modifying the schema (multi-engine, from v2.9.0 onward)`, `Runtime dependencies`) describe **forward-looking policy** for unreleased versions. Do not apply them to work targeting v3.5.x or earlier. The rules become active on the version indicated in each heading; until then, treat them as design intent to preserve when new work approaches that version.
 
 ### Creating new data tables in post-v4.0.0 releases *(applies from v4.1.0+)*
 
@@ -356,7 +357,7 @@ Asset cache-buster: update `?v=X.Y.Z` in the `<link>` and `<script>` tags in `pa
 ### Nav structure
 - Left: nav-links (Dashboard, Subnets, Addresses, Search, Audit, ⚙ Admin dropdown)
 - Right: user dropdown (username + role badge → Theme, Password, Logout)
-- Admin dropdown items: Sites, VLANs, VRFs, Tags, Contacts, Users, DHCP Pools, API Keys, Webhooks, Import CSV, Database Tools
+- Admin dropdown items: Sites, VLANs, VRFs, Tags, Contacts, Custom Fields, Users, DHCP Pools, API Keys, Webhooks, Import CSV, Database Tools
 
 ---
 
@@ -377,6 +378,7 @@ vlan.create         vlan.update             vlan.delete
 vrf.create          vrf.update              vrf.delete
 contact.create      contact.update          contact.delete
 tag.create          tag.update              tag.delete
+custom_field.create custom_field.update     custom_field.delete     custom_field.reorder
 apikey.create       apikey.deactivate       apikey.activate      apikey.delete
 dhcp_pool.reserve   dhcp_pool.clear
 db.export           db.import               db.import_failed
