@@ -87,7 +87,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = 'This account is temporarily locked due to too many failed attempts.';
             audit($db, 'auth.account_locked', 'user', null, '');
         } else {
-            $st = $db->prepare("SELECT id, username, password_hash, role, is_active FROM users WHERE username = :u");
+            $st = $db->prepare("SELECT id, username, password_hash, role, is_active, totp_enabled FROM users WHERE username = :u");
             $st->execute([':u' => $username]);
             /** @var array<string, mixed>|false $user */
             $user = $st->fetch();
@@ -128,6 +128,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 clear_login_failures($db, $ip);
                 clear_account_lockout($db, $username);
+                if (to_int($user['totp_enabled'] ?? 0) === 1) {
+                    $_SESSION['totp_pending_uid']      = to_int($user['id']);
+                    $_SESSION['totp_pending_username'] = to_str($user['username']);
+                    $_SESSION['totp_pending_role']     = to_str($user['role']);
+                    header('Location: totp_verify.php');
+                    exit;
+                }
                 login_user(to_int($user['id']), to_str($user['username']), to_str($user['role']));
                 $db->prepare("UPDATE users SET last_login_at=" . ipam_dialect()->now() . " WHERE id=:id")
                    ->execute([':id' => to_int($user['id'])]);

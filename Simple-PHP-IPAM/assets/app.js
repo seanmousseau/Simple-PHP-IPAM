@@ -1654,6 +1654,29 @@
     syncCfType();
   }
 
+  // TOTP backup code toggle on totp_verify.php
+  var toggleBackup = document.getElementById("toggle-backup");
+  if (toggleBackup) {
+    toggleBackup.addEventListener("click", function(e) {
+      e.preventDefault();
+      var totpRow   = document.getElementById("totp-code-row");
+      var backupRow = document.getElementById("backup-code-row");
+      var hidden    = document.getElementById("use-backup-hidden");
+      var totpInput = document.getElementById("totp-code-input");
+      var backupInput = document.getElementById("backup-code-input");
+      if (!totpRow || !backupRow || !hidden) return;
+      var isBackup = hidden.value === "1";
+      hidden.value = isBackup ? "0" : "1";
+      totpRow.classList.toggle("hidden", !isBackup);
+      backupRow.classList.toggle("hidden", isBackup);
+      if (totpInput) totpInput.required = isBackup;
+      if (backupInput) backupInput.required = !isBackup;
+      toggleBackup.textContent = isBackup ? "Use a backup code instead" : "Use authenticator app instead";
+      if (!isBackup && backupInput) backupInput.focus();
+      if (isBackup && totpInput) totpInput.focus();
+    });
+  }
+
   // SMTP test button on settings.php
   var smtpTestBtn = document.getElementById("smtp-test-btn");
   if (smtpTestBtn) {
@@ -1677,4 +1700,20 @@
     });
   }
 
+})();
+
+// TOTP enrollment QR code — runs after qrcode.min.js is loaded inline in the view
+(function () {
+  var qrEl = document.getElementById("totp-qr");
+  if (!qrEl || typeof QRCode === "undefined") return;
+  var uri = qrEl.getAttribute("data-uri");
+  if (!uri) return;
+  new QRCode(qrEl, {
+    text: uri,
+    width: 200,
+    height: 200,
+    colorDark: "#000000",
+    colorLight: "#ffffff",
+    correctLevel: QRCode.CorrectLevel.M
+  });
 })();
