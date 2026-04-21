@@ -7395,6 +7395,9 @@ function ipam_totp_verify(string $secret, string $code, int $discrepancy = 1): b
 function ipam_totp_encrypt_secret(string $secret, string $key): string {
     $iv  = random_bytes(16);
     $enc = openssl_encrypt($secret, 'aes-256-cbc', hash('sha256', $key, true), OPENSSL_RAW_DATA, $iv);
+    if ($enc === false) {
+        throw new \RuntimeException('TOTP secret encryption failed');
+    }
     return base64_encode($iv . $enc);
 }
 
