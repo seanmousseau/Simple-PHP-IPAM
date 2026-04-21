@@ -40,7 +40,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
-    $code      = preg_replace('/\s+/', '', to_str($_POST['code'] ?? ''));
+    $code      = to_str(preg_replace('/\s+/', '', to_str($_POST['code'] ?? '')));
     $useBackup = !empty($_POST['use_backup']);
     $verified  = false;
 

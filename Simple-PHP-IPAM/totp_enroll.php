@@ -33,7 +33,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $step  = 1;
         } else {
             $secret = to_str($_SESSION['totp_pending_secret'] ?? '');
-            $code   = preg_replace('/\s+/', '', to_str($_POST['code'] ?? ''));
+            $code   = to_str(preg_replace('/\s+/', '', to_str($_POST['code'] ?? '')));
 
             if ($secret === '') {
                 $error = 'Enrollment session expired. Please start again.';
