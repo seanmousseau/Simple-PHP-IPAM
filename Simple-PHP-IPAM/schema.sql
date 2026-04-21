@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS subnets (
   dhcp_lease_max   INTEGER,                                          -- v3.4.0 #402: seconds → max-lease-time
   dhcp_next_server TEXT,                                             -- v3.4.0 #402: TFTP server IP → next-server (PXE)
   dhcp_boot_filename TEXT,                                           -- v3.4.0 #402: boot file → filename (PXE)
+  custom_fields TEXT NOT NULL DEFAULT '{}',                          -- v3.5.0 #313/#595: admin-defined key/value metadata (JSON-in-row)
   created_at  TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(cidr, vrf_id)
@@ -140,6 +141,7 @@ CREATE TABLE IF NOT EXISTS addresses (
   is_stale         INTEGER NOT NULL DEFAULT 0,            -- v2.3.0: 1 = host missed N consecutive scans
   device_id        INTEGER REFERENCES devices(id) ON DELETE SET NULL,         -- v3.2.0: FK to devices
   interface_id     INTEGER REFERENCES device_interfaces(id) ON DELETE SET NULL, -- v3.2.0: FK to device_interfaces
+  custom_fields    TEXT NOT NULL DEFAULT '{}',                                  -- v3.5.0 #313/#595: admin-defined key/value metadata (JSON-in-row)
   created_at       TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at       TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(subnet_id, ip),
@@ -498,3 +500,28 @@ CREATE INDEX IF NOT EXISTS idx_wh_deliveries_wh
 
 CREATE INDEX IF NOT EXISTS idx_wh_deliveries_pending
   ON webhook_deliveries(delivered_at, attempt);
+
+-- v3.5.0 #313/#595: Custom field definitions (admin-defined per-entity metadata)
+CREATE TABLE IF NOT EXISTS custom_field_defs (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_type TEXT    NOT NULL,                         -- 'subnet' | 'address'
+  key         TEXT    NOT NULL,                         -- slug, ^[a-z][a-z0-9_]{0,62}$
+  label       TEXT    NOT NULL,                         -- human-readable display name
+  type        TEXT    NOT NULL DEFAULT 'text',          -- text|number|date|boolean|select
+  options     TEXT,                                     -- JSON array of options for type='select'
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  is_required INTEGER NOT NULL DEFAULT 0,
+  is_deleted  INTEGER NOT NULL DEFAULT 0,               -- reserved for future soft-delete; unused in v3.5.0
+  created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT    NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(entity_type, key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cfd_entity_order ON custom_field_defs(entity_type, sort_order);
+
+CREATE TRIGGER IF NOT EXISTS custom_field_defs_updated_at
+AFTER UPDATE ON custom_field_defs
+FOR EACH ROW
+BEGIN
+  UPDATE custom_field_defs SET updated_at = datetime('now') WHERE id = OLD.id;
+END;
