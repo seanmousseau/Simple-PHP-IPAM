@@ -140,8 +140,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($action === 'delete') {
         $id = to_int($_POST['id'] ?? 0);
         if ($id > 0) {
-            $kc2 = ipam_key_col();
-            $defSt = $db->prepare("SELECT $kc2 AS key, label, entity_type FROM custom_field_defs WHERE id = :id");
+            $defSt = $db->prepare("SELECT * FROM custom_field_defs WHERE id = :id AND is_deleted = 0");
             $defSt->execute([':id' => $id]);
             /** @var array<string,mixed>|false $def */
             $def = $defSt->fetch();
