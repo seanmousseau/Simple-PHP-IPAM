@@ -5667,6 +5667,7 @@ function page_header(string $title, array $opts = []): void
             echo "<a class='nav-dropdown-item' href='tags.php'>🔖 Tags</a>";
             echo "<a class='nav-dropdown-item' href='devices.php'>🖥 Devices</a>";
             echo "<a class='nav-dropdown-item' href='contacts.php'>📇 Contacts</a>";
+            echo "<a class='nav-dropdown-item' href='custom_fields.php'>🗂 Custom Fields</a>";
             echo "<a class='nav-dropdown-item' href='users.php'>👤 Users</a>";
             echo "<a class='nav-dropdown-item' href='api_keys.php'>🔑 API Keys</a>";
             echo "<a class='nav-dropdown-item' href='webhooks.php'>🔔 Webhooks</a>";
@@ -7066,4 +7067,63 @@ function ipam_normalize_mac_for_dhcp(string $mac): ?string
     $hex = preg_replace('/[^0-9a-fA-F]/', '', $mac);
     if (!is_string($hex) || strlen($hex) !== 12) return null;
     return implode(':', str_split(strtolower($hex), 2));
+}
+
+// ── Custom field definitions (v3.5.0, #313/#596) ──────────────────────────
+
+/**
+ * Return all non-deleted custom field definitions, ordered by entity_type,
+ * sort_order, then key. When $entityType is provided only that entity's
+ * definitions are returned.
+ *
+ * @return list<array<string,mixed>>
+ */
+function custom_field_def_list(PDO $db, ?string $entityType = null): array
+{
+    $k = ipam_key_col();
+    if ($entityType !== null) {
+        $st = $db->prepare(
+            "SELECT * FROM custom_field_defs WHERE is_deleted = 0 AND entity_type = :et
+             ORDER BY sort_order, $k"
+        );
+        $st->execute([':et' => $entityType]);
+    } else {
+        $st = $db->query(
+            "SELECT * FROM custom_field_defs WHERE is_deleted = 0
+             ORDER BY entity_type, sort_order, $k"
+        );
+        if ($st === false) throw new \RuntimeException('Query failed');
+    }
+    /** @var list<array<string,mixed>> */
+    return $st->fetchAll();
+}
+
+/**
+ * Return true if any row in the table that corresponds to $entityType has a
+ * non-null JSON value stored for $key.  Uses dialect-specific JSON extraction
+ * so it works on SQLite, MySQL 8.0+, and PostgreSQL 14+.
+ *
+ * $key is validated to match ^[a-z][a-z0-9_]{0,62}$ before this is called,
+ * so it is safe to embed in the JSON path string.
+ */
+function custom_field_in_use(PDO $db, string $key, string $entityType): bool
+{
+    $tbl    = $entityType === 'subnet' ? 'subnets' : 'addresses';
+    $driver = ipam_dialect()->driver_name();
+
+    if ($driver === 'sqlite') {
+        $st = $db->prepare(
+            "SELECT EXISTS(SELECT 1 FROM {$tbl} WHERE json_extract(custom_fields, '$.' || :k) IS NOT NULL)"
+        );
+    } elseif ($driver === 'mysql') {
+        $st = $db->prepare(
+            "SELECT EXISTS(SELECT 1 FROM {$tbl} WHERE JSON_EXTRACT(custom_fields, CONCAT('$.', :k)) IS NOT NULL)"
+        );
+    } else {
+        $st = $db->prepare(
+            "SELECT EXISTS(SELECT 1 FROM {$tbl} WHERE (custom_fields::json)->>:k IS NOT NULL)"
+        );
+    }
+    $st->execute([':k' => $key]);
+    return (bool)$st->fetchColumn();
 }
