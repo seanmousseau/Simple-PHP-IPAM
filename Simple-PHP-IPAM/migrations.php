@@ -1789,27 +1789,66 @@ function ipam_migrations(): array
             }
 
             // ── 2. Create totp_backup_codes table ─────────────────────────────
-            $db->exec("CREATE TABLE IF NOT EXISTS totp_backup_codes (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                code_hash   TEXT NOT NULL,
-                used_at     TEXT
-            )");
-            $db->exec("CREATE INDEX IF NOT EXISTS idx_totp_backup_codes_user ON totp_backup_codes(user_id)");
+            if ($driver === 'mysql') {
+                $db->exec("CREATE TABLE IF NOT EXISTS totp_backup_codes (
+                    id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                    user_id     INT UNSIGNED NOT NULL,
+                    code_hash   TEXT NOT NULL,
+                    used_at     DATETIME,
+                    PRIMARY KEY (id),
+                    KEY idx_totp_backup_codes_user (user_id),
+                    CONSTRAINT fk_totp_backup_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            } elseif ($driver === 'pgsql') {
+                $db->exec("CREATE TABLE IF NOT EXISTS totp_backup_codes (
+                    id          SERIAL PRIMARY KEY,
+                    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    code_hash   TEXT NOT NULL,
+                    used_at     TIMESTAMP WITH TIME ZONE
+                )");
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_totp_backup_codes_user ON totp_backup_codes(user_id)");
+            } else {
+                $db->exec("CREATE TABLE IF NOT EXISTS totp_backup_codes (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    code_hash   TEXT NOT NULL,
+                    used_at     TEXT
+                )");
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_totp_backup_codes_user ON totp_backup_codes(user_id)");
+            }
         },
 
         // 3.6.0-rate-limit: sliding-window rate-limit bucket table (#419)
         '3.6.0-rate-limit' => function(PDO $db): void {
-            // CREATE TABLE IF NOT EXISTS is portable across SQLite, MySQL, and PostgreSQL.
-            // No column guards needed (new table only).
-            $db->exec("CREATE TABLE IF NOT EXISTS rate_limit_buckets (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                bucket_key   TEXT NOT NULL,
-                window_start TEXT NOT NULL,
-                count        INTEGER NOT NULL DEFAULT 0,
-                UNIQUE(bucket_key, window_start)
-            )");
-            $db->exec("CREATE INDEX IF NOT EXISTS idx_rate_limit_key_window ON rate_limit_buckets(bucket_key, window_start)");
+            $driver = ipam_dialect()->driver_name();
+            if ($driver === 'mysql') {
+                $db->exec("CREATE TABLE IF NOT EXISTS rate_limit_buckets (
+                    id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                    bucket_key   VARCHAR(255) NOT NULL,
+                    window_start DATETIME NOT NULL,
+                    count        INT NOT NULL DEFAULT 0,
+                    PRIMARY KEY (id),
+                    UNIQUE KEY idx_rate_limit_key_window (bucket_key, window_start)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            } elseif ($driver === 'pgsql') {
+                $db->exec("CREATE TABLE IF NOT EXISTS rate_limit_buckets (
+                    id           SERIAL PRIMARY KEY,
+                    bucket_key   VARCHAR(255) NOT NULL,
+                    window_start TIMESTAMP WITH TIME ZONE NOT NULL,
+                    count        INTEGER NOT NULL DEFAULT 0,
+                    UNIQUE (bucket_key, window_start)
+                )");
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_rate_limit_key_window ON rate_limit_buckets(bucket_key, window_start)");
+            } else {
+                $db->exec("CREATE TABLE IF NOT EXISTS rate_limit_buckets (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    bucket_key   TEXT NOT NULL,
+                    window_start TEXT NOT NULL,
+                    count        INTEGER NOT NULL DEFAULT 0,
+                    UNIQUE(bucket_key, window_start)
+                )");
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_rate_limit_key_window ON rate_limit_buckets(bucket_key, window_start)");
+            }
         },
 
         // 3.6.0-lockout: persistent account lockout columns (#421)
@@ -1867,7 +1906,13 @@ function ipam_migrations(): array
                             $db->exec("ALTER TABLE users ADD COLUMN failed_auth_count INTEGER NOT NULL DEFAULT 0");
                         }
                     } elseif ($col === 'locked_until') {
-                        $db->exec("ALTER TABLE users ADD COLUMN locked_until TEXT");
+                        if ($driver === 'mysql') {
+                            $db->exec("ALTER TABLE users ADD COLUMN locked_until DATETIME");
+                        } elseif ($driver === 'pgsql') {
+                            $db->exec("ALTER TABLE users ADD COLUMN locked_until TIMESTAMP WITH TIME ZONE");
+                        } else {
+                            $db->exec("ALTER TABLE users ADD COLUMN locked_until TEXT");
+                        }
                     } else {
                         $db->exec("ALTER TABLE users ADD COLUMN lock_reason TEXT");
                     }
