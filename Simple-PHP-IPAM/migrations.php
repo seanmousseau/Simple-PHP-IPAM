@@ -1729,22 +1729,66 @@ function ipam_migrations(): array
 
         // 3.6.0-totp: TOTP 2FA enrollment columns + backup codes table (#418)
         '3.6.0-totp' => function(PDO $db): void {
-            $tables = array_column(
-                ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(PDO::FETCH_ASSOC),
-                'name'
-            );
-            if (in_array('users', $tables, true)) {
-                $cols = array_column(
-                    ($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll(PDO::FETCH_ASSOC),
-                    'name'
-                );
-                if (!in_array('totp_secret_enc', $cols, true)) {
-                    $db->exec("ALTER TABLE users ADD COLUMN totp_secret_enc TEXT");
-                }
-                if (!in_array('totp_enabled', $cols, true)) {
-                    $db->exec("ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0");
+            $driver = ipam_dialect()->driver_name();
+
+            // ── 1. Add totp_secret_enc + totp_enabled columns to users ────────
+            // Guard: users table may not exist in test DBs that pre-date it.
+            $usersExists = false;
+            if ($driver === 'sqlite') {
+                $r = $db->query("SELECT name FROM sqlite_master WHERE type='table' AND name='users'");
+                $usersExists = $r !== false && (bool)$r->fetch();
+            } elseif ($driver === 'mysql') {
+                $r = $db->query("SHOW TABLES LIKE 'users'");
+                $usersExists = $r !== false && (bool)$r->fetch();
+            } else {
+                $r = $db->prepare("SELECT 1 FROM information_schema.tables WHERE table_name='users'");
+                $r->execute();
+                $usersExists = (bool)$r->fetch();
+            }
+
+            if ($usersExists) {
+                foreach (['totp_secret_enc', 'totp_enabled'] as $col) {
+                    $has = false;
+                    if ($driver === 'sqlite') {
+                        $res = $db->query("PRAGMA table_info(users)");
+                        if ($res !== false) {
+                            /** @var array<string, mixed> $row */
+                            foreach ($res as $row) {
+                                if (($row['name'] ?? '') === $col) { $has = true; break; }
+                            }
+                        }
+                    } elseif ($driver === 'mysql') {
+                        $st = $db->prepare(
+                            "SELECT column_name FROM information_schema.columns
+                             WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = :c"
+                        );
+                        $st->execute([':c' => $col]);
+                        $has = (bool)$st->fetch();
+                    } else {
+                        $st = $db->prepare(
+                            "SELECT column_name FROM information_schema.columns
+                             WHERE table_name = 'users' AND column_name = :c"
+                        );
+                        $st->execute([':c' => $col]);
+                        $has = (bool)$st->fetch();
+                    }
+                    if (!$has) {
+                        if ($col === 'totp_secret_enc') {
+                            $db->exec("ALTER TABLE users ADD COLUMN totp_secret_enc TEXT");
+                        } else {
+                            if ($driver === 'sqlite') {
+                                $db->exec("ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0");
+                            } elseif ($driver === 'mysql') {
+                                $db->exec("ALTER TABLE users ADD COLUMN totp_enabled TINYINT NOT NULL DEFAULT 0");
+                            } else {
+                                $db->exec("ALTER TABLE users ADD COLUMN totp_enabled SMALLINT NOT NULL DEFAULT 0");
+                            }
+                        }
+                    }
                 }
             }
+
+            // ── 2. Create totp_backup_codes table ─────────────────────────────
             $db->exec("CREATE TABLE IF NOT EXISTS totp_backup_codes (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1756,6 +1800,8 @@ function ipam_migrations(): array
 
         // 3.6.0-rate-limit: sliding-window rate-limit bucket table (#419)
         '3.6.0-rate-limit' => function(PDO $db): void {
+            // CREATE TABLE IF NOT EXISTS is portable across SQLite, MySQL, and PostgreSQL.
+            // No column guards needed (new table only).
             $db->exec("CREATE TABLE IF NOT EXISTS rate_limit_buckets (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 bucket_key   TEXT NOT NULL,
@@ -1768,25 +1814,64 @@ function ipam_migrations(): array
 
         // 3.6.0-lockout: persistent account lockout columns (#421)
         '3.6.0-lockout' => function(PDO $db): void {
-            $tables = array_column(
-                ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(PDO::FETCH_ASSOC),
-                'name'
-            );
-            if (!in_array('users', $tables, true)) {
+            $driver = ipam_dialect()->driver_name();
+
+            // Guard: users table may not exist in test DBs that pre-date it.
+            $usersExists = false;
+            if ($driver === 'sqlite') {
+                $r = $db->query("SELECT name FROM sqlite_master WHERE type='table' AND name='users'");
+                $usersExists = $r !== false && (bool)$r->fetch();
+            } elseif ($driver === 'mysql') {
+                $r = $db->query("SHOW TABLES LIKE 'users'");
+                $usersExists = $r !== false && (bool)$r->fetch();
+            } else {
+                $r = $db->prepare("SELECT 1 FROM information_schema.tables WHERE table_name='users'");
+                $r->execute();
+                $usersExists = (bool)$r->fetch();
+            }
+
+            if (!$usersExists) {
                 return;
             }
-            $cols = array_column(
-                ($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll(PDO::FETCH_ASSOC),
-                'name'
-            );
-            if (!in_array('failed_auth_count', $cols, true)) {
-                $db->exec("ALTER TABLE users ADD COLUMN failed_auth_count INTEGER NOT NULL DEFAULT 0");
-            }
-            if (!in_array('locked_until', $cols, true)) {
-                $db->exec("ALTER TABLE users ADD COLUMN locked_until TEXT");
-            }
-            if (!in_array('lock_reason', $cols, true)) {
-                $db->exec("ALTER TABLE users ADD COLUMN lock_reason TEXT");
+
+            foreach (['failed_auth_count', 'locked_until', 'lock_reason'] as $col) {
+                $has = false;
+                if ($driver === 'sqlite') {
+                    $res = $db->query("PRAGMA table_info(users)");
+                    if ($res !== false) {
+                        /** @var array<string, mixed> $row */
+                        foreach ($res as $row) {
+                            if (($row['name'] ?? '') === $col) { $has = true; break; }
+                        }
+                    }
+                } elseif ($driver === 'mysql') {
+                    $st = $db->prepare(
+                        "SELECT column_name FROM information_schema.columns
+                         WHERE table_schema = DATABASE() AND table_name = 'users' AND column_name = :c"
+                    );
+                    $st->execute([':c' => $col]);
+                    $has = (bool)$st->fetch();
+                } else {
+                    $st = $db->prepare(
+                        "SELECT column_name FROM information_schema.columns
+                         WHERE table_name = 'users' AND column_name = :c"
+                    );
+                    $st->execute([':c' => $col]);
+                    $has = (bool)$st->fetch();
+                }
+                if (!$has) {
+                    if ($col === 'failed_auth_count') {
+                        if ($driver === 'mysql') {
+                            $db->exec("ALTER TABLE users ADD COLUMN failed_auth_count INT NOT NULL DEFAULT 0");
+                        } else {
+                            $db->exec("ALTER TABLE users ADD COLUMN failed_auth_count INTEGER NOT NULL DEFAULT 0");
+                        }
+                    } elseif ($col === 'locked_until') {
+                        $db->exec("ALTER TABLE users ADD COLUMN locked_until TEXT");
+                    } else {
+                        $db->exec("ALTER TABLE users ADD COLUMN lock_reason TEXT");
+                    }
+                }
             }
         },
     ];
