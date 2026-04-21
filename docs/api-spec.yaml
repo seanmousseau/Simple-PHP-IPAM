@@ -59,6 +59,14 @@ components:
         vlan_fk: { type: integer, nullable: true }
         vrf_id: { type: integer, nullable: true }
         tags: { type: array, items: { $ref: "#/components/schemas/Tag" } }
+        custom_fields:
+          type: object
+          description: >
+            Admin-defined per-subnet metadata. Keys are definition slugs; values
+            are typed (string, number, boolean) or null when unset. Always present
+            in responses even when empty ({}).
+          additionalProperties: true
+          example: { "cost_centre": "IT-001", "circuit_id": null }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -78,6 +86,14 @@ components:
         device_id: { type: integer, nullable: true }
         interface_id: { type: integer, nullable: true }
         tags: { type: array, items: { $ref: "#/components/schemas/Tag" } }
+        custom_fields:
+          type: object
+          description: >
+            Admin-defined per-address metadata. Keys are definition slugs; values
+            are typed (string, number, boolean) or null when unset. Always present
+            in responses even when empty ({}).
+          additionalProperties: true
+          example: { "sla_tier": "gold", "asset_tag": "ASSET-0042" }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -181,6 +197,29 @@ components:
         ip: { type: string }
         details: { type: string }
         created_at: { type: string, format: date-time }
+
+    CustomFieldDef:
+      type: object
+      properties:
+        id: { type: integer }
+        entity_type: { type: string, enum: [subnet, address] }
+        key: { type: string, description: "Slug identifier (^[a-z][a-z0-9_]{0,62}$)", example: "cost_centre" }
+        label: { type: string, example: "Cost Centre" }
+        type: { type: string, enum: [text, number, date, boolean, select] }
+        options:
+          type: array
+          items: { type: string }
+          description: Non-empty only for select fields
+        sort_order: { type: integer }
+        is_required: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ValidationError:
+      type: object
+      description: Returned with HTTP 422 when a custom_fields value fails strict type validation
+      properties:
+        error: { type: string, example: "cost_centre: expected string, got integer" }
 
     Error:
       type: object
@@ -607,3 +646,89 @@ paths:
           description: OK
           headers:
             X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
+
+  # ── Custom Field Definitions ─────────────────────────────────────────────────
+  /custom_field_defs:
+    get:
+      summary: List custom field definitions
+      parameters:
+        - { in: query, name: resource, required: true, schema: { type: string, enum: [custom_field_defs] } }
+        - { in: query, name: entity_type, schema: { type: string, enum: [subnet, address] }, description: "Filter by entity type" }
+      responses:
+        "200":
+          description: Array of definitions
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  custom_field_defs:
+                    type: array
+                    items: { $ref: "#/components/schemas/CustomFieldDef" }
+    post:
+      summary: Create a custom field definition (admin role required)
+      parameters:
+        - { in: query, name: resource, required: true, schema: { type: string, enum: [custom_field_defs] } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [entity_type, key, label, type]
+              properties:
+                entity_type: { type: string, enum: [subnet, address] }
+                key: { type: string, description: "Slug (^[a-z][a-z0-9_]{0,62}$)" }
+                label: { type: string }
+                type: { type: string, enum: [text, number, date, boolean, select] }
+                options: { type: array, items: { type: string }, description: "Required when type=select" }
+                sort_order: { type: integer, default: 0 }
+                is_required: { type: boolean, default: false }
+      responses:
+        "201":
+          description: Definition created
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
+        "400":
+          description: Validation error (duplicate key, invalid slug, etc.)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    put:
+      summary: Update a custom field definition (admin role required)
+      parameters:
+        - { in: query, name: resource, required: true, schema: { type: string, enum: [custom_field_defs] } }
+        - { in: query, name: id, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label: { type: string }
+                options: { type: array, items: { type: string } }
+                sort_order: { type: integer }
+                is_required: { type: boolean }
+      responses:
+        "200":
+          description: Definition updated
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
+    delete:
+      summary: Delete a custom field definition (admin role required; fails if values exist)
+      parameters:
+        - { in: query, name: resource, required: true, schema: { type: string, enum: [custom_field_defs] } }
+        - { in: query, name: id, required: true, schema: { type: integer } }
+      responses:
+        "204":
+          description: Deleted
+          headers:
+            X-IPAM-API-Version: { $ref: "#/components/headers/X-IPAM-API-Version" }
+        "409":
+          description: Definition is in use — clear values before deleting
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
