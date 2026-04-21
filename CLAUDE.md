@@ -266,7 +266,7 @@ A new dep must meet **all** of the following criteria:
 
 | File | Size | Source | Purpose | Justified in |
 |---|---|---|---|---|
-| `qrcode.min.js` | ~20KB | cdnjs (qrcodejs 1.0.0, MIT) | QR code canvas rendering for TOTP enrollment — generates the `otpauth://` QR code in the browser so users can scan with any authenticator app. Self-hosted, single file, zero deps, no build step. Qualifies under the data-visualization primitives carve-out. | #418, v3.6.0 |
+| `qrcode.min.js` | ~20KB | cdnjs (qrcodejs 1.0.0, MIT) | QR code canvas rendering for TOTP enrollment — generates the `otpauth://` QR code in the browser so users can scan with any authenticator app. Vendored as a single file under `assets/vendor/`, self-hosted, vanilla JS, zero deps, no build step, MIT licensed, ~20KB. | #418, v3.6.0 |
 
 Future candidates to be evaluated on a case-by-case basis as feature work surfaces them.
 
