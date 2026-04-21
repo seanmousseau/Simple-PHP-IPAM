@@ -7367,3 +7367,170 @@ function render_custom_field_inputs(array $defs, array $values, string $namePref
     $html .= '</div>';
     return $html;
 }
+
+// ============================================================
+// TOTP 2FA helpers (v3.6.0, #418)
+// ============================================================
+
+function ipam_totp_tfa(): \RobThree\Auth\TwoFactorAuth {
+    static $tfa = null;
+    if ($tfa === null) {
+        $tfa = new \RobThree\Auth\TwoFactorAuth(null, 6, 30, \RobThree\Auth\Algorithm::Sha1);
+    }
+    return $tfa;
+}
+
+function ipam_totp_generate_secret(): string {
+    return ipam_totp_tfa()->createSecret(160);
+}
+
+function ipam_totp_get_uri(string $secret, string $issuer, string $accountName): string {
+    return ipam_totp_tfa()->getQRText($issuer . ':' . $accountName, $secret);
+}
+
+function ipam_totp_verify(string $secret, string $code, int $discrepancy = 1): bool {
+    return ipam_totp_tfa()->verifyCode($secret, $code, $discrepancy);
+}
+
+function ipam_totp_encrypt_secret(string $secret, string $key): string {
+    $iv  = random_bytes(16);
+    $enc = openssl_encrypt($secret, 'aes-256-cbc', hash('sha256', $key, true), OPENSSL_RAW_DATA, $iv);
+    return base64_encode($iv . $enc);
+}
+
+function ipam_totp_decrypt_secret(string $encSecret, string $key): string {
+    $raw = base64_decode($encSecret, true);
+    if ($raw === false || strlen($raw) < 17) {
+        return '';
+    }
+    $iv      = substr($raw, 0, 16);
+    $payload = substr($raw, 16);
+    $result  = openssl_decrypt($payload, 'aes-256-cbc', hash('sha256', $key, true), OPENSSL_RAW_DATA, $iv);
+    if ($result === false) {
+        return '';
+    }
+    return $result;
+}
+
+/** @return list<string> */
+function ipam_totp_generate_backup_codes(int $count = 8): array {
+    $codes = [];
+    for ($i = 0; $i < $count; $i++) {
+        $codes[] = strtoupper(bin2hex(random_bytes(4))) . '-' . strtoupper(bin2hex(random_bytes(4)));
+    }
+    return $codes;
+}
+
+/** @param list<string> $codes */
+function ipam_totp_save_backup_codes(PDO $db, int $userId, array $codes): void {
+    $db->prepare("DELETE FROM totp_backup_codes WHERE user_id = :uid")->execute([':uid' => $userId]);
+    $stmt = $db->prepare("INSERT INTO totp_backup_codes (user_id, code_hash) VALUES (:uid, :hash)");
+    foreach ($codes as $code) {
+        $stmt->execute([':uid' => $userId, ':hash' => password_hash($code, PASSWORD_DEFAULT)]);
+    }
+}
+
+function ipam_totp_verify_backup_code(PDO $db, int $userId, string $code): bool {
+    $stmt = $db->prepare(
+        "SELECT id, code_hash FROM totp_backup_codes WHERE user_id = :uid AND used_at IS NULL"
+    );
+    $stmt->execute([':uid' => $userId]);
+    $nowExpr = $db->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite' ? "datetime('now')" : "NOW()";
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        if (password_verify($code, (string)$row['code_hash'])) {
+            $db->prepare("UPDATE totp_backup_codes SET used_at = {$nowExpr} WHERE id = :id")
+               ->execute([':id' => $row['id']]);
+            return true;
+        }
+    }
+    return false;
+}
+
+// ============================================================
+// API per-key rate limiting (v3.6.0, #419)
+// ============================================================
+
+function ipam_api_key_rate_limit_check(PDO $db, string $bucketKey, int $windowSec, int $max): bool {
+    $windowStart = date('Y-m-d H:i:s', (int)(time() / $windowSec) * $windowSec);
+    $cutoff      = date('Y-m-d H:i:s', time() - ($windowSec * 2));
+
+    // Prune buckets older than 2x window
+    $db->prepare("DELETE FROM rate_limit_buckets WHERE window_start < :cutoff")
+       ->execute([':cutoff' => $cutoff]);
+
+    $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    if ($driver === 'mysql') {
+        $db->prepare(
+            "INSERT INTO rate_limit_buckets (bucket_key, window_start, count) VALUES (:k, :w, 1)
+             ON DUPLICATE KEY UPDATE count = count + 1"
+        )->execute([':k' => $bucketKey, ':w' => $windowStart]);
+    } else {
+        // SQLite and PostgreSQL
+        $db->prepare(
+            "INSERT INTO rate_limit_buckets (bucket_key, window_start, count) VALUES (:k, :w, 1)
+             ON CONFLICT(bucket_key, window_start) DO UPDATE SET count = count + 1"
+        )->execute([':k' => $bucketKey, ':w' => $windowStart]);
+    }
+
+    $stmt = $db->prepare(
+        "SELECT count FROM rate_limit_buckets WHERE bucket_key = :k AND window_start = :w"
+    );
+    $stmt->execute([':k' => $bucketKey, ':w' => $windowStart]);
+    $count = (int)($stmt->fetchColumn() ?: 0);
+    return $count <= $max;
+}
+
+// ============================================================
+// Session absolute lifetime (v3.6.0, #420)
+// ============================================================
+
+/** @param IpamConfig $config */
+function ipam_session_enforce_absolute_lifetime(array $config): void {
+    if (!isset($_SESSION['_abs_expires'])) {
+        $_SESSION['_abs_expires'] = time() + (int)(($config['session']['absolute_lifetime_minutes'] ?? 480) * 60);
+        return;
+    }
+    $expires = $_SESSION['_abs_expires'];
+    $expiresInt = is_int($expires) ? $expires : (is_numeric($expires) ? (int)$expires : 0);
+    if (time() > $expiresInt) {
+        session_destroy();
+        header('Location: login.php?reason=session_expired');
+        exit;
+    }
+}
+
+// ============================================================
+// Persistent account lockout helpers (v3.6.0, #421)
+// ============================================================
+
+function ipam_is_persistently_locked(PDO $db, int $uid): bool {
+    $stmt = $db->prepare("SELECT locked_until FROM users WHERE id = :id");
+    $stmt->execute([':id' => $uid]);
+    $lockedUntil = $stmt->fetchColumn();
+    return $lockedUntil !== false && $lockedUntil !== null && strtotime((string)$lockedUntil) > time();
+}
+
+/** @param IpamConfig $config */
+function ipam_record_2fa_failure(PDO $db, int $uid, array $config): void {
+    $threshold   = (int)($config['auth']['lockout_after_failures'] ?? 10);
+    $lockMinutes = (int)($config['auth']['lockout_duration_minutes'] ?? 30);
+
+    $db->prepare("UPDATE users SET failed_auth_count = failed_auth_count + 1 WHERE id = :id")
+       ->execute([':id' => $uid]);
+
+    $stmt = $db->prepare("SELECT failed_auth_count FROM users WHERE id = :id");
+    $stmt->execute([':id' => $uid]);
+    $count = (int)$stmt->fetchColumn();
+
+    if ($count >= $threshold) {
+        $until = date('Y-m-d H:i:s', time() + ($lockMinutes * 60));
+        $db->prepare("UPDATE users SET locked_until = :until, lock_reason = 'failed_2fa' WHERE id = :id")
+           ->execute([':until' => $until, ':id' => $uid]);
+    }
+}
+
+function ipam_clear_persistent_lockout(PDO $db, int $uid): void {
+    $db->prepare(
+        "UPDATE users SET failed_auth_count = 0, locked_until = NULL, lock_reason = NULL WHERE id = :id"
+    )->execute([':id' => $uid]);
+}
