@@ -40,6 +40,13 @@ $error = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_require();
 
+    // Enforce persistent lockout before processing any submitted code (#421)
+    if (ipam_is_persistently_locked($db, $uid)) {
+        unset($_SESSION['totp_pending_uid']);
+        header('Location: login.php?reason=locked');
+        exit;
+    }
+
     if (to_int($userRow['totp_enabled']) !== 1) {
         // TOTP was disabled between password check and here — complete login normally
         unset($_SESSION['totp_pending_uid']);
