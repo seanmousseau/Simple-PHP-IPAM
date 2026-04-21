@@ -146,7 +146,8 @@ if ($sessionApiKey !== null) {
     $bucketKey = 'apikey:' . substr($keyHash, 0, 16);
     if (!ipam_api_key_rate_limit_check($db, $bucketKey, $apiRateLimitSec, $apiRateLimitMax)) {
         http_response_code(429);
-        header('Retry-After: ' . $apiRateLimitSec);
+        $retryAfter = $apiRateLimitSec - (time() % $apiRateLimitSec);
+        header('Retry-After: ' . $retryAfter);
         echo json_encode(['error' => 'Rate limit exceeded. Too many requests for this API key.']);
         exit;
     }

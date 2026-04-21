@@ -593,8 +593,8 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 -- totp_backup_codes (v3.6.0, #418)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS totp_backup_codes (
-  id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
-  user_id     INT UNSIGNED NOT NULL,
+  id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id     BIGINT UNSIGNED NOT NULL,
   code_hash   TEXT NOT NULL,
   used_at     DATETIME,
   PRIMARY KEY (id),

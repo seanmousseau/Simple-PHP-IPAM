@@ -715,6 +715,15 @@ function login_user(int $uid, string $username, string $role, ?PDO $db = null): 
     $_SESSION['username'] = $username;
     $_SESSION['role'] = $role;
     $_SESSION['last_active'] = time();
+    // Seed absolute session lifetime from config at login time
+    /** @var IpamConfig $cfg */
+    $cfg = $GLOBALS['config'] ?? [];
+    $absMin = (int)(($cfg['session']['absolute_lifetime_minutes'] ?? 480));
+    if ($absMin > 0) {
+        $_SESSION['_abs_expires'] = time() + ($absMin * 60);
+    } else {
+        unset($_SESSION['_abs_expires']);
+    }
     // Load persisted theme preference so page_header() can prime localStorage
     if ($db !== null) {
         $st = $db->prepare("SELECT theme FROM users WHERE id = :id");
@@ -7393,6 +7402,9 @@ function ipam_totp_verify(string $secret, string $code, int $discrepancy = 1): b
 }
 
 function ipam_totp_encrypt_secret(string $secret, string $key): string {
+    if ($key === '') {
+        throw new \RuntimeException('TOTP encryption requires a non-empty app_secret');
+    }
     $iv  = random_bytes(16);
     $enc = openssl_encrypt($secret, 'aes-256-cbc', hash('sha256', $key, true), OPENSSL_RAW_DATA, $iv);
     if ($enc === false) {
@@ -7402,6 +7414,9 @@ function ipam_totp_encrypt_secret(string $secret, string $key): string {
 }
 
 function ipam_totp_decrypt_secret(string $encSecret, string $key): string {
+    if ($key === '') {
+        throw new \RuntimeException('TOTP decryption requires a non-empty app_secret');
+    }
     $raw = base64_decode($encSecret, true);
     if ($raw === false || strlen($raw) < 17) {
         return '';
@@ -7441,9 +7456,11 @@ function ipam_totp_verify_backup_code(PDO $db, int $userId, string $code): bool 
     $nowExpr = $db->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite' ? "datetime('now')" : "NOW()";
     foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
         if (password_verify($code, (string)$row['code_hash'])) {
-            $db->prepare("UPDATE totp_backup_codes SET used_at = {$nowExpr} WHERE id = :id")
-               ->execute([':id' => $row['id']]);
-            return true;
+            $consume = $db->prepare(
+                "UPDATE totp_backup_codes SET used_at = {$nowExpr} WHERE id = :id AND used_at IS NULL"
+            );
+            $consume->execute([':id' => $row['id']]);
+            return $consume->rowCount() === 1;
         }
     }
     return false;
@@ -7454,13 +7471,18 @@ function ipam_totp_verify_backup_code(PDO $db, int $userId, string $code): bool 
 // ============================================================
 
 function ipam_api_key_rate_limit_check(PDO $db, string $bucketKey, int $windowSec, int $max): bool {
-    $windowStart = date('Y-m-d H:i:s', (int)(time() / $windowSec) * $windowSec);
-    $cutoff      = date('Y-m-d H:i:s', time() - ($windowSec * 2));
+    $now              = time();
+    $windowStartEpoch = (int)($now / $windowSec) * $windowSec;
+    $prevWindowEpoch  = $windowStartEpoch - $windowSec;
+    $windowStart      = date('Y-m-d H:i:s', $windowStartEpoch);
+    $prevWindowStart  = date('Y-m-d H:i:s', $prevWindowEpoch);
+    $cutoff           = date('Y-m-d H:i:s', $prevWindowEpoch - $windowSec);
 
-    // Prune buckets older than 2x window
+    // Prune buckets older than 2 windows ago
     $db->prepare("DELETE FROM rate_limit_buckets WHERE window_start < :cutoff")
        ->execute([':cutoff' => $cutoff]);
 
+    // Increment current window
     $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
     if ($driver === 'mysql') {
         $db->prepare(
@@ -7468,19 +7490,27 @@ function ipam_api_key_rate_limit_check(PDO $db, string $bucketKey, int $windowSe
              ON DUPLICATE KEY UPDATE count = count + 1"
         )->execute([':k' => $bucketKey, ':w' => $windowStart]);
     } else {
-        // SQLite and PostgreSQL
         $db->prepare(
             "INSERT INTO rate_limit_buckets (bucket_key, window_start, count) VALUES (:k, :w, 1)
              ON CONFLICT(bucket_key, window_start) DO UPDATE SET count = count + 1"
         )->execute([':k' => $bucketKey, ':w' => $windowStart]);
     }
 
+    // Sliding-window approximation: weight previous bucket by fraction remaining in current window
     $stmt = $db->prepare(
         "SELECT count FROM rate_limit_buckets WHERE bucket_key = :k AND window_start = :w"
     );
     $stmt->execute([':k' => $bucketKey, ':w' => $windowStart]);
-    $count = (int)($stmt->fetchColumn() ?: 0);
-    return $count <= $max;
+    $currentCount = (int)($stmt->fetchColumn() ?: 0);
+
+    $stmt->execute([':k' => $bucketKey, ':w' => $prevWindowStart]);
+    $prevCount = (int)($stmt->fetchColumn() ?: 0);
+
+    $elapsed  = $now - $windowStartEpoch;
+    $weight   = ($windowSec - $elapsed) / $windowSec;
+    $weighted = $currentCount + ($prevCount * $weight);
+
+    return $weighted <= $max;
 }
 
 // ============================================================
@@ -7489,11 +7519,14 @@ function ipam_api_key_rate_limit_check(PDO $db, string $bucketKey, int $windowSe
 
 /** @param IpamConfig $config */
 function ipam_session_enforce_absolute_lifetime(array $config): void {
-    if (!isset($_SESSION['_abs_expires'])) {
-        $_SESSION['_abs_expires'] = time() + (int)(($config['session']['absolute_lifetime_minutes'] ?? 480) * 60);
-        return;
+    $lifetimeMin = (int)(($config['session']['absolute_lifetime_minutes'] ?? 480));
+    if ($lifetimeMin <= 0) {
+        return; // Disabled
     }
-    $expires = $_SESSION['_abs_expires'];
+    if (!isset($_SESSION['_abs_expires'])) {
+        return; // Not yet seeded — pre-auth request; seeding happens in login_user()
+    }
+    $expires    = $_SESSION['_abs_expires'];
     $expiresInt = is_int($expires) ? $expires : (is_numeric($expires) ? (int)$expires : 0);
     if (time() > $expiresInt) {
         session_destroy();

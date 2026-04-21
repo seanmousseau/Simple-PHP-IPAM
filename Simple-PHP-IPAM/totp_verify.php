@@ -5,7 +5,7 @@ require __DIR__ . '/init.php';
 /** @var IpamConfig $config */
 
 // Guard: must have a pending TOTP session from login.php
-if (empty($_SESSION['totp_pending_uid']) || empty($_SESSION['totp_pending_username']) || empty($_SESSION['totp_pending_role'])) {
+if (empty($_SESSION['totp_pending_uid'])) {
     header('Location: login.php');
     exit;
 }
@@ -15,23 +15,34 @@ if (is_logged_in()) {
     exit;
 }
 
-$error     = '';
-$username  = to_str($_SESSION['totp_pending_username']);
+$uid = to_int($_SESSION['totp_pending_uid']);
+
+// Reload user from DB — don't trust session-stored username/role
+$userSt = $db->prepare(
+    "SELECT username, role, totp_secret_enc, totp_enabled FROM users WHERE id = :id AND is_active = 1"
+);
+$userSt->execute([':id' => $uid]);
+/** @var array<string, mixed>|false $userRow */
+$userRow = $userSt->fetch();
+
+if (!$userRow) {
+    // User was disabled or deleted between password step and 2FA step
+    unset($_SESSION['totp_pending_uid']);
+    header('Location: login.php');
+    exit;
+}
+
+$username = to_str($userRow['username']);
+$role     = to_str($userRow['role']);
+
+$error = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_require();
 
-    $uid  = to_int($_SESSION['totp_pending_uid']);
-    $role = to_str($_SESSION['totp_pending_role']);
-
-    $userSt = $db->prepare("SELECT totp_secret_enc, totp_enabled FROM users WHERE id = :id AND is_active = 1");
-    $userSt->execute([':id' => $uid]);
-    /** @var array<string, mixed>|false $userRow */
-    $userRow = $userSt->fetch();
-
-    if (!$userRow || to_int($userRow['totp_enabled']) !== 1) {
-        // TOTP got disabled between password check and here — complete login normally
-        unset($_SESSION['totp_pending_uid'], $_SESSION['totp_pending_username'], $_SESSION['totp_pending_role']);
+    if (to_int($userRow['totp_enabled']) !== 1) {
+        // TOTP was disabled between password check and here — complete login normally
+        unset($_SESSION['totp_pending_uid']);
         login_user($uid, $username, $role, $db);
         $db->prepare("UPDATE users SET last_login_at=" . ipam_dialect()->now() . " WHERE id=:id")
            ->execute([':id' => $uid]);
@@ -60,7 +71,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($verified) {
-        unset($_SESSION['totp_pending_uid'], $_SESSION['totp_pending_username'], $_SESSION['totp_pending_role']);
+        unset($_SESSION['totp_pending_uid']);
+        ipam_clear_persistent_lockout($db, $uid);
         login_user($uid, $username, $role, $db);
         $db->prepare("UPDATE users SET last_login_at=" . ipam_dialect()->now() . " WHERE id=:id")
            ->execute([':id' => $uid]);
@@ -74,7 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     audit($db, 'auth.totp_failed', 'user', $uid, '');
 
     if (ipam_is_persistently_locked($db, $uid)) {
-        unset($_SESSION['totp_pending_uid'], $_SESSION['totp_pending_username'], $_SESSION['totp_pending_role']);
+        unset($_SESSION['totp_pending_uid']);
         header('Location: login.php?reason=locked');
         exit;
     }

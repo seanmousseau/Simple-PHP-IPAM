@@ -22,7 +22,11 @@ test.describe('Reverse proxy harness', () => {
 
   test('password manager autocomplete attributes present', async ({ page }) => {
     await page.goto('login.php');
-    await expect(page.locator('input[name="username"]')).toBeVisible();
-    await expect(page.locator('input[type="password"]')).toBeVisible();
+    const usernameInput = page.locator('input[name="username"]');
+    const passwordInput = page.locator('input[type="password"]');
+    await expect(usernameInput).toBeVisible();
+    await expect(passwordInput).toBeVisible();
+    await expect(usernameInput).toHaveAttribute('autocomplete', 'username');
+    await expect(passwordInput).toHaveAttribute('autocomplete', 'current-password');
   });
 });

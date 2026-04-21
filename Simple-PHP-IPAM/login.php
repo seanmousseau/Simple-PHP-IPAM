@@ -129,9 +129,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 clear_login_failures($db, $ip);
                 clear_account_lockout($db, $username);
                 if (to_int($user['totp_enabled'] ?? 0) === 1) {
-                    $_SESSION['totp_pending_uid']      = to_int($user['id']);
-                    $_SESSION['totp_pending_username'] = to_str($user['username']);
-                    $_SESSION['totp_pending_role']     = to_str($user['role']);
+                    $_SESSION['totp_pending_uid'] = to_int($user['id']);
                     header('Location: totp_verify.php');
                     exit;
                 }
@@ -183,8 +181,8 @@ $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM'
   <form method="post" action="login.php" autocomplete="off">
     <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
     <div class="row">
-      <label>Username<br><input name="username" required></label>
-      <label>Password<br><input type="password" name="password" required></label>
+      <label>Username<br><input name="username" autocomplete="username" required></label>
+      <label>Password<br><input type="password" name="password" autocomplete="current-password" required></label>
     </div>
     <?php if ($lpWidgetHtml !== ''): ?>
       <div class="mt-10"><?= $lpWidgetHtml ?></div>
