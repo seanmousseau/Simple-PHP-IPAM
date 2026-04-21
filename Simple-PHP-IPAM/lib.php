@@ -7127,3 +7127,161 @@ function custom_field_in_use(PDO $db, string $key, string $entityType): bool
     $st->execute([':k' => $key]);
     return (bool)$st->fetchColumn();
 }
+
+/**
+ * Decode a JSON custom_fields column value into an associative array.
+ * Returns [] on empty, null, or malformed JSON.
+ *
+ * @return array<string,mixed>
+ */
+function parse_custom_fields_row(string $json): array
+{
+    if ($json === '' || $json === 'null') return [];
+    $decoded = json_decode($json, true);
+    return is_array($decoded) ? $decoded : [];
+}
+
+/**
+ * Canonical JSON serialization for the custom_fields column.
+ * Null values are stripped so the stored JSON stays compact.
+ *
+ * @param array<string,mixed> $values
+ */
+function serialize_custom_fields_row(array $values): string
+{
+    $filtered = array_filter($values, fn($v) => $v !== null);
+    return json_encode($filtered, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?: '{}';
+}
+
+/**
+ * Validate a raw POST payload against the active custom field definitions.
+ * Returns the typed values array (ready for serialize_custom_fields_row).
+ * Throws InvalidArgumentException on the first type mismatch or missing required field.
+ *
+ * @param list<array<string,mixed>> $defs     Output of custom_field_def_list()
+ * @param array<string,mixed>       $payload  Flat key→raw-value map from $_POST (keys without the 'cf_' prefix)
+ * @return array<string,mixed>
+ */
+function validate_custom_fields_payload(array $defs, array $payload): array
+{
+    $result = [];
+    foreach ($defs as $def) {
+        $key      = to_str($def['key']);
+        $type     = to_str($def['type']);
+        $required = (bool)$def['is_required'];
+
+        // Boolean: checkbox presence = true, absence = false; required does not apply
+        if ($type === 'boolean') {
+            $result[$key] = isset($payload[$key]) && $payload[$key] !== '' && $payload[$key] !== '0';
+            continue;
+        }
+
+        $raw = isset($payload[$key]) ? to_str($payload[$key]) : '';
+
+        if ($raw === '') {
+            if ($required) {
+                throw new \InvalidArgumentException($key . ': this field is required');
+            }
+            $result[$key] = null;
+            continue;
+        }
+
+        switch ($type) {
+            case 'text':
+                $result[$key] = $raw;
+                break;
+            case 'number':
+                if (!is_numeric($raw)) {
+                    throw new \InvalidArgumentException($key . ': expected a number');
+                }
+                $result[$key] = str_contains($raw, '.') ? (float)$raw : (int)$raw;
+                break;
+            case 'date':
+                if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $raw)) {
+                    throw new \InvalidArgumentException($key . ': expected YYYY-MM-DD format');
+                }
+                $result[$key] = $raw;
+                break;
+            case 'select':
+                $options = json_decode(to_str($def['options'] ?? '[]'), true);
+                $options = is_array($options) ? $options : [];
+                if (!in_array($raw, $options, true)) {
+                    throw new \InvalidArgumentException($key . ': not a valid option');
+                }
+                $result[$key] = $raw;
+                break;
+        }
+    }
+    return $result;
+}
+
+/**
+ * Render HTML form inputs for a set of custom field definitions.
+ * The name of each input is "{$namePrefix}{$key}".
+ * Returns '' when $defs is empty (no heading rendered).
+ *
+ * @param list<array<string,mixed>> $defs       Output of custom_field_def_list()
+ * @param array<string,mixed>       $values     Current stored values (from parse_custom_fields_row)
+ * @param string                    $namePrefix Form input name prefix (default 'cf_')
+ */
+function render_custom_field_inputs(array $defs, array $values, string $namePrefix = 'cf_'): string
+{
+    if (empty($defs)) return '';
+
+    $html  = '<div class="custom-field-group">';
+    $html .= '<h4 class="custom-field-heading">Custom fields</h4>';
+
+    foreach ($defs as $def) {
+        $key      = to_str($def['key']);
+        $label    = e(to_str($def['label']));
+        $type     = to_str($def['type']);
+        $required = (bool)$def['is_required'];
+        $name     = e($namePrefix . $key);
+        $inputId  = 'cf-inp-' . e($key);
+        $val      = $values[$key] ?? null;
+        $reqAttr  = $required ? ' required' : '';
+        $reqMark  = $required ? '<span class="cf-required" aria-hidden="true">*</span>' : '';
+        $cfKey    = ' data-cf-key="' . e($key) . '"';
+
+        $html .= '<div class="custom-field-row">';
+
+        if ($type === 'boolean') {
+            $checked = ($val === true || $val === 1 || $val === '1') ? ' checked' : '';
+            $html .= '<label class="form-check" for="' . $inputId . '">';
+            $html .= '<input id="' . $inputId . '" type="checkbox" name="' . $name . '" value="1"' . $cfKey . $checked . '>';
+            $html .= ' ' . $label . $reqMark;
+            $html .= '</label>';
+        } else {
+            $html .= '<label for="' . $inputId . '">' . $label . ' ' . $reqMark . '<br>';
+            switch ($type) {
+                case 'text':
+                    $html .= '<input id="' . $inputId . '" type="text" name="' . $name . '" value="' . e(to_str($val)) . '"' . $cfKey . $reqAttr . '>';
+                    break;
+                case 'number':
+                    $html .= '<input id="' . $inputId . '" type="number" step="any" name="' . $name . '" value="' . e(to_str($val)) . '"' . $cfKey . $reqAttr . '>';
+                    break;
+                case 'date':
+                    $html .= '<input id="' . $inputId . '" type="date" name="' . $name . '" value="' . e(to_str($val)) . '"' . $cfKey . $reqAttr . '>';
+                    break;
+                case 'select':
+                    $options = json_decode(to_str($def['options'] ?? '[]'), true);
+                    $options = is_array($options) ? $options : [];
+                    $html .= '<select id="' . $inputId . '" name="' . $name . '"' . $cfKey . $reqAttr . '>';
+                    $html .= '<option value="">(none)</option>';
+                    foreach ($options as $opt) {
+                        $optE = e(to_str($opt));
+                        $sel  = to_str($val) === to_str($opt) ? ' selected' : '';
+                        $html .= '<option value="' . $optE . '"' . $sel . '>' . $optE . '</option>';
+                    }
+                    $html .= '</select>';
+                    break;
+            }
+            $html .= '</label>';
+        }
+
+        $html .= '</div>';
+    }
+
+    $html .= '</div>';
+    return $html;
+}
