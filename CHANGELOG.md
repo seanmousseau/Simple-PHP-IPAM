@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.5.0] - 2026-04-21
+
+### Added
+
+- **#313 — Custom Fields.** Admin-defined per-entity metadata on subnets and addresses, stored as JSON in a new `custom_fields` TEXT column. No schema changes required for end users; the `3.5.0-custom-fields` migration adds the column idempotently on SQLite, MySQL/MariaDB, and PostgreSQL.
+  - **`custom_fields.php`** — New admin page (Admin → Custom Fields). Define fields with a key (slug), display label, type (`text`, `number`, `date`, `boolean`, `select`), and optional select options. Fields are scoped to `subnet` or `address` entities. Duplicate keys are rejected; delete is blocked if any values are stored.
+  - **Subnet and address edit forms** — Custom field inputs render below the core fields. Required fields are marked; type-mismatched values are rejected with a clear error both client- and server-side.
+  - **REST API** — `fmt_subnet()` and `fmt_address()` now include a `custom_fields` object. PUT/POST handlers accept and strictly validate `custom_fields` payloads; unknown keys or type mismatches return HTTP 422.
+  - **CSV export/import** — `export_addresses.php` adds a `custom_fields` JSON column. `import_csv.php` accepts and validates the column on import; malformed rows are reported without aborting the batch.
+  - **Documentation** — New [`docs/custom-fields.md`](docs/custom-fields.md) covering admin workflow, API shape, CSV format, strict-type behaviour, and upgrade path. OpenAPI spec updated.
+- **#461 — Search filter matrix.** `search.spec.ts` expanded from 6 to 28 parameterized test cases covering status × IP version combos, site/tag filter, free-text query fields (IP, hostname, owner, notes, group, MAC), special-character LIKE-escape regression, and CSV export validation.
+
+### Fixed
+
+- **#594 — action-pill button text invisible.** `.action-pill` elements were inheriting `--btnfg` instead of the neutral `--fg` token, making button text unreadable in both light and dark themes. Fixed by adding `color: var(--fg)` to the `.action-pill` rule in `app.css`.
+
 ## [3.4.1] - 2026-04-19
 
 ### Fixed
@@ -885,6 +901,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.5.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.4.1...v3.5.0
 [3.4.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.4.0...v3.4.1
 [3.4.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.3.0...v3.4.0
 [3.2.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.1.0...v3.2.0

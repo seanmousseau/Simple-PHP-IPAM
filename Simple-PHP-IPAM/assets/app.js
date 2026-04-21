@@ -1128,6 +1128,22 @@
           contactPicker.dispatchEvent(new CustomEvent("reinit"));
         }
 
+        // Fill custom field inputs from data-custom-fields JSON
+        var cfContainer = document.getElementById("subnet-edit-cf-inputs");
+        if (cfContainer) {
+          var cfValues = {};
+          try { cfValues = JSON.parse(d.customFields || "{}"); } catch(ex) {}
+          cfContainer.querySelectorAll("[data-cf-key]").forEach(function(inp) {
+            var cfKey = inp.getAttribute("data-cf-key");
+            var val = cfValues[cfKey];
+            if (inp.type === "checkbox") {
+              inp.checked = val === true || val === 1 || val === "1";
+            } else {
+              inp.value = (val !== null && val !== undefined) ? String(val) : "";
+            }
+          });
+        }
+
         editDrawer.hidden = false;
         var titleEl = formDrawer.querySelector(".drawer-title");
         if (titleEl) titleEl.textContent = "Edit " + d.cidr;
@@ -1619,6 +1635,23 @@
           .catch(function() { dhcpPreviewOut.value = "Error loading preview."; });
       });
     }
+  }
+
+  // custom_fields.php — type-select → options-row + preview toggle
+  var cfTypeSelect = document.getElementById("cf-type-select");
+  if (cfTypeSelect) {
+    var cfOptionsRow = document.getElementById("cf-options-row");
+    var cfPreviews   = ["text", "number", "date", "boolean", "select"];
+    function syncCfType() {
+      var t = cfTypeSelect.value;
+      cfPreviews.forEach(function(p) {
+        var el = document.getElementById("cf-preview-" + p);
+        if (el) el.hidden = (p !== t);
+      });
+      if (cfOptionsRow) cfOptionsRow.hidden = (t !== "select");
+    }
+    cfTypeSelect.addEventListener("change", syncCfType);
+    syncCfType();
   }
 
   // SMTP test button on settings.php

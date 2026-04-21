@@ -87,6 +87,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         $status = to_str($_POST['status'] ?? 'used');
 
+        // Custom fields
+        $cfAddrDefs = custom_field_def_list($db, 'address');
+        $cfAddrValues = [];
+        if ($cfAddrDefs) {
+            $cfPayload = [];
+            foreach ($_POST as $k => $v) {
+                if (is_string($k) && str_starts_with($k, 'cf_')) $cfPayload[substr($k, 3)] = to_str($v);
+            }
+            try {
+                $cfAddrValues = validate_custom_fields_payload($cfAddrDefs, $cfPayload);
+            } catch (\InvalidArgumentException $cfEx) {
+                $err = 'Custom field error: ' . $cfEx->getMessage();
+            }
+        }
+
         $st = $db->prepare("SELECT id, network, prefix, ip_version FROM subnets WHERE id = :id");
         $st->execute([':id' => $subnetId]);
         /** @var array<string, mixed>|false $sub */
@@ -110,8 +125,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // so the stored value has BLOB affinity on SQLite,
                     // round-trips high bytes correctly through MySQL
                     // VARBINARY, and does not UTF-8-validate on Postgres BYTEA.
-                    $ins = $db->prepare("INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, grp, mac, expires_at, status, owner_contact_id, device_id, interface_id)
-                                         VALUES (:sid,:ip,:bin,:hn,:ow,:nt,:grp,:mac,:exp,:st,:cid,:did,:iid)");
+                    $ins = $db->prepare("INSERT INTO addresses (subnet_id, ip, ip_bin, hostname, owner, note, grp, mac, expires_at, status, owner_contact_id, device_id, interface_id, custom_fields)
+                                         VALUES (:sid,:ip,:bin,:hn,:ow,:nt,:grp,:mac,:exp,:st,:cid,:did,:iid,:cf)");
                     $ins->bindValue(':sid', $subnetId, PDO::PARAM_INT);
                     $ins->bindValue(':ip',  $norm['ip']);
                     ipam_bind_binary($ins, ':bin', to_str($norm['bin']));
@@ -129,6 +144,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $deviceId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                     $ins->bindValue(':iid', $interfaceId,
                         $interfaceId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                    $ins->bindValue(':cf', serialize_custom_fields_row($cfAddrValues));
                     $ins->execute();
                     $aid = ipam_last_insert_id($db, 'addresses');
 
@@ -192,6 +208,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         $status = to_str($_POST['status'] ?? 'used');
 
+        // Custom fields
+        $cfAddrDefs = custom_field_def_list($db, 'address');
+        $cfAddrValues = [];
+        if ($cfAddrDefs) {
+            $cfPayload = [];
+            foreach ($_POST as $k => $v) {
+                if (is_string($k) && str_starts_with($k, 'cf_')) $cfPayload[substr($k, 3)] = to_str($v);
+            }
+            try {
+                $cfAddrValues = validate_custom_fields_payload($cfAddrDefs, $cfPayload);
+            } catch (\InvalidArgumentException $cfEx) {
+                $err = 'Custom field error: ' . $cfEx->getMessage();
+            }
+        }
+
         if (!in_array($status, ['used','reserved','free'], true)) {
             $err = 'Invalid status.';
         } else {
@@ -204,7 +235,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $err = 'Address not found.';
             } else {
                 $up = $db->prepare("UPDATE addresses
-                                    SET hostname=:hn, owner=:ow, note=:nt, grp=:grp, mac=:mac, expires_at=:exp, status=:st, owner_contact_id=:cid, device_id=:did, interface_id=:iid
+                                    SET hostname=:hn, owner=:ow, note=:nt, grp=:grp, mac=:mac, expires_at=:exp, status=:st, owner_contact_id=:cid, device_id=:did, interface_id=:iid, custom_fields=:cf
                                     WHERE id=:id AND subnet_id=:sid");
                 $up->bindValue(':hn',  $hostname);
                 $up->bindValue(':ow',  $owner);
@@ -220,6 +251,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $deviceId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
                 $up->bindValue(':iid', $interfaceId,
                     $interfaceId === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                $up->bindValue(':cf',  serialize_custom_fields_row($cfAddrValues));
                 $up->bindValue(':id',  $id,        PDO::PARAM_INT);
                 $up->bindValue(':sid', $subnetId,  PDO::PARAM_INT);
                 $up->execute();
@@ -407,7 +439,7 @@ if ($selectedSubnetId > 0) {
     $st = $db->prepare("SELECT a.id, a.ip, a.ip_bin, a.hostname, a.owner, a.note, a.grp, a.mac, a.expires_at, a.status, a.updated_at,
                                a.owner_contact_id, c.name AS owner_contact_name, c.email AS owner_contact_email,
                                a.last_seen_at, a.is_stale,
-                               a.device_id, a.interface_id,
+                               a.device_id, a.interface_id, a.custom_fields,
                                dv.name AS device_name, di.name AS interface_name
                         FROM addresses a
                         LEFT JOIN contacts c ON c.id = a.owner_contact_id
@@ -459,6 +491,9 @@ if ($selectedSubnetId > 0 && $networkBin !== null) {
         $missingInfra = count($found) < count($infraBins);
     }
 }
+
+/** @var list<array<string,mixed>> $addrCfDefs */
+$addrCfDefs = custom_field_def_list($db, 'address');
 
 // Devices + interfaces for dropdowns (keyed by device_id for JS)
 /** @var list<array<string,mixed>> $deviceList */
@@ -619,6 +654,10 @@ ipam_skeleton_flush();
         </select>
       </label>
     </div>
+    <?php endif; ?>
+
+    <?php if ($addrCfDefs): ?>
+    <?= render_custom_field_inputs($addrCfDefs, []) ?>
     <?php endif; ?>
 
     <p>
@@ -789,6 +828,10 @@ ipam_skeleton_flush();
                     </select>
                   </label>
                 </div>
+                <?php endif; ?>
+
+                <?php if ($addrCfDefs): ?>
+                <?= render_custom_field_inputs($addrCfDefs, parse_custom_fields_row(to_str($a['custom_fields'] ?? '{}'))) ?>
                 <?php endif; ?>
 
                 <button type="submit" <?= (current_user()['role']==='readonly')?'disabled':'' ?>>Save</button>

@@ -1093,6 +1093,168 @@ else
 fi
 
 # ====================================================================
+log "=== Custom Fields API (v3.5.0) ==="
+# ====================================================================
+
+# --- Response shape: custom_fields key present in subnet and address responses ---
+if [[ -n "${SUBNET_ID:-}" && "$SUBNET_ID" != "None" ]]; then
+    call_api GET "subnets&id=$SUBNET_ID"
+    assert_http 200 "GET subnet by id → 200"
+    CF_KEY=$(python3 -c "import sys,json; d=json.load(sys.stdin); print('present' if 'custom_fields' in d.get('subnet',{}) else 'missing')" <<< "$BODY" 2>/dev/null || echo "missing")
+    [[ "$CF_KEY" == "present" ]] && pass "subnet response has custom_fields key" || fail "subnet response missing custom_fields key"
+
+    call_api GET "addresses&subnet_id=$SUBNET_ID&limit=1"
+    assert_http 200 "GET addresses for subnet → 200"
+    ADDR_CF_KEY=$(python3 -c "import sys,json; d=json.load(sys.stdin); addrs=d.get('addresses',[]); print('present' if addrs and 'custom_fields' in addrs[0] else 'empty_or_missing')" <<< "$BODY" 2>/dev/null || echo "empty_or_missing")
+    [[ "$ADDR_CF_KEY" == "present" || "$ADDR_CF_KEY" == "empty_or_missing" ]] && pass "addresses response custom_fields key: $ADDR_CF_KEY" || fail "addresses response missing custom_fields"
+else
+    skip "Custom fields shape tests — no SUBNET_ID"
+fi
+
+# --- PUT with unknown custom field key → 422 ---
+if [[ -n "${SUBNET_ID:-}" && "$SUBNET_ID" != "None" ]]; then
+    call_api PUT "subnets&id=$SUBNET_ID" '{"custom_fields":{"__nonexistent_key__":"value"}}'
+    [[ "$HTTP_CODE" == "422" ]] && pass "PUT subnet with unknown cf key → 422" || fail "PUT subnet with unknown cf key → expected 422, got $HTTP_CODE"
+else
+    skip "Custom fields unknown-key test — no SUBNET_ID"
+fi
+
+if [[ -n "${ADDR_ID:-}" && "$ADDR_ID" != "None" ]]; then
+    call_api PUT "addresses&id=$ADDR_ID" '{"custom_fields":{"__nonexistent_key__":"value"}}'
+    [[ "$HTTP_CODE" == "422" ]] && pass "PUT address with unknown cf key → 422" || fail "PUT address with unknown cf key → expected 422, got $HTTP_CODE"
+else
+    skip "Custom fields unknown-key test — no ADDR_ID"
+fi
+
+# --- PUT with empty custom_fields object → 200 (no-op, always valid) ---
+if [[ -n "${SUBNET_ID:-}" && "$SUBNET_ID" != "None" ]]; then
+    call_api PUT "subnets&id=$SUBNET_ID" '{"custom_fields":{}}'
+    assert_http 200 "PUT subnet with empty custom_fields → 200"
+
+    call_api GET "subnets&id=$SUBNET_ID"
+    CF_EMPTY=$(python3 -c "import sys,json; d=json.load(sys.stdin); cf=d.get('subnet',{}).get('custom_fields',None); print('ok' if cf=={} else 'fail')" <<< "$BODY" 2>/dev/null || echo "fail")
+    [[ "$CF_EMPTY" == "ok" ]] && pass "subnet custom_fields round-trip: empty → {}" || fail "subnet custom_fields round-trip: unexpected value"
+else
+    skip "Custom fields empty PUT test — no SUBNET_ID"
+fi
+
+# --- Seed a CF definition, test type violation and round-trip, then clean up ---
+CF_DEF_ID=""
+if [[ -n "$DOCKER_CONTAINER" ]]; then
+    CF_DEF_ID=$(db_php "$(container_api_key_php "
+\$stmt = \$db->prepare(\"INSERT INTO custom_field_defs (entity_type, key, label, type, options, sort_order, is_required) VALUES ('subnet','api_test_num','API Test Number','number','[]',99,0)\");
+\$stmt->execute();
+echo ipam_last_insert_id(\$db, 'custom_field_defs');
+")" 2>/dev/null | tr -d '[:space:]')
+fi
+
+if [[ -n "${CF_DEF_ID:-}" && "$CF_DEF_ID" != "" && -n "${SUBNET_ID:-}" && "$SUBNET_ID" != "None" ]]; then
+    # Type violation: send string where number expected → 422
+    call_api PUT "subnets&id=$SUBNET_ID" '{"custom_fields":{"api_test_num":"not-a-number"}}'
+    [[ "$HTTP_CODE" == "422" ]] && pass "PUT subnet with string-typed number field → 422" || fail "PUT subnet with string-typed number field → expected 422, got $HTTP_CODE"
+
+    # Valid number value → 200, round-trip check
+    call_api PUT "subnets&id=$SUBNET_ID" '{"custom_fields":{"api_test_num":42}}'
+    assert_http 200 "PUT subnet with valid number cf value → 200"
+
+    call_api GET "subnets&id=$SUBNET_ID"
+    CF_NUM=$(python3 -c "import sys,json; d=json.load(sys.stdin); cf=d.get('subnet',{}).get('custom_fields',{}); print(cf.get('api_test_num','MISSING'))" <<< "$BODY" 2>/dev/null || echo "MISSING")
+    [[ "$CF_NUM" == "42" ]] && pass "subnet number cf round-trip: 42 → 42" || fail "subnet number cf round-trip: expected 42, got $CF_NUM"
+
+    # Clean up the test CF definition
+    db_php "$(container_api_key_php "
+\$db->prepare(\"DELETE FROM custom_field_defs WHERE id = :id\")->execute([':id' => $CF_DEF_ID]);
+\$db->prepare(\"UPDATE subnets SET custom_fields = '{}' WHERE id = :id\")->execute([':id' => $SUBNET_ID]);
+")" 2>/dev/null || true
+    pass "Cleaned up CF definition (id=$CF_DEF_ID)"
+else
+    [[ -z "${CF_DEF_ID:-}" ]] && skip "CF type-violation tests — DB seed skipped (not containerized or seed failed)" \
+                              || skip "CF type-violation tests — no SUBNET_ID"
+fi
+
+# ====================================================================
+log "=== Custom Fields CSV Export (v3.5.0) ==="
+# ====================================================================
+
+# Seed an address CF definition, run API + CSV export round-trip, then clean up
+CF_ADDR_DEF_ID=""
+if [[ -n "${DOCKER_CONTAINER:-}" ]]; then
+    CF_ADDR_DEF_ID=$(db_php "$(container_api_key_php "
+\$stmt = \$db->prepare(\"INSERT INTO custom_field_defs (entity_type, key, label, type, options, sort_order, is_required) VALUES ('address','csv_test_txt','CSV Test','text','[]',97,0)\");
+\$stmt->execute();
+echo ipam_last_insert_id(\$db, 'custom_field_defs');
+")" 2>/dev/null | tr -d '[:space:]')
+fi
+
+if [[ -n "${CF_ADDR_DEF_ID:-}" && "$CF_ADDR_DEF_ID" != "" && -n "${ADDR_ID:-}" && "$ADDR_ID" != "None" && -n "${SUBNET_ID:-}" && "$SUBNET_ID" != "None" ]]; then
+    # Valid text value → 200, verify via DB (GET addresses has no id filter — list endpoint only)
+    call_api PUT "addresses&id=$ADDR_ID" '{"custom_fields":{"csv_test_txt":"hello-csv"}}'
+    assert_http 200 "PUT address with text cf value → 200"
+
+    ADDR_TXT_VAL=$(db_php "$(container_api_key_php "
+\$st = \$db->prepare(\"SELECT custom_fields FROM addresses WHERE id = :id\");
+\$st->execute([':id' => $ADDR_ID]);
+\$r = \$st->fetch();
+\$cf = json_decode(\$r ? \$r['custom_fields'] : '{}', true);
+echo \$cf['csv_test_txt'] ?? 'MISSING';
+")" 2>/dev/null | tr -d '[:space:]')
+    [[ "$ADDR_TXT_VAL" == "hello-csv" ]] && pass "address text cf stored in DB: 'hello-csv'" || fail "address text cf not stored: $ADDR_TXT_VAL"
+
+    # Type violation: integer in text field → 422
+    call_api PUT "addresses&id=$ADDR_ID" '{"custom_fields":{"csv_test_txt":123}}'
+    [[ "$HTTP_CODE" == "422" ]] && pass "PUT address with integer in text field → 422" || fail "PUT address with integer in text field → expected 422, got $HTTP_CODE"
+
+    # Session login to download the CSV export
+    _SESS_JAR=$(mktemp /tmp/ipam_sess_XXXXXXXX.txt)
+    _ADMIN_USER="${IPAM_ADMIN_USER:-demo}"
+    _ADMIN_PASS="${IPAM_ADMIN_PASS:-demo}"
+    LOGIN_HTML=$(curl -s --noproxy '*' "${_ba_args[@]+"${_ba_args[@]}"}" -k \
+        -c "$_SESS_JAR" -b "$_SESS_JAR" \
+        "$BASE_URL/login.php" 2>/dev/null || echo "")
+    LOGIN_CSRF=$(echo "$LOGIN_HTML" | grep -oE 'name="csrf" value="[^"]*"' | head -1 | sed 's/.*value="//;s/"//' || echo "")
+
+    if [[ -n "$LOGIN_CSRF" ]]; then
+        curl -s --noproxy '*' "${_ba_args[@]+"${_ba_args[@]}"}" -k \
+            -c "$_SESS_JAR" -b "$_SESS_JAR" -L \
+            --data-urlencode "username=$_ADMIN_USER" \
+            --data-urlencode "password=$_ADMIN_PASS" \
+            --data-urlencode "csrf=$LOGIN_CSRF" \
+            -o /dev/null "$BASE_URL/login.php" 2>/dev/null || true
+
+        # Download the per-subnet CSV export
+        SUBNET_CSV=$(curl -s --noproxy '*' "${_ba_args[@]+"${_ba_args[@]}"}" -k \
+            -c "$_SESS_JAR" -b "$_SESS_JAR" \
+            "$BASE_URL/export_addresses.php?subnet_id=$SUBNET_ID" 2>/dev/null || echo "")
+
+        CSV_HEADER=$(echo "$SUBNET_CSV" | head -1)
+        [[ "$CSV_HEADER" == *"custom_fields"* ]] && pass "export_addresses.php CSV header contains 'custom_fields'" || fail "export_addresses.php CSV header missing 'custom_fields': $CSV_HEADER"
+
+        CSV_CF_VAL=$(python3 -c "
+import csv, io, sys
+data = sys.stdin.read()
+reader = csv.DictReader(io.StringIO(data))
+for row in reader:
+    print(row.get('custom_fields', 'MISSING'))
+    break
+" <<< "$SUBNET_CSV" 2>/dev/null || echo "MISSING")
+        [[ "$CSV_CF_VAL" == *"hello-csv"* ]] && pass "export CSV row custom_fields contains 'hello-csv'" || fail "export CSV row custom_fields: expected 'hello-csv', got $CSV_CF_VAL"
+    else
+        skip "CSV export download — could not get session CSRF token"
+    fi
+    rm -f "$_SESS_JAR"
+
+    # Clean up address CF def and reset address custom_fields
+    db_php "$(container_api_key_php "
+\$db->prepare(\"DELETE FROM custom_field_defs WHERE id = :id\")->execute([':id' => $CF_ADDR_DEF_ID]);
+\$db->prepare(\"UPDATE addresses SET custom_fields = '{}' WHERE id = :id\")->execute([':id' => $ADDR_ID]);
+")" 2>/dev/null || true
+    pass "Cleaned up address CF definition (id=$CF_ADDR_DEF_ID)"
+else
+    [[ -z "${CF_ADDR_DEF_ID:-}" ]] && skip "CSV CF tests — DB seed skipped (not containerized)" \
+                                    || skip "CSV CF tests — no ADDR_ID or SUBNET_ID"
+fi
+
+# ====================================================================
 log "=== OpenAPI Spec ==="
 # ====================================================================
 

@@ -375,6 +375,7 @@ tr.highlight{
   border-radius:var(--radius-2xl);
   background:var(--card-2);
   border:1px solid var(--border);
+  color:var(--fg);
 }
 .action-pill:hover{
   text-decoration:none;
@@ -1377,6 +1378,13 @@ body.pw-toggle-hidden .pw-wrap .pw-input{padding-right:36px}
 .contact-picker-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .contact-picker-row select{min-width:200px}
 .contact-picker-remove{min-width:32px;min-height:32px;padding:0;line-height:1}
+
+/* --- Custom fields (v3.5.0 #313) --- */
+.custom-field-group{margin-top:1rem;padding-top:0.75rem;border-top:1px solid var(--border)}
+.custom-field-heading{font-size:var(--font-size-1);font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:0 0 .5rem}
+.custom-field-row{margin-bottom:.5rem}
+.custom-field-row label{display:block}
+.cf-required{color:var(--danger);margin-left:.15em;font-weight:700}
 
 /* --- prefers-reduced-motion: suppress all animations/transitions --- */
 @media(prefers-reduced-motion:reduce){

@@ -12,12 +12,13 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.4.1
+## What's new in v3.5.0
 
-**Patch fix for MySQL/MariaDB migration compatibility.**
+**Custom fields, action-pill fix, and expanded search test coverage.**
 
-- **Migration fix.** `3.4.0-dhcp-options` migration now uses `information_schema.columns` instead of `SHOW COLUMNS LIKE ?` for the idempotency check. Resolves a `SQLSTATE[42000]` error that occurred on some MariaDB versions where `SHOW` statements cannot be used as native prepared statements.
-- v3.4.0: **DHCP Config Export (#338).** Generate ISC `dhcpd.conf` or Kea 2.x JSON directly from your subnet options and reservations. Set routers, DNS servers, domain name, lease times, and PXE boot options per-subnet via the subnet edit drawer. Any reserved address with a MAC is included as a host reservation. Download from Admin → DHCP Pools. See [docs/dhcp-export.md](docs/dhcp-export.md).
+- **Custom Fields (#313).** Define per-entity metadata fields on subnets and addresses — text, number, date, boolean, or select. Managed from Admin → Custom Fields. Fields appear on the subnet and address edit forms, are included in the REST API response, and round-trip through CSV export/import with strict type validation. See [docs/custom-fields.md](docs/custom-fields.md).
+- **action-pill text fix (#594).** Button text was invisible in both light and dark themes due to incorrect CSS token inheritance. Now uses `color: var(--fg)` for consistent readability.
+- **Search test matrix (#461).** `search.spec.ts` expanded from 6 to 28 parameterized test cases covering filter combos, special-char LIKE-escape, and CSV export validation.
 
 See [CHANGELOG.md](CHANGELOG.md) for full release history and [docs/upgrading.md](docs/upgrading.md) for the upgrade guide.
 

@@ -13,11 +13,11 @@ if ($subnetId <= 0) {
     $filename = safe_export_filename('ipam-addresses-all');
     csv_download_headers($filename);
 
-    csv_out(['subnet_cidr', 'site', 'ip', 'hostname', 'owner', 'group', 'mac', 'expires_at', 'status', 'note', 'updated_at']);
+    csv_out(['subnet_cidr', 'site', 'ip', 'hostname', 'owner', 'group', 'mac', 'expires_at', 'status', 'note', 'updated_at', 'custom_fields']);
 
     $st = $db->query("
         SELECT s.cidr AS subnet_cidr, COALESCE(si.name, '') AS site_name,
-               a.ip, a.hostname, a.owner, a.grp, a.mac, a.expires_at, a.status, a.note, a.updated_at
+               a.ip, a.hostname, a.owner, a.grp, a.mac, a.expires_at, a.status, a.note, a.updated_at, a.custom_fields
         FROM addresses a
         JOIN subnets s ON s.id = a.subnet_id
         LEFT JOIN sites si ON si.id = s.site_id
@@ -37,6 +37,7 @@ if ($subnetId <= 0) {
             to_str($r['status']),
             to_str($r['note']),
             to_str($r['updated_at']),
+            to_str($r['custom_fields'] ?? '{}'),
         ]);
     }
 
@@ -56,10 +57,10 @@ if (!$subnet) {
 $filename = safe_export_filename('ipam-addresses-subnet-' . $subnetId);
 csv_download_headers($filename);
 
-csv_out(['subnet_cidr', 'ip', 'hostname', 'owner', 'group', 'mac', 'expires_at', 'status', 'note', 'updated_at']);
+csv_out(['subnet_cidr', 'ip', 'hostname', 'owner', 'group', 'mac', 'expires_at', 'status', 'note', 'updated_at', 'custom_fields']);
 
 $st = $db->prepare("
-    SELECT a.ip, a.hostname, a.owner, a.grp AS grp, a.mac, a.expires_at, a.status, a.note, a.updated_at
+    SELECT a.ip, a.hostname, a.owner, a.grp AS grp, a.mac, a.expires_at, a.status, a.note, a.updated_at, a.custom_fields
     FROM addresses a
     WHERE a.subnet_id = :sid
     ORDER BY a.ip_bin ASC
@@ -78,6 +79,7 @@ foreach ($st->fetchAll() as $r) {
         to_str($r['status']),
         to_str($r['note']),
         to_str($r['updated_at']),
+        to_str($r['custom_fields'] ?? '{}'),
     ]);
 }
 

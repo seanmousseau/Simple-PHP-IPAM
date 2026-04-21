@@ -519,6 +519,144 @@ class MigrationTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // 3.5.0-custom-fields (#313, #595)
+    // -------------------------------------------------------------------------
+
+    /**
+     * The 3.5.0-custom-fields migration must:
+     *   - create the custom_field_defs table with a UNIQUE(entity_type, key)
+     *   - add subnets.custom_fields  TEXT NOT NULL DEFAULT '{}'
+     *   - add addresses.custom_fields TEXT NOT NULL DEFAULT '{}'
+     *   - preserve every pre-existing subnet/address row (no data loss)
+     *   - leave new rows defaulting to '{}' when the caller omits the column
+     */
+    public function testCustomFieldsMigrationCreatesSchemaAndPreservesData(): void
+    {
+        $db = $this->makePreVrfDb();
+
+        // Precondition: custom_fields columns not yet present.
+        $subnetCols = array_column($db->query("PRAGMA table_info(subnets)")->fetchAll(), 'name');
+        $this->assertNotContains('custom_fields', $subnetCols, 'precondition: subnets.custom_fields must not exist yet');
+        $addrCols = array_column($db->query("PRAGMA table_info(addresses)")->fetchAll(), 'name');
+        $this->assertNotContains('custom_fields', $addrCols, 'precondition: addresses.custom_fields must not exist yet');
+
+        $subnetCountBefore  = (int)$db->query("SELECT count(*) FROM subnets")->fetchColumn();
+        $addressCountBefore = (int)$db->query("SELECT count(*) FROM addresses")->fetchColumn();
+
+        apply_migrations($db);
+
+        // custom_field_defs table exists with expected columns.
+        $tables = array_column($db->query("SELECT name FROM sqlite_master WHERE type='table'")->fetchAll(), 'name');
+        $this->assertContains('custom_field_defs', $tables, 'custom_field_defs table must be created');
+
+        $defCols = array_column($db->query("PRAGMA table_info(custom_field_defs)")->fetchAll(), 'name');
+        foreach (['id', 'entity_type', 'key', 'label', 'type', 'options', 'sort_order', 'is_required', 'is_deleted', 'created_at', 'updated_at'] as $expected) {
+            $this->assertContains($expected, $defCols, "custom_field_defs.{$expected} must exist");
+        }
+
+        // subnets.custom_fields added with NOT NULL DEFAULT '{}'.
+        $subnetColInfo = $db->query("PRAGMA table_info(subnets)")->fetchAll();
+        $subnetCustom  = null;
+        foreach ($subnetColInfo as $c) {
+            if ((string)$c['name'] === 'custom_fields') { $subnetCustom = $c; break; }
+        }
+        $this->assertNotNull($subnetCustom, 'subnets.custom_fields must be added');
+        $this->assertSame(1, (int)$subnetCustom['notnull'], 'subnets.custom_fields must be NOT NULL');
+        $this->assertSame("'{}'", (string)$subnetCustom['dflt_value'], 'subnets.custom_fields default must be {}');
+
+        // addresses.custom_fields added with NOT NULL DEFAULT '{}'.
+        $addrColInfo = $db->query("PRAGMA table_info(addresses)")->fetchAll();
+        $addrCustom  = null;
+        foreach ($addrColInfo as $c) {
+            if ((string)$c['name'] === 'custom_fields') { $addrCustom = $c; break; }
+        }
+        $this->assertNotNull($addrCustom, 'addresses.custom_fields must be added');
+        $this->assertSame(1, (int)$addrCustom['notnull'], 'addresses.custom_fields must be NOT NULL');
+        $this->assertSame("'{}'", (string)$addrCustom['dflt_value'], 'addresses.custom_fields default must be {}');
+
+        // Data preserved (no cascade wipe).
+        $this->assertSame(
+            $subnetCountBefore,
+            (int)$db->query("SELECT count(*) FROM subnets")->fetchColumn(),
+            'subnets row count must be preserved across custom-fields migration'
+        );
+        $this->assertSame(
+            $addressCountBefore,
+            (int)$db->query("SELECT count(*) FROM addresses")->fetchColumn(),
+            'addresses row count must be preserved across custom-fields migration'
+        );
+
+        // Pre-existing rows backfill to the default '{}'.
+        $nonDefaultSubnet = (int)$db->query("SELECT count(*) FROM subnets WHERE custom_fields != '{}'")->fetchColumn();
+        $this->assertSame(0, $nonDefaultSubnet, 'pre-existing subnets must carry default {} after migration');
+        $nonDefaultAddr = (int)$db->query("SELECT count(*) FROM addresses WHERE custom_fields != '{}'")->fetchColumn();
+        $this->assertSame(0, $nonDefaultAddr, 'pre-existing addresses must carry default {} after migration');
+    }
+
+    /**
+     * UNIQUE(entity_type, key) on custom_field_defs must prevent duplicate
+     * keys within the same entity_type but allow the same key reused across
+     * different entity_types (e.g. 'cost_centre' on both subnets and
+     * addresses is legal).
+     */
+    public function testCustomFieldsUniqueConstraintScopesByEntityType(): void
+    {
+        $db = $this->makePreVrfDb();
+        apply_migrations($db);
+
+        $ins = $db->prepare(
+            "INSERT INTO custom_field_defs (entity_type, key, label, type)
+             VALUES (:et, :k, :lbl, 'text')"
+        );
+        $ins->execute([':et' => 'subnet',  ':k' => 'cost_centre', ':lbl' => 'Cost centre']);
+        $ins->execute([':et' => 'address', ':k' => 'cost_centre', ':lbl' => 'Cost centre']);
+
+        $count = (int)$db->query("SELECT count(*) FROM custom_field_defs WHERE key='cost_centre'")->fetchColumn();
+        $this->assertSame(2, $count, 'same key must be usable across different entity_types');
+
+        // Duplicate entity_type + key must throw.
+        $this->expectException(PDOException::class);
+        $ins->execute([':et' => 'subnet', ':k' => 'cost_centre', ':lbl' => 'Cost centre (dup)']);
+    }
+
+    /**
+     * Re-running the 3.5.0-custom-fields migration on a DB that already has
+     * the target schema must be a no-op: no exceptions, no duplicate columns,
+     * no row data loss.
+     */
+    public function testCustomFieldsMigrationIsIdempotent(): void
+    {
+        $db = $this->makePreVrfDb();
+        apply_migrations($db);
+
+        // Seed a user-written row so we can verify it survives re-run.
+        $db->prepare(
+            "INSERT INTO custom_field_defs (entity_type, key, label, type)
+             VALUES ('subnet', 'sla_tier', 'SLA tier', 'text')"
+        )->execute();
+        $defCountBefore = (int)$db->query("SELECT count(*) FROM custom_field_defs")->fetchColumn();
+
+        // Clear the stamp so apply_migrations() is forced to re-run the closure.
+        $db->prepare("DELETE FROM schema_migrations WHERE version = '3.5.0-custom-fields'")->execute();
+        apply_migrations($db);
+
+        $defCountAfter = (int)$db->query("SELECT count(*) FROM custom_field_defs")->fetchColumn();
+        $this->assertSame($defCountBefore, $defCountAfter, 'idempotent re-run must not drop existing definitions');
+
+        // Column must still exist exactly once (no duplicate ADD COLUMN error).
+        $subnetCols = array_column($db->query("PRAGMA table_info(subnets)")->fetchAll(), 'name');
+        $this->assertSame(1, count(array_filter($subnetCols, fn($c) => $c === 'custom_fields')));
+        $addrCols = array_column($db->query("PRAGMA table_info(addresses)")->fetchAll(), 'name');
+        $this->assertSame(1, count(array_filter($addrCols, fn($c) => $c === 'custom_fields')));
+
+        // Stamp re-recorded.
+        $marker = $db->query(
+            "SELECT 1 FROM schema_migrations WHERE version = '3.5.0-custom-fields'"
+        )->fetchColumn();
+        $this->assertNotFalse($marker, 'schema_migrations marker must be re-recorded after idempotent re-run');
+    }
+
+    // -------------------------------------------------------------------------
     // v2.11.0 #409 — migration-replay idempotency against the fresh schema
     // -------------------------------------------------------------------------
 

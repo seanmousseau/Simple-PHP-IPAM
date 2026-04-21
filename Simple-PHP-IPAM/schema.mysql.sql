@@ -163,6 +163,7 @@ CREATE TABLE IF NOT EXISTS subnets (
   dhcp_lease_max   INT DEFAULT NULL,                                 -- v3.4.0 #402: seconds (max-lease-time)
   dhcp_next_server TEXT DEFAULT NULL,                                -- v3.4.0 #402: TFTP server IP (PXE)
   dhcp_boot_filename TEXT DEFAULT NULL,                              -- v3.4.0 #402: boot filename (PXE)
+  custom_fields TEXT NOT NULL DEFAULT ('{}'),                        -- v3.5.0 #313/#595: admin-defined key/value metadata (JSON-in-row)
   created_at  DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   updated_at  DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   UNIQUE KEY uq_subnets_cidr_vrf (cidr, vrf_id),
@@ -219,6 +220,7 @@ CREATE TABLE IF NOT EXISTS addresses (
   is_stale         TINYINT      NOT NULL DEFAULT 0,
   device_id        BIGINT UNSIGNED NULL,
   interface_id     BIGINT UNSIGNED NULL,
+  custom_fields    TEXT NOT NULL DEFAULT ('{}'),                      -- v3.5.0 #313/#595: admin-defined key/value metadata (JSON-in-row)
   created_at       DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   updated_at       DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   UNIQUE KEY uq_addresses_subnet_ip (subnet_id, ip),
@@ -596,6 +598,29 @@ CREATE TABLE IF NOT EXISTS settings (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- ---------------------------------------------------------------------------
+-- custom_field_defs (v3.5.0, #313/#595) — admin-defined per-entity metadata
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS custom_field_defs (
+  id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  entity_type VARCHAR(20)  NOT NULL,                     -- 'subnet' | 'address'
+  `key`       VARCHAR(64)  COLLATE utf8mb4_bin NOT NULL, -- slug, ^[a-z][a-z0-9_]{0,62}$
+  label       VARCHAR(191) NOT NULL,
+  type        VARCHAR(20)  NOT NULL DEFAULT 'text',      -- text|number|date|boolean|select
+  options     TEXT         NULL,                         -- JSON array for type='select'
+  sort_order  INT          NOT NULL DEFAULT 0,
+  is_required TINYINT      NOT NULL DEFAULT 0,
+  is_deleted  TINYINT      NOT NULL DEFAULT 0,           -- reserved for future soft-delete
+  created_at  DATETIME     NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  updated_at  DATETIME     NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  UNIQUE KEY uq_cfd_entity_key (entity_type, `key`),
+  KEY idx_cfd_entity_order (entity_type, sort_order)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TRIGGER IF NOT EXISTS custom_field_defs_updated_at
+  BEFORE UPDATE ON custom_field_defs FOR EACH ROW
+  SET NEW.updated_at = UTC_TIMESTAMP();
+
+-- ---------------------------------------------------------------------------
 -- Pre-seed schema_migrations with every historical version so apply_migrations
 -- is a no-op on fresh MySQL installs. New migrations added in v2.10.0+ must
 -- be idempotent and safe to run on MySQL, since they WILL execute here.
@@ -644,6 +669,7 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.2.0-devices'),
   ('3.2.0-password-reset'),
   ('3.3.0-webhooks'),
-  ('3.4.0-dhcp-options');
+  ('3.4.0-dhcp-options'),
+  ('3.5.0-custom-fields');
 
 SET FOREIGN_KEY_CHECKS = 1;

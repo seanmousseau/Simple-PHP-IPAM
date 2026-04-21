@@ -5619,16 +5619,16 @@ function page_header(string $title, array $opts = []): void
 
     echo "<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
     echo "<title>" . e($appName) . " \u{2014} " . e($title) . "</title>";
-    echo "<link rel='icon' type='image/webp' sizes='32x32' href='assets/favicon-32.webp?v=3.4.0'>";
-    echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png?v=3.4.0'>";
-    echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp?v=3.4.0'>";
-    echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png?v=3.4.0'>";
-    echo "<link rel='stylesheet' href='assets/vendor/open-props.min.css?v=3.4.0'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=3.4.0'>";
+    echo "<link rel='icon' type='image/webp' sizes='32x32' href='assets/favicon-32.webp?v=3.5.0'>";
+    echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png?v=3.5.0'>";
+    echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp?v=3.5.0'>";
+    echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png?v=3.5.0'>";
+    echo "<link rel='stylesheet' href='assets/vendor/open-props.min.css?v=3.5.0'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=3.5.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=3.4.0'></script>";
+    echo "<script defer src='assets/app.js?v=3.5.0'></script>";
     $pageAttr = isset($opts['page']) && $opts['page'] !== ''
         ? " data-page='" . e(to_str($opts['page'])) . "'"
         : '';
@@ -5667,6 +5667,7 @@ function page_header(string $title, array $opts = []): void
             echo "<a class='nav-dropdown-item' href='tags.php'>🔖 Tags</a>";
             echo "<a class='nav-dropdown-item' href='devices.php'>🖥 Devices</a>";
             echo "<a class='nav-dropdown-item' href='contacts.php'>📇 Contacts</a>";
+            echo "<a class='nav-dropdown-item' href='custom_fields.php'>🗂 Custom Fields</a>";
             echo "<a class='nav-dropdown-item' href='users.php'>👤 Users</a>";
             echo "<a class='nav-dropdown-item' href='api_keys.php'>🔑 API Keys</a>";
             echo "<a class='nav-dropdown-item' href='webhooks.php'>🔔 Webhooks</a>";
@@ -7066,4 +7067,303 @@ function ipam_normalize_mac_for_dhcp(string $mac): ?string
     $hex = preg_replace('/[^0-9a-fA-F]/', '', $mac);
     if (!is_string($hex) || strlen($hex) !== 12) return null;
     return implode(':', str_split(strtolower($hex), 2));
+}
+
+// ── Custom field definitions (v3.5.0, #313/#596) ──────────────────────────
+
+/**
+ * Return all non-deleted custom field definitions, ordered by entity_type,
+ * sort_order, then key. When $entityType is provided only that entity's
+ * definitions are returned.
+ *
+ * @return list<array<string,mixed>>
+ */
+function custom_field_def_list(PDO $db, ?string $entityType = null): array
+{
+    $k = ipam_key_col();
+    if ($entityType !== null) {
+        $st = $db->prepare(
+            "SELECT * FROM custom_field_defs WHERE is_deleted = 0 AND entity_type = :et
+             ORDER BY sort_order, $k"
+        );
+        $st->execute([':et' => $entityType]);
+    } else {
+        $st = $db->query(
+            "SELECT * FROM custom_field_defs WHERE is_deleted = 0
+             ORDER BY entity_type, sort_order, $k"
+        );
+        if ($st === false) throw new \RuntimeException('Query failed');
+    }
+    /** @var list<array<string,mixed>> */
+    return $st->fetchAll();
+}
+
+/**
+ * Return true if any row in the table that corresponds to $entityType has a
+ * non-null JSON value stored for $key.  Uses dialect-specific JSON extraction
+ * so it works on SQLite, MySQL 8.0+, and PostgreSQL 14+.
+ *
+ * $key is validated to match ^[a-z][a-z0-9_]{0,62}$ before this is called,
+ * so it is safe to embed in the JSON path string.
+ */
+function custom_field_in_use(PDO $db, string $key, string $entityType): bool
+{
+    $tbl    = $entityType === 'subnet' ? 'subnets' : 'addresses';
+    $driver = ipam_dialect()->driver_name();
+
+    if ($driver === 'sqlite') {
+        $st = $db->prepare(
+            "SELECT EXISTS(SELECT 1 FROM {$tbl} WHERE json_extract(custom_fields, '$.' || :k) IS NOT NULL)"
+        );
+    } elseif ($driver === 'mysql') {
+        $st = $db->prepare(
+            "SELECT EXISTS(SELECT 1 FROM {$tbl} WHERE JSON_EXTRACT(custom_fields, CONCAT('$.', :k)) IS NOT NULL)"
+        );
+    } else {
+        $st = $db->prepare(
+            "SELECT EXISTS(SELECT 1 FROM {$tbl} WHERE (custom_fields::json)->>:k IS NOT NULL)"
+        );
+    }
+    $st->execute([':k' => $key]);
+    return (bool)$st->fetchColumn();
+}
+
+/**
+ * Decode a JSON custom_fields column value into an associative array.
+ * Returns [] on empty, null, or malformed JSON.
+ *
+ * @return array<string,mixed>
+ */
+function parse_custom_fields_row(string $json): array
+{
+    if ($json === '' || $json === 'null') return [];
+    $decoded = json_decode($json, true);
+    return is_array($decoded) ? $decoded : [];
+}
+
+/**
+ * Canonical JSON serialization for the custom_fields column.
+ * Null values are stripped so the stored JSON stays compact.
+ *
+ * @param array<mixed,mixed> $values
+ */
+function serialize_custom_fields_row(array $values): string
+{
+    $filtered = array_filter($values, fn($v) => $v !== null);
+    return json_encode($filtered, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?: '{}';
+}
+
+/**
+ * Validate a raw POST payload against the active custom field definitions.
+ * Returns the typed values array (ready for serialize_custom_fields_row).
+ * Throws InvalidArgumentException on the first type mismatch or missing required field.
+ *
+ * @param list<array<string,mixed>> $defs     Output of custom_field_def_list()
+ * @param array<mixed,mixed>        $payload  Flat key→raw-value map from $_POST or json_decode (keys without the 'cf_' prefix)
+ * @return array<string,mixed>
+ */
+function validate_custom_fields_payload(array $defs, array $payload): array
+{
+    $result = [];
+    foreach ($defs as $def) {
+        $key      = to_str($def['key']);
+        $type     = to_str($def['type']);
+        $required = (bool)$def['is_required'];
+
+        // Boolean: checkbox presence = true, absence = false; required does not apply
+        if ($type === 'boolean') {
+            $result[$key] = isset($payload[$key]) && $payload[$key] !== '' && $payload[$key] !== '0';
+            continue;
+        }
+
+        $raw = isset($payload[$key]) ? to_str($payload[$key]) : '';
+
+        if ($raw === '') {
+            if ($required) {
+                throw new \InvalidArgumentException($key . ': this field is required');
+            }
+            $result[$key] = null;
+            continue;
+        }
+
+        switch ($type) {
+            case 'text':
+                $result[$key] = $raw;
+                break;
+            case 'number':
+                if (!is_numeric($raw)) {
+                    throw new \InvalidArgumentException($key . ': expected a number');
+                }
+                $result[$key] = str_contains($raw, '.') ? (float)$raw : (int)$raw;
+                break;
+            case 'date':
+                if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $raw)) {
+                    throw new \InvalidArgumentException($key . ': expected YYYY-MM-DD format');
+                }
+                $result[$key] = $raw;
+                break;
+            case 'select':
+                $options = json_decode(to_str($def['options'] ?? '[]'), true);
+                $options = is_array($options) ? $options : [];
+                if (!in_array($raw, $options, true)) {
+                    throw new \InvalidArgumentException($key . ': not a valid option');
+                }
+                $result[$key] = $raw;
+                break;
+        }
+    }
+    return $result;
+}
+
+/**
+ * Validate a custom_fields payload arriving from the JSON API.
+ * Values are already typed (int, float, bool, string, null) — no coercion is done.
+ * Unknown keys are rejected. Required fields must be non-null.
+ *
+ * @param list<array<string,mixed>> $defs     Output of custom_field_def_list()
+ * @param array<mixed,mixed>        $payload  Decoded JSON object (key→typed value)
+ * @return array<string,mixed>
+ * @throws \InvalidArgumentException on the first type mismatch, unknown key, or missing required field
+ */
+function validate_custom_fields_api_payload(array $defs, array $payload): array
+{
+    $defKeys = [];
+    foreach ($defs as $def) {
+        $defKeys[to_str($def['key'])] = $def;
+    }
+
+    // Reject unknown keys
+    foreach (array_keys($payload) as $k) {
+        if (!isset($defKeys[$k])) {
+            throw new \InvalidArgumentException($k . ': unknown custom field key');
+        }
+    }
+
+    $result = [];
+    foreach ($defs as $def) {
+        $key      = to_str($def['key']);
+        $type     = to_str($def['type']);
+        $required = (bool)$def['is_required'];
+
+        $present = array_key_exists($key, $payload);
+        $val     = $present ? $payload[$key] : null;
+
+        if ($val === null) {
+            if ($required) {
+                throw new \InvalidArgumentException($key . ': this field is required');
+            }
+            $result[$key] = null;
+            continue;
+        }
+
+        switch ($type) {
+            case 'text':
+                if (!is_string($val)) {
+                    throw new \InvalidArgumentException($key . ': expected string, got ' . gettype($val));
+                }
+                $result[$key] = $val;
+                break;
+            case 'number':
+                if (!is_int($val) && !is_float($val)) {
+                    throw new \InvalidArgumentException($key . ': expected number, got ' . gettype($val));
+                }
+                $result[$key] = $val;
+                break;
+            case 'date':
+                if (!is_string($val) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $val)) {
+                    throw new \InvalidArgumentException($key . ': expected YYYY-MM-DD string');
+                }
+                $result[$key] = $val;
+                break;
+            case 'boolean':
+                if (!is_bool($val)) {
+                    throw new \InvalidArgumentException($key . ': expected boolean, got ' . gettype($val));
+                }
+                $result[$key] = $val;
+                break;
+            case 'select':
+                if (!is_string($val)) {
+                    throw new \InvalidArgumentException($key . ': expected string, got ' . gettype($val));
+                }
+                $options = json_decode(to_str($def['options'] ?? '[]'), true);
+                $options = is_array($options) ? $options : [];
+                if (!in_array($val, $options, true)) {
+                    throw new \InvalidArgumentException($key . ': not a valid option');
+                }
+                $result[$key] = $val;
+                break;
+        }
+    }
+    return $result;
+}
+
+/**
+ * Render HTML form inputs for a set of custom field definitions.
+ * The name of each input is "{$namePrefix}{$key}".
+ * Returns '' when $defs is empty (no heading rendered).
+ *
+ * @param list<array<string,mixed>> $defs       Output of custom_field_def_list()
+ * @param array<string,mixed>       $values     Current stored values (from parse_custom_fields_row)
+ * @param string                    $namePrefix Form input name prefix (default 'cf_')
+ */
+function render_custom_field_inputs(array $defs, array $values, string $namePrefix = 'cf_'): string
+{
+    if (empty($defs)) return '';
+
+    $html  = '<div class="custom-field-group">';
+    $html .= '<h4 class="custom-field-heading">Custom fields</h4>';
+
+    foreach ($defs as $def) {
+        $key      = to_str($def['key']);
+        $label    = e(to_str($def['label']));
+        $type     = to_str($def['type']);
+        $required = (bool)$def['is_required'];
+        $name     = e($namePrefix . $key);
+        $inputId  = 'cf-inp-' . e($key);
+        $val      = $values[$key] ?? null;
+        $reqAttr  = $required ? ' required' : '';
+        $reqMark  = $required ? '<span class="cf-required" aria-hidden="true">*</span>' : '';
+        $cfKey    = ' data-cf-key="' . e($key) . '"';
+
+        $html .= '<div class="custom-field-row">';
+
+        if ($type === 'boolean') {
+            $checked = ($val === true || $val === 1 || $val === '1') ? ' checked' : '';
+            $html .= '<label class="form-check" for="' . $inputId . '">';
+            $html .= '<input id="' . $inputId . '" type="checkbox" name="' . $name . '" value="1"' . $cfKey . $checked . '>';
+            $html .= ' ' . $label . $reqMark;
+            $html .= '</label>';
+        } else {
+            $html .= '<label for="' . $inputId . '">' . $label . ' ' . $reqMark . '<br>';
+            switch ($type) {
+                case 'text':
+                    $html .= '<input id="' . $inputId . '" type="text" name="' . $name . '" value="' . e(to_str($val)) . '"' . $cfKey . $reqAttr . '>';
+                    break;
+                case 'number':
+                    $html .= '<input id="' . $inputId . '" type="number" step="any" name="' . $name . '" value="' . e(to_str($val)) . '"' . $cfKey . $reqAttr . '>';
+                    break;
+                case 'date':
+                    $html .= '<input id="' . $inputId . '" type="date" name="' . $name . '" value="' . e(to_str($val)) . '"' . $cfKey . $reqAttr . '>';
+                    break;
+                case 'select':
+                    $options = json_decode(to_str($def['options'] ?? '[]'), true);
+                    $options = is_array($options) ? $options : [];
+                    $html .= '<select id="' . $inputId . '" name="' . $name . '"' . $cfKey . $reqAttr . '>';
+                    $html .= '<option value="">(none)</option>';
+                    foreach ($options as $opt) {
+                        $optE = e(to_str($opt));
+                        $sel  = to_str($val) === to_str($opt) ? ' selected' : '';
+                        $html .= '<option value="' . $optE . '"' . $sel . '>' . $optE . '</option>';
+                    }
+                    $html .= '</select>';
+                    break;
+            }
+            $html .= '</label>';
+        }
+
+        $html .= '</div>';
+    }
+
+    $html .= '</div>';
+    return $html;
 }
