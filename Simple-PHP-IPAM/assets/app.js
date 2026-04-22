@@ -1702,6 +1702,61 @@
 
 })();
 
+// backups.php modal handlers — CSP-safe event delegation on data-action attributes
+(function () {
+  var page = document.getElementById("backups-page");
+  if (!page) return;
+
+  function openModal(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.style.display = "flex";
+    el.addEventListener("click", function onBg(e) {
+      if (e.target === el) { closeModal(id); el.removeEventListener("click", onBg); }
+    });
+    var first = el.querySelector("button, [href], [tabindex]");
+    if (first) first.focus();
+  }
+
+  function closeModal(id) {
+    var el = document.getElementById(id);
+    if (el) el.style.display = "none";
+  }
+
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest("[data-action]");
+    if (!btn) return;
+    var action = btn.getAttribute("data-action");
+
+    if (action === "restore-info") {
+      var phpRoot = page.getAttribute("data-php-root") || "";
+      var phpPath = phpRoot + "/restore.php";
+      var fileArg = btn.getAttribute("data-path") || btn.getAttribute("data-filename") || "<path/to/backup>";
+      var dry  = document.getElementById("restore-cmd-dry");
+      var apply = document.getElementById("restore-cmd-apply");
+      if (dry)   dry.textContent   = "php " + phpPath + " --from=" + fileArg + " --dry-run";
+      if (apply) apply.textContent = "php " + phpPath + " --from=" + fileArg + " --force";
+      openModal("restore-modal");
+    } else if (action === "backup-delete") {
+      var idEl = document.getElementById("delete-id");
+      var bodyEl = document.getElementById("delete-modal-body");
+      if (idEl) idEl.value = btn.getAttribute("data-id") || "";
+      if (bodyEl) bodyEl.textContent =
+        'Delete backup record and file "' + (btn.getAttribute("data-filename") || "") + '"? This cannot be undone.';
+      openModal("delete-modal");
+    } else if (action === "close-modal") {
+      closeModal(btn.getAttribute("data-target") || "");
+    }
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") {
+      closeModal("restore-modal");
+      closeModal("delete-modal");
+    }
+  });
+})();
+
 // TOTP enrollment QR code — runs after qrcode.min.js is loaded inline in the view
 (function () {
   var qrEl = document.getElementById("totp-qr");

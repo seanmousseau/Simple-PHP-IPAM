@@ -136,7 +136,8 @@ page_header('Backups');
 <?php endif; ?>
 
 <!-- Summary card -->
-<div class="card" style="margin-bottom:1.25rem;display:flex;flex-wrap:wrap;gap:1.5rem;align-items:center">
+<div id="backups-page" data-php-root="<?= e(rtrim(dirname($_SERVER['SCRIPT_NAME'] ?? ''), '/')) ?>"
+     class="card" style="margin-bottom:1.25rem;display:flex;flex-wrap:wrap;gap:1.5rem;align-items:center">
   <div>
     <div class="muted" style="font-size:.75rem;text-transform:uppercase;letter-spacing:.05em">Status</div>
     <div>
@@ -160,7 +161,7 @@ page_header('Backups');
     <div><?= e($diskFree) ?></div>
   </div>
   <div style="margin-left:auto">
-    <button type="button" class="button-secondary" onclick="showRestoreModal()">
+    <button type="button" class="button-secondary" data-action="restore-info">
       Restore instructions
     </button>
   </div>
@@ -267,12 +268,17 @@ page_header('Backups');
             <?php endif; ?>
             <!-- Restore instructions -->
             <button type="button" class="action-pill" style="cursor:pointer"
-                    onclick="showRestoreModal(<?= $bkId ?>, '<?= e(addslashes(to_str($bk['filename'] ?? ''))) ?>', '<?= e(addslashes($path)) ?>')">
+                    data-action="restore-info"
+                    data-id="<?= $bkId ?>"
+                    data-filename="<?= e(to_str($bk['filename'] ?? '')) ?>"
+                    data-path="<?= e($path) ?>">
               Restore…
             </button>
             <!-- Delete -->
             <button type="button" class="action-pill button-danger" style="cursor:pointer"
-                    onclick="confirmDelete(<?= $bkId ?>, '<?= e(addslashes(to_str($bk['filename'] ?? ''))) ?>')">
+                    data-action="backup-delete"
+                    data-id="<?= $bkId ?>"
+                    data-filename="<?= e(to_str($bk['filename'] ?? '')) ?>">
               Delete
             </button>
           </td>
@@ -288,7 +294,7 @@ page_header('Backups');
 <div id="restore-modal" role="dialog" aria-modal="true" aria-labelledby="restore-modal-title"
      style="display:none;position:fixed;inset:0;z-index:var(--z-page-overlay);background:rgba(0,0,0,.45);align-items:center;justify-content:center">
   <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;max-width:640px;width:calc(100% - 2rem);max-height:90vh;overflow-y:auto;position:relative">
-    <button onclick="closeModal('restore-modal')" style="position:absolute;top:.75rem;right:.75rem;background:none;border:none;font-size:1.25rem;cursor:pointer;color:var(--muted)" aria-label="Close">&times;</button>
+    <button data-action="close-modal" data-target="restore-modal" style="position:absolute;top:.75rem;right:.75rem;background:none;border:none;font-size:1.25rem;cursor:pointer;color:var(--muted)" aria-label="Close">&times;</button>
     <h2 id="restore-modal-title" style="margin:0 0 1rem">Restore Instructions</h2>
     <p>Restores are performed via the CLI only. There is no one-click web restore — this is intentional to prevent accidental data loss.</p>
     <p><strong>Dry-run first (safe, no changes):</strong></p>
@@ -299,7 +305,7 @@ page_header('Backups');
       The restore script verifies the SHA-256 hash before writing. Use <code>--force</code> to overwrite a non-empty target.
     </p>
     <div style="text-align:right;margin-top:1rem">
-      <button type="button" class="button-secondary" onclick="closeModal('restore-modal')">Close</button>
+      <button type="button" class="button-secondary" data-action="close-modal" data-target="restore-modal">Close</button>
     </div>
   </div>
 </div>
@@ -315,58 +321,11 @@ page_header('Backups');
       <input type="hidden" name="action" value="delete">
       <input type="hidden" name="id"     id="delete-id">
       <div style="display:flex;gap:.75rem;justify-content:flex-end">
-        <button type="button" class="button-secondary" onclick="closeModal('delete-modal')">Cancel</button>
+        <button type="button" class="button-secondary" data-action="close-modal" data-target="delete-modal">Cancel</button>
         <button type="submit" class="button-danger">Delete</button>
       </div>
     </form>
   </div>
 </div>
-
-<script>
-(function () {
-  const phpRoot = <?= json_encode(rtrim(dirname($_SERVER['SCRIPT_NAME'] ?? ''), '/')) ?>;
-
-  function showModal(id) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.style.display = 'flex';
-    el.addEventListener('click', function onBg(e) {
-      if (e.target === el) { closeModal(id); el.removeEventListener('click', onBg); }
-    });
-    const first = el.querySelector('button, [href], [tabindex]');
-    if (first) first.focus();
-  }
-
-  window.closeModal = function (id) {
-    const el = document.getElementById(id);
-    if (el) el.style.display = 'none';
-  };
-
-  window.confirmDelete = function (id, filename) {
-    document.getElementById('delete-id').value = id;
-    document.getElementById('delete-modal-body').textContent =
-      'Delete backup record and file "' + filename + '"? This cannot be undone.';
-    showModal('delete-modal');
-  };
-
-  window.showRestoreModal = function (id, filename, path) {
-    const phpPath = phpRoot + '/restore.php';
-    const fileArg = path || filename || '<path/to/backup>';
-    document.getElementById('restore-cmd-dry').textContent =
-      'php ' + phpPath + ' --from=' + fileArg + ' --dry-run';
-    document.getElementById('restore-cmd-apply').textContent =
-      'php ' + phpPath + ' --from=' + fileArg + ' --force';
-    showModal('restore-modal');
-  };
-
-  // Close modals on Escape key
-  document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') {
-      closeModal('restore-modal');
-      closeModal('delete-modal');
-    }
-  });
-}());
-</script>
 
 <?php page_footer(); ?>
