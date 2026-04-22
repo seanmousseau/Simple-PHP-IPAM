@@ -76,9 +76,23 @@
   --font-size-9xl:1.9rem;
 
   --focus-ring:0 0 0 2px var(--bg), 0 0 0 4px var(--link);
+  --font-sans:'Fira Sans',system-ui,-apple-system,sans-serif;
   --font-mono:'Fira Code',ui-monospace,'SFMono-Regular','Consolas',monospace;
+
+  /* Typographic scale */
+  --text-xs:   0.6875rem;
+  --text-sm:   0.8125rem;
+  --text-base: 0.875rem;
+  --text-md:   1rem;
+  --text-lg:   1.125rem;
+  --text-xl:   1.25rem;
+  --text-2xl:  1.5rem;
 }
 
+@font-face{font-family:'Fira Sans';src:url('fonts/FiraSans-Regular.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:'Fira Sans';src:url('fonts/FiraSans-Medium.woff2') format('woff2');font-weight:500;font-style:normal;font-display:swap}
+@font-face{font-family:'Fira Sans';src:url('fonts/FiraSans-SemiBold.woff2') format('woff2');font-weight:600;font-style:normal;font-display:swap}
+@font-face{font-family:'Fira Sans';src:url('fonts/FiraSans-Bold.woff2') format('woff2');font-weight:700;font-style:normal;font-display:swap}
 @font-face{font-family:'Fira Code';src:url('fonts/fira-code-subset.woff2') format('woff2');font-weight:400;font-style:normal;font-display:swap}
 
 @media (prefers-color-scheme: dark){
@@ -180,9 +194,10 @@ input:focus-visible,select:focus-visible,textarea:focus-visible{box-shadow:var(-
 body{
   background:var(--bg);
   color:var(--fg);
-  font-family:Inter, system-ui, Segoe UI, Roboto, Arial, sans-serif;
+  font-family:var(--font-sans);
+  font-size:var(--text-base);
   margin:0;
-  line-height:1.45;
+  line-height:1.5;
 }
 .page{
   max-width:1280px;
@@ -192,10 +207,10 @@ body{
 a{color:var(--link);text-decoration:none}
 a:hover{text-decoration:underline}
 hr{border:none;border-top:1px solid var(--border);margin:18px 0}
-h1,h2,h3{margin:.2em 0 .55em 0;line-height:1.2}
-h1{font-size:var(--font-size-9xl)}
-h2{font-size:var(--font-size-7xl)}
-h3{font-size:var(--font-size-5xl)}
+h1,h2,h3{margin:.2em 0 .55em 0}
+h1{font-size:var(--text-xl);font-weight:700;line-height:1.25}
+h2{font-size:var(--text-lg);font-weight:600;line-height:1.25}
+h3{font-size:var(--text-md);font-weight:600;line-height:1.3}
 
 .topbar{
   position:sticky;
