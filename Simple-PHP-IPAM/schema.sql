@@ -565,6 +565,7 @@ CREATE TABLE IF NOT EXISTS backup_history (
   target        TEXT    NOT NULL DEFAULT 'local',
   target_path   TEXT,
   status        TEXT    NOT NULL DEFAULT 'pending',
-  error         TEXT
+  error         TEXT,
+  created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_backup_history_started_at ON backup_history(started_at);

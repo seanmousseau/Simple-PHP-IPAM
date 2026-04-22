@@ -18,8 +18,9 @@ All backup settings live in **Admin → Settings → Backup**:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `backup.enabled` | `false` | Enable/disable scheduled backups |
+| `backup.frequency` | `daily` | Backup frequency: `daily` or `weekly` |
 | `backup.retention` | `7` | How many backups to keep (oldest are pruned automatically) |
-| `backup.local_path` | `data/backups/` | Directory where backup files are stored |
+| `backup.dir` | `''` (→ `data/backups/`) | Directory where backup files are stored; empty uses the default |
 
 Enable backups by setting `backup.enabled = true` and configuring a cron schedule (see below).
 

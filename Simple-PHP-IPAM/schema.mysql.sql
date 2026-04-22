@@ -631,6 +631,7 @@ CREATE TABLE IF NOT EXISTS backup_history (
   target_path   TEXT,
   status        VARCHAR(16)  NOT NULL DEFAULT 'pending',
   error         TEXT,
+  created_at    DATETIME     NOT NULL DEFAULT (UTC_TIMESTAMP()),
   PRIMARY KEY (id),
   KEY idx_backup_history_started_at (started_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

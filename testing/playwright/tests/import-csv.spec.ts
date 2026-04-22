@@ -112,6 +112,7 @@ test.describe('CSV Import wizard', () => {
     const fileInput = page.locator('input[type=file][name=csv]');
     await fileInput.setInputFiles(path.join(FIXTURES, 'malformed.csv'));
     await page.locator('button[type=submit], input[type=submit]').first().click();
+    await page.waitForLoadState('domcontentloaded');
     // malformed.csv has no "ip" header so step 2 renders with no auto-mapped ip column
     const url = page.url();
     if (url.includes('step=2')) {
