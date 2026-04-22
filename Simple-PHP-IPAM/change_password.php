@@ -125,8 +125,12 @@ if (!$isSsoOnly && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $db->prepare("UPDATE users SET password_hash = :h, password_changed_at = " . ipam_dialect()->now() . " WHERE id = :id")
                ->execute([':h' => $hash, ':id' => $cur['id']]);
             session_regenerate_id(true);
-            // Reset the absolute lifetime clock so the new session gets a fresh window
-            $_SESSION['_abs_expires'] = time() + (to_int($config['session']['absolute_lifetime_minutes'] ?? 480) * 60);
+            // Reset the absolute lifetime clock so the new session gets a fresh window.
+            // Only set it when the feature is enabled (lifetime > 0).
+            $absLifetimeMin = to_int($config['session']['absolute_lifetime_minutes'] ?? 480);
+            if ($absLifetimeMin > 0) {
+                $_SESSION['_abs_expires'] = time() + ($absLifetimeMin * 60);
+            }
             audit($db, 'user.change_password', 'user', to_int($cur['id']), 'self');
             $msg = 'Password updated.';
             $isExpired = false;

@@ -16,7 +16,10 @@ test.describe('Reverse proxy harness', () => {
   });
 
   test('HTTPS is enforced behind proxy', async ({ page }) => {
-    await page.goto('login.php');
+    // Must start from an explicit http:// URL so the redirect is actually exercised.
+    const baseUrl = process.env.IPAM_BASE_URL ?? '';
+    const httpUrl = baseUrl.replace(/^https:/, 'http:') + '/login.php';
+    await page.goto(httpUrl);
     expect(page.url()).toMatch(/^https:/);
   });
 

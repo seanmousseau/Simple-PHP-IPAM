@@ -606,23 +606,48 @@ class UtilTest extends TestCase
     }
 
     // -----------------------------------------------------------------------
-    // API per-key rate limiting — window boundary math (v3.6.0, #419)
+    // API per-key rate limiting — DB-backed helper (v3.6.0, #419)
     // -----------------------------------------------------------------------
 
-    public function testRateLimitWindowBoundary(): void
+    public function testRateLimitHelperAllowsAndDenies(): void
     {
-        // Two timestamps in the same 60-second window should produce the same window_start
+        $db = new \PDO('sqlite::memory:');
+        $db->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
+        $db->exec("CREATE TABLE rate_limit_buckets (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            bucket_key   TEXT NOT NULL,
+            window_start TEXT NOT NULL,
+            count        INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(bucket_key, window_start)
+        )");
+
+        $key = 'test-key';
         $windowSec = 60;
-        $ts1 = mktime(12, 34, 0, 4, 21, 2026);  // :34:00
-        $ts2 = mktime(12, 34, 59, 4, 21, 2026); // :34:59
+        $max = 3;
 
-        $w1 = date('Y-m-d H:i:s', (int)($ts1 / $windowSec) * $windowSec);
-        $w2 = date('Y-m-d H:i:s', (int)($ts2 / $windowSec) * $windowSec);
-        $this->assertEquals($w1, $w2, 'Same window');
+        // First 3 requests should be allowed (return 0)
+        for ($i = 0; $i < $max; $i++) {
+            $this->assertSame(0, ipam_api_key_rate_limit_check($db, $key, $windowSec, $max),
+                "Request #$i should be allowed");
+        }
 
-        $ts3 = mktime(12, 35, 1, 4, 21, 2026);  // :35:01 — next window
-        $w3 = date('Y-m-d H:i:s', (int)($ts3 / $windowSec) * $windowSec);
-        $this->assertNotEquals($w1, $w3, 'Different window');
+        // 4th request must be denied (return > 0 seconds)
+        $retryAfter = ipam_api_key_rate_limit_check($db, $key, $windowSec, $max);
+        $this->assertGreaterThan(0, $retryAfter, '4th request should be denied');
+        $this->assertLessThanOrEqual($windowSec, $retryAfter, 'Retry-After must not exceed window');
+    }
+
+    public function testRateLimitHelperRejectsInvalidWindow(): void
+    {
+        $db = new \PDO('sqlite::memory:');
+        $db->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
+        $db->exec("CREATE TABLE rate_limit_buckets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bucket_key TEXT NOT NULL, window_start TEXT NOT NULL,
+            count INTEGER NOT NULL DEFAULT 0, UNIQUE(bucket_key, window_start)
+        )");
+        $this->expectException(\InvalidArgumentException::class);
+        ipam_api_key_rate_limit_check($db, 'k', 0, 10);
     }
 
     // -----------------------------------------------------------------------

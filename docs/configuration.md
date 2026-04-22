@@ -4,7 +4,7 @@
 
 Configuration lives in two places:
 
-1. **`config.php`** — bootstrap keys only. These are values the app needs before it can open the database: `db_driver`, `db_dsn`, `db_user`, `db_pass`, `session_name`, `force_https`. See `config.php.example` for the full template. Edit by hand on the server.
+1. **`config.php`** — bootstrap keys plus a small set of security-sensitive keys that must be available before the database is opened. Bootstrap keys: `db_driver`, `db_dsn`, `db_user`, `db_pass`, `session_name`, `force_https`. Security-sensitive keys added in v3.6.0: `app_secret` (TOTP encryption key), `session.absolute_lifetime_minutes`, `auth.lockout_after_failures`, `auth.lockout_duration_minutes`. See `config.php.example` for the full template. Edit by hand on the server.
 2. **Database (`settings` table)** — everything else. Edited through the admin UI under **⚙ Admin → Settings**. Reads are cached per-request.
 
 When the app reads a setting it checks: `settings` table row → default from `ipam_setting_definitions()`. The admin page shows a source badge next to every setting — 🟢 Database or ⚪ Default.

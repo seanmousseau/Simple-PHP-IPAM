@@ -7441,10 +7441,17 @@ function ipam_totp_generate_backup_codes(int $count = 8): array {
 
 /** @param list<string> $codes */
 function ipam_totp_save_backup_codes(PDO $db, int $userId, array $codes): void {
-    $db->prepare("DELETE FROM totp_backup_codes WHERE user_id = :uid")->execute([':uid' => $userId]);
-    $stmt = $db->prepare("INSERT INTO totp_backup_codes (user_id, code_hash) VALUES (:uid, :hash)");
-    foreach ($codes as $code) {
-        $stmt->execute([':uid' => $userId, ':hash' => password_hash($code, PASSWORD_DEFAULT)]);
+    $db->beginTransaction();
+    try {
+        $db->prepare("DELETE FROM totp_backup_codes WHERE user_id = :uid")->execute([':uid' => $userId]);
+        $stmt = $db->prepare("INSERT INTO totp_backup_codes (user_id, code_hash) VALUES (:uid, :hash)");
+        foreach ($codes as $code) {
+            $stmt->execute([':uid' => $userId, ':hash' => password_hash($code, PASSWORD_DEFAULT)]);
+        }
+        $db->commit();
+    } catch (\Throwable $e) {
+        $db->rollBack();
+        throw $e;
     }
 }
 
@@ -7470,7 +7477,17 @@ function ipam_totp_verify_backup_code(PDO $db, int $userId, string $code): bool 
 // API per-key rate limiting (v3.6.0, #419)
 // ============================================================
 
-function ipam_api_key_rate_limit_check(PDO $db, string $bucketKey, int $windowSec, int $max): bool {
+/**
+ * Returns 0 when the request is allowed, or the number of seconds until the
+ * sliding window unblocks when it is denied.
+ */
+function ipam_api_key_rate_limit_check(PDO $db, string $bucketKey, int $windowSec, int $max): int {
+    if ($windowSec < 1) {
+        throw new \InvalidArgumentException('windowSec must be >= 1');
+    }
+    if ($max < 1) {
+        throw new \InvalidArgumentException('max must be >= 1');
+    }
     $now              = time();
     $windowStartEpoch = (int)($now / $windowSec) * $windowSec;
     $prevWindowEpoch  = $windowStartEpoch - $windowSec;
@@ -7510,7 +7527,13 @@ function ipam_api_key_rate_limit_check(PDO $db, string $bucketKey, int $windowSe
     $weight   = ($windowSec - $elapsed) / $windowSec;
     $weighted = $currentCount + ($prevCount * $weight);
 
-    return $weighted <= $max;
+    if ($weighted <= $max) {
+        return 0; // allowed
+    }
+    // Return seconds until the oldest contributing portion of the previous window
+    // no longer affects the sliding count.  The current window ends at:
+    $windowEndEpoch = $windowStartEpoch + $windowSec;
+    return max(1, $windowEndEpoch - $now);
 }
 
 // ============================================================
@@ -7543,7 +7566,7 @@ function ipam_is_persistently_locked(PDO $db, int $uid): bool {
     $stmt = $db->prepare("SELECT locked_until FROM users WHERE id = :id");
     $stmt->execute([':id' => $uid]);
     $lockedUntil = $stmt->fetchColumn();
-    return $lockedUntil !== false && $lockedUntil !== null && strtotime((string)$lockedUntil) > time();
+    return $lockedUntil !== false && $lockedUntil !== null && strtotime((string)$lockedUntil . ' UTC') > time();
 }
 
 /** @param IpamConfig $config */

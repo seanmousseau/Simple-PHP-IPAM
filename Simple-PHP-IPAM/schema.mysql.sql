@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS users (
   totp_enabled               TINYINT NOT NULL DEFAULT 0,
   failed_auth_count          INT NOT NULL DEFAULT 0,
   locked_until               DATETIME,
-  lock_reason                VARCHAR(20),
+  lock_reason                TEXT,
   created_at          DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   updated_at          DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   UNIQUE KEY idx_users_oidc_sub (oidc_sub)

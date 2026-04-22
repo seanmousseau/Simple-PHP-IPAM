@@ -14,6 +14,7 @@ $acctLockoutSecs  = to_int(ipam_setting('security.account_lockout_seconds'));
 
 $error    = '';
 $timedOut = !empty($_GET['timeout']);
+$reason   = to_str($_GET['reason'] ?? '');
 $isRecovery = recovery_mode_enabled($config);
 
 // Login protection setup (#124) — widget HTML also sets time_check session ts on GET
@@ -25,6 +26,13 @@ $lpCsp        = $isRecovery ? ['script_src' => '', 'style_src' => '', 'frame_src
 if (!empty($_SESSION['oidc_error'])) {
     $error = to_str($_SESSION['oidc_error']);
     unset($_SESSION['oidc_error']);
+}
+
+// ?reason= messages from redirects (session expiry, persistent lockout)
+if ($error === '' && $reason === 'session_expired') {
+    $error = 'Your session has expired. Please log in again.';
+} elseif ($error === '' && $reason === 'locked') {
+    $error = 'This account is locked due to too many failed two-factor authentication attempts.';
 }
 
 // Render-prep variables (needed even when goto jumps past POST block)

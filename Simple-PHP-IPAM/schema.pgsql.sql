@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS users (
   totp_enabled               SMALLINT NOT NULL DEFAULT 0,
   failed_auth_count          INTEGER NOT NULL DEFAULT 0,
   locked_until               TIMESTAMP WITH TIME ZONE,
-  lock_reason                VARCHAR(20),
+  lock_reason                TEXT,
   created_at          TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
   updated_at          TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
   -- No CHECK on role or theme: schema.sql (SQLite) has none, and

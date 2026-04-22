@@ -24,9 +24,9 @@ test.describe('Users admin page', () => {
 });
 
 test.describe('API rate limit', () => {
-  test('API returns 200 or 401 on normal single request (not 429)', async ({ request }) => {
+  test('API returns 401 on unauthenticated request (not 429)', async ({ request }) => {
     const resp = await request.get('api.php?resource=subnets');
-    // Without a valid API key expect 401, not 429
-    expect([200, 401]).toContain(resp.status());
+    // Without a valid API key we must always get 401, never 429.
+    expect(resp.status()).toBe(401);
   });
 });

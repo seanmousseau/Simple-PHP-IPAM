@@ -127,6 +127,8 @@ The backup is left in place after a successful upgrade. You can remove it manual
 
 **Action required to enable 2FA:** Set `app_secret` in `config.php` before users attempt enrollment. Users who try to enroll without this key set will see an error. Existing installs with `app_secret` left empty have 2FA disabled; all other functionality is unaffected.
 
+> **Warning — `app_secret` is a wrapping key.** `app_secret` encrypts every user's stored TOTP secret. If you change its value after users have enrolled, their stored secrets become undecryptable and those users will be unable to pass the 2FA challenge. They will be locked out of 2FA until an admin resets their TOTP (`users.php` → Reset 2FA) and they re-enroll. **Never rotate `app_secret` on a live instance without first resetting all enrolled users' TOTP.** If you need to rotate the key, the safe procedure is: (1) admin-reset every enrolled user's TOTP, (2) update `app_secret`, (3) have all users re-enroll.
+
 See the [Security guide](security.md#two-factor-authentication-totp) for full enrollment and admin-reset instructions.
 
 ---

@@ -217,6 +217,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                ->execute([':id' => $id]);
             $db->prepare("DELETE FROM totp_backup_codes WHERE user_id=:uid")
                ->execute([':uid' => $id]);
+            ipam_clear_persistent_lockout($db, $id);
             audit($db, 'user.totp_reset', 'user', $id, 'admin_reset');
             $msg = 'Two-factor authentication reset for user.';
         }
@@ -353,7 +354,7 @@ page_header('Users');
       <td><?php
         $isTimeLocked    = isset($lockedUsers[to_str($u['username'])]);
         $lockedUntilStr  = to_str($u['locked_until'] ?? '');
-        $isPersistLocked = $lockedUntilStr !== '' && strtotime($lockedUntilStr) > time();
+        $isPersistLocked = $lockedUntilStr !== '' && strtotime($lockedUntilStr . ' UTC') > time();
         $isLocked        = $isTimeLocked || $isPersistLocked;
         $lockReason      = $isPersistLocked ? to_str($u['lock_reason'] ?? '') : '';
       ?>
