@@ -48,7 +48,7 @@ Add a cron entry to run `cron.php` every 15 minutes. The backup task honours `ba
 */15 * * * * php /path/to/Simple-PHP-IPAM/cron.php >> /var/log/ipam-cron.log 2>&1
 ```
 
-The default schedule runs a backup once per day at 02:00 local time. This is controlled by `backup.schedule_cron` in the settings (not currently editable via the UI — set it in the database or a future admin UI).
+The default schedule runs a backup once per day. The frequency is controlled by the `backup.frequency` setting (`daily` or `weekly`), configurable via **Admin → Settings → Backup**.
 
 ---
 

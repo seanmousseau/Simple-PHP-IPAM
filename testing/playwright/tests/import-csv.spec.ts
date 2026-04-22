@@ -89,10 +89,11 @@ test.describe('CSV Import wizard', () => {
     await applyBtn.click();
     await page.waitForURL(/step=4/);
 
-    // Step 4: result — expect a success summary
+    // Step 4: result — expect a concrete success summary (not a failure message)
     await expect(page).toHaveURL(/step=4/);
     const body = await page.textContent('body') ?? '';
-    expect(body).toMatch(/import(ed)?|success|creat/i);
+    expect(body).toMatch(/Import complete\.|Created addresses:|Addresses created:/i);
+    expect(body).not.toMatch(/import failed|error occurred/i);
   });
 
   test('edge-case CSV: BOM, CRLF, MAC notations, quoted owner — no error', async () => {
@@ -106,15 +107,25 @@ test.describe('CSV Import wizard', () => {
     expect(body).not.toMatch(/fatal error|exception|stack trace/i);
   });
 
-  test('malformed CSV: missing "ip" header shows friendly error', async () => {
+  test('malformed CSV: submitting without ip mapping shows validation error', async () => {
     await page.goto('import_csv.php?step=1');
     const fileInput = page.locator('input[type=file][name=csv]');
     await fileInput.setInputFiles(path.join(FIXTURES, 'malformed.csv'));
     await page.locator('button[type=submit], input[type=submit]').first().click();
-    // Either stays on step=1 with an error, or advances and shows error on step=2
-    const body = await page.textContent('body') ?? '';
-    expect(body).toMatch(/ip|required|column|header|error/i);
-    expect(body).not.toMatch(/fatal error|exception/i);
+    // malformed.csv has no "ip" header so step 2 renders with no auto-mapped ip column
+    const url = page.url();
+    if (url.includes('step=2')) {
+      // Drive step-2 validation: submit without setting map[ip]
+      await page.locator('button[type=submit], input[type=submit]').first().click();
+      const body = await page.textContent('body') ?? '';
+      expect(body).toMatch(/ip.*required|required.*ip|must.*map.*ip|ip.*column/i);
+      expect(body).not.toMatch(/fatal error|exception/i);
+    } else {
+      // The upload itself may reject the file early (step=1 error)
+      const body = await page.textContent('body') ?? '';
+      expect(body).toMatch(/ip|required|column|header|error/i);
+      expect(body).not.toMatch(/fatal error|exception/i);
+    }
   });
 
   test('read-only user is denied (403 or redirect)', async ({ browser }: { browser: Browser }) => {

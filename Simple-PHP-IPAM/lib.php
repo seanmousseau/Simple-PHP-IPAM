@@ -3206,7 +3206,12 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             try { $db->exec("PRAGMA wal_checkpoint(FULL)"); } catch (Throwable) {}
 
             $dest = $dir . '/ipam-' . $ts . '.sqlite';
-            if (!@copy($dbPath, $dest)) return false;
+            if (!@copy($dbPath, $dest)) {
+                backup_history_insert($db, basename($dest), 0, '', $driver,
+                    $startedAt, date('Y-m-d H:i:s'), (int)((microtime(true) - $t0) * 1000),
+                    $dest, 'failed', 'copy() failed');
+                return false;
+            }
             @chmod($dest, 0600);
 
             $sha256 = hash_file('sha256', $dest) ?: '';
@@ -3240,7 +3245,12 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             ];
             $env = array_merge(getenv() ?: [], ['MYSQL_PWD' => $pass]);
             $ret = backup_run_dump($cmd, $env, $dest);
-            if (!$ret) return false;
+            if (!$ret) {
+                backup_history_insert($db, basename($dest), 0, '', $driver,
+                    $startedAt, date('Y-m-d H:i:s'), (int)((microtime(true) - $t0) * 1000),
+                    $dest, 'failed', 'mysqldump failed');
+                return false;
+            }
 
             $sha256 = hash_file('sha256', $dest) ?: '';
             $size   = (int)(@filesize($dest) ?: 0);
@@ -3269,7 +3279,12 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             $cmd = ['pg_dump', '-h', $host, '-p', $port, '-U', $user, $dbName];
             $env = array_merge(getenv() ?: [], ['PGPASSWORD' => $pass]);
             $ret = backup_run_dump($cmd, $env, $dest);
-            if (!$ret) return false;
+            if (!$ret) {
+                backup_history_insert($db, basename($dest), 0, '', $driver,
+                    $startedAt, date('Y-m-d H:i:s'), (int)((microtime(true) - $t0) * 1000),
+                    $dest, 'failed', 'pg_dump failed');
+                return false;
+            }
 
             $sha256 = hash_file('sha256', $dest) ?: '';
             $size   = (int)(@filesize($dest) ?: 0);
@@ -3308,7 +3323,7 @@ function run_db_backup_if_due(PDO $db, array $config): bool
  * @param list<string> $cmd
  * @param array<string,string> $env
  */
-function backup_run_dump(array $cmd, array $env, string $destPath): bool
+function backup_run_dump(array $cmd, array $env, string $destPath, int $timeoutSecs = 120): bool
 {
     $pipes = [];
     // $cmd is built from admin config values only (never user input); array-form
@@ -3326,13 +3341,37 @@ function backup_run_dump(array $cmd, array $env, string $destPath): bool
     if (!is_resource($proc)) return false;
 
     fclose($pipes[0]);
-    $stderr = stream_get_contents($pipes[2]);
+    stream_set_blocking($pipes[2], false);
+
+    // Poll for process completion with a hard deadline so a hung mysqldump/pg_dump
+    // never blocks a web request thread indefinitely. Non-blocking stderr reads
+    // prevent the process from stalling when the pipe buffer fills up.
+    $stderr   = '';
+    $deadline = time() + $timeoutSecs;
+    while (true) {
+        $chunk = fread($pipes[2], 4096);
+        if ($chunk !== false && $chunk !== '') $stderr .= $chunk;
+        if (!proc_get_status($proc)['running']) break;
+        if (time() > $deadline) {
+            proc_terminate($proc);
+            fclose($pipes[2]);
+            proc_close($proc);
+            @unlink($destPath); // nosemgrep: php.lang.security.unlink-use.unlink-use
+            error_log('backup_run_dump: killed after ' . $timeoutSecs . 's timeout');
+            return false;
+        }
+        usleep(100000); // 100ms polling interval
+    }
+    while (!feof($pipes[2])) {
+        $chunk = fread($pipes[2], 4096);
+        if ($chunk !== false && $chunk !== '') $stderr .= $chunk;
+    }
     fclose($pipes[2]);
     $exit = proc_close($proc);
 
     if ($exit !== 0) {
         @unlink($destPath); // nosemgrep: php.lang.security.unlink-use.unlink-use
-        error_log('backup_run_dump failed (exit=' . $exit . '): ' . trim((string)$stderr));
+        error_log('backup_run_dump failed (exit=' . $exit . '): ' . trim($stderr));
         return false;
     }
     @chmod($destPath, 0600);

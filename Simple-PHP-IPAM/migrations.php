@@ -1872,6 +1872,7 @@ function ipam_migrations(): array
                     target_path   TEXT,
                     status        VARCHAR(16) NOT NULL DEFAULT 'pending',
                     error         TEXT,
+                    created_at    DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
                     PRIMARY KEY (id),
                     KEY idx_backup_history_started_at (started_at)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
@@ -1888,7 +1889,8 @@ function ipam_migrations(): array
                     target        TEXT NOT NULL DEFAULT 'local',
                     target_path   TEXT,
                     status        TEXT NOT NULL DEFAULT 'pending',
-                    error         TEXT
+                    error         TEXT,
+                    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )");
                 $db->exec("CREATE INDEX IF NOT EXISTS idx_backup_history_started_at ON backup_history(started_at)");
             } else {
@@ -1904,7 +1906,8 @@ function ipam_migrations(): array
                     target        TEXT NOT NULL DEFAULT 'local',
                     target_path   TEXT,
                     status        TEXT NOT NULL DEFAULT 'pending',
-                    error         TEXT
+                    error         TEXT,
+                    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
                 )");
                 $db->exec("CREATE INDEX IF NOT EXISTS idx_backup_history_started_at ON backup_history(started_at)");
             }
