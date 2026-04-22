@@ -1,1 +1,2 @@
-<?php // placeholder partial — used by smoke test ?>
+<?php
+// placeholder partial — used by smoke test
