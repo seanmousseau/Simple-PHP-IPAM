@@ -569,6 +569,25 @@ function ipam_render_string(string $view, array $props = []): string
     return ob_get_clean() ?: '';
 }
 
+/**
+ * Render an SVG icon from the sprite sheet.
+ *
+ * Returns an inline <svg><use> element referencing the icon sprite.
+ * Decorative — always aria-hidden and focusable=false.
+ * Use the $cls parameter to add sizing classes (e.g. 'icon-lg').
+ *
+ * @param string $name  Icon name (without 'icon-' prefix), e.g. 'home', 'cog'
+ * @param string $cls   Additional CSS classes to append (space-separated)
+ * @return string       HTML string safe to echo directly
+ */
+function icon(string $name, string $cls = ''): string
+{
+    $c = trim('icon ' . $cls);
+    return '<svg class="' . e($c) . '" aria-hidden="true" focusable="false">'
+         . '<use href="#icon-' . e($name) . '"></use>'
+         . '</svg>';
+}
+
 /* ---------------- Timestamp display ---------------- */
 
 /**
@@ -5880,6 +5899,15 @@ function page_header(string $title, array $opts = []): void
         ? " data-page='" . e(to_str($opts['page'])) . "'"
         : '';
     echo "</head><body{$pageAttr}>";
+    // Inline SVG sprite once per page (display:none in the SVG itself)
+    static $__spritePrinted = false;
+    if (!$__spritePrinted) {
+        $__spritePrinted = true;
+        $__spritePath = __DIR__ . '/assets/icons.svg';
+        if (is_file($__spritePath)) {
+            readfile($__spritePath);
+        }
+    }
     echo "<a class='skip-link' href='#main-content'>Skip to main content</a>";
 
     /** @var IpamConfig $gConf */
@@ -5895,41 +5923,41 @@ function page_header(string $title, array $opts = []): void
     echo "<button class='nav-toggle' id='nav-toggle' aria-label='Open menu' aria-expanded='false' aria-controls='nav-drawer'>&#9776;</button>";
     echo "<nav class='nav-links' role='navigation' aria-label='Primary'>";
     if ($u) {
-        echo "<a class='nav-pill' href='dashboard.php'>🏠 Dashboard</a>";
-        echo "<a class='nav-pill' href='subnets.php'>🌐 Subnets</a>";
-        echo "<a class='nav-pill' href='addresses.php'>🧾 Addresses</a>";
-        echo "<a class='nav-pill nav-search-link' href='search.php'>🔎 Search <kbd class='nav-kbd'>⌘K</kbd></a>";
-        echo "<a class='nav-pill' href='audit.php'>📜 Audit</a>";
+        echo "<a class='nav-pill' href='dashboard.php'>" . icon('home') . " Dashboard</a>";
+        echo "<a class='nav-pill' href='subnets.php'>" . icon('server-stack') . " Subnets</a>";
+        echo "<a class='nav-pill' href='addresses.php'>" . icon('map-pin') . " Addresses</a>";
+        echo "<a class='nav-pill nav-search-link' href='search.php'>" . icon('magnifying-glass') . " Search <kbd class='nav-kbd'>⌘K</kbd></a>";
+        echo "<a class='nav-pill' href='audit.php'>" . icon('audit') . " Audit</a>";
         if ($role === 'admin') {
             echo "<div class='nav-dropdown'>";
-            echo "<button type='button' class='nav-pill nav-dropdown-toggle'>⚙ Admin ▾</button>";
+            echo "<button type='button' class='nav-pill nav-dropdown-toggle'>" . icon('cog') . " Admin " . icon('chevron-down') . "</button>";
             echo "<div class='nav-dropdown-menu'>";
-            echo "<a class='nav-dropdown-item' href='dhcp_pool.php'>🔒 DHCP Pools</a>";
+            echo "<a class='nav-dropdown-item' href='dhcp_pool.php'>" . icon('dhcp') . " DHCP Pools</a>";
             echo "<hr class='nav-dropdown-divider'>";
-            echo "<a class='nav-dropdown-item' href='sites.php'>📍 Sites</a>";
-            echo "<a class='nav-dropdown-item' href='vrfs.php'>🌐 VRFs</a>";
-            echo "<a class='nav-dropdown-item' href='vlans.php'>🏷 VLANs</a>";
-            echo "<a class='nav-dropdown-item' href='aggregates.php'>🗂 Aggregates</a>";
-            echo "<a class='nav-dropdown-item' href='pd_pools.php'>🔷 PD Pools</a>";
-            echo "<a class='nav-dropdown-item' href='tags.php'>🔖 Tags</a>";
-            echo "<a class='nav-dropdown-item' href='devices.php'>🖥 Devices</a>";
-            echo "<a class='nav-dropdown-item' href='contacts.php'>📇 Contacts</a>";
-            echo "<a class='nav-dropdown-item' href='custom_fields.php'>🗂 Custom Fields</a>";
-            echo "<a class='nav-dropdown-item' href='users.php'>👤 Users</a>";
-            echo "<a class='nav-dropdown-item' href='api_keys.php'>🔑 API Keys</a>";
-            echo "<a class='nav-dropdown-item' href='webhooks.php'>🔔 Webhooks</a>";
-            echo "<a class='nav-dropdown-item' href='import_csv.php'>⬆ Import CSV</a>";
-            echo "<a class='nav-dropdown-item' href='import_arp.php'>📡 ARP Import</a>";
-            echo "<a class='nav-dropdown-item' href='reports.php'>📊 Reports</a>";
-            if (ipam_sql_dump_supported()) echo "<a class='nav-dropdown-item' href='db_tools.php'>🗄 Database Tools</a>";
-            echo "<a class='nav-dropdown-item' href='backups.php'>💾 Backups</a>";
-            echo "<a class='nav-dropdown-item' href='health.php'>🩺 Health</a>";
+            echo "<a class='nav-dropdown-item' href='sites.php'>" . icon('building') . " Sites</a>";
+            echo "<a class='nav-dropdown-item' href='vrfs.php'>" . icon('globe') . " VRFs</a>";
+            echo "<a class='nav-dropdown-item' href='vlans.php'>" . icon('link') . " VLANs</a>";
+            echo "<a class='nav-dropdown-item' href='aggregates.php'>" . icon('aggregates') . " Aggregates</a>";
+            echo "<a class='nav-dropdown-item' href='pd_pools.php'>" . icon('pd-pools') . " PD Pools</a>";
+            echo "<a class='nav-dropdown-item' href='tags.php'>" . icon('tag') . " Tags</a>";
+            echo "<a class='nav-dropdown-item' href='devices.php'>" . icon('server') . " Devices</a>";
+            echo "<a class='nav-dropdown-item' href='contacts.php'>" . icon('phone') . " Contacts</a>";
+            echo "<a class='nav-dropdown-item' href='custom_fields.php'>" . icon('custom-fields') . " Custom Fields</a>";
+            echo "<a class='nav-dropdown-item' href='users.php'>" . icon('users') . " Users</a>";
+            echo "<a class='nav-dropdown-item' href='api_keys.php'>" . icon('key') . " API Keys</a>";
+            echo "<a class='nav-dropdown-item' href='webhooks.php'>" . icon('webhook') . " Webhooks</a>";
+            echo "<a class='nav-dropdown-item' href='import_csv.php'>" . icon('upload') . " Import CSV</a>";
+            echo "<a class='nav-dropdown-item' href='import_arp.php'>" . icon('arp') . " ARP Import</a>";
+            echo "<a class='nav-dropdown-item' href='reports.php'>" . icon('reports') . " Reports</a>";
+            if (ipam_sql_dump_supported()) echo "<a class='nav-dropdown-item' href='db_tools.php'>" . icon('database') . " Database Tools</a>";
+            echo "<a class='nav-dropdown-item' href='backups.php'>" . icon('backup') . " Backups</a>";
+            echo "<a class='nav-dropdown-item' href='health.php'>" . icon('health') . " Health</a>";
             echo "<hr class='nav-dropdown-divider'>";
-            echo "<a class='nav-dropdown-item' href='settings.php'>⚙ Settings</a>";
+            echo "<a class='nav-dropdown-item' href='settings.php'>" . icon('settings') . " Settings</a>";
             echo "</div></div>";
         }
     } else {
-        echo "<a class='nav-pill' href='login.php'>🔐 Login</a>";
+        echo "<a class='nav-pill' href='login.php'>" . icon('login') . " Login</a>";
     }
     echo "</nav>";
 
@@ -5937,13 +5965,13 @@ function page_header(string $title, array $opts = []): void
         echo "<div class='nav-right'>";
         echo "<div class='nav-dropdown'>";
         echo "<button type='button' class='nav-pill nav-dropdown-toggle nav-user-toggle'>";
-        echo e($u) . " <span class='badge badge-role-" . e($role) . "'>" . e($role) . "</span> ▾";
+        echo icon('user-circle') . " " . e($u) . " <span class='badge badge-role-" . e($role) . "'>" . e($role) . "</span> " . icon('chevron-down');
         echo "</button>";
         echo "<div class='nav-dropdown-menu nav-dropdown-menu--right'>";
-        echo "<button type='button' class='nav-dropdown-item' id='theme-toggle'>🌓 Theme</button>";
+        echo "<button type='button' class='nav-dropdown-item' id='theme-toggle'>" . icon('theme') . " Theme</button>";
         echo "<hr class='nav-dropdown-divider'>";
-        echo "<a class='nav-dropdown-item' href='change_password.php'>🔐 Account</a>";
-        echo "<a class='nav-dropdown-item' href='logout.php'>↩ Logout</a>";
+        echo "<a class='nav-dropdown-item' href='change_password.php'>" . icon('account') . " Account</a>";
+        echo "<a class='nav-dropdown-item' href='logout.php'>" . icon('logout') . " Logout</a>";
         echo "</div></div>";
         echo "</div>";
     }
@@ -5955,38 +5983,38 @@ function page_header(string $title, array $opts = []): void
     echo "<button class='drawer-close' aria-label='Close menu'>&#10005;</button>";
     if ($u) {
         echo "<span class='nav-drawer-section'>Navigation</span>";
-        echo "<a href='dashboard.php'>&#127968; Dashboard</a>";
-        echo "<a href='subnets.php'>&#127760; Subnets</a>";
-        echo "<a href='addresses.php'>&#129438; Addresses</a>";
-        echo "<a href='search.php'>&#128270; Search</a>";
-        echo "<a href='audit.php'>&#128220; Audit</a>";
+        echo "<a href='dashboard.php'>" . icon('home') . " Dashboard</a>";
+        echo "<a href='subnets.php'>" . icon('server-stack') . " Subnets</a>";
+        echo "<a href='addresses.php'>" . icon('map-pin') . " Addresses</a>";
+        echo "<a href='search.php'>" . icon('magnifying-glass') . " Search</a>";
+        echo "<a href='audit.php'>" . icon('audit') . " Audit</a>";
         if ($role === 'admin') {
             echo "<hr>";
             echo "<span class='nav-drawer-section'>Admin</span>";
-            echo "<a href='dhcp_pool.php'>&#128274; DHCP Pools</a>";
-            echo "<a href='sites.php'>&#128205; Sites</a>";
-            echo "<a href='vrfs.php'>&#127760; VRFs</a>";
-            echo "<a href='vlans.php'>&#127991; VLANs</a>";
-            echo "<a href='tags.php'>&#128278; Tags</a>";
-            echo "<a href='devices.php'>&#128421; Devices</a>";
-            echo "<a href='contacts.php'>&#128215; Contacts</a>";
-            echo "<a href='users.php'>&#128100; Users</a>";
-            echo "<a href='api_keys.php'>&#128273; API Keys</a>";
-            echo "<a href='webhooks.php'>&#128276; Webhooks</a>";
-            echo "<a href='import_arp.php'>&#128200; ARP Import</a>";
-            echo "<a href='import_csv.php'>&#8679; Import CSV</a>";
-            echo "<a href='reports.php'>&#128202; Reports</a>";
-            if (ipam_sql_dump_supported()) echo "<a href='db_tools.php'>&#128444; Database Tools</a>";
-            echo "<a href='backups.php'>&#128190; Backups</a>";
-            echo "<a href='health.php'>&#129690; Health</a>";
-            echo "<a href='settings.php'>&#9881; Settings</a>";
+            echo "<a href='dhcp_pool.php'>" . icon('dhcp') . " DHCP Pools</a>";
+            echo "<a href='sites.php'>" . icon('building') . " Sites</a>";
+            echo "<a href='vrfs.php'>" . icon('globe') . " VRFs</a>";
+            echo "<a href='vlans.php'>" . icon('link') . " VLANs</a>";
+            echo "<a href='tags.php'>" . icon('tag') . " Tags</a>";
+            echo "<a href='devices.php'>" . icon('server') . " Devices</a>";
+            echo "<a href='contacts.php'>" . icon('phone') . " Contacts</a>";
+            echo "<a href='users.php'>" . icon('users') . " Users</a>";
+            echo "<a href='api_keys.php'>" . icon('key') . " API Keys</a>";
+            echo "<a href='webhooks.php'>" . icon('webhook') . " Webhooks</a>";
+            echo "<a href='import_arp.php'>" . icon('arp') . " ARP Import</a>";
+            echo "<a href='import_csv.php'>" . icon('upload') . " Import CSV</a>";
+            echo "<a href='reports.php'>" . icon('reports') . " Reports</a>";
+            if (ipam_sql_dump_supported()) echo "<a href='db_tools.php'>" . icon('database') . " Database Tools</a>";
+            echo "<a href='backups.php'>" . icon('backup') . " Backups</a>";
+            echo "<a href='health.php'>" . icon('health') . " Health</a>";
+            echo "<a href='settings.php'>" . icon('settings') . " Settings</a>";
         }
         echo "<hr>";
         echo "<span class='nav-drawer-section'>Account</span>";
-        echo "<a href='change_password.php'>&#128272; Account</a>";
-        echo "<a href='logout.php'>&#8617; Logout</a>";
+        echo "<a href='change_password.php'>" . icon('account') . " Account</a>";
+        echo "<a href='logout.php'>" . icon('logout') . " Logout</a>";
     } else {
-        echo "<a href='login.php'>&#128272; Login</a>";
+        echo "<a href='login.php'>" . icon('login') . " Login</a>";
     }
     echo "</div>";
     echo "<div class='nav-drawer-overlay'></div>";
