@@ -75,15 +75,17 @@ test.describe('CSV Import wizard', () => {
     await page.locator('button[type=submit], input[type=submit]').first().click();
     await page.waitForURL(/step=2/);
 
-    // Step 2: column mapping — the wizard auto-detects headers; confirm and proceed
+    // Step 2: column mapping — set the IP column (CSV column index 0 = "ip")
     await expect(page).toHaveURL(/step=2/);
+    await page.locator('select[name="map[ip]"]').selectOption('0');
     const nextBtn = page.locator('button[type=submit], input[type=submit]').first();
     await nextBtn.click();
     await page.waitForURL(/step=3/);
 
-    // Step 3: dry-run — look for a preview table
+    // Step 3: dry-run — click "Apply Import" (second form's submit button)
     await expect(page).toHaveURL(/step=3/);
-    const applyBtn = page.locator('button[type=submit], input[type=submit]').first();
+    page.once('dialog', d => d.accept());
+    const applyBtn = page.locator('form[action*="step=4"] button[type=submit]');
     await applyBtn.click();
     await page.waitForURL(/step=4/);
 
