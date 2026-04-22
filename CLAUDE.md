@@ -840,29 +840,44 @@ If CodeRabbit or a human reviewer asks for a change on the open PR:
    ```
 5. Verify the release is live: `gh release view vX.Y.Z --json url,assets`.
 6. **Deploy to demo site** (`demo.simplephpipam.com`, OpenLiteSpeed on `root@192.168.80.23`):
+   Use the release tarball + `upgrade.sh` — **never raw `rsync` from the working tree**, which silently excludes `vendor/` (gitignored) and breaks the Composer autoloader.
    ```bash
-   rsync -az --delete \
-     --exclude='data/' --exclude='config.php' \
-     Simple-PHP-IPAM/ root@192.168.80.23:/usr/local/lsws/vhosts/demo.simplephpipam.com/html/
-   ssh root@192.168.80.23 "chown -R nobody:nogroup /usr/local/lsws/vhosts/demo.simplephpipam.com/html/ && php /usr/local/lsws/vhosts/demo.simplephpipam.com/html/migrate.php"
+   scp releases/ipam-X.Y.Z/ipam-X.Y.Z.tar.gz root@192.168.80.23:/tmp/
+   ssh root@192.168.80.23 "
+     rm -rf /tmp/ipam-X.Y.Z && mkdir /tmp/ipam-X.Y.Z
+     tar -xzf /tmp/ipam-X.Y.Z.tar.gz -C /tmp/ipam-X.Y.Z
+     cd /tmp/ipam-X.Y.Z/ipam-X.Y.Z
+     bash upgrade.sh --yes /usr/local/lsws/vhosts/demo.simplephpipam.com/html
+     chown -R nobody:nogroup /usr/local/lsws/vhosts/demo.simplephpipam.com/html
+   "
    ```
    Verify: browse `https://demo.simplephpipam.com/` and confirm the version shown in the footer.
 7. **Deploy to prod instance** (`ipam.seanmousseau.com`, OpenLiteSpeed on `root@192.168.80.23`):
    ```bash
-   rsync -az --delete \
-     --exclude='data/' --exclude='config.php' \
-     Simple-PHP-IPAM/ root@192.168.80.23:/usr/local/lsws/vhosts/ipam.seanmousseau.com/html/
-   ssh root@192.168.80.23 "chown -R nobody:nogroup /usr/local/lsws/vhosts/ipam.seanmousseau.com/html/ && php /usr/local/lsws/vhosts/ipam.seanmousseau.com/html/migrate.php"
+   ssh root@192.168.80.23 "
+     cd /tmp/ipam-X.Y.Z/ipam-X.Y.Z
+     bash upgrade.sh --yes /usr/local/lsws/vhosts/ipam.seanmousseau.com/html
+     chown -R nobody:nogroup /usr/local/lsws/vhosts/ipam.seanmousseau.com/html
+   "
    ```
    **DB:** MySQL at `192.168.80.13:3306`, database `ipam`, user `ipam`. Credentials are in `config.php` on the server (not in `dev-secrets.env`). `data/ipam.sqlite` on disk is stale/unused — always verify migration state against MySQL `schema_migrations`, not the SQLite file.
    Verify: browse `https://ipam.seanmousseau.com/` and confirm the version in the footer.
 8. **Deploy to 4 testing instances** (`root@192.168.80.15`):
+   The DB hostnames (`mariadb`, `postgres`) are Docker-internal and unreachable from the host, so `upgrade.sh` must run **inside the container** via `docker exec`. Copy the tarball into the container, extract it, and run `upgrade.sh` from there.
    ```bash
-   for dir in ipam ipam-maria ipam-mysql ipam-postgres; do
-     rsync -az --delete --exclude='data/' --exclude='config.php' \
-       Simple-PHP-IPAM/ root@192.168.80.15:/opt/container_data/dev.seanmousseau.com/html/testing/$dir/
-     ssh root@192.168.80.15 "chown -R www-data:www-data /opt/container_data/dev.seanmousseau.com/html/testing/$dir/ && docker exec dev_seanmousseau_com-apache-php-1 php /var/www/html/testing/$dir/migrate.php"
-   done
+   scp releases/ipam-X.Y.Z/ipam-X.Y.Z.tar.gz root@192.168.80.15:/tmp/
+   ssh root@192.168.80.15 "
+     docker cp /tmp/ipam-X.Y.Z.tar.gz dev_seanmousseau_com-apache-php-1:/tmp/
+     docker exec dev_seanmousseau_com-apache-php-1 bash -c '
+       rm -rf /tmp/ipam-X.Y.Z && mkdir /tmp/ipam-X.Y.Z
+       tar -xzf /tmp/ipam-X.Y.Z.tar.gz -C /tmp/ipam-X.Y.Z
+       cd /tmp/ipam-X.Y.Z/ipam-X.Y.Z
+       for dir in ipam ipam-maria ipam-mysql ipam-postgres; do
+         bash upgrade.sh --yes /var/www/html/testing/\$dir
+       done
+     '
+     chown -R www-data:www-data /opt/container_data/dev.seanmousseau.com/html/testing/
+   "
    ```
 9. **Update the marketing website** (`simplephpipam.com`) — required on every release, not optional. The version number appears in multiple places in `website/front-page.php`:
    - Hero badge: `vX.Y.Z — <tagline>`
