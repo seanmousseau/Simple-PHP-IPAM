@@ -1827,3 +1827,100 @@
     u.setSize({ width: el.offsetWidth || 640, height: 180 });
   });
 }());
+
+/* global IpamDrawer — right-side drawer (#517) */
+var IpamDrawer = (function () {
+    var drawer, overlay, titleEl, bodyEl, _lastFocus;
+
+    function _getFocusable() {
+        return Array.prototype.slice.call(
+            drawer.querySelectorAll(
+                'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'
+            )
+        );
+    }
+
+    function _trapFocus(e) {
+        if (e.key !== 'Tab') return;
+        var focusable = _getFocusable();
+        if (!focusable.length) { e.preventDefault(); return; }
+        var first = focusable[0];
+        var last  = focusable[focusable.length - 1];
+        if (e.shiftKey) {
+            if (document.activeElement === first) { e.preventDefault(); last.focus(); }
+        } else {
+            if (document.activeElement === last)  { e.preventDefault(); first.focus(); }
+        }
+    }
+
+    function _init() {
+        if (drawer) return;
+        drawer = document.createElement('div');
+        drawer.id = 'global-drawer';
+        drawer.className = 'drawer';
+        drawer.setAttribute('role', 'dialog');
+        drawer.setAttribute('aria-modal', 'true');
+        drawer.setAttribute('aria-hidden', 'true');
+        drawer.setAttribute('aria-labelledby', 'global-drawer-title');
+        drawer.innerHTML =
+            '<div class="drawer-header">' +
+            '<span class="drawer-title" id="global-drawer-title"></span>' +
+            '<button class="drawer-close" id="global-drawer-close" aria-label="Close drawer">' +
+            '<svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-x"></use></svg>' +
+            '</button>' +
+            '</div>' +
+            '<div class="drawer-body" id="global-drawer-body"></div>';
+        document.body.appendChild(drawer);
+
+        overlay = document.createElement('div');
+        overlay.className = 'drawer-overlay';
+        document.body.appendChild(overlay);
+
+        titleEl = document.getElementById('global-drawer-title');
+        bodyEl  = document.getElementById('global-drawer-body');
+
+        document.getElementById('global-drawer-close').addEventListener('click', close);
+        overlay.addEventListener('click', close);
+
+        document.addEventListener('keydown', function (e) {
+            if (!drawer.classList.contains('is-open')) return;
+            if (e.key === 'Escape') { close(); return; }
+            _trapFocus(e);
+        });
+    }
+
+    function open(title, tplId) {
+        _init();
+        _lastFocus = document.activeElement;
+        var tpl = document.getElementById(tplId);
+        bodyEl.innerHTML = tpl ? tpl.innerHTML : '';
+        titleEl.textContent = title;
+        overlay.classList.add('is-visible');
+        drawer.classList.add('is-open');
+        drawer.setAttribute('aria-hidden', 'false');
+        var focusable = _getFocusable();
+        if (focusable.length) focusable[0].focus();
+        else drawer.focus();
+    }
+
+    function close() {
+        if (!drawer) return;
+        drawer.classList.remove('is-open');
+        overlay.classList.remove('is-visible');
+        drawer.setAttribute('aria-hidden', 'true');
+        if (_lastFocus && _lastFocus.focus) _lastFocus.focus();
+    }
+
+    // Event delegation — handle [data-drawer-title] buttons (CSP-safe, no onclick)
+    document.addEventListener('click', function (e) {
+        var btn = e.target.closest ? e.target.closest('[data-drawer-title]') : null;
+        if (!btn) return;
+        e.preventDefault();
+        open(
+            btn.getAttribute('data-drawer-title') || '',
+            btn.getAttribute('data-drawer-tpl')   || ''
+        );
+    });
+
+    return { open: open, close: close };
+}());

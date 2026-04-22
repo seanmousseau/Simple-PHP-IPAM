@@ -475,6 +475,9 @@ if ($selectedSubnet && to_int($selectedSubnet['ip_version']) === 4) {
         to_str($selectedSubnet['network']), to_int($selectedSubnet['prefix']));
 }
 
+// Pre-validated IP pre-fill from ?next_ip= query param (used in the Add Address drawer)
+$prefillIp = trim(to_str($_GET['next_ip'] ?? ''));
+
 // Check if network/broadcast are missing (for "Reserve infra" button)
 $missingInfra = false;
 if ($selectedSubnetId > 0 && $networkBin !== null) {
@@ -536,7 +539,7 @@ ipam_skeleton_flush();
 <div class="page-actions">
   <?php if ($selectedSubnetId > 0): ?>
     <?php if (current_user()['role'] !== 'readonly'): ?>
-      <a class="action-pill" href="#add-address" data-open-drawer="add-address" data-drawer-title="Add Address">➕ Add Address <kbd class="kbd-hint">⌘N</kbd></a>
+      <button class="action-pill" data-drawer-title="Add Address" data-drawer-tpl="tpl-add-address">➕ Add Address <kbd class="kbd-hint">⌘N</kbd></button>
       <a class="action-pill" href="bulk_update.php?subnet_id=<?= (int)$selectedSubnetId ?>">✏ Bulk Update</a>
       <?php if ($missingInfra): ?>
         <a class="action-pill" href="#reserve-infra" data-open-drawer="reserve-infra" data-drawer-title="Reserve Infrastructure IPs">🔒 Reserve Infra IPs</a>
@@ -602,74 +605,14 @@ ipam_skeleton_flush();
   ?>
 <?php endif; ?>
 
-<div class="card mt-16 drawer-form-card" id="add-address">
-  <h2>Add address</h2>
-  <?php if ($nextAvailableIp): ?>
-    <p class="muted">Next available: <b><?= e($nextAvailableIp) ?></b>
-      <a class="action-pill" href="#" data-fill-ip="<?= e($nextAvailableIp) ?>">Use</a>
-    </p>
-  <?php endif; ?>
-  <form method="post" action="addresses.php" id="add-address">
-    <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
-    <input type="hidden" name="action" value="create">
-    <input type="hidden" name="subnet_id" value="<?= (int)$selectedSubnetId ?>">
-    <?php $prefillIp = trim(to_str($_GET['next_ip'] ?? '')); ?>
-    <div class="row">
-      <label>IP<br><input name="ip" value="<?= e($prefillIp) ?>" placeholder="<?= ($selectedSubnet && to_int($selectedSubnet['ip_version'])===6) ? '2001:db8::10' : '10.0.0.10' ?>" required data-validate="ip"></label>
-      <label>Hostname<br><input name="hostname" maxlength="253"></label>
-      <label>Owner<br>
-        <span class="contact-typeahead-wrap">
-          <input name="owner" maxlength="255" autocomplete="off" data-contact-typeahead>
-          <input type="hidden" name="owner_contact_id" value="0">
-          <button type="button" class="contact-browse-btn" title="Browse contacts">Browse</button>
-        </span>
-      </label>
-      <label>Group<br><input name="grp" maxlength="100" placeholder="e.g. web-tier" class="mw-160"></label>
-      <label>MAC<br><input name="mac" maxlength="64" placeholder="e.g. aa:bb:cc:dd:ee:ff" class="mw-160"></label>
-      <label>Expires<br><input name="expires_at" type="date" class="mw-160"></label>
-      <label>Status<br>
-        <select name="status">
-          <option value="used">used</option>
-          <option value="reserved">reserved</option>
-          <option value="free">free</option>
-        </select>
-      </label>
-    </div>
-    <div class="row">
-      <label class="flex-1">Note<br><input name="note" maxlength="1000" class="w-full"></label>
-    </div>
-    <?php if ($deviceList): ?>
-    <div class="row">
-      <label>Device<br>
-        <select name="device_id" class="addr-device-select" data-iface-target="add-iface-select">
-          <option value="0">(none)</option>
-          <?php foreach ($deviceList as $dv): ?>
-            <option value="<?= to_int($dv['id']) ?>"><?= e(to_str($dv['name'])) ?></option>
-          <?php endforeach; ?>
-        </select>
-      </label>
-      <label>Interface<br>
-        <select name="interface_id" id="add-iface-select">
-          <option value="0">(none)</option>
-        </select>
-      </label>
-    </div>
-    <?php endif; ?>
-
-    <?php if ($addrCfDefs): ?>
-    <?= render_custom_field_inputs($addrCfDefs, []) ?>
-    <?php endif; ?>
-
-    <p>
-      <button type="submit"
-        <?= ($selectedSubnetId>0 && current_user()['role']!=='readonly') ? '' : 'disabled' ?>>
-        Add
-      </button>
-    </p>
-    <?php if ($selectedSubnetId <= 0): ?><p class="muted">Select a subnet first.</p><?php endif; ?>
-    <?php if (current_user()['role']==='readonly'): ?><p class="muted">Read-only account.</p><?php endif; ?>
-  </form>
-</div>
+<div id="tpl-add-address" style="display:none"><?= ipam_render_string('address_form', [
+    'selectedSubnetId' => $selectedSubnetId,
+    'selectedSubnet'   => $selectedSubnet,
+    'nextAvailableIp'  => $nextAvailableIp,
+    'prefillIp'        => $prefillIp,
+    'addrCfDefs'       => $addrCfDefs,
+    'deviceList'       => $deviceList,
+]) ?></div>
 
 <?php if ($missingInfra && $selectedSubnet): ?>
 <div class="card mt-16 drawer-form-card" id="reserve-infra">
@@ -694,7 +637,7 @@ ipam_skeleton_flush();
   <?php if ($selectedSubnetId <= 0): ?>
     <div class="empty-state">No subnet selected. <a href="subnets.php">Go to Subnets</a> to create or select one.</div>
   <?php elseif (!$addresses): ?>
-    <div class="empty-state">No addresses in this subnet yet. <a class="action-pill" href="#add-address">+ Add Address</a></div>
+    <div class="empty-state">No addresses in this subnet yet. <button class="action-pill" data-drawer-title="Add Address" data-drawer-tpl="tpl-add-address">+ Add Address</button></div>
   <?php else: ?>
     <div class="table-wrap">
     <table data-col-table="addresses">

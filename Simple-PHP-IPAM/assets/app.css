@@ -1535,3 +1535,70 @@ body.pw-toggle-hidden .pw-wrap .pw-input{padding-right:36px}
 #growth-chart .uplot,
 #growth-chart .u-wrap { width: 100% !important; }
 @media(prefers-reduced-motion:reduce){.sidebar{transition:none}}
+
+/* ===== Global drawer (#517) ===== */
+.drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(480px, 100vw);
+    background: var(--card);
+    border-left: 1px solid var(--border);
+    z-index: 200;
+    display: flex;
+    flex-direction: column;
+    transform: translateX(100%);
+    transition: transform 220ms ease-out;
+    box-shadow: -4px 0 24px rgba(0,0,0,.12);
+    outline: none;
+}
+.drawer.is-open { transform: translateX(0); }
+.drawer-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.4);
+    z-index: 199;
+    display: none;
+}
+.drawer-overlay.is-visible { display: block; }
+.drawer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+.drawer-title { font-size: var(--text-md, 1rem); font-weight: 600; color: var(--fg); }
+.drawer-close {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--muted);
+    padding: .375rem;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    line-height: 1;
+}
+.drawer-close:hover { background: var(--btn); color: var(--btnfg); }
+.drawer-body { flex: 1; overflow-y: auto; padding: 1.25rem; }
+.drawer-skeleton { display: flex; flex-direction: column; gap: .75rem; }
+.drawer-skeleton-line {
+    height: 1rem;
+    background: var(--border);
+    border-radius: var(--radius-sm);
+    animation: drawer-pulse 1.4s ease-in-out infinite;
+}
+.drawer-skeleton-line--wide  { width: 100%; }
+.drawer-skeleton-line--mid   { width: 70%; }
+.drawer-skeleton-line--short { width: 40%; }
+@keyframes drawer-pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: .4; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .drawer { transition: none; }
+    .drawer-skeleton-line { animation: none; }
+}
