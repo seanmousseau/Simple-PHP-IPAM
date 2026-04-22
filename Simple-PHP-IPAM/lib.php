@@ -7492,7 +7492,7 @@ function ipam_api_key_rate_limit_check(PDO $db, string $bucketKey, int $windowSe
     } else {
         $db->prepare(
             "INSERT INTO rate_limit_buckets (bucket_key, window_start, count) VALUES (:k, :w, 1)
-             ON CONFLICT(bucket_key, window_start) DO UPDATE SET count = count + 1"
+             ON CONFLICT(bucket_key, window_start) DO UPDATE SET count = rate_limit_buckets.count + 1"
         )->execute([':k' => $bucketKey, ':w' => $windowStart]);
     }
 
