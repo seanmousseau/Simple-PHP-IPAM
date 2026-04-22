@@ -54,6 +54,16 @@ function ipam_dialect_from_config(array $config): Dialect
 }
 
 /**
+ * Returns true when the active DB engine supports the SQL dump/restore
+ * feature in db_tools.php (SQLite only). Used to conditionally show the
+ * Database Tools nav item — direct navigation to db_tools.php still works
+ * on all engines (it shows an "unsupported" banner).
+ */
+function ipam_sql_dump_supported(): bool {
+    return ipam_dialect()->driver_name() === 'sqlite';
+}
+
+/**
  * Bind a raw binary value (typically inet_pton output) to a PDOStatement
  * parameter using PDO::PARAM_LOB on every driver (#410).
  *
@@ -5911,7 +5921,7 @@ function page_header(string $title, array $opts = []): void
             echo "<a class='nav-dropdown-item' href='import_csv.php'>⬆ Import CSV</a>";
             echo "<a class='nav-dropdown-item' href='import_arp.php'>📡 ARP Import</a>";
             echo "<a class='nav-dropdown-item' href='reports.php'>📊 Reports</a>";
-            echo "<a class='nav-dropdown-item' href='db_tools.php'>🗄 Database Tools</a>";
+            if (ipam_sql_dump_supported()) echo "<a class='nav-dropdown-item' href='db_tools.php'>🗄 Database Tools</a>";
             echo "<a class='nav-dropdown-item' href='backups.php'>💾 Backups</a>";
             echo "<a class='nav-dropdown-item' href='health.php'>🩺 Health</a>";
             echo "<hr class='nav-dropdown-divider'>";
@@ -5966,7 +5976,7 @@ function page_header(string $title, array $opts = []): void
             echo "<a href='import_arp.php'>&#128200; ARP Import</a>";
             echo "<a href='import_csv.php'>&#8679; Import CSV</a>";
             echo "<a href='reports.php'>&#128202; Reports</a>";
-            echo "<a href='db_tools.php'>&#128444; Database Tools</a>";
+            if (ipam_sql_dump_supported()) echo "<a href='db_tools.php'>&#128444; Database Tools</a>";
             echo "<a href='backups.php'>&#128190; Backups</a>";
             echo "<a href='health.php'>&#129690; Health</a>";
             echo "<a href='settings.php'>&#9881; Settings</a>";
