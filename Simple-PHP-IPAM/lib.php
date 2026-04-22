@@ -7405,29 +7405,47 @@ function ipam_totp_encrypt_secret(string $secret, string $key): string {
     if ($key === '') {
         throw new \RuntimeException('TOTP encryption requires a non-empty app_secret');
     }
-    $iv  = random_bytes(16);
-    $enc = openssl_encrypt($secret, 'aes-256-cbc', hash('sha256', $key, true), OPENSSL_RAW_DATA, $iv);
+    $iv  = random_bytes(12);
+    $tag = '';
+    $enc = openssl_encrypt($secret, 'aes-256-gcm', hash('sha256', $key, true), OPENSSL_RAW_DATA, $iv, $tag, '', 16);
     if ($enc === false) {
         throw new \RuntimeException('TOTP secret encryption failed');
     }
-    return base64_encode($iv . $enc);
+    // Prefix '$2$' distinguishes GCM (authenticated) from legacy CBC blobs.
+    return '$2$' . base64_encode($iv . $tag . $enc);
 }
 
 function ipam_totp_decrypt_secret(string $encSecret, string $key): string {
     if ($key === '') {
         throw new \RuntimeException('TOTP decryption requires a non-empty app_secret');
     }
+    if (str_starts_with($encSecret, '$2$')) {
+        // GCM path (v3.6.0+)
+        $raw = base64_decode(substr($encSecret, 3), true);
+        if ($raw === false || strlen($raw) < 29) {
+            return '';
+        }
+        $iv      = substr($raw, 0, 12);
+        $tag     = substr($raw, 12, 16);
+        $payload = substr($raw, 28);
+        $decrypted = openssl_decrypt($payload, 'aes-256-gcm', hash('sha256', $key, true), OPENSSL_RAW_DATA, $iv, $tag);
+        if ($decrypted === false) {
+            return '';
+        }
+        return $decrypted;
+    }
+    // Legacy CBC path — decrypt secrets enrolled before the GCM migration.
     $raw = base64_decode($encSecret, true);
     if ($raw === false || strlen($raw) < 17) {
         return '';
     }
-    $iv      = substr($raw, 0, 16);
-    $payload = substr($raw, 16);
-    $result  = openssl_decrypt($payload, 'aes-256-cbc', hash('sha256', $key, true), OPENSSL_RAW_DATA, $iv);
-    if ($result === false) {
+    $iv        = substr($raw, 0, 16);
+    $payload   = substr($raw, 16);
+    $decrypted = openssl_decrypt($payload, 'aes-256-cbc', hash('sha256', $key, true), OPENSSL_RAW_DATA, $iv);
+    if ($decrypted === false) {
         return '';
     }
-    return $result;
+    return $decrypted;
 }
 
 /** @return list<string> */
@@ -7530,10 +7548,28 @@ function ipam_api_key_rate_limit_check(PDO $db, string $bucketKey, int $windowSe
     if ($weighted <= $max) {
         return 0; // allowed
     }
-    // Return seconds until the oldest contributing portion of the previous window
-    // no longer affects the sliding count.  The current window ends at:
-    $windowEndEpoch = $windowStartEpoch + $windowSec;
-    return max(1, $windowEndEpoch - $now);
+
+    // Calculate when the weighted count will drop to <= max (assuming no new requests).
+    //
+    // Case A: currentCount < max — overflow is driven by prevCount weight.
+    //   Solve: currentCount + prevCount*(windowSec - elapsed - t)/windowSec = max
+    //   => t = (windowSec - elapsed) - (max - currentCount)*windowSec/prevCount
+    if ($currentCount < $max && $prevCount > 0) {
+        $tWithin = ($windowSec - $elapsed) - ((float)($max - $currentCount) * $windowSec / $prevCount);
+        if ($tWithin > 0) {
+            return max(1, (int)ceil($tWithin));
+        }
+    }
+
+    // Case B: currentCount >= max — need to survive into the next window.
+    //   In next window: weighted ≈ currentCount*(windowSec - t')/windowSec
+    //   Solve for t' when weighted = max, then add remaining time in current window.
+    $remainInWindow = $windowStartEpoch + $windowSec - $now;
+    if ($currentCount > 0) {
+        $intoNext = (int)ceil($windowSec * (1.0 - (float)$max / $currentCount));
+        return max(1, $remainInWindow + max(0, $intoNext));
+    }
+    return max(1, $remainInWindow + 1);
 }
 
 // ============================================================

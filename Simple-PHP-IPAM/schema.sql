@@ -542,7 +542,6 @@ CREATE TABLE IF NOT EXISTS totp_backup_codes (
 CREATE INDEX IF NOT EXISTS idx_totp_backup_codes_user ON totp_backup_codes(user_id);
 
 -- v3.6.0 #419: Sliding-window rate-limit buckets
--- UNIQUE constraint already creates an implicit index; no separate CREATE INDEX needed.
 CREATE TABLE IF NOT EXISTS rate_limit_buckets (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   bucket_key   TEXT    NOT NULL,
@@ -550,3 +549,5 @@ CREATE TABLE IF NOT EXISTS rate_limit_buckets (
   count        INTEGER NOT NULL DEFAULT 0,
   UNIQUE(bucket_key, window_start)
 );
+-- Separate index on window_start alone accelerates the DELETE prune query.
+CREATE INDEX IF NOT EXISTS idx_rate_limit_buckets_window_start ON rate_limit_buckets(window_start);

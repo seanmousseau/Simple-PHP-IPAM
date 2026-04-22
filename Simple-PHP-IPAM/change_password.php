@@ -80,6 +80,20 @@ if (isset($_GET['verify_email'])) {
 // 2FA: disable TOTP
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 'disable_totp') {
     csrf_require();
+    $disableStmt = $db->prepare("SELECT password_hash FROM users WHERE id = :id");
+    $disableStmt->execute([':id' => $cur['id']]);
+    /** @var array<string, mixed>|false $disableRow */
+    $disableRow    = $disableStmt->fetch();
+    $disablePwHash = $disableRow ? to_str($disableRow['password_hash']) : '';
+    $isSsoOnlyDisable = str_starts_with($disablePwHash, '!');
+    if (!$isSsoOnlyDisable) {
+        $confirmPw = to_str($_POST['current_password'] ?? '');
+        if ($confirmPw === '' || !password_verify($confirmPw, $disablePwHash)) {
+            flash_set('Current password is incorrect. 2FA was not disabled.', 'danger');
+            header('Location: change_password.php');
+            exit;
+        }
+    }
     $db->prepare("UPDATE users SET totp_enabled=0, totp_secret_enc=NULL WHERE id=:id")
        ->execute([':id' => $cur['id']]);
     $db->prepare("DELETE FROM totp_backup_codes WHERE user_id=:uid")
@@ -258,6 +272,11 @@ page_header('Account');
     <form method="post" action="change_password.php">
       <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
       <input type="hidden" name="action" value="disable_totp">
+      <?php if (!$isSsoOnly): ?>
+        <label style="display:block;margin-bottom:8px;">Confirm current password:<br>
+          <input type="password" name="current_password" autocomplete="current-password" required>
+        </label>
+      <?php endif; ?>
       <button type="submit" class="button-danger"
         onclick="return confirm('Disable 2FA? You will no longer need a code to log in.')">
         Disable 2FA

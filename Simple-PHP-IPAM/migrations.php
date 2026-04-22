@@ -1830,7 +1830,8 @@ function ipam_migrations(): array
                     window_start DATETIME NOT NULL,
                     count        INT NOT NULL DEFAULT 0,
                     PRIMARY KEY (id),
-                    UNIQUE KEY idx_rate_limit_key_window (bucket_key, window_start)
+                    UNIQUE KEY idx_rate_limit_key_window (bucket_key, window_start),
+                    KEY idx_rate_limit_buckets_window_start (window_start)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
             } elseif ($driver === 'pgsql') {
                 $db->exec("CREATE TABLE IF NOT EXISTS rate_limit_buckets (
@@ -1841,8 +1842,8 @@ function ipam_migrations(): array
                     UNIQUE (bucket_key, window_start)
                 )");
                 $db->exec("CREATE INDEX IF NOT EXISTS idx_rate_limit_key_window ON rate_limit_buckets(bucket_key, window_start)");
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_rate_limit_buckets_window_start ON rate_limit_buckets(window_start)");
             } else {
-                // SQLite: UNIQUE constraint already creates an implicit index.
                 $db->exec("CREATE TABLE IF NOT EXISTS rate_limit_buckets (
                     id           INTEGER PRIMARY KEY AUTOINCREMENT,
                     bucket_key   TEXT NOT NULL,
@@ -1850,6 +1851,7 @@ function ipam_migrations(): array
                     count        INTEGER NOT NULL DEFAULT 0,
                     UNIQUE(bucket_key, window_start)
                 )");
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_rate_limit_buckets_window_start ON rate_limit_buckets(window_start)");
             }
         },
 

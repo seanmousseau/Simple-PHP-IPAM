@@ -611,7 +611,8 @@ CREATE TABLE IF NOT EXISTS rate_limit_buckets (
   window_start DATETIME NOT NULL,
   count        INT NOT NULL DEFAULT 0,
   PRIMARY KEY (id),
-  UNIQUE KEY idx_rate_limit_key_window (bucket_key, window_start)
+  UNIQUE KEY idx_rate_limit_key_window (bucket_key, window_start),
+  KEY idx_rate_limit_buckets_window_start (window_start)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ---------------------------------------------------------------------------

@@ -630,6 +630,7 @@ CREATE TABLE IF NOT EXISTS rate_limit_buckets (
     UNIQUE (bucket_key, window_start)
 );
 CREATE INDEX IF NOT EXISTS idx_rate_limit_key_window ON rate_limit_buckets(bucket_key, window_start);
+CREATE INDEX IF NOT EXISTS idx_rate_limit_buckets_window_start ON rate_limit_buckets(window_start);
 
 -- ---------------------------------------------------------------------------
 -- settings (v2.6.0, key/value config registry)
