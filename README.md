@@ -12,14 +12,17 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.7.0
+## What's new in v3.7.1
 
-**Operational readiness: database backup/restore, admin health dashboard, audit log retention, and expanded test coverage.**
+**Patch release: 2FA login fix, CSP compliance, health dashboard improvements, and documentation fixes.**
 
-- **Database backup & restore (#423, #424).** `backup.php` CLI dumps SQLite, MySQL, or PostgreSQL to a timestamped file with SHA-256 verification; `restore.php` CLI restores with dry-run mode and safety checks. `backups.php` admin page lists backup history with status badges, download, verify, and delete. Scheduled via `cron.php`. See [docs/backup.md](docs/backup.md).
-- **Operational health dashboard (#425).** `health.php` admin page shows real-time metrics across six sections (Database, Backups, Scanning, Webhooks, Auth/Security, System) with color-coded status indicators. Results cached 60 seconds; bypass with `?nocache=1`.
-- **Audit log retention (#426).** Admin-configurable retention window (default 365 days) with batch pruning via `cron.php`. `audit.php` shows a retention info panel and "Prune now" button.
-- **CSV import Playwright spec + upgrade-replay PHPUnit suite (#460, #465).** End-to-end Playwright tests for the CSV import wizard and the `status.php` health endpoint. PHPUnit `UpgradeReplayTest` runs the full migration chain from old SQLite fixtures and asserts no data loss — specifically guarding the v2.2.1 address-loss regression.
+- **TOTP login fix (#625).** Fixed a bug where the TOTP 6-digit code was always rejected at login. Two `name="code"` inputs in the form caused PHP to read the empty backup-code field instead of the authenticator code.
+- **TOTP enrollment fix (#626).** Fixed enrollment redirecting to "already enabled" after step 2 — the step=3 backup-codes page was being swallowed by an early guard.
+- **CSP compliance for backups page (#617).** Moved all modal JavaScript from an inline `<script>` block to `app.js` using `data-*` event delegation so the page works under `script-src 'self'`.
+- **Health dashboard improvements (#619, #620, #621).** DB version now detected per driver (SQLite/MySQL/PostgreSQL). Timestamps display in the user's configured timezone. Header-to-grid spacing and card height consistency fixed.
+- **Backup prerequisites warning (#618).** Health Dashboard now warns with a critical badge when `mysqldump` or `pg_dump` is missing from `$PATH`. Prerequisites documented in `docs/configuration.md`.
+- **`app_secret` documentation (#622).** Improved comment explains that changing the value locks out all TOTP users. Added the missing `app_secret` entry to `config.php.example`.
+- **Broken TOC links fixed (#623).** kramdown (GitHub Pages) collapses consecutive hyphens; TOC anchors in `docs/install.md` corrected from double-hyphen to single-hyphen format.
 
 See [CHANGELOG.md](CHANGELOG.md) for full release history and [docs/upgrading.md](docs/upgrading.md) for the upgrade guide.
 

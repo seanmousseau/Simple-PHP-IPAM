@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.7.1] - 2026-04-22
+
+### Fixed
+
+- **#625 — TOTP login always fails.** Two `name="code"` inputs in `totp_verify.php` caused PHP to take the empty disabled backup-code field as `$_POST['code']`, discarding the authenticator code entirely. Fixed by adding `disabled` to the backup input by default; `app.js` now toggles `disabled` alongside `required` when switching modes.
+- **#626 — TOTP enrollment redirects to "already enabled" after step 2.** The already-enrolled guard in `totp_enroll.php` ran before the step=3 handler. After step 2 sets `totp_enabled=1` and redirects to `?step=3`, the guard fired and swallowed the backup-codes page. Fixed by moving the step=3 check above the enrolled guard.
+- **#617 — backups.php inline `<script>` blocked by CSP.** `page_header()` sets `script-src 'self'` (no `unsafe-inline`). The modal trigger functions and all `onclick=` attributes are now moved to `app.js` using `data-action` / `data-*` event delegation; `data-php-root` on a container element passes the PHP-generated path prefix. Focus management, Escape-key close, and backdrop-click close are preserved.
+- **#621 — health.php shows blank DB version on MySQL/PostgreSQL.** The hardcoded `SELECT sqlite_version()` is replaced with a per-driver branch: `sqlite_version()` for SQLite, `VERSION()` for MySQL, `version()` for PostgreSQL.
+- **#620 — health.php timestamps display raw UTC.** Last-backup and last-scan timestamps now pass through `ipam_format_datetime()` so they render in the user's configured timezone.
+- **#619 — health.php layout: missing header gap and inconsistent card heights.** Added `margin-top:1.25rem` before `.health-grid` and `align-self:stretch` on `.health-grid > .card` so all cards fill their grid cell.
+- **#622 — `app_secret` comment insufficient.** Improved comment in `config.php.example` explains that changing the value locks out all enrolled TOTP users until 2FA is reset, and that the key must never be empty on a production instance with 2FA enabled. Added the missing `app_secret` entry to the example template.
+- **#623 — Broken TOC anchor links in install.md.** kramdown (GitHub Pages) collapses consecutive hyphens into one, so em-dash headings like "Step 1 — Download" generate single-hyphen IDs. All five TOC links and two inline cross-references updated from `--` to `-`.
+- **#618 — Backup prerequisites undocumented.** Added a Prerequisites table to `docs/configuration.md` backup section listing that MySQL requires `mysqldump` and PostgreSQL requires `pg_dump` in `$PATH`. The Health Dashboard now detects a missing tool and shows a critical warning badge.
+
 ## [3.7.0] - 2026-04-22
 
 ### Added
@@ -924,6 +938,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.7.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.7.0...v3.7.1
 [3.7.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.6.0...v3.7.0
 [3.6.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.5.0...v3.6.0
 [3.5.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.4.1...v3.5.0
