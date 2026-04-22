@@ -530,6 +530,9 @@ if (!function_exists('to_str')) {
  */
 function ipam_render(string $view, array $props = []): void
 {
+    if ($view !== basename($view) || $view === '') {
+        throw new \InvalidArgumentException("Invalid view name: $view");
+    }
     $path = __DIR__ . '/views/' . $view . '.php';
     if (!is_file($path)) {
         throw new \RuntimeException("View not found: $view");
@@ -553,7 +556,7 @@ function ipam_render_string(string $view, array $props = []): string
 {
     ob_start();
     ipam_render($view, $props);
-    return (string)ob_get_clean();
+    return ob_get_clean() ?: '';
 }
 
 /* ---------------- Timestamp display ---------------- */
