@@ -894,7 +894,12 @@
           .replace(/&/g, "&amp;")
           .replace(/</g, "&lt;")
           .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;");
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#x27;");
+      }
+
+      function safeUrl(url) {
+        return /^(javascript|data|vbscript):/i.test(String(url)) ? "#" : url;
       }
 
       function openPalette() {
@@ -961,7 +966,7 @@
           item.addEventListener("mousedown", function(e) {
             e.preventDefault();
             closePalette();
-            window.location.href = row.url;
+            window.location.href = safeUrl(row.url);
           });
           results.appendChild(item);
           currentItems.push({ el: item, cmd: { href: row.url } });
@@ -973,7 +978,7 @@
         if (cmd.action) {
           cmd.action();
         } else if (cmd.href) {
-          window.location.href = cmd.href;
+          window.location.href = safeUrl(cmd.href);
         }
       }
 
