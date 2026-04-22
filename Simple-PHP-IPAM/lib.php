@@ -5927,7 +5927,7 @@ function page_header(string $title, array $opts = []): void
     echo "<a href='dashboard.php' class='sidebar-logo-link'>" . icon('server-stack', 'icon-xl') . " " . e($appName) . "</a>";
     echo "<button id='sidebar-close' class='sidebar-close' aria-label='Close menu'>" . icon('x') . "</button>";
     echo "</div>";
-    echo "<nav class='sidebar-nav' role='navigation' aria-label='Primary'>";
+    echo "<nav class='sidebar-nav' aria-label='Primary'>";
 
     if ($u) {
         // Primary group

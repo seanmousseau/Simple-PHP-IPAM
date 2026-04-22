@@ -117,23 +117,6 @@
       });
     });
 
-    // --- Dropdown toggle ---
-    document.addEventListener("click", function(e) {
-      if (e.target.closest("#theme-toggle")) return;
-
-      var toggle = e.target.closest(".nav-dropdown-toggle");
-      if (toggle) {
-        var dropdown = toggle.closest(".nav-dropdown");
-        var isOpen = dropdown.classList.contains("open");
-        document.querySelectorAll(".nav-dropdown.open")
-                .forEach(function(d) { d.classList.remove("open"); });
-        if (!isOpen) dropdown.classList.add("open");
-        return;
-      }
-      document.querySelectorAll(".nav-dropdown.open")
-              .forEach(function(d) { d.classList.remove("open"); });
-    });
-
     // --- Live Ping buttons (addresses.php) ---
     document.addEventListener("click", function(e) {
       var btn = e.target.closest(".ping-btn");
@@ -464,17 +447,41 @@
       overlay.className = "sidebar-overlay";
       document.body.appendChild(overlay);
 
+      function isMobile() {
+        return window.innerWidth <= 1023;
+      }
+
       function openSidebar() {
         sidebar.classList.add("is-open");
         overlay.classList.add("is-visible");
+        sidebar.setAttribute("aria-hidden", "false");
         if (openBtn) openBtn.setAttribute("aria-expanded", "true");
+        if (closeBtn) closeBtn.focus();
       }
 
       function closeSidebar() {
         sidebar.classList.remove("is-open");
         overlay.classList.remove("is-visible");
-        if (openBtn) openBtn.setAttribute("aria-expanded", "false");
+        if (isMobile()) sidebar.setAttribute("aria-hidden", "true");
+        if (openBtn) {
+          openBtn.setAttribute("aria-expanded", "false");
+          openBtn.focus();
+        }
       }
+
+      // Set initial aria-hidden state
+      if (isMobile()) sidebar.setAttribute("aria-hidden", "true");
+
+      // Update on resize
+      window.addEventListener("resize", function () {
+        if (isMobile()) {
+          if (!sidebar.classList.contains("is-open")) {
+            sidebar.setAttribute("aria-hidden", "true");
+          }
+        } else {
+          sidebar.removeAttribute("aria-hidden");
+        }
+      });
 
       if (openBtn) openBtn.addEventListener("click", openSidebar);
       if (closeBtn) closeBtn.addEventListener("click", closeSidebar);
