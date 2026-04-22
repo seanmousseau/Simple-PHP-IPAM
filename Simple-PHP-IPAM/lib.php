@@ -5920,7 +5920,7 @@ function page_header(string $title, array $opts = []): void
     echo "<a href='dashboard.php' class='nav-brand'>"
        . "Simple<span class='nav-brand-php'>PHP</span>IPAM"
        . "</a>";
-    echo "<button class='nav-toggle' id='nav-toggle' aria-label='Open menu' aria-expanded='false' aria-controls='nav-drawer'>&#9776;</button>";
+    echo "<button class='nav-toggle' id='nav-toggle' aria-label='Open menu' aria-expanded='false' aria-controls='nav-drawer'>" . icon('bars') . "</button>";
     echo "<nav class='nav-links' role='navigation' aria-label='Primary'>";
     if ($u) {
         echo "<a class='nav-pill' href='dashboard.php'>" . icon('home') . " Dashboard</a>";
@@ -5980,7 +5980,7 @@ function page_header(string $title, array $opts = []): void
 
     // Mobile nav drawer (hidden on desktop, slides in on mobile)
     echo "<div id='nav-drawer' aria-hidden='true'>";
-    echo "<button class='drawer-close' aria-label='Close menu'>&#10005;</button>";
+    echo "<button class='drawer-close' aria-label='Close menu'>" . icon('x') . "</button>";
     if ($u) {
         echo "<span class='nav-drawer-section'>Navigation</span>";
         echo "<a href='dashboard.php'>" . icon('home') . " Dashboard</a>";
