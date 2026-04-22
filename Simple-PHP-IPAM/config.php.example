@@ -34,4 +34,12 @@ return [
 
     // --- HTTPS ---
     'force_https' => true,
+
+    // --- Two-factor authentication (TOTP) ---
+    // Required for TOTP 2FA: a long random string used to encrypt each user's TOTP
+    // secret at rest. If this value changes, all enrolled users will be unable to log
+    // in with their authenticator app until 2FA is reset by an admin. Never leave
+    // this empty on a production instance with 2FA enabled.
+    // Generate with: php -r "echo bin2hex(random_bytes(32));"
+    'app_secret' => '',
 ];

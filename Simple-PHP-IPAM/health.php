@@ -92,6 +92,12 @@ if ($data === null) {
     } catch (Throwable) {}
     $backupDir   = backup_dir($config);
     $diskFree    = @disk_free_space($backupDir);
+    $backupToolMissing = false;
+    if ($driver === 'mysql') {
+        $backupToolMissing = (trim((string)shell_exec('which mysqldump 2>/dev/null')) === '');
+    } elseif ($driver === 'pgsql') {
+        $backupToolMissing = (trim((string)shell_exec('which pg_dump 2>/dev/null')) === '');
+    }
     $data['backup'] = [
         'enabled'      => (bool)ipam_setting('backup.enabled'),
         'last_at'      => $lastBackup,
@@ -100,6 +106,7 @@ if ($data === null) {
         'storage_used' => $storageUsed,
         'disk_free'    => $diskFree !== false ? (int)$diskFree : -1,
         'retention'    => max(1, to_int(ipam_setting('backup.retention'))),
+        'tool_missing' => $backupToolMissing,
     ];
 
     // --- Scanning ---
@@ -252,9 +259,10 @@ function health_row(string $label, string $value, string $level = ''): void
  * Derived status levels
  * ---------------------------------------------------------------------- */
 $dbStatus     = 'ok';
-$backupStatus = (bool)($data['backup']['enabled'] ?? false)
-    ? (($data['backup']['last_status'] ?? '') === 'success' ? 'ok' : 'warn')
-    : 'warn';
+$backupStatus = (bool)($data['backup']['tool_missing'] ?? false) ? 'crit'
+    : ((bool)($data['backup']['enabled'] ?? false)
+        ? (($data['backup']['last_status'] ?? '') === 'success' ? 'ok' : 'warn')
+        : 'warn');
 $scanStatus   = to_int($data['scan']['overdue'] ?? 0) > 0 ? 'warn' : 'ok';
 $webhookStatus= to_int($data['webhook']['pending_retry'] ?? 0) > 0 ? 'warn' : 'ok';
 $authStatus   = to_int($data['auth']['failed_1h'] ?? 0) > 10 ? 'warn' : 'ok';
@@ -309,6 +317,9 @@ page_header('Health Dashboard');
     <?php
     $bEnabled = (bool)($data['backup']['enabled'] ?? false);
     health_row('Status', $bEnabled ? '<span style="color:var(--success)">Enabled</span>' : '<span class="muted">Disabled</span>');
+    if ((bool)($data['backup']['tool_missing'] ?? false)) {
+        health_row('Dump tool', '<span class="danger">Not found in $PATH — backups will fail</span>', 'crit');
+    }
     $lastAt = to_str($data['backup']['last_at'] ?? '');
     health_row('Last backup', $lastAt !== '' ? e(ipam_format_datetime($lastAt)) : '<span class="muted">Never</span>',
         $lastAt === '' ? 'warn' : (to_str($data['backup']['last_status'] ?? '') === 'success' ? 'ok' : 'crit'));
