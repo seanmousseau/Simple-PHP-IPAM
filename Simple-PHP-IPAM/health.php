@@ -49,7 +49,10 @@ if ($data === null) {
             if ($vRow) $dbVersion = 'SQLite ' . to_str($vRow['v'] ?? '');
         } elseif ($driver === 'mysql') {
             $vRow = $db->query("SELECT VERSION() AS v")?->fetch();
-            if ($vRow) $dbVersion = 'MySQL ' . to_str($vRow['v'] ?? '');
+            if ($vRow) {
+                $vStr = to_str($vRow['v'] ?? '');
+                $dbVersion = (stripos($vStr, 'MariaDB') !== false ? 'MariaDB ' : 'MySQL ') . $vStr;
+            }
         } elseif ($driver === 'pgsql') {
             $vRow = $db->query("SELECT version() AS v")?->fetch();
             if ($vRow) {

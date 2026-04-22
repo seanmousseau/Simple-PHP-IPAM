@@ -136,7 +136,7 @@ page_header('Backups');
 <?php endif; ?>
 
 <!-- Summary card -->
-<div id="backups-page" data-php-root="<?= e(rtrim(dirname($_SERVER['SCRIPT_NAME'] ?? ''), '/')) ?>"
+<div id="backups-page" data-restore-script="<?= e(__DIR__ . '/restore.php') ?>"
      class="card" style="margin-bottom:1.25rem;display:flex;flex-wrap:wrap;gap:1.5rem;align-items:center">
   <div>
     <div class="muted" style="font-size:.75rem;text-transform:uppercase;letter-spacing:.05em">Status</div>

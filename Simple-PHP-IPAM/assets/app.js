@@ -1729,9 +1729,9 @@
     var action = btn.getAttribute("data-action");
 
     if (action === "restore-info") {
-      var phpRoot = page.getAttribute("data-php-root") || "";
-      var phpPath = phpRoot + "/restore.php";
-      var fileArg = btn.getAttribute("data-path") || btn.getAttribute("data-filename") || "<path/to/backup>";
+      var phpPath = page.getAttribute("data-restore-script") || "/path/to/Simple-PHP-IPAM/restore.php";
+      var rawArg  = btn.getAttribute("data-path") || btn.getAttribute("data-filename") || "<path/to/backup>";
+      var fileArg = "'" + rawArg.replace(/'/g, "'\\''") + "'";
       var dry  = document.getElementById("restore-cmd-dry");
       var apply = document.getElementById("restore-cmd-apply");
       if (dry)   dry.textContent   = "php " + phpPath + " --from=" + fileArg + " --dry-run";

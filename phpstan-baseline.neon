@@ -19,12 +19,6 @@ parameters:
 			path: Simple-PHP-IPAM/backups.php
 
 		-
-			message: '#^Parameter \#1 \$path of function dirname expects string, mixed given\.$#'
-			identifier: argument.type
-			count: 1
-			path: Simple-PHP-IPAM/backups.php
-
-		-
 			message: '#^Variable \$db might not be defined\.$#'
 			identifier: variable.undefined
 			count: 3

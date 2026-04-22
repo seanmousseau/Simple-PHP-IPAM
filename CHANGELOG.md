@@ -10,7 +10,7 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
 ### Fixed
 
-- **#625 — TOTP login always fails.** Two `name="code"` inputs in `totp_verify.php` caused PHP to take the empty disabled backup-code field as `$_POST['code']`, discarding the authenticator code entirely. Fixed by adding `disabled` to the backup input by default; `app.js` now toggles `disabled` alongside `required` when switching modes.
+- **#625 — TOTP login always fails.** Two `name="code"` inputs in `totp_verify.php`: the backup-code field was not `disabled` by default, so PHP read its empty value as `$_POST['code']` and discarded the authenticator code entirely. Fixed by adding `disabled` to the backup input by default; `app.js` now toggles `disabled` alongside `required` when switching modes.
 - **#626 — TOTP enrollment redirects to "already enabled" after step 2.** The already-enrolled guard in `totp_enroll.php` ran before the step=3 handler. After step 2 sets `totp_enabled=1` and redirects to `?step=3`, the guard fired and swallowed the backup-codes page. Fixed by moving the step=3 check above the enrolled guard.
 - **#617 — backups.php inline `<script>` blocked by CSP.** `page_header()` sets `script-src 'self'` (no `unsafe-inline`). The modal trigger functions and all `onclick=` attributes are now moved to `app.js` using `data-action` / `data-*` event delegation; `data-php-root` on a container element passes the PHP-generated path prefix. Focus management, Escape-key close, and backdrop-click close are preserved.
 - **#621 — health.php shows blank DB version on MySQL/PostgreSQL.** The hardcoded `SELECT sqlite_version()` is replaced with a per-driver branch: `sqlite_version()` for SQLite, `VERSION()` for MySQL, `version()` for PostgreSQL.
