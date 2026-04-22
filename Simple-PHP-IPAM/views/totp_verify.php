@@ -28,6 +28,7 @@ declare(strict_types=1);
       <label>Backup code<br>
         <input type="text" name="code" id="backup-code-input"
                maxlength="19" placeholder="XXXXXXXX-XXXXXXXX" autocomplete="off"
+               disabled
                style="font-family:var(--font-mono);max-width:200px;">
       </label>
     </div>

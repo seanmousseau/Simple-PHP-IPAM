@@ -1669,8 +1669,8 @@
       hidden.value = isBackup ? "0" : "1";
       totpRow.classList.toggle("hidden", !isBackup);
       backupRow.classList.toggle("hidden", isBackup);
-      if (totpInput) totpInput.required = isBackup;
-      if (backupInput) backupInput.required = !isBackup;
+      if (totpInput) { totpInput.required = isBackup; totpInput.disabled = !isBackup; }
+      if (backupInput) { backupInput.required = !isBackup; backupInput.disabled = isBackup; }
       toggleBackup.textContent = isBackup ? "Use a backup code instead" : "Use authenticator app instead";
       if (!isBackup && backupInput) backupInput.focus();
       if (isBackup && totpInput) totpInput.focus();
