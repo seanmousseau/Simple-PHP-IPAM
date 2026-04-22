@@ -884,7 +884,7 @@
         { group: "Pages", label: "Audit Log",    href: "audit.php" },
         { group: "Actions", label: "New Subnet", action: function() { IpamDrawer.open("Add Subnet", "tpl-add-subnet"); } },
         { group: "Actions", label: "Toggle Theme", action: function() {
-            var btn = document.querySelector("[data-theme-toggle]");
+            var btn = document.getElementById("theme-toggle");
             if (btn) btn.click();
         }},
       ];
