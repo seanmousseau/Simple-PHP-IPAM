@@ -7876,18 +7876,23 @@ function ipam_clear_persistent_lockout(PDO $db, int $uid): void {
 // Dashboard KPI helpers (v3.8.0, #514)
 // ============================================================
 
+/**
+ * @return array{subnets:int,addresses:int,used:int,pct_used:float,alerts:int}
+ */
 function ipam_dashboard_kpis(PDO $db): array {
-    /** @var array<string, mixed>|false $totals */
-    $totals = $db->query(
+    $stmtTotals = $db->query(
         "SELECT COUNT(*) AS subnets,
                 (SELECT COUNT(*) FROM addresses) AS addresses,
                 (SELECT COUNT(*) FROM addresses WHERE status='used') AS used
          FROM subnets"
-    )->fetch();
-    /** @var array<string, mixed>|false $alerts */
-    $alerts = $db->query(
+    );
+    /** @var array<string, mixed>|false $totals */
+    $totals = $stmtTotals ? $stmtTotals->fetch() : false;
+    $stmtAlerts = $db->query(
         "SELECT COUNT(*) AS cnt FROM alert_state WHERE level='crit'"
-    )->fetch();
+    );
+    /** @var array<string, mixed>|false $alerts */
+    $alerts = $stmtAlerts ? $stmtAlerts->fetch() : false;
     $subnets   = is_array($totals) ? to_int($totals['subnets'])   : 0;
     $addresses = is_array($totals) ? to_int($totals['addresses']) : 0;
     $used      = is_array($totals) ? to_int($totals['used'])      : 0;
@@ -7900,6 +7905,9 @@ function ipam_dashboard_kpis(PDO $db): array {
     ];
 }
 
+/**
+ * @return list<array<string,mixed>>
+ */
 function ipam_dashboard_growth(PDO $db, int $days = 30): array {
     $cutoff = gmdate('Y-m-d H:i:s', time() - $days * 86400);
     $st = $db->prepare(

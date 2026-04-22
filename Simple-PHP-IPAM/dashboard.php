@@ -200,8 +200,8 @@ ipam_render('dashboard_kpi_card', ['label' => 'Crit Alerts', 'value' => $kpis['a
   <?php else: ?>
     <div id="growth-chart"
          style="min-height:180px"
-         data-uplot-xs="<?= e(json_encode($growthTs)) ?>"
-         data-uplot-ys="<?= e(json_encode($growthNs)) ?>"></div>
+         data-uplot-xs="<?= e((string)(json_encode($growthTs) ?: '[]')) ?>"
+         data-uplot-ys="<?= e((string)(json_encode($growthNs) ?: '[]')) ?>"></div>
   <?php endif; ?>
 </div>
 
