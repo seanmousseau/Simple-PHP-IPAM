@@ -43,8 +43,20 @@ if ($data === null) {
     }
     $dbVersion = '';
     try {
-        $vRow = $db->query("SELECT sqlite_version() AS v")?->fetch();
-        if ($vRow) $dbVersion = 'SQLite ' . to_str($vRow['v'] ?? '');
+        $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+        if ($driver === 'sqlite') {
+            $vRow = $db->query("SELECT sqlite_version() AS v")?->fetch();
+            if ($vRow) $dbVersion = 'SQLite ' . to_str($vRow['v'] ?? '');
+        } elseif ($driver === 'mysql') {
+            $vRow = $db->query("SELECT VERSION() AS v")?->fetch();
+            if ($vRow) $dbVersion = 'MySQL ' . to_str($vRow['v'] ?? '');
+        } elseif ($driver === 'pgsql') {
+            $vRow = $db->query("SELECT version() AS v")?->fetch();
+            if ($vRow) {
+                $parts = explode(' ', to_str($vRow['v'] ?? ''));
+                $dbVersion = 'PostgreSQL ' . ($parts[1] ?? '');
+            }
+        }
     } catch (Throwable) {}
 
     $counts = [];
@@ -298,7 +310,7 @@ page_header('Health Dashboard');
     $bEnabled = (bool)($data['backup']['enabled'] ?? false);
     health_row('Status', $bEnabled ? '<span style="color:var(--success)">Enabled</span>' : '<span class="muted">Disabled</span>');
     $lastAt = to_str($data['backup']['last_at'] ?? '');
-    health_row('Last backup', $lastAt !== '' ? e($lastAt) : '<span class="muted">Never</span>',
+    health_row('Last backup', $lastAt !== '' ? e(ipam_format_datetime($lastAt)) : '<span class="muted">Never</span>',
         $lastAt === '' ? 'warn' : (to_str($data['backup']['last_status'] ?? '') === 'success' ? 'ok' : 'crit'));
     health_row('Last status', e(to_str($data['backup']['last_status'] ?? '—')));
     health_row('Successful backups', e((string)to_int($data['backup']['count'] ?? 0)));
@@ -322,7 +334,7 @@ page_header('Health Dashboard');
     $overdue = to_int($data['scan']['overdue'] ?? 0);
     health_row('Overdue schedules', e((string)$overdue), $overdue > 0 ? 'warn' : 'ok');
     $ls = to_str($data['scan']['last_scan'] ?? '');
-    health_row('Last successful scan', $ls !== '' ? e($ls) : '<span class="muted">Never</span>');
+    health_row('Last successful scan', $ls !== '' ? e(ipam_format_datetime($ls)) : '<span class="muted">Never</span>');
     $stale = to_int($data['scan']['stale'] ?? 0);
     health_row('Stale addresses', e(number_format($stale)), $stale > 0 ? 'warn' : 'ok');
     ?>
