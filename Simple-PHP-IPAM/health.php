@@ -101,13 +101,21 @@ if ($data === null) {
         $schedules = $r ? to_int($r['c']) : 0;
         $r2 = $db->query("SELECT COUNT(*) AS c FROM scan_schedules WHERE is_active=1")?->fetch();
         $activeScans = $r2 ? to_int($r2['c']) : 0;
-        // Overdue = active, last_run_at set, and now - last_run > 2× interval
-        $r3 = $db->query(
-            "SELECT COUNT(*) AS c FROM scan_schedules
-             WHERE is_active=1 AND last_run_at IS NOT NULL
-               AND (strftime('%s','now') - strftime('%s', last_run_at)) > interval_minutes * 60 * 2"
-        )?->fetch();
-        $overdueScans = $r3 ? to_int($r3['c']) : 0;
+        // Overdue = active, last_run_at set, and now - last_run > 2× interval (PHP-side for portability)
+        $st3 = $db->query(
+            "SELECT interval_minutes, last_run_at FROM scan_schedules
+             WHERE is_active=1 AND last_run_at IS NOT NULL"
+        );
+        if ($st3) {
+            $now = time();
+            foreach ($st3->fetchAll() as $srow) {
+                $threshold = to_int($srow['interval_minutes']) * 120;
+                $lastRun   = strtotime(to_str($srow['last_run_at']));
+                if ($lastRun !== false && ($now - $lastRun) > $threshold) {
+                    $overdueScans++;
+                }
+            }
+        }
         $r4 = $db->query("SELECT MAX(scanned_at) AS t FROM scan_results")?->fetch();
         if ($r4) $lastScan = to_str($r4['t'] ?? '');
         $r5 = $db->query("SELECT COUNT(*) AS c FROM addresses WHERE is_stale=1")?->fetch();
@@ -165,8 +173,7 @@ if ($data === null) {
     $failedLogin1h  = 0;
     $failedLogin24h = 0;
     try {
-        $r = $db->query("SELECT COUNT(*) AS c FROM users WHERE is_active=0 AND role='admin'")?->fetch();
-        // Actually locked = failed attempt threshold. Count recent IPs with many failures.
+        // Locked = recent IPs with many failures (failed attempt threshold).
         $st2 = $db->prepare("SELECT COUNT(DISTINCT ip) AS c FROM login_attempts WHERE attempted_at >= :t15m");
         $st2->execute([':t15m' => gmdate('Y-m-d H:i:s', time() - 900)]);
         $r2 = $st2->fetch();
