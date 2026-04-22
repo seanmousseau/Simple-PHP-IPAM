@@ -277,6 +277,11 @@ if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
 
 require __DIR__ . '/lib.php';
 
+// Enforce absolute session lifetime (#420); no-op in CLI context where there is no session
+if (PHP_SAPI !== 'cli' && PHP_SAPI !== 'phpdbg') {
+    ipam_session_enforce_absolute_lifetime($config);
+}
+
 $db = ipam_db($config);
 ipam_db_init($db);
 

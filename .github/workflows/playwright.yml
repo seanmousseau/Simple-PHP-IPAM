@@ -51,9 +51,36 @@ jobs:
         working-directory: testing/playwright
         run: npm ci
 
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-browsers-${{ hashFiles('testing/playwright/package-lock.json') }}-${{ runner.os }}
+
       - name: Install Playwright browsers
         working-directory: testing/playwright
-        run: npx playwright install --with-deps chromium
+        env:
+          PW_CACHE_HIT: ${{ steps.pw-cache.outputs.cache-hit }}
+        run: |
+          if [[ "$PW_CACHE_HIT" == "true" ]]; then
+            npx playwright install-deps chromium
+          else
+            npx playwright install --with-deps chromium
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v4.0.0
+
+      - name: Build IPAM Docker image (GHA layer cache)
+        run: |
+          docker buildx build \
+            --cache-from type=gha,scope=ipam-apache-docker \
+            --cache-to  type=gha,scope=ipam-apache-docker,mode=max \
+            --load \
+            -t ipam-pw-apache:local \
+            -f testing/playwright/Dockerfile.apache \
+            testing/playwright
 
       - name: Bootstrap containerized IPAM
         run: bash testing/playwright/bootstrap-app.sh "$DRIVER"
@@ -106,9 +133,38 @@ jobs:
         working-directory: testing/playwright
         run: npm ci
 
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-browsers-${{ hashFiles('testing/playwright/package-lock.json') }}-${{ runner.os }}
+
       - name: Install Playwright browsers
         working-directory: testing/playwright
-        run: npx playwright install chromium
+        env:
+          PW_CACHE_HIT: ${{ steps.pw-cache.outputs.cache-hit }}
+        run: |
+          if [[ "$PW_CACHE_HIT" == "true" ]]; then
+            npx playwright install-deps chromium
+          else
+            npx playwright install --with-deps chromium
+          fi
+
+      - name: Set up Docker Buildx
+        if: matrix.webserver == 'apache'
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v4.0.0
+
+      - name: Build IPAM Docker image (GHA layer cache)
+        if: matrix.webserver == 'apache'
+        run: |
+          docker buildx build \
+            --cache-from type=gha,scope=ipam-apache-docker \
+            --cache-to  type=gha,scope=ipam-apache-docker,mode=max \
+            --load \
+            -t ipam-pw-apache:local \
+            -f testing/playwright/Dockerfile.apache \
+            testing/playwright
 
       # Apache: boots the full Dockerized Apache+PHP harness on HTTPS :8443
       # with a seeded SQLite database. Postgres/MySQL matrix slots do not
@@ -198,6 +254,18 @@ jobs:
           extensions: pdo_sqlite, mbstring, openssl
           coverage: none
 
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Composer dependencies
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-php-8.2-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-php-8.2-composer-
+
       - name: Install runtime Composer dependencies
         run: composer install --no-dev --no-progress --quiet
 
@@ -205,9 +273,36 @@ jobs:
         working-directory: testing/playwright
         run: npm ci
 
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-browsers-${{ hashFiles('testing/playwright/package-lock.json') }}-${{ runner.os }}
+
       - name: Install Playwright browsers
         working-directory: testing/playwright
-        run: npx playwright install --with-deps chromium
+        env:
+          PW_CACHE_HIT: ${{ steps.pw-cache.outputs.cache-hit }}
+        run: |
+          if [[ "$PW_CACHE_HIT" == "true" ]]; then
+            npx playwright install-deps chromium
+          else
+            npx playwright install --with-deps chromium
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v4.0.0
+
+      - name: Build IPAM Docker image (GHA layer cache)
+        run: |
+          docker buildx build \
+            --cache-from type=gha,scope=ipam-apache-docker \
+            --cache-to  type=gha,scope=ipam-apache-docker,mode=max \
+            --load \
+            -t ipam-pw-apache:local \
+            -f testing/playwright/Dockerfile.apache \
+            testing/playwright
 
       - name: Bootstrap containerized IPAM with MailHog
         env:
@@ -254,6 +349,19 @@ jobs:
           php-version: '8.2'
           extensions: pdo_sqlite, mbstring, openssl
           coverage: none
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v4.0.0
+
+      - name: Build IPAM Docker image (GHA layer cache)
+        run: |
+          docker buildx build \
+            --cache-from type=gha,scope=ipam-apache-docker \
+            --cache-to  type=gha,scope=ipam-apache-docker,mode=max \
+            --load \
+            -t ipam-pw-apache:local \
+            -f testing/playwright/Dockerfile.apache \
+            testing/playwright
 
       - name: Bootstrap containerized IPAM
         run: bash testing/playwright/bootstrap-app.sh sqlite

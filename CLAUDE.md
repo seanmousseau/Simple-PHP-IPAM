@@ -33,7 +33,7 @@ Two cheap calls. The first loads your profile + preferences. The second returns 
 
 ## Project overview
 
-> **Current shipped version: v3.5.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v3.6.0 → v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v3.6.0 describes future work — **do not apply it to current v3.5.x code**. Current-state rules are the ones that do not cite a future version.
+> **Current shipped version: v3.6.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v3.7.0 → v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v3.7.0 describes future work — **do not apply it to current v3.6.x code**. Current-state rules are the ones that do not cite a future version.
 
 Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application built with **PHP 8.2+ and SQLite**. It has **no npm build step** — all CSS and JavaScript are vanilla. Starting in v2.9.0, the application will ship a small, carefully curated set of Composer-managed runtime dependencies bundled into the release tarball, so end users still deploy by extracting the tarball with no build step. The web root is `Simple-PHP-IPAM/` (the subdirectory, not the repo root).
 
@@ -76,6 +76,8 @@ Dev tooling at the repo root (not deployed): `composer.json`, `composer.lock`, `
 | `api_keys.php` | yes | admin | REST API key management |
 | `webhooks.php` | yes | admin | Outbound webhook management: create, edit, toggle, delete, test-fire, delivery log, retry (v3.3.0) |
 | `change_password.php` | yes | any | Account page: self-service password change, timezone preference, email change with verification (nav label: "Account") |
+| `totp_enroll.php` | yes | any | TOTP 2FA enrollment wizard (3 steps: start → QR scan → backup codes); requires `app_secret` in config.php (v3.6.0) |
+| `totp_verify.php` | partial | any | Mid-login TOTP challenge; reached only via `$_SESSION['totp_pending_uid']` set by `login.php`; redirects to login if session key absent (v3.6.0) |
 | `forgot_password.php` | — | — | Email-based password recovery: submit username/email, sends reset link |
 | `reset_password.php` | — | — | Consumes password reset token, shows new-password form |
 | `devices.php` | yes | admin | Device and interface management (CRUD, filter by type/site, interface sub-section) |
@@ -190,7 +192,7 @@ Migrations live in `migrations.php` as an associative array of version string �
 
 **When adding a new version:** add the migration closure, bump `version.php`, update `CHANGELOG.md` (keepachangelog format).
 
-> **Current shipped version: v3.5.0.** The three subsections below (`Creating new data tables in post-v4.0.0 releases`, `Modifying the schema (multi-engine, from v2.9.0 onward)`, `Runtime dependencies`) describe **forward-looking policy** for unreleased versions. Do not apply them to work targeting v3.5.x or earlier. The rules become active on the version indicated in each heading; until then, treat them as design intent to preserve when new work approaches that version.
+> **Current shipped version: v3.6.0.** The three subsections below (`Creating new data tables in post-v4.0.0 releases`, `Modifying the schema (multi-engine, from v2.9.0 onward)`, `Runtime dependencies`) describe **forward-looking policy** for unreleased versions. Do not apply them to work targeting v3.6.x or earlier. The rules become active on the version indicated in each heading; until then, treat them as design intent to preserve when new work approaches that version.
 
 ### Creating new data tables in post-v4.0.0 releases *(applies from v4.1.0+)*
 
@@ -260,6 +262,13 @@ A new dep must meet **all** of the following criteria:
 | Package | Version | Purpose | Justified in |
 |---|---|---|---|
 | phpmailer/phpmailer | ^6.9 | Direct SMTP delivery (replaces native `mail()` when smtp.enabled=true). Hand-rolling SMTP+TLS+AUTH is error-prone and a security risk; PHPMailer has >5 years of active maintenance, is used by WordPress/Joomla/Drupal, has zero transitive runtime deps, and is licensed LGPL-2.1-or-later with an explicit bundling exception (PHPMailer FAQ). | #415, v3.1.0 |
+| robthree/twofactorauth | ^2.1 | TOTP (RFC 6238) secret generation, code verification, otpauth:// URI for QR enrollment. Hand-rolling TOTP is error-prone (time-sync drift, HMAC, counter management); this library has zero transitive runtime deps, MIT license, pure PHP 8. | #418, v3.6.0 |
+
+**Vendored frontend assets (assets/vendor/):**
+
+| File | Size | Source | Purpose | Justified in |
+|---|---|---|---|---|
+| `qrcode.min.js` | ~20KB | cdnjs (qrcodejs 1.0.0, MIT) | QR code canvas rendering for TOTP enrollment — generates the `otpauth://` QR code in the browser so users can scan with any authenticator app. Vendored as a single file under `assets/vendor/`, self-hosted, vanilla JS, zero deps, no build step, MIT licensed, ~20KB. | #418, v3.6.0 |
 
 Future candidates to be evaluated on a case-by-case basis as feature work surfaces them.
 

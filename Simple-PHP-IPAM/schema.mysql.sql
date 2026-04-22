@@ -49,6 +49,11 @@ CREATE TABLE IF NOT EXISTS users (
   pending_email            VARCHAR(255) NULL,
   pending_email_token_hash VARCHAR(64)  COLLATE utf8mb4_bin NULL,
   pending_email_expires_at DATETIME     NULL,
+  totp_secret_enc            TEXT,
+  totp_enabled               TINYINT NOT NULL DEFAULT 0,
+  failed_auth_count          INT NOT NULL DEFAULT 0,
+  locked_until               DATETIME,
+  lock_reason                TEXT,
   created_at          DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   updated_at          DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   UNIQUE KEY idx_users_oidc_sub (oidc_sub)
@@ -585,6 +590,32 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- ---------------------------------------------------------------------------
+-- totp_backup_codes (v3.6.0, #418)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS totp_backup_codes (
+  id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id     BIGINT UNSIGNED NOT NULL,
+  code_hash   TEXT NOT NULL,
+  used_at     DATETIME,
+  PRIMARY KEY (id),
+  KEY idx_totp_backup_codes_user (user_id),
+  CONSTRAINT fk_totp_backup_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------------------------------------------------------------------------
+-- rate_limit_buckets (v3.6.0, #419)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS rate_limit_buckets (
+  id           INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  bucket_key   VARCHAR(255) NOT NULL,
+  window_start DATETIME NOT NULL,
+  count        INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (id),
+  UNIQUE KEY idx_rate_limit_key_window (bucket_key, window_start),
+  KEY idx_rate_limit_buckets_window_start (window_start)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------------------------------------------------------------------------
 -- settings (v2.6.0, key/value config registry)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS settings (
@@ -670,6 +701,9 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.2.0-password-reset'),
   ('3.3.0-webhooks'),
   ('3.4.0-dhcp-options'),
-  ('3.5.0-custom-fields');
+  ('3.5.0-custom-fields'),
+  ('3.6.0-totp'),
+  ('3.6.0-rate-limit'),
+  ('3.6.0-lockout');
 
 SET FOREIGN_KEY_CHECKS = 1;

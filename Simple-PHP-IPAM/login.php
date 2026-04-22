@@ -14,6 +14,7 @@ $acctLockoutSecs  = to_int(ipam_setting('security.account_lockout_seconds'));
 
 $error    = '';
 $timedOut = !empty($_GET['timeout']);
+$reason   = to_str($_GET['reason'] ?? '');
 $isRecovery = recovery_mode_enabled($config);
 
 // Login protection setup (#124) — widget HTML also sets time_check session ts on GET
@@ -25,6 +26,13 @@ $lpCsp        = $isRecovery ? ['script_src' => '', 'style_src' => '', 'frame_src
 if (!empty($_SESSION['oidc_error'])) {
     $error = to_str($_SESSION['oidc_error']);
     unset($_SESSION['oidc_error']);
+}
+
+// ?reason= messages from redirects (session expiry, persistent lockout)
+if ($error === '' && $reason === 'session_expired') {
+    $error = 'Your session has expired. Please log in again.';
+} elseif ($error === '' && $reason === 'locked') {
+    $error = 'This account is locked due to too many failed two-factor authentication attempts.';
 }
 
 // Render-prep variables (needed even when goto jumps past POST block)
@@ -87,7 +95,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = 'This account is temporarily locked due to too many failed attempts.';
             audit($db, 'auth.account_locked', 'user', null, '');
         } else {
-            $st = $db->prepare("SELECT id, username, password_hash, role, is_active FROM users WHERE username = :u");
+            $st = $db->prepare("SELECT id, username, password_hash, role, is_active, totp_enabled FROM users WHERE username = :u");
             $st->execute([':u' => $username]);
             /** @var array<string, mixed>|false $user */
             $user = $st->fetch();
@@ -128,6 +136,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 clear_login_failures($db, $ip);
                 clear_account_lockout($db, $username);
+                if (to_int($user['totp_enabled'] ?? 0) === 1) {
+                    $_SESSION['totp_pending_uid'] = to_int($user['id']);
+                    header('Location: totp_verify.php');
+                    exit;
+                }
                 login_user(to_int($user['id']), to_str($user['username']), to_str($user['role']));
                 $db->prepare("UPDATE users SET last_login_at=" . ipam_dialect()->now() . " WHERE id=:id")
                    ->execute([':id' => to_int($user['id'])]);
@@ -176,8 +189,8 @@ $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM'
   <form method="post" action="login.php" autocomplete="off">
     <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
     <div class="row">
-      <label>Username<br><input name="username" required></label>
-      <label>Password<br><input type="password" name="password" required></label>
+      <label>Username<br><input name="username" autocomplete="username" required></label>
+      <label>Password<br><input type="password" name="password" autocomplete="current-password" required></label>
     </div>
     <?php if ($lpWidgetHtml !== ''): ?>
       <div class="mt-10"><?= $lpWidgetHtml ?></div>

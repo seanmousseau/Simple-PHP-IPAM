@@ -572,7 +572,7 @@ final class SchemaParityTest extends TestCase
         if (in_array($dataType, $reals, true)) {
             return 'real';
         }
-        $texts = ['char', 'varchar', 'text', 'longtext', 'mediumtext', 'tinytext'];
+        $texts = ['char', 'varchar', 'character varying', 'text', 'longtext', 'mediumtext', 'tinytext'];
         if (in_array($dataType, $texts, true)) {
             return 'text';
         }

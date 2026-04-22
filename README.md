@@ -12,13 +12,14 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.5.0
+## What's new in v3.6.0
 
-**Custom fields, action-pill fix, and expanded search test coverage.**
+**Security hardening: TOTP 2FA, per-API-key rate limiting, session absolute lifetime, persistent account lockout.**
 
-- **Custom Fields (#313).** Define per-entity metadata fields on subnets and addresses — text, number, date, boolean, or select. Managed from Admin → Custom Fields. Fields appear on the subnet and address edit forms, are included in the REST API response, and round-trip through CSV export/import with strict type validation. See [docs/custom-fields.md](docs/custom-fields.md).
-- **action-pill text fix (#594).** Button text was invisible in both light and dark themes due to incorrect CSS token inheritance. Now uses `color: var(--fg)` for consistent readability.
-- **Search test matrix (#461).** `search.spec.ts` expanded from 6 to 28 parameterized test cases covering filter combos, special-char LIKE-escape, and CSV export validation.
+- **TOTP 2FA (#418).** RFC 6238 two-factor authentication with a 3-step enrollment wizard, mid-login challenge page, backup codes, and admin TOTP reset. Works with any authenticator app (Google Authenticator, Authy, 1Password, etc.). Secrets encrypted at rest. See [docs/security.md](docs/security.md).
+- **Per-API-key rate limiting (#419).** Sliding-window 429 + `Retry-After` on top of the existing IP-based limit. Defaults to 300 requests / 60 s per key; configurable via DB settings.
+- **Session absolute lifetime (#420).** Sessions expire after a configurable absolute duration (default 8 hours) independent of idle timeout. Session ID rotated on password change.
+- **Persistent 2FA lockout (#421).** Persistent account lockout after repeated 2FA failures, surfaced in the Users admin table with a "Locked (2FA)" badge. Admin unlock clears both lockout types in one action.
 
 See [CHANGELOG.md](CHANGELOG.md) for full release history and [docs/upgrading.md](docs/upgrading.md) for the upgrade guide.
 

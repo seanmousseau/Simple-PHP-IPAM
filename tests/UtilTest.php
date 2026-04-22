@@ -575,4 +575,94 @@ class UtilTest extends TestCase
         $this->assertNotNull($net);
         $this->assertNull(ipam_compute_gateway_bin($net['net_bin'], $net['prefix']));
     }
+
+    // -----------------------------------------------------------------------
+    // TOTP helpers (v3.6.0, #418)
+    // -----------------------------------------------------------------------
+
+    public function testTotpSecretRoundTrip(): void
+    {
+        $secret = ipam_totp_generate_secret();
+        $this->assertMatchesRegularExpression('/^[A-Z2-7]{32}$/', $secret, 'Secret must be 32 base32 chars');
+
+        $key = str_repeat('k', 32);
+        $enc = ipam_totp_encrypt_secret($secret, $key);
+        $this->assertNotEquals($secret, $enc, 'Encrypted must differ from plaintext');
+
+        $dec = ipam_totp_decrypt_secret($enc, $key);
+        $this->assertEquals($secret, $dec, 'Decrypt must recover original');
+    }
+
+    public function testTotpBackupCodeFormat(): void
+    {
+        $codes = ipam_totp_generate_backup_codes(8);
+        $this->assertCount(8, $codes);
+        foreach ($codes as $code) {
+            $this->assertMatchesRegularExpression('/^[0-9A-F]{8}-[0-9A-F]{8}$/', $code,
+                'Backup code must be XXXXXXXX-XXXXXXXX uppercase hex');
+        }
+        // All codes must be unique
+        $this->assertCount(8, array_unique($codes));
+    }
+
+    // -----------------------------------------------------------------------
+    // API per-key rate limiting — DB-backed helper (v3.6.0, #419)
+    // -----------------------------------------------------------------------
+
+    public function testRateLimitHelperAllowsAndDenies(): void
+    {
+        $db = new \PDO('sqlite::memory:');
+        $db->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
+        $db->exec("CREATE TABLE rate_limit_buckets (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            bucket_key   TEXT NOT NULL,
+            window_start TEXT NOT NULL,
+            count        INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(bucket_key, window_start)
+        )");
+
+        $key = 'test-key';
+        $windowSec = 60;
+        $max = 3;
+
+        // First 3 requests should be allowed (return 0)
+        for ($i = 0; $i < $max; $i++) {
+            $this->assertSame(0, ipam_api_key_rate_limit_check($db, $key, $windowSec, $max),
+                "Request #$i should be allowed");
+        }
+
+        // 4th request must be denied (return > 0 seconds).
+        // Retry-After can exceed $windowSec in the sliding-window Case B scenario
+        // (overflow driven by the current bucket becoming the weighted previous
+        // bucket in the next window), so the upper bound is 2 * $windowSec.
+        $retryAfter = ipam_api_key_rate_limit_check($db, $key, $windowSec, $max);
+        $this->assertGreaterThan(0, $retryAfter, '4th request should be denied');
+        $this->assertLessThanOrEqual($windowSec * 2, $retryAfter, 'Retry-After must not exceed two windows');
+    }
+
+    public function testRateLimitHelperRejectsInvalidWindow(): void
+    {
+        $db = new \PDO('sqlite::memory:');
+        $db->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
+        $db->exec("CREATE TABLE rate_limit_buckets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bucket_key TEXT NOT NULL, window_start TEXT NOT NULL,
+            count INTEGER NOT NULL DEFAULT 0, UNIQUE(bucket_key, window_start)
+        )");
+        $this->expectException(\InvalidArgumentException::class);
+        ipam_api_key_rate_limit_check($db, 'k', 0, 10);
+    }
+
+    // -----------------------------------------------------------------------
+    // XSS escaping of version strings (issue #467)
+    // -----------------------------------------------------------------------
+
+    public function testUpdateCheckEscapesVersionString(): void
+    {
+        $dangerous = '<script>alert(1)</script>v3.6.0';
+        $escaped = e($dangerous);
+        $this->assertStringNotContainsString('<script>', $escaped);
+        $this->assertStringContainsString('&lt;script&gt;', $escaped);
+        $this->assertStringContainsString('v3.6.0', $escaped);
+    }
 }

@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.6.0] - 2026-04-21
+
+### Added
+
+- **#418 — TOTP Two-Factor Authentication.** RFC 6238 TOTP enrollment wizard (`totp_enroll.php`), mid-login challenge (`totp_verify.php`), and 2FA management on the Account page (`change_password.php`). Users scan a QR code in any authenticator app, verify a 6-digit code, and receive 8 single-use backup codes. Admins can reset another user's 2FA from the Users admin page. TOTP secrets are encrypted at rest with AES-256-CBC using the new `app_secret` config key. Uses `robthree/twofactorauth ^2.1` (MIT, zero transitive deps); QR rendering via vendored `qrcode.min.js` (~20 KB, client-side only).
+- **#419 — Per-API-key rate limiting.** Sliding-window rate limit per API key on top of the existing IP-based limit. Returns HTTP 429 with `Retry-After` header when the window is exceeded. Configurable via `api.rate_limit_window_seconds` (default 60) and `api.rate_limit_requests` (default 300) DB settings. Backed by new `rate_limit_buckets` table.
+- **#420 — Session absolute lifetime.** Every session is bounded by an absolute expiry (`$_SESSION['_abs_expires']`) enforced in `init.php`. Configurable via `$config['session']['absolute_lifetime_minutes']` (default 480 = 8 hours; 0 = disabled). Session ID is rotated on password change.
+- **#421 — Persistent account lockout for 2FA failures.** After `auth.lockout_after_failures` (default 10) consecutive 2FA failures the account is locked until `auth.lockout_duration_minutes` (default 30) elapses or an admin manually unlocks it. Adds `failed_auth_count`, `locked_until`, and `lock_reason` columns to `users`. Admin unlock clears both the time-windowed login lockout and the new persistent lockout in one action. The Users admin table shows a "Locked (2FA)" badge for 2FA-triggered lockouts.
+- **#422 — `docs/security.md` security reference.** Comprehensive guide covering threat model, TOTP walkthrough, session hardening, account lockout types, API rate limiting, CSRF, output encoding, SQL injection prevention, and a full configuration reference table.
+- **#459 — Playwright reverse-proxy spec skeleton.** `testing/playwright/tests/reverse-proxy.spec.ts` auto-skips unless `IPAM_PROXY_MODE=1`.
+- **#467 — PHPUnit tests.** `testTotpSecretRoundTrip`, `testTotpBackupCodeFormat`, `testRateLimitWindowBoundary`, `testUpdateCheckEscapesVersionString` in `tests/UtilTest.php`; `testV360MigrationsApply` in `tests/MigrationTest.php`.
+
 ## [3.5.0] - 2026-04-21
 
 ### Added
@@ -901,6 +913,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.6.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.5.0...v3.6.0
 [3.5.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.4.1...v3.5.0
 [3.4.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.4.0...v3.4.1
 [3.4.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.3.0...v3.4.0

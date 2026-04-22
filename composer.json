@@ -7,7 +7,9 @@
     "minimum-stability": "stable",
     "require": {
         "php": ">=8.2",
-        "phpmailer/phpmailer": "^6.9"
+        "ext-openssl": "*",
+        "phpmailer/phpmailer": "^6.9",
+        "robthree/twofactorauth": "^2.1"
     },
     "require-dev": {
         "phpstan/phpstan": "^2.0",

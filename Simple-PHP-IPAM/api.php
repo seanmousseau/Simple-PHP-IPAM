@@ -139,6 +139,18 @@ if ($sessionApiKey !== null) {
 
     $db->prepare("UPDATE api_keys SET last_used_at = " . ipam_dialect()->now() . " WHERE id = :id")
        ->execute([':id' => to_int($apiKey['id'])]);
+
+    // Per-key rate limiting (#419): sliding window, key-based auth only
+    $apiRateLimitSec = max(1, to_int(ipam_setting('api.rate_limit_window_seconds') ?: 60));
+    $apiRateLimitMax = max(1, to_int(ipam_setting('api.rate_limit_requests') ?: 300));
+    $bucketKey = 'apikey:' . substr($keyHash, 0, 16);
+    $rateLimitRetryAfter = ipam_api_key_rate_limit_check($db, $bucketKey, $apiRateLimitSec, $apiRateLimitMax);
+    if ($rateLimitRetryAfter > 0) {
+        http_response_code(429);
+        header('Retry-After: ' . $rateLimitRetryAfter);
+        echo json_encode(['error' => 'Rate limit exceeded. Too many requests for this API key.']);
+        exit;
+    }
 }
 
 // ---- Route ----

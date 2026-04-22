@@ -9,6 +9,7 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
+  - [v3.6.0](#v360) — TOTP 2FA, per-API-key rate limiting, session hardening (no breaking changes)
   - [v3.5.0](#v350) — Custom fields (no breaking changes)
   - [v3.4.0](#v340) — DHCP config export (no breaking changes)
   - [v3.3.0](#v330) — webhooks, login history, brand polish (no breaking changes)
@@ -94,6 +95,43 @@ The backup is left in place after a successful upgrade. You can remove it manual
 ---
 
 ## Version-specific upgrade notes
+
+### v3.6.0
+
+**No breaking changes.** All new features are opt-in. Upgrading from v3.5.0 requires no manual action — run `upgrade.sh` as normal.
+
+**New pages:**
+- `totp_enroll.php` — TOTP enrollment wizard (Account → Enable 2FA)
+- `totp_verify.php` — Mid-login 2FA challenge (shown automatically after password check if 2FA is enabled)
+
+**Database migration** (applied automatically on first boot after upgrade):
+- New columns on `users`: `totp_secret_enc`, `totp_enabled`, `failed_auth_count`, `locked_until`, `lock_reason`
+- New table `totp_backup_codes` — stores hashed single-use backup codes per user
+- New table `rate_limit_buckets` — stores per-API-key sliding window counters
+
+**New `config.php` keys (all optional — have safe defaults):**
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `app_secret` | `''` | Encryption key for stored TOTP secrets. **Required before any user can enable 2FA.** Generate with: `php -r "echo bin2hex(random_bytes(32));"` |
+| `session.absolute_lifetime_minutes` | `480` | Absolute session lifetime in minutes. 0 = no limit. |
+| `auth.lockout_after_failures` | `10` | Consecutive 2FA failures before persistent account lockout. |
+| `auth.lockout_duration_minutes` | `30` | Duration of a 2FA-triggered persistent lockout in minutes. |
+
+**New database settings** (configurable at Admin → Settings, no config.php change required):
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `api.rate_limit_window_seconds` | `60` | Sliding window size for per-API-key rate limiting. |
+| `api.rate_limit_requests` | `300` | Max requests per window per API key. |
+
+**Action required to enable 2FA:** Set `app_secret` in `config.php` before users attempt enrollment. Users who try to enroll without this key set will see an error. Existing installs with `app_secret` left empty have 2FA disabled; all other functionality is unaffected.
+
+> **Warning — `app_secret` is a wrapping key.** `app_secret` encrypts every user's stored TOTP secret. If you change its value after users have enrolled, their stored secrets become undecryptable and those users will be unable to pass the 2FA challenge. They will be locked out of 2FA until an admin resets their TOTP (`users.php` → Reset 2FA) and they re-enroll. **Never rotate `app_secret` on a live instance without first resetting all enrolled users' TOTP.** If you need to rotate the key, the safe procedure is: (1) admin-reset every enrolled user's TOTP, (2) update `app_secret`, (3) have all users re-enroll.
+
+See the [Security guide](security.md#two-factor-authentication-totp) for full enrollment and admin-reset instructions.
+
+---
 
 ### v3.5.0
 

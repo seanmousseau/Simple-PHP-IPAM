@@ -101,9 +101,15 @@ set_demo_mode() {
 echo "bootstrap-app: enabling demo_mode for seeding"
 set_demo_mode "true"
 
-# 2. Build the container image (cached on re-runs; fast once warm).
-echo "bootstrap-app: building $image"
-docker build --quiet -t "$image" -f "$script_dir/Dockerfile.apache" "$script_dir" >/dev/null
+# 2. Build the container image. Skip when the tagged image already exists — CI
+#    pre-builds it with docker buildx + GHA layer cache before invoking this
+#    script, so checking here avoids a redundant uncached docker build.
+if docker image inspect "$image" >/dev/null 2>&1; then
+    echo "bootstrap-app: image $image already present, skipping build"
+else
+    echo "bootstrap-app: building $image"
+    docker build --quiet -t "$image" -f "$script_dir/Dockerfile.apache" "$script_dir" >/dev/null
+fi
 
 # 3. For mysql/pgsql, spin up a docker network + the DB service container
 #    and wait for it to accept connections before seeding.
