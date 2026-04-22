@@ -784,6 +784,18 @@ Network failures are silently ignored. Drafts are never shown.
 
 Controls automatic database backups.
 
+### Prerequisites
+
+The backup mechanism depends on the database driver in use:
+
+| Driver | Requirement |
+|--------|-------------|
+| SQLite | No external tools needed — the backup is a WAL-checkpointed file copy performed entirely in PHP/PDO. |
+| MySQL / MariaDB | **`mysqldump`** must be installed on the web server and available in `$PATH`. Most Linux distributions provide it in the `mysql-client` or `default-mysql-client` package. |
+| PostgreSQL | **`pg_dump`** must be installed on the web server and available in `$PATH`. Most distributions provide it in the `postgresql-client` package. |
+
+If the required tool is absent, `cron.php` will record a `failure` status in the backup history and no backup file will be written. The **Health Dashboard** (⚙ Admin → Health) shows a **critical** badge when the tool is missing.
+
 | Key | Default | Description |
 |-----|---------|-------------|
 | `enabled` | `false` | Set to `true` to enable automatic backups |

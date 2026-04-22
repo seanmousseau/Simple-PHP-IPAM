@@ -10,6 +10,23 @@ $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM'
 $error   = '';
 $step    = 1;
 
+$appSecret = to_str($config['app_secret'] ?? '');
+
+// Step=3 must be checked before the already-enrolled guard: step 2 sets totp_enabled=1
+// then redirects here, so the guard would fire and swallow the backup codes page.
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && to_int($_GET['step'] ?? 0) === 3) {
+    $step  = 3;
+    $codes = (array)($_SESSION['totp_new_backup_codes'] ?? []);
+    if (!$codes) {
+        // Already dismissed — redirect to Account
+        header('Location: change_password.php');
+        exit;
+    }
+    unset($_SESSION['totp_new_backup_codes']);
+    require __DIR__ . '/views/totp_enroll.php';
+    exit;
+}
+
 // Guard: if already enrolled, send back to Account
 $checkSt = $db->prepare("SELECT totp_enabled FROM users WHERE id = :id");
 $checkSt->execute([':id' => $cur['id']]);
@@ -20,8 +37,6 @@ if ($checkRow && to_int($checkRow['totp_enabled']) === 1) {
     header('Location: change_password.php');
     exit;
 }
-
-$appSecret = to_str($config['app_secret'] ?? '');
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_require();
@@ -58,20 +73,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
     }
-}
-
-// GET with step=3: show backup codes (one-time display)
-if ($_SERVER['REQUEST_METHOD'] === 'GET' && to_int($_GET['step'] ?? 0) === 3) {
-    $step  = 3;
-    $codes = (array)($_SESSION['totp_new_backup_codes'] ?? []);
-    if (!$codes) {
-        // Already dismissed — redirect to Account
-        header('Location: change_password.php');
-        exit;
-    }
-    unset($_SESSION['totp_new_backup_codes']);
-    require __DIR__ . '/views/totp_enroll.php';
-    exit;
 }
 
 // Step 1: generate secret if not already pending

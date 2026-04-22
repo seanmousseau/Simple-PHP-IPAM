@@ -19,12 +19,6 @@ parameters:
 			path: Simple-PHP-IPAM/backups.php
 
 		-
-			message: '#^Parameter \#1 \$path of function dirname expects string, mixed given\.$#'
-			identifier: argument.type
-			count: 1
-			path: Simple-PHP-IPAM/backups.php
-
-		-
 			message: '#^Variable \$db might not be defined\.$#'
 			identifier: variable.undefined
 			count: 3
@@ -241,6 +235,12 @@ parameters:
 			path: Simple-PHP-IPAM/health.php
 
 		-
+			message: '#^Cannot access offset ''tool_missing'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 2
+			path: Simple-PHP-IPAM/health.php
+
+		-
 			message: '#^Cannot access offset ''total'' on mixed\.$#'
 			identifier: offsetAccess.nonOffsetAccessible
 			count: 1
@@ -267,7 +267,7 @@ parameters:
 		-
 			message: '#^Cannot access offset ''v'' on mixed\.$#'
 			identifier: offsetAccess.nonOffsetAccessible
-			count: 1
+			count: 3
 			path: Simple-PHP-IPAM/health.php
 
 		-
@@ -279,7 +279,7 @@ parameters:
 		-
 			message: '#^Cannot call method fetch\(\) on PDOStatement\|false\.$#'
 			identifier: method.nonObject
-			count: 12
+			count: 14
 			path: Simple-PHP-IPAM/health.php
 
 		-
@@ -291,7 +291,7 @@ parameters:
 		-
 			message: '#^Using nullsafe method call on non\-nullable type PDOStatement\|false\. Use \-\> instead\.$#'
 			identifier: nullsafe.neverNull
-			count: 12
+			count: 14
 			path: Simple-PHP-IPAM/health.php
 
 		-

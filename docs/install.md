@@ -3,11 +3,11 @@
 ## Contents
 
 - [Requirements](#requirements)
-- [Step 1 — Download a release](#step-1--download-a-release)
-- [Step 2 — Set file permissions](#step-2--set-file-permissions)
-- [Step 3 — Configure the application](#step-3--configure-the-application)
-- [Step 4 — Configure your web server](#step-4--configure-your-web-server)
-- [Step 5 — Verify the install](#step-5--verify-the-install)
+- [Step 1 — Download a release](#step-1-download-a-release)
+- [Step 2 — Set file permissions](#step-2-set-file-permissions)
+- [Step 3 — Configure the application](#step-3-configure-the-application)
+- [Step 4 — Configure your web server](#step-4-configure-your-web-server)
+- [Step 5 — Verify the install](#step-5-verify-the-install)
 - [First login](#first-login)
 - [File permissions reference](#file-permissions-reference)
 
@@ -19,7 +19,7 @@
 |---|---|
 | **PHP** | 8.2 or later (8.3 recommended) |
 | **PHP extensions** | `pdo`, `pdo_sqlite`, `openssl` |
-| **Web server** | Apache, LiteSpeed, nginx, or Caddy (see [Step 4](#step-4--configure-your-web-server)) |
+| **Web server** | Apache, LiteSpeed, nginx, or Caddy (see [Step 4](#step-4-configure-your-web-server)) |
 | **SQLite** | 3.x via PDO SQLite |
 | **HTTPS** | Required — the app redirects all HTTP traffic to HTTPS |
 | **Writable `data/` dir** | The web server user needs read/write access to `data/` (and `data/tmp/` for CSV import) |
@@ -61,6 +61,7 @@ The application itself also enforces a soft cap via the `import_sql_max_mb` sett
 ---
 
 ## Step 1 — Download a release
+{: #step-1-download-a-release }
 
 Download the latest release archive from the [Releases](../../../releases) page and extract it, or clone the repository:
 
@@ -76,7 +77,7 @@ The application files live inside the `Simple-PHP-IPAM/` subdirectory of the rep
 
 > **About `vendor/` (v2.9.0+).** Starting in v2.9.0, release tarballs bundle a small set of pre-built PHP libraries under `Simple-PHP-IPAM/vendor/`. You do **not** need Composer on the target server — the libraries are pre-packaged. Do not edit anything inside `vendor/`; it will be overwritten on the next upgrade.
 >
-> The bundled `vendor/.htaccess` denies direct HTTP access to library source **on Apache and LiteSpeed only**. nginx and Caddy do not process `.htaccess` files — if you use either, add an explicit deny rule for `/vendor/` alongside the `/data/` rule shown in [Step 4](#step-4--configure-your-web-server).
+> The bundled `vendor/.htaccess` denies direct HTTP access to library source **on Apache and LiteSpeed only**. nginx and Caddy do not process `.htaccess` files — if you use either, add an explicit deny rule for `/vendor/` alongside the `/data/` rule shown in [Step 4](#step-4-configure-your-web-server).
 >
 > nginx:
 > ```nginx
@@ -95,6 +96,7 @@ The application files live inside the `Simple-PHP-IPAM/` subdirectory of the rep
 ---
 
 ## Step 2 — Set file permissions
+{: #step-2-set-file-permissions }
 
 ```bash
 # Replace www-data with your web server user (e.g. apache, nginx, _www on macOS)
@@ -116,6 +118,7 @@ chmod 0600 /var/www/ipam/data/ipam.sqlite
 ---
 
 ## Step 3 — Configure the application
+{: #step-3-configure-the-application }
 
 Copy or edit `config.php`. See the [Configuration guide](configuration.md) for all available settings.
 
@@ -280,6 +283,7 @@ On the first request, the installer loads `schema.pgsql.sql`, creates the bootst
 ---
 
 ## Step 4 — Configure your web server
+{: #step-4-configure-your-web-server }
 
 ### Apache (virtual host example)
 
@@ -422,12 +426,14 @@ Regression protection: `.github/workflows/playwright.yml` includes a containeriz
 ---
 
 ## Step 5 — Verify the install
+{: #step-5-verify-the-install }
 
 Open `https://ipam.example.com/` in a browser. You should be redirected to the login page. Log in with the bootstrap admin credentials from `config.php` and immediately change the password under **Password** in the navigation.
 
 ---
 
 ## Step 6 — Register the cron runner
+{: #step-6-register-the-cron-runner }
 
 Simple PHP IPAM ships with a unified CLI cron runner that handles all periodic tasks in a single entry: temp file cleanup, audit log pruning, address history pruning, subnet utilisation alerts, database backups, scheduled network scans, and (when demo mode is enabled) the demo database reset.
 

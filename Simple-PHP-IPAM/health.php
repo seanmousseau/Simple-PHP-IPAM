@@ -43,8 +43,23 @@ if ($data === null) {
     }
     $dbVersion = '';
     try {
-        $vRow = $db->query("SELECT sqlite_version() AS v")?->fetch();
-        if ($vRow) $dbVersion = 'SQLite ' . to_str($vRow['v'] ?? '');
+        $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+        if ($driver === 'sqlite') {
+            $vRow = $db->query("SELECT sqlite_version() AS v")?->fetch();
+            if ($vRow) $dbVersion = 'SQLite ' . to_str($vRow['v'] ?? '');
+        } elseif ($driver === 'mysql') {
+            $vRow = $db->query("SELECT VERSION() AS v")?->fetch();
+            if ($vRow) {
+                $vStr = to_str($vRow['v'] ?? '');
+                $dbVersion = (stripos($vStr, 'MariaDB') !== false ? 'MariaDB ' : 'MySQL ') . $vStr;
+            }
+        } elseif ($driver === 'pgsql') {
+            $vRow = $db->query("SELECT version() AS v")?->fetch();
+            if ($vRow) {
+                $parts = explode(' ', to_str($vRow['v'] ?? ''));
+                $dbVersion = 'PostgreSQL ' . ($parts[1] ?? '');
+            }
+        }
     } catch (Throwable) {}
 
     $counts = [];
@@ -80,6 +95,12 @@ if ($data === null) {
     } catch (Throwable) {}
     $backupDir   = backup_dir($config);
     $diskFree    = @disk_free_space($backupDir);
+    $backupToolMissing = false;
+    if ($driver === 'mysql') {
+        $backupToolMissing = (trim((string)shell_exec('which mysqldump 2>/dev/null')) === '');
+    } elseif ($driver === 'pgsql') {
+        $backupToolMissing = (trim((string)shell_exec('which pg_dump 2>/dev/null')) === '');
+    }
     $data['backup'] = [
         'enabled'      => (bool)ipam_setting('backup.enabled'),
         'last_at'      => $lastBackup,
@@ -88,6 +109,7 @@ if ($data === null) {
         'storage_used' => $storageUsed,
         'disk_free'    => $diskFree !== false ? (int)$diskFree : -1,
         'retention'    => max(1, to_int(ipam_setting('backup.retention'))),
+        'tool_missing' => $backupToolMissing,
     ];
 
     // --- Scanning ---
@@ -240,9 +262,10 @@ function health_row(string $label, string $value, string $level = ''): void
  * Derived status levels
  * ---------------------------------------------------------------------- */
 $dbStatus     = 'ok';
-$backupStatus = (bool)($data['backup']['enabled'] ?? false)
-    ? (($data['backup']['last_status'] ?? '') === 'success' ? 'ok' : 'warn')
-    : 'warn';
+$backupStatus = (bool)($data['backup']['tool_missing'] ?? false) ? 'crit'
+    : ((bool)($data['backup']['enabled'] ?? false)
+        ? (($data['backup']['last_status'] ?? '') === 'success' ? 'ok' : 'warn')
+        : 'warn');
 $scanStatus   = to_int($data['scan']['overdue'] ?? 0) > 0 ? 'warn' : 'ok';
 $webhookStatus= to_int($data['webhook']['pending_retry'] ?? 0) > 0 ? 'warn' : 'ok';
 $authStatus   = to_int($data['auth']['failed_1h'] ?? 0) > 10 ? 'warn' : 'ok';
@@ -297,8 +320,11 @@ page_header('Health Dashboard');
     <?php
     $bEnabled = (bool)($data['backup']['enabled'] ?? false);
     health_row('Status', $bEnabled ? '<span style="color:var(--success)">Enabled</span>' : '<span class="muted">Disabled</span>');
+    if ((bool)($data['backup']['tool_missing'] ?? false)) {
+        health_row('Dump tool', '<span class="danger">Not found in $PATH — backups will fail</span>', 'crit');
+    }
     $lastAt = to_str($data['backup']['last_at'] ?? '');
-    health_row('Last backup', $lastAt !== '' ? e($lastAt) : '<span class="muted">Never</span>',
+    health_row('Last backup', $lastAt !== '' ? e(ipam_format_datetime($lastAt)) : '<span class="muted">Never</span>',
         $lastAt === '' ? 'warn' : (to_str($data['backup']['last_status'] ?? '') === 'success' ? 'ok' : 'crit'));
     health_row('Last status', e(to_str($data['backup']['last_status'] ?? '—')));
     health_row('Successful backups', e((string)to_int($data['backup']['count'] ?? 0)));
@@ -322,7 +348,7 @@ page_header('Health Dashboard');
     $overdue = to_int($data['scan']['overdue'] ?? 0);
     health_row('Overdue schedules', e((string)$overdue), $overdue > 0 ? 'warn' : 'ok');
     $ls = to_str($data['scan']['last_scan'] ?? '');
-    health_row('Last successful scan', $ls !== '' ? e($ls) : '<span class="muted">Never</span>');
+    health_row('Last successful scan', $ls !== '' ? e(ipam_format_datetime($ls)) : '<span class="muted">Never</span>');
     $stale = to_int($data['scan']['stale'] ?? 0);
     health_row('Stale addresses', e(number_format($stale)), $stale > 0 ? 'warn' : 'ok');
     ?>
