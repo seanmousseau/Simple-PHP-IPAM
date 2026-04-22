@@ -843,7 +843,16 @@ If CodeRabbit or a human reviewer asks for a change on the open PR:
    ssh root@192.168.80.23 "chown -R nobody:nogroup /usr/local/lsws/vhosts/demo.simplephpipam.com/html/ && php /usr/local/lsws/vhosts/demo.simplephpipam.com/html/migrate.php"
    ```
    Verify: browse `https://demo.simplephpipam.com/` and confirm the version shown in the footer.
-7. **Deploy to 4 testing instances** (`root@192.168.80.15`):
+7. **Deploy to prod instance** (`ipam.seanmousseau.com`, OpenLiteSpeed on `root@192.168.80.23`):
+   ```bash
+   rsync -az --delete \
+     --exclude='data/' --exclude='config.php' \
+     Simple-PHP-IPAM/ root@192.168.80.23:/usr/local/lsws/vhosts/ipam.seanmousseau.com/html/
+   ssh root@192.168.80.23 "chown -R nobody:nogroup /usr/local/lsws/vhosts/ipam.seanmousseau.com/html/ && php /usr/local/lsws/vhosts/ipam.seanmousseau.com/html/migrate.php"
+   ```
+   **DB:** MySQL at `192.168.80.13:3306`, database `ipam`, user `ipam`. Credentials are in `config.php` on the server (not in `dev-secrets.env`). `data/ipam.sqlite` on disk is stale/unused — always verify migration state against MySQL `schema_migrations`, not the SQLite file.
+   Verify: browse `https://ipam.seanmousseau.com/` and confirm the version in the footer.
+8. **Deploy to 4 testing instances** (`root@192.168.80.15`):
    ```bash
    for dir in ipam ipam-maria ipam-mysql ipam-postgres; do
      rsync -az --delete --exclude='data/' --exclude='config.php' \
@@ -851,7 +860,7 @@ If CodeRabbit or a human reviewer asks for a change on the open PR:
      ssh root@192.168.80.15 "chown -R www-data:www-data /opt/container_data/dev.seanmousseau.com/html/testing/$dir/ && docker exec dev_seanmousseau_com-apache-php-1 php /var/www/html/testing/$dir/migrate.php"
    done
    ```
-8. **Update the marketing website** (`simplephpipam.com`) — required on every release, not optional. The version number appears in multiple places in `website/front-page.php`:
+9. **Update the marketing website** (`simplephpipam.com`) — required on every release, not optional. The version number appears in multiple places in `website/front-page.php`:
    - Hero badge: `vX.Y.Z — <tagline>`
    - Download button label (appears twice: hero CTA and quickstart section)
    - Quickstart `tar` command: `ipam-X.Y.Z.tar.gz`
@@ -866,11 +875,11 @@ If CodeRabbit or a human reviewer asks for a change on the open PR:
      website/ root@192.168.80.23:/usr/local/lsws/vhosts/simplephpipam.com/html/wp-content/themes/simplephpipam/
    ssh root@192.168.80.23 "chown -R nobody:nogroup /usr/local/lsws/vhosts/simplephpipam.com/html/wp-content/themes/simplephpipam/"
    ```
-9. **Close milestone issues** — close every GitHub issue in the vX.Y.Z milestone:
+10. **Close milestone issues** — close every GitHub issue in the vX.Y.Z milestone:
    ```bash
    gh issue close <N> --comment "Released in vX.Y.Z. See https://github.com/seanmousseau/Simple-PHP-IPAM/releases/tag/vX.Y.Z"
    ```
-10. **Update Memory MCP** — write a final "RELEASED" observation to the `project:simple-php-ipam:roadmap:vX.Y.Z` entity with: merge commit hash, bundle SHA256, tag, deploy confirmation, and all issues closed. Also update the bare `project:simple-php-ipam` entity if it has a "current version" observation.
+11. **Update Memory MCP** — write a final "RELEASED" observation to the `project:simple-php-ipam:roadmap:vX.Y.Z` entity with: merge commit hash, bundle SHA256, tag, deploy confirmation, and all issues closed. Also update the bare `project:simple-php-ipam` entity if it has a "current version" observation.
 
 ### Commit style
 ```

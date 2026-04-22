@@ -29,8 +29,8 @@ The keys below are seeded into the `settings` table by the v2.6.0 migration and 
 | `security.login_lockout_seconds` | int | `900` | Lockout window length. |
 | `security.account_lockout_max_attempts` | int | `10` | Failed logins per username before account lockout. |
 | `security.account_lockout_seconds` | int | `900` | Account lockout window length. |
-| `api.rate_limit_window_seconds` | int | `60` | Sliding window size (seconds) for per-API-key rate limiting. *(v3.6.0)* |
-| `api.rate_limit_requests` | int | `300` | Max requests per window per API key before HTTP 429. *(v3.6.0)* |
+| `api.rate_limit_window_seconds` | int | `60` | Sliding window size (seconds) for per-API-key rate limiting. Seeded from `config.php` `api.rate_limit_window_seconds` on first install. *(v3.6.0)* |
+| `api.rate_limit_requests` | int | `300` | Max requests per window per API key before HTTP 429. Seeded from `config.php` `api.rate_limit_requests` on first install. *(v3.6.0)* |
 | *(config.php only)* `recovery_mode` | bool | `false` | Emergency login recovery mode (see below). |
 | `alert.recipient_user_ids` | json | `[]` | (v2.8.0+) Active user IDs that receive utilization alerts. Picked from a multi-select on **Settings → Alerting**; only users with a non-empty email are eligible. Inactive users / cleared emails drop out automatically at send time. |
 | `alert.email` | string | *(empty)* | **Deprecated in v2.8.0** — replaced by `alert.recipient_user_ids`. The 2.8.0 migration auto-maps a matching active user; unmappable values produce a `settings.alert_email_unmigrated` audit row. Hidden from the UI. Removal in v3.0.0. |
@@ -66,15 +66,9 @@ The keys below are seeded into the `settings` table by the v2.6.0 migration and 
 
 ---
 
-## Legacy reference (`config.php`)
+## `config.php` reference
 
-**Every non-bootstrap key in this section is deprecated as of v2.7.0 and will be removed in v3.0.0.** Edit them from **⚙ Admin → Settings** instead. If the admin UI shows a "config.php settings to migrate" banner, click **Import to database** on each listed key to copy its current value into the `settings` table; after that you can remove the key from `config.php` at your convenience.
-
-The rest of this document describes the full `config.php` file. In v2.7.0 every non-bootstrap key here is also editable from the admin UI, and the UI value takes precedence at runtime. This section will shrink to just the bootstrap keys in v3.0.0.
-
-All non-bootstrap settings currently still read from `config.php` when no database row exists. This file is preserved automatically during upgrades — you will never need to re-apply your settings after an upgrade.
-
-New configuration keys are added automatically when you upgrade: on the first page load after an upgrade, any missing keys are appended to `config.php` with their default values. An admin notice is shown once to confirm what was added.
+The keys below are the only ones read from `config.php` at runtime in v3.x. **All other application settings live in the `settings` table** and are edited at **⚙ Admin → Settings**. Do not add v2.x-era keys (`session_idle_seconds`, `login_max_attempts`, `oidc`, `update_check`, `housekeeping`, etc.) to `config.php` — they are silently ignored in v3.x.
 
 ## Contents
 
@@ -83,6 +77,7 @@ New configuration keys are added automatically when you upgrade: on the first pa
 - [`app_secret`](#app_secret) *(v3.6.0)*
 - [`session`](#session) *(v3.6.0)*
 - [`auth`](#auth) *(v3.6.0)*
+- [`api`](#api) *(v3.6.0)*
 - [`login_protection`](#login_protection)
 - [`demo_mode`](#demo_mode)
 - [`password_policy`](#password_policy)
@@ -98,132 +93,76 @@ New configuration keys are added automatically when you upgrade: on the first pa
 
 ## Full example
 
+This is the v3.x `config.php` stub — only these keys belong in the file. Everything else (OIDC, alerting, update checker, login protection, branding, etc.) is configured at **⚙ Admin → Settings** and stored in the database.
+
 ```php
+<?php
+declare(strict_types=1);
+
 return [
-    // Path to the SQLite database file.
-    // The directory must be writable by the web server user.
-    'db_path' => __DIR__ . '/data/ipam.sqlite',
+    // ── Database ────────────────────────────────────────────────────────────
+    // SQLite (default): set db_path to the absolute path of your database file.
+    'db_driver' => 'sqlite',
+    'db_path'   => __DIR__ . '/data/ipam.sqlite',
 
-    // Session cookie name.
+    // MySQL / MariaDB: comment out db_path above and uncomment:
+    // 'db_driver' => 'mysql',
+    // 'db_dsn'    => 'mysql:host=127.0.0.1;dbname=ipam;charset=utf8mb4',
+    // 'db_user'   => 'ipam',
+    // 'db_pass'   => 'changeme',
+
+    // PostgreSQL:
+    // 'db_driver' => 'pgsql',
+    // 'db_dsn'    => 'pgsql:host=127.0.0.1;dbname=ipam',
+    // 'db_user'   => 'ipam',
+    // 'db_pass'   => 'changeme',
+
+    // ── Session ─────────────────────────────────────────────────────────────
     'session_name' => 'IPAMSESSID',
+    'force_https'  => true,
 
-    // Set to true only if the app sits behind a trusted reverse proxy
-    // that sets X-Forwarded-Proto. Leave false if accessed directly.
-    'proxy_trust' => false,
+    // ── TOTP 2FA (v3.6.0) ───────────────────────────────────────────────────
+    // Required before any user can enroll in two-factor authentication.
+    // Generate with: php -r "echo bin2hex(random_bytes(32));"
+    // WARNING: changing this after enrollment invalidates all existing TOTP secrets.
+    'app_secret' => '',
 
-    // Bootstrap admin account — created on first run if no users exist.
-    // CHANGE THIS PASSWORD before exposing the site.
+    // ── Session lifetime (v3.6.0) ────────────────────────────────────────────
+    'session' => [
+        'absolute_lifetime_minutes' => 480,  // 8 hours; 0 = disabled
+    ],
+
+    // ── 2FA lockout (v3.6.0) ─────────────────────────────────────────────────
+    'auth' => [
+        'lockout_after_failures'   => 10,   // persistent lockout after N consecutive 2FA failures
+        'lockout_duration_minutes' => 30,   // how long the lockout lasts
+    ],
+
+    // ── API rate limit seed defaults (v3.6.0) ────────────────────────────────
+    // Runtime values are read from the settings table (api.rate_limit_*);
+    // these seed the DB rows on first install.
+    'api' => [
+        'rate_limit_window_seconds' => 60,   // sliding window size
+        'rate_limit_requests'       => 300,  // max requests per window per key
+    ],
+
+    // ── Bootstrap admin ──────────────────────────────────────────────────────
+    // Created on first run when no users exist. Change the password immediately.
     'bootstrap_admin' => [
         'username' => 'admin',
         'password' => 'ChangeMeNow!12345',
     ],
 
-    // Session idle timeout (seconds). Users are logged out after this
-    // much inactivity. Default: 1800 (30 minutes).
-    'session_idle_seconds' => 1800,
+    // ── Optional keys ────────────────────────────────────────────────────────
+    // 'proxy_trust'   => false,  // true if behind a trusted reverse proxy (X-Forwarded-Proto)
+    // 'recovery_mode' => false,  // emergency break-glass; disable immediately after use
 
-    // Encryption key for TOTP 2FA secrets. Required before enabling 2FA.
-    // Generate: php -r "echo bin2hex(random_bytes(32));"
-    'app_secret' => '',
-
-    // Absolute session lifetime (minutes). 0 = no limit. Default: 8 hours.
-    'session' => [
-        'absolute_lifetime_minutes' => 480,
-    ],
-
-    // Persistent lockout after repeated 2FA failures.
-    'auth' => [
-        'lockout_after_failures'   => 10,
-        'lockout_duration_minutes' => 30,
-    ],
-
-    // Login rate limiting: lock out an IP after this many consecutive
-    // failed attempts within the lockout window.
-    'login_max_attempts'    => 5,
-    'login_lockout_seconds' => 900,
-
-    // Maximum CSV upload size for the import wizard (MB). Range: 5–50.
-    'import_csv_max_mb' => 5,
-
-    // How long (seconds) to keep uploaded CSV temp files before cleanup.
-    'tmp_cleanup_ttl_seconds' => 86400,
-
-    // Audit log retention (days). Entries older than this are pruned during housekeeping.
-    // Set to 0 to keep the audit log forever (default).
-    'audit_log_retention_days' => 0,
-
-    // Address history retention (days). 0 = keep forever.
-    'address_history_retention_days' => 0,
-
-    // Lazy housekeeping: runs on normal site access at most once per interval.
-    'housekeeping' => [
-        'enabled'          => true,
-        'interval_seconds' => 86400, // once per day
-    ],
-
-    // Subnet utilization thresholds for the colour-coded progress bars.
-    'utilization_warn'     => 80,
-    'utilization_critical' => 95,
-
-    // Update check: fetches GitHub releases and shows a banner/badge when a
-    // newer version is available. notify_prerelease includes alpha/beta/RC builds.
-    'update_check' => [
-        'enabled'           => true,
-        'ttl_seconds'       => 86400,  // cache 24 hours
-        'notify_prerelease' => false,
-    ],
-
-    // Automatic database backups (opt-in). Backups run on page load when the
-    // interval elapses. Older files beyond retention count are pruned.
-    'backup' => [
-        'enabled'   => false,
-        'frequency' => 'daily',   // 'daily' | 'weekly'
-        'retention' => 7,
-        'dir'       => '',        // empty = data/backups/
-    ],
-
-    // Login form bot protection (opt-in). See login_protection section below.
-    'login_protection' => [
-        'method'      => null,
-        'site_key'    => '',
-        'secret_key'  => '',
-        'min_seconds' => 3,
-        'version'     => 2,
-    ],
-
-    // Demo mode (opt-in). See demo_mode section below.
+    // Demo mode (opt-in):
     'demo_mode' => [
         'enabled'    => false,
         'gate'       => null,
         'site_key'   => '',
         'secret_key' => '',
-    ],
-
-    // Password complexity policy.
-    'password_policy' => [
-        'min_length'            => 12,
-        'require_uppercase'     => false,
-        'require_lowercase'     => false,
-        'require_number'        => false,
-        'require_symbol'        => false,
-        'max_password_age_days' => 0,
-    ],
-
-    // OIDC single sign-on — see docs/oidc.md for full setup guide.
-    'oidc' => [
-        'enabled'                   => false,
-        'display_name'              => 'SSO',
-        'client_id'                 => '',
-        'client_secret'             => '',
-        'discovery_url'             => '',
-        'redirect_uri'              => '',
-        'scopes'                    => 'openid email profile',
-        'auto_link'                 => false,
-        'auto_provision'            => false,
-        'default_role'              => 'readonly',
-        'disable_local_login'       => false,
-        'hide_emergency_link'       => false,
-        'disable_emergency_bypass'  => false,
     ],
 ];
 ```
@@ -355,6 +294,28 @@ Controls authentication hardening behaviour, specifically the persistent 2FA loc
 | `lockout_duration_minutes` | `30` | How long the persistent lockout lasts in minutes. Admins can unlock early from the Users admin page. |
 
 The persistent 2FA lockout is separate from the IP-based and per-account login lockouts. It tracks failures at the 2FA challenge step and persists across server restarts via `users.locked_until` and `users.lock_reason`. The Users admin page shows a "Locked (2FA)" badge for affected accounts.
+
+---
+
+### `api`
+
+*(Added in v3.6.0)*
+
+Seed defaults for per-API-key rate limiting. These values initialise the corresponding rows in the `settings` table on first install. **At runtime the values are read from the `settings` table** (editable at **⚙ Admin → Settings → API**); the `config.php` values serve only as the initial seed and as a fallback when the DB row is absent.
+
+```php
+'api' => [
+    'rate_limit_window_seconds' => 60,   // sliding window size in seconds
+    'rate_limit_requests'       => 300,  // max requests per window per key
+],
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `rate_limit_window_seconds` | `60` | Length of the sliding-window rate-limit period. |
+| `rate_limit_requests` | `300` | Maximum API requests per window per key before the server returns HTTP 429 with a `Retry-After` header. |
+
+When a key exceeds the limit, the response is `HTTP 429 Too Many Requests` with a `Retry-After` header indicating how many seconds remain in the current window. The bucket resets automatically when the window elapses.
 
 ---
 
