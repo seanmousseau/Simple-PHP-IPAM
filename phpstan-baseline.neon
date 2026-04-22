@@ -1,7 +1,403 @@
 parameters:
 	ignoreErrors:
 		-
+			message: '#^Cannot cast mixed to string\.$#'
+			identifier: cast.string
+			count: 1
+			path: Simple-PHP-IPAM/backup.php
+
+		-
+			message: '#^Cannot access offset ''sha256'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/backups.php
+
+		-
+			message: '#^Cannot access offset ''target_path'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 3
+			path: Simple-PHP-IPAM/backups.php
+
+		-
+			message: '#^Parameter \#1 \$path of function dirname expects string, mixed given\.$#'
+			identifier: argument.type
+			count: 1
+			path: Simple-PHP-IPAM/backups.php
+
+		-
 			message: '#^Variable \$db might not be defined\.$#'
 			identifier: variable.undefined
 			count: 3
 			path: Simple-PHP-IPAM/export_dhcp.php
+
+		-
+			message: '#^Cannot access offset ''active'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 2
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''addresses'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''audit_log'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''c'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 12
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''count'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''disk_free'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 2
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''driver'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''enabled'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 2
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''error'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''failed_1h'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 3
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''failed_24h'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''h24_ok'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''h24_total'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''ipam_version'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''last_at'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''last_error'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''last_scan'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''last_status'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 3
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''locked_ips'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''ok'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''overdue'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 2
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''pending_retry'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 2
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''php_version'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''retention'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''s'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''scan_results'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''schedules'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''size'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 2
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''stale'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''started_at'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''status'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''storage_used'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''subnets'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''t'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''tmp_size'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''total'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''total_users'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''totp_enabled'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''users'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''v'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''version'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot call method fetch\(\) on PDOStatement\|false\.$#'
+			identifier: method.nonObject
+			count: 14
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot cast mixed to int\.$#'
+			identifier: cast.int
+			count: 2
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Using nullsafe method call on non\-nullable type PDOStatement\|false\. Use \-\> instead\.$#'
+			identifier: nullsafe.neverNull
+			count: 14
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^If condition is always true\.$#'
+			identifier: if.alwaysTrue
+			count: 1
+			path: Simple-PHP-IPAM/lib.php
+
+		-
+			message: '#^Offset ''db_host'' on array\{db_path\: string, session_name\: string, proxy_trust\: bool, app_name\: string, timezone\?\: string, base_url\?\: string\|null, bootstrap_admin\: array\{username\: string, password\: string\}, session_idle_seconds\: int, \.\.\.\} on left side of \?\? does not exist\.$#'
+			identifier: nullCoalesce.offset
+			count: 2
+			path: Simple-PHP-IPAM/lib.php
+
+		-
+			message: '#^Offset ''db_name'' on array\{db_path\: string, session_name\: string, proxy_trust\: bool, app_name\: string, timezone\?\: string, base_url\?\: string\|null, bootstrap_admin\: array\{username\: string, password\: string\}, session_idle_seconds\: int, \.\.\.\} on left side of \?\? does not exist\.$#'
+			identifier: nullCoalesce.offset
+			count: 2
+			path: Simple-PHP-IPAM/lib.php
+
+		-
+			message: '#^Offset ''db_pass'' on array\{db_path\: string, session_name\: string, proxy_trust\: bool, app_name\: string, timezone\?\: string, base_url\?\: string\|null, bootstrap_admin\: array\{username\: string, password\: string\}, session_idle_seconds\: int, \.\.\.\} on left side of \?\? does not exist\.$#'
+			identifier: nullCoalesce.offset
+			count: 2
+			path: Simple-PHP-IPAM/lib.php
+
+		-
+			message: '#^Offset ''db_port'' on array\{db_path\: string, session_name\: string, proxy_trust\: bool, app_name\: string, timezone\?\: string, base_url\?\: string\|null, bootstrap_admin\: array\{username\: string, password\: string\}, session_idle_seconds\: int, \.\.\.\} on left side of \?\? does not exist\.$#'
+			identifier: nullCoalesce.offset
+			count: 2
+			path: Simple-PHP-IPAM/lib.php
+
+		-
+			message: '#^Offset ''db_user'' on array\{db_path\: string, session_name\: string, proxy_trust\: bool, app_name\: string, timezone\?\: string, base_url\?\: string\|null, bootstrap_admin\: array\{username\: string, password\: string\}, session_idle_seconds\: int, \.\.\.\} on left side of \?\? does not exist\.$#'
+			identifier: nullCoalesce.offset
+			count: 2
+			path: Simple-PHP-IPAM/lib.php
+
+		-
+			message: '#^Variable \$dest on left side of \?\? always exists and is not nullable\.$#'
+			identifier: nullCoalesce.variable
+			count: 1
+			path: Simple-PHP-IPAM/lib.php
+
+		-
+			message: '#^Cannot access offset ''started_at'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 1
+			path: Simple-PHP-IPAM/restore.php
+
+		-
+			message: '#^Cannot cast list\<mixed\>\|string\|false to string\.$#'
+			identifier: cast.string
+			count: 1
+			path: Simple-PHP-IPAM/restore.php
+
+		-
+			message: '#^Offset ''db_host'' on array\{db_path\: string, session_name\: string, proxy_trust\: bool, app_name\: string, timezone\?\: string, base_url\?\: string\|null, bootstrap_admin\: array\{username\: string, password\: string\}, session_idle_seconds\: int, \.\.\.\} on left side of \?\? does not exist\.$#'
+			identifier: nullCoalesce.offset
+			count: 2
+			path: Simple-PHP-IPAM/restore.php
+
+		-
+			message: '#^Offset ''db_name'' on array\{db_path\: string, session_name\: string, proxy_trust\: bool, app_name\: string, timezone\?\: string, base_url\?\: string\|null, bootstrap_admin\: array\{username\: string, password\: string\}, session_idle_seconds\: int, \.\.\.\} on left side of \?\? does not exist\.$#'
+			identifier: nullCoalesce.offset
+			count: 2
+			path: Simple-PHP-IPAM/restore.php
+
+		-
+			message: '#^Offset ''db_pass'' on array\{db_path\: string, session_name\: string, proxy_trust\: bool, app_name\: string, timezone\?\: string, base_url\?\: string\|null, bootstrap_admin\: array\{username\: string, password\: string\}, session_idle_seconds\: int, \.\.\.\} on left side of \?\? does not exist\.$#'
+			identifier: nullCoalesce.offset
+			count: 2
+			path: Simple-PHP-IPAM/restore.php
+
+		-
+			message: '#^Offset ''db_port'' on array\{db_path\: string, session_name\: string, proxy_trust\: bool, app_name\: string, timezone\?\: string, base_url\?\: string\|null, bootstrap_admin\: array\{username\: string, password\: string\}, session_idle_seconds\: int, \.\.\.\} on left side of \?\? does not exist\.$#'
+			identifier: nullCoalesce.offset
+			count: 2
+			path: Simple-PHP-IPAM/restore.php
+
+		-
+			message: '#^Offset ''db_user'' on array\{db_path\: string, session_name\: string, proxy_trust\: bool, app_name\: string, timezone\?\: string, base_url\?\: string\|null, bootstrap_admin\: array\{username\: string, password\: string\}, session_idle_seconds\: int, \.\.\.\} on left side of \?\? does not exist\.$#'
+			identifier: nullCoalesce.offset
+			count: 2
+			path: Simple-PHP-IPAM/restore.php
+
+		-
+			message: '#^Parameter \#1 \$from of function copy expects string, string\|false given\.$#'
+			identifier: argument.type
+			count: 1
+			path: Simple-PHP-IPAM/restore.php
+
+		-
+			message: '#^Parameter \#1 \$path of function basename expects string, string\|false given\.$#'
+			identifier: argument.type
+			count: 3
+			path: Simple-PHP-IPAM/restore.php
+
+		-
+			message: '#^Parameter \#2 \$descriptor_spec of function proc_open expects array\<0\|1\|2, list\<string\>\|resource\>, array\{array\{''file'', non\-empty\-string\|false, ''r''\}, array\{''pipe'', ''w''\}, array\{''pipe'', ''w''\}\} given\.$#'
+			identifier: argument.type
+			count: 2
+			path: Simple-PHP-IPAM/restore.php
+
+		-
+			message: '#^Strict comparison using \=\=\= between ''pgsql'' and ''pgsql'' will always evaluate to true\.$#'
+			identifier: identical.alwaysTrue
+			count: 1
+			path: Simple-PHP-IPAM/restore.php

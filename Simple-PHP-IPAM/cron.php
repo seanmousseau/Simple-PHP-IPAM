@@ -132,6 +132,11 @@ try {
     $retentionDays = to_int(ipam_setting('housekeeping.audit_log_retention_days'));
     if ($retentionDays > 0) {
         $pruned = prune_audit_log($db, $retentionDays);
+        if ($pruned > 0) {
+            audit($db, 'audit.pruned', 'system', null,
+                "Pruned {$pruned} audit log " . ($pruned === 1 ? 'entry' : 'entries')
+                . " older than {$retentionDays} days (scheduled).");
+        }
         $emit(['task' => 'prune_audit_log', 'pruned' => $pruned, 'ts' => $now]);
     } else {
         $emit(['task' => 'prune_audit_log', 'skipped' => true, 'reason' => 'retention_days=0', 'ts' => $now]);

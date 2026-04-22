@@ -1,0 +1,5 @@
+﻿ip,hostname,status,mac,owner,note
+10.99.3.1,bom-host,used,AA:BB:CC:DD:EE:FF,"owner,with,commas",bom+crlf test
+10.99.3.2,mac-dash,used,AA-BB-CC-DD-EE-FF,user1,dash notation
+10.99.3.3,mac-nodot,used,AABBCCDDEEFF,user2,no-separator notation
+10.99.3.4,ipv4-mixed,reserved,,owner "with" quote,quoted owner

@@ -551,3 +551,20 @@ CREATE TABLE IF NOT EXISTS rate_limit_buckets (
 );
 -- Separate index on window_start alone accelerates the DELETE prune query.
 CREATE INDEX IF NOT EXISTS idx_rate_limit_buckets_window_start ON rate_limit_buckets(window_start);
+
+-- v3.7.0 #423: Backup history — one row per backup run
+CREATE TABLE IF NOT EXISTS backup_history (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  filename      TEXT    NOT NULL,
+  size_bytes    INTEGER,
+  sha256        TEXT,
+  db_driver     TEXT    NOT NULL,
+  started_at    TEXT    NOT NULL,
+  completed_at  TEXT,
+  duration_ms   INTEGER,
+  target        TEXT    NOT NULL DEFAULT 'local',
+  target_path   TEXT,
+  status        TEXT    NOT NULL DEFAULT 'pending',
+  error         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_backup_history_started_at ON backup_history(started_at);

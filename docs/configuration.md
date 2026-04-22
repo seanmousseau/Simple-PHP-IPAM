@@ -31,6 +31,12 @@ The keys below are seeded into the `settings` table by the v2.6.0 migration and 
 | `security.account_lockout_seconds` | int | `900` | Account lockout window length. |
 | `api.rate_limit_window_seconds` | int | `60` | Sliding window size (seconds) for per-API-key rate limiting. Seeded from `config.php` `api.rate_limit_window_seconds` on first install. *(v3.6.0)* |
 | `api.rate_limit_requests` | int | `300` | Max requests per window per API key before HTTP 429. Seeded from `config.php` `api.rate_limit_requests` on first install. *(v3.6.0)* |
+| `backup.enabled` | bool | `false` | Enable scheduled database backups via `cron.php`. *(v3.7.0)* |
+| `backup.local_path` | string | `data/backups/` | Directory where backup files are written (relative to app root). Created automatically on first backup. *(v3.7.0)* |
+| `backup.retention_count` | int | `7` | Number of backup files to retain; oldest files beyond this count are deleted after each backup. *(v3.7.0)* |
+| `backup.schedule_cron` | string | `0 2 * * *` | Cron expression controlling when `cron.php` triggers a backup. *(v3.7.0)* |
+| `audit.retention_days` | int | `365` | Days to keep audit log entries. Entries older than this are batch-deleted by `cron.php`. Set to `0` to never prune. *(v3.7.0)* |
+| `audit.prune_batch_size` | int | `1000` | Maximum number of audit rows deleted per prune pass. Prevents long lock waits on busy installs. *(v3.7.0)* |
 | *(config.php only)* `recovery_mode` | bool | `false` | Emergency login recovery mode (see below). |
 | `alert.recipient_user_ids` | json | `[]` | (v2.8.0+) Active user IDs that receive utilization alerts. Picked from a multi-select on **Settings → Alerting**; only users with a non-empty email are eligible. Inactive users / cleared emails drop out automatically at send time. |
 | `alert.email` | string | *(empty)* | **Deprecated in v2.8.0** — replaced by `alert.recipient_user_ids`. The 2.8.0 migration auto-maps a matching active user; unmappable values produce a `settings.alert_email_unmigrated` audit row. Hidden from the UI. Removal in v3.0.0. |

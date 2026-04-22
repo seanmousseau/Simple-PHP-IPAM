@@ -33,7 +33,7 @@ Two cheap calls. The first loads your profile + preferences. The second returns 
 
 ## Project overview
 
-> **Current shipped version: v3.6.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v3.7.0 → v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v3.7.0 describes future work — **do not apply it to current v3.6.x code**. Current-state rules are the ones that do not cite a future version.
+> **Current shipped version: v3.7.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v3.8.0 → v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v3.8.0 describes future work — **do not apply it to current v3.7.x code**. Current-state rules are the ones that do not cite a future version.
 
 Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application built with **PHP 8.2+ and SQLite**. It has **no npm build step** — all CSS and JavaScript are vanilla. Starting in v2.9.0, the application will ship a small, carefully curated set of Composer-managed runtime dependencies bundled into the release tarball, so end users still deploy by extracting the tarball with no build step. The web root is `Simple-PHP-IPAM/` (the subdirectory, not the repo root).
 
@@ -103,6 +103,10 @@ Dev tooling at the repo root (not deployed): `composer.json`, `composer.lock`, `
 | `set_theme.php` | yes | any | AJAX POST: persists theme preference to `users.theme` |
 | `db_tools.php` | yes | admin | Database SQL export and import |
 | `demo_gate.php` | — | — | Demo mode bot challenge gate (pre-login) |
+| `backups.php` | yes | admin | Backup history: list runs with status badges, download, SHA-256 verify, delete, restore instructions (v3.7.0) |
+| `health.php` | yes | admin | Operational health dashboard: DB metrics, backup status, scanning, webhooks, auth/security, system info; 60s cache; `?nocache=1` bypass (v3.7.0) |
+| `backup.php` | CLI | — | CLI-only database backup runner; returns 403 on web access (v3.7.0) |
+| `restore.php` | CLI | — | CLI-only database restore with --dry-run, --force; returns 403 on web access (v3.7.0) |
 
 ---
 
@@ -192,7 +196,7 @@ Migrations live in `migrations.php` as an associative array of version string �
 
 **When adding a new version:** add the migration closure, bump `version.php`, update `CHANGELOG.md` (keepachangelog format).
 
-> **Current shipped version: v3.6.0.** The three subsections below (`Creating new data tables in post-v4.0.0 releases`, `Modifying the schema (multi-engine, from v2.9.0 onward)`, `Runtime dependencies`) describe **forward-looking policy** for unreleased versions. Do not apply them to work targeting v3.6.x or earlier. The rules become active on the version indicated in each heading; until then, treat them as design intent to preserve when new work approaches that version.
+> **Current shipped version: v3.7.0.** The three subsections below (`Creating new data tables in post-v4.0.0 releases`, `Modifying the schema (multi-engine, from v2.9.0 onward)`, `Runtime dependencies`) describe **forward-looking policy** for unreleased versions. Do not apply them to work targeting v3.6.x or earlier. The rules become active on the version indicated in each heading; until then, treat them as design intent to preserve when new work approaches that version.
 
 ### Creating new data tables in post-v4.0.0 releases *(applies from v4.1.0+)*
 

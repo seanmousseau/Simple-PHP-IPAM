@@ -1,0 +1,11 @@
+ip,hostname,status,owner,note
+10.99.1.1,host-a,used,alice,test row
+10.99.1.2,host-b,reserved,bob,
+10.99.1.3,host-c,used,charlie,edge case
+10.99.1.4,,free,,
+10.99.1.5,host-e,used,diana,row 5
+10.99.2.1,host-f,used,eve,subnet 2
+10.99.2.2,host-g,reserved,,
+10.99.2.3,host-h,used,frank,
+10.99.2.4,host-i,free,,
+10.99.2.5,host-j,used,grace,last

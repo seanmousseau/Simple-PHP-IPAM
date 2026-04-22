@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.7.0] - 2026-04-22
+
+### Added
+
+- **#423 — Database backup infrastructure.** `backup.php` CLI script dumps the configured database to a timestamped file with SHA-256 integrity verification. Supports SQLite (file copy + WAL checkpoint), MySQL (`mysqldump`), and PostgreSQL (`pg_dump`). Results recorded in new `backup_history` table. Configurable via DB settings: `backup.enabled`, `backup.local_path` (default `data/backups/`), `backup.retention_count` (default 7), `backup.schedule_cron` (default `0 2 * * *`). `cron.php` runs backups on schedule. Web access to `backup.php` returns 403.
+- **#424 — Restore workflow and backup admin UI.** `restore.php` CLI supports `--from=<file>`, `--dry-run`, and `--force` flags. Verifies SHA-256 against `backup_history` before restoring; runs `apply_migrations()` after restore. `backups.php` admin page lists `backup_history` rows with status badges, supports SHA-256 verification, file download, and delete with confirmation. Restore is intentionally CLI-only; the admin page shows the command to run. Both new CLI files blocked at web (`backup.php`, `restore.php` return 403). New `docs/backup.md` covers the full disaster recovery workflow.
+- **#425 — Operational health dashboard.** `health.php` admin-only page showing real-time metrics across six sections: Database (size, row counts, driver/version), Backups (last run, next scheduled, retention, storage used), Scanning (active schedules, overdue count, last scan, stale addresses), Webhooks (active count, 24-hour delivery success rate, failed/pending, last error), Auth/Security (locked accounts, 2FA-enabled ratio, failed login attempts over 1 h / 24 h), and System (PHP version, IPAM version + update flag, disk free on `data/`, temp dir size). Color-coded status dots (green / amber / red). Results cached for 60 seconds in `data/tmp/health_cache.json`; bypass with `?nocache=1`. Admin dropdown link added.
+- **#426 — Audit log retention controls.** Admin-configurable `audit.retention_days` setting (default 365; 0 = never prune) and `audit.prune_batch_size` (default 1000). `cron.php` batch-prunes `audit_log` rows respecting the retention window. Prune operations drop and re-create the append-only triggers for safety. `audit.php` now shows a retention info panel (oldest entry, total row count, current retention setting) and a CSRF-protected "Prune now" button. The `backup` action prefix is added to the audit viewer filter list.
+- **#460 — CSV import Playwright spec and upgrade-replay PHPUnit suite.** `testing/playwright/tests/import-csv.spec.ts` covers the full CSV import wizard (upload → map → dry-run → apply), edge-case CSVs (BOM, CRLF, multiple MAC notations, quoted owner), malformed CSV friendly error, and read-only user 403. Fixture CSVs committed under `testing/playwright/fixtures/csv/`. `tests/UpgradeReplayTest.php` runs `apply_migrations()` against in-memory and file-based SQLite fixtures from old schema states and asserts no row loss, FK restoration, and idempotency; specifically guards the v2.2.1 data-loss regression.
+- **#465 — `status.php` Playwright spec.** `testing/playwright/tests/status.spec.ts` verifies the load-balancer health endpoint returns HTTP 200 with `{"status":"ok"}` body, is accessible without authentication, and does not set a `PHPSESSID` cookie.
+
 ## [3.6.0] - 2026-04-21
 
 ### Added
@@ -913,6 +924,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.7.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.6.0...v3.7.0
 [3.6.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.5.0...v3.6.0
 [3.5.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.4.1...v3.5.0
 [3.4.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.4.0...v3.4.1
