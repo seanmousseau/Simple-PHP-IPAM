@@ -1142,7 +1142,9 @@ fi
 CF_DEF_ID=""
 if [[ -n "$DOCKER_CONTAINER" ]]; then
     CF_DEF_ID=$(db_php "$(container_api_key_php "
-\$stmt = \$db->prepare(\"INSERT INTO custom_field_defs (entity_type, key, label, type, options, sort_order, is_required) VALUES ('subnet','api_test_num','API Test Number','number','[]',99,0)\");
+\$_drv = \$db->getAttribute(PDO::ATTR_DRIVER_NAME);
+\$_kq  = \$_drv === 'mysql' ? '\`key\`' : '\"key\"';
+\$stmt = \$db->prepare(\"INSERT INTO custom_field_defs (entity_type, {\$_kq}, label, type, options, sort_order, is_required) VALUES ('subnet','api_test_num','API Test Number','number','[]',99,0)\");
 \$stmt->execute();
 echo ipam_last_insert_id(\$db, 'custom_field_defs');
 ")" 2>/dev/null | tr -d '[:space:]')
@@ -1180,7 +1182,9 @@ log "=== Custom Fields CSV Export (v3.5.0) ==="
 CF_ADDR_DEF_ID=""
 if [[ -n "${DOCKER_CONTAINER:-}" ]]; then
     CF_ADDR_DEF_ID=$(db_php "$(container_api_key_php "
-\$stmt = \$db->prepare(\"INSERT INTO custom_field_defs (entity_type, key, label, type, options, sort_order, is_required) VALUES ('address','csv_test_txt','CSV Test','text','[]',97,0)\");
+\$_drv = \$db->getAttribute(PDO::ATTR_DRIVER_NAME);
+\$_kq  = \$_drv === 'mysql' ? '\`key\`' : '\"key\"';
+\$stmt = \$db->prepare(\"INSERT INTO custom_field_defs (entity_type, {\$_kq}, label, type, options, sort_order, is_required) VALUES ('address','csv_test_txt','CSV Test','text','[]',97,0)\");
 \$stmt->execute();
 echo ipam_last_insert_id(\$db, 'custom_field_defs');
 ")" 2>/dev/null | tr -d '[:space:]')

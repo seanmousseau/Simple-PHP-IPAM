@@ -631,10 +631,13 @@ class UtilTest extends TestCase
                 "Request #$i should be allowed");
         }
 
-        // 4th request must be denied (return > 0 seconds)
+        // 4th request must be denied (return > 0 seconds).
+        // Retry-After can exceed $windowSec in the sliding-window Case B scenario
+        // (overflow driven by the current bucket becoming the weighted previous
+        // bucket in the next window), so the upper bound is 2 * $windowSec.
         $retryAfter = ipam_api_key_rate_limit_check($db, $key, $windowSec, $max);
         $this->assertGreaterThan(0, $retryAfter, '4th request should be denied');
-        $this->assertLessThanOrEqual($windowSec, $retryAfter, 'Retry-After must not exceed window');
+        $this->assertLessThanOrEqual($windowSec * 2, $retryAfter, 'Retry-After must not exceed two windows');
     }
 
     public function testRateLimitHelperRejectsInvalidWindow(): void

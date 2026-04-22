@@ -1405,4 +1405,3 @@ body.pw-toggle-hidden .pw-wrap .pw-input{padding-right:36px}
 .totp-secret-box{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9rem;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 12px;word-break:break-all;letter-spacing:.05em}
 .totp-backup-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin:16px 0}
 .totp-backup-code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9rem;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 12px;text-align:center;letter-spacing:.1em}
-.badge--success{background:var(--success);color:#fff}

@@ -1841,7 +1841,7 @@ function ipam_migrations(): array
                     count        INTEGER NOT NULL DEFAULT 0,
                     UNIQUE (bucket_key, window_start)
                 )");
-                $db->exec("CREATE INDEX IF NOT EXISTS idx_rate_limit_key_window ON rate_limit_buckets(bucket_key, window_start)");
+                // No separate composite index: UNIQUE (bucket_key, window_start) already provides one.
                 $db->exec("CREATE INDEX IF NOT EXISTS idx_rate_limit_buckets_window_start ON rate_limit_buckets(window_start)");
             } else {
                 $db->exec("CREATE TABLE IF NOT EXISTS rate_limit_buckets (

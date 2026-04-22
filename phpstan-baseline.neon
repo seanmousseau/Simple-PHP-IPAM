@@ -5,39 +5,3 @@ parameters:
 			identifier: variable.undefined
 			count: 3
 			path: Simple-PHP-IPAM/export_dhcp.php
-
-		-
-			message: '#^Access to constant Sha1 on an unknown class RobThree\\Auth\\Algorithm\.$#'
-			identifier: class.notFound
-			count: 1
-			path: Simple-PHP-IPAM/lib.php
-
-		-
-			message: '#^Call to method createSecret\(\) on an unknown class RobThree\\Auth\\TwoFactorAuth\.$#'
-			identifier: class.notFound
-			count: 1
-			path: Simple-PHP-IPAM/lib.php
-
-		-
-			message: '#^Call to method getQRText\(\) on an unknown class RobThree\\Auth\\TwoFactorAuth\.$#'
-			identifier: class.notFound
-			count: 1
-			path: Simple-PHP-IPAM/lib.php
-
-		-
-			message: '#^Call to method verifyCode\(\) on an unknown class RobThree\\Auth\\TwoFactorAuth\.$#'
-			identifier: class.notFound
-			count: 1
-			path: Simple-PHP-IPAM/lib.php
-
-		-
-			message: '#^Function ipam_totp_tfa\(\) has invalid return type RobThree\\Auth\\TwoFactorAuth\.$#'
-			identifier: class.notFound
-			count: 1
-			path: Simple-PHP-IPAM/lib.php
-
-		-
-			message: '#^Instantiated class RobThree\\Auth\\TwoFactorAuth not found\.$#'
-			identifier: class.notFound
-			count: 1
-			path: Simple-PHP-IPAM/lib.php

@@ -629,7 +629,8 @@ CREATE TABLE IF NOT EXISTS rate_limit_buckets (
     count        INTEGER NOT NULL DEFAULT 0,
     UNIQUE (bucket_key, window_start)
 );
-CREATE INDEX IF NOT EXISTS idx_rate_limit_key_window ON rate_limit_buckets(bucket_key, window_start);
+-- idx_rate_limit_key_window is intentionally absent: UNIQUE (bucket_key, window_start) above
+-- already provides the composite b-tree that the rate-limiter lookup uses.
 CREATE INDEX IF NOT EXISTS idx_rate_limit_buckets_window_start ON rate_limit_buckets(window_start);
 
 -- ---------------------------------------------------------------------------
