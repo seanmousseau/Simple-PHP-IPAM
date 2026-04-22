@@ -657,6 +657,66 @@ class MigrationTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // v3.6.0 #418/#419/#421 — TOTP, rate-limit buckets, lockout columns
+    // -------------------------------------------------------------------------
+
+    /**
+     * The three 3.6.0 migrations must:
+     *   - add totp_secret_enc, totp_enabled to users
+     *   - create totp_backup_codes table
+     *   - create rate_limit_buckets table
+     *   - add failed_auth_count, locked_until, lock_reason to users
+     *   - default totp_enabled and failed_auth_count to 0 for new rows
+     *   - be idempotent (second apply_migrations() call must not throw)
+     */
+    public function testV360MigrationsApply(): void
+    {
+        $db = $this->makePreVrfDb();
+
+        // makePreVrfDb() does not include a users table; add a minimal one so
+        // the 3.6.0 migrations can ALTER it.
+        $db->exec("
+            CREATE TABLE IF NOT EXISTS users (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                username      TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                role          TEXT NOT NULL DEFAULT 'admin',
+                is_active     INTEGER NOT NULL DEFAULT 1,
+                created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        ");
+
+        apply_migrations($db);
+
+        // Assert new columns on users table
+        $cols = array_column($db->query("PRAGMA table_info(users)")->fetchAll(), 'name');
+        $this->assertContains('totp_secret_enc', $cols, 'totp_secret_enc column missing');
+        $this->assertContains('totp_enabled', $cols, 'totp_enabled column missing');
+        $this->assertContains('failed_auth_count', $cols, 'failed_auth_count column missing');
+        $this->assertContains('locked_until', $cols, 'locked_until column missing');
+        $this->assertContains('lock_reason', $cols, 'lock_reason column missing');
+
+        // Assert new tables exist
+        $tables = array_column(
+            $db->query("SELECT name FROM sqlite_master WHERE type='table'")->fetchAll(),
+            'name'
+        );
+        $this->assertContains('totp_backup_codes', $tables, 'totp_backup_codes table missing');
+        $this->assertContains('rate_limit_buckets', $tables, 'rate_limit_buckets table missing');
+
+        // Assert idempotency
+        apply_migrations($db);
+        $this->assertTrue(true, 'Second apply_migrations call should not throw');
+
+        // Assert defaults work - insert a user and check totp_enabled defaults to 0
+        $db->exec("INSERT INTO users (username, password_hash, role) VALUES ('testv360', 'hash', 'readonly')");
+        $row = $db->query("SELECT totp_enabled, failed_auth_count FROM users WHERE username='testv360'")->fetch();
+        $this->assertEquals(0, (int)$row['totp_enabled']);
+        $this->assertEquals(0, (int)$row['failed_auth_count']);
+    }
+
+    // -------------------------------------------------------------------------
     // v2.11.0 #409 — migration-replay idempotency against the fresh schema
     // -------------------------------------------------------------------------
 

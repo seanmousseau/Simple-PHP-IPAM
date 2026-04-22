@@ -77,10 +77,24 @@ if (isset($_GET['verify_email'])) {
     exit;
 }
 
+// 2FA: disable TOTP
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 'disable_totp') {
+    csrf_require();
+    $db->prepare("UPDATE users SET totp_enabled=0, totp_secret_enc=NULL WHERE id=:id")
+       ->execute([':id' => $cur['id']]);
+    $db->prepare("DELETE FROM totp_backup_codes WHERE user_id=:uid")
+       ->execute([':uid' => $cur['id']]);
+    audit($db, 'auth.totp_disable', 'user', to_int($cur['id']), 'self');
+    flash_set('Two-factor authentication disabled.');
+    header('Location: change_password.php');
+    exit;
+}
+
 // Fetch the full user row to check for SSO-only account
 $st = $db->prepare(
     "SELECT password_hash, oidc_sub, timezone, email,
-            pending_email, pending_email_expires_at
+            pending_email, pending_email_expires_at,
+            totp_enabled, totp_secret_enc
        FROM users WHERE id = :id"
 );
 $st->execute([':id' => $cur['id']]);
@@ -110,6 +124,9 @@ if (!$isSsoOnly && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $hash = password_hash($new1, PASSWORD_DEFAULT);
             $db->prepare("UPDATE users SET password_hash = :h, password_changed_at = " . ipam_dialect()->now() . " WHERE id = :id")
                ->execute([':h' => $hash, ':id' => $cur['id']]);
+            session_regenerate_id(true);
+            // Reset the absolute lifetime clock so the new session gets a fresh window
+            $_SESSION['_abs_expires'] = time() + (to_int($config['session']['absolute_lifetime_minutes'] ?? 480) * 60);
             audit($db, 'user.change_password', 'user', to_int($cur['id']), 'self');
             $msg = 'Password updated.';
             $isExpired = false;
@@ -229,6 +246,24 @@ page_header('Account');
     <p><button type="submit">Update</button></p>
   </form>
 <?php endif; ?>
+
+<div class="card mt-16">
+  <h2>Two-Factor Authentication</h2>
+  <?php if (to_int($userRow['totp_enabled'] ?? 0) === 1): ?>
+    <p class="success">Two-factor authentication is <strong>enabled</strong>.</p>
+    <form method="post" action="change_password.php">
+      <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+      <input type="hidden" name="action" value="disable_totp">
+      <button type="submit" class="button-danger"
+        onclick="return confirm('Disable 2FA? You will no longer need a code to log in.')">
+        Disable 2FA
+      </button>
+    </form>
+  <?php else: ?>
+    <p class="muted">Two-factor authentication is <strong>not enabled</strong>.</p>
+    <a href="totp_enroll.php" class="btn">Enable 2FA</a>
+  <?php endif; ?>
+</div>
 
 <?php
 $tzGroups = [];

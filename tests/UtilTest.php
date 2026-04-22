@@ -575,4 +575,66 @@ class UtilTest extends TestCase
         $this->assertNotNull($net);
         $this->assertNull(ipam_compute_gateway_bin($net['net_bin'], $net['prefix']));
     }
+
+    // -----------------------------------------------------------------------
+    // TOTP helpers (v3.6.0, #418)
+    // -----------------------------------------------------------------------
+
+    public function testTotpSecretRoundTrip(): void
+    {
+        $secret = ipam_totp_generate_secret();
+        $this->assertMatchesRegularExpression('/^[A-Z2-7]{32}$/', $secret, 'Secret must be 32 base32 chars');
+
+        $key = str_repeat('k', 32);
+        $enc = ipam_totp_encrypt_secret($secret, $key);
+        $this->assertNotEquals($secret, $enc, 'Encrypted must differ from plaintext');
+
+        $dec = ipam_totp_decrypt_secret($enc, $key);
+        $this->assertEquals($secret, $dec, 'Decrypt must recover original');
+    }
+
+    public function testTotpBackupCodeFormat(): void
+    {
+        $codes = ipam_totp_generate_backup_codes(8);
+        $this->assertCount(8, $codes);
+        foreach ($codes as $code) {
+            $this->assertMatchesRegularExpression('/^[0-9A-F]{8}-[0-9A-F]{8}$/', $code,
+                'Backup code must be XXXXXXXX-XXXXXXXX uppercase hex');
+        }
+        // All codes must be unique
+        $this->assertCount(8, array_unique($codes));
+    }
+
+    // -----------------------------------------------------------------------
+    // API per-key rate limiting — window boundary math (v3.6.0, #419)
+    // -----------------------------------------------------------------------
+
+    public function testRateLimitWindowBoundary(): void
+    {
+        // Two timestamps in the same 60-second window should produce the same window_start
+        $windowSec = 60;
+        $ts1 = mktime(12, 34, 0, 4, 21, 2026);  // :34:00
+        $ts2 = mktime(12, 34, 59, 4, 21, 2026); // :34:59
+
+        $w1 = date('Y-m-d H:i:s', (int)($ts1 / $windowSec) * $windowSec);
+        $w2 = date('Y-m-d H:i:s', (int)($ts2 / $windowSec) * $windowSec);
+        $this->assertEquals($w1, $w2, 'Same window');
+
+        $ts3 = mktime(12, 35, 1, 4, 21, 2026);  // :35:01 — next window
+        $w3 = date('Y-m-d H:i:s', (int)($ts3 / $windowSec) * $windowSec);
+        $this->assertNotEquals($w1, $w3, 'Different window');
+    }
+
+    // -----------------------------------------------------------------------
+    // XSS escaping of version strings (issue #467)
+    // -----------------------------------------------------------------------
+
+    public function testUpdateCheckEscapesVersionString(): void
+    {
+        $dangerous = '<script>alert(1)</script>v3.6.0';
+        $escaped = e($dangerous);
+        $this->assertStringNotContainsString('<script>', $escaped);
+        $this->assertStringContainsString('&lt;script&gt;', $escaped);
+        $this->assertStringContainsString('v3.6.0', $escaped);
+    }
 }

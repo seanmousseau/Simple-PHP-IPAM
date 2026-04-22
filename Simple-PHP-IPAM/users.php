@@ -205,8 +205,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $target = $tSt->fetch();
         if ($target) {
             clear_account_lockout($db, to_str($target['username']));
+            ipam_clear_persistent_lockout($db, $id);
             audit($db, 'user.unlock', 'user', $id, '');
             $msg = 'Account unlocked.';
+        }
+
+    } elseif ($action === 'reset_totp') {
+        $id = to_int($_POST['id'] ?? 0);
+        if ($id > 0) {
+            $db->prepare("UPDATE users SET totp_enabled=0, totp_secret_enc=NULL WHERE id=:id")
+               ->execute([':id' => $id]);
+            $db->prepare("DELETE FROM totp_backup_codes WHERE user_id=:uid")
+               ->execute([':uid' => $id]);
+            audit($db, 'user.totp_reset', 'user', $id, 'admin_reset');
+            $msg = 'Two-factor authentication reset for user.';
         }
 
     } elseif ($action === 'delete') {
@@ -241,7 +253,8 @@ $userSortCols = ['username' => 'username', 'role' => 'role', 'last_login' => 'la
 $userSort = parse_sort($userSortCols, 'username');
 
 $st = $db->prepare(
-    "SELECT id, username, name, email, role, is_active, created_at, updated_at, oidc_sub, last_login_at
+    "SELECT id, username, name, email, role, is_active, created_at, updated_at, oidc_sub, last_login_at,
+            totp_enabled, locked_until, lock_reason, failed_auth_count
      FROM users ORDER BY {$userSort['sql']}"
 );
 $st->execute();
@@ -322,6 +335,7 @@ page_header('Users');
       <?php echo sort_th('role',       'Role',       $userSort['col'], $userSort['dir'], '?'); ?>
       <th>Active</th>
       <th>Locked</th>
+      <th>2FA</th>
       <th>SSO</th>
       <?php echo sort_th('last_login', 'Last Login', $userSort['col'], $userSort['dir'], '?'); ?>
       <th>Created</th>
@@ -336,9 +350,20 @@ page_header('Users');
       <td><?= e(to_str($u['email'])) ?></td>
       <td><?= e(to_str($u['role'])) ?></td>
       <td><?= (to_int($u['is_active']) === 1) ? 'yes' : 'no' ?></td>
-      <td><?php $isLocked = isset($lockedUsers[to_str($u['username'])]); ?>
-        <?= $isLocked ? '<span class="danger font-sm">Locked</span>' : '<span class="muted">—</span>' ?>
+      <td><?php
+        $isTimeLocked    = isset($lockedUsers[to_str($u['username'])]);
+        $lockedUntilStr  = to_str($u['locked_until'] ?? '');
+        $isPersistLocked = $lockedUntilStr !== '' && strtotime($lockedUntilStr) > time();
+        $isLocked        = $isTimeLocked || $isPersistLocked;
+        $lockReason      = $isPersistLocked ? to_str($u['lock_reason'] ?? '') : '';
+      ?>
+        <?php if ($isLocked): ?>
+          <span class="danger font-sm">Locked<?= $lockReason === 'failed_2fa' ? ' (2FA)' : '' ?></span>
+        <?php else: ?>
+          <span class="muted">—</span>
+        <?php endif; ?>
       </td>
+      <td><?= to_int($u['totp_enabled'] ?? 0) === 1 ? '<span class="badge badge--success">On</span>' : '<span class="muted">—</span>' ?></td>
       <td>
         <?php if ($u['oidc_sub'] !== null): ?>
           <span class="success" title="<?= e(to_str($u['oidc_sub'])) ?>">linked</span>
@@ -419,6 +444,18 @@ page_header('Users');
               <input type="hidden" name="action" value="unlock_account">
               <input type="hidden" name="id"     value="<?= to_int($u['id']) ?>">
               <button type="submit" class="button-secondary">Unlock</button>
+            </form>
+            <?php endif; ?>
+
+            <?php if (to_int($u['totp_enabled'] ?? 0) === 1 && to_int($u['id']) !== $self['id']): ?>
+            <form method="post" action="users.php" class="row gap-6">
+              <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+              <input type="hidden" name="action" value="reset_totp">
+              <input type="hidden" name="id"     value="<?= to_int($u['id']) ?>">
+              <button type="submit" class="action-pill"
+                onclick="return confirm('Reset 2FA for <?= e(to_str($u['username'])) ?>?')">
+                Reset 2FA
+              </button>
             </form>
             <?php endif; ?>
 

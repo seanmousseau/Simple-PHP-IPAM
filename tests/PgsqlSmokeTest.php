@@ -145,7 +145,7 @@ final class PgsqlSmokeTest extends TestCase
     public function testSchemaMigrationsPreseeded(): void
     {
         $row = $this->db->query("SELECT COUNT(*) AS c FROM schema_migrations")->fetch(PDO::FETCH_ASSOC);
-        $this->assertSame(41, (int)$row['c']);
+        $this->assertSame(44, (int)$row['c']);
     }
 
     public function testBootstrapAdminUserInserted(): void
