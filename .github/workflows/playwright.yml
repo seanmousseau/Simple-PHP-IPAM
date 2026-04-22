@@ -134,6 +134,7 @@ jobs:
         run: npm ci
 
       - name: Cache Playwright browsers
+        id: pw-cache
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ~/.cache/ms-playwright
@@ -141,7 +142,14 @@ jobs:
 
       - name: Install Playwright browsers
         working-directory: testing/playwright
-        run: npx playwright install chromium
+        env:
+          PW_CACHE_HIT: ${{ steps.pw-cache.outputs.cache-hit }}
+        run: |
+          if [[ "$PW_CACHE_HIT" == "true" ]]; then
+            npx playwright install-deps chromium
+          else
+            npx playwright install --with-deps chromium
+          fi
 
       - name: Set up Docker Buildx
         if: matrix.webserver == 'apache'
