@@ -12,14 +12,14 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.6.0
+## What's new in v3.7.0
 
-**Security hardening: TOTP 2FA, per-API-key rate limiting, session absolute lifetime, persistent account lockout.**
+**Operational readiness: database backup/restore, admin health dashboard, audit log retention, and expanded test coverage.**
 
-- **TOTP 2FA (#418).** RFC 6238 two-factor authentication with a 3-step enrollment wizard, mid-login challenge page, backup codes, and admin TOTP reset. Works with any authenticator app (Google Authenticator, Authy, 1Password, etc.). Secrets encrypted at rest. See [docs/security.md](docs/security.md).
-- **Per-API-key rate limiting (#419).** Sliding-window 429 + `Retry-After` on top of the existing IP-based limit. Defaults to 300 requests / 60 s per key; configurable via DB settings.
-- **Session absolute lifetime (#420).** Sessions expire after a configurable absolute duration (default 8 hours) independent of idle timeout. Session ID rotated on password change.
-- **Persistent 2FA lockout (#421).** Persistent account lockout after repeated 2FA failures, surfaced in the Users admin table with a "Locked (2FA)" badge. Admin unlock clears both lockout types in one action.
+- **Database backup & restore (#423, #424).** `backup.php` CLI dumps SQLite, MySQL, or PostgreSQL to a timestamped file with SHA-256 verification; `restore.php` CLI restores with dry-run mode and safety checks. `backups.php` admin page lists backup history with status badges, download, verify, and delete. Scheduled via `cron.php`. See [docs/backup.md](docs/backup.md).
+- **Operational health dashboard (#425).** `health.php` admin page shows real-time metrics across six sections (Database, Backups, Scanning, Webhooks, Auth/Security, System) with color-coded status indicators. Results cached 60 seconds; bypass with `?nocache=1`.
+- **Audit log retention (#426).** Admin-configurable retention window (default 365 days) with batch pruning via `cron.php`. `audit.php` shows a retention info panel and "Prune now" button.
+- **CSV import Playwright spec + upgrade-replay PHPUnit suite (#460, #465).** End-to-end Playwright tests for the CSV import wizard and the `status.php` health endpoint. PHPUnit `UpgradeReplayTest` runs the full migration chain from old SQLite fixtures and asserts no data loss — specifically guarding the v2.2.1 address-loss regression.
 
 See [CHANGELOG.md](CHANGELOG.md) for full release history and [docs/upgrading.md](docs/upgrading.md) for the upgrade guide.
 

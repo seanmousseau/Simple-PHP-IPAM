@@ -4,8 +4,38 @@ require __DIR__ . '/init.php';
 /** @var \PDO $db */
 require_login();
 
+$msg    = '';
+$errors = [];
+
+// --- Admin: handle manual prune request ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    require_role('admin');
+    csrf_require();
+    if (to_str($_POST['action'] ?? '') === 'prune_now') {
+        $retDays = to_int(ipam_setting('housekeeping.audit_log_retention_days'));
+        if ($retDays > 0) {
+            $pruned = prune_audit_log($db, $retDays);
+            if ($pruned > 0) {
+                audit($db, 'audit.pruned', 'system', null,
+                    "Manually pruned {$pruned} audit log " . ($pruned === 1 ? 'entry' : 'entries')
+                    . " older than {$retDays} days.");
+            }
+            $msg = "Pruned " . number_format($pruned) . " audit log "
+                 . ($pruned === 1 ? 'entry' : 'entries') . " (retention: {$retDays} days).";
+        } else {
+            $errors[] = 'Retention is set to 0 (keep forever). Update the setting to enable pruning.';
+        }
+    }
+}
+
 // --- Valid action prefixes (categories) ---
-const AUDIT_PREFIXES = ['auth', 'subnet', 'address', 'user', 'site', 'apikey', 'dhcp_pool', 'db', 'export', 'import'];
+const AUDIT_PREFIXES = [
+    'address', 'aggregate', 'alert', 'apikey', 'audit', 'auth', 'backup',
+    'config', 'contact', 'custom_field', 'db', 'device', 'device_interface',
+    'dhcp_pool', 'export', 'import', 'mail', 'pd_pool', 'restore', 'scan',
+    'setting', 'settings', 'site', 'subnet', 'tag', 'user', 'vlan', 'vrf',
+    'webhook',
+];
 
 $filterPrefix = trim(to_str($_GET['prefix'] ?? ''));
 if ($filterPrefix !== '' && !in_array($filterPrefix, AUDIT_PREFIXES, true)) {
@@ -111,6 +141,20 @@ function audit_qs(int $page, int $limit, string $prefix, string $from, string $t
 $hasFilter = $filterPrefix !== '' || $filterFrom !== '' || $filterTo !== ''
           || $filterAction !== '' || $filterUserId > 0;
 
+// --- Admin: gather retention stats for the info panel ---
+$isAdmin = current_user()['role'] === 'admin';
+$retentionPanel = null;
+if ($isAdmin) {
+    $retDays  = to_int(ipam_setting('housekeeping.audit_log_retention_days'));
+    $statSt   = $db->query("SELECT COUNT(*) AS c, MIN(created_at) AS oldest FROM audit_log");
+    $statRow  = $statSt !== false ? $statSt->fetch() : false;
+    $retentionPanel = [
+        'days'   => $retDays,
+        'total'  => is_array($statRow) ? to_int($statRow['c'])         : 0,
+        'oldest' => is_array($statRow) ? to_str($statRow['oldest'] ?? '') : '',
+    ];
+}
+
 page_header('Audit Log');
 ?>
 
@@ -119,6 +163,38 @@ page_header('Audit Log');
   <span class="sep">›</span>
   <span>📜 Audit</span>
 </div>
+
+<?php if ($msg !== ''): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
+<?php if ($errors): ?><ul class="errors"><?php foreach ($errors as $err): ?><li><?= e($err) ?></li><?php endforeach; ?></ul><?php endif; ?>
+
+<?php if ($retentionPanel !== null): ?>
+<div class="card mb-12" style="padding:10px 16px;">
+  <div class="row align-center gap-24 flex-wrap">
+    <div>
+      <span class="muted">Retention:</span>
+      <b><?= $retentionPanel['days'] > 0 ? e((string)$retentionPanel['days']) . ' days' : 'keep forever' ?></b>
+      <a href="settings.php" class="muted ml-8" style="font-size:.85em">⚙ Change</a>
+    </div>
+    <div>
+      <span class="muted">Total entries:</span>
+      <b><?= e(number_format($retentionPanel['total'])) ?></b>
+    </div>
+    <?php if ($retentionPanel['oldest'] !== ''): ?>
+    <div>
+      <span class="muted">Oldest entry:</span>
+      <b><?= e(ipam_format_datetime($retentionPanel['oldest'])) ?></b>
+    </div>
+    <?php endif; ?>
+    <?php if ($retentionPanel['days'] > 0): ?>
+    <form method="post" action="audit.php" class="m-0" onsubmit="return confirm('Prune audit log entries older than <?= e((string)$retentionPanel['days']) ?> days?')">
+      <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+      <input type="hidden" name="action" value="prune_now">
+      <button type="submit" class="button-secondary">🗑 Prune now</button>
+    </form>
+    <?php endif; ?>
+  </div>
+</div>
+<?php endif; ?>
 
 <div class="toolbar">
   <div>

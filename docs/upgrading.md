@@ -9,6 +9,7 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
+  - [v3.7.0](#v370) — Backup/restore, health dashboard, audit retention, test coverage (no breaking changes)
   - [v3.6.0](#v360) — TOTP 2FA, per-API-key rate limiting, session hardening (no breaking changes)
   - [v3.5.0](#v350) — Custom fields (no breaking changes)
   - [v3.4.0](#v340) — DHCP config export (no breaking changes)
@@ -95,6 +96,38 @@ The backup is left in place after a successful upgrade. You can remove it manual
 ---
 
 ## Version-specific upgrade notes
+
+### v3.7.0
+
+**No breaking changes.** All new features are opt-in. Upgrading from v3.6.0 requires no manual action — run `upgrade.sh` as normal.
+
+**New pages:**
+- `backups.php` — Admin → Backups: lists backup history with status badges, download, SHA-256 verify, and delete
+- `health.php` — Admin → Health: real-time operational metrics dashboard (DB size, backup status, scan health, webhook delivery, auth/security, system info)
+
+**New CLI scripts (403 if accessed via web):**
+- `backup.php` — Run a database backup on-demand (SQLite, MySQL, PostgreSQL)
+- `restore.php` — Restore from a backup file with dry-run mode and SHA-256 verification
+
+**Database migration** (applied automatically on first boot after upgrade):
+- New table `backup_history` — tracks every backup run with status, size, and SHA-256
+
+**New database settings** (Admin → Settings):
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `backup.enabled` | `false` | Enable scheduled database backups via cron |
+| `backup.local_path` | `data/backups/` | Directory for backup files (relative to app root) |
+| `backup.retention_count` | `7` | Number of backup files to retain; older files are deleted |
+| `backup.schedule_cron` | `0 2 * * *` | Cron expression controlling backup frequency |
+| `audit.retention_days` | `365` | Days to retain audit log entries; 0 = never prune |
+| `audit.prune_batch_size` | `1000` | Rows deleted per prune pass |
+
+**Action required to enable backups:** Set `backup.enabled = true` at Admin → Settings and ensure `cron.php` is scheduled (see [docs/backup.md](backup.md) for cron setup). SQLite installs: no additional configuration. MySQL/PostgreSQL installs: verify the `mysqldump`/`pg_dump` binary is on the server's `PATH`.
+
+See [docs/backup.md](backup.md) for the full backup, restore, and disaster-recovery reference.
+
+---
 
 ### v3.6.0
 

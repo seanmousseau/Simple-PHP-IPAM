@@ -484,6 +484,16 @@ function to_int(mixed $value): int
     return 0;
 }
 
+function format_bytes(int $bytes): string
+{
+    if ($bytes <= 0) return '0 B';
+    $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    $i = (int)floor(log($bytes, 1024));
+    $i = min($i, count($units) - 1);
+    $val = $bytes / (1024 ** $i);
+    return ($i === 0 ? (string)$bytes : round($val, 1)) . ' ' . $units[$i];
+}
+
 /**
  * Safely coerce a mixed value (e.g. PDO fetch result or superglobal) to string.
  * Needed at PHPStan level 9 where (string) casts on mixed are disallowed.
@@ -3113,29 +3123,49 @@ function backup_is_due(array $config): bool
 }
 
 /**
- * Run a database backup if one is due. Uses WAL checkpoint + file copy for
- * a consistent snapshot without requiring SQLite3 extension.
- * Returns true if a backup was written, false otherwise.
+ * Record a row to backup_history. Best-effort: swallows all errors so a
+ * missing table (fresh install before migration runs) never blocks the backup.
+ */
+function backup_history_insert(PDO $db, string $filename, int $sizeBytes,
+    string $sha256, string $driver, string $startedAt, string $completedAt,
+    int $durationMs, string $targetPath, string $status, string $error = ''): void
+{
+    try {
+        $db->prepare("INSERT INTO backup_history
+            (filename, size_bytes, sha256, db_driver, started_at, completed_at,
+             duration_ms, target, target_path, status, error)
+            VALUES
+            (:fn, :sz, :h, :dr, :sa, :ca, :dur, 'local', :tp, :st, :err)")
+           ->execute([
+               ':fn'  => $filename,
+               ':sz'  => $sizeBytes,
+               ':h'   => $sha256,
+               ':dr'  => $driver,
+               ':sa'  => $startedAt,
+               ':ca'  => $completedAt,
+               ':dur' => $durationMs,
+               ':tp'  => $targetPath,
+               ':st'  => $status,
+               ':err' => $error,
+           ]);
+    } catch (Throwable) {
+        // best-effort
+    }
+}
+
+/**
+ * Run a database backup if one is due.
  *
- * SQLite-only for the moment. The whole flow (`wal_checkpoint`,
- * file-copy of a single `.sqlite` file, `.sqlite` retention pruning)
- * is SQLite-specific. MySQL / Postgres users should run engine-native
- * backups (`mysqldump`, `pg_dump`) from cron or their hosting
- * platform. v3.0.0 `migrate_db.php` (#392) will expose a generic
- * cross-engine backup API; until then, short-circuit here on any
- * non-SQLite driver so the housekeeping cycle does not fatal out on
- * the missing `db_path` key.
+ * - SQLite: WAL checkpoint + file copy.
+ * - MySQL:  mysqldump via proc_open (password via env var, never on command line).
+ * - Postgres: pg_dump via proc_open (password via PGPASSWORD env var).
+ *
+ * All engines record to backup_history with SHA-256 for integrity verification.
+ * Returns true if a backup was written, false otherwise.
  */
 /** @param IpamConfig $config */
 function run_db_backup_if_due(PDO $db, array $config): bool
 {
-    // Driver-gate before anything else. MySQL / Postgres do not have a
-    // `db_path` key in $config, so even reading $gConf['db_path'] below
-    // would emit an undefined-array-key warning and — on PHP 8.x — a
-    // TypeError on `is_file(null)` when the warning handler routes the
-    // notice but doesn't cast the value. v2.10.0 regression fix (#502).
-    if (ipam_dialect()->driver_name() !== 'sqlite') return false;
-
     if (!backup_is_due($config)) return false;
 
     $lockPath = __DIR__ . '/data/backup.lock';
@@ -3151,41 +3181,129 @@ function run_db_backup_if_due(PDO $db, array $config): bool
     try {
         if (!backup_is_due($config)) return false;
 
-        // Driver gate at the top of the function already proved
-        // driver_name() === 'sqlite', so IpamConfig's required db_path
-        // is genuinely present here.
-        /** @var IpamConfig $gConf */
-        $gConf = $GLOBALS['config'];
-        $dbPath = $gConf['db_path'] !== '' ? $gConf['db_path'] : (__DIR__ . '/data/ipam.sqlite');
-        if (!is_file($dbPath)) return false;
-
         $dir = backup_dir($config);
         if (!is_dir($dir)) {
             if (!@mkdir($dir, 0700, true)) return false;
+            // Deny direct web access to backup files.
+            @file_put_contents($dir . '/.htaccess',
+                "<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n" .
+                "<IfModule !mod_authz_core.c>\n    Deny from all\n</IfModule>\n");
         }
 
-        // Flush WAL to the main database file for a consistent copy
-        try { $db->exec("PRAGMA wal_checkpoint(FULL)"); } catch (Throwable) {}
+        $driver    = ipam_dialect()->driver_name();
+        $ts        = date('Y-m-d-His');
+        $startedAt = date('Y-m-d H:i:s');
+        $t0        = microtime(true);
+        $retention = max(1, to_int(ipam_setting('backup.retention')));
 
-        $ts   = date('Y-m-d-His');
-        $dest = $dir . '/ipam-' . $ts . '.sqlite';
+        /** @var IpamConfig $gConf */
+        $gConf = $GLOBALS['config'];
 
-        if (@copy($dbPath, $dest)) {
+        if ($driver === 'sqlite') {
+            $dbPath = $gConf['db_path'] !== '' ? $gConf['db_path'] : (__DIR__ . '/data/ipam.sqlite');
+            if (!is_file($dbPath)) return false;
+
+            try { $db->exec("PRAGMA wal_checkpoint(FULL)"); } catch (Throwable) {}
+
+            $dest = $dir . '/ipam-' . $ts . '.sqlite';
+            if (!@copy($dbPath, $dest)) {
+                backup_history_insert($db, basename($dest), 0, '', $driver,
+                    $startedAt, date('Y-m-d H:i:s'), (int)((microtime(true) - $t0) * 1000),
+                    $dest, 'failed', 'copy() failed');
+                return false;
+            }
             @chmod($dest, 0600);
-            $wrote = true;
 
-            // Prune old backups according to retention policy
-            $retention = max(1, to_int(ipam_setting('backup.retention')));
+            $sha256 = hash_file('sha256', $dest) ?: '';
+            $size   = (int)(@filesize($dest) ?: 0);
+            $dur    = (int)((microtime(true) - $t0) * 1000);
+            backup_history_insert($db, basename($dest), $size, $sha256, $driver,
+                $startedAt, date('Y-m-d H:i:s'), $dur, $dest, 'success');
+
+            // Prune old SQLite backups
             $files = glob($dir . '/ipam-*.sqlite');
             if (is_array($files)) {
-                rsort($files); // newest first (lexicographic = chronological for our format)
+                rsort($files);
                 foreach (array_slice($files, $retention) as $old) {
                     @unlink($old); // nosemgrep: php.lang.security.unlink-use.unlink-use
                 }
             }
+            $wrote = true;
 
-            // Record backup timestamp
-            $state = ['last_backup' => time(), 'last_file' => basename($dest)];
+        } elseif ($driver === 'mysql') {
+            $dsn    = to_str($gConf['db_dsn'] ?? '');
+            $host   = preg_match('/host=([^;]+)/i', $dsn, $m) ? $m[1] : '127.0.0.1';
+            $port   = preg_match('/port=([^;]+)/i', $dsn, $m) ? $m[1] : '3306';
+            $dbName = preg_match('/dbname=([^;]+)/i', $dsn, $m) ? $m[1] : 'ipam';
+            $user   = to_str($gConf['db_user'] ?? 'root');
+            $pass   = to_str($gConf['db_pass'] ?? '');
+            $dest   = $dir . '/ipam-' . $ts . '.sql';
+
+            $cmd = [
+                'mysqldump', '--single-transaction', '--routines',
+                '-h', $host, '-P', $port, '-u', $user, $dbName,
+            ];
+            $env = array_merge(getenv() ?: [], ['MYSQL_PWD' => $pass]);
+            $ret = backup_run_dump($cmd, $env, $dest);
+            if (!$ret) {
+                backup_history_insert($db, basename($dest), 0, '', $driver,
+                    $startedAt, date('Y-m-d H:i:s'), (int)((microtime(true) - $t0) * 1000),
+                    $dest, 'failed', 'mysqldump failed');
+                return false;
+            }
+
+            $sha256 = hash_file('sha256', $dest) ?: '';
+            $size   = (int)(@filesize($dest) ?: 0);
+            $dur    = (int)((microtime(true) - $t0) * 1000);
+            backup_history_insert($db, basename($dest), $size, $sha256, $driver,
+                $startedAt, date('Y-m-d H:i:s'), $dur, $dest, 'success');
+
+            $files = glob($dir . '/ipam-*.sql');
+            if (is_array($files)) {
+                rsort($files);
+                foreach (array_slice($files, $retention) as $old) {
+                    @unlink($old); // nosemgrep: php.lang.security.unlink-use.unlink-use
+                }
+            }
+            $wrote = true;
+
+        } elseif ($driver === 'pgsql') {
+            $dsn    = to_str($gConf['db_dsn'] ?? '');
+            $host   = preg_match('/host=([^;]+)/i', $dsn, $m) ? $m[1] : '127.0.0.1';
+            $port   = preg_match('/port=([^;]+)/i', $dsn, $m) ? $m[1] : '5432';
+            $dbName = preg_match('/dbname=([^;]+)/i', $dsn, $m) ? $m[1] : 'ipam';
+            $user   = to_str($gConf['db_user'] ?? 'postgres');
+            $pass   = to_str($gConf['db_pass'] ?? '');
+            $dest   = $dir . '/ipam-' . $ts . '.sql';
+
+            $cmd = ['pg_dump', '-h', $host, '-p', $port, '-U', $user, $dbName];
+            $env = array_merge(getenv() ?: [], ['PGPASSWORD' => $pass]);
+            $ret = backup_run_dump($cmd, $env, $dest);
+            if (!$ret) {
+                backup_history_insert($db, basename($dest), 0, '', $driver,
+                    $startedAt, date('Y-m-d H:i:s'), (int)((microtime(true) - $t0) * 1000),
+                    $dest, 'failed', 'pg_dump failed');
+                return false;
+            }
+
+            $sha256 = hash_file('sha256', $dest) ?: '';
+            $size   = (int)(@filesize($dest) ?: 0);
+            $dur    = (int)((microtime(true) - $t0) * 1000);
+            backup_history_insert($db, basename($dest), $size, $sha256, $driver,
+                $startedAt, date('Y-m-d H:i:s'), $dur, $dest, 'success');
+
+            $files = glob($dir . '/ipam-*.sql');
+            if (is_array($files)) {
+                rsort($files);
+                foreach (array_slice($files, $retention) as $old) {
+                    @unlink($old); // nosemgrep: php.lang.security.unlink-use.unlink-use
+                }
+            }
+            $wrote = true;
+        }
+
+        if ($wrote) {
+            $state = ['last_backup' => time(), 'last_file' => basename($dest ?? '')];
             @file_put_contents(backup_state_path(), json_encode($state));
             @chmod(backup_state_path(), 0600);
         }
@@ -3195,6 +3313,69 @@ function run_db_backup_if_due(PDO $db, array $config): bool
     }
 
     return $wrote;
+}
+
+/**
+ * Run a dump command (mysqldump / pg_dump) writing stdout to $destPath.
+ * Uses array-form proc_open so no shell injection is possible.
+ * Password is passed via $env, never on the command line.
+ *
+ * @param list<string> $cmd
+ * @param array<string,string> $env
+ */
+function backup_run_dump(array $cmd, array $env, string $destPath, int $timeoutSecs = 120): bool
+{
+    $pipes = [];
+    // $cmd is built from admin config values only (never user input); array-form
+    // proc_open bypasses the shell entirely so no injection is possible.
+    $proc  = proc_open($cmd, // nosemgrep
+        [
+            0 => ['pipe', 'r'],
+            1 => ['file', $destPath, 'w'],
+            2 => ['pipe', 'w'],
+        ],
+        $pipes,
+        null,
+        $env
+    );
+    if (!is_resource($proc)) return false;
+
+    fclose($pipes[0]);
+    stream_set_blocking($pipes[2], false);
+
+    // Poll for process completion with a hard deadline so a hung mysqldump/pg_dump
+    // never blocks a web request thread indefinitely. Non-blocking stderr reads
+    // prevent the process from stalling when the pipe buffer fills up.
+    $stderr   = '';
+    $deadline = time() + $timeoutSecs;
+    while (true) {
+        $chunk = fread($pipes[2], 4096);
+        if ($chunk !== false && $chunk !== '') $stderr .= $chunk;
+        if (!proc_get_status($proc)['running']) break;
+        if (time() > $deadline) {
+            proc_terminate($proc);
+            fclose($pipes[2]);
+            proc_close($proc);
+            @unlink($destPath); // nosemgrep: php.lang.security.unlink-use.unlink-use
+            error_log('backup_run_dump: killed after ' . $timeoutSecs . 's timeout');
+            return false;
+        }
+        usleep(100000); // 100ms polling interval
+    }
+    while (!feof($pipes[2])) {
+        $chunk = fread($pipes[2], 4096);
+        if ($chunk !== false && $chunk !== '') $stderr .= $chunk;
+    }
+    fclose($pipes[2]);
+    $exit = proc_close($proc);
+
+    if ($exit !== 0) {
+        @unlink($destPath); // nosemgrep: php.lang.security.unlink-use.unlink-use
+        error_log('backup_run_dump failed (exit=' . $exit . '): ' . trim($stderr));
+        return false;
+    }
+    @chmod($destPath, 0600);
+    return true;
 }
 
 /**
@@ -5628,16 +5809,16 @@ function page_header(string $title, array $opts = []): void
 
     echo "<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
     echo "<title>" . e($appName) . " \u{2014} " . e($title) . "</title>";
-    echo "<link rel='icon' type='image/webp' sizes='32x32' href='assets/favicon-32.webp?v=3.6.0'>";
-    echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png?v=3.6.0'>";
-    echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp?v=3.6.0'>";
-    echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png?v=3.6.0'>";
-    echo "<link rel='stylesheet' href='assets/vendor/open-props.min.css?v=3.6.0'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=3.6.0'>";
+    echo "<link rel='icon' type='image/webp' sizes='32x32' href='assets/favicon-32.webp?v=3.7.0'>";
+    echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png?v=3.7.0'>";
+    echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp?v=3.7.0'>";
+    echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png?v=3.7.0'>";
+    echo "<link rel='stylesheet' href='assets/vendor/open-props.min.css?v=3.7.0'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=3.7.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=3.6.0'></script>";
+    echo "<script defer src='assets/app.js?v=3.7.0'></script>";
     $pageAttr = isset($opts['page']) && $opts['page'] !== ''
         ? " data-page='" . e(to_str($opts['page'])) . "'"
         : '';
@@ -5684,6 +5865,8 @@ function page_header(string $title, array $opts = []): void
             echo "<a class='nav-dropdown-item' href='import_arp.php'>📡 ARP Import</a>";
             echo "<a class='nav-dropdown-item' href='reports.php'>📊 Reports</a>";
             echo "<a class='nav-dropdown-item' href='db_tools.php'>🗄 Database Tools</a>";
+            echo "<a class='nav-dropdown-item' href='backups.php'>💾 Backups</a>";
+            echo "<a class='nav-dropdown-item' href='health.php'>🩺 Health</a>";
             echo "<hr class='nav-dropdown-divider'>";
             echo "<a class='nav-dropdown-item' href='settings.php'>⚙ Settings</a>";
             echo "</div></div>";
@@ -5737,6 +5920,8 @@ function page_header(string $title, array $opts = []): void
             echo "<a href='import_csv.php'>&#8679; Import CSV</a>";
             echo "<a href='reports.php'>&#128202; Reports</a>";
             echo "<a href='db_tools.php'>&#128444; Database Tools</a>";
+            echo "<a href='backups.php'>&#128190; Backups</a>";
+            echo "<a href='health.php'>&#129690; Health</a>";
             echo "<a href='settings.php'>&#9881; Settings</a>";
         }
         echo "<hr>";

@@ -31,6 +31,11 @@ The keys below are seeded into the `settings` table by the v2.6.0 migration and 
 | `security.account_lockout_seconds` | int | `900` | Account lockout window length. |
 | `api.rate_limit_window_seconds` | int | `60` | Sliding window size (seconds) for per-API-key rate limiting. Seeded from `config.php` `api.rate_limit_window_seconds` on first install. *(v3.6.0)* |
 | `api.rate_limit_requests` | int | `300` | Max requests per window per API key before HTTP 429. Seeded from `config.php` `api.rate_limit_requests` on first install. *(v3.6.0)* |
+| `backup.enabled` | bool | `false` | Enable scheduled database backups via `cron.php`. *(v3.7.0)* |
+| `backup.dir` | string | `''` | Directory where backup files are written. Empty = `data/backups/` relative to app root. Created automatically on first backup. *(v3.7.0)* |
+| `backup.retention` | int | `7` | Number of backup files to retain; oldest files beyond this count are deleted after each backup. *(v3.7.0)* |
+| `backup.frequency` | string | `daily` | How often to run automatic backups. Accepted values: `daily`, `weekly`. *(v3.7.0)* |
+| `housekeeping.audit_log_retention_days` | int | `0` | Days to keep audit log entries. Entries older than this are pruned during scheduled housekeeping. Set to `0` to never prune. *(v3.7.0)* |
 | *(config.php only)* `recovery_mode` | bool | `false` | Emergency login recovery mode (see below). |
 | `alert.recipient_user_ids` | json | `[]` | (v2.8.0+) Active user IDs that receive utilization alerts. Picked from a multi-select on **Settings → Alerting**; only users with a non-empty email are eligible. Inactive users / cleared emails drop out automatically at send time. |
 | `alert.email` | string | *(empty)* | **Deprecated in v2.8.0** — replaced by `alert.recipient_user_ids`. The 2.8.0 migration auto-maps a matching active user; unmappable values produce a `settings.alert_email_unmigrated` audit row. Hidden from the UI. Removal in v3.0.0. |
@@ -684,10 +689,10 @@ For a guaranteed reset at midnight (independent of web traffic), add a cron entr
 | Task | Config key(s) | Throttled? |
 |------|--------------|-----------|
 | Temp file cleanup | `tmp_cleanup_ttl_seconds` | No — always runs |
-| Audit log pruning | `audit_log_retention_days` | No — skipped when `retention_days=0` |
+| Audit log pruning | `housekeeping.audit_log_retention_days` | No — skipped when value is `0` |
 | Address history pruning | `address_history_retention_days` | No — skipped when `retention_days=0` |
 | Subnet utilisation alerts | `alert.recipient_user_ids` (v2.8.0+; legacy `alert_email`) | No — skipped when no eligible recipients resolve |
-| Database backup | `backup.enabled`, `backup.frequency` | Yes — honours frequency setting |
+| Database backup | `backup.enabled`, `backup.frequency` | Yes — honours `backup.frequency` setting |
 | Network scanning | Per-subnet `scan_schedules.interval_minutes` | Yes — each subnet's own interval |
 | Demo mode reset | `demo_mode.enabled` | Yes — at most once every 24 hours |
 

@@ -616,6 +616,27 @@ CREATE TABLE IF NOT EXISTS rate_limit_buckets (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ---------------------------------------------------------------------------
+-- backup_history (v3.7.0, #423)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS backup_history (
+  id            INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  filename      VARCHAR(512) NOT NULL,
+  size_bytes    BIGINT,
+  sha256        VARCHAR(64),
+  db_driver     VARCHAR(16)  NOT NULL,
+  started_at    DATETIME     NOT NULL,
+  completed_at  DATETIME,
+  duration_ms   INT,
+  target        VARCHAR(32)  NOT NULL DEFAULT 'local',
+  target_path   TEXT,
+  status        VARCHAR(16)  NOT NULL DEFAULT 'pending',
+  error         TEXT,
+  created_at    DATETIME     NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  PRIMARY KEY (id),
+  KEY idx_backup_history_started_at (started_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------------------------------------------------------------------------
 -- settings (v2.6.0, key/value config registry)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS settings (
@@ -704,6 +725,7 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.5.0-custom-fields'),
   ('3.6.0-totp'),
   ('3.6.0-rate-limit'),
-  ('3.6.0-lockout');
+  ('3.6.0-lockout'),
+  ('3.7.0-backup-history');
 
 SET FOREIGN_KEY_CHECKS = 1;
