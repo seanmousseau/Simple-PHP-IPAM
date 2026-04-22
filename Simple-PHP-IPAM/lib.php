@@ -512,6 +512,50 @@ if (!function_exists('to_str')) {
     }
 }
 
+/* ---------------- View helpers (v3.8.0, #522) ---------------- */
+
+/**
+ * Render a PHP partial from Simple-PHP-IPAM/views/<view>.php.
+ *
+ * Props are extracted into the partial's local scope via extract() with
+ * EXTR_SKIP so that no prop can shadow an existing variable. The partial
+ * is a plain PHP file — no compiled syntax, no reserved directives, no
+ * templating engine. This is the idiomatic code-reuse pattern for this
+ * project (see CLAUDE.md "Runtime dependencies → UI and rendering").
+ *
+ * @param string               $view  Partial name without the .php extension
+ *                                    (e.g. 'subnet_row' for views/subnet_row.php).
+ * @param array<string, mixed> $props Variables to extract into the partial scope.
+ * @throws \RuntimeException          If the partial file does not exist.
+ */
+function ipam_render(string $view, array $props = []): void
+{
+    $path = __DIR__ . '/views/' . $view . '.php';
+    if (!is_file($path)) {
+        throw new \RuntimeException("View not found: $view");
+    }
+    extract($props, EXTR_SKIP);
+    require $path;
+}
+
+/**
+ * Render a PHP partial and return the output as a string.
+ *
+ * Buffers the output of ipam_render() and returns it. Useful when the
+ * rendered fragment must be stored or passed to another function before
+ * being sent to the client.
+ *
+ * @param string               $view  Partial name without the .php extension.
+ * @param array<string, mixed> $props Variables to extract into the partial scope.
+ * @return string                     The captured partial output.
+ */
+function ipam_render_string(string $view, array $props = []): string
+{
+    ob_start();
+    ipam_render($view, $props);
+    return (string)ob_get_clean();
+}
+
 /* ---------------- Timestamp display ---------------- */
 
 /**

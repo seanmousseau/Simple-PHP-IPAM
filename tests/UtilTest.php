@@ -665,4 +665,22 @@ class UtilTest extends TestCase
         $this->assertStringContainsString('&lt;script&gt;', $escaped);
         $this->assertStringContainsString('v3.6.0', $escaped);
     }
+
+    // -----------------------------------------------------------------------
+    // ipam_render() / ipam_render_string() — view helper (v3.8.0, #522)
+    // -----------------------------------------------------------------------
+
+    public function test_ipam_render_throws_on_missing_view(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        ipam_render('__nonexistent_view_xyz__');
+    }
+
+    public function test_ipam_render_executes_known_view(): void
+    {
+        ob_start();
+        ipam_render('_empty');
+        $output = ob_get_clean();
+        $this->assertSame('', $output);
+    }
 }
