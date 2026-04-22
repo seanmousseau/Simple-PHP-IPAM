@@ -29,7 +29,7 @@ then copy the SQLite file here.
 git worktree add /tmp/ipam-v1.19 v1.19.0
 cd /tmp/ipam-v1.19/Simple-PHP-IPAM
 php -r "
-require 'config.php'; require 'lib.php';
+\$config = require 'config.php'; require 'lib.php';
 \$db = ipam_db(\$config);
 ipam_db_init(\$db);
 "

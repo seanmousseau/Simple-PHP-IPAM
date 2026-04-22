@@ -3226,9 +3226,10 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             $wrote = true;
 
         } elseif ($driver === 'mysql') {
-            $host   = to_str($gConf['db_host'] ?? '127.0.0.1');
-            $port   = to_str($gConf['db_port'] ?? '3306');
-            $dbName = to_str($gConf['db_name'] ?? 'ipam');
+            $dsn    = to_str($gConf['db_dsn'] ?? '');
+            $host   = preg_match('/host=([^;]+)/i', $dsn, $m) ? $m[1] : '127.0.0.1';
+            $port   = preg_match('/port=([^;]+)/i', $dsn, $m) ? $m[1] : '3306';
+            $dbName = preg_match('/dbname=([^;]+)/i', $dsn, $m) ? $m[1] : 'ipam';
             $user   = to_str($gConf['db_user'] ?? 'root');
             $pass   = to_str($gConf['db_pass'] ?? '');
             $dest   = $dir . '/ipam-' . $ts . '.sql';
@@ -3257,9 +3258,10 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             $wrote = true;
 
         } elseif ($driver === 'pgsql') {
-            $host   = to_str($gConf['db_host'] ?? '127.0.0.1');
-            $port   = to_str($gConf['db_port'] ?? '5432');
-            $dbName = to_str($gConf['db_name'] ?? 'ipam');
+            $dsn    = to_str($gConf['db_dsn'] ?? '');
+            $host   = preg_match('/host=([^;]+)/i', $dsn, $m) ? $m[1] : '127.0.0.1';
+            $port   = preg_match('/port=([^;]+)/i', $dsn, $m) ? $m[1] : '5432';
+            $dbName = preg_match('/dbname=([^;]+)/i', $dsn, $m) ? $m[1] : 'ipam';
             $user   = to_str($gConf['db_user'] ?? 'postgres');
             $pass   = to_str($gConf['db_pass'] ?? '');
             $dest   = $dir . '/ipam-' . $ts . '.sql';

@@ -693,7 +693,7 @@ For a guaranteed reset at midnight (independent of web traffic), add a cron entr
 | Audit log pruning | `audit_log_retention_days` | No — skipped when `retention_days=0` |
 | Address history pruning | `address_history_retention_days` | No — skipped when `retention_days=0` |
 | Subnet utilisation alerts | `alert.recipient_user_ids` (v2.8.0+; legacy `alert_email`) | No — skipped when no eligible recipients resolve |
-| Database backup | `backup.enabled`, `backup.frequency` | Yes — honours frequency setting |
+| Database backup | `backup.enabled`, `backup.schedule_cron` | Yes — honours cron schedule setting |
 | Network scanning | Per-subnet `scan_schedules.interval_minutes` | Yes — each subnet's own interval |
 | Demo mode reset | `demo_mode.enabled` | Yes — at most once every 24 hours |
 

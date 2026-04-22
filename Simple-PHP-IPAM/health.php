@@ -141,7 +141,7 @@ if ($data === null) {
         $r3 = $db->query(
             "SELECT COUNT(*) AS c FROM webhook_deliveries
              WHERE (http_status IS NULL OR http_status < 200 OR http_status >= 300)
-               AND retry_count < 3"
+               AND attempt < 3"
         )?->fetch();
         $whPending = $r3 ? to_int($r3['c']) : 0;
         $r4 = $db->query(

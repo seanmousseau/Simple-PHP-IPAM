@@ -30,8 +30,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // --- Valid action prefixes (categories) ---
 const AUDIT_PREFIXES = [
-    'auth', 'subnet', 'address', 'user', 'site', 'apikey', 'dhcp_pool',
-    'db', 'export', 'import', 'scan', 'webhook', 'setting', 'audit', 'backup',
+    'address', 'aggregate', 'alert', 'apikey', 'audit', 'auth', 'backup',
+    'config', 'contact', 'custom_field', 'db', 'device', 'device_interface',
+    'dhcp_pool', 'export', 'import', 'mail', 'pd_pool', 'restore', 'scan',
+    'setting', 'settings', 'site', 'subnet', 'tag', 'user', 'vlan', 'vrf',
+    'webhook',
 ];
 
 $filterPrefix = trim(to_str($_GET['prefix'] ?? ''));
