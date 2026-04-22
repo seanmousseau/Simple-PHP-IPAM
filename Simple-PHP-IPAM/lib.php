@@ -5991,14 +5991,14 @@ function page_header(string $title, array $opts = []): void
     echo "<span class='topbar-title'>" . e($appName) . "</span>";
     echo "</header>";
 
-    // ⌘K / Ctrl+K search overlay (#253)
-    echo "<div id='search-overlay' role='dialog' aria-modal='true' aria-label='Quick search'>";
-    echo "<div class='so-box'>";
-    echo "<input id='search-overlay-input' type='search' placeholder='Search IPs, hostnames, owners…' autocomplete='off' spellcheck='false'>";
-    echo "<button id='search-overlay-close' class='so-close' aria-label='Close search'>&times;</button>";
-    echo "<ul id='search-overlay-list'></ul>";
-    echo "<div class='so-hint'>&#x23CE; to navigate &nbsp;&middot;&nbsp; &#x2191;&#x2193; to move &nbsp;&middot;&nbsp; <kbd>Esc</kbd> to close</div>";
-    echo "</div>";
+    // ⌘K / Ctrl+K command palette (#516)
+    echo "<div id='cmd-palette-bg' class='cmd-palette-bg' role='dialog' aria-modal='true' aria-label='Command palette'>";
+    echo "  <div class='cmd-palette'>";
+    echo "    <div class='cmd-input-wrap'>";
+    echo "      <input id='cmd-input' class='cmd-input' type='search' placeholder='Search pages, actions, addresses\xe2\x80\xa6' autocomplete='off' spellcheck='false' aria-label='Command palette search'>";
+    echo "    </div>";
+    echo "    <div id='cmd-results' class='cmd-results'></div>";
+    echo "  </div>";
     echo "</div>";
 
     echo "<main id='main-content' class='page-content'>";
