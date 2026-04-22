@@ -1783,3 +1783,47 @@
     correctLevel: QRCode.CorrectLevel.M
   });
 })();
+
+// uPlot dashboard growth chart
+(function () {
+  var el = document.getElementById('growth-chart');
+  if (!el || typeof uPlot === 'undefined') return;
+
+  var xs = JSON.parse(el.getAttribute('data-uplot-xs') || '[]');
+  var ys = JSON.parse(el.getAttribute('data-uplot-ys') || '[]');
+  if (!xs.length) return;
+
+  var style  = getComputedStyle(document.documentElement);
+  var stroke = (style.getPropertyValue('--link') || '#0077cc').trim();
+  var fill   = stroke + '22';
+  var muted  = (style.getPropertyValue('--muted') || '#6c757d').trim();
+
+  var opts = {
+    width:  el.offsetWidth || 640,
+    height: 180,
+    cursor: { drag: { x: false, y: false } },
+    select: { show: false },
+    legend: { show: false },
+    series: [
+      {},
+      {
+        label: 'New addresses',
+        stroke: stroke,
+        fill:   fill,
+        width:  2
+      }
+    ],
+    axes: [
+      { gap: 8, size: 28, stroke: muted, ticks: { stroke: muted } },
+      { gap: 8, size: 40, stroke: muted, ticks: { stroke: muted } }
+    ],
+    scales: { x: { time: true } }
+  };
+
+  var u = new uPlot(opts, [xs, ys], el);
+
+  // Resize chart when window resizes
+  window.addEventListener('resize', function () {
+    u.setSize({ width: el.offsetWidth || 640, height: 180 });
+  });
+}());

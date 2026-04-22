@@ -1470,4 +1470,68 @@ body.pw-toggle-hidden .pw-wrap .pw-input{padding-right:36px}
   .sidebar-close{display:flex;align-items:center;justify-content:center}
   .sidebar-overlay.is-visible{display:block}
 }
+
+/* ===== KPI cards ===== */
+.kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.kpi-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-left: 3px solid transparent;
+    border-radius: var(--radius-2, 4px);
+    padding: 1rem 1.25rem;
+}
+
+.kpi-card--warn { border-left-color: var(--warn); }
+.kpi-card--crit { border-left-color: var(--danger); }
+
+.kpi-label {
+    font-size: var(--text-xs, .6875rem);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    color: var(--muted);
+    margin-bottom: .25rem;
+}
+
+.kpi-value {
+    font-size: var(--text-2xl, 1.5rem);
+    font-weight: 700;
+    color: var(--fg);
+    line-height: 1.1;
+}
+
+.kpi-sub {
+    font-size: var(--text-xs, .6875rem);
+    color: var(--muted);
+    margin-top: .25rem;
+}
+
+/* ===== Dashboard chart section ===== */
+.chart-section {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-2, 4px);
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.5rem;
+    overflow: hidden;
+}
+
+.chart-title {
+    font-size: var(--text-sm, .8125rem);
+    font-weight: 600;
+    color: var(--muted);
+    margin: 0 0 .75rem;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+}
+
+/* uPlot reset — make it fill the container width */
+#growth-chart .uplot,
+#growth-chart .u-wrap { width: 100% !important; }
 @media(prefers-reduced-motion:reduce){.sidebar{transition:none}}

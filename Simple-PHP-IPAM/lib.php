@@ -7871,3 +7871,45 @@ function ipam_clear_persistent_lockout(PDO $db, int $uid): void {
         "UPDATE users SET failed_auth_count = 0, locked_until = NULL, lock_reason = NULL WHERE id = :id"
     )->execute([':id' => $uid]);
 }
+
+// ============================================================
+// Dashboard KPI helpers (v3.8.0, #514)
+// ============================================================
+
+function ipam_dashboard_kpis(PDO $db): array {
+    /** @var array<string, mixed>|false $totals */
+    $totals = $db->query(
+        "SELECT COUNT(*) AS subnets,
+                (SELECT COUNT(*) FROM addresses) AS addresses,
+                (SELECT COUNT(*) FROM addresses WHERE status='used') AS used
+         FROM subnets"
+    )->fetch();
+    /** @var array<string, mixed>|false $alerts */
+    $alerts = $db->query(
+        "SELECT COUNT(*) AS cnt FROM alert_state WHERE level='crit'"
+    )->fetch();
+    $subnets   = is_array($totals) ? to_int($totals['subnets'])   : 0;
+    $addresses = is_array($totals) ? to_int($totals['addresses']) : 0;
+    $used      = is_array($totals) ? to_int($totals['used'])      : 0;
+    return [
+        'subnets'   => $subnets,
+        'addresses' => $addresses,
+        'used'      => $used,
+        'pct_used'  => $addresses > 0 ? round($used / $addresses * 100, 1) : 0.0,
+        'alerts'    => is_array($alerts) ? to_int($alerts['cnt']) : 0,
+    ];
+}
+
+function ipam_dashboard_growth(PDO $db, int $days = 30): array {
+    $cutoff = gmdate('Y-m-d H:i:s', time() - $days * 86400);
+    $st = $db->prepare(
+        "SELECT DATE(created_at) AS d, COUNT(*) AS n
+         FROM addresses
+         WHERE created_at >= :cutoff
+         GROUP BY DATE(created_at)
+         ORDER BY d"
+    );
+    $st->execute([':cutoff' => $cutoff]);
+    /** @var list<array<string,mixed>> */
+    return $st->fetchAll();
+}
