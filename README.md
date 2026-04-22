@@ -153,3 +153,6 @@ See the [Installation guide](docs/install.md) for full web server configuration 
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for the full version history.
+
+
+<!-- Fix #614 -->
