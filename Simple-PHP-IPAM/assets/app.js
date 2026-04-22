@@ -453,30 +453,34 @@
       el.addEventListener("input", function() { el.setCustomValidity(""); });
     });
 
-    // --- Mobile hamburger nav (#250) ---
-    var navToggle = document.getElementById("nav-toggle");
-    var navDrawer = document.getElementById("nav-drawer");
-    var navOverlay = document.querySelector(".nav-drawer-overlay");
-    if (navToggle && navDrawer) {
-      function openNav() {
-        document.body.classList.add("nav-open");
-        navToggle.setAttribute("aria-expanded", "true");
-        navDrawer.removeAttribute("aria-hidden");
+    // --- Sidebar hamburger toggle (#512) ---
+    (function () {
+      var sidebar = document.getElementById("sidebar");
+      var openBtn = document.getElementById("sidebar-open");
+      var closeBtn = document.getElementById("sidebar-close");
+      if (!sidebar) return;
+
+      var overlay = document.createElement("div");
+      overlay.className = "sidebar-overlay";
+      document.body.appendChild(overlay);
+
+      function openSidebar() {
+        sidebar.classList.add("is-open");
+        overlay.classList.add("is-visible");
+        if (openBtn) openBtn.setAttribute("aria-expanded", "true");
       }
-      function closeNav() {
-        document.body.classList.remove("nav-open");
-        navToggle.setAttribute("aria-expanded", "false");
-        navDrawer.setAttribute("aria-hidden", "true");
+
+      function closeSidebar() {
+        sidebar.classList.remove("is-open");
+        overlay.classList.remove("is-visible");
+        if (openBtn) openBtn.setAttribute("aria-expanded", "false");
       }
-      navToggle.addEventListener("click", function() {
-        document.body.classList.contains("nav-open") ? closeNav() : openNav();
-      });
-      if (navOverlay) navOverlay.addEventListener("click", closeNav);
-      var drawerClose = navDrawer.querySelector(".drawer-close");
-      if (drawerClose) drawerClose.addEventListener("click", closeNav);
-      navDrawer.querySelectorAll("a").forEach(function(a) { a.addEventListener("click", closeNav); });
-      document.addEventListener("keydown", function(e) { if (e.key === "Escape") closeNav(); });
-    }
+
+      if (openBtn) openBtn.addEventListener("click", openSidebar);
+      if (closeBtn) closeBtn.addEventListener("click", closeSidebar);
+      overlay.addEventListener("click", closeSidebar);
+      document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeSidebar(); });
+    }());
 
     // --- Inline status toggle (#252) ---
     document.querySelectorAll(".status-badge[data-addr-id]").forEach(function(badge) {
