@@ -1307,7 +1307,7 @@
             if (pctSpan) pctSpan.textContent = pct + "%";
           });
         })
-        .catch(function(err) {
+        .catch(function() {
           document.querySelectorAll(".subnet-stats-placeholder").forEach(function(el) {
             el.textContent = "Error loading stats";
             el.classList.remove("subnet-stats-placeholder");
