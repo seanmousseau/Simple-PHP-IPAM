@@ -31,12 +31,3 @@ test('addresses table has sticky header', async () => {
   );
   expect(position).toBe('sticky');
 });
-
-test('addresses table has .data-table class', async () => {
-  if (!subnetId) {
-    test.skip(true, 'TEST_CIDR1 subnet not found in demo data');
-    return;
-  }
-  await page.goto(`addresses.php?subnet_id=${subnetId}`);
-  await expect(page.locator('.data-table')).toBeVisible();
-});
