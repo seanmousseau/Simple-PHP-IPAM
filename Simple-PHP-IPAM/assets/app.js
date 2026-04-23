@@ -2230,7 +2230,6 @@ function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
   function openDrawer() {
     overlay.style.display = 'block';
     drawer.style.display  = 'block';
-    testPanel.style.display = 'none';
   }
   function closeDrawer() {
     overlay.style.display = 'none';
@@ -2242,6 +2241,7 @@ function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
     fAction.value = 'create';
     fId.value = '';
     form.reset();
+    testPanel.style.display = 'none';
     openDrawer();
   });
 
@@ -2254,6 +2254,7 @@ function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
       fUrl.value    = btn.dataset.url  || '';
       var evts = JSON.parse(btn.dataset.events || '[]');
       cbs.forEach(function (cb) { cb.checked = evts.includes(cb.value); });
+      testPanel.style.display = 'none';
       openDrawer();
     });
   });
