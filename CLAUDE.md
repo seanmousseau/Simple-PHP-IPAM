@@ -33,7 +33,7 @@ Two cheap calls. The first loads your profile + preferences. The second returns 
 
 ## Project overview
 
-> **Current shipped version: v3.7.1** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v3.8.0 → v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v3.8.0 describes future work — **do not apply it to current v3.7.x code**. Current-state rules are the ones that do not cite a future version.
+> **Current shipped version: v3.8.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v3.9.0 → v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v3.9.0 describes future work — **do not apply it to current v3.8.x code**. Current-state rules are the ones that do not cite a future version.
 
 Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application built with **PHP 8.2+ and SQLite**. It has **no npm build step** — all CSS and JavaScript are vanilla. Starting in v2.9.0, the application will ship a small, carefully curated set of Composer-managed runtime dependencies bundled into the release tarball, so end users still deploy by extracting the tarball with no build step. The web root is `Simple-PHP-IPAM/` (the subdirectory, not the repo root).
 
@@ -196,7 +196,7 @@ Migrations live in `migrations.php` as an associative array of version string �
 
 **When adding a new version:** add the migration closure, bump `version.php`, update `CHANGELOG.md` (keepachangelog format).
 
-> **Current shipped version: v3.7.1.** `Creating new data tables in post-v4.0.0 releases` is **forward-looking** (applies from v4.1.0+ only) — ignore it for all current v3.x work. `Modifying the schema (multi-engine, from v2.9.0 onward)` and `Runtime dependencies` are **currently active** rules (apply to v2.9.0+ including the current v3.7.1).
+> **Current shipped version: v3.8.0.** `Creating new data tables in post-v4.0.0 releases` is **forward-looking** (applies from v4.1.0+ only) — ignore it for all current v3.x work. `Modifying the schema (multi-engine, from v2.9.0 onward)` and `Runtime dependencies` are **currently active** rules (apply to v2.9.0+ including the current v3.8.0).
 
 ### Creating new data tables in post-v4.0.0 releases *(applies from v4.1.0+)*
 
@@ -367,10 +367,12 @@ Key utility classes: `.muted`, `.danger`, `.success`, `.warning`, `.badge`, `.ba
 
 Asset cache-buster: update `?v=X.Y.Z` in the `<link>` and `<script>` tags in `page_header()` **and** in `demo_gate.php` (lines 74–75) when changing CSS/JS. `demo_gate.php` has its own `<head>` block and does not call `page_header()`, so it must be updated separately.
 
-### Nav structure
-- Left: nav-links (Dashboard, Subnets, Addresses, Search, Audit, ⚙ Admin dropdown)
-- Right: user dropdown (username + role badge → Theme, Password, Logout)
-- Admin dropdown items: Sites, VLANs, VRFs, Tags, Contacts, Custom Fields, Users, DHCP Pools, API Keys, Webhooks, Import CSV, Database Tools
+### Nav structure (v3.8.0 sidebar)
+- **Desktop (≥1024px):** always-visible sidebar with SVG Heroicon nav links (Dashboard, Subnets, Addresses, Search, Audit, Admin section) and user block at the bottom (username + role badge → Theme, Account, Logout)
+- **Mobile (<768px):** hamburger button opens the sidebar as a full-height overlay; Escape or backdrop click closes it
+- **Command palette ⌘K / Ctrl+K:** keyboard-driven navigation, record creation, and theme toggle; accessible from any page
+- **Admin section nav items:** Sites, VLANs, VRFs, Tags, Contacts, Custom Fields, Users, DHCP Pools, API Keys, Webhooks, Import CSV, Database Tools (hidden for non-SQLite engines), Backups, Health
+- All emoji icons replaced with consistent SVG Heroicons sprite (`assets/icons.svg`)
 
 ---
 

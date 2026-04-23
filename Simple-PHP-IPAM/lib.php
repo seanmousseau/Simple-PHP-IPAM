@@ -5885,16 +5885,16 @@ function page_header(string $title, array $opts = []): void
 
     echo "<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
     echo "<title>" . e($appName) . " \u{2014} " . e($title) . "</title>";
-    echo "<link rel='icon' type='image/webp' sizes='32x32' href='assets/favicon-32.webp?v=3.7.1'>";
-    echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png?v=3.7.1'>";
-    echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp?v=3.7.1'>";
-    echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png?v=3.7.1'>";
-    echo "<link rel='stylesheet' href='assets/vendor/open-props.min.css?v=3.7.1'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=3.7.1'>";
+    echo "<link rel='icon' type='image/webp' sizes='32x32' href='assets/favicon-32.webp?v=3.8.0'>";
+    echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png?v=3.8.0'>";
+    echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp?v=3.8.0'>";
+    echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png?v=3.8.0'>";
+    echo "<link rel='stylesheet' href='assets/vendor/open-props.min.css?v=3.8.0'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v=3.8.0'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=3.7.1'></script>";
+    echo "<script defer src='assets/app.js?v=3.8.0'></script>";
     $pageAttr = isset($opts['page']) && $opts['page'] !== ''
         ? " data-page='" . e(to_str($opts['page'])) . "'"
         : '';

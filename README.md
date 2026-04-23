@@ -12,19 +12,20 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.7.1
+## What's new in v3.8.0
 
-**Patch release: 2FA login fix, CSP compliance, health dashboard improvements, and documentation fixes.**
+v3.8.0 is a complete visual rework — sidebar navigation, command palette, right-side drawer, uPlot dashboard charts, SVG icon system, and Fira Sans typography. All pages are WCAG AA compliant in dark mode and fully responsive at 375/768/1024/1440px.
 
-- **TOTP login fix (#625).** Fixed a bug where the TOTP 6-digit code was always rejected at login. Two `name="code"` inputs in the form caused PHP to read the empty backup-code field instead of the authenticator code.
-- **TOTP enrollment fix (#626).** Fixed enrollment redirecting to "already enabled" after step 2 — the step=3 backup-codes page was being swallowed by an early guard.
-- **CSP compliance for backups page (#617).** Moved all modal JavaScript from an inline `<script>` block to `app.js` using `data-*` event delegation so the page works under `script-src 'self'`.
-- **Health dashboard improvements (#619, #620, #621).** DB version now detected per driver (SQLite/MySQL/PostgreSQL). Timestamps display in the user's configured timezone. Header-to-grid spacing and card height consistency fixed.
-- **Backup prerequisites warning (#618).** Health Dashboard now warns with a critical badge when `mysqldump` or `pg_dump` is missing from `$PATH`. Prerequisites documented in `docs/configuration.md`.
-- **`app_secret` documentation (#622).** Improved comment explains that changing the value locks out all TOTP users. Added the missing `app_secret` entry to `config.php.example`.
-- **Broken TOC links fixed (#623).** kramdown (GitHub Pages) collapses consecutive hyphens; TOC anchors in `docs/install.md` corrected from double-hyphen to single-hyphen format.
+**Highlights:**
+- **Sidebar navigation** — Enterprise Gateway pattern at ≥1024px, mobile hamburger
+- **Command palette ⌘K** — navigate, create records, toggle theme
+- **Right-side drawer** — smooth slide-in for all create/edit flows
+- **uPlot dashboard** — KPI cards + time-series growth chart
+- **SVG icon system** — Heroicons sprite, consistent sizing across all nav
+- **Fira Sans** — self-hosted, completes the Fira type family
+- WCAG AA dark-mode pass, responsive breakpoint audit
 
-See [CHANGELOG.md](CHANGELOG.md) for full release history and [docs/upgrading.md](docs/upgrading.md) for the upgrade guide.
+See [CHANGELOG.md](CHANGELOG.md) for full details.
 
 ---
 
