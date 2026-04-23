@@ -247,11 +247,11 @@ page_header('Account');
   <form method="post" action="change_password.php">
     <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
     <div class="row">
-      <label>Current password<br><input type="password" name="old_password" required></label>
+      <label>Current password<br><input type="password" name="old_password" required autocomplete="current-password"></label>
     </div>
     <div class="row">
-      <label>New password<br><input type="password" name="new_password" required></label>
-      <label>Repeat new password<br><input type="password" name="new_password2" required></label>
+      <label>New password<br><input type="password" name="new_password" required autocomplete="new-password"></label>
+      <label>Repeat new password<br><input type="password" name="new_password2" required autocomplete="new-password"></label>
     </div>
     <p class="muted">Minimum <?= (int)$minLen ?> characters<?php
         $reqs = [];

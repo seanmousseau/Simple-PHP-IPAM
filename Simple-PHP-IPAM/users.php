@@ -390,7 +390,7 @@ page_header('Users');
               <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
               <input type="hidden" name="action" value="reset_password">
               <input type="hidden" name="id"     value="<?= to_int($u['id']) ?>">
-              <input type="password" name="new_password" placeholder="New password (12+ chars)" required>
+              <input type="password" name="new_password" placeholder="New password (12+ chars)" required autocomplete="new-password">
               <button type="submit">Reset PW</button>
             </form>
 
