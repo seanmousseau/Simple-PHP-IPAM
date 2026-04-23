@@ -24,7 +24,7 @@
 | **HTTPS** | Required — the app redirects all HTTP traffic to HTTPS |
 | **Writable `data/` dir** | The web server user needs read/write access to `data/` (and `data/tmp/` for CSV import) |
 
-There are **no additional dependencies** for v2.x features. VLANs, VRFs, contacts, tags, site hierarchy, address expiry, and MAC address fields are all managed within the same SQLite database and require no extra extensions or services.
+There are **no additional dependencies** for core features. VLANs, VRFs, contacts, tags, site hierarchy, address expiry, and MAC address fields are all managed within the same SQLite database and require no extra extensions or services.
 
 **Optional integrations** (all opt-in via `config.php`):
 
@@ -124,9 +124,9 @@ Copy or edit `config.php`. See the [Configuration guide](configuration.md) for a
 
 At minimum, **change the default admin password** before the site receives any traffic.
 
-### MySQL (experimental)
+### MySQL
 
-> ⚠️ **MySQL support is experimental in v2.10.0 and will be promoted to stable in v3.0.0.** The default driver is SQLite; you must opt in explicitly. Report bugs at the [GitHub tracker](https://github.com/seanmousseau/Simple-PHP-IPAM/issues). See the [Known issues](#mysql-known-issues) list below for current limitations.
+> **MySQL support is production-ready as of v3.0.0.** The default driver is SQLite; you must opt in explicitly. Report issues at the [GitHub tracker](https://github.com/seanmousseau/Simple-PHP-IPAM/issues). See the [Notes](#mysql-notes) section below for driver-specific behaviour.
 
 **Requirements:**
 
@@ -166,19 +166,18 @@ return [
 ];
 ```
 
-On the first request, the installer loads `schema.mysql.sql`, creates the bootstrap admin account, and pre-seeds `schema_migrations` with every historical version so subsequent migration runs are no-ops. An **admin UI beta banner** appears on every page while `db_driver=mysql` is active — you can dismiss it per browser, and it resurfaces whenever you upgrade the application.
+On the first request, the installer loads `schema.mysql.sql`, creates the bootstrap admin account, and pre-seeds `schema_migrations` with every historical version so subsequent migration runs are no-ops.
 
-<a id="mysql-known-issues"></a>
-**Known issues and current limitations:**
+<a id="mysql-notes"></a>
+**Driver-specific notes:**
 
-- **Binary binding requires PDO `PARAM_LOB`.** The application already does this everywhere internally via `ipam_bind_binary()`. If you write a custom script that talks to `ipam.sqlite`-style columns (`ip_bin`, `network_bin`), bind with `PDO::PARAM_LOB` or your values will be string-escaped and corrupted.
-- **Backups are SQLite-format only.** `db_tools.php` export produces a SQLite dump that can only be imported back into a SQLite install. Cross-engine migration (MySQL ↔ SQLite ↔ Postgres) lands in v3.0.0 via a dedicated `migrate_db.php` tool. For now, use native MySQL tools (`mysqldump`) for MySQL-to-MySQL backups.
-- **CHECK constraints require MySQL 8.0.16+.** The schema declares CHECK constraints on enum columns (`role`, `theme`, `status`, `level`, `method`) and range columns (`vlan_id`, `tcp_port`, prefix delegation). Versions below 8.0.16 silently ignore them, leaving invariant enforcement to the application layer only.
-- **Playwright MySQL matrix slot (v2.10.0+).** The CI matrix covers the full 329-test end-to-end suite against a containerized `mysql:8.0` service on every PR alongside the per-commit PHP QA + `test_api.sh` slot. Track progress at [#433](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/433).
+- **Binary binding requires PDO `PARAM_LOB`.** The application already does this everywhere internally via `ipam_bind_binary()`. If you write a custom script that reads or writes `ip_bin` / `network_bin` columns, bind with `PDO::PARAM_LOB` or your values will be string-escaped and corrupted.
+- **CHECK constraints require MySQL 8.0.16+.** The schema declares CHECK constraints on enum and range columns. Versions below 8.0.16 silently ignore them, leaving invariant enforcement to the application layer only.
+- **Backups use `mysqldump`.** The scheduled backup runner (`backup.php`) calls `mysqldump` for MySQL installs. Ensure `mysqldump` is on the server's `PATH`. For cross-engine migration, use `migrate_db.php`.
 
-### MariaDB (experimental)
+### MariaDB
 
-> ⚠️ **MariaDB support is experimental in v2.12.0 and will be promoted to stable in v3.0.0.** MariaDB uses the same `mysql` PDO driver and `db_driver => 'mysql'` config key as MySQL. The default driver is SQLite; you must opt in explicitly. Report bugs at the [GitHub tracker](https://github.com/seanmousseau/Simple-PHP-IPAM/issues).
+> **MariaDB support is production-ready as of v3.0.0.** MariaDB uses the same `mysql` PDO driver and `db_driver => 'mysql'` config key as MySQL. The default driver is SQLite; you must opt in explicitly. Report issues at the [GitHub tracker](https://github.com/seanmousseau/Simple-PHP-IPAM/issues).
 
 **Requirements:**
 
@@ -218,9 +217,9 @@ Configuration is identical to MySQL — MariaDB speaks the same wire protocol an
 
 - **MariaDB version strings contain a `5.5.5-` prefix** in some deployments (historical protocol compatibility lie). The application strips this prefix automatically — no user action needed.
 
-### PostgreSQL (experimental)
+### PostgreSQL
 
-> ⚠️ **PostgreSQL support is experimental in v2.11.0 and will be promoted to stable in v3.0.0.** The default driver is SQLite; you must opt in explicitly. Report bugs at the [GitHub tracker](https://github.com/seanmousseau/Simple-PHP-IPAM/issues). See the [Known issues](#postgresql-known-issues) list below for current limitations.
+> **PostgreSQL support is production-ready as of v3.0.0.** The default driver is SQLite; you must opt in explicitly. Report issues at the [GitHub tracker](https://github.com/seanmousseau/Simple-PHP-IPAM/issues). See the [Notes](#postgresql-notes) section below for driver-specific behaviour.
 
 **Requirements:**
 
@@ -268,17 +267,16 @@ return [
 ];
 ```
 
-On the first request, the installer loads `schema.pgsql.sql`, creates the bootstrap admin account, and pre-seeds `schema_migrations` with every historical version so subsequent migration runs are no-ops. An **admin UI beta banner** appears on every page while `db_driver=pgsql` is active — you can dismiss it per browser, and it resurfaces whenever you upgrade the application.
+On the first request, the installer loads `schema.pgsql.sql`, creates the bootstrap admin account, and pre-seeds `schema_migrations` with every historical version so subsequent migration runs are no-ops.
 
-<a id="postgresql-known-issues"></a>
-**Known issues and current limitations:**
+<a id="postgresql-notes"></a>
+**Driver-specific notes:**
 
-- **BYTEA columns are returned as PHP streams.** pdo_pgsql returns `ip_bin` and `network_bin` as stream resources instead of byte strings. The application auto-unwraps this at the PDO layer via a `PgsqlStatement` subclass installed on the pgsql connection, so every built-in call site works transparently. If you write a **custom** PHP script that talks to an IPAM Postgres database, remember to call `stream_get_contents()` on any BYTEA column you read — or attach the `PgsqlStatement` class yourself via `$pdo->setAttribute(PDO::ATTR_STATEMENT_CLASS, [PgsqlStatement::class])`.
-- **Binary binding requires PDO `PARAM_LOB`.** Same rule as MySQL: the application already does this everywhere via `ipam_bind_binary()`. Custom scripts inserting into `ip_bin` / `network_bin` must bind with `PDO::PARAM_LOB` or Postgres will reject the byte string with `invalid byte sequence for encoding "UTF8"` the moment a non-ASCII byte shows up.
-- **`GENERATED BY DEFAULT AS IDENTITY` sequences.** The schema uses modern IDENTITY columns (PG10+). Explicit `INSERT ... (id, ...) VALUES (N, ...)` is accepted, but does **not** advance the backing sequence — subsequent implicit inserts would collide at id=1. The demo seed and test fixtures handle this by calling `setval(pg_get_serial_sequence('t', 'id'), MAX(id))` after bulk-inserting explicit ids. Custom scripts doing the same pattern must do the equivalent.
-- **Backups are SQLite-format only.** `db_tools.php` export produces a SQLite dump that can only be imported back into a SQLite install. Cross-engine migration (SQLite ↔ MySQL ↔ Postgres) lands in v3.0.0 via a dedicated `migrate_db.php` tool. For now, use native Postgres tools (`pg_dump` / `pg_restore`) for Postgres-to-Postgres backups.
-- **No per-connection FK enforcement toggle.** Unlike SQLite (`PRAGMA foreign_keys`) and MySQL (`SET FOREIGN_KEY_CHECKS`), Postgres has no session-level FK switch. The application does not need to disable FKs for normal operation — the v2.1.0-vrfs table-rebuild migration that forced the SQLite PRAGMA-off dance is pre-stamped on fresh Postgres installs and never re-runs, so the schema stays consistent under `ON DELETE CASCADE` / `SET NULL` / `RESTRICT`.
-- **Playwright PostgreSQL matrix slot (v2.11.0+).** The CI matrix covers the full ~330-test end-to-end suite against a containerized `postgres:14-alpine` service on every PR alongside the per-commit PHP QA + `test_api.sh` slot. Track progress at [#388](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/388).
+- **BYTEA columns are returned as PHP streams.** pdo_pgsql returns `ip_bin` and `network_bin` as stream resources instead of byte strings. The application auto-unwraps this at the PDO layer via a `PgsqlStatement` subclass, so every built-in call site works transparently. If you write a **custom** PHP script that reads from an IPAM Postgres database, call `stream_get_contents()` on any BYTEA column — or attach the `PgsqlStatement` class via `$pdo->setAttribute(PDO::ATTR_STATEMENT_CLASS, [PgsqlStatement::class])`.
+- **Binary binding requires PDO `PARAM_LOB`.** Same rule as MySQL: the application already does this everywhere via `ipam_bind_binary()`. Custom scripts inserting into `ip_bin` / `network_bin` must bind with `PDO::PARAM_LOB` or Postgres will reject the byte string with `invalid byte sequence for encoding "UTF8"`.
+- **`GENERATED BY DEFAULT AS IDENTITY` sequences.** Explicit `INSERT ... (id, ...) VALUES (N, ...)` is accepted, but does **not** advance the backing sequence. Custom scripts bulk-inserting explicit IDs must call `setval(pg_get_serial_sequence('t', 'id'), MAX(id))` afterwards.
+- **Backups use `pg_dump`.** The scheduled backup runner (`backup.php`) calls `pg_dump` for PostgreSQL installs. Ensure `pg_dump` is on the server's `PATH`. For cross-engine migration, use `migrate_db.php`.
+- **No per-connection FK enforcement toggle.** Unlike SQLite and MySQL, Postgres has no session-level FK switch. The application does not need to disable FKs at runtime — all migrations that require temporary FK bypass are pre-stamped on fresh Postgres installs.
 
 ---
 
@@ -428,7 +426,7 @@ Regression protection: `.github/workflows/playwright.yml` includes a containeriz
 ## Step 5 — Verify the install
 {: #step-5-verify-the-install }
 
-Open `https://ipam.example.com/` in a browser. You should be redirected to the login page. Log in with the bootstrap admin credentials from `config.php` and immediately change the password under **Password** in the navigation.
+Open `https://ipam.example.com/` in a browser. You should be redirected to the login page. Log in with the bootstrap admin credentials from `config.php` and immediately change the password under **Account** in the sidebar.
 
 ---
 
@@ -460,7 +458,7 @@ Each task throttles itself internally and is skipped cleanly when not yet due, s
 
 1. Navigate to your install URL — you will be redirected to the login page.
 2. Log in with the credentials set in `config.php` under `bootstrap_admin` (default: `admin` / `ChangeMeNow!12345`).
-3. **Immediately change the password** — go to **Password** in the top navigation.
+3. **Immediately change the password** — click your username at the bottom of the sidebar and go to **Account**.
 4. Optionally create additional users under **Admin → Users**.
 
 > The bootstrap admin account is only created if no users exist in the database. Once any user account exists, changes to `bootstrap_admin` in `config.php` have no effect.
