@@ -24,7 +24,7 @@ test.afterAll(async () => {
 
 test('"Database" nav link navigates to db_tools.php', async () => {
   await page.goto('dashboard.php');
-  const dbLink = page.locator('.sidebar-link', { hasText: /^Database$/ });
+  const dbLink = page.locator('a.sidebar-link[href="db_tools.php"]');
   await expect(dbLink).toBeVisible();
   await dbLink.click();
   await expect(page).toHaveURL(/db_tools\.php/);
@@ -38,13 +38,13 @@ test('nav has no separate "Backups" link', async () => {
 
 test('nav has exactly one "Database" link', async () => {
   await page.goto('db_tools.php');
-  const dbLinks = page.locator('.sidebar-link', { hasText: /^Database$/ });
+  const dbLinks = page.locator('a.sidebar-link[href="db_tools.php"]');
   await expect(dbLinks).toHaveCount(1);
 });
 
 test('"Database" nav link is marked active on db_tools.php', async () => {
   await page.goto('db_tools.php');
-  const dbLink = page.locator('.sidebar-link.is-active', { hasText: /^Database$/ });
+  const dbLink = page.locator('a.sidebar-link.is-active[href="db_tools.php"]');
   await expect(dbLink).toBeVisible();
 });
 

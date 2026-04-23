@@ -51,10 +51,15 @@ async function cleanup(p: Page) {
     await p.goto('subnets.php');
     await deleteSubnet(p, CIDR_A);
     await deleteSubnet(p, CIDR_B);
-    // Delete test sites
+    // Delete ALL instances of each test site (loop until none remain — guards against
+    // duplicate sites left by prior failed runs where only the first match was deleted)
     for (const siteName of [SITE_A, SITE_B]) {
-        const sid = await siteIdFor(p, siteName);
-        if (sid) await fetchPost(p, appUrl('sites.php'), { action: 'delete', id: sid });
+        let sid = await siteIdFor(p, siteName);
+        while (sid) {
+            await fetchPost(p, appUrl('sites.php'), { action: 'delete', id: sid });
+            await p.goto('sites.php');
+            sid = await siteIdFor(p, siteName);
+        }
     }
 }
 
