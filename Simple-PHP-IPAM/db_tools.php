@@ -320,22 +320,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'backu
         $st->execute([':id' => $verifyId]);
         $bkRow = $st->fetch();
         if ($bkRow) {
-            $verPath  = to_str($bkRow['target_path'] ?? '');
-            $expected = to_str($bkRow['sha256'] ?? '');
-            if ($verPath === '' || !is_file($verPath)) {
+            $verPath      = to_str($bkRow['target_path'] ?? '');
+            $expected     = to_str($bkRow['sha256'] ?? '');
+            $realVer      = $verPath !== '' ? (realpath($verPath) ?: false) : false;
+            $allowedVerDir = realpath(backup_dir($config));
+            if ($realVer === false || $allowedVerDir === false
+                || !str_starts_with($realVer, $allowedVerDir . DIRECTORY_SEPARATOR)) {
+                $err = 'Backup path is outside the allowed backup directory.';
+            } elseif (!is_file($realVer)) {
                 $err = 'Backup file not found on disk.';
             } elseif ($expected === '') {
                 $err = 'No SHA-256 hash recorded for this backup — cannot verify.';
             } else {
-                $actual = hash_file('sha256', $verPath) ?: '';
+                $actual = hash_file('sha256', $realVer) ?: '';
                 if (hash_equals($expected, $actual)) {
                     $msg = 'SHA-256 verified OK. File integrity confirmed.';
                     audit($db, 'backup.verified', 'backup_history', $verifyId,
-                        'SHA-256 verified OK for: ' . basename($verPath));
+                        'SHA-256 verified OK for: ' . basename($realVer));
                 } else {
                     $err = 'SHA-256 MISMATCH — backup file may be corrupted.';
                     audit($db, 'backup.verify_failed', 'backup_history', $verifyId,
-                        'SHA-256 mismatch for: ' . basename($verPath));
+                        'SHA-256 mismatch for: ' . basename($realVer));
                 }
             }
         } else {
@@ -354,15 +359,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($_GET['action'] ?? '') === 'backup_
         $st->execute([':id' => $dlId]);
         $bkRow = $st->fetch();
         if ($bkRow) {
-            $dlPath = to_str($bkRow['target_path'] ?? '');
-            if ($dlPath !== '' && is_file($dlPath)) {
-                $dlFilename = basename($dlPath);
-                $dlSize     = (int)filesize($dlPath);
+            $dlPath     = to_str($bkRow['target_path'] ?? '');
+            $realDl     = $dlPath !== '' ? (realpath($dlPath) ?: false) : false;
+            $allowedDlDir = realpath(backup_dir($config));
+            if ($realDl === false || $allowedDlDir === false
+                || !str_starts_with($realDl, $allowedDlDir . DIRECTORY_SEPARATOR)) {
+                http_response_code(403);
+                exit('Access denied.');
+            }
+            if (is_file($realDl)) {
+                $dlFilename = basename($realDl);
+                $dlSize     = (int)filesize($realDl);
                 header('Content-Type: application/octet-stream');
                 header('Content-Disposition: attachment; filename="' . $dlFilename . '"');
                 header('Content-Length: ' . $dlSize);
                 header('X-Content-Type-Options: nosniff');
-                readfile($dlPath);
+                readfile($realDl);
                 audit($db, 'backup.downloaded', 'backup_history', $dlId,
                     'Downloaded backup: ' . $dlFilename);
                 exit;
