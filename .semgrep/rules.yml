@@ -396,3 +396,41 @@ rules:
     metadata:
       category: portability
       confidence: HIGH
+
+  # ---------------------------------------------------------------------------
+  # CSP: inline <script> blocks in PHP output
+  #
+  # script-src 'self' blocks all inline scripts. Any PHP file that outputs
+  # a <script> tag without a src= attribute is writing an inline script that
+  # will be blocked by CSP and silently do nothing in the browser. JS belongs
+  # in assets/app.js with a <script src="..."> tag.
+  #
+  # Pattern covers:
+  #   <script>alert(1)</script>       inline JS code
+  #   <script type="text/template">  template inline content
+  #   <script type="text/html">      HTML-as-string inline content
+  #
+  # Excluded:
+  #   <script src="...">              external script (CSP allows)
+  #   <script type="application/json"> JSON data block (CSP allows)
+  #
+  # Known violations are suppressed with `// nosemgrep: ipam-inline-script-csp`
+  # plus a reference to the tracking issue.
+  # ---------------------------------------------------------------------------
+  - id: ipam-inline-script-csp
+    patterns:
+      - pattern-regex: '<script\s*>'
+      - pattern-not-regex: 'src=|nosemgrep'
+    paths:
+      include:
+        - "**/Simple-PHP-IPAM/*.php"
+        - "**/Simple-PHP-IPAM/views/*.php"
+    message: >
+      Inline <script> block will be blocked by Content-Security-Policy: script-src 'self'.
+      Move the JS to Simple-PHP-IPAM/assets/app.js and load it with <script src="..." integrity="..."></script>.
+    languages: [php]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: CWE-693
+      confidence: HIGH
