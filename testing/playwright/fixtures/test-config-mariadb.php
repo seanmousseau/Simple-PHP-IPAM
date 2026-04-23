@@ -60,11 +60,13 @@ return [
         'version'     => 2,
     ],
     'demo_mode'            => [
-        'enabled'    => false,
-        'gate'       => null,
-        'site_key'   => '',
-        'secret_key' => '',
+        'enabled'     => false,
+        'allow_force' => true,   // permits DEMO_SEED_FORCE=1 in the test harness
+        'gate'        => null,
+        'site_key'    => '',
+        'secret_key'  => '',
     ],
+    'app_secret'           => 'playwright-test-app-secret-for-totp',
     'oidc'                 => [
         'enabled'        => false,
         'display_name'   => 'SSO',

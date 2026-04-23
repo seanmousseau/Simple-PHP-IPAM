@@ -12,21 +12,20 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.8.1
+## What's new in v3.9.0
 
-v3.8.1 is a patch release fixing three dashboard layout bugs discovered after v3.8.0 shipped, plus a comprehensive documentation refresh.
+**Navigation & filtering**
+- **Subnet site filter strip** — click a site pill above the subnet tree to scope the view. Supports region → site hierarchy with collapsible groups. Filter persists via `sessionStorage`.
+- **Address page cascading filter** — new Site dropdown narrows the Subnet dropdown client-side. Pre-selects correct site when loading from a `?subnet_id=N` link.
+- **Subnet description in address header** — human-readable subnet name shown as a subtitle under the CIDR.
 
-**Bug fixes:**
-- KPI cards now have proper spacing below action pills (#635)
-- Dashboard grid collapses correctly at the sidebar breakpoint; uPlot chart resizes on sidebar open/close (#636)
-- Address growth chart shows a friendly empty state instead of a flat zero-line when no new addresses were recorded in the last 30 days (#637)
+**Database admin consolidation**
+- The separate *Database Tools* and *Backups* nav links are merged into a single **Database** page. Old `backups.php` URL redirects automatically.
 
-**Documentation:**
-- MySQL, MariaDB, PostgreSQL marked stable (were incorrectly labeled experimental) (#638)
-- New guide: Sidebar & Command Palette user guide (#638)
-- v3.8.0 upgrade notes and install.md nav reference fixes (#638)
+**Test coverage**
+- New Playwright spec covers the complete 2FA lifecycle: enrollment, TOTP login, backup-code login, single-use code invalidation, and admin 2FA reset.
 
-See [CHANGELOG.md](CHANGELOG.md) for full details.
+Full history in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

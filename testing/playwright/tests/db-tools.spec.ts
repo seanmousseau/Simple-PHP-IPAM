@@ -50,6 +50,7 @@ test.afterAll(async () => {
 test('db_tools page loads', async () => {
   await page.goto('db_tools.php');
   const title = await page.title();
+  // Title is now "Database" (consolidated from "Database Tools")
   expect(title.toLowerCase()).toContain('database');
 });
 

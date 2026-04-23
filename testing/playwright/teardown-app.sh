@@ -32,3 +32,6 @@ if [[ -f "$app_dir/config.php.prebootstrap-backup" ]]; then
     mv "$app_dir/config.php.prebootstrap-backup" "$app_dir/config.php"
     echo "teardown-app: restored original config.php"
 fi
+
+# Remove the .env file written by bootstrap-app.sh so it doesn't linger between runs
+rm -f "${script_dir}/.env"

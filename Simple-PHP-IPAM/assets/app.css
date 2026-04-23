@@ -1654,3 +1654,81 @@ button:active,.button:active,.action-pill:active{transform:translateY(1px)}
     outline-offset:2px;
     border-radius:var(--radius-xs);
 }
+
+/* ===== Site filter strip (#629) ===== */
+.site-filter-strip{
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    gap:var(--space-2) var(--space-3);
+    padding:var(--space-5) 0 var(--space-4);
+    border-bottom:1px solid var(--border);
+    margin-bottom:var(--space-6);
+}
+.site-filter-pill{
+    display:inline-flex;
+    align-items:center;
+    gap:var(--space-2);
+    padding:var(--space-2) var(--space-5);
+    background:var(--btn-secondary);
+    color:var(--btn-secondary-fg);
+    border:1px solid var(--border);
+    border-radius:var(--radius-pill);
+    font-size:var(--font-size-sm);
+    font-weight:500;
+    cursor:pointer;
+    white-space:nowrap;
+    transition:background 150ms ease,color 150ms ease,border-color 150ms ease,box-shadow 150ms ease;
+    line-height:1.4;
+}
+.site-filter-pill:hover{
+    background:var(--btn);
+    color:var(--btnfg);
+    border-color:var(--btn);
+}
+.site-filter-pill--active,
+.site-filter-pill[aria-pressed="true"]{
+    background:var(--btn);
+    color:var(--btnfg);
+    border-color:var(--btn);
+    box-shadow:0 0 0 2px var(--link);
+}
+.site-filter-pill--region{
+    font-weight:600;
+}
+.site-filter-pill--child{
+    font-size:var(--font-size-xs);
+    padding:var(--space-1) var(--space-4);
+}
+.site-filter-region{
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    gap:var(--space-2) var(--space-2);
+}
+.site-filter-region-children{
+    display:flex;
+    flex-wrap:wrap;
+    gap:var(--space-2);
+    transition:opacity 150ms ease;
+}
+.site-filter-region-children.is-collapsed{
+    display:none;
+}
+.site-filter-caret{
+    font-size:.7em;
+    margin-left:var(--space-1);
+    transition:transform .15s ease;
+    display:inline-block;
+}
+.site-filter-pill[aria-expanded="false"] .site-filter-caret{
+    transform:rotate(-90deg);
+}
+/* Hidden subnet nodes (filtered out) */
+.subnet-node--filtered{
+    display:none !important;
+}
+/* Hide site-group when all its subnet nodes are filtered */
+.site-group--filter-empty{
+    display:none !important;
+}

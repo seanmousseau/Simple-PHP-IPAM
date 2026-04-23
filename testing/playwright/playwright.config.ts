@@ -1,4 +1,17 @@
 import { defineConfig, devices } from '@playwright/test';
+import * as fs from 'fs';
+import * as path from 'path';
+
+// Load .env file written by bootstrap-app.sh into process.env so tests can
+// read SEED_2FA_TEST_USER and any other bootstrap-time flags without requiring
+// the caller to pass them explicitly on the command line.
+const dotenvPath = path.join(__dirname, '.env');
+if (fs.existsSync(dotenvPath)) {
+    for (const line of fs.readFileSync(dotenvPath, 'utf-8').split('\n')) {
+        const m = line.match(/^([^#=\s][^=]*)=(.*)$/);
+        if (m && !(m[1] in process.env)) process.env[m[1]] = m[2];
+    }
+}
 
 // Normalize base URL: ensure no trailing slash so we can append '/page.php' cleanly.
 const rawBase = process.env.IPAM_BASE_URL || 'http://localhost:8080';
