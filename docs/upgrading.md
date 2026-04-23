@@ -9,6 +9,7 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
+  - [v3.8.1](#v381) — Dashboard bug fixes, documentation refresh (no breaking changes)
   - [v3.8.0](#v380) — Sidebar navigation, command palette, uPlot dashboard, SVG icons, Fira Sans (no breaking changes)
   - [v3.7.0](#v370) — Backup/restore, health dashboard, audit retention, test coverage (no breaking changes)
   - [v3.6.0](#v360) — TOTP 2FA, per-API-key rate limiting, session hardening (no breaking changes)
@@ -98,11 +99,27 @@ The backup is left in place after a successful upgrade. You can remove it manual
 
 ## Version-specific upgrade notes
 
+### v3.8.1
+
+**No breaking changes.** Run `upgrade.sh` as normal — no manual steps required.
+
+**Bug fixes:**
+- Dashboard KPI cards now have proper spacing below action pills.
+- Dashboard two-column grid collapses at the correct sidebar breakpoint; uPlot growth chart resizes when the sidebar is toggled.
+- Address growth chart shows a friendly empty state when no new addresses were recorded in the last 30 days.
+
+**Documentation:**
+- All three database drivers (MySQL, MariaDB, PostgreSQL) correctly documented as production-ready since v3.0.0.
+- New guides: [Sidebar & Command Palette](sidebar-and-command-palette.md), [Two-Factor Authentication](security.md#two-factor-authentication-totp) (moved to security.md).
+- v3.8.0 upgrade notes corrected (mobile breakpoint was listed as `<768px`; correct value is `<1024px`).
+
+---
+
 ### v3.8.0
 
 **New pages:** None.
 
-**UI changes:** The top navigation bar has been replaced with a sidebar navigation pattern. On desktop (≥1024px) the sidebar is always visible. On mobile (<768px) a hamburger button opens the sidebar as an overlay. The previous emoji-icon nav links are now SVG Heroicons. The dashboard has been rewritten with KPI cards and a uPlot time-series chart.
+**UI changes:** The top navigation bar has been replaced with a sidebar navigation pattern. On desktop (≥1024px) the sidebar is always visible. On mobile (<1024px) a hamburger button opens the sidebar as an overlay. The previous emoji-icon nav links are now SVG Heroicons. The dashboard has been rewritten with KPI cards and a uPlot time-series chart.
 
 **New keyboard shortcuts:** ⌘K / Ctrl+K opens the command palette for navigation, creating records, and toggling the theme.
 

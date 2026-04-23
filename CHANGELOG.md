@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.8.1] - 2026-04-23
+
+### Fixed
+- Dashboard KPI cards now have proper spacing below action pills — added `margin-bottom` to `.page-actions` (#635)
+- Dashboard two-column grid now collapses at the sidebar breakpoint (`minmax` raised from 320px to 420px) (#636)
+- uPlot growth chart resizes correctly when the sidebar opens or closes (#636)
+- Address growth chart shows a friendly empty state instead of a flat zero-line when no new addresses were created in the last 30 days (#637)
+
+### Documentation
+- Removed stale "(experimental)" labels for MySQL, MariaDB, and PostgreSQL — stable since v3.0.0 (#638)
+- Removed stale Known Issues sections and outdated v2.x references from install.md (#638)
+- Fixed "top navigation" references in install.md — updated to "sidebar" (v3.8.0 nav change) (#638)
+- Added v3.8.0 and v3.8.1 entries to upgrading.md (#638)
+- New user guide: Sidebar & Command Palette (`docs/sidebar-and-command-palette.md`) (#638)
+- Updated feature index and documentation table in `docs/index.md` (#638)
+
 ## [3.8.0] - 2026-04-22
 
 ### Added
@@ -964,6 +980,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.8.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.8.0...v3.8.1
 [3.8.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.7.1...v3.8.0
 [3.7.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.7.0...v3.7.1
 [3.7.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.6.0...v3.7.0

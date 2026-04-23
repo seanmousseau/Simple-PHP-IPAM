@@ -12,18 +12,19 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.8.0
+## What's new in v3.8.1
 
-v3.8.0 is a complete visual rework — sidebar navigation, command palette, right-side drawer, uPlot dashboard charts, SVG icon system, and Fira Sans typography. All pages are WCAG AA compliant in dark mode and fully responsive at 375/768/1024/1440px.
+v3.8.1 is a patch release fixing three dashboard layout bugs discovered after v3.8.0 shipped, plus a comprehensive documentation refresh.
 
-**Highlights:**
-- **Sidebar navigation** — Enterprise Gateway pattern at ≥1024px, mobile hamburger
-- **Command palette ⌘K** — navigate, create records, toggle theme
-- **Right-side drawer** — smooth slide-in for all create/edit flows
-- **uPlot dashboard** — KPI cards + time-series growth chart
-- **SVG icon system** — Heroicons sprite, consistent sizing across all nav
-- **Fira Sans** — self-hosted, completes the Fira type family
-- WCAG AA dark-mode pass, responsive breakpoint audit
+**Bug fixes:**
+- KPI cards now have proper spacing below action pills (#635)
+- Dashboard grid collapses correctly at the sidebar breakpoint; uPlot chart resizes on sidebar open/close (#636)
+- Address growth chart shows a friendly empty state instead of a flat zero-line when no new addresses were recorded in the last 30 days (#637)
+
+**Documentation:**
+- MySQL, MariaDB, PostgreSQL marked stable (were incorrectly labeled experimental) (#638)
+- New guide: Sidebar & Command Palette user guide (#638)
+- v3.8.0 upgrade notes and install.md nav reference fixes (#638)
 
 See [CHANGELOG.md](CHANGELOG.md) for full details.
 

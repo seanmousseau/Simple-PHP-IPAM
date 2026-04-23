@@ -428,6 +428,9 @@
       overlay.className = "sidebar-overlay";
       document.body.appendChild(overlay);
 
+      // Matches the CSS sidebar slide-in transition duration so uPlot resizes after layout settles
+      var SIDEBAR_TRANSITION_MS = 320;
+
       function isMobile() {
         return window.innerWidth <= 1023;
       }
@@ -438,6 +441,7 @@
         sidebar.setAttribute("aria-hidden", "false");
         if (openBtn) openBtn.setAttribute("aria-expanded", "true");
         if (closeBtn) closeBtn.focus();
+        setTimeout(function() { document.dispatchEvent(new CustomEvent('ipam:sidebar-toggle')); }, SIDEBAR_TRANSITION_MS);
       }
 
       function closeSidebar() {
@@ -448,6 +452,7 @@
           openBtn.setAttribute("aria-expanded", "false");
           openBtn.focus();
         }
+        setTimeout(function() { document.dispatchEvent(new CustomEvent('ipam:sidebar-toggle')); }, SIDEBAR_TRANSITION_MS);
       }
 
       // Set initial aria-hidden state
@@ -1841,13 +1846,23 @@
   } catch (e) { return; }
   if (!xs.length) return;
 
+  var hasData = ys.some(function(v) { return v !== 0; });
+  if (!hasData) {
+    var emptyMsg = document.createElement('p');
+    emptyMsg.className = 'muted';
+    emptyMsg.style.cssText = 'text-align:center;line-height:180px;margin:0';
+    emptyMsg.textContent = 'No new addresses recorded in the last 30 days.';
+    el.appendChild(emptyMsg);
+    return;
+  }
+
   var style  = getComputedStyle(document.documentElement);
   var stroke = (style.getPropertyValue('--link') || '#0077cc').trim();
   var fill   = stroke + '22';
   var muted  = (style.getPropertyValue('--muted') || '#6c757d').trim();
 
   var opts = {
-    width:  el.offsetWidth || 640,
+    width:  640,
     height: 180,
     cursor: { drag: { x: false, y: false } },
     select: { show: false },
@@ -1870,10 +1885,14 @@
 
   var u = new uPlot(opts, [xs, ys], el);
 
-  // Resize chart when window resizes
-  window.addEventListener('resize', function () {
-    u.setSize({ width: el.offsetWidth || 640, height: 180 });
-  });
+  function resizeChart() {
+    var w = el.offsetWidth;
+    if (w > 0) u.setSize({ width: w, height: 180 });
+  }
+
+  requestAnimationFrame(resizeChart);
+  window.addEventListener('resize', resizeChart);
+  document.addEventListener('ipam:sidebar-toggle', resizeChart);
 }());
 
 /* global IpamDrawer — right-side drawer (#517) */

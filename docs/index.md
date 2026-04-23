@@ -49,6 +49,7 @@ See the [Installation guide](install.md) to get up and running in minutes.
 |-------|-------------|
 | [Installation](install.md) | Requirements, deployment, first login |
 | [Configuration](configuration.md) | All `config.php` keys explained |
+| [Sidebar & Command Palette](sidebar-and-command-palette.md) | Navigation layout, mobile overlay, ⌘K command palette |
 | [Scanning](scanning.md) | Network discovery and scheduled scanning |
 | [Advanced Networking](advanced-networking.md) | VRF BGP, VLAN ranges, aggregates, PD pools, DNS export |
 | [REST API](api.md) | Endpoint reference, authentication, examples, OpenAPI spec |
@@ -58,7 +59,7 @@ See the [Installation guide](install.md) to get up and running in minutes.
 | [Devices](devices.md) | Device & interface tracking, CSV import, API |
 | [OIDC / SSO](oidc.md) | PKCE flow setup with Keycloak, Azure AD, Okta, etc. |
 | [SMTP & Email](smtp.md) | SMTP configuration, alerts, password recovery |
-| [Security](security.md) | Hardening checklist, CSP, HTTPS, firewall |
+| [Security](security.md) | Hardening checklist, CSP, HTTPS, firewall, TOTP 2FA |
 | [Backup & Restore](backup.md) | Database backup CLI, scheduled backups, restore workflow, disaster recovery |
 | [Upgrading](upgrading.md) | Version upgrade instructions and changelog |
 
