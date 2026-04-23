@@ -22,8 +22,8 @@ test.afterAll(async () => {
 test('opens on Ctrl+K', async () => {
   await page.keyboard.press('Control+k');
   await expect(page.locator('#cmd-palette-bg')).toHaveClass(/is-open/, { timeout: 3000 });
-  // clean up
   await page.keyboard.press('Escape');
+  await expect(page.locator('#cmd-palette-bg')).not.toHaveClass(/is-open/);
 });
 
 test('closes on Escape', async () => {
