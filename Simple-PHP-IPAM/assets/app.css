@@ -854,6 +854,11 @@ html[data-theme=dark] .expired-row td{background:rgba(255,80,80,.08)}
   .subnet-node{margin-left:0 !important;padding-left:var(--space-4);border-left:2px solid var(--border)}
 }
 
+/* Content padding reduction on narrow viewports */
+@media (max-width: 767px){
+  .page-content{padding:1rem}
+}
+
 /* Mobile — 480px breakpoint (small phones) */
 @media (max-width: 480px){
   .page{padding:var(--space-5)}
@@ -938,6 +943,7 @@ body.nav-open .nav-drawer-overlay{display:block}
 @media(max-width:600px){
   .nav-links{display:none}
   .nav-toggle{display:block}
+  .card{overflow-x:auto}
 }
 
 /* ---- Inline status badge (#252) ---- */
@@ -1437,7 +1443,7 @@ body.pw-toggle-hidden .pw-wrap .pw-input{padding-right:36px}
 .sidebar-link:focus-visible{outline:2px solid var(--link);outline-offset:2px}
 .sidebar-link.is-active{background:var(--link);color:#fff}
 .layout-main{flex:1;min-width:0;margin-left:var(--sidebar-width,220px);display:flex;flex-direction:column}
-.page-content{flex:1;padding:1.5rem}
+.page-content{flex:1;padding:1.5rem;max-width:1440px;width:100%}
 .topbar--mobile{display:none;align-items:center;gap:.75rem;padding:.625rem 1rem;background:var(--card);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:90}
 .topbar-title{font-weight:600;font-size:var(--text-md,1rem);color:var(--fg)}
 .hamburger{background:none;border:none;cursor:pointer;color:var(--fg);padding:.375rem;border-radius:var(--radius-sm);display:flex;align-items:center}
