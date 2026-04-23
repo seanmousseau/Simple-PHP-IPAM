@@ -631,7 +631,7 @@ button:disabled{opacity:.6;cursor:not-allowed}
   height:100%;
   background:var(--success);
   border-radius:var(--radius-xs);
-  transition:width .3s;
+  transition:width 400ms ease;
 }
 .util-bar-fill--warn{background:var(--warn)}
 .util-bar-fill--crit{background:var(--danger)}
@@ -1630,3 +1630,20 @@ body.pw-toggle-hidden .pw-wrap .pw-input{padding-right:36px}
 .bulk-bar.is-visible { opacity: 1; pointer-events: all; }
 .bulk-bar-count { font-size: var(--text-sm); font-weight: 600; }
 @media (prefers-reduced-motion: reduce) { .bulk-bar { transition: none; } }
+
+/* ===== Micro-interaction polish (#519) ===== */
+button,.button,.action-pill,.button-danger,.button-secondary,.nav-pill{
+    transition:background 150ms ease,color 150ms ease,box-shadow 150ms ease;
+}
+button:active,.button:active,.action-pill:active{transform:translateY(1px)}
+
+.badge{transition:background 150ms ease,color 150ms ease}
+
+.data-table thead th{transition:color 150ms ease}
+
+/* Global focus ring — outline-based, overrides the earlier box-shadow-only rule */
+:focus-visible{
+    outline:2px solid var(--link);
+    outline-offset:2px;
+    border-radius:var(--radius-xs);
+}
