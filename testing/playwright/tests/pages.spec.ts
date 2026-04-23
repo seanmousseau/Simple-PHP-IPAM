@@ -29,6 +29,13 @@ const PAGES: Array<[string, string]> = [
   ['change_password.php', 'Account'],
   ['scan_history.php', 'Scan'],
   ['settings.php',     'Settings'],
+  ['webhooks.php',      'Webhook'],
+  ['health.php',        'Health'],
+  ['reports.php',       'Report'],
+  ['devices.php',       'Device'],
+  ['custom_fields.php', 'Custom Fields'],
+  ['import_arp.php',    'ARP'],
+  ['contacts.php',      'Contact'],
 ];
 
 // Pages that include breadcrumbs — dashboard is the root page and has no breadcrumb bar

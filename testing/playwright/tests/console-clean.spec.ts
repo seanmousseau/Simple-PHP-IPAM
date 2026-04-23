@@ -25,6 +25,12 @@ const PAGES = [
   'change_password.php',
   'scan_history.php',
   'settings.php',
+  'webhooks.php',
+  'health.php',
+  'reports.php',
+  'devices.php',
+  'custom_fields.php',
+  'import_arp.php',
 ];
 
 // Benign warnings we deliberately tolerate — empty for now. Add with caution.
