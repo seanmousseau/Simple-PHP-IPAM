@@ -4,7 +4,7 @@
  */
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import {
-  login, fetchGet, fetchPost, appUrl,
+  login, fetchGet, fetchPost, deleteSubnet, appUrl,
   ADMIN_USER, ADMIN_PASS,
   TEST_VLAN_ID, TEST_VLAN_NAME, TEST_VLAN_DESC, TEST_VLAN_CIDR,
   newAuthContext,
@@ -136,19 +136,9 @@ test('vlans: edit VLAN name', async () => {
 });
 
 test('vlans: delete test VLAN subnet then VLAN', async () => {
-  // First delete the test subnet we created
+  // Delete the test subnet via fetchPost (delete button is in the global drawer in v3.8.0)
   await page.goto('subnets.php');
-  const subnetNode = page.locator('.subnet-node').filter({ hasText: TEST_VLAN_CIDR });
-  if (await subnetNode.count() > 0) {
-    // Open details via evaluate to avoid sticky-header pointer-event interception
-    const details = subnetNode.locator('details').first();
-    await details.evaluate((el: HTMLDetailsElement) => { el.open = true; });
-    const deleteForm = subnetNode.locator('form').filter({ has: page.locator('[value=delete]') });
-    page.once('dialog', d => d.accept());
-    // Use evaluate to bypass sticky-header pointer-event interception
-    await deleteForm.locator('button.button-danger').evaluate((el: HTMLElement) => el.click());
-    await page.waitForURL(/subnets\.php/);
-  }
+  await deleteSubnet(page, TEST_VLAN_CIDR);
 
   // Now delete the VLAN
   await page.goto('vlans.php');
