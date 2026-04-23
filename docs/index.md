@@ -11,6 +11,8 @@ A lightweight, self-hosted IP Address Management (IPAM) tool built with **PHP 8.
 
 - **IPv4 and IPv6** subnet and address management
 - **Hierarchical subnets** with site and VRF scoping
+- **Site filter strip** on the subnet tree — click a site pill to scope the view; supports region → site hierarchy; persists via `sessionStorage`
+- **Cascading site→subnet filter** on the addresses page — Site dropdown narrows Subnet dropdown client-side; pre-selects site from `?subnet_id=N` links
 - **VLANs, VRF, Tags, Contacts** — full network object model
 - **BGP metadata** on VRFs (ASN, Route Targets)
 - **VLAN ranges** — named allocation blocks

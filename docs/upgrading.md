@@ -9,6 +9,7 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
+  - [v3.9.0](#v390) — Site filter strip, cascading address filter, DB admin consolidation (no breaking changes)
   - [v3.8.1](#v381) — Dashboard bug fixes, documentation refresh (no breaking changes)
   - [v3.8.0](#v380) — Sidebar navigation, command palette, uPlot dashboard, SVG icons, Fira Sans (no breaking changes)
   - [v3.7.0](#v370) — Backup/restore, health dashboard, audit retention, test coverage (no breaking changes)
@@ -98,6 +99,14 @@ The backup is left in place after a successful upgrade. You can remove it manual
 ---
 
 ## Version-specific upgrade notes
+
+### v3.9.0
+
+- **`backups.php` removed from nav; redirects 301 to `db_tools.php`.** Update any bookmarks or internal links.
+- No schema changes. No config changes. No new runtime dependencies.
+- Asset cache-busters bumped to `?v=3.9.0` — hard-refresh may be needed after upgrade if CSS/JS is cached.
+
+---
 
 ### v3.8.1
 

@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.9.0] - 2026-04-23
+
+### Added
+- Subnet site filter strip on `subnets.php`: site pills with region→site hierarchy support; client-side filter with `sessionStorage` persistence (#629)
+- Site→subnet cascading filter on `addresses.php`: Site dropdown narrows Subnet dropdown client-side; pre-selects site from `?subnet_id=` URL param (#630)
+- Subnet description shown as subtitle in address page header when set (#631)
+- Unified **Database** admin page (`db_tools.php`): merges Backup History (previously `backups.php`) with export/import; `backups.php` redirects to `db_tools.php` (#615)
+- Playwright TOTP spec: enrollment, login, backup-code login, single-use invalidation, admin 2FA reset (#628)
+
+### Fixed
+- Admin TOTP 2FA reset (Reset 2FA button in users.php) confirmed implemented in v3.8.x; closed #624
+
 ## [3.8.1] - 2026-04-23
 
 ### Fixed
@@ -980,6 +992,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.9.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.8.1...v3.9.0
 [3.8.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.8.0...v3.8.1
 [3.8.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.7.1...v3.8.0
 [3.7.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.7.0...v3.7.1
