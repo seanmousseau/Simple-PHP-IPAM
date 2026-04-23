@@ -27,7 +27,7 @@ test('addresses table has sticky header', async () => {
   }
   await page.goto(`addresses.php?subnet_id=${subnetId}`);
   const position = await page.locator('.data-table thead th').first().evaluate(
-    function(el) { return getComputedStyle(el).position; }
+    function(el: HTMLElement) { return getComputedStyle(el).position; }
   );
   expect(position).toBe('sticky');
 });
