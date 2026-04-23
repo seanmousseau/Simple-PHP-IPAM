@@ -68,12 +68,12 @@ test.afterAll(async () => {
   try {
     // Delete the test webhook if it still exists.
     await page.goto(appUrl('webhooks.php'));
-    const deleteForm = page.locator(`form:has(input[name="action"][value="delete"])`).filter({
-      has: page.locator(`[data-wh-name="${WH_NAME}"]`),
-    }).first();
-    if (await deleteForm.count() > 0) {
+    // data-wh-name is on the <form> element itself; use CSS attribute selector
+    const deleteForms = page.locator(`form[data-wh-name="${WH_NAME}"]:has(input[name="action"][value="delete"])`);
+    const count = await deleteForms.count();
+    for (let i = 0; i < count; i++) {
       page.once('dialog', d => d.accept());
-      await deleteForm.locator('button[type="submit"]').click();
+      await deleteForms.first().locator('button[type="submit"]').click();
       await page.waitForURL(/webhooks\.php/, { timeout: 10_000 });
     }
   } catch { /* ignore */ }
@@ -136,17 +136,15 @@ test('create webhook via form', async () => {
   await page.waitForURL(/webhooks\.php(?!\?view=)/, { timeout: 15_000 });
 
   // New row should appear in the table
-  await expect(page.locator('table').getByText(WH_NAME)).toBeVisible({ timeout: 5_000 });
+  await expect(page.locator('table').getByText(WH_NAME).first()).toBeVisible({ timeout: 5_000 });
 });
 
 test('test_fire returns JSON (not HTTP 500) — regression for #662', async () => {
   // Requires the webhook created in the previous test.
   await page.goto(appUrl('webhooks.php'));
 
-  // Find the Test button for our webhook row
-  const testBtn = page.locator('.wh-testfire-btn').filter({
-    has: page.locator(`[data-name="${WH_NAME}"]`),
-  }).first();
+  // Find the Test button for our webhook row (data-name is on the button itself)
+  const testBtn = page.locator(`.wh-testfire-btn[data-name="${WH_NAME}"]`).first();
 
   // If it doesn't exist the create test above failed; skip gracefully
   const btnCount = await testBtn.count();
@@ -180,12 +178,8 @@ test('delete webhook', async () => {
   await page.goto(appUrl('webhooks.php'));
 
   // Find the delete form for our named webhook
-  const deleteForm = page.locator('form').filter({
-    has: page.locator(`input[name="action"][value="delete"]`),
-  }).filter({
-    // The surrounding <form> carries data-wh-name for the confirm() prompt
-    has: page.locator(`[data-wh-name="${WH_NAME}"]`),
-  }).first();
+  // data-wh-name is on the <form> element itself; use CSS attribute selector
+  const deleteForm = page.locator(`form[data-wh-name="${WH_NAME}"]:has(input[name="action"][value="delete"])`).first();
 
   const formCount = await deleteForm.count();
   if (formCount === 0) {

@@ -1011,11 +1011,10 @@
         clearTimeout(searchTimer);
         var q = input.value.trim();
         activeIdx = -1;
-        if (q.length < 2) {
-          renderCommands(q);
-          return;
+        renderCommands(q);
+        if (q.length >= 2) {
+          searchTimer = setTimeout(function() { runSearch(q); }, 300);
         }
-        searchTimer = setTimeout(function() { runSearch(q); }, 300);
       });
 
       input.addEventListener("keydown", function(e) {
@@ -2262,6 +2261,7 @@ function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
   document.getElementById('wh-drawer-close').addEventListener('click', closeDrawer);
   document.getElementById('wh-drawer-close2').addEventListener('click', closeDrawer);
   overlay.addEventListener('click', closeDrawer);
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && overlay.style.display === 'block') closeDrawer(); });
 
   document.getElementById('wh-gen-secret').addEventListener('click', function () {
     var fd = new FormData();
