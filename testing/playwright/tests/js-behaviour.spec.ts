@@ -47,6 +47,7 @@ test('search overlay opens on Meta+K (macOS)', async () => {
   await page.keyboard.press('Meta+k');
   await expect(page.locator('#cmd-palette-bg')).toBeVisible({ timeout: 2000 });
   await page.keyboard.press('Escape');
+  await expect(page.locator('#cmd-palette-bg')).toBeHidden();
 });
 
 test('data-auto-submit select attribute present on scan_history.php', async () => {

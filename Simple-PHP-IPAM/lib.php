@@ -564,14 +564,18 @@ function ipam_render(string $view, array $props = []): void
  */
 function ipam_render_string(string $view, array $props = []): string
 {
+    $level = ob_get_level();
     ob_start();
     try {
         ipam_render($view, $props);
+        $out = ob_get_clean();
+        return $out === false ? '' : $out;
     } catch (\Throwable $e) {
-        ob_end_clean();
+        while (ob_get_level() > $level) {
+            ob_end_clean();
+        }
         throw $e;
     }
-    return (string)ob_get_clean();
 }
 
 /**
@@ -7914,11 +7918,9 @@ function ipam_dashboard_kpis(PDO $db): array {
  * @return list<array<string,mixed>>
  */
 function ipam_dashboard_growth(PDO $db, int $days = 30): array {
-    $days = max(1, $days);
-    // Align to calendar-day boundaries in UTC so the chart always shows exactly
-    // $days distinct DATE buckets (today − ($days−1) days through today).
-    $ts    = time() - ($days - 1) * 86400;
-    $start = gmdate('Y-m-d', $ts) . ' 00:00:00';
+    $days  = max(1, $days);
+    $now   = time();
+    $start = gmdate('Y-m-d', $now - ($days - 1) * 86400) . ' 00:00:00';
     $st = $db->prepare(
         "SELECT DATE(created_at) AS d, COUNT(*) AS n
          FROM addresses
@@ -7927,6 +7929,16 @@ function ipam_dashboard_growth(PDO $db, int $days = 30): array {
          ORDER BY d"
     );
     $st->execute([':start' => $start]);
-    /** @var list<array<string,mixed>> */
-    return $st->fetchAll();
+
+    $counts = [];
+    foreach ($st->fetchAll() as $row) {
+        $counts[to_str($row['d'])] = to_int($row['n']);
+    }
+
+    $series = [];
+    for ($i = $days - 1; $i >= 0; $i--) {
+        $day      = gmdate('Y-m-d', $now - $i * 86400);
+        $series[] = ['d' => $day, 'n' => $counts[$day] ?? 0];
+    }
+    return $series;
 }

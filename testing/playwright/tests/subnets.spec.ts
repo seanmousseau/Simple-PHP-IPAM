@@ -165,13 +165,10 @@ test('subnets: VLAN picker lists test VLAN when it exists', async () => {
 
 test('subnets: form drawer opens on Add Subnet click', async () => {
   await page.goto('subnets.php');
-  const drawerTrigger = page.locator('[data-open-drawer]').first();
-  if (await drawerTrigger.count() === 0) {
-    test.skip(true, 'No drawer trigger found — drawer may not be implemented on this page');
-    return;
-  }
+  const drawerTrigger = page.locator('[data-drawer-title="Add Subnet"]').first();
   await drawerTrigger.click();
-  await expect(page.locator('#form-drawer')).toBeVisible();
+  await expect(page.locator('#global-drawer')).toBeVisible();
+  await page.keyboard.press('Escape');
 });
 
 // ── v2.3.0 scan schedule section ─────────────────────────────────────────────
