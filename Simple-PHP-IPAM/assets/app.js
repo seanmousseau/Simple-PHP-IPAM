@@ -480,10 +480,12 @@
         var nextStatus = cycle[curStatus] || "used";
         var csrf = document.querySelector("input[name=csrf]");
         if (!csrf) return;
+        var subnetParam = new URLSearchParams(window.location.search).get("subnet_id") || "0";
         var formData = new FormData();
         formData.append("csrf", csrf.value);
         formData.append("action", "update_status");
         formData.append("id", addrId);
+        formData.append("subnet_id", subnetParam);
         formData.append("status", nextStatus);
         badge.classList.add("status-updating");
         fetch("addresses.php", {method: "POST", body: formData})
@@ -817,11 +819,12 @@
           if (!csrf) { cell.innerHTML = origHtml; return; }
           isSaving = true;
           var fd = new FormData();
-          fd.append("csrf",   csrf.value);
-          fd.append("action", "update_cell");
-          fd.append("id",     addrId);
-          fd.append("field",  field);
-          fd.append("value",  newVal);
+          fd.append("csrf",      csrf.value);
+          fd.append("action",    "update_cell");
+          fd.append("id",        addrId);
+          fd.append("subnet_id", new URLSearchParams(window.location.search).get("subnet_id") || "0");
+          fd.append("field",     field);
+          fd.append("value",     newVal);
           cell.classList.add("cell-saving");
           fetch("addresses.php", {method: "POST", body: fd})
             .then(function(r) { return r.json(); })

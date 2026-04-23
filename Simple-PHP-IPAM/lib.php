@@ -7914,15 +7914,19 @@ function ipam_dashboard_kpis(PDO $db): array {
  * @return list<array<string,mixed>>
  */
 function ipam_dashboard_growth(PDO $db, int $days = 30): array {
-    $cutoff = gmdate('Y-m-d H:i:s', time() - $days * 86400);
+    $days = max(1, $days);
+    // Align to calendar-day boundaries in UTC so the chart always shows exactly
+    // $days distinct DATE buckets (today − ($days−1) days through today).
+    $ts    = time() - ($days - 1) * 86400;
+    $start = gmdate('Y-m-d', $ts) . ' 00:00:00';
     $st = $db->prepare(
         "SELECT DATE(created_at) AS d, COUNT(*) AS n
          FROM addresses
-         WHERE created_at >= :cutoff
+         WHERE created_at >= :start
          GROUP BY DATE(created_at)
          ORDER BY d"
     );
-    $st->execute([':cutoff' => $cutoff]);
+    $st->execute([':start' => $start]);
     /** @var list<array<string,mixed>> */
     return $st->fetchAll();
 }

@@ -291,15 +291,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($action === 'update_status') {
         // Inline status toggle — JSON response for JS fetch; graceful-degrades on non-JS
         require_write_access();
-        $id       = to_int($_POST['id'] ?? 0);
-        $newStatus = to_str($_POST['status'] ?? '');
-        if (!in_array($newStatus, ['used', 'reserved', 'free'], true) || $id <= 0) {
+        $id        = to_int($_POST['id']        ?? 0);
+        $subnetId  = to_int($_POST['subnet_id'] ?? 0);
+        $newStatus = to_str($_POST['status']    ?? '');
+        if (!in_array($newStatus, ['used', 'reserved', 'free'], true) || $id <= 0 || $subnetId <= 0) {
             header('Content-Type: application/json');
             echo '{"ok":false,"error":"Invalid request"}';
             exit;
         }
-        $st = $db->prepare("UPDATE addresses SET status=:s, updated_at=" . ipam_dialect()->now() . " WHERE id=:id");
-        $st->execute([':s' => $newStatus, ':id' => $id]);
+        $st = $db->prepare("UPDATE addresses SET status=:s, updated_at=" . ipam_dialect()->now() . " WHERE id=:id AND subnet_id=:sid");
+        $st->execute([':s' => $newStatus, ':id' => $id, ':sid' => $subnetId]);
         if ($st->rowCount()) {
             audit($db, 'address.update', 'address', $id, "status=$newStatus via inline toggle");
         }
@@ -310,18 +311,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Inline cell edit — JSON response; CSRF already verified above
         require_write_access();
         header('Content-Type: application/json');
-        $id     = to_int($_POST['id']    ?? 0);
-        $field  = to_str($_POST['field'] ?? '');
-        $value  = to_str($_POST['value'] ?? '');
+        $id       = to_int($_POST['id']        ?? 0);
+        $subnetId = to_int($_POST['subnet_id'] ?? 0);
+        $field    = to_str($_POST['field']     ?? '');
+        $value    = to_str($_POST['value']     ?? '');
         $allowed = ['hostname', 'owner', 'note', 'grp'];
-        if ($id <= 0 || !in_array($field, $allowed, true)) {
+        if ($id <= 0 || $subnetId <= 0 || !in_array($field, $allowed, true)) {
             echo json_encode(['ok' => false, 'error' => 'Invalid request.']);
             exit;
         }
         $maxLen = ['hostname' => 253, 'owner' => 255, 'note' => 1000, 'grp' => 100];
         $value = substr(trim($value), 0, $maxLen[$field]);
-        $sel = $db->prepare("SELECT id, ip, hostname, owner, note, grp FROM addresses WHERE id=:id");
-        $sel->execute([':id' => $id]);
+        $sel = $db->prepare("SELECT id, ip, hostname, owner, note, grp FROM addresses WHERE id=:id AND subnet_id=:sid");
+        $sel->execute([':id' => $id, ':sid' => $subnetId]);
         /** @var array<string, mixed>|false $before */
         $before = $sel->fetch();
         if (!$before) {
@@ -331,25 +333,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Static SQL per field — no interpolation of user-controlled data
         // Editing 'owner' free-text clears the structured contact link to keep them in sync.
         $updateSql = match ($field) {
-            'hostname' => "UPDATE addresses SET hostname=:v, updated_at=" . ipam_dialect()->now() . " WHERE id=:id",
-            'owner'    => "UPDATE addresses SET owner=:v, owner_contact_id=NULL, updated_at=" . ipam_dialect()->now() . " WHERE id=:id",
-            'note'     => "UPDATE addresses SET note=:v, updated_at=" . ipam_dialect()->now() . " WHERE id=:id",
-            'grp'      => "UPDATE addresses SET grp=:v, updated_at=" . ipam_dialect()->now() . " WHERE id=:id",
+            'hostname' => "UPDATE addresses SET hostname=:v, updated_at=" . ipam_dialect()->now() . " WHERE id=:id AND subnet_id=:sid",
+            'owner'    => "UPDATE addresses SET owner=:v, owner_contact_id=NULL, updated_at=" . ipam_dialect()->now() . " WHERE id=:id AND subnet_id=:sid",
+            'note'     => "UPDATE addresses SET note=:v, updated_at=" . ipam_dialect()->now() . " WHERE id=:id AND subnet_id=:sid",
+            'grp'      => "UPDATE addresses SET grp=:v, updated_at=" . ipam_dialect()->now() . " WHERE id=:id AND subnet_id=:sid",
         };
-        $db->prepare($updateSql)->execute([':v' => $value, ':id' => $id]);
+        $db->prepare($updateSql)->execute([':v' => $value, ':id' => $id, ':sid' => $subnetId]);
         $after = array_merge(
             ['hostname' => to_str($before['hostname']), 'owner' => to_str($before['owner']),
              'note'     => to_str($before['note']),     'grp'   => to_str($before['grp'])],
             [$field => $value]
         );
-        $subnetIdForHistory = to_int((function() use ($db, $id) {
-            $r = $db->prepare("SELECT subnet_id FROM addresses WHERE id=:id");
-            $r->execute([':id' => $id]);
-            /** @var array<string, mixed>|false $row */
-            $row = $r->fetch();
-            return $row ? to_int($row['subnet_id']) : 0;
-        })());
-        history_log_address($db, 'update', $subnetIdForHistory, to_str($before['ip']), $id,
+        history_log_address($db, 'update', $subnetId, to_str($before['ip']), $id,
             ['hostname' => to_str($before['hostname']), 'owner' => to_str($before['owner']),
              'note'     => to_str($before['note']),     'grp'   => to_str($before['grp'])],
             $after

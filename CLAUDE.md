@@ -369,7 +369,7 @@ Asset cache-buster: update `?v=X.Y.Z` in the `<link>` and `<script>` tags in `pa
 
 ### Nav structure (v3.8.0 sidebar)
 - **Desktop (≥1024px):** always-visible sidebar with SVG Heroicon nav links (Dashboard, Subnets, Addresses, Search, Audit, Admin section) and user block at the bottom (username + role badge → Theme, Account, Logout)
-- **Mobile (<768px):** hamburger button opens the sidebar as a full-height overlay; Escape or backdrop click closes it
+- **Mobile (<1024px):** hamburger button opens the sidebar as a full-height overlay; Escape or backdrop click closes it
 - **Command palette ⌘K / Ctrl+K:** keyboard-driven navigation, record creation, and theme toggle; accessible from any page
 - **Admin section nav items:** Sites, VLANs, VRFs, Tags, Contacts, Custom Fields, Users, DHCP Pools, API Keys, Webhooks, Import CSV, Database Tools (hidden for non-SQLite engines), Backups, Health
 - All emoji icons replaced with consistent SVG Heroicons sprite (`assets/icons.svg`)
