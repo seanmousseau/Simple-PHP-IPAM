@@ -103,7 +103,8 @@ if (getenv('SEED_2FA_TEST_USER') === '1') {
         $uid = (int) $db->lastInsertId();
         if ($uid === 0) {
             // Was a REPLACE — fetch the id
-            $uid = (int) ($db->query("SELECT id FROM users WHERE username='2fa_test_user'")->fetchColumn() ?: 0);
+            $stmt = $db->query("SELECT id FROM users WHERE username='2fa_test_user'");
+            $uid = (int) (($stmt ? $stmt->fetchColumn() : false) ?: 0);
         }
 
         if ($uid === 0) {

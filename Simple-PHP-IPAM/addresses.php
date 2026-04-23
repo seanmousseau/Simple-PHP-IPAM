@@ -19,7 +19,8 @@ $subnetList = $st->fetchAll();
 
 /** @var list<array<string, mixed>> $addrSiteList */
 $addrSiteList = ($db->query("SELECT id, name FROM sites ORDER BY name ASC") ?: throw new \RuntimeException('Query failed'))->fetchAll();
-$addrDistinctSiteCount = count(array_unique(array_filter(array_column($subnetList, 'site_id'), fn($v) => (int)$v > 0)));
+$addrSiteIds = array_filter(array_column($subnetList, 'site_id'), fn($v) => is_int($v) || (is_string($v) && $v !== ''));
+$addrDistinctSiteCount = count(array_unique(array_map(fn($v) => (int)$v, array_values($addrSiteIds))));
 
 $selectedSubnetId = to_int($_GET['subnet_id'] ?? ($_POST['subnet_id'] ?? 0));
 $highlightId = to_int($_GET['highlight'] ?? 0);
