@@ -229,7 +229,7 @@ ipam_skeleton_flush();
       <div class="empty-state">No unassigned IPs to show (or subnet too large).</div>
     <?php else: ?>
       <div class="table-wrap">
-      <table>
+      <table class="data-table">
         <thead>
           <tr>
             <th>IP</th>

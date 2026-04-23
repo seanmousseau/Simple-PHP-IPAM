@@ -640,9 +640,10 @@ ipam_skeleton_flush();
     <div class="empty-state">No addresses in this subnet yet. <button class="action-pill" data-drawer-title="Add Address" data-drawer-tpl="tpl-add-address">+ Add Address</button></div>
   <?php else: ?>
     <div class="table-wrap">
-    <table data-col-table="addresses">
+    <table data-col-table="addresses" class="data-table">
       <thead>
         <tr>
+          <th><input type="checkbox" id="select-all-addresses" aria-label="Select all"></th>
           <?php $addrQsParams = ['subnet_id' => $selectedSubnetId, 'page_size' => $pageSize];
                 if ($filterType !== '') { $addrQsParams['filter'] = $filterType; }
                 if ($filterType === 'expiring') { $addrQsParams['days'] = $filterDays; }
@@ -672,6 +673,7 @@ ipam_skeleton_flush();
           $rowClasses = array_filter([$isHighlighted ? 'highlight-row' : '', $isExpired ? 'expired-row' : '']);
       ?>
         <tr id="addr-<?= $aid ?>"<?= $rowClasses ? ' class="' . e(implode(' ', $rowClasses)) . '"' : '' ?>>
+          <td><input type="checkbox" class="row-select" value="<?= $aid ?>" aria-label="Select row"></td>
           <td class="ip-cell"><?= e(to_str($a['ip'])) ?><?php
             $ipBin = is_string($a['ip_bin'] ?? null) ? $a['ip_bin'] : '';
             if ($ipBin !== '') {
@@ -836,4 +838,9 @@ ipam_skeleton_flush();
 }());
 </script>
 <?php endif; ?>
-<?php ipam_skeleton_remove(); page_footer();
+<?php
+echo "<div id='bulk-bar' class='bulk-bar' role='status' aria-live='polite' data-subnet-id='" . (int)$selectedSubnetId . "'>";
+echo "  <span class='bulk-bar-count' id='bulk-bar-count'>0 selected</span>";
+echo "  <a class='button-secondary' id='bulk-bar-link' href='bulk_update.php?subnet_id=" . (int)$selectedSubnetId . "'>Bulk Edit</a>";
+echo "</div>";
+ipam_skeleton_remove(); page_footer();

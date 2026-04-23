@@ -1966,3 +1966,64 @@ var IpamDrawer = (function () {
 
     return { open: open, close: close };
 }());
+
+// IpamVirtualTable — utility for future viewport-based row rendering
+function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
+    var container = document.getElementById(containerId);
+    if (!container) return;
+    var scroller = container.querySelector(".vt-scroll");
+    var tbody = container.querySelector("tbody");
+    if (!scroller || !tbody) return;
+
+    var OVERSCAN = 5;
+    scroller.style.height = (rows.length * rowHeight) + "px";
+
+    function render() {
+        var scrollTop = container.scrollTop;
+        var clientHeight = container.clientHeight;
+        var start = Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN);
+        var end = Math.min(rows.length, Math.ceil((scrollTop + clientHeight) / rowHeight) + OVERSCAN);
+        tbody.style.transform = "translateY(" + (start * rowHeight) + "px)";
+        while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+        for (var i = start; i < end; i++) {
+            tbody.appendChild(renderRow(rows[i], i));
+        }
+    }
+
+    container.addEventListener("scroll", render, { passive: true });
+    render();
+}
+
+// Bulk-select bar for addresses table
+(function () {
+    var bar = document.getElementById("bulk-bar");
+    if (!bar) return;
+    var countEl = document.getElementById("bulk-bar-count");
+    var linkEl = document.getElementById("bulk-bar-link");
+    var subnetId = bar.getAttribute("data-subnet-id") || "";
+
+    function updateBar() {
+        var checked = document.querySelectorAll(".row-select:checked");
+        var n = checked.length;
+        bar.classList.toggle("is-visible", n > 0);
+        if (countEl) countEl.textContent = n + " selected";
+        if (linkEl && subnetId) {
+            var ids = [];
+            for (var i = 0; i < checked.length; i++) ids.push(checked[i].value);
+            linkEl.href = "bulk_update.php?subnet_id=" + encodeURIComponent(subnetId) + "&ids=" + ids.join(",");
+        }
+    }
+
+    var selectAll = document.getElementById("select-all-addresses");
+    if (selectAll) {
+        selectAll.addEventListener("change", function () {
+            var boxes = document.querySelectorAll(".row-select");
+            for (var i = 0; i < boxes.length; i++) boxes[i].checked = selectAll.checked;
+            updateBar();
+        });
+    }
+
+    document.addEventListener("change", function (e) {
+        if (e.target && e.target.classList.contains("row-select")) updateBar();
+    });
+}());
