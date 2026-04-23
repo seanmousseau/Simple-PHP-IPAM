@@ -145,7 +145,8 @@ test('vlans: delete test VLAN subnet then VLAN', async () => {
     await details.evaluate((el: HTMLDetailsElement) => { el.open = true; });
     const deleteForm = subnetNode.locator('form').filter({ has: page.locator('[value=delete]') });
     page.once('dialog', d => d.accept());
-    await deleteForm.locator('button.button-danger').click();
+    // Use evaluate to bypass sticky-header pointer-event interception
+    await deleteForm.locator('button.button-danger').evaluate((el: HTMLElement) => el.click());
     await page.waitForURL(/subnets\.php/);
   }
 

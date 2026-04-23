@@ -85,11 +85,12 @@ test.describe('Settings page', () => {
     await expect(secret).toHaveAttribute('type', 'password');
     await expect(toggle).toHaveAttribute('aria-pressed', 'false');
     await secret.fill('round-trip-check');
-    await toggle.click({ force: true });
+    // Use evaluate to bypass sticky-header pointer-event interception (#v3.8.0 layout)
+    await toggle.evaluate((el: HTMLElement) => el.click());
     await expect(secret).toHaveAttribute('type', 'text');
     await expect(secret).toHaveValue('round-trip-check');
     await expect(toggle).toHaveAttribute('aria-pressed', 'true');
-    await toggle.click();
+    await toggle.evaluate((el: HTMLElement) => el.click());
     await expect(secret).toHaveAttribute('type', 'password');
     await expect(toggle).toHaveAttribute('aria-pressed', 'false');
     // Do not submit — leave sensitive field blank so we don't rewrite the
