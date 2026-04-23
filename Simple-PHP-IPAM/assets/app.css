@@ -1186,7 +1186,7 @@ td[data-editable].cell-saving{opacity:.5;}
 /* ---- CSP-safe utility classes (replaces JS inline style assignments) ---- */
 .hidden{display:none !important;}
 .d-inline{display:inline;}
-.badge--success{background:var(--success);color:#fff;}
+.badge--success{background:var(--success);color:#0a1a0d;}
 .card--warn{border-left:4px solid var(--warn);}
 .th-sortable{cursor:pointer;}
 
