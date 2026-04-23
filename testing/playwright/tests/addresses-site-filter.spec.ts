@@ -53,12 +53,15 @@ async function cleanup(p: Page) {
     await deleteSubnet(p, CIDR_B);
     // Delete ALL instances of each test site (loop until none remain — guards against
     // duplicate sites left by prior failed runs where only the first match was deleted)
+    const MAX_DELETE_ATTEMPTS = 20;
     for (const siteName of [SITE_A, SITE_B]) {
         let sid = await siteIdFor(p, siteName);
-        while (sid) {
+        let attempts = 0;
+        while (sid && attempts < MAX_DELETE_ATTEMPTS) {
             await fetchPost(p, appUrl('sites.php'), { action: 'delete', id: sid });
             await p.goto('sites.php');
             sid = await siteIdFor(p, siteName);
+            attempts++;
         }
     }
 }
@@ -97,6 +100,8 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
     await page.goto('subnets.php');
     subnetIdA = await subnetIdFor(page, CIDR_A);
     subnetIdB = await subnetIdFor(page, CIDR_B);
+    expect(subnetIdA, 'subnetIdA must be set after subnet creation').not.toBeNull();
+    expect(subnetIdB, 'subnetIdB must be set after subnet creation').not.toBeNull();
 });
 
 test.afterAll(async () => {

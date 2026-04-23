@@ -61,15 +61,14 @@ ipam_db_init($db);
 
 echo "Resetting database to demo data...\n";
 demo_reset_db($db);
-file_put_contents(__DIR__ . '/data/demo_last_reset.txt', (string)time());
-echo "Done. Demo data loaded successfully.\n";
 
 // 2FA test user — seeded only when SEED_2FA_TEST_USER=1
 if (getenv('SEED_2FA_TEST_USER') === '1') {
     $testSecret = 'JBSWY3DPEHPK3PXP'; // standard RFC 6238 test vector (base32)
     $appSecret  = to_str($config['app_secret'] ?? '');
     if ($appSecret === '') {
-        echo "Warning: app_secret not set in config — 2FA test user skipped\n";
+        fwrite(STDERR, "Error: app_secret must be set in config when SEED_2FA_TEST_USER=1\n");
+        exit(1);
     } else {
         // Encrypt using AES-256-GCM, matching ipam_totp_encrypt_secret() in lib.php
         $iv  = random_bytes(12);
@@ -123,6 +122,9 @@ if (getenv('SEED_2FA_TEST_USER') === '1') {
                   'MMMM3333-NNNN4444', 'OOOO5555-PPPP6666'] as $code) {
             $bkSt->execute([':uid' => $uid, ':ch' => password_hash($code, PASSWORD_DEFAULT)]);
         }
-        echo "Seeded 2FA test user: 2fa_test_user / Password1! (TOTP secret: $testSecret)\n";
+        echo "Seeded 2FA test user: 2fa_test_user\n";
     }
 }
+
+file_put_contents(__DIR__ . '/data/demo_last_reset.txt', (string)time());
+echo "Done. Demo data loaded successfully.\n";
