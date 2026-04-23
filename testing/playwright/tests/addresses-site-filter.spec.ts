@@ -123,14 +123,18 @@ test('site select contains both test sites', async () => {
 
 test('selecting site A hides subnet B option client-side', async () => {
     await page.goto('addresses.php');
+
     // Choose site A in the filter
     await page.selectOption('#addrSiteFilter', { label: SITE_A });
-    // CIDR_B option should be hidden
+
+    // CIDR_B option should have the hidden attribute
     const cidrbOpt = page.locator(`select[name="subnet_id"] option[value="${subnetIdB}"]`);
     await expect(cidrbOpt).toBeHidden();
-    // CIDR_A option should still be visible
+    // CIDR_A option should NOT have the hidden attribute
+    // Note: toBeVisible() fails for <option> inside a closed <select> (zero bounding box),
+    // so we check the HTML attribute directly instead.
     const cidraOpt = page.locator(`select[name="subnet_id"] option[value="${subnetIdA}"]`);
-    await expect(cidraOpt).toBeVisible();
+    await expect(cidraOpt).not.toHaveAttribute('hidden');
 });
 
 test('"All sites" restores full subnet list', async () => {
@@ -142,7 +146,7 @@ test('"All sites" restores full subnet list', async () => {
 
     // …then reset to "All sites"
     await page.selectOption('#addrSiteFilter', { value: '0' });
-    await expect(cidrbOpt).toBeVisible();
+    await expect(cidrbOpt).not.toHaveAttribute('hidden');
 });
 
 test('pre-selects correct site when ?subnet_id= belongs to site A', async () => {

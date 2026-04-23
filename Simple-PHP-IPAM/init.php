@@ -90,9 +90,15 @@ $config = require __DIR__ . '/config.php';
 // releases/make_releases.sh) and in dev environments where the tester has run
 // `composer install`. A fresh git clone without composer install must still
 // boot, so we skip silently if the file is absent.
-if (is_file(__DIR__ . '/vendor/autoload.php')) {
-    require_once __DIR__ . '/vendor/autoload.php';
+$_ipam_autoload = __DIR__ . '/vendor/autoload.php';
+if (!is_file($_ipam_autoload)) {
+    // Fallback: vendor/ mounted one level above the web root (dev/Docker setups).
+    $_ipam_autoload = dirname(__DIR__) . '/vendor/autoload.php';
 }
+if (is_file($_ipam_autoload)) {
+    require_once $_ipam_autoload;
+}
+unset($_ipam_autoload);
 
 // Dialect abstraction (#378). Loaded before lib.php so any function in lib.php
 // can call ipam_dialect() without needing a separate bootstrap step. v2.9.0

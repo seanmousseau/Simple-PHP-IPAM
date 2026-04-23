@@ -243,6 +243,13 @@ docker run --rm "${seed_docker_args[@]}" -e SEED_2FA_TEST_USER=1 "$image" \
         exit 1
     }
 
+# Write .env so Playwright auto-loads SEED_2FA_TEST_USER — the seeding step above
+# always seeds the 2FA test user (SEED_2FA_TEST_USER=1 is hardcoded on line 228),
+# but that flag is a Docker env var scoped to the seed container. Playwright reads
+# its own .env file from the config directory, so writing it here ensures the
+# is2FaSeeded() guard in totp.spec.ts returns true without any extra CLI wrangling.
+echo "SEED_2FA_TEST_USER=1" > "${script_dir}/.env"
+
 # 5. Flip demo_mode off so the suite can exercise normal admin flows.
 echo "bootstrap-app: disabling demo_mode for runtime"
 set_demo_mode "false"
@@ -256,6 +263,21 @@ echo "bootstrap-app: starting container $container on https://127.0.0.1:$port"
 run_docker_args=(-d --rm --name "$container"
     -v "$app_dir:/var/www/html"
     -p "127.0.0.1:$port:443")
+# Mount the test config fixture directly over config.php so that the running
+# container always sees the correct test credentials (app_secret, app_name, etc.)
+# regardless of whether a cloud-sync tool (OneDrive, Dropbox) reverts the
+# host-side config.php back to the committed default. This is a file-level
+# bind mount that takes precedence over the directory-level mount above.
+# We need to select the right fixture for the driver (mysql/mariadb/pgsql have
+# their own test-config files that point at the correct DSN).
+case "$driver" in
+    mysql)    _test_cfg="$script_dir/fixtures/test-config-mysql.php" ;;
+    mariadb)  _test_cfg="$script_dir/fixtures/test-config-mariadb.php" ;;
+    pgsql)    _test_cfg="$script_dir/fixtures/test-config-pgsql.php" ;;
+    *)        _test_cfg="$script_dir/fixtures/test-config.php" ;;
+esac
+run_docker_args+=(-v "${_test_cfg}:/var/www/html/config.php:ro")
+unset _test_cfg
 if [[ "$driver" != "sqlite" ]] || [[ "$mailhog_enabled" == "1" ]]; then
     run_docker_args+=(--network "$network")
 fi
