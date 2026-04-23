@@ -582,6 +582,10 @@ ipam_skeleton_flush();
     <div class="toolbar">
       <div>
         <h2>Subnet: <?= e(to_str($selectedSubnet['cidr'] ?? '')) ?></h2>
+        <?php $subnetDesc = trim(to_str($selectedSubnet['description'] ?? '')); ?>
+        <?php if ($subnetDesc !== ''): ?>
+        <p class="muted font-sm" style="margin-top:0.15rem"><?= e($subnetDesc) ?></p>
+        <?php endif; ?>
         <div class="muted">Rows: <b><?= e((string)$total) ?></b><?php if ($p): ?> | Page <b><?= e(to_str($p['page'])) ?></b> of <b><?= e(to_str($p['pages'])) ?></b><?php endif; ?></div>
       </div>
     </div>
