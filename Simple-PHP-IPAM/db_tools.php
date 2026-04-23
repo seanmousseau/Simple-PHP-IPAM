@@ -54,6 +54,7 @@ if (
 require __DIR__ . '/init.php';
 /** @var \PDO $db */
 /** @var IpamConfig $config */
+require_login();
 require_role('admin');
 
 $err = '';
@@ -266,7 +267,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
                     "Database import completed ({$stmtCount} statements, {$elapsed}s); pre-import backup: " . basename($backupPath));
                 $msg = "Import successful — {$stmtCount} statements executed in {$elapsed}s. Pre-import backup: " . basename($backupPath);
                 // Invalidate db_initialized sentinel so ipam_db_init re-checks on next request
-                @unlink(__DIR__ . '/data/.db_initialized');
+                @unlink(__DIR__ . '/data/.db_initialized'); // nosemgrep: php.lang.security.unlink-use.unlink-use
             } catch (Throwable $ex) {
                 if ($db->inTransaction()) $db->rollBack();
                 $fkOnRecover = ipam_dialect()->pragma_foreign_keys(true);
@@ -278,6 +279,120 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
             }
         }
     }
+}
+
+/* ------------------------------------------------------------------ *
+ * POST: backup_history delete                                         *
+ * ------------------------------------------------------------------ */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'backup_delete') {
+    csrf_require();
+    $delId = to_int($_POST['id'] ?? 0);
+    if ($delId > 0) {
+        $st = $db->prepare("SELECT * FROM backup_history WHERE id=:id");
+        $st->execute([':id' => $delId]);
+        $bkRow = $st->fetch();
+        if ($bkRow) {
+            $delPath    = to_str($bkRow['target_path'] ?? '');
+            $allowedDir = realpath(backup_dir($config));
+            $realDel    = $delPath !== '' ? (realpath($delPath) ?: '') : '';
+            $fileOk     = true; // assume no file to remove unless we try
+            // Only unlink if the file is inside the configured backup directory
+            if ($allowedDir !== false && $realDel !== ''
+                && str_starts_with($realDel, $allowedDir . DIRECTORY_SEPARATOR)
+                && is_file($realDel)) {
+                $fileOk = unlink($realDel); // nosemgrep: php.lang.security.unlink-use.unlink-use
+            }
+            if ($fileOk) {
+                $db->prepare("DELETE FROM backup_history WHERE id=:id")->execute([':id' => $delId]);
+                audit($db, 'backup.deleted', 'backup_history', $delId,
+                    'Deleted backup record: ' . basename($delPath));
+                $msg = 'Backup record deleted.';
+            } else {
+                audit($db, 'backup.delete_failed', 'backup_history', $delId,
+                    'Failed to delete backup file: ' . basename($delPath));
+                $err = 'Failed to delete the backup file — record kept.';
+            }
+        } else {
+            $err = 'Backup record not found.';
+        }
+    }
+}
+
+/* ------------------------------------------------------------------ *
+ * POST: backup_history verify                                         *
+ * ------------------------------------------------------------------ */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'backup_verify') {
+    csrf_require();
+    $verifyId = to_int($_POST['id'] ?? 0);
+    if ($verifyId > 0) {
+        $st = $db->prepare("SELECT * FROM backup_history WHERE id=:id");
+        $st->execute([':id' => $verifyId]);
+        $bkRow = $st->fetch();
+        if ($bkRow) {
+            $verPath      = to_str($bkRow['target_path'] ?? '');
+            $expected     = to_str($bkRow['sha256'] ?? '');
+            $realVer      = $verPath !== '' ? (realpath($verPath) ?: false) : false;
+            $allowedVerDir = realpath(backup_dir($config));
+            if ($realVer === false || $allowedVerDir === false
+                || !str_starts_with($realVer, $allowedVerDir . DIRECTORY_SEPARATOR)) {
+                $err = 'Backup path is outside the allowed backup directory.';
+            } elseif (!is_file($realVer)) {
+                $err = 'Backup file not found on disk.';
+            } elseif ($expected === '') {
+                $err = 'No SHA-256 hash recorded for this backup — cannot verify.';
+            } else {
+                $actual = hash_file('sha256', $realVer) ?: '';
+                if (hash_equals($expected, $actual)) {
+                    $msg = 'SHA-256 verified OK. File integrity confirmed.';
+                    audit($db, 'backup.verified', 'backup_history', $verifyId,
+                        'SHA-256 verified OK for: ' . basename($realVer));
+                } else {
+                    $err = 'SHA-256 MISMATCH — backup file may be corrupted.';
+                    audit($db, 'backup.verify_failed', 'backup_history', $verifyId,
+                        'SHA-256 mismatch for: ' . basename($realVer));
+                }
+            }
+        } else {
+            $err = 'Backup record not found.';
+        }
+    }
+}
+
+/* ------------------------------------------------------------------ *
+ * GET: backup_history download                                        *
+ * ------------------------------------------------------------------ */
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($_GET['action'] ?? '') === 'backup_download') {
+    $dlId = to_int($_GET['id'] ?? 0);
+    if ($dlId > 0) {
+        $st = $db->prepare("SELECT * FROM backup_history WHERE id=:id");
+        $st->execute([':id' => $dlId]);
+        $bkRow = $st->fetch();
+        if ($bkRow) {
+            $dlPath     = to_str($bkRow['target_path'] ?? '');
+            $realDl     = $dlPath !== '' ? (realpath($dlPath) ?: false) : false;
+            $allowedDlDir = realpath(backup_dir($config));
+            if ($realDl === false || $allowedDlDir === false
+                || !str_starts_with($realDl, $allowedDlDir . DIRECTORY_SEPARATOR)) {
+                audit($db, 'backup.download_denied', 'backup_history', $dlId,
+                    'Path confinement check failed for backup id ' . $dlId);
+                http_response_code(403);
+                exit('Access denied.');
+            }
+            if (is_file($realDl)) {
+                $dlFilename = basename($realDl);
+                $dlSize     = (int)filesize($realDl);
+                header('Content-Type: application/octet-stream');
+                header('Content-Disposition: attachment; filename="' . $dlFilename . '"');
+                header('Content-Length: ' . $dlSize);
+                header('X-Content-Type-Options: nosniff');
+                readfile($realDl);
+                audit($db, 'backup.downloaded', 'backup_history', $dlId,
+                    'Downloaded backup: ' . $dlFilename);
+                exit;
+            }
+        }
+    }
+    $err = 'Backup file not found.';
 }
 
 /* ------------------------------------------------------------------ *
@@ -310,7 +425,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'backu
         $files = glob($bdir . '/ipam-*.sqlite');
         if (is_array($files)) {
             rsort($files);
-            foreach (array_slice($files, $retention) as $old) @unlink($old);
+            foreach (array_slice($files, $retention) as $old) @unlink($old); // nosemgrep: php.lang.security.unlink-use.unlink-use
         }
         $state = ['last_backup' => time(), 'last_file' => basename($dest)];
         @file_put_contents(__DIR__ . '/data/backup-state.json', json_encode($state));
@@ -327,10 +442,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'backu
 $backupEnabled = (bool)ipam_setting('backup.enabled');
 $bInfo         = backup_info($config);
 
-page_header('Database Tools');
+/* ------------------------------------------------------------------ *
+ * Load backup history for the history section                         *
+ * ------------------------------------------------------------------ */
+$bkpRows = [];
+try {
+    $bkpSt = $db->query("SELECT * FROM backup_history ORDER BY started_at DESC LIMIT 50");
+    /** @var list<array<string, mixed>> $bkpRows */
+    $bkpRows = $bkpSt ? $bkpSt->fetchAll() : [];
+} catch (Throwable) {
+    // table may not exist yet on a fresh install before migration runs
+}
+$backupDir     = backup_dir($config);
+$diskFreeBytes = @disk_free_space($backupDir);
+$diskFree      = ($diskFreeBytes !== false)
+    ? format_bytes((int)$diskFreeBytes) . ' free'
+    : 'unknown';
+
+page_header('Database');
 render_security_banner('db_tools', 'Database import will overwrite all existing data. Only import files from trusted sources.');
 ?>
-<h1>🗄 Database Tools</h1>
+<h1>Database</h1>
 
 <?php if ($err): ?>
   <p class='danger'><?= e($err) ?></p>
@@ -418,6 +550,180 @@ render_security_banner('db_tools', 'Database import will overwrite all existing 
     <input type='hidden' name='action' value='backup_now'>
     <button type='submit' class='button-secondary'<?= $sqlDumpSupported ? '' : ' disabled' ?>>💾 Run Backup Now</button>
   </form>
+</div>
+
+<!-- ================================================================ -->
+<!-- Backup History                                                    -->
+<!-- ================================================================ -->
+<div id="backup-history" class="card mt-16" style="padding:0;overflow:hidden">
+  <div style="padding:1rem 1.25rem;border-bottom:1px solid var(--border);display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:.75rem">
+    <div>
+      <strong>Backup History</strong>
+      <span class="muted" style="font-size:.85em;margin-left:.75rem"><?= count($bkpRows) ?> record<?= count($bkpRows) !== 1 ? 's' : '' ?></span>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:1rem;align-items:center;font-size:.85em">
+      <?php if ($backupEnabled): ?>
+        <span class="badge" style="background:var(--success);color:#fff">Backups enabled</span>
+      <?php else: ?>
+        <span class="badge" style="background:var(--muted);color:#fff">Backups disabled</span>
+      <?php endif; ?>
+      <span class="muted">Dir: <code style="font-size:.9em"><?= e($backupDir) ?></code></span>
+      <span class="muted">Disk: <?= e($diskFree) ?></span>
+      <button type="button" class="button-secondary" style="font-size:.85em" data-action="restore-info">
+        Restore instructions
+      </button>
+    </div>
+  </div>
+  <?php if (empty($bkpRows)): ?>
+    <div style="padding:2rem;text-align:center;color:var(--muted)">
+      No backups recorded yet.
+      <?php if ($backupEnabled): ?>
+        Run <code>php backup.php --force</code> to create the first backup.
+      <?php endif; ?>
+    </div>
+  <?php else: ?>
+  <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:.9em">
+      <thead>
+        <tr style="background:var(--bg);border-bottom:1px solid var(--border)">
+          <th style="padding:.6rem 1rem;text-align:left;font-weight:600;white-space:nowrap">File</th>
+          <th style="padding:.6rem 1rem;text-align:left;font-weight:600;white-space:nowrap">Driver</th>
+          <th style="padding:.6rem 1rem;text-align:right;font-weight:600;white-space:nowrap">Size</th>
+          <th style="padding:.6rem 1rem;text-align:left;font-weight:600;white-space:nowrap">SHA-256</th>
+          <th style="padding:.6rem 1rem;text-align:left;font-weight:600;white-space:nowrap">Started</th>
+          <th style="padding:.6rem 1rem;text-align:right;font-weight:600;white-space:nowrap">Duration</th>
+          <th style="padding:.6rem 1rem;text-align:center;font-weight:600;white-space:nowrap">Status</th>
+          <th style="padding:.6rem 1rem;text-align:right;font-weight:600;white-space:nowrap">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <?php foreach ($bkpRows as $bk):
+            $bkId    = to_int($bk['id'] ?? 0);
+            $bkStatus = to_str($bk['status'] ?? 'unknown');
+            $bkSha   = to_str($bk['sha256'] ?? '');
+            $bkPath  = to_str($bk['target_path'] ?? '');
+            $bkFileOk = ($bkPath !== '' && is_file($bkPath));
+            $bkDur   = to_int($bk['duration_ms'] ?? 0);
+            $bkDurStr = $bkDur > 0 ? ($bkDur >= 1000 ? round($bkDur / 1000, 1) . 's' : $bkDur . 'ms') : '—';
+
+            if ($bkStatus === 'success') {
+                $bkBadgeBg = 'var(--success)'; $bkBadgeFg = '#fff';
+            } elseif ($bkStatus === 'failed') {
+                $bkBadgeBg = 'var(--danger)';  $bkBadgeFg = '#fff';
+            } else {
+                $bkBadgeBg = 'var(--warn)';    $bkBadgeFg = '#000';
+            }
+        ?>
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:.6rem 1rem;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="<?= e($bkPath) ?>">
+            <?php if ($bkFileOk): ?>
+              <span style="font-family:monospace;font-size:.85em"><?= e(to_str($bk['filename'] ?? '')) ?></span>
+            <?php else: ?>
+              <span style="font-family:monospace;font-size:.85em;color:var(--muted)"><?= e(to_str($bk['filename'] ?? '')) ?></span>
+              <span class="muted" style="font-size:.8em"> (missing)</span>
+            <?php endif; ?>
+          </td>
+          <td style="padding:.6rem 1rem">
+            <code style="font-size:.85em"><?= e(to_str($bk['db_driver'] ?? '')) ?></code>
+          </td>
+          <td style="padding:.6rem 1rem;text-align:right;white-space:nowrap">
+            <?= e(format_bytes(to_int($bk['size_bytes'] ?? 0))) ?>
+          </td>
+          <td style="padding:.6rem 1rem">
+            <?php if ($bkSha !== ''): ?>
+              <code style="font-size:.8em;word-break:break-all" title="<?= e($bkSha) ?>"><?= e(substr($bkSha, 0, 12)) ?>…</code>
+            <?php else: ?>
+              <span class="muted">—</span>
+            <?php endif; ?>
+          </td>
+          <td style="padding:.6rem 1rem;white-space:nowrap">
+            <?= e(to_str($bk['started_at'] ?? '')) ?>
+          </td>
+          <td style="padding:.6rem 1rem;text-align:right;white-space:nowrap">
+            <?= e($bkDurStr) ?>
+          </td>
+          <td style="padding:.6rem 1rem;text-align:center">
+            <span class="badge" style="background:<?= $bkBadgeBg ?>;color:<?= $bkBadgeFg ?>"><?= e($bkStatus) ?></span>
+          </td>
+          <td style="padding:.6rem 1rem;text-align:right;white-space:nowrap">
+            <!-- Download -->
+            <?php if ($bkFileOk): ?>
+            <a href="db_tools.php?action=backup_download&id=<?= $bkId ?>"
+               class="action-pill" style="text-decoration:none;cursor:pointer" title="Download backup file">
+              Download
+            </a>
+            <?php endif; ?>
+            <!-- Verify -->
+            <?php if ($bkSha !== '' && $bkFileOk): ?>
+            <form method="post" action="db_tools.php" style="display:inline">
+              <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+              <input type="hidden" name="action" value="backup_verify">
+              <input type="hidden" name="id"     value="<?= $bkId ?>">
+              <button type="submit" class="action-pill" style="cursor:pointer" title="Verify SHA-256 integrity">
+                Verify
+              </button>
+            </form>
+            <?php endif; ?>
+            <!-- Restore instructions -->
+            <button type="button" class="action-pill" style="cursor:pointer"
+                    data-action="restore-info"
+                    data-id="<?= $bkId ?>"
+                    data-filename="<?= e(to_str($bk['filename'] ?? '')) ?>"
+                    data-path="<?= e($bkPath) ?>">
+              Restore…
+            </button>
+            <!-- Delete -->
+            <button type="button" class="action-pill button-danger" style="cursor:pointer"
+                    data-action="backup-delete"
+                    data-id="<?= $bkId ?>"
+                    data-filename="<?= e(to_str($bk['filename'] ?? '')) ?>">
+              Delete
+            </button>
+          </td>
+        </tr>
+        <?php endforeach; ?>
+      </tbody>
+    </table>
+  </div>
+  <?php endif; ?>
+</div>
+
+<!-- Restore instructions modal -->
+<div id="restore-modal" role="dialog" aria-modal="true" aria-labelledby="restore-modal-title"
+     style="display:none;position:fixed;inset:0;z-index:var(--z-page-overlay);background:rgba(0,0,0,.45);align-items:center;justify-content:center">
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;max-width:640px;width:calc(100% - 2rem);max-height:90vh;overflow-y:auto;position:relative">
+    <button data-action="close-modal" data-target="restore-modal" style="position:absolute;top:.75rem;right:.75rem;background:none;border:none;font-size:1.25rem;cursor:pointer;color:var(--muted)" aria-label="Close">&times;</button>
+    <h2 id="restore-modal-title" style="margin:0 0 1rem">Restore Instructions</h2>
+    <p>Restores are performed via the CLI only. There is no one-click web restore — this is intentional to prevent accidental data loss.</p>
+    <p><strong>Dry-run first (safe, no changes):</strong></p>
+    <pre id="restore-cmd-dry" style="background:var(--bg);padding:.75rem;border-radius:var(--radius-sm);overflow-x:auto;font-size:.85em;white-space:pre-wrap;word-break:break-all"></pre>
+    <p><strong>Apply restore:</strong></p>
+    <pre id="restore-cmd-apply" style="background:var(--bg);padding:.75rem;border-radius:var(--radius-sm);overflow-x:auto;font-size:.85em;white-space:pre-wrap;word-break:break-all"></pre>
+    <p class="muted" style="font-size:.85em;margin-top:.75rem">
+      The restore script verifies the SHA-256 hash before writing. Use <code>--force</code> to overwrite a non-empty target.
+    </p>
+    <div style="text-align:right;margin-top:1rem">
+      <button type="button" class="button-secondary" data-action="close-modal" data-target="restore-modal">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete confirmation modal -->
+<div id="delete-modal" role="dialog" aria-modal="true" aria-labelledby="delete-modal-title"
+     style="display:none;position:fixed;inset:0;z-index:var(--z-page-overlay);background:rgba(0,0,0,.45);align-items:center;justify-content:center">
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;max-width:420px;width:calc(100% - 2rem)">
+    <h2 id="delete-modal-title" style="margin:0 0 .75rem">Delete Backup?</h2>
+    <p id="delete-modal-body" style="margin:0 0 1.25rem;word-break:break-all"></p>
+    <form id="delete-form" method="post" action="db_tools.php">
+      <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+      <input type="hidden" name="action" value="backup_delete">
+      <input type="hidden" name="id"     id="delete-id">
+      <div style="display:flex;gap:.75rem;justify-content:flex-end">
+        <button type="button" class="button-secondary" data-action="close-modal" data-target="delete-modal">Cancel</button>
+        <button type="submit" class="button-danger">Delete</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <?php page_footer(); ?>

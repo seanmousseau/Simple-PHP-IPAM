@@ -13,7 +13,7 @@ $warn = '';
 
 // Flash warnings are now rendered by page_header() via flash_get()
 
-$st = $db->prepare("SELECT id, name FROM sites ORDER BY name ASC");
+$st = $db->prepare("SELECT id, name, parent_id FROM sites ORDER BY name ASC");
 $st->execute();
 /** @var list<array<string, mixed>> $siteList */
 $siteList = $st->fetchAll();
@@ -421,6 +421,49 @@ foreach ($tree['roots'] as $rid) {
 }
 uasort($siteGroups, fn($a, $b) => strcasecmp($a['label'], $b['label']));
 
+// Build site hierarchy for the filter strip (#629).
+// siteById: id => ['id', 'name', 'parent_id', 'children' => [id,...]]
+$siteById = [];
+foreach ($siteList as $s) {
+    $siteById[to_int($s['id'])] = ['id' => to_int($s['id']), 'name' => to_str($s['name']), 'parent_id' => to_int($s['parent_id'] ?? 0), 'children' => []];
+}
+foreach ($siteById as $sid => $_sv) {
+    $pid = $siteById[$sid]['parent_id'];
+    if ($pid > 0 && isset($siteById[$pid])) {
+        $siteById[$pid]['children'][] = $sid;
+    }
+}
+// Collect site IDs that actually have subnets in the tree (any depth)
+$usedSiteIds = [];
+foreach ($tree['byId'] as $sn) {
+    $snSite = to_int($sn['site_id'] ?? 0);
+    if ($snSite > 0) $usedSiteIds[$snSite] = true;
+}
+// Regions: parent sites. A site is a region if it has children that have used sites,
+// or if it itself is a parent_id of any siteById entry.
+$filterRegions = [];  // region_id => ['name', 'children' => [child_id,...] that are used]
+$filterFlat    = [];  // site_id => name (sites with no parent, directly used)
+foreach ($siteById as $sid => $sv) {
+    if ($sv['parent_id'] > 0) continue; // skip child sites in this pass
+    $usedChildren = array_filter($sv['children'], fn($cid) => isset($usedSiteIds[$cid]));
+    $selfUsed = isset($usedSiteIds[$sid]);
+    if ($sv['children'] !== []) {
+        if (!empty($usedChildren) || $selfUsed) {
+            $filterRegions[$sid] = ['name' => $sv['name'], 'children' => array_values($usedChildren), 'self_used' => $selfUsed];
+        }
+    } elseif ($selfUsed) {
+        $filterFlat[$sid] = $sv['name'];
+    }
+}
+// Count of distinct used site IDs that would appear in strip (regions + flat sites)
+$stripSiteCount = count($filterFlat);
+foreach ($filterRegions as $r) {
+    if ($r['self_used']) $stripSiteCount++;
+    $stripSiteCount += count($r['children']);
+}
+// Strip renders only when there are 2+ distinct used sites
+$showFilterStrip = $stripSiteCount >= 2;
+
 /**
  * @param array{byId: array<int, array<string, mixed>>, children: array<int, list<int>>} $tree
  * @param list<int> $roots
@@ -469,7 +512,7 @@ function render_subnet_node_local(PDO $db, array $tree, array $siteMap, array $s
     $siteId = to_int($row['site_id'] ?? 0);
     if ($siteId > 0) $siteName = $siteMap[$siteId] ?? '';
 
-    echo "<div class='subnet-node card' data-indent='{$pad}'>";
+    echo "<div class='subnet-node card' data-indent='{$pad}' data-site-id='" . ($siteId > 0 ? $siteId : '0') . "'>";
     echo "<details " . ($depth < 1 ? "open" : "") . ">";
     echo "<summary>";
     echo "<b><a href='addresses.php?subnet_id=" . to_int($row['id']) . "'>" . e(to_str($row['cidr'])) . "</a></b> ";
@@ -646,6 +689,37 @@ ipam_skeleton_flush();
     'subnetCfDefs' => $subnetCfDefs,
     'contactList'  => $contactList,
 ]) ?></div>
+
+<?php if ($showFilterStrip): ?>
+<div id="site-filter-strip" class="site-filter-strip" role="group" aria-label="Filter by site">
+  <button type="button" class="site-filter-pill site-filter-pill--active" data-filter-site="all" aria-pressed="true">All sites</button>
+  <?php foreach ($filterRegions as $rid => $region): ?>
+    <?php $regionId = to_int($rid); ?>
+    <div class="site-filter-region" data-region-id="<?= $regionId ?>">
+      <button type="button"
+              class="site-filter-pill site-filter-pill--region"
+              data-filter-site="region:<?= $regionId ?>"
+              aria-pressed="false"
+              aria-expanded="true"
+              data-region-toggle="<?= $regionId ?>">
+        <?= e($region['name']) ?><span class="site-filter-caret" aria-hidden="true">&#9660;</span>
+      </button>
+      <div class="site-filter-region-children" data-region-children="<?= $regionId ?>">
+        <?php if ($region['self_used']): ?>
+          <button type="button" class="site-filter-pill site-filter-pill--child" data-filter-site="<?= $regionId ?>" aria-pressed="false"><?= e($region['name']) ?> (all)</button>
+        <?php endif; ?>
+        <?php foreach ($region['children'] as $cid): ?>
+          <?php $childId = to_int($cid); if (!isset($siteById[$childId])) continue; ?>
+          <button type="button" class="site-filter-pill site-filter-pill--child" data-filter-site="<?= $childId ?>" aria-pressed="false"><?= e($siteById[$childId]['name']) ?></button>
+        <?php endforeach; ?>
+      </div>
+    </div>
+  <?php endforeach; ?>
+  <?php foreach ($filterFlat as $fid => $fname): ?>
+    <button type="button" class="site-filter-pill" data-filter-site="<?= to_int($fid) ?>" aria-pressed="false"><?= e($fname) ?></button>
+  <?php endforeach; ?>
+</div>
+<?php endif; ?>
 
 <div class="card mt-16">
   <div class="toolbar mb-8">

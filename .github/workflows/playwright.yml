@@ -82,6 +82,9 @@ jobs:
             -f testing/playwright/Dockerfile.apache \
             testing/playwright
 
+      - name: Install Composer dependencies
+        run: composer install --no-dev --no-progress --quiet
+
       - name: Bootstrap containerized IPAM
         run: bash testing/playwright/bootstrap-app.sh "$DRIVER"
 

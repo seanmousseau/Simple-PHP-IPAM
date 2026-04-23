@@ -49,7 +49,12 @@ require __DIR__ . '/lib.php';
 
 $config = require __DIR__ . '/config.php';
 
-if (!($config['demo_mode']['enabled'] ?? false)) {
+// DEMO_SEED_FORCE=1 is accepted only when the test fixture also sets
+// demo_mode.allow_force=true, so a leaked env var cannot wipe a production DB.
+$forceSeed = getenv('DEMO_SEED_FORCE') === '1'
+    && ($config['demo_mode']['allow_force'] ?? false);
+
+if (!$forceSeed && !($config['demo_mode']['enabled'] ?? false)) {
     echo "Demo mode is not enabled in config.php. Aborting.\n";
     echo "Set 'demo_mode' => ['enabled' => true] to use this script.\n";
     exit(1);
@@ -60,5 +65,52 @@ ipam_db_init($db);
 
 echo "Resetting database to demo data...\n";
 demo_reset_db($db);
+
+// 2FA test user — seeded only when SEED_2FA_TEST_USER=1
+if (getenv('SEED_2FA_TEST_USER') === '1') {
+    $testSecret = 'JBSWY3DPEHPK3PXP'; // standard RFC 6238 test vector (base32)
+    $appSecret  = to_str($config['app_secret'] ?? '');
+    if ($appSecret === '') {
+        fwrite(STDERR, "Error: app_secret must be set in config when SEED_2FA_TEST_USER=1\n");
+        exit(1);
+    } else {
+        try {
+            $encSecret = ipam_totp_encrypt_secret($testSecret, $appSecret);
+        } catch (\Throwable $e) {
+            fwrite(STDERR, "Error: {$e->getMessage()}\n");
+            exit(1);
+        }
+
+        // Idempotent seed: remove any prior run's test user then INSERT fresh.
+        // demo_reset_db() clears the demo users so this is normally a no-op DELETE.
+        // Using DELETE+INSERT rather than a dialect-specific upsert keeps the SQL
+        // portable across SQLite, MySQL, MariaDB, and Postgres.
+        $db->prepare("DELETE FROM users WHERE username='2fa_test_user'")->execute();
+        $db->prepare(
+            "INSERT INTO users
+                (username, password_hash, role, is_active, totp_enabled, totp_secret_enc, email, name)
+             VALUES ('2fa_test_user', :ph, 'readonly', 1, 1, :ts, '2fa_test@example.com', '2FA Test User')"
+        )->execute([
+            ':ph' => password_hash('Password1!', PASSWORD_DEFAULT),
+            ':ts' => $encSecret,
+        ]);
+
+        $stmt = $db->query("SELECT id FROM users WHERE username='2fa_test_user'");
+        $uid  = (int) (($stmt ? $stmt->fetchColumn() : false) ?: 0);
+
+        if ($uid === 0) {
+            fwrite(STDERR, "Error: could not determine uid for 2fa_test_user\n");
+            exit(1);
+        }
+
+        ipam_totp_save_backup_codes($db, $uid, [
+            'AAAA1111-BBBB2222', 'CCCC3333-DDDD4444', 'EEEE5555-FFFF6666',
+            'GGGG7777-HHHH8888', 'IIII9999-JJJJAAAA', 'KKKK1111-LLLL2222',
+            'MMMM3333-NNNN4444', 'OOOO5555-PPPP6666',
+        ]);
+        echo "Seeded 2FA test user: 2fa_test_user\n";
+    }
+}
+
 file_put_contents(__DIR__ . '/data/demo_last_reset.txt', (string)time());
 echo "Done. Demo data loaded successfully.\n";

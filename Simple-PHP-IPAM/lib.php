@@ -5970,8 +5970,7 @@ function page_header(string $title, array $opts = []): void
             echo "<a class='sidebar-link" . ($activePage === 'import_csv' ? ' is-active' : '') . "' href='import_csv.php'>" . icon('upload') . " Import CSV</a>";
             echo "<a class='sidebar-link" . ($activePage === 'import_arp' ? ' is-active' : '') . "' href='import_arp.php'>" . icon('arp') . " ARP Import</a>";
             echo "<a class='sidebar-link" . ($activePage === 'reports' ? ' is-active' : '') . "' href='reports.php'>" . icon('reports') . " Reports</a>";
-            if (ipam_sql_dump_supported()) echo "<a class='sidebar-link" . ($activePage === 'db_tools' ? ' is-active' : '') . "' href='db_tools.php'>" . icon('database') . " Database Tools</a>";
-            echo "<a class='sidebar-link" . ($activePage === 'backups' ? ' is-active' : '') . "' href='backups.php'>" . icon('backup') . " Backups</a>";
+            echo "<a class='sidebar-link" . ($activePage === 'db_tools' ? ' is-active' : '') . "' href='db_tools.php'>" . icon('database') . " Database</a>";
             echo "<a class='sidebar-link" . ($activePage === 'health' ? ' is-active' : '') . "' href='health.php'>" . icon('health') . " Health</a>";
             echo "<a class='sidebar-link" . ($activePage === 'settings' ? ' is-active' : '') . "' href='settings.php'>" . icon('settings') . " Settings</a>";
             echo "</div>";
