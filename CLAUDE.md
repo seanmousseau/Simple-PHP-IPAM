@@ -33,7 +33,7 @@ Two cheap calls. The first loads your profile + preferences. The second returns 
 
 ## Project overview
 
-> **Current shipped version: v3.7.1** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v3.8.0 → v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v3.8.0 describes future work — **do not apply it to current v3.7.x code**. Current-state rules are the ones that do not cite a future version.
+> **Current shipped version: v3.8.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v3.9.0 → v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v3.9.0 describes future work — **do not apply it to current v3.8.x code**. Current-state rules are the ones that do not cite a future version.
 
 Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application built with **PHP 8.2+ and SQLite**. It has **no npm build step** — all CSS and JavaScript are vanilla. Starting in v2.9.0, the application will ship a small, carefully curated set of Composer-managed runtime dependencies bundled into the release tarball, so end users still deploy by extracting the tarball with no build step. The web root is `Simple-PHP-IPAM/` (the subdirectory, not the repo root).
 
@@ -196,7 +196,7 @@ Migrations live in `migrations.php` as an associative array of version string �
 
 **When adding a new version:** add the migration closure, bump `version.php`, update `CHANGELOG.md` (keepachangelog format).
 
-> **Current shipped version: v3.7.1.** `Creating new data tables in post-v4.0.0 releases` is **forward-looking** (applies from v4.1.0+ only) — ignore it for all current v3.x work. `Modifying the schema (multi-engine, from v2.9.0 onward)` and `Runtime dependencies` are **currently active** rules (apply to v2.9.0+ including the current v3.7.1).
+> **Current shipped version: v3.8.0.** `Creating new data tables in post-v4.0.0 releases` is **forward-looking** (applies from v4.1.0+ only) — ignore it for all current v3.x work. `Modifying the schema (multi-engine, from v2.9.0 onward)` and `Runtime dependencies` are **currently active** rules (apply to v2.9.0+ including the current v3.8.0).
 
 ### Creating new data tables in post-v4.0.0 releases *(applies from v4.1.0+)*
 
@@ -367,10 +367,12 @@ Key utility classes: `.muted`, `.danger`, `.success`, `.warning`, `.badge`, `.ba
 
 Asset cache-buster: update `?v=X.Y.Z` in the `<link>` and `<script>` tags in `page_header()` **and** in `demo_gate.php` (lines 74–75) when changing CSS/JS. `demo_gate.php` has its own `<head>` block and does not call `page_header()`, so it must be updated separately.
 
-### Nav structure
-- Left: nav-links (Dashboard, Subnets, Addresses, Search, Audit, ⚙ Admin dropdown)
-- Right: user dropdown (username + role badge → Theme, Password, Logout)
-- Admin dropdown items: Sites, VLANs, VRFs, Tags, Contacts, Custom Fields, Users, DHCP Pools, API Keys, Webhooks, Import CSV, Database Tools
+### Nav structure (v3.8.0 sidebar)
+- **Desktop (≥1024px):** always-visible sidebar with SVG Heroicon nav links (Dashboard, Subnets, Addresses, Search, Audit, Admin section) and user block at the bottom (username + role badge → Theme, Account, Logout)
+- **Mobile (<1024px):** hamburger button opens the sidebar as a full-height overlay; Escape or backdrop click closes it
+- **Command palette ⌘K / Ctrl+K:** keyboard-driven navigation, record creation, and theme toggle; accessible from any page
+- **Admin section nav items:** Sites, VLANs, VRFs, Tags, Contacts, Custom Fields, Users, DHCP Pools, API Keys, Webhooks, Import CSV, Database Tools (hidden for non-SQLite engines), Backups, Health
+- All emoji icons replaced with consistent SVG Heroicons sprite (`assets/icons.svg`)
 
 ---
 
@@ -840,29 +842,44 @@ If CodeRabbit or a human reviewer asks for a change on the open PR:
    ```
 5. Verify the release is live: `gh release view vX.Y.Z --json url,assets`.
 6. **Deploy to demo site** (`demo.simplephpipam.com`, OpenLiteSpeed on `root@192.168.80.23`):
+   Use the release tarball + `upgrade.sh` — **never raw `rsync` from the working tree**, which silently excludes `vendor/` (gitignored) and breaks the Composer autoloader.
    ```bash
-   rsync -az --delete \
-     --exclude='data/' --exclude='config.php' \
-     Simple-PHP-IPAM/ root@192.168.80.23:/usr/local/lsws/vhosts/demo.simplephpipam.com/html/
-   ssh root@192.168.80.23 "chown -R nobody:nogroup /usr/local/lsws/vhosts/demo.simplephpipam.com/html/ && php /usr/local/lsws/vhosts/demo.simplephpipam.com/html/migrate.php"
+   scp releases/ipam-X.Y.Z/ipam-X.Y.Z.tar.gz root@192.168.80.23:/tmp/
+   ssh root@192.168.80.23 "
+     rm -rf /tmp/ipam-X.Y.Z && mkdir /tmp/ipam-X.Y.Z
+     tar -xzf /tmp/ipam-X.Y.Z.tar.gz -C /tmp/ipam-X.Y.Z
+     cd /tmp/ipam-X.Y.Z/ipam-X.Y.Z
+     bash upgrade.sh --yes /usr/local/lsws/vhosts/demo.simplephpipam.com/html
+     chown -R nobody:nogroup /usr/local/lsws/vhosts/demo.simplephpipam.com/html
+   "
    ```
    Verify: browse `https://demo.simplephpipam.com/` and confirm the version shown in the footer.
 7. **Deploy to prod instance** (`ipam.seanmousseau.com`, OpenLiteSpeed on `root@192.168.80.23`):
    ```bash
-   rsync -az --delete \
-     --exclude='data/' --exclude='config.php' \
-     Simple-PHP-IPAM/ root@192.168.80.23:/usr/local/lsws/vhosts/ipam.seanmousseau.com/html/
-   ssh root@192.168.80.23 "chown -R nobody:nogroup /usr/local/lsws/vhosts/ipam.seanmousseau.com/html/ && php /usr/local/lsws/vhosts/ipam.seanmousseau.com/html/migrate.php"
+   ssh root@192.168.80.23 "
+     cd /tmp/ipam-X.Y.Z/ipam-X.Y.Z
+     bash upgrade.sh --yes /usr/local/lsws/vhosts/ipam.seanmousseau.com/html
+     chown -R nobody:nogroup /usr/local/lsws/vhosts/ipam.seanmousseau.com/html
+   "
    ```
    **DB:** MySQL at `192.168.80.13:3306`, database `ipam`, user `ipam`. Credentials are in `config.php` on the server (not in `dev-secrets.env`). `data/ipam.sqlite` on disk is stale/unused — always verify migration state against MySQL `schema_migrations`, not the SQLite file.
    Verify: browse `https://ipam.seanmousseau.com/` and confirm the version in the footer.
 8. **Deploy to 4 testing instances** (`root@192.168.80.15`):
+   The DB hostnames (`mariadb`, `postgres`) are Docker-internal and unreachable from the host, so `upgrade.sh` must run **inside the container** via `docker exec`. Copy the tarball into the container, extract it, and run `upgrade.sh` from there.
    ```bash
-   for dir in ipam ipam-maria ipam-mysql ipam-postgres; do
-     rsync -az --delete --exclude='data/' --exclude='config.php' \
-       Simple-PHP-IPAM/ root@192.168.80.15:/opt/container_data/dev.seanmousseau.com/html/testing/$dir/
-     ssh root@192.168.80.15 "chown -R www-data:www-data /opt/container_data/dev.seanmousseau.com/html/testing/$dir/ && docker exec dev_seanmousseau_com-apache-php-1 php /var/www/html/testing/$dir/migrate.php"
-   done
+   scp releases/ipam-X.Y.Z/ipam-X.Y.Z.tar.gz root@192.168.80.15:/tmp/
+   ssh root@192.168.80.15 "
+     docker cp /tmp/ipam-X.Y.Z.tar.gz dev_seanmousseau_com-apache-php-1:/tmp/
+     docker exec dev_seanmousseau_com-apache-php-1 bash -c '
+       rm -rf /tmp/ipam-X.Y.Z && mkdir /tmp/ipam-X.Y.Z
+       tar -xzf /tmp/ipam-X.Y.Z.tar.gz -C /tmp/ipam-X.Y.Z
+       cd /tmp/ipam-X.Y.Z/ipam-X.Y.Z
+       for dir in ipam ipam-maria ipam-mysql ipam-postgres; do
+         bash upgrade.sh --yes /var/www/html/testing/\$dir
+       done
+     '
+     chown -R www-data:www-data /opt/container_data/dev.seanmousseau.com/html/testing/
+   "
    ```
 9. **Update the marketing website** (`simplephpipam.com`) — required on every release, not optional. The version number appears in multiple places in `website/front-page.php`:
    - Hero badge: `vX.Y.Z — <tagline>`

@@ -31,9 +31,9 @@ const PAGES: Array<[string, string]> = [
   ['settings.php',     'Settings'],
 ];
 
-// Pages that include breadcrumbs (all non-login pages with page_header())
+// Pages that include breadcrumbs — dashboard is the root page and has no breadcrumb bar
 const BREADCRUMB_PAGES = [
-  'dashboard.php', 'subnets.php', 'search.php', 'audit.php',
+  'subnets.php', 'search.php', 'audit.php',
   'users.php', 'sites.php', 'vlans.php', 'tags.php',
   'api_keys.php', 'change_password.php',
 ];
@@ -128,21 +128,18 @@ adminTest.describe('Sticky headers', () => {
 adminTest.describe('Mobile hamburger nav', () => {
   adminTest('nav-toggle button exists in DOM', async ({ adminPage: page }) => {
     await page.goto('dashboard.php');
-    const toggle = page.locator('#nav-toggle');
+    const toggle = page.locator('#sidebar-open');
     await expect(toggle).toBeAttached();
   });
 
   adminTest('nav-drawer opens on toggle click (mobile viewport)', async ({ adminPage: page }) => {
     await page.setViewportSize({ width: 375, height: 812 });
     await page.goto('dashboard.php');
-    // Open: toggle click adds body.nav-open and removes aria-hidden from drawer
-    await page.locator('#nav-toggle').click();
-    await expect(page.locator('body')).toHaveClass(/nav-open/);
-    // drawer uses CSS transform (not display:none), so check aria-hidden instead of toBeVisible
-    await expect(page.locator('#nav-drawer')).not.toHaveAttribute('aria-hidden', 'true');
+    // Open: hamburger click adds is-open class to sidebar
+    await page.locator('#sidebar-open').click();
+    await expect(page.locator('#sidebar')).toHaveClass(/is-open/);
     // Close via overlay click
-    await page.locator('.nav-drawer-overlay').click();
-    await expect(page.locator('body')).not.toHaveClass(/nav-open/);
-    await expect(page.locator('#nav-drawer')).toHaveAttribute('aria-hidden', 'true');
+    await page.locator('.sidebar-overlay').click();
+    await expect(page.locator('#sidebar')).not.toHaveClass(/is-open/);
   });
 });

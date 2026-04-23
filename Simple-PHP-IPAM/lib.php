@@ -54,6 +54,16 @@ function ipam_dialect_from_config(array $config): Dialect
 }
 
 /**
+ * Returns true when the active DB engine supports the SQL dump/restore
+ * feature in db_tools.php (SQLite only). Used to conditionally show the
+ * Database Tools nav item — direct navigation to db_tools.php still works
+ * on all engines (it shows an "unsupported" banner).
+ */
+function ipam_sql_dump_supported(): bool {
+    return ipam_dialect()->driver_name() === 'sqlite';
+}
+
+/**
  * Bind a raw binary value (typically inet_pton output) to a PDOStatement
  * parameter using PDO::PARAM_LOB on every driver (#410).
  *
@@ -510,6 +520,81 @@ if (!function_exists('to_str')) {
         if ($value === null) return '';
         return '';
     }
+}
+
+/* ---------------- View helpers (v3.8.0, #522) ---------------- */
+
+/**
+ * Render a PHP partial from Simple-PHP-IPAM/views/<view>.php.
+ *
+ * Props are extracted into the partial's local scope via extract() with
+ * EXTR_SKIP so that no prop can shadow an existing variable. The partial
+ * is a plain PHP file — no compiled syntax, no reserved directives, no
+ * templating engine. This is the idiomatic code-reuse pattern for this
+ * project (see CLAUDE.md "Runtime dependencies → UI and rendering").
+ *
+ * @param string               $view  Partial name without the .php extension
+ *                                    (e.g. 'subnet_row' for views/subnet_row.php).
+ * @param array<string, mixed> $props Variables to extract into the partial scope.
+ * @throws \RuntimeException          If the partial file does not exist.
+ */
+function ipam_render(string $view, array $props = []): void
+{
+    if ($view !== basename($view) || $view === '') {
+        throw new \InvalidArgumentException("Invalid view name: $view");
+    }
+    $path = __DIR__ . '/views/' . $view . '.php';
+    if (!is_file($path)) {
+        throw new \RuntimeException("View not found: $view");
+    }
+    extract($props, EXTR_SKIP);
+    require $path;
+}
+
+/**
+ * Render a PHP partial and return the output as a string.
+ *
+ * Buffers the output of ipam_render() and returns it. Useful when the
+ * rendered fragment must be stored or passed to another function before
+ * being sent to the client.
+ *
+ * @param string               $view  Partial name without the .php extension.
+ * @param array<string, mixed> $props Variables to extract into the partial scope.
+ * @return string                     The captured partial output.
+ */
+function ipam_render_string(string $view, array $props = []): string
+{
+    $level = ob_get_level();
+    ob_start();
+    try {
+        ipam_render($view, $props);
+        $out = ob_get_clean();
+        return $out === false ? '' : $out;
+    } catch (\Throwable $e) {
+        while (ob_get_level() > $level) {
+            ob_end_clean();
+        }
+        throw $e;
+    }
+}
+
+/**
+ * Render an SVG icon from the sprite sheet.
+ *
+ * Returns an inline <svg><use> element referencing the icon sprite.
+ * Decorative — always aria-hidden and focusable=false.
+ * Use the $cls parameter to add sizing classes (e.g. 'icon-lg').
+ *
+ * @param string $name  Icon name (without 'icon-' prefix), e.g. 'home', 'cog'
+ * @param string $cls   Additional CSS classes to append (space-separated)
+ * @return string       HTML string safe to echo directly
+ */
+function icon(string $name, string $cls = ''): string
+{
+    $c = trim('icon ' . $cls);
+    return '<svg class="' . e($c) . '" aria-hidden="true" focusable="false">'
+         . '<use href="#icon-' . e($name) . '"></use>'
+         . '</svg>';
 }
 
 /* ---------------- Timestamp display ---------------- */
@@ -5795,6 +5880,7 @@ function page_header(string $title, array $opts = []): void
     // forever (see below). Everything else in this function reads through
     // ipam_setting() as of v2.7.0.
     global $config;
+    require_once __DIR__ . '/version.php';
     $u = to_str($_SESSION['username'] ?? '');
     $role = to_str($_SESSION['role'] ?? '');
     $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
@@ -5809,20 +5895,30 @@ function page_header(string $title, array $opts = []): void
 
     echo "<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
     echo "<title>" . e($appName) . " \u{2014} " . e($title) . "</title>";
-    echo "<link rel='icon' type='image/webp' sizes='32x32' href='assets/favicon-32.webp?v=3.7.1'>";
-    echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png?v=3.7.1'>";
-    echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp?v=3.7.1'>";
-    echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png?v=3.7.1'>";
-    echo "<link rel='stylesheet' href='assets/vendor/open-props.min.css?v=3.7.1'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v=3.7.1'>";
+    $av = e(IPAM_VERSION);
+    echo "<link rel='icon' type='image/webp' sizes='32x32' href='assets/favicon-32.webp?v={$av}'>";
+    echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png?v={$av}'>";
+    echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp?v={$av}'>";
+    echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png?v={$av}'>";
+    echo "<link rel='stylesheet' href='assets/vendor/open-props.min.css?v={$av}'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v={$av}'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v=3.7.1'></script>";
+    echo "<script defer src='assets/app.js?v={$av}'></script>";
     $pageAttr = isset($opts['page']) && $opts['page'] !== ''
         ? " data-page='" . e(to_str($opts['page'])) . "'"
         : '';
     echo "</head><body{$pageAttr}>";
+    // Inline SVG sprite once per page (display:none in the SVG itself)
+    static $__spritePrinted = false;
+    if (!$__spritePrinted) {
+        $__spritePrinted = true;
+        $__spritePath = __DIR__ . '/assets/icons.svg';
+        if (is_file($__spritePath)) {
+            readfile($__spritePath);
+        }
+    }
     echo "<a class='skip-link' href='#main-content'>Skip to main content</a>";
 
     /** @var IpamConfig $gConf */
@@ -5831,120 +5927,92 @@ function page_header(string $title, array $opts = []): void
         echo "<div class='recovery-banner'>RECOVERY MODE ACTIVE &mdash; disable <code>recovery_mode</code> in config.php after use</div>";
     }
 
-    echo "<header role='banner'><div class='topbar'><div class='nav-wrap'>";
-    echo "<a href='dashboard.php' class='nav-brand'>"
-       . "Simple<span class='nav-brand-php'>PHP</span>IPAM"
-       . "</a>";
-    echo "<button class='nav-toggle' id='nav-toggle' aria-label='Open menu' aria-expanded='false' aria-controls='nav-drawer'>&#9776;</button>";
-    echo "<nav class='nav-links' role='navigation' aria-label='Primary'>";
-    if ($u) {
-        echo "<a class='nav-pill' href='dashboard.php'>🏠 Dashboard</a>";
-        echo "<a class='nav-pill' href='subnets.php'>🌐 Subnets</a>";
-        echo "<a class='nav-pill' href='addresses.php'>🧾 Addresses</a>";
-        echo "<a class='nav-pill nav-search-link' href='search.php'>🔎 Search <kbd class='nav-kbd'>⌘K</kbd></a>";
-        echo "<a class='nav-pill' href='audit.php'>📜 Audit</a>";
-        if ($role === 'admin') {
-            echo "<div class='nav-dropdown'>";
-            echo "<button type='button' class='nav-pill nav-dropdown-toggle'>⚙ Admin ▾</button>";
-            echo "<div class='nav-dropdown-menu'>";
-            echo "<a class='nav-dropdown-item' href='dhcp_pool.php'>🔒 DHCP Pools</a>";
-            echo "<hr class='nav-dropdown-divider'>";
-            echo "<a class='nav-dropdown-item' href='sites.php'>📍 Sites</a>";
-            echo "<a class='nav-dropdown-item' href='vrfs.php'>🌐 VRFs</a>";
-            echo "<a class='nav-dropdown-item' href='vlans.php'>🏷 VLANs</a>";
-            echo "<a class='nav-dropdown-item' href='aggregates.php'>🗂 Aggregates</a>";
-            echo "<a class='nav-dropdown-item' href='pd_pools.php'>🔷 PD Pools</a>";
-            echo "<a class='nav-dropdown-item' href='tags.php'>🔖 Tags</a>";
-            echo "<a class='nav-dropdown-item' href='devices.php'>🖥 Devices</a>";
-            echo "<a class='nav-dropdown-item' href='contacts.php'>📇 Contacts</a>";
-            echo "<a class='nav-dropdown-item' href='custom_fields.php'>🗂 Custom Fields</a>";
-            echo "<a class='nav-dropdown-item' href='users.php'>👤 Users</a>";
-            echo "<a class='nav-dropdown-item' href='api_keys.php'>🔑 API Keys</a>";
-            echo "<a class='nav-dropdown-item' href='webhooks.php'>🔔 Webhooks</a>";
-            echo "<a class='nav-dropdown-item' href='import_csv.php'>⬆ Import CSV</a>";
-            echo "<a class='nav-dropdown-item' href='import_arp.php'>📡 ARP Import</a>";
-            echo "<a class='nav-dropdown-item' href='reports.php'>📊 Reports</a>";
-            echo "<a class='nav-dropdown-item' href='db_tools.php'>🗄 Database Tools</a>";
-            echo "<a class='nav-dropdown-item' href='backups.php'>💾 Backups</a>";
-            echo "<a class='nav-dropdown-item' href='health.php'>🩺 Health</a>";
-            echo "<hr class='nav-dropdown-divider'>";
-            echo "<a class='nav-dropdown-item' href='settings.php'>⚙ Settings</a>";
-            echo "</div></div>";
-        }
-    } else {
-        echo "<a class='nav-pill' href='login.php'>🔐 Login</a>";
-    }
-    echo "</nav>";
+    // Active page detection for sidebar highlighting
+    $activePage = basename(to_str($_SERVER['SCRIPT_NAME'] ?? ''), '.php');
+
+    echo "<div class='layout-root'>";
+
+    // Sidebar — desktop: always visible; mobile: off-canvas
+    echo "<aside id='sidebar' class='sidebar' aria-label='Main navigation'>";
+    echo "<div class='sidebar-logo'>";
+    echo "<a href='dashboard.php' class='sidebar-logo-link'>" . icon('server-stack', 'icon-xl') . " " . e($appName) . "</a>";
+    echo "<button id='sidebar-close' class='sidebar-close' aria-label='Close menu'>" . icon('x') . "</button>";
+    echo "</div>";
+    echo "<nav class='sidebar-nav' aria-label='Primary'>";
 
     if ($u) {
-        echo "<div class='nav-right'>";
-        echo "<div class='nav-dropdown'>";
-        echo "<button type='button' class='nav-pill nav-dropdown-toggle nav-user-toggle'>";
-        echo e($u) . " <span class='badge badge-role-" . e($role) . "'>" . e($role) . "</span> ▾";
-        echo "</button>";
-        echo "<div class='nav-dropdown-menu nav-dropdown-menu--right'>";
-        echo "<button type='button' class='nav-dropdown-item' id='theme-toggle'>🌓 Theme</button>";
-        echo "<hr class='nav-dropdown-divider'>";
-        echo "<a class='nav-dropdown-item' href='change_password.php'>🔐 Account</a>";
-        echo "<a class='nav-dropdown-item' href='logout.php'>↩ Logout</a>";
-        echo "</div></div>";
+        // Primary group
+        echo "<div class='sidebar-group'>";
+        echo "<a class='sidebar-link" . ($activePage === 'dashboard' ? ' is-active' : '') . "' href='dashboard.php'>" . icon('home') . " Dashboard</a>";
+        echo "<a class='sidebar-link" . ($activePage === 'subnets' ? ' is-active' : '') . "' href='subnets.php'>" . icon('server-stack') . " Subnets</a>";
+        echo "<a class='sidebar-link" . ($activePage === 'addresses' ? ' is-active' : '') . "' href='addresses.php'>" . icon('map-pin') . " Addresses</a>";
+        echo "<a class='sidebar-link nav-search-link" . ($activePage === 'search' ? ' is-active' : '') . "' href='search.php'>" . icon('magnifying-glass') . " Search</a>";
+        echo "<a class='sidebar-link" . ($activePage === 'audit' ? ' is-active' : '') . "' href='audit.php'>" . icon('audit') . " Audit</a>";
+        echo "<a class='sidebar-link" . ($activePage === 'unassigned' ? ' is-active' : '') . "' href='unassigned.php'>" . icon('unassigned') . " Unassigned</a>";
+        echo "</div>";
+
+        if ($role === 'admin') {
+            echo "<div class='sidebar-group'>";
+            echo "<span class='sidebar-group-label'>Admin</span>";
+            echo "<a class='sidebar-link" . ($activePage === 'dhcp_pool' ? ' is-active' : '') . "' href='dhcp_pool.php'>" . icon('dhcp') . " DHCP Pools</a>";
+            echo "<a class='sidebar-link" . ($activePage === 'sites' ? ' is-active' : '') . "' href='sites.php'>" . icon('building') . " Sites</a>";
+            echo "<a class='sidebar-link" . ($activePage === 'vrfs' ? ' is-active' : '') . "' href='vrfs.php'>" . icon('globe') . " VRFs</a>";
+            echo "<a class='sidebar-link" . ($activePage === 'vlans' ? ' is-active' : '') . "' href='vlans.php'>" . icon('link') . " VLANs</a>";
+            echo "<a class='sidebar-link" . ($activePage === 'aggregates' ? ' is-active' : '') . "' href='aggregates.php'>" . icon('aggregates') . " Aggregates</a>";
+            echo "<a class='sidebar-link" . ($activePage === 'pd_pools' ? ' is-active' : '') . "' href='pd_pools.php'>" . icon('pd-pools') . " PD Pools</a>";
+            echo "<a class='sidebar-link" . ($activePage === 'tags' ? ' is-active' : '') . "' href='tags.php'>" . icon('tag') . " Tags</a>";
+            echo "<a class='sidebar-link" . ($activePage === 'devices' ? ' is-active' : '') . "' href='devices.php'>" . icon('server') . " Devices</a>";
+            echo "<a class='sidebar-link" . ($activePage === 'contacts' ? ' is-active' : '') . "' href='contacts.php'>" . icon('phone') . " Contacts</a>";
+            echo "<a class='sidebar-link" . ($activePage === 'custom_fields' ? ' is-active' : '') . "' href='custom_fields.php'>" . icon('custom-fields') . " Custom Fields</a>";
+            echo "<a class='sidebar-link" . ($activePage === 'users' ? ' is-active' : '') . "' href='users.php'>" . icon('users') . " Users</a>";
+            echo "<a class='sidebar-link" . ($activePage === 'api_keys' ? ' is-active' : '') . "' href='api_keys.php'>" . icon('key') . " API Keys</a>";
+            echo "<a class='sidebar-link" . ($activePage === 'webhooks' ? ' is-active' : '') . "' href='webhooks.php'>" . icon('webhook') . " Webhooks</a>";
+            echo "<a class='sidebar-link" . ($activePage === 'import_csv' ? ' is-active' : '') . "' href='import_csv.php'>" . icon('upload') . " Import CSV</a>";
+            echo "<a class='sidebar-link" . ($activePage === 'import_arp' ? ' is-active' : '') . "' href='import_arp.php'>" . icon('arp') . " ARP Import</a>";
+            echo "<a class='sidebar-link" . ($activePage === 'reports' ? ' is-active' : '') . "' href='reports.php'>" . icon('reports') . " Reports</a>";
+            if (ipam_sql_dump_supported()) echo "<a class='sidebar-link" . ($activePage === 'db_tools' ? ' is-active' : '') . "' href='db_tools.php'>" . icon('database') . " Database Tools</a>";
+            echo "<a class='sidebar-link" . ($activePage === 'backups' ? ' is-active' : '') . "' href='backups.php'>" . icon('backup') . " Backups</a>";
+            echo "<a class='sidebar-link" . ($activePage === 'health' ? ' is-active' : '') . "' href='health.php'>" . icon('health') . " Health</a>";
+            echo "<a class='sidebar-link" . ($activePage === 'settings' ? ' is-active' : '') . "' href='settings.php'>" . icon('settings') . " Settings</a>";
+            echo "</div>";
+        }
+
+        // Account group
+        echo "<div class='sidebar-group sidebar-group--account'>";
+        echo "<span class='sidebar-group-label'>Account</span>";
+        echo "<button type='button' class='sidebar-link' id='theme-toggle'>" . icon('theme') . " Theme</button>";
+        echo "<a class='sidebar-link" . ($activePage === 'change_password' ? ' is-active' : '') . "' href='change_password.php'>" . icon('account') . " Account <span class='badge badge-role-" . e($role) . "'>" . e($u) . "</span></a>";
+        echo "<a class='sidebar-link' href='logout.php'>" . icon('logout') . " Logout</a>";
+        echo "</div>";
+    } else {
+        echo "<div class='sidebar-group'>";
+        echo "<a class='sidebar-link" . ($activePage === 'login' ? ' is-active' : '') . "' href='login.php'>" . icon('login') . " Login</a>";
         echo "</div>";
     }
 
-    echo "</div></div></header>";
+    echo "</nav>";
+    echo "</aside>";
 
-    // Mobile nav drawer (hidden on desktop, slides in on mobile)
-    echo "<div id='nav-drawer' aria-hidden='true'>";
-    echo "<button class='drawer-close' aria-label='Close menu'>&#10005;</button>";
-    if ($u) {
-        echo "<span class='nav-drawer-section'>Navigation</span>";
-        echo "<a href='dashboard.php'>&#127968; Dashboard</a>";
-        echo "<a href='subnets.php'>&#127760; Subnets</a>";
-        echo "<a href='addresses.php'>&#129438; Addresses</a>";
-        echo "<a href='search.php'>&#128270; Search</a>";
-        echo "<a href='audit.php'>&#128220; Audit</a>";
-        if ($role === 'admin') {
-            echo "<hr>";
-            echo "<span class='nav-drawer-section'>Admin</span>";
-            echo "<a href='dhcp_pool.php'>&#128274; DHCP Pools</a>";
-            echo "<a href='sites.php'>&#128205; Sites</a>";
-            echo "<a href='vrfs.php'>&#127760; VRFs</a>";
-            echo "<a href='vlans.php'>&#127991; VLANs</a>";
-            echo "<a href='tags.php'>&#128278; Tags</a>";
-            echo "<a href='devices.php'>&#128421; Devices</a>";
-            echo "<a href='contacts.php'>&#128215; Contacts</a>";
-            echo "<a href='users.php'>&#128100; Users</a>";
-            echo "<a href='api_keys.php'>&#128273; API Keys</a>";
-            echo "<a href='webhooks.php'>&#128276; Webhooks</a>";
-            echo "<a href='import_arp.php'>&#128200; ARP Import</a>";
-            echo "<a href='import_csv.php'>&#8679; Import CSV</a>";
-            echo "<a href='reports.php'>&#128202; Reports</a>";
-            echo "<a href='db_tools.php'>&#128444; Database Tools</a>";
-            echo "<a href='backups.php'>&#128190; Backups</a>";
-            echo "<a href='health.php'>&#129690; Health</a>";
-            echo "<a href='settings.php'>&#9881; Settings</a>";
-        }
-        echo "<hr>";
-        echo "<span class='nav-drawer-section'>Account</span>";
-        echo "<a href='change_password.php'>&#128272; Account</a>";
-        echo "<a href='logout.php'>&#8617; Logout</a>";
-    } else {
-        echo "<a href='login.php'>&#128272; Login</a>";
-    }
-    echo "</div>";
-    echo "<div class='nav-drawer-overlay'></div>";
+    // Main content area
+    echo "<div class='layout-main'>";
 
-    // ⌘K / Ctrl+K search overlay (#253)
-    echo "<div id='search-overlay' role='dialog' aria-modal='true' aria-label='Quick search'>";
-    echo "<div class='so-box'>";
-    echo "<input id='search-overlay-input' type='search' placeholder='Search IPs, hostnames, owners…' autocomplete='off' spellcheck='false'>";
-    echo "<button id='search-overlay-close' class='so-close' aria-label='Close search'>&times;</button>";
-    echo "<ul id='search-overlay-list'></ul>";
-    echo "<div class='so-hint'>&#x23CE; to navigate &nbsp;&middot;&nbsp; &#x2191;&#x2193; to move &nbsp;&middot;&nbsp; <kbd>Esc</kbd> to close</div>";
-    echo "</div>";
+    // Mobile topbar — hamburger + app name
+    echo "<header class='topbar topbar--mobile'>";
+    echo "<button id='sidebar-open' class='hamburger' aria-label='Open menu' aria-expanded='false'>" . icon('bars') . "</button>";
+    echo "<span class='topbar-title'>" . e($appName) . "</span>";
+    echo "</header>";
+
+    // ⌘K / Ctrl+K command palette (#516)
+    echo "<div id='cmd-palette-bg' class='cmd-palette-bg' role='dialog' aria-modal='true' aria-label='Command palette'>";
+    echo "  <div class='cmd-palette'>";
+    echo "    <div class='cmd-input-wrap'>";
+    echo "      <input id='cmd-input' class='cmd-input' type='search' placeholder='Search pages, actions, addresses\xe2\x80\xa6' autocomplete='off' spellcheck='false' aria-label='Command palette search'>";
+    echo "    </div>";
+    echo "    <div id='cmd-results' class='cmd-results'></div>";
+    echo "  </div>";
     echo "</div>";
 
-    echo "<main id='main-content' class='page'>";
+    echo "<main id='main-content' class='page-content'>";
 
     // Demo mode banner (non-dismissible)
     if (demo_mode_enabled()) {
@@ -6052,7 +6120,7 @@ function page_footer(): void
            . "Update available v{$uv}</a>";
     }
 
-    echo "</div></footer>";
+    echo "</div></footer></div></div>";
 
     // Slide-in form drawer container (populated by JS openFormDrawer())
     echo "<div id='form-drawer' role='dialog' aria-modal='true' aria-labelledby='drawer-title-text'>";
@@ -7813,4 +7881,66 @@ function ipam_clear_persistent_lockout(PDO $db, int $uid): void {
     $db->prepare(
         "UPDATE users SET failed_auth_count = 0, locked_until = NULL, lock_reason = NULL WHERE id = :id"
     )->execute([':id' => $uid]);
+}
+
+// ============================================================
+// Dashboard KPI helpers (v3.8.0, #514)
+// ============================================================
+
+/**
+ * @return array{subnets:int,addresses:int,used:int,pct_used:float,alerts:int}
+ */
+function ipam_dashboard_kpis(PDO $db): array {
+    $stmtTotals = $db->query(
+        "SELECT COUNT(*) AS subnets,
+                (SELECT COUNT(*) FROM addresses) AS addresses,
+                (SELECT COUNT(*) FROM addresses WHERE status='used') AS used
+         FROM subnets"
+    );
+    /** @var array<string, mixed>|false $totals */
+    $totals = $stmtTotals ? $stmtTotals->fetch() : false;
+    $stmtAlerts = $db->query(
+        "SELECT COUNT(*) AS cnt FROM alert_state WHERE level='crit'"
+    );
+    /** @var array<string, mixed>|false $alerts */
+    $alerts = $stmtAlerts ? $stmtAlerts->fetch() : false;
+    $subnets   = is_array($totals) ? to_int($totals['subnets'])   : 0;
+    $addresses = is_array($totals) ? to_int($totals['addresses']) : 0;
+    $used      = is_array($totals) ? to_int($totals['used'])      : 0;
+    return [
+        'subnets'   => $subnets,
+        'addresses' => $addresses,
+        'used'      => $used,
+        'pct_used'  => $addresses > 0 ? round($used / $addresses * 100, 1) : 0.0,
+        'alerts'    => is_array($alerts) ? to_int($alerts['cnt']) : 0,
+    ];
+}
+
+/**
+ * @return list<array<string,mixed>>
+ */
+function ipam_dashboard_growth(PDO $db, int $days = 30): array {
+    $days  = max(1, $days);
+    $now   = time();
+    $start = gmdate('Y-m-d', $now - ($days - 1) * 86400) . ' 00:00:00';
+    $st = $db->prepare(
+        "SELECT DATE(created_at) AS d, COUNT(*) AS n
+         FROM addresses
+         WHERE created_at >= :start
+         GROUP BY DATE(created_at)
+         ORDER BY d"
+    );
+    $st->execute([':start' => $start]);
+
+    $counts = [];
+    foreach ($st->fetchAll() as $row) {
+        $counts[to_str($row['d'])] = to_int($row['n']);
+    }
+
+    $series = [];
+    for ($i = $days - 1; $i >= 0; $i--) {
+        $day      = gmdate('Y-m-d', $now - $i * 86400);
+        $series[] = ['d' => $day, 'n' => $counts[$day] ?? 0];
+    }
+    return $series;
 }

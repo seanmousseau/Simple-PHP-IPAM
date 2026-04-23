@@ -117,23 +117,6 @@
       });
     });
 
-    // --- Dropdown toggle ---
-    document.addEventListener("click", function(e) {
-      if (e.target.closest("#theme-toggle")) return;
-
-      var toggle = e.target.closest(".nav-dropdown-toggle");
-      if (toggle) {
-        var dropdown = toggle.closest(".nav-dropdown");
-        var isOpen = dropdown.classList.contains("open");
-        document.querySelectorAll(".nav-dropdown.open")
-                .forEach(function(d) { d.classList.remove("open"); });
-        if (!isOpen) dropdown.classList.add("open");
-        return;
-      }
-      document.querySelectorAll(".nav-dropdown.open")
-              .forEach(function(d) { d.classList.remove("open"); });
-    });
-
     // --- Live Ping buttons (addresses.php) ---
     document.addEventListener("click", function(e) {
       var btn = e.target.closest(".ping-btn");
@@ -174,25 +157,6 @@
     });
 
     // --- #317: Cmd/Ctrl+N opens the Add Address drawer on addresses.php ---
-    // Gated by <body data-page="addresses"> so the shortcut only fires on the
-    // intended page. Skipped when focus is in a text input/textarea so users
-    // typing an address can still type the letter "n".
-    document.addEventListener("keydown", function(e) {
-      if (!(e.metaKey || e.ctrlKey)) return;
-      if (e.key !== "n" && e.key !== "N") return;
-      if (document.body.dataset.page !== "addresses") return;
-      var ae = document.activeElement;
-      if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)) return;
-      var trigger = document.querySelector('[data-open-drawer="add-address"]');
-      if (!trigger) return;
-      e.preventDefault();
-      trigger.click();
-      // Auto-focus the IP field once the drawer is open. The drawer-open
-      // logic is synchronous so the field is in the DOM by the time we
-      // ask for it.
-      var ipField = document.querySelector('#add-address input[name="ip"]');
-      if (ipField) ipField.focus();
-    });
 
     // --- #443: clear-all button for the alert recipients multi-select ---
     // <button data-clear-select="<select-id>"> deselects every option in the
@@ -453,30 +417,58 @@
       el.addEventListener("input", function() { el.setCustomValidity(""); });
     });
 
-    // --- Mobile hamburger nav (#250) ---
-    var navToggle = document.getElementById("nav-toggle");
-    var navDrawer = document.getElementById("nav-drawer");
-    var navOverlay = document.querySelector(".nav-drawer-overlay");
-    if (navToggle && navDrawer) {
-      function openNav() {
-        document.body.classList.add("nav-open");
-        navToggle.setAttribute("aria-expanded", "true");
-        navDrawer.removeAttribute("aria-hidden");
+    // --- Sidebar hamburger toggle (#512) ---
+    (function () {
+      var sidebar = document.getElementById("sidebar");
+      var openBtn = document.getElementById("sidebar-open");
+      var closeBtn = document.getElementById("sidebar-close");
+      if (!sidebar) return;
+
+      var overlay = document.createElement("div");
+      overlay.className = "sidebar-overlay";
+      document.body.appendChild(overlay);
+
+      function isMobile() {
+        return window.innerWidth <= 1023;
       }
-      function closeNav() {
-        document.body.classList.remove("nav-open");
-        navToggle.setAttribute("aria-expanded", "false");
-        navDrawer.setAttribute("aria-hidden", "true");
+
+      function openSidebar() {
+        sidebar.classList.add("is-open");
+        overlay.classList.add("is-visible");
+        sidebar.setAttribute("aria-hidden", "false");
+        if (openBtn) openBtn.setAttribute("aria-expanded", "true");
+        if (closeBtn) closeBtn.focus();
       }
-      navToggle.addEventListener("click", function() {
-        document.body.classList.contains("nav-open") ? closeNav() : openNav();
+
+      function closeSidebar() {
+        sidebar.classList.remove("is-open");
+        overlay.classList.remove("is-visible");
+        if (isMobile()) sidebar.setAttribute("aria-hidden", "true");
+        if (openBtn) {
+          openBtn.setAttribute("aria-expanded", "false");
+          openBtn.focus();
+        }
+      }
+
+      // Set initial aria-hidden state
+      if (isMobile()) sidebar.setAttribute("aria-hidden", "true");
+
+      // Update on resize
+      window.addEventListener("resize", function () {
+        if (isMobile()) {
+          if (!sidebar.classList.contains("is-open")) {
+            sidebar.setAttribute("aria-hidden", "true");
+          }
+        } else {
+          sidebar.removeAttribute("aria-hidden");
+        }
       });
-      if (navOverlay) navOverlay.addEventListener("click", closeNav);
-      var drawerClose = navDrawer.querySelector(".drawer-close");
-      if (drawerClose) drawerClose.addEventListener("click", closeNav);
-      navDrawer.querySelectorAll("a").forEach(function(a) { a.addEventListener("click", closeNav); });
-      document.addEventListener("keydown", function(e) { if (e.key === "Escape") closeNav(); });
-    }
+
+      if (openBtn) openBtn.addEventListener("click", openSidebar);
+      if (closeBtn) closeBtn.addEventListener("click", closeSidebar);
+      overlay.addEventListener("click", closeSidebar);
+      document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeSidebar(); });
+    }());
 
     // --- Inline status toggle (#252) ---
     document.querySelectorAll(".status-badge[data-addr-id]").forEach(function(badge) {
@@ -488,10 +480,12 @@
         var nextStatus = cycle[curStatus] || "used";
         var csrf = document.querySelector("input[name=csrf]");
         if (!csrf) return;
+        var subnetParam = new URLSearchParams(window.location.search).get("subnet_id") || "0";
         var formData = new FormData();
         formData.append("csrf", csrf.value);
         formData.append("action", "update_status");
         formData.append("id", addrId);
+        formData.append("subnet_id", subnetParam);
         formData.append("status", nextStatus);
         badge.classList.add("status-updating");
         fetch("addresses.php", {method: "POST", body: formData})
@@ -825,11 +819,12 @@
           if (!csrf) { cell.innerHTML = origHtml; return; }
           isSaving = true;
           var fd = new FormData();
-          fd.append("csrf",   csrf.value);
-          fd.append("action", "update_cell");
-          fd.append("id",     addrId);
-          fd.append("field",  field);
-          fd.append("value",  newVal);
+          fd.append("csrf",      csrf.value);
+          fd.append("action",    "update_cell");
+          fd.append("id",        addrId);
+          fd.append("subnet_id", new URLSearchParams(window.location.search).get("subnet_id") || "0");
+          fd.append("field",     field);
+          fd.append("value",     newVal);
           cell.classList.add("cell-saving");
           fetch("addresses.php", {method: "POST", body: fd})
             .then(function(r) { return r.json(); })
@@ -873,129 +868,190 @@
       });
     });
 
-    // --- Global ⌘K / Ctrl+K search overlay (#253) ---
+    // --- Command palette ⌘K (#516) ---
     (function() {
-      var overlay = document.getElementById("search-overlay");
-      if (!overlay) return;
-      var overlayInput  = document.getElementById("search-overlay-input");
-      var overlayList   = document.getElementById("search-overlay-list");
-      var overlayClose  = document.getElementById("search-overlay-close");
+      var bg = document.getElementById("cmd-palette-bg");
+      if (!bg) return;
+
+      var input = document.getElementById("cmd-input");
+      var results = document.getElementById("cmd-results");
       var searchTimer;
       var activeIdx = -1;
+      var currentItems = [];
 
-      function openOverlay() {
-        overlay.classList.add("visible");
-        overlayInput.value = "";
-        overlayList.innerHTML = "";
-        activeIdx = -1;
-        overlayInput.focus();
-      }
-
-      function closeOverlay() {
-        overlay.classList.remove("visible");
-        clearTimeout(searchTimer);
-      }
-
-      function setActive(idx) {
-        var items = overlayList.querySelectorAll(".so-item");
-        if (activeIdx >= 0 && items[activeIdx]) items[activeIdx].classList.remove("active");
-        activeIdx = Math.max(-1, Math.min(idx, items.length - 1));
-        if (activeIdx >= 0 && items[activeIdx]) {
-          items[activeIdx].classList.add("active");
-          items[activeIdx].scrollIntoView({block: "nearest", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth"});
-        }
-      }
-
-      function runSearch(q) {
-        overlayList.innerHTML = '<li class="so-loading">Searching\u2026</li>';
-        activeIdx = -1;
-        fetch("search.php?format=json&q=" + encodeURIComponent(q), {credentials: "same-origin"})
-          .then(function(r) { return r.json(); })
-          .then(function(data) {
-            overlayList.innerHTML = "";
-            if (!data.length) {
-              overlayList.innerHTML = '<li class="so-empty">No results.</li>';
-              return;
-            }
-            data.forEach(function(row) {
-              var li = document.createElement("li");
-              li.className = "so-item";
-              li.innerHTML =
-                '<span class="so-ip">' + escHtml(row.ip) + '</span>'
-                + (row.hostname ? ' <span class="so-host">' + escHtml(row.hostname) + '</span>' : '')
-                + ' <span class="so-status status-' + escHtml(row.status) + '">' + escHtml(row.status) + '</span>';
-              li.dataset.url = row.url;
-              li.addEventListener("mousedown", function(e) {
-                e.preventDefault();
-                window.location.href = row.url;
-              });
-              overlayList.appendChild(li);
-            });
-          })
-          .catch(function() {
-            overlayList.innerHTML = '<li class="so-empty">Search failed.</li>';
-          });
-      }
+      var IPAM_COMMANDS = [
+        { group: "Pages", label: "Dashboard",    href: "dashboard.php" },
+        { group: "Pages", label: "Subnets",      href: "subnets.php" },
+        { group: "Pages", label: "Addresses",    href: "addresses.php" },
+        { group: "Pages", label: "Search",       href: "search.php" },
+        { group: "Pages", label: "Audit Log",    href: "audit.php" },
+        { group: "Actions", label: "New Subnet", action: function() { IpamDrawer.open("Add Subnet", "tpl-add-subnet"); } },
+        { group: "Actions", label: "Toggle Theme", action: function() {
+            var btn = document.getElementById("theme-toggle");
+            if (btn) btn.click();
+        }},
+      ];
 
       function escHtml(s) {
         return String(s)
           .replace(/&/g, "&amp;")
           .replace(/</g, "&lt;")
           .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;");
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#x27;");
       }
 
-      overlayInput.addEventListener("input", function() {
-        clearTimeout(searchTimer);
-        var q = overlayInput.value.trim();
-        overlayList.innerHTML = "";
+      function safeUrl(url) {
+        return /^(javascript|data|vbscript):/i.test(String(url)) ? "#" : url;
+      }
+
+      function openPalette() {
+        bg.classList.add("is-open");
+        input.value = "";
+        renderCommands("");
         activeIdx = -1;
-        if (q.length < 2) return;
+        input.focus();
+      }
+
+      function closePalette() {
+        bg.classList.remove("is-open");
+        clearTimeout(searchTimer);
+      }
+
+      function renderCommands(q) {
+        var lq = q.toLowerCase();
+        var filtered = IPAM_COMMANDS.filter(function(c) {
+          return !lq || c.label.toLowerCase().indexOf(lq) !== -1;
+        });
+
+        results.innerHTML = "";
+        currentItems = [];
+
+        if (!filtered.length) {
+          results.innerHTML = '<div class="cmd-empty">No commands match.</div>';
+          return;
+        }
+
+        var lastGroup = null;
+        filtered.forEach(function(cmd) {
+          if (cmd.group !== lastGroup) {
+            var gl = document.createElement("div");
+            gl.className = "cmd-group-label";
+            gl.textContent = cmd.group;
+            results.appendChild(gl);
+            lastGroup = cmd.group;
+          }
+          var item = document.createElement("div");
+          item.className = "cmd-item";
+          item.setAttribute("role", "option");
+          item.innerHTML = escHtml(cmd.label);
+          item.addEventListener("mousedown", function(e) {
+            e.preventDefault();
+            activateCommand(cmd);
+          });
+          results.appendChild(item);
+          currentItems.push({ el: item, cmd: cmd });
+        });
+        activeIdx = -1;
+      }
+
+      function renderEntities(data) {
+        if (!data.length) return;
+        var gl = document.createElement("div");
+        gl.className = "cmd-group-label";
+        gl.textContent = "Addresses";
+        results.appendChild(gl);
+        data.slice(0, 8).forEach(function(row) {
+          var item = document.createElement("div");
+          item.className = "cmd-item";
+          item.setAttribute("role", "option");
+          item.innerHTML = escHtml(row.ip) + (row.hostname ? ' <span style="opacity:.65">' + escHtml(row.hostname) + "</span>" : "");
+          item.addEventListener("mousedown", function(e) {
+            e.preventDefault();
+            closePalette();
+            window.location.href = safeUrl(row.url);
+          });
+          results.appendChild(item);
+          currentItems.push({ el: item, cmd: { href: row.url } });
+        });
+      }
+
+      function activateCommand(cmd) {
+        closePalette();
+        if (cmd.action) {
+          cmd.action();
+        } else if (cmd.href) {
+          window.location.href = safeUrl(cmd.href);
+        }
+      }
+
+      function setActive(idx) {
+        if (activeIdx >= 0 && currentItems[activeIdx]) currentItems[activeIdx].el.classList.remove("is-active");
+        activeIdx = Math.max(-1, Math.min(idx, currentItems.length - 1));
+        if (activeIdx >= 0 && currentItems[activeIdx]) {
+          currentItems[activeIdx].el.classList.add("is-active");
+          currentItems[activeIdx].el.scrollIntoView({ block: "nearest" });
+        }
+      }
+
+      function runSearch(q) {
+        renderCommands(q);
+        fetch("search.php?format=json&q=" + encodeURIComponent(q), { credentials: "same-origin" })
+          .then(function(r) { return r.json(); })
+          .then(function(data) { renderEntities(data); })
+          .catch(function() {});
+      }
+
+      input.addEventListener("input", function() {
+        clearTimeout(searchTimer);
+        var q = input.value.trim();
+        activeIdx = -1;
+        if (q.length < 2) {
+          renderCommands(q);
+          return;
+        }
         searchTimer = setTimeout(function() { runSearch(q); }, 300);
       });
 
-      overlayInput.addEventListener("keydown", function(e) {
-        var items = overlayList.querySelectorAll(".so-item");
+      input.addEventListener("keydown", function(e) {
         if (e.key === "ArrowDown") { e.preventDefault(); setActive(activeIdx + 1); }
-        else if (e.key === "ArrowUp") { e.preventDefault(); setActive(activeIdx - 1); }
+        else if (e.key === "ArrowUp") { e.preventDefault(); setActive(Math.max(-1, activeIdx - 1)); }
         else if (e.key === "Enter") {
           e.preventDefault();
-          if (activeIdx >= 0 && items[activeIdx]) {
-            window.location.href = items[activeIdx].dataset.url;
-          } else if (overlayInput.value.trim() !== "") {
-            window.location.href = "search.php?q=" + encodeURIComponent(overlayInput.value.trim());
+          if (activeIdx >= 0 && currentItems[activeIdx]) {
+            activateCommand(currentItems[activeIdx].cmd);
+          } else if (input.value.trim().length >= 2) {
+            closePalette();
+            window.location.href = "search.php?q=" + encodeURIComponent(input.value.trim());
           }
-        } else if (e.key === "Escape") { closeOverlay(); }
-        else if (e.key === "Tab") {
-          e.preventDefault();
-          if (overlayClose) overlayClose.focus();
-        }
+        } else if (e.key === "Escape") { closePalette(); }
       });
 
-      if (overlayClose) {
-        overlayClose.addEventListener("click", closeOverlay);
-        overlayClose.addEventListener("keydown", function(e) {
-          if (e.key === "Tab") { e.preventDefault(); overlayInput.focus(); }
-          if (e.key === "Escape") { closeOverlay(); }
-        });
-      }
-      overlay.addEventListener("mousedown", function(e) {
-        if (e.target === overlay) closeOverlay();
+      bg.addEventListener("mousedown", function(e) {
+        if (e.target === bg) closePalette();
       });
 
       document.addEventListener("keydown", function(e) {
         if ((e.metaKey || e.ctrlKey) && e.key === "k") {
           e.preventDefault();
-          overlay.classList.contains("visible") ? closeOverlay() : openOverlay();
+          bg.classList.contains("is-open") ? closePalette() : openPalette();
         }
       });
 
-      // Delegated handler for the Search nav link (opens overlay, falls back to search.php without JS)
       document.addEventListener("click", function(e) {
         var btn = e.target.closest(".nav-search-link");
         if (btn) {
           e.preventDefault();
-          overlay.classList.contains("visible") ? closeOverlay() : openOverlay();
+          bg.classList.contains("is-open") ? closePalette() : openPalette();
+        }
+      });
+
+      document.addEventListener("keydown", function(e) {
+        if ((e.metaKey || e.ctrlKey) && e.key === "n" && document.getElementById("tpl-add-address")) {
+          e.preventDefault();
+          IpamDrawer.open("Add Address", "tpl-add-address");
+          var ipField = document.querySelector("#global-drawer-body input[name=\"ip\"]");
+          if (ipField) ipField.focus();
         }
       });
     }());
@@ -1259,7 +1315,7 @@
             if (pctSpan) pctSpan.textContent = pct + "%";
           });
         })
-        .catch(function(err) {
+        .catch(function() {
           document.querySelectorAll(".subnet-stats-placeholder").forEach(function(el) {
             el.textContent = "Error loading stats";
             el.classList.remove("subnet-stats-placeholder");
@@ -1772,3 +1828,209 @@
     correctLevel: QRCode.CorrectLevel.M
   });
 })();
+
+// uPlot dashboard growth chart
+(function () {
+  var el = document.getElementById('growth-chart');
+  if (!el || typeof uPlot === 'undefined') return;
+
+  var xs, ys;
+  try {
+    xs = JSON.parse(el.getAttribute('data-uplot-xs') || '[]');
+    ys = JSON.parse(el.getAttribute('data-uplot-ys') || '[]');
+  } catch (e) { return; }
+  if (!xs.length) return;
+
+  var style  = getComputedStyle(document.documentElement);
+  var stroke = (style.getPropertyValue('--link') || '#0077cc').trim();
+  var fill   = stroke + '22';
+  var muted  = (style.getPropertyValue('--muted') || '#6c757d').trim();
+
+  var opts = {
+    width:  el.offsetWidth || 640,
+    height: 180,
+    cursor: { drag: { x: false, y: false } },
+    select: { show: false },
+    legend: { show: false },
+    series: [
+      {},
+      {
+        label: 'New addresses',
+        stroke: stroke,
+        fill:   fill,
+        width:  2
+      }
+    ],
+    axes: [
+      { gap: 8, size: 28, stroke: muted, ticks: { stroke: muted } },
+      { gap: 8, size: 40, stroke: muted, ticks: { stroke: muted } }
+    ],
+    scales: { x: { time: true } }
+  };
+
+  var u = new uPlot(opts, [xs, ys], el);
+
+  // Resize chart when window resizes
+  window.addEventListener('resize', function () {
+    u.setSize({ width: el.offsetWidth || 640, height: 180 });
+  });
+}());
+
+/* global IpamDrawer — right-side drawer (#517) */
+var IpamDrawer = (function () {
+    var drawer, overlay, titleEl, bodyEl, _lastFocus;
+
+    function _getFocusable() {
+        return Array.prototype.slice.call(
+            drawer.querySelectorAll(
+                'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'
+            )
+        );
+    }
+
+    function _trapFocus(e) {
+        if (e.key !== 'Tab') return;
+        var focusable = _getFocusable();
+        if (!focusable.length) { e.preventDefault(); return; }
+        var first = focusable[0];
+        var last  = focusable[focusable.length - 1];
+        if (e.shiftKey) {
+            if (document.activeElement === first) { e.preventDefault(); last.focus(); }
+        } else {
+            if (document.activeElement === last)  { e.preventDefault(); first.focus(); }
+        }
+    }
+
+    function _init() {
+        if (drawer) return;
+        drawer = document.createElement('div');
+        drawer.id = 'global-drawer';
+        drawer.className = 'drawer';
+        drawer.setAttribute('role', 'dialog');
+        drawer.setAttribute('aria-modal', 'true');
+        drawer.setAttribute('aria-hidden', 'true');
+        drawer.setAttribute('aria-labelledby', 'global-drawer-title');
+        drawer.setAttribute('tabindex', '-1');
+        drawer.innerHTML =
+            '<div class="drawer-header">' +
+            '<span class="drawer-title" id="global-drawer-title"></span>' +
+            '<button class="drawer-close" id="global-drawer-close" aria-label="Close drawer">' +
+            '<svg class="icon" aria-hidden="true" focusable="false"><use href="#icon-x"></use></svg>' +
+            '</button>' +
+            '</div>' +
+            '<div class="drawer-body" id="global-drawer-body"></div>';
+        document.body.appendChild(drawer);
+
+        overlay = document.createElement('div');
+        overlay.className = 'drawer-overlay';
+        document.body.appendChild(overlay);
+
+        titleEl = document.getElementById('global-drawer-title');
+        bodyEl  = document.getElementById('global-drawer-body');
+
+        document.getElementById('global-drawer-close').addEventListener('click', close);
+        overlay.addEventListener('click', close);
+
+        document.addEventListener('keydown', function (e) {
+            if (!drawer.classList.contains('is-open')) return;
+            if (e.key === 'Escape') { close(); return; }
+            _trapFocus(e);
+        });
+    }
+
+    function open(title, tplId) {
+        _init();
+        _lastFocus = document.activeElement;
+        var tpl = document.getElementById(tplId);
+        bodyEl.innerHTML = tpl ? tpl.innerHTML : '';
+        titleEl.textContent = title;
+        overlay.classList.add('is-visible');
+        drawer.classList.add('is-open');
+        drawer.setAttribute('aria-hidden', 'false');
+        var focusable = _getFocusable();
+        if (focusable.length) focusable[0].focus();
+        else drawer.focus();
+    }
+
+    function close() {
+        if (!drawer) return;
+        drawer.classList.remove('is-open');
+        overlay.classList.remove('is-visible');
+        drawer.setAttribute('aria-hidden', 'true');
+        if (_lastFocus && _lastFocus.focus) _lastFocus.focus();
+    }
+
+    // Event delegation — handle [data-drawer-title] buttons (CSP-safe, no onclick)
+    document.addEventListener('click', function (e) {
+        var btn = e.target.closest ? e.target.closest('[data-drawer-title]') : null;
+        if (!btn) return;
+        e.preventDefault();
+        open(
+            btn.getAttribute('data-drawer-title') || '',
+            btn.getAttribute('data-drawer-tpl')   || ''
+        );
+    });
+
+    return { open: open, close: close };
+}());
+
+// IpamVirtualTable — utility for future viewport-based row rendering
+function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
+    var container = document.getElementById(containerId);
+    if (!container) return;
+    var scroller = container.querySelector(".vt-scroll");
+    var tbody = container.querySelector("tbody");
+    if (!scroller || !tbody) return;
+
+    var OVERSCAN = 5;
+    scroller.style.height = (rows.length * rowHeight) + "px";
+
+    function render() {
+        var scrollTop = container.scrollTop;
+        var clientHeight = container.clientHeight;
+        var start = Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN);
+        var end = Math.min(rows.length, Math.ceil((scrollTop + clientHeight) / rowHeight) + OVERSCAN);
+        tbody.style.transform = "translateY(" + (start * rowHeight) + "px)";
+        while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+        for (var i = start; i < end; i++) {
+            tbody.appendChild(renderRow(rows[i], i));
+        }
+    }
+
+    container.addEventListener("scroll", render, { passive: true });
+    render();
+}
+
+// Bulk-select bar for addresses table
+(function () {
+    var bar = document.getElementById("bulk-bar");
+    if (!bar) return;
+    var countEl = document.getElementById("bulk-bar-count");
+    var linkEl = document.getElementById("bulk-bar-link");
+    var subnetId = parseInt(bar.getAttribute("data-subnet-id") || "0", 10);
+
+    function updateBar() {
+        var checked = document.querySelectorAll(".row-select:checked");
+        var n = checked.length;
+        bar.classList.toggle("is-visible", n > 0);
+        if (countEl) countEl.textContent = n + " selected";
+        if (linkEl && subnetId > 0) {
+            var ids = [];
+            for (var i = 0; i < checked.length; i++) ids.push(checked[i].value);
+            linkEl.href = "bulk_update.php?subnet_id=" + encodeURIComponent(subnetId) + "&ids=" + ids.join(",");
+        }
+    }
+
+    var selectAll = document.getElementById("select-all-addresses");
+    if (selectAll) {
+        selectAll.addEventListener("change", function () {
+            var boxes = document.querySelectorAll(".row-select");
+            for (var i = 0; i < boxes.length; i++) boxes[i].checked = selectAll.checked;
+            updateBar();
+        });
+    }
+
+    document.addEventListener("change", function (e) {
+        if (e.target && e.target.classList.contains("row-select")) updateBar();
+    });
+}());

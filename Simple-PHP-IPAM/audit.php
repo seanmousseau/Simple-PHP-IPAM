@@ -241,7 +241,7 @@ page_header('Audit Log');
     <div class="empty-state">No audit entries<?= $hasFilter ? ' matching the current filter' : '' ?>.<?= $hasFilter ? ' <a class="action-pill" href="audit.php">Clear filters</a>' : '' ?></div>
   <?php else: ?>
     <div class="table-wrap">
-    <table>
+    <table class="data-table">
       <thead>
         <tr>
           <?php $auditQsBase = '?' . http_build_query(array_filter([

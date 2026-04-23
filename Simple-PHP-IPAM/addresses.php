@@ -291,15 +291,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($action === 'update_status') {
         // Inline status toggle — JSON response for JS fetch; graceful-degrades on non-JS
         require_write_access();
-        $id       = to_int($_POST['id'] ?? 0);
-        $newStatus = to_str($_POST['status'] ?? '');
-        if (!in_array($newStatus, ['used', 'reserved', 'free'], true) || $id <= 0) {
+        $id        = to_int($_POST['id']        ?? 0);
+        $subnetId  = to_int($_POST['subnet_id'] ?? 0);
+        $newStatus = to_str($_POST['status']    ?? '');
+        if (!in_array($newStatus, ['used', 'reserved', 'free'], true) || $id <= 0 || $subnetId <= 0) {
             header('Content-Type: application/json');
             echo '{"ok":false,"error":"Invalid request"}';
             exit;
         }
-        $st = $db->prepare("UPDATE addresses SET status=:s, updated_at=" . ipam_dialect()->now() . " WHERE id=:id");
-        $st->execute([':s' => $newStatus, ':id' => $id]);
+        $st = $db->prepare("UPDATE addresses SET status=:s, updated_at=" . ipam_dialect()->now() . " WHERE id=:id AND subnet_id=:sid");
+        $st->execute([':s' => $newStatus, ':id' => $id, ':sid' => $subnetId]);
         if ($st->rowCount()) {
             audit($db, 'address.update', 'address', $id, "status=$newStatus via inline toggle");
         }
@@ -310,18 +311,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Inline cell edit — JSON response; CSRF already verified above
         require_write_access();
         header('Content-Type: application/json');
-        $id     = to_int($_POST['id']    ?? 0);
-        $field  = to_str($_POST['field'] ?? '');
-        $value  = to_str($_POST['value'] ?? '');
+        $id       = to_int($_POST['id']        ?? 0);
+        $subnetId = to_int($_POST['subnet_id'] ?? 0);
+        $field    = to_str($_POST['field']     ?? '');
+        $value    = to_str($_POST['value']     ?? '');
         $allowed = ['hostname', 'owner', 'note', 'grp'];
-        if ($id <= 0 || !in_array($field, $allowed, true)) {
+        if ($id <= 0 || $subnetId <= 0 || !in_array($field, $allowed, true)) {
             echo json_encode(['ok' => false, 'error' => 'Invalid request.']);
             exit;
         }
         $maxLen = ['hostname' => 253, 'owner' => 255, 'note' => 1000, 'grp' => 100];
         $value = substr(trim($value), 0, $maxLen[$field]);
-        $sel = $db->prepare("SELECT id, ip, hostname, owner, note, grp FROM addresses WHERE id=:id");
-        $sel->execute([':id' => $id]);
+        $sel = $db->prepare("SELECT id, ip, hostname, owner, note, grp FROM addresses WHERE id=:id AND subnet_id=:sid");
+        $sel->execute([':id' => $id, ':sid' => $subnetId]);
         /** @var array<string, mixed>|false $before */
         $before = $sel->fetch();
         if (!$before) {
@@ -331,25 +333,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Static SQL per field — no interpolation of user-controlled data
         // Editing 'owner' free-text clears the structured contact link to keep them in sync.
         $updateSql = match ($field) {
-            'hostname' => "UPDATE addresses SET hostname=:v, updated_at=" . ipam_dialect()->now() . " WHERE id=:id",
-            'owner'    => "UPDATE addresses SET owner=:v, owner_contact_id=NULL, updated_at=" . ipam_dialect()->now() . " WHERE id=:id",
-            'note'     => "UPDATE addresses SET note=:v, updated_at=" . ipam_dialect()->now() . " WHERE id=:id",
-            'grp'      => "UPDATE addresses SET grp=:v, updated_at=" . ipam_dialect()->now() . " WHERE id=:id",
+            'hostname' => "UPDATE addresses SET hostname=:v, updated_at=" . ipam_dialect()->now() . " WHERE id=:id AND subnet_id=:sid",
+            'owner'    => "UPDATE addresses SET owner=:v, owner_contact_id=NULL, updated_at=" . ipam_dialect()->now() . " WHERE id=:id AND subnet_id=:sid",
+            'note'     => "UPDATE addresses SET note=:v, updated_at=" . ipam_dialect()->now() . " WHERE id=:id AND subnet_id=:sid",
+            'grp'      => "UPDATE addresses SET grp=:v, updated_at=" . ipam_dialect()->now() . " WHERE id=:id AND subnet_id=:sid",
         };
-        $db->prepare($updateSql)->execute([':v' => $value, ':id' => $id]);
+        $db->prepare($updateSql)->execute([':v' => $value, ':id' => $id, ':sid' => $subnetId]);
         $after = array_merge(
             ['hostname' => to_str($before['hostname']), 'owner' => to_str($before['owner']),
              'note'     => to_str($before['note']),     'grp'   => to_str($before['grp'])],
             [$field => $value]
         );
-        $subnetIdForHistory = to_int((function() use ($db, $id) {
-            $r = $db->prepare("SELECT subnet_id FROM addresses WHERE id=:id");
-            $r->execute([':id' => $id]);
-            /** @var array<string, mixed>|false $row */
-            $row = $r->fetch();
-            return $row ? to_int($row['subnet_id']) : 0;
-        })());
-        history_log_address($db, 'update', $subnetIdForHistory, to_str($before['ip']), $id,
+        history_log_address($db, 'update', $subnetId, to_str($before['ip']), $id,
             ['hostname' => to_str($before['hostname']), 'owner' => to_str($before['owner']),
              'note'     => to_str($before['note']),     'grp'   => to_str($before['grp'])],
             $after
@@ -475,6 +470,9 @@ if ($selectedSubnet && to_int($selectedSubnet['ip_version']) === 4) {
         to_str($selectedSubnet['network']), to_int($selectedSubnet['prefix']));
 }
 
+// Pre-validated IP pre-fill from ?next_ip= query param (used in the Add Address drawer)
+$prefillIp = trim(to_str($_GET['next_ip'] ?? ''));
+
 // Check if network/broadcast are missing (for "Reserve infra" button)
 $missingInfra = false;
 if ($selectedSubnetId > 0 && $networkBin !== null) {
@@ -536,7 +534,7 @@ ipam_skeleton_flush();
 <div class="page-actions">
   <?php if ($selectedSubnetId > 0): ?>
     <?php if (current_user()['role'] !== 'readonly'): ?>
-      <a class="action-pill" href="#add-address" data-open-drawer="add-address" data-drawer-title="Add Address">➕ Add Address <kbd class="kbd-hint">⌘N</kbd></a>
+      <button class="action-pill" data-drawer-title="Add Address" data-drawer-tpl="tpl-add-address">➕ Add Address <kbd class="kbd-hint">⌘N</kbd></button>
       <a class="action-pill" href="bulk_update.php?subnet_id=<?= (int)$selectedSubnetId ?>">✏ Bulk Update</a>
       <?php if ($missingInfra): ?>
         <a class="action-pill" href="#reserve-infra" data-open-drawer="reserve-infra" data-drawer-title="Reserve Infrastructure IPs">🔒 Reserve Infra IPs</a>
@@ -602,74 +600,14 @@ ipam_skeleton_flush();
   ?>
 <?php endif; ?>
 
-<div class="card mt-16 drawer-form-card" id="add-address">
-  <h2>Add address</h2>
-  <?php if ($nextAvailableIp): ?>
-    <p class="muted">Next available: <b><?= e($nextAvailableIp) ?></b>
-      <a class="action-pill" href="#" data-fill-ip="<?= e($nextAvailableIp) ?>">Use</a>
-    </p>
-  <?php endif; ?>
-  <form method="post" action="addresses.php" id="add-address">
-    <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
-    <input type="hidden" name="action" value="create">
-    <input type="hidden" name="subnet_id" value="<?= (int)$selectedSubnetId ?>">
-    <?php $prefillIp = trim(to_str($_GET['next_ip'] ?? '')); ?>
-    <div class="row">
-      <label>IP<br><input name="ip" value="<?= e($prefillIp) ?>" placeholder="<?= ($selectedSubnet && to_int($selectedSubnet['ip_version'])===6) ? '2001:db8::10' : '10.0.0.10' ?>" required data-validate="ip"></label>
-      <label>Hostname<br><input name="hostname" maxlength="253"></label>
-      <label>Owner<br>
-        <span class="contact-typeahead-wrap">
-          <input name="owner" maxlength="255" autocomplete="off" data-contact-typeahead>
-          <input type="hidden" name="owner_contact_id" value="0">
-          <button type="button" class="contact-browse-btn" title="Browse contacts">Browse</button>
-        </span>
-      </label>
-      <label>Group<br><input name="grp" maxlength="100" placeholder="e.g. web-tier" class="mw-160"></label>
-      <label>MAC<br><input name="mac" maxlength="64" placeholder="e.g. aa:bb:cc:dd:ee:ff" class="mw-160"></label>
-      <label>Expires<br><input name="expires_at" type="date" class="mw-160"></label>
-      <label>Status<br>
-        <select name="status">
-          <option value="used">used</option>
-          <option value="reserved">reserved</option>
-          <option value="free">free</option>
-        </select>
-      </label>
-    </div>
-    <div class="row">
-      <label class="flex-1">Note<br><input name="note" maxlength="1000" class="w-full"></label>
-    </div>
-    <?php if ($deviceList): ?>
-    <div class="row">
-      <label>Device<br>
-        <select name="device_id" class="addr-device-select" data-iface-target="add-iface-select">
-          <option value="0">(none)</option>
-          <?php foreach ($deviceList as $dv): ?>
-            <option value="<?= to_int($dv['id']) ?>"><?= e(to_str($dv['name'])) ?></option>
-          <?php endforeach; ?>
-        </select>
-      </label>
-      <label>Interface<br>
-        <select name="interface_id" id="add-iface-select">
-          <option value="0">(none)</option>
-        </select>
-      </label>
-    </div>
-    <?php endif; ?>
-
-    <?php if ($addrCfDefs): ?>
-    <?= render_custom_field_inputs($addrCfDefs, []) ?>
-    <?php endif; ?>
-
-    <p>
-      <button type="submit"
-        <?= ($selectedSubnetId>0 && current_user()['role']!=='readonly') ? '' : 'disabled' ?>>
-        Add
-      </button>
-    </p>
-    <?php if ($selectedSubnetId <= 0): ?><p class="muted">Select a subnet first.</p><?php endif; ?>
-    <?php if (current_user()['role']==='readonly'): ?><p class="muted">Read-only account.</p><?php endif; ?>
-  </form>
-</div>
+<div id="tpl-add-address" style="display:none"><?= ipam_render_string('address_form', [
+    'selectedSubnetId' => $selectedSubnetId,
+    'selectedSubnet'   => $selectedSubnet,
+    'nextAvailableIp'  => $nextAvailableIp,
+    'prefillIp'        => $prefillIp,
+    'addrCfDefs'       => $addrCfDefs,
+    'deviceList'       => $deviceList,
+]) ?></div>
 
 <?php if ($missingInfra && $selectedSubnet): ?>
 <div class="card mt-16 drawer-form-card" id="reserve-infra">
@@ -694,12 +632,13 @@ ipam_skeleton_flush();
   <?php if ($selectedSubnetId <= 0): ?>
     <div class="empty-state">No subnet selected. <a href="subnets.php">Go to Subnets</a> to create or select one.</div>
   <?php elseif (!$addresses): ?>
-    <div class="empty-state">No addresses in this subnet yet. <a class="action-pill" href="#add-address">+ Add Address</a></div>
+    <div class="empty-state">No addresses in this subnet yet. <button class="action-pill" data-drawer-title="Add Address" data-drawer-tpl="tpl-add-address">+ Add Address</button></div>
   <?php else: ?>
     <div class="table-wrap">
-    <table data-col-table="addresses">
+    <table data-col-table="addresses" class="data-table">
       <thead>
         <tr>
+          <?php if (current_user()['role'] !== 'readonly'): ?><th><input type="checkbox" id="select-all-addresses" aria-label="Select all"></th><?php else: ?><th></th><?php endif; ?>
           <?php $addrQsParams = ['subnet_id' => $selectedSubnetId, 'page_size' => $pageSize];
                 if ($filterType !== '') { $addrQsParams['filter'] = $filterType; }
                 if ($filterType === 'expiring') { $addrQsParams['days'] = $filterDays; }
@@ -729,6 +668,7 @@ ipam_skeleton_flush();
           $rowClasses = array_filter([$isHighlighted ? 'highlight-row' : '', $isExpired ? 'expired-row' : '']);
       ?>
         <tr id="addr-<?= $aid ?>"<?= $rowClasses ? ' class="' . e(implode(' ', $rowClasses)) . '"' : '' ?>>
+          <td><?php if ($isWrite): ?><input type="checkbox" class="row-select" value="<?= $aid ?>" aria-label="Select row"><?php endif; ?></td>
           <td class="ip-cell"><?= e(to_str($a['ip'])) ?><?php
             $ipBin = is_string($a['ip_bin'] ?? null) ? $a['ip_bin'] : '';
             if ($ipBin !== '') {
@@ -893,4 +833,11 @@ ipam_skeleton_flush();
 }());
 </script>
 <?php endif; ?>
-<?php ipam_skeleton_remove(); page_footer();
+<?php
+if (current_user()['role'] !== 'readonly') {
+    echo "<div id='bulk-bar' class='bulk-bar' role='status' aria-live='polite' data-subnet-id='" . (int)$selectedSubnetId . "'>";
+    echo "  <span class='bulk-bar-count' id='bulk-bar-count'>0 selected</span>";
+    echo "  <a class='button-secondary' id='bulk-bar-link' href='bulk_update.php?subnet_id=" . (int)$selectedSubnetId . "'>Bulk Edit</a>";
+    echo "</div>";
+}
+ipam_skeleton_remove(); page_footer();

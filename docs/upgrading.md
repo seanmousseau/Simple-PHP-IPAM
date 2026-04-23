@@ -9,6 +9,7 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
+  - [v3.8.0](#v380) — Sidebar navigation, command palette, uPlot dashboard, SVG icons, Fira Sans (no breaking changes)
   - [v3.7.0](#v370) — Backup/restore, health dashboard, audit retention, test coverage (no breaking changes)
   - [v3.6.0](#v360) — TOTP 2FA, per-API-key rate limiting, session hardening (no breaking changes)
   - [v3.5.0](#v350) — Custom fields (no breaking changes)
@@ -96,6 +97,16 @@ The backup is left in place after a successful upgrade. You can remove it manual
 ---
 
 ## Version-specific upgrade notes
+
+### v3.8.0
+
+**New pages:** None.
+
+**UI changes:** The top navigation bar has been replaced with a sidebar navigation pattern. On desktop (≥1024px) the sidebar is always visible. On mobile (<768px) a hamburger button opens the sidebar as an overlay. The previous emoji-icon nav links are now SVG Heroicons. The dashboard has been rewritten with KPI cards and a uPlot time-series chart.
+
+**New keyboard shortcuts:** ⌘K / Ctrl+K opens the command palette for navigation, creating records, and toggling the theme.
+
+**No config changes, no migration, no schema changes.**
 
 ### v3.7.0
 

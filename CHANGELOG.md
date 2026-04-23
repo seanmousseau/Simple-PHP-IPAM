@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.8.0] - 2026-04-22
+
+### Added
+- SVG icon sprite system (Heroicons) — replaces all emoji icons (#511)
+- Sidebar navigation (≥1024px Enterprise Gateway pattern, mobile hamburger) (#512)
+- uPlot dashboard time-series and sparklines — vendored in v3.7.1, wired here (#514)
+- KPI card grid on dashboard (Total Subnets, Addresses, % Used, Crit Alerts) (#514)
+- Right-side drawer for all create/edit flows (subnets, addresses, users) (#517)
+- Command palette ⌘K — navigate, create, toggle theme (#516)
+- Table virtualization, sticky thead, bulk-select action bar (#515)
+- `ipam_render()` view-helper layer and `views/` shared partials directory (#522)
+- Fira Sans self-hosted body font — completes Fira type family (#518)
+- Playwright spec files for sidebar, drawer, command palette, dashboard, tables (#527)
+- Playwright performance assertions — LCP, chart render timing (#528)
+
+### Changed
+- `page_header()` nav: all emoji replaced with consistent SVG icons (#511)
+- Dashboard rewritten: flat table replaced with KPI cards + uPlot growth chart (#514)
+- Database Tools nav item hidden for non-SQLite engines (#614)
+- Typographic scale updated to Fira Sans + refined sizes (#518)
+- Micro-interaction transitions added to buttons, badges, row hovers (#519)
+
+### Fixed
+- Dark-mode WCAG AA contrast violations across all new overlay surfaces (#520)
+- Responsive layout at 375/768/1024/1440 breakpoints (#521)
+
 ## [3.7.1] - 2026-04-22
 
 ### Fixed
@@ -938,6 +964,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.8.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.7.1...v3.8.0
 [3.7.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.7.0...v3.7.1
 [3.7.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.6.0...v3.7.0
 [3.6.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.5.0...v3.6.0

@@ -4,7 +4,7 @@
  */
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import {
-  login, fetchGet, fetchPost, appUrl,
+  login, fetchGet, fetchPost, deleteSubnet, appUrl,
   ADMIN_USER, ADMIN_PASS,
   TEST_VLAN_ID, TEST_VLAN_NAME, TEST_VLAN_DESC, TEST_VLAN_CIDR,
   newAuthContext,
@@ -73,18 +73,24 @@ test('vlans: create a VLAN', async () => {
 
 test('vlans: VLAN appears in subnet create picker', async () => {
   await page.goto('subnets.php');
-  const vlanSelect = page.locator('select[name=vlan_fk]').first();
+  await page.locator('[data-drawer-title="Add Subnet"]').first().click();
+  await expect(page.locator('#global-drawer')).toBeVisible();
+  const vlanSelect = page.locator('#global-drawer-body select[name=vlan_fk]');
   await expect(vlanSelect).toBeVisible();
   const optionText = await vlanSelect.locator('option').allInnerTexts();
+  await page.keyboard.press('Escape');
   const hasVlan = optionText.some(t => t.includes(TEST_VLAN_NAME) || t.includes(String(TEST_VLAN_ID)));
   expect(hasVlan).toBe(true);
 });
 
 test('vlans: create subnet with VLAN and verify badge', async () => {
   await page.goto('subnets.php');
+  await page.locator('[data-drawer-title="Add Subnet"]').first().click();
+  await expect(page.locator('#global-drawer')).toBeVisible();
 
-  // Find the VLAN option value by name
-  const vlanSelect = page.locator('select[name=vlan_fk]').first();
+  // Read the VLAN option value from the drawer picker
+  const drawer = page.locator('#global-drawer-body');
+  const vlanSelect = drawer.locator('select[name=vlan_fk]');
   const options = await vlanSelect.locator('option').all();
   let vlanFkValue = '';
   for (const opt of options) {
@@ -95,14 +101,16 @@ test('vlans: create subnet with VLAN and verify badge', async () => {
     }
   }
   expect(vlanFkValue, 'Test VLAN must appear in the subnet VLAN picker').toBeTruthy();
+  await page.keyboard.press('Escape');
 
-  await page.locator('input[name=cidr]').first().fill(TEST_VLAN_CIDR);
-  await page.locator('input[name=description]').first().fill('vlan badge test');
-  await vlanSelect.selectOption(vlanFkValue);
-  await page.locator('button[type=submit]').first().click();
+  // Use fetchPost with confirm_overlap to bypass the overlap confirmation step
+  // (TEST_VLAN_CIDR is within the demo DB's 10.0.0.0/8 subnet)
+  await fetchPost(page, appUrl('subnets.php'), {
+    action: 'create', cidr: TEST_VLAN_CIDR, description: 'vlan badge test',
+    vlan_fk: vlanFkValue, confirm_overlap: '1',
+  });
 
-  await page.waitForURL(/subnets\.php/);
-  // VLAN badge should appear somewhere in the subnet list
+  await page.goto('subnets.php');
   const body = await page.locator('body').innerText();
   expect(body).toContain(TEST_VLAN_NAME);
 });
@@ -128,18 +136,9 @@ test('vlans: edit VLAN name', async () => {
 });
 
 test('vlans: delete test VLAN subnet then VLAN', async () => {
-  // First delete the test subnet we created
+  // Delete the test subnet via fetchPost (delete button is in the global drawer in v3.8.0)
   await page.goto('subnets.php');
-  const subnetNode = page.locator('.subnet-node').filter({ hasText: TEST_VLAN_CIDR });
-  if (await subnetNode.count() > 0) {
-    // Open details via evaluate to avoid sticky-header pointer-event interception
-    const details = subnetNode.locator('details').first();
-    await details.evaluate((el: HTMLDetailsElement) => { el.open = true; });
-    const deleteForm = subnetNode.locator('form').filter({ has: page.locator('[value=delete]') });
-    page.once('dialog', d => d.accept());
-    await deleteForm.locator('button.button-danger').click();
-    await page.waitForURL(/subnets\.php/);
-  }
+  await deleteSubnet(page, TEST_VLAN_CIDR);
 
   // Now delete the VLAN
   await page.goto('vlans.php');

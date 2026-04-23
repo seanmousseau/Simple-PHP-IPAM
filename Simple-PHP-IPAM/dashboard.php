@@ -5,52 +5,54 @@ require __DIR__ . '/init.php';
 /** @var IpamConfig $config */
 require_login();
 
-/* --- Summary counts --- */
-$st = $db->prepare("SELECT COUNT(*) AS c FROM subnets");
-$st->execute();
-/** @var array<string, mixed>|false $cntRow */
+/* --- KPI totals (new, for KPI card row) --- */
+$kpis = ipam_dashboard_kpis($db);
 
-$cntRow = $st->fetch();
+/* --- Growth data for uPlot chart --- */
+$growthData = ipam_dashboard_growth($db, 30);
+$growthTs   = [];
+$growthNs   = [];
+foreach ($growthData as $row) {
+    $growthTs[] = (int)(new \DateTimeImmutable(to_str($row['d']) . 'T00:00:00+00:00'))->getTimestamp();
+    $growthNs[] = to_int($row['n']);
+}
 
-$totalSubnets = is_array($cntRow) ? to_int($cntRow['c']) : 0;
-
-$st = $db->prepare("SELECT COUNT(*) AS c FROM addresses");
-$st->execute();
-/** @var array<string, mixed>|false $cntRow */
-
-$cntRow = $st->fetch();
-
-$totalAddrs = is_array($cntRow) ? to_int($cntRow['c']) : 0;
-
-$st = $db->prepare("SELECT status, COUNT(*) AS c FROM addresses GROUP BY status");
-$st->execute();
+/* --- Legacy summary counts (kept for existing metric grid) --- */
 $statusMap = ['used' => 0, 'reserved' => 0, 'free' => 0];
-foreach ($st->fetchAll() as $r) {
+$stStatus = $db->prepare("SELECT status, COUNT(*) AS c FROM addresses GROUP BY status");
+$stStatus->execute();
+foreach ($stStatus->fetchAll() as $r) {
     if (isset($statusMap[to_str($r['status'])])) $statusMap[to_str($r['status'])] = to_int($r['c']);
 }
 
-/* --- IPv4 / IPv6 subnet split --- */
-$st = $db->prepare("SELECT ip_version, COUNT(*) AS c FROM subnets GROUP BY ip_version");
-$st->execute();
+$stVer = $db->prepare("SELECT ip_version, COUNT(*) AS c FROM subnets GROUP BY ip_version");
+$stVer->execute();
 $verCounts = [4 => 0, 6 => 0];
-foreach ($st->fetchAll() as $r) $verCounts[to_int($r['ip_version'])] = to_int($r['c']);
+foreach ($stVer->fetchAll() as $r) $verCounts[to_int($r['ip_version'])] = to_int($r['c']);
+
+/* --- Growth trend (7 and 30 day totals) --- */
+$cutoffWeek  = gmdate('Y-m-d H:i:s', time() - 7  * 86400);
+$cutoffMonth = gmdate('Y-m-d H:i:s', time() - 30 * 86400);
+$gWkSt = $db->prepare("SELECT COUNT(*) FROM addresses WHERE created_at >= :c");
+$gWkSt->execute([':c' => $cutoffWeek]);
+$growthWeek = to_int($gWkSt->fetchColumn());
+$gMoSt = $db->prepare("SELECT COUNT(*) FROM addresses WHERE created_at >= :c");
+$gMoSt->execute([':c' => $cutoffMonth]);
+$growthMonth = to_int($gMoSt->fetchColumn());
 
 /* --- Top IPv4 subnets by utilization % (/8–/32 only) --- */
-// Reuse the shared utilization function that excludes infrastructure IPs (#566)
 $utilData = ipv4_unassigned_summary($db);
-$st = $db->prepare("SELECT id, cidr, prefix, description FROM subnets WHERE ip_version = 4 AND prefix BETWEEN 8 AND 32");
-$st->execute();
+$stTop = $db->prepare("SELECT id, cidr, prefix, description FROM subnets WHERE ip_version = 4 AND prefix BETWEEN 8 AND 32");
+$stTop->execute();
 /** @var list<array<string, mixed>> $topSubnets */
 $topSubnets = [];
-foreach ($st->fetchAll() as $row) {
+foreach ($stTop->fetchAll() as $row) {
     $sid = to_int($row['id']);
     $u   = $utilData[$sid] ?? null;
     if ($u === null || $u['assigned_assignable'] <= 0) continue;
     $row['used_count'] = $u['assigned_assignable'];
     $topSubnets[] = $row;
 }
-
-// Sort by utilization percentage (highest first)
 usort($topSubnets, function (array $a, array $b): int {
     $capA = ipv4_assignable_count(to_int($a['prefix']));
     $capB = ipv4_assignable_count(to_int($b['prefix']));
@@ -64,27 +66,25 @@ $topSubnets = array_slice($topSubnets, 0, 10);
 /** @var array<int, list<float>> $sparklines */
 $sparklines = [];
 if ($topSubnets) {
-    $topIds = array_map(fn($r) => to_int($r['id']), $topSubnets);
+    $topIds       = array_map(fn($r) => to_int($r['id']), $topSubnets);
     $placeholders = implode(',', array_fill(0, count($topIds), '?'));
-    $spkSt = $db->prepare(
+    $spkSt        = $db->prepare(
         "SELECT subnet_id, used_count, total_hosts
          FROM utilization_snapshots
          WHERE subnet_id IN ($placeholders)
          ORDER BY subnet_id, snapped_at ASC"
     );
-    foreach ($topIds as $i => $sid) {
-        $spkSt->bindValue($i + 1, $sid, PDO::PARAM_INT);
-    }
+    foreach ($topIds as $i => $sid) $spkSt->bindValue($i + 1, $sid, PDO::PARAM_INT);
     $spkSt->execute();
     foreach ($spkSt->fetchAll() as $r) {
-        $sid   = to_int($r['subnet_id']);
-        $total = to_int($r['total_hosts']);
+        $sid             = to_int($r['subnet_id']);
+        $total           = to_int($r['total_hosts']);
         $sparklines[$sid][] = $total > 0 ? (float)round(to_int($r['used_count']) / $total * 100, 1) : 0.0;
     }
 }
 
-/* --- Address counts grouped by site --- */
-$st = $db->prepare("
+/* --- Addresses by site --- */
+$stSite = $db->prepare("
     SELECT COALESCE(si.name, 'Ungrouped') AS site_name,
            SUM(CASE WHEN a.status = 'used'     THEN 1 ELSE 0 END) AS used,
            SUM(CASE WHEN a.status = 'reserved' THEN 1 ELSE 0 END) AS reserved,
@@ -96,41 +96,21 @@ $st = $db->prepare("
     GROUP BY s.site_id, si.name
     ORDER BY site_name ASC
 ");
-$st->execute();
+$stSite->execute();
 /** @var list<array<string, mixed>> $bySite */
-$bySite = $st->fetchAll();
-
-/* --- Growth trend: addresses added in last 7 and 30 days ---
- * Cutoffs computed in PHP so the query stays engine-agnostic. The SQLite
- * relative-time modifier form is not portable to MySQL / Postgres — an
- * earlier attempt caused a SQL 1064 on every dashboard load against MySQL
- * in v2.10.0 #433 Playwright validation.
- */
-$cutoffWeek  = gmdate('Y-m-d H:i:s', time() - 7  * 86400);
-$cutoffMonth = gmdate('Y-m-d H:i:s', time() - 30 * 86400);
-$gWkSt = $db->prepare("SELECT COUNT(*) FROM addresses WHERE created_at >= :c");
-$gWkSt->execute([':c' => $cutoffWeek]);
-$growthWeek = to_int($gWkSt->fetchColumn());
-$gMoSt = $db->prepare("SELECT COUNT(*) FROM addresses WHERE created_at >= :c");
-$gMoSt->execute([':c' => $cutoffMonth]);
-$growthMonth = to_int($gMoSt->fetchColumn());
+$bySite = $stSite->fetchAll();
 
 /* --- Recent audit events --- */
-$st = $db->prepare("
-    SELECT created_at, username, action, details
-    FROM audit_log
-    ORDER BY id DESC
-    LIMIT 10
-");
-$st->execute();
+$stAudit = $db->prepare("SELECT created_at, username, action, details FROM audit_log ORDER BY id DESC LIMIT 10");
+$stAudit->execute();
 /** @var list<array<string, mixed>> $recentAudit */
-$recentAudit = $st->fetchAll();
+$recentAudit = $stAudit->fetchAll();
 
 /* --- Address expiry counts --- */
 $today  = date('Y-m-d');
 $in7d   = date('Y-m-d', (int)strtotime('+7 days'));
 $in30d  = date('Y-m-d', (int)strtotime('+30 days'));
-$expSt = $db->prepare("
+$expSt  = $db->prepare("
     SELECT
         SUM(CASE WHEN expires_at < :today                         THEN 1 ELSE 0 END) AS cnt_expired,
         SUM(CASE WHEN expires_at >= :f7 AND expires_at <= :t7     THEN 1 ELSE 0 END) AS cnt_7d,
@@ -171,10 +151,6 @@ function render_sparkline(array $points, int $w = 80, int $h = 24): string
 page_header('Dashboard');
 ?>
 
-<div class="breadcrumbs">
-  <span>🏠 Dashboard</span>
-</div>
-
 <div class="toolbar">
   <div>
     <h1>Dashboard</h1>
@@ -188,31 +164,55 @@ $_staleKeys = $GLOBALS['config_stale_keys'] ?? [];
 if ($_staleKeys && current_user()['role'] === 'admin'):
 ?>
   <div class="admin-notice admin-notice--warning" role="alert">
-    &#9888; <strong>config.php cleanup needed:</strong>
+    <?= icon('warning') ?> <strong>config.php cleanup needed:</strong>
     <?= count($_staleKeys) ?> non-bootstrap key(s) found in <code>config.php</code> that are no longer read.
     Remove them manually: <code><?= e(implode(', ', $_staleKeys)) ?></code>
   </div>
 <?php endif; unset($_staleKeys); ?>
 
 <div class="page-actions">
-  <a class="action-pill" href="subnets.php#add-subnet">➕ Add Subnet</a>
-  <a class="action-pill" href="search.php">🔎 Search</a>
-  <a class="action-pill" href="subnets.php">🌐 Subnets</a>
+  <a class="action-pill" href="subnets.php#add-subnet"><?= icon('plus') ?> Add Subnet</a>
+  <a class="action-pill" href="search.php"><?= icon('magnifying-glass') ?> Search</a>
+  <a class="action-pill" href="subnets.php"><?= icon('server-stack') ?> Subnets</a>
   <?php if (current_user()['role'] === 'admin'): ?>
-    <a class="action-pill" href="import_csv.php">📥 Import CSV</a>
+    <a class="action-pill" href="import_csv.php"><?= icon('upload') ?> Import CSV</a>
   <?php endif; ?>
-  <a class="action-pill muted" href="#" id="dash-reset" title="Reset widget layout and filters">↺ Reset widgets</a>
+  <a class="action-pill muted" href="#" id="dash-reset" title="Reset widget layout and filters"><?= icon('refresh') ?> Reset widgets</a>
 </div>
 
+<!-- KPI cards -->
+<div class="kpi-grid">
+<?php
+$pctStatus   = $kpis['pct_used'] >= 90 ? 'crit' : ($kpis['pct_used'] >= 75 ? 'warn' : 'ok');
+$alertStatus = $kpis['alerts'] > 0 ? 'crit' : 'ok';
+ipam_render('dashboard_kpi_card', ['label' => 'Subnets',     'value' => $kpis['subnets'],        'sub' => '',                                         'status' => 'ok']);
+ipam_render('dashboard_kpi_card', ['label' => 'Addresses',   'value' => $kpis['addresses'],      'sub' => '',                                         'status' => 'ok']);
+ipam_render('dashboard_kpi_card', ['label' => 'Used',        'value' => $kpis['pct_used'] . '%', 'sub' => $kpis['used'] . ' used',                   'status' => $pctStatus]);
+ipam_render('dashboard_kpi_card', ['label' => 'Crit Alerts', 'value' => $kpis['alerts'],         'sub' => $kpis['alerts'] > 0 ? 'active alerts' : '', 'status' => $alertStatus]);
+?>
+</div>
+
+<!-- uPlot growth chart -->
+<div class="chart-section">
+  <h2 class="chart-title">Address growth (last 30 days)</h2>
+  <?php if (empty($growthTs)): ?>
+    <div class="empty-state muted">No address creation data in the last 30 days.</div>
+  <?php else: ?>
+    <div id="growth-chart"
+         style="min-height:180px"
+         data-uplot-xs="<?= e((string)(json_encode($growthTs) ?: '[]')) ?>"
+         data-uplot-ys="<?= e((string)(json_encode($growthNs) ?: '[]')) ?>"></div>
+  <?php endif; ?>
+</div>
+
+<!-- Legacy metric grid -->
 <div class="grid cols-3 mt-16" data-widget="metrics">
-  <div class="metric"><div class="label">Subnets</div><div class="value"><?= e((string)$totalSubnets) ?></div></div>
-  <div class="metric"><div class="label">Addresses (rows)</div><div class="value"><?= e((string)$totalAddrs) ?></div></div>
   <div class="metric"><div class="label">Used</div><div class="value status-used"><?= e(to_str($statusMap['used'])) ?></div></div>
   <div class="metric"><div class="label">Reserved</div><div class="value status-reserved"><?= e(to_str($statusMap['reserved'])) ?></div></div>
   <div class="metric"><div class="label">Free</div><div class="value status-free"><?= e(to_str($statusMap['free'])) ?></div></div>
-  <div class="metric"><div class="label">IPv4 / IPv6 Subnets</div><div class="value"><?= e(to_str($verCounts[4])) ?> / <?= e(to_str($verCounts[6])) ?></div></div>
-  <div class="metric"><div class="label">Added (7 days)</div><div class="value"><?= e((string)$growthWeek) ?></div></div>
-  <div class="metric"><div class="label">Added (30 days)</div><div class="value"><?= e((string)$growthMonth) ?></div></div>
+  <div class="metric"><div class="label">IPv4 Subnets</div><div class="value"><?= e(to_str($verCounts[4])) ?></div></div>
+  <div class="metric"><div class="label">IPv6 Subnets</div><div class="value"><?= e(to_str($verCounts[6])) ?></div></div>
+  <div class="metric"><div class="label">Added (7d / 30d)</div><div class="value"><?= e((string)$growthWeek) ?> / <?= e((string)$growthMonth) ?></div></div>
 </div>
 
 <div class="grid cols-2 mt-16">
@@ -220,10 +220,10 @@ if ($_staleKeys && current_user()['role'] === 'admin'):
   <div class="card" data-widget="top-subnets">
     <div class="widget-header">
       <h2>Top IPv4 Subnets by Usage</h2>
-      <button class="widget-hide-btn" data-widget-key="top-subnets" title="Hide widget">&#10005;</button>
+      <button class="widget-hide-btn" data-widget-key="top-subnets" aria-label="Hide widget"><?= icon('x') ?></button>
     </div>
     <?php if (!$topSubnets): ?>
-      <div class="empty-state">No IPv4 subnets in /8–/32 range.</div>
+      <div class="empty-state">No IPv4 subnets in /8&ndash;/32 range.</div>
     <?php else: ?>
       <table>
         <thead>
@@ -231,13 +231,13 @@ if ($_staleKeys && current_user()['role'] === 'admin'):
         </thead>
         <tbody>
         <?php
-            $dashWarn = to_int(ipam_setting('display.utilization_warn'));
-            $dashCrit = to_int(ipam_setting('display.utilization_critical'));
+          $dashWarn = to_int(ipam_setting('display.utilization_warn'));
+          $dashCrit = to_int(ipam_setting('display.utilization_critical'));
         ?>
         <?php foreach ($topSubnets as $s):
-            $cap  = ipv4_assignable_count(to_int($s['prefix']));
-            $used = to_int($s['used_count']);
-            $pct  = $cap > 0 ? min(100, (int)round($used / $cap * 100)) : 0;
+            $cap      = ipv4_assignable_count(to_int($s['prefix']));
+            $used     = to_int($s['used_count']);
+            $pct      = $cap > 0 ? min(100, (int)round($used / $cap * 100)) : 0;
             $barClass = $pct >= $dashCrit ? 'util-bar-fill--crit' : ($pct >= $dashWarn ? 'util-bar-fill--warn' : '');
         ?>
           <tr>
@@ -257,13 +257,13 @@ if ($_staleKeys && current_user()['role'] === 'admin'):
         </tbody>
       </table>
     <?php endif; ?>
-    <div class="mt-10"><a class="action-pill" href="subnets.php">🌐 All Subnets</a></div>
+    <div class="mt-10"><a class="action-pill" href="subnets.php"><?= icon('server-stack') ?> All Subnets</a></div>
   </div>
 
   <div class="card" data-widget="by-site">
     <div class="widget-header">
       <h2>Addresses by Site</h2>
-      <button class="widget-hide-btn" data-widget-key="by-site" title="Hide widget">&#10005;</button>
+      <button class="widget-hide-btn" data-widget-key="by-site" aria-label="Hide widget"><?= icon('x') ?></button>
     </div>
     <?php if (!$bySite): ?>
       <div class="empty-state">No data yet.</div>
@@ -294,7 +294,7 @@ if ($_staleKeys && current_user()['role'] === 'admin'):
       </table>
     <?php endif; ?>
     <?php if (current_user()['role'] === 'admin'): ?>
-      <div class="mt-10"><a class="action-pill" href="sites.php">📍 Manage Sites</a></div>
+      <div class="mt-10"><a class="action-pill" href="sites.php"><?= icon('map-pin') ?> Manage Sites</a></div>
     <?php endif; ?>
   </div>
 
@@ -303,7 +303,7 @@ if ($_staleKeys && current_user()['role'] === 'admin'):
 <div class="card mt-16" data-widget="recent-activity">
   <div class="widget-header">
     <h2>Recent Activity</h2>
-    <button class="widget-hide-btn" data-widget-key="recent-activity" title="Hide widget">&#10005;</button>
+    <button class="widget-hide-btn" data-widget-key="recent-activity" aria-label="Hide widget"><?= icon('x') ?></button>
   </div>
   <?php if (!$recentAudit): ?>
     <div class="empty-state">No audit events yet.</div>
@@ -323,7 +323,7 @@ if ($_staleKeys && current_user()['role'] === 'admin'):
       <?php endforeach; ?>
       </tbody>
     </table>
-    <div class="mt-10"><a class="action-pill" href="audit.php">📜 Full Audit Log</a></div>
+    <div class="mt-10"><a class="action-pill" href="audit.php"><?= icon('audit') ?> Full Audit Log</a></div>
   <?php endif; ?>
 </div>
 
@@ -331,7 +331,7 @@ if ($_staleKeys && current_user()['role'] === 'admin'):
 <div class="card mt-16" data-widget="expiring-addresses">
   <div class="widget-header">
     <h2>Expiring Addresses</h2>
-    <button class="widget-hide-btn" data-widget-key="expiring-addresses" title="Hide widget">&#10005;</button>
+    <button class="widget-hide-btn" data-widget-key="expiring-addresses" aria-label="Hide widget"><?= icon('x') ?></button>
   </div>
   <div class="grid cols-3">
     <div class="metric">
@@ -345,7 +345,7 @@ if ($_staleKeys && current_user()['role'] === 'admin'):
       </div>
     </div>
     <div class="metric">
-      <div class="label">Expiring ≤7 days</div>
+      <div class="label">Expiring &le;7 days</div>
       <div class="value<?= $cnt7d > 0 ? ' warn' : '' ?>">
         <?php if ($cnt7d > 0): ?>
           <a href="addresses.php?filter=expiring&amp;days=7" style="color:inherit"><?= e((string)$cnt7d) ?></a>
@@ -355,7 +355,7 @@ if ($_staleKeys && current_user()['role'] === 'admin'):
       </div>
     </div>
     <div class="metric">
-      <div class="label">Expiring ≤30 days</div>
+      <div class="label">Expiring &le;30 days</div>
       <div class="value">
         <?php if ($cnt30d > 0): ?>
           <a href="addresses.php?filter=expiring&amp;days=30" style="color:inherit"><?= e((string)$cnt30d) ?></a>
@@ -368,4 +368,5 @@ if ($_staleKeys && current_user()['role'] === 'admin'):
 </div>
 <?php endif; ?>
 
+<script src="assets/vendor/uplot.min.js"></script>
 <?php page_footer();

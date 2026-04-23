@@ -111,7 +111,7 @@ test('overlap subnet creates with warning', async () => {
 
 test('subnets page has nav bar', async () => {
   await page.goto('subnets.php');
-  await expect(page.locator('.topbar')).toBeVisible();
+  await expect(page.locator('#sidebar')).toBeVisible();
 });
 
 test('subnets: breadcrumb is present', async () => {
@@ -122,24 +122,31 @@ test('subnets: breadcrumb is present', async () => {
 
 test('subnets: create form has auto-reserve checkbox', async () => {
   await page.goto('subnets.php');
-  const checkbox = page.locator('input[name=auto_reserve]');
+  await page.locator('[data-drawer-title="Add Subnet"]').first().click();
+  await expect(page.locator('#global-drawer')).toBeVisible();
+  const checkbox = page.locator('#global-drawer-body input[name=auto_reserve]');
   await expect(checkbox).toBeVisible();
-  // Should be pre-checked by default
   await expect(checkbox).toBeChecked();
+  await page.keyboard.press('Escape');
 });
 
 test('subnets: create form has gateway field', async () => {
   await page.goto('subnets.php');
-  await expect(page.locator('input[name=gateway]')).toBeVisible();
+  await page.locator('[data-drawer-title="Add Subnet"]').first().click();
+  await expect(page.locator('#global-drawer')).toBeVisible();
+  await expect(page.locator('#global-drawer-body input[name=gateway]')).toBeVisible();
+  await page.keyboard.press('Escape');
 });
 
 test('subnets: create form has VLAN picker', async () => {
   await page.goto('subnets.php');
-  const vlanSelect = page.locator('select[name=vlan_fk]').first();
+  await page.locator('[data-drawer-title="Add Subnet"]').first().click();
+  await expect(page.locator('#global-drawer')).toBeVisible();
+  const vlanSelect = page.locator('#global-drawer-body select[name=vlan_fk]');
   await expect(vlanSelect).toBeVisible();
-  // VLAN picker should at least have a (none) option
   const opts = await vlanSelect.locator('option').count();
   expect(opts).toBeGreaterThanOrEqual(1);
+  await page.keyboard.press('Escape');
 });
 
 test('subnets: VLAN picker lists test VLAN when it exists', async () => {
@@ -158,13 +165,10 @@ test('subnets: VLAN picker lists test VLAN when it exists', async () => {
 
 test('subnets: form drawer opens on Add Subnet click', async () => {
   await page.goto('subnets.php');
-  const drawerTrigger = page.locator('[data-open-drawer]').first();
-  if (await drawerTrigger.count() === 0) {
-    test.skip(true, 'No drawer trigger found — drawer may not be implemented on this page');
-    return;
-  }
+  const drawerTrigger = page.locator('[data-drawer-title="Add Subnet"]').first();
   await drawerTrigger.click();
-  await expect(page.locator('#form-drawer')).toBeVisible();
+  await expect(page.locator('#global-drawer')).toBeVisible();
+  await page.keyboard.press('Escape');
 });
 
 // ── v2.3.0 scan schedule section ─────────────────────────────────────────────

@@ -577,7 +577,7 @@ ipam_skeleton_flush();
 
 <div class="page-actions">
   <?php if (current_user()['role'] !== 'readonly'): ?>
-    <a class="action-pill" href="#add-subnet">➕ Add Subnet</a>
+    <button class="action-pill" data-drawer-title="Add Subnet" data-drawer-tpl="tpl-add-subnet">➕ Add Subnet</button>
   <?php endif; ?>
   <a class="action-pill" href="search.php">🔎 Search Addresses</a>
   <a class="action-pill" href="export_subnets.php">⬇ Export CSV</a>
@@ -639,69 +639,13 @@ ipam_skeleton_flush();
   </div>
 <?php endif; ?>
 
-<div class="card mt-16" id="add-subnet">
-  <h2>Add subnet</h2>
-  <form method="post" action="subnets.php">
-    <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
-    <input type="hidden" name="action" value="create">
-    <div class="row">
-      <label>CIDR<br><input name="cidr" placeholder="10.0.0.0/24 or 2001:db8::/64" required data-validate="cidr"></label>
-      <label>Description<br><input name="description" placeholder="Office LAN"></label>
-      <label class="subnet-notes-edit">Notes<br><textarea name="notes" rows="3" placeholder="Long-form operational notes, runbook links, ownership context…"></textarea></label>
-      <?php if ($vlanList): ?>
-      <label>VLAN<br>
-        <select name="vlan_fk">
-          <option value="0">(none)</option>
-          <?php foreach ($vlanList as $vl): ?>
-            <option value="<?= to_int($vl['id']) ?>"><?= to_int($vl['vlan_id']) ?> &mdash; <?= e(to_str($vl['name'])) ?></option>
-          <?php endforeach; ?>
-        </select>
-      </label>
-      <?php endif; ?>
-      <?php if ($vrfList): ?>
-      <label>VRF<br>
-        <select name="vrf_id">
-          <option value="0">(global)</option>
-          <?php foreach ($vrfList as $vr): ?>
-            <option value="<?= to_int($vr['id']) ?>"><?= e(to_str($vr['name'])) ?></option>
-          <?php endforeach; ?>
-        </select>
-      </label>
-      <?php endif; ?>
-      <label>Site<br>
-        <select name="site_id">
-          <option value="0">(none)</option>
-          <?php foreach ($siteList as $site): ?>
-            <option value="<?= to_int($site['id']) ?>"><?= e(to_str($site['name'])) ?></option>
-          <?php endforeach; ?>
-        </select>
-      </label>
-      <button type="submit" <?= (current_user()['role']==='readonly')?'disabled':'' ?>>Add</button>
-    </div>
-    <?php if ($subnetCfDefs): ?>
-    <?= render_custom_field_inputs($subnetCfDefs, []) ?>
-    <?php endif; ?>
-    <?php if ($contactList): ?>
-    <div class="row mt-8">
-      <input type="hidden" name="contact_id_present" value="1">
-      <div class="contact-picker" data-contacts='<?= e(json_encode(array_map(fn($c) => ['id' => to_int($c['id']), 'name' => to_str($c['name']), 'email' => to_str($c['email'])], $contactList), JSON_UNESCAPED_SLASHES) ?: '[]') ?>'>
-        <label>Contacts</label>
-        <div class="contact-picker-rows"></div>
-        <button type="button" class="button-secondary btn-sm contact-picker-add">+ Add contact</button>
-      </div>
-    </div>
-    <?php endif; ?>
-    <?php $autoReserveDefault = (bool)ipam_setting('display.auto_reserve_network_broadcast'); ?>
-    <div class="row mt-8">
-      <label class="row-inline">
-        <input type="checkbox" name="auto_reserve" value="1" <?= $autoReserveDefault ? 'checked' : '' ?>>
-        Auto-reserve network, broadcast &amp; gateway IPs
-      </label>
-      <label>Gateway (optional)<br><input name="gateway" placeholder="e.g. 10.0.0.1"></label>
-    </div>
-    <?php if (current_user()['role']==='readonly'): ?><p class="muted">Read-only account.</p><?php endif; ?>
-  </form>
-</div>
+<div id="tpl-add-subnet" style="display:none"><?= ipam_render_string('subnet_form', [
+    'vlanList'     => $vlanList,
+    'vrfList'      => $vrfList,
+    'siteList'     => $siteList,
+    'subnetCfDefs' => $subnetCfDefs,
+    'contactList'  => $contactList,
+]) ?></div>
 
 <div class="card mt-16">
   <div class="toolbar mb-8">
@@ -713,7 +657,7 @@ ipam_skeleton_flush();
   </div>
 
   <?php if (empty($siteGroups)): ?>
-    <div class="empty-state">No subnets yet. <a class="action-pill" href="#add-subnet">+ Add Subnet</a></div>
+    <div class="empty-state">No subnets yet. <button class="action-pill" data-drawer-title="Add Subnet" data-drawer-tpl="tpl-add-subnet">+ Add Subnet</button></div>
   <?php else: ?>
     <!-- List view -->
     <div id="subnet-list-view">
