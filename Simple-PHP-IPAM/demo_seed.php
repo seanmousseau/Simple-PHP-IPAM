@@ -49,7 +49,8 @@ require __DIR__ . '/lib.php';
 
 $config = require __DIR__ . '/config.php';
 
-if (!($config['demo_mode']['enabled'] ?? false)) {
+$forceSeed = getenv('DEMO_SEED_FORCE') === '1';
+if (!$forceSeed && !($config['demo_mode']['enabled'] ?? false)) {
     echo "Demo mode is not enabled in config.php. Aborting.\n";
     echo "Set 'demo_mode' => ['enabled' => true] to use this script.\n";
     exit(1);

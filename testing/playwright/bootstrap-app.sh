@@ -219,13 +219,26 @@ seed_docker_args=(-v "$app_dir:/var/www/html" -w /var/www/html)
 if [[ "$driver" != "sqlite" ]] || [[ "$mailhog_enabled" == "1" ]]; then
     seed_docker_args+=(--network "$network")
 fi
+# File-level config mount for the seed container — mirrors the same guard used
+# for the long-running container (see below). OneDrive (or other cloud-sync
+# tools) can revert config.php on the host between the `cp` above and the
+# docker run, so we pass the fixture directly rather than relying on the
+# directory-level mount to see the host write.
+case "$driver" in
+    mysql)    _seed_cfg="$script_dir/fixtures/test-config-mysql.php" ;;
+    mariadb)  _seed_cfg="$script_dir/fixtures/test-config-mariadb.php" ;;
+    pgsql)    _seed_cfg="$script_dir/fixtures/test-config-pgsql.php" ;;
+    *)        _seed_cfg="$script_dir/fixtures/test-config.php" ;;
+esac
+seed_docker_args+=(-v "${_seed_cfg}:/var/www/html/config.php:ro")
+unset _seed_cfg
 # Mount vendor/ for optional runtime dependencies (e.g. PHPMailer for SMTP).
 # Only added when vendor/ exists on the host — absent in the default playwright
 # matrix which skips composer install. The alerts-smtp CI job installs it first.
 if [[ -d "$repo_root/vendor" ]]; then
     seed_docker_args+=(-v "$repo_root/vendor:/var/www/vendor:ro")
 fi
-docker run --rm "${seed_docker_args[@]}" -e SEED_2FA_TEST_USER=1 "$image" \
+docker run --rm "${seed_docker_args[@]}" -e SEED_2FA_TEST_USER=1 -e DEMO_SEED_FORCE=1 "$image" \
     bash -c 'php migrate.php && php demo_seed.php && chmod -R a+rwX data' \
     >/tmp/ipam-pw-seed.log 2>&1 || {
         echo "bootstrap-app: seeding failed, log follows:" >&2
