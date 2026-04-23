@@ -79,6 +79,8 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
 
     siteIdA = await siteIdFor(page, SITE_A);
     siteIdB = await siteIdFor(page, SITE_B);
+    expect(siteIdA, 'siteIdA must be set after site creation').not.toBeNull();
+    expect(siteIdB, 'siteIdB must be set after site creation').not.toBeNull();
 
     // Create one subnet per site
     await fetchPost(page, appUrl('subnets.php'), {

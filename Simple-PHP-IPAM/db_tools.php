@@ -292,17 +292,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'backu
         $st->execute([':id' => $delId]);
         $bkRow = $st->fetch();
         if ($bkRow) {
-            $delPath   = to_str($bkRow['target_path'] ?? '');
-            $allowedDir = realpath(backup_dir($config)) ?: backup_dir($config);
+            $delPath    = to_str($bkRow['target_path'] ?? '');
+            $allowedDir = realpath(backup_dir($config));
             $realDel    = $delPath !== '' ? (realpath($delPath) ?: '') : '';
+            $fileOk     = true; // assume no file to remove unless we try
             // Only unlink if the file is inside the configured backup directory
-            if ($realDel !== '' && str_starts_with($realDel, $allowedDir . DIRECTORY_SEPARATOR) && is_file($realDel)) {
-                @unlink($realDel); // nosemgrep: php.lang.security.unlink-use.unlink-use
+            if ($allowedDir !== false && $realDel !== ''
+                && str_starts_with($realDel, $allowedDir . DIRECTORY_SEPARATOR)
+                && is_file($realDel)) {
+                $fileOk = unlink($realDel); // nosemgrep: php.lang.security.unlink-use.unlink-use
             }
-            $db->prepare("DELETE FROM backup_history WHERE id=:id")->execute([':id' => $delId]);
-            audit($db, 'backup.deleted', 'backup_history', $delId,
-                'Deleted backup record: ' . basename($delPath));
-            $msg = 'Backup record deleted.';
+            if ($fileOk) {
+                $db->prepare("DELETE FROM backup_history WHERE id=:id")->execute([':id' => $delId]);
+                audit($db, 'backup.deleted', 'backup_history', $delId,
+                    'Deleted backup record: ' . basename($delPath));
+                $msg = 'Backup record deleted.';
+            } else {
+                audit($db, 'backup.delete_failed', 'backup_history', $delId,
+                    'Failed to delete backup file: ' . basename($delPath));
+                $err = 'Failed to delete the backup file — record kept.';
+            }
         } else {
             $err = 'Backup record not found.';
         }
@@ -364,6 +373,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($_GET['action'] ?? '') === 'backup_
             $allowedDlDir = realpath(backup_dir($config));
             if ($realDl === false || $allowedDlDir === false
                 || !str_starts_with($realDl, $allowedDlDir . DIRECTORY_SEPARATOR)) {
+                audit($db, 'backup.download_denied', 'backup_history', $dlId,
+                    'Path confinement check failed for backup id ' . $dlId);
                 http_response_code(403);
                 exit('Access denied.');
             }

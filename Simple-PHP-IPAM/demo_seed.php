@@ -90,9 +90,13 @@ if (getenv('SEED_2FA_TEST_USER') === '1') {
         // '$2$' prefix identifies GCM format (same as ipam_totp_encrypt_secret in lib.php)
         $encSecret = '$2$' . base64_encode($iv . $tag . $enc);
 
-        // Upsert the test user (INSERT OR REPLACE resets the id on conflict; handle below)
+        // Idempotent seed: remove any prior run's test user then INSERT fresh.
+        // demo_reset_db() clears the demo users so this is normally a no-op DELETE.
+        // Using DELETE+INSERT rather than a dialect-specific upsert keeps the SQL
+        // portable across SQLite, MySQL, MariaDB, and Postgres.
+        $db->prepare("DELETE FROM users WHERE username='2fa_test_user'")->execute();
         $db->prepare(
-            "INSERT OR REPLACE INTO users
+            "INSERT INTO users
                 (username, password_hash, role, is_active, totp_enabled, totp_secret_enc, email, name)
              VALUES ('2fa_test_user', :ph, 'readonly', 1, 1, :ts, '2fa_test@example.com', '2FA Test User')"
         )->execute([
@@ -100,12 +104,8 @@ if (getenv('SEED_2FA_TEST_USER') === '1') {
             ':ts' => $encSecret,
         ]);
 
-        $uid = (int) $db->lastInsertId();
-        if ($uid === 0) {
-            // Was a REPLACE — fetch the id
-            $stmt = $db->query("SELECT id FROM users WHERE username='2fa_test_user'");
-            $uid = (int) (($stmt ? $stmt->fetchColumn() : false) ?: 0);
-        }
+        $stmt = $db->query("SELECT id FROM users WHERE username='2fa_test_user'");
+        $uid  = (int) (($stmt ? $stmt->fetchColumn() : false) ?: 0);
 
         if ($uid === 0) {
             echo "Error: could not determine uid for 2fa_test_user\n";

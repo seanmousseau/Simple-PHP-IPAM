@@ -248,7 +248,12 @@ docker run --rm "${seed_docker_args[@]}" -e SEED_2FA_TEST_USER=1 "$image" \
 # but that flag is a Docker env var scoped to the seed container. Playwright reads
 # its own .env file from the config directory, so writing it here ensures the
 # is2FaSeeded() guard in totp.spec.ts returns true without any extra CLI wrangling.
-echo "SEED_2FA_TEST_USER=1" > "${script_dir}/.env"
+# Preserve any other .env keys that may exist alongside this flag.
+if grep -q "^SEED_2FA_TEST_USER=" "${script_dir}/.env" 2>/dev/null; then
+    sed -i 's/^SEED_2FA_TEST_USER=.*/SEED_2FA_TEST_USER=1/' "${script_dir}/.env"
+else
+    echo "SEED_2FA_TEST_USER=1" >> "${script_dir}/.env"
+fi
 
 # 5. Flip demo_mode off so the suite can exercise normal admin flows.
 echo "bootstrap-app: disabling demo_mode for runtime"

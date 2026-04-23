@@ -2073,14 +2073,19 @@ function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
         });
 
         // Show/hide subnet-node elements; operate on ALL .subnet-node in the list view.
+        // Child subnets are DOM-nested inside parent subnet-node divs, so we must also
+        // keep a parent visible when any of its descendants match the active site filter.
         document.querySelectorAll("#subnet-list-view .subnet-node").forEach(function (node) {
             if (isAll) {
                 node.classList.remove("subnet-node--filtered");
                 return;
             }
             var siteId = parseInt(node.dataset.siteId || "0", 10);
-            var visible = activeSiteIds !== null && activeSiteIds.has(siteId);
-            node.classList.toggle("subnet-node--filtered", !visible);
+            var selfMatch = activeSiteIds !== null && activeSiteIds.has(siteId);
+            var childMatch = !selfMatch && Array.from(node.querySelectorAll(".subnet-node[data-site-id]")).some(function (desc) {
+                return activeSiteIds !== null && activeSiteIds.has(parseInt(desc.dataset.siteId || "0", 10));
+            });
+            node.classList.toggle("subnet-node--filtered", !selfMatch && !childMatch);
         });
 
         // Hide site-group containers that now have no visible subnet nodes
