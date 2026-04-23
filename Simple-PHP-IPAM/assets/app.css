@@ -388,6 +388,7 @@ tr.highlight{
   flex-wrap:wrap;
   align-items:center;
   margin-top:var(--space-4);
+  margin-bottom:var(--space-5);
 }
 .action-pill{
   display:inline-flex;
