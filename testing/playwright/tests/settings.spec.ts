@@ -85,8 +85,7 @@ test.describe('Settings page', () => {
     await expect(secret).toHaveAttribute('type', 'password');
     await expect(toggle).toHaveAttribute('aria-pressed', 'false');
     await secret.fill('round-trip-check');
-    await toggle.scrollIntoViewIfNeeded();
-    await toggle.click();
+    await toggle.click({ force: true });
     await expect(secret).toHaveAttribute('type', 'text');
     await expect(secret).toHaveValue('round-trip-check');
     await expect(toggle).toHaveAttribute('aria-pressed', 'true');

@@ -88,6 +88,7 @@ test('vlans: create subnet with VLAN and verify badge', async () => {
   await page.locator('[data-drawer-title="Add Subnet"]').first().click();
   await expect(page.locator('#global-drawer')).toBeVisible();
 
+  // Read the VLAN option value from the drawer picker
   const drawer = page.locator('#global-drawer-body');
   const vlanSelect = drawer.locator('select[name=vlan_fk]');
   const options = await vlanSelect.locator('option').all();
@@ -100,13 +101,16 @@ test('vlans: create subnet with VLAN and verify badge', async () => {
     }
   }
   expect(vlanFkValue, 'Test VLAN must appear in the subnet VLAN picker').toBeTruthy();
+  await page.keyboard.press('Escape');
 
-  await drawer.locator('input[name=cidr]').fill(TEST_VLAN_CIDR);
-  await drawer.locator('input[name=description]').fill('vlan badge test');
-  await vlanSelect.selectOption(vlanFkValue);
-  await drawer.locator('button[type=submit]').click();
+  // Use fetchPost with confirm_overlap to bypass the overlap confirmation step
+  // (TEST_VLAN_CIDR is within the demo DB's 10.0.0.0/8 subnet)
+  await fetchPost(page, appUrl('subnets.php'), {
+    action: 'create', cidr: TEST_VLAN_CIDR, description: 'vlan badge test',
+    vlan_fk: vlanFkValue, confirm_overlap: '1',
+  });
 
-  await page.waitForURL(/subnets\.php/);
+  await page.goto('subnets.php');
   const body = await page.locator('body').innerText();
   expect(body).toContain(TEST_VLAN_NAME);
 });

@@ -31,9 +31,9 @@ const PAGES: Array<[string, string]> = [
   ['settings.php',     'Settings'],
 ];
 
-// Pages that include breadcrumbs (all non-login pages with page_header())
+// Pages that include breadcrumbs — dashboard is the root page and has no breadcrumb bar
 const BREADCRUMB_PAGES = [
-  'dashboard.php', 'subnets.php', 'search.php', 'audit.php',
+  'subnets.php', 'search.php', 'audit.php',
   'users.php', 'sites.php', 'vlans.php', 'tags.php',
   'api_keys.php', 'change_password.php',
 ];
