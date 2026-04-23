@@ -8,7 +8,7 @@
  * The afterAll restores the setting and cleans up the test webhook row.
  */
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
-import { login, appUrl, newAuthContext, ADMIN_USER, ADMIN_PASS, fetchPost } from '../fixtures/ipam';
+import { login, appUrl, newAuthContext, ADMIN_USER, ADMIN_PASS } from '../fixtures/ipam';
 
 // ── Test data ──────────────────────────────────────────────────────────────────
 const WH_NAME   = 'pw-test-webhook';
