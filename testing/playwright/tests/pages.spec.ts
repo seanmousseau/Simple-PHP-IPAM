@@ -53,7 +53,12 @@ adminTest.describe('Page inventory', () => {
       expect(title.toLowerCase()).toContain(keyword.toLowerCase());
 
       if (!ALLOWED_DANGER.has(slug)) {
-        const dangerCount = await page.locator('.danger').count();
+        // health.php may show tool-availability warnings (e.g. mysqldump not in $PATH)
+        // in test containers; exclude those from the assertion.
+        const dangerLocator = slug === 'health.php'
+          ? page.locator('.danger').filter({ hasNotText: /not found in \$PATH/i })
+          : page.locator('.danger');
+        const dangerCount = await dangerLocator.count();
         expect(dangerCount, `${slug} has unexpected .danger element`).toBe(0);
       }
     });
