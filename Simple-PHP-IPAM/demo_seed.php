@@ -49,7 +49,11 @@ require __DIR__ . '/lib.php';
 
 $config = require __DIR__ . '/config.php';
 
-$forceSeed = getenv('DEMO_SEED_FORCE') === '1';
+// DEMO_SEED_FORCE=1 is accepted only when the test fixture also sets
+// demo_mode.allow_force=true, so a leaked env var cannot wipe a production DB.
+$forceSeed = getenv('DEMO_SEED_FORCE') === '1'
+    && ($config['demo_mode']['allow_force'] ?? false);
+
 if (!$forceSeed && !($config['demo_mode']['enabled'] ?? false)) {
     echo "Demo mode is not enabled in config.php. Aborting.\n";
     echo "Set 'demo_mode' => ['enabled' => true] to use this script.\n";
