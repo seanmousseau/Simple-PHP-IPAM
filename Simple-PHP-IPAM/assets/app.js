@@ -1878,12 +1878,22 @@
     ],
     axes: [
       { gap: 8, size: 28, stroke: muted, ticks: { stroke: muted } },
-      { gap: 8, size: 40, stroke: muted, ticks: { stroke: muted } }
+      {
+        gap: 8, size: 40, stroke: muted, ticks: { stroke: muted },
+        values: function (u, vals) {
+          return vals.map(function (v) { return v == null ? '' : String(Math.round(v)); });
+        }
+      }
     ],
     scales: { x: { time: true } }
   };
 
   var u = new uPlot(opts, [xs, ys], el);
+
+  // Hide stale cursor lines/points after mouse leaves the chart (#648)
+  el.addEventListener('mouseleave', function () {
+    u.over.dispatchEvent(new MouseEvent('mousemove', { bubbles: false, clientX: -9999, clientY: -9999 }));
+  });
 
   function resizeChart() {
     var w = el.offsetWidth;

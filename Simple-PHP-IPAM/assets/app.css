@@ -1732,3 +1732,10 @@ button:active,.button:active,.action-pill:active{transform:translateY(1px)}
 .site-group--filter-empty{
     display:none !important;
 }
+/* uPlot cursor artifact fix (#648): fade cursor elements when chart loses hover */
+#growth-chart .u-cursor-pt,
+#growth-chart .u-cursor-x,
+#growth-chart .u-cursor-y { transition:opacity .1s; }
+#growth-chart:not(:hover) .u-cursor-pt,
+#growth-chart:not(:hover) .u-cursor-x,
+#growth-chart:not(:hover) .u-cursor-y { opacity:0; }
