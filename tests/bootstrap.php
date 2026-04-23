@@ -10,5 +10,4 @@ if (is_file($_autoload)) {
 }
 unset($_autoload);
 
-require __DIR__ . '/../Simple-PHP-IPAM/version.php';
 require __DIR__ . '/../Simple-PHP-IPAM/lib.php';
