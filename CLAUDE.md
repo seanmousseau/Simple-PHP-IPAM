@@ -33,7 +33,7 @@ Two cheap calls. The first loads your profile + preferences. The second returns 
 
 ## Project overview
 
-> **Current shipped version: v3.9.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v4.0.0 describes future work — **do not apply it to current v3.x code**. Current-state rules are the ones that do not cite a future version.
+> **Current shipped version: v3.10.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v4.0.0 describes future work — **do not apply it to current v3.x code**. Current-state rules are the ones that do not cite a future version.
 
 Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application built with **PHP 8.2+ and SQLite**. It has **no npm build step** — all CSS and JavaScript are vanilla. Starting in v2.9.0, the application will ship a small, carefully curated set of Composer-managed runtime dependencies bundled into the release tarball, so end users still deploy by extracting the tarball with no build step. The web root is `Simple-PHP-IPAM/` (the subdirectory, not the repo root).
 
@@ -104,6 +104,8 @@ Dev tooling at the repo root (not deployed): `composer.json`, `composer.lock`, `
 | `db_tools.php` | yes | admin | Unified Database admin page: backup history (all engines), SQL export/import (SQLite only), manual WAL backup; absorbs backups.php (v3.9.0) |
 | `demo_gate.php` | — | — | Demo mode bot challenge gate (pre-login) |
 | `backups.php` | yes | admin | Redirects 301 to `db_tools.php` as of v3.9.0 (was: standalone Backup History page, v3.7.0) |
+| `reports.php` | yes | admin | Utilization history report: time-series of address counts per subnet with subnet filter and CSV export |
+| `export_utilization_history.php` | yes | any | CSV export: utilization history snapshots |
 | `health.php` | yes | admin | Operational health dashboard: DB metrics, backup status, scanning, webhooks, auth/security, system info; 60s cache; `?nocache=1` bypass (v3.7.0) |
 | `backup.php` | CLI | — | CLI-only database backup runner; returns 403 on web access (v3.7.0) |
 | `restore.php` | CLI | — | CLI-only database restore with --dry-run, --force; returns 403 on web access (v3.7.0) |
@@ -196,7 +198,7 @@ Migrations live in `migrations.php` as an associative array of version string �
 
 **When adding a new version:** add the migration closure, bump `version.php`, update `CHANGELOG.md` (keepachangelog format).
 
-> **Current shipped version: v3.9.0.** `Creating new data tables in post-v4.0.0 releases` is **forward-looking** (applies to any migration whose version sorts after v4.0.0, including v4.0.x patches) — ignore it for all current v3.x work. `Modifying the schema (multi-engine, from v2.9.0 onward)` and `Runtime dependencies` are **currently active** rules (apply to v2.9.0+ including the current v3.9.0).
+> **Current shipped version: v3.10.0.** `Creating new data tables in post-v4.0.0 releases` is **forward-looking** (applies to any migration whose version sorts after v4.0.0, including v4.0.x patches) — ignore it for all current v3.x work. `Modifying the schema (multi-engine, from v2.9.0 onward)` and `Runtime dependencies` are **currently active** rules (apply to v2.9.0+ including the current v3.10.0).
 
 ### Creating new data tables in post-v4.0.0 releases *(applies to any migration whose version sorts after v4.0.0, including v4.0.x patches)*
 
