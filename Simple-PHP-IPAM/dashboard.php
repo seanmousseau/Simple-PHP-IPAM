@@ -13,7 +13,7 @@ $growthData = ipam_dashboard_growth($db, 30);
 $growthTs   = [];
 $growthNs   = [];
 foreach ($growthData as $row) {
-    $growthTs[] = (int)strtotime(to_str($row['d']));
+    $growthTs[] = (int)(new \DateTimeImmutable(to_str($row['d']) . 'T00:00:00+00:00'))->getTimestamp();
     $growthNs[] = to_int($row['n']);
 }
 

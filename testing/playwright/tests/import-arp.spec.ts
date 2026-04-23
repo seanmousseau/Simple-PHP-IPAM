@@ -80,10 +80,8 @@ test('import_arp.php shows subnet selector', async () => {
 
 test('import_arp.php is in admin nav dropdown', async () => {
   await page.goto('subnets.php');
-  // Open admin dropdown (first .nav-dropdown-toggle is the ⚙ Admin button)
-  await page.locator('button.nav-dropdown-toggle').first().click();
-  // Scope to the desktop dropdown menu to avoid matching the mobile drawer link
-  await expect(page.locator('.nav-dropdown-menu a[href="import_arp.php"]')).toBeVisible();
+  // In v3.8.0 sidebar nav, ARP Import is a direct sidebar link
+  await expect(page.locator(".sidebar-link[href='import_arp.php']")).toBeVisible();
 });
 
 test('ARP import preview shows parsed entries', async () => {

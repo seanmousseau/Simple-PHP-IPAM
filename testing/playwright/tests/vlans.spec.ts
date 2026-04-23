@@ -73,18 +73,23 @@ test('vlans: create a VLAN', async () => {
 
 test('vlans: VLAN appears in subnet create picker', async () => {
   await page.goto('subnets.php');
-  const vlanSelect = page.locator('select[name=vlan_fk]').first();
+  await page.locator('[data-drawer-title="Add Subnet"]').first().click();
+  await expect(page.locator('#global-drawer')).toBeVisible();
+  const vlanSelect = page.locator('#global-drawer-body select[name=vlan_fk]');
   await expect(vlanSelect).toBeVisible();
   const optionText = await vlanSelect.locator('option').allInnerTexts();
+  await page.keyboard.press('Escape');
   const hasVlan = optionText.some(t => t.includes(TEST_VLAN_NAME) || t.includes(String(TEST_VLAN_ID)));
   expect(hasVlan).toBe(true);
 });
 
 test('vlans: create subnet with VLAN and verify badge', async () => {
   await page.goto('subnets.php');
+  await page.locator('[data-drawer-title="Add Subnet"]').first().click();
+  await expect(page.locator('#global-drawer')).toBeVisible();
 
-  // Find the VLAN option value by name
-  const vlanSelect = page.locator('select[name=vlan_fk]').first();
+  const drawer = page.locator('#global-drawer-body');
+  const vlanSelect = drawer.locator('select[name=vlan_fk]');
   const options = await vlanSelect.locator('option').all();
   let vlanFkValue = '';
   for (const opt of options) {
@@ -96,13 +101,12 @@ test('vlans: create subnet with VLAN and verify badge', async () => {
   }
   expect(vlanFkValue, 'Test VLAN must appear in the subnet VLAN picker').toBeTruthy();
 
-  await page.locator('input[name=cidr]').first().fill(TEST_VLAN_CIDR);
-  await page.locator('input[name=description]').first().fill('vlan badge test');
+  await drawer.locator('input[name=cidr]').fill(TEST_VLAN_CIDR);
+  await drawer.locator('input[name=description]').fill('vlan badge test');
   await vlanSelect.selectOption(vlanFkValue);
-  await page.locator('button[type=submit]').first().click();
+  await drawer.locator('button[type=submit]').click();
 
   await page.waitForURL(/subnets\.php/);
-  // VLAN badge should appear somewhere in the subnet list
   const body = await page.locator('body').innerText();
   expect(body).toContain(TEST_VLAN_NAME);
 });

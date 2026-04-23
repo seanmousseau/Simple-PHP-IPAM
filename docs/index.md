@@ -34,7 +34,7 @@ A lightweight, self-hosted IP Address Management (IPAM) tool built with **PHP 8.
 - **Sidebar navigation** — Enterprise Gateway pattern at ≥1024px; mobile hamburger overlay
 - **Command palette ⌘K** — keyboard-driven navigation, record creation, and theme toggle
 - **Right-side drawer** — slide-in panel for all create/edit flows (subnets, addresses, users)
-- **uPlot dashboard charts** — KPI card grid (total subnets, addresses, utilization, critical alerts) plus time-series growth chart
+- **uPlot dashboard charts** — KPI card grid (total subnets, addresses, utilisation, critical alerts) plus time-series growth chart
 - **SVG icon system** — Heroicons sprite, consistent sizing across all navigation elements
 - **Fira Sans typography** — self-hosted, completes the Fira type family; WCAG AA dark-mode compliant
 - **Dark mode** — automatic, light, and dark themes

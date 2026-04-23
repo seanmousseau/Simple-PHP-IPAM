@@ -118,9 +118,12 @@ test('sites: child site shows indented under parent (depth indicator)', async ()
 
 test('sites: subnet site picker shows hierarchy', async () => {
   await page.goto('subnets.php');
-  const siteSelect = page.locator('select[name=site_id]').first();
+  await page.locator('[data-drawer-title="Add Subnet"]').first().click();
+  await expect(page.locator('#global-drawer')).toBeVisible();
+  const siteSelect = page.locator('#global-drawer-body select[name=site_id]');
   await expect(siteSelect).toBeVisible();
   const options = await siteSelect.locator('option').allInnerTexts();
+  await page.keyboard.press('Escape');
   const hasRegion = options.some(o => o.includes(TEST_REGION_NAME));
   expect(hasRegion).toBe(true);
 });

@@ -565,8 +565,13 @@ function ipam_render(string $view, array $props = []): void
 function ipam_render_string(string $view, array $props = []): string
 {
     ob_start();
-    ipam_render($view, $props);
-    return ob_get_clean() ?: '';
+    try {
+        ipam_render($view, $props);
+    } catch (\Throwable $e) {
+        ob_end_clean();
+        throw $e;
+    }
+    return (string)ob_get_clean();
 }
 
 /**

@@ -1831,8 +1831,11 @@
   var el = document.getElementById('growth-chart');
   if (!el || typeof uPlot === 'undefined') return;
 
-  var xs = JSON.parse(el.getAttribute('data-uplot-xs') || '[]');
-  var ys = JSON.parse(el.getAttribute('data-uplot-ys') || '[]');
+  var xs, ys;
+  try {
+    xs = JSON.parse(el.getAttribute('data-uplot-xs') || '[]');
+    ys = JSON.parse(el.getAttribute('data-uplot-ys') || '[]');
+  } catch (e) { return; }
   if (!xs.length) return;
 
   var style  = getComputedStyle(document.documentElement);
@@ -1904,6 +1907,7 @@ var IpamDrawer = (function () {
         drawer.setAttribute('aria-modal', 'true');
         drawer.setAttribute('aria-hidden', 'true');
         drawer.setAttribute('aria-labelledby', 'global-drawer-title');
+        drawer.setAttribute('tabindex', '-1');
         drawer.innerHTML =
             '<div class="drawer-header">' +
             '<span class="drawer-title" id="global-drawer-title"></span>' +

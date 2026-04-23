@@ -28,7 +28,8 @@ test('sidebar is visible at 1280px viewport', async () => {
 test('sidebar is hidden and hamburger visible at 768px', async () => {
   await page.setViewportSize({ width: 768, height: 800 });
   await page.goto('dashboard.php');
-  await expect(page.locator('#sidebar')).toBeHidden();
+  // Sidebar hides via CSS transform (not display:none), so check it has no is-open class
+  await expect(page.locator('#sidebar')).not.toHaveClass(/is-open/);
   await expect(page.locator('#sidebar-open')).toBeVisible();
 });
 

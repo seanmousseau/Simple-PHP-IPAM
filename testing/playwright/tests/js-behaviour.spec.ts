@@ -37,15 +37,15 @@ test.afterAll(async () => {
 test('search overlay opens on Ctrl+K', async () => {
   await page.goto(appUrl('dashboard.php'));
   await page.keyboard.press('Control+k');
-  await expect(page.locator('#search-overlay')).toBeVisible({ timeout: 2000 });
+  await expect(page.locator('#cmd-palette-bg')).toBeVisible({ timeout: 2000 });
   await page.keyboard.press('Escape');
-  await expect(page.locator('#search-overlay')).not.toBeVisible();
+  await expect(page.locator('#cmd-palette-bg')).not.toBeVisible();
 });
 
 test('search overlay opens on Meta+K (macOS)', async () => {
   await page.goto(appUrl('dashboard.php'));
   await page.keyboard.press('Meta+k');
-  await expect(page.locator('#search-overlay')).toBeVisible({ timeout: 2000 });
+  await expect(page.locator('#cmd-palette-bg')).toBeVisible({ timeout: 2000 });
   await page.keyboard.press('Escape');
 });
 

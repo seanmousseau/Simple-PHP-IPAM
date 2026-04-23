@@ -107,18 +107,22 @@ test('vrfs: create a VRF', async () => {
 
 test('vrfs: VRF appears in subnet create picker', async () => {
   await page.goto('subnets.php');
-  const vrfSelect = page.locator('select[name=vrf_id]').first();
+  await page.locator('[data-drawer-title="Add Subnet"]').first().click();
+  await expect(page.locator('#global-drawer')).toBeVisible();
+  const vrfSelect = page.locator('#global-drawer-body select[name=vrf_id]');
   await expect(vrfSelect).toBeVisible();
   const optionTexts = await vrfSelect.locator('option').allInnerTexts();
+  await page.keyboard.press('Escape');
   const hasVrf = optionTexts.some(t => t.includes(TEST_VRF_NAME));
   expect(hasVrf).toBe(true);
 });
 
 test('vrfs: create subnet in VRF and verify badge', async () => {
   await page.goto('subnets.php');
+  await page.locator('[data-drawer-title="Add Subnet"]').first().click();
+  await expect(page.locator('#global-drawer')).toBeVisible();
 
-  // Find the VRF option value via the picker (verifies the VRF appears in the UI)
-  const vrfSelect = page.locator('select[name=vrf_id]').first();
+  const vrfSelect = page.locator('#global-drawer-body select[name=vrf_id]');
   const options = await vrfSelect.locator('option').all();
   let vrfValue = '';
   for (const opt of options) {
@@ -129,6 +133,7 @@ test('vrfs: create subnet in VRF and verify badge', async () => {
     }
   }
   expect(vrfValue, 'Test VRF must appear in the subnet VRF picker').toBeTruthy();
+  await page.keyboard.press('Escape');
 
   // Use fetchPost so confirm_overlap can be included — the demo DB has 10.0.0.0/8
   // which would trigger an overlap-confirmation redirect on a browser form submit.
