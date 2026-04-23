@@ -1843,6 +1843,16 @@
   } catch (e) { return; }
   if (!xs.length) return;
 
+  var hasData = ys.some(function(v) { return v !== 0; });
+  if (!hasData) {
+    var emptyMsg = document.createElement('p');
+    emptyMsg.className = 'muted';
+    emptyMsg.style.cssText = 'text-align:center;line-height:180px;margin:0';
+    emptyMsg.textContent = 'No new addresses recorded in the last 30 days.';
+    el.appendChild(emptyMsg);
+    return;
+  }
+
   var style  = getComputedStyle(document.documentElement);
   var stroke = (style.getPropertyValue('--link') || '#0077cc').trim();
   var fill   = stroke + '22';
