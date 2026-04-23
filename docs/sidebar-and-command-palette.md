@@ -63,8 +63,7 @@ The sidebar is divided into two sections:
 | API Keys | `api_keys.php` |
 | Webhooks | `webhooks.php` |
 | Import CSV | `import_csv.php` |
-| Database Tools | `db_tools.php` (SQLite only) |
-| Backups | `backups.php` |
+| Database Tools | `db_tools.php` — backup history (all engines), SQL export/import (SQLite only) |
 | Health | `health.php` |
 
 ### User block
