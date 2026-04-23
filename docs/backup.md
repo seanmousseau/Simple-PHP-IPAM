@@ -69,13 +69,13 @@ Each backup is verified with SHA-256 and recorded in `backup_history`.
 
 ## Verifying Integrity
 
-In **Admin → Backups**, each row in the history table has a **Verify** button (POST, CSRF-protected). This re-computes the SHA-256 hash of the file on disk and compares it to the recorded hash. A mismatch means the file may be corrupted or tampered with.
+In **Admin → Database**, each row in the history table has a **Verify** button (POST, CSRF-protected). This re-computes the SHA-256 hash of the file on disk and compares it to the recorded hash. A mismatch means the file may be corrupted or tampered with.
 
 From the CLI:
 
 ```bash
 sha256sum /path/to/Simple-PHP-IPAM/data/backups/ipam-2026-04-22-020000.sqlite
-# Compare to the hash shown in Admin → Backups
+# Compare to the hash shown in Admin → Database
 ```
 
 ---
@@ -84,7 +84,7 @@ sha256sum /path/to/Simple-PHP-IPAM/data/backups/ipam-2026-04-22-020000.sqlite
 
 ### Step 1: Identify the backup file
 
-Find the file path from **Admin → Backups** (click "Restore…" for the CLI command pre-filled) or list files directly:
+Find the file path from **Admin → Database** (click "Restore…" for the CLI command pre-filled) or list files directly:
 
 ```bash
 ls -lh /path/to/Simple-PHP-IPAM/data/backups/
