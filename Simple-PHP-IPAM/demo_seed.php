@@ -74,25 +74,12 @@ if (getenv('SEED_2FA_TEST_USER') === '1') {
         fwrite(STDERR, "Error: app_secret must be set in config when SEED_2FA_TEST_USER=1\n");
         exit(1);
     } else {
-        // Encrypt using AES-256-GCM, matching ipam_totp_encrypt_secret() in lib.php
-        $iv  = random_bytes(12);
-        $tag = '';
-        $enc = openssl_encrypt(
-            $testSecret,
-            'aes-256-gcm',
-            hash('sha256', $appSecret, true),
-            OPENSSL_RAW_DATA,
-            $iv,
-            $tag,
-            '',
-            16
-        );
-        if ($enc === false) {
-            echo "Error: TOTP secret encryption failed\n";
+        try {
+            $encSecret = ipam_totp_encrypt_secret($testSecret, $appSecret);
+        } catch (\Throwable $e) {
+            fwrite(STDERR, "Error: {$e->getMessage()}\n");
             exit(1);
         }
-        // '$2$' prefix identifies GCM format (same as ipam_totp_encrypt_secret in lib.php)
-        $encSecret = '$2$' . base64_encode($iv . $tag . $enc);
 
         // Idempotent seed: remove any prior run's test user then INSERT fresh.
         // demo_reset_db() clears the demo users so this is normally a no-op DELETE.
@@ -112,20 +99,15 @@ if (getenv('SEED_2FA_TEST_USER') === '1') {
         $uid  = (int) (($stmt ? $stmt->fetchColumn() : false) ?: 0);
 
         if ($uid === 0) {
-            echo "Error: could not determine uid for 2fa_test_user\n";
+            fwrite(STDERR, "Error: could not determine uid for 2fa_test_user\n");
             exit(1);
         }
 
-        // Seed known backup codes (stored as password_hash, matching ipam_totp_save_backup_codes)
-        $db->prepare("DELETE FROM totp_backup_codes WHERE user_id=:uid")->execute([':uid' => $uid]);
-        $bkSt = $db->prepare(
-            "INSERT INTO totp_backup_codes (user_id, code_hash) VALUES (:uid, :ch)"
-        );
-        foreach (['AAAA1111-BBBB2222', 'CCCC3333-DDDD4444', 'EEEE5555-FFFF6666',
-                  'GGGG7777-HHHH8888', 'IIII9999-JJJJAAAA', 'KKKK1111-LLLL2222',
-                  'MMMM3333-NNNN4444', 'OOOO5555-PPPP6666'] as $code) {
-            $bkSt->execute([':uid' => $uid, ':ch' => password_hash($code, PASSWORD_DEFAULT)]);
-        }
+        ipam_totp_save_backup_codes($db, $uid, [
+            'AAAA1111-BBBB2222', 'CCCC3333-DDDD4444', 'EEEE5555-FFFF6666',
+            'GGGG7777-HHHH8888', 'IIII9999-JJJJAAAA', 'KKKK1111-LLLL2222',
+            'MMMM3333-NNNN4444', 'OOOO5555-PPPP6666',
+        ]);
         echo "Seeded 2FA test user: 2fa_test_user\n";
     }
 }
