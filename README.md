@@ -19,7 +19,7 @@ v3.8.1 is a patch release fixing three dashboard layout bugs discovered after v3
 **Bug fixes:**
 - KPI cards now have proper spacing below action pills (#635)
 - Dashboard grid collapses correctly at the sidebar breakpoint; uPlot chart resizes on sidebar open/close (#636)
-- Address growth chart shows a friendly empty state instead of a flat zero-line when no addresses exist (#637)
+- Address growth chart shows a friendly empty state instead of a flat zero-line when no new addresses were recorded in the last 30 days (#637)
 
 **Documentation:**
 - MySQL, MariaDB, PostgreSQL marked stable (were incorrectly labeled experimental) (#638)

@@ -428,6 +428,9 @@
       overlay.className = "sidebar-overlay";
       document.body.appendChild(overlay);
 
+      // Matches the CSS sidebar slide-in transition duration so uPlot resizes after layout settles
+      var SIDEBAR_TRANSITION_MS = 320;
+
       function isMobile() {
         return window.innerWidth <= 1023;
       }
@@ -438,7 +441,7 @@
         sidebar.setAttribute("aria-hidden", "false");
         if (openBtn) openBtn.setAttribute("aria-expanded", "true");
         if (closeBtn) closeBtn.focus();
-        setTimeout(function() { document.dispatchEvent(new CustomEvent('ipam:sidebar-toggle')); }, 320);
+        setTimeout(function() { document.dispatchEvent(new CustomEvent('ipam:sidebar-toggle')); }, SIDEBAR_TRANSITION_MS);
       }
 
       function closeSidebar() {
@@ -449,7 +452,7 @@
           openBtn.setAttribute("aria-expanded", "false");
           openBtn.focus();
         }
-        setTimeout(function() { document.dispatchEvent(new CustomEvent('ipam:sidebar-toggle')); }, 320);
+        setTimeout(function() { document.dispatchEvent(new CustomEvent('ipam:sidebar-toggle')); }, SIDEBAR_TRANSITION_MS);
       }
 
       // Set initial aria-hidden state

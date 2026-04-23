@@ -34,13 +34,12 @@ On viewports <1024px the sidebar is hidden by default. A **hamburger button** (�
 - Click anywhere on the dimmed backdrop overlay
 - Press **Escape**
 
-The sidebar overlay locks background scroll while open.
-
 ### Nav sections
 
 The sidebar is divided into two sections:
 
 **Main navigation** (available to all roles):
+
 | Link | Page |
 |------|------|
 | Dashboard | `dashboard.php` |
@@ -50,6 +49,7 @@ The sidebar is divided into two sections:
 | Audit Log | `audit.php` |
 
 **Admin section** (visible to `admin` role only):
+
 | Link | Page |
 |------|------|
 | Sites | `sites.php` |
@@ -94,23 +94,20 @@ The palette can be opened from any page. It opens as a centred modal overlay. Pr
 
 Type any part of a command name or description to filter the list. Available commands include:
 
-**Navigation**
-- Go to Dashboard
-- Go to Subnets
-- Go to Addresses
-- Go to Search
-- Go to Audit Log
-- Go to Sites / VLANs / VRFs / Tags / Contacts / Custom Fields / Users (admin only)
-- Go to API Keys / Webhooks / Health / Backups (admin only)
+**Pages**
+- Dashboard
+- Subnets
+- Addresses
+- Search
+- Audit Log
 
 **Actions**
-- Create Subnet — opens the new subnet drawer
-- Create Address — opens the new address drawer
-- Create Site — opens the new site form (admin only)
-- Create VLAN — opens the new VLAN form (admin only)
+- New Subnet — opens the add-subnet drawer
 
 **Preferences**
 - Toggle Theme — cycles Auto → Light → Dark → Auto
+
+Typing two or more characters also performs a live address search and shows matching results inline.
 
 ### Keyboard navigation
 
@@ -122,6 +119,5 @@ Once the palette is open:
 | ↑ / ↓ | Move selection up/down |
 | Enter | Execute selected command |
 | Escape | Close palette |
-| Tab | Move to next result (same as ↓) |
 
 The selected command is highlighted. Commands that open a page navigate immediately on Enter. Commands that open a drawer or form close the palette first and then open the target.
