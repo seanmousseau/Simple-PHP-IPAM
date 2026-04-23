@@ -2000,14 +2000,14 @@ function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
     if (!bar) return;
     var countEl = document.getElementById("bulk-bar-count");
     var linkEl = document.getElementById("bulk-bar-link");
-    var subnetId = bar.getAttribute("data-subnet-id") || "";
+    var subnetId = parseInt(bar.getAttribute("data-subnet-id") || "0", 10);
 
     function updateBar() {
         var checked = document.querySelectorAll(".row-select:checked");
         var n = checked.length;
         bar.classList.toggle("is-visible", n > 0);
         if (countEl) countEl.textContent = n + " selected";
-        if (linkEl && subnetId) {
+        if (linkEl && subnetId > 0) {
             var ids = [];
             for (var i = 0; i < checked.length; i++) ids.push(checked[i].value);
             linkEl.href = "bulk_update.php?subnet_id=" + encodeURIComponent(subnetId) + "&ids=" + ids.join(",");
