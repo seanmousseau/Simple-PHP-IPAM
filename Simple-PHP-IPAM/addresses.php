@@ -12,10 +12,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $err = '';
 $msg = '';
 
-$st = $db->prepare("SELECT id, cidr, network, prefix, ip_version FROM subnets ORDER BY ip_version ASC, cidr ASC");
+$st = $db->prepare("SELECT id, cidr, network, prefix, ip_version, site_id, description FROM subnets ORDER BY ip_version ASC, cidr ASC");
 $st->execute();
 /** @var list<array<string, mixed>> $subnetList */
 $subnetList = $st->fetchAll();
+
+/** @var list<array<string, mixed>> $addrSiteList */
+$addrSiteList = ($db->query("SELECT id, name FROM sites ORDER BY name ASC") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+$addrDistinctSiteCount = count(array_unique(array_filter(array_column($subnetList, 'site_id'), fn($v) => (int)$v > 0)));
 
 $selectedSubnetId = to_int($_GET['subnet_id'] ?? ($_POST['subnet_id'] ?? 0));
 $highlightId = to_int($_GET['highlight'] ?? 0);
@@ -41,12 +45,13 @@ if ($filterType === 'expired') {
 
 $selectedSubnet = null;
 if ($selectedSubnetId > 0) {
-    $st = $db->prepare("SELECT id, cidr, network, prefix, ip_version, description, notes FROM subnets WHERE id = :id");
+    $st = $db->prepare("SELECT id, cidr, network, prefix, ip_version, site_id, description, notes FROM subnets WHERE id = :id");
     $st->execute([':id' => $selectedSubnetId]);
     /** @var array<string, mixed>|false $selRow */
     $selRow = $st->fetch();
     $selectedSubnet = $selRow ?: null;
 }
+$preselectSiteId = to_int($selectedSubnet['site_id'] ?? 0);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = to_str($_POST['action'] ?? '');
@@ -551,11 +556,22 @@ ipam_skeleton_flush();
 
 <div class="card mt-16">
   <form method="get" action="addresses.php" class="row">
+    <?php if ($addrDistinctSiteCount >= 2): ?>
+    <label>Site<br>
+      <select id="addrSiteFilter" name="_site_filter" aria-label="Filter by site">
+        <option value="0"<?= $preselectSiteId === 0 ? ' selected' : '' ?>>-- All sites --</option>
+        <?php foreach ($addrSiteList as $site): ?>
+          <option value="<?= to_int($site['id']) ?>"<?= to_int($site['id']) === $preselectSiteId ? ' selected' : '' ?>><?= e(to_str($site['name'])) ?></option>
+        <?php endforeach; ?>
+      </select>
+    </label>
+    <?php endif; ?>
+
     <label>Subnet<br>
       <select name="subnet_id">
         <option value="0">-- Select --</option>
         <?php foreach ($subnetList as $s): ?>
-          <option value="<?= to_int($s['id']) ?>" <?= (to_int($s['id']) === $selectedSubnetId) ? 'selected' : '' ?>>
+          <option value="<?= to_int($s['id']) ?>" <?= (to_int($s['id']) === $selectedSubnetId) ? 'selected' : '' ?> data-site-id="<?= to_int($s['site_id'] ?? 0) ?>">
             <?= e(to_str($s['cidr'])) ?>
           </option>
         <?php endforeach; ?>
