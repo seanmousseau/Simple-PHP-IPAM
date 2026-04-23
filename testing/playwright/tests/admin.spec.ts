@@ -35,16 +35,13 @@ test('dashboard: correct title and has stat cards', async () => {
 
 test('dashboard: nav bar present', async () => {
   await page.goto('dashboard.php');
-  await expect(page.locator('.topbar')).toBeVisible();
+  await expect(page.locator('#sidebar')).toBeVisible();
 });
 
-test('nav: DHCP Pools in admin dropdown, not top nav', async () => {
+test('nav: DHCP Pools accessible in sidebar', async () => {
   await page.goto('dashboard.php');
-  const adminItems = await page.locator('.nav-dropdown-item').allInnerTexts();
-  const topNavLinks = await page.locator('.nav-links > a.nav-pill, .nav-links > .nav-pill:not(.nav-dropdown-toggle)')
-    .allInnerTexts();
-  expect(adminItems.some(t => t.includes('DHCP'))).toBe(true);
-  expect(topNavLinks.some(t => t.includes('DHCP'))).toBe(false);
+  const sidebarLinks = await page.locator('.sidebar-link').allInnerTexts();
+  expect(sidebarLinks.some(t => t.includes('DHCP'))).toBe(true);
 });
 
 // ── API keys ───────────────────────────────────────────────────────────────────
@@ -197,12 +194,11 @@ test('vlans page: loads via admin nav', async () => {
   await expect(page.locator('h1')).toContainText('VLANs');
 });
 
-test('vlans page: accessible from admin dropdown', async () => {
+test('vlans page: accessible from admin sidebar', async () => {
   await page.goto('dashboard.php');
-  const adminDropdown = page.locator('.nav-dropdown-item');
-  const items = await adminDropdown.allInnerTexts();
-  const hasVlans = items.some(t => t.toLowerCase().includes('vlan'));
-  expect(hasVlans, 'Admin dropdown must contain a VLANs link').toBe(true);
+  const sidebarLinks = await page.locator('.sidebar-link').allInnerTexts();
+  const hasVlans = sidebarLinks.some((t: string) => t.toLowerCase().includes('vlan'));
+  expect(hasVlans, 'Sidebar must contain a VLANs link').toBe(true);
 });
 
 test('vlans page: breadcrumb present', async () => {
@@ -219,12 +215,11 @@ test('tags page: loads via admin nav', async () => {
   await expect(page.locator('h1')).toContainText('Tags');
 });
 
-test('tags page: accessible from admin dropdown', async () => {
+test('tags page: accessible from admin sidebar', async () => {
   await page.goto('dashboard.php');
-  const adminDropdown = page.locator('.nav-dropdown-item');
-  const items = await adminDropdown.allInnerTexts();
-  const hasTags = items.some(t => t.toLowerCase().includes('tag'));
-  expect(hasTags, 'Admin dropdown must contain a Tags link').toBe(true);
+  const sidebarLinks = await page.locator('.sidebar-link').allInnerTexts();
+  const hasTags = sidebarLinks.some((t: string) => t.toLowerCase().includes('tag'));
+  expect(hasTags, 'Sidebar must contain a Tags link').toBe(true);
 });
 
 test('tags page: breadcrumb present', async () => {

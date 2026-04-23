@@ -138,23 +138,28 @@ test.afterAll(async () => {
 
 test('subnet create: custom field section appears in form', async () => {
   await page.goto('subnets.php');
-  // Narrow to the create form to avoid strict-mode collision with the hidden drawer copy
-  await expect(page.locator('#add-subnet .custom-field-group')).toBeVisible();
-  await expect(page.locator('#add-subnet .custom-field-heading')).toContainText('Custom fields');
+  await page.locator('[data-drawer-title="Add Subnet"]').first().click();
+  await expect(page.locator('#global-drawer-body .custom-field-group')).toBeVisible({ timeout: 5000 });
+  await expect(page.locator('#global-drawer-body .custom-field-heading')).toContainText('Custom fields');
+  await page.keyboard.press('Escape');
 });
 
 test('subnet create: all five field types render correct input controls', async () => {
   await page.goto('subnets.php');
+  await page.locator('[data-drawer-title="Add Subnet"]').first().click();
+  const drawer = page.locator('#global-drawer-body');
+  await expect(drawer).toBeVisible({ timeout: 5000 });
   // text
-  await expect(page.locator(`input[name="cf_${CF_KEY_TXT}"]`).first()).toBeVisible();
+  await expect(drawer.locator(`input[name="cf_${CF_KEY_TXT}"]`)).toBeVisible();
   // number
-  await expect(page.locator(`input[type=number][name="cf_${CF_KEY_NUM}"]`).first()).toBeVisible();
+  await expect(drawer.locator(`input[type=number][name="cf_${CF_KEY_NUM}"]`)).toBeVisible();
   // date
-  await expect(page.locator(`input[type=date][name="cf_${CF_KEY_DATE}"]`).first()).toBeVisible();
+  await expect(drawer.locator(`input[type=date][name="cf_${CF_KEY_DATE}"]`)).toBeVisible();
   // boolean
-  await expect(page.locator(`input[type=checkbox][name="cf_${CF_KEY_BOOL}"]`).first()).toBeVisible();
+  await expect(drawer.locator(`input[type=checkbox][name="cf_${CF_KEY_BOOL}"]`)).toBeVisible();
   // select
-  await expect(page.locator(`select[name="cf_${CF_KEY_SEL}"]`).first()).toBeVisible();
+  await expect(drawer.locator(`select[name="cf_${CF_KEY_SEL}"]`)).toBeVisible();
+  await page.keyboard.press('Escape');
 });
 
 test('subnet create: persists text + number + date + boolean + select values', async () => {
@@ -297,10 +302,10 @@ test('subnet update: invalid select option returns error', async () => {
 test('address create form: CF section appears', async () => {
   expect(subnetId, 'need subnet ID').not.toBeNull();
   await page.goto(`addresses.php?subnet_id=${subnetId}`);
-  // The add-address form is a drawer-form-card (hidden until opened via the Add Address button)
-  await page.locator('[data-open-drawer="add-address"]').first().click();
-  await expect(page.locator('#add-address .custom-field-group')).toBeVisible({ timeout: 5000 });
-  await expect(page.locator('#add-address .custom-field-heading')).toContainText('Custom fields');
+  await page.locator('[data-drawer-title="Add Address"]').first().click();
+  await expect(page.locator('#global-drawer-body .custom-field-group')).toBeVisible({ timeout: 5000 });
+  await expect(page.locator('#global-drawer-body .custom-field-heading')).toContainText('Custom fields');
+  await page.keyboard.press('Escape');
 });
 
 test('address create: required CF field enforced server-side', async () => {

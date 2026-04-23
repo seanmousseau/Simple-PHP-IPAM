@@ -65,11 +65,9 @@ test('custom-fields page: breadcrumb present', async () => {
   await expect(page.locator('.breadcrumbs')).toContainText('Dashboard');
 });
 
-test('custom-fields page: nav dropdown link present', async () => {
+test('custom-fields page: nav sidebar link present', async () => {
   await page.goto('dashboard.php');
-  const adminToggle = page.locator('.nav-dropdown-toggle').filter({ hasText: /admin/i }).first();
-  await adminToggle.click();
-  await expect(page.locator(".nav-dropdown-item[href='custom_fields.php']")).toBeVisible();
+  await expect(page.locator(".sidebar-link[href='custom_fields.php']")).toBeVisible();
 });
 
 // ── Role guard ─────────────────────────────────────────────────────────────────

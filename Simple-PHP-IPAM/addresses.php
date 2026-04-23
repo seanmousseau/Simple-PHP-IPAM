@@ -643,7 +643,7 @@ ipam_skeleton_flush();
     <table data-col-table="addresses" class="data-table">
       <thead>
         <tr>
-          <th><input type="checkbox" id="select-all-addresses" aria-label="Select all"></th>
+          <?php if (current_user()['role'] !== 'readonly'): ?><th><input type="checkbox" id="select-all-addresses" aria-label="Select all"></th><?php else: ?><th></th><?php endif; ?>
           <?php $addrQsParams = ['subnet_id' => $selectedSubnetId, 'page_size' => $pageSize];
                 if ($filterType !== '') { $addrQsParams['filter'] = $filterType; }
                 if ($filterType === 'expiring') { $addrQsParams['days'] = $filterDays; }
@@ -673,7 +673,7 @@ ipam_skeleton_flush();
           $rowClasses = array_filter([$isHighlighted ? 'highlight-row' : '', $isExpired ? 'expired-row' : '']);
       ?>
         <tr id="addr-<?= $aid ?>"<?= $rowClasses ? ' class="' . e(implode(' ', $rowClasses)) . '"' : '' ?>>
-          <td><input type="checkbox" class="row-select" value="<?= $aid ?>" aria-label="Select row"></td>
+          <td><?php if ($isWrite): ?><input type="checkbox" class="row-select" value="<?= $aid ?>" aria-label="Select row"><?php endif; ?></td>
           <td class="ip-cell"><?= e(to_str($a['ip'])) ?><?php
             $ipBin = is_string($a['ip_bin'] ?? null) ? $a['ip_bin'] : '';
             if ($ipBin !== '') {
@@ -839,8 +839,10 @@ ipam_skeleton_flush();
 </script>
 <?php endif; ?>
 <?php
-echo "<div id='bulk-bar' class='bulk-bar' role='status' aria-live='polite' data-subnet-id='" . (int)$selectedSubnetId . "'>";
-echo "  <span class='bulk-bar-count' id='bulk-bar-count'>0 selected</span>";
-echo "  <a class='button-secondary' id='bulk-bar-link' href='bulk_update.php?subnet_id=" . (int)$selectedSubnetId . "'>Bulk Edit</a>";
-echo "</div>";
+if (current_user()['role'] !== 'readonly') {
+    echo "<div id='bulk-bar' class='bulk-bar' role='status' aria-live='polite' data-subnet-id='" . (int)$selectedSubnetId . "'>";
+    echo "  <span class='bulk-bar-count' id='bulk-bar-count'>0 selected</span>";
+    echo "  <a class='button-secondary' id='bulk-bar-link' href='bulk_update.php?subnet_id=" . (int)$selectedSubnetId . "'>Bulk Edit</a>";
+    echo "</div>";
+}
 ipam_skeleton_remove(); page_footer();

@@ -243,20 +243,20 @@ test('addresses: inline status toggle cycles status on click', async () => {
 test('addresses: Add Address drawer trigger present', async () => {
   if (!subnetId) { test.skip(); return; }
   await page.goto(`addresses.php?subnet_id=${subnetId}`);
-  const trigger = page.locator('[data-open-drawer="add-address"]');
+  const trigger = page.locator('[data-drawer-title="Add Address"]').first();
   await expect(trigger).toBeVisible();
 });
 
 test('addresses: form drawer opens on Add Address click', async () => {
   if (!subnetId) { test.skip(); return; }
   await page.goto(`addresses.php?subnet_id=${subnetId}`);
-  const trigger = page.locator('[data-open-drawer="add-address"]');
+  const trigger = page.locator('[data-drawer-title="Add Address"]').first();
   if (await trigger.count() === 0) {
     test.skip(true, 'No Add Address drawer trigger found');
     return;
   }
   await trigger.click();
-  await expect(page.locator('#form-drawer')).toBeVisible();
+  await expect(page.locator('#global-drawer')).toBeVisible();
 });
 
 // ── v2.3.0 scan-related address fields ────────────────────────────────────────
