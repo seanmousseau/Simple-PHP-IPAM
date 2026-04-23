@@ -62,3 +62,65 @@ echo "Resetting database to demo data...\n";
 demo_reset_db($db);
 file_put_contents(__DIR__ . '/data/demo_last_reset.txt', (string)time());
 echo "Done. Demo data loaded successfully.\n";
+
+// 2FA test user — seeded only when SEED_2FA_TEST_USER=1
+if (getenv('SEED_2FA_TEST_USER') === '1') {
+    $testSecret = 'JBSWY3DPEHPK3PXP'; // standard RFC 6238 test vector (base32)
+    $appSecret  = to_str($config['app_secret'] ?? '');
+    if ($appSecret === '') {
+        echo "Warning: app_secret not set in config — 2FA test user skipped\n";
+    } else {
+        // Encrypt using AES-256-GCM, matching ipam_totp_encrypt_secret() in lib.php
+        $iv  = random_bytes(12);
+        $tag = '';
+        $enc = openssl_encrypt(
+            $testSecret,
+            'aes-256-gcm',
+            hash('sha256', $appSecret, true),
+            OPENSSL_RAW_DATA,
+            $iv,
+            $tag,
+            '',
+            16
+        );
+        if ($enc === false) {
+            echo "Error: TOTP secret encryption failed\n";
+            exit(1);
+        }
+        // '$2$' prefix identifies GCM format (same as ipam_totp_encrypt_secret in lib.php)
+        $encSecret = '$2$' . base64_encode($iv . $tag . $enc);
+
+        // Upsert the test user (INSERT OR REPLACE resets the id on conflict; handle below)
+        $db->prepare(
+            "INSERT OR REPLACE INTO users
+                (username, password_hash, role, is_active, totp_enabled, totp_secret_enc, email, name)
+             VALUES ('2fa_test_user', :ph, 'readonly', 1, 1, :ts, '2fa_test@example.com', '2FA Test User')"
+        )->execute([
+            ':ph' => password_hash('Password1!', PASSWORD_DEFAULT),
+            ':ts' => $encSecret,
+        ]);
+
+        $uid = (int) $db->lastInsertId();
+        if ($uid === 0) {
+            // Was a REPLACE — fetch the id
+            $uid = (int) ($db->query("SELECT id FROM users WHERE username='2fa_test_user'")->fetchColumn() ?: 0);
+        }
+
+        if ($uid === 0) {
+            echo "Error: could not determine uid for 2fa_test_user\n";
+            exit(1);
+        }
+
+        // Seed known backup codes (stored as password_hash, matching ipam_totp_save_backup_codes)
+        $db->prepare("DELETE FROM totp_backup_codes WHERE user_id=:uid")->execute([':uid' => $uid]);
+        $bkSt = $db->prepare(
+            "INSERT INTO totp_backup_codes (user_id, code_hash) VALUES (:uid, :ch)"
+        );
+        foreach (['AAAA1111-BBBB2222', 'CCCC3333-DDDD4444', 'EEEE5555-FFFF6666',
+                  'GGGG7777-HHHH8888', 'IIII9999-JJJJAAAA', 'KKKK1111-LLLL2222',
+                  'MMMM3333-NNNN4444', 'OOOO5555-PPPP6666'] as $code) {
+            $bkSt->execute([':uid' => $uid, ':ch' => password_hash($code, PASSWORD_DEFAULT)]);
+        }
+        echo "Seeded 2FA test user: 2fa_test_user / Password1! (TOTP secret: $testSecret)\n";
+    }
+}

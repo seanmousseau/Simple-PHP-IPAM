@@ -65,6 +65,7 @@ return [
         'site_key'   => '',
         'secret_key' => '',
     ],
+    'app_secret'           => 'playwright-test-app-secret-for-totp',
     'oidc'                 => [
         'enabled'        => false,
         'display_name'   => 'SSO',

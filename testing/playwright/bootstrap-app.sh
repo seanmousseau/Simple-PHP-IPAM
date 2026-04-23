@@ -225,7 +225,7 @@ fi
 if [[ -d "$repo_root/vendor" ]]; then
     seed_docker_args+=(-v "$repo_root/vendor:/var/www/vendor:ro")
 fi
-docker run --rm "${seed_docker_args[@]}" "$image" \
+docker run --rm "${seed_docker_args[@]}" -e SEED_2FA_TEST_USER=1 "$image" \
     bash -c 'php migrate.php && php demo_seed.php && chmod -R a+rwX data' \
     >/tmp/ipam-pw-seed.log 2>&1 || {
         echo "bootstrap-app: seeding failed, log follows:" >&2
