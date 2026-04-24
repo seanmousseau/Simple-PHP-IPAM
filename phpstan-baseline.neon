@@ -283,6 +283,18 @@ parameters:
 			path: Simple-PHP-IPAM/health.php
 
 		-
+			message: '#^Cannot access offset ''warn_alerts'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 2
+			path: Simple-PHP-IPAM/health.php
+
+		-
+			message: '#^Cannot access offset ''crit_alerts'' on mixed\.$#'
+			identifier: offsetAccess.nonOffsetAccessible
+			count: 2
+			path: Simple-PHP-IPAM/health.php
+
+		-
 			message: '#^Cannot cast mixed to int\.$#'
 			identifier: cast.int
 			count: 2

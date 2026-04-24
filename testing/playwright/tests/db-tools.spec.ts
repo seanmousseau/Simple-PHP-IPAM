@@ -55,11 +55,15 @@ test('db_tools page loads', async () => {
 });
 
 test('db_tools export/import card heights are equal', async () => {
+  // Use a wide viewport so .grid.cols-2 (minmax(520px,1fr)) renders 2 columns.
+  // 1400px gives ~1180px content width (sidebar ~220px), which exceeds 2×520+gap.
+  await page.setViewportSize({ width: 1400, height: 900 });
   await page.goto('db_tools.php');
   const heights = await page.evaluate(() =>
     Array.from(document.querySelectorAll('.grid > .card'))
       .map((c) => Math.round(c.getBoundingClientRect().height)),
   );
+  await page.setViewportSize({ width: 1280, height: 720 });
   expect(heights.length, 'at least 2 cards').toBeGreaterThanOrEqual(2);
   const allEqual = heights.every(h => h === heights[0]);
   expect(allEqual, `cards equal height: ${JSON.stringify(heights)}`).toBe(true);

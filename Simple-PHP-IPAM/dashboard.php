@@ -225,6 +225,7 @@ ipam_render('dashboard_kpi_card', ['label' => 'Crit Alerts', 'value' => $kpis['a
     <?php if (!$topSubnets): ?>
       <div class="empty-state">No IPv4 subnets in /8&ndash;/32 range.</div>
     <?php else: ?>
+      <div class="table-scroll">
       <table>
         <thead>
           <tr><th>Subnet</th><th>Description</th><th>Used</th><th>Capacity</th><th>Fill</th><th>Trend</th></tr>
@@ -256,6 +257,7 @@ ipam_render('dashboard_kpi_card', ['label' => 'Crit Alerts', 'value' => $kpis['a
         <?php endforeach; ?>
         </tbody>
       </table>
+      </div>
     <?php endif; ?>
     <div class="mt-10"><a class="action-pill" href="subnets.php"><?= icon('server-stack') ?> All Subnets</a></div>
   </div>
@@ -266,7 +268,14 @@ ipam_render('dashboard_kpi_card', ['label' => 'Crit Alerts', 'value' => $kpis['a
       <button class="widget-hide-btn" data-widget-key="by-site" aria-label="Hide widget"><?= icon('x') ?></button>
     </div>
     <?php if (!$bySite): ?>
-      <div class="empty-state">No data yet.</div>
+      <div class="empty-state">
+        <p class="muted">No site data yet.</p>
+        <?php if (current_user()['role'] === 'admin'): ?>
+          <a href="sites.php" class="action-pill"><?= icon('map-pin') ?> Manage Sites</a>
+        <?php else: ?>
+          <p class="muted" style="font-size:.85rem">Ask an administrator to configure sites.</p>
+        <?php endif; ?>
+      </div>
     <?php else: ?>
       <div class="mb-8">
         <select id="dash-site-filter" class="action-pill">
@@ -276,6 +285,7 @@ ipam_render('dashboard_kpi_card', ['label' => 'Crit Alerts', 'value' => $kpis['a
           <?php endforeach; ?>
         </select>
       </div>
+      <div class="table-scroll">
       <table>
         <thead>
           <tr><th>Site</th><th>Used</th><th>Reserved</th><th>Free</th><th>Total</th></tr>
@@ -292,8 +302,9 @@ ipam_render('dashboard_kpi_card', ['label' => 'Crit Alerts', 'value' => $kpis['a
         <?php endforeach; ?>
         </tbody>
       </table>
+      </div>
     <?php endif; ?>
-    <?php if (current_user()['role'] === 'admin'): ?>
+    <?php if ($bySite && current_user()['role'] === 'admin'): ?>
       <div class="mt-10"><a class="action-pill" href="sites.php"><?= icon('map-pin') ?> Manage Sites</a></div>
     <?php endif; ?>
   </div>

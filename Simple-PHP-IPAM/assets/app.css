@@ -436,7 +436,7 @@ tr.highlight{
 /* Push CTA links to bottom of equal-height grid cards (#650) */
 .grid > .card > .mt-10:last-child{margin-top:auto}
 .grid.cols-2{
-  grid-template-columns:repeat(auto-fit,minmax(420px,1fr));
+  grid-template-columns:repeat(auto-fit,minmax(520px,1fr));
 }
 .grid.cols-3{
   grid-template-columns:repeat(auto-fit,minmax(240px,1fr));

@@ -9,6 +9,7 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
+  - [v3.12.0](#v3120) — Dashboard responsive fix, health alert indicators, webhooks cleanup (no breaking changes)
   - [v3.9.0](#v390) — Site filter strip, cascading address filter, DB admin consolidation (no breaking changes)
   - [v3.8.1](#v381) — Dashboard bug fixes, documentation refresh (no breaking changes)
   - [v3.8.0](#v380) — Sidebar navigation, command palette, uPlot dashboard, SVG icons, Fira Sans (no breaking changes)
@@ -99,6 +100,14 @@ The backup is left in place after a successful upgrade. You can remove it manual
 ---
 
 ## Version-specific upgrade notes
+
+### v3.12.0
+
+No breaking changes, new configuration keys, or migrations.
+
+**UI changes:** The dashboard two-column widget grid now requires a wider viewport before splitting (fixes overlap at ~900–1100px). Health page scanning card has two new rows: Warn alerts and Crit alerts.
+
+---
 
 ### v3.11.0
 

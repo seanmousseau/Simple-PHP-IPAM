@@ -206,11 +206,44 @@ test('webhooks delivery-log view has breadcrumb with parent link', async () => {
   }
   const webhookId = match[1];
 
-  await page.goto(appUrl(`webhooks.php?view=deliveries&webhook_id=${webhookId}`));
+  await page.goto(appUrl(`webhooks.php?view=deliveries&webhook_id=${webhookId}`), { waitUntil: 'networkidle' });
   const bc = page.locator('.breadcrumbs');
   await expect(bc).toBeVisible();
   await expect(bc.locator('a[href="webhooks.php"]')).toContainText('Webhooks');
   await expect(bc.locator('span').last()).toContainText('Delivery Log');
+});
+
+test('webhooks page has no nested <main> elements', async () => {
+  await page.goto(appUrl('webhooks.php'), { waitUntil: 'networkidle' });
+  const mainCount = await page.locator('main').count();
+  expect(mainCount, 'page must have exactly one <main> element').toBe(1);
+});
+
+test('webhooks list view uses .toolbar header, not inline row', async () => {
+  await page.goto(appUrl('webhooks.php'), { waitUntil: 'networkidle' });
+  await expect(page.locator('.toolbar h1'), 'h1 must be inside .toolbar').toBeVisible();
+  await expect(page.locator('.toolbar #add-wh-btn'), '+ Add webhook button must be inside .toolbar').toBeVisible();
+});
+
+test('webhooks delivery-log view uses .toolbar header', async () => {
+  await page.goto(appUrl('webhooks.php'));
+  await page.waitForLoadState('networkidle');
+  const row = page.locator(`table tr`, { hasText: WH_NAME }).first();
+  const deliveryLink = row.locator(`a[href*="view=deliveries"]`).first();
+  if (await deliveryLink.count() === 0) {
+    test.skip(true, 'No delivery-log link found — webhook may not exist yet');
+    return;
+  }
+  const href = await deliveryLink.getAttribute('href') ?? '';
+  const match = href.match(/webhook_id=(\d+)/);
+  if (!match) {
+    test.skip(true, 'Could not extract webhook_id from delivery link');
+    return;
+  }
+  const webhookId = match[1];
+  await page.goto(appUrl(`webhooks.php?view=deliveries&webhook_id=${webhookId}`), { waitUntil: 'networkidle' });
+  await expect(page.locator('.toolbar h1'), 'Delivery log h1 must be inside .toolbar').toBeVisible();
+  await expect(page.locator('.toolbar a[href="webhooks.php"]'), 'Back link must be inside .toolbar').toBeVisible();
 });
 
 test('delete webhook', async () => {
