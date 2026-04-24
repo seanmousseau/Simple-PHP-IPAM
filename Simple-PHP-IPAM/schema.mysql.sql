@@ -728,6 +728,7 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.6.0-totp'),
   ('3.6.0-rate-limit'),
   ('3.6.0-lockout'),
-  ('3.7.0-backup-history');
+  ('3.7.0-backup-history'),
+  ('3.13.0-settings-cascade');
 
 SET FOREIGN_KEY_CHECKS = 1;
