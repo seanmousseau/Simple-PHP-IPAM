@@ -229,12 +229,14 @@ final class SchemaParityTest extends TestCase
                 if ((int)$idx['unique'] !== 1) {
                     continue;
                 }
-                // Skip partial indexes (WHERE clause). MySQL does not support
-                // predicate partial indexes, so they cannot be compared across
-                // engines. The settings table uses partial indexes for NULL-safe
-                // global uniqueness — MySQL achieves the same semantic via a
-                // composite UNIQUE(tenant_id, key) + transaction protection.
-                if ((int)$idx['partial'] === 1) {
+                // Skip partial indexes only on the `settings` table. The
+                // settings table uses partial unique indexes (WHERE tenant_id
+                // IS NULL / IS NOT NULL) that have no direct MySQL equivalent;
+                // MySQL uses UNIQUE(tenant_id, key) instead. All other tables
+                // that use partial indexes (e.g. users.oidc_sub) have a
+                // semantically equivalent regular UNIQUE in MySQL and must be
+                // compared normally.
+                if ($table === 'settings' && (int)$idx['partial'] === 1) {
                     continue;
                 }
                 // Skip the auto-index that backs the primary key.

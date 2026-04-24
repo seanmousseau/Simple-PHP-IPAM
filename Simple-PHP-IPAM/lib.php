@@ -1957,7 +1957,14 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
     $oldRaw  = null;
     $oldType = $type;
 
-    $db->beginTransaction();
+    // Wrap SELECT+UPDATE/INSERT in a transaction to prevent TOCTOU races only
+    // when no outer transaction is already active. settings.php wraps all saves
+    // in its own transaction, so starting a nested one here would throw
+    // "There is already an active transaction" on every page save.
+    $ownTx = !$db->inTransaction();
+    if ($ownTx) {
+        $db->beginTransaction();
+    }
     try {
         // Fetch the existing row for the same scope (tenant or global) to produce
         // a meaningful audit diff. Build the tenant WHERE clause as a literal
@@ -2006,9 +2013,11 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
                 ':u'  => $userId,
             ]);
         }
-        $db->commit();
+        if ($ownTx) {
+            $db->commit();
+        }
     } catch (\Throwable $ex) {
-        if ($db->inTransaction()) $db->rollBack();
+        if ($ownTx && $db->inTransaction()) $db->rollBack();
         throw $ex;
     }
 
