@@ -231,7 +231,12 @@ page_header('API Keys');
   </div>
 </div>
 <?php else: ?>
-  <p class="muted mt-16">No API keys yet.</p>
+  <div class="empty-state">
+    <?= icon('key') ?>
+    <p>No API keys configured.</p>
+    <p class="muted">Create an API key to enable programmatic read access to your IPAM data via the REST API.</p>
+    <a href="api_keys.php" class="action-pill"><?= icon('plus') ?> Create API key</a>
+  </div>
 <?php endif; ?>
 
 <?php page_footer(); ?>
