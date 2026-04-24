@@ -144,7 +144,7 @@ function render_sparkline(array $points, int $w = 80, int $h = 24): string
     }
     $poly = implode(' ', $pts);
     return '<svg width="' . $w . '" height="' . $h . '" viewBox="0 0 ' . $w . ' ' . $h . '" class="sparkline" aria-hidden="true">'
-         . '<polyline points="' . htmlspecialchars($poly, ENT_QUOTES) . '" fill="none" stroke="var(--link)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>'
+         . '<polyline points="' . htmlspecialchars($poly, ENT_QUOTES) . '" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>'
          . '</svg>';
 }
 
