@@ -306,7 +306,7 @@ page_header('Health Dashboard');
     <p class="muted">Operational metrics — cached for <?= e((string)$cacheTtl) ?> seconds. Last updated: <?= e($cacheAgeStr) ?>.</p>
   </div>
   <div style="display:flex;gap:.5rem;align-items:center">
-    <a href="health.php?nocache=1" class="button-secondary" style="text-decoration:none">Refresh now</a>
+    <a href="health.php?nocache=1" class="button-secondary">Refresh now</a>
   </div>
 </div>
 

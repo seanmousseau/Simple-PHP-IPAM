@@ -558,9 +558,20 @@ button{
 button:hover{filter:brightness(1.05)}
 button:disabled{opacity:.6;cursor:not-allowed}
 .button-secondary{
+  display:inline-flex;
+  align-items:center;
+  gap:var(--space-2);
+  padding:var(--space-2) var(--space-4);
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  font-size:var(--font-size-sm);
+  font-weight:500;
+  cursor:pointer;
+  text-decoration:none;
   background:var(--btn-secondary);
   color:var(--btn-secondary-fg);
 }
+.button-secondary:hover{filter:brightness(0.95)}
 .button-danger{
   background:var(--danger);
   color:#fff;
