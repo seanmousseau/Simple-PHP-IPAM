@@ -100,6 +100,15 @@ The backup is left in place after a successful upgrade. You can remove it manual
 
 ## Version-specific upgrade notes
 
+### v3.11.0
+
+No database migrations or configuration changes. Pure UI polish release.
+
+- No manual steps required on upgrade.
+- The asset cache-buster has been bumped to `?v=3.11.0` — browsers will fetch fresh CSS/JS on first load after upgrade.
+
+---
+
 ### v3.10.0
 
 No breaking changes. No manual migration steps required — `migrate.php` handles all schema changes automatically.

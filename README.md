@@ -12,13 +12,17 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.10.0
+## What's new in v3.11.0
 
-v3.10.0 is a quality and testing release that fixes 9 bugs discovered during the v3.9.0 functional review and expands the automated test suite with 9 new or expanded specs.
+v3.11.0 is a UI consistency and polish release. It completes the emoji-to-SVG-icon pass across all page content areas, adds breadcrumbs to the three admin pages that were missing them, and fixes dark-mode sparkline visibility. It also ships collapsible expand/collapse for the sites admin hierarchy, a structured empty state for the dashboard growth chart, and extended Playwright coverage for the reports and export endpoints.
 
-**Key fixes:** webhook test_fire no longer crashes HTTP 500 (IPAM_VERSION load-order fix), CSP-blocked inline scripts in `webhooks.php` and `addresses.php` moved to `app.js`, uPlot y-axis integer formatting and cursor artifact, dashboard metric card responsive grid, password field autocomplete attributes.
-
-**Test coverage:** `webhooks.spec.ts`, `health.spec.ts`, 7-page fleet guard expansion, PHPUnit `ConstantLoadOrderTest`, new semgrep CSP rule, expanded a11y, drawer, command palette, and CSS regression specs.
+**Highlights:**
+- Emoji → SVG Heroicons sweep across all page content areas (#654)
+- Breadcrumbs on `health.php`, `db_tools.php`, `webhooks.php` (#657)
+- Collapsible sites admin with sessionStorage persistence (#632, #633)
+- Dashboard growth chart structured empty state (#644)
+- Dark-mode sparkline fix (#653)
+- Sidebar suppressed on pre-auth pages (#658)
 
 See [CHANGELOG.md](CHANGELOG.md) for the full change list.
 
