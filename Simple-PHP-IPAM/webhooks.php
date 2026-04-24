@@ -290,9 +290,6 @@ function wh_status_badge(mixed $status): string
     return "<span class='badge' style='background:#fee2e2;color:#991b1b'>{$code}</span>";
 }
 ?>
-<main id='main-content'>
-<div class='container'>
-
 <?php if ($flash): ?>
   <div class='card <?= $flash['type'] === 'success' ? 'success' : 'danger' ?>' style='margin-bottom:1rem'>
     <?= e($flash['msg']) ?>
@@ -306,8 +303,9 @@ function wh_status_badge(mixed $status): string
 <?php if ($view === 'deliveries' && is_array($whRow)): ?>
   <?php /** @var array<string, mixed> $whRow */ ?>
   <!-- Delivery log view -->
-  <div class='row' style='align-items:center;margin-bottom:1rem;gap:.5rem'>
-    <h1 style='margin:0;flex:1'>Delivery log — <?= e(to_str($whRow['name'])) ?></h1>
+  <div class="toolbar">
+    <h1>Delivery log — <?= e(to_str($whRow['name'])) ?></h1>
+    <span class="spacer"></span>
     <a class='action-pill' href='webhooks.php'>&#8592; Back to webhooks</a>
   </div>
   <div style='overflow-x:auto'>
@@ -355,8 +353,9 @@ function wh_status_badge(mixed $status): string
 
 <?php else: ?>
   <!-- Webhook list view -->
-  <div class='row' style='align-items:center;margin-bottom:1rem;gap:.5rem'>
-    <h1 style='margin:0;flex:1'>Webhooks</h1>
+  <div class="toolbar">
+    <h1>Webhooks</h1>
+    <span class="spacer"></span>
     <button type='button' class='action-pill' id='add-wh-btn'>+ Add webhook</button>
   </div>
 
@@ -442,9 +441,6 @@ function wh_status_badge(mixed $status): string
     </table>
   </div>
 <?php endif; ?>
-
-</div>
-</main>
 
 <!-- Add/Edit webhook drawer -->
 <div id='wh-form-overlay' style='display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:var(--z-overlay)'></div>
