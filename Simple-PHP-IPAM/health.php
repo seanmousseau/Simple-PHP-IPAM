@@ -118,6 +118,8 @@ if ($data === null) {
     $overdueScans= 0;
     $lastScan    = null;
     $staleCount  = 0;
+    $warnAlerts  = 0;
+    $critAlerts  = 0;
     try {
         $r = $db->query("SELECT COUNT(*) AS c FROM scan_schedules")?->fetch();
         $schedules = $r ? to_int($r['c']) : 0;
@@ -142,6 +144,16 @@ if ($data === null) {
         if ($r4) $lastScan = to_str($r4['t'] ?? '');
         $r5 = $db->query("SELECT COUNT(*) AS c FROM addresses WHERE is_stale=1")?->fetch();
         $staleCount = $r5 ? to_int($r5['c']) : 0;
+        $st6 = $db->query("SELECT level, COUNT(*) AS c FROM alert_state GROUP BY level");
+        if ($st6) {
+            $r6 = $st6->fetchAll();
+            if ($r6) {
+                foreach ($r6 as $ar) {
+                    if (to_str($ar['level']) === 'warn') $warnAlerts = to_int($ar['c']);
+                    if (to_str($ar['level']) === 'crit') $critAlerts = to_int($ar['c']);
+                }
+            }
+        }
     } catch (Throwable) {}
     $data['scan'] = [
         'schedules'    => $schedules,
@@ -149,6 +161,8 @@ if ($data === null) {
         'overdue'      => $overdueScans,
         'last_scan'    => $lastScan,
         'stale'        => $staleCount,
+        'warn_alerts'  => $warnAlerts,
+        'crit_alerts'  => $critAlerts,
     ];
 
     // --- Webhooks ---
@@ -356,6 +370,10 @@ page_header('Health Dashboard');
     health_row('Last successful scan', $ls !== '' ? e(ipam_format_datetime($ls)) : '<span class="muted">Never</span>');
     $stale = to_int($data['scan']['stale'] ?? 0);
     health_row('Stale addresses', e(number_format($stale)), $stale > 0 ? 'warn' : 'ok');
+    $warnA = to_int($data['scan']['warn_alerts'] ?? 0);
+    health_row('Warn alerts', e((string)$warnA), $warnA > 0 ? 'warn' : 'ok');
+    $critA = to_int($data['scan']['crit_alerts'] ?? 0);
+    health_row('Crit alerts', e((string)$critA), $critA > 0 ? 'crit' : 'ok');
     ?>
   </div>
 

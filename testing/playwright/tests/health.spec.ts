@@ -48,4 +48,28 @@ adminTest.describe('health dashboard', () => {
     await expect(bc.locator('a[href="dashboard.php"]')).toContainText('Dashboard');
     await expect(bc.locator('span').last()).toContainText('Health');
   });
+
+  adminTest('scanning card shows warn alerts row with green dot for zero', async ({ adminPage: page }) => {
+    await page.goto('health.php?nocache=1', { waitUntil: 'networkidle' });
+
+    const warnRow = page.locator('.health-row', {
+      has: page.locator('.health-label', { hasText: 'Warn alerts' })
+    });
+    await expect(warnRow, 'Warn alerts row must exist in health page').toBeVisible();
+
+    const dot = warnRow.locator('.health-dot');
+    await expect(dot, 'Warn alerts dot must be .ok (green) when count is 0').toHaveClass(/\bok\b/);
+  });
+
+  adminTest('scanning card shows crit alerts row with green dot for zero', async ({ adminPage: page }) => {
+    await page.goto('health.php?nocache=1', { waitUntil: 'networkidle' });
+
+    const critRow = page.locator('.health-row', {
+      has: page.locator('.health-label', { hasText: 'Crit alerts' })
+    });
+    await expect(critRow, 'Crit alerts row must exist in health page').toBeVisible();
+
+    const dot = critRow.locator('.health-dot');
+    await expect(dot, 'Crit alerts dot must be .ok (green) when count is 0').toHaveClass(/\bok\b/);
+  });
 });
