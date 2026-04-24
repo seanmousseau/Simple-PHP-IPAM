@@ -3,7 +3,7 @@
  * Tests: KPI card count, chart render.
  */
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
-import { login, newAuthContext, ADMIN_USER, ADMIN_PASS } from '../fixtures/ipam';
+import { login, newAuthContext, ADMIN_USER, ADMIN_PASS, appUrl } from '../fixtures/ipam';
 
 let ctx: BrowserContext;
 let page: Page;
@@ -50,7 +50,7 @@ test('grid.cols-2 shows 1 column at 900px viewport (no sidebar)', async ({ brows
     ignoreHTTPSErrors: true,
   });
   const p = await narrowCtx.newPage();
-  await p.goto('login.php');
+  await p.goto(appUrl('login.php'));
   await p.fill('input[name="username"]', ADMIN_USER);
   await p.fill('input[name="password"]', ADMIN_PASS);
   await p.click('button[type="submit"]');
@@ -70,7 +70,7 @@ test('grid.cols-2 shows 2 columns at 1400px viewport (with sidebar)', async ({ b
     ignoreHTTPSErrors: true,
   });
   const p = await wideCtx.newPage();
-  await p.goto('login.php');
+  await p.goto(appUrl('login.php'));
   await p.fill('input[name="username"]', ADMIN_USER);
   await p.fill('input[name="password"]', ADMIN_PASS);
   await p.click('button[type="submit"]');

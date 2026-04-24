@@ -103,7 +103,7 @@ The backup is left in place after a successful upgrade. You can remove it manual
 
 ### v3.12.0
 
-No breaking changes. No new configuration keys. No migrations.
+No breaking changes, new configuration keys, or migrations.
 
 **UI changes:** The dashboard two-column widget grid now requires a wider viewport before splitting (fixes overlap at ~900–1100px). Health page scanning card has two new rows: Warn alerts and Crit alerts.
 
