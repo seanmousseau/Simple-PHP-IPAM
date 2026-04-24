@@ -2109,11 +2109,29 @@ function ipam_migrate_2_6_0_settings(PDO $db): void
     $config = $GLOBALS['config'] ?? null;
     $definitions = ipam_setting_definitions();
 
-    $check = $db->prepare("SELECT 1 FROM settings WHERE ".ipam_key_col()." = :k");
-    $ins = $db->prepare(
-        "INSERT INTO settings (".ipam_key_col().", value, type, updated_at, updated_by)
-         VALUES (:k, :v, :t, datetime('now'), NULL)"
+    // Detect whether the 3.13.0-settings-cascade migration has already run
+    // (tenant_id column present) so we can use the correct column list and
+    // WHERE clause. This function may be called both before and after that
+    // migration depending on the replay order in tests and upgrades.
+    $existingCols = array_column(
+        ($db->query("PRAGMA table_info(settings)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+        'name'
     );
+    $hasTenantCol = in_array('tenant_id', $existingCols, true);
+
+    if ($hasTenantCol) {
+        $check = $db->prepare("SELECT 1 FROM settings WHERE tenant_id IS NULL AND ".ipam_key_col()." = :k");
+        $ins = $db->prepare(
+            "INSERT INTO settings (tenant_id, ".ipam_key_col().", value, type, updated_at, updated_by)
+             VALUES (NULL, :k, :v, :t, datetime('now'), NULL)"
+        );
+    } else {
+        $check = $db->prepare("SELECT 1 FROM settings WHERE ".ipam_key_col()." = :k");
+        $ins = $db->prepare(
+            "INSERT INTO settings (".ipam_key_col().", value, type, updated_at, updated_by)
+             VALUES (:k, :v, :t, datetime('now'), NULL)"
+        );
+    }
 
     $seeded = 0;
     foreach ($definitions as $key => $def) {

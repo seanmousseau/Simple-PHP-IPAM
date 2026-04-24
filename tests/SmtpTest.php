@@ -24,11 +24,13 @@ class SmtpTest extends TestCase
         // Minimal schema needed for ipam_setting() and audit()
         $this->db->exec("
             CREATE TABLE settings (
-                key        TEXT PRIMARY KEY,
+                tenant_id  INTEGER,
+                key        TEXT NOT NULL,
                 value      TEXT,
-                type       TEXT NOT NULL DEFAULT 'string' CHECK(type IN ('string','int','bool','json')),
+                type       TEXT NOT NULL DEFAULT 'string',
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_by INTEGER
+                updated_by INTEGER,
+                UNIQUE(tenant_id, key)
             );
             CREATE TABLE audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,13 +89,13 @@ class SmtpTest extends TestCase
     public function testSmtpPathReturnsFailureOnBadHost(): void
     {
         // Force smtp.enabled on with a bogus host that cannot connect
-        $this->db->exec("INSERT INTO settings (key, value, type) VALUES
-            ('smtp.enabled',  '1',       'bool'),
-            ('smtp.host',     '127.0.0.1', 'string'),
-            ('smtp.port',     '19999',   'int'),
-            ('smtp.timeout_seconds', '1', 'int'),
-            ('smtp.encryption', 'none',  'string'),
-            ('smtp.verify_peer', '0',    'bool')
+        $this->db->exec("INSERT INTO settings (tenant_id, key, value, type) VALUES
+            (NULL, 'smtp.enabled',  '1',       'bool'),
+            (NULL, 'smtp.host',     '127.0.0.1', 'string'),
+            (NULL, 'smtp.port',     '19999',   'int'),
+            (NULL, 'smtp.timeout_seconds', '1', 'int'),
+            (NULL, 'smtp.encryption', 'none',  'string'),
+            (NULL, 'smtp.verify_peer', '0',    'bool')
         ");
 
         $result = ipam_send_mail('test@example.com', 'Subject', 'Body');
@@ -110,15 +112,15 @@ class SmtpTest extends TestCase
     public function testAuthPassNotLeakedInErrorMessage(): void
     {
         $secret = 'super-secret-password-12345';
-        $this->db->exec("INSERT INTO settings (key, value, type) VALUES
-            ('smtp.enabled',   '1',          'bool'),
-            ('smtp.host',      '127.0.0.1',  'string'),
-            ('smtp.port',      '19999',      'int'),
-            ('smtp.timeout_seconds', '1',    'int'),
-            ('smtp.encryption', 'none',      'string'),
-            ('smtp.verify_peer', '0',        'bool'),
-            ('smtp.auth_user', 'user@example.com', 'string'),
-            ('smtp.auth_pass', " . $this->db->quote($secret) . ", 'string')
+        $this->db->exec("INSERT INTO settings (tenant_id, key, value, type) VALUES
+            (NULL, 'smtp.enabled',   '1',          'bool'),
+            (NULL, 'smtp.host',      '127.0.0.1',  'string'),
+            (NULL, 'smtp.port',      '19999',      'int'),
+            (NULL, 'smtp.timeout_seconds', '1',    'int'),
+            (NULL, 'smtp.encryption', 'none',      'string'),
+            (NULL, 'smtp.verify_peer', '0',        'bool'),
+            (NULL, 'smtp.auth_user', 'user@example.com', 'string'),
+            (NULL, 'smtp.auth_pass', " . $this->db->quote($secret) . ", 'string')
         ");
 
         $result = ipam_send_mail('test@example.com', 'Subject', 'Body');
@@ -138,13 +140,13 @@ class SmtpTest extends TestCase
         // indirectly: a connection attempt to a bogus host completes (fails
         // with connect error, not a TLS negotiation error) — the error string
         // should not contain "STARTTLS" or "SSL".
-        $this->db->exec("INSERT INTO settings (key, value, type) VALUES
-            ('smtp.enabled',   '1',         'bool'),
-            ('smtp.host',      '127.0.0.1', 'string'),
-            ('smtp.port',      '19999',     'int'),
-            ('smtp.timeout_seconds', '1',   'int'),
-            ('smtp.encryption', 'none',     'string'),
-            ('smtp.verify_peer', '1',       'bool')
+        $this->db->exec("INSERT INTO settings (tenant_id, key, value, type) VALUES
+            (NULL, 'smtp.enabled',   '1',         'bool'),
+            (NULL, 'smtp.host',      '127.0.0.1', 'string'),
+            (NULL, 'smtp.port',      '19999',     'int'),
+            (NULL, 'smtp.timeout_seconds', '1',   'int'),
+            (NULL, 'smtp.encryption', 'none',     'string'),
+            (NULL, 'smtp.verify_peer', '1',       'bool')
         ");
 
         $result = ipam_send_mail('test@example.com', 'Subject', 'Body');

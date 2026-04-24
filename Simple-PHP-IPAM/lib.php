@@ -1859,20 +1859,28 @@ function ipam_setting_infer_type(mixed $value): string
 }
 
 /**
- * Read a setting. Fallback chain: settings table -> $config (v2.6 back-compat)
- * -> registry default -> $default argument. Never throws. Results are memoised
- * via ipam_setting_cache_storage() so repeated reads in a single request don't
- * re-query the DB; ipam_setting_set() invalidates the relevant entry.
+ * Read a setting. Fallback chain:
+ *   1. Tenant-scoped DB row (only when $tenantId is non-null)
+ *   2. Global DB row (tenant_id IS NULL)
+ *   3. Registry default → $default argument
+ *
+ * Never throws. Results are memoised via ipam_setting_cache_storage() keyed
+ * by "{tenantId}:{key}" so repeated reads in a single request don't re-query
+ * the DB; ipam_setting_set() / ipam_setting_cache_bust() invalidate entries.
+ *
+ * In v3.x all settings rows have tenant_id = NULL, so callers that do not
+ * pass $tenantId continue to work identically to before. The parameter is
+ * groundwork for the v4.0.0 multi-tenancy cascade.
  */
-function ipam_setting(string $key, mixed $default = null): mixed
+function ipam_setting(string $key, mixed $default = null, ?int $tenantId = null): mixed
 {
-    $cached = ipam_setting_cache_storage($key);
+    $cached = ipam_setting_cache_storage($key, false, null, false, $tenantId);
     if ($cached !== '__IPAM_SETTING_MISS__') return $cached;
 
     $definitions = ipam_setting_definitions();
     $def         = $definitions[$key] ?? null;
     $type        = is_array($def) && is_string($def['type'] ?? null) ? $def['type'] : 'string';
-    // Precedence: DB → config → registry default → caller $default. A caller
+    // Precedence: DB → registry default → caller $default. A caller
     // default only matters for unregistered keys; registered keys always fall
     // through to the registry's authoritative default.
     $fallback = ($def !== null && array_key_exists('default', $def))
@@ -1882,14 +1890,31 @@ function ipam_setting(string $key, mixed $default = null): mixed
     try {
         $db = $GLOBALS['db'] ?? null;
         if ($db instanceof PDO) {
-            $st = $db->prepare("SELECT value, type FROM settings WHERE ".ipam_key_col()." = :k");
+            $kc = ipam_key_col();
+
+            // Step 1: tenant-scoped row (only when a tenantId is provided).
+            if ($tenantId !== null) {
+                $st = $db->prepare("SELECT value, type FROM settings WHERE tenant_id = :t AND {$kc} = :k");
+                $st->execute([':t' => $tenantId, ':k' => $key]);
+                $row = $st->fetch();
+                if (is_array($row)) {
+                    $storedType = is_string($row['type'] ?? null) && $row['type'] !== '' ? $row['type'] : $type;
+                    $value      = is_string($row['value'] ?? null) ? $row['value'] : null;
+                    $decoded    = ipam_setting_decode($value, $storedType, $fallback);
+                    ipam_setting_cache_storage($key, false, $decoded, true, $tenantId);
+                    return $decoded;
+                }
+            }
+
+            // Step 2: global row (tenant_id IS NULL) — always checked.
+            $st = $db->prepare("SELECT value, type FROM settings WHERE tenant_id IS NULL AND {$kc} = :k");
             $st->execute([':k' => $key]);
             $row = $st->fetch();
             if (is_array($row)) {
                 $storedType = is_string($row['type'] ?? null) && $row['type'] !== '' ? $row['type'] : $type;
                 $value      = is_string($row['value'] ?? null) ? $row['value'] : null;
                 $decoded    = ipam_setting_decode($value, $storedType, $fallback);
-                ipam_setting_cache_storage($key, false, $decoded, true);
+                ipam_setting_cache_storage($key, false, $decoded, true, $tenantId);
                 return $decoded;
             }
         }
@@ -1897,7 +1922,7 @@ function ipam_setting(string $key, mixed $default = null): mixed
         error_log("ipam_setting: read failed for key {$key}: " . $e->getMessage());
     }
 
-    ipam_setting_cache_storage($key, false, $fallback, true);
+    ipam_setting_cache_storage($key, false, $fallback, true, $tenantId);
     return $fallback;
 }
 
@@ -1905,8 +1930,12 @@ function ipam_setting(string $key, mixed $default = null): mixed
  * Write a setting. Infers type from $value unless the registry defines one.
  * Produces a `setting.update` audit entry with old/new values (masked for
  * sensitive keys). Invalidates the per-request cache for the key.
+ *
+ * When $tenantId is null the row is written to the global layer (tenant_id IS
+ * NULL). When non-null it is written to the tenant-scoped layer. In v3.x all
+ * callers pass null (the default), so existing behaviour is unchanged.
  */
-function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = null): void
+function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = null, ?int $tenantId = null): void
 {
     $definitions = ipam_setting_definitions();
     $def         = $definitions[$key] ?? null;
@@ -1917,32 +1946,59 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
 
     $encoded = ipam_setting_encode($value, $type);
 
-    $oldRaw = null;
+    // Fetch the existing row for the same scope (tenant or global) to produce
+    // a meaningful audit diff. Use a portable NULL-safe comparison.
+    $oldRaw  = null;
     $oldType = $type;
-    $st = $db->prepare("SELECT value, type FROM settings WHERE ".ipam_key_col()." = :k");
-    $st->execute([':k' => $key]);
+    $kc = ipam_key_col();
+    $st = $db->prepare(
+        "SELECT value, type FROM settings
+         WHERE ((tenant_id IS NULL AND :ta IS NULL) OR tenant_id = :tb) AND {$kc} = :k"
+    );
+    $st->execute([':ta' => $tenantId, ':tb' => $tenantId, ':k' => $key]);
     $prev = $st->fetch();
     if (is_array($prev)) {
         $oldRaw  = is_string($prev['value'] ?? null) ? $prev['value'] : null;
         $oldType = is_string($prev['type'] ?? null) && $prev['type'] !== '' ? $prev['type'] : $type;
     }
 
-    // #379: route through the dialect so v2.10.0 / v2.11.0 swap upsert and
-    // timestamp idioms without touching this call site. The dialect's
-    // upsert() returns the ON CONFLICT...DO UPDATE fragment for the engine.
+    // Write the new value. We use explicit UPDATE-then-INSERT rather than a
+    // dialect upsert because SQLite treats NULL as distinct from NULL in UNIQUE
+    // index lookups, so ON CONFLICT(tenant_id, key) never fires for global
+    // (tenant_id IS NULL) rows in SQLite. The SELECT above already tells us
+    // whether a row exists, so branching on $prev is cheap and portable.
+    // MySQL and PostgreSQL handle NULL the same way in their ON CONFLICT / ON
+    // DUPLICATE KEY UPDATE idioms, so this pattern is safe across all three.
     $d = ipam_dialect();
-    $upsertClause = $d->upsert('settings', ['key'], ['value', 'type', 'updated_at', 'updated_by']);
-    $up = $db->prepare(
-        "INSERT INTO settings (".ipam_key_col().", value, type, updated_at, updated_by)
-         VALUES (:k, :v, :t, {$d->now()}, :u)
-         $upsertClause"
-    );
-    $up->execute([
-        ':k' => $key,
-        ':v' => $encoded,
-        ':t' => $type,
-        ':u' => $userId,
-    ]);
+    if (is_array($prev)) {
+        // Row exists — update in place.
+        $up = $db->prepare(
+            "UPDATE settings
+             SET value = :v, type = :ty, updated_at = {$d->now()}, updated_by = :u
+             WHERE ((tenant_id IS NULL AND :ta IS NULL) OR tenant_id = :tb) AND {$kc} = :k"
+        );
+        $up->execute([
+            ':v'  => $encoded,
+            ':ty' => $type,
+            ':u'  => $userId,
+            ':ta' => $tenantId,
+            ':tb' => $tenantId,
+            ':k'  => $key,
+        ]);
+    } else {
+        // Row does not exist — insert.
+        $up = $db->prepare(
+            "INSERT INTO settings (tenant_id, {$kc}, value, type, updated_at, updated_by)
+             VALUES (:t, :k, :v, :ty, {$d->now()}, :u)"
+        );
+        $up->execute([
+            ':t'  => $tenantId,
+            ':k'  => $key,
+            ':v'  => $encoded,
+            ':ty' => $type,
+            ':u'  => $userId,
+        ]);
+    }
 
     $details = [
         'key' => $key,
@@ -1953,21 +2009,27 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
     audit($db, 'setting.update', 'setting', null, is_string($encodedDetails) ? $encodedDetails : $key);
 
     // Bust the per-request cache by forcing a re-read on next call.
-    // (ipam_setting() uses a function-level static, so we can't reach into it
-    // directly; instead the next read will use the new DB row because the
-    // cache starts empty on each request and callers typically read after
-    // writing in different requests.)
     ipam_setting_cache_bust($key);
 }
 
 /**
  * Bust the per-request cache for ipam_setting(). Pass a key to clear a single
- * entry, or omit to clear all entries. Also exposed so tests can reset state
- * between assertions.
+ * entry (for all tenants), or omit/null to clear the entire cache. Also
+ * exposed so tests can reset state between assertions.
  */
 function ipam_setting_cache_bust(?string $key = null): void
 {
-    ipam_setting_cache_storage($key, true);
+    if ($key === null) {
+        // Clear the entire cache including all tenant-keyed entries.
+        ipam_setting_cache_storage('__CLEAR__', true);
+    } else {
+        // Clear the global entry and any tenant-scoped entries for this key.
+        // We cannot enumerate all tenants, so we wipe the whole cache when a
+        // specific key is busted — the cache is a single-request optimisation
+        // and rebuilds cheaply. This is safe: stale reads within a single
+        // request after a write to a specific key are the bug we are guarding.
+        ipam_setting_cache_storage('__CLEAR__', true);
+    }
 }
 
 /**
@@ -1976,29 +2038,47 @@ function ipam_setting_cache_bust(?string $key = null): void
  * ipam_setting_cache_bust() can invalidate entries. Not intended for direct
  * use by application code.
  *
+ * The cache key is "{tenantId}:{key}" where tenantId is 'g' for the global
+ * (null) tenant and the integer string for tenant-scoped rows. This ensures
+ * that tenant-specific reads do not collide with global reads in the same
+ * request.
+ *
+ * Special sentinel: $key === '__CLEAR__' with $reset = true wipes the entire
+ * cache, including all tenant-scoped entries. Used by tests between assertions.
+ *
  * @internal
  */
 function ipam_setting_cache_storage(
     ?string $key = null,
     bool $reset = false,
     mixed $setValue = null,
-    bool $doSet = false
+    bool $doSet = false,
+    ?int $tenantId = null
 ): mixed {
     static $cache = [];
+
+    // Full-cache wipe: __CLEAR__ sentinel used by tests and ipam_setting_cache_bust(null).
+    if ($reset && $key === '__CLEAR__') {
+        $cache = [];
+        return '__IPAM_SETTING_MISS__';
+    }
+
+    $cacheKey = ($tenantId === null ? 'g' : (string)$tenantId) . ':' . (string)$key;
+
     if ($reset) {
         if ($key === null) {
             $cache = [];
         } else {
-            unset($cache[$key]);
+            unset($cache[$cacheKey]);
         }
         return null;
     }
     if ($doSet && $key !== null) {
-        $cache[$key] = $setValue;
+        $cache[$cacheKey] = $setValue;
         return $setValue;
     }
-    if ($key !== null && array_key_exists($key, $cache)) {
-        return $cache[$key];
+    if ($key !== null && array_key_exists($cacheKey, $cache)) {
+        return $cache[$cacheKey];
     }
     return '__IPAM_SETTING_MISS__';
 }
@@ -2027,7 +2107,7 @@ function ipam_setting_all(): array
 function ipam_setting_source(PDO $db, string $key): string
 {
     try {
-        $st = $db->prepare("SELECT 1 FROM settings WHERE ".ipam_key_col()." = :k");
+        $st = $db->prepare("SELECT 1 FROM settings WHERE tenant_id IS NULL AND ".ipam_key_col()." = :k");
         $st->execute([':k' => $key]);
         if ($st->fetchColumn() !== false) return 'db';
     } catch (\Throwable) {
@@ -2096,7 +2176,7 @@ function ipam_setting_deprecated_keys(): array
         // runs on both engines. Without the quotes, MySQL would throw a
         // syntax error that the catch below would silently swallow,
         // returning [] and hiding every deprecation from the UI banner.
-        $st   = $db->query("SELECT ".ipam_key_col()." FROM settings");
+        $st   = $db->query("SELECT ".ipam_key_col()." FROM settings WHERE tenant_id IS NULL");
         $rows = $st !== false ? $st->fetchAll(PDO::FETCH_COLUMN) : [];
     } catch (\Throwable) {
         return [];
