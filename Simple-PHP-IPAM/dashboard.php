@@ -304,7 +304,7 @@ ipam_render('dashboard_kpi_card', ['label' => 'Crit Alerts', 'value' => $kpis['a
       </table>
       </div>
     <?php endif; ?>
-    <?php if (current_user()['role'] === 'admin'): ?>
+    <?php if ($bySite && current_user()['role'] === 'admin'): ?>
       <div class="mt-10"><a class="action-pill" href="sites.php"><?= icon('map-pin') ?> Manage Sites</a></div>
     <?php endif; ?>
   </div>

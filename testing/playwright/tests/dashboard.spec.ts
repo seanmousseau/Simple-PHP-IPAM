@@ -51,8 +51,8 @@ test('grid.cols-2 shows 1 column at 900px viewport (no sidebar)', async ({ brows
   });
   const p = await narrowCtx.newPage();
   await p.goto('login.php');
-  await p.fill('input[name="username"]', 'demo');
-  await p.fill('input[name="password"]', 'demo');
+  await p.fill('input[name="username"]', ADMIN_USER);
+  await p.fill('input[name="password"]', ADMIN_PASS);
   await p.click('button[type="submit"]');
   await p.waitForURL('**/dashboard.php');
   await p.waitForLoadState('networkidle');
@@ -71,8 +71,8 @@ test('grid.cols-2 shows 2 columns at 1400px viewport (with sidebar)', async ({ b
   });
   const p = await wideCtx.newPage();
   await p.goto('login.php');
-  await p.fill('input[name="username"]', 'demo');
-  await p.fill('input[name="password"]', 'demo');
+  await p.fill('input[name="username"]', ADMIN_USER);
+  await p.fill('input[name="password"]', ADMIN_PASS);
   await p.click('button[type="submit"]');
   await p.waitForURL('**/dashboard.php');
   await p.waitForLoadState('networkidle');

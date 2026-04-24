@@ -281,6 +281,8 @@ $backupStatus = (bool)($data['backup']['tool_missing'] ?? false) ? 'crit'
         ? (($data['backup']['last_status'] ?? '') === 'success' ? 'ok' : 'warn')
         : 'warn');
 $scanStatus   = to_int($data['scan']['overdue'] ?? 0) > 0 ? 'warn' : 'ok';
+if (to_int($data['scan']['crit_alerts'] ?? 0) > 0) $scanStatus = 'crit';
+elseif (to_int($data['scan']['warn_alerts'] ?? 0) > 0 && $scanStatus === 'ok') $scanStatus = 'warn';
 $webhookStatus= to_int($data['webhook']['pending_retry'] ?? 0) > 0 ? 'warn' : 'ok';
 $authStatus   = to_int($data['auth']['failed_1h'] ?? 0) > 10 ? 'warn' : 'ok';
 $authStatus   = to_int($data['auth']['failed_1h'] ?? 0) > 50 ? 'crit' : $authStatus;
