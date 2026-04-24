@@ -1847,11 +1847,26 @@
 
   var hasData = ys.some(function(v) { return v !== 0; });
   if (!hasData) {
-    var emptyMsg = document.createElement('p');
-    emptyMsg.className = 'muted';
-    emptyMsg.style.cssText = 'text-align:center;line-height:180px;margin:0';
-    emptyMsg.textContent = 'No new addresses recorded in the last 30 days.';
-    el.appendChild(emptyMsg);
+    /* All content below is hardcoded literal HTML — no user data, no XSS risk */
+    var wrap  = document.createElement('div');
+    wrap.className = 'chart-empty';
+    var svgIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svgIcon.setAttribute('class', 'icon');
+    svgIcon.setAttribute('aria-hidden', 'true');
+    var useEl = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    useEl.setAttribute('href', 'assets/icons.svg#icon-reports');
+    svgIcon.appendChild(useEl);
+    var msg = document.createElement('p');
+    msg.className = 'chart-empty__msg';
+    msg.textContent = 'No address activity in the past 30 days';
+    var cta = document.createElement('a');
+    cta.className = 'chart-empty__cta';
+    cta.href = 'subnets.php';
+    cta.textContent = 'Go to Subnets';
+    wrap.appendChild(svgIcon);
+    wrap.appendChild(msg);
+    wrap.appendChild(cta);
+    el.appendChild(wrap);
     return;
   }
 

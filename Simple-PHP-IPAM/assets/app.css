@@ -1423,6 +1423,12 @@ body.pw-toggle-hidden .pw-wrap .pw-input{padding-right:36px}
 .sparkline{display:inline-block;vertical-align:middle}
 .sparkline polyline{stroke:var(--link);fill:none}
 
+/* ── Dashboard chart empty state (v3.11.0 #644) ─────────────────────── */
+.chart-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:180px;gap:var(--space-3)}
+.chart-empty .icon{width:32px;height:32px;color:var(--muted);opacity:.5}
+.chart-empty__msg{margin:0;color:var(--muted);font-size:.875rem;text-align:center}
+.chart-empty__cta{font-size:.8125rem;color:var(--link)}
+
 /* ── Health dashboard status indicators (v3.7.0 #425) ───────────────── */
 .health-dot{display:inline-block;width:10px;height:10px;border-radius:50%;flex-shrink:0;vertical-align:middle}
 .health-dot.ok{background:var(--success)}
