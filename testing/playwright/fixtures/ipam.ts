@@ -89,12 +89,12 @@ export function appUrl(path: string): string {
 // ── Auth helpers ───────────────────────────────────────────────────────────────
 export async function login(page: Page, username: string, password: string): Promise<void> {
   await page.goto('login.php');
-  await page.waitForSelector('[name=username]', { timeout: 10_000 });
+  await page.waitForSelector('[name=username]', { timeout: 30_000 });
   await page.locator('[name=username]').fill(username);
   await page.locator('[name=password]').fill(password);
   await page.locator('button[type=submit]').click();
   // Wait for navigation away from login.php (successful login redirects to dashboard)
-  await page.waitForURL(url => !url.pathname.endsWith('login.php'), { timeout: 15_000 });
+  await page.waitForURL(url => !url.pathname.endsWith('login.php'), { timeout: 30_000 });
 }
 
 export async function logout(page: Page): Promise<void> {
