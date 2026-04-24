@@ -225,6 +225,7 @@ ipam_render('dashboard_kpi_card', ['label' => 'Crit Alerts', 'value' => $kpis['a
     <?php if (!$topSubnets): ?>
       <div class="empty-state">No IPv4 subnets in /8&ndash;/32 range.</div>
     <?php else: ?>
+      <div class="table-scroll">
       <table>
         <thead>
           <tr><th>Subnet</th><th>Description</th><th>Used</th><th>Capacity</th><th>Fill</th><th>Trend</th></tr>
@@ -256,6 +257,7 @@ ipam_render('dashboard_kpi_card', ['label' => 'Crit Alerts', 'value' => $kpis['a
         <?php endforeach; ?>
         </tbody>
       </table>
+      </div>
     <?php endif; ?>
     <div class="mt-10"><a class="action-pill" href="subnets.php"><?= icon('server-stack') ?> All Subnets</a></div>
   </div>
@@ -276,6 +278,7 @@ ipam_render('dashboard_kpi_card', ['label' => 'Crit Alerts', 'value' => $kpis['a
           <?php endforeach; ?>
         </select>
       </div>
+      <div class="table-scroll">
       <table>
         <thead>
           <tr><th>Site</th><th>Used</th><th>Reserved</th><th>Free</th><th>Total</th></tr>
@@ -292,6 +295,7 @@ ipam_render('dashboard_kpi_card', ['label' => 'Crit Alerts', 'value' => $kpis['a
         <?php endforeach; ?>
         </tbody>
       </table>
+      </div>
     <?php endif; ?>
     <?php if (current_user()['role'] === 'admin'): ?>
       <div class="mt-10"><a class="action-pill" href="sites.php"><?= icon('map-pin') ?> Manage Sites</a></div>
