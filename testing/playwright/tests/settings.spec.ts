@@ -6,7 +6,7 @@
  */
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import {
-  login, appUrl, ADMIN_USER, ADMIN_PASS,
+  login, appUrl, fetchGet, ensureRoUser, ADMIN_USER, ADMIN_PASS, RO_USER, RO_PASS,
   newAuthContext,
 } from '../fixtures/ipam';
 
@@ -214,5 +214,54 @@ test.describe('Settings page', () => {
       await page.locator(SITE_NAME_FIELD).fill(original);
       await brandingSubmit(page);
     }
+  });
+});
+
+// ── v3.13.0 #714 — nav visibility, readonly gate, console cleanliness ─────────
+
+test.describe('Settings page — v3.13.0 (#714)', () => {
+  let ctx714: BrowserContext;
+  let page714: Page;
+
+  test.beforeAll(async ({ browser }: { browser: Browser }) => {
+    ctx714 = await newAuthContext(browser);
+    page714 = await ctx714.newPage();
+    await login(page714, ADMIN_USER, ADMIN_PASS);
+  });
+
+  test.afterAll(async () => {
+    await ctx714.close();
+  });
+
+  test('Settings nav link is visible in the admin sidebar', async () => {
+    await page714.goto(appUrl('dashboard.php'));
+    const link = page714.locator('nav a[href="settings.php"], .sidebar-link[href="settings.php"]');
+    await expect(link.first()).toBeVisible();
+  });
+
+  test('readonly user receives 403 on settings.php', async () => {
+    // Ensure readonly user exists before trying to log in as them.
+    await ensureRoUser(page714);
+
+    const roCtx = await newAuthContext(page714.context().browser()!);
+    const roPage = await roCtx.newPage();
+    try {
+      await login(roPage, RO_USER, RO_PASS);
+      const result = await fetchGet(roPage, appUrl('settings.php'));
+      expect(result.status).toBe(403);
+    } finally {
+      await roCtx.close();
+    }
+  });
+
+  test('settings.php loads with no console errors', async () => {
+    const errors: string[] = [];
+    page714.on('console', msg => {
+      if (msg.type() === 'error') errors.push(msg.text());
+    });
+    await page714.goto(appUrl('settings.php'));
+    await page714.waitForLoadState('networkidle');
+    const realErrors = errors.filter(e => !e.includes('favicon'));
+    expect(realErrors).toHaveLength(0);
   });
 });
