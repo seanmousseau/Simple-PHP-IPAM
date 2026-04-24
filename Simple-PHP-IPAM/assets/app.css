@@ -1444,6 +1444,7 @@ body.pw-toggle-hidden .pw-wrap .pw-input{padding-right:36px}
 
 /* ===== Sidebar layout (v3.8.0 #512) ===================================== */
 .layout-root{display:flex;min-height:100vh}
+.layout-root--no-sidebar{display:block}
 .sidebar{width:var(--sidebar-width,220px);background:var(--card);border-right:1px solid var(--border);display:flex;flex-direction:column;position:fixed;top:0;bottom:0;left:0;z-index:100;overflow-y:auto;transition:transform 200ms ease}
 .sidebar-logo{display:flex;align-items:center;gap:.5rem;padding:1rem .75rem;border-bottom:1px solid var(--border);min-height:3.5rem}
 .sidebar-logo-link{font-weight:700;font-size:var(--text-lg,1.125rem);color:var(--fg);text-decoration:none;display:flex;align-items:center;gap:.5rem;flex:1}

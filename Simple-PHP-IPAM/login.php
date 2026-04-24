@@ -166,6 +166,7 @@ page_header('Login', array_filter([
     'extra_script_src' => $lpCsp['script_src'],
     'extra_style_src'  => $lpCsp['style_src'],
     'extra_frame_src'  => $lpCsp['frame_src'],
+    'no_sidebar'       => true,
 ]));
 $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
 ?>

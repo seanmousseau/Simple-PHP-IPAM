@@ -60,4 +60,16 @@ test.describe('Authentication', () => {
     expect(typeof action).toBe('string');
     expect(action!.length).toBeGreaterThan(0);
   });
+
+  test('login page has no sidebar', async ({ page }) => {
+    await page.goto('login.php');
+    await expect(page.locator('#sidebar')).not.toBeAttached();
+    // Login form should still be visible
+    await expect(page.locator('[name=username]')).toBeVisible();
+  });
+
+  test('forgot_password page has no sidebar', async ({ page }) => {
+    await page.goto('forgot_password.php');
+    await expect(page.locator('#sidebar')).not.toBeAttached();
+  });
 });
