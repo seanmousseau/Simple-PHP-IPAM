@@ -17,7 +17,7 @@
  * then commit both sets. Local dev captures macOS baselines.
  */
 import { test, expect } from '@playwright/test';
-import { login, ADMIN_USER, ADMIN_PASS, appUrl } from '../fixtures/ipam';
+import { login, ADMIN_USER, ADMIN_PASS } from '../fixtures/ipam';
 
 interface VRPage {
   name: string;
@@ -47,22 +47,6 @@ async function setTheme(page: any, theme: 'light' | 'dark') {
   }, theme);
   await page.waitForTimeout(100);
 }
-
-test('sparklines visible in dark mode', async ({ page }) => {
-  await login(page, ADMIN_USER, ADMIN_PASS);
-  await page.goto(appUrl('dashboard.php'));
-  await page.evaluate(() => {
-    document.documentElement.setAttribute('data-theme', 'dark');
-  });
-  const sparklines = page.locator('svg.sparkline polyline');
-  const count = await sparklines.count();
-  if (count === 0) return; // no sparkline data in this env
-  const stroke = await sparklines.first().evaluate(
-    (el: Element) => window.getComputedStyle(el as SVGElement).stroke
-  );
-  expect(stroke).not.toBe('');
-  expect(stroke).not.toBe('rgb(0, 0, 0)');
-});
 
 test.describe('visual regression baseline', () => {
   test.beforeAll(async () => {

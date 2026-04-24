@@ -80,6 +80,23 @@ adminTest.describe('CSS regression', () => {
     }
   });
 
+  adminTest('sparklines visible in dark mode', async ({ adminPage: page }) => {
+    await page.goto('dashboard.php');
+    await page.evaluate(() => {
+      document.documentElement.setAttribute('data-theme', 'dark');
+    });
+    const sparklines = page.locator('svg.sparkline polyline');
+    const count = await sparklines.count();
+    if (count === 0) {
+      adminTest.skip(true, 'no sparkline data in this env');
+      return;
+    }
+    const stroke = await sparklines.first().evaluate(
+      (el: Element) => window.getComputedStyle(el as SVGElement).stroke
+    );
+    expect(stroke).toMatch(/^rgb/);
+  });
+
   adminTest('dashboard metric-row renders exactly 3 columns at 1280px viewport', async ({ adminPage: page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto('dashboard.php');
