@@ -251,7 +251,7 @@ This rule exists because the v4.0.0 tenancy migration only backfills tables that
 
 Pre-v4.0.0 migrations do not need to worry about this — they predate tenancy and are handled automatically by v4.0.0's runtime table enumeration (see #406 for implementation). The rule applies strictly to migrations whose version key sorts greater than v4.0.0 under natural-sort ordering.
 
-**Exception:** tables that are explicitly global and not tenant-scoped (e.g. `users`, `tenants` itself, `settings`, future `system_health` or similar) do not take `tenant_id`. When adding such a table, document in the migration closure why it is global, and update `docs/tenancy.md` to list it as an exception.
+**Exception:** tables that are explicitly global and not tenant-scoped (e.g. `users`, `tenants` itself, future `system_health` or similar) do not take `tenant_id`. Note: `settings` is **not** an exception — it has a nullable `tenant_id` column since v3.13.0 and uses a tenant→global fallback model. When adding a genuinely global table, document in the migration closure why it is global, and update `docs/tenancy.md` to list it as an exception.
 
 ### Modifying the schema (multi-engine, from v2.9.0 onward) *(applies from v2.9.0+)*
 

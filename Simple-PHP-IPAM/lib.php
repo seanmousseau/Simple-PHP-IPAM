@@ -2013,6 +2013,17 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
                 ':u'  => $userId,
             ]);
         }
+        // Build and write the audit row inside the transaction so that a
+        // failed audit INSERT rolls back the settings write too. The setting
+        // change and its audit trail are committed atomically.
+        $details = [
+            'key' => $key,
+            'old' => $sensitive ? '***' : ipam_setting_decode($oldRaw, $oldType, null),
+            'new' => $sensitive ? '***' : ipam_setting_decode($encoded, $type, null),
+        ];
+        $encodedDetails = json_encode($details);
+        audit($db, 'setting.update', 'setting', null, is_string($encodedDetails) ? $encodedDetails : $key);
+
         if ($ownTx) {
             $db->commit();
         }
@@ -2021,36 +2032,22 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
         throw $ex;
     }
 
-    $details = [
-        'key' => $key,
-        'old' => $sensitive ? '***' : ipam_setting_decode($oldRaw, $oldType, null),
-        'new' => $sensitive ? '***' : ipam_setting_decode($encoded, $type, null),
-    ];
-    $encodedDetails = json_encode($details);
-    audit($db, 'setting.update', 'setting', null, is_string($encodedDetails) ? $encodedDetails : $key);
-
     // Bust the per-request cache by forcing a re-read on next call.
     ipam_setting_cache_bust($key);
 }
 
 /**
- * Bust the per-request cache for ipam_setting(). Pass a key to clear a single
- * entry (for all tenants), or omit/null to clear the entire cache. Also
- * exposed so tests can reset state between assertions.
+ * Bust the per-request cache for ipam_setting(). Always clears the entire
+ * cache, regardless of whether a specific key is passed. Passing a key is
+ * accepted for call-site clarity but has no narrowing effect: we cannot
+ * enumerate all active tenant IDs to selectively evict only that key's
+ * tenant-scoped entries, so a full wipe is the only safe option. The cache
+ * is a single-request optimisation and rebuilds cheaply on next access.
+ * Also exposed so tests can reset state between assertions.
  */
 function ipam_setting_cache_bust(?string $key = null): void
 {
-    if ($key === null) {
-        // Clear the entire cache including all tenant-keyed entries.
-        ipam_setting_cache_storage('__CLEAR__', true);
-    } else {
-        // Clear the global entry and any tenant-scoped entries for this key.
-        // We cannot enumerate all tenants, so we wipe the whole cache when a
-        // specific key is busted — the cache is a single-request optimisation
-        // and rebuilds cheaply. This is safe: stale reads within a single
-        // request after a write to a specific key are the bug we are guarding.
-        ipam_setting_cache_storage('__CLEAR__', true);
-    }
+    ipam_setting_cache_storage('__CLEAR__', true);
 }
 
 /**

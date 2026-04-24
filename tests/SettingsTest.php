@@ -228,14 +228,22 @@ class SettingsTest extends TestCase
 
     public function testUniqueConstraintRejectsDuplicateTenantKey(): void
     {
-        // UNIQUE(tenant_id, key): two rows with the same non-null tenant_id + key must fail.
-        // Note: SQLite (and the SQL standard) treats NULL as distinct from NULL in UNIQUE
-        // indexes, so this test uses a non-null tenant_id to exercise the constraint.
+        // uq_settings_tenant: two rows with the same non-null tenant_id + key must fail.
         $this->expectException(PDOException::class);
         $ins = $this->db->prepare("INSERT INTO settings (tenant_id, key, value, type) VALUES (:t, :k, :v, 'string')");
         $ins->execute([':t' => 5, ':k' => 'bogus.key', ':v' => 'x']);
-        // Second insert with same tenant_id=5 + key must violate UNIQUE(tenant_id, key).
         $ins->execute([':t' => 5, ':k' => 'bogus.key', ':v' => 'y']);
+    }
+
+    public function testUniqueConstraintRejectsDuplicateGlobalKey(): void
+    {
+        // uq_settings_global: two global rows (tenant_id IS NULL) with the same key must fail.
+        // This is the partial unique index WHERE tenant_id IS NULL — the case that a plain
+        // UNIQUE(tenant_id, key) would miss because SQL treats NULL as distinct from NULL.
+        $this->expectException(PDOException::class);
+        $ins = $this->db->prepare("INSERT INTO settings (tenant_id, key, value, type) VALUES (:t, :k, :v, 'string')");
+        $ins->execute([':t' => null, ':k' => 'bogus.global', ':v' => 'x']);
+        $ins->execute([':t' => null, ':k' => 'bogus.global', ':v' => 'y']);
     }
 
     public function testRegistryAdvertisesMinMaxOnKnownIntKeys(): void
