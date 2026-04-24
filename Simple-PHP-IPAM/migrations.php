@@ -2043,7 +2043,18 @@ function ipam_migrations(): array
                 if ($col) {
                     return;
                 }
-                $db->exec("ALTER TABLE settings DROP PRIMARY KEY");
+                // Check if PRIMARY KEY exists before trying to drop it — the settings
+                // table was created with only a UNIQUE KEY, so on a fresh install there
+                // is no PRIMARY KEY and DROP PRIMARY KEY would throw ERROR 1091.
+                $hasPk = (int)($db->query(
+                    "SELECT COUNT(*) FROM information_schema.table_constraints
+                     WHERE table_schema = DATABASE()
+                       AND table_name = 'settings'
+                       AND constraint_type = 'PRIMARY KEY'"
+                ) ?: throw new \RuntimeException('Query failed'))->fetchColumn();
+                if ($hasPk > 0) {
+                    $db->exec("ALTER TABLE settings DROP PRIMARY KEY");
+                }
                 $db->exec("ALTER TABLE settings ADD COLUMN tenant_id INT NULL FIRST");
                 $db->exec("ALTER TABLE settings ADD UNIQUE KEY uq_settings_tenant_key (tenant_id, `key`)");
             } elseif ($driver === 'pgsql') {
@@ -2054,7 +2065,6 @@ function ipam_migrations(): array
                 if ($col) {
                     return;
                 }
-                $db->exec("ALTER TABLE settings DROP CONSTRAINT IF EXISTS settings_pkey");
                 $db->exec("ALTER TABLE settings ADD COLUMN tenant_id INTEGER");
                 $db->exec("ALTER TABLE settings ADD CONSTRAINT uq_settings_tenant_key UNIQUE (tenant_id, key)");
             }
