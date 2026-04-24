@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.13.0] - 2026-04-24
+
+### Added
+- Settings cascade: `ipam_setting()` now accepts optional `?int $tenantId` parameter with tenant→global→default resolution order, groundwork for v4.0.0 multi-tenancy (#711)
+- `tenant_id` column added to `settings` table with `UNIQUE(tenant_id, key)` constraint across all three engines (SQLite, MySQL, PostgreSQL) (#711)
+- PHPUnit `SettingsTest` covering all cascade levels (tenant shadow, global fallback, code default, null tenantId) (#713)
+- Playwright `settings.spec.ts` covering admin CRUD, nav visibility, readonly 403 (#714)
+- `reports.php`: server-side LIMIT/OFFSET pagination (100 rows/page) replacing the 2000-row hardcap (#734)
+- `api_keys.php`: styled `.empty-state` card with CTA replaces bare "No API keys yet." text (#732)
+
+### Fixed
+- `ipam_setting_set()`: PostgreSQL `SQLSTATE[42P18]` (indeterminate datatype) when `$tenantId` is null — build WHERE clause as SQL literal instead of parameterized NULL
+- Theme toggle button: SVG icon is now preserved after JS `updateThemeButton()` runs (was overwritten by `textContent` assignment to emoji) (#729)
+- `addresses.php`: Subnet notes section heading no longer uses 📝 emoji (#730)
+- `audit.php`: "Prune now" button no longer uses 🗑️ emoji — uses SVG trash icon (#731)
+- `health.php`: "Refresh now" link (`<a class="button-secondary">`) now renders correctly as a styled button (#733)
+
 ## [3.12.0] - 2026-04-24
 
 ### Fixed
@@ -1050,6 +1067,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.13.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.12.0...v3.13.0
 [3.12.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.11.0...v3.12.0
 [3.11.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.10.0...v3.11.0
 [3.10.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.9.0...v3.10.0
