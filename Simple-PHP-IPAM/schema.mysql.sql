@@ -640,13 +640,15 @@ CREATE TABLE IF NOT EXISTS backup_history (
 -- settings (v2.6.0, key/value config registry)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS settings (
-  `key`      VARCHAR(191) COLLATE utf8mb4_bin NOT NULL PRIMARY KEY,
+  tenant_id  INT NULL,
+  `key`      VARCHAR(191) COLLATE utf8mb4_bin NOT NULL,
   value      TEXT NULL,
   type       VARCHAR(16) NOT NULL DEFAULT 'string',
   updated_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   updated_by BIGINT UNSIGNED NULL,
   CONSTRAINT settings_type_check CHECK (type IN ('string','int','bool','json')),
-  CONSTRAINT fk_settings_updated_by FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
+  CONSTRAINT fk_settings_updated_by FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL,
+  UNIQUE KEY uq_settings_tenant_key (tenant_id, `key`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- ---------------------------------------------------------------------------

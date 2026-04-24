@@ -465,12 +465,14 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 );
 
 CREATE TABLE IF NOT EXISTS settings (
-  key        TEXT PRIMARY KEY,
+  tenant_id  INTEGER,
+  key        TEXT NOT NULL,
   value      TEXT,
   type       TEXT NOT NULL DEFAULT 'string'
              CHECK(type IN ('string','int','bool','json')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  UNIQUE(tenant_id, key)
 );
 
 -- v3.3.0: Outbound webhooks

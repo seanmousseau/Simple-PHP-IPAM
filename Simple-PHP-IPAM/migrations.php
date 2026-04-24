@@ -668,10 +668,30 @@ function ipam_migrations(): array
             if (!in_array('settings', $tables, true)) return;
 
             // Insert the new row with default '[]' if not already present.
-            $ignore = ipam_dialect()->upsert_or_ignore('settings', ['key']);
-            $db->prepare(
-                "INSERT INTO settings (".ipam_key_col().", value, type) VALUES (:k, '[]', 'json') $ignore"
-            )->execute([':k' => 'alert.recipient_user_ids']);
+            // After 3.13.0-settings-cascade, settings has UNIQUE(tenant_id, key)
+            // rather than PRIMARY KEY(key). Use the appropriate conflict columns
+            // based on what the current schema actually has so this migration
+            // replays correctly in the idempotency test and on real upgrades.
+            $driver2 = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $hasTenantCol = false;
+            if ($driver2 === 'sqlite') {
+                $existingCols = array_column(
+                    ($db->query("PRAGMA table_info(settings)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                    'name'
+                );
+                $hasTenantCol = in_array('tenant_id', $existingCols, true);
+            }
+            $conflictCols = $hasTenantCol ? ['tenant_id', '`key`'] : ['key'];
+            $ignore = ipam_dialect()->upsert_or_ignore('settings', $conflictCols);
+            if ($hasTenantCol) {
+                $db->prepare(
+                    "INSERT INTO settings (tenant_id, `key`, value, type) VALUES (NULL, :k, '[]', 'json') $ignore"
+                )->execute([':k' => 'alert.recipient_user_ids']);
+            } else {
+                $db->prepare(
+                    "INSERT INTO settings (".ipam_key_col().", value, type) VALUES (:k, '[]', 'json') $ignore"
+                )->execute([':k' => 'alert.recipient_user_ids']);
+            }
 
             // CodeRabbit M1 (PR #450): re-run safety. If alert.recipient_user_ids
             // is already non-default, the migration (or an admin) has already
@@ -1979,6 +1999,64 @@ function ipam_migrations(): array
                         $db->exec("ALTER TABLE users ADD COLUMN lock_reason TEXT");
                     }
                 }
+            }
+        },
+
+        // v3.13.0 #711: add tenant_id to settings table as groundwork for the
+        // multi-tenant settings cascade (global → tenant → per-request). The
+        // PRIMARY KEY(key) unique constraint is replaced by UNIQUE(tenant_id, key)
+        // so each tenant can override any global setting while global rows sit at
+        // tenant_id IS NULL. SQLite requires a full table rebuild; MySQL and
+        // PostgreSQL use ALTER TABLE.
+        '3.13.0-settings-cascade' => static function (PDO $db): void {
+            $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+
+            if ($driver === 'sqlite') {
+                $cols = array_column(
+                    ($db->query("PRAGMA table_info(settings)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                    'name'
+                );
+                if (in_array('tenant_id', $cols, true)) {
+                    return;
+                }
+                $db->exec("ALTER TABLE settings RENAME TO settings_v3120");
+                $db->exec("
+                    CREATE TABLE settings (
+                        tenant_id  INTEGER,
+                        key        TEXT NOT NULL,
+                        value      TEXT,
+                        type       TEXT NOT NULL DEFAULT 'string'
+                                   CHECK(type IN ('string','int','bool','json')),
+                        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                        updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                        UNIQUE(tenant_id, key)
+                    )
+                ");
+                $db->exec("
+                    INSERT INTO settings (tenant_id, `key`, value, type, updated_at, updated_by)
+                    SELECT NULL, `key`, value, type, updated_at, updated_by
+                    FROM settings_v3120
+                ");
+                $db->exec("DROP TABLE settings_v3120");
+            } elseif ($driver === 'mysql') {
+                $col = ($db->query("SHOW COLUMNS FROM settings LIKE 'tenant_id'") ?: throw new \RuntimeException('Query failed'))->fetch();
+                if ($col) {
+                    return;
+                }
+                $db->exec("ALTER TABLE settings DROP PRIMARY KEY");
+                $db->exec("ALTER TABLE settings ADD COLUMN tenant_id INT NULL FIRST");
+                $db->exec("ALTER TABLE settings ADD UNIQUE KEY uq_settings_tenant_key (tenant_id, `key`)");
+            } elseif ($driver === 'pgsql') {
+                $col = ($db->query(
+                    "SELECT 1 FROM information_schema.columns
+                     WHERE table_name='settings' AND column_name='tenant_id'"
+                ) ?: throw new \RuntimeException('Query failed'))->fetch();
+                if ($col) {
+                    return;
+                }
+                $db->exec("ALTER TABLE settings DROP CONSTRAINT IF EXISTS settings_pkey");
+                $db->exec("ALTER TABLE settings ADD COLUMN tenant_id INTEGER");
+                $db->exec("ALTER TABLE settings ADD CONSTRAINT uq_settings_tenant_key UNIQUE (tenant_id, key)");
             }
         },
     ];

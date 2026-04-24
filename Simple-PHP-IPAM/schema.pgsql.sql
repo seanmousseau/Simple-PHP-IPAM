@@ -659,12 +659,14 @@ CREATE INDEX IF NOT EXISTS idx_backup_history_started_at ON backup_history(start
 -- Postgres does not reserve it but quoting keeps the identifier exact.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS settings (
-  "key"      TEXT COLLATE "C" NOT NULL PRIMARY KEY,
+  tenant_id  INTEGER NULL,
+  "key"      TEXT COLLATE "C" NOT NULL,
   value      TEXT NULL,
   type       TEXT NOT NULL DEFAULT 'string',
   updated_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
   updated_by BIGINT NULL REFERENCES users(id) ON DELETE SET NULL,
-  CONSTRAINT settings_type_check CHECK (type IN ('string','int','bool','json'))
+  CONSTRAINT settings_type_check CHECK (type IN ('string','int','bool','json')),
+  CONSTRAINT uq_settings_tenant_key UNIQUE (tenant_id, "key")
 );
 
 -- ---------------------------------------------------------------------------

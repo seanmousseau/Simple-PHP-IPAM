@@ -838,4 +838,29 @@ class MigrationTest extends TestCase
             unset($GLOBALS['ipam_dialect']);
         }
     }
+
+    // -------------------------------------------------------------------------
+    // 3.13.0-settings-cascade
+    // -------------------------------------------------------------------------
+
+    /**
+     * The 3.13.0-settings-cascade migration must add tenant_id to settings,
+     * preserve all existing rows, and be idempotent on a second run.
+     */
+    public function testSettingsCascadeMigrationIdempotent(): void
+    {
+        $db = $this->makePreVrfDb();
+        apply_migrations($db);
+
+        $cols = $db->query("PRAGMA table_info(settings)")->fetchAll(PDO::FETCH_COLUMN, 1);
+        $this->assertContains('tenant_id', $cols, 'settings.tenant_id must exist after 3.13.0-settings-cascade migration');
+
+        $count = (int)$db->query("SELECT COUNT(*) FROM settings")->fetchColumn();
+        $this->assertGreaterThan(0, $count, 'settings rows must survive the migration');
+
+        // Second call must be a no-op (idempotency guard).
+        apply_migrations($db);
+        $cols2 = $db->query("PRAGMA table_info(settings)")->fetchAll(PDO::FETCH_COLUMN, 1);
+        $this->assertContains('tenant_id', $cols2, 'tenant_id must still exist after second apply_migrations() call');
+    }
 }
