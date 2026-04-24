@@ -1780,3 +1780,7 @@ button:active,.button:active,.action-pill:active{transform:translateY(1px)}
 #growth-chart:not(:hover) .u-cursor-pt,
 #growth-chart:not(:hover) .u-cursor-x,
 #growth-chart:not(:hover) .u-cursor-y { opacity:0; }
+/* Pagination bar (#734) */
+.pagination-bar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:var(--space-3);margin-top:var(--space-5);padding-top:var(--space-4);border-top:1px solid var(--border)}
+.pagination-controls{display:flex;align-items:center;gap:var(--space-3)}
+.page-indicator{font-size:var(--font-size-sm);color:var(--muted)}

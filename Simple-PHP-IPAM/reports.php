@@ -9,6 +9,9 @@ require_role('admin');
 // --- Parameters ---
 $subnetId = to_int($_GET['subnet_id'] ?? 0);
 $days     = max(1, min(365, to_int($_GET['days'] ?? 90)));
+$page     = max(1, to_int($_GET['page'] ?? 1));
+$perPage  = 100;
+$offset   = ($page - 1) * $perPage;
 
 $cutoff = gmdate('Y-m-d H:i:s', time() - $days * 86400);
 
@@ -23,16 +26,31 @@ if ($subnetId > 0) {
 
 $where = 'WHERE ' . implode(' AND ', $wheres);
 
-// --- Fetch rows (cap at 2000) ---
+// --- Count total rows for pagination ---
+$countSt = $db->prepare(
+    "SELECT COUNT(*) FROM utilization_snapshots us
+     JOIN subnets s ON s.id = us.subnet_id
+     $where"
+);
+foreach ($params as $k => $v) $countSt->bindValue($k, $v);
+$countSt->execute();
+$totalRows  = (int)$countSt->fetchColumn();
+$totalPages = max(1, (int)ceil($totalRows / $perPage));
+$page       = min($page, $totalPages);
+$offset     = ($page - 1) * $perPage;
+
+// --- Fetch rows (paginated) ---
 $st = $db->prepare(
     "SELECT us.subnet_id, s.cidr, us.snapped_at, us.used_count, us.free_count, us.total_hosts
      FROM utilization_snapshots us
      JOIN subnets s ON s.id = us.subnet_id
      $where
      ORDER BY us.subnet_id ASC, us.snapped_at DESC
-     LIMIT 2000"
+     LIMIT :limit OFFSET :offset"
 );
 foreach ($params as $k => $v) $st->bindValue($k, $v);
+$st->bindValue(':limit', $perPage, PDO::PARAM_INT);
+$st->bindValue(':offset', $offset, PDO::PARAM_INT);
 $st->execute();
 /** @var list<array<string, mixed>> $rows */
 $rows = $st->fetchAll();
@@ -56,6 +74,13 @@ $exportUrl = 'export_utilization_history.php?' . http_build_query(
         fn($v) => $v !== null
     )
 );
+
+// Build base pagination URL preserving active filters (page excluded — appended per link).
+$baseParams = array_filter(
+    ['days' => $days !== 90 ? $days : null, 'subnet_id' => $subnetId > 0 ? $subnetId : null],
+    fn($v) => $v !== null
+);
+$baseUrl = 'reports.php' . ($baseParams ? '?' . http_build_query($baseParams) . '&' : '?');
 
 page_header('Reports');
 ?>
@@ -130,9 +155,22 @@ page_header('Reports');
     <?php endforeach; ?>
     </tbody>
   </table>
-  <?php if (count($rows) === 2000): ?>
-    <div class="muted mt-8" style="font-size:.85rem">Showing first 2000 rows. Use the CSV export for full data.</div>
-  <?php endif; ?>
+</div>
+<?php
+$from = $totalRows === 0 ? 0 : $offset + 1;
+$to   = min($offset + $perPage, $totalRows);
+?>
+<div class="pagination-bar">
+  <span class="muted"><?= e("Showing {$from}–{$to} of " . number_format($totalRows) . " rows") ?></span>
+  <div class="pagination-controls">
+    <?php if ($page > 1): ?>
+      <a href="<?= e($baseUrl . 'page=' . ($page - 1)) ?>" class="action-pill">&laquo; Prev</a>
+    <?php endif; ?>
+    <span class="page-indicator">Page <?= e((string)$page) ?> of <?= e((string)$totalPages) ?></span>
+    <?php if ($page < $totalPages): ?>
+      <a href="<?= e($baseUrl . 'page=' . ($page + 1)) ?>" class="action-pill">Next &raquo;</a>
+    <?php endif; ?>
+  </div>
 </div>
 <?php endif; ?>
 
