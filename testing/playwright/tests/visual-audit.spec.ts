@@ -375,9 +375,9 @@ for (const { path: pagePath, label } of BREADCRUMB_PAGES) {
     await login(page, ADMIN_USER, ADMIN_PASS);
     await page.goto(pagePath);
 
-    // All BREADCRUMB_PAGES must render a .breadcrumbs element — assert presence.
+    // All BREADCRUMB_PAGES must render a .breadcrumbs element — assert presence (auto-retrying).
     const bc = page.locator('.breadcrumbs');
-    expect(await bc.count(), `missing .breadcrumbs on ${label}`).toBeGreaterThan(0);
+    await expect(bc.first()).toBeVisible({ timeout: 5_000 });
     const bcText = await bc.first().evaluate(el => el.textContent ?? '');
     expect(bcText, `emoji in .breadcrumbs on ${label}`).not.toMatch(EMOJI_RE);
 
@@ -402,7 +402,7 @@ test('breadcrumbs and action pills on addresses have no emoji', async ({ page })
   await page.goto(`addresses.php?subnet_id=${subnetId}`);
 
   const bc = page.locator('.breadcrumbs');
-  expect(await bc.count(), 'missing .breadcrumbs on addresses').toBeGreaterThan(0);
+  await expect(bc.first()).toBeVisible({ timeout: 5_000 });
   const bcText = await bc.first().evaluate(el => el.textContent ?? '');
   expect(bcText, 'emoji in .breadcrumbs on addresses').not.toMatch(EMOJI_RE);
 

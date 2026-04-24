@@ -118,6 +118,6 @@ test('readonly user is blocked from reports.php (403)', async ({ browser }: { br
     expect(bodyText).toMatch(/forbidden|403/i);
   } finally {
     await logout(roPage).catch(() => undefined);
-    await roCtx.close();
+    await roCtx.close().catch(() => undefined);
   }
 });
