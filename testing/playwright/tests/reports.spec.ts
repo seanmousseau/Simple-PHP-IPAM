@@ -28,7 +28,7 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
 });
 
 test.afterAll(async () => {
-  await ctx.close();
+  await ctx?.close().catch(() => undefined);
 });
 
 // ── Page structure ────────────────────────────────────────────────────────────
@@ -110,8 +110,10 @@ test('readonly user is blocked from reports.php (403)', async ({ browser }: { br
   const roPage = await roCtx.newPage();
   try {
     await login(roPage, RO_USER, RO_PASS);
-    await roPage.goto(appUrl('reports.php'));
-    // Expect a 403 response — page renders "Forbidden" or similar
+    const response = await roPage.goto(appUrl('reports.php'));
+    // Primary guard: assert HTTP 403 status
+    expect(response?.status()).toBe(403);
+    // Secondary guard: page body confirms forbidden
     const bodyText = await roPage.locator('body').innerText();
     expect(bodyText).toMatch(/forbidden|403/i);
   } finally {

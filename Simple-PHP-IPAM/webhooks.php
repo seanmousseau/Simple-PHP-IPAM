@@ -264,13 +264,13 @@ $flash = flash_get();
 page_header('Webhooks');
 ?>
 <div class="breadcrumbs">
-  <a href="dashboard.php">Dashboard</a><span class="sep">›</span>
-  <a href="#">Admin</a><span class="sep">›</span>
+  <a href="dashboard.php"><?= icon('home') ?> Dashboard</a><span class="sep">›</span>
+  <a href="#"><?= icon('cog') ?> Admin</a><span class="sep">›</span>
   <?php if ($view === 'deliveries'): ?>
-    <a href="webhooks.php">Webhooks</a><span class="sep">›</span>
-    <span>Delivery Log</span>
+    <a href="webhooks.php"><?= icon('webhook') ?> Webhooks</a><span class="sep">›</span>
+    <span><?= icon('audit') ?> Delivery Log</span>
   <?php else: ?>
-    <span>Webhooks</span>
+    <span><?= icon('webhook') ?> Webhooks</span>
   <?php endif; ?>
 </div>
 <?php

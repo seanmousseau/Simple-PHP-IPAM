@@ -279,9 +279,9 @@ $cacheAgeStr = $cachedAt !== null
 page_header('Health Dashboard');
 ?>
 <div class="breadcrumbs">
-  <a href="dashboard.php">Dashboard</a><span class="sep">›</span>
-  <a href="#">Admin</a><span class="sep">›</span>
-  <span>Health</span>
+  <a href="dashboard.php"><?= icon('home') ?> Dashboard</a><span class="sep">›</span>
+  <a href="#"><?= icon('cog') ?> Admin</a><span class="sep">›</span>
+  <span><?= icon('health') ?> Health</span>
 </div>
 
 <div class="page-header">

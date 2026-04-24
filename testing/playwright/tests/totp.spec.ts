@@ -239,8 +239,10 @@ test.describe('TOTP 2FA', () => {
         const resetForm = targetRow!.locator('form').filter({ hasText: 'Reset 2FA' });
         // Accept any confirm() dialog that may appear
         page.once('dialog', d => d.accept());
-        await resetForm.locator('button[type=submit]').click();
-        await page.waitForURL(/users\.php/, { timeout: 30_000 });
+        await Promise.all([
+            page.waitForURL(/users\.php/, { timeout: 30_000 }),
+            resetForm.locator('button[type=submit]').click(),
+        ]);
 
         await logout(page);
 
