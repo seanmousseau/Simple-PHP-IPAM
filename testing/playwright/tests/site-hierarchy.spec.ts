@@ -164,6 +164,45 @@ test('sites: delete parent region', async () => {
   await expect(page.locator('body')).not.toContainText(TEST_REGION_NAME);
 });
 
+// ── Collapsible rows (v3.11.0 #632 #633) ─────────────────────────────────────
+
+test('sites: parent sites render a collapse toggle button', async () => {
+  await page.goto('sites.php', { waitUntil: 'networkidle' });
+  const toggles = page.locator('[data-collapsible-toggle]');
+  const count = await toggles.count();
+  if (count === 0) {
+    test.skip(true, 'No parent sites with children in this environment');
+    return;
+  }
+  await expect(toggles.first()).toBeVisible();
+  await expect(toggles.first()).toHaveAttribute('aria-expanded');
+});
+
+test('sites: clicking toggle collapses and expands child rows', async () => {
+  await page.goto('sites.php', { waitUntil: 'networkidle' });
+  const toggles = page.locator('[data-collapsible-toggle]');
+  const count = await toggles.count();
+  if (count === 0) {
+    test.skip(true, 'No parent sites with children in this environment');
+    return;
+  }
+  const groupId = await toggles.first().getAttribute('data-collapsible-group-id');
+  const childRows = page.locator(`[data-collapsible-child="${groupId}"]`);
+  const childCount = await childRows.count();
+  if (childCount === 0) {
+    test.skip(true, 'No child sites in this group');
+    return;
+  }
+  // Collapse
+  await toggles.first().click();
+  await expect(toggles.first()).toHaveAttribute('aria-expanded', 'false');
+  await expect(childRows.first()).toHaveClass(/collapsible-child--hidden/);
+  // Re-expand
+  await toggles.first().click();
+  await expect(toggles.first()).toHaveAttribute('aria-expanded', 'true');
+  await expect(childRows.first()).not.toHaveClass(/collapsible-child--hidden/);
+});
+
 // ── API — site hierarchy ───────────────────────────────────────────────────────
 
 test('api: site response includes parent_id field', async () => {

@@ -110,6 +110,18 @@ foreach ($rootSites as $root) {
     }
 }
 
+// Build child-count map for collapsible toggles
+/** @var array<int, int> $childCounts */
+$childCounts = [];
+foreach ($displayRows as $row) {
+    $pid = to_int($row['parent_id'] ?? 0);
+    if ($pid > 0) {
+        $childCounts[$pid] = ($childCounts[$pid] ?? 0) + 1;
+    }
+}
+/** @var array<int, int> $parentsWithChildren */
+$parentsWithChildren = array_filter($childCounts, fn($c) => $c > 0);
+
 page_header('Sites');
 ?>
 <div class="breadcrumbs">
@@ -187,6 +199,15 @@ page_header('Sites');
   <?php if (!$sites): ?>
     <div class="empty-state">No sites yet. <a class="action-pill" href="#add-site">+ Add Site</a></div>
   <?php else: ?>
+    <?php if (count($parentsWithChildren) >= 2): ?>
+    <div class="toolbar" style="margin-bottom:var(--space-3)">
+      <div></div>
+      <div>
+        <button type="button" class="button-secondary btn-sm" data-collapsible-expand-all><?= icon('plus') ?> Expand all</button>
+        <button type="button" class="button-secondary btn-sm" data-collapsible-collapse-all><?= icon('x') ?> Collapse all</button>
+      </div>
+    </div>
+    <?php endif; ?>
     <div class="table-wrap">
     <table>
       <thead>
@@ -204,11 +225,23 @@ page_header('Sites');
       </thead>
       <tbody>
       <?php foreach ($displayRows as $site): ?>
-        <?php $depth = to_int($site['_depth'] ?? 0); ?>
-        <tr>
+        <?php
+          $depth   = to_int($site['_depth'] ?? 0);
+          $siteId  = to_int($site['id']);
+          $pid     = to_int($site['parent_id'] ?? 0);
+          $hasKids = ($childCounts[$siteId] ?? 0) > 0;
+        ?>
+        <tr<?= ($depth === 1 && $pid > 0) ? ' data-collapsible-child="' . $pid . '"' : '' ?>>
           <td style="padding-left: <?= 16 + $depth * 20 ?>px">
             <?php if ($depth > 0): ?><span class="muted">↳ </span><?php endif; ?>
             <b><?= e(to_str($site['name'])) ?></b>
+            <?php if ($hasKids): ?>
+              <button type="button" class="collapsible-toggle" data-collapsible-toggle
+                      data-collapsible-group-id="<?= $siteId ?>"
+                      aria-expanded="true"
+                      aria-label="Toggle child sites for <?= e(to_str($site['name'])) ?>"><?= icon('chevron-down') ?></button>
+              <span class="badge muted" style="font-size:.75rem"><?= $childCounts[$siteId] ?> <?= $childCounts[$siteId] === 1 ? 'site' : 'sites' ?></span>
+            <?php endif; ?>
           </td>
           <td class="muted"><?= e(ipam_format_datetime(to_str($site['created_at']))) ?></td>
           <td><?= $site['parent_name'] ? e(to_str($site['parent_name'])) : '<span class="muted">—</span>' ?></td>

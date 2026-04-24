@@ -1429,6 +1429,14 @@ body.pw-toggle-hidden .pw-wrap .pw-input{padding-right:36px}
 .chart-empty__msg{margin:0;color:var(--muted);font-size:.875rem;text-align:center}
 .chart-empty__cta{font-size:.8125rem;color:var(--link)}
 
+/* ── Collapsible row toggle (v3.11.0 #632 #633) ─────────────────────── */
+.collapsible-toggle{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;background:none;border:none;cursor:pointer;color:var(--muted);padding:0;border-radius:var(--radius-sm);flex-shrink:0}
+.collapsible-toggle:hover{color:var(--fg);background:color-mix(in srgb,var(--border) 60%,transparent)}
+.collapsible-toggle .icon{width:16px;height:16px;transition:transform 200ms ease}
+.collapsible-toggle[aria-expanded="true"] .icon{transform:rotate(90deg)}
+@media (prefers-reduced-motion:reduce){.collapsible-toggle .icon{transition:none}}
+.collapsible-child--hidden{display:none}
+
 /* ── Health dashboard status indicators (v3.7.0 #425) ───────────────── */
 .health-dot{display:inline-block;width:10px;height:10px;border-radius:50%;flex-shrink:0;vertical-align:middle}
 .health-dot.ok{background:var(--success)}
