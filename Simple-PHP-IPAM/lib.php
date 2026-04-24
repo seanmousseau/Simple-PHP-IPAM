@@ -1947,15 +1947,21 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
     $encoded = ipam_setting_encode($value, $type);
 
     // Fetch the existing row for the same scope (tenant or global) to produce
-    // a meaningful audit diff. Use a portable NULL-safe comparison.
+    // a meaningful audit diff. Build the tenant WHERE clause as a literal
+    // condition rather than a parameterized NULL so that PostgreSQL can infer
+    // the data type (PostgreSQL raises "indeterminate datatype" on bare NULL
+    // parameters in prepared statements).
     $oldRaw  = null;
     $oldType = $type;
     $kc = ipam_key_col();
+    $tenantWhere = $tenantId === null ? 'tenant_id IS NULL' : 'tenant_id = :tb';
     $st = $db->prepare(
         "SELECT value, type FROM settings
-         WHERE ((tenant_id IS NULL AND :ta IS NULL) OR tenant_id = :tb) AND {$kc} = :k"
+         WHERE {$tenantWhere} AND {$kc} = :k"
     );
-    $st->execute([':ta' => $tenantId, ':tb' => $tenantId, ':k' => $key]);
+    $stParams = [':k' => $key];
+    if ($tenantId !== null) { $stParams[':tb'] = $tenantId; }
+    $st->execute($stParams);
     $prev = $st->fetch();
     if (is_array($prev)) {
         $oldRaw  = is_string($prev['value'] ?? null) ? $prev['value'] : null;
@@ -1975,16 +1981,11 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
         $up = $db->prepare(
             "UPDATE settings
              SET value = :v, type = :ty, updated_at = {$d->now()}, updated_by = :u
-             WHERE ((tenant_id IS NULL AND :ta IS NULL) OR tenant_id = :tb) AND {$kc} = :k"
+             WHERE {$tenantWhere} AND {$kc} = :k"
         );
-        $up->execute([
-            ':v'  => $encoded,
-            ':ty' => $type,
-            ':u'  => $userId,
-            ':ta' => $tenantId,
-            ':tb' => $tenantId,
-            ':k'  => $key,
-        ]);
+        $upParams = [':v' => $encoded, ':ty' => $type, ':u' => $userId, ':k' => $key];
+        if ($tenantId !== null) { $upParams[':tb'] = $tenantId; }
+        $up->execute($upParams);
     } else {
         // Row does not exist — insert.
         $up = $db->prepare(
