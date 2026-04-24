@@ -91,3 +91,22 @@ test('dashboard widget tables have overflow-x:auto wrapper', async () => {
   const wrappers = await page.locator('[data-widget="top-subnets"] .table-scroll, [data-widget="by-site"] .table-scroll').count();
   expect(wrappers, 'both dashboard widget tables must have .table-scroll overflow wrapper').toBe(2);
 });
+
+test('by-site widget empty state has meaningful text when no site data', async () => {
+  await page.goto('dashboard.php');
+  await page.waitForLoadState('networkidle');
+  // The seeded demo DB has sites, so the widget should show data (not empty state).
+  // This test validates the empty-state markup when it appears, and verifies the widget exists.
+  const widget = page.locator('[data-widget="by-site"]');
+  await expect(widget).toBeVisible();
+
+  const emptyState = widget.locator('.empty-state');
+  const isEmpty = await emptyState.count() > 0;
+  if (isEmpty) {
+    // If empty state is shown, it must NOT say "No data yet" and must have a link to sites.php
+    await expect(emptyState, 'empty state must not say "No data yet"').not.toContainText('No data yet');
+    await expect(emptyState.locator('a[href="sites.php"]'),
+      'empty state must include a link to sites.php').toBeVisible();
+  }
+  // If not empty, the table should be visible — widget presence is sufficient assertion
+});

@@ -268,7 +268,14 @@ ipam_render('dashboard_kpi_card', ['label' => 'Crit Alerts', 'value' => $kpis['a
       <button class="widget-hide-btn" data-widget-key="by-site" aria-label="Hide widget"><?= icon('x') ?></button>
     </div>
     <?php if (!$bySite): ?>
-      <div class="empty-state">No data yet.</div>
+      <div class="empty-state">
+        <p class="muted">No site data yet.</p>
+        <?php if (current_user()['role'] === 'admin'): ?>
+          <a href="sites.php" class="action-pill"><?= icon('map-pin') ?> Manage Sites</a>
+        <?php else: ?>
+          <p class="muted" style="font-size:.85rem">Ask an administrator to configure sites.</p>
+        <?php endif; ?>
+      </div>
     <?php else: ?>
       <div class="mb-8">
         <select id="dash-site-filter" class="action-pill">
