@@ -12,19 +12,14 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.11.0
+## What's new in v3.12.0
 
-v3.11.0 is a UI consistency and polish release. It completes the emoji-to-SVG-icon pass across all page content areas, adds breadcrumbs to the three admin pages that were missing them, and fixes dark-mode sparkline visibility. It also ships collapsible expand/collapse for the sites admin hierarchy, a structured empty state for the dashboard growth chart, and extended Playwright coverage for the reports and export endpoints.
+- **Dashboard responsive fix** — tables no longer overlap at 900–1100px viewport widths; two-column layout only appears when there's genuinely enough room
+- **Health page alert indicators** — Utilization warn/crit alert counts shown in the Scanning card; zero = green
+- **Dashboard empty state** — "Addresses by Site" widget shows a helpful message and admin CTA when no sites are configured
+- **Webhooks layout cleanup** — fixed stale HTML wrapper and standardized the page header pattern
 
-**Highlights:**
-- Emoji → SVG Heroicons sweep across all page content areas (#654)
-- Breadcrumbs on `health.php`, `db_tools.php`, `webhooks.php` (#657)
-- Collapsible sites admin with sessionStorage persistence (#632, #633)
-- Dashboard growth chart structured empty state (#644)
-- Dark-mode sparkline fix (#653)
-- Sidebar suppressed on pre-auth pages (#658)
-
-See [CHANGELOG.md](CHANGELOG.md) for the full change list.
+[Full changelog →](CHANGELOG.md)
 
 ---
 

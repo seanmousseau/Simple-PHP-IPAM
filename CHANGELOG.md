@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.12.0] - 2026-04-24
+
+### Fixed
+- Dashboard: raised `.grid.cols-2` minmax threshold from 420px to 520px, eliminating a 904–1023px viewport window where two narrow columns appeared without the sidebar (#677)
+- Dashboard: added `overflow-x:auto` scroll wrappers to both widget tables as defense-in-depth against future overflow (#677)
+- Webhooks: removed stale `<main id='main-content'>/<div class='container'>` wrappers (invalid nested `<main>` elements left from pre-v3.8.0 layout) and replaced ad-hoc inline `.row` header with standard `.toolbar` CSS class (#661)
+
+### Added
+- Dashboard: "Addresses by Site" widget now shows a contextual empty state with a "Manage Sites" CTA for admins when no site data exists (#660)
+- Health: Scanning card now shows Warn alerts and Crit alerts counts from `alert_state`; a count of zero shows a green dot (#659)
+
 ## [3.11.0] - 2026-04-24
 
 ### Added
@@ -1039,6 +1050,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.12.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.11.0...v3.12.0
 [3.11.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.10.0...v3.11.0
 [3.10.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.9.0...v3.10.0
 [3.9.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.8.1...v3.9.0
