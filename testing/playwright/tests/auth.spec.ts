@@ -72,4 +72,9 @@ test.describe('Authentication', () => {
     await page.goto('forgot_password.php');
     await expect(page.locator('#sidebar')).not.toBeAttached();
   });
+
+  test('reset_password page has no sidebar', async ({ page }) => {
+    await page.goto('reset_password.php');
+    await expect(page.locator('#sidebar')).not.toBeAttached();
+  });
 });

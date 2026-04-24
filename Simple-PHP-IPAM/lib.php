@@ -5873,7 +5873,6 @@ function ipam_webhook_prune(PDO $db, int $days): int
 
 /* ---------------- UI helpers ---------------- */
 
-/** @param array<string, string> $opts */
 /** @param array<string, mixed> $opts */
 function page_header(string $title, array $opts = []): void
 {
