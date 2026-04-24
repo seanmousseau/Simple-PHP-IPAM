@@ -1894,7 +1894,7 @@
       { gap: 8, size: 28, stroke: muted, ticks: { stroke: muted } },
       {
         gap: 8, size: 40, stroke: muted, ticks: { stroke: muted },
-        values: function (u, vals) {
+        values: function (_u, vals) {
           return vals.map(function (v) { return v == null ? '' : String(Math.round(v)); });
         }
       }
