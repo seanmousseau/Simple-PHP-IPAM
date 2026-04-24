@@ -23,12 +23,13 @@ class SettingsTest extends TestCase
                 tenant_id  INTEGER,
                 key        TEXT NOT NULL,
                 value      TEXT,
-                type       TEXT NOT NULL DEFAULT 'string',
+                type       TEXT NOT NULL DEFAULT 'string' CHECK(type IN ('string','int','bool','json')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_by INTEGER,
-                UNIQUE(tenant_id, key)
+                updated_by INTEGER
             )
         ");
+        $this->db->exec("CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_global ON settings (key) WHERE tenant_id IS NULL");
+        $this->db->exec("CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_tenant ON settings (tenant_id, key) WHERE tenant_id IS NOT NULL");
         $this->db->exec("
             CREATE TABLE audit_log (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,

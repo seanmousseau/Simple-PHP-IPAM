@@ -1946,59 +1946,70 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
 
     $encoded = ipam_setting_encode($value, $type);
 
-    // Fetch the existing row for the same scope (tenant or global) to produce
-    // a meaningful audit diff. Build the tenant WHERE clause as a literal
-    // condition rather than a parameterized NULL so that PostgreSQL can infer
-    // the data type (PostgreSQL raises "indeterminate datatype" on bare NULL
-    // parameters in prepared statements).
+    // Wrap SELECT+UPDATE/INSERT in a transaction to prevent TOCTOU races.
+    // Two concurrent writers could both see "no row" and both INSERT, creating
+    // duplicate global rows — the partial unique index catches the second writer
+    // on SQLite/PostgreSQL, but MySQL's composite UNIQUE allows duplicate NULLs.
+    // The transaction serialises the check-then-act so only one writer wins.
+    $kc = ipam_key_col();
+    $d  = ipam_dialect();
+    $tenantWhere = $tenantId === null ? 'tenant_id IS NULL' : 'tenant_id = :tb';
     $oldRaw  = null;
     $oldType = $type;
-    $kc = ipam_key_col();
-    $tenantWhere = $tenantId === null ? 'tenant_id IS NULL' : 'tenant_id = :tb';
-    $st = $db->prepare(
-        "SELECT value, type FROM settings
-         WHERE {$tenantWhere} AND {$kc} = :k"
-    );
-    $stParams = [':k' => $key];
-    if ($tenantId !== null) { $stParams[':tb'] = $tenantId; }
-    $st->execute($stParams);
-    $prev = $st->fetch();
-    if (is_array($prev)) {
-        $oldRaw  = is_string($prev['value'] ?? null) ? $prev['value'] : null;
-        $oldType = is_string($prev['type'] ?? null) && $prev['type'] !== '' ? $prev['type'] : $type;
-    }
 
-    // Write the new value. We use explicit UPDATE-then-INSERT rather than a
-    // dialect upsert because SQLite treats NULL as distinct from NULL in UNIQUE
-    // index lookups, so ON CONFLICT(tenant_id, key) never fires for global
-    // (tenant_id IS NULL) rows in SQLite. The SELECT above already tells us
-    // whether a row exists, so branching on $prev is cheap and portable.
-    // MySQL and PostgreSQL handle NULL the same way in their ON CONFLICT / ON
-    // DUPLICATE KEY UPDATE idioms, so this pattern is safe across all three.
-    $d = ipam_dialect();
-    if (is_array($prev)) {
-        // Row exists — update in place.
-        $up = $db->prepare(
-            "UPDATE settings
-             SET value = :v, type = :ty, updated_at = {$d->now()}, updated_by = :u
+    $db->beginTransaction();
+    try {
+        // Fetch the existing row for the same scope (tenant or global) to produce
+        // a meaningful audit diff. Build the tenant WHERE clause as a literal
+        // condition rather than a parameterized NULL so that PostgreSQL can infer
+        // the data type (PostgreSQL raises "indeterminate datatype" on bare NULL
+        // parameters in prepared statements).
+        $st = $db->prepare(
+            "SELECT value, type FROM settings
              WHERE {$tenantWhere} AND {$kc} = :k"
         );
-        $upParams = [':v' => $encoded, ':ty' => $type, ':u' => $userId, ':k' => $key];
-        if ($tenantId !== null) { $upParams[':tb'] = $tenantId; }
-        $up->execute($upParams);
-    } else {
-        // Row does not exist — insert.
-        $up = $db->prepare(
-            "INSERT INTO settings (tenant_id, {$kc}, value, type, updated_at, updated_by)
-             VALUES (:t, :k, :v, :ty, {$d->now()}, :u)"
-        );
-        $up->execute([
-            ':t'  => $tenantId,
-            ':k'  => $key,
-            ':v'  => $encoded,
-            ':ty' => $type,
-            ':u'  => $userId,
-        ]);
+        $stParams = [':k' => $key];
+        if ($tenantId !== null) { $stParams[':tb'] = $tenantId; }
+        $st->execute($stParams);
+        $prev = $st->fetch();
+        if (is_array($prev)) {
+            $oldRaw  = is_string($prev['value'] ?? null) ? $prev['value'] : null;
+            $oldType = is_string($prev['type'] ?? null) && $prev['type'] !== '' ? $prev['type'] : $type;
+        }
+
+        // Write the new value. We use explicit UPDATE-then-INSERT rather than a
+        // dialect upsert because SQLite treats NULL as distinct from NULL in UNIQUE
+        // index lookups, so ON CONFLICT(tenant_id, key) never fires for global
+        // (tenant_id IS NULL) rows in SQLite. The SELECT above already tells us
+        // whether a row exists, so branching on $prev is cheap and portable.
+        if (is_array($prev)) {
+            // Row exists — update in place.
+            $up = $db->prepare(
+                "UPDATE settings
+                 SET value = :v, type = :ty, updated_at = {$d->now()}, updated_by = :u
+                 WHERE {$tenantWhere} AND {$kc} = :k"
+            );
+            $upParams = [':v' => $encoded, ':ty' => $type, ':u' => $userId, ':k' => $key];
+            if ($tenantId !== null) { $upParams[':tb'] = $tenantId; }
+            $up->execute($upParams);
+        } else {
+            // Row does not exist — insert.
+            $up = $db->prepare(
+                "INSERT INTO settings (tenant_id, {$kc}, value, type, updated_at, updated_by)
+                 VALUES (:t, :k, :v, :ty, {$d->now()}, :u)"
+            );
+            $up->execute([
+                ':t'  => $tenantId,
+                ':k'  => $key,
+                ':v'  => $encoded,
+                ':ty' => $type,
+                ':u'  => $userId,
+            ]);
+        }
+        $db->commit();
+    } catch (\Throwable $ex) {
+        if ($db->inTransaction()) $db->rollBack();
+        throw $ex;
     }
 
     $details = [

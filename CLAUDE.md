@@ -230,7 +230,7 @@ This is a one-way operation. Reversing it requires a database restore.
 
 **Per-tenant key isolation (v4.0.0):** rather than storing per-tenant secrets in the DB (which would put the key and the protected data in the same breach radius), per-tenant keys are **derived at runtime** via HKDF:
 
-```
+```text
 tenant_key(tenant_id, purpose) = HKDF-SHA256(app_secret, "ipam-v4:" || tenant_id || ":" || purpose)
 ```
 

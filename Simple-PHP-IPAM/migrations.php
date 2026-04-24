@@ -660,12 +660,14 @@ function ipam_migrations(): array
         '2.8.0-alert-recipients' => function(PDO $db): void {
             // settings table only exists on installs that ran 2.6.0-settings.
             // Fresh installs older than v2.6.0 are not supported; this guard
-            // is for resilience during test fixtures.
-            $tables = array_column(
-                ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
-                'name'
-            );
-            if (!in_array('settings', $tables, true)) return;
+            // is for resilience during test fixtures. Use a portable try/catch
+            // instead of sqlite_master (SQLite-only) so this migration runs
+            // correctly on MySQL and PostgreSQL too.
+            try {
+                $db->query("SELECT 1 FROM settings LIMIT 1");
+            } catch (\PDOException $e) {
+                return; // settings table does not exist yet
+            }
 
             // Insert the new row with default '[]' if not already present.
             // After 3.13.0-settings-cascade, settings has UNIQUE(tenant_id, key)
@@ -681,15 +683,23 @@ function ipam_migrations(): array
                 );
                 $hasTenantCol = in_array('tenant_id', $existingCols, true);
             }
-            $conflictCols = $hasTenantCol ? ['tenant_id', '`key`'] : ['key'];
-            $ignore = ipam_dialect()->upsert_or_ignore('settings', $conflictCols);
+            $kc = ipam_key_col();
             if ($hasTenantCol) {
-                $db->prepare(
-                    "INSERT INTO settings (tenant_id, `key`, value, type) VALUES (NULL, :k, '[]', 'json') $ignore"
-                )->execute([':k' => 'alert.recipient_user_ids']);
+                // After 3.13.0 the settings table uses partial unique indexes
+                // instead of UNIQUE(tenant_id, key). SQLite and PostgreSQL do
+                // not accept ON CONFLICT with explicit column names that match
+                // only a partial index, so use an existence check instead.
+                $ex = $db->prepare("SELECT 1 FROM settings WHERE tenant_id IS NULL AND $kc = :k");
+                $ex->execute([':k' => 'alert.recipient_user_ids']);
+                if (!$ex->fetch()) {
+                    $db->prepare(
+                        "INSERT INTO settings (tenant_id, $kc, value, type) VALUES (NULL, :k, '[]', 'json')"
+                    )->execute([':k' => 'alert.recipient_user_ids']);
+                }
             } else {
+                $ignore = ipam_dialect()->upsert_or_ignore('settings', [$kc]);
                 $db->prepare(
-                    "INSERT INTO settings (".ipam_key_col().", value, type) VALUES (:k, '[]', 'json') $ignore"
+                    "INSERT INTO settings ($kc, value, type) VALUES (:k, '[]', 'json') $ignore"
                 )->execute([':k' => 'alert.recipient_user_ids']);
             }
 
@@ -712,8 +722,11 @@ function ipam_migrations(): array
             if ($legacy === '') return;
 
             // Look up exactly one active user with this email (case-insensitive).
-            $users = ($db->query("SELECT name FROM sqlite_master WHERE type='table' AND name='users'") ?: throw new \RuntimeException('Query failed'))->fetchAll();
-            if (!$users) return;
+            try {
+                $db->query("SELECT 1 FROM users LIMIT 1");
+            } catch (\PDOException $e) {
+                return; // users table does not exist yet
+            }
 
             $u = $db->prepare("SELECT id FROM users WHERE LOWER(email) = LOWER(:e) AND is_active = 1");
             $u->execute([':e' => $legacy]);
@@ -2028,8 +2041,7 @@ function ipam_migrations(): array
                         type       TEXT NOT NULL DEFAULT 'string'
                                    CHECK(type IN ('string','int','bool','json')),
                         updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-                        updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-                        UNIQUE(tenant_id, key)
+                        updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
                     )
                 ");
                 $db->exec("
@@ -2038,6 +2050,10 @@ function ipam_migrations(): array
                     FROM settings_v3120
                 ");
                 $db->exec("DROP TABLE settings_v3120");
+                // Partial indexes enforce uniqueness for NULL tenant_id rows.
+                // SQLite treats each NULL as distinct in composite UNIQUE constraints.
+                $db->exec('CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_global ON settings (key) WHERE tenant_id IS NULL');
+                $db->exec('CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_tenant ON settings (tenant_id, key) WHERE tenant_id IS NOT NULL');
             } elseif ($driver === 'mysql') {
                 $col = ($db->query("SHOW COLUMNS FROM settings LIKE 'tenant_id'") ?: throw new \RuntimeException('Query failed'))->fetch();
                 if ($col) {
@@ -2066,7 +2082,10 @@ function ipam_migrations(): array
                     return;
                 }
                 $db->exec("ALTER TABLE settings ADD COLUMN tenant_id INTEGER");
-                $db->exec("ALTER TABLE settings ADD CONSTRAINT uq_settings_tenant_key UNIQUE (tenant_id, key)");
+                // Partial indexes enforce uniqueness for NULL tenant_id (global) rows.
+                // PostgreSQL treats NULL as distinct in composite UNIQUE constraints.
+                $db->exec('CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_global ON settings ("key") WHERE tenant_id IS NULL');
+                $db->exec('CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_tenant ON settings (tenant_id, "key") WHERE tenant_id IS NOT NULL');
             }
         },
     ];

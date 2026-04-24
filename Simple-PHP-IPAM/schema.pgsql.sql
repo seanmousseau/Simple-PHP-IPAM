@@ -665,9 +665,13 @@ CREATE TABLE IF NOT EXISTS settings (
   type       TEXT NOT NULL DEFAULT 'string',
   updated_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
   updated_by BIGINT NULL REFERENCES users(id) ON DELETE SET NULL,
-  CONSTRAINT settings_type_check CHECK (type IN ('string','int','bool','json')),
-  CONSTRAINT uq_settings_tenant_key UNIQUE (tenant_id, "key")
+  CONSTRAINT settings_type_check CHECK (type IN ('string','int','bool','json'))
 );
+-- Partial indexes enforce uniqueness correctly for NULL tenant_id (global rows).
+-- PostgreSQL treats NULL as distinct in composite UNIQUE constraints, so a plain
+-- UNIQUE(tenant_id, key) would allow multiple (NULL, 'theme') rows.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_global ON settings ("key") WHERE tenant_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_tenant ON settings (tenant_id, "key") WHERE tenant_id IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- custom_field_defs (v3.5.0 #313/#595, admin-defined per-entity metadata)

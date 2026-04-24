@@ -471,9 +471,13 @@ CREATE TABLE IF NOT EXISTS settings (
   type       TEXT NOT NULL DEFAULT 'string'
              CHECK(type IN ('string','int','bool','json')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  UNIQUE(tenant_id, key)
+  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
 );
+-- Partial indexes enforce uniqueness correctly for NULL tenant_id (global rows):
+-- SQLite treats each NULL as distinct in a composite UNIQUE, so a plain
+-- UNIQUE(tenant_id, key) would allow multiple (NULL, 'theme') rows.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_global ON settings (key) WHERE tenant_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_tenant ON settings (tenant_id, key) WHERE tenant_id IS NOT NULL;
 
 -- v3.3.0: Outbound webhooks
 CREATE TABLE IF NOT EXISTS webhooks (
