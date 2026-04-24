@@ -219,9 +219,9 @@ page_header('Search');
 ?>
 
 <div class="breadcrumbs">
-  <a href="dashboard.php">🏠 Dashboard</a>
+  <a href="dashboard.php"><?= icon('home') ?> Dashboard</a>
   <span class="sep">›</span>
-  <span>🔎 Search</span>
+  <span><?= icon('magnifying-glass') ?> Search</span>
 </div>
 
 <div class="toolbar">
@@ -232,10 +232,10 @@ page_header('Search');
 </div>
 
 <div class="page-actions">
-  <a class="action-pill" href="export_search.php?<?= e(build_query_search()) ?>">⬇ Export CSV</a>
-  <a class="action-pill" href="addresses.php">🧾 Addresses</a>
+  <a class="action-pill" href="export_search.php?<?= e(build_query_search()) ?>"><?= icon('download') ?> Export CSV</a>
+  <a class="action-pill" href="addresses.php"><?= icon('map-pin') ?> Addresses</a>
   <?php if ($subnetId > 0): ?>
-    <a class="action-pill" href="addresses.php?subnet_id=<?= (int)$subnetId ?>">🌐 View Subnet Addresses</a>
+    <a class="action-pill" href="addresses.php?subnet_id=<?= (int)$subnetId ?>"><?= icon('server-stack') ?> View Subnet Addresses</a>
   <?php endif; ?>
 </div>
 

@@ -357,3 +357,49 @@ test('visual audit — all pages', async ({ page }) => {
   // Don't fail the test — we just want the report
   expect(allIssues.length).toBeGreaterThanOrEqual(0);
 });
+
+// Emoji range helpers
+const EMOJI_RE = /[\u{1F300}-\u{1FFFF}\u{2600}-\u{27BF}]/u;
+
+const BREADCRUMB_PAGES: Array<{ path: string; label: string }> = [
+  { path: 'subnets.php', label: 'subnets' },
+  { path: 'audit.php', label: 'audit' },
+  { path: 'search.php?q=10', label: 'search' },
+  { path: 'unassigned.php', label: 'unassigned' },
+  { path: 'import_csv.php', label: 'import_csv' },
+];
+
+for (const { path: pagePath, label } of BREADCRUMB_PAGES) {
+  test(`breadcrumbs and action pills on ${label} have no emoji`, async ({ page }) => {
+    await login(page, ADMIN_USER, ADMIN_PASS);
+    await page.goto(pagePath);
+
+    const bc = page.locator('.breadcrumbs');
+    if (await bc.count() > 0) {
+      const bcText = await bc.first().evaluate(el => el.textContent ?? '');
+      expect(bcText, `emoji in .breadcrumbs on ${label}`).not.toMatch(EMOJI_RE);
+    }
+
+    const pills = page.locator('.page-actions');
+    if (await pills.count() > 0) {
+      const pillText = await pills.first().evaluate(el => el.textContent ?? '');
+      expect(pillText, `emoji in .page-actions on ${label}`).not.toMatch(EMOJI_RE);
+    }
+  });
+}
+
+test('breadcrumbs and action pills on addresses have no emoji', async ({ page }) => {
+  await login(page, ADMIN_USER, ADMIN_PASS);
+  // Navigate to subnets first to get a valid subnet_id
+  await page.goto('subnets.php');
+  const firstSubnetLink = page.locator('table tbody tr td a').first();
+  const subnetHref = await firstSubnetLink.getAttribute('href') ?? 'addresses.php?subnet_id=1';
+  const subnetId = (subnetHref.match(/subnet_id=(\d+)/) ?? [, '1'])[1];
+
+  await page.goto(`addresses.php?subnet_id=${subnetId}`);
+  const bcText = await page.locator('.breadcrumbs').evaluate(el => el.textContent ?? '');
+  expect(bcText, 'emoji in .breadcrumbs on addresses').not.toMatch(EMOJI_RE);
+
+  const pillText = await page.locator('.page-actions').evaluate(el => el.textContent ?? '');
+  expect(pillText, 'emoji in .page-actions on addresses').not.toMatch(EMOJI_RE);
+});

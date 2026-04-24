@@ -278,9 +278,9 @@ if ($subnet) {
 page_header('DHCP Pools');
 ?>
 <div class="breadcrumbs">
-  <a href="dashboard.php">🏠 Dashboard</a><span class="sep">›</span>
-  <a href="subnets.php">🌐 Subnets</a><span class="sep">›</span>
-  <span>🔒 DHCP Pools</span>
+  <a href="dashboard.php"><?= icon('home') ?> Dashboard</a><span class="sep">›</span>
+  <a href="subnets.php"><?= icon('server-stack') ?> Subnets</a><span class="sep">›</span>
+  <span><?= icon('dhcp') ?> DHCP Pools</span>
 </div>
 
 <p class="muted mt-8 m-0">DHCP pool management is available for IPv4 subnets only.</p>

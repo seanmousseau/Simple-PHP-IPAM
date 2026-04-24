@@ -466,7 +466,7 @@ render_security_banner('import_csv', 'CSV import will create or update address r
 ?>
 
 <div class="breadcrumbs">
-  <a href="dashboard.php">🏠 Dashboard</a><span class="sep">›</span><span>⬆ Import CSV</span>
+  <a href="dashboard.php"><?= icon('home') ?> Dashboard</a><span class="sep">›</span><span><?= icon('import') ?> Import CSV</span>
 </div>
 
 <div class="toolbar">
@@ -665,7 +665,7 @@ if ($step === 3) {
           <button type="submit">Apply Import</button>
         </form>
 
-        <a class="action-pill" href="export_import_report.php?mode=plan">⬇ Export Dry Run Report</a>
+        <a class="action-pill" href="export_import_report.php?mode=plan"><?= icon('download') ?> Export Dry Run Report</a>
       </div>
 
       <h3 class="mt-18">Row Report</h3>
@@ -1108,9 +1108,9 @@ if (!empty($wiz['result_path']) && is_file(to_str($wiz['result_path']))) {
   <?php endif; ?>
 
   <div class="page-actions mt-16">
-    <a class="action-pill" href="import_csv.php">⬆ Start New Import</a>
+    <a class="action-pill" href="import_csv.php"><?= icon('import') ?> Start New Import</a>
     <?php if (!empty($wiz['result_path']) && is_file(to_str($wiz['result_path']))): ?>
-      <a class="action-pill" href="export_import_report.php?mode=result">⬇ Export Result Report</a>
+      <a class="action-pill" href="export_import_report.php?mode=result"><?= icon('download') ?> Export Result Report</a>
     <?php endif; ?>
   </div>
 

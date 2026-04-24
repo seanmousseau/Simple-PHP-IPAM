@@ -519,15 +519,15 @@ ipam_skeleton_flush();
 ?>
 
 <div class="breadcrumbs">
-  <a href="dashboard.php">🏠 Dashboard</a>
+  <a href="dashboard.php"><?= icon('home') ?> Dashboard</a>
   <span class="sep">›</span>
   <?php if ($selectedSubnet): ?>
-    <a href="subnets.php">🌐 Subnets</a>
+    <a href="subnets.php"><?= icon('server-stack') ?> Subnets</a>
     <span class="sep">›</span>
     <span><?= e(to_str($selectedSubnet['cidr'])) ?></span>
     <span class="sep">›</span>
   <?php endif; ?>
-  <span>🧾 Addresses</span>
+  <span><?= icon('map-pin') ?> Addresses</span>
 </div>
 
 <div class="toolbar">
@@ -540,18 +540,18 @@ ipam_skeleton_flush();
 <div class="page-actions">
   <?php if ($selectedSubnetId > 0): ?>
     <?php if (current_user()['role'] !== 'readonly'): ?>
-      <button class="action-pill" data-drawer-title="Add Address" data-drawer-tpl="tpl-add-address">➕ Add Address <kbd class="kbd-hint">⌘N</kbd></button>
-      <a class="action-pill" href="bulk_update.php?subnet_id=<?= (int)$selectedSubnetId ?>">✏ Bulk Update</a>
+      <button class="action-pill" data-drawer-title="Add Address" data-drawer-tpl="tpl-add-address"><?= icon('plus') ?> Add Address <kbd class="kbd-hint">⌘N</kbd></button>
+      <a class="action-pill" href="bulk_update.php?subnet_id=<?= (int)$selectedSubnetId ?>"><?= icon('pencil') ?> Bulk Update</a>
       <?php if ($missingInfra): ?>
-        <a class="action-pill" href="#reserve-infra" data-open-drawer="reserve-infra" data-drawer-title="Reserve Infrastructure IPs">🔒 Reserve Infra IPs</a>
+        <a class="action-pill" href="#reserve-infra" data-open-drawer="reserve-infra" data-drawer-title="Reserve Infrastructure IPs"><?= icon('shield') ?> Reserve Infra IPs</a>
       <?php endif; ?>
     <?php endif; ?>
     <?php if ($selectedSubnet && to_int($selectedSubnet['ip_version']) === 4): ?>
-      <a class="action-pill" href="unassigned.php?subnet_id=<?= (int)$selectedSubnetId ?>">✨ Unassigned</a>
+      <a class="action-pill" href="unassigned.php?subnet_id=<?= (int)$selectedSubnetId ?>"><?= icon('unassigned') ?> Unassigned</a>
     <?php endif; ?>
-    <a class="action-pill" href="search.php?subnet_id=<?= (int)$selectedSubnetId ?>">🔎 Search in Subnet</a>
-    <a class="action-pill" href="export_addresses.php?subnet_id=<?= (int)$selectedSubnetId ?>">⬇ Export CSV</a>
-    <a class="action-pill" href="export_dns.php?subnet_id=<?= (int)$selectedSubnetId ?>">🌐 DNS Export</a>
+    <a class="action-pill" href="search.php?subnet_id=<?= (int)$selectedSubnetId ?>"><?= icon('magnifying-glass') ?> Search in Subnet</a>
+    <a class="action-pill" href="export_addresses.php?subnet_id=<?= (int)$selectedSubnetId ?>"><?= icon('download') ?> Export CSV</a>
+    <a class="action-pill" href="export_dns.php?subnet_id=<?= (int)$selectedSubnetId ?>"><?= icon('globe') ?> DNS Export</a>
   <?php endif; ?>
 </div>
 

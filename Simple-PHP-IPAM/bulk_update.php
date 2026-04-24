@@ -386,8 +386,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 page_header('Bulk Update');
 ?>
 <div class="breadcrumbs">
-  <a href="dashboard.php">🏠 Dashboard</a><span class="sep">›</span>
-  <a href="addresses.php">🧾 Addresses</a><span class="sep">›</span>
+  <a href="dashboard.php"><?= icon('home') ?> Dashboard</a><span class="sep">›</span>
+  <a href="addresses.php"><?= icon('map-pin') ?> Addresses</a><span class="sep">›</span>
   <span>Bulk Update</span>
 </div>
 

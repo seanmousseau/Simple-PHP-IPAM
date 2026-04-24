@@ -158,13 +158,13 @@ ipam_skeleton_flush();
 ?>
 
 <div class="breadcrumbs">
-  <a href="dashboard.php">🏠 Dashboard</a>
+  <a href="dashboard.php"><?= icon('home') ?> Dashboard</a>
   <?php if ($sub): ?>
-    <span class="sep">›</span><a href="subnets.php">🌐 Subnets</a>
+    <span class="sep">›</span><a href="subnets.php"><?= icon('server-stack') ?> Subnets</a>
     <span class="sep">›</span><a href="addresses.php?subnet_id=<?= (int)$subnetId ?>"><?= e(to_str($sub['cidr'])) ?></a>
     <span class="sep">›</span>
   <?php endif; ?>
-  <span>✨ Unassigned IPs</span>
+  <span><?= icon('unassigned') ?> Unassigned IPs</span>
 </div>
 
 <div class="toolbar">
@@ -176,12 +176,12 @@ ipam_skeleton_flush();
 
 <div class="page-actions">
   <?php if ($subnetId > 0): ?>
-    <a class="action-pill" href="addresses.php?subnet_id=<?= (int)$subnetId ?>">🧾 View Addresses</a>
+    <a class="action-pill" href="addresses.php?subnet_id=<?= (int)$subnetId ?>"><?= icon('map-pin') ?> View Addresses</a>
     <?php if (current_user()['role'] !== 'readonly'): ?>
-      <a class="action-pill" href="bulk_update.php?subnet_id=<?= (int)$subnetId ?>">✏ Bulk Update</a>
+      <a class="action-pill" href="bulk_update.php?subnet_id=<?= (int)$subnetId ?>"><?= icon('pencil') ?> Bulk Update</a>
     <?php endif; ?>
-    <a class="action-pill" href="search.php?subnet_id=<?= (int)$subnetId ?>">🔎 Search in Subnet</a>
-    <a class="action-pill" href="export_unassigned.php?subnet_id=<?= (int)$subnetId ?>">⬇ Export CSV</a>
+    <a class="action-pill" href="search.php?subnet_id=<?= (int)$subnetId ?>"><?= icon('magnifying-glass') ?> Search in Subnet</a>
+    <a class="action-pill" href="export_unassigned.php?subnet_id=<?= (int)$subnetId ?>"><?= icon('download') ?> Export CSV</a>
   <?php endif; ?>
 </div>
 
