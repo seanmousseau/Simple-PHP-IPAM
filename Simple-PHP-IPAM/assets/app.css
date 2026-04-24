@@ -404,6 +404,8 @@ tr.highlight{
   text-decoration:none;
   filter:brightness(1.02);
 }
+/* Prevent action-pills overflowing card boundaries at narrow widths (#651) */
+.card .action-pill{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 .breadcrumbs{
   display:flex;
@@ -431,11 +433,22 @@ tr.highlight{
   flex-direction:column;
   margin-top:0;
 }
+/* Push CTA links to bottom of equal-height grid cards (#650) */
+.grid > .card > .mt-10:last-child{margin-top:auto}
 .grid.cols-2{
   grid-template-columns:repeat(auto-fit,minmax(420px,1fr));
 }
 .grid.cols-3{
   grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+}
+/* Dashboard metric grid — always 3 columns at ≥640px, collapses to 1 at mobile (#649) */
+.metric-row{
+  display:grid;
+  gap:var(--space-8);
+  grid-template-columns:repeat(3,1fr);
+}
+@media(max-width:640px){
+  .metric-row{grid-template-columns:1fr}
 }
 
 .metric{
@@ -1732,3 +1745,10 @@ button:active,.button:active,.action-pill:active{transform:translateY(1px)}
 .site-group--filter-empty{
     display:none !important;
 }
+/* uPlot cursor artifact fix (#648): fade cursor elements when chart loses hover */
+#growth-chart .u-cursor-pt,
+#growth-chart .u-cursor-x,
+#growth-chart .u-cursor-y { transition:opacity .1s; }
+#growth-chart:not(:hover) .u-cursor-pt,
+#growth-chart:not(:hover) .u-cursor-x,
+#growth-chart:not(:hover) .u-cursor-y { opacity:0; }

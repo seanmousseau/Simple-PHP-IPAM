@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/version.php';
 
 /**
  * Returns the active SQL dialect (#378). ipam_db() bootstraps this once per

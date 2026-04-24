@@ -1011,11 +1011,10 @@
         clearTimeout(searchTimer);
         var q = input.value.trim();
         activeIdx = -1;
-        if (q.length < 2) {
-          renderCommands(q);
-          return;
+        renderCommands(q);
+        if (q.length >= 2) {
+          searchTimer = setTimeout(function() { runSearch(q); }, 300);
         }
-        searchTimer = setTimeout(function() { runSearch(q); }, 300);
       });
 
       input.addEventListener("keydown", function(e) {
@@ -1878,12 +1877,22 @@
     ],
     axes: [
       { gap: 8, size: 28, stroke: muted, ticks: { stroke: muted } },
-      { gap: 8, size: 40, stroke: muted, ticks: { stroke: muted } }
+      {
+        gap: 8, size: 40, stroke: muted, ticks: { stroke: muted },
+        values: function (u, vals) {
+          return vals.map(function (v) { return v == null ? '' : String(Math.round(v)); });
+        }
+      }
     ],
     scales: { x: { time: true } }
   };
 
   var u = new uPlot(opts, [xs, ys], el);
+
+  // Hide stale cursor lines/points after mouse leaves the chart (#648)
+  el.addEventListener('mouseleave', function () {
+    u.over.dispatchEvent(new MouseEvent('mousemove', { bubbles: false, clientX: -9999, clientY: -9999 }));
+  });
 
   function resizeChart() {
     var w = el.offsetWidth;
@@ -2199,4 +2208,129 @@ function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
     // Apply filter on page load so a pre-selected site narrows the list immediately
     var initSite = parseInt(siteSelect.value, 10) || 0;
     if (initSite > 0) filterBySite(initSite);
+}());
+
+// Webhooks page — drawer + gen_secret + test-fire (#645 CSP fix, was inline IIFE)
+(function () {
+  var overlay   = document.getElementById('wh-form-overlay');
+  if (!overlay) return; // not on webhooks.php
+
+  var drawer    = document.getElementById('wh-form-drawer');
+  var title     = document.getElementById('wh-drawer-title');
+  var form      = document.getElementById('wh-form');
+  var fAction   = document.getElementById('wh-form-action');
+  var fId       = document.getElementById('wh-form-id');
+  var fName     = document.getElementById('wh-f-name');
+  var fUrl      = document.getElementById('wh-f-url');
+  var fSecret   = document.getElementById('wh-f-secret');
+  var cbs       = document.querySelectorAll('.wh-event-cb');
+  var testPanel = document.getElementById('wh-test-panel');
+  var testResult = document.getElementById('wh-test-result');
+
+  function openDrawer() {
+    overlay.style.display = 'block';
+    drawer.style.display  = 'block';
+  }
+  function closeDrawer() {
+    overlay.style.display = 'none';
+    drawer.style.display  = 'none';
+  }
+
+  document.getElementById('add-wh-btn').addEventListener('click', function () {
+    title.textContent = 'Add webhook';
+    fAction.value = 'create';
+    fId.value = '';
+    form.reset();
+    testPanel.style.display = 'none';
+    openDrawer();
+  });
+
+  document.querySelectorAll('.wh-edit-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      title.textContent = 'Edit webhook';
+      fAction.value = 'edit';
+      fId.value     = btn.dataset.id || '';
+      fName.value   = btn.dataset.name || '';
+      fUrl.value    = btn.dataset.url  || '';
+      var evts = JSON.parse(btn.dataset.events || '[]');
+      cbs.forEach(function (cb) { cb.checked = evts.includes(cb.value); });
+      testPanel.style.display = 'none';
+      openDrawer();
+    });
+  });
+
+  document.getElementById('wh-drawer-close').addEventListener('click', closeDrawer);
+  document.getElementById('wh-drawer-close2').addEventListener('click', closeDrawer);
+  overlay.addEventListener('click', closeDrawer);
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && overlay.style.display === 'block') closeDrawer(); });
+
+  document.getElementById('wh-gen-secret').addEventListener('click', function () {
+    var fd = new FormData();
+    fd.append('csrf', document.querySelector('input[name=csrf]').value);
+    fd.append('action', 'gen_secret');
+    fetch('webhooks.php', { method: 'POST', body: fd })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { if (d.secret) fSecret.value = d.secret; });
+  });
+
+  document.querySelectorAll('.wh-testfire-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      title.textContent = 'Test fire — ' + (btn.dataset.name || '');
+      fAction.value = 'test_fire';
+      fId.value     = btn.dataset.id || '';
+      testPanel.style.display = 'block';
+      testResult.innerHTML    = '<span class="muted">Sending…</span>';
+      openDrawer();
+
+      var fd = new FormData();
+      fd.append('csrf', document.querySelector('input[name=csrf]').value);
+      fd.append('action', 'test_fire');
+      fd.append('id', btn.dataset.id || '');
+      fetch('webhooks.php', { method: 'POST', body: fd })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          var colour = d.ok ? '#065f46' : '#991b1b';
+          var status = d.status ? 'HTTP ' + d.status : 'No response';
+          function escHtml(s) {
+            var t = document.createElement('div');
+            t.textContent = typeof s === 'string' ? s : String(s);
+            return t.innerHTML;
+          }
+          testResult.innerHTML =
+            '<p style="color:' + colour + ';font-weight:600">' +
+              (d.ok ? '✓ Delivered' : '✗ Failed') + ' — ' + status + '</p>' +
+            (d.error ? '<p class="muted">Error: ' + escHtml(d.error) + '</p>' : '') +
+            '<p class="muted" style="font-size:.8rem">Signature: <code>' + escHtml(d.signature || '') + '</code></p>' +
+            (d.body ? '<pre style="font-size:.75rem;overflow-x:auto;max-height:120px">' + escHtml(d.body.substring(0, 500)) + '</pre>' : '');
+        })
+        .catch(function () { testResult.textContent = 'Request failed.'; });
+    });
+  });
+}());
+
+// Addresses page — device → interface dropdown cascade (#645 CSP fix, was inline IIFE)
+(function () {
+  var el = document.getElementById('iface-data');
+  if (!el) return; // not on addresses.php or no devices
+
+  var ifaceMap;
+  try { ifaceMap = JSON.parse(el.getAttribute('data-ifaces') || '{}'); }
+  catch (e) { ifaceMap = {}; }
+
+  document.addEventListener('change', function (e) {
+    var sel = e.target;
+    if (!sel || !sel.classList.contains('addr-device-select')) return;
+    var targetId = sel.getAttribute('data-iface-target');
+    var target = targetId ? document.getElementById(targetId) : null;
+    if (!target) return;
+    var devId = parseInt(sel.value, 10);
+    var ifaces = (devId && ifaceMap[devId]) ? ifaceMap[devId] : [];
+    target.innerHTML = '<option value="0">(none)</option>';
+    ifaces.forEach(function (iface) {
+      var opt = document.createElement('option');
+      opt.value = iface.id;
+      opt.textContent = iface.name;
+      target.appendChild(opt);
+    });
+  });
 }());

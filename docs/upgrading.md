@@ -100,6 +100,14 @@ The backup is left in place after a successful upgrade. You can remove it manual
 
 ## Version-specific upgrade notes
 
+### v3.10.0
+
+No breaking changes. No manual migration steps required — `migrate.php` handles all schema changes automatically.
+
+**If upgrading from ≤v3.9.0:** The `IPAM_VERSION` load-order fix (#662) resolves webhook test_fire returning HTTP 500. No config changes needed.
+
+---
+
 ### v3.9.0
 
 - **`backups.php` removed from nav; redirects 301 to `db_tools.php`.** Update any bookmarks or internal links.

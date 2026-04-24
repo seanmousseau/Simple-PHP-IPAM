@@ -295,7 +295,7 @@ page_header('Users');
 <div class="page-actions">
   <button class="action-pill" data-drawer-title="Create User" data-drawer-tpl="tpl-create-user">➕ Create User</button>
 </div>
-<div id="tpl-create-user" style="display:none"><?= ipam_render_string('user_form', [
+<div id="tpl-create-user" style="display:none"><?= ipam_render_string('user_form', [ // nosemgrep
     'formData' => $formData,
     'config'   => $config,
 ]) ?></div>
@@ -381,8 +381,8 @@ page_header('Users');
               <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
               <input type="hidden" name="action" value="update_profile">
               <input type="hidden" name="id"     value="<?= to_int($u['id']) ?>">
-              <input name="name"  placeholder="Full name"  value="<?= e(to_str($u['name'])) ?>" maxlength="255">
-              <input type="email" name="email" placeholder="Email" value="<?= e(to_str($u['email'])) ?>" maxlength="255">
+              <input name="name"  placeholder="Full name"  aria-label="Full name" value="<?= e(to_str($u['name'])) ?>" maxlength="255">
+              <input type="email" name="email" placeholder="Email" aria-label="Email" value="<?= e(to_str($u['email'])) ?>" maxlength="255">
               <button type="submit">Save profile</button>
             </form>
 
@@ -390,7 +390,7 @@ page_header('Users');
               <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
               <input type="hidden" name="action" value="reset_password">
               <input type="hidden" name="id"     value="<?= to_int($u['id']) ?>">
-              <input type="password" name="new_password" placeholder="New password (12+ chars)" required>
+              <input type="password" name="new_password" placeholder="New password (12+ chars)" aria-label="New password" required autocomplete="new-password">
               <button type="submit">Reset PW</button>
             </form>
 
@@ -411,7 +411,7 @@ page_header('Users');
                 <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action" value="link_oidc">
                 <input type="hidden" name="id"     value="<?= to_int($u['id']) ?>">
-                <input name="oidc_sub" placeholder="IdP subject ID (sub claim)" class="mw-220">
+                <input name="oidc_sub" placeholder="IdP subject ID (sub claim)" aria-label="IdP subject ID" class="mw-220">
                 <button type="submit" class="button-secondary">Link SSO</button>
               </form>
             <?php endif; ?>

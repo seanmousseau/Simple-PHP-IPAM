@@ -832,27 +832,8 @@ ipam_skeleton_flush();
 </div>
 
 <?php if ($deviceList): ?>
-<script>
-(function () {
-  var ifaceMap = <?= json_encode($ifacesByDeviceId, JSON_HEX_TAG | JSON_HEX_AMP) ?>; // nosemgrep: php.lang.security.xss
-  document.addEventListener('change', function (e) {
-    var sel = e.target;
-    if (!sel || !sel.classList.contains('addr-device-select')) return;
-    var targetId = sel.getAttribute('data-iface-target');
-    var target = targetId ? document.getElementById(targetId) : null;
-    if (!target) return;
-    var devId = parseInt(sel.value, 10);
-    var ifaces = (devId && ifaceMap[devId]) ? ifaceMap[devId] : [];
-    target.innerHTML = '<option value="0">(none)</option>';
-    ifaces.forEach(function (iface) {
-      var opt = document.createElement('option');
-      opt.value = iface.id;
-      opt.textContent = iface.name;
-      target.appendChild(opt);
-    });
-  });
-}());
-</script>
+<div id="iface-data" hidden
+     data-ifaces="<?= e((string)(json_encode($ifacesByDeviceId, JSON_HEX_TAG | JSON_HEX_AMP) ?: '{}')) ?>"></div>
 <?php endif; ?>
 <?php
 if (current_user()['role'] !== 'readonly') {

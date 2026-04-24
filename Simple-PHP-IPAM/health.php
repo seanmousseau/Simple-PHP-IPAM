@@ -227,7 +227,7 @@ if ($data === null) {
         $tmpSize += is_file($f) ? (int)filesize($f) : 0;
     }
     $diskFreeData = @disk_free_space(__DIR__ . '/data');
-    $ipamVer  = defined('IPAM_VERSION') ? IPAM_VERSION : '?';
+    $ipamVer  = IPAM_VERSION;
     $data['system'] = [
         'php_version'  => PHP_VERSION,
         'ipam_version' => $ipamVer,

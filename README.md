@@ -12,20 +12,15 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.9.0
+## What's new in v3.10.0
 
-**Navigation & filtering**
-- **Subnet site filter strip** — click a site pill above the subnet tree to scope the view. Supports region → site hierarchy with collapsible groups. Filter persists via `sessionStorage`.
-- **Address page cascading filter** — new Site dropdown narrows the Subnet dropdown client-side. Pre-selects correct site when loading from a `?subnet_id=N` link.
-- **Subnet description in address header** — human-readable subnet name shown as a subtitle under the CIDR.
+v3.10.0 is a quality and testing release that fixes 9 bugs discovered during the v3.9.0 functional review and expands the automated test suite with 9 new or expanded specs.
 
-**Database admin consolidation**
-- The separate *Database Tools* and *Backups* nav links are merged into a single **Database** page. Old `backups.php` URL redirects automatically.
+**Key fixes:** webhook test_fire no longer crashes HTTP 500 (IPAM_VERSION load-order fix), CSP-blocked inline scripts in `webhooks.php` and `addresses.php` moved to `app.js`, uPlot y-axis integer formatting and cursor artifact, dashboard metric card responsive grid, password field autocomplete attributes.
 
-**Test coverage**
-- New Playwright spec covers the complete 2FA lifecycle: enrollment, TOTP login, backup-code login, single-use code invalidation, and admin 2FA reset.
+**Test coverage:** `webhooks.spec.ts`, `health.spec.ts`, 7-page fleet guard expansion, PHPUnit `ConstantLoadOrderTest`, new semgrep CSP rule, expanded a11y, drawer, command palette, and CSS regression specs.
 
-Full history in [CHANGELOG.md](CHANGELOG.md).
+See [CHANGELOG.md](CHANGELOG.md) for the full change list.
 
 ---
 

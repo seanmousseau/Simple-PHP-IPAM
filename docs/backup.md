@@ -5,7 +5,7 @@ nav_order: 9
 
 # Backup & Restore
 
-Simple PHP IPAM includes built-in backup infrastructure for all supported database engines (SQLite, MySQL, PostgreSQL). Backups are created via a CLI script and tracked in a `backup_history` table. A web-based admin page (`backups.php`) lets admins review history, verify integrity, and download backup files.
+Simple PHP IPAM includes built-in backup infrastructure for all supported database engines (SQLite, MySQL, PostgreSQL). Backups are created via a CLI script and tracked in a `backup_history` table. The **Admin → Database** page (`db_tools.php`) lets admins review backup history, verify integrity, and download backup files alongside the SQL export/import tools (SQLite only).
 
 **There is intentionally no one-click web restore.** Restoration is a CLI-only operation to prevent accidental data loss.
 
@@ -69,13 +69,13 @@ Each backup is verified with SHA-256 and recorded in `backup_history`.
 
 ## Verifying Integrity
 
-In **Admin → Backups**, each row in the history table has a **Verify** button (POST, CSRF-protected). This re-computes the SHA-256 hash of the file on disk and compares it to the recorded hash. A mismatch means the file may be corrupted or tampered with.
+In **Admin → Database**, each row in the history table has a **Verify** button (POST, CSRF-protected). This re-computes the SHA-256 hash of the file on disk and compares it to the recorded hash. A mismatch means the file may be corrupted or tampered with.
 
 From the CLI:
 
 ```bash
 sha256sum /path/to/Simple-PHP-IPAM/data/backups/ipam-2026-04-22-020000.sqlite
-# Compare to the hash shown in Admin → Backups
+# Compare to the hash shown in Admin → Database
 ```
 
 ---
@@ -84,7 +84,7 @@ sha256sum /path/to/Simple-PHP-IPAM/data/backups/ipam-2026-04-22-020000.sqlite
 
 ### Step 1: Identify the backup file
 
-Find the file path from **Admin → Backups** (click "Restore…" for the CLI command pre-filled) or list files directly:
+Find the file path from **Admin → Database** (click "Restore…" for the CLI command pre-filled) or list files directly:
 
 ```bash
 ls -lh /path/to/Simple-PHP-IPAM/data/backups/
@@ -131,9 +131,11 @@ php /path/to/Simple-PHP-IPAM/migrate_db.php --from=sqlite --to=mysql
 
 ---
 
-## Admin UI (backups.php)
+## Admin UI (db_tools.php)
 
-**Admin → Backups** shows:
+> **v3.9.0:** The standalone `backups.php` page was merged into `db_tools.php` (Database). Any existing bookmarks to `backups.php` redirect automatically via HTTP 301.
+
+**Admin → Database** shows the **Backup History** tab with:
 
 - Backup enabled/disabled status
 - Retention count and backup directory

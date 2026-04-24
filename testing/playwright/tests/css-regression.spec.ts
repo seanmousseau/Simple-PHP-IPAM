@@ -43,4 +43,56 @@ adminTest.describe('CSS regression', () => {
     expect(width).toBeGreaterThanOrEqual(95);
     expect(width).toBeLessThanOrEqual(105);
   });
+
+  adminTest('theme toggle persists html[data-theme] across page navigation', async ({ adminPage: page }) => {
+    await page.goto('dashboard.php');
+
+    // Get current CSRF token from the page (set_theme.php does not require CSRF,
+    // but try to grab one for forward-compatibility; skip gracefully if absent)
+    const csrfToken = await page.locator('input[name="csrf"]').first().inputValue().catch(() => '');
+    if (!csrfToken) {
+      adminTest.skip(true, 'could not get CSRF token');
+      return;
+    }
+
+    // Set theme to dark via set_theme.php
+    await page.evaluate(async (csrf: string) => {
+      const fd = new FormData();
+      fd.append('csrf', csrf);
+      fd.append('theme', 'dark');
+      await fetch('set_theme.php', { method: 'POST', body: fd });
+    }, csrfToken);
+
+    // Navigate to another page and check html[data-theme]
+    await page.goto('subnets.php');
+    const theme = await page.locator('html').getAttribute('data-theme');
+    expect(theme).toBe('dark');
+
+    // Restore to auto
+    const csrfToken2 = await page.locator('input[name="csrf"]').first().inputValue().catch(() => '');
+    if (csrfToken2) {
+      await page.evaluate(async (csrf: string) => {
+        const fd = new FormData();
+        fd.append('csrf', csrf);
+        fd.append('theme', 'auto');
+        await fetch('set_theme.php', { method: 'POST', body: fd });
+      }, csrfToken2);
+    }
+  });
+
+  adminTest('dashboard metric-row renders exactly 3 columns at 1280px viewport', async ({ adminPage: page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto('dashboard.php');
+    await page.waitForLoadState('networkidle');
+
+    const columnCount = await page.evaluate(() => {
+      const grid = document.querySelector('[data-widget="metrics"]') as HTMLElement;
+      if (!grid) return -1;
+      const style = window.getComputedStyle(grid);
+      const cols  = style.gridTemplateColumns.split(' ').filter(Boolean);
+      return cols.length;
+    });
+
+    expect(columnCount, 'metric-row should have exactly 3 columns at 1280px viewport (regression for #649)').toBe(3);
+  });
 });

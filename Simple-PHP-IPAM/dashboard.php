@@ -206,7 +206,7 @@ ipam_render('dashboard_kpi_card', ['label' => 'Crit Alerts', 'value' => $kpis['a
 </div>
 
 <!-- Legacy metric grid -->
-<div class="grid cols-3 mt-16" data-widget="metrics">
+<div class="metric-row mt-16" data-widget="metrics">
   <div class="metric"><div class="label">Used</div><div class="value status-used"><?= e(to_str($statusMap['used'])) ?></div></div>
   <div class="metric"><div class="label">Reserved</div><div class="value status-reserved"><?= e(to_str($statusMap['reserved'])) ?></div></div>
   <div class="metric"><div class="label">Free</div><div class="value status-free"><?= e(to_str($statusMap['free'])) ?></div></div>

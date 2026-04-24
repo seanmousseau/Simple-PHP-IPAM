@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.10.0] - 2026-04-23
+
+### Fixed
+- `IPAM_VERSION` constant now loaded at `lib.php` module scope, not lazily inside
+  `page_footer()` — fixes HTTP 500 on webhook test_fire and "?" in health dashboard (#662, #646)
+- CSP violation: inline `<script>` IIFEs moved from `webhooks.php` and `addresses.php`
+  to `assets/app.js` — webhook drawer, gen_secret, test_fire, and device→interface
+  cascade now function correctly (#645)
+- Dashboard uPlot y-axis integer formatter — small-count ranges no longer show `0.000` (#647)
+- Dashboard uPlot cursor artifact — cursor lines and points fade on mouse leave (#648)
+- Dashboard metric cards always render in 3 columns at ≥640px viewport (#649)
+- Dashboard widget CTA links pushed to card bottom in equal-height grid (#650)
+- `action-pill` elements no longer overflow card boundaries at narrow viewports (#651)
+- Password fields in `users.php` and `change_password.php` now carry correct
+  `autocomplete` attributes for password manager compatibility (#652)
+
+### Added
+- PHPUnit `ConstantLoadOrderTest` — regression guard asserting `IPAM_VERSION` is
+  defined at `lib.php` module scope (#666)
+- Fleet guard specs (`pages.spec.ts`, `csp.spec.ts`, `console-clean.spec.ts`) now
+  cover `webhooks.php`, `health.php`, `reports.php`, `devices.php`, `custom_fields.php`,
+  `contacts.php`, `import_arp.php` (#664)
+- New `webhooks.spec.ts` — CRUD, drawer open/close, test_fire regression guard (#665)
+- New `health.spec.ts` — asserts IPAM version cell shows semver (#667)
+- Semgrep rule `ipam-inline-script-csp` — detects inline `<script>` in PHP at push time (#673)
+- Expanded `command-palette.spec.ts` — nav Enter key, New Subnet action, readonly filter (#672)
+- Expanded `drawer.spec.ts` — focus-in, backdrop close, focus-return, address drawer (#674)
+- Expanded `a11y-infrastructure.spec.ts` — focus rings, aria-label, form label assertions (#670)
+- Expanded `css-regression.spec.ts` — theme persistence, metric-row 3-column guard (#671)
+
 ## [3.9.0] - 2026-04-23
 
 ### Added
@@ -992,6 +1022,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.10.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.9.0...v3.10.0
 [3.9.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.8.1...v3.9.0
 [3.8.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.8.0...v3.8.1
 [3.8.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.7.1...v3.8.0

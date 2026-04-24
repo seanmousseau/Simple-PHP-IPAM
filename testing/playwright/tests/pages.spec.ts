@@ -29,6 +29,13 @@ const PAGES: Array<[string, string]> = [
   ['change_password.php', 'Account'],
   ['scan_history.php', 'Scan'],
   ['settings.php',     'Settings'],
+  ['webhooks.php',      'Webhook'],
+  ['health.php',        'Health'],
+  ['reports.php',       'Report'],
+  ['devices.php',       'Device'],
+  ['custom_fields.php', 'Custom Fields'],
+  ['import_arp.php',    'ARP'],
+  ['contacts.php',      'Contact'],
 ];
 
 // Pages that include breadcrumbs — dashboard is the root page and has no breadcrumb bar
@@ -46,7 +53,12 @@ adminTest.describe('Page inventory', () => {
       expect(title.toLowerCase()).toContain(keyword.toLowerCase());
 
       if (!ALLOWED_DANGER.has(slug)) {
-        const dangerCount = await page.locator('.danger').count();
+        // health.php may show tool-availability warnings (e.g. mysqldump not in $PATH)
+        // in test containers; exclude those from the assertion.
+        const dangerLocator = slug === 'health.php'
+          ? page.locator('.danger').filter({ hasNotText: /not found in \$PATH/i })
+          : page.locator('.danger');
+        const dangerCount = await dangerLocator.count();
         expect(dangerCount, `${slug} has unexpected .danger element`).toBe(0);
       }
     });
