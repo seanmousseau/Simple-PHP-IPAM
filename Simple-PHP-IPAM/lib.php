@@ -6067,7 +6067,7 @@ function page_header(string $title, array $opts = []): void
             // Account group
             echo "<div class='sidebar-group sidebar-group--account'>";
             echo "<span class='sidebar-group-label'>Account</span>";
-            echo "<button type='button' class='sidebar-link' id='theme-toggle'>" . icon('theme') . " Theme</button>";
+            echo "<button type='button' class='sidebar-link' id='theme-toggle'>" . icon('theme') . " <span class='theme-label'>Theme</span></button>";
             echo "<a class='sidebar-link" . ($activePage === 'change_password' ? ' is-active' : '') . "' href='change_password.php'>" . icon('account') . " Account <span class='badge badge-role-" . e($role) . "'>" . e($u) . "</span></a>";
             echo "<a class='sidebar-link' href='logout.php'>" . icon('logout') . " Logout</a>";
             echo "</div>";

@@ -39,8 +39,9 @@
   function updateThemeButton() {
     var btn = document.getElementById("theme-toggle");
     if (!btn) return;
-    var labels = { auto: "\u{1F5A5} System", light: "\u2600 Light", dark: "\u{1F319} Dark" };
-    btn.textContent = labels[currentTheme()] || "\u{1F313} Theme";
+    var labels = { auto: "System", light: "Light", dark: "Dark" };
+    var labelEl = btn.querySelector(".theme-label");
+    if (labelEl) labelEl.textContent = labels[currentTheme()] || "Theme";
   }
 
   function cycleTheme() {
