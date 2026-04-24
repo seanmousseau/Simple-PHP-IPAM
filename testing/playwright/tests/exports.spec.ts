@@ -145,3 +145,30 @@ test('export DNS missing subnet_id returns 400', async () => {
   const r = await fetchGet(page, appUrl('export_dns.php'));
   expect(r.status).toBe(400);
 });
+
+test('export utilization history: 200 response, CSV content-type', async () => {
+  await page.goto('subnets.php');
+  const r = await fetchGet(page, appUrl('export_utilization_history.php?days=7'));
+  expect(r.status).toBe(200);
+  expect(r.contentType.toLowerCase()).toContain('text');
+});
+
+test('export unassigned: missing subnet_id returns 400', async () => {
+  const r = await fetchGet(page, appUrl('export_unassigned.php'));
+  expect(r.status).toBe(400);
+});
+
+test('export unassigned: valid subnet_id returns 200 CSV', async () => {
+  if (!subnetId) { test.skip(); return; }
+  await page.goto(`addresses.php?subnet_id=${subnetId}`);
+  const r = await fetchGet(page, appUrl(`export_unassigned.php?subnet_id=${subnetId}`));
+  expect(r.status).toBe(200);
+  expect(r.contentType.toLowerCase()).toContain('text');
+});
+
+test('export import report: without active import session returns 404, not 500', async () => {
+  // No active CSV import wizard session — expects 404 (no plan found), never 500
+  const r = await fetchGet(page, appUrl('export_import_report.php'));
+  expect(r.status).not.toBe(500);
+  expect([400, 404]).toContain(r.status);
+});
