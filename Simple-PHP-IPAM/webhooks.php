@@ -262,6 +262,18 @@ if ($view === 'deliveries' && $whId > 0) {
 
 $flash = flash_get();
 page_header('Webhooks');
+?>
+<div class="breadcrumbs">
+  <a href="dashboard.php">Dashboard</a><span class="sep">›</span>
+  <a href="#">Admin</a><span class="sep">›</span>
+  <?php if ($view === 'deliveries'): ?>
+    <a href="webhooks.php">Webhooks</a><span class="sep">›</span>
+    <span>Delivery Log</span>
+  <?php else: ?>
+    <span>Webhooks</span>
+  <?php endif; ?>
+</div>
+<?php
 
 function wh_status_badge(mixed $status): string
 {

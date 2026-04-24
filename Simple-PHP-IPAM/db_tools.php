@@ -462,6 +462,11 @@ $diskFree      = ($diskFreeBytes !== false)
 page_header('Database');
 render_security_banner('db_tools', 'Database import will overwrite all existing data. Only import files from trusted sources.');
 ?>
+<div class="breadcrumbs">
+  <a href="dashboard.php">Dashboard</a><span class="sep">›</span>
+  <a href="#">Admin</a><span class="sep">›</span>
+  <span>Database</span>
+</div>
 <h1>Database</h1>
 
 <?php if ($err): ?>

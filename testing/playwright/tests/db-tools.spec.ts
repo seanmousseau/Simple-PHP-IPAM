@@ -133,6 +133,14 @@ test('db_tools security banner can be dismissed', async () => {
     test.skip();
   }
 });
+
+test('db-tools page has breadcrumb', async () => {
+  await page.goto('db_tools.php');
+  const bc = page.locator('.breadcrumbs');
+  await expect(bc).toBeVisible();
+  await expect(bc.locator('a[href="dashboard.php"]')).toContainText('Dashboard');
+  await expect(bc.locator('span').last()).toContainText('Database');
+});
 });  // end of "db_tools SQLite round-trip" describe
 
 // v2.10.0 #433 / v2.11.0 #388: non-SQLite gating assertion. Lives in its own

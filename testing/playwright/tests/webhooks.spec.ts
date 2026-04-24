@@ -174,6 +174,14 @@ test('test_fire returns JSON (not HTTP 500) — regression for #662', async () =
   expect(resultText.trim().length).toBeGreaterThan(5);
 });
 
+test('webhooks page has breadcrumb', async () => {
+  await page.goto(appUrl('webhooks.php'));
+  const bc = page.locator('.breadcrumbs');
+  await expect(bc).toBeVisible();
+  await expect(bc.locator('a[href="dashboard.php"]')).toContainText('Dashboard');
+  await expect(bc.locator('span').last()).toContainText('Webhooks');
+});
+
 test('delete webhook', async () => {
   await page.goto(appUrl('webhooks.php'));
 
