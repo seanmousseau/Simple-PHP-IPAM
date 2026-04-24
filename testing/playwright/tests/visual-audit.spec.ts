@@ -11,7 +11,8 @@ const OUT = '/tmp/ipam-audit-pw';
 fs.mkdirSync(OUT, { recursive: true });
 
 async function shot(page: any, name: string) {
-  await page.screenshot({ path: path.join(OUT, `${name}.png`), fullPage: false });
+  // OUT is hardcoded; name is always a literal string from test code — not user input.
+  await page.screenshot({ path: path.join(OUT, `${name}.png`), fullPage: false }); // nosemgrep
 }
 
 async function checkTableHeaderOrder(page: any, pageName: string): Promise<string[]> {
@@ -356,4 +357,58 @@ test('visual audit — all pages', async ({ page }) => {
 
   // Don't fail the test — we just want the report
   expect(allIssues.length).toBeGreaterThanOrEqual(0);
+});
+
+// Emoji range helpers
+const EMOJI_RE = /[\u{1F300}-\u{1FFFF}\u{2600}-\u{27BF}]/u;
+
+const BREADCRUMB_PAGES: Array<{ path: string; label: string }> = [
+  { path: 'subnets.php', label: 'subnets' },
+  { path: 'audit.php', label: 'audit' },
+  { path: 'search.php?q=10', label: 'search' },
+  { path: 'unassigned.php', label: 'unassigned' },
+  { path: 'import_csv.php', label: 'import_csv' },
+];
+
+for (const { path: pagePath, label } of BREADCRUMB_PAGES) {
+  test(`breadcrumbs and action pills on ${label} have no emoji`, async ({ page }) => {
+    await login(page, ADMIN_USER, ADMIN_PASS);
+    await page.goto(pagePath);
+
+    // All BREADCRUMB_PAGES must render a .breadcrumbs element — assert presence (auto-retrying).
+    const bc = page.locator('.breadcrumbs');
+    await expect(bc.first()).toBeVisible({ timeout: 5_000 });
+    const bcText = await bc.first().evaluate(el => el.textContent ?? '');
+    expect(bcText, `emoji in .breadcrumbs on ${label}`).not.toMatch(EMOJI_RE);
+
+    // .page-actions is optional — only check content when present.
+    const pills = page.locator('.page-actions');
+    if (await pills.count() > 0) {
+      const pillText = await pills.first().evaluate(el => el.textContent ?? '');
+      expect(pillText, `emoji in .page-actions on ${label}`).not.toMatch(EMOJI_RE);
+    }
+  });
+}
+
+test('breadcrumbs and action pills on addresses have no emoji', async ({ page }) => {
+  await login(page, ADMIN_USER, ADMIN_PASS);
+
+  // Resolve the first available subnet ID at runtime rather than assuming ID 1.
+  await page.goto('subnets.php');
+  const firstHref = await page.locator('a[href*="addresses.php?subnet_id="]').first().getAttribute('href') ?? '';
+  const subnetIdMatch = firstHref.match(/subnet_id=(\d+)/);
+  const subnetId = subnetIdMatch ? subnetIdMatch[1] : '1';
+
+  await page.goto(`addresses.php?subnet_id=${subnetId}`);
+
+  const bc = page.locator('.breadcrumbs');
+  await expect(bc.first()).toBeVisible({ timeout: 5_000 });
+  const bcText = await bc.first().evaluate(el => el.textContent ?? '');
+  expect(bcText, 'emoji in .breadcrumbs on addresses').not.toMatch(EMOJI_RE);
+
+  const pills = page.locator('.page-actions');
+  if (await pills.count() > 0) {
+    const pillText = await pills.first().evaluate(el => el.textContent ?? '');
+    expect(pillText, 'emoji in .page-actions on addresses').not.toMatch(EMOJI_RE);
+  }
 });

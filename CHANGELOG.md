@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.11.0] - 2026-04-24
+
+### Added
+- Breadcrumb navigation added to `health.php`, `db_tools.php`, and `webhooks.php` for consistent admin orientation (#657)
+- Collapsible expand/collapse for sites admin — parent regions collapse child sites with `sessionStorage` persistence, expand-all/collapse-all controls when 2+ groups (#632, #633)
+- Structured empty state for the dashboard address growth chart: icon + message + "Go to Subnets" CTA replaces bare text (#644)
+- `reports.spec.ts` Playwright spec — utilization history page functional coverage (#668)
+- Extended `exports.spec.ts` — `export_search.php`, `export_utilization_history.php`, `export_unassigned.php` (with/without `subnet_id`), `export_import_report.php` coverage (#669)
+
+### Changed
+- All emoji icons in breadcrumbs and action pills replaced with SVG Heroicons, matching the sidebar icon convention established in v3.8.0 (#654)
+- Action button styles standardised: `action-pill` applied consistently to all interactive links in page content areas; stray `btn`-only affordance on Account page fixed (#655, #656)
+
+### Fixed
+- Dark-mode sparklines in the dashboard subnet trend column are now visible; stroke colour resolved via CSS rule instead of SVG presentation attribute (#653)
+- Sidebar navigation no longer renders on pre-auth pages (login, forgot-password, reset-password); the redundant Login link is gone (#658)
+
 ## [3.10.0] - 2026-04-23
 
 ### Fixed
@@ -1022,6 +1039,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.11.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.10.0...v3.11.0
 [3.10.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.9.0...v3.10.0
 [3.9.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.8.1...v3.9.0
 [3.8.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.8.0...v3.8.1

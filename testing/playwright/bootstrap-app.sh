@@ -263,7 +263,7 @@ docker run --rm "${seed_docker_args[@]}" -e SEED_2FA_TEST_USER=1 -e DEMO_SEED_FO
 # is2FaSeeded() guard in totp.spec.ts returns true without any extra CLI wrangling.
 # Preserve any other .env keys that may exist alongside this flag.
 if grep -q "^SEED_2FA_TEST_USER=" "${script_dir}/.env" 2>/dev/null; then
-    sed -i 's/^SEED_2FA_TEST_USER=.*/SEED_2FA_TEST_USER=1/' "${script_dir}/.env"
+    perl -i -pe 's/^SEED_2FA_TEST_USER=.*/SEED_2FA_TEST_USER=1/' "${script_dir}/.env"
 else
     echo "SEED_2FA_TEST_USER=1" >> "${script_dir}/.env"
 fi

@@ -45,7 +45,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
-page_header('Forgot Password');
+page_header('Forgot Password', ['no_sidebar' => true]);
 ?>
 <div class="login-wrap">
 <div class="login-card">

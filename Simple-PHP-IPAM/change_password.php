@@ -284,7 +284,7 @@ page_header('Account');
     </form>
   <?php else: ?>
     <p class="muted">Two-factor authentication is <strong>not enabled</strong>.</p>
-    <a href="totp_enroll.php" class="btn">Enable 2FA</a>
+    <a href="totp_enroll.php" class="action-pill">Enable 2FA</a>
   <?php endif; ?>
 </div>
 

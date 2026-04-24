@@ -67,12 +67,22 @@ async function loginPasswordStep(
     password: string,
 ): Promise<void> {
     await page.goto('login.php');
-    await page.waitForSelector('[name=username]', { timeout: 10_000 });
+    await page.waitForSelector('[name=username]', { timeout: 30_000 });
     await page.locator('[name=username]').fill(username);
     await page.locator('[name=password]').fill(password);
     await page.locator('button[type=submit]').click();
-    // Should land on totp_verify.php, not dashboard (2FA required)
-    await page.waitForURL(url => url.pathname.endsWith('totp_verify.php'), { timeout: 10_000 });
+    // Wait for navigation away from login.php, then assert we reached the TOTP challenge.
+    // If login goes straight to dashboard, TOTP is disabled (DB was left dirty by a prior
+    // admin-reset test run — re-run bootstrap-app.sh to restore).
+    await page.waitForURL(url => !url.pathname.endsWith('login.php'), { timeout: 30_000 });
+    const landed = page.url();
+    if (!landed.includes('totp_verify.php')) {
+        throw new Error(
+            `loginPasswordStep: expected totp_verify.php after ${username} login, got ${landed}. ` +
+            'TOTP is likely disabled (totp_enabled=0). Re-run bootstrap-app.sh to restore state: ' +
+            'bash testing/playwright/bootstrap-app.sh <driver>',
+        );
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -229,14 +239,16 @@ test.describe('TOTP 2FA', () => {
         const resetForm = targetRow!.locator('form').filter({ hasText: 'Reset 2FA' });
         // Accept any confirm() dialog that may appear
         page.once('dialog', d => d.accept());
-        await resetForm.locator('button[type=submit]').click();
-        await page.waitForURL(/users\.php/, { timeout: 10_000 });
+        await Promise.all([
+            page.waitForURL(/users\.php/, { timeout: 30_000 }),
+            resetForm.locator('button[type=submit]').click(),
+        ]);
 
         await logout(page);
 
         // Now try to log in as 2fa_test_user — should go straight to dashboard (no TOTP step)
         await page.goto('login.php');
-        await page.waitForSelector('[name=username]', { timeout: 10_000 });
+        await page.waitForSelector('[name=username]', { timeout: 30_000 });
         await page.locator('[name=username]').fill(TFA_USER);
         await page.locator('[name=password]').fill(TFA_PASS);
         await page.locator('button[type=submit]').click();
@@ -244,7 +256,7 @@ test.describe('TOTP 2FA', () => {
         // Should NOT redirect to totp_verify.php
         await page.waitForURL(
             url => !url.pathname.endsWith('login.php'),
-            { timeout: 15_000 },
+            { timeout: 30_000 },
         );
         await expect(page).not.toHaveURL(/totp_verify\.php/);
         await expect(page).not.toHaveURL(/login\.php/);

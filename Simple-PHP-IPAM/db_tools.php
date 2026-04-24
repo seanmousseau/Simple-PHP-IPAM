@@ -462,6 +462,11 @@ $diskFree      = ($diskFreeBytes !== false)
 page_header('Database');
 render_security_banner('db_tools', 'Database import will overwrite all existing data. Only import files from trusted sources.');
 ?>
+<div class="breadcrumbs">
+  <a href="dashboard.php">Dashboard</a><span class="sep">›</span>
+  <a href="#">Admin</a><span class="sep">›</span>
+  <span>Database</span>
+</div>
 <h1>Database</h1>
 
 <?php if ($err): ?>
@@ -488,7 +493,7 @@ render_security_banner('db_tools', 'Database import will overwrite all existing 
     <form method='post'>
       <input type='hidden' name='csrf' value='<?= e(csrf_token()) ?>'>
       <input type='hidden' name='action' value='export'>
-      <button type='submit'<?= $sqlDumpSupported ? '' : ' disabled' ?>>⬇ Download SQL Dump</button>
+      <button type='submit'<?= $sqlDumpSupported ? '' : ' disabled' ?>><?= icon('download') ?> Download SQL Dump</button>
     </form>
   </div>
 
@@ -508,7 +513,7 @@ render_security_banner('db_tools', 'Database import will overwrite all existing 
           I understand this will overwrite all existing data
         </label>
         <div>
-          <button type='submit' class='button-danger'<?= $sqlDumpSupported ? '' : ' disabled' ?>>⬆ Import &amp; Replace</button>
+          <button type='submit' class='button-danger'<?= $sqlDumpSupported ? '' : ' disabled' ?>><?= icon('upload') ?> Import &amp; Replace</button>
         </div>
       </div>
     </form>
@@ -548,7 +553,7 @@ render_security_banner('db_tools', 'Database import will overwrite all existing 
   <form method='post' class='mt-14'>
     <input type='hidden' name='csrf' value='<?= e(csrf_token()) ?>'>
     <input type='hidden' name='action' value='backup_now'>
-    <button type='submit' class='button-secondary'<?= $sqlDumpSupported ? '' : ' disabled' ?>>💾 Run Backup Now</button>
+    <button type='submit' class='button-secondary'<?= $sqlDumpSupported ? '' : ' disabled' ?>><?= icon('backup') ?> Run Backup Now</button>
   </form>
 </div>
 

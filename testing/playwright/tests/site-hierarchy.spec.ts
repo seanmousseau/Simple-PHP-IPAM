@@ -128,6 +128,33 @@ test('sites: subnet site picker shows hierarchy', async () => {
   expect(hasRegion).toBe(true);
 });
 
+// ── Collapsible rows (v3.11.0 #632 #633) ─────────────────────────────────────
+// Run before the delete tests so the pw-test-region/pw-test-child-site hierarchy
+// created above is guaranteed to be present.
+
+test('sites: parent sites render a collapse toggle button', async () => {
+  await page.goto('sites.php', { waitUntil: 'networkidle' });
+  const toggles = page.locator('[data-collapsible-toggle]');
+  await expect(toggles.first()).toBeVisible();
+  await expect(toggles.first()).toHaveAttribute('aria-expanded');
+});
+
+test('sites: clicking toggle collapses and expands child rows', async () => {
+  await page.goto('sites.php', { waitUntil: 'networkidle' });
+  const toggles = page.locator('[data-collapsible-toggle]');
+  const groupId = await toggles.first().getAttribute('data-collapsible-group-id');
+  const childRows = page.locator(`[data-collapsible-child="${groupId}"]`);
+  await expect(childRows.first()).toBeVisible();
+  // Collapse
+  await toggles.first().click();
+  await expect(toggles.first()).toHaveAttribute('aria-expanded', 'false');
+  await expect(childRows.first()).toHaveClass(/collapsible-child--hidden/);
+  // Re-expand
+  await toggles.first().click();
+  await expect(toggles.first()).toHaveAttribute('aria-expanded', 'true');
+  await expect(childRows.first()).not.toHaveClass(/collapsible-child--hidden/);
+});
+
 test('sites: delete child site', async () => {
   await page.goto('sites.php');
   const rows = await page.locator('table tbody tr').all();

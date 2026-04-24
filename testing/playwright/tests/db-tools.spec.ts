@@ -135,6 +135,22 @@ test('db_tools security banner can be dismissed', async () => {
 });
 });  // end of "db_tools SQLite round-trip" describe
 
+// Engine-agnostic: breadcrumb renders on all DB drivers.
+test('db-tools page has breadcrumb', async ({ browser }) => {
+  const ctx = await newAuthContext(browser);
+  const page = await ctx.newPage();
+  try {
+    await login(page, ADMIN_USER, ADMIN_PASS);
+    await page.goto('db_tools.php');
+    const bc = page.locator('.breadcrumbs');
+    await expect(bc).toBeVisible();
+    await expect(bc.locator('a[href="dashboard.php"]')).toContainText('Dashboard');
+    await expect(bc.locator('span').last()).toContainText('Database');
+  } finally {
+    await ctx.close();
+  }
+});
+
 // v2.10.0 #433 / v2.11.0 #388: non-SQLite gating assertion. Lives in its own
 // describe so the SQLite round-trip describe's skip does not also skip these
 // tests on the MySQL or Postgres matrix slots. Both engines show the same

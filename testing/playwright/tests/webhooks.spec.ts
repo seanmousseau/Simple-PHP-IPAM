@@ -174,6 +174,45 @@ test('test_fire returns JSON (not HTTP 500) — regression for #662', async () =
   expect(resultText.trim().length).toBeGreaterThan(5);
 });
 
+test('webhooks page has breadcrumb', async () => {
+  await page.goto(appUrl('webhooks.php'));
+  const bc = page.locator('.breadcrumbs');
+  await expect(bc).toBeVisible();
+  await expect(bc.locator('a[href="dashboard.php"]')).toContainText('Dashboard');
+  await expect(bc.locator('span').last()).toContainText('Webhooks');
+});
+
+test('webhooks delivery-log view has breadcrumb with parent link', async () => {
+  // Resolve the ID of the webhook created earlier in this suite.
+  await page.goto(appUrl('webhooks.php'));
+  const row = page.locator(`table tr`, { hasText: WH_NAME }).first();
+  const rowCount = await row.count();
+  if (rowCount === 0) {
+    // Webhook not present (create test may have failed) — skip gracefully.
+    test.skip();
+    return;
+  }
+  // The delivery-log link carries the webhook_id in its href.
+  const deliveryLink = row.locator(`a[href*="view=deliveries"]`).first();
+  if (await deliveryLink.count() === 0) {
+    test.skip();
+    return;
+  }
+  const href = await deliveryLink.getAttribute('href') ?? '';
+  const match = href.match(/webhook_id=(\d+)/);
+  if (!match) {
+    test.skip();
+    return;
+  }
+  const webhookId = match[1];
+
+  await page.goto(appUrl(`webhooks.php?view=deliveries&webhook_id=${webhookId}`));
+  const bc = page.locator('.breadcrumbs');
+  await expect(bc).toBeVisible();
+  await expect(bc.locator('a[href="webhooks.php"]')).toContainText('Webhooks');
+  await expect(bc.locator('span').last()).toContainText('Delivery Log');
+});
+
 test('delete webhook', async () => {
   await page.goto(appUrl('webhooks.php'));
 

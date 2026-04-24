@@ -1421,6 +1421,21 @@ body.pw-toggle-hidden .pw-wrap .pw-input{padding-right:36px}
 
 /* --- Sparklines (v3.1.0 #311) --- */
 .sparkline{display:inline-block;vertical-align:middle}
+.sparkline polyline{stroke:var(--link);fill:none}
+
+/* ── Dashboard chart empty state (v3.11.0 #644) ─────────────────────── */
+.chart-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:180px;gap:var(--space-3)}
+.chart-empty .icon{width:32px;height:32px;color:var(--muted);opacity:.5}
+.chart-empty__msg{margin:0;color:var(--muted);font-size:.875rem;text-align:center}
+.chart-empty__cta{font-size:.8125rem;color:var(--link)}
+
+/* ── Collapsible row toggle (v3.11.0 #632 #633) ─────────────────────── */
+.collapsible-toggle{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;background:none;border:none;cursor:pointer;color:var(--muted);padding:0;border-radius:var(--radius-sm);flex-shrink:0}
+.collapsible-toggle:hover{color:var(--fg);background:color-mix(in srgb,var(--border) 60%,transparent)}
+.collapsible-toggle .icon{width:16px;height:16px;transition:transform 200ms ease}
+.collapsible-toggle[aria-expanded="true"] .icon{transform:rotate(90deg)}
+@media (prefers-reduced-motion:reduce){.collapsible-toggle .icon{transition:none}}
+.collapsible-child--hidden{display:none}
 
 /* ── Health dashboard status indicators (v3.7.0 #425) ───────────────── */
 .health-dot{display:inline-block;width:10px;height:10px;border-radius:50%;flex-shrink:0;vertical-align:middle}
@@ -1443,6 +1458,8 @@ body.pw-toggle-hidden .pw-wrap .pw-input{padding-right:36px}
 
 /* ===== Sidebar layout (v3.8.0 #512) ===================================== */
 .layout-root{display:flex;min-height:100vh}
+.layout-root--no-sidebar{display:block}
+.layout-root--no-sidebar .layout-main{margin-left:0}
 .sidebar{width:var(--sidebar-width,220px);background:var(--card);border-right:1px solid var(--border);display:flex;flex-direction:column;position:fixed;top:0;bottom:0;left:0;z-index:100;overflow-y:auto;transition:transform 200ms ease}
 .sidebar-logo{display:flex;align-items:center;gap:.5rem;padding:1rem .75rem;border-bottom:1px solid var(--border);min-height:3.5rem}
 .sidebar-logo-link{font-weight:700;font-size:var(--text-lg,1.125rem);color:var(--fg);text-decoration:none;display:flex;align-items:center;gap:.5rem;flex:1}

@@ -608,7 +608,7 @@ ipam_skeleton_flush();
 ?>
 
 <div class="breadcrumbs">
-  <a href="dashboard.php">🏠 Dashboard</a><span class="sep">›</span><span>🌐 Subnets</span>
+  <a href="dashboard.php"><?= icon('home') ?> Dashboard</a><span class="sep">›</span><span><?= icon('server-stack') ?> Subnets</span>
 </div>
 
 <div class="toolbar">
@@ -620,12 +620,12 @@ ipam_skeleton_flush();
 
 <div class="page-actions">
   <?php if (current_user()['role'] !== 'readonly'): ?>
-    <button class="action-pill" data-drawer-title="Add Subnet" data-drawer-tpl="tpl-add-subnet">➕ Add Subnet</button>
+    <button class="action-pill" data-drawer-title="Add Subnet" data-drawer-tpl="tpl-add-subnet"><?= icon('plus') ?> Add Subnet</button>
   <?php endif; ?>
-  <a class="action-pill" href="search.php">🔎 Search Addresses</a>
-  <a class="action-pill" href="export_subnets.php">⬇ Export CSV</a>
+  <a class="action-pill" href="search.php"><?= icon('magnifying-glass') ?> Search Addresses</a>
+  <a class="action-pill" href="export_subnets.php"><?= icon('download') ?> Export CSV</a>
   <?php if (current_user()['role'] === 'admin'): ?>
-    <a class="action-pill" href="sites.php">📍 Manage Sites</a>
+    <a class="action-pill" href="sites.php"><?= icon('building') ?> Manage Sites</a>
   <?php endif; ?>
 </div>
 

@@ -159,9 +159,9 @@ page_header('Audit Log');
 ?>
 
 <div class="breadcrumbs">
-  <a href="dashboard.php">🏠 Dashboard</a>
+  <a href="dashboard.php"><?= icon('home') ?> Dashboard</a>
   <span class="sep">›</span>
-  <span>📜 Audit</span>
+  <span><?= icon('audit') ?> Audit</span>
 </div>
 
 <?php if ($msg !== ''): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
@@ -212,7 +212,7 @@ page_header('Audit Log');
 </div>
 
 <div class="page-actions align-center gap-12 flex-wrap">
-  <a class="action-pill" href="export_audit.php">⬇ Export CSV</a>
+  <a class="action-pill" href="export_audit.php"><?= icon('download') ?> Export CSV</a>
   <form method="get" action="audit.php" class="row gap-8 m-0 align-center">
     <label class="m-0 label-inline">Category:
       <select name="prefix" data-auto-submit>

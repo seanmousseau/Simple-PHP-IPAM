@@ -1847,11 +1847,26 @@
 
   var hasData = ys.some(function(v) { return v !== 0; });
   if (!hasData) {
-    var emptyMsg = document.createElement('p');
-    emptyMsg.className = 'muted';
-    emptyMsg.style.cssText = 'text-align:center;line-height:180px;margin:0';
-    emptyMsg.textContent = 'No new addresses recorded in the last 30 days.';
-    el.appendChild(emptyMsg);
+    /* All content below is hardcoded literal HTML — no user data, no XSS risk */
+    var wrap  = document.createElement('div');
+    wrap.className = 'chart-empty';
+    var svgIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svgIcon.setAttribute('class', 'icon');
+    svgIcon.setAttribute('aria-hidden', 'true');
+    var useEl = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    useEl.setAttribute('href', 'assets/icons.svg#icon-reports');
+    svgIcon.appendChild(useEl);
+    var msg = document.createElement('p');
+    msg.className = 'chart-empty__msg';
+    msg.textContent = 'No address activity in the past 30 days';
+    var cta = document.createElement('a');
+    cta.className = 'chart-empty__cta';
+    cta.href = 'subnets.php';
+    cta.textContent = 'Go to Subnets';
+    wrap.appendChild(svgIcon);
+    wrap.appendChild(msg);
+    wrap.appendChild(cta);
+    el.appendChild(wrap);
     return;
   }
 
@@ -1879,7 +1894,7 @@
       { gap: 8, size: 28, stroke: muted, ticks: { stroke: muted } },
       {
         gap: 8, size: 40, stroke: muted, ticks: { stroke: muted },
-        values: function (u, vals) {
+        values: function (_u, vals) {
           return vals.map(function (v) { return v == null ? '' : String(Math.round(v)); });
         }
       }
@@ -2333,4 +2348,41 @@ function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
       target.appendChild(opt);
     });
   });
+}());
+
+// Collapsible row toggle — sites admin and any future collapsible groups (v3.11.0 #632 #633)
+(function () {
+  function applyCollapsible(btn, childRows, expanded) {
+    btn.setAttribute('aria-expanded', String(expanded));
+    childRows.forEach(function (row) {
+      row.classList.toggle('collapsible-child--hidden', !expanded);
+    });
+  }
+
+  document.querySelectorAll('[data-collapsible-toggle]').forEach(function (btn) {
+    var groupId = btn.getAttribute('data-collapsible-group-id');
+    var storageKey = 'ipam-collapsible-' + groupId;
+    var childRows = Array.prototype.slice.call(document.querySelectorAll('[data-collapsible-child="' + groupId + '"]'));
+    var saved = sessionStorage.getItem(storageKey);
+    var expanded = saved === null ? true : saved === 'true';
+    applyCollapsible(btn, childRows, expanded);
+    btn.addEventListener('click', function () {
+      var isExpanded = btn.getAttribute('aria-expanded') === 'true';
+      applyCollapsible(btn, childRows, !isExpanded);
+      sessionStorage.setItem(storageKey, String(!isExpanded));
+    });
+  });
+
+  var collapseAllBtn = document.querySelector('[data-collapsible-collapse-all]');
+  var expandAllBtn   = document.querySelector('[data-collapsible-expand-all]');
+  function allGroupsAction(expanded) {
+    document.querySelectorAll('[data-collapsible-toggle]').forEach(function (btn) {
+      var groupId = btn.getAttribute('data-collapsible-group-id');
+      var childRows = Array.prototype.slice.call(document.querySelectorAll('[data-collapsible-child="' + groupId + '"]'));
+      applyCollapsible(btn, childRows, expanded);
+      sessionStorage.setItem('ipam-collapsible-' + groupId, String(expanded));
+    });
+  }
+  if (collapseAllBtn) { collapseAllBtn.addEventListener('click', function () { allGroupsAction(false); }); }
+  if (expandAllBtn)   { expandAllBtn.addEventListener('click',   function () { allGroupsAction(true); }); }
 }());

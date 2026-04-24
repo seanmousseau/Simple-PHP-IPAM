@@ -40,4 +40,12 @@ adminTest.describe('health dashboard', () => {
     const valText = await row.locator('.health-val').innerText();
     expect(valText.trim(), 'DB version cell should not be empty').not.toBe('');
   });
+
+  adminTest('health page has breadcrumb', async ({ adminPage: page }) => {
+    await page.goto('health.php');
+    const bc = page.locator('.breadcrumbs');
+    await expect(bc).toBeVisible();
+    await expect(bc.locator('a[href="dashboard.php"]')).toContainText('Dashboard');
+    await expect(bc.locator('span').last()).toContainText('Health');
+  });
 });

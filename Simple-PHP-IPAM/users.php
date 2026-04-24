@@ -293,7 +293,7 @@ page_header('Users');
 <?php if ($msg): ?><p class="success"><?= e($msg) ?></p><?php endif; ?>
 
 <div class="page-actions">
-  <button class="action-pill" data-drawer-title="Create User" data-drawer-tpl="tpl-create-user">➕ Create User</button>
+  <button class="action-pill" data-drawer-title="Create User" data-drawer-tpl="tpl-create-user"><?= icon('plus') ?> Create User</button>
 </div>
 <div id="tpl-create-user" style="display:none"><?= ipam_render_string('user_form', [ // nosemgrep
     'formData' => $formData,

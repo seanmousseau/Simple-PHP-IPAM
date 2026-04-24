@@ -127,13 +127,13 @@ page_header('Address History');
 ?>
 
 <div class="breadcrumbs">
-  <a href="dashboard.php">🏠 Dashboard</a>
+  <a href="dashboard.php"><?= icon('home') ?> Dashboard</a>
   <span class="sep">›</span>
-  <a href="addresses.php?subnet_id=<?= to_int($addr['subnet_id']) ?>">🧾 Addresses</a>
+  <a href="addresses.php?subnet_id=<?= to_int($addr['subnet_id']) ?>"><?= icon('map-pin') ?> Addresses</a>
   <span class="sep">›</span>
   <span><?= e(to_str($addr['ip'])) ?></span>
   <span class="sep">›</span>
-  <span>📜 History</span>
+  <span><?= icon('audit') ?> History</span>
 </div>
 
 <div class="toolbar">
@@ -144,9 +144,9 @@ page_header('Address History');
 </div>
 
 <div class="page-actions">
-  <a class="action-pill" href="addresses.php?subnet_id=<?= to_int($addr['subnet_id']) ?>">🧾 Back to Addresses</a>
-  <a class="action-pill" href="search.php?q=<?= urlencode(to_str($addr['ip'])) ?>">🔎 Search this IP</a>
-  <a class="action-pill" href="export_address_history.php?address_id=<?= to_int($addr['id']) ?>">⬇ Export CSV</a>
+  <a class="action-pill" href="addresses.php?subnet_id=<?= to_int($addr['subnet_id']) ?>"><?= icon('map-pin') ?> Back to Addresses</a>
+  <a class="action-pill" href="search.php?q=<?= urlencode(to_str($addr['ip'])) ?>"><?= icon('magnifying-glass') ?> Search this IP</a>
+  <a class="action-pill" href="export_address_history.php?address_id=<?= to_int($addr['id']) ?>"><?= icon('download') ?> Export CSV</a>
 </div>
 
 <div class="card mt-16">
