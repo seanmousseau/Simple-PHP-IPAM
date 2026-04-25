@@ -1,0 +1,162 @@
+/**
+ * Playwright E2E tests for Email OTP 2FA (#684, #715).
+ * Tests enrollment on the Account page and mid-login challenge flow.
+ *
+ * Self-skips when SEED_EMAIL_OTP_TEST_USER is not '1'.
+ * Requires: SMTP configured (or a test user without Email OTP for enrollment tests).
+ *
+ * Uses injectTestOtp() to bypass actual email delivery in the containerized harness.
+ */
+
+import { test, expect } from '@playwright/test';
+import { login, logout, ADMIN_USER, ADMIN_PASS, appUrl, fetchPost, injectTestOtp } from '../fixtures/ipam';
+
+const EMAIL_OTP_USER = 'email_otp_test_user';
+const EMAIL_OTP_PASS = 'Password1!';
+
+function isEmailOtpSeeded(): boolean {
+    return process.env.SEED_EMAIL_OTP_TEST_USER === '1';
+}
+
+// ── Enrollment flow ───────────────────────────────────────────────────────────
+
+test.describe('Email OTP enrollment', () => {
+    test.skip(!isEmailOtpSeeded(), 'SEED_EMAIL_OTP_TEST_USER not set');
+
+    test.beforeEach(async ({ page }) => {
+        await login(page, ADMIN_USER, ADMIN_PASS);
+        // Enable Email OTP globally
+        await fetchPost(page, appUrl('settings.php'), {
+            group: 'mfa',
+            'mfa.email_otp_enabled': '1',
+        });
+        await logout(page);
+    });
+
+    test.afterEach(async ({ page }) => {
+        // Disable Email OTP globally and reset test user enrollment
+        await login(page, ADMIN_USER, ADMIN_PASS);
+        await fetchPost(page, appUrl('settings.php'), {
+            group: 'mfa',
+            'mfa.email_otp_enabled': '0',
+        });
+        await logout(page);
+    });
+
+    test('Email OTP section appears on Account page when globally enabled', async ({ page }) => {
+        await login(page, EMAIL_OTP_USER, EMAIL_OTP_PASS);
+        await page.goto(appUrl('change_password.php'));
+        await expect(page.locator('#email-otp')).toBeVisible();
+        await logout(page);
+    });
+
+    test('enable button triggers enrollment flow', async ({ page }) => {
+        await login(page, EMAIL_OTP_USER, EMAIL_OTP_PASS);
+        await page.goto(appUrl('change_password.php'));
+
+        await page.locator('#email-otp button[type=submit]').first().click();
+        await page.waitForURL(/change_password\.php/);
+
+        // Inject a known code since we can't receive the email
+        const code = await injectTestOtp(EMAIL_OTP_USER, '654321');
+
+        // Should now show the verification form
+        await expect(page.locator('#email-otp input[name=otp_code]')).toBeVisible();
+
+        await page.locator('#email-otp input[name=otp_code]').fill(code);
+        await page.locator('#email-otp button[type=submit]').first().click();
+
+        await expect(page.locator('.success')).toBeVisible();
+        await expect(page.locator('#email-otp')).toContainText(/active/i);
+        await logout(page);
+    });
+
+    test('wrong code shows error and stays on enrollment', async ({ page }) => {
+        await login(page, EMAIL_OTP_USER, EMAIL_OTP_PASS);
+        await page.goto(appUrl('change_password.php'));
+        await page.locator('#email-otp button[type=submit]').first().click();
+        await injectTestOtp(EMAIL_OTP_USER, '654321');
+
+        await page.locator('#email-otp input[name=otp_code]').fill('000000');
+        await page.locator('#email-otp button[type=submit]').first().click();
+
+        await expect(page.locator('.danger')).toBeVisible();
+        await expect(page.locator('#email-otp input[name=otp_code]')).toBeVisible();
+        await logout(page);
+    });
+
+    test('disable button removes Email OTP enrollment', async ({ page }) => {
+        // First enroll
+        await login(page, EMAIL_OTP_USER, EMAIL_OTP_PASS);
+        await page.goto(appUrl('change_password.php'));
+        await page.locator('#email-otp button[type=submit]').first().click();
+        const code = await injectTestOtp(EMAIL_OTP_USER, '111222');
+        await page.locator('#email-otp input[name=otp_code]').fill(code);
+        await page.locator('#email-otp button[type=submit]').first().click();
+        // Now disable
+        await page.locator('#email-otp button.button-danger').click();
+        await expect(page.locator('#email-otp')).not.toContainText(/active/i);
+        await logout(page);
+    });
+});
+
+// ── Mid-login challenge ───────────────────────────────────────────────────────
+
+test.describe('Email OTP login challenge', () => {
+    test.skip(!isEmailOtpSeeded(), 'SEED_EMAIL_OTP_TEST_USER not set');
+
+    test('user with Email OTP enrolled is challenged on login', async ({ page }) => {
+        await page.goto(appUrl('login.php'));
+        await page.locator('[name=username]').fill(EMAIL_OTP_USER);
+        await page.locator('[name=password]').fill(EMAIL_OTP_PASS);
+        await page.locator('button[type=submit]').click();
+        await page.waitForURL(url => !url.pathname.endsWith('login.php'), { timeout: 30_000 });
+        await expect(page).toHaveURL(/email_otp_verify\.php/);
+    });
+
+    test('correct OTP code completes login', async ({ page }) => {
+        await page.goto(appUrl('login.php'));
+        await page.locator('[name=username]').fill(EMAIL_OTP_USER);
+        await page.locator('[name=password]').fill(EMAIL_OTP_PASS);
+        await page.locator('button[type=submit]').click();
+        await page.waitForURL(/email_otp_verify\.php/, { timeout: 30_000 });
+
+        const code = await injectTestOtp(EMAIL_OTP_USER, '333444');
+        await page.locator('[name=otp_code]').fill(code);
+        await page.locator('button[type=submit]').click();
+        await expect(page).toHaveURL(/dashboard\.php/);
+        await logout(page);
+    });
+
+    test('wrong OTP code stays on challenge page', async ({ page }) => {
+        await page.goto(appUrl('login.php'));
+        await page.locator('[name=username]').fill(EMAIL_OTP_USER);
+        await page.locator('[name=password]').fill(EMAIL_OTP_PASS);
+        await page.locator('button[type=submit]').click();
+        await page.waitForURL(/email_otp_verify\.php/, { timeout: 30_000 });
+
+        await injectTestOtp(EMAIL_OTP_USER, '555666');
+        await page.locator('[name=otp_code]').fill('000000');
+        await page.locator('button[type=submit]').click();
+        await expect(page).toHaveURL(/email_otp_verify\.php/);
+        await expect(page.locator('.danger')).toBeVisible();
+    });
+
+    test('email_otp_verify.php without session redirects to login', async ({ page }) => {
+        await page.goto(appUrl('email_otp_verify.php'));
+        await expect(page).toHaveURL(/login\.php/);
+    });
+});
+
+// ── Admin controls ────────────────────────────────────────────────────────────
+
+test.describe('Email OTP admin controls', () => {
+    test.skip(!isEmailOtpSeeded(), 'SEED_EMAIL_OTP_TEST_USER not set');
+
+    test('admin sees Reset Email OTP action for enrolled users in users.php', async ({ page }) => {
+        await login(page, ADMIN_USER, ADMIN_PASS);
+        await page.goto(appUrl('users.php'));
+        await expect(page.locator(`text=Reset Email OTP`).first()).toBeVisible();
+        await logout(page);
+    });
+});
