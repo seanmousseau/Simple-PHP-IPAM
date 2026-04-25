@@ -222,6 +222,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $msg = 'Two-factor authentication reset for user.';
         }
 
+    } elseif ($action === 'email_otp_reset') {
+        $id = to_int($_POST['id'] ?? 0);
+        if ($id === $self['id']) {
+            flash_set('Use the Account page to manage your own Email OTP.', 'warning');
+            header('Location: users.php');
+            exit;
+        }
+        if ($id > 0) {
+            $db->prepare(
+                "UPDATE users SET email_otp_enabled = 0, email_otp_hash = NULL,
+                                  email_otp_expires_at = NULL, email_otp_attempts = 0
+                  WHERE id = :id"
+            )->execute([':id' => $id]);
+            audit($db, 'user.email_otp_reset', 'user', $id, 'Admin reset Email OTP enrollment');
+            flash_set('Email OTP enrollment reset.', 'success');
+            header('Location: users.php');
+            exit;
+        }
+
     } elseif ($action === 'delete') {
         $id = to_int($_POST['id'] ?? 0);
         if ($id === $self['id']) {
@@ -255,7 +274,7 @@ $userSort = parse_sort($userSortCols, 'username');
 
 $st = $db->prepare(
     "SELECT id, username, name, email, role, is_active, created_at, updated_at, oidc_sub, last_login_at,
-            totp_enabled, locked_until, lock_reason, failed_auth_count
+            totp_enabled, email_otp_enabled, locked_until, lock_reason, failed_auth_count
      FROM users ORDER BY {$userSort['sql']}"
 );
 $st->execute();
@@ -433,6 +452,18 @@ page_header('Users');
               <button type="submit" class="action-pill"
                 onclick="return confirm('Reset 2FA for <?= e(to_str($u['username'])) ?>?')">
                 Reset 2FA
+              </button>
+            </form>
+            <?php endif; ?>
+
+            <?php if (to_int($u['email_otp_enabled'] ?? 0) === 1 && to_int($u['id']) !== $self['id']): ?>
+            <form method="post" action="users.php" class="row gap-6">
+              <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+              <input type="hidden" name="action" value="email_otp_reset">
+              <input type="hidden" name="id"     value="<?= to_int($u['id']) ?>">
+              <button type="submit" class="action-pill"
+                onclick="return confirm('Reset Email OTP for <?= e(to_str($u['username'])) ?>?')">
+                Reset Email OTP
               </button>
             </form>
             <?php endif; ?>
