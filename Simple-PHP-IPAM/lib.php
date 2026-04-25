@@ -8112,18 +8112,27 @@ function ipam_email_otp_verify(PDO $db, int $userId, string $code): bool
 
     if ($attempts >= 5) {
         ipam_email_otp_clear($db, $userId);
+        audit($db, 'mfa.otp.locked', 'user', $userId, 'OTP locked: max attempts exceeded');
         return false;
     }
 
     // ISO datetime strings sort correctly as plain string comparison
     if ($expires < date('Y-m-d H:i:s')) {
         ipam_email_otp_clear($db, $userId);
+        audit($db, 'mfa.otp.expired', 'user', $userId, 'OTP expired');
         return false;
     }
 
     if (!password_verify($code, $hash)) {
-        $db->prepare("UPDATE users SET email_otp_attempts = email_otp_attempts + 1 WHERE id = :id")
-           ->execute([':id' => $userId]);
+        $newAttempts = $attempts + 1;
+        if ($newAttempts >= 5) {
+            ipam_email_otp_clear($db, $userId);
+            audit($db, 'mfa.otp.locked', 'user', $userId, 'OTP locked: max attempts exceeded');
+        } else {
+            $db->prepare("UPDATE users SET email_otp_attempts = email_otp_attempts + 1 WHERE id = :id")
+               ->execute([':id' => $userId]);
+            audit($db, 'mfa.otp.fail', 'user', $userId, "attempt={$newAttempts}");
+        }
         return false;
     }
 
@@ -8176,7 +8185,9 @@ function ipam_email_otp_send(PDO $db, int $userId, string $code): bool
 
     $result = ipam_send_mail($to, $subject, $body);
     if (!$result['success']) {
-        error_log('ipam_email_otp_send: failed to send OTP to user ' . $userId . ': ' . ($result['error'] ?? 'unknown'));
+        $errMsg = $result['error'] ?? 'unknown';
+        error_log('ipam_email_otp_send: failed to send OTP to user ' . $userId . ': ' . $errMsg);
+        audit($db, 'mfa.otp.send_fail', 'user', $userId, $errMsg);
         return false;
     }
     return true;

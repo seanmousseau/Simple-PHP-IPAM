@@ -32,8 +32,7 @@ if (!file_exists($configPath)) {
     exit(3);
 }
 
-$config = [];
-require $configPath;
+$config = require $configPath;
 
 $driver = $config['db_driver'] ?? 'sqlite';
 
@@ -68,6 +67,7 @@ if ($driver === 'sqlite') {
 $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
 $hash = password_hash($newPassword, PASSWORD_DEFAULT);
+// Intentionally skips password_changed_at to avoid triggering expiry flows in tests.
 $st   = $db->prepare("UPDATE users SET password_hash = :h WHERE username = :u");
 $st->execute([':h' => $hash, ':u' => $username]);
 
@@ -76,7 +76,7 @@ if ($st->rowCount() === 0) {
     exit(5);
 }
 
-// Clear any rate-limiting state left by test login failures.
-$db->exec("DELETE FROM login_attempts");
+// Clear rate-limiting state for this user only; scoped to avoid breaking parallel workers.
+$db->prepare("DELETE FROM login_attempts WHERE username = :u")->execute([':u' => $username]);
 
 echo "ok\n";

@@ -112,5 +112,18 @@ if (getenv('SEED_2FA_TEST_USER') === '1') {
     }
 }
 
+// Email OTP test user — seeded only when SEED_EMAIL_OTP_TEST_USER=1
+if (getenv('SEED_EMAIL_OTP_TEST_USER') === '1') {
+    $db->prepare("DELETE FROM users WHERE username='email_otp_test_user'")->execute();
+    $db->prepare(
+        "INSERT INTO users
+            (username, password_hash, role, is_active, email_otp_enabled, email, name)
+         VALUES ('email_otp_test_user', :ph, 'readonly', 1, 1, 'email_otp_test@example.com', 'Email OTP Test User')"
+    )->execute([
+        ':ph' => password_hash('Password1!', PASSWORD_DEFAULT),
+    ]);
+    echo "Seeded Email OTP test user: email_otp_test_user\n";
+}
+
 file_put_contents(__DIR__ . '/data/demo_last_reset.txt', (string)time());
 echo "Done. Demo data loaded successfully.\n";

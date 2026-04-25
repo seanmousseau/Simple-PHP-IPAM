@@ -238,7 +238,7 @@ unset _seed_cfg
 if [[ -d "$repo_root/vendor" ]]; then
     seed_docker_args+=(-v "$repo_root/vendor:/var/www/vendor:ro")
 fi
-docker run --rm "${seed_docker_args[@]}" -e SEED_2FA_TEST_USER=1 -e DEMO_SEED_FORCE=1 "$image" \
+docker run --rm "${seed_docker_args[@]}" -e SEED_2FA_TEST_USER=1 -e SEED_EMAIL_OTP_TEST_USER=1 -e DEMO_SEED_FORCE=1 "$image" \
     bash -c 'php migrate.php && php demo_seed.php && chmod -R a+rwX data' \
     >/tmp/ipam-pw-seed.log 2>&1 || {
         echo "bootstrap-app: seeding failed, log follows:" >&2
@@ -266,6 +266,11 @@ if grep -q "^SEED_2FA_TEST_USER=" "${script_dir}/.env" 2>/dev/null; then
     perl -i -pe 's/^SEED_2FA_TEST_USER=.*/SEED_2FA_TEST_USER=1/' "${script_dir}/.env"
 else
     echo "SEED_2FA_TEST_USER=1" >> "${script_dir}/.env"
+fi
+if grep -q "^SEED_EMAIL_OTP_TEST_USER=" "${script_dir}/.env" 2>/dev/null; then
+    perl -i -pe 's/^SEED_EMAIL_OTP_TEST_USER=.*/SEED_EMAIL_OTP_TEST_USER=1/' "${script_dir}/.env"
+else
+    echo "SEED_EMAIL_OTP_TEST_USER=1" >> "${script_dir}/.env"
 fi
 
 # 5. Flip demo_mode off so the suite can exercise normal admin flows.
