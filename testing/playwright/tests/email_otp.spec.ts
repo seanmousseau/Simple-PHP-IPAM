@@ -112,7 +112,9 @@ test.describe('Email OTP enrollment', () => {
         const code = await injectTestOtp(EMAIL_OTP_USER, '111222');
         await page.locator('#email-otp input[name=otp_code]').fill(code);
         await page.locator('#email-otp button[type=submit]').first().click();
-        // Now disable
+        // Now disable — fill required password field, accept confirm dialog, then submit
+        await page.locator('#email-otp input[name=current_password]').fill(EMAIL_OTP_PASS);
+        page.once('dialog', d => d.accept());
         await page.locator('#email-otp button.button-danger').click();
         await expect(page.locator('#email-otp')).not.toContainText(/active/i);
         await logout(page);
