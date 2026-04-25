@@ -745,6 +745,14 @@ function require_login(): void
             }
         }
     }
+
+    if (!empty($_SESSION['mfa_enrollment_required'])) {
+        $page = basename(to_str($_SERVER['SCRIPT_FILENAME'] ?? ''));
+        if (!in_array($page, ['change_password.php', 'totp_enroll.php', 'logout.php'], true)) {
+            header('Location: change_password.php?mfa_required=1');
+            exit;
+        }
+    }
 }
 
 /**

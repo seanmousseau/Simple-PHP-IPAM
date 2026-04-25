@@ -266,6 +266,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 
         $db->prepare("UPDATE users SET email_otp_enabled = 1 WHERE id = :id")
            ->execute([':id' => to_int($cur['id'])]);
         unset($_SESSION['email_otp_enrolling']);
+        unset($_SESSION['mfa_enrollment_required']);
         audit($db, 'user.email_otp_enable', 'user', to_int($cur['id']), 'Email OTP 2FA enrolled');
         flash_set('Email OTP enabled successfully.');
     } else {
@@ -325,7 +326,6 @@ $actSt->execute([':uid' => $viewUserId]);
 $activityRows = $actSt->fetchAll();
 
 if (isset($_GET['mfa_required']) && !empty($_SESSION['mfa_enrollment_required'])) {
-    unset($_SESSION['mfa_enrollment_required']);
     flash_set('Your administrator requires 2FA. Please enroll in TOTP or Email OTP below.', 'warning');
 }
 
