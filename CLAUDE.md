@@ -78,6 +78,7 @@ Dev tooling at the repo root (not deployed): `composer.json`, `composer.lock`, `
 | `change_password.php` | yes | any | Account page: self-service password change, timezone preference, email change with verification (nav label: "Account") |
 | `totp_enroll.php` | yes | any | TOTP 2FA enrollment wizard (3 steps: start → QR scan → backup codes); requires `app_secret` in config.php (v3.6.0) |
 | `totp_verify.php` | partial | any | Mid-login TOTP challenge; reached only via `$_SESSION['totp_pending_uid']` set by `login.php`; redirects to login if session key absent (v3.6.0) |
+| `email_otp_verify.php` | partial | any | Mid-login Email OTP challenge; reached only via `$_SESSION['email_otp_pending_uid']` set by `login.php`; redirects to login if session key absent (v3.14.0) |
 | `forgot_password.php` | — | — | Email-based password recovery: submit username/email, sends reset link |
 | `reset_password.php` | — | — | Consumes password reset token, shows new-password form |
 | `devices.php` | yes | admin | Device and interface management (CRUD, filter by type/site, interface sub-section) |
