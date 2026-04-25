@@ -2126,6 +2126,8 @@ function ipam_migrations(): array
         },
 
         // v3.14.0 #684: add email_otp_* columns to users table for Email OTP 2FA.
+        // Natural sort places this before 3.14.0-mfa-settings; that is intentional
+        // and harmless — the two closures touch different tables (users vs settings).
         '3.14.0-email-otp' => static function (PDO $db): void {
             $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
 
@@ -2156,6 +2158,9 @@ function ipam_migrations(): array
                     ($db->query("SHOW COLUMNS FROM users") ?: throw new \RuntimeException('SHOW COLUMNS failed'))->fetchAll(),
                     'Field'
                 );
+                if ($cols === []) {
+                    return;
+                }
                 if (!in_array('email_otp_enabled', $cols, true)) {
                     $db->exec("ALTER TABLE users ADD COLUMN email_otp_enabled  TINYINT NOT NULL DEFAULT 0");
                 }
