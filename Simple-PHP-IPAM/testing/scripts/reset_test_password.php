@@ -43,20 +43,23 @@ if ($driver === 'sqlite') {
         $dbPath = '/var/www/html/data/ipam.sqlite';
     }
     $db = new PDO('sqlite:' . $dbPath);
-} elseif ($driver === 'mysql') {
-    $host   = $config['db_host']   ?? 'localhost';
-    $port   = $config['db_port']   ?? 3306;
-    $dbName = $config['db_name']   ?? 'ipam';
-    $user   = $config['db_user']   ?? 'ipam';
-    $pass   = $config['db_pass']   ?? '';
-    $db = new PDO("mysql:host={$host};port={$port};dbname={$dbName};charset=utf8mb4", $user, $pass);
-} elseif ($driver === 'pgsql') {
-    $host   = $config['db_host']   ?? 'localhost';
-    $port   = $config['db_port']   ?? 5432;
-    $dbName = $config['db_name']   ?? 'ipam';
-    $user   = $config['db_user']   ?? 'ipam';
-    $pass   = $config['db_pass']   ?? '';
-    $db = new PDO("pgsql:host={$host};port={$port};dbname={$dbName}", $user, $pass);
+} elseif ($driver === 'mysql' || $driver === 'pgsql') {
+    // Test configs use db_dsn; fall back to constructing from individual keys.
+    $dsn  = $config['db_dsn']  ?? '';
+    $user = $config['db_user'] ?? 'ipam';
+    $pass = $config['db_pass'] ?? '';
+    if ($dsn === '' && $driver === 'mysql') {
+        $host   = $config['db_host'] ?? 'localhost';
+        $port   = $config['db_port'] ?? 3306;
+        $dbName = $config['db_name'] ?? 'ipam';
+        $dsn    = "mysql:host={$host};port={$port};dbname={$dbName};charset=utf8mb4";
+    } elseif ($dsn === '') {
+        $host   = $config['db_host'] ?? 'localhost';
+        $port   = $config['db_port'] ?? 5432;
+        $dbName = $config['db_name'] ?? 'ipam';
+        $dsn    = "pgsql:host={$host};port={$port};dbname={$dbName}";
+    }
+    $db = new PDO($dsn, $user, $pass);
 } else {
     fwrite(STDERR, "Unknown db_driver: {$driver}\n");
     exit(4);
