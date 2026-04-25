@@ -249,6 +249,14 @@ page_header('Settings');
     <h2><?= e($groupLabel) ?></h2>
     <div class="muted"><?= e(to_str($groupMeta['description'] ?? '')) ?></div>
 
+    <?php if ($groupKey === 'mfa' && !(bool)to_int(ipam_setting('smtp.enabled', false))): ?>
+    <div class="warning" style="margin-bottom:1rem">
+      <strong>SMTP is not configured.</strong>
+      Email OTP requires a working SMTP connection to deliver codes.
+      Configure SMTP under <a href="settings.php#group-smtp">Email Delivery</a> before enabling Email OTP.
+    </div>
+    <?php endif; ?>
+
     <form method="post" action="settings.php">
       <input type="hidden" name="csrf"  value="<?= e(csrf_token()) ?>">
       <input type="hidden" name="group" value="<?= e($groupKey) ?>">
