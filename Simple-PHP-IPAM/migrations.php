@@ -2021,6 +2021,40 @@ function ipam_migrations(): array
         // so each tenant can override any global setting while global rows sit at
         // tenant_id IS NULL. SQLite requires a full table rebuild; MySQL and
         // PostgreSQL use ALTER TABLE.
+        '3.14.0-mfa-settings' => static function (PDO $db): void {
+            if (!function_exists('ipam_setting_definitions')) {
+                return;
+            }
+            $definitions = ipam_setting_definitions();
+            $kc = ipam_key_col();
+
+            foreach (['mfa.email_otp_enabled', 'mfa.require'] as $key) {
+                if (!isset($definitions[$key])) {
+                    continue;
+                }
+                $def = $definitions[$key];
+                $type = to_str($def['type']);
+                $encoded = ipam_setting_encode($def['default'], $type);
+                $ex = $db->prepare("SELECT 1 FROM settings WHERE tenant_id IS NULL AND {$kc} = :k");
+                $ex->execute([':k' => $key]);
+                if ($ex->fetch()) {
+                    continue;
+                }
+                try {
+                    $st = $db->prepare(
+                        "INSERT INTO settings (tenant_id, {$kc}, value, type) VALUES (NULL, :k, :v, :t)"
+                    );
+                    $st->execute([':k' => $key, ':v' => $encoded, ':t' => $type]);
+                } catch (\PDOException $e) {
+                    // Row already exists (duplicate key) — skip.
+                    if (str_contains($e->getMessage(), 'UNIQUE') || str_contains($e->getMessage(), 'Duplicate')) {
+                        continue;
+                    }
+                    throw $e;
+                }
+            }
+        },
+
         '3.13.0-settings-cascade' => static function (PDO $db): void {
             $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
 
