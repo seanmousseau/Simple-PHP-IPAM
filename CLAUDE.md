@@ -33,7 +33,7 @@ Two cheap calls. The first loads your profile + preferences. The second returns 
 
 ## Project overview
 
-> **Current shipped version: v3.13.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v4.0.0 describes future work — **do not apply it to current v3.x code**. Current-state rules are the ones that do not cite a future version.
+> **Current shipped version: v3.14.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v4.0.0 describes future work — **do not apply it to current v3.x code**. Current-state rules are the ones that do not cite a future version.
 
 Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application built with **PHP 8.2+ and SQLite**. It has **no npm build step** — all CSS and JavaScript are vanilla. Starting in v2.9.0, the application will ship a small, carefully curated set of Composer-managed runtime dependencies bundled into the release tarball, so end users still deploy by extracting the tarball with no build step. The web root is `Simple-PHP-IPAM/` (the subdirectory, not the repo root).
 
@@ -78,6 +78,7 @@ Dev tooling at the repo root (not deployed): `composer.json`, `composer.lock`, `
 | `change_password.php` | yes | any | Account page: self-service password change, timezone preference, email change with verification (nav label: "Account") |
 | `totp_enroll.php` | yes | any | TOTP 2FA enrollment wizard (3 steps: start → QR scan → backup codes); requires `app_secret` in config.php (v3.6.0) |
 | `totp_verify.php` | partial | any | Mid-login TOTP challenge; reached only via `$_SESSION['totp_pending_uid']` set by `login.php`; redirects to login if session key absent (v3.6.0) |
+| `email_otp_verify.php` | partial | any | Mid-login Email OTP challenge; reached only via `$_SESSION['email_otp_pending_uid']` set by `login.php`; redirects to login if session key absent (v3.14.0) |
 | `forgot_password.php` | — | — | Email-based password recovery: submit username/email, sends reset link |
 | `reset_password.php` | — | — | Consumes password reset token, shows new-password form |
 | `devices.php` | yes | admin | Device and interface management (CRUD, filter by type/site, interface sub-section) |
@@ -198,7 +199,7 @@ Migrations live in `migrations.php` as an associative array of version string �
 
 **When adding a new version:** add the migration closure, bump `version.php`, update `CHANGELOG.md` (keepachangelog format).
 
-> **Current shipped version: v3.13.0.** `Creating new data tables in post-v4.0.0 releases` is **forward-looking** (applies to any migration whose version sorts after v4.0.0, including v4.0.x patches) — ignore it for all current v3.x work. `Modifying the schema (multi-engine, from v2.9.0 onward)` and `Runtime dependencies` are **currently active** rules (apply to v2.9.0+ including the current v3.13.0).
+> **Current shipped version: v3.14.0.** `Creating new data tables in post-v4.0.0 releases` is **forward-looking** (applies to any migration whose version sorts after v4.0.0, including v4.0.x patches) — ignore it for all current v3.x work. `Modifying the schema (multi-engine, from v2.9.0 onward)` and `Runtime dependencies` are **currently active** rules (apply to v2.9.0+ including the current v3.14.0).
 
 ### Multi-tenancy model *(v4.0.0, opt-in)*
 

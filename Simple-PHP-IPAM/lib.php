@@ -745,6 +745,14 @@ function require_login(): void
             }
         }
     }
+
+    if (!empty($_SESSION['mfa_enrollment_required'])) {
+        $page = basename(to_str($_SERVER['SCRIPT_FILENAME'] ?? ''));
+        if (!in_array($page, ['change_password.php', 'totp_enroll.php', 'logout.php'], true)) {
+            header('Location: change_password.php?mfa_required=1');
+            exit;
+        }
+    }
 }
 
 /**
@@ -1531,6 +1539,26 @@ function ipam_setting_definitions(): array
             'min'         => 1,
         ],
 
+        // --- Multi-Factor Authentication ---
+        'mfa.email_otp_enabled' => [
+            'label'       => 'Enable Email OTP',
+            'type'        => 'bool',
+            'default'     => false,
+            'group'       => 'mfa',
+            'description' => 'Allow users to enroll Email OTP as a second authentication factor. Requires SMTP to be configured.',
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
+        'mfa.require' => [
+            'label'       => 'Require 2FA for all users',
+            'type'        => 'bool',
+            'default'     => false,
+            'group'       => 'mfa',
+            'description' => 'Users without any 2FA method enrolled will be redirected to the Account page to enroll before accessing the application.',
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
+
         // --- Password policy ---
         'password_policy.min_length' => [
             'label'       => 'Minimum password length',
@@ -1765,6 +1793,7 @@ function ipam_setting_groups(): array
     return [
         'branding'             => ['label' => 'Branding',             'description' => 'Display name and timezone shown across the UI.'],
         'security'             => ['label' => 'Security',             'description' => 'Session lifetime and login lockout policy.'],
+        'mfa'                  => ['label' => 'Multi-Factor Authentication', 'description' => 'Available 2FA methods and enforcement policy.'],
         'password_policy'      => ['label' => 'Password policy',      'description' => 'Complexity requirements and rotation for local passwords.'],
         'alert'                => ['label' => 'Alerting',             'description' => 'Subnet utilization email alerts.'],
         'update_check'         => ['label' => 'Update checker',       'description' => 'GitHub release checker for the in-app upgrade banner.'],
@@ -8024,6 +8053,160 @@ function ipam_clear_persistent_lockout(PDO $db, int $uid): void {
     $db->prepare(
         "UPDATE users SET failed_auth_count = 0, locked_until = NULL, lock_reason = NULL WHERE id = :id"
     )->execute([':id' => $uid]);
+}
+
+// ============================================================
+// Email OTP helpers (#684)
+// ============================================================
+
+/**
+ * Generate a 6-digit email OTP for the given user, store a bcrypt hash,
+ * set a TTL-based expiry, reset the attempt counter, and return the
+ * plaintext code for delivery via email.
+ *
+ * Expiry is computed in PHP (date('Y-m-d H:i:s', time() + $ttlMinutes * 60))
+ * so no dialect-specific SQL expression is needed.
+ */
+function ipam_email_otp_generate(PDO $db, int $userId, int $ttlMinutes = 10): string
+{
+    $code    = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+    $hash    = password_hash($code, PASSWORD_DEFAULT);
+    $expires = gmdate('Y-m-d H:i:s', time() + $ttlMinutes * 60);
+
+    $db->prepare(
+        "UPDATE users
+            SET email_otp_hash       = :hash,
+                email_otp_expires_at = :expires,
+                email_otp_attempts   = 0
+          WHERE id = :id"
+    )->execute([':hash' => $hash, ':expires' => $expires, ':id' => $userId]);
+
+    audit($db, 'mfa.otp.generate', 'user', $userId, "expires={$expires}");
+    return $code;
+}
+
+/**
+ * Verify a submitted email OTP code for the given user.
+ *
+ * Returns true only when:
+ *   - a hash and expiry exist in the DB
+ *   - fewer than 5 failed attempts have been recorded
+ *   - the OTP has not expired
+ *   - the code matches the stored bcrypt hash
+ *
+ * On success the OTP columns are cleared.
+ * On failure the attempt counter is incremented.
+ */
+function ipam_email_otp_verify(PDO $db, int $userId, string $code): bool
+{
+    $stmt = $db->prepare(
+        "SELECT email_otp_hash, email_otp_expires_at, email_otp_attempts
+           FROM users WHERE id = :id"
+    );
+    $stmt->execute([':id' => $userId]);
+    /** @var array<string,mixed>|false $row */
+    $row = $stmt->fetch();
+
+    if (!$row) {
+        return false;
+    }
+
+    $hash     = is_string($row['email_otp_hash']       ?? null) ? $row['email_otp_hash']       : '';
+    $expires  = is_string($row['email_otp_expires_at'] ?? null) ? $row['email_otp_expires_at'] : '';
+    $attempts = to_int($row['email_otp_attempts'] ?? 0);
+
+    if ($hash === '' || $expires === '') {
+        return false;
+    }
+
+    if ($attempts >= 5) {
+        ipam_email_otp_clear($db, $userId);
+        audit($db, 'mfa.otp.locked', 'user', $userId, 'OTP locked: max attempts exceeded');
+        return false;
+    }
+
+    // ISO datetime strings sort correctly as plain string comparison (both UTC)
+    if ($expires < gmdate('Y-m-d H:i:s')) {
+        ipam_email_otp_clear($db, $userId);
+        audit($db, 'mfa.otp.expired', 'user', $userId, 'OTP expired');
+        return false;
+    }
+
+    if (!password_verify($code, $hash)) {
+        $newAttempts = $attempts + 1;
+        if ($newAttempts >= 5) {
+            ipam_email_otp_clear($db, $userId);
+            audit($db, 'mfa.otp.locked', 'user', $userId, 'OTP locked: max attempts exceeded');
+        } else {
+            $db->prepare("UPDATE users SET email_otp_attempts = email_otp_attempts + 1 WHERE id = :id")
+               ->execute([':id' => $userId]);
+            audit($db, 'mfa.otp.fail', 'user', $userId, "attempt={$newAttempts}");
+        }
+        return false;
+    }
+
+    // Success — consume the OTP
+    $db->prepare(
+        "UPDATE users
+            SET email_otp_hash       = NULL,
+                email_otp_expires_at = NULL,
+                email_otp_attempts   = 0
+          WHERE id = :id"
+    )->execute([':id' => $userId]);
+
+    audit($db, 'mfa.otp.verify_ok', 'user', $userId, 'Email OTP verified successfully');
+    return true;
+}
+
+/**
+ * Clear all email OTP state for the given user (used on logout, password
+ * change, or administrative reset). Pass a non-empty $reason to emit an
+ * audit entry for the clear event (omit when the caller already audits).
+ */
+function ipam_email_otp_clear(PDO $db, int $userId, string $reason = ''): void
+{
+    $db->prepare(
+        "UPDATE users
+            SET email_otp_hash       = NULL,
+                email_otp_expires_at = NULL,
+                email_otp_attempts   = 0
+          WHERE id = :id"
+    )->execute([':id' => $userId]);
+    if ($reason !== '') {
+        audit($db, 'mfa.otp.clear', 'user', $userId, $reason);
+    }
+}
+
+/**
+ * Send a plaintext email OTP code to the given user's email address via ipam_send_mail().
+ * Call this immediately after ipam_email_otp_generate() with the returned plaintext code.
+ * Returns true on success, false on failure (SMTP not configured, no email set, etc.).
+ */
+function ipam_email_otp_send(PDO $db, int $userId, string $code, int $ttlMinutes = 10): bool
+{
+    $stmt = $db->prepare("SELECT email, username FROM users WHERE id = :id");
+    $stmt->execute([':id' => $userId]);
+    /** @var array<string, mixed>|false $user */
+    $user = $stmt->fetch();
+    if (!$user || to_str($user['email'] ?? '') === '') {
+        return false;
+    }
+
+    $appName = str_replace(["\r", "\n"], '', trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM');
+    $to      = to_str($user['email']);
+    $subject = '[' . $appName . '] Your verification code';
+    $body    = "Your one-time verification code is:\n\n    {$code}\n\nThis code expires in {$ttlMinutes} minutes. Do not share it with anyone.\n\nIf you did not request this, please contact your administrator.";
+
+    $result = ipam_send_mail($to, $subject, $body);
+    if (!$result['success']) {
+        $errMsg = $result['error'] ?? 'unknown';
+        error_log('ipam_email_otp_send: failed to send OTP to user ' . $userId . ': ' . $errMsg);
+        audit($db, 'mfa.otp.send_fail', 'user', $userId, substr(strip_tags($errMsg), 0, 200));
+        return false;
+    }
+    $masked = preg_replace('/^(.).*(@.+)$/', '$1***$2', $to) ?: '***';
+    audit($db, 'mfa.otp.send', 'user', $userId, "to={$masked}");
+    return true;
 }
 
 // ============================================================

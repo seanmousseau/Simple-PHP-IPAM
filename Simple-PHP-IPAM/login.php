@@ -33,6 +33,8 @@ if ($error === '' && $reason === 'session_expired') {
     $error = 'Your session has expired. Please log in again.';
 } elseif ($error === '' && $reason === 'locked') {
     $error = 'This account is locked due to too many failed two-factor authentication attempts.';
+} elseif ($error === '' && $reason === 'otp_locked') {
+    $error = 'Too many incorrect codes. Please log in again.';
 }
 
 // Render-prep variables (needed even when goto jumps past POST block)
@@ -95,7 +97,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = 'This account is temporarily locked due to too many failed attempts.';
             audit($db, 'auth.account_locked', 'user', null, '');
         } else {
-            $st = $db->prepare("SELECT id, username, password_hash, role, is_active, totp_enabled FROM users WHERE username = :u");
+            $st = $db->prepare("SELECT id, username, password_hash, role, is_active, totp_enabled, email_otp_enabled FROM users WHERE username = :u");
             $st->execute([':u' => $username]);
             /** @var array<string, mixed>|false $user */
             $user = $st->fetch();
@@ -139,6 +141,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (to_int($user['totp_enabled'] ?? 0) === 1) {
                     $_SESSION['totp_pending_uid'] = to_int($user['id']);
                     header('Location: totp_verify.php');
+                    exit;
+                }
+                if (to_int($user['email_otp_enabled'] ?? 0) === 1 &&
+                    (bool)to_int(ipam_setting('mfa.email_otp_enabled', false))) {
+                    $code = ipam_email_otp_generate($db, to_int($user['id']));
+                    if (!ipam_email_otp_send($db, to_int($user['id']), $code)) {
+                        ipam_email_otp_clear($db, to_int($user['id']), 'email_send_failed');
+                        flash_set('Could not send verification code. Please contact your administrator.', 'danger');
+                        header('Location: login.php');
+                        exit;
+                    }
+                    $_SESSION['email_otp_pending_uid'] = to_int($user['id']);
+                    header('Location: email_otp_verify.php');
+                    exit;
+                }
+                if ((bool)to_int(ipam_setting('mfa.require', false)) &&
+                    to_int($user['totp_enabled']      ?? 0) === 0 &&
+                    to_int($user['email_otp_enabled'] ?? 0) === 0) {
+                    login_user(to_int($user['id']), to_str($user['username']), to_str($user['role']));
+                    $db->prepare("UPDATE users SET last_login_at=" . ipam_dialect()->now() . " WHERE id=:id")
+                       ->execute([':id' => to_int($user['id'])]);
+                    audit($db, 'auth.login', 'user', to_int($user['id']), 'login ok (mfa_require redirect)');
+                    $_SESSION['mfa_enrollment_required'] = true;
+                    header('Location: change_password.php?mfa_required=1#email-otp');
                     exit;
                 }
                 login_user(to_int($user['id']), to_str($user['username']), to_str($user['role']));

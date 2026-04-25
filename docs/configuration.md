@@ -716,29 +716,31 @@ Demo mode does not restrict read access. Any visitor can browse all IPAM data. F
 
 ## `password_policy`
 
-Controls password complexity requirements and optional rotation.
-
-```php
-'password_policy' => [
-    'min_length'            => 12,
-    'require_uppercase'     => false,
-    'require_lowercase'     => false,
-    'require_number'        => false,
-    'require_symbol'        => false,
-    'max_password_age_days' => 0,
-],
-```
+Controls password complexity requirements and optional rotation. **As of v3.14.0, these settings are stored in the database and enforced in all password-change flows.** Admin changes via Admin → Settings take effect immediately without a server restart.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `min_length` | `12` | Minimum number of characters (multi-byte safe) |
-| `require_uppercase` | `false` | Require at least one uppercase letter |
-| `require_lowercase` | `false` | Require at least one lowercase letter |
-| `require_number` | `false` | Require at least one digit |
-| `require_symbol` | `false` | Require at least one non-alphanumeric character |
-| `max_password_age_days` | `0` | Force change after N days; `0` = never expires |
+| `password_policy.min_length` | `12` | Minimum number of characters (multi-byte safe) |
+| `password_policy.require_uppercase` | `false` | Require at least one uppercase letter |
+| `password_policy.require_lowercase` | `false` | Require at least one lowercase letter |
+| `password_policy.require_number` | `false` | Require at least one digit |
+| `password_policy.require_symbol` | `false` | Require at least one non-alphanumeric character |
+| `password_policy.max_password_age_days` | `0` | Force change after N days; `0` = never expires |
 
 All failing rules are reported at once rather than one at a time.
+
+---
+
+## `mfa`
+
+*(Added in v3.14.0)*
+
+Controls multi-factor authentication options. Managed via Admin → Settings → MFA.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `mfa.email_otp_enabled` | `false` | Allow users to enroll Email OTP as a second authentication factor. Requires a working SMTP configuration. |
+| `mfa.require` | `false` | Require all users to enroll in at least one 2FA method (TOTP or Email OTP) before accessing the application. Users without any 2FA enrolled are redirected to the Account page on login. Admins are not exempt. |
 
 ---
 

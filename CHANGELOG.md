@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.14.0] - 2026-04-25
+
+### Added
+- **Email OTP 2FA** (`email_otp_verify.php`): users can enroll Email OTP as a second authentication factor on the Account page. A 6-digit code is sent via email at each login. Supports 10-minute expiry and a 5-attempt rate limit. Requires SMTP and an email address on the account. (#684)
+- **MFA admin settings**: new `mfa.email_otp_enabled` and `mfa.require` settings in the admin Settings page. When `mfa.require` is enabled, users without any enrolled 2FA method are redirected to the Account page to enroll before accessing the application. (#685)
+- Admin can reset a user's Email OTP enrollment from `users.php`. (#684)
+
+### Fixed
+- Password policy settings (`password_policy.*`) now read from the settings table via `ipam_setting()` in `change_password.php` and `reset_password.php`. Previously, admin changes to the Settings page had no effect on enforcement. (#686)
+
+### Testing
+- PHPUnit `PasswordPolicyTest` covering `validate_password_complexity()` across all policy combinations. (#716)
+- PHPUnit `EmailOtpTest` covering OTP generation, hash storage, expiry, rate limiting, and cleanup. (#716)
+- Playwright `password_policy.spec.ts` covering Settings admin controls and change-password enforcement. (#717)
+- Playwright `email_otp.spec.ts` covering enrollment, challenge, wrong-code, and admin-reset flows. (#715)
+
+---
+
 ## [3.13.0] - 2026-04-24
 
 ### Added
@@ -1067,6 +1085,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.14.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.13.0...v3.14.0
 [3.13.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.12.0...v3.13.0
 [3.12.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.11.0...v3.12.0
 [3.11.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.10.0...v3.11.0

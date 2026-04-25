@@ -159,6 +159,64 @@ Users can disable their own 2FA from the Account page. This requires entering th
 
 ---
 
+### Email OTP 2FA
+
+*(Added in v3.14.0)*
+
+Email OTP is a second 2FA method that sends a 6-digit code to the user's registered email address at each login. It requires a working SMTP configuration and an email address on the account.
+
+**Priority:** when a user has both TOTP and Email OTP enrolled, TOTP takes precedence at the login challenge. Email OTP is only checked when TOTP is not enrolled.
+
+#### Requirements
+
+- SMTP must be configured (Admin → Settings → Email Delivery). The `mfa.email_otp_enabled` setting must be enabled by an admin.
+- The user must have a verified email address set on their account.
+
+#### Enrollment
+
+1. Log in and go to **Account** (user menu).
+2. In the **Email OTP** section, click **Enable Email OTP**.
+3. A 6-digit code is sent to your registered email address. Enter it in the confirmation field.
+4. Enrollment is confirmed and Email OTP takes effect on your next login.
+
+#### Mid-login challenge
+
+After entering username and password, if Email OTP is enrolled (and TOTP is not), the user is redirected to `email_otp_verify.php`. The 6-digit code sent to their email must be entered within 10 minutes. After 5 consecutive incorrect attempts the challenge is aborted and the user must log in again.
+
+#### Admin controls
+
+| Setting | Description |
+|---------|-------------|
+| `mfa.email_otp_enabled` | Allow users to enroll Email OTP. Disabled by default. Requires SMTP. |
+| `mfa.require` | Require all users to enroll in at least one 2FA method (TOTP or Email OTP) before accessing the application. Admins are not exempt. |
+
+#### Admin reset
+
+Admins can reset a user's Email OTP enrollment from **Admin → Users → Reset Email OTP**. This:
+
+- Disables Email OTP for that user.
+- Clears any pending OTP code.
+- Is recorded in the audit log as `user.email_otp_reset`.
+
+---
+
+### Password policy
+
+*(Settings-backed as of v3.14.0; previously config.php only)*
+
+Password complexity requirements are configured in Admin → Settings → Password Policy and enforced on all password-change flows (`change_password.php` and `reset_password.php`). Admin changes take effect immediately — no server restart required.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `password_policy.min_length` | `12` | Minimum character count |
+| `password_policy.require_uppercase` | `false` | At least one uppercase letter |
+| `password_policy.require_lowercase` | `false` | At least one lowercase letter |
+| `password_policy.require_number` | `false` | At least one digit |
+| `password_policy.require_symbol` | `false` | At least one non-alphanumeric character |
+| `password_policy.max_password_age_days` | `0` | Force change after N days; `0` = never |
+
+---
+
 ## Session security
 
 ### Idle timeout

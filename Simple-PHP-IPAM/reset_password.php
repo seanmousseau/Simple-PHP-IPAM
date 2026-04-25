@@ -29,6 +29,14 @@ if ($rawToken !== '') {
     $tokenValid = (bool)$peekSt->fetch();
 }
 
+$pwPolicy = [
+    'min_length'        => to_int(ipam_setting('password_policy.min_length', 12)),
+    'require_uppercase' => (bool)ipam_setting('password_policy.require_uppercase', false),
+    'require_lowercase' => (bool)ipam_setting('password_policy.require_lowercase', false),
+    'require_number'    => (bool)ipam_setting('password_policy.require_number', false),
+    'require_symbol'    => (bool)ipam_setting('password_policy.require_symbol', false),
+];
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $new1 = to_str($_POST['new_password']  ?? '');
     $new2 = to_str($_POST['new_password2'] ?? '');
@@ -40,7 +48,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($new1 !== $new2) {
         $errors[] = 'Passwords do not match.';
     } else {
-        $pwErrors = validate_password_complexity($new1, $config['password_policy']);
+        $pwErrors = validate_password_complexity($new1, $pwPolicy);
         if ($pwErrors) {
             $errors = $pwErrors;
         } else {
@@ -63,8 +71,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $appName  = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
-$pwPolicy = $config['password_policy'];
-$minLen   = max(1, $pwPolicy['min_length']);
+$minLen = max(1, to_int(ipam_setting('password_policy.min_length', 12)));
 
 page_header('Reset Password', ['no_sidebar' => true]);
 ?>

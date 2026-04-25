@@ -328,6 +328,67 @@ export async function deleteTag(page: Page, name: string): Promise<void> {
   }
 }
 
+/**
+ * Reset a user's password directly in the database by executing
+ * reset_test_password.php inside the test container via docker exec.
+ * Bypasses change_password.php policy enforcement (needed when the original
+ * password is shorter than the enforced min_length, e.g. 'demo' = 4 chars).
+ */
+export async function resetTestPassword(username: string, password: string): Promise<void> {
+    const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
+    const { execFileSync } = await import('child_process');
+    execFileSync('docker', [
+        'exec', container,
+        'php', '/var/www/html/testing/scripts/reset_test_password.php',
+        username, password,
+    ], { stdio: 'pipe' });
+}
+
+/**
+ * Inject a known 6-digit OTP for the given username by executing
+ * inject_test_otp.php inside the test container via docker exec.
+ * Returns the 6-digit code string used.
+ */
+export async function injectTestOtp(username: string, code = '123456'): Promise<string> {
+    const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
+    const { execFileSync } = await import('child_process');
+    execFileSync('docker', [
+        'exec', container,
+        'php', '/var/www/html/testing/scripts/inject_test_otp.php',
+        username, code,
+    ], { stdio: 'pipe' });
+    return code;
+}
+
+export async function resetEmailOtpEnrollment(username: string): Promise<void> {
+    const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
+    const { execFileSync } = await import('child_process');
+    execFileSync('docker', [
+        'exec', container,
+        'php', '/var/www/html/testing/scripts/reset_email_otp_enrollment.php',
+        username,
+    ], { stdio: 'pipe' });
+}
+
+export async function ensureEmailOtpEnrolled(username: string): Promise<void> {
+    const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
+    const { execFileSync } = await import('child_process');
+    execFileSync('docker', [
+        'exec', container,
+        'php', '/var/www/html/testing/scripts/ensure_email_otp_enrolled.php',
+        username,
+    ], { stdio: 'pipe' });
+}
+
+export async function setSmtpMailhog(): Promise<void> {
+    const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
+    const { execFileSync } = await import('child_process');
+    execFileSync('docker', [
+        'exec', container,
+        'php', '/var/www/html/testing/scripts/set_smtp_mailhog.php',
+    ], { stdio: 'pipe' });
+}
+
 // ── adminTest fixture ──────────────────────────────────────────────────────────
 /**
  * A test fixture that logs in as admin before each test and logs out after.

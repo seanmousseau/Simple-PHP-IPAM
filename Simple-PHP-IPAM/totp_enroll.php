@@ -23,6 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && to_int($_GET['step'] ?? 0) === 3) {
         exit;
     }
     unset($_SESSION['totp_new_backup_codes']);
+    unset($_SESSION['mfa_enrollment_required']);
     require __DIR__ . '/views/totp_enroll.php';
     exit;
 }
