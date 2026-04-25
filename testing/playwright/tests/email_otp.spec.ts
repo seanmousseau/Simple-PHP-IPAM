@@ -18,6 +18,10 @@ function isEmailOtpSeeded(): boolean {
     return process.env.SEED_EMAIL_OTP_TEST_USER === '1';
 }
 
+function isMailhogEnabled(): boolean {
+    return process.env.IPAM_TEST_MAILHOG === '1';
+}
+
 // ── Enrollment flow ───────────────────────────────────────────────────────────
 
 test.describe('Email OTP enrollment', () => {
@@ -54,6 +58,7 @@ test.describe('Email OTP enrollment', () => {
     });
 
     test('enable button triggers enrollment flow', async ({ page }) => {
+        test.skip(!isMailhogEnabled(), 'requires IPAM_TEST_MAILHOG=1 (SMTP delivery)');
         await login(page, EMAIL_OTP_USER, EMAIL_OTP_PASS);
         await page.goto(appUrl('change_password.php'));
 
@@ -75,6 +80,7 @@ test.describe('Email OTP enrollment', () => {
     });
 
     test('wrong code shows error and stays on enrollment', async ({ page }) => {
+        test.skip(!isMailhogEnabled(), 'requires IPAM_TEST_MAILHOG=1 (SMTP delivery)');
         await login(page, EMAIL_OTP_USER, EMAIL_OTP_PASS);
         await page.goto(appUrl('change_password.php'));
         await page.locator('#email-otp button[type=submit]').first().click();
@@ -89,6 +95,7 @@ test.describe('Email OTP enrollment', () => {
     });
 
     test('disable button removes Email OTP enrollment', async ({ page }) => {
+        test.skip(!isMailhogEnabled(), 'requires IPAM_TEST_MAILHOG=1 (SMTP delivery)');
         // First enroll
         await login(page, EMAIL_OTP_USER, EMAIL_OTP_PASS);
         await page.goto(appUrl('change_password.php'));

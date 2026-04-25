@@ -272,6 +272,14 @@ if grep -q "^SEED_EMAIL_OTP_TEST_USER=" "${script_dir}/.env" 2>/dev/null; then
 else
     echo "SEED_EMAIL_OTP_TEST_USER=1" >> "${script_dir}/.env"
 fi
+# Propagate MailHog flag so isMailhogEnabled() in the spec can gate SMTP tests.
+if [[ "$mailhog_enabled" == "1" ]]; then
+    if grep -q "^IPAM_TEST_MAILHOG=" "${script_dir}/.env" 2>/dev/null; then
+        perl -i -pe 's/^IPAM_TEST_MAILHOG=.*/IPAM_TEST_MAILHOG=1/' "${script_dir}/.env"
+    else
+        echo "IPAM_TEST_MAILHOG=1" >> "${script_dir}/.env"
+    fi
+fi
 
 # 5. Flip demo_mode off so the suite can exercise normal admin flows.
 echo "bootstrap-app: disabling demo_mode for runtime"

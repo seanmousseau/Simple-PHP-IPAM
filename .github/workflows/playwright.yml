@@ -239,7 +239,7 @@ jobs:
   alerts-smtp:
     name: Alerts SMTP (MailHog)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
@@ -319,7 +319,7 @@ jobs:
           IPAM_ADMIN_USER: demo
           IPAM_ADMIN_PASS: demo
           CI: 'true'
-        run: npx playwright test tests/alerts-smtp.spec.ts --project=chromium
+        run: npx playwright test tests/alerts-smtp.spec.ts tests/email_otp.spec.ts --project=chromium
 
       - name: Container logs on failure
         if: failure()
