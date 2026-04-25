@@ -83,7 +83,7 @@ test.describe('Email OTP enrollment', () => {
         await page.locator('#email-otp input[name=otp_code]').fill(code);
         await page.locator('#email-otp button[type=submit]').first().click();
 
-        await expect(page.locator('.success')).toBeVisible();
+        await expect(page.locator('.success').first()).toBeVisible();
         await expect(page.locator('#email-otp')).toContainText(/active/i);
         await logout(page);
     });
@@ -145,6 +145,7 @@ test.describe('Email OTP login challenge', () => {
     });
 
     test('user with Email OTP enrolled is challenged on login', async ({ page }) => {
+        test.skip(!isMailhogEnabled(), 'requires IPAM_TEST_MAILHOG=1 (SMTP delivery for login OTP)');
         await page.goto(appUrl('login.php'));
         await page.locator('[name=username]').fill(EMAIL_OTP_USER);
         await page.locator('[name=password]').fill(EMAIL_OTP_PASS);
@@ -154,6 +155,7 @@ test.describe('Email OTP login challenge', () => {
     });
 
     test('correct OTP code completes login', async ({ page }) => {
+        test.skip(!isMailhogEnabled(), 'requires IPAM_TEST_MAILHOG=1 (SMTP delivery for login OTP)');
         await page.goto(appUrl('login.php'));
         await page.locator('[name=username]').fill(EMAIL_OTP_USER);
         await page.locator('[name=password]').fill(EMAIL_OTP_PASS);
@@ -168,6 +170,7 @@ test.describe('Email OTP login challenge', () => {
     });
 
     test('wrong OTP code stays on challenge page', async ({ page }) => {
+        test.skip(!isMailhogEnabled(), 'requires IPAM_TEST_MAILHOG=1 (SMTP delivery for login OTP)');
         await page.goto(appUrl('login.php'));
         await page.locator('[name=username]').fill(EMAIL_OTP_USER);
         await page.locator('[name=password]').fill(EMAIL_OTP_PASS);
@@ -215,7 +218,10 @@ test.describe('Email OTP admin controls', () => {
     test('admin sees Reset Email OTP action for enrolled users in users.php', async ({ page }) => {
         await login(page, ADMIN_USER, ADMIN_PASS);
         await page.goto(appUrl('users.php'));
-        await expect(page.locator(`text=Reset Email OTP`).first()).toBeVisible();
+        // Reset Email OTP is in a collapsed <details> actions panel — expand the row first
+        const userRow = page.locator('table tr').filter({ hasText: EMAIL_OTP_USER });
+        await userRow.locator('details').click();
+        await expect(page.locator('button', { hasText: 'Reset Email OTP' }).first()).toBeVisible();
         await logout(page);
     });
 });
