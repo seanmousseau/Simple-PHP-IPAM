@@ -8167,7 +8167,7 @@ function ipam_email_otp_send(PDO $db, int $userId, string $code): bool
         return false;
     }
 
-    $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
+    $appName = str_replace(["\r", "\n"], '', trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM');
     $to      = to_str($user['email']);
     $subject = '[' . $appName . '] Your verification code';
     $body    = "Your one-time verification code is:\n\n    {$code}\n\nThis code expires in 10 minutes. Do not share it with anyone.\n\nIf you did not request this, please contact your administrator.";

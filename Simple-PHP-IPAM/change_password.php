@@ -227,10 +227,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 
         header('Location: change_password.php');
         exit;
     }
-    $eoUserRow = $db->prepare("SELECT email FROM users WHERE id = :id");
+    $eoUserRow = $db->prepare("SELECT email, email_otp_enabled FROM users WHERE id = :id");
     $eoUserRow->execute([':id' => to_int($cur['id'])]);
     /** @var array<string, mixed>|false $eoRow */
     $eoRow      = $eoUserRow->fetch();
+    if ($eoRow && to_int($eoRow['email_otp_enabled'] ?? 0) === 1) {
+        header('Location: change_password.php#email-otp');
+        exit;
+    }
     $eoEmail    = $eoRow ? to_str($eoRow['email'] ?? '') : '';
     if ($eoEmail === '') {
         flash_set('You must set an email address on your account before enabling Email OTP.', 'danger');
