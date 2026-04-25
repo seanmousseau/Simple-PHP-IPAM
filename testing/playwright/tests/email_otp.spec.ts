@@ -9,7 +9,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { login, logout, ADMIN_USER, ADMIN_PASS, appUrl, fetchPost, injectTestOtp, resetEmailOtpEnrollment } from '../fixtures/ipam';
+import { login, logout, ADMIN_USER, ADMIN_PASS, appUrl, fetchPost, injectTestOtp, resetEmailOtpEnrollment, ensureEmailOtpEnrolled, setSmtpMailhog } from '../fixtures/ipam';
 
 const EMAIL_OTP_USER = 'email_otp_test_user';
 const EMAIL_OTP_PASS = 'Password1!';
@@ -31,8 +31,16 @@ test.describe('Email OTP enrollment', () => {
         // Reset test user to unenrolled state before each enrollment test so
         // tests are independent regardless of seed or prior test run order.
         await resetEmailOtpEnrollment(EMAIL_OTP_USER);
+        // Restore SMTP to MailHog before each test so enrollment tests have
+        // working email delivery regardless of test-file execution order.
+        // (alerts-smtp.spec.ts afterAll wipes SMTP settings before this spec runs.)
+        if (isMailhogEnabled()) {
+            await setSmtpMailhog();
+        }
         await login(page, ADMIN_USER, ADMIN_PASS);
-        // Enable Email OTP globally
+        // Navigate to settings.php so getCsrf() finds a valid CSRF token.
+        await page.goto(appUrl('settings.php'));
+        // Enable Email OTP globally. Bool settings: present key = true.
         await fetchPost(page, appUrl('settings.php'), {
             group: 'mfa',
             'k_mfa__email_otp_enabled': '1',
@@ -41,12 +49,13 @@ test.describe('Email OTP enrollment', () => {
     });
 
     test.afterEach(async ({ page }) => {
-        // Disable Email OTP globally and reset test user enrollment
+        // Ensure the test user's session is cleared before logging in as admin.
+        await logout(page).catch(() => undefined);
+        // Disable Email OTP globally. Bool settings use absent-key = false convention:
+        // posting the mfa group with no bool keys sets all mfa bools to false.
         await login(page, ADMIN_USER, ADMIN_PASS);
-        await fetchPost(page, appUrl('settings.php'), {
-            group: 'mfa',
-            'k_mfa__email_otp_enabled': '0',
-        });
+        await page.goto(appUrl('settings.php'));
+        await fetchPost(page, appUrl('settings.php'), { group: 'mfa' });
         await logout(page);
     });
 
@@ -116,7 +125,10 @@ test.describe('Email OTP login challenge', () => {
     test.skip(!isEmailOtpSeeded(), 'SEED_EMAIL_OTP_TEST_USER not set');
 
     test.beforeEach(async ({ page }) => {
+        // Ensure test user is enrolled so the login challenge fires.
+        await ensureEmailOtpEnrolled(EMAIL_OTP_USER);
         await login(page, ADMIN_USER, ADMIN_PASS);
+        await page.goto(appUrl('settings.php'));
         await fetchPost(page, appUrl('settings.php'), {
             group: 'mfa',
             'k_mfa__email_otp_enabled': '1',
@@ -125,11 +137,10 @@ test.describe('Email OTP login challenge', () => {
     });
 
     test.afterEach(async ({ page }) => {
+        await logout(page).catch(() => undefined);
         await login(page, ADMIN_USER, ADMIN_PASS);
-        await fetchPost(page, appUrl('settings.php'), {
-            group: 'mfa',
-            'k_mfa__email_otp_enabled': '0',
-        });
+        await page.goto(appUrl('settings.php'));
+        await fetchPost(page, appUrl('settings.php'), { group: 'mfa' });
         await logout(page);
     });
 
@@ -182,7 +193,10 @@ test.describe('Email OTP admin controls', () => {
     test.skip(!isEmailOtpSeeded(), 'SEED_EMAIL_OTP_TEST_USER not set');
 
     test.beforeEach(async ({ page }) => {
+        // Ensure test user is enrolled so the admin Reset action is visible.
+        await ensureEmailOtpEnrolled(EMAIL_OTP_USER);
         await login(page, ADMIN_USER, ADMIN_PASS);
+        await page.goto(appUrl('settings.php'));
         await fetchPost(page, appUrl('settings.php'), {
             group: 'mfa',
             'k_mfa__email_otp_enabled': '1',
@@ -191,11 +205,10 @@ test.describe('Email OTP admin controls', () => {
     });
 
     test.afterEach(async ({ page }) => {
+        await logout(page).catch(() => undefined);
         await login(page, ADMIN_USER, ADMIN_PASS);
-        await fetchPost(page, appUrl('settings.php'), {
-            group: 'mfa',
-            'k_mfa__email_otp_enabled': '0',
-        });
+        await page.goto(appUrl('settings.php'));
+        await fetchPost(page, appUrl('settings.php'), { group: 'mfa' });
         await logout(page);
     });
 

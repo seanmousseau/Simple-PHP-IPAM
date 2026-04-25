@@ -370,6 +370,25 @@ export async function resetEmailOtpEnrollment(username: string): Promise<void> {
     ], { stdio: 'pipe' });
 }
 
+export async function ensureEmailOtpEnrolled(username: string): Promise<void> {
+    const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
+    const { execFileSync } = await import('child_process');
+    execFileSync('docker', [
+        'exec', container,
+        'php', '/var/www/html/testing/scripts/ensure_email_otp_enrolled.php',
+        username,
+    ], { stdio: 'pipe' });
+}
+
+export async function setSmtpMailhog(): Promise<void> {
+    const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
+    const { execFileSync } = await import('child_process');
+    execFileSync('docker', [
+        'exec', container,
+        'php', '/var/www/html/testing/scripts/set_smtp_mailhog.php',
+    ], { stdio: 'pipe' });
+}
+
 // ── adminTest fixture ──────────────────────────────────────────────────────────
 /**
  * A test fixture that logs in as admin before each test and logs out after.
