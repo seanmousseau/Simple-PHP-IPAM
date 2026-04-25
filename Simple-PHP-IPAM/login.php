@@ -33,6 +33,8 @@ if ($error === '' && $reason === 'session_expired') {
     $error = 'Your session has expired. Please log in again.';
 } elseif ($error === '' && $reason === 'locked') {
     $error = 'This account is locked due to too many failed two-factor authentication attempts.';
+} elseif ($error === '' && $reason === 'otp_locked') {
+    $error = 'Too many incorrect codes. Please log in again.';
 }
 
 // Render-prep variables (needed even when goto jumps past POST block)
