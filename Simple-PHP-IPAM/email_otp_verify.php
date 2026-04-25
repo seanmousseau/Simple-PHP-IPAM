@@ -61,9 +61,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $attRow = $attSt->fetch();
         $attempts = to_int(($attRow ?: [])['email_otp_attempts'] ?? 0);
 
+        audit($db, 'auth.email_otp_failed', 'user', $uid, 'Invalid or expired Email OTP code');
+
         if ($attempts >= 5) {
+            ipam_email_otp_clear($db, $uid);
             unset($_SESSION['email_otp_pending_uid']);
             audit($db, 'auth.email_otp_failed', 'user', $uid, 'Email OTP max attempts reached — challenge aborted');
+            session_destroy();
+            session_start();
+            session_regenerate_id(true);
             header('Location: login.php?reason=otp_locked');
             exit;
         }
