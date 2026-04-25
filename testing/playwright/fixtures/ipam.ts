@@ -328,6 +328,22 @@ export async function deleteTag(page: Page, name: string): Promise<void> {
   }
 }
 
+/**
+ * Inject a known 6-digit OTP for the given username by executing
+ * inject_test_otp.php inside the test container via docker exec.
+ * Returns the 6-digit code string used.
+ */
+export async function injectTestOtp(username: string, code = '123456'): Promise<string> {
+    const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
+    const { execFileSync } = await import('child_process');
+    execFileSync('docker', [
+        'exec', container,
+        'php', '/var/www/html/testing/scripts/inject_test_otp.php',
+        username, code,
+    ], { stdio: 'pipe' });
+    return code;
+}
+
 // ── adminTest fixture ──────────────────────────────────────────────────────────
 /**
  * A test fixture that logs in as admin before each test and logs out after.
