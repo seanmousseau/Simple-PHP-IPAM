@@ -660,18 +660,48 @@ function ipam_migrations(): array
         '2.8.0-alert-recipients' => function(PDO $db): void {
             // settings table only exists on installs that ran 2.6.0-settings.
             // Fresh installs older than v2.6.0 are not supported; this guard
-            // is for resilience during test fixtures.
-            $tables = array_column(
-                ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
-                'name'
-            );
-            if (!in_array('settings', $tables, true)) return;
+            // is for resilience during test fixtures. Use a portable try/catch
+            // instead of sqlite_master (SQLite-only) so this migration runs
+            // correctly on MySQL and PostgreSQL too.
+            try {
+                $db->query("SELECT 1 FROM settings LIMIT 1");
+            } catch (\PDOException $e) {
+                return; // settings table does not exist yet
+            }
 
             // Insert the new row with default '[]' if not already present.
-            $ignore = ipam_dialect()->upsert_or_ignore('settings', ['key']);
-            $db->prepare(
-                "INSERT INTO settings (".ipam_key_col().", value, type) VALUES (:k, '[]', 'json') $ignore"
-            )->execute([':k' => 'alert.recipient_user_ids']);
+            // After 3.13.0-settings-cascade, settings has UNIQUE(tenant_id, key)
+            // rather than PRIMARY KEY(key). Use the appropriate conflict columns
+            // based on what the current schema actually has so this migration
+            // replays correctly in the idempotency test and on real upgrades.
+            $driver2 = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $hasTenantCol = false;
+            if ($driver2 === 'sqlite') {
+                $existingCols = array_column(
+                    ($db->query("PRAGMA table_info(settings)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                    'name'
+                );
+                $hasTenantCol = in_array('tenant_id', $existingCols, true);
+            }
+            $kc = ipam_key_col();
+            if ($hasTenantCol) {
+                // After 3.13.0 the settings table uses partial unique indexes
+                // instead of UNIQUE(tenant_id, key). SQLite and PostgreSQL do
+                // not accept ON CONFLICT with explicit column names that match
+                // only a partial index, so use an existence check instead.
+                $ex = $db->prepare("SELECT 1 FROM settings WHERE tenant_id IS NULL AND $kc = :k");
+                $ex->execute([':k' => 'alert.recipient_user_ids']);
+                if (!$ex->fetch()) {
+                    $db->prepare(
+                        "INSERT INTO settings (tenant_id, $kc, value, type) VALUES (NULL, :k, '[]', 'json')"
+                    )->execute([':k' => 'alert.recipient_user_ids']);
+                }
+            } else {
+                $ignore = ipam_dialect()->upsert_or_ignore('settings', [$kc]);
+                $db->prepare(
+                    "INSERT INTO settings ($kc, value, type) VALUES (:k, '[]', 'json') $ignore"
+                )->execute([':k' => 'alert.recipient_user_ids']);
+            }
 
             // CodeRabbit M1 (PR #450): re-run safety. If alert.recipient_user_ids
             // is already non-default, the migration (or an admin) has already
@@ -692,8 +722,11 @@ function ipam_migrations(): array
             if ($legacy === '') return;
 
             // Look up exactly one active user with this email (case-insensitive).
-            $users = ($db->query("SELECT name FROM sqlite_master WHERE type='table' AND name='users'") ?: throw new \RuntimeException('Query failed'))->fetchAll();
-            if (!$users) return;
+            try {
+                $db->query("SELECT 1 FROM users LIMIT 1");
+            } catch (\PDOException $e) {
+                return; // users table does not exist yet
+            }
 
             $u = $db->prepare("SELECT id FROM users WHERE LOWER(email) = LOWER(:e) AND is_active = 1");
             $u->execute([':e' => $legacy]);
@@ -1981,6 +2014,80 @@ function ipam_migrations(): array
                 }
             }
         },
+
+        // v3.13.0 #711: add tenant_id to settings table as groundwork for the
+        // multi-tenant settings cascade (global → tenant → per-request). The
+        // PRIMARY KEY(key) unique constraint is replaced by UNIQUE(tenant_id, key)
+        // so each tenant can override any global setting while global rows sit at
+        // tenant_id IS NULL. SQLite requires a full table rebuild; MySQL and
+        // PostgreSQL use ALTER TABLE.
+        '3.13.0-settings-cascade' => static function (PDO $db): void {
+            $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+
+            if ($driver === 'sqlite') {
+                $cols = array_column(
+                    ($db->query("PRAGMA table_info(settings)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+                    'name'
+                );
+                if (in_array('tenant_id', $cols, true)) {
+                    return;
+                }
+                $db->exec("ALTER TABLE settings RENAME TO settings_v3120");
+                $db->exec("
+                    CREATE TABLE settings (
+                        tenant_id  INTEGER,
+                        key        TEXT NOT NULL,
+                        value      TEXT,
+                        type       TEXT NOT NULL DEFAULT 'string'
+                                   CHECK(type IN ('string','int','bool','json')),
+                        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                        updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+                    )
+                ");
+                $db->exec("
+                    INSERT INTO settings (tenant_id, `key`, value, type, updated_at, updated_by)
+                    SELECT NULL, `key`, value, type, updated_at, updated_by
+                    FROM settings_v3120
+                ");
+                $db->exec("DROP TABLE settings_v3120");
+                // Partial indexes enforce uniqueness for NULL tenant_id rows.
+                // SQLite treats each NULL as distinct in composite UNIQUE constraints.
+                $db->exec('CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_global ON settings (key) WHERE tenant_id IS NULL');
+                $db->exec('CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_tenant ON settings (tenant_id, key) WHERE tenant_id IS NOT NULL');
+            } elseif ($driver === 'mysql') {
+                $col = ($db->query("SHOW COLUMNS FROM settings LIKE 'tenant_id'") ?: throw new \RuntimeException('Query failed'))->fetch();
+                if ($col) {
+                    return;
+                }
+                // Check if PRIMARY KEY exists before trying to drop it — the settings
+                // table was created with only a UNIQUE KEY, so on a fresh install there
+                // is no PRIMARY KEY and DROP PRIMARY KEY would throw ERROR 1091.
+                $hasPk = (int)($db->query(
+                    "SELECT COUNT(*) FROM information_schema.table_constraints
+                     WHERE table_schema = DATABASE()
+                       AND table_name = 'settings'
+                       AND constraint_type = 'PRIMARY KEY'"
+                ) ?: throw new \RuntimeException('Query failed'))->fetchColumn();
+                if ($hasPk > 0) {
+                    $db->exec("ALTER TABLE settings DROP PRIMARY KEY");
+                }
+                $db->exec("ALTER TABLE settings ADD COLUMN tenant_id INT NULL FIRST");
+                $db->exec("ALTER TABLE settings ADD UNIQUE KEY uq_settings_tenant_key (tenant_id, `key`)");
+            } elseif ($driver === 'pgsql') {
+                $col = ($db->query(
+                    "SELECT 1 FROM information_schema.columns
+                     WHERE table_name='settings' AND column_name='tenant_id'"
+                ) ?: throw new \RuntimeException('Query failed'))->fetch();
+                if ($col) {
+                    return;
+                }
+                $db->exec("ALTER TABLE settings ADD COLUMN tenant_id INTEGER");
+                // Partial indexes enforce uniqueness for NULL tenant_id (global) rows.
+                // PostgreSQL treats NULL as distinct in composite UNIQUE constraints.
+                $db->exec('CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_global ON settings ("key") WHERE tenant_id IS NULL');
+                $db->exec('CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_tenant ON settings (tenant_id, "key") WHERE tenant_id IS NOT NULL');
+            }
+        },
     ];
 }
 
@@ -2021,11 +2128,29 @@ function ipam_migrate_2_6_0_settings(PDO $db): void
     $config = $GLOBALS['config'] ?? null;
     $definitions = ipam_setting_definitions();
 
-    $check = $db->prepare("SELECT 1 FROM settings WHERE ".ipam_key_col()." = :k");
-    $ins = $db->prepare(
-        "INSERT INTO settings (".ipam_key_col().", value, type, updated_at, updated_by)
-         VALUES (:k, :v, :t, datetime('now'), NULL)"
+    // Detect whether the 3.13.0-settings-cascade migration has already run
+    // (tenant_id column present) so we can use the correct column list and
+    // WHERE clause. This function may be called both before and after that
+    // migration depending on the replay order in tests and upgrades.
+    $existingCols = array_column(
+        ($db->query("PRAGMA table_info(settings)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+        'name'
     );
+    $hasTenantCol = in_array('tenant_id', $existingCols, true);
+
+    if ($hasTenantCol) {
+        $check = $db->prepare("SELECT 1 FROM settings WHERE tenant_id IS NULL AND ".ipam_key_col()." = :k");
+        $ins = $db->prepare(
+            "INSERT INTO settings (tenant_id, ".ipam_key_col().", value, type, updated_at, updated_by)
+             VALUES (NULL, :k, :v, :t, datetime('now'), NULL)"
+        );
+    } else {
+        $check = $db->prepare("SELECT 1 FROM settings WHERE ".ipam_key_col()." = :k");
+        $ins = $db->prepare(
+            "INSERT INTO settings (".ipam_key_col().", value, type, updated_at, updated_by)
+             VALUES (:k, :v, :t, datetime('now'), NULL)"
+        );
+    }
 
     $seeded = 0;
     foreach ($definitions as $key => $def) {

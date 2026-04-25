@@ -659,13 +659,19 @@ CREATE INDEX IF NOT EXISTS idx_backup_history_started_at ON backup_history(start
 -- Postgres does not reserve it but quoting keeps the identifier exact.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS settings (
-  "key"      TEXT COLLATE "C" NOT NULL PRIMARY KEY,
+  tenant_id  INTEGER NULL,
+  "key"      TEXT COLLATE "C" NOT NULL,
   value      TEXT NULL,
   type       TEXT NOT NULL DEFAULT 'string',
   updated_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
   updated_by BIGINT NULL REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT settings_type_check CHECK (type IN ('string','int','bool','json'))
 );
+-- Partial indexes enforce uniqueness correctly for NULL tenant_id (global rows).
+-- PostgreSQL treats NULL as distinct in composite UNIQUE constraints, so a plain
+-- UNIQUE(tenant_id, key) would allow multiple (NULL, 'theme') rows.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_global ON settings ("key") WHERE tenant_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_tenant ON settings (tenant_id, "key") WHERE tenant_id IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- custom_field_defs (v3.5.0 #313/#595, admin-defined per-entity metadata)
@@ -749,5 +755,6 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.6.0-totp'),
   ('3.6.0-rate-limit'),
   ('3.6.0-lockout'),
-  ('3.7.0-backup-history')
+  ('3.7.0-backup-history'),
+  ('3.13.0-settings-cascade')
 ON CONFLICT (version) DO NOTHING;

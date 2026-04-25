@@ -12,12 +12,11 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.12.0
+## What's new in v3.13.0
 
-- **Dashboard responsive fix** — tables no longer overlap at 900–1100px viewport widths; two-column layout only appears when there's genuinely enough room
-- **Health page alert indicators** — Utilization warn/crit alert counts shown in the Scanning card; zero = green
-- **Dashboard empty state** — "Addresses by Site" widget shows a helpful message and admin CTA when no sites are configured
-- **Webhooks layout cleanup** — fixed stale HTML wrapper and standardized the page header pattern
+**Settings cascade (multi-tenancy groundwork):** `ipam_setting()` gains an optional `$tenantId` parameter with a two-level cascade (tenant row → global row → code default), backed by a schema migration that adds `tenant_id` to the `settings` table. This lays the foundation for v4.0.0 multi-tenancy without breaking any single-tenant functionality.
+
+**UI/UX polish:** Six issues from the v3.12.0 audit are resolved — emoji icons replaced with SVG Heroicons across the sidebar theme toggle, subnet notes, and audit prune button; the `api_keys.php` empty state is styled consistently with all other pages; `button-secondary` now renders correctly on `<a>` elements; and `reports.php` replaces its 2000-row hardcap with proper server-side pagination.
 
 [Full changelog →](CHANGELOG.md)
 

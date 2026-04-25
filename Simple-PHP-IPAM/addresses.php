@@ -614,7 +614,7 @@ ipam_skeleton_flush();
     $subnetNotes = to_str($selectedSubnet['notes'] ?? '');
     if ($subnetNotes !== '') {
         echo '<details class="card mt-16 subnet-notes" open>'
-           . '<summary><b>📝 Subnet notes</b></summary>'
+           . '<summary><b>Subnet notes</b></summary>'
            . '<div class="subnet-notes-body">' . nl2br(e($subnetNotes)) . '</div>'
            . '</details>';
     }

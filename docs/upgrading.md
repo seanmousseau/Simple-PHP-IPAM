@@ -9,6 +9,7 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
+  - [v3.13.0](#v3130) — Settings cascade migration, UI/UX polish (no breaking changes)
   - [v3.12.0](#v3120) — Dashboard responsive fix, health alert indicators, webhooks cleanup (no breaking changes)
   - [v3.9.0](#v390) — Site filter strip, cascading address filter, DB admin consolidation (no breaking changes)
   - [v3.8.1](#v381) — Dashboard bug fixes, documentation refresh (no breaking changes)
@@ -100,6 +101,14 @@ The backup is left in place after a successful upgrade. You can remove it manual
 ---
 
 ## Version-specific upgrade notes
+
+### v3.13.0
+
+- No manual upgrade steps required.
+- The `3.13.0-settings-cascade` migration adds a `tenant_id` column to the `settings` table. This is non-destructive — all existing settings rows remain and gain `tenant_id = NULL` (global scope). The migration is idempotent.
+- Existing `config.php` files are unaffected.
+
+---
 
 ### v3.12.0
 

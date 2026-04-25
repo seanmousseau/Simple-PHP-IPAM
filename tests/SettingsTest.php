@@ -20,14 +20,16 @@ class SettingsTest extends TestCase
 
         $this->db->exec("
             CREATE TABLE settings (
-                key        TEXT PRIMARY KEY,
+                tenant_id  INTEGER,
+                key        TEXT NOT NULL,
                 value      TEXT,
-                type       TEXT NOT NULL DEFAULT 'string'
-                           CHECK(type IN ('string','int','bool','json')),
+                type       TEXT NOT NULL DEFAULT 'string' CHECK(type IN ('string','int','bool','json')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_by INTEGER
             )
         ");
+        $this->db->exec("CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_global ON settings (key) WHERE tenant_id IS NULL");
+        $this->db->exec("CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_tenant ON settings (tenant_id, key) WHERE tenant_id IS NOT NULL");
         $this->db->exec("
             CREATE TABLE audit_log (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,7 +55,18 @@ class SettingsTest extends TestCase
     protected function tearDown(): void
     {
         unset($GLOBALS['db'], $GLOBALS['config']);
-        ipam_setting_cache_bust();
+        // Clear entire cache including tenant-keyed entries via the __CLEAR__ sentinel.
+        ipam_setting_cache_storage('__CLEAR__', true);
+    }
+
+    // ------------------------------------------------------------------
+    // Helper: seed a settings row directly (bypasses ipam_setting_set()).
+    // ------------------------------------------------------------------
+    private function seed(string $key, string $value, ?int $tenantId = null, string $type = 'string'): void
+    {
+        $this->db->prepare(
+            "INSERT INTO settings (tenant_id, key, value, type) VALUES (:t, :k, :v, :ty)"
+        )->execute([':t' => $tenantId, ':k' => $key, ':v' => $value, ':ty' => $type]);
     }
 
     public function testRegistryIsNonEmptyAndWellShaped(): void
@@ -119,7 +132,7 @@ class SettingsTest extends TestCase
 
     public function testJsonTypeRoundTrip(): void
     {
-        $this->db->exec("INSERT INTO settings (key, value, type) VALUES ('test.obj', '{\"a\":1,\"b\":[2,3]}', 'json')");
+        $this->db->exec("INSERT INTO settings (tenant_id, key, value, type) VALUES (NULL, 'test.obj', '{\"a\":1,\"b\":[2,3]}', 'json')");
         ipam_setting_cache_bust();
 
         $this->assertSame(['a' => 1, 'b' => [2, 3]], ipam_setting('test.obj'));
@@ -127,7 +140,7 @@ class SettingsTest extends TestCase
 
     public function testInvalidJsonReturnsDefault(): void
     {
-        $this->db->exec("INSERT INTO settings (key, value, type) VALUES ('test.bad', 'not valid json', 'json')");
+        $this->db->exec("INSERT INTO settings (tenant_id, key, value, type) VALUES (NULL, 'test.bad', 'not valid json', 'json')");
         ipam_setting_cache_bust();
 
         $prev = ini_set('error_log', '/dev/null');
@@ -213,11 +226,24 @@ class SettingsTest extends TestCase
         $this->assertNull(ipam_setting_config_fallback($config, null));
     }
 
-    public function testCheckConstraintRejectsUnsupportedTypeValue(): void
+    public function testUniqueConstraintRejectsDuplicateTenantKey(): void
     {
+        // uq_settings_tenant: two rows with the same non-null tenant_id + key must fail.
         $this->expectException(PDOException::class);
-        $ins = $this->db->prepare("INSERT INTO settings (key, value, type) VALUES (:k, :v, :t)");
-        $ins->execute([':k' => 'bogus.key', ':v' => 'x', ':t' => 'date']);
+        $ins = $this->db->prepare("INSERT INTO settings (tenant_id, key, value, type) VALUES (:t, :k, :v, 'string')");
+        $ins->execute([':t' => 5, ':k' => 'bogus.key', ':v' => 'x']);
+        $ins->execute([':t' => 5, ':k' => 'bogus.key', ':v' => 'y']);
+    }
+
+    public function testUniqueConstraintRejectsDuplicateGlobalKey(): void
+    {
+        // uq_settings_global: two global rows (tenant_id IS NULL) with the same key must fail.
+        // This is the partial unique index WHERE tenant_id IS NULL — the case that a plain
+        // UNIQUE(tenant_id, key) would miss because SQL treats NULL as distinct from NULL.
+        $this->expectException(PDOException::class);
+        $ins = $this->db->prepare("INSERT INTO settings (tenant_id, key, value, type) VALUES (:t, :k, :v, 'string')");
+        $ins->execute([':t' => null, ':k' => 'bogus.global', ':v' => 'x']);
+        $ins->execute([':t' => null, ':k' => 'bogus.global', ':v' => 'y']);
     }
 
     public function testRegistryAdvertisesMinMaxOnKnownIntKeys(): void
@@ -435,5 +461,57 @@ class SettingsTest extends TestCase
 
         // Unregistered key still honours the caller default.
         $this->assertSame('caller-default', ipam_setting('bogus.unregistered', 'caller-default'));
+    }
+
+    // ------------------------------------------------------------------
+    // v3.13.0 — tenant→global cascade tests (#711, #713)
+    // ------------------------------------------------------------------
+
+    public function testGlobalSettingReadWithNullTenantId(): void
+    {
+        $this->seed('foo.bar', 'global-value');
+        $this->assertSame('global-value', ipam_setting('foo.bar', 'default', null));
+    }
+
+    public function testTenantSettingOverridesGlobal(): void
+    {
+        $this->seed('foo.bar', 'global-value', null);
+        $this->seed('foo.bar', 'tenant-value', 42);
+        $this->assertSame('tenant-value', ipam_setting('foo.bar', 'default', 42));
+    }
+
+    public function testFallsBackToGlobalWhenNoTenantRow(): void
+    {
+        $this->seed('foo.bar', 'global-value', null);
+        $this->assertSame('global-value', ipam_setting('foo.bar', 'default', 99));
+    }
+
+    public function testFallsBackToCodeDefaultWhenNoRows(): void
+    {
+        $this->assertSame('my-default', ipam_setting('nonexistent.key', 'my-default', null));
+    }
+
+    public function testNullTenantIdReturnsGlobalOnly(): void
+    {
+        $this->seed('foo.bar', 'global-value', null);
+        $this->seed('foo.bar', 'tenant-value', 1);
+        // Calling with null tenantId must return global, NOT the tenant-1 row.
+        $this->assertSame('global-value', ipam_setting('foo.bar', 'default', null));
+    }
+
+    public function testSetSettingWritesGlobalRow(): void
+    {
+        ipam_setting_set($this->db, 'foo.bar', 'new-value', null, null);
+        $row = $this->db->query("SELECT value FROM settings WHERE key='foo.bar' AND tenant_id IS NULL")->fetch();
+        $this->assertIsArray($row);
+        $this->assertSame('new-value', $row['value']);
+    }
+
+    public function testSetSettingWritesTenantRow(): void
+    {
+        ipam_setting_set($this->db, 'foo.bar', 'tenant-new', null, 7);
+        $row = $this->db->query("SELECT value, tenant_id FROM settings WHERE key='foo.bar' AND tenant_id=7")->fetch();
+        $this->assertIsArray($row);
+        $this->assertSame('tenant-new', $row['value']);
     }
 }

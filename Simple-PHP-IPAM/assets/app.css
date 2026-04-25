@@ -558,9 +558,20 @@ button{
 button:hover{filter:brightness(1.05)}
 button:disabled{opacity:.6;cursor:not-allowed}
 .button-secondary{
+  display:inline-flex;
+  align-items:center;
+  gap:var(--space-2);
+  padding:var(--space-2) var(--space-4);
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  font-size:var(--font-size-sm);
+  font-weight:500;
+  cursor:pointer;
+  text-decoration:none;
   background:var(--btn-secondary);
   color:var(--btn-secondary-fg);
 }
+.button-secondary:hover{filter:brightness(0.95)}
 .button-danger{
   background:var(--danger);
   color:#fff;
@@ -1769,3 +1780,7 @@ button:active,.button:active,.action-pill:active{transform:translateY(1px)}
 #growth-chart:not(:hover) .u-cursor-pt,
 #growth-chart:not(:hover) .u-cursor-x,
 #growth-chart:not(:hover) .u-cursor-y { opacity:0; }
+/* Pagination bar (#734) */
+.pagination-bar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:var(--space-3);margin-top:var(--space-5);padding-top:var(--space-4);border-top:1px solid var(--border)}
+.pagination-controls{display:flex;align-items:center;gap:var(--space-3)}
+.page-indicator{font-size:var(--font-size-sm);color:var(--muted)}

@@ -16,6 +16,10 @@ When the app reads a setting it checks: `settings` table row → default from `i
 - **v3.0.0** — the `config.php` fallback is removed. Only the six bootstrap keys (`db_driver`, `db_dsn`, `db_user`, `db_pass`, `session_name`, `force_https`) were read from the file at runtime (until v3.6.0 added more — see below). An upgrade-time migration copies any customised values into the database and rewrites `config.php` to stub format. See [docs/upgrading.md](upgrading.md#v300) for the full upgrade guide.
 - **v3.6.0** — adds a small set of security-sensitive pre-DB keys to `config.php`: `app_secret` (TOTP encryption), `session.absolute_lifetime_minutes`, and `auth.lockout_after_failures` / `auth.lockout_duration_minutes`. These cannot live in the `settings` table because they are needed before or during the DB open / session start sequence. The bootstrap six remain unchanged.
 
+#### Settings cascade (v3.13.0)
+
+In v3.13.0, `ipam_setting()` accepts an optional `?int $tenantId` parameter. In v3.x all settings are global (`tenant_id IS NULL`) — passing `$tenantId` has no visible effect until v4.0.0 multi-tenancy is activated. The cascade resolution order is: (1) tenant-specific row, (2) global row (`tenant_id IS NULL`), (3) code default.
+
 ### Settings reference (database-backed)
 
 The keys below are seeded into the `settings` table by the v2.6.0 migration and can be edited at **⚙ Admin → Settings**. Generated from `ipam_setting_definitions()` in `lib.php`; if it drifts from the registry, the registry is authoritative.
