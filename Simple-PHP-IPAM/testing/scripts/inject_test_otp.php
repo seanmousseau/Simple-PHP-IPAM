@@ -31,8 +31,7 @@ if (!file_exists($configPath)) {
     exit(3);
 }
 
-$config = [];
-require $configPath;
+$config = require $configPath;
 
 $driver = $config['db_driver'] ?? 'sqlite';
 
