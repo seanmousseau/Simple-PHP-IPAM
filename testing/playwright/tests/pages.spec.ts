@@ -3,7 +3,8 @@
  * Also covers: breadcrumbs on all pages, sticky headers, mobile nav toggle.
  * Migrated from cdp_test.py section 3.
  */
-import { adminTest, expect } from '../fixtures/ipam';
+import { test, expect } from '@playwright/test';
+import { adminTest } from '../fixtures/ipam';
 
 // Pages that legitimately show a .danger element on normal load
 const ALLOWED_DANGER = new Set(['db_tools.php']);
@@ -153,5 +154,12 @@ adminTest.describe('Mobile hamburger nav', () => {
     // Close via overlay click
     await page.locator('.sidebar-overlay').click();
     await expect(page.locator('#sidebar')).not.toHaveClass(/is-open/);
+  });
+});
+
+test.describe('Mid-login challenge page guards', () => {
+  test('email_otp_verify.php redirects to login without pending session', async ({ page }) => {
+    await page.goto('email_otp_verify.php');
+    await expect(page).toHaveURL(/login\.php/);
   });
 });
