@@ -269,7 +269,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 
         audit($db, 'user.email_otp_enable', 'user', to_int($cur['id']), 'Email OTP 2FA enrolled');
         flash_set('Email OTP enabled successfully.');
     } else {
-        flash_set('Invalid or expired code. Please try again.', 'danger');
+        // Check if the verifier cleared OTP state due to too many attempts (attempts >= 5
+        // causes ipam_email_otp_verify() to call ipam_email_otp_clear() and return false).
+        $attemptRow = $db->prepare("SELECT email_otp_attempts FROM users WHERE id = :id");
+        $attemptRow->execute([':id' => to_int($cur['id'])]);
+        /** @var array<string, mixed>|false $attemptData */
+        $attemptData = $attemptRow->fetch();
+        if ($attemptData === false || to_int($attemptData['email_otp_attempts']) === 0) {
+            unset($_SESSION['email_otp_enrolling']);
+            flash_set('Too many incorrect attempts. Please request a new code.', 'danger');
+        } else {
+            flash_set('Invalid or expired code. Please try again.', 'danger');
+        }
     }
     header('Location: change_password.php#email-otp');
     exit;
@@ -278,6 +289,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 
 // --- Email OTP: disable ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 'email_otp_disable') {
     csrf_require();
+    $eoDisableStmt = $db->prepare("SELECT password_hash FROM users WHERE id = :id");
+    $eoDisableStmt->execute([':id' => $cur['id']]);
+    /** @var array<string, mixed>|false $eoDisableRow */
+    $eoDisableRow    = $eoDisableStmt->fetch();
+    $eoDisablePwHash = $eoDisableRow ? to_str($eoDisableRow['password_hash']) : '';
+    if (!str_starts_with($eoDisablePwHash, '!')) {
+        $eoConfirmPw = to_str($_POST['current_password'] ?? '');
+        if ($eoConfirmPw === '' || !password_verify($eoConfirmPw, $eoDisablePwHash)) {
+            flash_set('Current password is incorrect. Email OTP was not disabled.', 'danger');
+            header('Location: change_password.php#email-otp');
+            exit;
+        }
+    }
     $db->prepare("UPDATE users SET email_otp_enabled = 0 WHERE id = :id")
        ->execute([':id' => to_int($cur['id'])]);
     ipam_email_otp_clear($db, to_int($cur['id']));
@@ -481,6 +505,11 @@ $eoEnrolling  = !empty($_SESSION['email_otp_enrolling']);
     <form method="post" action="change_password.php#email-otp">
       <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
       <input type="hidden" name="action" value="email_otp_disable">
+      <?php if (!$isSsoOnly): ?>
+        <label style="display:block;margin-bottom:8px;">Confirm current password:<br>
+          <input type="password" name="current_password" autocomplete="current-password" required>
+        </label>
+      <?php endif; ?>
       <button type="submit" class="button-danger"
         onclick="return confirm('Disable Email OTP? You will no longer receive a code by email at login.')">
         Disable Email OTP

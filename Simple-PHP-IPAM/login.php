@@ -146,7 +146,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (to_int($user['email_otp_enabled'] ?? 0) === 1 &&
                     (bool)to_int(ipam_setting('mfa.email_otp_enabled', false))) {
                     $code = ipam_email_otp_generate($db, to_int($user['id']));
-                    ipam_email_otp_send($db, to_int($user['id']), $code);
+                    if (!ipam_email_otp_send($db, to_int($user['id']), $code)) {
+                        ipam_email_otp_clear($db, to_int($user['id']));
+                        flash_set('Could not send verification code. Please contact your administrator.', 'danger');
+                        header('Location: login.php');
+                        exit;
+                    }
                     $_SESSION['email_otp_pending_uid'] = to_int($user['id']);
                     header('Location: email_otp_verify.php');
                     exit;

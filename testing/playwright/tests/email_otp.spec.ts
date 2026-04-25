@@ -28,7 +28,7 @@ test.describe('Email OTP enrollment', () => {
         // Enable Email OTP globally
         await fetchPost(page, appUrl('settings.php'), {
             group: 'mfa',
-            'mfa.email_otp_enabled': '1',
+            'k_mfa__email_otp_enabled': '1',
         });
         await logout(page);
     });
@@ -38,7 +38,7 @@ test.describe('Email OTP enrollment', () => {
         await login(page, ADMIN_USER, ADMIN_PASS);
         await fetchPost(page, appUrl('settings.php'), {
             group: 'mfa',
-            'mfa.email_otp_enabled': '0',
+            'k_mfa__email_otp_enabled': '0',
         });
         await logout(page);
     });

@@ -8111,11 +8111,13 @@ function ipam_email_otp_verify(PDO $db, int $userId, string $code): bool
     }
 
     if ($attempts >= 5) {
+        ipam_email_otp_clear($db, $userId);
         return false;
     }
 
     // ISO datetime strings sort correctly as plain string comparison
     if ($expires < date('Y-m-d H:i:s')) {
+        ipam_email_otp_clear($db, $userId);
         return false;
     }
 

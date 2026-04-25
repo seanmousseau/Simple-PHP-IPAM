@@ -83,6 +83,7 @@ test.describe('change_password.php — policy enforcement', () => {
         await fetchPost(page, appUrl('settings.php'), {
             group: 'password_policy',
             k_password_policy__min_length: '12',
+            k_password_policy__require_uppercase: '0',
         });
         await logout(page);
     });

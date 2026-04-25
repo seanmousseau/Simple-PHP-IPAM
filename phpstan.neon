@@ -8,7 +8,6 @@ parameters:
         - Simple-PHP-IPAM
     excludePaths:
         - Simple-PHP-IPAM/data
-        - Simple-PHP-IPAM/testing
     bootstrapFiles:
         - Simple-PHP-IPAM/version.php
     typeAliases:
