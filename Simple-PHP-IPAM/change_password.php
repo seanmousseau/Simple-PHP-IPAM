@@ -218,6 +218,72 @@ if ($cur['role'] === 'admin' && to_int($_GET['user_id'] ?? 0) > 0) {
     }
 }
 
+// --- Email OTP enrollment: start (send code) ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 'email_otp_enable') {
+    csrf_require();
+    $emailOtpEnabled = (bool)to_int(ipam_setting('mfa.email_otp_enabled', false));
+    if (!$emailOtpEnabled) {
+        flash_set('Email OTP is not enabled by your administrator.', 'danger');
+        header('Location: change_password.php');
+        exit;
+    }
+    $eoUserRow = $db->prepare("SELECT email FROM users WHERE id = :id");
+    $eoUserRow->execute([':id' => to_int($cur['id'])]);
+    /** @var array<string, mixed>|false $eoRow */
+    $eoRow      = $eoUserRow->fetch();
+    $eoEmail    = $eoRow ? to_str($eoRow['email'] ?? '') : '';
+    if ($eoEmail === '') {
+        flash_set('You must set an email address on your account before enabling Email OTP.', 'danger');
+        header('Location: change_password.php');
+        exit;
+    }
+    $code = ipam_email_otp_generate($db, to_int($cur['id']));
+    $sent = ipam_email_otp_send($db, to_int($cur['id']), $code);
+    if (!$sent) {
+        flash_set('Failed to send verification email. Please check SMTP configuration.', 'danger');
+        header('Location: change_password.php');
+        exit;
+    }
+    $_SESSION['email_otp_enrolling'] = true;
+    header('Location: change_password.php#email-otp');
+    exit;
+}
+
+// --- Email OTP enrollment: verify submitted code ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 'email_otp_verify_enroll') {
+    csrf_require();
+    $submittedCode = trim(to_str($_POST['otp_code'] ?? ''));
+    if (!isset($_SESSION['email_otp_enrolling'])) {
+        flash_set('Enrollment session expired. Please start again.', 'danger');
+        header('Location: change_password.php');
+        exit;
+    }
+    if (ipam_email_otp_verify($db, to_int($cur['id']), $submittedCode)) {
+        $db->prepare("UPDATE users SET email_otp_enabled = 1 WHERE id = :id")
+           ->execute([':id' => to_int($cur['id'])]);
+        unset($_SESSION['email_otp_enrolling']);
+        audit($db, 'user.email_otp_enable', 'user', to_int($cur['id']), 'Email OTP 2FA enrolled');
+        flash_set('Email OTP enabled successfully.');
+    } else {
+        flash_set('Invalid or expired code. Please try again.', 'danger');
+    }
+    header('Location: change_password.php#email-otp');
+    exit;
+}
+
+// --- Email OTP: disable ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 'email_otp_disable') {
+    csrf_require();
+    $db->prepare("UPDATE users SET email_otp_enabled = 0 WHERE id = :id")
+       ->execute([':id' => to_int($cur['id'])]);
+    ipam_email_otp_clear($db, to_int($cur['id']));
+    unset($_SESSION['email_otp_enrolling']);
+    audit($db, 'user.email_otp_disable', 'user', to_int($cur['id']), 'Email OTP 2FA disabled');
+    flash_set('Email OTP disabled.');
+    header('Location: change_password.php#email-otp');
+    exit;
+}
+
 $actSt = $db->prepare("
     SELECT created_at, action, ip, user_agent
     FROM audit_log
@@ -383,6 +449,62 @@ $pendingActive = $pendingEmail !== '' && $pendingExpiry !== ''
       </tbody>
     </table>
     </div>
+  <?php endif; ?>
+</div>
+
+<?php
+// --- Email OTP section ---
+$emailOtpGlobalEnabled = (bool)to_int(ipam_setting('mfa.email_otp_enabled', false));
+$eoSt = $db->prepare("SELECT email_otp_enabled, email FROM users WHERE id = :id");
+$eoSt->execute([':id' => to_int($cur['id'])]);
+/** @var array<string, mixed>|false $eoUser */
+$eoUser    = $eoSt->fetch();
+$emailOtpIsOn = $eoUser && to_int($eoUser['email_otp_enabled'] ?? 0) === 1;
+$eoHasEmail   = $eoUser && to_str($eoUser['email'] ?? '') !== '';
+$eoEnrolling  = !empty($_SESSION['email_otp_enrolling']);
+?>
+<div class="card mt-16" id="email-otp">
+  <h2>Email OTP</h2>
+  <?php if (!$emailOtpGlobalEnabled): ?>
+    <p class="muted">Email OTP is not enabled by your administrator.</p>
+  <?php elseif ($emailOtpIsOn): ?>
+    <p class="success">Email OTP is <strong>active</strong>. A verification code will be emailed to you at each login.</p>
+    <form method="post" action="change_password.php#email-otp">
+      <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+      <input type="hidden" name="action" value="email_otp_disable">
+      <button type="submit" class="button-danger"
+        onclick="return confirm('Disable Email OTP? You will no longer receive a code by email at login.')">
+        Disable Email OTP
+      </button>
+    </form>
+  <?php elseif ($eoEnrolling): ?>
+    <p>A 6-digit code was sent to your email address. Enter it below to confirm enrollment.</p>
+    <form method="post" action="change_password.php#email-otp">
+      <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+      <input type="hidden" name="action" value="email_otp_verify_enroll">
+      <div class="row">
+        <label for="otp_code">Verification code<br>
+          <input type="text" id="otp_code" name="otp_code" inputmode="numeric" pattern="\d{6}"
+                 maxlength="6" autocomplete="one-time-code" required placeholder="6-digit code"
+                 style="max-width:160px;">
+        </label>
+      </div>
+      <p><button type="submit">Confirm</button></p>
+    </form>
+    <form method="post" action="change_password.php#email-otp" style="margin-top:.5rem">
+      <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+      <input type="hidden" name="action" value="email_otp_enable">
+      <button type="submit" class="button-secondary">Resend code</button>
+    </form>
+  <?php elseif (!$eoHasEmail): ?>
+    <p class="warning">You must <a href="change_password.php#email">set an email address</a> before you can enable Email OTP.</p>
+  <?php else: ?>
+    <p>Add Email OTP as a second factor. Each login will require a code sent to your email address.</p>
+    <form method="post" action="change_password.php#email-otp">
+      <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+      <input type="hidden" name="action" value="email_otp_enable">
+      <p><button type="submit">Enable Email OTP</button></p>
+    </form>
   <?php endif; ?>
 </div>
 

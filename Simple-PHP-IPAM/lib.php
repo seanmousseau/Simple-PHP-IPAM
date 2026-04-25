@@ -8152,6 +8152,34 @@ function ipam_email_otp_clear(PDO $db, int $userId): void
     )->execute([':id' => $userId]);
 }
 
+/**
+ * Send a plaintext email OTP code to the given user's email address via ipam_send_mail().
+ * Call this immediately after ipam_email_otp_generate() with the returned plaintext code.
+ * Returns true on success, false on failure (SMTP not configured, no email set, etc.).
+ */
+function ipam_email_otp_send(PDO $db, int $userId, string $code): bool
+{
+    $stmt = $db->prepare("SELECT email, username FROM users WHERE id = :id");
+    $stmt->execute([':id' => $userId]);
+    /** @var array<string, mixed>|false $user */
+    $user = $stmt->fetch();
+    if (!$user || to_str($user['email'] ?? '') === '') {
+        return false;
+    }
+
+    $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
+    $to      = to_str($user['email']);
+    $subject = '[' . $appName . '] Your verification code';
+    $body    = "Your one-time verification code is:\n\n    {$code}\n\nThis code expires in 10 minutes. Do not share it with anyone.\n\nIf you did not request this, please contact your administrator.";
+
+    $result = ipam_send_mail($to, $subject, $body);
+    if (!$result['success']) {
+        error_log('ipam_email_otp_send: failed to send OTP to user ' . $userId . ': ' . ($result['error'] ?? 'unknown'));
+        return false;
+    }
+    return true;
+}
+
 // ============================================================
 // Dashboard KPI helpers (v3.8.0, #514)
 // ============================================================
