@@ -300,6 +300,11 @@ $actSt->execute([':uid' => $viewUserId]);
 /** @var list<array<string, mixed>> $activityRows */
 $activityRows = $actSt->fetchAll();
 
+if (isset($_GET['mfa_required']) && !empty($_SESSION['mfa_enrollment_required'])) {
+    unset($_SESSION['mfa_enrollment_required']);
+    flash_set('Your administrator requires 2FA. Please enroll in TOTP or Email OTP below.', 'warning');
+}
+
 page_header('Account');
 ?>
 <div class="breadcrumbs">
