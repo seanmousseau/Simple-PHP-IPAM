@@ -60,7 +60,8 @@ test.describe('Settings — password policy', () => {
 test.describe('change_password.php — policy enforcement', () => {
     test.beforeEach(async ({ page }) => {
         await login(page, ADMIN_USER, ADMIN_PASS);
-        // Ensure require_uppercase is on for enforcement tests
+        // Navigate to settings.php first so getCsrf() finds a valid CSRF token
+        await page.goto(appUrl('settings.php'));
         await fetchPost(page, appUrl('settings.php'), {
             group: 'password_policy',
             k_password_policy__min_length: '12',
