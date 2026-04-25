@@ -8073,6 +8073,7 @@ function ipam_email_otp_generate(PDO $db, int $userId, int $ttlMinutes = 10): st
           WHERE id = :id"
     )->execute([':hash' => $hash, ':expires' => $expires, ':id' => $userId]);
 
+    audit($db, 'mfa.otp.generate', 'user', $userId, "expires={$expires}");
     return $code;
 }
 
@@ -8168,7 +8169,7 @@ function ipam_email_otp_clear(PDO $db, int $userId): void
  * Call this immediately after ipam_email_otp_generate() with the returned plaintext code.
  * Returns true on success, false on failure (SMTP not configured, no email set, etc.).
  */
-function ipam_email_otp_send(PDO $db, int $userId, string $code): bool
+function ipam_email_otp_send(PDO $db, int $userId, string $code, int $ttlMinutes = 10): bool
 {
     $stmt = $db->prepare("SELECT email, username FROM users WHERE id = :id");
     $stmt->execute([':id' => $userId]);
@@ -8181,7 +8182,7 @@ function ipam_email_otp_send(PDO $db, int $userId, string $code): bool
     $appName = str_replace(["\r", "\n"], '', trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM');
     $to      = to_str($user['email']);
     $subject = '[' . $appName . '] Your verification code';
-    $body    = "Your one-time verification code is:\n\n    {$code}\n\nThis code expires in 10 minutes. Do not share it with anyone.\n\nIf you did not request this, please contact your administrator.";
+    $body    = "Your one-time verification code is:\n\n    {$code}\n\nThis code expires in {$ttlMinutes} minutes. Do not share it with anyone.\n\nIf you did not request this, please contact your administrator.";
 
     $result = ipam_send_mail($to, $subject, $body);
     if (!$result['success']) {
@@ -8190,6 +8191,7 @@ function ipam_email_otp_send(PDO $db, int $userId, string $code): bool
         audit($db, 'mfa.otp.send_fail', 'user', $userId, $errMsg);
         return false;
     }
+    audit($db, 'mfa.otp.send', 'user', $userId, "to={$to}");
     return true;
 }
 

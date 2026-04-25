@@ -9,7 +9,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { login, logout, ADMIN_USER, ADMIN_PASS, appUrl, fetchPost, injectTestOtp } from '../fixtures/ipam';
+import { login, logout, ADMIN_USER, ADMIN_PASS, appUrl, fetchPost, injectTestOtp, resetEmailOtpEnrollment } from '../fixtures/ipam';
 
 const EMAIL_OTP_USER = 'email_otp_test_user';
 const EMAIL_OTP_PASS = 'Password1!';
@@ -24,6 +24,9 @@ test.describe('Email OTP enrollment', () => {
     test.skip(!isEmailOtpSeeded(), 'SEED_EMAIL_OTP_TEST_USER not set');
 
     test.beforeEach(async ({ page }) => {
+        // Reset test user to unenrolled state before each enrollment test so
+        // tests are independent regardless of seed or prior test run order.
+        await resetEmailOtpEnrollment(EMAIL_OTP_USER);
         await login(page, ADMIN_USER, ADMIN_PASS);
         // Enable Email OTP globally
         await fetchPost(page, appUrl('settings.php'), {

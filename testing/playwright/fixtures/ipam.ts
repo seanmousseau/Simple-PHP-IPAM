@@ -360,6 +360,16 @@ export async function injectTestOtp(username: string, code = '123456'): Promise<
     return code;
 }
 
+export async function resetEmailOtpEnrollment(username: string): Promise<void> {
+    const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
+    const { execFileSync } = await import('child_process');
+    execFileSync('docker', [
+        'exec', container,
+        'php', '/var/www/html/testing/scripts/reset_email_otp_enrollment.php',
+        username,
+    ], { stdio: 'pipe' });
+}
+
 // ── adminTest fixture ──────────────────────────────────────────────────────────
 /**
  * A test fixture that logs in as admin before each test and logs out after.
