@@ -8048,6 +8048,111 @@ function ipam_clear_persistent_lockout(PDO $db, int $uid): void {
 }
 
 // ============================================================
+// Email OTP helpers (#684)
+// ============================================================
+
+/**
+ * Generate a 6-digit email OTP for the given user, store a bcrypt hash,
+ * set a TTL-based expiry, reset the attempt counter, and return the
+ * plaintext code for delivery via email.
+ *
+ * Expiry is computed in PHP (date('Y-m-d H:i:s', time() + $ttlMinutes * 60))
+ * so no dialect-specific SQL expression is needed.
+ */
+function ipam_email_otp_generate(PDO $db, int $userId, int $ttlMinutes = 10): string
+{
+    $code    = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+    $hash    = password_hash($code, PASSWORD_DEFAULT);
+    $expires = date('Y-m-d H:i:s', time() + $ttlMinutes * 60);
+
+    $db->prepare(
+        "UPDATE users
+            SET email_otp_hash       = :hash,
+                email_otp_expires_at = :expires,
+                email_otp_attempts   = 0
+          WHERE id = :id"
+    )->execute([':hash' => $hash, ':expires' => $expires, ':id' => $userId]);
+
+    return $code;
+}
+
+/**
+ * Verify a submitted email OTP code for the given user.
+ *
+ * Returns true only when:
+ *   - a hash and expiry exist in the DB
+ *   - fewer than 5 failed attempts have been recorded
+ *   - the OTP has not expired
+ *   - the code matches the stored bcrypt hash
+ *
+ * On success the OTP columns are cleared.
+ * On failure the attempt counter is incremented.
+ */
+function ipam_email_otp_verify(PDO $db, int $userId, string $code): bool
+{
+    $stmt = $db->prepare(
+        "SELECT email_otp_hash, email_otp_expires_at, email_otp_attempts
+           FROM users WHERE id = :id"
+    );
+    $stmt->execute([':id' => $userId]);
+    /** @var array<string,mixed>|false $row */
+    $row = $stmt->fetch();
+
+    if (!$row) {
+        return false;
+    }
+
+    $hash     = is_string($row['email_otp_hash']       ?? null) ? $row['email_otp_hash']       : '';
+    $expires  = is_string($row['email_otp_expires_at'] ?? null) ? $row['email_otp_expires_at'] : '';
+    $attempts = to_int($row['email_otp_attempts'] ?? 0);
+
+    if ($hash === '' || $expires === '') {
+        return false;
+    }
+
+    if ($attempts >= 5) {
+        return false;
+    }
+
+    // ISO datetime strings sort correctly as plain string comparison
+    if ($expires < date('Y-m-d H:i:s')) {
+        return false;
+    }
+
+    if (!password_verify($code, $hash)) {
+        $db->prepare("UPDATE users SET email_otp_attempts = email_otp_attempts + 1 WHERE id = :id")
+           ->execute([':id' => $userId]);
+        return false;
+    }
+
+    // Success — consume the OTP
+    $db->prepare(
+        "UPDATE users
+            SET email_otp_hash       = NULL,
+                email_otp_expires_at = NULL,
+                email_otp_attempts   = 0
+          WHERE id = :id"
+    )->execute([':id' => $userId]);
+
+    return true;
+}
+
+/**
+ * Clear all email OTP state for the given user (used on logout, password
+ * change, or administrative reset).
+ */
+function ipam_email_otp_clear(PDO $db, int $userId): void
+{
+    $db->prepare(
+        "UPDATE users
+            SET email_otp_hash       = NULL,
+                email_otp_expires_at = NULL,
+                email_otp_attempts   = 0
+          WHERE id = :id"
+    )->execute([':id' => $userId]);
+}
+
+// ============================================================
 // Dashboard KPI helpers (v3.8.0, #514)
 // ============================================================
 
