@@ -15,6 +15,10 @@ if (PHP_SAPI !== 'cli') {
 }
 
 $username = $argv[1] ?? '';
+if ($username === '') {
+    fwrite(STDERR, "Usage: reset_email_otp_enrollment.php <username>\n");
+    exit(2);
+}
 
 $configPath = __DIR__ . '/../../Simple-PHP-IPAM/config.php';
 if (!file_exists($configPath)) {

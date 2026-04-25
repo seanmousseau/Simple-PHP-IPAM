@@ -147,7 +147,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     (bool)to_int(ipam_setting('mfa.email_otp_enabled', false))) {
                     $code = ipam_email_otp_generate($db, to_int($user['id']));
                     if (!ipam_email_otp_send($db, to_int($user['id']), $code)) {
-                        ipam_email_otp_clear($db, to_int($user['id']));
+                        ipam_email_otp_clear($db, to_int($user['id']), 'email_send_failed');
                         flash_set('Could not send verification code. Please contact your administrator.', 'danger');
                         header('Location: login.php');
                         exit;

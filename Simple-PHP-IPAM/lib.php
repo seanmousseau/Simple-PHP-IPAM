@@ -8063,7 +8063,7 @@ function ipam_email_otp_generate(PDO $db, int $userId, int $ttlMinutes = 10): st
 {
     $code    = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
     $hash    = password_hash($code, PASSWORD_DEFAULT);
-    $expires = date('Y-m-d H:i:s', time() + $ttlMinutes * 60);
+    $expires = gmdate('Y-m-d H:i:s', time() + $ttlMinutes * 60);
 
     $db->prepare(
         "UPDATE users
@@ -8117,8 +8117,8 @@ function ipam_email_otp_verify(PDO $db, int $userId, string $code): bool
         return false;
     }
 
-    // ISO datetime strings sort correctly as plain string comparison
-    if ($expires < date('Y-m-d H:i:s')) {
+    // ISO datetime strings sort correctly as plain string comparison (both UTC)
+    if ($expires < gmdate('Y-m-d H:i:s')) {
         ipam_email_otp_clear($db, $userId);
         audit($db, 'mfa.otp.expired', 'user', $userId, 'OTP expired');
         return false;
@@ -8146,14 +8146,16 @@ function ipam_email_otp_verify(PDO $db, int $userId, string $code): bool
           WHERE id = :id"
     )->execute([':id' => $userId]);
 
+    audit($db, 'mfa.otp.verify_ok', 'user', $userId, 'Email OTP verified successfully');
     return true;
 }
 
 /**
  * Clear all email OTP state for the given user (used on logout, password
- * change, or administrative reset).
+ * change, or administrative reset). Pass a non-empty $reason to emit an
+ * audit entry for the clear event (omit when the caller already audits).
  */
-function ipam_email_otp_clear(PDO $db, int $userId): void
+function ipam_email_otp_clear(PDO $db, int $userId, string $reason = ''): void
 {
     $db->prepare(
         "UPDATE users
@@ -8162,6 +8164,9 @@ function ipam_email_otp_clear(PDO $db, int $userId): void
                 email_otp_attempts   = 0
           WHERE id = :id"
     )->execute([':id' => $userId]);
+    if ($reason !== '') {
+        audit($db, 'mfa.otp.clear', 'user', $userId, $reason);
+    }
 }
 
 /**
@@ -8188,10 +8193,11 @@ function ipam_email_otp_send(PDO $db, int $userId, string $code, int $ttlMinutes
     if (!$result['success']) {
         $errMsg = $result['error'] ?? 'unknown';
         error_log('ipam_email_otp_send: failed to send OTP to user ' . $userId . ': ' . $errMsg);
-        audit($db, 'mfa.otp.send_fail', 'user', $userId, $errMsg);
+        audit($db, 'mfa.otp.send_fail', 'user', $userId, substr(strip_tags($errMsg), 0, 200));
         return false;
     }
-    audit($db, 'mfa.otp.send', 'user', $userId, "to={$to}");
+    $masked = preg_replace('/^(.).*(@.+)$/', '$1***$2', $to) ?: '***';
+    audit($db, 'mfa.otp.send', 'user', $userId, "to={$masked}");
     return true;
 }
 

@@ -108,6 +108,24 @@ test.describe('Email OTP enrollment', () => {
 test.describe('Email OTP login challenge', () => {
     test.skip(!isEmailOtpSeeded(), 'SEED_EMAIL_OTP_TEST_USER not set');
 
+    test.beforeEach(async ({ page }) => {
+        await login(page, ADMIN_USER, ADMIN_PASS);
+        await fetchPost(page, appUrl('settings.php'), {
+            group: 'mfa',
+            'k_mfa__email_otp_enabled': '1',
+        });
+        await logout(page);
+    });
+
+    test.afterEach(async ({ page }) => {
+        await login(page, ADMIN_USER, ADMIN_PASS);
+        await fetchPost(page, appUrl('settings.php'), {
+            group: 'mfa',
+            'k_mfa__email_otp_enabled': '0',
+        });
+        await logout(page);
+    });
+
     test('user with Email OTP enrolled is challenged on login', async ({ page }) => {
         await page.goto(appUrl('login.php'));
         await page.locator('[name=username]').fill(EMAIL_OTP_USER);
@@ -155,6 +173,24 @@ test.describe('Email OTP login challenge', () => {
 
 test.describe('Email OTP admin controls', () => {
     test.skip(!isEmailOtpSeeded(), 'SEED_EMAIL_OTP_TEST_USER not set');
+
+    test.beforeEach(async ({ page }) => {
+        await login(page, ADMIN_USER, ADMIN_PASS);
+        await fetchPost(page, appUrl('settings.php'), {
+            group: 'mfa',
+            'k_mfa__email_otp_enabled': '1',
+        });
+        await logout(page);
+    });
+
+    test.afterEach(async ({ page }) => {
+        await login(page, ADMIN_USER, ADMIN_PASS);
+        await fetchPost(page, appUrl('settings.php'), {
+            group: 'mfa',
+            'k_mfa__email_otp_enabled': '0',
+        });
+        await logout(page);
+    });
 
     test('admin sees Reset Email OTP action for enrolled users in users.php', async ({ page }) => {
         await login(page, ADMIN_USER, ADMIN_PASS);
