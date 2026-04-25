@@ -1862,7 +1862,9 @@ function ipam_setting_infer_type(mixed $value): string
  * Read a setting. Fallback chain:
  *   1. Tenant-scoped DB row (only when $tenantId is non-null)
  *   2. Global DB row (tenant_id IS NULL)
- *   3. Registry default → $default argument
+ *   3. $GLOBALS['config'] via the registry's config_key path (v2.6 back-compat
+ *      for installs that have not yet migrated config.php values to the DB)
+ *   4. Registry default → $default argument
  *
  * Never throws. Results are memoised via ipam_setting_cache_storage() keyed
  * by "{tenantId}:{key}" so repeated reads in a single request don't re-query
@@ -1880,9 +1882,6 @@ function ipam_setting(string $key, mixed $default = null, ?int $tenantId = null)
     $definitions = ipam_setting_definitions();
     $def         = $definitions[$key] ?? null;
     $type        = is_array($def) && is_string($def['type'] ?? null) ? $def['type'] : 'string';
-    // Precedence: DB → registry default → caller $default. A caller
-    // default only matters for unregistered keys; registered keys always fall
-    // through to the registry's authoritative default.
     $fallback = ($def !== null && array_key_exists('default', $def))
         ? $def['default']
         : $default;
@@ -1922,6 +1921,20 @@ function ipam_setting(string $key, mixed $default = null, ?int $tenantId = null)
         error_log("ipam_setting: read failed for key {$key}: " . $e->getMessage());
     }
 
+    // Step 3: $GLOBALS['config'] back-compat — installs that have not yet
+    // migrated their config.php values to the settings table still get the
+    // correct value here rather than falling through to the registry default.
+    $rawConfigKey = is_array($def) ? ($def['config_key'] ?? null) : null;
+    $configKey    = (is_string($rawConfigKey) || is_array($rawConfigKey)) ? $rawConfigKey : null;
+    $cfg          = $GLOBALS['config'] ?? null;
+    if ($configKey !== null && is_array($cfg)) {
+        $cfgVal = ipam_setting_config_fallback($cfg, $configKey);
+        if ($cfgVal !== null) {
+            ipam_setting_cache_storage($key, false, $cfgVal, true, $tenantId);
+            return $cfgVal;
+        }
+    }
+
     ipam_setting_cache_storage($key, false, $fallback, true, $tenantId);
     return $fallback;
 }
@@ -1946,16 +1959,26 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
 
     $encoded = ipam_setting_encode($value, $type);
 
-    // Wrap SELECT+UPDATE/INSERT in a transaction to prevent TOCTOU races.
-    // Two concurrent writers could both see "no row" and both INSERT, creating
-    // duplicate global rows — the partial unique index catches the second writer
-    // on SQLite/PostgreSQL, but MySQL's composite UNIQUE allows duplicate NULLs.
-    // The transaction serialises the check-then-act so only one writer wins.
     $kc = ipam_key_col();
     $d  = ipam_dialect();
     $tenantWhere = $tenantId === null ? 'tenant_id IS NULL' : 'tenant_id = :tb';
     $oldRaw  = null;
     $oldType = $type;
+
+    // MySQL advisory lock: serialise SELECT→INSERT for this key/scope so that
+    // two concurrent writers cannot both see "row does not exist" and both
+    // attempt INSERT. SQLite and PostgreSQL enforce uniqueness via partial
+    // indexes (uq_settings_global, uq_settings_tenant), but MySQL's composite
+    // UNIQUE(tenant_id, key) allows multiple NULL tenant_id values per SQL
+    // standard, so a second concurrent INSERT would silently succeed and create
+    // duplicate global rows. GET_LOCK blocks until the lock is free (or the
+    // 5 s timeout elapses). RELEASE_LOCK runs unconditionally in the finally
+    // block so the lock is freed even when an exception is thrown.
+    $mysqlLockName = null;
+    if ($d->driver_name() === 'mysql') {
+        $mysqlLockName = 'settings:' . $key . ':' . ($tenantId === null ? '__GLOBAL__' : (string)$tenantId);
+        $db->prepare("SELECT GET_LOCK(:n, 5)")->execute([':n' => $mysqlLockName]);
+    }
 
     // Wrap SELECT+UPDATE/INSERT in a transaction to prevent TOCTOU races only
     // when no outer transaction is already active. settings.php wraps all saves
@@ -2030,6 +2053,14 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
     } catch (\Throwable $ex) {
         if ($ownTx && $db->inTransaction()) $db->rollBack();
         throw $ex;
+    } finally {
+        if ($mysqlLockName !== null) {
+            try {
+                $db->prepare("SELECT RELEASE_LOCK(:n)")->execute([':n' => $mysqlLockName]);
+            } catch (\Throwable $_) {
+                // Best-effort: the connection close will free it regardless.
+            }
+        }
     }
 
     // Bust the per-request cache by forcing a re-read on next call.
