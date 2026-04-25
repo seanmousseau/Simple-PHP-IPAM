@@ -1538,6 +1538,8 @@ function ipam_setting_definitions(): array
             'default'     => false,
             'group'       => 'mfa',
             'description' => 'Allow users to enroll Email OTP as a second authentication factor. Requires SMTP to be configured.',
+            'sensitive'   => false,
+            'config_key'  => null,
         ],
         'mfa.require' => [
             'label'       => 'Require 2FA for all users',
@@ -1545,6 +1547,8 @@ function ipam_setting_definitions(): array
             'default'     => false,
             'group'       => 'mfa',
             'description' => 'Users without any 2FA method enrolled will be redirected to the Account page to enroll before accessing the application.',
+            'sensitive'   => false,
+            'config_key'  => null,
         ],
 
         // --- Password policy ---
