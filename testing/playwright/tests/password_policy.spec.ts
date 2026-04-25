@@ -10,7 +10,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { login, logout, ADMIN_USER, ADMIN_PASS, appUrl, fetchPost } from '../fixtures/ipam';
+import { login, logout, ADMIN_USER, ADMIN_PASS, appUrl, fetchPost, resetTestPassword } from '../fixtures/ipam';
 
 // ── Settings — password policy admin controls ─────────────────────────────────
 
@@ -69,8 +69,17 @@ test.describe('change_password.php — policy enforcement', () => {
         });
     });
 
+    // Known test password used by the compliant-password test.
+    // afterEach always tries to restore from this value so cleanup works
+    // even if the test body fails mid-way.
+    const TEST_PASS = 'ValidPassword1!';
+
     test.afterEach(async ({ page }) => {
-        // Restore defaults
+        // 1. Reset password directly in DB (bypasses policy; ADMIN_PASS='demo' is 4
+        //    chars and cannot be set via the form while min_length≥8 is enforced).
+        await resetTestPassword(ADMIN_USER, ADMIN_PASS);
+        // 2. Restore policy defaults (goto ensures a valid CSRF token for fetchPost).
+        await page.goto(appUrl('settings.php'));
         await fetchPost(page, appUrl('settings.php'), {
             group: 'password_policy',
             k_password_policy__min_length: '12',
@@ -100,16 +109,10 @@ test.describe('change_password.php — policy enforcement', () => {
     test('policy-compliant password is accepted', async ({ page }) => {
         await page.goto(appUrl('change_password.php'));
         await page.locator('input[name=old_password]').fill(ADMIN_PASS);
-        const newPass = 'ValidPassword1!';
-        await page.locator('input[name=new_password]').fill(newPass);
-        await page.locator('input[name=new_password2]').fill(newPass);
+        await page.locator('input[name=new_password]').fill(TEST_PASS);
+        await page.locator('input[name=new_password2]').fill(TEST_PASS);
         await page.locator('form button[type=submit]').first().click();
         await expect(page.locator('.success')).toBeVisible();
-        // Restore password
-        await fetchPost(page, appUrl('change_password.php'), {
-            old_password: newPass,
-            new_password: ADMIN_PASS,
-            new_password2: ADMIN_PASS,
-        });
+        // Restore is handled by afterEach after clearing the policy.
     });
 });
