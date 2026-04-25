@@ -71,6 +71,10 @@ CREATE TABLE IF NOT EXISTS users (
   failed_auth_count          INTEGER NOT NULL DEFAULT 0,
   locked_until               TIMESTAMP WITH TIME ZONE,
   lock_reason                TEXT,
+  email_otp_enabled            SMALLINT NOT NULL DEFAULT 0,
+  email_otp_hash               TEXT,
+  email_otp_expires_at         TIMESTAMP NULL,
+  email_otp_attempts           INTEGER NOT NULL DEFAULT 0,
   created_at          TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
   updated_at          TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
   -- No CHECK on role or theme: schema.sql (SQLite) has none, and
@@ -756,5 +760,7 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.6.0-rate-limit'),
   ('3.6.0-lockout'),
   ('3.7.0-backup-history'),
-  ('3.13.0-settings-cascade')
+  ('3.13.0-settings-cascade'),
+  ('3.14.0-mfa-settings'),
+  ('3.14.0-email-otp')
 ON CONFLICT (version) DO NOTHING;

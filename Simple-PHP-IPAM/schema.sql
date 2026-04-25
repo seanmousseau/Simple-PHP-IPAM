@@ -21,6 +21,10 @@ CREATE TABLE IF NOT EXISTS users (
   failed_auth_count        INTEGER NOT NULL DEFAULT 0,  -- v3.6.0: cumulative 2FA failure count
   locked_until             TEXT,                   -- v3.6.0: persistent lockout expiry datetime; NULL = not locked
   lock_reason              TEXT,                   -- v3.6.0: failed_login|failed_2fa|admin|NULL
+  email_otp_enabled        INTEGER NOT NULL DEFAULT 0,  -- v3.14.0: 1 when Email OTP 2FA is active
+  email_otp_hash           TEXT,                         -- v3.14.0: bcrypt hash of issued OTP code
+  email_otp_expires_at     TEXT,                         -- v3.14.0: ISO datetime expiry of current OTP
+  email_otp_attempts       INTEGER NOT NULL DEFAULT 0,  -- v3.14.0: failed attempts against current OTP token
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );

@@ -54,6 +54,10 @@ CREATE TABLE IF NOT EXISTS users (
   failed_auth_count          INT NOT NULL DEFAULT 0,
   locked_until               DATETIME,
   lock_reason                TEXT,
+  email_otp_enabled          TINYINT NOT NULL DEFAULT 0,
+  email_otp_hash             VARCHAR(255) NULL,
+  email_otp_expires_at       DATETIME NULL,
+  email_otp_attempts         INT NOT NULL DEFAULT 0,
   created_at          DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   updated_at          DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   UNIQUE KEY idx_users_oidc_sub (oidc_sub)
@@ -729,6 +733,8 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.6.0-rate-limit'),
   ('3.6.0-lockout'),
   ('3.7.0-backup-history'),
-  ('3.13.0-settings-cascade');
+  ('3.13.0-settings-cascade'),
+  ('3.14.0-mfa-settings'),
+  ('3.14.0-email-otp');
 
 SET FOREIGN_KEY_CHECKS = 1;

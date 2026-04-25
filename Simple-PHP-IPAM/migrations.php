@@ -2124,6 +2124,68 @@ function ipam_migrations(): array
                 }
             }
         },
+
+        // v3.14.0 #684: add email_otp_* columns to users table for Email OTP 2FA.
+        '3.14.0-email-otp' => static function (PDO $db): void {
+            $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+
+            if ($driver === 'sqlite') {
+                $cols = array_column(
+                    ($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('PRAGMA failed'))->fetchAll(),
+                    'name'
+                );
+                // PRAGMA table_info returns zero rows when the table does not exist;
+                // skip gracefully — this migration is a no-op on partial test DBs.
+                if ($cols === []) {
+                    return;
+                }
+                if (!in_array('email_otp_enabled', $cols, true)) {
+                    $db->exec("ALTER TABLE users ADD COLUMN email_otp_enabled  INTEGER NOT NULL DEFAULT 0");
+                }
+                if (!in_array('email_otp_hash', $cols, true)) {
+                    $db->exec("ALTER TABLE users ADD COLUMN email_otp_hash     TEXT");
+                }
+                if (!in_array('email_otp_expires_at', $cols, true)) {
+                    $db->exec("ALTER TABLE users ADD COLUMN email_otp_expires_at TEXT");
+                }
+                if (!in_array('email_otp_attempts', $cols, true)) {
+                    $db->exec("ALTER TABLE users ADD COLUMN email_otp_attempts INTEGER NOT NULL DEFAULT 0");
+                }
+            } elseif ($driver === 'mysql') {
+                $cols = array_column(
+                    ($db->query("SHOW COLUMNS FROM users") ?: throw new \RuntimeException('SHOW COLUMNS failed'))->fetchAll(),
+                    'Field'
+                );
+                if (!in_array('email_otp_enabled', $cols, true)) {
+                    $db->exec("ALTER TABLE users ADD COLUMN email_otp_enabled  TINYINT NOT NULL DEFAULT 0");
+                }
+                if (!in_array('email_otp_hash', $cols, true)) {
+                    $db->exec("ALTER TABLE users ADD COLUMN email_otp_hash     VARCHAR(255) NULL");
+                }
+                if (!in_array('email_otp_expires_at', $cols, true)) {
+                    $db->exec("ALTER TABLE users ADD COLUMN email_otp_expires_at DATETIME NULL");
+                }
+                if (!in_array('email_otp_attempts', $cols, true)) {
+                    $db->exec("ALTER TABLE users ADD COLUMN email_otp_attempts INT NOT NULL DEFAULT 0");
+                }
+            } elseif ($driver === 'pgsql') {
+                $existing = ($db->query(
+                    "SELECT column_name FROM information_schema.columns WHERE table_name='users'"
+                ) ?: throw new \RuntimeException('Column query failed'))->fetchAll(\PDO::FETCH_COLUMN);
+                if (!in_array('email_otp_enabled', $existing, true)) {
+                    $db->exec("ALTER TABLE users ADD COLUMN email_otp_enabled    SMALLINT NOT NULL DEFAULT 0");
+                }
+                if (!in_array('email_otp_hash', $existing, true)) {
+                    $db->exec("ALTER TABLE users ADD COLUMN email_otp_hash       TEXT");
+                }
+                if (!in_array('email_otp_expires_at', $existing, true)) {
+                    $db->exec("ALTER TABLE users ADD COLUMN email_otp_expires_at TIMESTAMP NULL");
+                }
+                if (!in_array('email_otp_attempts', $existing, true)) {
+                    $db->exec("ALTER TABLE users ADD COLUMN email_otp_attempts   INTEGER NOT NULL DEFAULT 0");
+                }
+            }
+        },
     ];
 }
 
