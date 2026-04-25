@@ -118,7 +118,13 @@ $userRow = $st->fetch();
 // SSO-only: unusable hash starts with '!' (password_verify always returns false)
 $isSsoOnly = $userRow && str_starts_with(to_str($userRow['password_hash']), '!');
 
-$pwPolicy  = (array)(($config ?? [])['password_policy'] ?? []);
+$pwPolicy = [
+    'min_length'        => to_int(ipam_setting('password_policy.min_length', 12)),
+    'require_uppercase' => (bool)ipam_setting('password_policy.require_uppercase', false),
+    'require_lowercase' => (bool)ipam_setting('password_policy.require_lowercase', false),
+    'require_number'    => (bool)ipam_setting('password_policy.require_number', false),
+    'require_symbol'    => (bool)ipam_setting('password_policy.require_symbol', false),
+];
 $isExpired = isset($_GET['expired']);
 
 if (!$isSsoOnly && $_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -195,7 +201,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && array_key_exists('new_email', $_POS
     exit;
 }
 
-$minLen = max(1, to_int($pwPolicy['min_length'] ?? 12));
+$minLen = max(1, $pwPolicy['min_length']);
 
 // Session activity: admins may view any user; others see only their own
 $viewUserId = $cur['id'];
