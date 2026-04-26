@@ -12,13 +12,11 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.14.0
+## What's new in v3.15.0
 
-**Email OTP 2FA** — a second authentication method using 6-digit codes sent via email. Enrollable on the Account page; admin-controlled via `mfa.email_otp_enabled`.
+**Passkeys / WebAuthn 2FA** — register FIDO2 passkeys (hardware security keys, Touch ID / Face ID / Windows Hello, or password-manager passkeys) on the Account page. At login the passkey challenge replaces TOTP and Email OTP for enrolled users. Phishing-resistant; no codes to type. Admin opt-in via `mfa.passkeys_enabled`.
 
-**MFA enforcement** — new `mfa.require` setting forces all users to enroll in at least one 2FA method (TOTP or Email OTP) before accessing the application.
-
-**Password policy enforcement** — password complexity and rotation settings in the admin Settings page now take effect in all password-change flows (was reading from config.php).
+**`mfa.require` now covers passkeys** — a registered passkey satisfies the MFA enforcement requirement alongside TOTP and Email OTP.
 
 [Full changelog →](CHANGELOG.md)
 
