@@ -120,7 +120,7 @@ test.describe('Passkeys', () => {
         await page.goto(pkUrl('change_password.php#passkeys'));
         await expect(page.locator('#btn-add-passkey')).toBeVisible();
 
-        page.on('dialog', dialog => dialog.accept('My Test Passkey'));
+        page.once('dialog', dialog => dialog.accept('My Test Passkey'));
         await page.locator('#btn-add-passkey').click();
 
         await expect(page.locator('#passkeys')).toContainText('My Test Passkey', { timeout: 30_000 });
@@ -134,7 +134,7 @@ test.describe('Passkeys', () => {
 
         await login(page, PASSKEY_USER, PASSKEY_PASS);
         await page.goto(pkUrl('change_password.php#passkeys'));
-        page.on('dialog', dialog => dialog.accept('Login Test Passkey'));
+        page.once('dialog', dialog => dialog.accept('Login Test Passkey'));
         await page.locator('#btn-add-passkey').click();
         await expect(page.locator('#passkeys')).toContainText('Login Test Passkey', { timeout: 30_000 });
         await logout(page);
@@ -157,7 +157,7 @@ test.describe('Passkeys', () => {
 
         await login(page, PASSKEY_USER, PASSKEY_PASS);
         await page.goto(pkUrl('change_password.php#passkeys'));
-        page.on('dialog', dialog => dialog.accept('Reject Test Passkey'));
+        page.once('dialog', dialog => dialog.accept('Reject Test Passkey'));
         await page.locator('#btn-add-passkey').click();
         await expect(page.locator('#passkeys')).toContainText('Reject Test Passkey', { timeout: 30_000 });
         await logout(page);
@@ -194,7 +194,7 @@ test.describe('Passkeys', () => {
 
         await login(page, PASSKEY_USER, PASSKEY_PASS);
         await page.goto(pkUrl('change_password.php#passkeys'));
-        page.on('dialog', dialog => dialog.accept('Count Test Passkey'));
+        page.once('dialog', dialog => dialog.accept('Count Test Passkey'));
         await page.locator('#btn-add-passkey').click();
         await expect(page.locator('#passkeys')).toContainText('Count Test Passkey', { timeout: 30_000 });
         await logout(page);
@@ -213,10 +213,11 @@ test.describe('Passkeys', () => {
 
         await login(page, PASSKEY_USER, PASSKEY_PASS);
         await page.goto(pkUrl('change_password.php#passkeys'));
-        page.on('dialog', dialog => dialog.accept('Deletable Passkey'));
+        page.once('dialog', dialog => dialog.accept('Deletable Passkey'));
         await page.locator('#btn-add-passkey').click();
         await expect(page.locator('#passkeys')).toContainText('Deletable Passkey', { timeout: 30_000 });
 
+        await page.locator('#passkeys input[name=current_password]').last().fill(PASSKEY_PASS);
         page.once('dialog', d => d.accept());
         await page.locator('#passkeys button[type=submit]').last().click();
         await expect(page.locator('#passkeys')).not.toContainText('Deletable Passkey', { timeout: 15_000 });
@@ -230,7 +231,7 @@ test.describe('Passkeys', () => {
 
         await login(page, PASSKEY_USER, PASSKEY_PASS);
         await page.goto(pkUrl('change_password.php#passkeys'));
-        page.on('dialog', dialog => dialog.accept('Admin Reset Passkey'));
+        page.once('dialog', dialog => dialog.accept('Admin Reset Passkey'));
         await page.locator('#btn-add-passkey').click();
         await expect(page.locator('#passkeys')).toContainText('Admin Reset Passkey', { timeout: 30_000 });
         await logout(page);
