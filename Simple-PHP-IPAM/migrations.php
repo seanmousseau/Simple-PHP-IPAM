@@ -2194,7 +2194,7 @@ function ipam_migrations(): array
 
         // 3.15.0-passkeys (#688): WebAuthn/Passkey credential store
         '3.15.0-passkeys' => static function (PDO $db): void {
-            $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driver = ipam_dialect()->driver_name();
             $tables = [];
             if ($driver === 'sqlite') {
                 foreach (($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll() as $t) {
@@ -2219,7 +2219,7 @@ function ipam_migrations(): array
                     CREATE TABLE webauthn_credentials (
                       id            INTEGER PRIMARY KEY AUTOINCREMENT,
                       user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                      credential_id BLOB    NOT NULL UNIQUE,
+                      credential_id BLOB    NOT NULL UNIQUE, -- PARAM_LOB required on all writes: see ipam_bind_binary()
                       public_key    TEXT    NOT NULL,
                       sign_count    INTEGER NOT NULL DEFAULT 0,
                       name          TEXT    NOT NULL DEFAULT 'Passkey',
@@ -2233,7 +2233,7 @@ function ipam_migrations(): array
                     CREATE TABLE webauthn_credentials (
                       id            INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
                       user_id       INT UNSIGNED NOT NULL,
-                      credential_id VARBINARY(255) NOT NULL,
+                      credential_id VARBINARY(255) NOT NULL, -- PARAM_LOB required on all writes: see ipam_bind_binary()
                       public_key    TEXT NOT NULL,
                       sign_count    INT UNSIGNED NOT NULL DEFAULT 0,
                       name          VARCHAR(255) NOT NULL DEFAULT 'Passkey',
@@ -2249,7 +2249,7 @@ function ipam_migrations(): array
                     CREATE TABLE webauthn_credentials (
                       id            SERIAL PRIMARY KEY,
                       user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                      credential_id BYTEA   NOT NULL UNIQUE,
+                      credential_id BYTEA   NOT NULL UNIQUE, -- PARAM_LOB required on all writes: see ipam_bind_binary()
                       public_key    TEXT    NOT NULL,
                       sign_count    INTEGER NOT NULL DEFAULT 0,
                       name          VARCHAR(255) NOT NULL DEFAULT 'Passkey',

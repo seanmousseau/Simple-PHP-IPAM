@@ -646,7 +646,7 @@ CREATE TABLE IF NOT EXISTS backup_history (
 CREATE TABLE IF NOT EXISTS webauthn_credentials (
   id            INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   user_id       INT UNSIGNED NOT NULL,
-  credential_id VARBINARY(255) NOT NULL,
+  credential_id VARBINARY(255) NOT NULL, -- PARAM_LOB required on all writes: see ipam_bind_binary()
   public_key    TEXT NOT NULL,
   sign_count    INT UNSIGNED NOT NULL DEFAULT 0,
   name          VARCHAR(255) NOT NULL DEFAULT 'Passkey',

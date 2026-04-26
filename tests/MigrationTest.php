@@ -859,6 +859,15 @@ class MigrationTest extends TestCase
         sort($cols);
         $expected = ['created_at', 'credential_id', 'id', 'last_used_at', 'name', 'public_key', 'sign_count', 'user_id'];
         $this->assertSame($expected, $cols);
+
+        // Idempotency: second run must not throw or alter the table structure.
+        apply_migrations($db);
+        $cols2 = [];
+        foreach ($db->query("PRAGMA table_info(webauthn_credentials)")->fetchAll() as $row) {
+            $cols2[] = $row['name'];
+        }
+        sort($cols2);
+        $this->assertSame($expected, $cols2);
     }
 
     // -------------------------------------------------------------------------

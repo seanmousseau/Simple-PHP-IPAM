@@ -663,7 +663,7 @@ CREATE INDEX IF NOT EXISTS idx_backup_history_started_at ON backup_history(start
 CREATE TABLE IF NOT EXISTS webauthn_credentials (
   id            SERIAL PRIMARY KEY,
   user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  credential_id BYTEA   NOT NULL UNIQUE,
+  credential_id BYTEA   NOT NULL UNIQUE, -- PARAM_LOB required on all writes: see ipam_bind_binary()
   public_key    TEXT    NOT NULL,
   sign_count    INTEGER NOT NULL DEFAULT 0,
   name          VARCHAR(255) NOT NULL DEFAULT 'Passkey',
