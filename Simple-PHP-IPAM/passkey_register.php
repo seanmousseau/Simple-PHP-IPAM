@@ -12,7 +12,6 @@ declare(strict_types=1);
 require __DIR__ . '/init.php';
 /** @var \PDO $db */
 /** @var IpamConfig $config */
-require_login();
 
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
@@ -22,6 +21,8 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     echo json_encode(['error' => 'method']);
     exit;
 }
+
+require_login();
 
 if (!hash_equals(to_str($_SESSION['csrf'] ?? ''), to_str($_POST['csrf'] ?? ''))) {
     http_response_code(403);
@@ -67,9 +68,25 @@ if ($action === 'get_challenge') {
         $excludeIds
     );
 
-    $_SESSION['passkey_reg_challenge'] = $webAuthn->getChallenge()->getBinaryString();
+    $challengeBin = $webAuthn->getChallenge()->getBinaryString();
+    $_SESSION['passkey_reg_challenge'] = $challengeBin;
 
-    echo json_encode(['ok' => true, 'options' => $createArgs]);
+    // Extract the publicKey sub-object and re-encode ByteBuffer fields as plain
+    // base64url so the browser's WebAuthn API can consume them directly (lbuchs
+    // ByteBuffer serialises to MIME RFC-2047 encoded-word format by default).
+    $pk            = $createArgs->publicKey;
+    $pk->challenge = rtrim(strtr(base64_encode($challengeBin), '+/', '-_'), '=');
+    $pk->user->id  = rtrim(strtr(base64_encode(\base64_encode((string)$userId)), '+/', '-_'), '=');
+    if (!empty($pk->excludeCredentials)) {
+        foreach ($pk->excludeCredentials as &$ec) {
+            if (isset($ec->id) && ($ec->id instanceof \lbuchs\WebAuthn\Binary\ByteBuffer)) {
+                $ec->id = rtrim(strtr(base64_encode($ec->id->getBinaryString()), '+/', '-_'), '=');
+            }
+        }
+        unset($ec);
+    }
+
+    echo json_encode(['ok' => true, 'options' => $pk]);
     exit;
 }
 
@@ -81,11 +98,12 @@ if ($action === 'complete') {
         exit;
     }
 
-    $clientDataJSON    = to_str($_POST['clientDataJSON']    ?? '');
-    $attestationObject = to_str($_POST['attestationObject'] ?? '');
-    $credentialName    = mb_substr(trim(to_str($_POST['name'] ?? '')), 0, 100) ?: 'Passkey';
+    // JS sends ArrayBuffer values as base64url; lbuchs processCreate expects raw binary.
+    $clientDataJSONRaw    = base64_decode(strtr(to_str($_POST['clientDataJSON']    ?? ''), '-_', '+/'));
+    $attestationObjectRaw = base64_decode(strtr(to_str($_POST['attestationObject'] ?? ''), '-_', '+/'));
+    $credentialName       = mb_substr(trim(to_str($_POST['name'] ?? '')), 0, 100) ?: 'Passkey';
 
-    if ($clientDataJSON === '' || $attestationObject === '') {
+    if ($clientDataJSONRaw === '' || $attestationObjectRaw === '') {
         http_response_code(400);
         echo json_encode(['error' => 'missing_fields']);
         exit;
@@ -95,8 +113,8 @@ if ($action === 'complete') {
         $challenge  = new \lbuchs\WebAuthn\Binary\ByteBuffer($_SESSION['passkey_reg_challenge']);
         $webAuthn   = ipam_passkey_webauthn();
         $credential = $webAuthn->processCreate(
-            $clientDataJSON,
-            $attestationObject,
+            $clientDataJSONRaw,
+            $attestationObjectRaw,
             $challenge,
             false,
             true,

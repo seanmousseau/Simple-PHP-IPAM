@@ -38,12 +38,13 @@ $error    = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_require();
 
-    $clientDataJSON    = to_str($_POST['clientDataJSON']    ?? '');
-    $authenticatorData = to_str($_POST['authenticatorData'] ?? '');
-    $signature         = to_str($_POST['signature']         ?? '');
-    $credentialId      = to_str($_POST['credentialId']      ?? '');
+    // JS sends ArrayBuffer values as base64url; lbuchs processGet expects raw binary.
+    $clientDataJSONRaw    = base64_decode(strtr(to_str($_POST['clientDataJSON']    ?? ''), '-_', '+/'));
+    $authenticatorDataRaw = base64_decode(strtr(to_str($_POST['authenticatorData'] ?? ''), '-_', '+/'));
+    $signatureRaw         = base64_decode(strtr(to_str($_POST['signature']         ?? ''), '-_', '+/'));
+    $credentialId         = to_str($_POST['credentialId'] ?? '');
 
-    if ($clientDataJSON === '' || $authenticatorData === '' || $signature === '' || $credentialId === '') {
+    if ($clientDataJSONRaw === '' || $authenticatorDataRaw === '' || $signatureRaw === '' || $credentialId === '') {
         $error = 'Incomplete passkey response. Please try again.';
     } else {
         $credIdBin = base64_decode(strtr($credentialId, '-_', '+/'));
@@ -61,9 +62,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $prevCount  = to_int($cred['sign_count']);
                 $webAuthn = ipam_passkey_webauthn();
                 $webAuthn->processGet(
-                    $clientDataJSON,
-                    $authenticatorData,
-                    $signature,
+                    $clientDataJSONRaw,
+                    $authenticatorDataRaw,
+                    $signatureRaw,
                     $publicKey,
                     $challenge,
                     $prevCount,
