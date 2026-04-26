@@ -4,7 +4,7 @@
  * Migrated from cdp_test.py section 3.
  */
 import { test, expect } from '@playwright/test';
-import { adminTest } from '../fixtures/ipam';
+import { adminTest, appUrl } from '../fixtures/ipam';
 
 // Pages that legitimately show a .danger element on normal load
 const ALLOWED_DANGER = new Set(['db_tools.php']);
