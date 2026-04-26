@@ -2191,6 +2191,75 @@ function ipam_migrations(): array
                 }
             }
         },
+
+        // 3.15.0-passkeys (#688): WebAuthn/Passkey credential store
+        '3.15.0-passkeys' => static function (PDO $db): void {
+            $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $tables = [];
+            if ($driver === 'sqlite') {
+                foreach (($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll() as $t) {
+                    $tables[] = $t['name'];
+                }
+            } elseif ($driver === 'mysql') {
+                foreach (($db->query("SHOW TABLES") ?: throw new \RuntimeException('Query failed'))->fetchAll(PDO::FETCH_COLUMN) as $t) {
+                    $tables[] = $t;
+                }
+            } else {
+                foreach (($db->query("SELECT tablename FROM pg_tables WHERE schemaname='public'") ?: throw new \RuntimeException('Query failed'))->fetchAll(PDO::FETCH_COLUMN) as $t) {
+                    $tables[] = $t;
+                }
+            }
+
+            if (in_array('webauthn_credentials', $tables, true)) {
+                return; // idempotent guard
+            }
+
+            if ($driver === 'sqlite') {
+                $db->exec("
+                    CREATE TABLE webauthn_credentials (
+                      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                      user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                      credential_id BLOB    NOT NULL UNIQUE,
+                      public_key    TEXT    NOT NULL,
+                      sign_count    INTEGER NOT NULL DEFAULT 0,
+                      name          TEXT    NOT NULL DEFAULT 'Passkey',
+                      created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+                      last_used_at  TEXT
+                    )
+                ");
+                $db->exec("CREATE INDEX idx_webauthn_credentials_user ON webauthn_credentials(user_id)");
+            } elseif ($driver === 'mysql') {
+                $db->exec("
+                    CREATE TABLE webauthn_credentials (
+                      id            INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                      user_id       INT UNSIGNED NOT NULL,
+                      credential_id VARBINARY(255) NOT NULL,
+                      public_key    TEXT NOT NULL,
+                      sign_count    INT UNSIGNED NOT NULL DEFAULT 0,
+                      name          VARCHAR(255) NOT NULL DEFAULT 'Passkey',
+                      created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      last_used_at  DATETIME,
+                      UNIQUE KEY uq_wac_cred_id (credential_id),
+                      CONSTRAINT fk_wac_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                      INDEX idx_webauthn_credentials_user (user_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                ");
+            } else {
+                $db->exec("
+                    CREATE TABLE webauthn_credentials (
+                      id            SERIAL PRIMARY KEY,
+                      user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                      credential_id BYTEA   NOT NULL UNIQUE,
+                      public_key    TEXT    NOT NULL,
+                      sign_count    INTEGER NOT NULL DEFAULT 0,
+                      name          VARCHAR(255) NOT NULL DEFAULT 'Passkey',
+                      created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      last_used_at  TIMESTAMP
+                    )
+                ");
+                $db->exec("CREATE INDEX idx_webauthn_credentials_user ON webauthn_credentials(user_id)");
+            }
+        },
     ];
 }
 

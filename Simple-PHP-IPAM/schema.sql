@@ -579,3 +579,16 @@ CREATE TABLE IF NOT EXISTS backup_history (
   created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_backup_history_started_at ON backup_history(started_at);
+
+-- v3.15.0 #688: WebAuthn/Passkey credentials
+CREATE TABLE IF NOT EXISTS webauthn_credentials (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  credential_id BLOB    NOT NULL UNIQUE,
+  public_key    TEXT    NOT NULL,
+  sign_count    INTEGER NOT NULL DEFAULT 0,
+  name          TEXT    NOT NULL DEFAULT 'Passkey',
+  created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+  last_used_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_webauthn_credentials_user ON webauthn_credentials(user_id);
