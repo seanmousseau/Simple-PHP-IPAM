@@ -665,7 +665,7 @@ function ipam_migrations(): array
             // correctly on MySQL and PostgreSQL too.
             try {
                 $db->query("SELECT 1 FROM settings LIMIT 1");
-            } catch (\PDOException $e) {
+            } catch (\PDOException) {
                 return; // settings table does not exist yet
             }
 
@@ -724,7 +724,7 @@ function ipam_migrations(): array
             // Look up exactly one active user with this email (case-insensitive).
             try {
                 $db->query("SELECT 1 FROM users LIMIT 1");
-            } catch (\PDOException $e) {
+            } catch (\PDOException) {
                 return; // users table does not exist yet
             }
 
