@@ -2387,3 +2387,123 @@ function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
   if (collapseAllBtn) { collapseAllBtn.addEventListener('click', function () { allGroupsAction(false); }); }
   if (expandAllBtn)   { expandAllBtn.addEventListener('click',   function () { allGroupsAction(true); }); }
 }());
+
+// ── Passkey verify page (#689) ──────────────────────────────────────────────
+(function () {
+  var btn = document.getElementById('btn-passkey');
+  if (!btn) return;
+
+  var status = document.getElementById('passkey-status');
+
+  function b64url(buf) {
+    return btoa(String.fromCharCode.apply(null, Array.prototype.slice.call(new Uint8Array(buf))))
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  }
+
+  function b64ToBytes(b64) {
+    return Uint8Array.from(atob(b64.replace(/-/g, '+').replace(/_/g, '/')), function (c) { return c.charCodeAt(0); });
+  }
+
+  function verify() {
+    var optsRaw = btn.getAttribute('data-assert-opts');
+    if (!optsRaw) { return; }
+    var opts;
+    try { opts = JSON.parse(optsRaw); } catch (e) { return; }
+
+    btn.disabled = true;
+    if (status) status.textContent = 'Waiting for authenticator…';
+
+    opts.challenge = b64ToBytes(opts.challenge);
+    if (opts.allowCredentials) {
+      opts.allowCredentials = opts.allowCredentials.map(function (c) {
+        return Object.assign({}, c, { id: b64ToBytes(c.id) });
+      });
+    }
+
+    navigator.credentials.get({ publicKey: opts }).then(function (cred) {
+      document.getElementById('f-clientDataJSON').value    = b64url(cred.response.clientDataJSON);
+      document.getElementById('f-authenticatorData').value = b64url(cred.response.authenticatorData);
+      document.getElementById('f-signature').value         = b64url(cred.response.signature);
+      document.getElementById('f-credentialId').value      = b64url(cred.rawId);
+      document.getElementById('passkey-form').submit();
+    }).catch(function () {
+      if (status) status.textContent = 'Passkey prompt cancelled or failed. Try again.';
+      btn.disabled = false;
+    });
+  }
+
+  btn.addEventListener('click', verify);
+  setTimeout(verify, 300);
+}());
+
+// ── Passkey registration (change_password.php #passkeys) (#688) ─────────────
+(function () {
+  var btn = document.getElementById('btn-add-passkey');
+  if (!btn) return;
+
+  var statusEl = document.getElementById('passkey-add-status');
+
+  function b64url(buf) {
+    return btoa(String.fromCharCode.apply(null, Array.prototype.slice.call(new Uint8Array(buf))))
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  }
+
+  function b64ToBytes(b64) {
+    return Uint8Array.from(atob(b64.replace(/-/g, '+').replace(/_/g, '/')), function (c) { return c.charCodeAt(0); });
+  }
+
+  function setStatus(msg) {
+    if (!statusEl) return;
+    statusEl.style.display = 'inline';
+    statusEl.textContent = msg;
+  }
+
+  function register() {
+    btn.disabled = true;
+    setStatus('Generating challenge…');
+
+    var csrf = (document.querySelector('[name=csrf]') || {}).value || '';
+
+    fetch('passkey_register.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ action: 'get_challenge', csrf: csrf })
+    }).then(function (r) { return r.json(); }).then(function (data) {
+      if (!data.ok) throw new Error(data.error || 'Challenge failed');
+
+      var opts = data.options;
+      opts.challenge = b64ToBytes(opts.challenge);
+      opts.user.id   = b64ToBytes(opts.user.id);
+      if (opts.excludeCredentials) {
+        opts.excludeCredentials = opts.excludeCredentials.map(function (c) {
+          return Object.assign({}, c, { id: b64ToBytes(c.id) });
+        });
+      }
+
+      setStatus('Waiting for authenticator…');
+      return navigator.credentials.create({ publicKey: opts });
+    }).then(function (cred) {
+      var credName = window.prompt('Name this passkey (optional):', 'Passkey') || 'Passkey';
+      return fetch('passkey_register.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          action:            'complete',
+          csrf:              (document.querySelector('[name=csrf]') || {}).value || '',
+          clientDataJSON:    b64url(cred.response.clientDataJSON),
+          attestationObject: b64url(cred.response.attestationObject),
+          name:              credName
+        })
+      }).then(function (r) { return r.json(); }).then(function (result) {
+        if (!result.ok) throw new Error(result.error || 'Registration failed');
+        setStatus('Passkey registered!');
+        setTimeout(function () { window.location.reload(); }, 800);
+      });
+    }).catch(function (err) {
+      setStatus('Registration failed: ' + err.message);
+      btn.disabled = false;
+    });
+  }
+
+  btn.addEventListener('click', register);
+}());

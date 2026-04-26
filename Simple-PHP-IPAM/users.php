@@ -241,6 +241,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
 
+    } elseif ($action === 'passkey_reset') {
+        $id = to_int($_POST['id'] ?? 0);
+        if ($id === $self['id']) {
+            flash_set('Use the Account page to manage your own passkeys.', 'warning');
+            header('Location: users.php');
+            exit;
+        }
+        if ($id > 0) {
+            $targetStmt = $db->prepare("SELECT username FROM users WHERE id = :id");
+            $targetStmt->execute([':id' => $id]);
+            /** @var array<string,mixed>|false $targetRow */
+            $targetRow = $targetStmt->fetch();
+            if ($targetRow) {
+                ipam_passkey_delete_all($db, $id);
+                audit($db, 'user.passkey_reset', 'user', $id, 'admin_reset by ' . to_str($self['username']));
+                flash_set('Passkeys cleared for ' . to_str($targetRow['username']), 'success');
+            }
+            header('Location: users.php');
+            exit;
+        }
+
     } elseif ($action === 'delete') {
         $id = to_int($_POST['id'] ?? 0);
         if ($id === $self['id']) {
@@ -280,6 +301,17 @@ $st = $db->prepare(
 $st->execute();
 /** @var list<array<string, mixed>> $users */
 $users = $st->fetchAll();
+
+$pkCounts = [];
+$userIds  = array_column($users, 'id');
+if ($userIds !== []) {
+    $in     = implode(',', array_fill(0, count($userIds), '?'));
+    $pkStmt = $db->prepare("SELECT user_id, COUNT(*) AS cnt FROM webauthn_credentials WHERE user_id IN ($in) GROUP BY user_id");
+    $pkStmt->execute($userIds);
+    foreach ($pkStmt->fetchAll() as $pkRow) {
+        $pkCounts[to_int($pkRow['user_id'])] = to_int($pkRow['cnt']);
+    }
+}
 
 $acctMaxAttempts = to_int(ipam_setting('security.account_lockout_max_attempts'));
 $acctLockoutSecs = to_int(ipam_setting('security.account_lockout_seconds'));
@@ -333,6 +365,7 @@ page_header('Users');
       <th>Active</th>
       <th>Locked</th>
       <th>2FA</th>
+      <th>Passkeys</th>
       <th>SSO</th>
       <?php echo sort_th('last_login', 'Last Login', $userSort['col'], $userSort['dir'], '?'); ?>
       <th>Created</th>
@@ -361,6 +394,7 @@ page_header('Users');
         <?php endif; ?>
       </td>
       <td><?= to_int($u['totp_enabled'] ?? 0) === 1 ? '<span class="badge badge--success">On</span>' : '<span class="muted">—</span>' ?></td>
+      <td><?php $pkN = $pkCounts[to_int($u['id'])] ?? 0; echo $pkN > 0 ? '<span class="badge badge--success">' . $pkN . '</span>' : '<span class="muted">—</span>'; ?></td>
       <td>
         <?php if ($u['oidc_sub'] !== null): ?>
           <span class="success" title="<?= e(to_str($u['oidc_sub'])) ?>">linked</span>
@@ -464,6 +498,18 @@ page_header('Users');
               <button type="submit" class="action-pill"
                 onclick="return confirm('Reset Email OTP for <?= e(to_str($u['username'])) ?>?')">
                 Reset Email OTP
+              </button>
+            </form>
+            <?php endif; ?>
+
+            <?php if (($pkCounts[to_int($u['id'])] ?? 0) > 0 && to_int($u['id']) !== $self['id']): ?>
+            <form method="post" action="users.php" class="row gap-6">
+              <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+              <input type="hidden" name="action" value="passkey_reset">
+              <input type="hidden" name="id"     value="<?= to_int($u['id']) ?>">
+              <button type="submit" class="action-pill button-danger"
+                onclick="return confirm('Delete ALL passkeys for <?= e(to_str($u['username'])) ?>?')">
+                <?= icon('key') ?> Reset Passkeys
               </button>
             </form>
             <?php endif; ?>

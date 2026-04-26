@@ -313,6 +313,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 
     exit;
 }
 
+// --- Passkeys: delete ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 'passkey_delete') {
+    csrf_require();
+    $pkDelStmt = $db->prepare("SELECT password_hash FROM users WHERE id = :id");
+    $pkDelStmt->execute([':id' => $cur['id']]);
+    /** @var array<string, mixed>|false $pkDelRow */
+    $pkDelRow   = $pkDelStmt->fetch();
+    $pkDelHash  = $pkDelRow ? to_str($pkDelRow['password_hash']) : '';
+    if (!str_starts_with($pkDelHash, '!')) {
+        $pkDelPw = to_str($_POST['current_password'] ?? '');
+        if ($pkDelPw === '' || !password_verify($pkDelPw, $pkDelHash)) {
+            flash_set('Current password is incorrect. Passkey was not removed.', 'danger');
+            header('Location: change_password.php#passkeys');
+            exit;
+        }
+    }
+    $credId = to_int($_POST['credential_id'] ?? 0);
+    if ($credId > 0 && ipam_passkey_delete($db, $credId, to_int($cur['id']))) {
+        audit($db, 'user.passkey_delete', 'user', to_int($cur['id']), "credential_id={$credId}");
+    }
+    header('Location: change_password.php#passkeys');
+    exit;
+}
+
 $actSt = $db->prepare("
     SELECT created_at, action, ip, user_agent
     FROM audit_log
@@ -324,6 +348,9 @@ $actSt = $db->prepare("
 $actSt->execute([':uid' => $viewUserId]);
 /** @var list<array<string, mixed>> $activityRows */
 $activityRows = $actSt->fetchAll();
+
+$passkeysEnabled = (bool)to_int(ipam_setting('mfa.passkeys_enabled', false));
+$passkeyCreds    = ipam_passkey_get_credentials($db, to_int($cur['id']));
 
 if (isset($_GET['mfa_required']) && !empty($_SESSION['mfa_enrollment_required'])) {
     flash_set('Your administrator requires 2FA. Please enroll in TOTP or Email OTP below.', 'warning');
@@ -544,6 +571,53 @@ $eoEnrolling  = !empty($_SESSION['email_otp_enrolling']);
       <p><button type="submit">Enable Email OTP</button></p>
     </form>
   <?php endif; ?>
+</div>
+
+<div class="card mt-16" id="passkeys">
+  <h2><?= icon('finger-print') ?> Passkeys</h2>
+  <?php if (!$passkeysEnabled): ?>
+    <p class="muted">Passkeys are not enabled on this server. Contact your administrator.</p>
+  <?php else: ?>
+    <?php if ($passkeyCreds !== []): ?>
+      <p>Your registered passkeys:</p>
+      <ul style="list-style:none;padding:0;margin:0 0 1rem">
+        <?php foreach ($passkeyCreds as $pk): ?>
+          <li style="display:flex;align-items:center;gap:.5rem;padding:.4rem 0;border-bottom:1px solid var(--border)">
+            <?= icon('key') ?>
+            <span style="flex:1"><strong><?= e(to_str($pk['name'])) ?></strong>
+              <span class="muted" style="font-size:.8rem">
+                — added <?= e(substr(to_str($pk['created_at']), 0, 10)) ?>
+                <?php if (to_str($pk['last_used_at']) !== ''): ?>
+                  · last used <?= e(substr(to_str($pk['last_used_at']), 0, 10)) ?>
+                <?php endif ?>
+              </span>
+            </span>
+            <form method="post" action="change_password.php#passkeys"
+                  onsubmit="return confirm('Remove this passkey?')">
+              <input type="hidden" name="csrf"          value="<?= e(csrf_token()) ?>">
+              <input type="hidden" name="action"        value="passkey_delete">
+              <input type="hidden" name="credential_id" value="<?= e((string)to_int($pk['id'])) ?>">
+              <?php if (!$isSsoOnly): ?>
+              <input type="password" name="current_password" placeholder="Current password"
+                     autocomplete="current-password" required
+                     style="margin-right:.4rem;width:auto">
+              <?php endif ?>
+              <button type="submit" class="action-pill button-danger"
+                      aria-label="Remove passkey <?= e(to_str($pk['name'])) ?>">
+                <?= icon('trash') ?> Remove
+              </button>
+            </form>
+          </li>
+        <?php endforeach ?>
+      </ul>
+    <?php else: ?>
+      <p class="muted">No passkeys registered yet.</p>
+    <?php endif ?>
+    <button type="button" id="btn-add-passkey" class="action-pill">
+      <?= icon('plus-circle') ?> Add Passkey
+    </button>
+    <span id="passkey-add-status" class="muted" style="font-size:.85rem;display:none;margin-left:.5rem"></span>
+  <?php endif ?>
 </div>
 
 <?php page_footer();

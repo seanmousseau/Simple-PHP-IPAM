@@ -4,7 +4,7 @@
  * Migrated from cdp_test.py section 3.
  */
 import { test, expect } from '@playwright/test';
-import { adminTest } from '../fixtures/ipam';
+import { adminTest, appUrl } from '../fixtures/ipam';
 
 // Pages that legitimately show a .danger element on normal load
 const ALLOWED_DANGER = new Set(['db_tools.php']);
@@ -161,5 +161,15 @@ test.describe('Mid-login challenge page guards', () => {
   test('email_otp_verify.php redirects to login without pending session', async ({ page }) => {
     await page.goto('email_otp_verify.php');
     await expect(page).toHaveURL(/login\.php/);
+  });
+
+  test('passkey_verify.php redirects to login without pending session', async ({ page }) => {
+    await page.goto('passkey_verify.php');
+    await expect(page).toHaveURL(/login\.php/);
+  });
+
+  test('passkey_register.php returns 405 on GET', async ({ page }) => {
+    const resp = await page.request.get(appUrl('passkey_register.php'));
+    expect(resp.status()).toBe(405);
   });
 });

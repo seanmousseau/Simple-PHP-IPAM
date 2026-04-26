@@ -33,7 +33,7 @@ Two cheap calls. The first loads your profile + preferences. The second returns 
 
 ## Project overview
 
-> **Current shipped version: v3.14.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v4.0.0 describes future work — **do not apply it to current v3.x code**. Current-state rules are the ones that do not cite a future version.
+> **Current shipped version: v3.15.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v4.0.0 describes future work — **do not apply it to current v3.x code**. Current-state rules are the ones that do not cite a future version.
 
 Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application built with **PHP 8.2+ and SQLite**. It has **no npm build step** — all CSS and JavaScript are vanilla. Starting in v2.9.0, the application will ship a small, carefully curated set of Composer-managed runtime dependencies bundled into the release tarball, so end users still deploy by extracting the tarball with no build step. The web root is `Simple-PHP-IPAM/` (the subdirectory, not the repo root).
 
@@ -79,6 +79,8 @@ Dev tooling at the repo root (not deployed): `composer.json`, `composer.lock`, `
 | `totp_enroll.php` | yes | any | TOTP 2FA enrollment wizard (3 steps: start → QR scan → backup codes); requires `app_secret` in config.php (v3.6.0) |
 | `totp_verify.php` | partial | any | Mid-login TOTP challenge; reached only via `$_SESSION['totp_pending_uid']` set by `login.php`; redirects to login if session key absent (v3.6.0) |
 | `email_otp_verify.php` | partial | any | Mid-login Email OTP challenge; reached only via `$_SESSION['email_otp_pending_uid']` set by `login.php`; redirects to login if session key absent (v3.14.0) |
+| `passkey_verify.php` | partial | any | Mid-login passkey (WebAuthn) challenge; reached only via `$_SESSION['passkey_pending_uid']` set by `login.php`; redirects to login if session key absent (v3.15.0) |
+| `passkey_register.php` | yes | any | AJAX POST endpoint for WebAuthn credential registration ceremony; returns 405 on GET (v3.15.0) |
 | `forgot_password.php` | — | — | Email-based password recovery: submit username/email, sends reset link |
 | `reset_password.php` | — | — | Consumes password reset token, shows new-password form |
 | `devices.php` | yes | admin | Device and interface management (CRUD, filter by type/site, interface sub-section) |
@@ -199,7 +201,7 @@ Migrations live in `migrations.php` as an associative array of version string �
 
 **When adding a new version:** add the migration closure, bump `version.php`, update `CHANGELOG.md` (keepachangelog format).
 
-> **Current shipped version: v3.14.0.** `Creating new data tables in post-v4.0.0 releases` is **forward-looking** (applies to any migration whose version sorts after v4.0.0, including v4.0.x patches) — ignore it for all current v3.x work. `Modifying the schema (multi-engine, from v2.9.0 onward)` and `Runtime dependencies` are **currently active** rules (apply to v2.9.0+ including the current v3.14.0).
+> **Current shipped version: v3.15.0.** `Creating new data tables in post-v4.0.0 releases` is **forward-looking** (applies to any migration whose version sorts after v4.0.0, including v4.0.x patches) — ignore it for all current v3.x work. `Modifying the schema (multi-engine, from v2.9.0 onward)` and `Runtime dependencies` are **currently active** rules (apply to v2.9.0+ including the current v3.15.0).
 
 ### Multi-tenancy model *(v4.0.0, opt-in)*
 
@@ -313,6 +315,7 @@ A new dep must meet **all** of the following criteria:
 |---|---|---|---|
 | phpmailer/phpmailer | ^6.9 | Direct SMTP delivery (replaces native `mail()` when smtp.enabled=true). Hand-rolling SMTP+TLS+AUTH is error-prone and a security risk; PHPMailer has >5 years of active maintenance, is used by WordPress/Joomla/Drupal, has zero transitive runtime deps, and is licensed LGPL-2.1-or-later with an explicit bundling exception (PHPMailer FAQ). | #415, v3.1.0 |
 | robthree/twofactorauth | ^2.1 | TOTP (RFC 6238) secret generation, code verification, otpauth:// URI for QR enrollment. Hand-rolling TOTP is error-prone (time-sync drift, HMAC, counter management); this library has zero transitive runtime deps, MIT license, pure PHP 8. | #418, v3.6.0 |
+| lbuchs/webauthn | ^2.1 | WebAuthn server-side challenge/response — attestation verification, assertion verification, COSE key parsing. Hand-rolling WebAuthn is a security risk (CBOR-encoded COSE keys, cryptographic signature chains, RP ID binding); `lbuchs/WebAuthn` has been actively maintained since 2019, is widely used in the PHP WebAuthn ecosystem, has zero transitive runtime deps, MIT license, pure PHP 8.0+. | #687, v3.15.0 |
 
 **Vendored frontend assets (assets/vendor/):**
 

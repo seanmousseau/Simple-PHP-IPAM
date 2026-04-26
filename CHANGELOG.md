@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.15.0] - 2026-04-26
+
+### Added
+- **Passkeys / WebAuthn 2FA**: users can register FIDO2 passkeys (hardware security keys, platform authenticators like Touch ID/Face ID/Windows Hello, or password-manager passkeys) on the Account page. At login, the passkey challenge replaces TOTP and Email OTP for enrolled users. Passkeys are phishing-resistant and require no codes. (#687, #688, #689)
+- `passkey_register.php`: AJAX endpoint for the WebAuthn registration ceremony (POST only, 405 on GET).
+- `passkey_verify.php`: mid-login passkey challenge page; redirects to `login.php` without a pending session.
+- `mfa.passkeys_enabled` admin setting to opt-in to passkeys per installation. Disabled by default.
+- Admin can view passkey count and reset all passkeys for a user from `users.php`.
+- `webauthn_credentials` schema migration stores registered public keys per user (multi-engine: SQLite BLOB, MySQL VARBINARY(255), PostgreSQL BYTEA).
+- Composer dependency: `lbuchs/webauthn ^2.2.0` (MIT, zero transitive deps, pure PHP 8.0+).
+
+### Changed
+- `mfa.require` enforcement now accepts a registered passkey as a satisfying 2FA factor alongside TOTP and Email OTP.
+
+### Testing
+- Playwright `passkeys.spec.ts`: 8 tests using Chromium's CDP `WebAuthn.addVirtualAuthenticator` API — register, login, invalid assertion rejection, admin passkey count, user delete, admin reset, disabled notice, Add Passkey button, mid-login redirect guards. (#718)
+
+---
+
 ## [3.14.0] - 2026-04-25
 
 ### Added
@@ -1085,6 +1104,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.15.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.14.0...v3.15.0
 [3.14.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.13.0...v3.14.0
 [3.13.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.12.0...v3.13.0
 [3.12.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.11.0...v3.12.0

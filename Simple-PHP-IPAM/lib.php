@@ -1558,6 +1558,15 @@ function ipam_setting_definitions(): array
             'sensitive'   => false,
             'config_key'  => null,
         ],
+        'mfa.passkeys_enabled' => [
+            'label'       => 'Enable Passkeys (WebAuthn)',
+            'type'        => 'bool',
+            'default'     => false,
+            'group'       => 'mfa',
+            'description' => 'Allow users to register hardware security keys or device biometrics (Face ID, Touch ID, Windows Hello) as a second authentication factor.',
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
 
         // --- Password policy ---
         'password_policy.min_length' => [
@@ -8207,6 +8216,120 @@ function ipam_email_otp_send(PDO $db, int $userId, string $code, int $ttlMinutes
     $masked = preg_replace('/^(.).*(@.+)$/', '$1***$2', $to) ?: '***';
     audit($db, 'mfa.otp.send', 'user', $userId, "to={$masked}");
     return true;
+}
+
+// ── Passkeys (WebAuthn) ───────────────────────────────────────────────────────
+
+function ipam_passkey_webauthn(string $rpName = 'Simple PHP IPAM'): \lbuchs\WebAuthn\WebAuthn
+{
+    // Load Composer autoloader if lbuchs\WebAuthn is not already available.
+    // Primary: vendor/ bundled inside the web root (release tarball installs).
+    // Fallback: vendor/ at the project root (dev/Docker setups, e.g. playwright matrix).
+    if (!class_exists('lbuchs\\WebAuthn\\WebAuthn')) {
+        $autoload = __DIR__ . '/vendor/autoload.php';
+        if (!file_exists($autoload)) {
+            $autoload = dirname(__DIR__) . '/vendor/autoload.php';
+        }
+        if (file_exists($autoload)) require_once $autoload;
+        // PHPStan can't see that require_once may have loaded the class.
+        // @phpstan-ignore-next-line booleanNot.alwaysTrue
+        if (!class_exists('lbuchs\\WebAuthn\\WebAuthn')) {
+            throw new \RuntimeException(
+                'Passkeys are unavailable because the WebAuthn library is not installed. Run "composer install" or deploy the release tarball which bundles vendor/.'
+            );
+        }
+    }
+    // Strip port from HTTP_HOST — rpId must be hostname only, no port.
+    $host = to_str($_SERVER['HTTP_HOST'] ?? 'localhost');
+    $rpId = (string)preg_replace('/:\d+$/', '', $host) ?: 'localhost';
+    // Strip brackets from IPv6 literals: "[::1]" → "::1", "[::1]:8443" → "::1".
+    $rpId = (string)preg_replace('/^\[(.+)\]$/', '$1', $rpId);
+    // IP addresses are not valid WebAuthn RP IDs per the W3C spec; only the
+    // loopback addresses are permitted (mapped to 'localhost' for dev/test).
+    // All other IP literals are rejected early — the browser would raise a
+    // SecurityError anyway, and this surfaces a clear config error.
+    if (filter_var($rpId, FILTER_VALIDATE_IP) !== false) {
+        if ($rpId === '127.0.0.1' || $rpId === '::1') {
+            $rpId = 'localhost';
+        } else {
+            throw new \RuntimeException(
+                'Passkeys require a hostname; IP addresses are not valid WebAuthn RP IDs.'
+            );
+        }
+    }
+    return new \lbuchs\WebAuthn\WebAuthn($rpName, $rpId, allowedFormats: ['none', 'packed', 'apple', 'fido-u2f', 'android-key', 'android-safetynet', 'tpm']);
+}
+
+/** @return list<array<string,mixed>> */
+function ipam_passkey_get_credentials(PDO $db, int $userId): array
+{
+    $st = $db->prepare(
+        "SELECT id, credential_id, public_key, sign_count, name, created_at, last_used_at
+           FROM webauthn_credentials
+          WHERE user_id = :uid
+          ORDER BY created_at"
+    );
+    $st->execute([':uid' => $userId]);
+    /** @var list<array<string,mixed>> $rows */
+    $rows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    return $rows;
+}
+
+function ipam_passkey_has_credentials(PDO $db, int $userId): bool
+{
+    $st = $db->prepare("SELECT COUNT(*) FROM webauthn_credentials WHERE user_id = :uid");
+    $st->execute([':uid' => $userId]);
+    return (int)$st->fetchColumn() > 0;
+}
+
+function ipam_passkey_count(PDO $db, int $userId): int
+{
+    $st = $db->prepare("SELECT COUNT(*) FROM webauthn_credentials WHERE user_id = :uid");
+    $st->execute([':uid' => $userId]);
+    return (int)$st->fetchColumn();
+}
+
+function ipam_passkey_delete(PDO $db, int $credentialDbId, int $userId): bool
+{
+    $st = $db->prepare("DELETE FROM webauthn_credentials WHERE id = :id AND user_id = :uid");
+    $st->execute([':id' => $credentialDbId, ':uid' => $userId]);
+    return $st->rowCount() > 0;
+}
+
+function ipam_passkey_delete_all(PDO $db, int $userId): void
+{
+    $db->prepare("DELETE FROM webauthn_credentials WHERE user_id = :uid")->execute([':uid' => $userId]);
+}
+
+/**
+ * Look up a credential by its binary credential_id; returns DB row or null.
+ * @return array<string,mixed>|null
+ */
+function ipam_passkey_find_by_credential_id(PDO $db, string $credentialIdBin): ?array
+{
+    $st = $db->prepare(
+        "SELECT id, user_id, credential_id, public_key, sign_count, name
+           FROM webauthn_credentials
+          WHERE credential_id = :cid"
+    );
+    $st->bindValue(':cid', $credentialIdBin, PDO::PARAM_LOB);
+    $st->execute();
+    /** @var array<string,mixed>|false $row */
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    return $row ?: null;
+}
+
+function ipam_passkey_update_sign_count(PDO $db, int $credentialDbId, int $signCount): void
+{
+    /** @var string $driver */
+    $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    $nowExpr = match($driver) {
+        'sqlite' => "datetime('now')",
+        'mysql'  => "UTC_TIMESTAMP()",
+        default  => "(NOW() AT TIME ZONE 'utc')",
+    };
+    $db->prepare("UPDATE webauthn_credentials SET sign_count = :sc, last_used_at = $nowExpr WHERE id = :id")
+       ->execute([':sc' => $signCount, ':id' => $credentialDbId]);
 }
 
 // ============================================================
