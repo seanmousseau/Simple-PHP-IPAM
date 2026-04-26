@@ -860,7 +860,9 @@ class MigrationTest extends TestCase
         $expected = ['created_at', 'credential_id', 'id', 'last_used_at', 'name', 'public_key', 'sign_count', 'user_id'];
         $this->assertSame($expected, $cols);
 
-        // Idempotency: second run must not throw or alter the table structure.
+        // Idempotency: delete the version stamp and re-run so the migration body
+        // itself executes again; CREATE TABLE IF NOT EXISTS must not throw.
+        $db->exec("DELETE FROM schema_migrations WHERE version = '3.15.0-passkeys'");
         apply_migrations($db);
         $cols2 = [];
         foreach ($db->query("PRAGMA table_info(webauthn_credentials)")->fetchAll() as $row) {

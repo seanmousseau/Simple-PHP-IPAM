@@ -8235,6 +8235,8 @@ function ipam_passkey_webauthn(string $rpName = 'Simple PHP IPAM'): \lbuchs\WebA
     // Strip port from HTTP_HOST — rpId must be hostname only, no port.
     $host = to_str($_SERVER['HTTP_HOST'] ?? 'localhost');
     $rpId = (string)preg_replace('/:\d+$/', '', $host) ?: 'localhost';
+    // Strip brackets from IPv6 literals: "[::1]" → "::1", "[::1]:8443" → "::1".
+    $rpId = (string)preg_replace('/^\[(.+)\]$/', '$1', $rpId);
     // IP addresses are not valid WebAuthn RP IDs per the browser spec.
     // Map loopback IPs to 'localhost' for dev/test environments.
     if ($rpId === '127.0.0.1' || $rpId === '::1') {

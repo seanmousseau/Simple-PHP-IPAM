@@ -21,7 +21,7 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 - `mfa.require` enforcement now accepts a registered passkey as a satisfying 2FA factor alongside TOTP and Email OTP.
 
 ### Testing
-- Playwright `passkeys.spec.ts`: 9 tests using Chromium's CDP `WebAuthn.addVirtualAuthenticator` API — register, login, invalid assertion rejection, admin passkey count, user delete, admin reset, disabled notice, Add Passkey button, mid-login redirect guards. (#718)
+- Playwright `passkeys.spec.ts`: 8 tests using Chromium's CDP `WebAuthn.addVirtualAuthenticator` API — register, login, invalid assertion rejection, admin passkey count, user delete, admin reset, disabled notice, Add Passkey button, mid-login redirect guards. (#718)
 
 ---
 

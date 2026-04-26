@@ -86,6 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit;
 
             } catch (\lbuchs\WebAuthn\WebAuthnException $e) {
+                unset($_SESSION['passkey_challenge'], $_SESSION['passkey_assertion_options']);
                 ipam_record_2fa_failure($db, $uid, $config);
                 audit($db, 'auth.passkey_fail', 'user', $uid, substr($e->getMessage(), 0, 200));
                 $error = 'Passkey verification failed. Please try again.';

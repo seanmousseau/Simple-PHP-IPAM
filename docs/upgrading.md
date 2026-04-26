@@ -105,8 +105,8 @@ The backup is left in place after a successful upgrade. You can remove it manual
 ### v3.15.0
 
 - No manual upgrade steps required.
-- The `3.15.0-webauthn` migration creates the `webauthn_credentials` table (passkey storage). This is non-destructive and idempotent.
-- **New pages:** `passkey_register.php` (AJAX endpoint, POST only), `passkey_verify.php` (mid-login passkey challenge). Both are only reachable via the normal login flow; direct navigation redirects to `login.php`.
+- The `3.15.0-passkeys` migration creates the `webauthn_credentials` table (passkey storage). This is non-destructive and idempotent.
+- **New pages:** `passkey_verify.php` (mid-login passkey challenge; direct navigation redirects to `login.php`), `passkey_register.php` (AJAX registration endpoint, POST only; requires an active session).
 - **New settings key:** `mfa.passkeys_enabled` (default `false`). Passkeys are opt-in — existing installs are unaffected. Enable via Admin → Settings → Multi-Factor Auth.
 - **`mfa.require` now includes passkeys:** when enforcement is enabled, a registered passkey satisfies the requirement alongside TOTP and Email OTP.
 - **New Composer dependency:** `lbuchs/webauthn ^2.2.0` (WebAuthn server-side library, MIT, zero transitive deps). Included in the release tarball under `vendor/`. No action required for tarball-based installs. Source installs must run `composer install --no-dev` after upgrade.

@@ -24,11 +24,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 require_login();
 
-if (!hash_equals(to_str($_SESSION['csrf'] ?? ''), to_str($_POST['csrf'] ?? ''))) {
-    http_response_code(403);
-    echo json_encode(['error' => 'csrf']);
-    exit;
-}
+csrf_require();
 
 if (!(bool)to_int(ipam_setting('mfa.passkeys_enabled', false))) {
     http_response_code(403);
