@@ -72,6 +72,8 @@ async function deleteAllPasskeys(page: import('@playwright/test').Page) {
     await login(page, ADMIN_USER, ADMIN_PASS);
     await page.goto(pkUrl('users.php'));
     const userRow = page.locator('tr', { hasText: PASSKEY_USER });
+    // Actions are inside a <details> — expand it so buttons become visible.
+    await userRow.locator('details').click();
     const resetBtn = userRow.locator('button', { hasText: 'Reset Passkeys' });
     if (await resetBtn.isVisible()) {
         page.once('dialog', d => d.accept());
@@ -136,6 +138,7 @@ test.describe('Passkeys', () => {
         page.on('dialog', dialog => dialog.accept('Login Test Passkey'));
         await page.locator('#btn-add-passkey').click();
         await page.waitForURL(/change_password\.php/, { timeout: 30_000 });
+        await expect(page.locator('#passkeys')).toContainText('Login Test Passkey');
         await logout(page);
 
         await page.goto(pkUrl('login.php'));
@@ -146,6 +149,7 @@ test.describe('Passkeys', () => {
         // Virtual authenticator responds automatically
         await page.waitForURL(/dashboard\.php/, { timeout: 30_000 });
         await expect(page).toHaveURL(/dashboard\.php/);
+        await logout(page);
 
         await removeVirtualAuth(page, authId);
     });
@@ -158,6 +162,7 @@ test.describe('Passkeys', () => {
         page.on('dialog', dialog => dialog.accept('Reject Test Passkey'));
         await page.locator('#btn-add-passkey').click();
         await page.waitForURL(/change_password\.php/, { timeout: 30_000 });
+        await expect(page.locator('#passkeys')).toContainText('Reject Test Passkey');
         await logout(page);
         await removeVirtualAuth(page, authId);
 
@@ -195,6 +200,7 @@ test.describe('Passkeys', () => {
         page.on('dialog', dialog => dialog.accept('Count Test Passkey'));
         await page.locator('#btn-add-passkey').click();
         await page.waitForURL(/change_password\.php/, { timeout: 30_000 });
+        await expect(page.locator('#passkeys')).toContainText('Count Test Passkey');
         await logout(page);
 
         await login(page, ADMIN_USER, ADMIN_PASS);
@@ -233,11 +239,13 @@ test.describe('Passkeys', () => {
         page.on('dialog', dialog => dialog.accept('Admin Reset Passkey'));
         await page.locator('#btn-add-passkey').click();
         await page.waitForURL(/change_password\.php/, { timeout: 30_000 });
+        await expect(page.locator('#passkeys')).toContainText('Admin Reset Passkey');
         await logout(page);
 
         await login(page, ADMIN_USER, ADMIN_PASS);
         await page.goto(pkUrl('users.php'));
         const userRow = page.locator('tr', { hasText: PASSKEY_USER });
+        await userRow.locator('details').click();
         const resetBtn = userRow.locator('button', { hasText: 'Reset Passkeys' });
         await expect(resetBtn).toBeVisible();
         page.once('dialog', d => d.accept());

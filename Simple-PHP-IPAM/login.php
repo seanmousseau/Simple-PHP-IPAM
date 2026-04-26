@@ -165,11 +165,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         },
                         $creds
                     );
-                    $webAuthn   = ipam_passkey_webauthn();
-                    $assertArgs = $webAuthn->getGetArgs($credentialIds, 60);
+                    $webAuthn      = ipam_passkey_webauthn();
+                    $assertArgs    = $webAuthn->getGetArgs($credentialIds, 60);
+                    $challengeBin  = $webAuthn->getChallenge()->getBinaryString();
+                    // Extract publicKey sub-object and convert ByteBuffer fields to
+                    // base64url — same pattern as passkey_register.php get_challenge.
+                    $pk            = $assertArgs->publicKey;
+                    $pk->challenge = rtrim(strtr(base64_encode($challengeBin), '+/', '-_'), '=');
+                    if (!empty($pk->allowCredentials)) {
+                        foreach ($pk->allowCredentials as &$ac) {
+                            if (isset($ac->id) && ($ac->id instanceof \lbuchs\WebAuthn\Binary\ByteBuffer)) {
+                                $ac->id = rtrim(strtr(base64_encode($ac->id->getBinaryString()), '+/', '-_'), '=');
+                            }
+                        }
+                        unset($ac);
+                    }
                     $_SESSION['passkey_pending_uid']       = to_int($user['id']);
-                    $_SESSION['passkey_challenge']         = $webAuthn->getChallenge()->getBinaryString();
-                    $_SESSION['passkey_assertion_options'] = json_encode($assertArgs);
+                    $_SESSION['passkey_challenge']         = $challengeBin;
+                    $_SESSION['passkey_assertion_options'] = json_encode($pk);
                     audit($db, 'auth.passkey_challenge', 'user', to_int($user['id']), 'passkey challenge issued');
                     header('Location: passkey_verify.php');
                     exit;

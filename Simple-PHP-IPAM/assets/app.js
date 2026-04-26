@@ -2497,7 +2497,7 @@ function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
       }).then(function (r) { return r.json(); }).then(function (result) {
         if (!result.ok) throw new Error(result.error || 'Registration failed');
         setStatus('Passkey registered!');
-        setTimeout(function () { window.location.href = 'change_password.php#passkeys'; }, 800);
+        setTimeout(function () { window.location.reload(); }, 800);
       });
     }).catch(function (err) {
       setStatus('Registration failed: ' + err.message);
