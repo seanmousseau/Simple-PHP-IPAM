@@ -8231,6 +8231,11 @@ function ipam_passkey_webauthn(string $rpName = 'Simple PHP IPAM'): \lbuchs\WebA
             $autoload = dirname(__DIR__) . '/vendor/autoload.php';
         }
         if (file_exists($autoload)) require_once $autoload;
+        if (!class_exists('lbuchs\\WebAuthn\\WebAuthn')) {
+            throw new \RuntimeException(
+                'Passkeys are unavailable because the WebAuthn library is not installed. Run "composer install" or deploy the release tarball which bundles vendor/.'
+            );
+        }
     }
     // Strip port from HTTP_HOST — rpId must be hostname only, no port.
     $host = to_str($_SERVER['HTTP_HOST'] ?? 'localhost');
