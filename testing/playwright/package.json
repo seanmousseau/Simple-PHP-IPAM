@@ -11,6 +11,6 @@
     "@axe-core/playwright": "^4.11.2",
     "@playwright/test": "^1.52.0",
     "@types/node": "^25.6.0",
-    "otpauth": "^9.3.6"
+    "otpauth": "^9.5.1"
   }
 }
