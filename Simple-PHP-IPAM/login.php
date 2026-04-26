@@ -174,11 +174,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     header('Location: passkey_verify.php');
                     exit;
                 }
-                $passkeysSatisfy = $passkeysEnabled && ipam_passkey_has_credentials($db, to_int($user['id']));
                 if ((bool)to_int(ipam_setting('mfa.require', false)) &&
                     to_int($user['totp_enabled']      ?? 0) === 0 &&
-                    to_int($user['email_otp_enabled'] ?? 0) === 0 &&
-                    !$passkeysSatisfy) {
+                    to_int($user['email_otp_enabled'] ?? 0) === 0) {
                     login_user(to_int($user['id']), to_str($user['username']), to_str($user['role']));
                     $db->prepare("UPDATE users SET last_login_at=" . ipam_dialect()->now() . " WHERE id=:id")
                        ->execute([':id' => to_int($user['id'])]);
