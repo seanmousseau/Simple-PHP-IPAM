@@ -8237,10 +8237,18 @@ function ipam_passkey_webauthn(string $rpName = 'Simple PHP IPAM'): \lbuchs\WebA
     $rpId = (string)preg_replace('/:\d+$/', '', $host) ?: 'localhost';
     // Strip brackets from IPv6 literals: "[::1]" → "::1", "[::1]:8443" → "::1".
     $rpId = (string)preg_replace('/^\[(.+)\]$/', '$1', $rpId);
-    // IP addresses are not valid WebAuthn RP IDs per the browser spec.
-    // Map loopback IPs to 'localhost' for dev/test environments.
-    if ($rpId === '127.0.0.1' || $rpId === '::1') {
-        $rpId = 'localhost';
+    // IP addresses are not valid WebAuthn RP IDs per the W3C spec; only the
+    // loopback addresses are permitted (mapped to 'localhost' for dev/test).
+    // All other IP literals are rejected early — the browser would raise a
+    // SecurityError anyway, and this surfaces a clear config error.
+    if (filter_var($rpId, FILTER_VALIDATE_IP) !== false) {
+        if ($rpId === '127.0.0.1' || $rpId === '::1') {
+            $rpId = 'localhost';
+        } else {
+            throw new \RuntimeException(
+                'Passkeys require a hostname; IP addresses are not valid WebAuthn RP IDs.'
+            );
+        }
     }
     return new \lbuchs\WebAuthn\WebAuthn($rpName, $rpId, allowedFormats: ['none', 'packed', 'apple', 'fido-u2f', 'android-key', 'android-safetynet', 'tpm']);
 }

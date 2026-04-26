@@ -38,6 +38,22 @@ $error    = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_require();
 
+    // Consume the challenge immediately — single-use regardless of outcome.
+    $challengeBin = to_str($_SESSION['passkey_challenge']);
+    $issuedAt     = to_int($_SESSION['passkey_challenge_issued_at'] ?? 0);
+    unset(
+        $_SESSION['passkey_pending_uid'],
+        $_SESSION['passkey_challenge'],
+        $_SESSION['passkey_assertion_options'],
+        $_SESSION['passkey_challenge_issued_at']
+    );
+
+    // Reject expired challenges (60-second TTL).
+    if ($challengeBin === '' || $issuedAt < (time() - 60)) {
+        header('Location: login.php');
+        exit;
+    }
+
     // JS sends ArrayBuffer values as base64url; lbuchs processGet expects raw binary.
     $clientDataJSONRaw    = base64_decode(strtr(to_str($_POST['clientDataJSON']    ?? ''), '-_', '+/'));
     $authenticatorDataRaw = base64_decode(strtr(to_str($_POST['authenticatorData'] ?? ''), '-_', '+/'));
@@ -57,9 +73,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             try {
                 // Load lbuchs autoloader before any ByteBuffer / WebAuthn usage.
                 $webAuthn   = ipam_passkey_webauthn();
-                $challenge  = new \lbuchs\WebAuthn\Binary\ByteBuffer(
-                    to_str($_SESSION['passkey_challenge'])
-                );
+                $challenge  = new \lbuchs\WebAuthn\Binary\ByteBuffer($challengeBin);
                 $publicKey  = to_str($cred['public_key']);
                 $prevCount  = to_int($cred['sign_count']);
                 $webAuthn->processGet(
@@ -73,7 +87,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     true
                 );
 
-                unset($_SESSION['passkey_pending_uid'], $_SESSION['passkey_challenge'], $_SESSION['passkey_assertion_options']);
                 $newSignCount = $webAuthn->getSignatureCounter() ?? $prevCount;
                 ipam_passkey_update_sign_count($db, to_int($cred['id']), $newSignCount);
                 login_user($uid, $username, $role, $db);
@@ -86,7 +99,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit;
 
             } catch (\lbuchs\WebAuthn\WebAuthnException $e) {
-                unset($_SESSION['passkey_challenge'], $_SESSION['passkey_assertion_options']);
                 ipam_record_2fa_failure($db, $uid, $config);
                 audit($db, 'auth.passkey_fail', 'user', $uid, substr($e->getMessage(), 0, 200));
                 $error = 'Passkey verification failed. Please try again.';

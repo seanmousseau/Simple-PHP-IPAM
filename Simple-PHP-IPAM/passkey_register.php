@@ -73,7 +73,9 @@ if ($action === 'get_challenge') {
     // ByteBuffer serialises to MIME RFC-2047 encoded-word format by default).
     $pk            = $createArgs->publicKey;
     $pk->challenge = rtrim(strtr(base64_encode($challengeBin), '+/', '-_'), '=');
-    $pk->user->id  = rtrim(strtr(base64_encode(\base64_encode((string)$userId)), '+/', '-_'), '=');
+    if ($pk->user->id instanceof \lbuchs\WebAuthn\Binary\ByteBuffer) {
+        $pk->user->id = rtrim(strtr(base64_encode($pk->user->id->getBinaryString()), '+/', '-_'), '=');
+    }
     if (!empty($pk->excludeCredentials)) {
         foreach ($pk->excludeCredentials as &$ec) {
             if (isset($ec->id) && ($ec->id instanceof \lbuchs\WebAuthn\Binary\ByteBuffer)) {

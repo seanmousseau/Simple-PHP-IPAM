@@ -180,9 +180,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         }
                         unset($ac);
                     }
-                    $_SESSION['passkey_pending_uid']       = to_int($user['id']);
-                    $_SESSION['passkey_challenge']         = $challengeBin;
-                    $_SESSION['passkey_assertion_options'] = json_encode($pk);
+                    $_SESSION['passkey_pending_uid']          = to_int($user['id']);
+                    $_SESSION['passkey_challenge']            = $challengeBin;
+                    $_SESSION['passkey_challenge_issued_at']  = time();
+                    $_SESSION['passkey_assertion_options']    = json_encode($pk);
                     audit($db, 'auth.passkey_challenge', 'user', to_int($user['id']), 'passkey challenge issued');
                     header('Location: passkey_verify.php');
                     exit;

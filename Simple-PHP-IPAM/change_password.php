@@ -315,6 +315,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 
 
 // --- Passkeys: delete ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 'passkey_delete') {
+    csrf_require();
+    $pkDelStmt = $db->prepare("SELECT password_hash FROM users WHERE id = :id");
+    $pkDelStmt->execute([':id' => $cur['id']]);
+    /** @var array<string, mixed>|false $pkDelRow */
+    $pkDelRow   = $pkDelStmt->fetch();
+    $pkDelHash  = $pkDelRow ? to_str($pkDelRow['password_hash']) : '';
+    if (!str_starts_with($pkDelHash, '!')) {
+        $pkDelPw = to_str($_POST['current_password'] ?? '');
+        if ($pkDelPw === '' || !password_verify($pkDelPw, $pkDelHash)) {
+            flash_set('Current password is incorrect. Passkey was not removed.', 'danger');
+            header('Location: change_password.php#passkeys');
+            exit;
+        }
+    }
     $credId = to_int($_POST['credential_id'] ?? 0);
     if ($credId > 0 && ipam_passkey_delete($db, $credId, to_int($cur['id']))) {
         audit($db, 'user.passkey_delete', 'user', to_int($cur['id']), "credential_id={$credId}");
@@ -583,6 +597,11 @@ $eoEnrolling  = !empty($_SESSION['email_otp_enrolling']);
               <input type="hidden" name="csrf"          value="<?= e(csrf_token()) ?>">
               <input type="hidden" name="action"        value="passkey_delete">
               <input type="hidden" name="credential_id" value="<?= e((string)to_int($pk['id'])) ?>">
+              <?php if (!$isSsoOnly): ?>
+              <input type="password" name="current_password" placeholder="Current password"
+                     autocomplete="current-password" required
+                     style="margin-right:.4rem;width:auto">
+              <?php endif ?>
               <button type="submit" class="action-pill button-danger"
                       aria-label="Remove passkey <?= e(to_str($pk['name'])) ?>">
                 <?= icon('trash') ?> Remove

@@ -2194,8 +2194,10 @@ function ipam_migrations(): array
 
         // 3.15.0-passkeys (#688): WebAuthn/Passkey credential store
         '3.15.0-passkeys' => static function (PDO $db): void {
-            $driver = ipam_dialect()->driver_name();
-            $tables = [];
+            $dialect = ipam_dialect();
+            $driver  = $dialect->driver_name();
+            $nowDflt = '(' . $dialect->now() . ')';
+            $tables  = [];
             if ($driver === 'sqlite') {
                 foreach (($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll() as $t) {
                     $tables[] = $t['name'];
@@ -2223,7 +2225,7 @@ function ipam_migrations(): array
                       public_key    TEXT    NOT NULL,
                       sign_count    INTEGER NOT NULL DEFAULT 0,
                       name          TEXT    NOT NULL DEFAULT 'Passkey',
-                      created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
+                      created_at    TEXT    NOT NULL DEFAULT {$nowDflt},
                       last_used_at  TEXT
                     )
                 ");
@@ -2237,7 +2239,7 @@ function ipam_migrations(): array
                       public_key    TEXT NOT NULL,
                       sign_count    INT UNSIGNED NOT NULL DEFAULT 0,
                       name          VARCHAR(255) NOT NULL DEFAULT 'Passkey',
-                      created_at    DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
+                      created_at    DATETIME NOT NULL DEFAULT {$nowDflt},
                       last_used_at  DATETIME,
                       UNIQUE KEY uq_wac_cred_id (credential_id),
                       CONSTRAINT fk_wac_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -2253,7 +2255,7 @@ function ipam_migrations(): array
                       public_key    TEXT    NOT NULL,
                       sign_count    INTEGER NOT NULL DEFAULT 0,
                       name          VARCHAR(255) NOT NULL DEFAULT 'Passkey',
-                      created_at    TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
+                      created_at    TIMESTAMP NOT NULL DEFAULT {$nowDflt},
                       last_used_at  TIMESTAMP
                     )
                 ");
