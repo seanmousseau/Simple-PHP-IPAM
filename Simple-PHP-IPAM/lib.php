@@ -8231,6 +8231,8 @@ function ipam_passkey_webauthn(string $rpName = 'Simple PHP IPAM'): \lbuchs\WebA
             $autoload = dirname(__DIR__) . '/vendor/autoload.php';
         }
         if (file_exists($autoload)) require_once $autoload;
+        // PHPStan can't see that require_once may have loaded the class.
+        // @phpstan-ignore-next-line booleanNot.alwaysTrue
         if (!class_exists('lbuchs\\WebAuthn\\WebAuthn')) {
             throw new \RuntimeException(
                 'Passkeys are unavailable because the WebAuthn library is not installed. Run "composer install" or deploy the release tarball which bundles vendor/.'
