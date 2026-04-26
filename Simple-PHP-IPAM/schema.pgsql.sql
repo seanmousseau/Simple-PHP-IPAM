@@ -667,7 +667,7 @@ CREATE TABLE IF NOT EXISTS webauthn_credentials (
   public_key    TEXT    NOT NULL,
   sign_count    INTEGER NOT NULL DEFAULT 0,
   name          VARCHAR(255) NOT NULL DEFAULT 'Passkey',
-  created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at    TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
   last_used_at  TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_webauthn_credentials_user ON webauthn_credentials(user_id);

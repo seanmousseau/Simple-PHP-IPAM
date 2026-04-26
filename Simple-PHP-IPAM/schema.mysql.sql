@@ -650,7 +650,7 @@ CREATE TABLE IF NOT EXISTS webauthn_credentials (
   public_key    TEXT NOT NULL,
   sign_count    INT UNSIGNED NOT NULL DEFAULT 0,
   name          VARCHAR(255) NOT NULL DEFAULT 'Passkey',
-  created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at    DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   last_used_at  DATETIME,
   UNIQUE KEY uq_wac_cred_id (credential_id),
   CONSTRAINT fk_wac_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,

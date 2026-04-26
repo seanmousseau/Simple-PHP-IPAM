@@ -8242,7 +8242,7 @@ function ipam_passkey_webauthn(string $rpName = 'Simple PHP IPAM'): \lbuchs\WebA
     if ($rpId === '127.0.0.1' || $rpId === '::1') {
         $rpId = 'localhost';
     }
-    return new \lbuchs\WebAuthn\WebAuthn($rpName, $rpId, allowedFormats: ['none', 'packed', 'apple']);
+    return new \lbuchs\WebAuthn\WebAuthn($rpName, $rpId, allowedFormats: ['none', 'packed', 'apple', 'fido-u2f', 'android-key', 'android-safetynet', 'tpm']);
 }
 
 /** @return list<array<string,mixed>> */
@@ -8306,7 +8306,13 @@ function ipam_passkey_find_by_credential_id(PDO $db, string $credentialIdBin): ?
 
 function ipam_passkey_update_sign_count(PDO $db, int $credentialDbId, int $signCount): void
 {
-    $nowExpr = $db->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite' ? "datetime('now')" : "NOW()";
+    /** @var string $driver */
+    $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    $nowExpr = match($driver) {
+        'sqlite' => "datetime('now')",
+        'mysql'  => "UTC_TIMESTAMP()",
+        default  => "(NOW() AT TIME ZONE 'utc')",
+    };
     $db->prepare("UPDATE webauthn_credentials SET sign_count = :sc, last_used_at = $nowExpr WHERE id = :id")
        ->execute([':sc' => $signCount, ':id' => $credentialDbId]);
 }

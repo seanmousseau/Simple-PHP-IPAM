@@ -2237,7 +2237,7 @@ function ipam_migrations(): array
                       public_key    TEXT NOT NULL,
                       sign_count    INT UNSIGNED NOT NULL DEFAULT 0,
                       name          VARCHAR(255) NOT NULL DEFAULT 'Passkey',
-                      created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      created_at    DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
                       last_used_at  DATETIME,
                       UNIQUE KEY uq_wac_cred_id (credential_id),
                       CONSTRAINT fk_wac_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -2253,7 +2253,7 @@ function ipam_migrations(): array
                       public_key    TEXT    NOT NULL,
                       sign_count    INTEGER NOT NULL DEFAULT 0,
                       name          VARCHAR(255) NOT NULL DEFAULT 'Passkey',
-                      created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      created_at    TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
                       last_used_at  TIMESTAMP
                     )
                 ");
