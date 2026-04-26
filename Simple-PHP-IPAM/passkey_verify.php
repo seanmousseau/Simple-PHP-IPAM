@@ -55,12 +55,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = 'Passkey not recognised. Please try again.';
         } else {
             try {
-                $challenge = new \lbuchs\WebAuthn\Binary\ByteBuffer(
+                // Load lbuchs autoloader before any ByteBuffer / WebAuthn usage.
+                $webAuthn   = ipam_passkey_webauthn();
+                $challenge  = new \lbuchs\WebAuthn\Binary\ByteBuffer(
                     to_str($_SESSION['passkey_challenge'])
                 );
                 $publicKey  = to_str($cred['public_key']);
                 $prevCount  = to_int($cred['sign_count']);
-                $webAuthn = ipam_passkey_webauthn();
                 $webAuthn->processGet(
                     $clientDataJSONRaw,
                     $authenticatorDataRaw,

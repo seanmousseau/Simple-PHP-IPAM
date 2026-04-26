@@ -50,13 +50,14 @@ if ($action === 'get_challenge') {
     $username    = $uData ? to_str($uData['username']) : to_str($cur['username']);
     $displayName = ($uData && to_str($uData['name']) !== '') ? to_str($uData['name']) : $username;
 
+    // Load lbuchs autoloader before any ByteBuffer / WebAuthn usage.
+    $webAuthn      = ipam_passkey_webauthn();
     $existingCreds = ipam_passkey_get_credentials($db, $userId);
     $excludeIds    = [];
     foreach ($existingCreds as $ec) {
         $excludeIds[] = new \lbuchs\WebAuthn\Binary\ByteBuffer(to_str($ec['credential_id']));
     }
 
-    $webAuthn   = ipam_passkey_webauthn();
     $createArgs = $webAuthn->getCreateArgs(
         \base64_encode((string)$userId),
         $username,
@@ -130,9 +131,9 @@ if ($action === 'complete') {
 
     unset($_SESSION['passkey_reg_challenge']);
 
-    $credIdBin = $credential->credentialId->getBinaryString();
+    $credIdBin = $credential->credentialId;  // raw binary string from lbuchs
     $publicKey = $credential->credentialPublicKey;
-    $signCount = (int)($credential->signCount ?? 0);
+    $signCount = (int)($credential->signatureCounter ?? 0);
 
     $st = $db->prepare(
         "INSERT INTO webauthn_credentials (user_id, credential_id, public_key, sign_count, name)

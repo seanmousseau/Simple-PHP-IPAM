@@ -8222,6 +8222,16 @@ function ipam_email_otp_send(PDO $db, int $userId, string $code, int $ttlMinutes
 
 function ipam_passkey_webauthn(string $rpName = 'Simple PHP IPAM'): \lbuchs\WebAuthn\WebAuthn
 {
+    // Load Composer autoloader if lbuchs\WebAuthn is not already available.
+    // Primary: vendor/ bundled inside the web root (release tarball installs).
+    // Fallback: vendor/ at the project root (dev/Docker setups, e.g. playwright matrix).
+    if (!class_exists('lbuchs\\WebAuthn\\WebAuthn')) {
+        $autoload = __DIR__ . '/vendor/autoload.php';
+        if (!file_exists($autoload)) {
+            $autoload = dirname(__DIR__) . '/vendor/autoload.php';
+        }
+        if (file_exists($autoload)) require_once $autoload;
+    }
     // Strip port from HTTP_HOST — rpId must be hostname only, no port.
     $host = to_str($_SERVER['HTTP_HOST'] ?? 'localhost');
     $rpId = (string)preg_replace('/:\d+$/', '', $host) ?: 'localhost';
