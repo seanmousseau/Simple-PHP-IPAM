@@ -156,9 +156,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     header('Location: email_otp_verify.php');
                     exit;
                 }
+                $passkeysEnabled = (bool)to_int(ipam_setting('mfa.passkeys_enabled', false));
+                if ($passkeysEnabled && ipam_passkey_has_credentials($db, to_int($user['id']))) {
+                    $creds         = ipam_passkey_get_credentials($db, to_int($user['id']));
+                    $credentialIds = array_map(
+                        static function (array $c): \lbuchs\WebAuthn\Binary\ByteBuffer {
+                            return new \lbuchs\WebAuthn\Binary\ByteBuffer(to_str($c['credential_id']));
+                        },
+                        $creds
+                    );
+                    $webAuthn   = ipam_passkey_webauthn();
+                    $assertArgs = $webAuthn->getGetArgs($credentialIds, 60);
+                    $_SESSION['passkey_pending_uid']       = to_int($user['id']);
+                    $_SESSION['passkey_challenge']         = $webAuthn->getChallenge()->getBinaryString();
+                    $_SESSION['passkey_assertion_options'] = json_encode($assertArgs);
+                    audit($db, 'auth.passkey_challenge', 'user', to_int($user['id']), 'passkey challenge issued');
+                    header('Location: passkey_verify.php');
+                    exit;
+                }
+                $passkeysSatisfy = $passkeysEnabled && ipam_passkey_has_credentials($db, to_int($user['id']));
                 if ((bool)to_int(ipam_setting('mfa.require', false)) &&
                     to_int($user['totp_enabled']      ?? 0) === 0 &&
-                    to_int($user['email_otp_enabled'] ?? 0) === 0) {
+                    to_int($user['email_otp_enabled'] ?? 0) === 0 &&
+                    !$passkeysSatisfy) {
                     login_user(to_int($user['id']), to_str($user['username']), to_str($user['role']));
                     $db->prepare("UPDATE users SET last_login_at=" . ipam_dialect()->now() . " WHERE id=:id")
                        ->execute([':id' => to_int($user['id'])]);
