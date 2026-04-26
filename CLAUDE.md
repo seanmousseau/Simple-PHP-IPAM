@@ -313,7 +313,7 @@ A new dep must meet **all** of the following criteria:
 |---|---|---|---|
 | phpmailer/phpmailer | ^6.9 | Direct SMTP delivery (replaces native `mail()` when smtp.enabled=true). Hand-rolling SMTP+TLS+AUTH is error-prone and a security risk; PHPMailer has >5 years of active maintenance, is used by WordPress/Joomla/Drupal, has zero transitive runtime deps, and is licensed LGPL-2.1-or-later with an explicit bundling exception (PHPMailer FAQ). | #415, v3.1.0 |
 | robthree/twofactorauth | ^2.1 | TOTP (RFC 6238) secret generation, code verification, otpauth:// URI for QR enrollment. Hand-rolling TOTP is error-prone (time-sync drift, HMAC, counter management); this library has zero transitive runtime deps, MIT license, pure PHP 8. | #418, v3.6.0 |
-| lbuchs/webauthn | ^2.1 | WebAuthn server-side challenge/response — attestation verification, assertion verification, COSE key parsing. Hand-rolling WebAuthn is a security risk (CBOR-encoded COSE keys, cryptographic signature chains, RP ID binding); this library has zero transitive runtime deps, MIT license, pure PHP 8.2+. | #687, v3.15.0 |
+| lbuchs/webauthn | ^2.1 | WebAuthn server-side challenge/response — attestation verification, assertion verification, COSE key parsing. Hand-rolling WebAuthn is a security risk (CBOR-encoded COSE keys, cryptographic signature chains, RP ID binding); `lbuchs/WebAuthn` has been actively maintained since 2019, is widely used in the PHP WebAuthn ecosystem, has zero transitive runtime deps, MIT license, pure PHP 8.0+. | #687, v3.15.0 |
 
 **Vendored frontend assets (assets/vendor/):**
 
