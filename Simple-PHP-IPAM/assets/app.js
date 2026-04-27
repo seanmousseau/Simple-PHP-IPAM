@@ -2484,7 +2484,7 @@ function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
       setStatus('Waiting for authenticator…');
       return navigator.credentials.create({ publicKey: opts });
     }).then(function (cred) {
-      var credName = window.prompt('Name this passkey (optional):', 'Passkey') || 'Passkey';
+      var credName = btn.getAttribute('data-default-name') || 'Passkey';
       return fetch('passkey_register.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

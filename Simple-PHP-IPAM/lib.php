@@ -752,7 +752,15 @@ function require_login(): void
     }
     $idle = to_int(ipam_setting('security.session_idle_seconds'));
     if (isset($_SESSION['last_active']) && (time() - to_int($_SESSION['last_active'])) > $idle) {
+        // Stash the URI before logout_user() wipes the session so the
+        // post-login redirect survives the idle-timeout bounce.
+        $stashUri = to_str($_SERVER['REQUEST_URI'] ?? '');
         logout_user();
+        if ($stashUri !== '') {
+            session_start();
+            ipam_post_login_redirect_stash($stashUri);
+            session_write_close();
+        }
         header('Location: login.php?timeout=1');
         exit;
     }
@@ -6115,16 +6123,22 @@ function page_header(string $title, array $opts = []): void
     echo "<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
     echo "<title>" . e($appName) . " \u{2014} " . e($title) . "</title>";
     $av = e(IPAM_VERSION);
+    // Append file mtime to JS/CSS cache busters so in-version edits invalidate
+    // the browser cache without requiring an IPAM_VERSION bump.
+    $cssMtime = (int)@filemtime(__DIR__ . '/assets/app.css');
+    $jsMtime  = (int)@filemtime(__DIR__ . '/assets/app.js');
+    $cssV     = $av . ($cssMtime > 0 ? '.' . $cssMtime : '');
+    $jsV      = $av . ($jsMtime  > 0 ? '.' . $jsMtime  : '');
     echo "<link rel='icon' type='image/webp' sizes='32x32' href='assets/favicon-32.webp?v={$av}'>";
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png?v={$av}'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp?v={$av}'>";
     echo "<link rel='apple-touch-icon' sizes='180x180' href='assets/apple-touch-icon.png?v={$av}'>";
     echo "<link rel='stylesheet' href='assets/vendor/open-props.min.css?v={$av}'>";
-    echo "<link rel='stylesheet' href='assets/app.css?v={$av}'>";
+    echo "<link rel='stylesheet' href='assets/app.css?v={$cssV}'>";
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
-    echo "<script defer src='assets/app.js?v={$av}'></script>";
+    echo "<script defer src='assets/app.js?v={$jsV}'></script>";
     $pageAttr = isset($opts['page']) && $opts['page'] !== ''
         ? " data-page='" . e(to_str($opts['page'])) . "'"
         : '';
@@ -8078,7 +8092,18 @@ function ipam_session_enforce_absolute_lifetime(array $config): void {
     $expires    = $_SESSION['_abs_expires'];
     $expiresInt = is_int($expires) ? $expires : (is_numeric($expires) ? (int)$expires : 0);
     if (time() > $expiresInt) {
+        // Stash REQUEST_URI before destroying the session so users who follow
+        // an authenticated link (e.g. email-verification) with a stale cookie
+        // are returned to that URL after re-login rather than dumped on the
+        // dashboard.
+        $stashUri = to_str($_SERVER['REQUEST_URI'] ?? '');
+        $_SESSION = [];
         session_destroy();
+        if ($stashUri !== '') {
+            session_start();
+            ipam_post_login_redirect_stash($stashUri);
+            session_write_close();
+        }
         header('Location: login.php?reason=session_expired');
         exit;
     }
@@ -8276,8 +8301,14 @@ function ipam_email_otp_send(PDO $db, int $userId, string $code, int $ttlMinutes
 
 // ── Passkeys (WebAuthn) ───────────────────────────────────────────────────────
 
-function ipam_passkey_webauthn(string $rpName = 'Simple PHP IPAM'): \lbuchs\WebAuthn\WebAuthn
+function ipam_passkey_webauthn(?string $rpName = null): \lbuchs\WebAuthn\WebAuthn
 {
+    // Default rpName to the configured site name so password managers
+    // (LastPass, 1Password, Bitwarden) display the install's friendly name
+    // rather than the generic "Simple PHP IPAM" or the bare hostname.
+    if ($rpName === null || $rpName === '') {
+        $rpName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
+    }
     // Load Composer autoloader if lbuchs\WebAuthn is not already available.
     // Primary: vendor/ bundled inside the web root (release tarball installs).
     // Fallback: vendor/ at the project root (dev/Docker setups, e.g. playwright matrix).
@@ -8314,6 +8345,46 @@ function ipam_passkey_webauthn(string $rpName = 'Simple PHP IPAM'): \lbuchs\WebA
         }
     }
     return new \lbuchs\WebAuthn\WebAuthn($rpName, $rpId, allowedFormats: ['none', 'packed', 'apple', 'fido-u2f', 'android-key', 'android-safetynet', 'tpm']);
+}
+
+/**
+ * Generate a WebAuthn assertion challenge for $userId, store it in the
+ * session, and return true. Used by login.php for the initial dispatch and
+ * by the MFA-method-switch links on totp_verify.php / email_otp_verify.php.
+ * Returns false if the user has no registered credentials.
+ */
+function ipam_passkey_dispatch_challenge(PDO $db, int $userId): bool
+{
+    if (!ipam_passkey_has_credentials($db, $userId)) return false;
+
+    $creds         = ipam_passkey_get_credentials($db, $userId);
+    $credentialIds = array_map(
+        static function (array $c): \lbuchs\WebAuthn\Binary\ByteBuffer {
+            return new \lbuchs\WebAuthn\Binary\ByteBuffer(to_str($c['credential_id']));
+        },
+        $creds
+    );
+
+    $webAuthn     = ipam_passkey_webauthn();
+    $assertArgs   = $webAuthn->getGetArgs($credentialIds, 60);
+    $challengeBin = $webAuthn->getChallenge()->getBinaryString();
+
+    $pk            = $assertArgs->publicKey;
+    $pk->challenge = rtrim(strtr(base64_encode($challengeBin), '+/', '-_'), '=');
+    if (!empty($pk->allowCredentials)) {
+        foreach ($pk->allowCredentials as &$ac) {
+            if (isset($ac->id) && ($ac->id instanceof \lbuchs\WebAuthn\Binary\ByteBuffer)) {
+                $ac->id = rtrim(strtr(base64_encode($ac->id->getBinaryString()), '+/', '-_'), '=');
+            }
+        }
+        unset($ac);
+    }
+
+    $_SESSION['passkey_pending_uid']         = $userId;
+    $_SESSION['passkey_challenge']           = $challengeBin;
+    $_SESSION['passkey_challenge_issued_at'] = time();
+    $_SESSION['passkey_assertion_options']   = json_encode($pk);
+    return true;
 }
 
 /** @return list<array<string,mixed>> */
