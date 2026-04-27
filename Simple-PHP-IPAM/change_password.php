@@ -189,11 +189,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && array_key_exists('new_email', $_POS
             flash_set('That email address is already in use.', 'danger');
         } else {
             $sent = ipam_send_email_verification($db, to_int($cur['id']), $newEmail);
-            if ($sent) {
+            if ($sent['success']) {
                 audit($db, 'user.email_change_initiated', 'user', to_int($cur['id']), 'new_email=' . $newEmail);
                 flash_set('Verification email sent to ' . $newEmail . '. Check your inbox and spam folder.');
             } else {
-                flash_set('Could not send verification email. Ensure SMTP and base_url are configured.', 'danger');
+                flash_set('Could not send verification email: ' . $sent['error'], 'danger');
             }
         }
     }

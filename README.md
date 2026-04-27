@@ -12,11 +12,15 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.15.0
+## What's new in v3.15.1
 
-**Passkeys / WebAuthn 2FA** — register FIDO2 passkeys (hardware security keys, Touch ID / Face ID / Windows Hello, or password-manager passkeys) on the Account page. At login the passkey challenge replaces TOTP and Email OTP for enrolled users. Phishing-resistant; no codes to type. Admin opt-in via `mfa.passkeys_enabled`.
+Bug-fix release on top of v3.15.0 (passkeys).
 
-**`mfa.require` now covers passkeys** — a registered passkey satisfies the MFA enforcement requirement alongside TOTP and Email OTP.
+- **Post-login redirect preserved.** Clicking a deep link (e.g. an email-verification link) while logged out used to drop you on the dashboard after sign-in — you had to click the link again. Fixed across all eight login paths (local, demo, recovery, OIDC, TOTP, TOTP-bypass, Email OTP, passkey).
+- **UTF-8 in emails.** PHPMailer's default `ISO-8859-1` charset turned em-dashes and accented characters into mojibake; mail now declares `UTF-8` with base64 transfer encoding.
+- **Email-verification error.** Surfaces the real failure reason instead of guessing "SMTP and base_url".
+- **`config.php` cleanup banner false positive on `app_secret`** (and the other v3.6.0 security keys) — would have broken every TOTP enrollment if followed.
+- **Documentation refresh.** Audit-driven fixes across `upgrading.md`, `security.md`, `install.md`, `oidc.md`, `api.md`, `custom-fields.md`, and `sidebar-and-command-palette.md`.
 
 [Full changelog →](CHANGELOG.md)
 

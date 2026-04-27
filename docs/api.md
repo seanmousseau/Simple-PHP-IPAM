@@ -417,6 +417,7 @@ When fetching a single VLAN (`?id=N`), the response is `{"vlan": {...}}`.
 | `name` | string | VLAN name |
 | `description` | string | Free-text description (may be empty) |
 | `site_id` | integer\|null | Optional site scope FK |
+| `site_name` | string\|null | Resolved site name (joined from `sites.name`); null when `site_id` is null |
 | `created_at` | string | UTC timestamp |
 | `updated_at` | string | UTC timestamp |
 
@@ -1341,7 +1342,8 @@ GET ?resource=devices&q=core
     "serial": "FOC1234X567",
     "note": "",
     "interface_count": 4,
-    "created_at": "2026-04-18T00:00:00Z"
+    "created_at": "2026-04-18 00:00:00",
+    "updated_at": "2026-04-18 00:00:00"
   }
 }
 ```

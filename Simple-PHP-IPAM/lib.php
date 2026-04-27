@@ -706,9 +706,47 @@ function csrf_require(): void
 
 function is_logged_in(): bool { return !empty($_SESSION['uid']); }
 
+/**
+ * Stash a same-origin request URI in the session so the user can be
+ * redirected back to it after they finish logging in (including any MFA
+ * detour). Only safe relative paths are accepted — schemes, hosts, embedded
+ * newlines, and parent-directory traversal are all rejected to prevent
+ * open-redirect and header-injection.
+ */
+function ipam_post_login_redirect_stash(string $uri): void
+{
+    if ($uri === '' || $uri[0] !== '/' || str_starts_with($uri, '//')) return;
+    if (preg_match('/[\r\n]/', $uri)) return;
+    if (str_contains($uri, '..')) return;
+    // Reject backslashes — some browsers canonicalise them to forward slashes,
+    // which would let "/\evil.com" become "//evil.com" after normalisation.
+    if (str_contains($uri, '\\')) return;
+    if (strlen($uri) > 1024) return;
+    $_SESSION['post_login_redirect'] = $uri;
+}
+
+/**
+ * Pull and clear the stashed post-login URI. Returns $default if nothing is
+ * stashed or the stashed value fails revalidation (defence in depth — same
+ * checks as stash, in case the session was tampered with).
+ */
+function ipam_post_login_redirect_consume(string $default = 'dashboard.php'): string
+{
+    $uri = to_str($_SESSION['post_login_redirect'] ?? '');
+    unset($_SESSION['post_login_redirect']);
+    if ($uri === '' || $uri[0] !== '/' || str_starts_with($uri, '//')) return $default;
+    if (preg_match('/[\r\n]/', $uri)) return $default;
+    if (str_contains($uri, '..')) return $default;
+    // Reject backslashes — see note in ipam_post_login_redirect_stash().
+    if (str_contains($uri, '\\')) return $default;
+    if (strlen($uri) > 1024) return $default;
+    return $uri;
+}
+
 function require_login(): void
 {
     if (!is_logged_in()) {
+        ipam_post_login_redirect_stash(to_str($_SERVER['REQUEST_URI'] ?? ''));
         header('Location: login.php');
         exit;
     }
@@ -2216,6 +2254,12 @@ function ipam_config_stale_keys(array $config): array
         'session_name', 'session_cookie_path', 'force_https',
         'proxy_trust', 'base_url', 'bootstrap_admin',
         'recovery_mode', 'demo_mode',
+        // v3.6.0 security-sensitive keys — must remain in config.php because
+        // they are needed before or during the DB open / session start
+        // sequence. See docs/configuration.md. These are top-level array keys
+        // in config.php; nested members (e.g. session.absolute_lifetime_minutes)
+        // live underneath them and are reached via $config['session'][...].
+        'app_secret', 'session', 'auth', 'api',
     ];
     $stale = [];
     foreach (array_keys($config) as $key) {
@@ -3040,6 +3084,12 @@ function ipam_send_mail(string $to, string $subject, string $bodyText, string $b
             if ($fromAddr !== '') {
                 $mail->setFrom($fromAddr, $fromName ?: $fromAddr);
             }
+
+            // PHPMailer defaults CharSet to ISO-8859-1, which mojibakes any
+            // UTF-8 in subject/body (em-dash, smart quotes, accented chars).
+            // Encoding stays at the PHPMailer default (8bit) — UTF-8 text bodies
+            // travel fine on modern SMTP and stay human-readable in test parsers.
+            $mail->CharSet = \PHPMailer\PHPMailer\PHPMailer::CHARSET_UTF8;
 
             $mail->addAddress($to);
             $mail->Subject = $subject;
@@ -7242,13 +7292,17 @@ function ipam_send_reset_email(string $toAddress, string $toName, string $rawTok
  * Stores pending_email + token hash + expiry on the user row and sends
  * a verification email to the NEW address.
  */
-function ipam_send_email_verification(PDO $db, int $userId, string $newEmail): bool
+/**
+ * @return array{success: bool, error: string}
+ */
+function ipam_send_email_verification(PDO $db, int $userId, string $newEmail): array
 {
     $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
     try {
         $base = ipam_app_base_url();
-    } catch (\RuntimeException) {
-        return false;
+    } catch (\RuntimeException $e) {
+        error_log('ipam_send_email_verification: ' . $e->getMessage());
+        return ['success' => false, 'error' => $e->getMessage()];
     }
 
     $rawToken  = bin2hex(random_bytes(32));
@@ -7277,16 +7331,18 @@ function ipam_send_email_verification(PDO $db, int $userId, string $newEmail): b
 
     $result = ipam_send_mail($newEmail, $subject, $text, $html);
     if (!$result['success']) {
+        $err = to_str($result['error'] ?? 'Email send failed.');
+        error_log('ipam_send_email_verification: ' . $err);
         $db->prepare(
             "UPDATE users SET pending_email = NULL,
                               pending_email_token_hash = NULL,
                               pending_email_expires_at = NULL
               WHERE id = :id"
         )->execute([':id' => $userId]);
-        return false;
+        return ['success' => false, 'error' => $err];
     }
 
-    return true;
+    return ['success' => true, 'error' => ''];
 }
 
 // ---------------------------------------------------------------------------

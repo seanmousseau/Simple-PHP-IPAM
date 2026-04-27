@@ -79,7 +79,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $db->prepare("UPDATE users SET last_login_at=" . ipam_dialect()->now() . " WHERE id=:id")
                    ->execute([':id' => to_int($demoUser['id'])]);
                 audit($db, 'auth.login', 'user', to_int($demoUser['id']), 'demo login');
-                header('Location: dashboard.php');
+                header('Location: ' . ipam_post_login_redirect_consume());
                 exit;
             }
         } else {
@@ -126,7 +126,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $db->prepare("UPDATE users SET last_login_at=" . ipam_dialect()->now() . " WHERE id=:id")
                    ->execute([':id' => $uid]);
                 audit($db, 'auth.recovery_login', 'user', $uid, 'recovery_mode');
-                header('Location: dashboard.php');
+                header('Location: ' . ipam_post_login_redirect_consume());
                 exit;
             }
 
@@ -203,7 +203,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $db->prepare("UPDATE users SET last_login_at=" . ipam_dialect()->now() . " WHERE id=:id")
                    ->execute([':id' => to_int($user['id'])]);
                 audit($db, 'auth.login', 'user', to_int($user['id']), 'login ok');
-                header('Location: dashboard.php');
+                header('Location: ' . ipam_post_login_redirect_consume());
                 exit;
             }
 
