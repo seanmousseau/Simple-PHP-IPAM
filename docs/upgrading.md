@@ -107,6 +107,17 @@ The backup is left in place after a successful upgrade. You can remove it manual
 
 ## Version-specific upgrade notes
 
+### v3.15.1
+
+- No manual upgrade steps required. No new migrations, no new settings, no new dependencies.
+- **Bug fixes:**
+  - Post-login redirect now preserves the requested URL across all eight final-success paths (local login, demo, recovery, OIDC, TOTP, TOTP-bypass, Email OTP, passkey). Previously, clicking a deep link (e.g. an email-verification link) while logged out dropped you on `dashboard.php` after sign-in.
+  - Email body charset is now declared as UTF-8. Previously, em-dashes and accented characters arrived as mojibake (`â—`) in clients that respected the declared charset.
+  - The dashboard `config.php` cleanup banner no longer flags `app_secret`, `session`, `auth`, or `api` as stale keys. Following the previous bad advice would have broken every TOTP enrollment.
+  - Email verification failures now surface the real cause (e.g. missing `base_url`) instead of a generic guess, with the underlying reason also logged via `error_log()` for server-side diagnostics.
+
+---
+
 ### v3.15.0
 
 - No manual upgrade steps required.

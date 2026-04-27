@@ -718,6 +718,9 @@ function ipam_post_login_redirect_stash(string $uri): void
     if ($uri === '' || $uri[0] !== '/' || str_starts_with($uri, '//')) return;
     if (preg_match('/[\r\n]/', $uri)) return;
     if (str_contains($uri, '..')) return;
+    // Reject backslashes — some browsers canonicalise them to forward slashes,
+    // which would let "/\evil.com" become "//evil.com" after normalisation.
+    if (str_contains($uri, '\\')) return;
     if (strlen($uri) > 1024) return;
     $_SESSION['post_login_redirect'] = $uri;
 }
@@ -734,6 +737,8 @@ function ipam_post_login_redirect_consume(string $default = 'dashboard.php'): st
     if ($uri === '' || $uri[0] !== '/' || str_starts_with($uri, '//')) return $default;
     if (preg_match('/[\r\n]/', $uri)) return $default;
     if (str_contains($uri, '..')) return $default;
+    // Reject backslashes — see note in ipam_post_login_redirect_stash().
+    if (str_contains($uri, '\\')) return $default;
     if (strlen($uri) > 1024) return $default;
     return $uri;
 }
@@ -2251,11 +2256,10 @@ function ipam_config_stale_keys(array $config): array
         'recovery_mode', 'demo_mode',
         // v3.6.0 security-sensitive keys — must remain in config.php because
         // they are needed before or during the DB open / session start
-        // sequence. See docs/configuration.md.
-        'app_secret',
-        'session.absolute_lifetime_minutes',
-        'auth.lockout_after_failures',
-        'auth.lockout_duration_minutes',
+        // sequence. See docs/configuration.md. These are top-level array keys
+        // in config.php; nested members (e.g. session.absolute_lifetime_minutes)
+        // live underneath them and are reached via $config['session'][...].
+        'app_secret', 'session', 'auth', 'api',
     ];
     $stale = [];
     foreach (array_keys($config) as $key) {
@@ -3083,8 +3087,9 @@ function ipam_send_mail(string $to, string $subject, string $bodyText, string $b
 
             // PHPMailer defaults CharSet to ISO-8859-1, which mojibakes any
             // UTF-8 in subject/body (em-dash, smart quotes, accented chars).
-            $mail->CharSet  = \PHPMailer\PHPMailer\PHPMailer::CHARSET_UTF8;
-            $mail->Encoding = \PHPMailer\PHPMailer\PHPMailer::ENCODING_BASE64;
+            // Encoding stays at the PHPMailer default (8bit) — UTF-8 text bodies
+            // travel fine on modern SMTP and stay human-readable in test parsers.
+            $mail->CharSet = \PHPMailer\PHPMailer\PHPMailer::CHARSET_UTF8;
 
             $mail->addAddress($to);
             $mail->Subject = $subject;
@@ -7296,6 +7301,7 @@ function ipam_send_email_verification(PDO $db, int $userId, string $newEmail): a
     try {
         $base = ipam_app_base_url();
     } catch (\RuntimeException $e) {
+        error_log('ipam_send_email_verification: ' . $e->getMessage());
         return ['success' => false, 'error' => $e->getMessage()];
     }
 
@@ -7325,13 +7331,15 @@ function ipam_send_email_verification(PDO $db, int $userId, string $newEmail): a
 
     $result = ipam_send_mail($newEmail, $subject, $text, $html);
     if (!$result['success']) {
+        $err = to_str($result['error'] ?? 'Email send failed.');
+        error_log('ipam_send_email_verification: ' . $err);
         $db->prepare(
             "UPDATE users SET pending_email = NULL,
                               pending_email_token_hash = NULL,
                               pending_email_expires_at = NULL
               WHERE id = :id"
         )->execute([':id' => $userId]);
-        return ['success' => false, 'error' => to_str($result['error'] ?? 'Email send failed.')];
+        return ['success' => false, 'error' => $err];
     }
 
     return ['success' => true, 'error' => ''];

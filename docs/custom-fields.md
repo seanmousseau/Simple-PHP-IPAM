@@ -14,7 +14,7 @@ Custom fields let admins attach site-specific metadata to subnets and addresses 
   - [Response shape](#response-shape)
   - [Writing custom fields](#writing-custom-fields)
   - [Strict type validation](#strict-type-validation)
-  - [Managing definitions via API](#managing-definitions-via-api)
+  - [Managing definitions](#managing-definitions)
 - [CSV export and import](#csv-export-and-import)
 - [Upgrading from v3.4.x](#upgrading-from-v34x)
 

@@ -105,7 +105,8 @@ Type any part of a command name or description to filter the list. Available com
 - Subnets
 - Addresses
 - Search
-- Audit Log
+- Audit
+- Unassigned
 
 **Actions**
 - New Subnet — opens the add-subnet drawer

@@ -890,7 +890,8 @@
         { group: "Pages", label: "Subnets",      href: "subnets.php" },
         { group: "Pages", label: "Addresses",    href: "addresses.php" },
         { group: "Pages", label: "Search",       href: "search.php" },
-        { group: "Pages", label: "Audit Log",    href: "audit.php" },
+        { group: "Pages", label: "Audit",        href: "audit.php" },
+        { group: "Pages", label: "Unassigned",   href: "unassigned.php" },
         { group: "Actions", label: "New Subnet", action: function() { IpamDrawer.open("Add Subnet", "tpl-add-subnet"); } },
         { group: "Actions", label: "Toggle Theme", action: function() {
             var btn = document.getElementById("theme-toggle");
