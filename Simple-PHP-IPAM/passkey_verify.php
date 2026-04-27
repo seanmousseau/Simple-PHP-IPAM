@@ -95,7 +95,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                    ->execute([':id' => $uid]);
                 audit($db, 'auth.passkey_login', 'user', $uid, 'passkey authentication ok');
 
-                header('Location: dashboard.php');
+                header('Location: ' . ipam_post_login_redirect_consume());
                 exit;
 
             } catch (\lbuchs\WebAuthn\WebAuthnException $e) {

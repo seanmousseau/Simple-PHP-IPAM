@@ -51,7 +51,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $db->prepare("UPDATE users SET last_login_at=" . ipam_dialect()->now() . " WHERE id=:id")
            ->execute([':id' => $uid]);
         audit($db, 'auth.email_otp_login', 'user', $uid, 'Email OTP 2FA passed');
-        header('Location: dashboard.php');
+        header('Location: ' . ipam_post_login_redirect_consume());
         exit;
     } else {
         // Refresh attempts count after ipam_email_otp_verify() incremented it
