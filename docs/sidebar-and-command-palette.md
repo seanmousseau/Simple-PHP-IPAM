@@ -46,25 +46,32 @@ The sidebar is divided into two sections:
 | Subnets | `subnets.php` |
 | Addresses | `addresses.php` |
 | Search | `search.php` |
-| Audit Log | `audit.php` |
+| Audit | `audit.php` |
+| Unassigned | `unassigned.php` |
 
 **Admin section** (visible to `admin` role only):
 
 | Link | Page |
 |------|------|
+| DHCP Pools | `dhcp_pool.php` |
 | Sites | `sites.php` |
-| VLANs | `vlans.php` |
 | VRFs | `vrfs.php` |
+| VLANs | `vlans.php` |
+| Aggregates | `aggregates.php` |
+| PD Pools | `pd_pools.php` |
 | Tags | `tags.php` |
+| Devices | `devices.php` |
 | Contacts | `contacts.php` |
 | Custom Fields | `custom_fields.php` |
 | Users | `users.php` |
-| DHCP Pools | `dhcp_pool.php` |
 | API Keys | `api_keys.php` |
 | Webhooks | `webhooks.php` |
 | Import CSV | `import_csv.php` |
+| ARP Import | `import_arp.php` |
+| Reports | `reports.php` |
 | Database | `db_tools.php` — backup history (all engines), SQL export/import and manual WAL backup (SQLite only) |
 | Health | `health.php` |
+| Settings | `settings.php` |
 
 ### User block
 

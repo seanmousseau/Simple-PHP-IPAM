@@ -152,28 +152,9 @@ Unknown keys (keys not in the definition list) also return 422:
 {"error": "typo_key: unknown custom field key"}
 ```
 
-### Managing definitions via API
+### Managing definitions
 
-Custom field definitions can be managed via `?resource=custom_field_defs`:
-
-```bash
-# List all definitions
-curl "https://ipam.example.com/api.php?resource=custom_field_defs" \
-  -H "Authorization: Bearer $API_KEY"
-
-# Filter by entity type
-curl "https://ipam.example.com/api.php?resource=custom_field_defs&entity_type=address" \
-  -H "Authorization: Bearer $API_KEY"
-
-# Create a definition (admin role required)
-curl -X POST \
-  -H "Authorization: Bearer $ADMIN_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"entity_type":"address","key":"sla_tier","label":"SLA Tier","type":"select","options":["bronze","silver","gold"],"sort_order":10,"is_required":false}' \
-  "https://ipam.example.com/api.php?resource=custom_field_defs"
-```
-
-Write operations require an **admin-role** API key. Read operations work with any valid key.
+Custom field definitions are managed exclusively from **⚙ Admin → Custom Fields** in the web UI. There is no REST API resource for definition CRUD; only the *values* on subnets and addresses are exposed via the API (under each record's `custom_fields` object).
 
 ---
 

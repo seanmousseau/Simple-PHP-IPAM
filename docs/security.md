@@ -190,7 +190,7 @@ After entering username and password, if Email OTP is enrolled (and TOTP is not)
 | Setting | Description |
 |---------|-------------|
 | `mfa.email_otp_enabled` | Allow users to enroll Email OTP. Disabled by default. Requires SMTP. |
-| `mfa.require` | Require all users to enroll in at least one 2FA method (TOTP or Email OTP) before accessing the application. Admins are not exempt. |
+| `mfa.require` | Require all users to enroll in at least one 2FA method (TOTP, Email OTP, or passkey) before accessing the application. Admins are not exempt. |
 
 #### Admin reset
 

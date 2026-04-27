@@ -44,20 +44,23 @@ The discovery document and JWKS are cached in `data/tmp/` for one hour. A single
 
 ## Configuration
 
-Add the following to your `config.php`:
+Configure OIDC from **⚙ Admin → Settings → OIDC / SSO** in the web UI. As of v2.7.0, every key listed below is a database setting; edits take effect on the next login with no restart. The `config.php` snippet shown is provided for reference and as a fallback for installs that have not yet migrated values into the settings table.
 
 ```php
 'oidc' => [
-    'enabled'             => true,
-    'display_name'        => 'Okta',          // Label on the login button
-    'client_id'           => 'your-client-id',
-    'client_secret'       => 'your-client-secret',
-    'discovery_url'       => 'https://your-org.okta.com/oauth2/default',
-    'redirect_uri'        => 'https://ipam.example.com/oidc_callback.php',
-    'scopes'              => 'openid email profile',
-    'auto_provision'      => false,
-    'default_role'        => 'readonly',
-    'disable_local_login' => false,
+    'enabled'                  => true,
+    'display_name'             => 'Okta',          // Label on the login button
+    'client_id'                => 'your-client-id',
+    'client_secret'            => 'your-client-secret',
+    'discovery_url'            => 'https://your-org.okta.com/oauth2/default',
+    'redirect_uri'             => 'https://ipam.example.com/oidc_callback.php',
+    'scopes'                   => 'openid email profile',
+    'auto_link'                => true,
+    'auto_provision'           => false,
+    'default_role'             => 'readonly',
+    'disable_local_login'      => false,
+    'hide_emergency_link'      => false,
+    'disable_emergency_bypass' => false,
 ],
 ```
 
@@ -72,9 +75,12 @@ Add the following to your `config.php`:
 | `discovery_url` | yes | IdP base URL — `/.well-known/openid-configuration` is appended automatically, or supply the full path |
 | `redirect_uri` | yes | Must match exactly what is registered with the IdP |
 | `scopes` | no | Space-separated scopes (default: `openid email profile`) |
-| `auto_provision` | no | Create a local user on first OIDC login if none exists (default: `false`) |
+| `auto_link` | no | Link an incoming OIDC login to an existing unlinked local account by `preferred_username` then `email` (default: `false`). Implied by `auto_provision`. |
+| `auto_provision` | no | Create a local user on first OIDC login if none exists (default: `false`). Enabling this also flips `auto_link` on. |
 | `default_role` | no | Role assigned to auto-provisioned users: `admin`, `netops`, or `readonly` (default: `readonly`). The `netops` value was added to the dropdown in v2.11.0 (#501) — prior releases only offered `admin` / `readonly` even though the schema and demo seed already carried a `netops` role. |
 | `disable_local_login` | no | Hide the password form when OIDC is enabled (default: `false`). See [Disabling local login](#disabling-local-login) |
+| `hide_emergency_link` | no | Hide the `?local=1` link text on the SSO-only login page (default: `false`). The URL still works. Database-backed since v2.7.0. |
+| `disable_emergency_bypass` | no | Make `?local=1` completely non-functional (default: `false`). Database-backed since v2.7.0. |
 
 ---
 
@@ -190,7 +196,7 @@ Set `'disable_local_login' => true` in the `oidc` config block to hide the usern
 
 ### Hiding the emergency link
 
-If you want SSO-only appearance without advertising the bypass URL, set `hide_emergency_link`:
+If you want SSO-only appearance without advertising the bypass URL, enable `oidc.hide_emergency_link` from **⚙ Admin → Settings → OIDC / SSO** (database-backed since v2.7.0). For back-compat, the same key in `config.php` works as a fallback:
 
 ```php
 'hide_emergency_link' => true,
@@ -200,7 +206,7 @@ The `?local=1` URL still works — the link text is simply not shown on the logi
 
 ### Disabling emergency access entirely
 
-To make `login.php?local=1` completely non-functional:
+To make `login.php?local=1` completely non-functional, enable `oidc.disable_emergency_bypass` from **⚙ Admin → Settings → OIDC / SSO** (database-backed since v2.7.0). For back-compat, the same key in `config.php` works as a fallback:
 
 ```php
 'disable_emergency_bypass' => true,
