@@ -73,8 +73,16 @@ $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM'
   <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png?v=3.15.2">
   <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png?v=3.15.2">
   <link rel="stylesheet" href="assets/vendor/open-props.min.css?v=3.15.2">
-  <link rel="stylesheet" href="assets/app.css?v=3.15.2">
-  <script defer src="assets/app.js?v=3.15.2"></script>
+  <?php
+  // Mirror the page_header() cache-buster: append asset mtime so in-version
+  // edits invalidate the browser cache without an IPAM_VERSION bump.
+  $cssMtime = (int)@filemtime(__DIR__ . '/assets/app.css');
+  $jsMtime  = (int)@filemtime(__DIR__ . '/assets/app.js');
+  $cssV     = '3.15.2' . ($cssMtime > 0 ? '.' . $cssMtime : '');
+  $jsV      = '3.15.2' . ($jsMtime  > 0 ? '.' . $jsMtime  : '');
+  ?>
+  <link rel="stylesheet" href="assets/app.css?v=<?= e($cssV) ?>">
+  <script defer src="assets/app.js?v=<?= e($jsV) ?>"></script>
 </head>
 <body>
 <div class="gate-wrap">
