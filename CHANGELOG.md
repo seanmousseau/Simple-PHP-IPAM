@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.15.1] - 2026-04-26
+
+### Fixed
+- **Post-login redirect preserves the requested URL.** When an unauthenticated user clicked a link into the app (e.g. an email-verification link) they were bounced through `login.php` and dropped on `dashboard.php`, losing the original URL — they had to click the link again. `require_login()` now stashes the request URI in the session and the eight final-success login paths (local login, demo, recovery, OIDC, TOTP, TOTP-bypass, Email OTP, passkey) consume it. Stash is restricted to safe relative paths (no scheme, no host, no `..`, no CRLF) to prevent open-redirect or header-injection.
+- **Email body charset.** PHPMailer's default `$CharSet` of `ISO-8859-1` mojibaked any UTF-8 in subjects or bodies (em-dashes, smart quotes, accented characters). `ipam_send_mail()` now sets `CharSet = UTF-8` and `Encoding = base64`.
+- **Email-verification error reports the real cause.** `ipam_send_email_verification()` previously returned a bare `bool`, so the UI could only guess "Ensure SMTP and base_url are configured." It now returns `['success' => bool, 'error' => string]` and `change_password.php` surfaces the real reason (e.g. missing `base_url`, SMTP host unreachable).
+- **`config.php` cleanup banner false positive on `app_secret` (and other v3.6.0 keys).** `ipam_config_stale_keys()` had a hardcoded bootstrap whitelist that only listed pre-v3.6.0 keys, so the dashboard banner has been telling admins to delete `app_secret`, `session.absolute_lifetime_minutes`, `auth.lockout_after_failures`, and `auth.lockout_duration_minutes` since v3.6.0 — actions that would have broken TOTP for every enrolled user. Whitelist now includes all four.
+
+### Documentation
+- Added the missing `### v3.14.0` upgrade-notes section to `docs/upgrading.md` and the missing v3.15.1, v3.15.0, v3.14.0, v3.11.0, v3.10.0 entries to the table of contents.
+- `docs/security.md` — `mfa.require` description now lists passkey alongside TOTP and Email OTP.
+- `docs/install.md` — added explicit HTTPS-required-for-passkeys note in the Optional integrations table.
+- `docs/oidc.md` — config example block now includes `auto_link`, `hide_emergency_link`, and `disable_emergency_bypass`; settings table adds `auto_link` and corrects `hide_emergency_link` / `disable_emergency_bypass` (database-backed since v2.7.0, not config.php-only); body sections updated to point at the Settings UI.
+- `docs/api.md` — VLAN object table now lists the `site_name` field; device example `created_at` shows the actual `YYYY-MM-DD HH:MM:SS` format returned by the API.
+- `docs/custom-fields.md` — removed the documented `?resource=custom_field_defs` API endpoints (never implemented in `api.php`); definitions are managed only through the admin UI.
+- `docs/sidebar-and-command-palette.md` — sidebar tables refreshed to match the live nav (added Unassigned, Aggregates, PD Pools, Devices, Reports, ARP Import, Settings).
+
+---
+
 ## [3.15.0] - 2026-04-26
 
 ### Added
@@ -1104,6 +1123,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.15.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.15.0...v3.15.1
 [3.15.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.14.0...v3.15.0
 [3.14.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.13.0...v3.14.0
 [3.13.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.12.0...v3.13.0
