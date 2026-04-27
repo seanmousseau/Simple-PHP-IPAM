@@ -9,6 +9,7 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
+  - [v3.15.2](#v3152) — Bug fixes: passkey registration with password managers, MFA method choice, stale-session redirect (no breaking changes)
   - [v3.15.1](#v3151) — Bug fixes: post-login redirect, email charset, banner false positive (no breaking changes)
   - [v3.15.0](#v3150) — WebAuthn / Passkey 2FA (no breaking changes)
   - [v3.14.0](#v3140) — Email OTP 2FA, MFA enforcement (no breaking changes)
@@ -106,6 +107,19 @@ The backup is left in place after a successful upgrade. You can remove it manual
 ---
 
 ## Version-specific upgrade notes
+
+### v3.15.2
+
+- No manual upgrade steps required. No new migrations, no new settings, no new dependencies.
+- **Bug fixes:**
+  - Passkey registration with password-manager providers (LastPass, 1Password, Bitwarden) now succeeds: `requireResidentKey: 'preferred'` makes credentials discoverable so they save to the vault, and `attestation: 'none'` avoids the "no signature found" verification failure on packed self-attestation.
+  - The WebAuthn `rp.name` now defaults to the configured `branding.site_name` setting (was hardcoded to "Simple PHP IPAM"). Most password managers and OS credential dialogs display this. LastPass labels entries by `rpId` regardless and is unaffected — that is a LastPass UX choice, not something this app can override.
+  - The default credential name shown in IPAM's passkey list is the site name (was an interactive `window.prompt`).
+  - When TOTP and Email OTP — or TOTP and a passkey — are both enrolled, the TOTP verify page now offers "Send a code to my email instead" and "Use a passkey instead" buttons. Previously TOTP was always dispatched first with no way to choose another method.
+  - The post-login redirect URL now survives idle-timeout and absolute-lifetime expiry. v3.15.1 only stashed in the cold-start branch of `require_login()`, so users hitting an authenticated link with a stale or expired cookie still landed on the dashboard.
+  - JS / CSS cache-buster query string now includes file mtime, so edits within a release invalidate browser caches without an `IPAM_VERSION` bump.
+
+---
 
 ### v3.15.1
 
