@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.15.2] - 2026-04-26
+
+### Fixed
+- **Email-verification link still bounced to dashboard for users with a stale or expired session.** The v3.15.1 redirect fix only stashed the request URI in the cold-start `!is_logged_in()` branch of `require_login()`. Users hitting an authenticated link with an idle-timed-out cookie went through `logout_user()` first, which wiped the session before any stash happened, and users hitting it with an absolute-lifetime-expired session went through `session_destroy()` for the same reason — both paths landed on the dashboard after re-login instead of the original URL. Both branches now stash `REQUEST_URI` before the session is wiped, then re-open a fresh session to write the stash.
+- **Passkey registration failed with `verification_failed` ("no signature found") when using LastPass and other password-manager passkey providers.** The browser was returning a `packed` self-attestation without a `sig` field, which the WebAuthn library rejected. We now request `attestation: 'none'` from the browser so authenticators omit attestation statements entirely; we still verify origin, RP-ID hash, and user-presence flags, which work identically.
+- **Passkey registration didn't make the credential discoverable.** `requireResidentKey` was hard-coded to `false`, which prevented LastPass / 1Password / Bitwarden from saving the credential to their vaults. It is now `'preferred'`, so password managers store the passkey while hardware keys that don't support resident keys still register normally.
+- **Passkey credential name prompted via `window.prompt()` after registration.** Replaced the prompt with a server-rendered default — the configured `branding.site_name` — passed via a `data-default-name` attribute on the Add Passkey button. Users can rename in the management UI (or the password manager).
+- **Relying-party name in WebAuthn options was hard-coded to "Simple PHP IPAM".** Now defaults to `branding.site_name`, so password managers / OS credential dialogs that honour `rp.name` (Apple Keychain, 1Password, Bitwarden, Windows Hello) display the install's friendly name. (LastPass uses the rpId regardless — that is a LastPass UX choice and cannot be overridden server-side.)
+- **No way to choose Email OTP or a passkey at login when TOTP is also enrolled.** `login.php` always dispatched to `totp_verify.php` first. The TOTP verify page now offers "Send a code to my email instead" and "Use a passkey instead" buttons when those methods are enrolled and enabled; clicking either generates a fresh challenge, swaps the pending session keys, and redirects to the matching verify page. Audited as `auth.mfa_method_switch`. (Refactored the passkey-challenge dispatch out of `login.php` into a shared `ipam_passkey_dispatch_challenge()` helper.)
+
+### Changed
+- **Asset cache-buster auto-busts on file edits.** `page_header()` now appends `filemtime()` of `assets/app.js` and `assets/app.css` to their `?v=` query strings, so in-version edits invalidate browser caches without requiring an `IPAM_VERSION` bump. Other assets (icons, fonts, vendor) keep the version-only buster since they change rarely.
+
+---
+
 ## [3.15.1] - 2026-04-26
 
 ### Fixed
@@ -1132,6 +1147,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.15.2]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.15.1...v3.15.2
 [3.15.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.15.0...v3.15.1
 [3.15.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.14.0...v3.15.0
 [3.14.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.13.0...v3.14.0

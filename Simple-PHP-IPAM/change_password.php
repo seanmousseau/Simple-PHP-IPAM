@@ -613,7 +613,9 @@ $eoEnrolling  = !empty($_SESSION['email_otp_enrolling']);
     <?php else: ?>
       <p class="muted">No passkeys registered yet.</p>
     <?php endif ?>
-    <button type="button" id="btn-add-passkey" class="action-pill">
+    <?php $passkeyDefaultName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM'; ?>
+    <button type="button" id="btn-add-passkey" class="action-pill"
+            data-default-name="<?= e($passkeyDefaultName) ?>">
       <?= icon('plus-circle') ?> Add Passkey
     </button>
     <span id="passkey-add-status" class="muted" style="font-size:.85rem;display:none;margin-left:.5rem"></span>

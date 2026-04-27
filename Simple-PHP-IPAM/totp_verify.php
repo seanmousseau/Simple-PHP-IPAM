@@ -35,9 +35,53 @@ if (!$userRow) {
 $username = to_str($userRow['username']);
 $role     = to_str($userRow['role']);
 
+// Detect alternate-method enrollment so the view can offer switch-method links
+$emailOtpStmt = $db->prepare("SELECT email_otp_enabled FROM users WHERE id = :id");
+$emailOtpStmt->execute([':id' => $uid]);
+$emailOtpAvailable = (int)$emailOtpStmt->fetchColumn() === 1
+    && (bool)to_int(ipam_setting('mfa.email_otp_enabled', false));
+
+$passkeyAvailable = (bool)to_int(ipam_setting('mfa.passkeys_enabled', false))
+    && ipam_passkey_has_credentials($db, $uid);
+
 $error = '';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+$action = to_str($_POST['action'] ?? '');
+
+// User chose to verify with Email OTP instead of TOTP.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'switch_to_email') {
+    csrf_require();
+    if (!$emailOtpAvailable) {
+        header('Location: totp_verify.php');
+        exit;
+    }
+    $code = ipam_email_otp_generate($db, $uid);
+    if (!ipam_email_otp_send($db, $uid, $code)) {
+        ipam_email_otp_clear($db, $uid, 'email_send_failed');
+        $error = 'Could not send verification code. Please try the authenticator code instead.';
+    } else {
+        unset($_SESSION['totp_pending_uid']);
+        $_SESSION['email_otp_pending_uid'] = $uid;
+        audit($db, 'auth.mfa_method_switch', 'user', $uid, 'totp -> email_otp');
+        header('Location: email_otp_verify.php');
+        exit;
+    }
+}
+
+// User chose to verify with a passkey instead of TOTP.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'switch_to_passkey') {
+    csrf_require();
+    if (!$passkeyAvailable || !ipam_passkey_dispatch_challenge($db, $uid)) {
+        header('Location: totp_verify.php');
+        exit;
+    }
+    unset($_SESSION['totp_pending_uid']);
+    audit($db, 'auth.mfa_method_switch', 'user', $uid, 'totp -> passkey');
+    header('Location: passkey_verify.php');
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action !== 'switch_to_email' && $action !== 'switch_to_passkey') {
     csrf_require();
 
     // Enforce persistent lockout before processing any submitted code (#421)

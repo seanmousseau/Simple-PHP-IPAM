@@ -157,33 +157,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     exit;
                 }
                 $passkeysEnabled = (bool)to_int(ipam_setting('mfa.passkeys_enabled', false));
-                if ($passkeysEnabled && ipam_passkey_has_credentials($db, to_int($user['id']))) {
-                    $creds         = ipam_passkey_get_credentials($db, to_int($user['id']));
-                    $credentialIds = array_map(
-                        static function (array $c): \lbuchs\WebAuthn\Binary\ByteBuffer {
-                            return new \lbuchs\WebAuthn\Binary\ByteBuffer(to_str($c['credential_id']));
-                        },
-                        $creds
-                    );
-                    $webAuthn      = ipam_passkey_webauthn();
-                    $assertArgs    = $webAuthn->getGetArgs($credentialIds, 60);
-                    $challengeBin  = $webAuthn->getChallenge()->getBinaryString();
-                    // Extract publicKey sub-object and convert ByteBuffer fields to
-                    // base64url — same pattern as passkey_register.php get_challenge.
-                    $pk            = $assertArgs->publicKey;
-                    $pk->challenge = rtrim(strtr(base64_encode($challengeBin), '+/', '-_'), '=');
-                    if (!empty($pk->allowCredentials)) {
-                        foreach ($pk->allowCredentials as &$ac) {
-                            if (isset($ac->id) && ($ac->id instanceof \lbuchs\WebAuthn\Binary\ByteBuffer)) {
-                                $ac->id = rtrim(strtr(base64_encode($ac->id->getBinaryString()), '+/', '-_'), '=');
-                            }
-                        }
-                        unset($ac);
-                    }
-                    $_SESSION['passkey_pending_uid']          = to_int($user['id']);
-                    $_SESSION['passkey_challenge']            = $challengeBin;
-                    $_SESSION['passkey_challenge_issued_at']  = time();
-                    $_SESSION['passkey_assertion_options']    = json_encode($pk);
+                if ($passkeysEnabled && ipam_passkey_dispatch_challenge($db, to_int($user['id']))) {
                     audit($db, 'auth.passkey_challenge', 'user', to_int($user['id']), 'passkey challenge issued');
                     header('Location: passkey_verify.php');
                     exit;

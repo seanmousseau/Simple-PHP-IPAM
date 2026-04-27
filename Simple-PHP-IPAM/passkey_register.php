@@ -54,16 +54,28 @@ if ($action === 'get_challenge') {
         $excludeIds[] = new \lbuchs\WebAuthn\Binary\ByteBuffer(to_str($ec['credential_id']));
     }
 
+    // requireResidentKey='preferred' makes the credential discoverable, which
+    // lets password managers (LastPass, 1Password, Bitwarden) save it to their
+    // vaults. Hardware keys / platform authenticators that don't support
+    // resident keys still register normally because 'preferred' is non-binding.
     $createArgs = $webAuthn->getCreateArgs(
         \base64_encode((string)$userId),
         $username,
         $displayName,
         60,
-        false,
+        'preferred',
         false,
         null,
         $excludeIds
     );
+
+    // Request 'none' attestation so authenticators (especially password
+    // manager passkey providers like LastPass) don't include attestation
+    // statements. Avoids "no signature found" failures when LastPass emits
+    // a malformed packed self-attestation. We don't pin a CA root, so
+    // there's no security loss here — we only verify origin / rpIdHash /
+    // user-presence flags, which work identically with attestation=none.
+    $createArgs->publicKey->attestation = 'none';
 
     $challengeBin = $webAuthn->getChallenge()->getBinaryString();
     $_SESSION['passkey_reg_challenge'] = $challengeBin;

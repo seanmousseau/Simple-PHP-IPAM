@@ -2,6 +2,8 @@
 declare(strict_types=1);
 /** @var string $error */
 /** @var string $username */
+/** @var bool   $emailOtpAvailable */
+/** @var bool   $passkeyAvailable */
 ?>
 <?php page_header('Two-Factor Authentication'); ?>
 <div class="login-wrap">
@@ -38,6 +40,26 @@ declare(strict_types=1);
   <p style="margin-top:12px;">
     <a href="#" id="toggle-backup" class="muted font-sm">Use a backup code instead</a>
   </p>
+  <?php if (!empty($emailOtpAvailable)): ?>
+  <form method="post" action="totp_verify.php" style="margin-top:6px;">
+    <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+    <input type="hidden" name="action" value="switch_to_email">
+    <button type="submit" class="link-button muted font-sm"
+            style="background:none;border:0;padding:0;cursor:pointer;text-decoration:underline;">
+      Send a code to my email instead
+    </button>
+  </form>
+  <?php endif ?>
+  <?php if (!empty($passkeyAvailable)): ?>
+  <form method="post" action="totp_verify.php" style="margin-top:6px;">
+    <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+    <input type="hidden" name="action" value="switch_to_passkey">
+    <button type="submit" class="link-button muted font-sm"
+            style="background:none;border:0;padding:0;cursor:pointer;text-decoration:underline;">
+      Use a passkey instead
+    </button>
+  </form>
+  <?php endif ?>
   <p><a href="login.php" class="muted font-sm">Cancel — back to login</a></p>
 </div>
 </div>
