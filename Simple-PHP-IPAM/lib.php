@@ -706,9 +706,47 @@ function csrf_require(): void
 
 function is_logged_in(): bool { return !empty($_SESSION['uid']); }
 
+/**
+ * Stash a same-origin request URI in the session so the user can be
+ * redirected back to it after they finish logging in (including any MFA
+ * detour). Only safe relative paths are accepted — schemes, hosts, embedded
+ * newlines, and parent-directory traversal are all rejected to prevent
+ * open-redirect and header-injection.
+ */
+function ipam_post_login_redirect_stash(string $uri): void
+{
+    if ($uri === '' || $uri[0] !== '/' || str_starts_with($uri, '//')) return;
+    if (preg_match('/[\r\n]/', $uri)) return;
+    if (str_contains($uri, '..')) return;
+    // Reject backslashes — some browsers canonicalise them to forward slashes,
+    // which would let "/\evil.com" become "//evil.com" after normalisation.
+    if (str_contains($uri, '\\')) return;
+    if (strlen($uri) > 1024) return;
+    $_SESSION['post_login_redirect'] = $uri;
+}
+
+/**
+ * Pull and clear the stashed post-login URI. Returns $default if nothing is
+ * stashed or the stashed value fails revalidation (defence in depth — same
+ * checks as stash, in case the session was tampered with).
+ */
+function ipam_post_login_redirect_consume(string $default = 'dashboard.php'): string
+{
+    $uri = to_str($_SESSION['post_login_redirect'] ?? '');
+    unset($_SESSION['post_login_redirect']);
+    if ($uri === '' || $uri[0] !== '/' || str_starts_with($uri, '//')) return $default;
+    if (preg_match('/[\r\n]/', $uri)) return $default;
+    if (str_contains($uri, '..')) return $default;
+    // Reject backslashes — see note in ipam_post_login_redirect_stash().
+    if (str_contains($uri, '\\')) return $default;
+    if (strlen($uri) > 1024) return $default;
+    return $uri;
+}
+
 function require_login(): void
 {
     if (!is_logged_in()) {
+        ipam_post_login_redirect_stash(to_str($_SERVER['REQUEST_URI'] ?? ''));
         header('Location: login.php');
         exit;
     }
@@ -1558,6 +1596,15 @@ function ipam_setting_definitions(): array
             'sensitive'   => false,
             'config_key'  => null,
         ],
+        'mfa.passkeys_enabled' => [
+            'label'       => 'Enable Passkeys (WebAuthn)',
+            'type'        => 'bool',
+            'default'     => false,
+            'group'       => 'mfa',
+            'description' => 'Allow users to register hardware security keys or device biometrics (Face ID, Touch ID, Windows Hello) as a second authentication factor.',
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
 
         // --- Password policy ---
         'password_policy.min_length' => [
@@ -2207,6 +2254,12 @@ function ipam_config_stale_keys(array $config): array
         'session_name', 'session_cookie_path', 'force_https',
         'proxy_trust', 'base_url', 'bootstrap_admin',
         'recovery_mode', 'demo_mode',
+        // v3.6.0 security-sensitive keys — must remain in config.php because
+        // they are needed before or during the DB open / session start
+        // sequence. See docs/configuration.md. These are top-level array keys
+        // in config.php; nested members (e.g. session.absolute_lifetime_minutes)
+        // live underneath them and are reached via $config['session'][...].
+        'app_secret', 'session', 'auth', 'api',
     ];
     $stale = [];
     foreach (array_keys($config) as $key) {
@@ -3031,6 +3084,12 @@ function ipam_send_mail(string $to, string $subject, string $bodyText, string $b
             if ($fromAddr !== '') {
                 $mail->setFrom($fromAddr, $fromName ?: $fromAddr);
             }
+
+            // PHPMailer defaults CharSet to ISO-8859-1, which mojibakes any
+            // UTF-8 in subject/body (em-dash, smart quotes, accented chars).
+            // Encoding stays at the PHPMailer default (8bit) — UTF-8 text bodies
+            // travel fine on modern SMTP and stay human-readable in test parsers.
+            $mail->CharSet = \PHPMailer\PHPMailer\PHPMailer::CHARSET_UTF8;
 
             $mail->addAddress($to);
             $mail->Subject = $subject;
@@ -7233,13 +7292,17 @@ function ipam_send_reset_email(string $toAddress, string $toName, string $rawTok
  * Stores pending_email + token hash + expiry on the user row and sends
  * a verification email to the NEW address.
  */
-function ipam_send_email_verification(PDO $db, int $userId, string $newEmail): bool
+/**
+ * @return array{success: bool, error: string}
+ */
+function ipam_send_email_verification(PDO $db, int $userId, string $newEmail): array
 {
     $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
     try {
         $base = ipam_app_base_url();
-    } catch (\RuntimeException) {
-        return false;
+    } catch (\RuntimeException $e) {
+        error_log('ipam_send_email_verification: ' . $e->getMessage());
+        return ['success' => false, 'error' => $e->getMessage()];
     }
 
     $rawToken  = bin2hex(random_bytes(32));
@@ -7268,16 +7331,18 @@ function ipam_send_email_verification(PDO $db, int $userId, string $newEmail): b
 
     $result = ipam_send_mail($newEmail, $subject, $text, $html);
     if (!$result['success']) {
+        $err = to_str($result['error'] ?? 'Email send failed.');
+        error_log('ipam_send_email_verification: ' . $err);
         $db->prepare(
             "UPDATE users SET pending_email = NULL,
                               pending_email_token_hash = NULL,
                               pending_email_expires_at = NULL
               WHERE id = :id"
         )->execute([':id' => $userId]);
-        return false;
+        return ['success' => false, 'error' => $err];
     }
 
-    return true;
+    return ['success' => true, 'error' => ''];
 }
 
 // ---------------------------------------------------------------------------
@@ -8207,6 +8272,120 @@ function ipam_email_otp_send(PDO $db, int $userId, string $code, int $ttlMinutes
     $masked = preg_replace('/^(.).*(@.+)$/', '$1***$2', $to) ?: '***';
     audit($db, 'mfa.otp.send', 'user', $userId, "to={$masked}");
     return true;
+}
+
+// ── Passkeys (WebAuthn) ───────────────────────────────────────────────────────
+
+function ipam_passkey_webauthn(string $rpName = 'Simple PHP IPAM'): \lbuchs\WebAuthn\WebAuthn
+{
+    // Load Composer autoloader if lbuchs\WebAuthn is not already available.
+    // Primary: vendor/ bundled inside the web root (release tarball installs).
+    // Fallback: vendor/ at the project root (dev/Docker setups, e.g. playwright matrix).
+    if (!class_exists('lbuchs\\WebAuthn\\WebAuthn')) {
+        $autoload = __DIR__ . '/vendor/autoload.php';
+        if (!file_exists($autoload)) {
+            $autoload = dirname(__DIR__) . '/vendor/autoload.php';
+        }
+        if (file_exists($autoload)) require_once $autoload;
+        // PHPStan can't see that require_once may have loaded the class.
+        // @phpstan-ignore-next-line booleanNot.alwaysTrue
+        if (!class_exists('lbuchs\\WebAuthn\\WebAuthn')) {
+            throw new \RuntimeException(
+                'Passkeys are unavailable because the WebAuthn library is not installed. Run "composer install" or deploy the release tarball which bundles vendor/.'
+            );
+        }
+    }
+    // Strip port from HTTP_HOST — rpId must be hostname only, no port.
+    $host = to_str($_SERVER['HTTP_HOST'] ?? 'localhost');
+    $rpId = (string)preg_replace('/:\d+$/', '', $host) ?: 'localhost';
+    // Strip brackets from IPv6 literals: "[::1]" → "::1", "[::1]:8443" → "::1".
+    $rpId = (string)preg_replace('/^\[(.+)\]$/', '$1', $rpId);
+    // IP addresses are not valid WebAuthn RP IDs per the W3C spec; only the
+    // loopback addresses are permitted (mapped to 'localhost' for dev/test).
+    // All other IP literals are rejected early — the browser would raise a
+    // SecurityError anyway, and this surfaces a clear config error.
+    if (filter_var($rpId, FILTER_VALIDATE_IP) !== false) {
+        if ($rpId === '127.0.0.1' || $rpId === '::1') {
+            $rpId = 'localhost';
+        } else {
+            throw new \RuntimeException(
+                'Passkeys require a hostname; IP addresses are not valid WebAuthn RP IDs.'
+            );
+        }
+    }
+    return new \lbuchs\WebAuthn\WebAuthn($rpName, $rpId, allowedFormats: ['none', 'packed', 'apple', 'fido-u2f', 'android-key', 'android-safetynet', 'tpm']);
+}
+
+/** @return list<array<string,mixed>> */
+function ipam_passkey_get_credentials(PDO $db, int $userId): array
+{
+    $st = $db->prepare(
+        "SELECT id, credential_id, public_key, sign_count, name, created_at, last_used_at
+           FROM webauthn_credentials
+          WHERE user_id = :uid
+          ORDER BY created_at"
+    );
+    $st->execute([':uid' => $userId]);
+    /** @var list<array<string,mixed>> $rows */
+    $rows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    return $rows;
+}
+
+function ipam_passkey_has_credentials(PDO $db, int $userId): bool
+{
+    $st = $db->prepare("SELECT COUNT(*) FROM webauthn_credentials WHERE user_id = :uid");
+    $st->execute([':uid' => $userId]);
+    return (int)$st->fetchColumn() > 0;
+}
+
+function ipam_passkey_count(PDO $db, int $userId): int
+{
+    $st = $db->prepare("SELECT COUNT(*) FROM webauthn_credentials WHERE user_id = :uid");
+    $st->execute([':uid' => $userId]);
+    return (int)$st->fetchColumn();
+}
+
+function ipam_passkey_delete(PDO $db, int $credentialDbId, int $userId): bool
+{
+    $st = $db->prepare("DELETE FROM webauthn_credentials WHERE id = :id AND user_id = :uid");
+    $st->execute([':id' => $credentialDbId, ':uid' => $userId]);
+    return $st->rowCount() > 0;
+}
+
+function ipam_passkey_delete_all(PDO $db, int $userId): void
+{
+    $db->prepare("DELETE FROM webauthn_credentials WHERE user_id = :uid")->execute([':uid' => $userId]);
+}
+
+/**
+ * Look up a credential by its binary credential_id; returns DB row or null.
+ * @return array<string,mixed>|null
+ */
+function ipam_passkey_find_by_credential_id(PDO $db, string $credentialIdBin): ?array
+{
+    $st = $db->prepare(
+        "SELECT id, user_id, credential_id, public_key, sign_count, name
+           FROM webauthn_credentials
+          WHERE credential_id = :cid"
+    );
+    $st->bindValue(':cid', $credentialIdBin, PDO::PARAM_LOB);
+    $st->execute();
+    /** @var array<string,mixed>|false $row */
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    return $row ?: null;
+}
+
+function ipam_passkey_update_sign_count(PDO $db, int $credentialDbId, int $signCount): void
+{
+    /** @var string $driver */
+    $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    $nowExpr = match($driver) {
+        'sqlite' => "datetime('now')",
+        'mysql'  => "UTC_TIMESTAMP()",
+        default  => "(NOW() AT TIME ZONE 'utc')",
+    };
+    $db->prepare("UPDATE webauthn_credentials SET sign_count = :sc, last_used_at = $nowExpr WHERE id = :id")
+       ->execute([':sc' => $signCount, ':id' => $credentialDbId]);
 }
 
 // ============================================================

@@ -203,5 +203,5 @@ $db->prepare("UPDATE users SET last_login_at=" . ipam_dialect()->now() . " WHERE
    ->execute([':id' => to_int($user['id'])]);
 audit($db, 'auth.oidc_login', 'user', to_int($user['id']), 'sub=' . $sub);
 
-header('Location: dashboard.php');
+header('Location: ' . ipam_post_login_redirect_consume());
 exit;

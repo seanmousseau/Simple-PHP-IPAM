@@ -11,6 +11,8 @@ Simple PHP IPAM is designed for deployment on trusted internal networks. This gu
   - [Local accounts](#local-accounts)
   - [OIDC single sign-on](#oidc-single-sign-on)
   - [Two-factor authentication (TOTP)](#two-factor-authentication-totp)
+  - [Email OTP 2FA](#email-otp-2fa)
+  - [Passkeys (WebAuthn)](#passkeys-webauthn)
 - [Session security](#session-security)
 - [Account lockout](#account-lockout)
 - [Login form protection](#login-form-protection)
@@ -188,7 +190,7 @@ After entering username and password, if Email OTP is enrolled (and TOTP is not)
 | Setting | Description |
 |---------|-------------|
 | `mfa.email_otp_enabled` | Allow users to enroll Email OTP. Disabled by default. Requires SMTP. |
-| `mfa.require` | Require all users to enroll in at least one 2FA method (TOTP or Email OTP) before accessing the application. Admins are not exempt. |
+| `mfa.require` | Require all users to enroll in at least one 2FA method (TOTP, Email OTP, or passkey) before accessing the application. Admins are not exempt. |
 
 #### Admin reset
 
@@ -197,6 +199,54 @@ Admins can reset a user's Email OTP enrollment from **Admin → Users → Reset 
 - Disables Email OTP for that user.
 - Clears any pending OTP code.
 - Is recorded in the audit log as `user.email_otp_reset`.
+
+---
+
+### Passkeys (WebAuthn)
+
+*(Added in v3.15.0)*
+
+Passkeys are a phishing-resistant 2FA method based on the WebAuthn/FIDO2 standard. Instead of typing a code, the user authenticates with a hardware security key, platform authenticator (Touch ID, Face ID, Windows Hello), or a passkey stored in a password manager.
+
+**Priority:** when a user has a passkey registered, the passkey challenge is presented at login. TOTP and Email OTP are not checked for passkey-enrolled users.
+
+#### Requirements
+
+- The `mfa.passkeys_enabled` setting must be enabled by an admin (Admin → Settings → Multi-Factor Auth).
+- The browser must support WebAuthn (all modern browsers do; Chromium is required for the Playwright test suite due to the virtual authenticator API).
+- HTTPS is mandatory — browsers refuse WebAuthn on plain HTTP.
+
+#### Enrollment
+
+1. Log in and go to **Account** (user menu).
+2. In the **Passkeys** section, click **Add Passkey**.
+3. Enter a friendly name for the passkey (e.g. "YubiKey 5" or "MacBook Touch ID").
+4. Follow the browser prompt to touch your security key or use the platform authenticator.
+5. The passkey appears in the list immediately. You can register multiple passkeys for redundancy.
+
+#### Mid-login challenge
+
+After entering username and password, if the user has at least one passkey registered and passkeys are enabled, they are redirected to `passkey_verify.php`. The browser presents the authenticator prompt automatically. The challenge is single-use with a 60-second server-side TTL.
+
+#### Admin controls
+
+| Setting | Description |
+|---------|-------------|
+| `mfa.passkeys_enabled` | Allow users to register and use passkeys. Disabled by default. |
+| `mfa.require` | Require all users to enroll in at least one 2FA method (TOTP, Email OTP, or passkey). |
+
+#### Admin reset
+
+Admins can delete all passkeys for a user from **Admin → Users → Reset Passkeys**. This:
+
+- Removes all registered credentials for that user.
+- Is recorded in the audit log as `user.passkey_reset`.
+
+Use this when a user loses all their registered authenticators.
+
+#### User deletion
+
+Users can delete individual passkeys from the **Passkeys** section of their Account page. Deleting all passkeys removes the passkey 2FA requirement for subsequent logins.
 
 ---
 

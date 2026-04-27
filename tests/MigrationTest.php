@@ -840,6 +840,39 @@ class MigrationTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // 3.15.0-passkeys (#688)
+    // -------------------------------------------------------------------------
+
+    /**
+     * The 3.15.0-passkeys migration must create the webauthn_credentials table
+     * with all expected columns and be idempotent on a second run.
+     */
+    public function testPasskeysMigrationAddsWebAuthnCredentialsTable(): void
+    {
+        $db = $this->makePreVrfDb();
+        apply_migrations($db);
+
+        $cols = [];
+        foreach ($db->query("PRAGMA table_info(webauthn_credentials)")->fetchAll() as $row) {
+            $cols[] = $row['name'];
+        }
+        sort($cols);
+        $expected = ['created_at', 'credential_id', 'id', 'last_used_at', 'name', 'public_key', 'sign_count', 'user_id'];
+        $this->assertSame($expected, $cols);
+
+        // Idempotency: delete the version stamp and re-run so the migration body
+        // itself executes again; CREATE TABLE IF NOT EXISTS must not throw.
+        $db->exec("DELETE FROM schema_migrations WHERE version = '3.15.0-passkeys'");
+        apply_migrations($db);
+        $cols2 = [];
+        foreach ($db->query("PRAGMA table_info(webauthn_credentials)")->fetchAll() as $row) {
+            $cols2[] = $row['name'];
+        }
+        sort($cols2);
+        $this->assertSame($expected, $cols2);
+    }
+
+    // -------------------------------------------------------------------------
     // 3.13.0-settings-cascade
     // -------------------------------------------------------------------------
 

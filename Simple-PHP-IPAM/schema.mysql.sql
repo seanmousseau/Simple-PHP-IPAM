@@ -641,6 +641,23 @@ CREATE TABLE IF NOT EXISTS backup_history (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ---------------------------------------------------------------------------
+-- webauthn_credentials (v3.15.0 #688: WebAuthn/Passkey credentials)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS webauthn_credentials (
+  id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  user_id       BIGINT UNSIGNED NOT NULL,
+  credential_id VARBINARY(255) NOT NULL, -- PARAM_LOB required on all writes: see ipam_bind_binary()
+  public_key    TEXT NOT NULL,
+  sign_count    INT UNSIGNED NOT NULL DEFAULT 0,
+  name          VARCHAR(255) NOT NULL DEFAULT 'Passkey',
+  created_at    DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  last_used_at  DATETIME,
+  UNIQUE KEY uq_wac_cred_id (credential_id),
+  CONSTRAINT fk_wac_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  INDEX idx_webauthn_credentials_user (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
 -- settings (v2.6.0, key/value config registry)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS settings (
@@ -735,6 +752,7 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.7.0-backup-history'),
   ('3.13.0-settings-cascade'),
   ('3.14.0-mfa-settings'),
-  ('3.14.0-email-otp');
+  ('3.14.0-email-otp'),
+  ('3.15.0-passkeys');
 
 SET FOREIGN_KEY_CHECKS = 1;

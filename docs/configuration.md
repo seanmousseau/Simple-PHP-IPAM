@@ -740,7 +740,8 @@ Controls multi-factor authentication options. Managed via Admin → Settings →
 | Key | Default | Description |
 |-----|---------|-------------|
 | `mfa.email_otp_enabled` | `false` | Allow users to enroll Email OTP as a second authentication factor. Requires a working SMTP configuration. |
-| `mfa.require` | `false` | Require all users to enroll in at least one 2FA method (TOTP or Email OTP) before accessing the application. Users without any 2FA enrolled are redirected to the Account page on login. Admins are not exempt. |
+| `mfa.passkeys_enabled` | `false` | Allow users to register WebAuthn passkeys (hardware security keys, platform authenticators) as a second authentication factor. Requires HTTPS. Added in v3.15.0. |
+| `mfa.require` | `false` | Require all users to enroll in at least one 2FA method (TOTP, Email OTP, or passkey) before accessing the application. Users without any 2FA enrolled are redirected to the Account page on login. Admins are not exempt. |
 
 ---
 

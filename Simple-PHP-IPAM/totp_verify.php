@@ -54,7 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $db->prepare("UPDATE users SET last_login_at=" . ipam_dialect()->now() . " WHERE id=:id")
            ->execute([':id' => $uid]);
         audit($db, 'auth.login', 'user', $uid, 'totp bypassed (disabled)');
-        header('Location: dashboard.php');
+        header('Location: ' . ipam_post_login_redirect_consume());
         exit;
     }
 
@@ -84,7 +84,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $db->prepare("UPDATE users SET last_login_at=" . ipam_dialect()->now() . " WHERE id=:id")
            ->execute([':id' => $uid]);
         audit($db, 'auth.login', 'user', $uid, 'totp ok');
-        header('Location: dashboard.php');
+        header('Location: ' . ipam_post_login_redirect_consume());
         exit;
     }
 

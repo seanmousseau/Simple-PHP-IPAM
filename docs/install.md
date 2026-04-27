@@ -34,6 +34,8 @@ There are **no additional dependencies** for core features. VLANs, VRFs, contact
 | Login bot mitigation | Third-party CAPTCHA account (Turnstile, hCaptcha, reCAPTCHA, Friendly Captcha) |
 | reCAPTCHA Enterprise | Google Cloud project + reCAPTCHA Enterprise API key |
 | Utilization email alerts | Server-side MTA (`mail()` function; most PHP hosts provide this) |
+| TOTP / Email OTP 2FA | `app_secret` set in `config.php` (TOTP); SMTP configured + per-user email (Email OTP) |
+| Passkeys (WebAuthn) | **HTTPS required** for the WebAuthn API to be available in the browser. Loopback IPs (`127.0.0.1`, `::1`) are accepted by browsers without HTTPS for local testing only |
 
 ### `upgrade.sh` dependencies (optional)
 

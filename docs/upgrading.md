@@ -9,8 +9,13 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
+  - [v3.15.1](#v3151) — Bug fixes: post-login redirect, email charset, banner false positive (no breaking changes)
+  - [v3.15.0](#v3150) — WebAuthn / Passkey 2FA (no breaking changes)
+  - [v3.14.0](#v3140) — Email OTP 2FA, MFA enforcement (no breaking changes)
   - [v3.13.0](#v3130) — Settings cascade migration, UI/UX polish (no breaking changes)
   - [v3.12.0](#v3120) — Dashboard responsive fix, health alert indicators, webhooks cleanup (no breaking changes)
+  - [v3.11.0](#v3110) — UI polish (no breaking changes)
+  - [v3.10.0](#v3100) — IPAM_VERSION load-order fix, webhook test_fire (no breaking changes)
   - [v3.9.0](#v390) — Site filter strip, cascading address filter, DB admin consolidation (no breaking changes)
   - [v3.8.1](#v381) — Dashboard bug fixes, documentation refresh (no breaking changes)
   - [v3.8.0](#v380) — Sidebar navigation, command palette, uPlot dashboard, SVG icons, Fira Sans (no breaking changes)
@@ -101,6 +106,39 @@ The backup is left in place after a successful upgrade. You can remove it manual
 ---
 
 ## Version-specific upgrade notes
+
+### v3.15.1
+
+- No manual upgrade steps required. No new migrations, no new settings, no new dependencies.
+- **Bug fixes:**
+  - Post-login redirect now preserves the requested URL across all eight final-success paths (local login, demo, recovery, OIDC, TOTP, TOTP-bypass, Email OTP, passkey). Previously, clicking a deep link (e.g. an email-verification link) while logged out dropped you on `dashboard.php` after sign-in.
+  - Email body charset is now declared as UTF-8. Previously, em-dashes and accented characters arrived as mojibake (`â—`) in clients that respected the declared charset.
+  - The dashboard `config.php` cleanup banner no longer flags `app_secret`, `session`, `auth`, or `api` as stale keys. Following the previous bad advice would have broken every TOTP enrollment.
+  - Email verification failures now surface the real cause (e.g. missing `base_url`) instead of a generic guess, with the underlying reason also logged via `error_log()` for server-side diagnostics.
+
+---
+
+### v3.15.0
+
+- No manual upgrade steps required.
+- The `3.15.0-passkeys` migration creates the `webauthn_credentials` table (passkey storage). This is non-destructive and idempotent.
+- **New pages:** `passkey_verify.php` (mid-login passkey challenge; direct navigation redirects to `login.php`), `passkey_register.php` (AJAX registration endpoint, POST only; requires an active session).
+- **New settings key:** `mfa.passkeys_enabled` (default `false`). Passkeys are opt-in — existing installs are unaffected. Enable via Admin → Settings → Multi-Factor Auth.
+- **`mfa.require` now includes passkeys:** when enforcement is enabled, a registered passkey satisfies the requirement alongside TOTP and Email OTP.
+- **New Composer dependency:** `lbuchs/webauthn ^2.1` (WebAuthn server-side library, MIT, zero transitive deps). Included in the release tarball under `vendor/`. No action required for tarball-based installs. Source installs must run `composer install --no-dev` after upgrade.
+
+---
+
+### v3.14.0
+
+- No manual upgrade steps required.
+- The `3.14.0-email-otp` migration adds Email OTP columns to `users` (`email_otp_enabled`, `email_otp_hash`, `email_otp_expires_at`, `email_otp_attempts`). Non-destructive and idempotent.
+- **New page:** `email_otp_verify.php` (mid-login Email OTP challenge; direct navigation redirects to `login.php`).
+- **New settings keys:** `mfa.email_otp_enabled` (default `false`) and `mfa.require` (default `false`). When `mfa.require` is enabled, users without any enrolled 2FA method are redirected to the Account page to enroll before accessing the application.
+- **SMTP and `users.email` are required** for Email OTP enrollment. Without SMTP configured (`smtp.enabled` true, host/port valid) and a user-level email address, enrollment fails closed.
+- Admins can reset a user's Email OTP enrollment from `users.php`.
+
+---
 
 ### v3.13.0
 

@@ -61,7 +61,7 @@ See the [Installation guide](install.md) to get up and running in minutes.
 | [Devices](devices.md) | Device & interface tracking, CSV import, API |
 | [OIDC / SSO](oidc.md) | PKCE flow setup with Keycloak, Azure AD, Okta, etc. |
 | [SMTP & Email](smtp.md) | SMTP configuration, alerts, password recovery |
-| [Security](security.md) | Hardening checklist, CSP, HTTPS, firewall, TOTP 2FA |
+| [Security](security.md) | Hardening checklist, CSP, HTTPS, firewall, TOTP 2FA, Email OTP, Passkeys/WebAuthn |
 | [Backup & Restore](backup.md) | Database backup CLI, scheduled backups, restore workflow, disaster recovery |
 | [Upgrading](upgrading.md) | Version upgrade instructions and changelog |
 

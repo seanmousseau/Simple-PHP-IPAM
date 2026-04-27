@@ -125,5 +125,20 @@ if (getenv('SEED_EMAIL_OTP_TEST_USER') === '1') {
     echo "Seeded Email OTP test user: email_otp_test_user\n";
 }
 
+// Passkey test user — seeded only when SEED_PASSKEY_TEST_USER=1
+// No pre-seeded credential: WebAuthn credentials require a real browser ceremony.
+// The test spec uses a virtual authenticator to register credentials dynamically.
+if (getenv('SEED_PASSKEY_TEST_USER') === '1') {
+    $pwHash  = password_hash('Password1!', PASSWORD_DEFAULT);
+    $pkExist = $db->prepare("SELECT id FROM users WHERE username = 'passkey_test_user'");
+    $pkExist->execute();
+    if (!$pkExist->fetch()) {
+        $db->prepare(
+            "INSERT INTO users (username, password_hash, role, is_active, email) VALUES (?,?,?,1,?)"
+        )->execute(['passkey_test_user', $pwHash, 'readonly', 'passkey-test@example.com']);
+    }
+    echo "Seeded passkey test user: passkey_test_user\n";
+}
+
 file_put_contents(__DIR__ . '/data/demo_last_reset.txt', (string)time());
 echo "Done. Demo data loaded successfully.\n";
