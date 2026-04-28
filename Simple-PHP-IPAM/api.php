@@ -1364,12 +1364,20 @@ function api_search(PDO $db): never
     // placeholder across multiple positions; SQLite allows it but we keep
     // the same shape for consistency. All five bindings hold the same
     // pre-escaped value.
+    // #750: case-insensitive across all engines via dialect-aware LOWER(col).
+    // SQLite NOCASE only folds ASCII; MySQL depends on column collation;
+    // Postgres LIKE is strictly case-sensitive and our text columns use
+    // COLLATE "C". The PgsqlDialect overrides the COLLATE per LOWER() call so
+    // non-ASCII folding works on every engine.
+    $d = ipam_dialect();
     $where  = [
-        "(a.ip LIKE :q1 ESCAPE '!' OR a.hostname LIKE :q2 ESCAPE '!' "
-        . "OR a.owner LIKE :q3 ESCAPE '!' OR a.note LIKE :q4 ESCAPE '!' "
-        . "OR a.grp LIKE :q5 ESCAPE '!')"
+        '(' . $d->lower_expr('a.ip')       . " LIKE :q1 ESCAPE '!' OR "
+            . $d->lower_expr('a.hostname') . " LIKE :q2 ESCAPE '!' OR "
+            . $d->lower_expr('a.owner')    . " LIKE :q3 ESCAPE '!' OR "
+            . $d->lower_expr('a.note')     . " LIKE :q4 ESCAPE '!' OR "
+            . $d->lower_expr('a.grp')      . " LIKE :q5 ESCAPE '!')",
     ];
-    $qLike  = '%' . like_escape($q) . '%';
+    $qLike  = '%' . like_escape($d->case_fold_value($q)) . '%';
     $params = [
         ':q1' => $qLike,
         ':q2' => $qLike,

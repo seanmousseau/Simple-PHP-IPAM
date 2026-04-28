@@ -29,10 +29,19 @@ $params = [];
 if ($q !== '') {
     // Distinct :q1..:q6 placeholders for PDO native-prepared safety.
     // See api.php::api_search() for the full rationale.
-    $where[] = "(a.ip LIKE :q1 ESCAPE '!' OR a.hostname LIKE :q2 ESCAPE '!'"
-             . " OR a.owner LIKE :q3 ESCAPE '!' OR a.note LIKE :q4 ESCAPE '!'"
-             . " OR a.grp LIKE :q5 ESCAPE '!' OR a.mac LIKE :q6 ESCAPE '!')";
-    $qLike = '%' . like_escape($q) . '%';
+    // #750: case-insensitive across all engines via dialect-aware LOWER(col).
+    // SQLite NOCASE only folds ASCII; MySQL depends on column collation;
+    // Postgres LIKE is strictly case-sensitive and our text columns use
+    // COLLATE "C". The PgsqlDialect overrides the COLLATE per LOWER() call so
+    // non-ASCII folding works on every engine. See lower_expr() on each Dialect.
+    $d = ipam_dialect();
+    $where[] = '(' . $d->lower_expr('a.ip')       . " LIKE :q1 ESCAPE '!' OR "
+             .       $d->lower_expr('a.hostname') . " LIKE :q2 ESCAPE '!' OR "
+             .       $d->lower_expr('a.owner')    . " LIKE :q3 ESCAPE '!' OR "
+             .       $d->lower_expr('a.note')     . " LIKE :q4 ESCAPE '!' OR "
+             .       $d->lower_expr('a.grp')      . " LIKE :q5 ESCAPE '!' OR "
+             .       $d->lower_expr('a.mac')      . " LIKE :q6 ESCAPE '!')";
+    $qLike = '%' . like_escape($d->case_fold_value($q)) . '%';
     $params[':q1'] = $qLike;
     $params[':q2'] = $qLike;
     $params[':q3'] = $qLike;
@@ -137,13 +146,15 @@ $rows = $st->fetchAll();
 /** @var list<array<string, mixed>> $deviceResults */
 $deviceResults = [];
 if ($q !== '') {
-    $dLike = '%' . like_escape($q) . '%';
-    $dWhere  = ["(d.name LIKE :dq1 ESCAPE '!'
-            OR d.vendor LIKE :dq2 ESCAPE '!'
-            OR d.model  LIKE :dq3 ESCAPE '!'
-            OR d.serial LIKE :dq4 ESCAPE '!'
-            OR d.note   LIKE :dq5 ESCAPE '!'
-            OR dif.name LIKE :dq6 ESCAPE '!')"];
+    // #750: case-insensitive search via dialect-aware LOWER() — see addresses block above.
+    $dLike = '%' . like_escape($d->case_fold_value($q)) . '%';
+    $d = ipam_dialect();
+    $dWhere  = ['(' . $d->lower_expr('d.name')   . " LIKE :dq1 ESCAPE '!' OR "
+                .    $d->lower_expr('d.vendor') . " LIKE :dq2 ESCAPE '!' OR "
+                .    $d->lower_expr('d.model')  . " LIKE :dq3 ESCAPE '!' OR "
+                .    $d->lower_expr('d.serial') . " LIKE :dq4 ESCAPE '!' OR "
+                .    $d->lower_expr('d.note')   . " LIKE :dq5 ESCAPE '!' OR "
+                .    $d->lower_expr('dif.name') . " LIKE :dq6 ESCAPE '!')"];
     $dParams = [':dq1' => $dLike, ':dq2' => $dLike, ':dq3' => $dLike,
                 ':dq4' => $dLike, ':dq5' => $dLike, ':dq6' => $dLike];
     if ($siteId > 0) {
@@ -173,8 +184,12 @@ if ($q !== '') {
     // Distinct :sq1..:sq3 placeholders — same PDO native-prepared rule
     // as the addresses search above. See api.php::api_search() for the
     // full rationale.
-    $subWhere[] = "(s.cidr LIKE :sq1 ESCAPE '!' OR s.description LIKE :sq2 ESCAPE '!' OR s.notes LIKE :sq3 ESCAPE '!')";
-    $sqLike = '%' . like_escape($q) . '%';
+    // #750: case-insensitive search via dialect-aware LOWER() — see addresses block above.
+    $d = ipam_dialect();
+    $subWhere[] = '(' . $d->lower_expr('s.cidr')        . " LIKE :sq1 ESCAPE '!' OR "
+                .       $d->lower_expr('s.description') . " LIKE :sq2 ESCAPE '!' OR "
+                .       $d->lower_expr('s.notes')       . " LIKE :sq3 ESCAPE '!')";
+    $sqLike = '%' . like_escape($d->case_fold_value($q)) . '%';
     $subParams[':sq1'] = $sqLike;
     $subParams[':sq2'] = $sqLike;
     $subParams[':sq3'] = $sqLike;

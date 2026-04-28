@@ -210,4 +210,16 @@ final class MysqlDialect implements Dialect
     {
         return 'mysql';
     }
+
+    public function lower_expr(string $column): string
+    {
+        // MySQL's LOWER() folds Unicode according to the column's collation.
+        // utf8mb4 collations handle non-ASCII case folding correctly.
+        return "LOWER($column)";
+    }
+
+    public function case_fold_value(string $value): string
+    {
+        return mb_strtolower($value);
+    }
 }

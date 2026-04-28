@@ -266,6 +266,39 @@ test('search pagination: page=2 with page_size=1 shows second result', async () 
   await expect(emptyState).toHaveCount(0);
 });
 
+// ── Case-insensitive search (#750) ─────────────────────────────────────────────
+//
+// PostgreSQL's LIKE is case-sensitive by default; SQLite NOCASE only folds
+// ASCII A-Z; MySQL's case sensitivity depends on column collation. The fix
+// uses LOWER(col) LIKE LOWER(:bind) to give consistent semantics across all
+// three engines. These cases assert mixed-case input matches a known seeded
+// hostname (web-lon-01) regardless of input casing.
+
+const CASE_INSENSITIVE_QUERIES = [
+  'WEB-LON-01',
+  'Web-Lon-01',
+  'web-lon-01',
+  'WeB-lOn-01',
+];
+
+for (const q of CASE_INSENSITIVE_QUERIES) {
+  test(`search is case-insensitive across hostname mixed-case input: "${q}"`, async () => {
+    await page.goto(`search.php?q=${encodeURIComponent(q)}`);
+    // The seeded hostname web-lon-01 lives at 10.10.2.10 in subnet 10.10.2.0/24
+    const body = await page.locator('body').innerText();
+    expect(body).toContain('10.10.2.10');
+    expect(body.toLowerCase()).toContain('web-lon-01');
+  });
+}
+
+test('search is case-insensitive on owner field (mixed case)', async () => {
+  // Seeded owner "WebTeam" — query with all-lower should still match
+  await page.goto('search.php?q=webteam');
+  const body = await page.locator('body').innerText();
+  // web-lon-01..03 all owned by WebTeam
+  expect(body).toContain('10.10.2.10');
+});
+
 // ── CSV export matches on-screen rows ─────────────────────────────────────────
 
 test('CSV export matches on-screen search results for used+v4', async () => {
