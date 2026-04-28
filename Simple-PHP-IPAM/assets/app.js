@@ -2592,12 +2592,18 @@ function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
         return el ? el.value : '';
     }
 
-    // Type selector swap
+    // Type selector swap. Hidden fieldsets must also disable their inputs so that
+    // HTML5 validation on `required` inputs in non-active fieldsets does not block
+    // form submission (otherwise the browser silently rejects the submit).
     var sel = document.querySelector('[data-destination-type-selector]');
     if (sel) {
         var updateFieldset = function () {
             document.querySelectorAll('.destination-fields').forEach(function (fs) {
-                fs.hidden = fs.dataset.type !== sel.value;
+                var active = fs.dataset.type === sel.value;
+                fs.hidden = !active;
+                fs.querySelectorAll('input, textarea, select').forEach(function (el) {
+                    el.disabled = !active;
+                });
             });
         };
         sel.addEventListener('change', updateFieldset);

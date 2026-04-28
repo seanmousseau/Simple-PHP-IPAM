@@ -145,7 +145,7 @@ test.describe('Restore history visibility', () => {
 
   test('history page Type filter narrows to restore-only when selected', async ({ page }) => {
     await page.goto(appUrl('backup_history.php?type=restore'));
-    const rows = page.locator('table.data-table tbody tr');
+    const rows = page.locator('section.card', { hasText: 'Log entries' }).locator('tbody tr');
     const count = await rows.count();
     if (count > 0) {
       for (let i = 0; i < count; i++) {
@@ -157,7 +157,7 @@ test.describe('Restore history visibility', () => {
 
   test('history page Type filter narrows to backup-only when selected', async ({ page }) => {
     await page.goto(appUrl('backup_history.php?type=backup'));
-    const rows = page.locator('table.data-table tbody tr');
+    const rows = page.locator('section.card', { hasText: 'Log entries' }).locator('tbody tr');
     const count = await rows.count();
     if (count > 0) {
       for (let i = 0; i < count; i++) {

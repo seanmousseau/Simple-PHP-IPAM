@@ -185,32 +185,21 @@ test.describe('Backup destinations admin', () => {
 
     await testBtn.click();
 
-    // Wait up to 12s for the result to update: look for a failure indicator
-    // in a result element or an updated button label.
-    // The exact selector depends on how the JS wires up the test result,
-    // but any of: ✗, failed, error, or the button text changing is sufficient.
-    const resultLocator = page.locator('[data-test-result], .test-result, #test-result-area').first();
-    const resultVisible = await resultLocator.isVisible().catch(() => false);
+    // The JS handler updates button text in-place and adds .button-danger / .button-success
+    // classes. Wait up to 30s for the transient "Testing…" label to be replaced.
+    // S3 connect to a closed port can take ~10s for the curl timeout to fire.
+    await expect(testBtn).not.toHaveText(/Testing/i, { timeout: 30_000 });
 
-    if (resultVisible) {
-      const resultText = (await resultLocator.textContent()) ?? '';
-      expect(
-        resultText.toLowerCase().includes('fail') ||
-        resultText.includes('✗') ||
-        resultText.toLowerCase().includes('error') ||
-        resultText.toLowerCase().includes('could not'),
-        `Expected failure indicator in test result, got: "${resultText}"`,
-      ).toBeTruthy();
-    } else {
-      // Alternative: button text may change to reflect failure status.
-      const btnText = (await testBtn.textContent()) ?? '';
-      expect(
-        btnText.toLowerCase().includes('fail') ||
-        btnText.includes('✗') ||
-        btnText.toLowerCase().includes('error'),
-        `Expected failure indicator in Test button text, got: "${btnText}"`,
-      ).toBeTruthy();
-    }
+    const btnText = (await testBtn.textContent()) ?? '';
+    const btnClass = (await testBtn.getAttribute('class')) ?? '';
+    expect(
+      btnText.toLowerCase().includes('fail') ||
+      btnText.includes('✗') ||
+      btnText.toLowerCase().includes('error') ||
+      btnText.toLowerCase().includes('could not') ||
+      btnClass.includes('button-danger'),
+      `Expected failure indicator (text: "${btnText}", class: "${btnClass}")`,
+    ).toBeTruthy();
   });
 
   test('admin can delete a destination', async () => {
@@ -397,19 +386,29 @@ test.describe('Backup history', () => {
     // This test verifies the badge class mapping works. If there are no rows in
     // the log, we fall back to a source-code read to confirm the template is wired.
     await page.goto(appUrl('backup_history.php'));
-    const rows = page.locator('section.card table.data-table tbody tr');
+    // Target the log entries table specifically (the page also has a Status-by-destination
+    // summary card with its own table that has no status badges).
+    const rows = page.locator('section.card', { hasText: 'Log entries' }).locator('tbody tr');
     const rowCount = await rows.count();
 
     if (rowCount > 0) {
-      // At least one row exists — verify the badge has a recognisable class.
-      const badge = rows.first().locator('span.badge');
-      const badgeClass = await badge.getAttribute('class') ?? '';
+      // At least one row exists — verify a status badge is present with a recognisable class.
+      // Note: Phase 14 added a separate Type badge (badge-backup / badge-restore). Iterate
+      // all badges in the row and require at least one to carry a known status class.
+      const badges = rows.first().locator('span.badge');
+      const badgeCount = await badges.count();
+      let foundStatusClass = '';
+      for (let i = 0; i < badgeCount; i++) {
+        const cls = await badges.nth(i).getAttribute('class') ?? '';
+        if (cls.includes('badge-success') || cls.includes('badge-failed') ||
+            cls.includes('badge-running') || cls.includes('badge-retention_pruned')) {
+          foundStatusClass = cls;
+          break;
+        }
+      }
       expect(
-        badgeClass.includes('badge-success') ||
-        badgeClass.includes('badge-failed') ||
-        badgeClass.includes('badge-running') ||
-        badgeClass.includes('badge-retention_pruned'),
-        `Badge class "${badgeClass}" does not match any known status class`,
+        foundStatusClass !== '',
+        `No status badge with a known class found among ${badgeCount} badges in first row`,
       ).toBeTruthy();
     } else {
       // No rows: verify the template source contains the correct class mapping.
@@ -420,8 +419,17 @@ test.describe('Backup history', () => {
         path.resolve(__dirname, '../../../Simple-PHP-IPAM/backup_history.php'),
         'utf8',
       );
-      expect(src).toContain("'badge-' . $statusVal");
-      expect(src).toContain('badge-success');
+      // Template builds class as 'badge-' . $r['status']; verify the dynamic
+      // construction is present and that the css declares all four states.
+      expect(src).toMatch(/'badge-' \. \$statusVal/);
+      const cssSrc = fs.readFileSync(
+        path.resolve(__dirname, '../../../Simple-PHP-IPAM/assets/app.css'),
+        'utf8',
+      );
+      expect(cssSrc).toContain('badge-success');
+      expect(cssSrc).toContain('badge-failed');
+      expect(cssSrc).toContain('badge-running');
+      expect(cssSrc).toContain('badge-retention_pruned');
     }
   });
 

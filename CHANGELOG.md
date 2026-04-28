@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.17.0] - 2026-04-28
+
+### Added
+- **Web-based backup destinations.** Three destination types — S3-compatible (AWS, MinIO, Backblaze B2, Wasabi, DigitalOcean Spaces, Cloudflare R2 — hand-rolled AWS Sig V4 client, no AWS SDK), SFTP (via `phpseclib/phpseclib ^3.0`), and Local filesystem (under `data/`). Admin UI at `destinations.php` to create, edit, test connection, and delete destinations. (#690, #691, #692, #693)
+- **Backup schedules with GFS retention.** Per-destination schedule (hourly / daily / weekly / monthly) with clock-aligned `next_run_at` and grandfather-father-son retention counters. Newest backup always preserved. Wired into `cron.php`. Manual "Run now" via AJAX. Email notifications via `backup.notify_on_failure` / `backup.notify_on_success` settings. (#695, #696)
+- **AES-256-GCM backup encryption** with HKDF-SHA256 key derivation from `app_secret`. Magic header `IPAMBKP1` for forward-compat. Tamper detection on body, tag, IV, truncation, and plaintext-input. (#694)
+- **Backup history log page** at `backup_history.php` — paginated 50/page with destination/status/date filters, Type column distinguishing backup vs restore, status badges, status-by-destination summary card. (#697)
+- **Remote backup browser** at `remote_backups.php` — list/verify/delete files on a chosen destination via the client's `list()` interface. Verify recomputes SHA-256 against the stored `backup_log.checksum`. (#698)
+- **Web-based restore wizard** at `restore_web.php` — three-step flow: stage from remote → dry-run preview (tables, row deltas, schema diff, warnings) → live apply with confirm-typing gate (`RESTORE` exactly). Wraps in transaction; runs `apply_migrations()` post-restore. (#699, #700)
+- **Restore audit and history integration.** Restore operations write `backup_log` rows with `triggered_by='web_restore'` and audit_log entries (`db.restore_stage`, `db.restore_dryrun`, `db.restore`). History page Type filter shows backup vs restore. (#701)
+- **PHPUnit coverage:** GFS retention algorithm (20 tests), encryption round-trip + tamper (12 tests), HKDF (3 tests including RFC 5869 TC1 vector), AWS Sig V4 (13 tests), SFTP constructor (6), LocalBackupClient (7), schedule next-run (8), v3.17.0 schema migration (2). 401 PHPUnit tests total, all passing. (#719, #720)
+- **Playwright coverage:** 17 tests across destinations admin / scheduling / history (`backups.spec.ts`) and 7 across the restore wizard / history filter (`restore.spec.ts`). Live restore round-trip is opt-in via `IPAM_PW_RESTORE_LIVE=1` so default CI runs do not destroy the test DB. (#721, #722, #723)
+- **New runtime dependency:** `phpseclib/phpseclib ^3.0` (SFTP). Bundled in the release tarball; no `composer install` needed at install time.
+
+### Changed
+- The legacy v3.7 `backup.php` CLI continues to write to the legacy `backup_history` table. New v3.17 destinations write to `backup_log`. They co-exist; no data migration required.
+- Admin sidebar gains four entries under the Admin section: **Destinations**, **Backup History**, **Remote Backups**, **Restore Database**.
+
+### Security
+- Backup encryption keys are derived per-purpose via HKDF-SHA256 from `app_secret`. Rotating `app_secret` invalidates existing encrypted backups by design. (#694)
+- The web-restore wizard requires admin role + CSRF; live apply requires the user to type `RESTORE` exactly. The staged file path is HMAC-signed so an attacker cannot forge an arbitrary path through the apply step.
+- New semgrep rule `ipam-unlink-user-path` enforces that `unlink()` calls on user-input-derived paths go through `realpath()` containment.
+
+### Notes
+- Backup dumps are SQLite-only in v3.17.0; MySQL and PostgreSQL backup dumps are a follow-up.
+- The new `backup_log` table is independent of the legacy `backup_history` table introduced in v3.7.0.
+
+---
+
 ## [3.16.0] - 2026-04-28
 
 ### Added
@@ -1164,6 +1193,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.17.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.16.0...v3.17.0
 [3.16.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.15.2...v3.16.0
 [3.15.2]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.15.1...v3.15.2
 [3.15.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.15.0...v3.15.1
