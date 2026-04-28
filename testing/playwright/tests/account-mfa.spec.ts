@@ -29,7 +29,7 @@ const TFA_SECRET     = 'JBSWY3DPEHPK3PXP'; // matches reset_2fa_enrollment.php s
  * the picker tests are self-contained.
  */
 async function loginWithTotp(page: import('@playwright/test').Page, username: string, password: string): Promise<void> {
-    await page.goto('login.php');
+    await page.goto(appUrl('login.php'));
     await page.waitForSelector('[name=username]', { timeout: 30_000 });
     await page.locator('[name=username]').fill(username);
     await page.locator('[name=password]').fill(password);
@@ -242,6 +242,23 @@ test.describe('Preserved-enrollment hints (#755)', () => {
             await logout(page);
         } finally {
             await setMfaToggles(page, { 'k_mfa__totp_enabled': '1' });
+            // Reset the preferred-method back to default so subsequent tests
+            // (which assume TOTP-first dispatch) are not broken by a stale
+            // email_otp preference on this shared seeded user.
+            try {
+                await loginWithTotp(page, EMAIL_OTP_USER, EMAIL_OTP_PASS);
+                await page.goto(appUrl('change_password.php'));
+                const sel = page.locator('#mfa-preferred-select');
+                if (await sel.count()) {
+                    await sel.selectOption('');
+                    await page.locator('form.mfa-preferred__form button[type=submit]').click();
+                    await page.waitForURL(/change_password\.php/, { timeout: 15_000 });
+                }
+                await logout(page);
+            } catch {
+                // best-effort cleanup; swallow so an unrelated failure
+                // doesn't mask the real test result.
+            }
         }
     });
 
@@ -264,7 +281,7 @@ test.describe('Preserved-enrollment hints (#755)', () => {
         try {
             // Login to password step only — we want to inspect totp_verify.php markup,
             // not complete the challenge.
-            await page.goto('login.php');
+            await page.goto(appUrl('login.php'));
             await page.locator('[name=username]').fill(EMAIL_OTP_USER);
             await page.locator('[name=password]').fill(EMAIL_OTP_PASS);
             await page.locator('button[type=submit]').click();

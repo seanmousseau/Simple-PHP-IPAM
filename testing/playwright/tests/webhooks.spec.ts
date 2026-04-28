@@ -22,7 +22,11 @@ let page: Page;
 
 /** Submit the webhooks settings card that contains allow_private_ips. */
 async function saveWebhookSettings(p: Page, enable: boolean): Promise<void> {
-  await p.goto(appUrl('settings.php'));
+  // v3.16.0 (#749): the webhooks settings card lives under the
+  // Integrations tab. Without ?tab=integrations the General tab renders
+  // instead and #group-webhooks is not in the DOM, so the beforeAll
+  // silently fails and the create test is rejected by the SSRF guard.
+  await p.goto(appUrl('settings.php?tab=integrations'));
   const cb = p.locator('input[type=checkbox][name="k_webhook__allow_private_ips"]');
   await expect(cb).toBeVisible({ timeout: 10_000 });
   const checked = await cb.isChecked();

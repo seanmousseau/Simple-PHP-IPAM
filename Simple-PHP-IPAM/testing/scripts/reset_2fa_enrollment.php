@@ -2,7 +2,11 @@
 /**
  * Test-only CLI helper: re-seeds the 2FA test user's totp_enabled=1,
  * totp_secret_enc (RFC 6238 vector JBSWY3DPEHPK3PXP), and the eight
- * known-plaintext backup codes that totp.spec.ts relies on.
+ * known-plaintext backup codes that totp.spec.ts relies on. Also
+ * re-enables the global mfa.totp_enabled setting so that beforeAll
+ * fully self-heals after upstream specs (email_otp/passkeys
+ * afterEach) wipe the global toggle via group=mfa POSTs with no
+ * booleans (#756 cascade).
  *
  * Used by Playwright's totp.spec.ts beforeAll so the spec is robust to
  * any upstream test that may have flipped the user's TOTP state during
@@ -26,7 +30,7 @@ if ($username === '') {
     exit(2);
 }
 
-$configPath = __DIR__ . '/../../Simple-PHP-IPAM/config.php';
+$configPath = __DIR__ . '/../../config.php';
 if (!file_exists($configPath)) {
     $configPath = '/var/www/html/config.php';
 }
@@ -37,7 +41,7 @@ if (!file_exists($configPath)) {
 
 $config = require $configPath;
 
-$libPath = __DIR__ . '/../../Simple-PHP-IPAM/lib.php';
+$libPath = __DIR__ . '/../../lib.php';
 if (!file_exists($libPath)) {
     $libPath = '/var/www/html/lib.php';
 }
@@ -59,6 +63,19 @@ $encSecret  = ipam_totp_encrypt_secret($testSecret, $appSecret);
 // transaction. Two writes; if the second fails the first stays committed,
 // which is acceptable for a test fixture.
 try {
+    // Verify the user exists with an explicit SELECT before issuing the UPDATE.
+    // Relying on rowCount() of UPDATE is engine-dependent: MySQL's PDO returns
+    // the number of rows actually CHANGED (not matched), so a no-op UPDATE
+    // against an already-reset user reports rowCount=0 and would trigger the
+    // "User not found" error path even though the user exists.
+    $check = $db->prepare("SELECT id FROM users WHERE username = :u LIMIT 1");
+    $check->execute([':u' => $username]);
+    $uid = (int)($check->fetchColumn() ?: 0);
+    if ($uid === 0) {
+        fwrite(STDERR, "User '{$username}' not found\n");
+        exit(5);
+    }
+
     $st = $db->prepare(
         "UPDATE users
             SET totp_enabled    = 1,
@@ -67,24 +84,19 @@ try {
     );
     $st->execute([':ts' => $encSecret, ':u' => $username]);
 
-    if ($st->rowCount() === 0) {
-        fwrite(STDERR, "User '{$username}' not found\n");
-        exit(5);
-    }
-
-    $uidStmt = $db->prepare("SELECT id FROM users WHERE username = :u");
-    $uidStmt->execute([':u' => $username]);
-    $uid = (int)($uidStmt->fetchColumn() ?: 0);
-    if ($uid === 0) {
-        fwrite(STDERR, "Could not resolve uid for '{$username}'\n");
-        exit(6);
-    }
-
     ipam_totp_save_backup_codes($db, $uid, [
         'AAAA1111-BBBB2222', 'CCCC3333-DDDD4444', 'EEEE5555-FFFF6666',
         'GGGG7777-HHHH8888', 'IIII9999-JJJJAAAA', 'KKKK1111-LLLL2222',
         'MMMM3333-NNNN4444', 'OOOO5555-PPPP6666',
     ]);
+
+    // Self-heal the global mfa.totp_enabled setting. Upstream specs
+    // (email_otp.spec.ts / passkeys.spec.ts) afterEach blocks POST
+    // group=mfa with no booleans, which the settings handler treats as
+    // "absent = false" and writes mfa.totp_enabled = 0. login.php gates
+    // TOTP dispatch on this global toggle, so per-user totp_enabled=1
+    // alone is not enough — the global must also be true.
+    ipam_setting_set($db, 'mfa.totp_enabled', true, $uid);
 } catch (\Throwable $e) {
     fwrite(STDERR, "reset failed: " . $e->getMessage() . "\n");
     exit(7);

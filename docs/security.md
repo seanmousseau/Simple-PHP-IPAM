@@ -245,6 +245,7 @@ After entering username and password, if the user has at least one passkey regis
 
 | Setting | Description |
 |---------|-------------|
+| `mfa.totp_enabled` | Admin global toggle to enable/disable TOTP enrolment + login challenge. Default `true`. Disabling preserves per-user `users.totp_enabled` so re-enabling restores enrolments without re-enrollment. `mfa.require` only counts methods both enrolled and globally enabled. The Settings UI warns if `mfa.totp_enabled = true` but `app_secret` in `config.php` is unset. (v3.16.0) |
 | `mfa.passkeys_enabled` | Allow users to register and use passkeys. Disabled by default. |
 | `mfa.require` | Require all users to enroll in at least one 2FA method (TOTP, Email OTP, or passkey). |
 

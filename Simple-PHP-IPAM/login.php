@@ -148,8 +148,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $available = ipam_user_available_mfa_methods($db, $uid);
                 $preferred = ipam_user_preferred_mfa($db, $uid);
                 $chain = $available;
-                if ($preferred !== null) {
-                    // Move preferred to the front of the dispatch chain.
+                if ($preferred !== null && in_array($preferred, $available, true)) {
+                    // Move preferred to the front of the dispatch chain only
+                    // when it is actually available (enrolled + globally enabled).
+                    // Otherwise leave $chain = $available so a stale preference
+                    // does not short-circuit dispatch.
                     $chain = array_values(array_unique(array_merge([$preferred], $available)));
                 }
 
@@ -186,8 +189,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // it. They must enroll Email OTP (or have a passkey already).
                 $totpGloballyEnabledForRequireGate = (bool)to_int(ipam_setting('mfa.totp_enabled', true));
                 $totpSatisfies = $totpGloballyEnabledForRequireGate && to_int($user['totp_enabled'] ?? 0) === 1;
+                $passkeysGloballyEnabled = (bool)to_int(ipam_setting('mfa.passkeys_enabled', false));
+                $passkeySatisfies = $passkeysGloballyEnabled && ipam_passkey_has_credentials($db, $uid);
                 if ((bool)to_int(ipam_setting('mfa.require', false)) &&
                     !$totpSatisfies &&
+                    !$passkeySatisfies &&
                     to_int($user['email_otp_enabled'] ?? 0) === 0) {
                     login_user(to_int($user['id']), to_str($user['username']), to_str($user['role']));
                     $db->prepare("UPDATE users SET last_login_at=" . ipam_dialect()->now() . " WHERE id=:id")

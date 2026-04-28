@@ -624,7 +624,7 @@ GET /api.php?resource=search&q=<query>
 
 Search addresses by IP, hostname, owner, note, or group. The web app's global search (`search.php`) also searches device names and interface names — see [Devices](devices.md) for details.
 
-Search is **case-insensitive on every supported database engine** as of v3.16.0 (it was case-sensitive on PostgreSQL prior). SQLite matching is ASCII-only (no ICU); MySQL and PostgreSQL perform full Unicode case folding via their default collations.
+Search is **case-insensitive on every supported database engine** as of v3.16.0 (it was case-sensitive on PostgreSQL prior). The query layer constructs case-insensitive comparisons via dialect-aware `LOWER()` expressions; PostgreSQL specifically wraps each `LOWER()` call with `COLLATE "C"` so the function-based index can be used. SQLite matching remains ASCII-only (no ICU bundled with the standard SQLite build); MySQL and PostgreSQL perform full Unicode case folding via `LOWER()` as called.
 
 **Query parameters**
 

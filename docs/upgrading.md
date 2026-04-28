@@ -112,7 +112,7 @@ The backup is left in place after a successful upgrade. You can remove it manual
 ### v3.16.0
 
 - No manual upgrade steps required.
-- The `3.16.0-preferred-mfa` migration adds a nullable `preferred_mfa_method` column to `users`. Non-destructive and idempotent. Existing users dispatch as before until they pick a preference from the Account page.
+- The `3.16.0-preferred-mfa-method` migration adds a nullable `preferred_mfa_method` column to `users`. Non-destructive and idempotent. Existing users dispatch as before until they pick a preference from the Account page.
 - **New setting `mfa.totp_enabled` (default `true`).** Existing installs continue to allow TOTP exactly as before. Admins who want to phase TOTP out in favour of Email OTP / passkeys can disable it from Admin → Settings → Multi-Factor Auth without revoking individual user enrollments — re-enabling restores each user's previous TOTP without re-enrollment.
 - **`app_secret` warning banner.** The Settings page now flags the case where `mfa.totp_enabled = true` but `app_secret` is unset in `config.php`. This was previously a silent failure mode at TOTP enrollment time. If you see the banner, either generate and add `app_secret` to `config.php` (`php -r "echo bin2hex(random_bytes(32));"`) or disable `mfa.totp_enabled`.
 - **Settings page reorganised into 5 tabs.** General, Authentication, Notifications, Data & Maintenance, Integrations. The per-subsection POST flow is unchanged — bookmarks to `settings.php` still work and the legacy `#group-<key>` anchor format auto-redirects to the correct tab via a JS shim. URL state is now carried via `?tab=`.

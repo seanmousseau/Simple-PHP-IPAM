@@ -754,6 +754,7 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.13.0-settings-cascade'),
   ('3.14.0-mfa-settings'),
   ('3.14.0-email-otp'),
-  ('3.15.0-passkeys');
+  ('3.15.0-passkeys'),
+  ('3.16.0-preferred-mfa-method');
 
 SET FOREIGN_KEY_CHECKS = 1;

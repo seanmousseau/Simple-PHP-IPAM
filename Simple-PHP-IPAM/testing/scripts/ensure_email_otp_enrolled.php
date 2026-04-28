@@ -19,7 +19,7 @@ if ($username === '') {
     exit(2);
 }
 
-$configPath = __DIR__ . '/../../Simple-PHP-IPAM/config.php';
+$configPath = __DIR__ . '/../../config.php';
 if (!file_exists($configPath)) {
     $configPath = '/var/www/html/config.php';
 }
@@ -33,7 +33,7 @@ $config = require $configPath;
 $driver = $config['db_driver'] ?? 'sqlite';
 
 if ($driver === 'sqlite') {
-    $dbPath = $config['db_path'] ?? (__DIR__ . '/../../Simple-PHP-IPAM/data/ipam.sqlite');
+    $dbPath = $config['db_path'] ?? (__DIR__ . '/../../data/ipam.sqlite');
     if (!file_exists($dbPath)) {
         $dbPath = '/var/www/html/data/ipam.sqlite';
     }

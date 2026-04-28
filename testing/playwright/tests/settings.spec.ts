@@ -330,27 +330,57 @@ test.describe('Settings page — v3.16.0 (#749) tab navigation', () => {
     // change must redirect back to ?tab=authentication and land on
     // #group-mfa, NOT lose the tab parameter.
     await page749.goto(appUrl('settings.php?tab=authentication'));
+
+    // Snapshot current MFA toggle bools so we can restore them in finally.
+    // POSTing group=mfa with no boolean keys treats them all as "false" and
+    // wipes the global toggle, which cascades into totp/email_otp/passkey
+    // specs that run after this one (see #756).
+    const readToggle = async (key: string): Promise<boolean> => {
+      const cb = page749.locator(`input[type="checkbox"][name="${key}"]`).first();
+      if (!(await cb.count())) return false;
+      return await cb.isChecked();
+    };
+    const before = {
+      'k_mfa__totp_enabled':      await readToggle('k_mfa__totp_enabled'),
+      'k_mfa__email_otp_enabled': await readToggle('k_mfa__email_otp_enabled'),
+      'k_mfa__passkeys_enabled':  await readToggle('k_mfa__passkeys_enabled'),
+      'k_mfa__require':           await readToggle('k_mfa__require'),
+    };
+
     const csrf = await page749
       .locator('form:has(input[name="group"][value="mfa"]) input[name="csrf"]')
       .first()
       .getAttribute('value');
     expect(csrf).toBeTruthy();
 
-    const response = await page749.request.post(appUrl('settings.php'), {
-      form: {
-        csrf:                  csrf ?? '',
-        group:                 'mfa',
-        // Only post the bool fields with their current state. Empty/missing
-        // values are treated as "false" by the bool path so this is a no-op
-        // unless the seeded state differs. The redirect target is what we
-        // care about.
-      },
-      maxRedirects: 0,
-    });
-    expect(response.status()).toBe(302);
-    const loc = response.headers()['location'] || '';
-    expect(loc).toContain('settings.php?tab=authentication');
-    expect(loc).toContain('#group-mfa');
+    try {
+      const response = await page749.request.post(appUrl('settings.php'), {
+        form: {
+          csrf:                  csrf ?? '',
+          group:                 'mfa',
+          // Only post the bool fields with their current state. Empty/missing
+          // values are treated as "false" by the bool path so this is a no-op
+          // unless the seeded state differs. The redirect target is what we
+          // care about.
+        },
+        maxRedirects: 0,
+      });
+      expect(response.status()).toBe(302);
+      const loc = response.headers()['location'] || '';
+      expect(loc).toContain('settings.php?tab=authentication');
+      expect(loc).toContain('#group-mfa');
+    } finally {
+      // Restore the bools we just overwrote so we don't poison subsequent specs.
+      const restoreCsrf = await page749.request.get(appUrl('settings.php?tab=authentication'));
+      const restoreHtml = await restoreCsrf.text();
+      const restoreMatch = restoreHtml.match(/<form[^>]*>[\s\S]*?name="group"\s+value="mfa"[\s\S]*?name="csrf"\s+value="([^"]+)"/);
+      const newCsrf = restoreMatch ? restoreMatch[1] : (csrf ?? '');
+      const form: Record<string, string> = { csrf: newCsrf, group: 'mfa' };
+      for (const [k, v] of Object.entries(before)) {
+        if (v) form[k] = '1';
+      }
+      await page749.request.post(appUrl('settings.php'), { form, maxRedirects: 0 });
+    }
   });
 
   test('arrow-key keyboard nav moves focus between rail items', async () => {

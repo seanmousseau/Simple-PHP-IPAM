@@ -240,7 +240,24 @@ test.describe('TOTP 2FA', () => {
 
         // Step 1: admin disables mfa.totp_enabled
         await login(page, ADMIN_USER, ADMIN_PASS);
-        await page.goto(appUrl('settings.php'));
+        await page.goto(appUrl('settings.php?tab=authentication'));
+
+        // Snapshot the current MFA toggle state so the finally block can
+        // restore exactly what was set before — not blindly force them all
+        // to '1'. This protects subsequent specs from a stale-default
+        // assumption when the seed eventually changes.
+        const readToggle = async (key: string): Promise<boolean> => {
+            const cb = page.locator(`input[type="checkbox"][name="${key}"]`).first();
+            if (!(await cb.count())) return false;
+            return await cb.isChecked();
+        };
+        const before = {
+            'k_mfa__totp_enabled':      await readToggle('k_mfa__totp_enabled'),
+            'k_mfa__email_otp_enabled': await readToggle('k_mfa__email_otp_enabled'),
+            'k_mfa__passkeys_enabled':  await readToggle('k_mfa__passkeys_enabled'),
+            'k_mfa__require':           await readToggle('k_mfa__require'),
+        };
+
         const disableRes = await fetchPost(page, appUrl('settings.php'), {
             group: 'mfa',
             // Note: absent key means false. We explicitly enable email_otp + passkeys so we
@@ -256,7 +273,7 @@ test.describe('TOTP 2FA', () => {
             // Step 2: log in as 2fa_test_user — must skip TOTP, land on a non-login,
             // non-totp-verify page. 2fa_test_user has only TOTP enrolled, no email_otp,
             // no passkeys, so with TOTP globally off they fall straight through to dashboard.
-            await page.goto('login.php');
+            await page.goto(appUrl('login.php'));
             await page.waitForSelector('[name=username]', { timeout: 30_000 });
             await page.locator('[name=username]').fill(TFA_USER);
             await page.locator('[name=password]').fill(TFA_PASS);
@@ -273,16 +290,13 @@ test.describe('TOTP 2FA', () => {
 
             await logout(page);
         } finally {
-            // Restore: re-enable mfa.totp_enabled so the rest of the suite
-            // sees the original state.
+            // Restore the bools to the values we saved before mutating.
             await login(page, ADMIN_USER, ADMIN_PASS);
-            await page.goto(appUrl('settings.php'));
-            await fetchPost(page, appUrl('settings.php'), {
-                group: 'mfa',
-                'k_mfa__totp_enabled': '1',
-                'k_mfa__email_otp_enabled': '1',
-                'k_mfa__passkeys_enabled': '1',
-            });
+            const form: Record<string, string> = { group: 'mfa' };
+            for (const [k, v] of Object.entries(before)) {
+                if (v) form[k] = '1';
+            }
+            await fetchPost(page, appUrl('settings.php'), form);
             await logout(page);
             // Re-seed TOTP state so subsequent tests in this file (if any are
             // re-run) start clean.

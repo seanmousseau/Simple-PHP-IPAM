@@ -88,7 +88,8 @@ test.describe('Email OTP enrollment', () => {
         await page.locator('#email-otp button[type=submit]').first().click();
 
         await expect(page.locator('.success').first()).toBeVisible();
-        await expect(page.locator('#email-otp')).toContainText(/active/i);
+        // v3.16.0 (#745): MFA card uses a status pill instead of literal "active" text.
+        await expect(page.locator('#email-otp .mfa-method-pill--enabled')).toBeVisible();
         await logout(page);
     });
 
