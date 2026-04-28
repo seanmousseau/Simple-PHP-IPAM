@@ -284,7 +284,10 @@ page_header('Settings');
   <!-- Desktop: vertical rail. role=navigation so screen readers announce a
        landmark; aria-current="page" on the active link is the canonical
        way to expose "you are here" inside a navigation list. -->
-  <nav class="settings-rail" aria-label="Settings sections" data-settings-rail>
+  <?php $groupToTabJson = json_encode($groupToTab, JSON_UNESCAPED_SLASHES);
+        if (!is_string($groupToTabJson)) $groupToTabJson = '{}'; ?>
+  <nav class="settings-rail" aria-label="Settings sections" data-settings-rail
+       data-group-tab-map='<?= e($groupToTabJson) ?>'>
     <ul class="settings-rail__list">
       <?php foreach ($tabs as $tabSlug => $tabMeta):
           $isActive = $tabSlug === $activeTab; ?>
@@ -310,6 +313,7 @@ page_header('Settings');
         'db'            => $db,
         'definitions'   => $definitions,
         'groups'        => $groups,
+        'tabGroups'     => $tabs[$activeTab]['groups'],
         'fieldErrors'   => $fieldErrors,
         'formOverrides' => $formOverrides,
     ]);

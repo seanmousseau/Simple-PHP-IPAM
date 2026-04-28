@@ -370,6 +370,30 @@ test.describe('Settings page — v3.16.0 (#749) tab navigation', () => {
     expect(focusedHome).toBe('General');
   });
 
+  test('legacy #group-<key> bookmark redirects to owning tab (#749 follow-up)', async () => {
+    // A pre-#749 bookmark like settings.php#group-mfa lands on the General
+    // tab (default) but the MFA form lives under Authentication. The JS
+    // shim should read the hash, look up the owning tab in the map exposed
+    // via data-group-tab-map on the rail, and redirect to
+    // ?tab=authentication#group-mfa preserving the anchor.
+    // Navigate away first so the next goto is a real page load (and runs the
+    // inline shim). If the previous test left us on settings.php, going to
+    // settings.php#group-mfa is treated as a same-document hash change and
+    // the script never re-executes.
+    await page749.goto(appUrl('dashboard.php'));
+    await page749.goto(appUrl('settings.php#group-mfa'));
+    // The shim calls location.replace synchronously after parse; Playwright
+    // may or may not have observed the second navigation by the time goto()
+    // returns. Poll the URL until the redirect has landed, then assert.
+    await expect.poll(() => page749.url(), { timeout: 5000 })
+      .toMatch(/[?&]tab=authentication/);
+    expect(page749.url()).toContain('settings.php?tab=authentication');
+    expect(page749.url()).toContain('#group-mfa');
+    // The MFA form must actually be present after the redirect.
+    const mfaForm = page749.locator('form:has(input[name="group"][value="mfa"])');
+    await expect(mfaForm).toBeVisible();
+  });
+
   test('mobile <768px hides rail and shows <select> dropdown', async () => {
     await page749.setViewportSize({ width: 360, height: 720 });
     try {
