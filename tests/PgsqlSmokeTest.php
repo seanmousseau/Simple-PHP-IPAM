@@ -145,7 +145,10 @@ final class PgsqlSmokeTest extends TestCase
     public function testSchemaMigrationsPreseeded(): void
     {
         $row = $this->db->query("SELECT COUNT(*) AS c FROM schema_migrations")->fetch(PDO::FETCH_ASSOC);
-        $this->assertSame(49, (int)$row['c']);
+        // Bump to 50 in v3.16.0 (#746): schema.pgsql.sql preseed now includes
+        // 3.16.0-preferred-mfa-method. Add 1 to this count for every new
+        // migration row added to schema.pgsql.sql in subsequent releases.
+        $this->assertSame(50, (int)$row['c']);
     }
 
     public function testBootstrapAdminUserInserted(): void

@@ -183,18 +183,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         continue;
                     }
                 }
+                // Reached here only if every method in $chain failed to dispatch
+                // (e.g. SMTP broken on email_otp, passkey challenge could not be
+                // issued). Treat this as a hard auth failure when the user
+                // actually has methods enrolled — falling through to login_user()
+                // below would let a user in without an MFA challenge, defeating
+                // the second factor entirely. (CR feedback on PR #757.)
+                if (count($chain) > 0) {
+                    audit($db, 'auth.login_failed', 'user', $uid, 'all_mfa_dispatch_failed');
+                    $error = 'Could not deliver an authentication challenge. Please contact your administrator.';
+                    goto render_page;
+                }
                 // #747: when computing whether mfa.require is satisfied, treat
                 // users with TOTP enrolled-but-globally-disabled as having no
                 // TOTP — they cannot use it to log in until the admin re-enables
                 // it. They must enroll Email OTP (or have a passkey already).
                 $totpGloballyEnabledForRequireGate = (bool)to_int(ipam_setting('mfa.totp_enabled', true));
                 $totpSatisfies = $totpGloballyEnabledForRequireGate && to_int($user['totp_enabled'] ?? 0) === 1;
+                $emailOtpGloballyEnabled = (bool)to_int(ipam_setting('mfa.email_otp_enabled', false));
+                $emailOtpSatisfies = $emailOtpGloballyEnabled && to_int($user['email_otp_enabled'] ?? 0) === 1;
                 $passkeysGloballyEnabled = (bool)to_int(ipam_setting('mfa.passkeys_enabled', false));
                 $passkeySatisfies = $passkeysGloballyEnabled && ipam_passkey_has_credentials($db, $uid);
                 if ((bool)to_int(ipam_setting('mfa.require', false)) &&
                     !$totpSatisfies &&
-                    !$passkeySatisfies &&
-                    to_int($user['email_otp_enabled'] ?? 0) === 0) {
+                    !$emailOtpSatisfies &&
+                    !$passkeySatisfies) {
                     login_user(to_int($user['id']), to_str($user['username']), to_str($user['role']));
                     $db->prepare("UPDATE users SET last_login_at=" . ipam_dialect()->now() . " WHERE id=:id")
                        ->execute([':id' => to_int($user['id'])]);
