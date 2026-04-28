@@ -18,6 +18,8 @@ $filterTo   = preg_match('/^\d{4}-\d{2}-\d{2}$/', $rawTo)   ? $rawTo   : '';
 $safeFrom   = htmlspecialchars($filterFrom, ENT_QUOTES, 'UTF-8');
 $safeTo     = htmlspecialchars($filterTo,   ENT_QUOTES, 'UTF-8');
 
+$filterType = to_str($_GET['type'] ?? '');
+
 $where = [];
 $params = [];
 if ($filterDest > 0) { $where[] = 'l.destination_id = :d'; $params[':d'] = $filterDest; }
@@ -26,6 +28,11 @@ if (in_array($filterStatus, ['running', 'success', 'failed', 'retention_pruned']
 }
 if ($filterFrom !== '') { $where[] = 'l.started_at >= :from'; $params[':from'] = $filterFrom; }
 if ($filterTo !== '')   { $where[] = 'l.started_at <= :to';   $params[':to']   = $filterTo;   }
+if ($filterType === 'restore') {
+    $where[] = "l.triggered_by LIKE 'web_restore%'";
+} elseif ($filterType === 'backup') {
+    $where[] = "(l.triggered_by NOT LIKE 'web_restore%')";
+}
 $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
 
 // Total count
@@ -69,12 +76,13 @@ $destStmt = $db->query("SELECT id, name FROM backup_destinations ORDER BY name")
 $destinations = ($destStmt !== false) ? $destStmt->fetchAll(PDO::FETCH_ASSOC) : [];
 
 // Safe query string for pagination links — only known scalar filter values
-function bh_qs(int $dest, string $status, string $from, string $to, int $page): string {
+function bh_qs(int $dest, string $status, string $from, string $to, int $page, string $type = ''): string {
     $parts = [];
     if ($dest > 0)     { $parts[] = 'destination_id=' . $dest; }
     if ($status !== '') { $parts[] = 'status=' . urlencode($status); }
     if ($from !== '')   { $parts[] = 'from=' . urlencode($from); }
     if ($to !== '')     { $parts[] = 'to=' . urlencode($to); }
+    if ($type !== '')   { $parts[] = 'type=' . urlencode($type); }
     if ($page > 1)     { $parts[] = 'page=' . $page; }
     return $parts ? ('?' . implode('&', $parts)) : '';
 }
@@ -123,6 +131,13 @@ page_header('Backup History');
           <?php endforeach; ?>
         </select>
       </label>
+      <label>Type
+        <select name="type">
+          <option value="">— Any —</option>
+          <option value="backup"  <?= $filterType === 'backup'  ? 'selected' : '' ?>>Backup</option>
+          <option value="restore" <?= $filterType === 'restore' ? 'selected' : '' ?>>Restore</option>
+        </select>
+      </label>
       <label>From <input type="date" name="from" value="<?= e($filterFrom) ?>"></label>
       <label>To <input type="date" name="to" value="<?= e($filterTo) ?>"></label>
       <button type="submit" class="action-pill">Filter</button>
@@ -136,7 +151,7 @@ page_header('Backup History');
       <p class="muted">No backup runs found.</p>
     <?php else: ?>
       <table class="data-table">
-        <thead><tr><th>Started</th><th>Destination</th><th>Trigger</th><th>Status</th><th>Filename</th><th>Size</th><th>Duration</th><th>Checksum</th></tr></thead>
+        <thead><tr><th>Started</th><th>Destination</th><th>Trigger</th><th>Type</th><th>Status</th><th>Filename</th><th>Size</th><th>Duration</th><th>Checksum</th></tr></thead>
         <tbody>
         <?php foreach ($rows as $r):
           $started   = to_str($r['started_at']);
@@ -155,6 +170,11 @@ page_header('Backup History');
             <td><?= e($started) ?></td>
             <td><?= e(to_str($r['dest_name'] ?? 'unknown')) ?></td>
             <td><?= e(to_str($r['triggered_by'])) ?></td>
+            <td><?php
+              $isRestore = str_starts_with(to_str($r['triggered_by']), 'web_restore');
+              $typeLabel = $isRestore ? 'Restore' : 'Backup';
+              $typeClass = $isRestore ? 'badge-restore' : 'badge-backup';
+            ?><span class="badge <?= e($typeClass) ?>"><?= e($typeLabel) ?></span></td>
             <td><span class="badge <?= e($statusClass) ?>"><?= e($statusVal) ?></span>
                 <?php if ($statusVal === 'failed' && to_str($r['error_message'] ?? '') !== ''): ?>
                   <details><summary class="muted">error</summary><pre><?= e(to_str($r['error_message'])) ?></pre></details>
@@ -173,7 +193,7 @@ page_header('Backup History');
       <nav class="pagination">
         <?php for ($p = 1; $p <= $pages; $p++): ?>
           <a class="action-pill <?= $p === $page ? 'is-active' : '' ?>"
-             href="<?= e(bh_qs($filterDest, $filterStatus, $filterFrom, $filterTo, $p)) ?>"><?= $p ?></a>
+             href="<?= e(bh_qs($filterDest, $filterStatus, $filterFrom, $filterTo, $p, $filterType)) ?>"><?= $p ?></a>
         <?php endfor; ?>
       </nav>
       <?php endif; ?>

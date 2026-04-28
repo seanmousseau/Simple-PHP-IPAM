@@ -228,6 +228,27 @@ final class RestoreEngine
             throw new RuntimeException('RestoreEngine: apply only supports sqlite in v3.17.0');
         }
 
+        // Log entry — track restore in backup_log for visibility on history page (#701).
+        // Reverse-lookup destination by checking which backup_log row had this filename.
+        $filename = basename($stagedPath);
+        $destId = null;
+        $matchStmt = $this->db->prepare(
+            "SELECT destination_id FROM backup_log
+             WHERE filename = :f AND status = 'success'
+             ORDER BY started_at DESC LIMIT 1"
+        );
+        $matchStmt->execute([':f' => $filename]);
+        $matched = $matchStmt->fetchColumn();
+        if (is_numeric($matched)) $destId = (int) $matched;
+
+        $now = ipam_dialect()->now();
+        $logStmt = $this->db->prepare(
+            "INSERT INTO backup_log (destination_id, triggered_by, status, filename, started_at)
+             VALUES (:d, 'web_restore', 'running', :f, $now)"
+        );
+        $logStmt->execute([':d' => $destId, ':f' => $filename]);
+        $logId = (int) $this->db->lastInsertId();
+
         $sql = $this->readStagedSql($stagedPath);
 
         $tablesSeen = [];
@@ -250,10 +271,27 @@ final class RestoreEngine
             $this->db->commit();
         } catch (Throwable $e) {
             if ($this->db->inTransaction()) $this->db->rollBack();
+            // Mark log entry failed — swallow any logging error so the real exception propagates
+            try {
+                $nowF = ipam_dialect()->now();
+                $updF = $this->db->prepare(
+                    "UPDATE backup_log SET status = 'failed', error_message = :e, completed_at = $nowF WHERE id = :id"
+                );
+                $updF->execute([':e' => substr($e->getMessage(), 0, 1000), ':id' => $logId]);
+            } catch (Throwable) { /* swallow */ }
             throw new RuntimeException('RestoreEngine: apply failed — ' . $e->getMessage(), 0, $e);
         } finally {
             $this->db->exec('PRAGMA foreign_keys = ON');
         }
+
+        // Mark log entry success
+        try {
+            $now2 = ipam_dialect()->now();
+            $upd = $this->db->prepare(
+                "UPDATE backup_log SET status = 'success', size_bytes = :sz, completed_at = $now2 WHERE id = :id"
+            );
+            $upd->execute([':sz' => filesize($stagedPath) ?: 0, ':id' => $logId]);
+        } catch (Throwable) { /* swallow logging failures */ }
 
         // Bring schema up to date if backup is from older version
         try {

@@ -1962,3 +1962,5 @@ button:active,.button:active,.action-pill:active{transform:translateY(1px)}
 .badge-retention_pruned { background: var(--card); color: var(--muted); }
 .pagination { margin-top: var(--space-9); display: flex; flex-wrap: wrap; gap: var(--space-4); }
 .pagination .is-active { font-weight: 700; }
+.badge-restore { background: color-mix(in srgb, var(--warn) 15%, var(--card) 85%); color: var(--warn); }
+.badge-backup  { background: color-mix(in srgb, var(--link) 15%, var(--card) 85%); color: var(--link); }
