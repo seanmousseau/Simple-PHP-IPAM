@@ -29,9 +29,11 @@ if (in_array($filterStatus, ['running', 'success', 'failed', 'retention_pruned']
 if ($filterFrom !== '') { $where[] = 'l.started_at >= :from'; $params[':from'] = $filterFrom; }
 if ($filterTo !== '')   { $where[] = 'l.started_at <= :to';   $params[':to']   = $filterTo . ' 23:59:59'; }
 if ($filterType === 'restore') {
-    $where[] = "l.triggered_by LIKE 'web_restore%'";
+    // Use the dedicated 'type' column (added in v3.17 migration). Fall back
+    // to triggered_by inference for any pre-migration rows that may exist.
+    $where[] = "(l.type = 'restore' OR l.triggered_by LIKE 'web_restore%')";
 } elseif ($filterType === 'backup') {
-    $where[] = "(l.triggered_by NOT LIKE 'web_restore%')";
+    $where[] = "(l.type = 'backup' OR (l.type IS NULL AND l.triggered_by NOT LIKE 'web_restore%'))";
 }
 $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
 
@@ -171,7 +173,13 @@ page_header('Backup History');
             <td><?= e(to_str($r['dest_name'] ?? 'unknown')) ?></td>
             <td><?= e(to_str($r['triggered_by'])) ?></td>
             <td><?php
-              $isRestore = str_starts_with(to_str($r['triggered_by']), 'web_restore');
+              // Prefer the dedicated 'type' column added in v3.17 migration; fall back
+              // to triggered_by inference for any pre-migration rows.
+              $rowType = to_str($r['type'] ?? '');
+              if ($rowType === '') {
+                  $rowType = str_starts_with(to_str($r['triggered_by']), 'web_restore') ? 'restore' : 'backup';
+              }
+              $isRestore = ($rowType === 'restore');
               $typeLabel = $isRestore ? 'Restore' : 'Backup';
               $typeClass = $isRestore ? 'badge-restore' : 'badge-backup';
             ?><span class="badge <?= e($typeClass) ?>"><?= e($typeLabel) ?></span></td>

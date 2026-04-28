@@ -230,7 +230,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $err = 'Destination is required.';
         } elseif (!in_array($frequency, ['hourly', 'daily', 'weekly', 'monthly'], true)) {
             $err = 'Invalid frequency.';
-        } elseif (!preg_match('/^[0-2]\d:[0-5]\d$/', $timeOfDay)) {
+        } elseif (!preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $timeOfDay)) {
             $err = 'Time of day must be in HH:MM format (e.g. 02:00).';
         } elseif ($dayOfWeek < 0 || $dayOfWeek > 6) {
             $err = 'Day of week must be 0–6.';
@@ -286,17 +286,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $err = 'Invalid schedule ID.';
         } elseif (!in_array($frequency, ['hourly', 'daily', 'weekly', 'monthly'], true)) {
             $err = 'Invalid frequency.';
-        } elseif (!preg_match('/^[0-2]\d:[0-5]\d$/', $timeOfDay)) {
+        } elseif (!preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $timeOfDay)) {
             $err = 'Time of day must be in HH:MM format (e.g. 02:00).';
         } elseif ($dayOfWeek < 0 || $dayOfWeek > 6) {
             $err = 'Day of week must be 0–6.';
         } elseif ($dayOfMonth < 1 || $dayOfMonth > 28) {
             $err = 'Day of month must be 1–28.';
         } else {
+            // Recompute next_run_at since the schedule timing fields may have changed.
+            $nextRunAt = gmdate('Y-m-d H:i:s', ipam_backup_next_run_at([
+                'frequency'    => $frequency,
+                'time_of_day'  => $timeOfDay,
+                'day_of_week'  => $dayOfWeek,
+                'day_of_month' => $dayOfMonth,
+            ]));
             $stmt = $db->prepare(
                 "UPDATE backup_schedules SET
                     frequency=:freq, time_of_day=:tod, day_of_week=:dow, day_of_month=:dom,
-                    retention_hourly=:rh, retention_daily=:rd, retention_weekly=:rw, retention_monthly=:rm
+                    retention_hourly=:rh, retention_daily=:rd, retention_weekly=:rw, retention_monthly=:rm,
+                    next_run_at=:nra
                  WHERE id=:id"
             );
             $stmt->execute([
@@ -308,6 +316,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':rd'   => $retDaily,
                 ':rw'   => $retWeekly,
                 ':rm'   => $retMonthly,
+                ':nra'  => $nextRunAt,
                 ':id'   => $id,
             ]);
             audit($db, 'schedule.update', 'schedule', $id, "frequency=$frequency");
@@ -410,9 +419,9 @@ page_header('Backup Destinations');
               <td><?= to_int($d['encrypt']) === 1 ? 'Yes' : 'No' ?></td>
               <td><?= to_int($d['is_active']) === 1 ? 'Active' : 'Disabled' ?></td>
               <td class="actions">
-                <button class="action-pill" data-edit-destination="<?= to_int($d['id']) ?>">Edit</button>
+                <!-- Edit currently has no in-page form; deferred to v3.18 polish (#762). Hidden so it's not a no-op affordance. -->
                 <button class="action-pill" data-test-destination="<?= to_int($d['id']) ?>">Test</button>
-                <form method="post" style="display:inline" onsubmit="return confirm('Delete this destination? Schedules will be removed.')">
+                <form method="post" style="display:inline" data-confirm-delete="this destination (schedules will be removed)">
                   <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
                   <input type="hidden" name="action" value="delete_destination">
                   <input type="hidden" name="id" value="<?= to_int($d['id']) ?>">
@@ -522,7 +531,7 @@ page_header('Backup Destinations');
                     <?= to_int($s['is_active']) === 1 ? 'Disable' : 'Enable' ?>
                   </button>
                 </form>
-                <form method="post" style="display:inline" onsubmit="return confirm('Delete this schedule?')">
+                <form method="post" style="display:inline" data-confirm-delete="this schedule">
                   <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
                   <input type="hidden" name="action" value="delete_schedule">
                   <input type="hidden" name="id" value="<?= to_int($s['id']) ?>">

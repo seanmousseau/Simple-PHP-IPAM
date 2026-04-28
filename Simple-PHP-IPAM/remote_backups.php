@@ -19,6 +19,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $err = 'This action is disabled in demo mode.';
     } elseif ($postDestId <= 0 || $postName === '') {
         $err = 'Invalid request.';
+    } elseif (str_contains($postName, '/') || str_contains($postName, '\\')
+              || str_contains($postName, "\0") || str_starts_with($postName, '.')) {
+        // Reject path-like remote names before they reach any backup client.
+        $err = 'Invalid filename.';
     } else {
         $client = ipam_remote_backups_client_for($db, $postDestId);
         if ($client === null) {
@@ -145,7 +149,7 @@ page_header('Remote Backups');
     <h2>Choose a destination</h2>
     <form method="get" class="filter-bar">
       <label>Destination
-        <select name="destination_id" onchange="this.form.submit()">
+        <select name="destination_id" data-auto-submit>
           <option value="0">— Select —</option>
           <?php foreach ($destinations as $d): ?>
             <option value="<?= (int)$d['id'] ?>" <?= $selectedId === (int)$d['id'] ? 'selected' : '' ?>>

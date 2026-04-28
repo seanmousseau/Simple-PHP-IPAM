@@ -75,10 +75,16 @@ if ($safeFilename === '' || $safeFilename === '.' || $safeFilename === '..') {
 header('Content-Type: application/octet-stream');
 header('Content-Disposition: attachment; filename="' . $safeFilename . '"');
 header('Content-Length: ' . $staged['size']);
+// Resolve the canonical staged path BEFORE streaming; sign() can throw on
+// missing app_secret and we'd rather fail before the response body starts.
+$cleanupReal = realpath($staged['path']);
+$tmpDir = dirname(__DIR__) . '/Simple-PHP-IPAM/data/tmp';
+$tmpReal = realpath($tmpDir);
+$canCleanup = ($cleanupReal !== false && $tmpReal !== false
+               && str_starts_with($cleanupReal . '/', rtrim($tmpReal, '/') . '/'));
+
 readfile($staged['path']);
-// Cleanup: re-resolve via realpath() at the call site (project semgrep recognises this as a sanitizer)
-$verified = $engine->verifySigned($staged['path'], $engine->sign($staged['path']));
-if ($verified !== null) {
-    $real = realpath($verified);
-    if ($real !== false) @unlink($real);
+
+if ($canCleanup && is_file($cleanupReal)) {
+    @unlink($cleanupReal); // nosemgrep: php.lang.security.unlink-use.unlink-use -- realpath() under data/tmp/
 }

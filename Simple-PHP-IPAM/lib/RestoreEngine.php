@@ -42,6 +42,30 @@ final class RestoreEngine
             throw new RuntimeException('RestoreEngine: file not found on remote');
         }
 
+        // Compute checksum of the on-the-wire blob BEFORE decryption,
+        // to match how BackupEngine recorded it during upload.
+        $observedHash = hash_file('sha256', $downloadPath);
+        if ($observedHash === false) {
+            // nosemgrep: php.lang.security.unlink-use.unlink-use -- random local path
+            @unlink($downloadPath);
+            throw new RuntimeException('RestoreEngine: cannot hash downloaded file');
+        }
+
+        // Verify against backup_log row if one exists for this filename.
+        // Mismatch is fatal — never apply a backup whose stored checksum disagrees.
+        $stmt = $this->db->prepare(
+            "SELECT checksum FROM backup_log
+             WHERE destination_id = :d AND filename = :f AND status = 'success'
+             ORDER BY started_at DESC LIMIT 1"
+        );
+        $stmt->execute([':d' => $destinationId, ':f' => $remoteName]);
+        $stored = $stmt->fetchColumn();
+        if (is_string($stored) && $stored !== '' && !hash_equals($stored, $observedHash)) {
+            // nosemgrep: php.lang.security.unlink-use.unlink-use -- random local path
+            @unlink($downloadPath);
+            throw new RuntimeException('RestoreEngine: checksum mismatch — refusing to stage file');
+        }
+
         try {
             if ($isEnc) {
                 $appSecret = is_string($this->config['app_secret'] ?? null) ? $this->config['app_secret'] : '';
@@ -69,24 +93,6 @@ final class RestoreEngine
         $size = filesize($stagedPath);
         if ($size === false) {
             throw new RuntimeException('RestoreEngine: staged file size unreadable');
-        }
-
-        // Verify against backup_log row if one exists for this filename
-        $stmt = $this->db->prepare(
-            "SELECT checksum FROM backup_log
-             WHERE destination_id = :d AND filename = :f AND status = 'success'
-             ORDER BY started_at DESC LIMIT 1"
-        );
-        $stmt->execute([':d' => $destinationId, ':f' => $remoteName]);
-        $stored = $stmt->fetchColumn();
-        if (is_string($stored) && $stored !== '') {
-            $observed = hash_file('sha256', $isEnc ? $stagedPath : $stagedPath);
-            // Note: backup_log stores SHA-256 of the FINAL (possibly encrypted) file.
-            // For .enc files we verified earlier via download path; recompute on the original blob shape.
-            // Conservative approach: skip strict equality verification when we can't re-derive the
-            // original (encrypted) hash from the staged plaintext. Verification is performed in
-            // Phase 13 dry-run instead.
-            unset($observed); // placeholder
         }
 
         return [
@@ -303,6 +309,24 @@ final class RestoreEngine
             error_log('[restore] post-restore migrations failed: ' . $e->getMessage());
         }
 
+        // Audit: significant destructive action. Records into audit_log so
+        // operators can see who restored what and when, independent of the
+        // backup_log row we already updated above.
+        try {
+            audit(
+                $this->db,
+                'db.restore',
+                'system',
+                null,
+                'file=' . $filename
+                    . ' tables=' . count($tablesSeen)
+                    . ' statements=' . $statements
+                    . ' size=' . (filesize($stagedPath) ?: 0)
+            );
+        } catch (Throwable $e) {
+            error_log('[restore] audit failed: ' . $e->getMessage());
+        }
+
         return [
             'tables_restored' => count($tablesSeen),
             'statements' => $statements,
@@ -311,17 +335,29 @@ final class RestoreEngine
 
     private function readStagedSql(string $stagedPath): string
     {
-        if (!is_file($stagedPath)) {
+        // Containment guard: must be under data/tmp/. Defence-in-depth in case
+        // an upstream signature/validation step is bypassed or refactored.
+        $tmpDir = dirname(__DIR__) . '/data/tmp';
+        $real = realpath($stagedPath);
+        $tmpReal = realpath($tmpDir);
+        if ($real === false || $tmpReal === false || !str_starts_with($real . '/', rtrim($tmpReal, '/') . '/')) {
+            throw new RuntimeException('RestoreEngine: staged file is not under data/tmp/');
+        }
+        if (!is_file($real)) {
             throw new RuntimeException('RestoreEngine: staged file not found');
         }
-        if (str_ends_with($stagedPath, '.sql.gz')) {
+        if (str_ends_with($real, '.sql.gz')) {
             $data = '';
-            $fh = @gzopen($stagedPath, 'rb');
+            $fh = @gzopen($real, 'rb');
             if ($fh === false) throw new RuntimeException('RestoreEngine: gzopen failed');
             try {
                 while (!gzeof($fh)) {
                     $chunk = gzread($fh, 65536);
-                    if ($chunk === false) break;
+                    if ($chunk === false) {
+                        // gzread() returning false is a corruption error, NOT EOF.
+                        // gzeof() catches end-of-file; reaching here means truncation.
+                        throw new RuntimeException('RestoreEngine: gzread error — backup may be truncated');
+                    }
                     $data .= $chunk;
                 }
             } finally {
@@ -329,7 +365,7 @@ final class RestoreEngine
             }
             return $data;
         }
-        $data = @file_get_contents($stagedPath);
+        $data = @file_get_contents($real);
         if ($data === false) throw new RuntimeException('RestoreEngine: cannot read staged file');
         return $data;
     }

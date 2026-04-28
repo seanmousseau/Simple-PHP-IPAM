@@ -705,7 +705,7 @@ CREATE TABLE IF NOT EXISTS backup_destinations (
   id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   name       VARCHAR(255) NOT NULL,
   type       VARCHAR(32)  NOT NULL,
-  config     JSON         NOT NULL,
+  config     TEXT         NOT NULL,
   encrypt    TINYINT(1)   NOT NULL DEFAULT 1,
   is_active  TINYINT(1)   NOT NULL DEFAULT 1,
   created_at DATETIME     NOT NULL DEFAULT (UTC_TIMESTAMP()),
