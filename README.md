@@ -12,14 +12,16 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.15.2
+## What's new in v3.16.0
 
-Bug-fix release covering passkey-registration with password-manager providers, MFA method choice at login, and the post-login redirect for users with stale sessions.
+UX-focused release: a unified MFA experience, a Settings page that no longer scrolls forever, and search that finally works the same on every supported database.
 
-- **Passkey registration works with password-manager providers.** LastPass / 1Password / Bitwarden now save the credential to their vault (`requireResidentKey: 'preferred'` makes it discoverable) and the server-side verification no longer rejects their attestation (`attestation: 'none'` sidesteps malformed packed-self-attestation). The credential default name is the configured site name; `rp.name` follows the site name too, so most password managers and OS dialogs display the install's friendly name.
-- **Choose your MFA method at login.** When TOTP and Email OTP — or TOTP and a passkey — are both enrolled, the TOTP verify page now offers "Send a code to my email instead" and "Use a passkey instead" buttons that swap the pending session keys and dispatch the alternate challenge.
-- **Post-login redirect now survives stale sessions.** v3.15.1 stashed the request URI on cold-start `require_login()` only; users hitting an authenticated link with an idle-timed-out or absolute-lifetime-expired cookie still landed on the dashboard. Both expiry paths now stash before destroying the session.
-- **JS / CSS cache-buster auto-busts.** The query string on `app.js` and `app.css` includes the file mtime, so in-version edits invalidate browser caches without bumping `IPAM_VERSION`.
+- **Two-Factor Authentication card on the Account page.** TOTP, Email OTP, and Passkeys now live in a single card with consistent status pills, action affordances, and "preserved enrollment" hints when an admin globally disables a method.
+- **Preferred MFA method picker.** Users with multiple methods enrolled can choose which one challenges them first at login. Falls back gracefully if the preferred method becomes unusable.
+- **Full MFA switch graph at login.** Every verify page (TOTP / Email OTP / Passkey) can now swap to either of the others mid-login if the user has them enrolled. Extends v3.15.2's TOTP-page-only buttons to the full 3×2 graph.
+- **Admin TOTP toggle.** New `mfa.totp_enabled` setting (default on) lets admins globally disable TOTP without revoking individual enrollments — re-enabling restores every user's TOTP without re-enrollment. Settings page also warns when TOTP is on but `app_secret` is missing from `config.php`.
+- **Settings page tab navigation.** 16 groups consolidated into 5 left-rail tabs (General, Authentication, Notifications, Data & Maintenance, Integrations). URL state via `?tab=`. Mobile collapses to a `<select>`. Legacy `#group-<key>` bookmarks auto-redirect to the right tab.
+- **Case-insensitive search on every engine.** PostgreSQL was previously case-sensitive — fixed. New `Dialect::lower_expr()` / `case_fold_value()` give the search/export pipeline a single portable code path across SQLite, MySQL, and PostgreSQL.
 
 [Full changelog →](CHANGELOG.md)
 

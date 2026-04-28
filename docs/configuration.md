@@ -739,9 +739,12 @@ Controls multi-factor authentication options. Managed via Admin → Settings →
 
 | Key | Default | Description |
 |-----|---------|-------------|
+| `mfa.totp_enabled` | `true` | Allow users to enroll TOTP (RFC 6238) as a second authentication factor. Requires `app_secret` to be set in `config.php` (the Settings page warns when this is enabled but `app_secret` is missing). When disabled, TOTP enrollment is removed from the Account page and the login dispatcher skips TOTP — but per-user `users.totp_enabled` rows are preserved, so re-enabling restores each user's existing enrollment without re-running the QR flow. Added in v3.16.0. |
 | `mfa.email_otp_enabled` | `false` | Allow users to enroll Email OTP as a second authentication factor. Requires a working SMTP configuration. |
 | `mfa.passkeys_enabled` | `false` | Allow users to register WebAuthn passkeys (hardware security keys, platform authenticators) as a second authentication factor. Requires HTTPS. Added in v3.15.0. |
-| `mfa.require` | `false` | Require all users to enroll in at least one 2FA method (TOTP, Email OTP, or passkey) before accessing the application. Users without any 2FA enrolled are redirected to the Account page on login. Admins are not exempt. |
+| `mfa.require` | `false` | Require all users to enroll in at least one 2FA method (TOTP, Email OTP, or passkey) before accessing the application. Users without any 2FA enrolled are redirected to the Account page on login. Admins are not exempt. The check considers only methods that are both enrolled on the user *and* globally enabled — globally disabling TOTP via `mfa.totp_enabled` will fall back to Email OTP / Passkey for enforcement. |
+
+The `users` table also gained a nullable `preferred_mfa_method` column in v3.16.0 (values: `totp`, `email_otp`, `passkey`, or `NULL`). This is a per-user preference set from the Account page, not a config key — it controls which method's verify page is shown first at login when the user has more than one enrolled. Existing users default to `NULL` and continue to dispatch in the legacy priority order (passkey → TOTP → Email OTP) until they pick a preference.
 
 ---
 

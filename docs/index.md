@@ -28,6 +28,7 @@ A lightweight, self-hosted IP Address Management (IPAM) tool built with **PHP 8.
 - **Outbound webhooks** — HMAC-signed HTTP callbacks on address/subnet mutations with retry and delivery log
 - **REST API** — read-only and read-write key authentication; OpenAPI 3.1 spec at `?resource=spec`
 - **OIDC/SSO** — PKCE flow, no Composer packages required
+- **Multi-method MFA** — TOTP, Email OTP, and WebAuthn passkeys; unified Account-page card; users pick a preferred method; full switch graph between methods at login; admin global toggles per method
 - **Audit log** — append-only, full change history with configurable retention and batch pruning
 - **Database backup & restore** — scheduled CLI backup (SQLite/MySQL/PostgreSQL) with SHA-256 verification, retention rotation, and restore with dry-run mode; admin backup history page
 - **Operational health dashboard** — real-time metrics (DB size, backup status, scanning health, webhook delivery, auth/security, system info) with color-coded status indicators

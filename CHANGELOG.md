@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.16.0] - 2026-04-28
+
+### Added
+- **Admin TOTP toggle** (`mfa.totp_enabled`, default `true`). Admins can globally disable TOTP enrollment and login dispatch from Admin → Settings → Multi-Factor Auth. Per-user `users.totp_enabled` is preserved when an admin toggles the global switch off; re-enabling restores each user's previous enrollment without re-running the QR flow. When TOTP is globally off, `mfa.require` falls back to Email OTP and Passkey. The Settings page also surfaces a warning banner when `mfa.totp_enabled = true` but `app_secret` is unset in `config.php`. (#747)
+- **Preferred MFA method picker.** New nullable column `users.preferred_mfa_method` (text). Users with multiple methods enrolled can pick TOTP / Email OTP / Passkey as their default from the Account page; the dropdown lists only methods that are both enrolled on the account and globally enabled. Login dispatches the preferred method first and falls back gracefully if the chosen method becomes unusable (admin disabled it, account no longer has email, etc.). Audited as `auth.mfa_preferred_set`. (#746)
+- **Full MFA switch graph at login.** Each verify page (`totp_verify.php`, `email_otp_verify.php`, `passkey_verify.php`) now offers switch buttons to either of the other two methods when they are enrolled and globally enabled. Clicking a switch button generates a fresh challenge, swaps the pending session keys, and redirects. Audited as `auth.mfa_method_switch`. Extends the v3.15.2 TOTP-page-only switch pattern to the full 3×2 graph. (#746)
+- **Settings page tab navigation.** The 16 settings groups are reorganised into 5 vertical left-rail tabs: General, Authentication, Notifications, Data & Maintenance, Integrations. URL state via `?tab=`. Per-subsection POST flow is unchanged. Mobile <768px collapses the rail to a `<select>`. Includes skip-link, arrow-key keyboard navigation, `aria-current="page"` on the active tab. Legacy `#group-<key>` bookmarks auto-redirect to the right tab via a JS shim. (#749)
+
+### Changed
+- **Case-insensitive search across all DB engines.** `search.php`, `api_search()`, and `export_search.php` now use a portable `LOWER()`-based comparison via two new `Dialect` interface methods: `lower_expr()` and `case_fold_value()`. SQLite remains ASCII-only by design (no ICU bundled with the standard build); MySQL and PostgreSQL perform full Unicode case folding. (#750)
+- **Account page Two-Factor Authentication card.** TOTP, Email OTP, and Passkeys now render as three rows inside a single "Two-Factor Authentication" card with consistent status pills, action affordances, and preserved-enrollment hints when an admin globally disables a method. New CSS classes under `.mfa-*`. Three Heroicon symbols added to the sprite: envelope, finger-print, plus-circle. (#745, #755)
+
+### Fixed
+- **PostgreSQL search was case-sensitive.** Previous `LIKE`-based search returned zero hits for `Acme` when the DB held `acme`. The portable `LOWER()` rewrite (above) corrects this. SQLite and MySQL behaviour is unchanged for ASCII; both now also handle non-ASCII input consistently with the per-engine collation. (#750)
+
+---
+
 ## [3.15.2] - 2026-04-26
 
 ### Fixed
@@ -1147,6 +1164,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.16.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.15.2...v3.16.0
 [3.15.2]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.15.1...v3.15.2
 [3.15.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.15.0...v3.15.1
 [3.15.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.14.0...v3.15.0

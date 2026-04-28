@@ -159,6 +159,19 @@ Use this when a user loses access to their authenticator app and has no backup c
 
 Users can disable their own 2FA from the Account page. This requires entering the current 6-digit TOTP code to confirm. Disabling 2FA also deletes all backup codes.
 
+#### Admin global toggle
+
+*(Added in v3.16.0)*
+
+Admins can globally disable TOTP from **Admin → Settings → Multi-Factor Auth** by clearing the `mfa.totp_enabled` setting (default `true`). When disabled:
+
+- TOTP enrollment is removed from the Account page UI.
+- The login dispatcher skips TOTP — users with TOTP enrolled fall through to Email OTP or Passkey at login.
+- **Per-user `users.totp_enabled` is preserved** — re-enabling the global setting restores every user's existing TOTP without re-running the QR enrollment flow. Disabling globally does not revoke individual enrollments.
+- `mfa.require` enforcement now considers only methods that are both enrolled *and* globally enabled. A user enrolled in TOTP only, with `mfa.totp_enabled = false`, is treated as not having MFA and will be redirected to enroll Email OTP or a passkey.
+
+The Settings page also surfaces a warning banner when `mfa.totp_enabled = true` but `app_secret` is unset in `config.php` — TOTP enrollment would silently fail in that state.
+
 ---
 
 ### Email OTP 2FA
@@ -167,7 +180,7 @@ Users can disable their own 2FA from the Account page. This requires entering th
 
 Email OTP is a second 2FA method that sends a 6-digit code to the user's registered email address at each login. It requires a working SMTP configuration and an email address on the account.
 
-**Priority:** when a user has both TOTP and Email OTP enrolled, TOTP takes precedence at the login challenge. Email OTP is only checked when TOTP is not enrolled.
+**Priority:** the login dispatcher honours the user's `preferred_mfa_method` (set from the Account page; added in v3.16.0) when set. When `preferred_mfa_method` is `NULL`, the legacy priority order applies: passkey → TOTP → Email OTP. Each verify page also offers switch buttons to the user's other enrolled methods at login (added in v3.15.2 for TOTP; extended to all three methods in v3.16.0).
 
 #### Requirements
 
