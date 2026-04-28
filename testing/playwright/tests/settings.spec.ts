@@ -23,7 +23,7 @@ let ctx: BrowserContext;
 let page: Page;
 
 const SITE_NAME_FIELD = 'input[name="k_branding__site_name"]';
-const BRANDING_CARD   = '.card:has(h2:has-text("Branding"))';
+const BRANDING_CARD   = '.card:has(h3:has-text("Branding"))';
 
 async function brandingSubmit(p: Page): Promise<void> {
   await p.locator(`${BRANDING_CARD} button[type="submit"]`).click();
@@ -43,11 +43,20 @@ test.afterAll(async () => {
 
 test.describe('Settings page', () => {
   test('loads under Admin dropdown for admin users', async () => {
+    // v3.16.0 #749 reorganized into 5 tabs. Branding + Update checker live
+    // on General (default tab); the other groups are visible on their
+    // owning tabs. Visit each tab to verify the subsection renders there.
     await page.goto(appUrl('settings.php'));
     await expect(page.locator('h1')).toContainText('Settings');
-    for (const label of ['Branding', 'Security', 'Alerting', 'Update checker', 'OIDC']) {
-      await expect(page.locator('.card h2', { hasText: label }).first()).toBeVisible();
+    for (const label of ['Branding', 'Update checker']) {
+      await expect(page.locator('.card h3', { hasText: label }).first()).toBeVisible();
     }
+    await page.goto(appUrl('settings.php?tab=authentication'));
+    for (const label of ['Security', 'OIDC / SSO']) {
+      await expect(page.locator('.card h3', { hasText: label }).first()).toBeVisible();
+    }
+    await page.goto(appUrl('settings.php?tab=notifications'));
+    await expect(page.locator('.card h3', { hasText: 'Alerting' }).first()).toBeVisible();
   });
 
   test('admin can save a branding change and the source badge flips to Database', async () => {
@@ -79,7 +88,7 @@ test.describe('Settings page', () => {
     // Regression for the v2.6.0 inline-onclick and v2.7.0 nested-<label>
     // checkbox patterns. v2.8.0 replaces both with a sibling <button> that
     // flips the input type and toggles aria-pressed.
-    await page.goto(appUrl('settings.php'));
+    await page.goto(appUrl('settings.php?tab=authentication'));
     const secret = page.locator('input[name="k_oidc__client_secret"]');
     const toggle = page.locator('button.pw-toggle[data-pw-toggle-for="f-k_oidc__client_secret"]');
     await expect(secret).toHaveAttribute('type', 'password');
@@ -99,7 +108,7 @@ test.describe('Settings page', () => {
   });
 
   test('#441 bool rows render checkbox inline with label (same row)', async () => {
-    await page.goto(appUrl('settings.php'));
+    await page.goto(appUrl('settings.php?tab=authentication'));
     const cb = page.locator('input[type=checkbox][name="k_oidc__enabled"]');
     const label = page.locator('label[for="f-k_oidc__enabled"] strong', { hasText: 'OIDC enabled' });
     await expect(cb).toBeVisible();
@@ -118,7 +127,7 @@ test.describe('Settings page', () => {
   });
 
   test('#442 login_protection.method renders as a validated <select>', async () => {
-    await page.goto(appUrl('settings.php'));
+    await page.goto(appUrl('settings.php?tab=authentication'));
     const select = page.locator('select[name="k_login_protection__method"]');
     await expect(select).toBeVisible();
     // At minimum the seven registry entries must be selectable.
@@ -132,7 +141,7 @@ test.describe('Settings page', () => {
     // even though the users.role column and demo seed already carried
     // the role. Regression guard — this test fails if anyone narrows
     // the enum again.
-    await page.goto(appUrl('settings.php'));
+    await page.goto(appUrl('settings.php?tab=authentication'));
     const select = page.locator('select[name="k_oidc__default_role"]');
     await expect(select).toBeVisible();
     for (const value of ['readonly', 'netops', 'admin']) {
@@ -163,7 +172,7 @@ test.describe('Settings page', () => {
 
   test('#442 out-of-set login_protection.method is rejected server-side', async () => {
     // Go through the form to grab a fresh CSRF token, then POST a forged value.
-    await page.goto(appUrl('settings.php'));
+    await page.goto(appUrl('settings.php?tab=authentication'));
     const csrf = await page
       .locator('form:has(select[name="k_login_protection__method"]) input[name="csrf"]')
       .first()
@@ -188,7 +197,7 @@ test.describe('Settings page', () => {
 
     // Guarantee nothing persisted: reload the page and the select value must
     // still be one of the known-good entries, never the forged string.
-    await page.goto(appUrl('settings.php'));
+    await page.goto(appUrl('settings.php?tab=authentication'));
     const selected = await page
       .locator('select[name="k_login_protection__method"]')
       .inputValue();
@@ -263,5 +272,119 @@ test.describe('Settings page — v3.13.0 (#714)', () => {
     await page714.waitForLoadState('networkidle');
     const realErrors = errors.filter(e => !e.includes('favicon'));
     expect(realErrors).toHaveLength(0);
+  });
+});
+
+// ── v3.16.0 #749 — vertical tab navigation ───────────────────────────────────
+test.describe('Settings page — v3.16.0 (#749) tab navigation', () => {
+  let ctx749: BrowserContext;
+  let page749: Page;
+
+  test.beforeAll(async ({ browser }: { browser: Browser }) => {
+    ctx749 = await newAuthContext(browser);
+    page749 = await ctx749.newPage();
+    await login(page749, ADMIN_USER, ADMIN_PASS);
+  });
+
+  test.afterAll(async () => {
+    await ctx749.close();
+  });
+
+  test('default tab is General; rail is visible with five tabs', async () => {
+    await page749.goto(appUrl('settings.php'));
+    const rail = page749.locator('[data-settings-rail]');
+    await expect(rail).toBeVisible();
+    const links = rail.locator('.settings-rail__link');
+    await expect(links).toHaveCount(5);
+    for (const label of ['General', 'Authentication', 'Notifications', 'Data & Maintenance', 'Integrations']) {
+      await expect(rail.locator(`.settings-rail__link:has-text("${label}")`)).toHaveCount(1);
+    }
+    const general = rail.locator('.settings-rail__link:has-text("General")');
+    await expect(general).toHaveAttribute('aria-current', 'page');
+  });
+
+  test('?tab=authentication renders only Authentication subsections', async () => {
+    await page749.goto(appUrl('settings.php?tab=authentication'));
+    const auth = page749.locator('.settings-rail__link:has-text("Authentication")');
+    await expect(auth).toHaveAttribute('aria-current', 'page');
+
+    // Auth-tab subsections must render.
+    for (const label of ['Security', 'Multi-Factor Authentication', 'Password policy', 'OIDC / SSO']) {
+      await expect(page749.locator('.card h3', { hasText: label }).first()).toBeVisible();
+    }
+    // Non-auth tab subsections must NOT render.
+    await expect(page749.locator('.card h3', { hasText: 'Branding' })).toHaveCount(0);
+    await expect(page749.locator('.card h3', { hasText: 'SMTP / Email Delivery' })).toHaveCount(0);
+    await expect(page749.locator('.card h3', { hasText: 'Webhooks' })).toHaveCount(0);
+  });
+
+  test('?tab=invalid falls back to General', async () => {
+    await page749.goto(appUrl('settings.php?tab=invalid'));
+    const general = page749.locator('.settings-rail__link:has-text("General")');
+    await expect(general).toHaveAttribute('aria-current', 'page');
+    await expect(page749.locator('.card h3', { hasText: 'Branding' }).first()).toBeVisible();
+  });
+
+  test('per-subsection POST still works and redirects back to owning tab', async () => {
+    // The MFA subsection lives under the Authentication tab. Saving a no-op
+    // change must redirect back to ?tab=authentication and land on
+    // #group-mfa, NOT lose the tab parameter.
+    await page749.goto(appUrl('settings.php?tab=authentication'));
+    const csrf = await page749
+      .locator('form:has(input[name="group"][value="mfa"]) input[name="csrf"]')
+      .first()
+      .getAttribute('value');
+    expect(csrf).toBeTruthy();
+
+    const response = await page749.request.post(appUrl('settings.php'), {
+      form: {
+        csrf:                  csrf ?? '',
+        group:                 'mfa',
+        // Only post the bool fields with their current state. Empty/missing
+        // values are treated as "false" by the bool path so this is a no-op
+        // unless the seeded state differs. The redirect target is what we
+        // care about.
+      },
+      maxRedirects: 0,
+    });
+    expect(response.status()).toBe(302);
+    const loc = response.headers()['location'] || '';
+    expect(loc).toContain('settings.php?tab=authentication');
+    expect(loc).toContain('#group-mfa');
+  });
+
+  test('arrow-key keyboard nav moves focus between rail items', async () => {
+    await page749.goto(appUrl('settings.php'));
+    const general = page749.locator('.settings-rail__link:has-text("General")');
+    await general.focus();
+    await page749.keyboard.press('ArrowDown');
+    const focused = await page749.evaluate(() => document.activeElement?.textContent?.trim() ?? '');
+    expect(focused).toBe('Authentication');
+
+    await page749.keyboard.press('End');
+    const focusedEnd = await page749.evaluate(() => document.activeElement?.textContent?.trim() ?? '');
+    expect(focusedEnd).toBe('Integrations');
+
+    await page749.keyboard.press('Home');
+    const focusedHome = await page749.evaluate(() => document.activeElement?.textContent?.trim() ?? '');
+    expect(focusedHome).toBe('General');
+  });
+
+  test('mobile <768px hides rail and shows <select> dropdown', async () => {
+    await page749.setViewportSize({ width: 360, height: 720 });
+    try {
+      await page749.goto(appUrl('settings.php'));
+      const rail = page749.locator('[data-settings-rail]');
+      await expect(rail).toBeHidden();
+      const select = page749.locator('select[data-settings-mobile-nav]');
+      await expect(select).toBeVisible();
+      // Has all five options.
+      for (const value of ['general', 'authentication', 'notifications', 'data', 'integrations']) {
+        await expect(select.locator(`option[value="${value}"]`)).toHaveCount(1);
+      }
+    } finally {
+      // Reset viewport so later specs that share this page get desktop layout.
+      await page749.setViewportSize({ width: 1280, height: 800 });
+    }
   });
 });

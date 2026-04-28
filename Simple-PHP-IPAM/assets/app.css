@@ -1869,3 +1869,54 @@ button:active,.button:active,.action-pill:active{transform:translateY(1px)}
   .mfa-method-row__form{width:100%}
   .mfa-method-row__pwlabel input,.mfa-method-row__codelabel input,.mfa-passkey-list__pw{width:100%;min-width:0}
 }
+
+/* ── Settings page (#749, v3.16.0) — vertical-tab layout ─────────────── */
+
+.settings-shell{
+  display:grid;
+  grid-template-columns:220px 1fr;
+  gap:var(--space-6,1.5rem);
+  align-items:flex-start;
+}
+.settings-rail{
+  position:sticky;
+  top:1rem;
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:var(--radius-md,8px);
+  padding:.5rem 0;
+  align-self:flex-start;
+}
+.settings-rail__list{list-style:none;margin:0;padding:0}
+.settings-rail__item{margin:0}
+.settings-rail__link{
+  display:block;
+  padding:.5rem .75rem .5rem calc(.75rem - 3px);
+  font-size:var(--text-sm,.875rem);
+  color:var(--fg);
+  text-decoration:none;
+  border-left:3px solid transparent;
+  transition:background 150ms ease,color 150ms ease,border-color 150ms ease;
+}
+.settings-rail__link:hover{background:var(--btn);color:var(--btnfg)}
+.settings-rail__link:focus-visible{outline:2px solid var(--link);outline-offset:-2px}
+.settings-rail__link.is-active,
+.settings-rail__link[aria-current="page"]{
+  border-left-color:var(--link);
+  background:var(--card-2,var(--card));
+  color:var(--fg);
+  font-weight:600;
+}
+.settings-content{min-width:0}
+.settings-content__title{margin:0 0 .25rem 0}
+.settings-content__desc{margin:0 0 1rem 0}
+.settings-group-title{margin-top:0}
+
+.settings-mobile-nav{display:none;margin-bottom:1rem}
+.settings-mobile-nav__label{display:block;font-weight:600;margin-bottom:.25rem;font-size:var(--text-sm,.875rem)}
+
+@media (max-width:768px){
+  .settings-shell{grid-template-columns:1fr}
+  .settings-rail{display:none}
+  .settings-mobile-nav{display:block}
+}
