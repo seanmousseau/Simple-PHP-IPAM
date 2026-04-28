@@ -3819,6 +3819,290 @@ function backup_decrypt(string $blob, string $appSecret): string
     return $pt;
 }
 
+// ── GFS Retention Engine (#695) ───────────────────────────────────────────────
+
+/**
+ * Select backup log IDs that should be deleted according to a GFS
+ * (Grandfather-Father-Son) retention policy.
+ *
+ * Algorithm
+ * ---------
+ * 1. Sort $backups newest-first by created_at.
+ * 2. Walk in order, assigning each backup to up to four tier slots:
+ *    - hourly  → slot key "Y-m-d H" (UTC)
+ *    - daily   → slot key "Y-m-d"   (UTC)
+ *    - weekly  → slot key "YYYY-WW"  (ISO 8601 week)
+ *    - monthly → slot key "Y-m"     (UTC)
+ * 3. For each tier with a positive keep_* count, the FIRST backup encountered
+ *    in a given slot (i.e. the newest in that slot) wins the slot until the
+ *    tier's capacity is exhausted.
+ * 4. A backup is KEPT if it wins at least one slot in any tier.
+ * 5. Safety guard: the newest backup overall is always kept, even when all
+ *    keep_* counts are zero.
+ * 6. Everything else goes into the delete list.
+ *
+ * Tier promotion note: tiers are independent. A backup that falls outside the
+ * hourly window (e.g. yesterday's backup when keep_hourly=1) can still win a
+ * daily, weekly, or monthly slot without first winning an hourly slot.
+ *
+ * @param array<int, array{id: int, created_at: string}> $backups
+ *        Flat list of backup records; order does not matter.
+ * @param array{keep_hourly: int, keep_daily: int, keep_weekly: int, keep_monthly: int} $config
+ *        Retention counts per tier. A count of 0 disables that tier entirely.
+ * @param int|null $nowEpoch  UTC epoch for the "current time" (injectable for tests).
+ *                            When null, uses time().
+ * @return int[]  IDs from $backups that should be deleted.
+ */
+function ipam_gfs_select_for_deletion(array $backups, array $config, ?int $nowEpoch = null): array
+{
+    if (count($backups) === 0) {
+        return [];
+    }
+
+    // Sort newest-first; stable sort preserves relative order of ties (not critical,
+    // but deterministic across PHP versions).
+    usort($backups, static function (array $a, array $b): int {
+        return strcmp($b['created_at'], $a['created_at']);
+    });
+
+    $newestId = (int) $backups[0]['id'];
+
+    $keepHourly  = max(0, (int) $config['keep_hourly']);
+    $keepDaily   = max(0, (int) $config['keep_daily']);
+    $keepWeekly  = max(0, (int) $config['keep_weekly']);
+    $keepMonthly = max(0, (int) $config['keep_monthly']);
+
+    // Slot tracking per tier: slot_key → count of backups already assigned to that slot.
+    $hourlySlots  = [];
+    $dailySlots   = [];
+    $weeklySlots  = [];
+    $monthlySlots = [];
+
+    // Count of unique slots filled so far per tier (used to stop once capacity reached).
+    $hourlyFilled  = 0;
+    $dailyFilled   = 0;
+    $weeklyFilled  = 0;
+    $monthlyFilled = 0;
+
+    $keepIds = [];
+
+    foreach ($backups as $backup) {
+        $id = (int) $backup['id'];
+
+        // Safety guard: always keep the newest backup.
+        if ($id === $newestId) {
+            $keepIds[$id] = true;
+            // Still run through the tier logic below so it counts toward slot capacity.
+        }
+
+        $epoch = strtotime($backup['created_at']);
+        if ($epoch === false) {
+            // Unparseable timestamp: treat as very old (epoch 0) — should never happen on well-formed data.
+            $epoch = 0;
+        }
+
+        $kept = isset($keepIds[$id]);
+
+        // Hourly tier
+        if ($keepHourly > 0) {
+            $slot = gmdate('Y-m-d H', $epoch);
+            if (!isset($hourlySlots[$slot])) {
+                // First (newest) backup in this slot wins it, if capacity remains.
+                if ($hourlyFilled < $keepHourly) {
+                    $hourlySlots[$slot] = true;
+                    $hourlyFilled++;
+                    $keepIds[$id] = true;
+                    $kept = true;
+                }
+                // If capacity exhausted, the slot winner is still recorded as "seen"
+                // so later (older) backups in the same slot are not mistakenly counted.
+                $hourlySlots[$slot] = true;
+            }
+            // Subsequent backups in the same slot: slot already claimed; they do not win it.
+        }
+
+        // Daily tier
+        if ($keepDaily > 0) {
+            $slot = gmdate('Y-m-d', $epoch);
+            if (!isset($dailySlots[$slot])) {
+                if ($dailyFilled < $keepDaily) {
+                    $dailySlots[$slot] = true;
+                    $dailyFilled++;
+                    $keepIds[$id] = true;
+                    $kept = true;
+                }
+                $dailySlots[$slot] = true;
+            }
+        }
+
+        // Weekly tier (ISO 8601 week: "YYYY-WW")
+        if ($keepWeekly > 0) {
+            $slot = gmdate('o-W', $epoch); // 'o' = ISO year (may differ from 'Y' at year boundary)
+            if (!isset($weeklySlots[$slot])) {
+                if ($weeklyFilled < $keepWeekly) {
+                    $weeklySlots[$slot] = true;
+                    $weeklyFilled++;
+                    $keepIds[$id] = true;
+                    $kept = true;
+                }
+                $weeklySlots[$slot] = true;
+            }
+        }
+
+        // Monthly tier
+        if ($keepMonthly > 0) {
+            $slot = gmdate('Y-m', $epoch);
+            if (!isset($monthlySlots[$slot])) {
+                if ($monthlyFilled < $keepMonthly) {
+                    $monthlySlots[$slot] = true;
+                    $monthlyFilled++;
+                    $keepIds[$id] = true;
+                    $kept = true;
+                }
+                $monthlySlots[$slot] = true;
+            }
+        }
+
+        // Suppress unused variable warning from static analysis: $kept is set for
+        // documentation clarity but only $keepIds drives the decision.
+        unset($kept);
+    }
+
+    // Build delete list: every input ID not in the keep set.
+    $delete = [];
+    foreach ($backups as $backup) {
+        $id = (int) $backup['id'];
+        if (!isset($keepIds[$id])) {
+            $delete[] = $id;
+        }
+    }
+
+    return $delete;
+}
+
+/**
+ * DB-aware GFS retention wrapper for a single backup destination.
+ *
+ * Fetches the destination's GFS schedule config from backup_schedules, fetches
+ * all successful backup_log rows for the destination, calls
+ * ipam_gfs_select_for_deletion() to determine which rows to prune, updates
+ * each pruned row's status to 'retention_pruned', audits the operation, and
+ * returns the count of rows pruned.
+ *
+ * Remote-delete stub: the actual delete-from-remote call requires a
+ * BackupClientInterface implementation (landing in Phase 4 / #692). Until then
+ * the remote-delete step throws RuntimeException with a clear message so callers
+ * know it is not yet wired. The backup_log row update and audit still occur
+ * (wrapped in try/catch so a remote-delete failure does not prevent the DB record
+ * from being marked and counted).
+ *
+ * @param PDO $db             Application database connection.
+ * @param int $destinationId  ID of the backup_destinations row.
+ * @return int                Count of backup_log rows marked as retention_pruned.
+ */
+function ipam_backup_apply_retention(PDO $db, int $destinationId): int
+{
+    // ── 1. Fetch destination info (type needed for future client dispatch) ──────
+    $destStmt = $db->prepare("SELECT id, name, type FROM backup_destinations WHERE id = :id");
+    $destStmt->execute([':id' => $destinationId]);
+    $dest = $destStmt->fetch();
+    if (!is_array($dest)) {
+        throw new \InvalidArgumentException("backup_destinations row not found: id={$destinationId}");
+    }
+
+    // ── 2. Fetch GFS config from backup_schedules (sane defaults if no schedule) ─
+    $schedStmt = $db->prepare(
+        "SELECT retention_hourly, retention_daily, retention_weekly, retention_monthly
+         FROM backup_schedules
+         WHERE destination_id = :did AND is_active = 1
+         LIMIT 1"
+    );
+    $schedStmt->execute([':did' => $destinationId]);
+    $sched = $schedStmt->fetch();
+
+    if (is_array($sched)) {
+        $gfsConfig = [
+            'keep_hourly'  => to_int($sched['retention_hourly']),
+            'keep_daily'   => to_int($sched['retention_daily']),
+            'keep_weekly'  => to_int($sched['retention_weekly']),
+            'keep_monthly' => to_int($sched['retention_monthly']),
+        ];
+    } else {
+        // No schedule: use conservative defaults so unscheduled destinations are
+        // still protected from unbounded log growth.
+        $gfsConfig = [
+            'keep_hourly'  => 0,
+            'keep_daily'   => 7,
+            'keep_weekly'  => 4,
+            'keep_monthly' => 3,
+        ];
+    }
+
+    // ── 3. Fetch successful backup_log rows for this destination ─────────────
+    // backup_log uses started_at for GFS bucketing (no created_at column).
+    $logStmt = $db->prepare(
+        "SELECT id, started_at AS created_at
+         FROM backup_log
+         WHERE destination_id = :did AND status = 'success'
+         ORDER BY started_at DESC"
+    );
+    $logStmt->execute([':did' => $destinationId]);
+    $rows = $logStmt->fetchAll();
+
+    if (count($rows) === 0) {
+        return 0;
+    }
+
+    // ── 4. Determine which IDs to prune ───────────────────────────────────────
+    $toDelete = ipam_gfs_select_for_deletion($rows, $gfsConfig);
+
+    if (count($toDelete) === 0) {
+        return 0;
+    }
+
+    // ── 5. For each ID: attempt remote delete (stub), then mark DB row ────────
+    $pruned = 0;
+    foreach ($toDelete as $logId) {
+        // Remote delete stub — BackupClientInterface not yet wired (Phase 4 / #692).
+        // Wrapped in try/catch: a remote-delete failure should not prevent the DB
+        // record from being marked or the audit from being written.
+        try {
+            // TODO(Phase 4): resolve BackupClientInterface from $dest['type'] and call
+            //   $client->delete($filename)
+            // For now, throw so callers know this path is not implemented.
+            throw new \RuntimeException(
+                'ipam_backup_apply_retention: remote delete client not yet wired (Phase 6). '
+                . 'Destination type: ' . to_str($dest['type'])
+            );
+        } catch (\RuntimeException $e) {
+            error_log('[ipam_backup_apply_retention] remote delete skipped for log_id=' . $logId . ': ' . $e->getMessage());
+        }
+
+        // Mark the log row as pruned regardless of remote-delete outcome.
+        try {
+            $db->prepare(
+                "UPDATE backup_log SET status = 'retention_pruned' WHERE id = :id"
+            )->execute([':id' => $logId]);
+            $pruned++;
+        } catch (\Exception $e) {
+            error_log('[ipam_backup_apply_retention] failed to mark log_id=' . $logId . ': ' . $e->getMessage());
+        }
+    }
+
+    // ── 6. Audit ──────────────────────────────────────────────────────────────
+    if ($pruned > 0) {
+        audit(
+            $db,
+            'backup.retention_pruned',
+            'backup_destination',
+            $destinationId,
+            'count=' . $pruned . ' destination=' . $destinationId
+        );
+    }
+
+    return $pruned;
+}
+
 /**
  * Stream a full SQL dump of the SQLite database to a callable.
  * Each call to $write receives a chunk of SQL text.
