@@ -33,7 +33,7 @@ Two cheap calls. The first loads your profile + preferences. The second returns 
 
 ## Project overview
 
-> **Current shipped version: v3.15.2** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v4.0.0 describes future work — **do not apply it to current v3.x code**. Current-state rules are the ones that do not cite a future version.
+> **Current shipped version: v3.16.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v4.0.0 describes future work — **do not apply it to current v3.x code**. Current-state rules are the ones that do not cite a future version.
 
 Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application built with **PHP 8.2+ and SQLite**. It has **no npm build step** — all CSS and JavaScript are vanilla. Starting in v2.9.0, the application will ship a small, carefully curated set of Composer-managed runtime dependencies bundled into the release tarball, so end users still deploy by extracting the tarball with no build step. The web root is `Simple-PHP-IPAM/` (the subdirectory, not the repo root).
 
@@ -201,7 +201,7 @@ Migrations live in `migrations.php` as an associative array of version string �
 
 **When adding a new version:** add the migration closure, bump `version.php`, update `CHANGELOG.md` (keepachangelog format).
 
-> **Current shipped version: v3.15.2.** `Creating new data tables in post-v4.0.0 releases` is **forward-looking** (applies to any migration whose version sorts after v4.0.0, including v4.0.x patches) — ignore it for all current v3.x work. `Modifying the schema (multi-engine, from v2.9.0 onward)` and `Runtime dependencies` are **currently active** rules (apply to v2.9.0+ including the current v3.15.2).
+> **Current shipped version: v3.16.0.** `Creating new data tables in post-v4.0.0 releases` is **forward-looking** (applies to any migration whose version sorts after v4.0.0, including v4.0.x patches) — ignore it for all current v3.x work. `Modifying the schema (multi-engine, from v2.9.0 onward)` and `Runtime dependencies` are **currently active** rules (apply to v2.9.0+ including the current v3.16.0).
 
 ### Multi-tenancy model *(v4.0.0, opt-in)*
 
@@ -432,6 +432,8 @@ Call `audit(PDO $db, string $action, string $entityType, ?int $entityId, string 
 ```
 auth.login          auth.login_failed       auth.login_blocked
 auth.oidc_login     auth.oidc_provision     auth.oidc_link       auth.oidc_failed
+auth.mfa_method_switch                      auth.mfa_preferred_set
+auth.totp_login     auth.email_otp_login    auth.passkey_challenge
 subnet.create       subnet.update           subnet.delete
 address.create      address.update          address.delete
 user.create         user.delete             user.toggle_active

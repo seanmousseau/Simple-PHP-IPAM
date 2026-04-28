@@ -24,17 +24,17 @@ test.describe('Settings — password policy', () => {
     });
 
     test('password_policy group renders in Settings', async ({ page }) => {
-        await page.goto(appUrl('settings.php'));
+        await page.goto(appUrl('settings.php?tab=authentication'));
         await expect(page.locator('#group-password_policy')).toBeVisible();
     });
 
     test('admin can set minimum password length', async ({ page }) => {
-        await page.goto(appUrl('settings.php#group-password_policy'));
+        await page.goto(appUrl('settings.php?tab=authentication#group-password_policy'));
         const minLengthInput = page.locator('input[name="k_password_policy__min_length"]');
         await minLengthInput.fill('14');
         await page.locator('#group-password_policy button[type=submit]').click();
         await page.waitForURL(/settings\.php/);
-        await page.goto(appUrl('settings.php#group-password_policy'));
+        await page.goto(appUrl('settings.php?tab=authentication#group-password_policy'));
         await expect(page.locator('input[name="k_password_policy__min_length"]')).toHaveValue('14');
         // Restore to default
         await page.locator('input[name="k_password_policy__min_length"]').fill('12');
@@ -42,12 +42,12 @@ test.describe('Settings — password policy', () => {
     });
 
     test('admin can toggle require_uppercase', async ({ page }) => {
-        await page.goto(appUrl('settings.php#group-password_policy'));
+        await page.goto(appUrl('settings.php?tab=authentication#group-password_policy'));
         const checkbox = page.locator('input[name="k_password_policy__require_uppercase"]');
         const wasChecked = await checkbox.isChecked();
         if (!wasChecked) { await checkbox.check(); }
         await page.locator('#group-password_policy button[type=submit]').click();
-        await page.goto(appUrl('settings.php#group-password_policy'));
+        await page.goto(appUrl('settings.php?tab=authentication#group-password_policy'));
         await expect(page.locator('input[name="k_password_policy__require_uppercase"]')).toBeChecked();
         // Restore
         await page.locator('input[name="k_password_policy__require_uppercase"]').uncheck();

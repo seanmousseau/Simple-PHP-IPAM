@@ -69,6 +69,16 @@ fi
 #    two-step surgery.
 echo "bootstrap-app: installing test config (driver=$driver)"
 mkdir -p "$app_dir/data"
+
+# Write IPAM_DRIVER to .env so the Playwright config picks it up automatically
+# and IS_SQLITE / IS_MYSQL fixture flags resolve correctly even when the local
+# gate command does not export IPAM_DRIVER. The .env file is loaded by
+# playwright.config.ts on startup. teardown-app.sh removes it.
+if grep -q "^IPAM_DRIVER=" "${script_dir}/.env" 2>/dev/null; then
+    perl -i -pe "s/^IPAM_DRIVER=.*/IPAM_DRIVER=${driver}/" "${script_dir}/.env"
+else
+    printf 'IPAM_DRIVER=%s\n' "$driver" >> "${script_dir}/.env"
+fi
 if [[ -f "$app_dir/config.php" && ! -f "$app_dir/config.php.prebootstrap-backup" ]]; then
     cp "$app_dir/config.php" "$app_dir/config.php.prebootstrap-backup"
 fi

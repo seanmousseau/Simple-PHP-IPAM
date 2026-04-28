@@ -2508,3 +2508,75 @@ function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
 
   btn.addEventListener('click', register);
 }());
+
+/* ── Legacy fragment-only bookmark redirect (#749 follow-up) ──────────── */
+// Pre-#749 a user could bookmark `settings.php#group-mfa`. After the tab
+// rewrite the MFA form lives under ?tab=authentication, so a bare anchor
+// lands on the General tab and silently shows the wrong content. This
+// shim reads window.location.hash on page load and, if the hash points at
+// a known group on a tab other than the current one, replaces the URL
+// with the owning tab + the same anchor. Runs before the rail nav IIFE
+// so the redirect happens before any user interaction.
+(function () {
+  var rail = document.querySelector('[data-settings-rail]');
+  if (!rail) return;
+  var pageName = (window.location.pathname.split('/').pop() || '');
+  if (!/^settings\.php/.test(pageName)) return;
+  var m = window.location.hash.match(/^#group-([a-z0-9_]+)$/);
+  if (!m) return;
+  var map;
+  try {
+    map = JSON.parse(rail.getAttribute('data-group-tab-map') || '{}');
+  } catch (err) {
+    return;
+  }
+  var owningTab = map[m[1]];
+  if (!owningTab) return;
+  var url = new URL(window.location.href);
+  if (url.searchParams.get('tab') === owningTab) return;
+  url.searchParams.set('tab', owningTab);
+  window.location.replace(url.pathname + url.search + window.location.hash);
+}());
+
+/* ── Settings rail keyboard nav + mobile select (#749, v3.16.0) ───────── */
+(function () {
+  // Mobile: changing the <select> navigates to ?tab=<value>. The form has
+  // method=get action=settings.php so non-JS users get the same behaviour
+  // by submitting normally; this just removes the extra click.
+  var mobileSelect = document.querySelector('select[data-settings-mobile-nav]');
+  if (mobileSelect) {
+    mobileSelect.addEventListener('change', function () {
+      var form = mobileSelect.closest('form');
+      if (form) form.submit();
+    });
+  }
+
+  // Desktop rail: ArrowUp/ArrowDown move focus between rail links,
+  // Home/End jump to first/last, Enter activates the focused link.
+  var rail = document.querySelector('[data-settings-rail]');
+  if (!rail) return;
+  var links = Array.prototype.slice.call(rail.querySelectorAll('.settings-rail__link'));
+  if (links.length === 0) return;
+
+  rail.addEventListener('keydown', function (e) {
+    var idx = links.indexOf(document.activeElement);
+    if (idx === -1) return;
+    var next = null;
+    if (e.key === 'ArrowDown') {
+      next = links[(idx + 1) % links.length];
+    } else if (e.key === 'ArrowUp') {
+      next = links[(idx - 1 + links.length) % links.length];
+    } else if (e.key === 'Home') {
+      next = links[0];
+    } else if (e.key === 'End') {
+      next = links[links.length - 1];
+    } else if (e.key === 'Enter') {
+      // Native <a> activates on Enter already; do not preventDefault.
+      return;
+    } else {
+      return;
+    }
+    e.preventDefault();
+    if (next) next.focus();
+  });
+}());

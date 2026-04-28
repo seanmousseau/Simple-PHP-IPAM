@@ -1586,6 +1586,15 @@ function ipam_setting_definitions(): array
         ],
 
         // --- Multi-Factor Authentication ---
+        'mfa.totp_enabled' => [
+            'label'       => 'Enable TOTP (authenticator app)',
+            'type'        => 'bool',
+            'default'     => true,
+            'group'       => 'mfa',
+            'description' => 'Allow users to enroll a Time-based One-Time Password (RFC 6238) as a second authentication factor using an authenticator app (1Password, Google Authenticator, Authy, etc.). Requires app_secret to be set in config.php.',
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
         'mfa.email_otp_enabled' => [
             'label'       => 'Enable Email OTP',
             'type'        => 'bool',
@@ -8457,6 +8466,104 @@ function ipam_passkey_update_sign_count(PDO $db, int $credentialDbId, int $signC
     };
     $db->prepare("UPDATE webauthn_credentials SET sign_count = :sc, last_used_at = $nowExpr WHERE id = :id")
        ->execute([':sc' => $signCount, ':id' => $credentialDbId]);
+}
+
+// ============================================================
+// Preferred MFA method dispatch (v3.16.0, #746)
+// ============================================================
+
+/**
+ * Return the user's currently usable MFA methods. A method is "usable" only
+ * if the user has it enrolled AND the admin has it globally enabled.
+ *
+ * Ordering matches the legacy v3.x dispatch chain (TOTP → Email OTP →
+ * Passkey) so that existing installs see no behaviour change when no
+ * preferred_mfa_method is set. The user-facing "most-recently-enrolled
+ * default" semantics live in change_password.php's picker UI, where we
+ * have signal to make a smart default; the dispatch helper itself is a
+ * deterministic, stable fallback.
+ *
+ * The returned list is the canonical fallback chain for login dispatch.
+ *
+ * @return list<string>  Subset of {'totp','email_otp','passkey'}.
+ */
+function ipam_user_available_mfa_methods(PDO $db, int $userId): array
+{
+    $totpGlobal      = (bool)to_int(ipam_setting('mfa.totp_enabled', true));
+    $emailOtpGlobal  = (bool)to_int(ipam_setting('mfa.email_otp_enabled', false));
+    $passkeysGlobal  = (bool)to_int(ipam_setting('mfa.passkeys_enabled', false));
+
+    $st = $db->prepare("SELECT totp_enabled, email_otp_enabled FROM users WHERE id = :id");
+    $st->execute([':id' => $userId]);
+    /** @var array<string,mixed>|false $row */
+    $row = $st->fetch();
+    if (!$row) {
+        return [];
+    }
+
+    $totpEnrolled     = to_int($row['totp_enabled'] ?? 0) === 1;
+    $emailOtpEnrolled = to_int($row['email_otp_enabled'] ?? 0) === 1;
+    $passkeyEnrolled  = ipam_passkey_has_credentials($db, $userId);
+
+    $methods = [];
+    if ($totpGlobal && $totpEnrolled) {
+        $methods[] = 'totp';
+    }
+    if ($emailOtpGlobal && $emailOtpEnrolled) {
+        $methods[] = 'email_otp';
+    }
+    if ($passkeysGlobal && $passkeyEnrolled) {
+        $methods[] = 'passkey';
+    }
+    return $methods;
+}
+
+/**
+ * Resolve the user's effective preferred MFA method for login dispatch.
+ *
+ * Returns the value stored in users.preferred_mfa_method when that method
+ * is currently usable (enrolled by the user AND globally enabled). Returns
+ * null otherwise — the caller should then fall back to
+ * ipam_user_available_mfa_methods()[0].
+ *
+ * Tolerates absence of the preferred_mfa_method column (e.g. on partial
+ * test DBs that pre-date the 3.16.0 migration) by returning null.
+ */
+function ipam_user_preferred_mfa(PDO $db, int $userId): ?string
+{
+    try {
+        $st = $db->prepare("SELECT preferred_mfa_method FROM users WHERE id = :id");
+        $st->execute([':id' => $userId]);
+    } catch (\PDOException $e) {
+        // Tolerate ONLY "column does not exist" — partial test DBs that pre-date
+        // the v3.16.0 migration. SQLSTATE codes per driver:
+        //   MySQL:      42S22 (column not found)
+        //   PostgreSQL: 42703 (undefined_column)
+        //   SQLite:     HY000 with errorInfo[2] containing "no such column"
+        // Any other PDO error (transient connection, lock timeout, etc.) is a
+        // real problem and must propagate — silently coercing every DB error
+        // to "no preference" hides outages.
+        $sqlstate = (string)($e->errorInfo[0] ?? '');
+        $msg      = (string)($e->errorInfo[2] ?? '');
+        if ($sqlstate === '42S22'
+            || $sqlstate === '42703'
+            || ($sqlstate === 'HY000' && str_contains($msg, 'no such column'))) {
+            return null;
+        }
+        throw $e;
+    }
+    $val = $st->fetchColumn();
+    if (!is_string($val) || $val === '') {
+        return null;
+    }
+    if (!in_array($val, ['totp', 'email_otp', 'passkey'], true)) {
+        return null;
+    }
+    $available = ipam_user_available_mfa_methods($db, $userId);
+    if (!in_array($val, $available, true)) {
+        return null;
+    }
+    return $val;
 }
 
 // ============================================================

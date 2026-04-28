@@ -20,7 +20,7 @@ if ($username === '') {
     exit(2);
 }
 
-$configPath = __DIR__ . '/../../Simple-PHP-IPAM/config.php';
+$configPath = __DIR__ . '/../../config.php';
 if (!file_exists($configPath)) {
     $configPath = '/var/www/html/config.php';
 }
@@ -34,7 +34,7 @@ $config = require $configPath;
 $driver = $config['db_driver'] ?? 'sqlite';
 
 if ($driver === 'sqlite') {
-    $dbPath = $config['db_path'] ?? (__DIR__ . '/../../Simple-PHP-IPAM/data/ipam.sqlite');
+    $dbPath = $config['db_path'] ?? (__DIR__ . '/../../data/ipam.sqlite');
     if (!file_exists($dbPath)) {
         $dbPath = '/var/www/html/data/ipam.sqlite';
     }
@@ -62,6 +62,18 @@ if ($driver === 'sqlite') {
 
 $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
+// Verify the user exists with an explicit SELECT before issuing the UPDATE.
+// Relying on rowCount() of UPDATE is engine-dependent: MySQL's PDO returns
+// the number of rows actually CHANGED (not matched), so a no-op UPDATE
+// against an already-reset user reports rowCount=0 and would trigger the
+// "User not found" error path even though the user exists.
+$check = $db->prepare("SELECT 1 FROM users WHERE username = :u LIMIT 1");
+$check->execute([':u' => $username]);
+if ($check->fetchColumn() === false) {
+    fwrite(STDERR, "User '{$username}' not found\n");
+    exit(5);
+}
+
 $st = $db->prepare(
     "UPDATE users
         SET email_otp_enabled    = 0,
@@ -71,10 +83,5 @@ $st = $db->prepare(
       WHERE username = :u"
 );
 $st->execute([':u' => $username]);
-
-if ($st->rowCount() === 0) {
-    fwrite(STDERR, "User '{$username}' not found\n");
-    exit(5);
-}
 
 echo "ok\n";

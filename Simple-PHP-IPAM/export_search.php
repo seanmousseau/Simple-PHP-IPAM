@@ -20,10 +20,17 @@ $params = [];
 if ($q !== '') {
     // Distinct :q1..:q6 placeholders for PDO native-prepared safety.
     // See api.php::api_search() for the full rationale.
-    $where[] = "(a.ip LIKE :q1 ESCAPE '!' OR a.hostname LIKE :q2 ESCAPE '!'"
-             . " OR a.owner LIKE :q3 ESCAPE '!' OR a.note LIKE :q4 ESCAPE '!'"
-             . " OR a.grp LIKE :q5 ESCAPE '!' OR a.mac LIKE :q6 ESCAPE '!')";
-    $qLike = '%' . like_escape($q) . '%';
+    // #750: case-insensitive across all engines via dialect-aware LOWER(col).
+    // See search.php / api.php for the full rationale; PgsqlDialect overrides
+    // COLLATE "C" so non-ASCII folding works on every engine.
+    $d = ipam_dialect();
+    $where[] = '(' . $d->lower_expr('a.ip')       . " LIKE :q1 ESCAPE '!' OR "
+             .       $d->lower_expr('a.hostname') . " LIKE :q2 ESCAPE '!' OR "
+             .       $d->lower_expr('a.owner')    . " LIKE :q3 ESCAPE '!' OR "
+             .       $d->lower_expr('a.note')     . " LIKE :q4 ESCAPE '!' OR "
+             .       $d->lower_expr('a.grp')      . " LIKE :q5 ESCAPE '!' OR "
+             .       $d->lower_expr('a.mac')      . " LIKE :q6 ESCAPE '!')";
+    $qLike = '%' . like_escape($d->case_fold_value($q)) . '%';
     $params[':q1'] = $qLike;
     $params[':q2'] = $qLike;
     $params[':q3'] = $qLike;

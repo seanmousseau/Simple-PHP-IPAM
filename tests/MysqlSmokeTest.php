@@ -157,7 +157,8 @@ final class MysqlSmokeTest extends TestCase
         // Must match the list in schema.mysql.sql — the pre-seed count is
         // the regression gate here. If a new historical migration is
         // added, this must go up too.
-        $this->assertSame(49, (int)$row['c']);
+        // Bumped to 50 in v3.16.0 (#746): added 3.16.0-preferred-mfa-method.
+        $this->assertSame(50, (int)$row['c']);
     }
 
     public function testBootstrapAdminUserInserted(): void

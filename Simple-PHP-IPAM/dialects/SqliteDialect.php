@@ -132,4 +132,19 @@ final class SqliteDialect implements Dialect
     {
         return 'sqlite';
     }
+
+    public function lower_expr(string $column): string
+    {
+        // No-op: SQLite's default LIKE is already case-insensitive on ASCII
+        // A–Z, and SQLite has no built-in Unicode case folding (would need
+        // the ICU extension). Pass-through pairs with case_fold_value()
+        // returning the value unchanged, preserving SQLite's default LIKE
+        // semantics. See lower_expr() docs on Dialect interface.
+        return $column;
+    }
+
+    public function case_fold_value(string $value): string
+    {
+        return $value;
+    }
 }

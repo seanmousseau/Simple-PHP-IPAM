@@ -51,11 +51,15 @@ test.describe('Email OTP enrollment', () => {
     test.afterEach(async ({ page }) => {
         // Ensure the test user's session is cleared before logging in as admin.
         await logout(page).catch(() => undefined);
-        // Disable Email OTP globally. Bool settings use absent-key = false convention:
-        // posting the mfa group with no bool keys sets all mfa bools to false.
+        // Disable Email OTP globally. Bool settings use absent-key = false convention.
+        // We MUST keep mfa.totp_enabled=1 here (the v3.x default and #747's gate) so
+        // that totp.spec.ts running after this file finds TOTP dispatch enabled.
         await login(page, ADMIN_USER, ADMIN_PASS);
         await page.goto(appUrl('settings.php'));
-        await fetchPost(page, appUrl('settings.php'), { group: 'mfa' });
+        await fetchPost(page, appUrl('settings.php'), {
+            group: 'mfa',
+            'k_mfa__totp_enabled': '1',
+        });
         await logout(page);
     });
 
@@ -84,7 +88,8 @@ test.describe('Email OTP enrollment', () => {
         await page.locator('#email-otp button[type=submit]').first().click();
 
         await expect(page.locator('.success').first()).toBeVisible();
-        await expect(page.locator('#email-otp')).toContainText(/active/i);
+        // v3.16.0 (#745): MFA card uses a status pill instead of literal "active" text.
+        await expect(page.locator('#email-otp .mfa-method-pill--enabled')).toBeVisible();
         await logout(page);
     });
 

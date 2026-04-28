@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS users (
   email_otp_hash             VARCHAR(255) NULL,
   email_otp_expires_at       DATETIME NULL,
   email_otp_attempts         INT NOT NULL DEFAULT 0,
+  preferred_mfa_method       VARCHAR(20) NULL,
   created_at          DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   updated_at          DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   UNIQUE KEY idx_users_oidc_sub (oidc_sub)
@@ -753,6 +754,7 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.13.0-settings-cascade'),
   ('3.14.0-mfa-settings'),
   ('3.14.0-email-otp'),
-  ('3.15.0-passkeys');
+  ('3.15.0-passkeys'),
+  ('3.16.0-preferred-mfa-method');
 
 SET FOREIGN_KEY_CHECKS = 1;

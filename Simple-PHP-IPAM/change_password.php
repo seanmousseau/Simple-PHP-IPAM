@@ -337,6 +337,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 
     exit;
 }
 
+// 2FA: set preferred MFA method (#746). Accepts 'totp', 'email_otp',
+// 'passkey', or '' (clear). Server-side guards: the chosen method must be
+// currently enrolled by the user AND globally enabled. Anything else is
+// silently coerced to NULL so a stale form post (e.g. method just disabled
+// in another tab) cannot pin the user to an unusable preference.
+if ($_SERVER['REQUEST_METHOD'] === 'POST'
+    && to_str($_POST['action'] ?? '') === 'set_preferred_mfa') {
+    csrf_require();
+    $submitted = to_str($_POST['preferred_mfa'] ?? '');
+    $available = ipam_user_available_mfa_methods($db, to_int($cur['id']));
+    $newVal    = in_array($submitted, $available, true) ? $submitted : null;
+
+    $st = $db->prepare("UPDATE users SET preferred_mfa_method = :v WHERE id = :id");
+    $st->bindValue(':v', $newVal, $newVal === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
+    $st->bindValue(':id', to_int($cur['id']), PDO::PARAM_INT);
+    $st->execute();
+    audit(
+        $db,
+        'auth.mfa_preferred_set',
+        'user',
+        to_int($cur['id']),
+        'preferred_mfa_method=' . ($newVal ?? 'null')
+    );
+    flash_set('Preferred sign-in method updated.');
+    header('Location: change_password.php#mfa-preferred');
+    exit;
+}
+
 $actSt = $db->prepare("
     SELECT created_at, action, ip, user_agent
     FROM audit_log
@@ -348,9 +376,6 @@ $actSt = $db->prepare("
 $actSt->execute([':uid' => $viewUserId]);
 /** @var list<array<string, mixed>> $activityRows */
 $activityRows = $actSt->fetchAll();
-
-$passkeysEnabled = (bool)to_int(ipam_setting('mfa.passkeys_enabled', false));
-$passkeyCreds    = ipam_passkey_get_credentials($db, to_int($cur['id']));
 
 if (isset($_GET['mfa_required']) && !empty($_SESSION['mfa_enrollment_required'])) {
     flash_set('Your administrator requires 2FA. Please enroll in TOTP or Email OTP below.', 'warning');
@@ -397,28 +422,272 @@ page_header('Account');
   </form>
 <?php endif; ?>
 
-<div class="card mt-16">
-  <h2>Two-Factor Authentication</h2>
-  <?php if (to_int($userRow['totp_enabled'] ?? 0) === 1): ?>
-    <p class="success">Two-factor authentication is <strong>enabled</strong>.</p>
-    <form method="post" action="change_password.php">
-      <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
-      <input type="hidden" name="action" value="disable_totp">
-      <?php if (!$isSsoOnly): ?>
-        <label style="display:block;margin-bottom:8px;">Confirm current password:<br>
-          <input type="password" name="current_password" autocomplete="current-password" required>
-        </label>
-      <?php endif; ?>
-      <button type="submit" class="button-danger"
-        onclick="return confirm('Disable 2FA? You will no longer need a code to log in.')">
-        Disable 2FA
-      </button>
-    </form>
-  <?php else: ?>
-    <p class="muted">Two-factor authentication is <strong>not enabled</strong>.</p>
-    <a href="totp_enroll.php" class="action-pill">Enable 2FA</a>
+<?php
+// ── Two-Factor Authentication card (TOTP + Email OTP + Passkeys, #745, #755) ──
+$totpGlobalEnabled     = (bool)to_int(ipam_setting('mfa.totp_enabled', true));
+$emailOtpGlobalEnabled = (bool)to_int(ipam_setting('mfa.email_otp_enabled', false));
+$passkeysEnabled       = (bool)to_int(ipam_setting('mfa.passkeys_enabled', false));
+
+$totpUserEnabled = to_int($userRow['totp_enabled'] ?? 0) === 1;
+
+$eoSt = $db->prepare("SELECT email_otp_enabled, email FROM users WHERE id = :id");
+$eoSt->execute([':id' => to_int($cur['id'])]);
+/** @var array<string, mixed>|false $eoUser */
+$eoUser           = $eoSt->fetch();
+$emailOtpUserEnabled = $eoUser && to_int($eoUser['email_otp_enabled'] ?? 0) === 1;
+$eoHasEmail       = $eoUser && to_str($eoUser['email'] ?? '') !== '';
+$eoEnrolling      = !empty($_SESSION['email_otp_enrolling']);
+
+$passkeyCreds       = ipam_passkey_get_credentials($db, to_int($cur['id']));
+$passkeyUserEnabled = $passkeyCreds !== [];
+$passkeyDefaultName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
+
+// Preferred MFA method picker (#746). Read the persisted value (tolerant
+// of the column not existing on partial test DBs) and compute the set of
+// methods this user is allowed to choose from.
+$mfaAvailable = ipam_user_available_mfa_methods($db, to_int($cur['id']));
+$mfaPreferred = ipam_user_preferred_mfa($db, to_int($cur['id'])) ?? '';
+$mfaMethodLabels = [
+    'totp'      => 'Authenticator app',
+    'email_otp' => 'Email one-time code',
+    'passkey'   => 'Passkey',
+];
+?>
+<section class="card mt-16 mfa-card" aria-labelledby="mfa-heading">
+  <header class="mfa-card__header">
+    <?= icon('shield', 'mfa-card__icon') ?>
+    <div>
+      <h2 id="mfa-heading">Two-Factor Authentication</h2>
+      <p class="muted mfa-card__lede">Add a second factor so a stolen password is not enough to access your account.</p>
+    </div>
+  </header>
+
+  <?php if (count($mfaAvailable) >= 1): ?>
+  <!-- ── Preferred sign-in method (#746) ─────────────────────────────── -->
+  <div class="mfa-preferred" id="mfa-preferred" role="group" aria-labelledby="mfa-preferred-label">
+    <span id="mfa-preferred-label" class="mfa-preferred__label">Preferred method at login</span>
+    <?php if (count($mfaAvailable) === 1): ?>
+      <?php $only = $mfaAvailable[0]; ?>
+      <p class="mfa-preferred__static muted">
+        <?= e($mfaMethodLabels[$only] ?? $only) ?>
+        <span class="muted">(only enrolled method)</span>
+        <span class="sr-only"> &mdash; currently your preferred sign-in method</span>
+      </p>
+    <?php else: ?>
+      <form method="post" action="change_password.php#mfa-preferred" class="mfa-preferred__form">
+        <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+        <input type="hidden" name="action" value="set_preferred_mfa">
+        <label class="sr-only" for="mfa-preferred-select">Preferred sign-in method</label>
+        <select name="preferred_mfa" id="mfa-preferred-select" class="mfa-preferred__select"
+                aria-describedby="mfa-preferred-help">
+          <option value="" <?= $mfaPreferred === '' ? 'selected' : '' ?>>
+            Most-recently-enrolled (default)
+          </option>
+          <?php foreach ($mfaAvailable as $m): ?>
+            <option value="<?= e($m) ?>" <?= $mfaPreferred === $m ? 'selected' : '' ?>>
+              <?= e($mfaMethodLabels[$m] ?? $m) ?><?= $mfaPreferred === $m ? ' — currently preferred' : '' ?>
+            </option>
+          <?php endforeach ?>
+        </select>
+        <button type="submit" class="action-pill">Save</button>
+        <span id="mfa-preferred-help" class="mfa-preferred__help muted">
+          Login lands on this method first. The other enrolled methods stay
+          available via the &ldquo;Use … instead&rdquo; links on every verify page.
+        </span>
+      </form>
+    <?php endif; ?>
+  </div>
   <?php endif; ?>
-</div>
+
+  <ul class="mfa-method-list" role="list">
+    <!-- ── Authenticator app (TOTP) ─────────────────────────────────────── -->
+    <li class="mfa-method-row" id="totp">
+      <div class="mfa-method-row__lead">
+        <?= icon('shield', 'mfa-method-row__icon') ?>
+        <div class="mfa-method-row__text">
+          <h3 class="mfa-method-row__title">Authenticator app</h3>
+          <p class="mfa-method-row__desc">Use a TOTP app (1Password, Authy, Google Authenticator) to generate one-time codes.</p>
+        </div>
+      </div>
+      <?php if (!$totpGlobalEnabled): ?>
+        <?php if ($totpUserEnabled): ?>
+          <span class="mfa-method-pill mfa-method-pill--unavailable" data-method="totp">Unavailable</span>
+        <?php else: ?>
+          <span class="mfa-method-pill mfa-method-pill--unavailable" data-method="totp">Disabled by admin</span>
+        <?php endif; ?>
+      <?php elseif ($totpUserEnabled): ?>
+        <span class="mfa-method-pill mfa-method-pill--enabled" data-method="totp">Enabled</span>
+      <?php else: ?>
+        <span class="mfa-method-pill mfa-method-pill--disabled" data-method="totp">Disabled</span>
+      <?php endif; ?>
+      <div class="mfa-method-row__actions">
+        <?php if ($totpUserEnabled): ?>
+          <form method="post" action="change_password.php#totp" class="mfa-method-row__form">
+            <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+            <input type="hidden" name="action" value="disable_totp">
+            <?php if (!$isSsoOnly): ?>
+              <label class="mfa-method-row__pwlabel">Current password
+                <input type="password" name="current_password" autocomplete="current-password" required>
+              </label>
+            <?php endif; ?>
+            <button type="submit" class="action-pill button-danger"
+              onclick="return confirm('Disable authenticator app 2FA? You will no longer need a code to log in.')">
+              Disable
+            </button>
+          </form>
+        <?php elseif ($totpGlobalEnabled): ?>
+          <a href="totp_enroll.php" class="action-pill">Enroll</a>
+        <?php endif; ?>
+      </div>
+      <?php if (!$totpGlobalEnabled && $totpUserEnabled): ?>
+        <p class="mfa-method-row__hint" role="status">
+          <?= icon('info', 'mfa-method-row__hint-icon') ?>
+          Your TOTP enrolment is preserved and will reactivate automatically if TOTP is re-enabled.
+        </p>
+      <?php endif; ?>
+    </li>
+
+    <!-- ── Email one-time code ─────────────────────────────────────────── -->
+    <li class="mfa-method-row" id="email-otp">
+      <div class="mfa-method-row__lead">
+        <?= icon('envelope', 'mfa-method-row__icon') ?>
+        <div class="mfa-method-row__text">
+          <h3 class="mfa-method-row__title">Email one-time code</h3>
+          <p class="mfa-method-row__desc">A 6-digit code is emailed to your address each time you sign in.</p>
+        </div>
+      </div>
+      <?php if (!$emailOtpGlobalEnabled): ?>
+        <?php if ($emailOtpUserEnabled): ?>
+          <span class="mfa-method-pill mfa-method-pill--unavailable" data-method="email_otp">Unavailable</span>
+        <?php else: ?>
+          <span class="mfa-method-pill mfa-method-pill--unavailable" data-method="email_otp">Disabled by admin</span>
+        <?php endif; ?>
+      <?php elseif ($emailOtpUserEnabled): ?>
+        <span class="mfa-method-pill mfa-method-pill--enabled" data-method="email_otp">Enabled</span>
+      <?php elseif ($eoEnrolling): ?>
+        <span class="mfa-method-pill mfa-method-pill--pending" data-method="email_otp">Code sent</span>
+      <?php else: ?>
+        <span class="mfa-method-pill mfa-method-pill--disabled" data-method="email_otp">Disabled</span>
+      <?php endif; ?>
+      <div class="mfa-method-row__actions">
+        <?php if ($emailOtpUserEnabled): ?>
+          <form method="post" action="change_password.php#email-otp" class="mfa-method-row__form">
+            <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+            <input type="hidden" name="action" value="email_otp_disable">
+            <?php if (!$isSsoOnly): ?>
+              <label class="mfa-method-row__pwlabel">Current password
+                <input type="password" name="current_password" autocomplete="current-password" required>
+              </label>
+            <?php endif; ?>
+            <button type="submit" class="action-pill button-danger"
+              onclick="return confirm('Disable Email OTP? You will no longer receive a code by email at login.')">
+              Disable
+            </button>
+          </form>
+        <?php elseif (!$emailOtpGlobalEnabled): ?>
+          <!-- no enroll affordance when globally disabled -->
+        <?php elseif ($eoEnrolling): ?>
+          <form method="post" action="change_password.php#email-otp" class="mfa-method-row__form">
+            <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+            <input type="hidden" name="action" value="email_otp_verify_enroll">
+            <label class="mfa-method-row__codelabel" for="otp_code">Verification code
+              <input type="text" id="otp_code" name="otp_code" inputmode="numeric" pattern="\d{6}"
+                     maxlength="6" autocomplete="one-time-code" required placeholder="6-digit code">
+            </label>
+            <button type="submit" class="action-pill">Confirm</button>
+          </form>
+          <form method="post" action="change_password.php#email-otp" class="mfa-method-row__form">
+            <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+            <input type="hidden" name="action" value="email_otp_enable">
+            <button type="submit" class="action-pill button-secondary">Resend code</button>
+          </form>
+        <?php elseif (!$eoHasEmail): ?>
+          <span class="mfa-method-row__notice">Set an email address first.</span>
+        <?php else: ?>
+          <form method="post" action="change_password.php#email-otp" class="mfa-method-row__form">
+            <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+            <input type="hidden" name="action" value="email_otp_enable">
+            <button type="submit" class="action-pill">Enroll</button>
+          </form>
+        <?php endif; ?>
+      </div>
+      <?php if (!$emailOtpGlobalEnabled && $emailOtpUserEnabled): ?>
+        <p class="mfa-method-row__hint" role="status">
+          <?= icon('info', 'mfa-method-row__hint-icon') ?>
+          Your Email OTP enrolment is preserved and will reactivate automatically if Email OTP is re-enabled.
+        </p>
+      <?php endif; ?>
+    </li>
+
+    <!-- ── Passkeys ────────────────────────────────────────────────────── -->
+    <li class="mfa-method-row" id="passkeys">
+      <div class="mfa-method-row__lead">
+        <?= icon('finger-print', 'mfa-method-row__icon') ?>
+        <div class="mfa-method-row__text">
+          <h3 class="mfa-method-row__title">Passkeys</h3>
+          <p class="mfa-method-row__desc">Sign in with a device biometric, security key, or password manager.</p>
+        </div>
+      </div>
+      <?php if (!$passkeysEnabled): ?>
+        <?php if ($passkeyUserEnabled): ?>
+          <span class="mfa-method-pill mfa-method-pill--unavailable" data-method="passkeys">Unavailable</span>
+        <?php else: ?>
+          <span class="mfa-method-pill mfa-method-pill--unavailable" data-method="passkeys">Disabled by admin</span>
+        <?php endif; ?>
+      <?php elseif ($passkeyUserEnabled): ?>
+        <span class="mfa-method-pill mfa-method-pill--enabled" data-method="passkeys"><?= (int)count($passkeyCreds) ?> registered</span>
+      <?php else: ?>
+        <span class="mfa-method-pill mfa-method-pill--disabled" data-method="passkeys">Disabled</span>
+      <?php endif; ?>
+      <div class="mfa-method-row__actions">
+        <?php if ($passkeysEnabled): ?>
+          <button type="button" id="btn-add-passkey" class="action-pill"
+                  data-default-name="<?= e($passkeyDefaultName) ?>">
+            <?= icon('plus-circle') ?> Add passkey
+          </button>
+          <span id="passkey-add-status" class="muted mfa-method-row__notice" style="display:none"></span>
+        <?php endif; ?>
+      </div>
+      <?php if ($passkeysEnabled && $passkeyCreds !== []): ?>
+        <ul class="mfa-passkey-list" role="list">
+          <?php foreach ($passkeyCreds as $pk): ?>
+            <li class="mfa-passkey-list__item">
+              <?= icon('key', 'mfa-passkey-list__icon') ?>
+              <span class="mfa-passkey-list__name"><strong><?= e(to_str($pk['name'])) ?></strong>
+                <span class="muted mfa-passkey-list__meta">
+                  added <?= e(substr(to_str($pk['created_at']), 0, 10)) ?>
+                  <?php if (to_str($pk['last_used_at']) !== ''): ?>
+                    · last used <?= e(substr(to_str($pk['last_used_at']), 0, 10)) ?>
+                  <?php endif ?>
+                </span>
+              </span>
+              <form method="post" action="change_password.php#passkeys" class="mfa-passkey-list__form"
+                    onsubmit="return confirm('Remove this passkey?')">
+                <input type="hidden" name="csrf"          value="<?= e(csrf_token()) ?>">
+                <input type="hidden" name="action"        value="passkey_delete">
+                <input type="hidden" name="credential_id" value="<?= e((string)to_int($pk['id'])) ?>">
+                <?php if (!$isSsoOnly): ?>
+                  <input type="password" name="current_password" placeholder="Current password"
+                         autocomplete="current-password" required class="mfa-passkey-list__pw">
+                <?php endif ?>
+                <button type="submit" class="action-pill button-danger"
+                        aria-label="Remove passkey <?= e(to_str($pk['name'])) ?>">
+                  <?= icon('trash') ?> Remove
+                </button>
+              </form>
+            </li>
+          <?php endforeach ?>
+        </ul>
+      <?php endif; ?>
+      <?php if (!$passkeysEnabled && $passkeyUserEnabled): ?>
+        <p class="mfa-method-row__hint" role="status">
+          <?= icon('info', 'mfa-method-row__hint-icon') ?>
+          Your registered passkeys are preserved and will be available again if Passkeys are re-enabled.
+        </p>
+      <?php endif; ?>
+    </li>
+  </ul>
+</section>
 
 <?php
 $tzGroups = [];
@@ -510,116 +779,6 @@ $pendingActive = $pendingEmail !== '' && $pendingExpiry !== ''
     </table>
     </div>
   <?php endif; ?>
-</div>
-
-<?php
-// --- Email OTP section ---
-$emailOtpGlobalEnabled = (bool)to_int(ipam_setting('mfa.email_otp_enabled', false));
-$eoSt = $db->prepare("SELECT email_otp_enabled, email FROM users WHERE id = :id");
-$eoSt->execute([':id' => to_int($cur['id'])]);
-/** @var array<string, mixed>|false $eoUser */
-$eoUser    = $eoSt->fetch();
-$emailOtpIsOn = $eoUser && to_int($eoUser['email_otp_enabled'] ?? 0) === 1;
-$eoHasEmail   = $eoUser && to_str($eoUser['email'] ?? '') !== '';
-$eoEnrolling  = !empty($_SESSION['email_otp_enrolling']);
-?>
-<div class="card mt-16" id="email-otp">
-  <h2>Email OTP</h2>
-  <?php if (!$emailOtpGlobalEnabled): ?>
-    <p class="muted">Email OTP is not enabled by your administrator.</p>
-  <?php elseif ($emailOtpIsOn): ?>
-    <p class="success">Email OTP is <strong>active</strong>. A verification code will be emailed to you at each login.</p>
-    <form method="post" action="change_password.php#email-otp">
-      <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
-      <input type="hidden" name="action" value="email_otp_disable">
-      <?php if (!$isSsoOnly): ?>
-        <label style="display:block;margin-bottom:8px;">Confirm current password:<br>
-          <input type="password" name="current_password" autocomplete="current-password" required>
-        </label>
-      <?php endif; ?>
-      <button type="submit" class="button-danger"
-        onclick="return confirm('Disable Email OTP? You will no longer receive a code by email at login.')">
-        Disable Email OTP
-      </button>
-    </form>
-  <?php elseif ($eoEnrolling): ?>
-    <p>A 6-digit code was sent to your email address. Enter it below to confirm enrollment.</p>
-    <form method="post" action="change_password.php#email-otp">
-      <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
-      <input type="hidden" name="action" value="email_otp_verify_enroll">
-      <div class="row">
-        <label for="otp_code">Verification code<br>
-          <input type="text" id="otp_code" name="otp_code" inputmode="numeric" pattern="\d{6}"
-                 maxlength="6" autocomplete="one-time-code" required placeholder="6-digit code"
-                 style="max-width:160px;">
-        </label>
-      </div>
-      <p><button type="submit">Confirm</button></p>
-    </form>
-    <form method="post" action="change_password.php#email-otp" style="margin-top:.5rem">
-      <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
-      <input type="hidden" name="action" value="email_otp_enable">
-      <button type="submit" class="button-secondary">Resend code</button>
-    </form>
-  <?php elseif (!$eoHasEmail): ?>
-    <p class="warning">You must <a href="change_password.php#email">set an email address</a> before you can enable Email OTP.</p>
-  <?php else: ?>
-    <p>Add Email OTP as a second factor. Each login will require a code sent to your email address.</p>
-    <form method="post" action="change_password.php#email-otp">
-      <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
-      <input type="hidden" name="action" value="email_otp_enable">
-      <p><button type="submit">Enable Email OTP</button></p>
-    </form>
-  <?php endif; ?>
-</div>
-
-<div class="card mt-16" id="passkeys">
-  <h2><?= icon('finger-print') ?> Passkeys</h2>
-  <?php if (!$passkeysEnabled): ?>
-    <p class="muted">Passkeys are not enabled on this server. Contact your administrator.</p>
-  <?php else: ?>
-    <?php if ($passkeyCreds !== []): ?>
-      <p>Your registered passkeys:</p>
-      <ul style="list-style:none;padding:0;margin:0 0 1rem">
-        <?php foreach ($passkeyCreds as $pk): ?>
-          <li style="display:flex;align-items:center;gap:.5rem;padding:.4rem 0;border-bottom:1px solid var(--border)">
-            <?= icon('key') ?>
-            <span style="flex:1"><strong><?= e(to_str($pk['name'])) ?></strong>
-              <span class="muted" style="font-size:.8rem">
-                — added <?= e(substr(to_str($pk['created_at']), 0, 10)) ?>
-                <?php if (to_str($pk['last_used_at']) !== ''): ?>
-                  · last used <?= e(substr(to_str($pk['last_used_at']), 0, 10)) ?>
-                <?php endif ?>
-              </span>
-            </span>
-            <form method="post" action="change_password.php#passkeys"
-                  onsubmit="return confirm('Remove this passkey?')">
-              <input type="hidden" name="csrf"          value="<?= e(csrf_token()) ?>">
-              <input type="hidden" name="action"        value="passkey_delete">
-              <input type="hidden" name="credential_id" value="<?= e((string)to_int($pk['id'])) ?>">
-              <?php if (!$isSsoOnly): ?>
-              <input type="password" name="current_password" placeholder="Current password"
-                     autocomplete="current-password" required
-                     style="margin-right:.4rem;width:auto">
-              <?php endif ?>
-              <button type="submit" class="action-pill button-danger"
-                      aria-label="Remove passkey <?= e(to_str($pk['name'])) ?>">
-                <?= icon('trash') ?> Remove
-              </button>
-            </form>
-          </li>
-        <?php endforeach ?>
-      </ul>
-    <?php else: ?>
-      <p class="muted">No passkeys registered yet.</p>
-    <?php endif ?>
-    <?php $passkeyDefaultName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM'; ?>
-    <button type="button" id="btn-add-passkey" class="action-pill"
-            data-default-name="<?= e($passkeyDefaultName) ?>">
-      <?= icon('plus-circle') ?> Add Passkey
-    </button>
-    <span id="passkey-add-status" class="muted" style="font-size:.85rem;display:none;margin-left:.5rem"></span>
-  <?php endif ?>
 </div>
 
 <?php page_footer();

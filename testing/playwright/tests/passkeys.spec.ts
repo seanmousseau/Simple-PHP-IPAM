@@ -64,7 +64,12 @@ async function enablePasskeys(page: import('@playwright/test').Page) {
 async function disablePasskeys(page: import('@playwright/test').Page) {
     await login(page, ADMIN_USER, ADMIN_PASS);
     await page.goto(pkUrl('settings.php'));
-    await fetchPost(page, pkUrl('settings.php'), { group: 'mfa' });
+    // Keep mfa.totp_enabled=1 (v3.x default and #747's gate) so totp.spec.ts
+    // running after this file finds TOTP dispatch enabled.
+    await fetchPost(page, pkUrl('settings.php'), {
+        group: 'mfa',
+        'k_mfa__totp_enabled': '1',
+    });
     await logout(page);
 }
 
@@ -102,7 +107,11 @@ test.describe('Passkeys', () => {
         await disablePasskeys(page);
         await login(page, PASSKEY_USER, PASSKEY_PASS);
         await page.goto(pkUrl('change_password.php'));
-        await expect(page.locator('#passkeys')).toContainText('not enabled on this server');
+        // Consolidated MFA card (#745): the row keeps id="passkeys" and renders a status
+        // pill with "Disabled by admin" (or "Unavailable" if the user still has creds)
+        // when the global toggle is off, instead of the old standalone-card paragraph.
+        await expect(page.locator('#passkeys .mfa-method-pill')).toContainText(/Disabled by admin|Unavailable/);
+        await expect(page.locator('#passkeys #btn-add-passkey')).toHaveCount(0);
         await logout(page);
     });
 

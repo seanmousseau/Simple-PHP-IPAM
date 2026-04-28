@@ -9,6 +9,7 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
+  - [v3.16.0](#v3160) — Admin TOTP toggle, preferred MFA method, unified MFA card, Settings tabs, portable case-insensitive search (no breaking changes)
   - [v3.15.2](#v3152) — Bug fixes: passkey registration with password managers, MFA method choice, stale-session redirect (no breaking changes)
   - [v3.15.1](#v3151) — Bug fixes: post-login redirect, email charset, banner false positive (no breaking changes)
   - [v3.15.0](#v3150) — WebAuthn / Passkey 2FA (no breaking changes)
@@ -107,6 +108,19 @@ The backup is left in place after a successful upgrade. You can remove it manual
 ---
 
 ## Version-specific upgrade notes
+
+### v3.16.0
+
+- No manual upgrade steps required.
+- The `3.16.0-preferred-mfa-method` migration adds a nullable `preferred_mfa_method` column to `users`. Non-destructive and idempotent. Existing users dispatch as before until they pick a preference from the Account page.
+- **New setting `mfa.totp_enabled` (default `true`).** Existing installs continue to allow TOTP exactly as before. Admins who want to phase TOTP out in favour of Email OTP / passkeys can disable it from Admin → Settings → Multi-Factor Auth without revoking individual user enrollments — re-enabling restores each user's previous TOTP without re-enrollment.
+- **`app_secret` warning banner.** The Settings page now flags the case where `mfa.totp_enabled = true` but `app_secret` is unset in `config.php`. This was previously a silent failure mode at TOTP enrollment time. If you see the banner, either generate and add `app_secret` to `config.php` (`php -r "echo bin2hex(random_bytes(32));"`) or disable `mfa.totp_enabled`.
+- **Settings page reorganised into 5 tabs.** General, Authentication, Notifications, Data & Maintenance, Integrations. The per-subsection POST flow is unchanged — bookmarks to `settings.php` still work and the legacy `#group-<key>` anchor format auto-redirects to the correct tab via a JS shim. URL state is now carried via `?tab=`.
+- **Account page MFA section consolidated.** TOTP, Email OTP, and Passkeys now live in a single "Two-Factor Authentication" card. No data migration; the layout change is purely UI. The "Two-Factor Authentication" heading replaces the prior three separate sections.
+- **Login MFA switch graph.** Each verify page (TOTP, Email OTP, Passkey) now offers switch buttons to either of the other two methods when they are enrolled and globally enabled. Extends v3.15.2's TOTP-page-only buttons.
+- **Search is now case-insensitive on every supported engine.** PostgreSQL was previously case-sensitive — operators who built habits around exact-case search on Postgres should know it now matches SQLite and MySQL behaviour. SQLite remains ASCII-only by design (no ICU bundled with the standard SQLite build); MySQL and PostgreSQL perform full Unicode case folding via their default collations.
+
+---
 
 ### v3.15.2
 

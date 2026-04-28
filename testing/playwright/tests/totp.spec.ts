@@ -21,7 +21,7 @@
 
 import { test, expect } from '@playwright/test';
 import { TOTP } from 'otpauth';
-import { login, logout, ADMIN_USER, ADMIN_PASS, appUrl, fetchPost } from '../fixtures/ipam';
+import { login, logout, ADMIN_USER, ADMIN_PASS, appUrl, fetchPost, reset2faEnrollment } from '../fixtures/ipam';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -88,6 +88,16 @@ async function loginPasswordStep(
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 test.describe('TOTP 2FA', () => {
+    // Re-seed 2fa_test_user once before the spec runs so it is robust to any
+    // upstream test that may have flipped totp_enabled or consumed backup
+    // codes during a full-suite run. Bootstrap-time seeding alone is fragile
+    // when 600+ tests share a single SQLite DB. Skipped when SEED_2FA_TEST_USER
+    // is not set so non-2FA test environments stay clean.
+    test.beforeAll(async () => {
+        if (!is2FaSeeded()) return;
+        await reset2faEnrollment(TFA_USER);
+    });
+
     test.beforeEach(({}, testInfo) => {
         if (!is2FaSeeded()) {
             testInfo.skip(true, 'SEED_2FA_TEST_USER is not set — 2FA test user not seeded; skipping');
@@ -212,7 +222,89 @@ test.describe('TOTP 2FA', () => {
         await expect(page.locator('.danger')).toBeVisible();
     });
 
-    // ── 6. Admin 2FA reset (#624 regression verify) ──────────────────────────
+    // ── 6. Admin TOTP toggle (#747) ──────────────────────────────────────────
+    //
+    // When an admin disables `mfa.totp_enabled` in the Settings page, users
+    // who have totp_enabled=1 in the DB must NOT be dispatched to the TOTP
+    // challenge. With TOTP globally off and only TOTP enrolled, 2fa_test_user
+    // should land directly on dashboard. After the test we restore the toggle
+    // by POSTing the mfa group with both keys present so the rest of the
+    // suite keeps the original state.
+
+    test('#747 admin TOTP toggle: when off, TOTP-enrolled user logs in without TOTP challenge', async ({ page }) => {
+        // Re-seed TOTP enrollment so this test is independent of test #6's
+        // admin reset (which clears 2fa_test_user's TOTP). Without this, the
+        // test would silently pass for the wrong reason: the user has no TOTP
+        // to dispatch on regardless of the global toggle.
+        await reset2faEnrollment(TFA_USER);
+
+        // Step 1: admin disables mfa.totp_enabled
+        await login(page, ADMIN_USER, ADMIN_PASS);
+        await page.goto(appUrl('settings.php?tab=authentication'));
+
+        // Snapshot the current MFA toggle state so the finally block can
+        // restore exactly what was set before — not blindly force them all
+        // to '1'. This protects subsequent specs from a stale-default
+        // assumption when the seed eventually changes.
+        const readToggle = async (key: string): Promise<boolean> => {
+            const cb = page.locator(`input[type="checkbox"][name="${key}"]`).first();
+            if (!(await cb.count())) return false;
+            return await cb.isChecked();
+        };
+        const before = {
+            'k_mfa__totp_enabled':      await readToggle('k_mfa__totp_enabled'),
+            'k_mfa__email_otp_enabled': await readToggle('k_mfa__email_otp_enabled'),
+            'k_mfa__passkeys_enabled':  await readToggle('k_mfa__passkeys_enabled'),
+            'k_mfa__require':           await readToggle('k_mfa__require'),
+        };
+
+        const disableRes = await fetchPost(page, appUrl('settings.php'), {
+            group: 'mfa',
+            // Note: absent key means false. We explicitly enable email_otp + passkeys so we
+            // exercise pure absence of the TOTP key without churning other toggles.
+            'k_mfa__email_otp_enabled': '1',
+            'k_mfa__passkeys_enabled': '1',
+            // mfa.require deliberately omitted — leave at default
+        });
+        expect(disableRes.ok).toBe(true);
+        await logout(page);
+
+        try {
+            // Step 2: log in as 2fa_test_user — must skip TOTP, land on a non-login,
+            // non-totp-verify page. 2fa_test_user has only TOTP enrolled, no email_otp,
+            // no passkeys, so with TOTP globally off they fall straight through to dashboard.
+            await page.goto(appUrl('login.php'));
+            await page.waitForSelector('[name=username]', { timeout: 30_000 });
+            await page.locator('[name=username]').fill(TFA_USER);
+            await page.locator('[name=password]').fill(TFA_PASS);
+            await page.locator('button[type=submit]').click();
+
+            await page.waitForURL(
+                url => !url.pathname.endsWith('login.php') && !url.pathname.endsWith('totp_verify.php'),
+                { timeout: 30_000 },
+            );
+            await expect(page).not.toHaveURL(/totp_verify\.php/);
+            await expect(page).not.toHaveURL(/email_otp_verify\.php/);
+            await expect(page).not.toHaveURL(/passkey_verify\.php/);
+            await expect(page).not.toHaveURL(/login\.php/);
+
+            await logout(page);
+        } finally {
+            // Restore the bools to the values we saved before mutating.
+            await login(page, ADMIN_USER, ADMIN_PASS);
+            const form: Record<string, string> = { group: 'mfa' };
+            for (const [k, v] of Object.entries(before)) {
+                if (v) form[k] = '1';
+            }
+            await fetchPost(page, appUrl('settings.php'), form);
+            await logout(page);
+            // Re-seed TOTP state so subsequent tests in this file (if any are
+            // re-run) start clean.
+            await reset2faEnrollment(TFA_USER);
+        }
+    });
+
+    // ── 7. Admin 2FA reset (#624 regression verify) ──────────────────────────
 
     test('#624 admin 2FA reset: clears 2FA for another user and allows password-only login', async ({ page }) => {
         // Log in as admin

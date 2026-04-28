@@ -370,6 +370,23 @@ export async function resetEmailOtpEnrollment(username: string): Promise<void> {
     ], { stdio: 'pipe' });
 }
 
+/**
+ * Re-seed a user's TOTP enrolment back to the canonical test state:
+ * totp_enabled=1, totp_secret_enc set to the RFC 6238 test vector,
+ * and the eight known-plaintext backup codes refreshed. Used by
+ * totp.spec.ts beforeAll so the spec is robust to any upstream test
+ * that may have flipped totp_enabled during a full-suite run.
+ */
+export async function reset2faEnrollment(username: string): Promise<void> {
+    const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
+    const { execFileSync } = await import('child_process');
+    execFileSync('docker', [
+        'exec', container,
+        'php', '/var/www/html/testing/scripts/reset_2fa_enrollment.php',
+        username,
+    ], { stdio: 'pipe' });
+}
+
 export async function ensureEmailOtpEnrolled(username: string): Promise<void> {
     const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
     const { execFileSync } = await import('child_process');

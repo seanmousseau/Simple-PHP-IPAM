@@ -226,4 +226,19 @@ final class PgsqlDialect implements Dialect
     {
         return 'pgsql';
     }
+
+    public function lower_expr(string $column): string
+    {
+        // Text columns use COLLATE "C" for byte-comparable equality (matching
+        // SQLite default and MySQL utf8mb4_bin). Under COLLATE "C", LOWER()
+        // only folds ASCII A–Z. Overriding the collation only for the LOWER()
+        // call gives consistent Unicode case folding without changing how the
+        // column is stored or compared elsewhere. See #750.
+        return "LOWER($column COLLATE \"default\")";
+    }
+
+    public function case_fold_value(string $value): string
+    {
+        return mb_strtolower($value);
+    }
 }

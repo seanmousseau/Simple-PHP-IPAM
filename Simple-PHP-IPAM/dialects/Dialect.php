@@ -172,4 +172,36 @@ interface Dialect
      * @return 'sqlite'|'mysql'|'pgsql'
      */
     public function driver_name(): string;
+
+    /**
+     * SQL expression that case-folds a TEXT column for case-insensitive search.
+     * Pair with case_fold_value() to fold the PHP-side query input the same way.
+     *
+     *  - SQLite : `$column` — no-op. SQLite's default LIKE is already
+     *             case-insensitive on ASCII A–Z, and SQLite has no built-in
+     *             Unicode case folding (would need the ICU extension), so
+     *             pass-through preserves the existing behaviour without
+     *             introducing a Cyrillic/CJK regression.
+     *  - MySQL  : `LOWER(col)` — utf8mb4 collation handles Unicode folding.
+     *  - Postgres: `LOWER(col COLLATE "default")` — text columns use COLLATE "C"
+     *             (byte-comparable) for exact-equality semantics, but COLLATE "C"
+     *             disables non-ASCII folding inside LOWER(). Overriding the
+     *             collation only for the LOWER() call gives consistent Unicode
+     *             folding without changing column storage. Introduced for #750.
+     */
+    public function lower_expr(string $column): string;
+
+    /**
+     * Fold a search value to match the comparison performed by lower_expr().
+     * The PHP-side fold and the SQL-side fold must agree; otherwise a
+     * mixed-case literal stored in the column won't match a same-case query.
+     *
+     *  - SQLite : pass-through (LIKE is ASCII-case-insensitive by default and
+     *             non-ASCII case folding is not supported without ICU).
+     *  - MySQL  : `mb_strtolower($v)` — DB returns lowercased columns, query
+     *             must be lowercased too.
+     *  - Postgres: `mb_strtolower($v)` — same, with COLLATE "default" for
+     *             non-ASCII coverage on the SQL side.
+     */
+    public function case_fold_value(string $value): string;
 }

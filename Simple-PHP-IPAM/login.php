@@ -138,33 +138,76 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 clear_login_failures($db, $ip);
                 clear_account_lockout($db, $username);
-                if (to_int($user['totp_enabled'] ?? 0) === 1) {
-                    $_SESSION['totp_pending_uid'] = to_int($user['id']);
-                    header('Location: totp_verify.php');
-                    exit;
+                // #746 v3.16.0: dispatch on the user's preferred MFA method
+                // when set, otherwise fall through to the most-recently-enrolled
+                // available method. ipam_user_available_mfa_methods() already
+                // applies the same global-toggle gating that the previous
+                // hand-rolled chain did (#747 for TOTP, mfa.email_otp_enabled,
+                // mfa.passkeys_enabled).
+                $uid = to_int($user['id']);
+                $available = ipam_user_available_mfa_methods($db, $uid);
+                $preferred = ipam_user_preferred_mfa($db, $uid);
+                $chain = $available;
+                if ($preferred !== null && in_array($preferred, $available, true)) {
+                    // Move preferred to the front of the dispatch chain only
+                    // when it is actually available (enrolled + globally enabled).
+                    // Otherwise leave $chain = $available so a stale preference
+                    // does not short-circuit dispatch.
+                    $chain = array_values(array_unique(array_merge([$preferred], $available)));
                 }
-                if (to_int($user['email_otp_enabled'] ?? 0) === 1 &&
-                    (bool)to_int(ipam_setting('mfa.email_otp_enabled', false))) {
-                    $code = ipam_email_otp_generate($db, to_int($user['id']));
-                    if (!ipam_email_otp_send($db, to_int($user['id']), $code)) {
-                        ipam_email_otp_clear($db, to_int($user['id']), 'email_send_failed');
-                        flash_set('Could not send verification code. Please contact your administrator.', 'danger');
-                        header('Location: login.php');
+
+                foreach ($chain as $method) {
+                    if ($method === 'totp') {
+                        $_SESSION['totp_pending_uid'] = $uid;
+                        header('Location: totp_verify.php');
                         exit;
                     }
-                    $_SESSION['email_otp_pending_uid'] = to_int($user['id']);
-                    header('Location: email_otp_verify.php');
-                    exit;
+                    if ($method === 'email_otp') {
+                        $code = ipam_email_otp_generate($db, $uid);
+                        if (!ipam_email_otp_send($db, $uid, $code)) {
+                            ipam_email_otp_clear($db, $uid, 'email_send_failed');
+                            // Fall through to the next available method rather than
+                            // dead-ending the user when SMTP is broken.
+                            continue;
+                        }
+                        $_SESSION['email_otp_pending_uid'] = $uid;
+                        header('Location: email_otp_verify.php');
+                        exit;
+                    }
+                    if ($method === 'passkey') {
+                        if (ipam_passkey_dispatch_challenge($db, $uid)) {
+                            audit($db, 'auth.passkey_challenge', 'user', $uid, 'passkey challenge issued');
+                            header('Location: passkey_verify.php');
+                            exit;
+                        }
+                        continue;
+                    }
                 }
-                $passkeysEnabled = (bool)to_int(ipam_setting('mfa.passkeys_enabled', false));
-                if ($passkeysEnabled && ipam_passkey_dispatch_challenge($db, to_int($user['id']))) {
-                    audit($db, 'auth.passkey_challenge', 'user', to_int($user['id']), 'passkey challenge issued');
-                    header('Location: passkey_verify.php');
-                    exit;
+                // Reached here only if every method in $chain failed to dispatch
+                // (e.g. SMTP broken on email_otp, passkey challenge could not be
+                // issued). Treat this as a hard auth failure when the user
+                // actually has methods enrolled — falling through to login_user()
+                // below would let a user in without an MFA challenge, defeating
+                // the second factor entirely. (CR feedback on PR #757.)
+                if (count($chain) > 0) {
+                    audit($db, 'auth.login_failed', 'user', $uid, 'all_mfa_dispatch_failed');
+                    $error = 'Could not deliver an authentication challenge. Please contact your administrator.';
+                    goto render_page;
                 }
+                // #747: when computing whether mfa.require is satisfied, treat
+                // users with TOTP enrolled-but-globally-disabled as having no
+                // TOTP — they cannot use it to log in until the admin re-enables
+                // it. They must enroll Email OTP (or have a passkey already).
+                $totpGloballyEnabledForRequireGate = (bool)to_int(ipam_setting('mfa.totp_enabled', true));
+                $totpSatisfies = $totpGloballyEnabledForRequireGate && to_int($user['totp_enabled'] ?? 0) === 1;
+                $emailOtpGloballyEnabled = (bool)to_int(ipam_setting('mfa.email_otp_enabled', false));
+                $emailOtpSatisfies = $emailOtpGloballyEnabled && to_int($user['email_otp_enabled'] ?? 0) === 1;
+                $passkeysGloballyEnabled = (bool)to_int(ipam_setting('mfa.passkeys_enabled', false));
+                $passkeySatisfies = $passkeysGloballyEnabled && ipam_passkey_has_credentials($db, $uid);
                 if ((bool)to_int(ipam_setting('mfa.require', false)) &&
-                    to_int($user['totp_enabled']      ?? 0) === 0 &&
-                    to_int($user['email_otp_enabled'] ?? 0) === 0) {
+                    !$totpSatisfies &&
+                    !$emailOtpSatisfies &&
+                    !$passkeySatisfies) {
                     login_user(to_int($user['id']), to_str($user['username']), to_str($user['role']));
                     $db->prepare("UPDATE users SET last_login_at=" . ipam_dialect()->now() . " WHERE id=:id")
                        ->execute([':id' => to_int($user['id'])]);

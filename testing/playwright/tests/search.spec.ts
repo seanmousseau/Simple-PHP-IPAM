@@ -9,7 +9,7 @@ import { test, expect, type Browser, type BrowserContext, type Page } from '@pla
 import {
   login, fetchPost, fetchGet, deleteSubnet, subnetIdFor, appUrl,
   ADMIN_USER, ADMIN_PASS,
-  newAuthContext,
+  newAuthContext, IS_SQLITE,
 } from '../fixtures/ipam';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -27,6 +27,17 @@ const SEARCH_NOTE      = 'pw-srch-note-text';
 const SEARCH_MAC       = 'AA:BB:CC:DD:EE:FF';
 const SEARCH_LIKE_HOST = 'pw-srch-percent%host';   // contains %, _, !
 const SEARCH_LIKE_IP   = '10.88.0.40';
+// Non-ASCII case-folding fixture (#750 follow-up): seeds a hostname with an
+// UPPERCASE German umlaut so the test below can query in lowercase
+// ("müller-test") and assert it matches. The seeded value must be uppercase
+// (not lowercase) so the column-side LOWER() fold is what makes the match
+// work — querying lowercase against a lowercase-stored value would pass even
+// when LOWER() is broken on non-ASCII. This locks in the
+// PgsqlDialect::lower_expr() COLLATE "default" override — without it,
+// Postgres LOWER() leaves 'Ü' unchanged on a COLLATE "C" text column and the
+// query 'müller-test' fails to match the stored 'MÜLLER-TEST'.
+const SEARCH_UNICODE_HOST = 'MÜLLER-TEST';
+const SEARCH_UNICODE_IP   = '10.88.0.50';
 
 // ── Fixtures ───────────────────────────────────────────────────────────────────
 
@@ -75,6 +86,12 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
     await fetchPost(page, appUrl('addresses.php'), {
       action: 'create', subnet_id: String(subnetV4),
       ip: SEARCH_LIKE_IP, hostname: SEARCH_LIKE_HOST, owner: SEARCH_OWNER,
+      status: 'used', note: '', grp: '', mac: '', expires_at: '',
+    });
+    // address with non-ASCII hostname (#750 follow-up: pin Postgres COLLATE override)
+    await fetchPost(page, appUrl('addresses.php'), {
+      action: 'create', subnet_id: String(subnetV4),
+      ip: SEARCH_UNICODE_IP, hostname: SEARCH_UNICODE_HOST, owner: SEARCH_OWNER,
       status: 'used', note: '', grp: '', mac: '', expires_at: '',
     });
   }
@@ -264,6 +281,58 @@ test('search pagination: page=2 with page_size=1 shows second result', async () 
   const emptyState = page.locator('.empty-state');
   // empty-state should not be visible on page 2 (we have more than 1 result)
   await expect(emptyState).toHaveCount(0);
+});
+
+// ── Case-insensitive search (#750) ─────────────────────────────────────────────
+//
+// PostgreSQL's LIKE is case-sensitive by default; SQLite NOCASE only folds
+// ASCII A-Z; MySQL's case sensitivity depends on column collation. The fix
+// uses LOWER(col) LIKE LOWER(:bind) to give consistent semantics across all
+// three engines. These cases assert mixed-case input matches a known seeded
+// hostname (web-lon-01) regardless of input casing.
+
+const CASE_INSENSITIVE_QUERIES = [
+  'WEB-LON-01',
+  'Web-Lon-01',
+  'web-lon-01',
+  'WeB-lOn-01',
+];
+
+for (const q of CASE_INSENSITIVE_QUERIES) {
+  test(`search is case-insensitive across hostname mixed-case input: "${q}"`, async () => {
+    await page.goto(`search.php?q=${encodeURIComponent(q)}`);
+    // The seeded hostname web-lon-01 lives at 10.10.2.10 in subnet 10.10.2.0/24
+    const body = await page.locator('body').innerText();
+    expect(body).toContain('10.10.2.10');
+    expect(body.toLowerCase()).toContain('web-lon-01');
+  });
+}
+
+test('search is case-insensitive on owner field (mixed case)', async () => {
+  // Seeded owner "WebTeam" — query with all-lower should still match
+  await page.goto('search.php?q=webteam');
+  const body = await page.locator('body').innerText();
+  // web-lon-01..03 all owned by WebTeam
+  expect(body).toContain('10.10.2.10');
+});
+
+// Non-ASCII case folding (#750 follow-up). The seeded hostname is
+// "MÜLLER-TEST" (UPPERCASE u-umlaut). Querying with "müller-test" (lowercase)
+// must still match. This is the regression test that pins
+// PgsqlDialect::lower_expr()'s COLLATE "default" override: on Postgres with
+// COLLATE "C" text columns, plain LOWER() folds only ASCII A-Z, so the
+// stored 'Ü' would stay 'Ü' under LOWER() and the query 'ü' would not match.
+//
+// Skipped on SQLite: SqliteDialect::lower_expr() is intentionally a no-op
+// because SQLite has no built-in Unicode case folding (would require the ICU
+// extension). Non-ASCII case-insensitive search is unsupported by design on
+// SQLite — see SqliteDialect::lower_expr() comments. The MySQL and Postgres
+// dialects DO support it, and this test is the regression gate for both.
+test('search is case-insensitive on non-ASCII hostname (umlaut)', async () => {
+  test.skip(IS_SQLITE, 'SQLite has no Unicode case folding without ICU; non-ASCII fold is MySQL/Postgres-only by design');
+  await page.goto(`search.php?q=${encodeURIComponent('müller-test')}`);
+  const body = await page.locator('body').innerText();
+  expect(body).toContain(SEARCH_UNICODE_IP);
 });
 
 // ── CSV export matches on-screen rows ─────────────────────────────────────────
