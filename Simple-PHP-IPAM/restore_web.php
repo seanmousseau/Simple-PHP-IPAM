@@ -76,9 +76,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         audit($db, 'db.restore', 'system', null,
                               "file=$stagedFilename tables=" . $result['tables_restored']
                               . " statements=" . $result['statements']);
-                        // Cleanup staged file after successful apply
-                        // nosemgrep: php.lang.security.unlink-use.unlink-use -- $verified is RestoreEngine::verifySigned() output, contained under data/tmp/
-                        if (is_file($verified)) @unlink($verified);
+                        // Cleanup staged file after successful apply.
+                        // Re-resolve via realpath() at the call site (project semgrep sanitizer pattern).
+                        $cleanupReal = realpath($verified);
+                        if ($cleanupReal !== false && is_file($cleanupReal)) {
+                            @unlink($cleanupReal);
+                        }
                         $flash = sprintf(
                             'Restore applied: %d tables, %d statements.',
                             $result['tables_restored'], $result['statements']
