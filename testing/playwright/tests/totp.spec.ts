@@ -21,7 +21,7 @@
 
 import { test, expect } from '@playwright/test';
 import { TOTP } from 'otpauth';
-import { login, logout, ADMIN_USER, ADMIN_PASS, appUrl, fetchPost } from '../fixtures/ipam';
+import { login, logout, ADMIN_USER, ADMIN_PASS, appUrl, fetchPost, reset2faEnrollment } from '../fixtures/ipam';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -88,6 +88,16 @@ async function loginPasswordStep(
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 test.describe('TOTP 2FA', () => {
+    // Re-seed 2fa_test_user once before the spec runs so it is robust to any
+    // upstream test that may have flipped totp_enabled or consumed backup
+    // codes during a full-suite run. Bootstrap-time seeding alone is fragile
+    // when 600+ tests share a single SQLite DB. Skipped when SEED_2FA_TEST_USER
+    // is not set so non-2FA test environments stay clean.
+    test.beforeAll(async () => {
+        if (!is2FaSeeded()) return;
+        await reset2faEnrollment(TFA_USER);
+    });
+
     test.beforeEach(({}, testInfo) => {
         if (!is2FaSeeded()) {
             testInfo.skip(true, 'SEED_2FA_TEST_USER is not set — 2FA test user not seeded; skipping');
