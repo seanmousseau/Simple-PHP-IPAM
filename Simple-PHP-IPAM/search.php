@@ -147,8 +147,8 @@ $rows = $st->fetchAll();
 $deviceResults = [];
 if ($q !== '') {
     // #750: case-insensitive search via dialect-aware LOWER() — see addresses block above.
-    $dLike = '%' . like_escape($d->case_fold_value($q)) . '%';
     $d = ipam_dialect();
+    $dLike = '%' . like_escape($d->case_fold_value($q)) . '%';
     $dWhere  = ['(' . $d->lower_expr('d.name')   . " LIKE :dq1 ESCAPE '!' OR "
                 .    $d->lower_expr('d.vendor') . " LIKE :dq2 ESCAPE '!' OR "
                 .    $d->lower_expr('d.model')  . " LIKE :dq3 ESCAPE '!' OR "
