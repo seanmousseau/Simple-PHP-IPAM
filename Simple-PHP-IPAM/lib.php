@@ -1586,6 +1586,15 @@ function ipam_setting_definitions(): array
         ],
 
         // --- Multi-Factor Authentication ---
+        'mfa.totp_enabled' => [
+            'label'       => 'Enable TOTP (authenticator app)',
+            'type'        => 'bool',
+            'default'     => true,
+            'group'       => 'mfa',
+            'description' => 'Allow users to enroll a Time-based One-Time Password (RFC 6238) as a second authentication factor using an authenticator app (1Password, Google Authenticator, Authy, etc.). Requires app_secret to be set in config.php.',
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
         'mfa.email_otp_enabled' => [
             'label'       => 'Enable Email OTP',
             'type'        => 'bool',

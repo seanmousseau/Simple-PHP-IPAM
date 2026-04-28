@@ -10,6 +10,17 @@ if (empty($_SESSION['totp_pending_uid'])) {
     exit;
 }
 
+// #747: if an admin disabled mfa.totp_enabled while a user is mid-login,
+// drop the pending session and send the user back to login.php to retry
+// (they will be dispatched via email_otp / passkey / no-MFA on the next
+// attempt). This also blocks direct GET to totp_verify.php after the
+// setting is turned off.
+if (!(bool)to_int(ipam_setting('mfa.totp_enabled', true))) {
+    unset($_SESSION['totp_pending_uid']);
+    header('Location: login.php');
+    exit;
+}
+
 if (is_logged_in()) {
     header('Location: dashboard.php');
     exit;

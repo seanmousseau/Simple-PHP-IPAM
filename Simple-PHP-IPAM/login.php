@@ -138,7 +138,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 clear_login_failures($db, $ip);
                 clear_account_lockout($db, $username);
-                if (to_int($user['totp_enabled'] ?? 0) === 1) {
+                // #747: TOTP dispatch is gated on mfa.totp_enabled (default true).
+                // When the admin disables TOTP globally, users with totp_enabled=1
+                // in the DB still keep their enrollment row and backup codes, but
+                // the TOTP path is skipped during login dispatch — they fall
+                // through to email_otp / passkey / no-MFA dispatch as if they
+                // had no TOTP enrolled.
+                $totpGloballyEnabled = (bool)to_int(ipam_setting('mfa.totp_enabled', true));
+                if ($totpGloballyEnabled && to_int($user['totp_enabled'] ?? 0) === 1) {
                     $_SESSION['totp_pending_uid'] = to_int($user['id']);
                     header('Location: totp_verify.php');
                     exit;
@@ -162,8 +169,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     header('Location: passkey_verify.php');
                     exit;
                 }
+                // #747: when computing whether mfa.require is satisfied, treat
+                // users with TOTP enrolled-but-globally-disabled as having no
+                // TOTP — they cannot use it to log in until the admin re-enables
+                // it. They must enroll Email OTP (or have a passkey already).
+                $totpSatisfies = $totpGloballyEnabled && to_int($user['totp_enabled'] ?? 0) === 1;
                 if ((bool)to_int(ipam_setting('mfa.require', false)) &&
-                    to_int($user['totp_enabled']      ?? 0) === 0 &&
+                    !$totpSatisfies &&
                     to_int($user['email_otp_enabled'] ?? 0) === 0) {
                     login_user(to_int($user['id']), to_str($user['username']), to_str($user['role']));
                     $db->prepare("UPDATE users SET last_login_at=" . ipam_dialect()->now() . " WHERE id=:id")

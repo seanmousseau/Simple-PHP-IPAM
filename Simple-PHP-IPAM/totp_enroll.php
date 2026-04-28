@@ -5,6 +5,16 @@ require __DIR__ . '/init.php';
 /** @var IpamConfig $config */
 require_login();
 
+// #747: TOTP enrolment is gated on mfa.totp_enabled (default true). When the
+// admin disables TOTP globally, redirect users back to the Account page so
+// they cannot start (or continue) an enrolment ceremony. The Account page
+// renders a "TOTP is not enabled on this server" notice in the same slot.
+if (!(bool)to_int(ipam_setting('mfa.totp_enabled', true))) {
+    flash_set('TOTP is not enabled on this server. Contact your administrator.', 'warning');
+    header('Location: change_password.php');
+    exit;
+}
+
 $cur     = current_user();
 $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
 $error   = '';

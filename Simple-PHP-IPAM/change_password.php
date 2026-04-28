@@ -397,9 +397,12 @@ page_header('Account');
   </form>
 <?php endif; ?>
 
+<?php $totpGlobalEnabled = (bool)to_int(ipam_setting('mfa.totp_enabled', true)); ?>
 <div class="card mt-16">
   <h2>Two-Factor Authentication</h2>
-  <?php if (to_int($userRow['totp_enabled'] ?? 0) === 1): ?>
+  <?php if (!$totpGlobalEnabled): ?>
+    <p class="muted">TOTP is not enabled on this server. Contact your administrator.</p>
+  <?php elseif (to_int($userRow['totp_enabled'] ?? 0) === 1): ?>
     <p class="success">Two-factor authentication is <strong>enabled</strong>.</p>
     <form method="post" action="change_password.php">
       <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">

@@ -257,6 +257,20 @@ page_header('Settings');
     </div>
     <?php endif; ?>
 
+    <?php
+    $_globalCfg   = is_array($GLOBALS['config'] ?? null) ? $GLOBALS['config'] : [];
+    $_appSecret   = trim(to_str($_globalCfg['app_secret'] ?? ''));
+    if ($groupKey === 'mfa'
+        && (bool)to_int(ipam_setting('mfa.totp_enabled', true))
+        && $_appSecret === ''): ?>
+    <div class="warning" style="margin-bottom:1rem">
+      <strong><code>app_secret</code> is not set in <code>config.php</code>.</strong>
+      TOTP enrolment requires <code>app_secret</code> to encrypt user secrets at rest.
+      Set a strong random value (e.g. <code>bin2hex(random_bytes(32))</code>) in <code>config.php</code>
+      before users attempt to enroll.
+    </div>
+    <?php endif; unset($_globalCfg, $_appSecret); ?>
+
     <form method="post" action="settings.php">
       <input type="hidden" name="csrf"  value="<?= e(csrf_token()) ?>">
       <input type="hidden" name="group" value="<?= e($groupKey) ?>">
