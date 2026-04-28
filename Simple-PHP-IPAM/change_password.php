@@ -337,6 +337,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 
     exit;
 }
 
+// 2FA: set preferred MFA method (#746). Accepts 'totp', 'email_otp',
+// 'passkey', or '' (clear). Server-side guards: the chosen method must be
+// currently enrolled by the user AND globally enabled. Anything else is
+// silently coerced to NULL so a stale form post (e.g. method just disabled
+// in another tab) cannot pin the user to an unusable preference.
+if ($_SERVER['REQUEST_METHOD'] === 'POST'
+    && to_str($_POST['action'] ?? '') === 'set_preferred_mfa') {
+    csrf_require();
+    $submitted = to_str($_POST['preferred_mfa'] ?? '');
+    $available = ipam_user_available_mfa_methods($db, to_int($cur['id']));
+    $newVal    = in_array($submitted, $available, true) ? $submitted : null;
+
+    $st = $db->prepare("UPDATE users SET preferred_mfa_method = :v WHERE id = :id");
+    $st->bindValue(':v', $newVal, $newVal === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
+    $st->bindValue(':id', to_int($cur['id']), PDO::PARAM_INT);
+    $st->execute();
+    audit(
+        $db,
+        'user.update_profile',
+        'user',
+        to_int($cur['id']),
+        'preferred_mfa_method=' . ($newVal ?? 'null')
+    );
+    flash_set('Preferred sign-in method updated.');
+    header('Location: change_password.php#mfa-preferred');
+    exit;
+}
+
 $actSt = $db->prepare("
     SELECT created_at, action, ip, user_agent
     FROM audit_log
@@ -413,6 +441,17 @@ $eoEnrolling      = !empty($_SESSION['email_otp_enrolling']);
 $passkeyCreds       = ipam_passkey_get_credentials($db, to_int($cur['id']));
 $passkeyUserEnabled = $passkeyCreds !== [];
 $passkeyDefaultName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
+
+// Preferred MFA method picker (#746). Read the persisted value (tolerant
+// of the column not existing on partial test DBs) and compute the set of
+// methods this user is allowed to choose from.
+$mfaAvailable = ipam_user_available_mfa_methods($db, to_int($cur['id']));
+$mfaPreferred = ipam_user_preferred_mfa($db, to_int($cur['id'])) ?? '';
+$mfaMethodLabels = [
+    'totp'      => 'Authenticator app',
+    'email_otp' => 'Email one-time code',
+    'passkey'   => 'Passkey',
+];
 ?>
 <section class="card mt-16 mfa-card" aria-labelledby="mfa-heading">
   <header class="mfa-card__header">
@@ -422,6 +461,44 @@ $passkeyDefaultName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simpl
       <p class="muted mfa-card__lede">Add a second factor so a stolen password is not enough to access your account.</p>
     </div>
   </header>
+
+  <?php if (count($mfaAvailable) >= 1): ?>
+  <!-- ── Preferred sign-in method (#746) ─────────────────────────────── -->
+  <div class="mfa-preferred" id="mfa-preferred" role="group" aria-labelledby="mfa-preferred-label">
+    <span id="mfa-preferred-label" class="mfa-preferred__label">Preferred method at login</span>
+    <?php if (count($mfaAvailable) === 1): ?>
+      <?php $only = $mfaAvailable[0]; ?>
+      <p class="mfa-preferred__static muted">
+        <?= e($mfaMethodLabels[$only] ?? $only) ?>
+        <span class="muted">(only enrolled method)</span>
+        <span class="sr-only"> &mdash; currently your preferred sign-in method</span>
+      </p>
+    <?php else: ?>
+      <form method="post" action="change_password.php#mfa-preferred" class="mfa-preferred__form">
+        <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+        <input type="hidden" name="action" value="set_preferred_mfa">
+        <label class="sr-only" for="mfa-preferred-select">Preferred sign-in method</label>
+        <select name="preferred_mfa" id="mfa-preferred-select" class="mfa-preferred__select"
+                aria-describedby="mfa-preferred-help">
+          <option value="" <?= $mfaPreferred === '' ? 'selected' : '' ?>>
+            Most-recently-enrolled (default)
+          </option>
+          <?php foreach ($mfaAvailable as $m): ?>
+            <option value="<?= e($m) ?>" <?= $mfaPreferred === $m ? 'selected' : '' ?>>
+              <?= e($mfaMethodLabels[$m] ?? $m) ?><?= $mfaPreferred === $m ? ' — currently preferred' : '' ?>
+            </option>
+          <?php endforeach ?>
+        </select>
+        <button type="submit" class="action-pill">Save</button>
+        <span id="mfa-preferred-help" class="mfa-preferred__help muted">
+          Login lands on this method first. The other enrolled methods stay
+          available via the &ldquo;Use … instead&rdquo; links on every verify page.
+        </span>
+      </form>
+    <?php endif; ?>
+  </div>
+  <?php endif; ?>
+
   <ul class="mfa-method-list" role="list">
     <!-- ── Authenticator app (TOTP) ─────────────────────────────────────── -->
     <li class="mfa-method-row" id="totp">

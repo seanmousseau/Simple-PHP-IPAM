@@ -14,12 +14,33 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { TOTP } from 'otpauth';
 import { login, logout, ADMIN_USER, ADMIN_PASS, appUrl, fetchPost, reset2faEnrollment, ensureEmailOtpEnrolled } from '../fixtures/ipam';
 
 const TFA_USER       = '2fa_test_user';
 const TFA_PASS       = 'Password1!';
 const EMAIL_OTP_USER = 'email_otp_test_user';
 const EMAIL_OTP_PASS = 'Password1!';
+const TFA_SECRET     = 'JBSWY3DPEHPK3PXP'; // matches reset_2fa_enrollment.php seed
+
+/**
+ * Log in as a user who has TOTP enrolled, completing the TOTP challenge.
+ * Mirrors loginPasswordStep + verify in totp.spec.ts but inlined here so
+ * the picker tests are self-contained.
+ */
+async function loginWithTotp(page: import('@playwright/test').Page, username: string, password: string): Promise<void> {
+    await page.goto('login.php');
+    await page.waitForSelector('[name=username]', { timeout: 30_000 });
+    await page.locator('[name=username]').fill(username);
+    await page.locator('[name=password]').fill(password);
+    await page.locator('button[type=submit]').click();
+    await page.waitForURL(/totp_verify\.php/, { timeout: 30_000 });
+    const code = new TOTP({ secret: TFA_SECRET, algorithm: 'SHA1', digits: 6, period: 30 }).generate();
+    await page.locator('#totp-code-input').fill(code);
+    // Scope to the verify form — switch-method buttons add extra submits to the page (#746).
+    await page.locator('#totp-verify-form button[type=submit]').click();
+    await page.waitForURL(url => !url.pathname.endsWith('totp_verify.php') && !url.pathname.endsWith('login.php'), { timeout: 15_000 });
+}
 
 function isTotpSeeded(): boolean {
     return process.env.SEED_2FA_TEST_USER === '1';
@@ -156,6 +177,103 @@ test.describe('Preserved-enrollment hints (#755)', () => {
             await expect(eoRow.locator('.mfa-method-row__hint')).toContainText('Email OTP enrolment is preserved');
 
             await logout(page);
+        } finally {
+            await setMfaToggles(page, { 'k_mfa__totp_enabled': '1' });
+        }
+    });
+
+    test('Preferred-method picker renders as static text when only one method is enrolled (#746)', async ({ page }) => {
+        test.skip(!isTotpSeeded(), 'SEED_2FA_TEST_USER not set');
+        // 2fa_test_user has only TOTP enrolled. With TOTP globally on and the
+        // other methods globally off, only one method is "available" — so the
+        // picker must render as a static text line, not a <select>.
+        await reset2faEnrollment(TFA_USER);
+        await setMfaToggles(page, { 'k_mfa__totp_enabled': '1' });
+        try {
+            await loginWithTotp(page, TFA_USER, TFA_PASS);
+            await page.goto(appUrl('change_password.php'));
+
+            const block = page.locator('#mfa-preferred');
+            await expect(block).toBeVisible();
+            // Static path renders <p class="mfa-preferred__static">; dropdown path renders a <select>.
+            await expect(block.locator('select#mfa-preferred-select')).toHaveCount(0);
+            await expect(block.locator('.mfa-preferred__static')).toContainText('Authenticator app');
+            await expect(block.locator('.mfa-preferred__static')).toContainText('only enrolled method');
+
+            await logout(page);
+        } finally {
+            await setMfaToggles(page, { 'k_mfa__totp_enabled': '1' });
+        }
+    });
+
+    test('Preferred-method picker renders dropdown when multiple methods enrolled (#746)', async ({ page }) => {
+        test.skip(!isEmailOtpSeeded() || !isTotpSeeded(), 'Both 2FA test users must be seeded');
+        // email_otp_test_user has Email OTP enrolled; we additionally enable
+        // TOTP globally — but the user does not have TOTP enrolled, so still
+        // only one available method. To exercise the dropdown path we need a
+        // user with two-or-more methods enrolled and globally enabled. The
+        // simplest is to enrol both Email OTP and TOTP on the email_otp user
+        // via the same reset helpers (TOTP secret seeding by username).
+        await ensureEmailOtpEnrolled(EMAIL_OTP_USER);
+        await reset2faEnrollment(EMAIL_OTP_USER);
+        await setMfaToggles(page, {
+            'k_mfa__totp_enabled':      '1',
+            'k_mfa__email_otp_enabled': '1',
+        });
+        try {
+            await loginWithTotp(page, EMAIL_OTP_USER, EMAIL_OTP_PASS);
+            await page.goto(appUrl('change_password.php'));
+
+            const select = page.locator('#mfa-preferred-select');
+            await expect(select).toBeVisible();
+            // At least three options: default + two enrolled methods.
+            const optionCount = await select.locator('option').count();
+            expect(optionCount).toBeGreaterThanOrEqual(3);
+            // Save with Email OTP as the preferred method.
+            await select.selectOption('email_otp');
+            await page.locator('form.mfa-preferred__form button[type=submit]').click();
+            await page.waitForURL(/change_password\.php/, { timeout: 15_000 });
+
+            // Reload and verify the option is marked selected.
+            await page.goto(appUrl('change_password.php'));
+            const sel2 = page.locator('#mfa-preferred-select');
+            await expect(sel2).toHaveValue('email_otp');
+
+            await logout(page);
+        } finally {
+            await setMfaToggles(page, { 'k_mfa__totp_enabled': '1' });
+        }
+    });
+
+    test('TOTP verify page exposes switch buttons when other methods are available (#746 full graph)', async ({ page }) => {
+        test.skip(!isTotpSeeded() || !isEmailOtpSeeded(), 'Both 2FA test users must be seeded');
+        // email_otp_test_user has both TOTP and Email OTP enrolled. With
+        // both globally enabled, the TOTP verify page must offer "Send a
+        // code to my email instead" — that link existed in v3.15.2; this
+        // assertion is regression cover for it. The mirror buttons on
+        // email_otp_verify.php and passkey_verify.php (added in #746) are
+        // unit-covered via PHP-side dispatch logic and visible in the
+        // markup; their full live exercise requires SMTP+passkey support
+        // and is intentionally out of scope here.
+        await ensureEmailOtpEnrolled(EMAIL_OTP_USER);
+        await reset2faEnrollment(EMAIL_OTP_USER);
+        await setMfaToggles(page, {
+            'k_mfa__totp_enabled':      '1',
+            'k_mfa__email_otp_enabled': '1',
+        });
+        try {
+            // Login to password step only — we want to inspect totp_verify.php markup,
+            // not complete the challenge.
+            await page.goto('login.php');
+            await page.locator('[name=username]').fill(EMAIL_OTP_USER);
+            await page.locator('[name=password]').fill(EMAIL_OTP_PASS);
+            await page.locator('button[type=submit]').click();
+            await page.waitForURL(/totp_verify\.php/, { timeout: 30_000 });
+
+            // The switch-to-email button is present and discoverable.
+            const switchEmailForm = page.locator('form input[name=action][value=switch_to_email]').locator('..');
+            await expect(switchEmailForm).toBeVisible();
+            await expect(switchEmailForm.locator('button[type=submit]')).toContainText(/Send a code to my email/);
         } finally {
             await setMfaToggles(page, { 'k_mfa__totp_enabled': '1' });
         }

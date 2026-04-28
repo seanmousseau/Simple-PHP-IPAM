@@ -75,6 +75,7 @@ CREATE TABLE IF NOT EXISTS users (
   email_otp_hash               TEXT,
   email_otp_expires_at         TIMESTAMP NULL,
   email_otp_attempts           INTEGER NOT NULL DEFAULT 0,
+  preferred_mfa_method         TEXT NULL,
   created_at          TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
   updated_at          TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
   -- No CHECK on role or theme: schema.sql (SQLite) has none, and

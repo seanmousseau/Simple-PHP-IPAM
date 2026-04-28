@@ -873,6 +873,59 @@ class MigrationTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // 3.16.0-preferred-mfa-method (#746)
+    // -------------------------------------------------------------------------
+
+    /**
+     * The 3.16.0-preferred-mfa-method migration must add a nullable
+     * preferred_mfa_method TEXT column to the users table and be idempotent
+     * across re-runs. Existing rows must read the column as NULL (no default).
+     */
+    public function testV316PreferredMfaMethodColumnAdded(): void
+    {
+        // makePreVrfDb gives us subnets/addresses/audit_log; we still need a
+        // users table for the migration's ALTER to bind to. Add one at the
+        // v3.6.0 shape (same pattern as testTotpMigrationAddsColumns).
+        $db = $this->makePreVrfDb();
+        $db->exec("
+            CREATE TABLE users (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                username      TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                role          TEXT NOT NULL DEFAULT 'admin',
+                is_active     INTEGER NOT NULL DEFAULT 1,
+                created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        ");
+
+        apply_migrations($db);
+
+        $cols = $db->query("PRAGMA table_info(users)")->fetchAll();
+        $match = array_values(array_filter(
+            $cols,
+            static fn(array $c): bool => (string)$c['name'] === 'preferred_mfa_method'
+        ));
+        $this->assertNotEmpty($match, 'preferred_mfa_method column missing on users');
+        $this->assertSame(0, (int)$match[0]['notnull'], 'preferred_mfa_method must be nullable');
+
+        // Insert a user; column should default to NULL since no default was set.
+        $db->exec("INSERT INTO users (username, password_hash, role) VALUES ('v316user', 'h', 'admin')");
+        $val = $db->query("SELECT preferred_mfa_method FROM users WHERE username='v316user'")->fetchColumn();
+        $this->assertNull($val, 'preferred_mfa_method must default to NULL for new rows');
+
+        // Idempotency: a second migration pass must be a no-op.
+        $db->exec("DELETE FROM schema_migrations WHERE version = '3.16.0-preferred-mfa-method'");
+        apply_migrations($db);
+        $colsAgain = $db->query("PRAGMA table_info(users)")->fetchAll();
+        $countAgain = count(array_filter(
+            $colsAgain,
+            static fn(array $c): bool => (string)$c['name'] === 'preferred_mfa_method'
+        ));
+        $this->assertSame(1, $countAgain, 'preferred_mfa_method must still appear exactly once after re-run');
+    }
+
+    // -------------------------------------------------------------------------
     // 3.13.0-settings-cascade
     // -------------------------------------------------------------------------
 

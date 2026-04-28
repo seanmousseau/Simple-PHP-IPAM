@@ -2262,6 +2262,47 @@ function ipam_migrations(): array
                 $db->exec("CREATE INDEX idx_webauthn_credentials_user ON webauthn_credentials(user_id)");
             }
         },
+
+        // v3.16.0 #746: add preferred_mfa_method to users (nullable enum:
+        // totp | email_otp | passkey). NULL means "no explicit preference,
+        // fall back to most-recently-enrolled". Enum is enforced at the
+        // application layer (lib.php / change_password.php) — schema files
+        // for the three engines stay free of CHECK constraints to match the
+        // existing convention for enum-like text columns on this table.
+        '3.16.0-preferred-mfa-method' => static function (PDO $db): void {
+            $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+
+            if ($driver === 'sqlite') {
+                $cols = array_column(
+                    ($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('PRAGMA failed'))->fetchAll(),
+                    'name'
+                );
+                if ($cols === []) {
+                    return;
+                }
+                if (!in_array('preferred_mfa_method', $cols, true)) {
+                    $db->exec("ALTER TABLE users ADD COLUMN preferred_mfa_method TEXT");
+                }
+            } elseif ($driver === 'mysql') {
+                $cols = array_column(
+                    ($db->query("SHOW COLUMNS FROM users") ?: throw new \RuntimeException('SHOW COLUMNS failed'))->fetchAll(),
+                    'Field'
+                );
+                if ($cols === []) {
+                    return;
+                }
+                if (!in_array('preferred_mfa_method', $cols, true)) {
+                    $db->exec("ALTER TABLE users ADD COLUMN preferred_mfa_method VARCHAR(20) NULL");
+                }
+            } elseif ($driver === 'pgsql') {
+                $existing = ($db->query(
+                    "SELECT column_name FROM information_schema.columns WHERE table_name='users'"
+                ) ?: throw new \RuntimeException('Column query failed'))->fetchAll(\PDO::FETCH_COLUMN);
+                if (!in_array('preferred_mfa_method', $existing, true)) {
+                    $db->exec("ALTER TABLE users ADD COLUMN preferred_mfa_method TEXT NULL");
+                }
+            }
+        },
     ];
 }
 

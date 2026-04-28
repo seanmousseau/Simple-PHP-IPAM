@@ -35,9 +35,52 @@ if (!$userRow) {
 $username = to_str($userRow['username']);
 $role     = to_str($userRow['role']);
 
+// Detect alternate-method enrolment so the view can offer switch-method links.
+$totpAvailable = (bool)to_int(ipam_setting('mfa.totp_enabled', true));
+if ($totpAvailable) {
+    $tStmt = $db->prepare("SELECT totp_enabled FROM users WHERE id = :id");
+    $tStmt->execute([':id' => $uid]);
+    $totpAvailable = (int)$tStmt->fetchColumn() === 1;
+}
+$passkeyAvailable = (bool)to_int(ipam_setting('mfa.passkeys_enabled', false))
+    && ipam_passkey_has_credentials($db, $uid);
+
 $error = '';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+$action = to_str($_POST['action'] ?? '');
+
+// User chose to verify with TOTP instead of Email OTP (#746).
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'switch_to_totp') {
+    csrf_require();
+    if (!$totpAvailable) {
+        header('Location: email_otp_verify.php');
+        exit;
+    }
+    ipam_email_otp_clear($db, $uid, 'method_switch');
+    unset($_SESSION['email_otp_pending_uid']);
+    $_SESSION['totp_pending_uid'] = $uid;
+    audit($db, 'auth.mfa_method_switch', 'user', $uid, 'email_otp -> totp');
+    header('Location: totp_verify.php');
+    exit;
+}
+
+// User chose to verify with a passkey instead of Email OTP (#746).
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'switch_to_passkey') {
+    csrf_require();
+    if (!$passkeyAvailable || !ipam_passkey_dispatch_challenge($db, $uid)) {
+        header('Location: email_otp_verify.php');
+        exit;
+    }
+    ipam_email_otp_clear($db, $uid, 'method_switch');
+    unset($_SESSION['email_otp_pending_uid']);
+    audit($db, 'auth.mfa_method_switch', 'user', $uid, 'email_otp -> passkey');
+    header('Location: passkey_verify.php');
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST'
+    && $action !== 'switch_to_totp'
+    && $action !== 'switch_to_passkey') {
     csrf_require();
 
     $submittedCode = trim(to_str($_POST['otp_code'] ?? ''));

@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS users (
   email_otp_hash           TEXT,                         -- v3.14.0: bcrypt hash of issued OTP code
   email_otp_expires_at     TEXT,                         -- v3.14.0: ISO datetime expiry of current OTP
   email_otp_attempts       INTEGER NOT NULL DEFAULT 0,  -- v3.14.0: failed attempts against current OTP token
+  preferred_mfa_method     TEXT,                         -- v3.16.0: NULL | 'totp' | 'email_otp' | 'passkey' — login dispatches to this method first when set
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );

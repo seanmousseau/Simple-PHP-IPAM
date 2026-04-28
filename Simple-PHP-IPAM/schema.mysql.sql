@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS users (
   email_otp_hash             VARCHAR(255) NULL,
   email_otp_expires_at       DATETIME NULL,
   email_otp_attempts         INT NOT NULL DEFAULT 0,
+  preferred_mfa_method       VARCHAR(20) NULL,
   created_at          DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   updated_at          DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   UNIQUE KEY idx_users_oidc_sub (oidc_sub)

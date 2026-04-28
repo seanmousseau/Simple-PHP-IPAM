@@ -35,7 +35,69 @@ $username = to_str($userRow['username']);
 $role     = to_str($userRow['role']);
 $error    = '';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+// Detect alternate-method enrolment so the view can offer switch-method links (#746).
+$totpAvailable = (bool)to_int(ipam_setting('mfa.totp_enabled', true));
+if ($totpAvailable) {
+    $tStmt = $db->prepare("SELECT totp_enabled FROM users WHERE id = :id");
+    $tStmt->execute([':id' => $uid]);
+    $totpAvailable = (int)$tStmt->fetchColumn() === 1;
+}
+$emailOtpAvailable = (bool)to_int(ipam_setting('mfa.email_otp_enabled', false));
+if ($emailOtpAvailable) {
+    $eStmt = $db->prepare("SELECT email_otp_enabled FROM users WHERE id = :id");
+    $eStmt->execute([':id' => $uid]);
+    $emailOtpAvailable = (int)$eStmt->fetchColumn() === 1;
+}
+
+$action = to_str($_POST['action'] ?? '');
+
+// User chose to verify with TOTP instead of a passkey (#746).
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'switch_to_totp') {
+    csrf_require();
+    if (!$totpAvailable) {
+        header('Location: passkey_verify.php');
+        exit;
+    }
+    unset(
+        $_SESSION['passkey_pending_uid'],
+        $_SESSION['passkey_challenge'],
+        $_SESSION['passkey_assertion_options'],
+        $_SESSION['passkey_challenge_issued_at']
+    );
+    $_SESSION['totp_pending_uid'] = $uid;
+    audit($db, 'auth.mfa_method_switch', 'user', $uid, 'passkey -> totp');
+    header('Location: totp_verify.php');
+    exit;
+}
+
+// User chose to verify with Email OTP instead of a passkey (#746).
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'switch_to_email') {
+    csrf_require();
+    if (!$emailOtpAvailable) {
+        header('Location: passkey_verify.php');
+        exit;
+    }
+    $code = ipam_email_otp_generate($db, $uid);
+    if (!ipam_email_otp_send($db, $uid, $code)) {
+        ipam_email_otp_clear($db, $uid, 'email_send_failed');
+        $error = 'Could not send verification code. Please try a passkey instead.';
+    } else {
+        unset(
+            $_SESSION['passkey_pending_uid'],
+            $_SESSION['passkey_challenge'],
+            $_SESSION['passkey_assertion_options'],
+            $_SESSION['passkey_challenge_issued_at']
+        );
+        $_SESSION['email_otp_pending_uid'] = $uid;
+        audit($db, 'auth.mfa_method_switch', 'user', $uid, 'passkey -> email_otp');
+        header('Location: email_otp_verify.php');
+        exit;
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST'
+    && $action !== 'switch_to_totp'
+    && $action !== 'switch_to_email') {
     csrf_require();
 
     // Consume the challenge immediately — single-use regardless of outcome.
@@ -134,6 +196,27 @@ page_header('Sign in with Passkey');
     </button>
     <a href="login.php" class="button-secondary" style="display:block;text-align:center">Cancel</a>
   </form>
+
+  <?php if (!empty($totpAvailable)): ?>
+  <form method="post" action="passkey_verify.php" style="margin-top:.75rem;">
+    <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+    <input type="hidden" name="action" value="switch_to_totp">
+    <button type="submit" class="link-button muted font-sm"
+            style="background:none;border:0;padding:0;cursor:pointer;text-decoration:underline;">
+      Use my authenticator app instead
+    </button>
+  </form>
+  <?php endif ?>
+  <?php if (!empty($emailOtpAvailable)): ?>
+  <form method="post" action="passkey_verify.php" style="margin-top:.5rem;">
+    <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+    <input type="hidden" name="action" value="switch_to_email">
+    <button type="submit" class="link-button muted font-sm"
+            style="background:none;border:0;padding:0;cursor:pointer;text-decoration:underline;">
+      Send a code to my email instead
+    </button>
+  </form>
+  <?php endif ?>
 
   <p class="muted" id="passkey-status" style="font-size:.85rem;margin-top:.75rem"></p>
 </div>
