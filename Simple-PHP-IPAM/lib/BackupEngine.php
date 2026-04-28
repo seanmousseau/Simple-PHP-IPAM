@@ -44,7 +44,9 @@ final class BackupEngine
             $extension = '.sql.gz';
         }
 
-        $remoteName = sprintf('ipam-backup-%s%s', gmdate('Ymd-His'), $extension);
+        // Random 8-hex-char suffix prevents filename collisions when two
+        // runs land in the same second (e.g. manual + scheduled overlap).
+        $remoteName = sprintf('ipam-backup-%s-%s%s', gmdate('Ymd-His'), bin2hex(random_bytes(4)), $extension);
         $logId = $this->insertLog($destId, $triggeredBy, 'running', $remoteName);
 
         try {
@@ -148,7 +150,12 @@ final class BackupEngine
         }
         try {
             ipam_db_dump_stream($this->db, function (string $chunk) use ($fh): void {
-                gzwrite($fh, $chunk);
+                $written = gzwrite($fh, $chunk);
+                if ($written === false || $written !== strlen($chunk)) {
+                    throw new RuntimeException(
+                        'BackupEngine: gzwrite stopped accepting bytes (disk full or compression error)'
+                    );
+                }
             });
         } finally {
             gzclose($fh);

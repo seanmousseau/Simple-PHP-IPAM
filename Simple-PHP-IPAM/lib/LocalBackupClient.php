@@ -24,8 +24,14 @@ final class LocalBackupClient implements BackupClientInterface
         }
         $canonical = '/' . implode('/', $parts);
 
-        // Path-traversal guard: must be under <app>/data/
-        $appData = dirname(__DIR__) . '/data';
+        // Path-traversal guard: must be under <app>/data/. Resolve the
+        // canonical data root with realpath() so a symlinked entry under
+        // data/ that points elsewhere cannot escape the containment.
+        $appData = realpath(dirname(__DIR__) . '/data');
+        if ($appData === false) {
+            throw new RuntimeException('LocalBackupClient: data directory does not exist');
+        }
+        // Pre-creation containment check on the requested string path.
         if (!str_starts_with($canonical . '/', $appData . '/')) {
             throw new InvalidArgumentException('LocalBackupClient: path must be under data/');
         }
@@ -34,7 +40,13 @@ final class LocalBackupClient implements BackupClientInterface
                 throw new RuntimeException('LocalBackupClient: cannot create directory');
             }
         }
-        $this->directory = rtrim($canonical, '/') . '/';
+        // Post-creation symlink check: realpath() resolves symlinks; the
+        // resolved path must still be under the resolved data root.
+        $resolved = realpath($canonical);
+        if ($resolved === false || !str_starts_with($resolved . '/', $appData . '/')) {
+            throw new InvalidArgumentException('LocalBackupClient: resolved path escapes data/ (symlink not allowed)');
+        }
+        $this->directory = rtrim($resolved, '/') . '/';
     }
 
     /** @return array{size:int,checksum:string} */

@@ -297,20 +297,26 @@ class SftpClient implements BackupClientInterface
         }
 
         // Fingerprint pinning: verify SHA-256 of the server's host key before auth.
+        // Use phpseclib's PublicKeyLoader + getFingerprint() so the computed
+        // fingerprint matches what users get from `ssh-keygen -lf -E sha256` and
+        // OpenSSH known_hosts conventions.
         if ($this->fingerprint !== null) {
             $hostKey = $sftp->getServerPublicHostKey();
             if ($hostKey === false) {
                 throw new RuntimeException("SftpClient: could not retrieve server host key");
             }
-            // getServerPublicHostKey() returns "algorithm base64key"; extract the key part.
-            $parts = explode(' ', $hostKey, 2);
-            $keyB64 = isset($parts[1]) ? trim($parts[1]) : '';
-            $decoded = base64_decode($keyB64, true);
-            if ($decoded === false) {
-                throw new RuntimeException("SftpClient: could not decode server host key for fingerprint check");
+            try {
+                $publicKey = PublicKeyLoader::load($hostKey);
+            } catch (\Throwable $e) {
+                throw new RuntimeException("SftpClient: could not load server host key for fingerprint check");
             }
-            $actual = hash('sha256', $decoded);
-            // Compare normalised (lowercase, no colons) fingerprints
+            // The Fingerprint trait is mixed into concrete public-key types (RSA/EC/DSA/etc.);
+            // PHPStan only sees the abstract AsymmetricKey return type, so assert it.
+            if (!method_exists($publicKey, 'getFingerprint')) {
+                throw new RuntimeException("SftpClient: loaded host key does not expose getFingerprint()");
+            }
+            $fp       = $publicKey->getFingerprint('sha256');
+            $actual   = strtolower(str_replace(':', '', is_string($fp) ? $fp : ''));
             $expected = strtolower(str_replace(':', '', $this->fingerprint));
             if (!hash_equals($expected, $actual)) {
                 throw new RuntimeException("SftpClient: host key fingerprint mismatch");

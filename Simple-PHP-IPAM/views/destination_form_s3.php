@@ -11,4 +11,5 @@ $ak  = e(to_str($cfg['access_key'] ?? ''));
 <label>Bucket <input type="text" name="s3_bucket" value="<?= $buc ?>" required></label>
 <label>Prefix <input type="text" name="s3_prefix" value="<?= $pre ?>"></label>
 <label>Access key ID <input type="text" name="s3_access_key" value="<?= $ak ?>" autocomplete="off" required></label>
-<label>Secret access key <input type="password" name="s3_secret_key" autocomplete="new-password" placeholder="<?= isset($cfg['secret_key']) ? '(unchanged)' : '' ?>"></label>
+<label>Secret access key <input type="password" name="s3_secret_key" autocomplete="new-password"
+   <?= isset($cfg['secret_key']) ? 'placeholder="(unchanged)"' : 'required placeholder="required"' ?>></label>

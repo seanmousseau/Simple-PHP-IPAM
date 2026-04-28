@@ -220,7 +220,7 @@ final class RestoreEngine
      *
      * @return array{tables_restored:int,statements:int}
      */
-    public function apply(string $stagedPath): array
+    public function apply(string $stagedPath, string $realFilename = ''): array
     {
         $driverAttr = $this->db->getAttribute(PDO::ATTR_DRIVER_NAME);
         $driver = is_string($driverAttr) ? $driverAttr : '';
@@ -229,8 +229,10 @@ final class RestoreEngine
         }
 
         // Log entry — track restore in backup_log for visibility on history page (#701).
-        // Reverse-lookup destination by checking which backup_log row had this filename.
-        $filename = basename($stagedPath);
+        // Use the real backup filename (passed by caller) when available; fall back
+        // to the staged tmp filename only if not provided. The staged tmp filename
+        // (e.g. restore_staged_<rand>.sql.gz) is meaningless for history viewers.
+        $filename = $realFilename !== '' ? $realFilename : basename($stagedPath);
         $destId = null;
         $matchStmt = $this->db->prepare(
             "SELECT destination_id FROM backup_log
@@ -243,8 +245,8 @@ final class RestoreEngine
 
         $now = ipam_dialect()->now();
         $logStmt = $this->db->prepare(
-            "INSERT INTO backup_log (destination_id, triggered_by, status, filename, started_at)
-             VALUES (:d, 'web_restore', 'running', :f, $now)"
+            "INSERT INTO backup_log (destination_id, triggered_by, type, status, filename, started_at)
+             VALUES (:d, 'web_restore', 'restore', 'running', :f, $now)"
         );
         $logStmt->execute([':d' => $destId, ':f' => $filename]);
         $logId = (int) $this->db->lastInsertId();

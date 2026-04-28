@@ -27,7 +27,7 @@ if (in_array($filterStatus, ['running', 'success', 'failed', 'retention_pruned']
     $where[] = 'l.status = :s'; $params[':s'] = $filterStatus;
 }
 if ($filterFrom !== '') { $where[] = 'l.started_at >= :from'; $params[':from'] = $filterFrom; }
-if ($filterTo !== '')   { $where[] = 'l.started_at <= :to';   $params[':to']   = $filterTo;   }
+if ($filterTo !== '')   { $where[] = 'l.started_at <= :to';   $params[':to']   = $filterTo . ' 23:59:59'; }
 if ($filterType === 'restore') {
     $where[] = "l.triggered_by LIKE 'web_restore%'";
 } elseif ($filterType === 'backup') {

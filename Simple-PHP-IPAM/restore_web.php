@@ -35,6 +35,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stagedSize = $staged['size'];
                 audit($db, 'db.restore_stage', 'destination', $destId, "name=$name");
             } catch (Throwable $e) {
+                error_log('[restore_web] stage failed: ' . $e->getMessage());
+                audit($db, 'db.restore_stage_failed', 'destination', $destId, "name=$name error=" . substr($e->getMessage(), 0, 200));
                 $err = 'Stage failed: ' . $e->getMessage();
             }
         }
@@ -53,6 +55,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     audit($db, 'db.restore_dryrun', 'system', null,
                           "file=$stagedFilename tables=" . count($dryRunResult['tables']));
                 } catch (Throwable $e) {
+                    error_log('[restore_web] dry run failed: ' . $e->getMessage());
+                    audit($db, 'db.restore_dryrun_failed', 'system', null, "file=$stagedFilename error=" . substr($e->getMessage(), 0, 200));
                     $err = 'Dry run failed: ' . $e->getMessage();
                 }
             }
@@ -72,7 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $err = 'Invalid or expired staged file token.';
                 } else {
                     try {
-                        $result = $engine->apply($verified);
+                        $result = $engine->apply($verified, $stagedFilename);
                         audit($db, 'db.restore', 'system', null,
                               "file=$stagedFilename tables=" . $result['tables_restored']
                               . " statements=" . $result['statements']);
@@ -90,6 +94,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $stagedSize = 0;
                         $dryRunResult = null;
                     } catch (Throwable $e) {
+                        error_log('[restore_web] apply failed: ' . $e->getMessage());
+                        audit($db, 'db.restore_failed', 'system', null, "file=$stagedFilename error=" . substr($e->getMessage(), 0, 200));
                         $err = 'Apply failed: ' . $e->getMessage();
                     }
                 }

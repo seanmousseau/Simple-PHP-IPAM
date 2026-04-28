@@ -50,6 +50,11 @@ try {
     audit($db, 'destination.test', 'destination', $id, $result['ok'] ? 'ok' : 'fail');
     echo json_encode($result);
 } catch (Throwable $e) {
-    audit($db, 'destination.test', 'destination', $id, 'fail: ' . substr($e->getMessage(), 0, 200));
-    echo json_encode(['ok' => false, 'message' => $e->getMessage(), 'latency_ms' => null]);
+    error_log('[test_destination] dest=' . $id . ' error=' . $e->getMessage());
+    audit($db, 'destination.test', 'destination', $id, 'fail');
+    echo json_encode([
+        'ok'         => false,
+        'message'    => 'Connection failed (see server log for details)',
+        'latency_ms' => null,
+    ]);
 }

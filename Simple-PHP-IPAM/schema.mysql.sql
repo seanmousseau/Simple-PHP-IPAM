@@ -732,6 +732,14 @@ CREATE TABLE IF NOT EXISTS backup_schedules (
   next_run_at         DATETIME     NULL,
   created_at          DATETIME     NOT NULL DEFAULT (UTC_TIMESTAMP()),
   CONSTRAINT fk_bsched_dest FOREIGN KEY (destination_id) REFERENCES backup_destinations(id) ON DELETE CASCADE,
+  CONSTRAINT chk_bsched_frequency  CHECK (frequency IN ('hourly','daily','weekly','monthly')),
+  CONSTRAINT chk_bsched_dow        CHECK (day_of_week IS NULL OR day_of_week BETWEEN 0 AND 6),
+  CONSTRAINT chk_bsched_dom        CHECK (day_of_month IS NULL OR day_of_month BETWEEN 1 AND 28),
+  CONSTRAINT chk_bsched_ret_hourly  CHECK (retention_hourly  >= 0),
+  CONSTRAINT chk_bsched_ret_daily   CHECK (retention_daily   >= 0),
+  CONSTRAINT chk_bsched_ret_weekly  CHECK (retention_weekly  >= 0),
+  CONSTRAINT chk_bsched_ret_monthly CHECK (retention_monthly >= 0),
+  CONSTRAINT chk_bsched_active     CHECK (is_active IN (0,1)),
   KEY idx_backup_schedules_destination (destination_id),
   KEY idx_backup_schedules_next_run (next_run_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -741,6 +749,7 @@ CREATE TABLE IF NOT EXISTS backup_log (
   destination_id  BIGINT UNSIGNED NULL,
   schedule_id     BIGINT UNSIGNED NULL,
   triggered_by    VARCHAR(32)  NOT NULL DEFAULT 'manual',
+  type            VARCHAR(16)  NOT NULL DEFAULT 'backup',
   status          VARCHAR(16)  NOT NULL DEFAULT 'pending',
   filename        TEXT         NULL,
   size_bytes      BIGINT       NULL,

@@ -35,11 +35,13 @@ try {
     $engine = new RestoreEngine($db, $config);
     $staged = $engine->prepareForRestore($destId, $name);
 } catch (Throwable $e) {
+    // Log full error server-side; return generic message to the client.
+    error_log('[download_remote_backup] dest=' . $destId . ' name=' . $name . ' error=' . $e->getMessage());
     audit($db, 'remote_backup.download_failed', 'destination', $destId,
           'name=' . $name . ' error=' . substr($e->getMessage(), 0, 200));
     http_response_code(500);
     header('Content-Type: text/plain');
-    echo '500 ' . $e->getMessage() . "\n";
+    echo "500 Download failed (see server log for details)\n";
     exit;
 }
 
@@ -62,7 +64,14 @@ if ($as === 'staged') {
 }
 
 // Default: stream the decrypted staged file as a download.
+// basename() strips path components but does not remove quotes or CR/LF.
+// Sanitize aggressively — strip control chars and collapse to a safe ASCII charset.
 $safeFilename = basename($staged['filename'], '.enc');
+$safeFilename = preg_replace('/[\x00-\x1F\x7F"\\\\]/', '_', $safeFilename) ?? 'backup';
+$safeFilename = preg_replace('/[^A-Za-z0-9._-]/', '_', $safeFilename) ?? 'backup';
+if ($safeFilename === '' || $safeFilename === '.' || $safeFilename === '..') {
+    $safeFilename = 'backup';
+}
 header('Content-Type: application/octet-stream');
 header('Content-Disposition: attachment; filename="' . $safeFilename . '"');
 header('Content-Length: ' . $staged['size']);

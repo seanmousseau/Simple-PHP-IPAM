@@ -2693,3 +2693,15 @@ function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
         button.disabled = (input.value !== 'RESTORE');
     });
 })();
+
+/* === v3.17 remote_backups Delete-with-confirm (CSP-safe; replaces inline onsubmit) === */
+(function () {
+    document.querySelectorAll('form[data-confirm-delete]').forEach(function (form) {
+        form.addEventListener('submit', function (ev) {
+            var name = form.getAttribute('data-confirm-delete') || 'this file';
+            if (!window.confirm('Delete ' + name + ' from the remote destination?')) {
+                ev.preventDefault();
+            }
+        });
+    });
+})();

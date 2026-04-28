@@ -967,7 +967,7 @@ class MigrationTest extends TestCase
             'name'
         );
         foreach ([
-            'id', 'destination_id', 'schedule_id', 'triggered_by', 'status',
+            'id', 'destination_id', 'schedule_id', 'triggered_by', 'type', 'status',
             'filename', 'size_bytes', 'checksum', 'error_message',
             'started_at', 'completed_at',
         ] as $c) {

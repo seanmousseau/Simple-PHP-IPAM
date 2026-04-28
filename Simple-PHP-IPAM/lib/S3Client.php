@@ -233,7 +233,11 @@ class S3Client implements BackupClientInterface
 
         $curlHeaders = $this->buildCurlHeaders($headers, $authz);
 
-        $fh = fopen($destPath, 'wb');
+        // Stream into a sibling tmp file first; promote to $destPath only on
+        // a successful 200 response so 404/4xx don't leave an error-body
+        // partial-write corrupting the caller's destination path.
+        $tmpDestPath = $destPath . '.dl_tmp_' . bin2hex(random_bytes(4));
+        $fh = fopen($tmpDestPath, 'wb');
         if ($fh === false) {
             throw new RuntimeException("S3Client::download: cannot open destination for writing");
         }
@@ -258,8 +262,16 @@ class S3Client implements BackupClientInterface
         }
 
         if ($code === 200) {
+            if (!@rename($tmpDestPath, $destPath)) {
+                @unlink($tmpDestPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmpDestPath is locally-generated random
+                throw new RuntimeException("S3Client::download: cannot finalize destination");
+            }
             return true;
         }
+
+        // Non-200: discard the tmp file (which may contain an error body)
+        // and never touch $destPath.
+        @unlink($tmpDestPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmpDestPath is locally-generated random
 
         if ($code === 404) {
             return false;
@@ -350,8 +362,13 @@ class S3Client implements BackupClientInterface
 
             foreach ($xml->Contents as $item) {
                 $etag     = isset($item->ETag) ? trim((string) $item->ETag, '"') : null;
+                $key      = (string) $item->Key;
+                // Strip exact prefix string (NOT a character mask — ltrim was wrong).
+                $name     = ($this->prefix !== '' && str_starts_with($key, $this->prefix))
+                    ? substr($key, strlen($this->prefix))
+                    : $key;
                 $results[] = [
-                    'name'          => ltrim((string) $item->Key, $this->prefix),
+                    'name'          => $name,
                     'size'          => (int) (string) $item->Size,
                     'last_modified' => (string) $item->LastModified,
                     'checksum'      => $etag !== '' ? $etag : null,

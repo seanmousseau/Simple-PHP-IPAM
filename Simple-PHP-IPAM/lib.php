@@ -3792,6 +3792,9 @@ function ipam_hkdf_sha256(string $ikm, string $info, int $length, string $salt =
  */
 function backup_encrypt(string $plain, string $appSecret): string
 {
+    if ($appSecret === '') {
+        throw new RuntimeException('backup encryption requires app_secret to be set in config.php');
+    }
     $key = ipam_hkdf_sha256($appSecret, 'ipam-v3:backup', 32);
     $iv  = random_bytes(BACKUP_IV_LEN);
     $tag = '';
@@ -3822,6 +3825,9 @@ function backup_encrypt(string $plain, string $appSecret): string
  */
 function backup_decrypt(string $blob, string $appSecret): string
 {
+    if ($appSecret === '') {
+        throw new RuntimeException('backup decryption requires app_secret to be set in config.php');
+    }
     $minLen = strlen(BACKUP_MAGIC) + BACKUP_IV_LEN + BACKUP_TAG_LEN;
     if (strlen($blob) < $minLen) {
         throw new RuntimeException('encrypted blob too short');
@@ -4063,7 +4069,7 @@ function ipam_backup_apply_retention(PDO $db, int $destinationId): int
     // ── 3. Fetch successful backup_log rows for this destination ─────────────
     // backup_log uses started_at for GFS bucketing (no created_at column).
     $logStmt = $db->prepare(
-        "SELECT id, started_at AS created_at
+        "SELECT id, filename, started_at AS created_at
          FROM backup_log
          WHERE destination_id = :did AND status = 'success'
          ORDER BY started_at DESC"
@@ -4082,25 +4088,68 @@ function ipam_backup_apply_retention(PDO $db, int $destinationId): int
         return 0;
     }
 
-    // ── 5. For each ID: attempt remote delete (stub), then mark DB row ────────
+    // Index rows by id for filename lookup
+    $rowById = [];
+    foreach ($rows as $r) {
+        if (is_array($r) && isset($r['id']) && is_numeric($r['id'])) {
+            $rowById[(int) $r['id']] = $r;
+        }
+    }
+
+    // Build a client for the destination so we can actually delete remote files.
+    $cfgJson = '';
+    $destStmt2 = $db->prepare("SELECT config FROM backup_destinations WHERE id = :id");
+    $destStmt2->execute([':id' => $destinationId]);
+    $cfgRow = $destStmt2->fetch();
+    if (is_array($cfgRow) && is_string($cfgRow['config'] ?? null)) {
+        $cfgJson = $cfgRow['config'];
+    }
+    $cfgArr = json_decode($cfgJson, true);
+    $typedCfg = [];
+    if (is_array($cfgArr)) {
+        foreach ($cfgArr as $k => $v) {
+            if (is_string($k)) $typedCfg[$k] = $v;
+        }
+    }
+    $client = null;
+    try {
+        $type = is_string($dest['type'] ?? null) ? $dest['type'] : '';
+        $client = match ($type) {
+            's3'    => new S3Client($typedCfg),
+            'sftp'  => new SftpClient($typedCfg),
+            'local' => new LocalBackupClient($typedCfg),
+            default => null,
+        };
+    } catch (\Throwable $e) {
+        error_log('[ipam_backup_apply_retention] cannot construct client: ' . $e->getMessage());
+        $client = null;
+    }
+
+    // ── 5. For each ID: attempt remote delete; mark DB row ONLY if remote delete succeeded ──
     $pruned = 0;
     foreach ($toDelete as $logId) {
-        // Remote delete stub — BackupClientInterface not yet wired (Phase 4 / #692).
-        // Wrapped in try/catch: a remote-delete failure should not prevent the DB
-        // record from being marked or the audit from being written.
-        try {
-            // TODO(Phase 4): resolve BackupClientInterface from $dest['type'] and call
-            //   $client->delete($filename)
-            // For now, throw so callers know this path is not implemented.
-            throw new \RuntimeException(
-                'ipam_backup_apply_retention: remote delete client not yet wired (Phase 6). '
-                . 'Destination type: ' . to_str($dest['type'])
-            );
-        } catch (\RuntimeException $e) {
-            error_log('[ipam_backup_apply_retention] remote delete skipped for log_id=' . $logId . ': ' . $e->getMessage());
+        $row = $rowById[(int) $logId] ?? null;
+        $filename = is_array($row) && is_string($row['filename'] ?? null) ? $row['filename'] : '';
+        $remoteDeleted = false;
+
+        if ($client !== null && $filename !== '') {
+            try {
+                // BackupClientInterface::delete() returns bool — true = removed, false = not found.
+                // Treat both as success for retention purposes (the goal is "no longer present").
+                $client->delete($filename);
+                $remoteDeleted = true;
+            } catch (\Throwable $e) {
+                error_log('[ipam_backup_apply_retention] remote delete failed for log_id=' . $logId . ' file=' . $filename . ': ' . $e->getMessage());
+                $remoteDeleted = false;
+            }
         }
 
-        // Mark the log row as pruned regardless of remote-delete outcome.
+        if (!$remoteDeleted) {
+            // Do NOT mark this row as retention_pruned — the remote object is still there.
+            // Leaving the row at status='success' so the next retention pass will try again.
+            continue;
+        }
+
         try {
             $db->prepare(
                 "UPDATE backup_log SET status = 'retention_pruned' WHERE id = :id"
@@ -4202,15 +4251,22 @@ function ipam_backup_next_run_at(array $schedule, ?int $nowEpoch = null): int
  * @param string $status 'success' | 'failure'
  * @param string $detail filename on success, error message on failure
  */
-function ipam_backup_notify(array $dest, string $status, string $detail): void
+function ipam_backup_notify(PDO $db, array $dest, string $status, string $detail): void
 {
-    $alertEmail = trim(to_str(ipam_setting('alert_email')));
-    if ($alertEmail === '') return;
-
     $notifyFailure = (bool) ipam_setting('backup.notify_on_failure');
     $notifySuccess = (bool) ipam_setting('backup.notify_on_success');
     if ($status === 'failure' && !$notifyFailure) return;
     if ($status === 'success' && !$notifySuccess) return;
+
+    // Resolve recipients via the same multi-user picker the rest of the
+    // alerting system uses (alert.recipient_user_ids → users.email).
+    // Falls back to the deprecated alert_email setting only if no users selected.
+    $recipients = ipam_resolve_alert_recipients($db);
+    if ($recipients === []) {
+        $legacy = trim(to_str(ipam_setting('alert.email')));
+        if ($legacy !== '') $recipients = [$legacy];
+    }
+    if ($recipients === []) return;
 
     $destName = is_string($dest['name'] ?? null) ? $dest['name'] : 'unknown';
     $subject = sprintf('[IPAM] Backup %s: %s', strtoupper($status), $destName);
@@ -4219,14 +4275,16 @@ function ipam_backup_notify(array $dest, string $status, string $detail): void
         $status, $destName, $detail
     );
 
-    try {
-        if (function_exists('ipam_send_mail')) {
-            ipam_send_mail($alertEmail, $subject, $body);
-        } else {
-            @mail($alertEmail, $subject, $body);
+    foreach ($recipients as $to) {
+        try {
+            if (function_exists('ipam_send_mail')) {
+                ipam_send_mail($to, $subject, $body);
+            } else {
+                @mail($to, $subject, $body);
+            }
+        } catch (Throwable $e) {
+            error_log('[backup] notify failed for ' . $to . ': ' . $e->getMessage());
         }
-    } catch (Throwable $e) {
-        error_log('[backup] notify failed: ' . $e->getMessage());
     }
 }
 

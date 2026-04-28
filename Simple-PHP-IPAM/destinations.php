@@ -29,6 +29,7 @@ function ipam_destinations_collect_config(string $type, array $post): array|stri
         if ($region   === '') return 'S3 region is required.';
         if ($bucket   === '') return 'S3 bucket is required.';
         if ($access_key === '') return 'S3 access key ID is required.';
+        if ($secret_key === '') return 'S3 secret access key is required.';
 
         $cfg = [
             'endpoint'   => $endpoint,
@@ -36,10 +37,8 @@ function ipam_destinations_collect_config(string $type, array $post): array|stri
             'bucket'     => $bucket,
             'prefix'     => $prefix,
             'access_key' => $access_key,
+            'secret_key' => $secret_key,
         ];
-        if ($secret_key !== '') {
-            $cfg['secret_key'] = $secret_key;
-        }
         return $cfg;
     }
 
@@ -157,6 +156,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($type === 'sftp' && to_str($_POST['sftp_password'] ?? '') === '' && isset($existingCfg['password'])) {
                 $_POST['sftp_password'] = $existingCfg['password'];
             }
+            if ($type === 'sftp' && to_str($_POST['sftp_private_key'] ?? '') === '' && isset($existingCfg['private_key'])) {
+                $_POST['sftp_private_key'] = to_str($existingCfg['private_key']);
+            }
 
             $cfg = ipam_destinations_collect_config($type, $_POST);
             if (is_string($cfg)) {
@@ -235,13 +237,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($dayOfMonth < 1 || $dayOfMonth > 28) {
             $err = 'Day of month must be 1–28.';
         } else {
+            $nextRunAt = gmdate('Y-m-d H:i:s', ipam_backup_next_run_at([
+                'frequency'    => $frequency,
+                'time_of_day'  => $timeOfDay,
+                'day_of_week'  => $dayOfWeek,
+                'day_of_month' => $dayOfMonth,
+            ]));
             $now  = ipam_dialect()->now();
             $stmt = $db->prepare(
                 "INSERT INTO backup_schedules
                     (destination_id, frequency, time_of_day, day_of_week, day_of_month,
                      retention_hourly, retention_daily, retention_weekly, retention_monthly,
-                     is_active, created_at)
-                 VALUES (:did, :freq, :tod, :dow, :dom, :rh, :rd, :rw, :rm, 1, $now)"
+                     next_run_at, is_active, created_at)
+                 VALUES (:did, :freq, :tod, :dow, :dom, :rh, :rd, :rw, :rm, :nra, 1, $now)"
             );
             $stmt->execute([
                 ':did'  => $destId,
@@ -253,6 +261,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':rd'   => $retDaily,
                 ':rw'   => $retWeekly,
                 ':rm'   => $retMonthly,
+                ':nra'  => $nextRunAt,
             ]);
             $newSchedId = (int) $db->lastInsertId();
             audit($db, 'schedule.create', 'schedule', $newSchedId, "destination_id=$destId frequency=$frequency");

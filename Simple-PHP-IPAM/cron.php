@@ -325,30 +325,43 @@ try {
             $schedId = isset($sched['id']) && is_numeric($sched['id']) ? (int) $sched['id'] : 0;
             if ($destId <= 0 || $schedId <= 0) continue;
 
+            $runOk = false;
             try {
                 $engine = new BackupEngine($db, $config);
                 $engine->runForDestination($destId, 'schedule');
+                $runOk = true;
             } catch (Throwable $e) {
                 error_log('[backup] schedule ' . $schedId . ' failed: ' . $e->getMessage());
             }
 
-            // Update schedule's last_run_at + next_run_at regardless of outcome
+            // Always record last_run_at (so admins can see the attempt happened),
+            // but only advance next_run_at on success — a failed run should be retried
+            // on the next cron tick rather than skipped to the next scheduled slot.
             $sNorm = [];
             foreach ($sched as $k => $v) {
                 if (is_string($k)) $sNorm[$k] = $v;
             }
-            $next = ipam_backup_next_run_at($sNorm);
             try {
-                $upd = $db->prepare(
-                    "UPDATE backup_schedules
-                       SET last_run_at = " . ipam_dialect()->now() . ",
-                           next_run_at = :next
-                     WHERE id = :id"
-                );
-                $upd->execute([
-                    ':next' => gmdate('Y-m-d H:i:s', $next),
-                    ':id' => $schedId,
-                ]);
+                if ($runOk) {
+                    $next = ipam_backup_next_run_at($sNorm);
+                    $upd = $db->prepare(
+                        "UPDATE backup_schedules
+                           SET last_run_at = " . ipam_dialect()->now() . ",
+                               next_run_at = :next
+                         WHERE id = :id"
+                    );
+                    $upd->execute([
+                        ':next' => gmdate('Y-m-d H:i:s', $next),
+                        ':id'   => $schedId,
+                    ]);
+                } else {
+                    $upd = $db->prepare(
+                        "UPDATE backup_schedules
+                           SET last_run_at = " . ipam_dialect()->now() . "
+                         WHERE id = :id"
+                    );
+                    $upd->execute([':id' => $schedId]);
+                }
             } catch (Throwable $e) {
                 error_log('[backup] schedule ' . $schedId . ' next_run update failed: ' . $e->getMessage());
             }

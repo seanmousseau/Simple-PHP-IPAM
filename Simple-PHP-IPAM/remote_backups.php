@@ -26,9 +26,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             try {
                 if ($action === 'delete') {
-                    $client->delete($postName);
-                    audit($db, 'remote_backup.delete', 'destination', $postDestId, "name=$postName");
-                    $flash = 'File deleted from remote.';
+                    if (!$client->delete($postName)) {
+                        audit($db, 'remote_backup.delete_failed', 'destination', $postDestId, "name=$postName");
+                        $err = 'Delete failed: file not found on remote (or destination rejected the request).';
+                    } else {
+                        audit($db, 'remote_backup.delete', 'destination', $postDestId, "name=$postName");
+                        $flash = 'File deleted from remote.';
+                    }
                 } elseif ($action === 'verify') {
                     // Download to a tmp file, recompute SHA-256, compare with backup_log if entry exists
                     $tmp = tempnam(sys_get_temp_dir(), 'rbverify_');
@@ -192,7 +196,7 @@ page_header('Remote Backups');
                   <input type="hidden" name="name" value="<?= e($name) ?>">
                   <button class="action-pill" type="submit">Verify</button>
                 </form>
-                <form method="post" style="display:inline" onsubmit="return confirm('Delete <?= e($name) ?> from the remote destination?')">
+                <form method="post" style="display:inline" data-confirm-delete="<?= e($name) ?>">
                   <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
                   <input type="hidden" name="action" value="delete">
                   <input type="hidden" name="destination_id" value="<?= $selectedId ?>">
