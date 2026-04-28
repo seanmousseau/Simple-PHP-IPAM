@@ -1920,3 +1920,32 @@ button:active,.button:active,.action-pill:active{transform:translateY(1px)}
   .settings-rail{display:none}
   .settings-mobile-nav{display:block}
 }
+
+/* === v3.17 destinations + backup history === */
+.destination-form, .schedule-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: var(--space-9);
+    margin-top: var(--space-9);
+}
+.destination-form label, .schedule-form label {
+    display: flex; flex-direction: column; gap: var(--space-4);
+    font-weight: 500;
+}
+.destination-form .checkbox { flex-direction: row; align-items: center; gap: var(--space-6); }
+.destination-fields {
+    grid-column: 1 / -1;
+    border: 1px solid var(--border);
+    padding: var(--space-9);
+    border-radius: var(--radius-md);
+    background: var(--card);
+}
+.destination-fields legend { font-weight: 600; padding: 0 var(--space-4); }
+.badge-type-s3    { background: #fef3c7; color: #92400e; }
+.badge-type-sftp  { background: #dbeafe; color: #1e40af; }
+.badge-type-local { background: #d1fae5; color: #065f46; }
+@media (prefers-color-scheme: dark) {
+  .badge-type-s3    { background: #422006; color: #fde68a; }
+  .badge-type-sftp  { background: #1e293b; color: #93c5fd; }
+  .badge-type-local { background: #052e1f; color: #6ee7b7; }
+}
