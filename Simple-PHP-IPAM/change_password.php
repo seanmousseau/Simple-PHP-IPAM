@@ -608,9 +608,6 @@ $passkeyDefaultName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simpl
           Your registered passkeys are preserved and will be available again if Passkeys are re-enabled.
         </p>
       <?php endif; ?>
-      <?php if ($emailOtpGlobalEnabled && !$emailOtpUserEnabled && $eoEnrolling): ?>
-        <!-- placeholder to silence any unused-state warnings; intentionally empty -->
-      <?php endif; ?>
     </li>
   </ul>
 </section>
