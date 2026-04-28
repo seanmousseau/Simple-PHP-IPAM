@@ -6717,6 +6717,7 @@ function page_header(string $title, array $opts = []): void
                 echo "<a class='sidebar-link" . ($activePage === 'webhooks' ? ' is-active' : '') . "' href='webhooks.php'>" . icon('webhook') . " Webhooks</a>";
                 echo "<a class='sidebar-link" . ($activePage === 'destinations' ? ' is-active' : '') . "' href='destinations.php'>" . icon('server-stack') . " Destinations</a>";
                 echo "<a class='sidebar-link" . ($activePage === 'backup_history' ? ' is-active' : '') . "' href='backup_history.php'>" . icon('audit') . " Backup History</a>";
+                echo "<a class='sidebar-link" . ($activePage === 'remote_backups' ? ' is-active' : '') . "' href='remote_backups.php'>" . icon('server-stack') . " Remote Backups</a>";
                 echo "<a class='sidebar-link" . ($activePage === 'import_csv' ? ' is-active' : '') . "' href='import_csv.php'>" . icon('upload') . " Import CSV</a>";
                 echo "<a class='sidebar-link" . ($activePage === 'import_arp' ? ' is-active' : '') . "' href='import_arp.php'>" . icon('arp') . " ARP Import</a>";
                 echo "<a class='sidebar-link" . ($activePage === 'reports' ? ' is-active' : '') . "' href='reports.php'>" . icon('reports') . " Reports</a>";
