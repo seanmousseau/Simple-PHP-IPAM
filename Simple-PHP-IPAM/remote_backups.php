@@ -178,6 +178,13 @@ page_header('Remote Backups');
               <td><?= e($modified) ?></td>
               <td title="<?= e($checksum) ?>"><?= e($csShort) ?></td>
               <td class="actions">
+                <form method="post" action="download_remote_backup.php" style="display:inline">
+                  <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                  <input type="hidden" name="destination_id" value="<?= $selectedId ?>">
+                  <input type="hidden" name="name" value="<?= e($name) ?>">
+                  <input type="hidden" name="as" value="file">
+                  <button class="action-pill" type="submit">Download</button>
+                </form>
                 <form method="post" style="display:inline">
                   <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
                   <input type="hidden" name="action" value="verify">
