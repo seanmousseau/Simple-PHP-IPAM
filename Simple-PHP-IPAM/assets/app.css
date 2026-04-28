@@ -1949,3 +1949,6 @@ button:active,.button:active,.action-pill:active{transform:translateY(1px)}
   .badge-type-sftp  { background: #1e293b; color: #93c5fd; }
   .badge-type-local { background: #052e1f; color: #6ee7b7; }
 }
+
+/* v3.17 — destination test/run feedback state */
+.button-success { background: color-mix(in srgb, var(--success) 15%, var(--card) 85%); color: var(--success); }
