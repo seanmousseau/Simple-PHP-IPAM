@@ -306,7 +306,60 @@ try {
 }
 
 // ---------------------------------------------------------------------------
-// Task 9: Demo mode database reset (was Task 7 pre-v3.3.0)
+// Task 9: Backup schedules (v3.17.0 — fire any backup_schedules rows that are due)
+// ---------------------------------------------------------------------------
+try {
+    $stmt = $db->query(
+        "SELECT s.*, d.name AS dest_name
+         FROM backup_schedules s
+         JOIN backup_destinations d ON d.id = s.destination_id
+         WHERE s.is_active = 1 AND d.is_active = 1
+           AND (s.next_run_at IS NULL OR s.next_run_at <= " . ipam_dialect()->now() . ")"
+    );
+    if ($stmt !== false) {
+        $due = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($due as $sched) {
+            if (!is_array($sched)) continue;
+            $destId = isset($sched['destination_id']) && is_numeric($sched['destination_id'])
+                ? (int) $sched['destination_id'] : 0;
+            $schedId = isset($sched['id']) && is_numeric($sched['id']) ? (int) $sched['id'] : 0;
+            if ($destId <= 0 || $schedId <= 0) continue;
+
+            try {
+                $engine = new BackupEngine($db, $config);
+                $engine->runForDestination($destId, 'schedule');
+            } catch (Throwable $e) {
+                error_log('[backup] schedule ' . $schedId . ' failed: ' . $e->getMessage());
+            }
+
+            // Update schedule's last_run_at + next_run_at regardless of outcome
+            $sNorm = [];
+            foreach ($sched as $k => $v) {
+                if (is_string($k)) $sNorm[$k] = $v;
+            }
+            $next = ipam_backup_next_run_at($sNorm);
+            try {
+                $upd = $db->prepare(
+                    "UPDATE backup_schedules
+                       SET last_run_at = " . ipam_dialect()->now() . ",
+                           next_run_at = :next
+                     WHERE id = :id"
+                );
+                $upd->execute([
+                    ':next' => gmdate('Y-m-d H:i:s', $next),
+                    ':id' => $schedId,
+                ]);
+            } catch (Throwable $e) {
+                error_log('[backup] schedule ' . $schedId . ' next_run update failed: ' . $e->getMessage());
+            }
+        }
+    }
+} catch (Throwable $e) {
+    error_log('[backup] schedule evaluation failed: ' . $e->getMessage());
+}
+
+// ---------------------------------------------------------------------------
+// Task 10: Demo mode database reset (was Task 7 pre-v3.3.0, Task 9 pre-v3.17.0)
 // ---------------------------------------------------------------------------
 try {
     $demoEnabled = !empty($config['demo_mode']['enabled']);

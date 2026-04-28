@@ -1534,6 +1534,22 @@ function ipam_setting_definitions(): array
             'sensitive'   => false,
             'config_key'  => ['backup', 'dir'],
         ],
+        'backup.notify_on_failure' => [
+            'label'       => 'Notify on backup failure',
+            'description' => 'Email notification when a backup fails.',
+            'type'        => 'bool',
+            'group'       => 'backup',
+            'default'     => true,
+            'sensitive'   => false,
+        ],
+        'backup.notify_on_success' => [
+            'label'       => 'Notify on backup success',
+            'description' => 'Email notification when a backup succeeds.',
+            'type'        => 'bool',
+            'group'       => 'backup',
+            'default'     => false,
+            'sensitive'   => false,
+        ],
 
         // --- Limits ---
         'limits.import_csv_max_mb' => [
@@ -4106,6 +4122,111 @@ function ipam_backup_apply_retention(PDO $db, int $destinationId): int
     }
 
     return $pruned;
+}
+
+/**
+ * Compute the next clock-aligned run time for a backup schedule.
+ *
+ * @param array<string,mixed> $schedule schedule row, requires 'frequency'; uses
+ *                                       'time_of_day' (HH:MM), 'day_of_week' (0-6, Mon=1),
+ *                                       'day_of_month' (1-28).
+ * @param ?int $nowEpoch injectable UTC epoch for testing; defaults to time()
+ * @return int next-run UTC epoch
+ */
+function ipam_backup_next_run_at(array $schedule, ?int $nowEpoch = null): int
+{
+    $now = $nowEpoch ?? time();
+    $freq = is_string($schedule['frequency'] ?? null) ? $schedule['frequency'] : 'daily';
+
+    // Parse time_of_day "HH:MM" -> [hour, minute]
+    $timeOfDay = is_string($schedule['time_of_day'] ?? null) ? $schedule['time_of_day'] : '02:00';
+    $parts = explode(':', $timeOfDay);
+    $hour = (int) $parts[0];
+    $minute = count($parts) > 1 ? (int) $parts[1] : 0;
+    if ($hour < 0 || $hour > 23) $hour = 2;
+    if ($minute < 0 || $minute > 59) $minute = 0;
+
+    if ($freq === 'hourly') {
+        // Next exact HH:00 strictly after now.
+        $aligned = gmmktime((int) gmdate('H', $now) + 1, 0, 0,
+                            (int) gmdate('n', $now), (int) gmdate('j', $now), (int) gmdate('Y', $now));
+        return is_int($aligned) ? $aligned : $now + 3600;
+    }
+
+    if ($freq === 'weekly') {
+        $targetDow = isset($schedule['day_of_week']) && is_numeric($schedule['day_of_week'])
+            ? ((int) $schedule['day_of_week']) : 1; // Mon default
+        if ($targetDow < 0) $targetDow = 0;
+        if ($targetDow > 6) $targetDow = 6;
+        // PHP gmdate('N') returns 1=Mon..7=Sun. day_of_week convention: 0=Sun..6=Sat (per #690 schema).
+        // Convert: schema 0 (Sun) -> PHP 7; schema 1..6 -> PHP 1..6.
+        $phpDow = $targetDow === 0 ? 7 : $targetDow;
+        $currentDow = (int) gmdate('N', $now);
+        $daysAhead = ($phpDow - $currentDow + 7) % 7;
+        $candidate = gmmktime($hour, $minute, 0,
+                              (int) gmdate('n', $now), (int) gmdate('j', $now) + $daysAhead, (int) gmdate('Y', $now));
+        if (!is_int($candidate)) return $now + 7 * 86400;
+        if ($candidate <= $now) $candidate += 7 * 86400;
+        return $candidate;
+    }
+
+    if ($freq === 'monthly') {
+        $targetDom = isset($schedule['day_of_month']) && is_numeric($schedule['day_of_month'])
+            ? ((int) $schedule['day_of_month']) : 1;
+        if ($targetDom < 1) $targetDom = 1;
+        if ($targetDom > 28) $targetDom = 28;
+        $candidate = gmmktime($hour, $minute, 0,
+                              (int) gmdate('n', $now), $targetDom, (int) gmdate('Y', $now));
+        if (!is_int($candidate)) return $now + 30 * 86400;
+        if ($candidate <= $now) {
+            $candidate = gmmktime($hour, $minute, 0,
+                                  (int) gmdate('n', $now) + 1, $targetDom, (int) gmdate('Y', $now));
+            if (!is_int($candidate)) return $now + 30 * 86400;
+        }
+        return $candidate;
+    }
+
+    // 'daily' (and unknown) — next HH:MM today or tomorrow
+    $candidate = gmmktime($hour, $minute, 0,
+                          (int) gmdate('n', $now), (int) gmdate('j', $now), (int) gmdate('Y', $now));
+    if (!is_int($candidate)) return $now + 86400;
+    if ($candidate <= $now) $candidate += 86400;
+    return $candidate;
+}
+
+/**
+ * Email notification on backup completion. Best-effort: failures logged, never thrown.
+ *
+ * @param array<string,mixed> $dest backup_destinations row
+ * @param string $status 'success' | 'failure'
+ * @param string $detail filename on success, error message on failure
+ */
+function ipam_backup_notify(array $dest, string $status, string $detail): void
+{
+    $alertEmail = trim(to_str(ipam_setting('alert_email')));
+    if ($alertEmail === '') return;
+
+    $notifyFailure = (bool) ipam_setting('backup.notify_on_failure');
+    $notifySuccess = (bool) ipam_setting('backup.notify_on_success');
+    if ($status === 'failure' && !$notifyFailure) return;
+    if ($status === 'success' && !$notifySuccess) return;
+
+    $destName = is_string($dest['name'] ?? null) ? $dest['name'] : 'unknown';
+    $subject = sprintf('[IPAM] Backup %s: %s', strtoupper($status), $destName);
+    $body = sprintf(
+        "Backup %s for destination \"%s\".\n\nDetail: %s\n",
+        $status, $destName, $detail
+    );
+
+    try {
+        if (function_exists('ipam_send_mail')) {
+            ipam_send_mail($alertEmail, $subject, $body);
+        } else {
+            @mail($alertEmail, $subject, $body);
+        }
+    } catch (Throwable $e) {
+        error_log('[backup] notify failed: ' . $e->getMessage());
+    }
 }
 
 /**
