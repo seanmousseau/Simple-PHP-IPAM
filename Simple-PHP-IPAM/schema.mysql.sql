@@ -697,6 +697,64 @@ CREATE TRIGGER IF NOT EXISTS custom_field_defs_updated_at
   SET NEW.updated_at = UTC_TIMESTAMP();
 
 -- ---------------------------------------------------------------------------
+-- backup_destinations / backup_schedules / backup_log (v3.17.0, #690)
+-- backup_history (v3.7.0) remains for CLI-only backup.php use.
+-- backup_log is distinct: FK references to destinations and schedules.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS backup_destinations (
+  id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  name       VARCHAR(255) NOT NULL,
+  type       VARCHAR(32)  NOT NULL,
+  config     JSON         NOT NULL,
+  encrypt    TINYINT(1)   NOT NULL DEFAULT 1,
+  is_active  TINYINT(1)   NOT NULL DEFAULT 1,
+  created_at DATETIME     NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  updated_at DATETIME     NOT NULL DEFAULT (UTC_TIMESTAMP())
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TRIGGER IF NOT EXISTS backup_destinations_updated_at
+  BEFORE UPDATE ON backup_destinations FOR EACH ROW
+  SET NEW.updated_at = UTC_TIMESTAMP();
+
+CREATE TABLE IF NOT EXISTS backup_schedules (
+  id                  BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  destination_id      BIGINT UNSIGNED NOT NULL,
+  frequency           VARCHAR(16)  NOT NULL DEFAULT 'daily',
+  time_of_day         VARCHAR(5)   NOT NULL DEFAULT '02:00',
+  day_of_week         TINYINT      NULL,
+  day_of_month        TINYINT      NULL,
+  retention_hourly    SMALLINT     NOT NULL DEFAULT 0,
+  retention_daily     SMALLINT     NOT NULL DEFAULT 7,
+  retention_weekly    SMALLINT     NOT NULL DEFAULT 4,
+  retention_monthly   SMALLINT     NOT NULL DEFAULT 3,
+  is_active           TINYINT(1)   NOT NULL DEFAULT 1,
+  last_run_at         DATETIME     NULL,
+  next_run_at         DATETIME     NULL,
+  created_at          DATETIME     NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  CONSTRAINT fk_bsched_dest FOREIGN KEY (destination_id) REFERENCES backup_destinations(id) ON DELETE CASCADE,
+  KEY idx_backup_schedules_destination (destination_id),
+  KEY idx_backup_schedules_next_run (next_run_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS backup_log (
+  id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  destination_id  BIGINT UNSIGNED NULL,
+  schedule_id     BIGINT UNSIGNED NULL,
+  triggered_by    VARCHAR(32)  NOT NULL DEFAULT 'manual',
+  status          VARCHAR(16)  NOT NULL DEFAULT 'pending',
+  filename        TEXT         NULL,
+  size_bytes      BIGINT       NULL,
+  checksum        VARCHAR(128) NULL,
+  error_message   TEXT         NULL,
+  started_at      DATETIME     NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  completed_at    DATETIME     NULL,
+  CONSTRAINT fk_blog_dest  FOREIGN KEY (destination_id) REFERENCES backup_destinations(id) ON DELETE SET NULL,
+  CONSTRAINT fk_blog_sched FOREIGN KEY (schedule_id)    REFERENCES backup_schedules(id)    ON DELETE SET NULL,
+  KEY idx_backup_log_destination (destination_id),
+  KEY idx_backup_log_started_at (started_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ---------------------------------------------------------------------------
 -- Pre-seed schema_migrations with every historical version so apply_migrations
 -- is a no-op on fresh MySQL installs. New migrations added in v2.10.0+ must
 -- be idempotent and safe to run on MySQL, since they WILL execute here.
@@ -755,6 +813,7 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.14.0-mfa-settings'),
   ('3.14.0-email-otp'),
   ('3.15.0-passkeys'),
-  ('3.16.0-preferred-mfa-method');
+  ('3.16.0-preferred-mfa-method'),
+  ('3.17.0-backup');
 
 SET FOREIGN_KEY_CHECKS = 1;

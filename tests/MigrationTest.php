@@ -926,6 +926,85 @@ class MigrationTest extends TestCase
     }
 
     // -------------------------------------------------------------------------
+    // 3.17.0-backup (#690)
+    // -------------------------------------------------------------------------
+
+    /**
+     * The 3.17.0-backup migration must create backup_destinations,
+     * backup_schedules, and backup_log with all required columns.
+     */
+    public function testV317BackupTablesAdded(): void
+    {
+        $db = $this->makePreVrfDb();
+        apply_migrations($db);
+
+        // backup_destinations
+        $cols = array_column(
+            $db->query("PRAGMA table_info(backup_destinations)")->fetchAll(PDO::FETCH_ASSOC),
+            'name'
+        );
+        foreach (['id', 'name', 'type', 'config', 'encrypt', 'is_active', 'created_at', 'updated_at'] as $c) {
+            $this->assertContains($c, $cols, "backup_destinations missing column: $c");
+        }
+
+        // backup_schedules
+        $cols = array_column(
+            $db->query("PRAGMA table_info(backup_schedules)")->fetchAll(PDO::FETCH_ASSOC),
+            'name'
+        );
+        foreach ([
+            'id', 'destination_id', 'frequency', 'time_of_day',
+            'day_of_week', 'day_of_month',
+            'retention_hourly', 'retention_daily', 'retention_weekly', 'retention_monthly',
+            'is_active', 'last_run_at', 'next_run_at', 'created_at',
+        ] as $c) {
+            $this->assertContains($c, $cols, "backup_schedules missing column: $c");
+        }
+
+        // backup_log
+        $cols = array_column(
+            $db->query("PRAGMA table_info(backup_log)")->fetchAll(PDO::FETCH_ASSOC),
+            'name'
+        );
+        foreach ([
+            'id', 'destination_id', 'schedule_id', 'triggered_by', 'status',
+            'filename', 'size_bytes', 'checksum', 'error_message',
+            'started_at', 'completed_at',
+        ] as $c) {
+            $this->assertContains($c, $cols, "backup_log missing column: $c");
+        }
+    }
+
+    /**
+     * The 3.17.0-backup migration must be idempotent: a second apply_migrations()
+     * call on an already-migrated database must not throw.
+     */
+    public function testV317MigrationIsIdempotent(): void
+    {
+        $db = $this->makePreVrfDb();
+        apply_migrations($db);
+
+        // Delete the stamp to force re-execution of the closure body.
+        $db->exec("DELETE FROM schema_migrations WHERE version = '3.17.0-backup'");
+        apply_migrations($db); // must not throw
+
+        // Tables must still exist with correct structure.
+        $tables = array_column(
+            $db->query("SELECT name FROM sqlite_master WHERE type='table'")->fetchAll(PDO::FETCH_ASSOC),
+            'name'
+        );
+        $this->assertContains('backup_destinations', $tables, 'backup_destinations must still exist after idempotent re-run');
+        $this->assertContains('backup_schedules',    $tables, 'backup_schedules must still exist after idempotent re-run');
+        $this->assertContains('backup_log',          $tables, 'backup_log must still exist after idempotent re-run');
+
+        // Version stamp must be re-recorded.
+        $marker = $db->query(
+            "SELECT 1 FROM schema_migrations WHERE version = '3.17.0-backup'"
+        )->fetchColumn();
+        $this->assertNotFalse($marker, 'schema_migrations stamp must be re-recorded after idempotent re-run');
+    }
+
+    // -------------------------------------------------------------------------
     // 3.13.0-settings-cascade
     // -------------------------------------------------------------------------
 
