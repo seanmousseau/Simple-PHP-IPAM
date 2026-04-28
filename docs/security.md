@@ -502,3 +502,34 @@ These are configured via **Admin → Settings** and take effect on the next requ
 | `security.account_lockout_seconds` | `900` | Per-account lockout duration in seconds (default: 15 minutes). |
 | `api.rate_limit_window_seconds` | `60` | Sliding window size for per-API-key rate limiting. *(v3.6.0)* |
 | `api.rate_limit_requests` | `300` | Maximum requests per window per API key. *(v3.6.0)* |
+
+---
+
+## Backup encryption (v3.17.0+)
+
+Encrypted backups use **AES-256-GCM** with a 12-byte random IV and a 16-byte authentication tag appended to the ciphertext. The encryption key is derived from `config.php`'s `app_secret` via HKDF-SHA256 with the info string `'ipam-v3:backup'`, so each install (with a unique `app_secret`) has a unique backup-encryption key without storing a separate per-tenant secret.
+
+Encrypted blobs carry the magic header `IPAMBKP1` (8 bytes, format version 1). The decryption helper (`backup_decrypt`) rejects any blob with a different magic, allowing future format versions to be detected and rejected with a clear error message.
+
+**File format:**
+
+```
+[8 bytes: "IPAMBKP1"] [12 bytes: random IV] [ciphertext] [16 bytes: GCM tag]
+```
+
+**Rotating `app_secret` invalidates existing encrypted backups.** This is the documented and intentional behaviour. Operators rotating the secret must either keep a copy of the old secret to decrypt historical backups, or accept that older `.enc` files cannot be restored after rotation. See [Backup Destinations & Schedules — Encryption](backups.md#encryption) for full details.
+
+---
+
+## Restore audit (v3.17.0+)
+
+Every restore operation performed via the web wizard (`restore_web.php`) is recorded in two places:
+
+1. **`audit_log`** — actions `db.restore_stage` (when a remote file is staged in `data/tmp/`), `db.restore_dryrun` (when the wizard runs the dry-run preview), and `db.restore` (when the live apply completes successfully).
+2. **`backup_log`** — a row with `triggered_by = 'web_restore'`, with `status` updated to `running` / `success` / `failed` as the operation progresses, and the destination and filename linked to any existing backup entries.
+
+Restore entries are visible on the Backup History page and are filterable via the Type column.
+
+The web restore wizard requires admin role and CSRF on every step. Live apply additionally requires the user to type `RESTORE` exactly into the confirmation field before the Apply button is enabled. This typing gate is enforced server-side — the AJAX handler verifies the submitted confirmation string and rejects the request if it does not match exactly.
+
+See [Restore from a backup](restore.md) for the full wizard workflow.

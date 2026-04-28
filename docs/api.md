@@ -1433,3 +1433,9 @@ Linked address `interface_id` columns are SET NULL.
 ## DHCP config export
 
 DHCP configuration export (ISC `dhcpd.conf` and Kea 2.x JSON) is available via the `export_dhcp.php` endpoint. This is a UI-only feature in v3.4.0 and is not part of the `api.php` REST API. See [DHCP Config Export](dhcp-export.md) for full documentation.
+
+---
+
+## Backup resources
+
+> **Note:** Backup-related tables (`backup_destinations`, `backup_schedules`, `backup_log`) are not exposed via the REST API in v3.17.0. Use the admin UI at `destinations.php` (destinations and schedules) and `backup_history.php` (history log).
