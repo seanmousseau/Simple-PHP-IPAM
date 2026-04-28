@@ -3729,6 +3729,96 @@ function backup_info(array $config): array
     ];
 }
 
+// ── Backup encryption constants (Phase 2 / #694) ────────────────────────────
+const BACKUP_MAGIC   = 'IPAMBKP1';  // 8-byte magic + version tag
+const BACKUP_IV_LEN  = 12;          // AES-256-GCM recommended IV length
+const BACKUP_TAG_LEN = 16;          // GCM authentication tag length (max)
+
+/**
+ * Derive a fixed-length key from a master secret using HKDF-SHA-256.
+ *
+ * Thin wrapper around PHP's native hash_hkdf() (PHP 7.1.2+). Keeping this as
+ * a named function makes call-sites self-documenting and lets tests verify the
+ * RFC 5869 Test Case 1 vector directly. The $salt parameter is optional and
+ * defaults to the all-zeros salt that HKDF specifies when salt is omitted.
+ *
+ * @param string $ikm    Input keying material (e.g. $config['app_secret'])
+ * @param string $info   Context string distinguishing key purposes
+ * @param int    $length Output length in bytes (1–255 × hash-length for SHA-256)
+ * @param string $salt   Optional salt; pass '' to use HKDF's default zero-salt
+ */
+function ipam_hkdf_sha256(string $ikm, string $info, int $length, string $salt = ''): string
+{
+    if ($length <= 0) {
+        throw new RuntimeException('ipam_hkdf_sha256: length must be positive');
+    }
+    return hash_hkdf('sha256', $ikm, $length, $info, $salt);
+}
+
+/**
+ * Encrypt a backup payload with AES-256-GCM.
+ *
+ * The output format is:
+ *   BACKUP_MAGIC (8 bytes) | IV (12 bytes) | GCM tag (16 bytes) | ciphertext
+ *
+ * The AES key is derived from $appSecret via HKDF-SHA-256 with a fixed
+ * purpose string, so a compromise of the ciphertext alone does not expose
+ * $appSecret or any other derived key.
+ *
+ * @throws RuntimeException on openssl failure (should never happen on a
+ *         supported PHP build, but we must not silently return bad data)
+ */
+function backup_encrypt(string $plain, string $appSecret): string
+{
+    $key = ipam_hkdf_sha256($appSecret, 'ipam-v3:backup', 32);
+    $iv  = random_bytes(BACKUP_IV_LEN);
+    $tag = '';
+    $ct  = openssl_encrypt($plain, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag, '', BACKUP_TAG_LEN);
+    if ($ct === false) {
+        throw new RuntimeException('backup encryption failed');
+    }
+    return BACKUP_MAGIC . $iv . $tag . $ct;
+}
+
+/**
+ * Decrypt a backup payload produced by backup_encrypt().
+ *
+ * Verifies the magic header and GCM authentication tag before returning
+ * plaintext. Any tampering with the ciphertext, tag, or IV — or passing
+ * a plain-text file instead of an encrypted blob — causes a RuntimeException
+ * with a non-leaky message (no oracle information about which part failed).
+ *
+ * Forward-compat note: future format versions will use a different magic
+ * (e.g. "IPAMBKP2") and a newer decoder. The error message on version
+ * mismatch is intentionally identical to the bad-magic path so the format
+ * version itself is not leaked through the exception text. Callers should
+ * surface a user-friendly "backup created by newer version" error when
+ * appropriate based on the loaded software version, not by parsing the
+ * exception message.
+ *
+ * @throws RuntimeException on bad magic, truncation, or authentication failure
+ */
+function backup_decrypt(string $blob, string $appSecret): string
+{
+    $minLen = strlen(BACKUP_MAGIC) + BACKUP_IV_LEN + BACKUP_TAG_LEN;
+    if (strlen($blob) < $minLen) {
+        throw new RuntimeException('encrypted blob too short');
+    }
+    if (substr($blob, 0, strlen(BACKUP_MAGIC)) !== BACKUP_MAGIC) {
+        throw new RuntimeException('not an IPAM backup blob (bad magic)');
+    }
+    $offset = strlen(BACKUP_MAGIC);
+    $iv  = substr($blob, $offset, BACKUP_IV_LEN);
+    $tag = substr($blob, $offset + BACKUP_IV_LEN, BACKUP_TAG_LEN);
+    $ct  = substr($blob, $offset + BACKUP_IV_LEN + BACKUP_TAG_LEN);
+    $key = ipam_hkdf_sha256($appSecret, 'ipam-v3:backup', 32);
+    $pt  = openssl_decrypt($ct, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag);
+    if ($pt === false) {
+        throw new RuntimeException('backup decryption failed (auth or key)');
+    }
+    return $pt;
+}
+
 /**
  * Stream a full SQL dump of the SQLite database to a callable.
  * Each call to $write receives a chunk of SQL text.
