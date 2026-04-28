@@ -145,7 +145,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // hand-rolled chain did (#747 for TOTP, mfa.email_otp_enabled,
                 // mfa.passkeys_enabled).
                 $uid = to_int($user['id']);
-                $totpGloballyEnabled = (bool)to_int(ipam_setting('mfa.totp_enabled', true));
                 $available = ipam_user_available_mfa_methods($db, $uid);
                 $preferred = ipam_user_preferred_mfa($db, $uid);
                 $chain = $available;
@@ -185,7 +184,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // users with TOTP enrolled-but-globally-disabled as having no
                 // TOTP — they cannot use it to log in until the admin re-enables
                 // it. They must enroll Email OTP (or have a passkey already).
-                $totpSatisfies = $totpGloballyEnabled && to_int($user['totp_enabled'] ?? 0) === 1;
+                $totpGloballyEnabledForRequireGate = (bool)to_int(ipam_setting('mfa.totp_enabled', true));
+                $totpSatisfies = $totpGloballyEnabledForRequireGate && to_int($user['totp_enabled'] ?? 0) === 1;
                 if ((bool)to_int(ipam_setting('mfa.require', false)) &&
                     !$totpSatisfies &&
                     to_int($user['email_otp_enabled'] ?? 0) === 0) {

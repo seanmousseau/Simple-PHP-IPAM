@@ -432,6 +432,8 @@ Call `audit(PDO $db, string $action, string $entityType, ?int $entityId, string 
 ```
 auth.login          auth.login_failed       auth.login_blocked
 auth.oidc_login     auth.oidc_provision     auth.oidc_link       auth.oidc_failed
+auth.mfa_method_switch                      auth.mfa_preferred_set
+auth.totp_login     auth.email_otp_login    auth.passkey_challenge
 subnet.create       subnet.update           subnet.delete
 address.create      address.update          address.delete
 user.create         user.delete             user.toggle_active

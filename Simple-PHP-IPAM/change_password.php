@@ -355,7 +355,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
     $st->execute();
     audit(
         $db,
-        'user.update_profile',
+        'auth.mfa_preferred_set',
         'user',
         to_int($cur['id']),
         'preferred_mfa_method=' . ($newVal ?? 'null')

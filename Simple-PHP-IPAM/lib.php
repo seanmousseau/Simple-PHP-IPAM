@@ -8534,8 +8534,23 @@ function ipam_user_preferred_mfa(PDO $db, int $userId): ?string
     try {
         $st = $db->prepare("SELECT preferred_mfa_method FROM users WHERE id = :id");
         $st->execute([':id' => $userId]);
-    } catch (\PDOException) {
-        return null;
+    } catch (\PDOException $e) {
+        // Tolerate ONLY "column does not exist" — partial test DBs that pre-date
+        // the v3.16.0 migration. SQLSTATE codes per driver:
+        //   MySQL:      42S22 (column not found)
+        //   PostgreSQL: 42703 (undefined_column)
+        //   SQLite:     HY000 with errorInfo[2] containing "no such column"
+        // Any other PDO error (transient connection, lock timeout, etc.) is a
+        // real problem and must propagate — silently coercing every DB error
+        // to "no preference" hides outages.
+        $sqlstate = (string)($e->errorInfo[0] ?? '');
+        $msg      = (string)($e->errorInfo[2] ?? '');
+        if ($sqlstate === '42S22'
+            || $sqlstate === '42703'
+            || ($sqlstate === 'HY000' && str_contains($msg, 'no such column'))) {
+            return null;
+        }
+        throw $e;
     }
     $val = $st->fetchColumn();
     if (!is_string($val) || $val === '') {

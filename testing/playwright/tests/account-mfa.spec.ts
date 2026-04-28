@@ -279,6 +279,37 @@ test.describe('Preserved-enrollment hints (#755)', () => {
         }
     });
 
+    test('email_otp_verify view contains switch_to_totp and switch_to_passkey markup (#746 full graph)', async () => {
+        // Markup-level cover for the new switch_to_* handlers on
+        // email_otp_verify.php (#746). A full e2e — logging in such that
+        // dispatch actually lands on email_otp_verify and clicking the
+        // button — requires SMTP delivery (mailhog) AND a fresh challenge
+        // session, which is heavy and brittle. The handler routing is
+        // PHP-side and exercised by the live totp.spec.ts switch test
+        // already; this test guards that the user-visible buttons remain
+        // in the template so the affordance does not silently disappear.
+        const fs = await import('fs');
+        const path = await import('path');
+        const file = path.resolve(__dirname, '../../../Simple-PHP-IPAM/views/email_otp_verify.php');
+        const src = fs.readFileSync(file, 'utf8');
+        expect(src).toContain('name="action" value="switch_to_totp"');
+        expect(src).toContain('name="action" value="switch_to_passkey"');
+    });
+
+    test('passkey_verify view contains switch_to_totp and switch_to_email markup (#746 full graph)', async () => {
+        // Markup-level cover for passkey_verify.php switch buttons (#746).
+        // A live e2e requires a registered WebAuthn credential (see
+        // passkeys.spec.ts for the virtual-authenticator setup), so this
+        // assertion reads the rendered template source directly. The POST
+        // handlers themselves are exercised by PHP-level routing.
+        const fs = await import('fs');
+        const path = await import('path');
+        const file = path.resolve(__dirname, '../../../Simple-PHP-IPAM/passkey_verify.php');
+        const src = fs.readFileSync(file, 'utf8');
+        expect(src).toContain('name="action" value="switch_to_totp"');
+        expect(src).toContain('name="action" value="switch_to_email"');
+    });
+
     test('Passkey row shows "Disabled by admin" pill when globally OFF and no creds', async ({ page }) => {
         // Passkeys default to OFF and the seeded admin has no credentials,
         // so the unavailable pill is present and the hint is NOT shown.
