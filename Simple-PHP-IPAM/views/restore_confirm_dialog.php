@@ -3,6 +3,7 @@
 /** @var string $stagedSig */
 /** @var string $stagedFilename */
 /** @var int $stagedSize */
+/** @var int $stagedDestId */
 ?>
 <section class="card restore-confirm">
   <h2>Step 3: live restore</h2>
@@ -18,6 +19,7 @@
     <input type="hidden" name="staged_sig" value="<?= e($stagedSig) ?>">
     <input type="hidden" name="staged_filename" value="<?= e($stagedFilename) ?>">
     <input type="hidden" name="staged_size" value="<?= e((string) $stagedSize) ?>">
+    <input type="hidden" name="staged_destination_id" value="<?= e((string) $stagedDestId) ?>">
     <label>Confirmation text
       <input type="text" name="confirm" id="restore-confirm-input" autocomplete="off"
              placeholder="Type RESTORE to enable" required>

@@ -21,7 +21,12 @@ final class RestoreEngine
         $client = $this->clientFor($destinationId);
 
         // Sanity: reject any name with traversal characters before passing to client.
-        if ($remoteName === '' || str_contains($remoteName, '/') || str_contains($remoteName, "\0")
+        // Backslash rejection is defence-in-depth: direct POSTs to download_remote_backup.php
+        // can reach this method without first going through the remote_backups.php name-guard.
+        if ($remoteName === ''
+            || str_contains($remoteName, '/')
+            || str_contains($remoteName, '\\')
+            || str_contains($remoteName, "\0")
             || str_starts_with($remoteName, '.')) {
             throw new InvalidArgumentException('RestoreEngine: invalid remote name');
         }
@@ -226,7 +231,7 @@ final class RestoreEngine
      *
      * @return array{tables_restored:int,statements:int}
      */
-    public function apply(string $stagedPath, string $realFilename = ''): array
+    public function apply(string $stagedPath, string $realFilename = '', ?int $destinationId = null): array
     {
         $driverAttr = $this->db->getAttribute(PDO::ATTR_DRIVER_NAME);
         $driver = is_string($driverAttr) ? $driverAttr : '';
@@ -239,15 +244,22 @@ final class RestoreEngine
         // to the staged tmp filename only if not provided. The staged tmp filename
         // (e.g. restore_staged_<rand>.sql.gz) is meaningless for history viewers.
         $filename = $realFilename !== '' ? $realFilename : basename($stagedPath);
-        $destId = null;
-        $matchStmt = $this->db->prepare(
-            "SELECT destination_id FROM backup_log
-             WHERE filename = :f AND status = 'success'
-             ORDER BY started_at DESC LIMIT 1"
-        );
-        $matchStmt->execute([':f' => $filename]);
-        $matched = $matchStmt->fetchColumn();
-        if (is_numeric($matched)) $destId = (int) $matched;
+
+        // destination_id: prefer explicit caller-supplied value (the same id that
+        // staged the file). Fall back to filename lookup only if the caller didn't
+        // know — and even then, prefer the most recent success across destinations
+        // since same-name backups on multiple destinations are inherently ambiguous.
+        $destId = $destinationId !== null && $destinationId > 0 ? $destinationId : null;
+        if ($destId === null) {
+            $matchStmt = $this->db->prepare(
+                "SELECT destination_id FROM backup_log
+                 WHERE filename = :f AND status = 'success'
+                 ORDER BY started_at DESC LIMIT 1"
+            );
+            $matchStmt->execute([':f' => $filename]);
+            $matched = $matchStmt->fetchColumn();
+            if (is_numeric($matched)) $destId = (int) $matched;
+        }
 
         $now = ipam_dialect()->now();
         $logStmt = $this->db->prepare(

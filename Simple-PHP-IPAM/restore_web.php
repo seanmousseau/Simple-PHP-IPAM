@@ -14,6 +14,7 @@ $stagedPath = '';
 $stagedSig = '';
 $stagedFilename = '';
 $stagedSize = 0;
+$stagedDestId = 0;
 $dryRunResult = null;
 
 $engine = new RestoreEngine($db, $config);
@@ -33,6 +34,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $stagedSig = $engine->sign($stagedPath);
                 $stagedFilename = $staged['filename'];
                 $stagedSize = $staged['size'];
+                $stagedDestId = $destId;
                 audit($db, 'db.restore_stage', 'destination', $destId, "name=$name");
             } catch (Throwable $e) {
                 error_log('[restore_web] stage failed: ' . $e->getMessage());
@@ -46,6 +48,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stagedSig = to_str($_POST['staged_sig'] ?? '');
             $stagedFilename = to_str($_POST['staged_filename'] ?? '');
             $stagedSize = to_int($_POST['staged_size'] ?? 0);
+            $stagedDestId = to_int($_POST['staged_destination_id'] ?? 0);
             $verified = $engine->verifySigned($stagedPath, $stagedSig);
             if ($verified === null) {
                 $err = 'Invalid or expired staged file token.';
@@ -67,6 +70,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stagedSig = to_str($_POST['staged_sig'] ?? '');
             $stagedFilename = to_str($_POST['staged_filename'] ?? '');
             $stagedSize = to_int($_POST['staged_size'] ?? 0);
+            $stagedDestId = to_int($_POST['staged_destination_id'] ?? 0);
             $confirm = to_str($_POST['confirm'] ?? '');
             if ($confirm !== 'RESTORE') {
                 $err = 'Confirmation text must be "RESTORE" exactly.';
@@ -76,7 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $err = 'Invalid or expired staged file token.';
                 } else {
                     try {
-                        $result = $engine->apply($verified, $stagedFilename);
+                        $result = $engine->apply($verified, $stagedFilename, $stagedDestId > 0 ? $stagedDestId : null);
                         audit($db, 'db.restore', 'system', null,
                               "file=$stagedFilename tables=" . $result['tables_restored']
                               . " statements=" . $result['statements']);
@@ -150,7 +154,8 @@ page_header('Restore Database');
         <input type="hidden" name="staged_path" value="<?= e($stagedPath) ?>">
         <input type="hidden" name="staged_sig" value="<?= e($stagedSig) ?>">
         <input type="hidden" name="staged_filename" value="<?= e($stagedFilename) ?>">
-        <input type="hidden" name="staged_size" value="<?= $stagedSize ?>">
+        <input type="hidden" name="staged_size" value="<?= e((string) $stagedSize) ?>">
+        <input type="hidden" name="staged_destination_id" value="<?= e((string) $stagedDestId) ?>">
         <button type="submit" class="action-pill">Run dry-run</button>
       </form>
     </section>

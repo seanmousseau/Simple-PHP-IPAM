@@ -78,7 +78,7 @@ header('Content-Length: ' . $staged['size']);
 // Resolve the canonical staged path BEFORE streaming; sign() can throw on
 // missing app_secret and we'd rather fail before the response body starts.
 $cleanupReal = realpath($staged['path']);
-$tmpDir = dirname(__DIR__) . '/Simple-PHP-IPAM/data/tmp';
+$tmpDir = __DIR__ . '/data/tmp';
 $tmpReal = realpath($tmpDir);
 $canCleanup = ($cleanupReal !== false && $tmpReal !== false
                && str_starts_with($cleanupReal . '/', rtrim($tmpReal, '/') . '/'));
