@@ -32,8 +32,7 @@ if ($destId <= 0 || $name === '') {
 }
 
 try {
-    $engine = new RestoreEngine($db, $config);
-    $staged = $engine->prepareForRestore($destId, $name);
+    $staged = ipam_restore_prepare_for_restore($db, $config, $destId, $name);
 } catch (Throwable $e) {
     // Log full error server-side; return generic message to the client.
     error_log('[download_remote_backup] dest=' . $destId . ' name=' . $name . ' error=' . $e->getMessage());
@@ -50,7 +49,7 @@ if ($as === 'staged') {
     // on empty app_secret, and we'd rather fail noisily without an audit row
     // claiming the download succeeded.
     try {
-        $signature = $engine->sign($staged['path'], [
+        $signature = ipam_restore_sign($config, $staged['path'], [
             'filename' => $staged['filename'],
             'destination_id' => $destId,
             'size' => $staged['size'],

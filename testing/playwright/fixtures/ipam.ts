@@ -242,13 +242,31 @@ export async function subnetIdFor(page: Page, cidr: string): Promise<number | nu
 }
 
 /**
- * Delete a subnet by CIDR via a POST to subnets.php.
+ * Delete every subnet matching the given CIDR via POST to subnets.php.
  * Must be called while subnets.php is the active page.
+ *
+ * Loops until subnetIdFor returns null. The schema's UNIQUE(cidr, vrf_id)
+ * treats NULL vrf_id as distinct (SQL standard) on every supported engine
+ * (SQLite, MySQL, Postgres), so a CIDR with no VRF can legitimately appear
+ * more than once if a prior spec's afterAll left a row behind, or if a
+ * later spec re-created the CIDR with confirm_overlap=1. A single-shot
+ * delete leaves orphans, and the *next* spec's subnetIdFor() can then
+ * return the orphan ID — its address creates land in the orphan, while
+ * the test then queries the freshly-created subnet (or vice versa),
+ * causing assertions like unassigned.spec.ts:76 (#760) to flake by
+ * showing the assigned IP as still unassigned. Re-iterating + reloading
+ * the subnets list page guarantees the CIDR slot is empty before the
+ * caller proceeds, so the next subnet creation is the only row.
  */
 export async function deleteSubnet(page: Page, cidr: string): Promise<void> {
-  const subId = await subnetIdFor(page, cidr);
-  if (subId) {
+  // Bound the loop to defend against pathological cases (broken delete handler,
+  // mass-orphaned rows). 10 is far above the realistic worst case (1–2 stale).
+  for (let i = 0; i < 10; i++) {
+    const subId = await subnetIdFor(page, cidr);
+    if (!subId) return;
     await fetchPost(page, appUrl('subnets.php'), { action: 'delete', id: String(subId) });
+    // Reload so subnetIdFor() sees the post-delete state on the next iteration.
+    await page.goto('subnets.php');
   }
 }
 

@@ -1795,6 +1795,8 @@ button:active,.button:active,.action-pill:active{transform:translateY(1px)}
 .mfa-method-row{
   display:grid;
   grid-template-columns:1fr auto auto;
+  /* "extra" row is only used by the per-method passkey list (.mfa-passkey-list);
+     TOTP and Email OTP rows leave it empty by design. (#758) */
   grid-template-areas:"lead pill actions" "hint hint hint" "extra extra extra";
   align-items:center;
   gap:var(--space-5) var(--space-6);
@@ -1845,7 +1847,9 @@ button:active,.button:active,.action-pill:active{transform:translateY(1px)}
 .mfa-method-pill--enabled{background:color-mix(in srgb,var(--success) 15%,var(--badge-bg) 85%);color:var(--success);border-color:color-mix(in srgb,var(--success) 35%,var(--border) 65%)}
 .mfa-method-pill--disabled{background:var(--badge-bg);color:var(--muted);border-color:var(--border)}
 .mfa-method-pill--pending{background:color-mix(in srgb,var(--warn) 15%,var(--badge-bg) 85%);color:var(--warn);border-color:color-mix(in srgb,var(--warn) 35%,var(--border) 65%)}
-.mfa-method-pill--unavailable{background:color-mix(in srgb,var(--muted) 12%,var(--badge-bg) 88%);color:var(--muted);border-color:var(--border);font-style:italic}
+/* Italic on tight-tracked --font-size-xs hurts dark-mode legibility (#758).
+   Lean on color + border for the disabled-state cue instead. */
+.mfa-method-pill--unavailable{background:color-mix(in srgb,var(--muted) 12%,var(--badge-bg) 88%);color:var(--muted);border-color:var(--border);font-weight:500}
 
 /* Passkey credential list (nested under the passkey row) */
 .mfa-passkey-list{grid-area:extra;list-style:none;padding:0;margin:var(--space-5) 0 0;display:flex;flex-direction:column;gap:var(--space-3)}
@@ -1872,9 +1876,20 @@ button:active,.button:active,.action-pill:active{transform:translateY(1px)}
 
 /* ── Settings page (#749, v3.16.0) — vertical-tab layout ─────────────── */
 
+/* Settings page utility classes (#758) — replaces inline style="margin-…" in views/settings_group_form.php */
+.settings-warning{margin-bottom:var(--space-6)}
+.settings-row__badge{margin-left:var(--space-3)}
+.settings-row__key{margin-left:var(--space-3)}
+.settings-row__inline-help{margin-left:var(--space-3);font-size:.85em}
+.settings-row__sub{margin-top:var(--space-2)}
+.settings-row__actions{margin-top:var(--space-6)}
+
 .settings-shell{
   display:grid;
-  grid-template-columns:220px 1fr;
+  /* minmax allows the rail to shrink under the 220px target at narrow desktop widths
+     (768–900px) so 'Data & Maintenance' / 'Authentication' labels stop wrapping
+     mid-word. Floor of 180px keeps the rail readable. (#758) */
+  grid-template-columns:minmax(180px,220px) 1fr;
   gap:var(--space-6,1.5rem);
   align-items:flex-start;
 }

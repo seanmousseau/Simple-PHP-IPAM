@@ -9,6 +9,7 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
+  - [v3.18.0](#v3180) — Per-toggle Settings save, backup/restore polish, contacts docs, pgsql test flake fix (no breaking changes)
   - [v3.17.0](#v3170) — Backup destinations, schedules, GFS retention, encryption, web restore wizard (no breaking changes)
   - [v3.16.0](#v3160) — Admin TOTP toggle, preferred MFA method, unified MFA card, Settings tabs, portable case-insensitive search (no breaking changes)
   - [v3.15.2](#v3152) — Bug fixes: passkey registration with password managers, MFA method choice, stale-session redirect (no breaking changes)
@@ -109,6 +110,16 @@ The backup is left in place after a successful upgrade. You can remove it manual
 ---
 
 ## Version-specific upgrade notes
+
+### v3.18.0
+
+Polish release. **No new pages, no schema migrations, no new runtime dependencies.** Standard upgrade: `bash upgrade.sh --yes <docroot>`.
+
+- **Settings page** now saves boolean toggles individually — flipping one MFA switch no longer silently disables siblings. Each boolean is its own auto-submitting form. The "Save group" button still works for non-bool fields and continues to apply the legacy group-cascade behaviour for bools when used.
+- **Backup retention** is now clock-aligned to the cron tick (was previously sensitive to PHP request timing across long ticks). Behaviour is unchanged for normal cron-driven schedules; the change only affects edge cases where a long-running tick straddled a retention slot boundary.
+- **`BackupEngine` and `RestoreEngine` classes are gone.** Replaced by top-level functions (`ipam_backup_run_for_destination()`, `ipam_restore_prepare_for_restore()`, `ipam_restore_apply()`, etc.) in a new `lib/backup.php`. All the same orchestration, just procedural instead of class-wrapped. If you have site-local code that referenced these classes (unlikely — they were not part of any public API surface), update to the function names.
+- **Unified MFA card** has a small visual polish pass — pill no longer italicises the "unavailable" state, preserved-enrollment hints use `role="note"`, the tab rail handles 768–900px viewports without label wrapping.
+- **New doc:** [Contacts](contacts.md) — guide for linking contacts to IP addresses via the Owner typeahead.
 
 ### v3.17.0
 

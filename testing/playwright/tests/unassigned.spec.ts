@@ -5,9 +5,19 @@
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import {
   login, fetchPost, deleteSubnet, subnetIdFor, appUrl,
-  ADMIN_USER, ADMIN_PASS, TEST_CIDR2, TEST_IP, TEST_CIDR_V6,
+  ADMIN_USER, ADMIN_PASS, TEST_CIDR_V6,
   newAuthContext,
 } from '../fixtures/ipam';
+
+// Unique CIDR for this spec to avoid racing with addresses/contacts/exports/
+// search specs that share TEST_CIDR2='10.88.0.0/24' under parallel workers.
+// Pre-fix #760 the shared CIDR caused unassigned.spec.ts:76 to flake when a
+// concurrent spec deleted-and-recreated the subnet between this file's
+// beforeAll and the test body — subnetIdFor returned a subnet whose address
+// row for 10.88.0.10 had been removed by the racing spec, so the IP
+// reappeared in the unassigned table.
+const UNASSIGNED_CIDR = '10.91.0.0/24';
+const UNASSIGNED_IP   = '10.91.0.10';
 
 let ctx: BrowserContext;
 let page: Page;
@@ -21,21 +31,21 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
 
   // Stale cleanup
   await page.goto('subnets.php');
-  await deleteSubnet(page, TEST_CIDR2);
+  await deleteSubnet(page, UNASSIGNED_CIDR);
   await deleteSubnet(page, TEST_CIDR_V6);
 
   // Create IPv4 test subnet and one address (to verify it's excluded from unassigned list)
   await fetchPost(page, appUrl('subnets.php'), {
-    action: 'create', cidr: TEST_CIDR2, description: 'PW unassigned test', confirm_overlap: '1',
+    action: 'create', cidr: UNASSIGNED_CIDR, description: 'PW unassigned test', confirm_overlap: '1',
   });
   await page.goto('subnets.php');
-  ipv4SubnetId = await subnetIdFor(page, TEST_CIDR2);
+  ipv4SubnetId = await subnetIdFor(page, UNASSIGNED_CIDR);
 
   if (ipv4SubnetId) {
     await page.goto(`addresses.php?subnet_id=${ipv4SubnetId}`);
     await fetchPost(page, appUrl('addresses.php'), {
       action: 'create', subnet_id: String(ipv4SubnetId),
-      ip: TEST_IP, hostname: 'pw-assigned', owner: '',
+      ip: UNASSIGNED_IP, hostname: 'pw-assigned', owner: '',
       status: 'used', note: '', grp: '', mac: '', expires_at: '',
     });
   }
@@ -53,7 +63,7 @@ test.afterAll(async () => {
   try {
     if (page) {
       await page.goto('subnets.php');
-      await deleteSubnet(page, TEST_CIDR2);
+      await deleteSubnet(page, UNASSIGNED_CIDR);
       await deleteSubnet(page, TEST_CIDR_V6);
     }
   } finally {
@@ -70,7 +80,7 @@ test('unassigned IPv4: shows available IPs', async () => {
   if (!ipv4SubnetId) { test.skip(); return; }
   await page.goto(`unassigned.php?subnet_id=${ipv4SubnetId}`);
   const body = await page.locator('body').innerText();
-  expect(body).toContain('10.88.0.');
+  expect(body).toContain('10.91.0.');
 });
 
 test('unassigned IPv4: assigned IP is excluded from table', async () => {
@@ -80,8 +90,8 @@ test('unassigned IPv4: assigned IP is excluded from table', async () => {
   const ipInTable = await page.evaluate((ip) => {
     return Array.from(document.querySelectorAll('table tbody tr td b'))
       .some((b) => (b as HTMLElement).innerText.trim() === ip);
-  }, TEST_IP);
-  expect(ipInTable, `${TEST_IP} should not be in unassigned table`).toBe(false);
+  }, UNASSIGNED_IP);
+  expect(ipInTable, `${UNASSIGNED_IP} should not be in unassigned table`).toBe(false);
 });
 
 test('unassigned IPv4: count is non-zero', async () => {

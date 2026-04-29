@@ -540,7 +540,7 @@ $mfaMethodLabels = [
         <?php endif; ?>
       </div>
       <?php if (!$totpGlobalEnabled && $totpUserEnabled): ?>
-        <p class="mfa-method-row__hint" role="status">
+        <p class="mfa-method-row__hint" role="note">
           <?= icon('info', 'mfa-method-row__hint-icon') ?>
           Your TOTP enrolment is preserved and will reactivate automatically if TOTP is re-enabled.
         </p>
@@ -612,7 +612,7 @@ $mfaMethodLabels = [
         <?php endif; ?>
       </div>
       <?php if (!$emailOtpGlobalEnabled && $emailOtpUserEnabled): ?>
-        <p class="mfa-method-row__hint" role="status">
+        <p class="mfa-method-row__hint" role="note">
           <?= icon('info', 'mfa-method-row__hint-icon') ?>
           Your Email OTP enrolment is preserved and will reactivate automatically if Email OTP is re-enabled.
         </p>
@@ -680,7 +680,7 @@ $mfaMethodLabels = [
         </ul>
       <?php endif; ?>
       <?php if (!$passkeysEnabled && $passkeyUserEnabled): ?>
-        <p class="mfa-method-row__hint" role="status">
+        <p class="mfa-method-row__hint" role="note">
           <?= icon('info', 'mfa-method-row__hint-icon') ?>
           Your registered passkeys are preserved and will be available again if Passkeys are re-enabled.
         </p>

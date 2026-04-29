@@ -69,7 +69,7 @@
 | `restore_web.php` | yes | admin | Web restore wizard: 3-step flow (stage → dry-run preview → live apply) with `RESTORE` confirm-typing gate (v3.17.0) |
 | `download_remote_backup.php` | yes | admin | AJAX/file endpoint: downloads + decrypts a remote backup; signed staged-file token for handoff to `restore_web.php` (v3.17.0) |
 | `test_destination.php` | yes | admin | AJAX endpoint: invokes BackupClient `test()` for a destination id, returns JSON `{ok, message, latency_ms}` (v3.17.0) |
-| `run_backup_now.php` | yes | admin | AJAX endpoint: synchronously runs `BackupEngine::runForDestination` for a destination id, returns JSON (v3.17.0) |
+| `run_backup_now.php` | yes | admin | AJAX endpoint: synchronously runs `ipam_backup_run_for_destination()` for a destination id, returns JSON (v3.17.0; refactored from class to procedural in v3.18.0) |
 | `backup.php` | CLI | — | CLI-only database backup runner; returns 403 on web access (v3.7.0) |
 | `restore.php` | CLI | — | CLI-only database restore with --dry-run, --force; returns 403 on web access (v3.7.0) |
 

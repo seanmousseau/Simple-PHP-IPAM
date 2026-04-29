@@ -1,3 +1,9 @@
+# Match the org-level early-access flag so org settings for early-access
+# pre-merge checks (docstrings threshold) inherit into this repo. Without
+# this, CR was using its hardcoded 80% docstrings threshold instead of the
+# org's 40% override.
+early_access: true
+
 reviews:
   profile: chill
   request_changes_workflow: false
@@ -352,6 +358,17 @@ reviews:
       timeout_ms: 90000
     semgrep:
       enabled: true
+
+  # Belt-and-suspenders override of the docstrings pre-merge-check threshold.
+  # The org config sets this to 40 but CR was falling back to its hardcoded
+  # 80% default — likely because pre_merge_checks was entirely undeclared
+  # in this repo's config so org inheritance for early-access subkeys did
+  # not engage. Declaring the threshold here pins it to 40 regardless of
+  # inheritance behaviour. The org's `pre_merge_checks.title.requirements`
+  # (Conventional Commits) continues to inherit normally.
+  pre_merge_checks:
+    docstrings:
+      threshold: 40
 
 chat:
   auto_reply: true
