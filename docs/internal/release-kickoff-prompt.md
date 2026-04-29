@@ -8,6 +8,12 @@ Plan and execute release **v\<X.Y.Z\>** for Simple-PHP-IPAM.
 
 **Read first:** `docs/internal/release-workflow.md`, `docs/internal/marketing-site.md`, `docs/internal/test-suites.md`, and the GitHub milestone for v\<X.Y.Z\> + Memory MCP entity `project:simple-php-ipam:roadmap:v<X.Y.Z>`. Identify orphan issues (no milestone, or from earlier milestones still open) and propose inclusion/deferral decisions before locking scope.
 
+**Procedure docs to consult during execution (don't read upfront, reach for them when relevant):**
+- `docs/internal/adding-a-migration.md` — every release that touches schema
+- `docs/internal/adding-a-page.md` — every release that adds new PHP pages
+- `docs/internal/investigating-ci-failure.md` — when CI goes red
+- `docs/internal/hotfix-release.md` — only if this release is a hotfix off `main` instead of regular `dev → main`
+
 **Use:** `superpowers:writing-plans` to plan, `superpowers:subagent-driven-development` to execute, `ui-ux-pro-max` for any UI/UX work, `documentation` for any README / API doc / ADR / user-guide writing, Memory MCP for state, semgrep MCP and `gh`/`git` CLIs throughout. Keep Memory MCP updated as you go (one observation per meaningful change, with short commit hash).
 
 **Non-negotiable:**

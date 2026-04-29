@@ -156,3 +156,14 @@ If CodeRabbit or a human reviewer asks for a change on the open PR:
    gh issue close <N> --comment "Released in vX.Y.Z. See https://github.com/seanmousseau/Simple-PHP-IPAM/releases/tag/vX.Y.Z"
    ```
 11. **Update Memory MCP** — write a final "RELEASED" observation to the `project:simple-php-ipam:roadmap:vX.Y.Z` entity with: merge commit hash, bundle SHA256, tag, deploy confirmation, and all issues closed. Also update the bare `project:simple-php-ipam` entity if it has a "current version" observation.
+
+---
+
+## Related procedure docs
+
+- `docs/internal/hotfix-release.md` — when the fix can't wait for the regular `dev → main` cycle.
+- `docs/internal/marketing-site.md` — Phase 4 step 9 expanded.
+- `docs/internal/test-suites.md` — Local gate + 3-driver pass.
+- `docs/internal/adding-a-migration.md` — Phase 2 schema/migration steps.
+- `docs/internal/adding-a-page.md` — when the release introduces new pages.
+- `docs/internal/investigating-ci-failure.md` — when Phase 2/3 CI goes red.
