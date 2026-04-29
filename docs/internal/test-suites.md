@@ -263,6 +263,20 @@ Pick a fresh `NN` outside that set (`10.92`, `10.94`, `10.95`, …) for any new 
 
 The `deleteSubnet()` fixture in `testing/playwright/fixtures/ipam.ts` is now a bounded loop (defence-in-depth against orphan rows when `UNIQUE(cidr, vrf_id)` doesn't dedupe NULL `vrf_id` per SQL standard), but the loop is not a substitute for unique-CIDR-per-spec — the loop only handles the same spec's own orphans, not cross-spec races.
 
+### Dashboard is excluded from visual-regression — manual smoke check during release gate
+
+`tests/visual-regression.spec.ts` no longer captures `dashboard.php`. Every widget on the dashboard reflects live DB state — security-warning banner (config / app_secret / HTTPS state), Top IPv4 Subnets by Usage (live address counts), Addresses by Site (per-site totals), Expiring Addresses (lease-date sensitive), Recent Activity (audit_log timestamps + ordering). Under the parallel Playwright harness, dozens of workers mutate the shared SQLite DB concurrently with the dashboard capture, so every widget renders differently between baseline-snapshot and re-run. Masking individual widgets via Playwright `mask` failed (variable widget heights leak diff pixels into the surrounding layout); DOM-removal via `page.evaluate` only solved one of five volatile sources. Restoring dashboard VR coverage requires a mutation-isolated capture path (separate worker pool with its own DB, or a serial pre-mutation capture step) — tracked as a v3.20.0 follow-up.
+
+**Manual smoke check during every release gate.** Because the dashboard is a high-traffic page that can break in obvious ways (broken widget, broken theme, layout collapse on small viewports), the AI agent driving the release gate MUST manually verify it. Procedure:
+
+1. After `bootstrap-app.sh sqlite` is up, use the Playwright MCP to navigate to `https://127.0.0.1:8443/dashboard.php` (after logging in as `demo`/`demo`) at viewport widths 1440, 1024, 768, and 375.
+2. At each viewport, take a screenshot via `browser_take_screenshot` and **read it** (multimodal — the agent has visual access to PNGs).
+3. Check for: missing widgets (top-subnets, by-site, expiring-addresses, recent-activity, metrics row), broken layout (overflow, collapsed columns, off-canvas elements), broken theme switch (light vs dark — toggle via the data-theme attribute), zero-data states (empty tables should show a graceful empty state, not a broken table head).
+4. If anything looks wrong, treat it as a release-blocking failure and surface to the user before pushing.
+5. Repeat the same pass for the **mysql** and **pgsql** drivers — dashboard rendering differences across engines are the most common visible regressions.
+
+Skipping this manual check during a release run is a gate violation. The check is fast (~30 seconds per driver) and catches the failure mode that automated VR was supposed to but cannot reliably cover under parallelism.
+
 ### Visual-regression baselines are platform-suffixed and need refreshing on intentional UI/seed changes
 
 `testing/playwright/tests/visual-regression.spec.ts-snapshots/` holds per-platform PNG baselines (`*-darwin.png`, `*-linux.png`). Filenames include the host OS because Chromium's text shaping and AA differ between CoreText (macOS) and HarfBuzz+FreeType (Linux Docker), producing low-amplitude pixel diffs even when the bundled `@font-face` woff2s render identically.
