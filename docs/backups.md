@@ -335,4 +335,46 @@ MySQL and PostgreSQL backup dumps are planned for a follow-up release.
 
 The **destination**, **schedule**, **GFS retention**, **encryption**, and **history** infrastructure is fully engine-agnostic — MySQL and PostgreSQL installs can configure destinations and schedules today. When MySQL/PostgreSQL dump support ships, existing destination and schedule config will be used without change.
 
+---
+
+## On-disk format
+
+Encrypted backups carry an 8-byte magic header that identifies the format. v3.19.0 introduces the v2 streaming format; v1 backups (created on v3.17–v3.18) continue to restore on v3.19+ via a back-compat decrypt path.
+
+### v2 — `IPAMBKP2` (v3.19.0+, streaming)
+
+```
+offset  size   field
+0       8      magic  = "IPAMBKP2"
+8       16     salt   = random_bytes(16)        ; per-file HKDF salt
+24      16     iv     = random_bytes(16)        ; AES-256-CTR initial counter block
+40      N      ciphertext = AES-256-CTR(enc_key, iv, plaintext) streamed
+40+N    32     hmac   = HMAC-SHA256(mac_key, magic || salt || iv || ciphertext)
+```
+
+- Per-file salt → fresh enc_key (32 B) + mac_key (32 B) derived via `ipam_hkdf_sha256($appSecret, 'ipam-v3:backup-v2:' . bin2hex($salt), 64)`.
+- Encrypt-then-MAC (RFC-7366 style); HMAC covers magic + salt + iv + ciphertext, so an attacker cannot tamper with the header.
+- Restore is two-pass: pass 1 streams HMAC verification over the whole file, pass 2 streams plaintext to disk. Plaintext is never written until the MAC has matched.
+- 64 KiB streaming chunks; AES-CTR counter block is advanced manually between chunks (`+chunk_blocks`).
+- Memory-bound by `BACKUP_STREAM_CHUNK` (64 KiB) regardless of payload size.
+
+### v1 — `IPAMBKP1` (v3.17–v3.18, single-shot AES-256-GCM)
+
+```
+offset  size  field
+0       8     magic = "IPAMBKP1"
+8       12    iv
+20      16    GCM auth tag
+36      N     ciphertext
+```
+
+v1 backups are restored via the legacy `backup_decrypt()` path. Restoring a v1 backup remains bound by the original memory ceiling (the whole ciphertext is loaded into RAM once). Operators with multi-GB databases who hit the original OOM should take a fresh backup on v3.19+ to switch to the streaming v2 format.
+
+### Format dispatch on restore
+
+`backup_decrypt_to_path()` peeks the first 8 bytes:
+- `IPAMBKP2` → `backup_decrypt_stream()` (streaming).
+- `IPAMBKP1` → load full file → `backup_decrypt()` → write (back-compat).
+- Anything else → `RuntimeException`.
+
 The legacy v3.7.0 `backup.php` CLI is unchanged and continues to write `.sqlite` files to `data/backups/`. It is not affected by this feature.
