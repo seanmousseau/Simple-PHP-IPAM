@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.18.0] - 2026-04-29
+
+### Added
+- **Per-key save in `settings.php`** — boolean toggles can now be flipped individually via a new POST shape (`key=...&value=...`). The legacy group-POST handler treated every absent boolean as false, which silently flipped sibling MFA toggles when an admin only intended to flip one. Each boolean renders as its own `<form data-setting-toggle>` and auto-submits on change. The group form continues to handle non-bool fields with the existing batch validation UI. (#756)
+- **`docs/contacts.md`** — new user guide for linking contacts to IP addresses via the Owner typeahead on `addresses.php`. Covers when to use a linked contact vs the free-text Owner field, the inline-edit behaviour that clears the link, and the API alternative. (#759)
+- **`ipam_restore_assert_staged_path()` and `ipam_restore_canonicalize_staged()` helpers in `lib/backup.php`** — defence-in-depth containment guards called at every write site in the restore code path so a future refactor cannot accidentally write outside `data/tmp/`. (#762)
+
+### Changed
+- **`BackupEngine` and `RestoreEngine` refactored from classes to procedural functions** in a new `Simple-PHP-IPAM/lib/backup.php`. Both engines were single-implementation, no polymorphism, no per-instance state beyond constructor-injected `$db` / `$config` — natural fit for top-level functions per the project's procedural ethos. All call sites (`cron.php`, `restore_web.php`, `run_backup_now.php`, `download_remote_backup.php`) updated. Behaviour-equivalent: no schema, no API, no UI changes. (#762)
+- **`cron.php` backup-schedules block** now forwards a pinned `$tickEpoch` through to `ipam_backup_run_for_destination()` and on to `ipam_backup_apply_retention()`, so retention prune timing is aligned to the cron tick rather than drifting with `time()` across long ticks. (#762)
+
+### Fixed
+- **`ipam_backup_apply_retention()`** now accepts and forwards `?int $nowEpoch` to `ipam_gfs_select_for_deletion()`. The wrapper previously dropped the parameter on the floor, so retention silently fell back to `time()`. Reflection + static-source contract test added. (#762)
+- **Settings page UX** — skip-link to `#settings-content` jumps past the rail; rail `grid-template-columns` switched to `minmax(180px, 220px) 1fr` so 'Data & Maintenance' / 'Authentication' labels stop wrapping mid-word at 768–900px viewports; inline `style="margin-…"` strings lifted to a `.settings-row__*` utility set in `app.css`; `$flash` unset for consistency with sibling local helpers. (#758)
+- **Unified MFA card** — drop `font-style:italic` on `.mfa-method-pill--unavailable` (italic on tight-tracked `--font-size-xs` hurt dark-mode legibility — `font-weight:500` upright now); document the `extra` grid-template-areas row as passkey-only by design; switch the three preserved-enrollment hint `<p>` elements from `role="status"` (polite live region) to `role="note"` (static contextual annotation). (#758)
+- **Playwright `unassigned.spec.ts:76` flake on PostgreSQL full-suite runs** — the shared `deleteSubnet()` fixture in `testing/playwright/fixtures/ipam.ts` was single-shot, but `UNIQUE(cidr, vrf_id)` with NULL `vrf_id` permits duplicate rows per SQL standard. Orphan rows from an earlier spec's `afterAll` could cause `subnetIdFor()` to return the wrong subnet, making 'assigned IP excluded from unassigned table' false-positive. Fixture now loops `subnetIdFor → delete → reload` until empty. (#760)
+
+### Notes
+- No schema migrations. No new runtime dependencies. No new pages.
+- The cumulative diff is small but the static analysis surface is significant: PHPStan L9 stays clean across the engine refactor; PHPUnit gains `BackupRetentionWrapperTest` (2) and `RestoreStagingPathTest` (8) — 411 tests, 0 failures.
+
+---
+
 ## [3.17.0] - 2026-04-28
 
 ### Added
@@ -1193,6 +1216,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.18.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.17.0...v3.18.0
 [3.17.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.16.0...v3.17.0
 [3.16.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.15.2...v3.16.0
 [3.15.2]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.15.1...v3.15.2
