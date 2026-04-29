@@ -244,12 +244,17 @@ class S3Client implements BackupClientInterface
 
         $ch = curl_init();
         try {
+            // CURLOPT_FILE redirects body bytes into $fh. Must NOT also set
+            // CURLOPT_RETURNTRANSFER explicitly — even setting it to its
+            // default value of false makes curl ignore CURLOPT_FILE on
+            // PHP 8.4+ and stream the body to stdout instead, leaking the
+            // raw downloaded payload into the HTTP response of any caller
+            // (verify on remote_backups.php, restore staging, etc.).
             curl_setopt_array($ch, [
                 CURLOPT_URL            => $this->nonEmptyUrl($url),
                 CURLOPT_HTTPGET        => true,
                 CURLOPT_HTTPHEADER     => $curlHeaders,
                 CURLOPT_FILE           => $fh,
-                CURLOPT_RETURNTRANSFER => false,
                 CURLOPT_FAILONERROR    => false,
                 CURLOPT_SSL_VERIFYPEER => true,
                 CURLOPT_TIMEOUT        => 600,
