@@ -64,15 +64,28 @@
     updateThemeButton();
 
     // --- Settings per-toggle auto-submit (#756) ---
-    // Each boolean setting renders as its own [data-setting-toggle] form.
-    // Submitting on `change` flips a single key without the legacy group-POST
-    // cascade silently flipping siblings. <noscript> exposes a Save button as
-    // fallback; the JS path simply submits the form, which works identically.
-    document.querySelectorAll("form[data-setting-toggle]").forEach(function(form) {
-      var checkbox = form.querySelector("input[type=checkbox][name=value]");
-      if (!checkbox) return;
-      checkbox.addEventListener("change", function() {
-        form.submit();
+    // Each bool setting has TWO inputs: the legacy checkbox inside the group
+    // form (name="k_..."), and a hidden shadow form #toggle-k_... bound via
+    // [data-setting-toggle-target]. On checkbox change we copy the current
+    // checked state to the shadow form's `value` input and submit it,
+    // triggering the per-key save path in settings.php (which does NOT
+    // cascade to sibling bools). The legacy "Save Group" button continues
+    // to function — JS users get instant per-toggle save, no-JS users get
+    // the legacy group-cascade behaviour.
+    document.querySelectorAll("input[type=checkbox][data-setting-toggle-target]").forEach(function(cb) {
+      cb.addEventListener("change", function() {
+        var key = cb.getAttribute("data-setting-toggle-target") || "";
+        var fieldName = "k_" + key.replace(/\./g, "__");
+        var shadow = document.getElementById("toggle-" + fieldName);
+        if (!shadow) return;
+        var existing = shadow.querySelector("input[name=value]");
+        if (existing) existing.parentNode.removeChild(existing);
+        var v = document.createElement("input");
+        v.type = "hidden";
+        v.name = "value";
+        v.value = cb.checked ? "1" : "0";
+        shadow.appendChild(v);
+        shadow.submit();
       });
     });
 
