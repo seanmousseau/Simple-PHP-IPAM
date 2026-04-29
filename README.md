@@ -12,9 +12,13 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.19.0
+## What's new in v3.19.1
 
-- **Streaming encrypted backups.** Backup creation and restore both stream in 64 KiB chunks instead of loading the whole file into memory. Multi-GB databases no longer OOM during encrypted backup runs. New on-disk format (`IPAMBKP2`) uses AES-256-CTR + HMAC-SHA256 in encrypt-then-MAC mode with a per-file HKDF salt. Existing v3.17/v3.18 (`IPAMBKP1`) backups continue to restore unchanged on v3.19+ — no migration needed.
+Hotfix release closing two long-standing gaps in the v3.17 remote-backup pipeline:
+
+- **S3 destinations now actually work.** A SigV4 canonicalization bug present since v3.17.0 caused every S3-compatible server (AWS, Wasabi, MinIO, Ceph) to reject signatures with HTTP 403. If you tried to configure an S3 destination on v3.17–v3.19 and gave up, re-test it on v3.19.1 — existing destinations and credentials work unchanged.
+- **Remote backup destinations are now engine-agnostic.** MySQL and PostgreSQL operators can finally configure cloud destinations (S3 / SFTP / Local) — the dump engine now dispatches to `mysqldump` / `pg_dump` for non-SQLite drivers. Output is `.sql.gz` for all three engines; encryption and upload paths are unchanged.
+- **v3.19.0 streaming encrypted backups** ship in v3.19.1 too: 64 KiB chunked AES-256-CTR + HMAC-SHA256, per-file HKDF salt, multi-GB databases no longer OOM. v3.17/v3.18 single-shot-GCM backups continue to restore unchanged via the back-compat decrypt path.
 
 [Full changelog →](CHANGELOG.md)
 
