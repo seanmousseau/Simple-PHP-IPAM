@@ -946,7 +946,7 @@ If CodeRabbit or a human reviewer asks for a change on the open PR:
    - Quickstart `tar` command: `ipam-X.Y.Z.tar.gz`
    - Update or add feature cards for significant new features
    - **If the release introduces new `docs/*.md` guides, link them from the relevant feature card.** WordPress serves them under `/docs/<slug>/` (e.g. `docs/backups.md` → `/docs/backups/`). Use `<a href="<?php echo esc_url(home_url('/docs/<slug>/')); ?>">Guide name</a>` inside the feature card description. Verify the URL resolves on the live site after deploy.
-   - **Cloudflare cache purge** after deploy: `curl -X POST "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/purge_cache" -H "Authorization: Bearer $CF_API_TOKEN" -H "Content-Type: application/json" --data '{"purge_everything":true}'` (zone ID + token in `~/.claude/dev-secrets.env`).
+   - **Cache purge** after deploy — `simplephpipam.com` is fronted by **QUIC.cloud CDN**, not Cloudflare. Use the **LiteSpeed Cache (LSCache) WordPress plugin** to purge all three layers in one shot: LSCache (page cache), OPcache (PHP), and QUIC.cloud CDN. Via WP-CLI on the OLS host: `ssh root@192.168.80.23 "wp --path=/usr/local/lsws/vhosts/simplephpipam.com/html --allow-root litespeed-purge all && wp --path=/usr/local/lsws/vhosts/simplephpipam.com/html --allow-root litespeed-purge cdn"`. Verify by hitting the site with cache-buster query string and confirming new HTML hits the origin. Cloudflare purge applies only to `demo.simplephpipam.com`, not the marketing site.
    Then push and deploy:
    ```bash
    cd website/
