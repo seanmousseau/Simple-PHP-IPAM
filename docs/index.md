@@ -56,6 +56,7 @@ See the [Installation guide](install.md) to get up and running in minutes.
 | [Sidebar & Command Palette](sidebar-and-command-palette.md) | Navigation layout, mobile overlay, ⌘K command palette |
 | [Scanning](scanning.md) | Network discovery and scheduled scanning |
 | [Advanced Networking](advanced-networking.md) | VRF BGP, VLAN ranges, aggregates, PD pools, DNS export |
+| [Contacts](contacts.md) | Linking contacts to IP addresses via the Owner typeahead |
 | [REST API](api.md) | Endpoint reference, authentication, examples, OpenAPI spec |
 | [Webhooks](webhooks.md) | Outbound webhooks: events, payload, signing, retry, SSRF protection |
 | [DHCP Config Export](dhcp-export.md) | Generate `dhcpd.conf` and Kea JSON from subnet options and reservations |

@@ -517,6 +517,8 @@ To attach tags atomically when creating a subnet or address, pass `tag_ids: [1, 
 
 ### Contacts
 
+> For the in-app workflow (typeahead, inline edit, contact card on the address list), see [Contacts](contacts.md).
+
 ```
 GET /api.php?resource=contacts
 ```
