@@ -262,3 +262,43 @@ Currently in use:
 Pick a fresh `NN` outside that set (`10.92`, `10.94`, `10.95`, …) for any new spec. The shared `TEST_CIDR2` constant is for legacy specs only — new specs declare a local constant. Do not migrate the four legacy specs off `TEST_CIDR2` unless you are also addressing the CIDR-race directly; partial migration leaves the same race in a smaller surface.
 
 The `deleteSubnet()` fixture in `testing/playwright/fixtures/ipam.ts` is now a bounded loop (defence-in-depth against orphan rows when `UNIQUE(cidr, vrf_id)` doesn't dedupe NULL `vrf_id` per SQL standard), but the loop is not a substitute for unique-CIDR-per-spec — the loop only handles the same spec's own orphans, not cross-spec races.
+
+### Dashboard is excluded from visual-regression — manual smoke check during release gate
+
+`tests/visual-regression.spec.ts` no longer captures `dashboard.php`. Every widget on the dashboard reflects live DB state — security-warning banner (config / app_secret / HTTPS state), Top IPv4 Subnets by Usage (live address counts), Addresses by Site (per-site totals), Expiring Addresses (lease-date sensitive), Recent Activity (audit_log timestamps + ordering). Under the parallel Playwright harness, dozens of workers mutate the shared SQLite DB concurrently with the dashboard capture, so every widget renders differently between baseline-snapshot and re-run. Masking individual widgets via Playwright `mask` failed (variable widget heights leak diff pixels into the surrounding layout); DOM-removal via `page.evaluate` only solved one of five volatile sources. Restoring dashboard VR coverage requires a mutation-isolated capture path (separate worker pool with its own DB, or a serial pre-mutation capture step) — tracked as a v3.20.0 follow-up.
+
+**Manual smoke check during every release gate.** Because the dashboard is a high-traffic page that can break in obvious ways (broken widget, broken theme, layout collapse on small viewports), the AI agent driving the release gate MUST manually verify it. Procedure:
+
+1. After `bootstrap-app.sh sqlite` is up, use the Playwright MCP to navigate to `https://127.0.0.1:8443/dashboard.php` (after logging in as `demo`/`demo`) at viewport widths 1440, 1024, 768, and 375.
+2. At each viewport, take a screenshot via `browser_take_screenshot` and **read it** (multimodal — the agent has visual access to PNGs).
+3. Check for: missing widgets (top-subnets, by-site, expiring-addresses, recent-activity, metrics row), broken layout (overflow, collapsed columns, off-canvas elements), broken theme switch (light vs dark — toggle via the data-theme attribute), zero-data states (empty tables should show a graceful empty state, not a broken table head).
+4. If anything looks wrong, treat it as a release-blocking failure and surface to the user before pushing.
+5. Repeat the same pass for the **mysql** and **pgsql** drivers — dashboard rendering differences across engines are the most common visible regressions.
+
+Skipping this manual check during a release run is a gate violation. The check is fast (~30 seconds per driver) and catches the failure mode that automated VR was supposed to but cannot reliably cover under parallelism.
+
+### Visual-regression baselines are platform-suffixed and need refreshing on intentional UI/seed changes
+
+`testing/playwright/tests/visual-regression.spec.ts-snapshots/` holds per-platform PNG baselines (`*-darwin.png`, `*-linux.png`). Filenames include the host OS because Chromium's text shaping and AA differ between CoreText (macOS) and HarfBuzz+FreeType (Linux Docker), producing low-amplitude pixel diffs even when the bundled `@font-face` woff2s render identically.
+
+CI's `playwright.yml` job runs in Linux Docker, so it only validates and refreshes `*-linux.png` baselines. **Darwin baselines drift over time** — every release that grows `demo_seed.php` (more rows on the captured pages) or restructures a captured page will eventually push the rendered page taller than the committed darwin baseline, and a local-mac VR run shows a cluster of visual-regression failures with the signature: `Expected an image WIDTHpx by Hpx, received WIDTHpx by H'px` where `H' < H`, on `subnets-*` / `addresses-*` / `search-*` across the 4 viewports. (Dashboard is excluded from automated VR — see the section above.)
+
+**This is not a regression.** It is platform-suffixed baseline maintenance debt.
+
+**When you see this pattern during a local-mac gate run:**
+
+1. Confirm that none of the touched files in your branch are UI / seed / template changes. (`git diff origin/main...HEAD --stat | grep -E 'subnets\.php|dashboard\.php|demo_seed\.php|page_header|app\.css'` — should be empty.)
+2. If your branch is UI-clean, refresh the darwin baselines in a dedicated commit on your release branch:
+
+   ```bash
+   bash testing/playwright/bootstrap-app.sh sqlite
+   (cd testing/playwright && \
+     IPAM_BASE_URL=https://127.0.0.1:8443 IPAM_ADMIN_USER=demo IPAM_ADMIN_PASS=demo \
+     npx playwright test visual-regression.spec.ts --update-snapshots)
+   git add testing/playwright/tests/visual-regression.spec.ts-snapshots/
+   git commit -m "test(vr): refresh darwin baselines for vX.Y.Z"
+   ```
+
+3. If your branch DID intentionally change UI / seed / templates, the same procedure applies but the commit message should reference the changes that justify the refresh.
+
+Linux baselines are CI's responsibility; do not refresh them locally. If a `*-linux.png` baseline ever needs refreshing, do it in a dedicated PR run through the CI pipeline so the captures come from the canonical environment.

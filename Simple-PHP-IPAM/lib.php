@@ -3754,6 +3754,11 @@ function backup_info(array $config): array
 const BACKUP_MAGIC   = 'IPAMBKP1';  // 8-byte magic + version tag
 const BACKUP_IV_LEN  = 12;          // AES-256-GCM recommended IV length
 const BACKUP_TAG_LEN = 16;          // GCM authentication tag length (max)
+const BACKUP_MAGIC_V2     = 'IPAMBKP2';  // 8-byte streaming format magic
+const BACKUP_SALT_LEN     = 16;          // HKDF salt length (v2)
+const BACKUP_CTR_IV_LEN   = 16;          // AES-256-CTR initial counter block
+const BACKUP_HMAC_LEN     = 32;          // HMAC-SHA256 tag length
+const BACKUP_STREAM_CHUNK = 65536;       // 64 KiB; counter step = 4096 blocks per chunk
 
 /**
  * Derive a fixed-length key from a master secret using HKDF-SHA-256.
@@ -3802,6 +3807,245 @@ function backup_encrypt(string $plain, string $appSecret): string
         throw new RuntimeException('backup encryption failed');
     }
     return BACKUP_MAGIC . $iv . $tag . $ct;
+}
+
+/**
+ * Stream-encrypt $srcPath into $dstPath using the v2 (IPAMBKP2) format:
+ * AES-256-CTR + HMAC-SHA256 in encrypt-then-MAC mode.
+ *
+ * Memory bound is BACKUP_STREAM_CHUNK + bookkeeping, regardless of input size.
+ *
+ * @throws RuntimeException on I/O, openssl, or appSecret failure.
+ */
+function backup_encrypt_stream(string $srcPath, string $dstPath, string $appSecret): void
+{
+    if ($appSecret === '') {
+        throw new RuntimeException('backup encryption requires app_secret to be set in config.php');
+    }
+    $salt = random_bytes(BACKUP_SALT_LEN);
+    $iv   = random_bytes(BACKUP_CTR_IV_LEN);
+    // Per-file salt is passed via HKDF's salt parameter (used in HKDF-Extract)
+    // for proper RFC 5869 strengthening. The fixed 'ipam-v3:backup-v2' goes in
+    // info for domain separation across purposes.
+    $keys = ipam_hkdf_sha256($appSecret, 'ipam-v3:backup-v2', 64, $salt);
+    $encKey = substr($keys, 0, 32);
+    $macKey = substr($keys, 32, 32);
+
+    $in = @fopen($srcPath, 'rb');
+    if ($in === false) {
+        throw new RuntimeException('backup_encrypt_stream: cannot open source');
+    }
+    $out = @fopen($dstPath, 'wb');
+    if ($out === false) {
+        fclose($in);
+        throw new RuntimeException('backup_encrypt_stream: cannot open dest');
+    }
+
+    try {
+        $header = BACKUP_MAGIC_V2 . $salt . $iv;
+        if (fwrite($out, $header) !== strlen($header)) {
+            throw new RuntimeException('backup_encrypt_stream: short write on header');
+        }
+        $hmacCtx = hash_init('sha256', HASH_HMAC, $macKey);
+        hash_update($hmacCtx, $header);
+
+        $counter = $iv;
+        while (!feof($in)) {
+            $chunk = fread($in, BACKUP_STREAM_CHUNK);
+            if ($chunk === false) {
+                throw new RuntimeException('backup_encrypt_stream: read failed');
+            }
+            if ($chunk === '') {
+                continue;
+            }
+            $ct = openssl_encrypt($chunk, 'aes-256-ctr', $encKey, OPENSSL_RAW_DATA, $counter);
+            if ($ct === false) {
+                throw new RuntimeException('backup_encrypt_stream: openssl_encrypt failed');
+            }
+            if (fwrite($out, $ct) !== strlen($ct)) {
+                throw new RuntimeException('backup_encrypt_stream: short write on ciphertext');
+            }
+            hash_update($hmacCtx, $ct);
+            $counter = ipam_backup_advance_ctr($counter, intdiv(strlen($chunk) + 15, 16));
+        }
+
+        $tag = hash_final($hmacCtx, true);
+        if (fwrite($out, $tag) !== BACKUP_HMAC_LEN) {
+            throw new RuntimeException('backup_encrypt_stream: short write on hmac');
+        }
+    } finally {
+        fclose($in);
+        fclose($out);
+    }
+}
+
+/**
+ * Stream-decrypt $srcPath (v2 IPAMBKP2 format) into $dstPath.
+ *
+ * Single-pass: decrypts each ciphertext chunk into a temporary file in the
+ * same directory as $dstPath while accumulating an HMAC-SHA256 over the
+ * exact bytes that were just decrypted (encrypt-then-MAC verification of
+ * the same buffer). The temp file is atomically renamed to $dstPath only
+ * after the trailing HMAC tag matches; on any failure path the temp is
+ * unlinked, so a failed verification leaves no plaintext file behind at
+ * $dstPath. Avoids the TOCTOU window of a two-pass design where the
+ * source file could change between verify and decrypt.
+ *
+ * @throws RuntimeException on bad magic, truncation, openssl failure, or HMAC mismatch.
+ */
+function backup_decrypt_stream(string $srcPath, string $dstPath, string $appSecret): void
+{
+    if ($appSecret === '') {
+        throw new RuntimeException('backup decryption requires app_secret to be set in config.php');
+    }
+    $size = @filesize($srcPath);
+    if ($size === false) {
+        throw new RuntimeException('backup_decrypt_stream: cannot stat source');
+    }
+    $headerLen = strlen(BACKUP_MAGIC_V2) + BACKUP_SALT_LEN + BACKUP_CTR_IV_LEN;
+    $minLen = $headerLen + BACKUP_HMAC_LEN;
+    if ($size < $minLen) {
+        throw new RuntimeException('backup_decrypt_stream: file too short');
+    }
+    $ctLen = $size - $minLen;
+
+    $in = @fopen($srcPath, 'rb');
+    if ($in === false) {
+        throw new RuntimeException('backup_decrypt_stream: cannot open source');
+    }
+
+    $tmpPath = $dstPath . '.decrypting.' . bin2hex(random_bytes(4));
+    $out = null;
+    try {
+        $header = (string) fread($in, $headerLen);
+        if (strlen($header) !== $headerLen) {
+            throw new RuntimeException('backup_decrypt_stream: short header read');
+        }
+        if (substr($header, 0, 8) !== BACKUP_MAGIC_V2) {
+            throw new RuntimeException('backup_decrypt_stream: bad magic');
+        }
+        $salt = substr($header, 8, BACKUP_SALT_LEN);
+        $iv   = substr($header, 8 + BACKUP_SALT_LEN, BACKUP_CTR_IV_LEN);
+
+        // Per-file salt is passed via HKDF's salt parameter (HKDF-Extract).
+        $keys = ipam_hkdf_sha256($appSecret, 'ipam-v3:backup-v2', 64, $salt);
+        $encKey = substr($keys, 0, 32);
+        $macKey = substr($keys, 32, 32);
+
+        $out = @fopen($tmpPath, 'wb');
+        if ($out === false) {
+            throw new RuntimeException('backup_decrypt_stream: cannot open tmp dst');
+        }
+
+        // Single-pass decrypt + HMAC over the exact bytes processed.
+        $hmacCtx = hash_init('sha256', HASH_HMAC, $macKey);
+        hash_update($hmacCtx, $header);
+        $counter = $iv;
+        $remaining = $ctLen;
+        while ($remaining > 0) {
+            $want = (int) min(BACKUP_STREAM_CHUNK, $remaining);
+            $buf = fread($in, $want);
+            if ($buf === false || strlen($buf) !== $want) {
+                throw new RuntimeException('backup_decrypt_stream: short ciphertext read');
+            }
+            hash_update($hmacCtx, $buf);
+            $pt = openssl_decrypt($buf, 'aes-256-ctr', $encKey, OPENSSL_RAW_DATA, $counter);
+            if ($pt === false) {
+                throw new RuntimeException('backup_decrypt_stream: openssl_decrypt failed');
+            }
+            if (fwrite($out, $pt) !== strlen($pt)) {
+                throw new RuntimeException('backup_decrypt_stream: short write to tmp');
+            }
+            $counter = ipam_backup_advance_ctr($counter, intdiv(strlen($buf) + 15, 16));
+            $remaining -= $want;
+        }
+        $observed = (string) fread($in, BACKUP_HMAC_LEN);
+        if (strlen($observed) !== BACKUP_HMAC_LEN) {
+            throw new RuntimeException('backup_decrypt_stream: short hmac read');
+        }
+        $expected = hash_final($hmacCtx, true);
+        if (!hash_equals($expected, $observed)) {
+            throw new RuntimeException('backup_decrypt_stream: hmac mismatch');
+        }
+
+        // HMAC verified — close out, atomically rename tmp into place.
+        fclose($out);
+        $out = null;
+        if (!@rename($tmpPath, $dstPath)) {
+            throw new RuntimeException('backup_decrypt_stream: rename to dst failed');
+        }
+    } catch (Throwable $e) {
+        if (is_resource($out)) {
+            fclose($out);
+        }
+        if (is_file($tmpPath)) {
+            @unlink($tmpPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmpPath built from $dstPath + random suffix; no user input
+        }
+        throw $e;
+    } finally {
+        fclose($in);
+    }
+}
+
+/**
+ * Format-detecting decrypt-to-path. Peeks the 8-byte magic header:
+ *   IPAMBKP2 → backup_decrypt_stream() (v3.19+ streaming).
+ *   IPAMBKP1 → load full file → backup_decrypt() → write (v3.17–v3.18 back-compat,
+ *              still bound by original memory ceiling for old backups).
+ *
+ * @throws RuntimeException on unknown magic or any underlying failure.
+ */
+function backup_decrypt_to_path(string $srcPath, string $dstPath, string $appSecret): void
+{
+    $fh = @fopen($srcPath, 'rb');
+    if ($fh === false) {
+        throw new RuntimeException('backup_decrypt_to_path: cannot open source');
+    }
+    $magic = (string) fread($fh, 8);
+    fclose($fh);
+
+    if ($magic === BACKUP_MAGIC_V2) {
+        backup_decrypt_stream($srcPath, $dstPath, $appSecret);
+        return;
+    }
+    if ($magic === BACKUP_MAGIC) {
+        $blob = @file_get_contents($srcPath);
+        if ($blob === false) {
+            throw new RuntimeException('backup_decrypt_to_path: cannot read v1 blob');
+        }
+        $plain = backup_decrypt($blob, $appSecret);
+        $written = @file_put_contents($dstPath, $plain);
+        if ($written !== strlen($plain)) {
+            // Partial write (e.g. disk full) — discard truncated plaintext.
+            if (is_file($dstPath)) {
+                @unlink($dstPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $dstPath is caller-supplied tmpfile path, no user input
+            }
+            throw new RuntimeException('backup_decrypt_to_path: cannot write v1 plaintext');
+        }
+        return;
+    }
+    throw new RuntimeException('backup_decrypt_to_path: unknown backup format');
+}
+
+/**
+ * Advance a 16-byte big-endian counter block by $blocks (treats the whole
+ * 16 bytes as a single big-endian integer). Returns the new counter; the
+ * input is unchanged.
+ */
+function ipam_backup_advance_ctr(string $counter, int $blocks): string
+{
+    $unpacked = unpack('C*', $counter);
+    if ($unpacked === false) {
+        throw new RuntimeException('ipam_backup_advance_ctr: unpack failed');
+    }
+    $bytes = array_values($unpacked);
+    $carry = $blocks;
+    for ($i = 15; $i >= 0 && $carry > 0; $i--) {
+        $sum = $bytes[$i] + ($carry & 0xff);
+        $bytes[$i] = $sum & 0xff;
+        $carry = ($carry >> 8) + ($sum >> 8);
+    }
+    return pack('C*', ...$bytes);
 }
 
 /**
