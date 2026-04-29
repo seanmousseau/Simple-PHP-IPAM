@@ -23,17 +23,24 @@ interface VRPage {
   name: string;
   path: string;
   skipAuth?: boolean;
-  // CSS selectors for regions whose content varies between runs
-  // (timestamps, audit log, "X minutes ago"); masked at screenshot time.
-  volatileSelectors?: string[];
+  // CSS selectors hidden via display:none before screenshot capture.
+  // Use for sections whose content AND height vary between runs
+  // (e.g. audit log rows where the `details` column wraps differently
+  // per row, making the rendered widget height non-deterministic). The
+  // Playwright `mask` option paints a fixed-size pink box and breaks
+  // when the masked region changes size; display:none removes the
+  // region from layout entirely so the rest of the page renders the
+  // same regardless of what would have been there.
+  hideSelectors?: string[];
 }
 
 const PAGES: VRPage[] = [
-  // Recent Activity card shows the 10 newest audit_log rows whose timestamps
-  // and contents shift on every test login. Mask it so the rest of the
-  // dashboard remains a meaningful regression target.
+  // Recent Activity card shows the 10 newest audit_log rows. The `details`
+  // column wraps to a variable number of lines per row, so the widget's
+  // rendered height shifts between runs. Hide it entirely to keep the
+  // rest of the dashboard a meaningful regression target.
   { name: 'dashboard', path: 'dashboard.php',
-    volatileSelectors: ['[data-widget="recent-activity"]'] },
+    hideSelectors: ['[data-widget="recent-activity"]'] },
   { name: 'subnets', path: 'subnets.php' },
   { name: 'addresses', path: 'addresses.php' },
   { name: 'search', path: 'search.php?q=10' },
@@ -78,10 +85,19 @@ test.describe('visual regression baseline', () => {
         await page.waitForLoadState('networkidle');
         await setTheme(page, theme);
 
-        const mask = (pg.volatileSelectors ?? []).map((sel) => page.locator(sel));
+        if (pg.hideSelectors && pg.hideSelectors.length > 0) {
+          // The app has `style-src 'self'` so addStyleTag is blocked. Remove
+          // the volatile element from the DOM instead — page.evaluate runs
+          // script that's already CSP-cleared (script-src 'self' + nonce).
+          await page.evaluate((selectors: string[]) => {
+            for (const sel of selectors) {
+              document.querySelectorAll(sel).forEach((el) => el.remove());
+            }
+          }, pg.hideSelectors);
+        }
         await expect(page).toHaveScreenshot(
           `${pg.name}-${theme}.png`,
-          { ...SCREENSHOT_OPTS, mask },
+          SCREENSHOT_OPTS,
         );
       });
     }
