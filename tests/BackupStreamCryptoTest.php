@@ -126,4 +126,41 @@ final class BackupStreamCryptoTest extends TestCase
         $this->expectException(RuntimeException::class);
         backup_decrypt_stream($enc, $dst, $secret);
     }
+
+    /**
+     * Acceptance test from issue #769: stream-encrypt + stream-decrypt a >100 MB
+     * payload while peak memory usage stays well below 128 MiB.
+     *
+     * Skipped if the test host has less than 512 MiB of free /tmp space.
+     *
+     * @group slow
+     */
+    public function testLargePayloadStreamsBelowMemoryCap(): void
+    {
+        $tmpFree = @disk_free_space($this->tmpDir);
+        if ($tmpFree !== false && $tmpFree < 512 * 1024 * 1024) {
+            $this->markTestSkipped('insufficient free /tmp space (need 512 MiB headroom)');
+        }
+        $secret = 'unit-test-secret-not-real';
+        $src = $this->tmpDir . '/big.bin';
+        $enc = $this->tmpDir . '/big.enc';
+        $dec = $this->tmpDir . '/big.dec';
+
+        // Build a 110 MiB synthetic file in 1 MiB chunks.
+        $fh = fopen($src, 'wb');
+        $this->assertNotFalse($fh);
+        $block = str_repeat("ABCDEFGHIJKLMNOP", 65536); // 1 MiB
+        for ($i = 0; $i < 110; $i++) fwrite($fh, $block);
+        fclose($fh);
+
+        $beforeEnc = memory_get_peak_usage(true);
+        backup_encrypt_stream($src, $enc, $secret);
+        backup_decrypt_stream($enc, $dec, $secret);
+        $peak = memory_get_peak_usage(true);
+
+        $this->assertSame(hash_file('sha256', $src), hash_file('sha256', $dec));
+        $this->assertLessThan(96 * 1024 * 1024, $peak,
+            sprintf('peak memory %d exceeded 96 MiB cap (started at %d)', $peak, $beforeEnc));
+        $this->assertGreaterThan(110 * 1024 * 1024, filesize($enc));
+    }
 }
