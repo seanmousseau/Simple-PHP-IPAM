@@ -945,8 +945,39 @@ If CodeRabbit or a human reviewer asks for a change on the open PR:
    - Download button label (appears twice: hero CTA and quickstart section)
    - Quickstart `tar` command: `ipam-X.Y.Z.tar.gz`
    - Update or add feature cards for significant new features
-   - **If the release introduces new `docs/*.md` guides, link them from the relevant feature card.** WordPress serves them under `/docs/<slug>/` (e.g. `docs/backups.md` → `/docs/backups/`). Use `<a href="<?php echo esc_url(home_url('/docs/<slug>/')); ?>">Guide name</a>` inside the feature card description. Verify the URL resolves on the live site after deploy.
-   - **Cache purge** after deploy — `simplephpipam.com` is fronted by **QUIC.cloud CDN**, not Cloudflare. Use the **LiteSpeed Cache (LSCache) WordPress plugin** to purge all three layers in one shot: LSCache (page cache), OPcache (PHP), and QUIC.cloud CDN. Via WP-CLI on the OLS host: `ssh root@192.168.80.23 "wp --path=/usr/local/lsws/vhosts/simplephpipam.com/html --allow-root litespeed-purge all && wp --path=/usr/local/lsws/vhosts/simplephpipam.com/html --allow-root litespeed-purge cdn"`. Verify by hitting the site with cache-buster query string and confirming new HTML hits the origin. Cloudflare purge applies only to `demo.simplephpipam.com`, not the marketing site.
+   - **If the release introduces new `docs/*.md` guides** — wiring a new doc requires changes in **six places** plus a WordPress page; missing any one causes a blank render, broken nav entry, or 404. Do **all** of these in one website PR:
+
+     1. **`docs/<slug>.md`** — write the doc. **Do NOT include Jekyll/YAML frontmatter** (`---\ntitle: …\n---`); the marked.js renderer on the marketing site does not strip it and it leaks as visible text at the top of the page. Existing docs (security.md, installation.md, etc.) have no frontmatter — match that convention.
+     2. **`website/functions.php`** — add `'<slug>' => '<slug>.md'` to `sipam_doc_md_file()`. **Without this, the page renders blank** — `$rawUrl` is empty so the loader script is omitted entirely.
+     3. **`website/header.php`** — add `<li role="menuitem"><a href="<?php echo esc_url(home_url('/docs/<slug>/')); ?>">Label</a></li>` to the Docs nav dropdown.
+     4. **`website/page.php`** — add `['slug' => '<slug>', 'label' => 'Label']` to the `$docs` array (left sidebar shown on every doc page).
+     5. **`website/page-docs.php`** — add an `<a class="doc-card">` block to the docs index grid.
+     6. **Feature card link in `website/front-page.php`** — add `<a href="<?php echo esc_url(home_url('/docs/<slug>/')); ?>">Guide name</a>` inside the relevant feature card description so visitors can discover it from the homepage.
+     7. **Create the WordPress page** via WP-CLI (the page content is irrelevant — `page.php` fetches the markdown from GitHub raw — but the page must exist for the URL to resolve):
+        ```bash
+        # Docs parent page is ID 22
+        ssh root@192.168.80.23 "wp --path=/usr/local/lsws/vhosts/simplephpipam.com/html --allow-root \
+          post create --post_type=page --post_status=publish \
+          --post_title='<Title>' --post_name='<slug>' --post_parent=22 --post_content=''"
+        ```
+   - **Cache purge** after deploy — `simplephpipam.com` is fronted by **QUIC.cloud CDN**, not Cloudflare. The full purge sequence (in order — skipping any step leaves stale state):
+     ```bash
+     ssh root@192.168.80.23 "
+       cd /usr/local/lsws/vhosts/simplephpipam.com/html
+       # 1. Reset PHP OPcache so new PHP files load
+       echo '<?php opcache_reset(); echo \"ok\";' > opcache_flush.php
+       chown nobody:nogroup opcache_flush.php
+       curl -sk https://simplephpipam.com/opcache_flush.php; echo
+       rm opcache_flush.php
+       # 2. Wipe LiteSpeed page cache directory
+       rm -rf /usr/local/lsws/vhosts/simplephpipam.com/cachedata/*
+       # 3. Flush WP rewrite rules (required after creating new pages — without this /docs/<slug>/ returns 404)
+       wp --allow-root rewrite flush
+       # 4. Purge LSCache + QUIC.cloud edge in one shot (QUIC.cloud caches pre-creation 404s)
+       wp --allow-root litespeed-purge all
+     "
+     ```
+     Verify each new doc URL: `curl -sk -o /dev/null -w '%{http_code}\n' https://simplephpipam.com/docs/<slug>/` — expect **200**. Then load in a browser with **DevTools → Application → Storage → Clear site data** (browser caching on this site is aggressive; hard-refresh is not enough). Cloudflare purge applies only to `demo.simplephpipam.com`, not the marketing site.
    Then push and deploy:
    ```bash
    cd website/
