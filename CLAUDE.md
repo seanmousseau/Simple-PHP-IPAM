@@ -945,6 +945,8 @@ If CodeRabbit or a human reviewer asks for a change on the open PR:
    - Download button label (appears twice: hero CTA and quickstart section)
    - Quickstart `tar` command: `ipam-X.Y.Z.tar.gz`
    - Update or add feature cards for significant new features
+   - **If the release introduces new `docs/*.md` guides, link them from the relevant feature card.** WordPress serves them under `/docs/<slug>/` (e.g. `docs/backups.md` → `/docs/backups/`). Use `<a href="<?php echo esc_url(home_url('/docs/<slug>/')); ?>">Guide name</a>` inside the feature card description. Verify the URL resolves on the live site after deploy.
+   - **Cloudflare cache purge** after deploy: `curl -X POST "https://api.cloudflare.com/client/v4/zones/$CF_ZONE_ID/purge_cache" -H "Authorization: Bearer $CF_API_TOKEN" -H "Content-Type: application/json" --data '{"purge_everything":true}'` (zone ID + token in `~/.claude/dev-secrets.env`).
    Then push and deploy:
    ```bash
    cd website/
