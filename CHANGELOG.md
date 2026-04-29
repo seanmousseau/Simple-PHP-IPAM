@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.19.0] - 2026-04-29
+
+### Changed
+- Encrypted backups now stream both during creation and during restore staging. The new on-disk format (`IPAMBKP2`) uses AES-256-CTR + HMAC-SHA256 in encrypt-then-MAC mode, with 64 KiB streaming chunks. Memory usage is bounded regardless of database size — multi-GB backups no longer OOM (#769).
+- Restore is single-pass: each chunk is decrypted into a temporary file in the destination directory while an HMAC accumulates over the same ciphertext. The temp file is atomically renamed to the staged path only after the trailing MAC matches; on any failure the temp is unlinked, so failed verification leaves no plaintext file behind.
+- Backward compatibility: v3.17 and v3.18 single-shot AES-256-GCM backups (`IPAMBKP1`) continue to restore unchanged via the back-compat decrypt path. No migration required for existing backups.
+
+### Security
+- Per-file HKDF salt fed through the RFC 5869 `salt` parameter (HKDF-Extract): every v2 backup derives a fresh enc_key + mac_key via `HKDF-SHA256(app_secret, info='ipam-v3:backup-v2', salt=<random 16 B>)`. Two backups with the same `app_secret` no longer share key material.
+- HMAC covers magic + salt + iv + ciphertext, so an attacker cannot tamper with the header.
+
+---
+
 ## [3.18.0] - 2026-04-29
 
 ### Added
@@ -1216,6 +1229,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.19.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.18.0...v3.19.0
 [3.18.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.17.0...v3.18.0
 [3.17.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.16.0...v3.17.0
 [3.16.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.15.2...v3.16.0

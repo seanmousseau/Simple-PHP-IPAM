@@ -12,17 +12,9 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.18.0
+## What's new in v3.19.0
 
-A polish release closing five milestone issues: per-key Settings save, backup/restore code-quality polish, contacts UX documentation, and a PostgreSQL Playwright flake fix. No schema migrations, no new runtime dependencies, no new pages.
-
-- **Per-toggle Settings save.** Flipping one MFA toggle no longer silently flips sibling toggles. Each boolean now renders as its own form and auto-submits on change. The legacy group form still works for non-bool fields. (#756)
-- **Backup engines refactored to procedural.** `BackupEngine` and `RestoreEngine` are now plain top-level functions in a new `lib/backup.php`, matching the project's procedural ethos. Behaviour-equivalent — no schema, API, or UI changes. (#762)
-- **Restore staging-dir guard centralized.** A single `ipam_restore_assert_staged_path()` helper is called at every write site in the restore code path, defending against future refactors that might accidentally write outside `data/tmp/`. (#762)
-- **Backup retention clock alignment.** `ipam_backup_apply_retention()` now accepts and forwards `$nowEpoch`; `cron.php` pins the cron-tick epoch and threads it through, so retention prune timing is aligned to the tick rather than drifting with `time()`. (#762)
-- **Settings + MFA card polish.** Skip-link, rail width fix at 768–900px viewports, lifted inline styles, dropped italic on the unavailable-method pill, switched preserved-enrollment hint to `role="note"`. (#758)
-- **PostgreSQL Playwright flake fixed.** The shared `deleteSubnet()` fixture is now bounded-loop instead of single-shot, eliminating the orphan-subnet pollution that caused intermittent `unassigned.spec.ts:76` failures. (#760)
-- **New doc:** [Contacts](docs/contacts.md) — linking contacts to IP addresses via the Owner typeahead. (#759)
+- **Streaming encrypted backups.** Backup creation and restore both stream in 64 KiB chunks instead of loading the whole file into memory. Multi-GB databases no longer OOM during encrypted backup runs. New on-disk format (`IPAMBKP2`) uses AES-256-CTR + HMAC-SHA256 in encrypt-then-MAC mode with a per-file HKDF salt. Existing v3.17/v3.18 (`IPAMBKP1`) backups continue to restore unchanged on v3.19+ — no migration needed.
 
 [Full changelog →](CHANGELOG.md)
 

@@ -185,18 +185,15 @@ function ipam_backup_dump_to_tmp(PDO $db): string
 
 function ipam_backup_encrypt_to_tmp(string $srcPath, string $appSecret): string
 {
-    $plain = @file_get_contents($srcPath);
-    if ($plain === false) {
-        throw new RuntimeException('ipam_backup: cannot read dump for encryption');
-    }
     $tmp = tempnam(sys_get_temp_dir(), 'ipambkE_');
     if ($tmp === false) {
         throw new RuntimeException('ipam_backup: tempnam failed');
     }
-    $cipher = backup_encrypt($plain, $appSecret);
-    if (@file_put_contents($tmp, $cipher) === false) {
+    try {
+        backup_encrypt_stream($srcPath, $tmp, $appSecret);
+    } catch (Throwable $e) {
         @unlink($tmp); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmp is tempnam()-generated, no user input
-        throw new RuntimeException('ipam_backup: cannot write encrypted blob');
+        throw $e;
     }
     return $tmp;
 }
@@ -359,15 +356,8 @@ function ipam_restore_prepare_for_restore(PDO $db, array $config, int $destinati
             if ($appSecret === '') {
                 throw new RuntimeException('ipam_restore: encrypted backup but app_secret is empty');
             }
-            $cipherBlob = @file_get_contents($downloadPath);
-            if ($cipherBlob === false) {
-                throw new RuntimeException('ipam_restore: cannot read downloaded blob');
-            }
-            $plain = backup_decrypt($cipherBlob, $appSecret);
             ipam_restore_assert_staged_path($stagedPath); // #762 item 3 — defence-in-depth before write
-            if (@file_put_contents($stagedPath, $plain) === false) {
-                throw new RuntimeException('ipam_restore: cannot write staged file');
-            }
+            backup_decrypt_to_path($downloadPath, $stagedPath, $appSecret);
         } else {
             ipam_restore_assert_staged_path($stagedPath); // #762 item 3 — defence-in-depth before write
             if (!@copy($downloadPath, $stagedPath)) {
