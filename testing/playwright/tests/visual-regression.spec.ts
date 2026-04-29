@@ -23,10 +23,17 @@ interface VRPage {
   name: string;
   path: string;
   skipAuth?: boolean;
+  // CSS selectors for regions whose content varies between runs
+  // (timestamps, audit log, "X minutes ago"); masked at screenshot time.
+  volatileSelectors?: string[];
 }
 
 const PAGES: VRPage[] = [
-  { name: 'dashboard', path: 'dashboard.php' },
+  // Recent Activity card shows the 10 newest audit_log rows whose timestamps
+  // and contents shift on every test login. Mask it so the rest of the
+  // dashboard remains a meaningful regression target.
+  { name: 'dashboard', path: 'dashboard.php',
+    volatileSelectors: ['[data-widget="recent-activity"]'] },
   { name: 'subnets', path: 'subnets.php' },
   { name: 'addresses', path: 'addresses.php' },
   { name: 'search', path: 'search.php?q=10' },
@@ -71,9 +78,10 @@ test.describe('visual regression baseline', () => {
         await page.waitForLoadState('networkidle');
         await setTheme(page, theme);
 
+        const mask = (pg.volatileSelectors ?? []).map((sel) => page.locator(sel));
         await expect(page).toHaveScreenshot(
           `${pg.name}-${theme}.png`,
-          SCREENSHOT_OPTS,
+          { ...SCREENSHOT_OPTS, mask },
         );
       });
     }
