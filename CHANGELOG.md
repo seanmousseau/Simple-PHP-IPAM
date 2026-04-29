@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.19.0] - 2026-04-29
+
+### Changed
+- Encrypted backups now stream both during creation and during restore staging. The new on-disk format (`IPAMBKP2`) uses AES-256-CTR + HMAC-SHA256 in encrypt-then-MAC mode, with 64 KiB streaming chunks. Memory usage is bounded regardless of database size — multi-GB backups no longer OOM (#769).
+- Restore is two-pass: pass 1 streams HMAC verification over the whole encrypted file; pass 2 writes plaintext only after the MAC has matched. Plaintext is never produced if verification fails.
+
+### Security
+- Per-file HKDF salt: every v2 backup derives a fresh enc_key + mac_key via `HKDF-SHA256(app_secret, 'ipam-v3:backup-v2:' || hex(salt))`. Two backups with the same `app_secret` no longer share key material.
+- HMAC covers magic + salt + iv + ciphertext, so an attacker cannot tamper with the header.
+
+### Compatibility
+- v3.17 and v3.18 single-shot AES-256-GCM backups (`IPAMBKP1`) continue to restore unchanged via the back-compat decrypt path. No migration required.
+
+---
+
 ## [3.18.0] - 2026-04-29
 
 ### Added
@@ -1216,6 +1231,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.19.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.18.0...v3.19.0
 [3.18.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.17.0...v3.18.0
 [3.17.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.16.0...v3.17.0
 [3.16.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.15.2...v3.16.0
