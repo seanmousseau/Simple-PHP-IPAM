@@ -356,15 +356,8 @@ function ipam_restore_prepare_for_restore(PDO $db, array $config, int $destinati
             if ($appSecret === '') {
                 throw new RuntimeException('ipam_restore: encrypted backup but app_secret is empty');
             }
-            $cipherBlob = @file_get_contents($downloadPath);
-            if ($cipherBlob === false) {
-                throw new RuntimeException('ipam_restore: cannot read downloaded blob');
-            }
-            $plain = backup_decrypt($cipherBlob, $appSecret);
             ipam_restore_assert_staged_path($stagedPath); // #762 item 3 — defence-in-depth before write
-            if (@file_put_contents($stagedPath, $plain) === false) {
-                throw new RuntimeException('ipam_restore: cannot write staged file');
-            }
+            backup_decrypt_to_path($downloadPath, $stagedPath, $appSecret);
         } else {
             ipam_restore_assert_staged_path($stagedPath); // #762 item 3 — defence-in-depth before write
             if (!@copy($downloadPath, $stagedPath)) {
