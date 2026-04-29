@@ -262,3 +262,29 @@ Currently in use:
 Pick a fresh `NN` outside that set (`10.92`, `10.94`, `10.95`, …) for any new spec. The shared `TEST_CIDR2` constant is for legacy specs only — new specs declare a local constant. Do not migrate the four legacy specs off `TEST_CIDR2` unless you are also addressing the CIDR-race directly; partial migration leaves the same race in a smaller surface.
 
 The `deleteSubnet()` fixture in `testing/playwright/fixtures/ipam.ts` is now a bounded loop (defence-in-depth against orphan rows when `UNIQUE(cidr, vrf_id)` doesn't dedupe NULL `vrf_id` per SQL standard), but the loop is not a substitute for unique-CIDR-per-spec — the loop only handles the same spec's own orphans, not cross-spec races.
+
+### Visual-regression baselines are platform-suffixed and need refreshing on intentional UI/seed changes
+
+`testing/playwright/tests/visual-regression.spec.ts-snapshots/` holds per-platform PNG baselines (`*-darwin.png`, `*-linux.png`). Filenames include the host OS because Chromium's text shaping and AA differ between CoreText (macOS) and HarfBuzz+FreeType (Linux Docker), producing low-amplitude pixel diffs even when the bundled `@font-face` woff2s render identically.
+
+CI's `playwright.yml` job runs in Linux Docker, so it only validates and refreshes `*-linux.png` baselines. **Darwin baselines drift over time** — every release that grows `demo_seed.php` (more rows on subnets/dashboard) or restructures a captured page will eventually push the rendered page taller than the committed darwin baseline, and a `vendor/bin` local-mac gate run shows a cluster of 8–10 visual-regression failures with the signature: `Expected an image WIDTHpx by Hpx, received WIDTHpx by H'px` where `H' < H`, all on `subnets-*` and `dashboard-*` across the 4 viewports.
+
+**This is not a regression.** It is platform-suffixed baseline maintenance debt.
+
+**When you see this pattern during a local-mac gate run:**
+
+1. Confirm that none of the touched files in your branch are UI / seed / template changes. (`git diff origin/main...HEAD --stat | grep -E 'subnets\.php|dashboard\.php|demo_seed\.php|page_header|app\.css'` — should be empty.)
+2. If your branch is UI-clean, refresh the darwin baselines in a dedicated commit on your release branch:
+
+   ```bash
+   bash testing/playwright/bootstrap-app.sh sqlite
+   (cd testing/playwright && \
+     IPAM_BASE_URL=https://127.0.0.1:8443 IPAM_ADMIN_USER=demo IPAM_ADMIN_PASS=demo \
+     npx playwright test visual-regression.spec.ts --update-snapshots)
+   git add testing/playwright/tests/visual-regression.spec.ts-snapshots/
+   git commit -m "test(vr): refresh darwin baselines for vX.Y.Z"
+   ```
+
+3. If your branch DID intentionally change UI / seed / templates, the same procedure applies but the commit message should reference the changes that justify the refresh.
+
+Linux baselines are CI's responsibility; do not refresh them locally. If a `*-linux.png` baseline ever needs refreshing, do it in a dedicated PR run through the CI pipeline so the captures come from the canonical environment.
