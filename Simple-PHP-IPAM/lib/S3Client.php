@@ -541,6 +541,16 @@ class S3Client implements BackupClientInterface
      * @param string $signedHeaders Semicolon-separated lowercase header names, sorted
      * @param string $payloadHash   Hex SHA-256 of the request body (EMPTY_HASH for empty body)
      */
+    /**
+     * Build an AWS SigV4 canonical request.
+     *
+     * **Contract:** `$headers` MUST end with a single `\n` — i.e. the output of
+     * `buildCanonicalHeaders()`, where every header line (including the last)
+     * is terminated with `\n`. The implementation relies on this so the implode
+     * separator alone produces the spec-mandated `\n\n` between the headers
+     * block and SignedHeaders. Passing headers without a trailing `\n` will
+     * produce a one-newline boundary and fail signing on every S3 server.
+     */
     public static function canonicalRequest(
         string $method,
         string $uri,
@@ -549,12 +559,16 @@ class S3Client implements BackupClientInterface
         string $signedHeaders,
         string $payloadHash
     ): string {
+        // Per AWS SigV4 spec: each canonical-header line ends in \n (terminator), then
+        // a single \n separates the headers block from SignedHeaders. Since $headers
+        // already terminates with \n, implode's separator alone yields the required
+        // \n\n. An extra '' element here would emit \n\n\n and break every signature.
+        // Verified against the AWS SigV4 official test suite (tests/S3CanonicalRequestTest).
         return implode("\n", [
             $method,
             $uri,
             $queryString,
-            $headers,   // already ends with \n per each header
-            '',          // blank line after headers block
+            $headers,
             $signedHeaders,
             $payloadHash,
         ]);

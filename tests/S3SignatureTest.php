@@ -80,7 +80,7 @@ class S3SignatureTest extends TestCase
             'GET',
             '/',
             '',
-            "host:example.amazonaws.com\nx-amz-date:20150830T123600Z",
+            "host:example.amazonaws.com\nx-amz-date:20150830T123600Z\n",
             'host;x-amz-date',
             self::EMPTY_HASH
         );
@@ -94,7 +94,7 @@ class S3SignatureTest extends TestCase
             'GET',
             '/',
             '',
-            "host:example.amazonaws.com\nx-amz-date:20150830T123600Z",
+            "host:example.amazonaws.com\nx-amz-date:20150830T123600Z\n",
             'host;x-amz-date',
             self::EMPTY_HASH
         );
