@@ -525,11 +525,23 @@ Encrypted blobs carry the magic header `IPAMBKP1` (8 bytes, format version 1). T
 
 Every restore operation performed via the web wizard (`restore_web.php`) is recorded in two places:
 
-1. **`audit_log`** — actions `db.restore_stage` (when a remote file is staged in `data/tmp/`), `db.restore_dryrun` (when the wizard runs the dry-run preview), and `db.restore` (when the live apply completes successfully).
-2. **`backup_log`** — a row with `triggered_by = 'web_restore'`, with `status` updated to `running` / `success` / `failed` as the operation progresses, and the destination and filename linked to any existing backup entries.
+1. **`audit_log`** — actions `db.restore_stage` / `db.restore_stage_failed`, `db.restore_dryrun` / `db.restore_dryrun_failed`, `db.restore` / `db.restore_failed`. Failure variants capture the truncated error message in the detail field.
+2. **`backup_log`** — a row with `type = 'restore'`, `triggered_by = 'web_restore'`, with `status` updated `running` → `success` / `failed` as the operation progresses, and the destination linked from the explicit `staged_destination_id` field signed into the wizard token (not inferred from filename — same backup name on multiple destinations would otherwise be ambiguous).
 
-Restore entries are visible on the Backup History page and are filterable via the Type column.
+Restore entries are visible on the Backup History page and are filterable via the Type column. The `backup_log.type` column is the canonical discriminator (`'backup'` vs `'restore'`).
 
 The web restore wizard requires admin role and CSRF on every step. Live apply additionally requires the user to type `RESTORE` exactly into the confirmation field before the Apply button is enabled. This typing gate is enforced server-side — the AJAX handler verifies the submitted confirmation string and rejects the request if it does not match exactly.
+
+### Token signing
+
+The wizard threads four pieces of state across the three steps via signed tokens: the staged file path, original filename, destination id, and size. The signature is an HMAC-SHA256 of all four fields under an HKDF-derived sub-key (`'ipam-v3:restore-stage'`). An attacker who tampers with any individual field produces a signature mismatch — the wizard cannot, for example, be tricked into applying a backup that originated from a different destination by flipping `staged_destination_id` between dryrun and apply.
+
+### Path containment
+
+`prepareForRestore()` rejects any remote name containing `/`, `\`, null bytes, or a leading `.` before passing it to a backup client (defence-in-depth — direct POSTs to `download_remote_backup.php` bypass the `remote_backups.php` form-level guard). `verifySigned()` then resolves both the staged path and the `data/tmp/` root through `realpath()` so symlinked deployment paths resolve consistently. `readStagedSql()` re-asserts the containment guard before opening the staged file.
+
+### Checksum verification
+
+If the originating backup row in `backup_log` (filtered to `type = 'backup'`) has a non-empty `checksum`, `prepareForRestore()` recomputes SHA-256 of the on-the-wire blob (BEFORE decryption) and refuses to stage the file on mismatch. The downloaded blob is unlinked and a `RuntimeException` is thrown — no audit success row, no staged file leftover.
 
 See [Restore from a backup](restore.md) for the full wizard workflow.

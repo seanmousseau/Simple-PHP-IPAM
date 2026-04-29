@@ -173,7 +173,7 @@ Schedules are created at **Admin → Backup → Schedules** (the Schedules tab o
 | `retain_monthly` | no | How many monthly backup files to keep. Default: `12`. |
 | `is_active` | yes | Toggle the schedule on/off without deleting it. |
 
-`next_run_at` is computed when the schedule is saved and after each run. `cron.php` sets `next_run_at` to the next fire time in UTC immediately after dispatching the backup job.
+`next_run_at` is computed when the schedule is created or edited (any change to the timing fields recomputes it from `frequency` / `time_of_day` / `day_of_week` / `day_of_month`) and again after each run. `cron.php` sets `next_run_at` to the next fire time in UTC after a successful run; failed runs leave `next_run_at` unchanged so the next cron tick will retry rather than skipping ahead. Schema-level CHECK constraints on `backup_schedules` enforce valid values for `frequency`, `day_of_week` (0–6), `day_of_month` (1–28), and the retention counts (≥0); `time_of_day` is validated to `00:00–23:59` at the form layer.
 
 ---
 
@@ -316,10 +316,14 @@ All backup and destination operations are recorded in the audit log:
 | `destination.update` | An existing destination is edited. |
 | `destination.delete` | A destination is deleted (cascades to associated schedules). |
 | `destination.test` | Test Connection is clicked; result (ok/fail) is in the detail. |
+| `schedule.create` | A new schedule is saved (`next_run_at` is computed at create). |
+| `schedule.update` | A schedule is edited (`next_run_at` is recomputed from the new timing fields). |
+| `schedule.delete` | A schedule is deleted. |
 | `backup.run` | A backup job completes successfully (via `BackupEngine` or legacy `backup.php`). |
 | `backup.failed` | A backup job fails (via `BackupEngine` or legacy `backup.php`). |
 | `backup.retention_pruned` | GFS pruning deleted one or more files from a destination. |
 | `remote_backup.delete` | A file is deleted from the Remote Backup Browser. |
+| `remote_backup.delete_failed` | A delete is requested but the destination reports the file did not exist or rejected the request. |
 | `remote_backup.verify` | A file's checksum is verified from the Remote Backup Browser. |
 | `remote_backup.download` | A file is downloaded via `download_remote_backup.php`. |
 | `remote_backup.download_failed` | A remote file download fails. |
