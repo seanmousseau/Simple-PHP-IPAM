@@ -23,9 +23,11 @@ if [ ! -f "$CHANGELOG" ]; then
   exit 2
 fi
 
-# Extract the FIRST `## [X.Y.Z] - DATE` section (the one being shipped).
+# Extract the FIRST released `## [X.Y.Z] - YYYY-MM-DD` section. The strict
+# heading regex skips `## [Unreleased]` and any other non-version heading
+# above the newest shipped release (CR feedback PR #786).
 section=$(awk '
-  /^## \[/ { c++ }
+  /^## \[[0-9]+\.[0-9]+\.[0-9]+\][[:space:]]*-[[:space:]]*[0-9]{4}-[0-9]{2}-[0-9]{2}$/ { c++ }
   c == 1   { print }
   c == 2   { exit }
 ' "$CHANGELOG")

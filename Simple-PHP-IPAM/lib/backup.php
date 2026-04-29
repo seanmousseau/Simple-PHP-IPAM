@@ -212,75 +212,84 @@ function ipam_backup_dump_to_tmp(PDO $db): string
     $tmpGz = $tmp . '.sql.gz';
     @rename($tmp, $tmpGz);
 
-    if ($driver === 'sqlite') {
-        $fh = @gzopen($tmpGz, 'wb9');
-        if ($fh === false) {
-            @unlink($tmpGz); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmpGz derives from tempnam(); no user input
-            throw new RuntimeException('ipam_backup: gzopen failed');
-        }
-        try {
-            ipam_db_dump_stream($db, function (string $chunk) use ($fh): void {
-                $written = gzwrite($fh, $chunk);
-                if ($written === false || $written !== strlen($chunk)) {
-                    throw new RuntimeException(
-                        'ipam_backup: gzwrite stopped accepting bytes (disk full or compression error)'
-                    );
-                }
-            });
-        } finally {
-            gzclose($fh);
-        }
-        return $tmpGz;
-    }
-
-    if ($driver === 'mysql' || $driver === 'pgsql') {
-        global $config;
-        $cfg = is_array($config ?? null) ? $config : [];
-        $tmpSql = $tmp . '.sql';
-        try {
-            $native = ipam_backup_native_cmd($driver, $cfg);
-            // 10-minute deadline matches what an interactive admin would tolerate;
-            // larger DBs that legitimately need more should run via cron instead.
-            if (!backup_run_dump($native['cmd'], $native['env'], $tmpSql, 600)) {
-                throw new RuntimeException('ipam_backup: ' . $driver . ' dump failed (see error_log)');
-            }
-            $in = @fopen($tmpSql, 'rb');
-            if ($in === false) {
-                throw new RuntimeException('ipam_backup: cannot read dump output');
-            }
-            $out = @gzopen($tmpGz, 'wb9');
-            if ($out === false) {
-                fclose($in);
-                throw new RuntimeException('ipam_backup: gzopen failed for compressed output');
+    // Outer try ensures $tmpGz is unlinked on every failure path, including
+    // partial-write conditions. Otherwise a recurring scheduled-dump failure
+    // would orphan ipambk_*.sql.gz files in sys_get_temp_dir() until disk
+    // fills (CR feedback PR #786, #788 sibling).
+    try {
+        if ($driver === 'sqlite') {
+            $fh = @gzopen($tmpGz, 'wb9');
+            if ($fh === false) {
+                throw new RuntimeException('ipam_backup: gzopen failed');
             }
             try {
-                while (!feof($in)) {
-                    $chunk = fread($in, 65536);
-                    if ($chunk === false) {
-                        throw new RuntimeException('ipam_backup: read failed during compression');
-                    }
-                    if ($chunk === '') continue;
-                    $written = gzwrite($out, $chunk);
+                ipam_db_dump_stream($db, function (string $chunk) use ($fh): void {
+                    $written = gzwrite($fh, $chunk);
                     if ($written === false || $written !== strlen($chunk)) {
                         throw new RuntimeException(
                             'ipam_backup: gzwrite stopped accepting bytes (disk full or compression error)'
                         );
                     }
+                });
+            } finally {
+                gzclose($fh);
+            }
+            return $tmpGz;
+        }
+
+        if ($driver === 'mysql' || $driver === 'pgsql') {
+            global $config;
+            $cfg = is_array($config ?? null) ? $config : [];
+            $tmpSql = $tmp . '.sql';
+            try {
+                $native = ipam_backup_native_cmd($driver, $cfg);
+                // 10-minute deadline matches what an interactive admin would tolerate;
+                // larger DBs that legitimately need more should run via cron instead.
+                if (!backup_run_dump($native['cmd'], $native['env'], $tmpSql, 600)) {
+                    throw new RuntimeException('ipam_backup: ' . $driver . ' dump failed (see error_log)');
+                }
+                $in = @fopen($tmpSql, 'rb');
+                if ($in === false) {
+                    throw new RuntimeException('ipam_backup: cannot read dump output');
+                }
+                $out = @gzopen($tmpGz, 'wb9');
+                if ($out === false) {
+                    fclose($in);
+                    throw new RuntimeException('ipam_backup: gzopen failed for compressed output');
+                }
+                try {
+                    while (!feof($in)) {
+                        $chunk = fread($in, 65536);
+                        if ($chunk === false) {
+                            throw new RuntimeException('ipam_backup: read failed during compression');
+                        }
+                        if ($chunk === '') continue;
+                        $written = gzwrite($out, $chunk);
+                        if ($written === false || $written !== strlen($chunk)) {
+                            throw new RuntimeException(
+                                'ipam_backup: gzwrite stopped accepting bytes (disk full or compression error)'
+                            );
+                        }
+                    }
+                } finally {
+                    fclose($in);
+                    gzclose($out);
                 }
             } finally {
-                fclose($in);
-                gzclose($out);
+                if (is_file($tmpSql)) {
+                    @unlink($tmpSql); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmpSql is tempnam()-generated, no user input
+                }
             }
-        } finally {
-            if (is_file($tmpSql)) {
-                @unlink($tmpSql); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmpSql is tempnam()-generated, no user input
-            }
+            return $tmpGz;
         }
-        return $tmpGz;
-    }
 
-    @unlink($tmpGz); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmpGz derives from tempnam(); no user input
-    throw new RuntimeException('ipam_backup: unsupported driver ' . $driver);
+        throw new RuntimeException('ipam_backup: unsupported driver ' . $driver);
+    } catch (Throwable $e) {
+        if (is_file($tmpGz)) {
+            @unlink($tmpGz); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmpGz derives from tempnam(); no user input
+        }
+        throw $e;
+    }
 }
 
 function ipam_backup_encrypt_to_tmp(string $srcPath, string $appSecret): string

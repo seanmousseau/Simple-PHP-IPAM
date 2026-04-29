@@ -9,6 +9,7 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
+  - [v3.19.1](#v3191) — **Hotfix:** S3 destinations actually work (SigV4 fix), MySQL/PG cloud backups unblocked, S3 download body-leak fixed (no breaking changes)
   - [v3.18.0](#v3180) — Per-toggle Settings save, backup/restore polish, contacts docs, pgsql test flake fix (no breaking changes)
   - [v3.17.0](#v3170) — Backup destinations, schedules, GFS retention, encryption, web restore wizard (no breaking changes)
   - [v3.16.0](#v3160) — Admin TOTP toggle, preferred MFA method, unified MFA card, Settings tabs, portable case-insensitive search (no breaking changes)
