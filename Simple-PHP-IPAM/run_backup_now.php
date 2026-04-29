@@ -25,8 +25,7 @@ if ($destId <= 0) {
 }
 
 try {
-    $engine = new BackupEngine($db, $config);
-    $result = $engine->runForDestination($destId, 'manual');
+    $result = ipam_backup_run_for_destination($db, $config, $destId, 'manual');
     echo json_encode([
         'ok' => true,
         'log_id' => $result['log_id'],

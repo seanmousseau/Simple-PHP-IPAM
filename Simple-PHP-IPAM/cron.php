@@ -91,8 +91,11 @@ if ($tz === '' || !@date_default_timezone_set($tz)) {
 }
 unset($tz);
 
-$now      = date('c');
-$exitCode = 0;
+$now       = date('c');
+$tickEpoch = time(); // Pinned UTC epoch for the entire tick — passed through
+                     // to backup retention so prune timing is aligned to the
+                     // tick rather than drifting with time() across long runs (#762).
+$exitCode  = 0;
 
 /** @param array<string, mixed> $data */
 $emit = function (array $data): void {
@@ -329,8 +332,9 @@ try {
 
         $runOk = false;
         try {
-            $engine = new BackupEngine($db, $config);
-            $engine->runForDestination($destId, 'schedule');
+            // Pass the cron-tick epoch through to retention so prune timing
+            // is aligned to the tick rather than drifting with time() (#762).
+            ipam_backup_run_for_destination($db, $config, $destId, 'schedule', $tickEpoch);
             $runOk = true;
             $okSched++;
         } catch (Throwable $e) {

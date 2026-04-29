@@ -17,8 +17,6 @@ $stagedSize = 0;
 $stagedDestId = 0;
 $dryRunResult = null;
 
-$engine = new RestoreEngine($db, $config);
-
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (demo_mode_enabled()) {
         $err = 'Restore is disabled in demo mode.';
@@ -30,8 +28,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $name   = to_str($_POST['name'] ?? '');
             $staged = null;
             try {
-                $staged = $engine->prepareForRestore($destId, $name);
-                $stagedSig = $engine->sign($staged['path'], [
+                $staged = ipam_restore_prepare_for_restore($db, $config, $destId, $name);
+                $stagedSig = ipam_restore_sign($config, $staged['path'], [
                     'filename' => $staged['filename'],
                     'destination_id' => $destId,
                     'size' => $staged['size'],
@@ -73,7 +71,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stagedFilename = to_str($_POST['staged_filename'] ?? '');
             $stagedSize = to_int($_POST['staged_size'] ?? 0);
             $stagedDestId = to_int($_POST['staged_destination_id'] ?? 0);
-            $verified = $engine->verifySigned($stagedPath, $stagedSig, [
+            $verified = ipam_restore_verify_signed($config, $stagedPath, $stagedSig, [
                 'filename' => $stagedFilename,
                 'destination_id' => $stagedDestId,
                 'size' => $stagedSize,
@@ -82,7 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $err = 'Invalid or expired staged file token.';
             } else {
                 try {
-                    $dryRunResult = $engine->dryRun($verified);
+                    $dryRunResult = ipam_restore_dry_run($db, $verified);
                     audit($db, 'db.restore_dryrun', 'system', null,
                           "file=$stagedFilename tables=" . count($dryRunResult['tables']));
                 } catch (Throwable $e) {
@@ -103,7 +101,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($confirm !== 'RESTORE') {
                 $err = 'Confirmation text must be "RESTORE" exactly.';
             } else {
-                $verified = $engine->verifySigned($stagedPath, $stagedSig, [
+                $verified = ipam_restore_verify_signed($config, $stagedPath, $stagedSig, [
                     'filename' => $stagedFilename,
                     'destination_id' => $stagedDestId,
                     'size' => $stagedSize,
@@ -112,8 +110,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $err = 'Invalid or expired staged file token.';
                 } else {
                     try {
-                        $result = $engine->apply($verified, $stagedFilename, $stagedDestId > 0 ? $stagedDestId : null);
-                        // RestoreEngine::apply() already emits the success db.restore audit.
+                        $result = ipam_restore_apply($db, $verified, $stagedFilename, $stagedDestId > 0 ? $stagedDestId : null);
+                        // ipam_restore_apply() already emits the success db.restore audit.
                         // Avoid double-writing here.
                         // Cleanup staged file after successful apply.
                         // Re-resolve via realpath() at the call site (project semgrep sanitizer pattern).
