@@ -74,4 +74,56 @@ final class BackupStreamCryptoTest extends TestCase
         $this->expectException(RuntimeException::class);
         backup_decrypt_to_path($src, $dst, 'unit-test-secret-not-real');
     }
+
+    public function testTamperedCiphertextFailsHmac(): void
+    {
+        $secret = 'unit-test-secret-not-real';
+        $src = $this->tmpDir . '/p.bin';
+        $enc = $this->tmpDir . '/e.bin';
+        $dst = $this->tmpDir . '/d.bin';
+        file_put_contents($src, random_bytes(4096));
+        backup_encrypt_stream($src, $enc, $secret);
+
+        // Flip a byte deep inside the ciphertext (after header, before HMAC tail).
+        $blob = (string) file_get_contents($enc);
+        $blob[100] = chr(ord($blob[100]) ^ 0xff);
+        file_put_contents($enc, $blob);
+
+        $this->expectExceptionMessageMatches('/hmac mismatch/');
+        backup_decrypt_stream($enc, $dst, $secret);
+    }
+
+    public function testTamperedHmacTagFails(): void
+    {
+        $secret = 'unit-test-secret-not-real';
+        $src = $this->tmpDir . '/p.bin';
+        $enc = $this->tmpDir . '/e.bin';
+        $dst = $this->tmpDir . '/d.bin';
+        file_put_contents($src, random_bytes(4096));
+        backup_encrypt_stream($src, $enc, $secret);
+
+        $blob = (string) file_get_contents($enc);
+        $last = strlen($blob) - 1;
+        $blob[$last] = chr(ord($blob[$last]) ^ 0x01);
+        file_put_contents($enc, $blob);
+
+        $this->expectExceptionMessageMatches('/hmac mismatch/');
+        backup_decrypt_stream($enc, $dst, $secret);
+    }
+
+    public function testTruncatedFileFails(): void
+    {
+        $secret = 'unit-test-secret-not-real';
+        $src = $this->tmpDir . '/p.bin';
+        $enc = $this->tmpDir . '/e.bin';
+        $dst = $this->tmpDir . '/d.bin';
+        file_put_contents($src, random_bytes(4096));
+        backup_encrypt_stream($src, $enc, $secret);
+
+        $blob = (string) file_get_contents($enc);
+        file_put_contents($enc, substr($blob, 0, strlen($blob) - 8));
+
+        $this->expectException(RuntimeException::class);
+        backup_decrypt_stream($enc, $dst, $secret);
+    }
 }
