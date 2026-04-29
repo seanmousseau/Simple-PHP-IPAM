@@ -28,14 +28,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($step === 'stage') {
             $destId = to_int($_POST['destination_id'] ?? 0);
             $name   = to_str($_POST['name'] ?? '');
+            $staged = null;
             try {
                 $staged = $engine->prepareForRestore($destId, $name);
-                $stagedPath = $staged['path'];
-                $stagedSig = $engine->sign($stagedPath, [
+                $stagedSig = $engine->sign($staged['path'], [
                     'filename' => $staged['filename'],
                     'destination_id' => $destId,
                     'size' => $staged['size'],
                 ]);
+                $stagedPath = $staged['path'];
                 $stagedFilename = $staged['filename'];
                 $stagedSize = $staged['size'];
                 $stagedDestId = $destId;
@@ -43,6 +44,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } catch (Throwable $e) {
                 error_log('[restore_web] stage failed: ' . $e->getMessage());
                 audit($db, 'db.restore_stage_failed', 'destination', $destId, "name=$name error=" . substr($e->getMessage(), 0, 200));
+                // If prepareForRestore() materialised the staged file before sign()
+                // or audit() threw, clean it up so we don't accumulate orphaned
+                // files in data/tmp/. The path is verified to be under data/tmp/
+                // by prepareForRestore() itself, so realpath()-then-unlink is safe.
+                if (is_array($staged)) {
+                    $orphan = realpath($staged['path']);
+                    $tmpReal = realpath(__DIR__ . '/data/tmp');
+                    if ($orphan !== false && $tmpReal !== false
+                        && str_starts_with($orphan . '/', rtrim($tmpReal, '/') . '/')
+                        && is_file($orphan)) {
+                        @unlink($orphan); // nosemgrep: php.lang.security.unlink-use.unlink-use -- realpath() under data/tmp/
+                    }
+                }
+                // Reset all staged-* so the wizard renders Step 1 again.
+                $stagedPath = '';
+                $stagedSig = '';
+                $stagedFilename = '';
+                $stagedSize = 0;
+                $stagedDestId = 0;
                 $err = 'Stage failed: ' . $e->getMessage();
             }
         }

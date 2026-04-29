@@ -148,8 +148,11 @@ final class RestoreEngine
             return null;
         }
         if (!hash_equals($expected, $signature)) return null;
-        // Containment guard: must be under data/tmp/
-        $tmpDir = dirname(__DIR__) . '/data/tmp';
+        // Containment guard: must be under data/tmp/. Canonicalize BOTH sides
+        // so symlinked deployments (release dir → /opt/ipam-current → /opt/ipam-X.Y.Z/)
+        // don't reject otherwise-valid staged files.
+        $tmpDir = realpath(dirname(__DIR__) . '/data/tmp');
+        if ($tmpDir === false) return null;
         $real = realpath($stagedPath);
         if ($real === false) return null;
         if (!str_starts_with($real . '/', rtrim($tmpDir, '/') . '/')) return null;
@@ -289,11 +292,12 @@ final class RestoreEngine
         $tablesSeen = [];
         $statements = 0;
 
+        // SQLite ignores PRAGMA foreign_keys = OFF inside an active transaction.
+        // Set it BEFORE beginTransaction(); restore (defensively) afterwards even
+        // on the failure path so the connection is left in the expected state.
+        $this->db->exec('PRAGMA foreign_keys = OFF');
         $this->db->beginTransaction();
         try {
-            // SQLite needs FK off during bulk restore (mirror migration pattern)
-            $this->db->exec('PRAGMA foreign_keys = OFF');
-
             foreach ($this->splitSqlStatements($sql) as $stmt) {
                 if ($stmt === '' || str_starts_with(ltrim($stmt), '--')) continue;
                 $this->db->exec($stmt);
