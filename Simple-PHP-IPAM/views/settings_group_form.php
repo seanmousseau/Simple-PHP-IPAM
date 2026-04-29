@@ -31,7 +31,7 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
   <?php endif; ?>
 
   <?php if ($groupKey === 'mfa' && !(bool)to_int(ipam_setting('smtp.enabled', false))): ?>
-  <div class="warning" style="margin-bottom:1rem">
+  <div class="warning settings-warning">
     <strong>SMTP is not configured.</strong>
     Email OTP requires a working SMTP connection to deliver codes.
     Configure SMTP under <a href="settings.php?tab=notifications#group-smtp">Email Delivery</a> before enabling Email OTP.
@@ -45,7 +45,7 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
   if ($groupKey === 'mfa'
       && (bool)to_int(ipam_setting('mfa.totp_enabled', true))
       && $_appSecret === ''): ?>
-  <div class="warning" style="margin-bottom:1rem">
+  <div class="warning settings-warning">
     <strong><code>app_secret</code> is not set in <code>config.php</code>.</strong>
     TOTP enrolment requires <code>app_secret</code> to encrypt user secrets at rest.
     Set a strong random value (e.g. <code>bin2hex(random_bytes(32))</code>) in <code>config.php</code>
@@ -75,6 +75,8 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
       $shown     = $formOverrides[$key] ?? null;
       $boolChecked = $shown !== null ? $shown === '1' : (bool)$current;
 
+      // Contract: ipam_setting_source() returns exactly one of 'db' | 'default'
+      // (lib.php:2270). The match below is exhaustive — 'db' wins, default wins.
       $badge = match ($source) {
           'db'    => ['text' => '🟢 Database', 'cls' => 'success'],
           default => ['text' => '⚪ Default',   'cls' => 'muted'],
@@ -85,13 +87,13 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
       <input type="hidden" name="csrf"  value="<?= e(csrf_token()) ?>">
       <input type="hidden" name="key"   value="<?= e($key) ?>">
       <input type="hidden" name="value" value="0">
-      <div class="setting-row row" style="align-items:flex-start;margin-top:0.75rem;">
+      <div class="setting-row row settings-row__sub">
         <div class="flex-1">
           <label for="<?= e($inputId) ?>" class="setting-head setting-head--bool">
             <input type="checkbox" id="<?= e($inputId) ?>" name="value" value="1"<?= $boolChecked ? ' checked' : '' ?>>
             <strong><?= e($label) ?></strong>
-            <span class="badge badge-<?= e($badge['cls']) ?>" style="margin-left:0.5rem;"><?= e($badge['text']) ?></span>
-            <code class="muted" style="margin-left:0.5rem;"><?= e($key) ?></code>
+            <span class="badge badge-<?= e($badge['cls']) ?> settings-row__badge"><?= e($badge['text']) ?></span>
+            <code class="muted settings-row__key"><?= e($key) ?></code>
           </label>
           <?php if ($help): ?><div class="muted"><?= e($help) ?></div><?php endif; ?>
         </div>
@@ -124,8 +126,8 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
         $inputId = 'f-' . $fieldName;
         $options = ($type === 'string') ? ipam_setting_options($def) : null;
         $badgeHtml =
-            '<span class="badge badge-' . e($badge['cls']) . '" style="margin-left:0.5rem;">' . e($badge['text']) . '</span>'
-          . '<code class="muted" style="margin-left:0.5rem;">' . e($key) . '</code>';
+            '<span class="badge badge-' . e($badge['cls']) . ' settings-row__badge">' . e($badge['text']) . '</span>'
+          . '<code class="muted settings-row__key">' . e($key) . '</code>';
     ?>
       <div class="setting-row row" style="align-items:flex-start;margin-top:0.75rem;">
         <div class="flex-1">
@@ -182,9 +184,9 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
                 </select>
                 <div class="settings-multi-actions">
                   <button type="button" class="button-secondary settings-multi-clear" data-clear-select="<?= e($inputId) ?>">Clear all</button>
-                  <span class="muted" style="margin-left:0.5rem;font-size:0.85em;">Cmd/Ctrl-click to toggle individual selections.</span>
+                  <span class="muted settings-row__inline-help">Cmd/Ctrl-click to toggle individual selections.</span>
                 </div>
-                <div class="muted" style="margin-top:0.25rem;">
+                <div class="muted settings-row__sub">
                   Emails will be sent to:
                   <?= $selectedEmails === [] ? '<em>(none)</em>' : e(implode(', ', $selectedEmails)) ?>
                 </div>
@@ -211,7 +213,7 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
                   <svg class="pw-eye pw-eye--closed" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a19.77 19.77 0 0 1 5.06-5.94"/><path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 8 11 8a19.77 19.77 0 0 1-3.17 4.19"/><path d="M14.12 14.12A3 3 0 1 1 9.88 9.88"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
                 </button>
               </span>
-              <span class="badge badge-<?= e($statusCls) ?>" style="margin-left:0.25rem;"><?= e($statusText) ?></span>
+              <span class="badge badge-<?= e($statusCls) ?> settings-row__badge"><?= e($statusText) ?></span>
             <?php elseif ($options !== null):
                 $selected       = $shown !== null ? $shown : (is_scalar($current) ? (string)$current : '');
                 $selectedValid  = array_key_exists($selected, $options);
@@ -235,14 +237,14 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
       </div>
     <?php endforeach; ?>
 
-    <div class="row" style="margin-top:1rem;">
+    <div class="row settings-row__actions">
       <button type="submit" class="button-primary">Save <?= e($groupLabel) ?></button>
     </div>
   </form>
   <?php endif; ?>
 
   <?php if ($groupKey === 'smtp'): ?>
-  <div class="row" style="margin-top:0.75rem;gap:0.5rem;align-items:center;">
+  <div class="row settings-row__sub" style="gap:.5rem;align-items:center;">
     <button type="button" id="smtp-test-btn" class="button-secondary">Send test email</button>
     <span id="smtp-test-result" class="muted"></span>
   </div>

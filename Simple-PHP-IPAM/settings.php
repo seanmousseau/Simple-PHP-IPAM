@@ -280,6 +280,9 @@ if (!isset($tabs[$activeTab])) {
 
 page_header('Settings');
 ?>
+<!-- Settings-specific skip-link (#758) — page_header()'s skip-link lands at #main-content
+     above the rail; this jumps past the rail straight to the form area on this page. -->
+<a class="skip-link" href="#settings-content">Skip to settings content</a>
 <div class="breadcrumbs">
   <a href="dashboard.php">Dashboard</a><span class="sep">›</span>
   <a href="#">Admin</a><span class="sep">›</span>
@@ -299,7 +302,7 @@ page_header('Settings');
 
 <?php $flash = flash_get(); if ($flash): ?>
   <p class="<?= e($flash['type']) ?>"><?= e($flash['msg']) ?></p>
-<?php endif; ?>
+<?php endif; unset($flash); ?>
 <?php if (!empty($fieldErrors['_group'])): ?>
   <p class="danger"><?= e($fieldErrors['_group']) ?></p>
 <?php endif; ?>
