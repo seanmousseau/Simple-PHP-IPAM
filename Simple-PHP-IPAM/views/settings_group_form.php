@@ -53,12 +53,59 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
   </div>
   <?php endif; unset($_globalCfg, $_appSecret); ?>
 
+  <?php
+  // Per-toggle save (#756): each boolean renders as its own <form> so flipping
+  // one checkbox does not silently flip siblings. The legacy group form below
+  // continues to handle non-bool fields (string, int, json, sensitive). Forms
+  // cannot nest in HTML, so the bool forms are siblings of the group form.
+  //
+  // Hidden value=0 BEFORE the checkbox value=1 is the standard "form sends
+  // last value with the same name" trick: unchecked sends 0, checked sends 1.
+  /** @var array<string, array<string, mixed>> $boolDefs */
+  $boolDefs = array_filter($groupDefs, fn($d) => ($d['type'] ?? 'string') === 'bool' && empty($d['deprecated']));
+  /** @var array<string, array<string, mixed>> $nonBoolDefs */
+  $nonBoolDefs = array_filter($groupDefs, fn($d) => ($d['type'] ?? 'string') !== 'bool' && empty($d['deprecated']));
+
+  foreach ($boolDefs as $key => $def):
+      $label     = to_str($def['label'] ?? $key);
+      $help      = to_str($def['description'] ?? '');
+      $fieldName = 'k_' . str_replace('.', '__', $key);
+      $source    = ipam_setting_source($db, $key);
+      $current   = ipam_setting($key);
+      $shown     = $formOverrides[$key] ?? null;
+      $boolChecked = $shown !== null ? $shown === '1' : (bool)$current;
+
+      $badge = match ($source) {
+          'db'    => ['text' => '🟢 Database', 'cls' => 'success'],
+          default => ['text' => '⚪ Default',   'cls' => 'muted'],
+      };
+      $inputId = 'f-' . $fieldName;
+  ?>
+    <form method="post" action="settings.php" class="setting-toggle-form" data-setting-toggle>
+      <input type="hidden" name="csrf"  value="<?= e(csrf_token()) ?>">
+      <input type="hidden" name="key"   value="<?= e($key) ?>">
+      <input type="hidden" name="value" value="0">
+      <div class="setting-row row" style="align-items:flex-start;margin-top:0.75rem;">
+        <div class="flex-1">
+          <label for="<?= e($inputId) ?>" class="setting-head setting-head--bool">
+            <input type="checkbox" id="<?= e($inputId) ?>" name="value" value="1"<?= $boolChecked ? ' checked' : '' ?>>
+            <strong><?= e($label) ?></strong>
+            <span class="badge badge-<?= e($badge['cls']) ?>" style="margin-left:0.5rem;"><?= e($badge['text']) ?></span>
+            <code class="muted" style="margin-left:0.5rem;"><?= e($key) ?></code>
+          </label>
+          <?php if ($help): ?><div class="muted"><?= e($help) ?></div><?php endif; ?>
+        </div>
+        <noscript><button type="submit" class="button-secondary">Save</button></noscript>
+      </div>
+    </form>
+  <?php endforeach; ?>
+
+  <?php if ($nonBoolDefs): ?>
   <form method="post" action="settings.php">
     <input type="hidden" name="csrf"  value="<?= e(csrf_token()) ?>">
     <input type="hidden" name="group" value="<?= e($groupKey) ?>">
 
-    <?php foreach ($groupDefs as $key => $def):
-        if (!empty($def['deprecated'])) continue;
+    <?php foreach ($nonBoolDefs as $key => $def):
         $type      = to_str($def['type'] ?? 'string');
         $label     = to_str($def['label'] ?? $key);
         $help      = to_str($def['description'] ?? '');
@@ -82,15 +129,7 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
     ?>
       <div class="setting-row row" style="align-items:flex-start;margin-top:0.75rem;">
         <div class="flex-1">
-          <?php if ($type === 'bool'):
-              $boolChecked = $shown !== null ? $shown === '1' : (bool)$current;
-          ?>
-            <label for="<?= e($inputId) ?>" class="setting-head setting-head--bool">
-              <input type="checkbox" id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>" value="1"<?= $boolChecked ? ' checked' : '' ?>>
-              <strong><?= e($label) ?></strong>
-              <?= $badgeHtml ?>
-            </label>
-          <?php else: ?>
+          <?php /* type === 'bool' is handled above as a separate per-toggle form */ ?>
             <div class="setting-head">
               <label for="<?= e($inputId) ?>"><strong><?= e($label) ?></strong></label>
               <?= $badgeHtml ?>
@@ -190,7 +229,6 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
                      value="<?= e($shown !== null ? $shown : (is_scalar($current) ? (string)$current : '')) ?>"
                      class="w-full">
             <?php endif; ?>
-          <?php endif; // bool vs other ?>
           <?php if ($help): ?><div class="muted"><?= e($help) ?></div><?php endif; ?>
           <?php if ($err): ?><div class="danger"><?= e($err) ?></div><?php endif; ?>
         </div>
@@ -201,6 +239,7 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
       <button type="submit" class="button-primary">Save <?= e($groupLabel) ?></button>
     </div>
   </form>
+  <?php endif; ?>
 
   <?php if ($groupKey === 'smtp'): ?>
   <div class="row" style="margin-top:0.75rem;gap:0.5rem;align-items:center;">

@@ -54,9 +54,10 @@ async function removeVirtualAuth(page: Page, authenticatorId: string) {
 async function enablePasskeys(page: import('@playwright/test').Page) {
     await login(page, ADMIN_USER, ADMIN_PASS);
     await page.goto(pkUrl('settings.php'));
+    // Per-key save (#756): flip passkeys without touching sibling MFA bools.
     await fetchPost(page, pkUrl('settings.php'), {
-        group: 'mfa',
-        'k_mfa__passkeys_enabled': '1',
+        key: 'mfa.passkeys_enabled',
+        value: '1',
     });
     await logout(page);
 }
@@ -64,11 +65,11 @@ async function enablePasskeys(page: import('@playwright/test').Page) {
 async function disablePasskeys(page: import('@playwright/test').Page) {
     await login(page, ADMIN_USER, ADMIN_PASS);
     await page.goto(pkUrl('settings.php'));
-    // Keep mfa.totp_enabled=1 (v3.x default and #747's gate) so totp.spec.ts
-    // running after this file finds TOTP dispatch enabled.
+    // Per-key save (#756): turn passkeys off cleanly without nuking siblings.
+    // No need to re-assert mfa.totp_enabled=1 — the per-key path doesn't touch it.
     await fetchPost(page, pkUrl('settings.php'), {
-        group: 'mfa',
-        'k_mfa__totp_enabled': '1',
+        key: 'mfa.passkeys_enabled',
+        value: '0',
     });
     await logout(page);
 }

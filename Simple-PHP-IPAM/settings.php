@@ -83,15 +83,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
+    $user   = current_user();
+    $userId = to_int($user['id'] ?? 0) ?: null;
+
+    // Per-key save (#756): single-setting update path. Distinct from the
+    // group-POST path below — the legacy group form treats every absent
+    // boolean as false, which silently flips siblings when an admin only
+    // intended to flip one toggle. The per-key path bypasses that cascade
+    // entirely. Currently bool-only (matches the toggle UI use case);
+    // string/int/json fields still flow through group save for batch
+    // validation UI. Activated by presence of POST['key']; if absent,
+    // falls through to group save.
+    $postedKey = to_str($_POST['key'] ?? '');
+    if ($postedKey !== '') {
+        if (!isset($definitions[$postedKey]) || !empty($definitions[$postedKey]['deprecated'])) {
+            flash_set('Unknown or deprecated setting.', 'danger');
+            header('Location: settings.php');
+            exit;
+        }
+        $def = $definitions[$postedKey];
+        $type = to_str($def['type'] ?? 'string');
+        if ($type !== 'bool') {
+            flash_set('Per-key save currently only supports boolean toggles.', 'danger');
+            header('Location: settings.php');
+            exit;
+        }
+        $rawVal   = to_str($_POST['value'] ?? '0');
+        $newValue = ($rawVal === '1' || $rawVal === 'true' || $rawVal === 'on');
+        $current  = ipam_setting($postedKey);
+
+        if ((bool)$current !== $newValue) {
+            try {
+                ipam_setting_set($db, $postedKey, $newValue, $userId);
+            } catch (\Throwable $e) {
+                error_log('settings.php per-key save failed: ' . $e->getMessage());
+                flash_set('Save failed. Please try again.', 'danger');
+                header('Location: settings.php');
+                exit;
+            }
+        }
+
+        $owningGroup = to_str($def['group'] ?? '');
+        $owningTab   = $groupToTab[$owningGroup] ?? 'general';
+        $label       = to_str($def['label'] ?? $postedKey);
+        flash_set("Updated {$label}.");
+        header('Location: settings.php?tab=' . rawurlencode($owningTab) . '#group-' . rawurlencode($owningGroup));
+        exit;
+    }
+
     $postedGroup = to_str($_POST['group'] ?? '');
     if ($postedGroup === '' || !isset($groups[$postedGroup])) {
         flash_set('Unknown settings group.', 'danger');
         header('Location: settings.php');
         exit;
     }
-
-    $user   = current_user();
-    $userId = to_int($user['id'] ?? 0) ?: null;
 
     /** @var array<string, mixed> $pending */
     $pending = [];

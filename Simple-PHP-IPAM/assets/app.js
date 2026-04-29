@@ -63,6 +63,19 @@
 
     updateThemeButton();
 
+    // --- Settings per-toggle auto-submit (#756) ---
+    // Each boolean setting renders as its own [data-setting-toggle] form.
+    // Submitting on `change` flips a single key without the legacy group-POST
+    // cascade silently flipping siblings. <noscript> exposes a Save button as
+    // fallback; the JS path simply submits the form, which works identically.
+    document.querySelectorAll("form[data-setting-toggle]").forEach(function(form) {
+      var checkbox = form.querySelector("input[type=checkbox][name=value]");
+      if (!checkbox) return;
+      checkbox.addEventListener("change", function() {
+        form.submit();
+      });
+    });
+
     // --- Theme toggle button ---
     var themeBtn = document.getElementById("theme-toggle");
     if (themeBtn) {

@@ -40,10 +40,10 @@ test.describe('Email OTP enrollment', () => {
         await login(page, ADMIN_USER, ADMIN_PASS);
         // Navigate to settings.php so getCsrf() finds a valid CSRF token.
         await page.goto(appUrl('settings.php'));
-        // Enable Email OTP globally. Bool settings: present key = true.
+        // Per-key save (#756): enable Email OTP globally without touching siblings.
         await fetchPost(page, appUrl('settings.php'), {
-            group: 'mfa',
-            'k_mfa__email_otp_enabled': '1',
+            key: 'mfa.email_otp_enabled',
+            value: '1',
         });
         await logout(page);
     });
@@ -51,14 +51,15 @@ test.describe('Email OTP enrollment', () => {
     test.afterEach(async ({ page }) => {
         // Ensure the test user's session is cleared before logging in as admin.
         await logout(page).catch(() => undefined);
-        // Disable Email OTP globally. Bool settings use absent-key = false convention.
-        // We MUST keep mfa.totp_enabled=1 here (the v3.x default and #747's gate) so
-        // that totp.spec.ts running after this file finds TOTP dispatch enabled.
+        // Per-key save (#756): disable Email OTP cleanly. Sibling bools (totp,
+        // passkeys) stay at whatever value the previous test left them — no
+        // sibling-bool re-assertion needed because the per-key path does not
+        // cascade absent bools to false.
         await login(page, ADMIN_USER, ADMIN_PASS);
         await page.goto(appUrl('settings.php'));
         await fetchPost(page, appUrl('settings.php'), {
-            group: 'mfa',
-            'k_mfa__totp_enabled': '1',
+            key: 'mfa.email_otp_enabled',
+            value: '0',
         });
         await logout(page);
     });
@@ -137,8 +138,8 @@ test.describe('Email OTP login challenge', () => {
         await login(page, ADMIN_USER, ADMIN_PASS);
         await page.goto(appUrl('settings.php'));
         await fetchPost(page, appUrl('settings.php'), {
-            group: 'mfa',
-            'k_mfa__email_otp_enabled': '1',
+            key: 'mfa.email_otp_enabled',
+            value: '1',
         });
         await logout(page);
     });
@@ -147,7 +148,11 @@ test.describe('Email OTP login challenge', () => {
         await logout(page).catch(() => undefined);
         await login(page, ADMIN_USER, ADMIN_PASS);
         await page.goto(appUrl('settings.php'));
-        await fetchPost(page, appUrl('settings.php'), { group: 'mfa' });
+        // Per-key save (#756): disable Email OTP without cascading to siblings.
+        await fetchPost(page, appUrl('settings.php'), {
+            key: 'mfa.email_otp_enabled',
+            value: '0',
+        });
         await logout(page);
     });
 
@@ -208,8 +213,8 @@ test.describe('Email OTP admin controls', () => {
         await login(page, ADMIN_USER, ADMIN_PASS);
         await page.goto(appUrl('settings.php'));
         await fetchPost(page, appUrl('settings.php'), {
-            group: 'mfa',
-            'k_mfa__email_otp_enabled': '1',
+            key: 'mfa.email_otp_enabled',
+            value: '1',
         });
         await logout(page);
     });
@@ -218,7 +223,11 @@ test.describe('Email OTP admin controls', () => {
         await logout(page).catch(() => undefined);
         await login(page, ADMIN_USER, ADMIN_PASS);
         await page.goto(appUrl('settings.php'));
-        await fetchPost(page, appUrl('settings.php'), { group: 'mfa' });
+        // Per-key save (#756): disable Email OTP without cascading to siblings.
+        await fetchPost(page, appUrl('settings.php'), {
+            key: 'mfa.email_otp_enabled',
+            value: '0',
+        });
         await logout(page);
     });
 
