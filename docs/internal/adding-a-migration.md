@@ -27,9 +27,15 @@ Any change that alters the runtime database structure on an existing install: ne
 
 4. **Update all three schema files.** Fresh installs go through `schema.sql` / `schema.mysql.sql` / `schema.pgsql.sql`, not the migration chain. They must stay structurally equivalent. CI's `SchemaParityTest` will fail the build on any divergence (table set, column set, type class, nullability, default kind, FK target, FK on-delete action). Type names normalise — `BLOB` / `VARBINARY(16)` / `BYTEA` all map to `"binary"` — so you don't need exact-string parity, just semantic.
 
-5. **Extend `tests/MigrationTest.php` if you need to prove behaviour.** Standard cases: pre-existing data is preserved, idempotency (running the migration twice is a no-op), constraints behave as expected. Build the pre-migration DB state in-memory in the test setup; do not point at a fixture file.
+5. **Regenerate the data dictionary.**
+   ```bash
+   php tools/generate-data-dictionary.php
+   ```
+   Commit the refreshed `docs/internal/data-dictionary.md` alongside your schema changes. `DataDictionaryDriftTest` (PHPUnit) fails the build if the file is stale — it re-runs the generator in-process and asserts byte-for-byte parity with the committed copy.
 
-6. **Run the local gate, then the 3-driver containerized harness:**
+6. **Extend `tests/MigrationTest.php` if you need to prove behaviour.** Standard cases: pre-existing data is preserved, idempotency (running the migration twice is a no-op), constraints behave as expected. Build the pre-migration DB state in-memory in the test setup; do not point at a fixture file.
+
+7. **Run the local gate, then the 3-driver containerized harness:**
    ```bash
    vendor/bin/phpunit                              # MigrationTest + SchemaParityTest
    bash testing/playwright/bootstrap-app.sh sqlite && bash testing/playwright/teardown-app.sh
@@ -38,7 +44,7 @@ Any change that alters the runtime database structure on an existing install: ne
    ```
    `bootstrap-app.sh` runs `migrate.php` against a fresh DB — if your migration is broken on any engine, it surfaces here before CI.
 
-7. **Bump `version.php`** and add the migration mention to the release `## [X.Y.Z]` entry in `CHANGELOG.md` under either `Added` (new tables/columns) or `Changed` (modified existing).
+8. **Bump `version.php`** and add the migration mention to the release `## [X.Y.Z]` entry in `CHANGELOG.md` under either `Added` (new tables/columns) or `Changed` (modified existing).
 
 ## Pitfalls (already burned)
 
@@ -51,5 +57,8 @@ Any change that alters the runtime database structure on an existing install: ne
 ## Cross-references
 
 - CLAUDE.md "Schema migrations" — policy, multi-tenancy rules, multi-engine deployment model, runtime-deps policy.
+- `docs/internal/data-dictionary.md` — generated cross-engine column/FK/UNIQUE reference. Refresh with `php tools/generate-data-dictionary.php` whenever you change a schema file.
 - `tests/MigrationTest.php` — assertion patterns, in-memory DB setup.
+- `tests/SchemaParityTest.php` — cross-engine parity assertions.
+- `tests/DataDictionaryDriftTest.php` — drift detection for the generated dictionary.
 - `dialects/*.php` — Dialect helper implementations per engine.

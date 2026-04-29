@@ -75,6 +75,7 @@ Operational procedures live alongside the code, one Read away. CLAUDE.md is poli
 | `docs/internal/investigating-ci-failure.md` | A check went red on a PR |
 | `docs/internal/release-kickoff-prompt.md` | Starting a new release session (paste-and-go template) |
 | `docs/internal/coderabbit-config.md` | Debugging `.coderabbit.yaml` ↔ org-config inheritance (early-access opt-in for pre-merge checks) |
+| `docs/internal/data-dictionary.md` | **Generated** — looking up a column type, FK, or unique constraint across SQLite/MySQL/PostgreSQL. Refresh with `php tools/generate-data-dictionary.php` after any schema change |
 
 ---
 
@@ -232,6 +233,8 @@ Once v2.9.0 lands, the project ships three schema files that must stay in sync:
 - `schema.pgsql.sql` — PostgreSQL 14+ (shipped v2.11.0)
 
 **When adding or modifying a table, column, index, or constraint:** update all three files in the same PR. No exceptions. The `SchemaParityTest` in CI will fail the build if the three files diverge on any structural element (table set, column set, type class, nullability, default kind, FK target, FK on-delete action). Type classes are normalised — `BLOB` / `VARBINARY(16)` / `BYTEA` all map to `"binary"`, so you do not need to match exact type names, only semantic equivalents.
+
+**Then regenerate the data dictionary** (`docs/internal/data-dictionary.md`) by running `php tools/generate-data-dictionary.php` and committing the refreshed file. `DataDictionaryDriftTest` (PHPUnit) re-runs the generator in-process and fails the build if the committed copy is stale.
 
 Migrations remain the source of truth for schema evolution. The three schema files are a fast path for fresh installs; the migration chain is what existing installs run through. `MigrationTest` asserts that applying every migration from v1.0 on an empty database converges to the same structural state as the matching `schema.X.sql` file, so drift between "what migrations produce" and "what the schema file says" is also caught.
 
@@ -576,7 +579,7 @@ Project-local agents, skills, and hooks live under `.claude/`. Use them — they
 
 **Subagents** (`.claude/agents/`, invoke via Agent tool with `subagent_type`):
 - `migration-reviewer` — run after editing `migrations.php`. Checks the four SQLite/FK footguns.
-- `multi-engine-schema-parity` — run after editing any of `schema.sql` / `schema.mysql.sql` / `schema.pgsql.sql`, or after a migration adds a table. Flags structural drift before `SchemaParityTest` does.
+- `multi-engine-schema-parity` — run after editing any of `schema.sql` / `schema.mysql.sql` / `schema.pgsql.sql`, or after a migration adds a table. Flags structural drift before `SchemaParityTest` does. **Also rerun `php tools/generate-data-dictionary.php` after these edits** — `DataDictionaryDriftTest` will fail the build if `docs/internal/data-dictionary.md` is stale.
 - `ip-binary-auditor` — run on any diff that touches `ip_bin` / `network_bin`, IP parsing, subnet math, ping/scan, or DB binds for binary columns.
 - `phpcs-style-fixer` — run before commit if you edited `.php`. Surfaces real PHPCS violations and respects the documented PSR-12 exclusions.
 
