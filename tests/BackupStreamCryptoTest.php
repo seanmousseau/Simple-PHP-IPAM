@@ -36,4 +36,42 @@ final class BackupStreamCryptoTest extends TestCase
         $this->assertSame(hash('sha256', $payload), hash_file('sha256', $dec));
         $this->assertSame('IPAMBKP2', substr((string) file_get_contents($enc), 0, 8));
     }
+
+    public function testV1BackupRestoresUnchanged(): void
+    {
+        $secret = 'unit-test-secret-not-real';
+        $payload = random_bytes(8192);
+        $v1Blob = backup_encrypt($payload, $secret); // single-shot GCM, IPAMBKP1
+        $src = $this->tmpDir . '/v1.enc';
+        $dst = $this->tmpDir . '/v1.dec';
+        file_put_contents($src, $v1Blob);
+
+        backup_decrypt_to_path($src, $dst, $secret);
+
+        $this->assertSame(hash('sha256', $payload), hash_file('sha256', $dst));
+    }
+
+    public function testV2DispatchesToStream(): void
+    {
+        $secret = 'unit-test-secret-not-real';
+        $payload = random_bytes(8192);
+        $src = $this->tmpDir . '/v2-plain.bin';
+        $enc = $this->tmpDir . '/v2.enc';
+        $dst = $this->tmpDir . '/v2.dec';
+        file_put_contents($src, $payload);
+
+        backup_encrypt_stream($src, $enc, $secret);
+        backup_decrypt_to_path($enc, $dst, $secret);
+
+        $this->assertSame(hash('sha256', $payload), hash_file('sha256', $dst));
+    }
+
+    public function testBadMagicRejected(): void
+    {
+        $src = $this->tmpDir . '/junk.enc';
+        $dst = $this->tmpDir . '/junk.dec';
+        file_put_contents($src, "NOTBACKUP" . random_bytes(64));
+        $this->expectException(RuntimeException::class);
+        backup_decrypt_to_path($src, $dst, 'unit-test-secret-not-real');
+    }
 }

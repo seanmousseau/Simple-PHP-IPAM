@@ -3977,6 +3977,41 @@ function backup_decrypt_stream(string $srcPath, string $dstPath, string $appSecr
 }
 
 /**
+ * Format-detecting decrypt-to-path. Peeks the 8-byte magic header:
+ *   IPAMBKP2 → backup_decrypt_stream() (v3.19+ streaming).
+ *   IPAMBKP1 → load full file → backup_decrypt() → write (v3.17–v3.18 back-compat,
+ *              still bound by original memory ceiling for old backups).
+ *
+ * @throws RuntimeException on unknown magic or any underlying failure.
+ */
+function backup_decrypt_to_path(string $srcPath, string $dstPath, string $appSecret): void
+{
+    $fh = @fopen($srcPath, 'rb');
+    if ($fh === false) {
+        throw new RuntimeException('backup_decrypt_to_path: cannot open source');
+    }
+    $magic = (string) fread($fh, 8);
+    fclose($fh);
+
+    if ($magic === BACKUP_MAGIC_V2) {
+        backup_decrypt_stream($srcPath, $dstPath, $appSecret);
+        return;
+    }
+    if ($magic === BACKUP_MAGIC) {
+        $blob = @file_get_contents($srcPath);
+        if ($blob === false) {
+            throw new RuntimeException('backup_decrypt_to_path: cannot read v1 blob');
+        }
+        $plain = backup_decrypt($blob, $appSecret);
+        if (@file_put_contents($dstPath, $plain) === false) {
+            throw new RuntimeException('backup_decrypt_to_path: cannot write v1 plaintext');
+        }
+        return;
+    }
+    throw new RuntimeException('backup_decrypt_to_path: unknown backup format');
+}
+
+/**
  * Advance a 16-byte big-endian counter block by $blocks (treats the whole
  * 16 bytes as a single big-endian integer). Returns the new counter; the
  * input is unchanged.
