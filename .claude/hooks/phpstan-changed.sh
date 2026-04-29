@@ -13,8 +13,12 @@ file="$(printf '%s' "$payload" | jq -r '.tool_input.file_path // empty')"
 [[ ! -f "$file" ]] && exit 0
 
 # Only analyse files under the app web root — phpstan.neon scope.
+# Compare against the project-root-prefixed path so the repo's own directory
+# name (which is also "Simple-PHP-IPAM/") doesn't accidentally match files in
+# sibling subtrees like tests/ or tools/.
+proj="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 case "$file" in
-  */Simple-PHP-IPAM/*) ;;
+  "$proj"/Simple-PHP-IPAM/*) ;;
   *) exit 0 ;;
 esac
 
