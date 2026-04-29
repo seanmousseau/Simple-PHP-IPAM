@@ -38,29 +38,31 @@ test.describe('Email OTP enrollment', () => {
             await setSmtpMailhog();
         }
         await login(page, ADMIN_USER, ADMIN_PASS);
-        // Navigate to settings.php so getCsrf() finds a valid CSRF token.
         await page.goto(appUrl('settings.php'));
-        // Per-key save (#756): enable Email OTP globally without touching siblings.
-        await fetchPost(page, appUrl('settings.php'), {
-            key: 'mfa.email_otp_enabled',
-            value: '1',
-        });
+        // Per-key save (#756): enable Email OTP and DISABLE every competing
+        // MFA global. EMAIL_OTP_USER may have stale TOTP / passkey enrollments
+        // from prior specs; without disabling those globals, login routes to
+        // totp_verify.php or passkey_verify.php instead of dashboard, and the
+        // goto change_password.php that follows bounces back to login.
+        // Pre-#756 the legacy `group=mfa` POST cascade-wiped these sibling
+        // bools as a side effect; per-key POST is explicit instead.
+        await fetchPost(page, appUrl('settings.php'), { key: 'mfa.email_otp_enabled', value: '1' });
+        await fetchPost(page, appUrl('settings.php'), { key: 'mfa.totp_enabled',      value: '0' });
+        await fetchPost(page, appUrl('settings.php'), { key: 'mfa.passkeys_enabled',  value: '0' });
         await logout(page);
     });
 
     test.afterEach(async ({ page }) => {
         // Ensure the test user's session is cleared before logging in as admin.
         await logout(page).catch(() => undefined);
-        // Per-key save (#756): disable Email OTP cleanly. Sibling bools (totp,
-        // passkeys) stay at whatever value the previous test left them — no
-        // sibling-bool re-assertion needed because the per-key path does not
-        // cascade absent bools to false.
+        // Restore: disable email_otp; re-enable totp (the v3.x default and
+        // #747's gate so totp.spec.ts running after this file finds TOTP
+        // dispatch enabled). Don't touch passkeys — leave at whatever value
+        // earlier specs set.
         await login(page, ADMIN_USER, ADMIN_PASS);
         await page.goto(appUrl('settings.php'));
-        await fetchPost(page, appUrl('settings.php'), {
-            key: 'mfa.email_otp_enabled',
-            value: '0',
-        });
+        await fetchPost(page, appUrl('settings.php'), { key: 'mfa.email_otp_enabled', value: '0' });
+        await fetchPost(page, appUrl('settings.php'), { key: 'mfa.totp_enabled',      value: '1' });
         await logout(page);
     });
 
@@ -137,10 +139,13 @@ test.describe('Email OTP login challenge', () => {
         await ensureEmailOtpEnrolled(EMAIL_OTP_USER);
         await login(page, ADMIN_USER, ADMIN_PASS);
         await page.goto(appUrl('settings.php'));
-        await fetchPost(page, appUrl('settings.php'), {
-            key: 'mfa.email_otp_enabled',
-            value: '1',
-        });
+        // Enable Email OTP and disable sibling MFA globals so EMAIL_OTP_USER
+        // routes specifically to email_otp_verify.php (not totp_verify.php
+        // or passkey_verify.php). See enrollment beforeEach for the full
+        // explanation of why per-key POST needs explicit sibling disable.
+        await fetchPost(page, appUrl('settings.php'), { key: 'mfa.email_otp_enabled', value: '1' });
+        await fetchPost(page, appUrl('settings.php'), { key: 'mfa.totp_enabled',      value: '0' });
+        await fetchPost(page, appUrl('settings.php'), { key: 'mfa.passkeys_enabled',  value: '0' });
         await logout(page);
     });
 
@@ -148,11 +153,10 @@ test.describe('Email OTP login challenge', () => {
         await logout(page).catch(() => undefined);
         await login(page, ADMIN_USER, ADMIN_PASS);
         await page.goto(appUrl('settings.php'));
-        // Per-key save (#756): disable Email OTP without cascading to siblings.
-        await fetchPost(page, appUrl('settings.php'), {
-            key: 'mfa.email_otp_enabled',
-            value: '0',
-        });
+        // Restore: disable email_otp; re-enable totp (the v3.x default and
+        // #747's gate). Don't touch passkeys.
+        await fetchPost(page, appUrl('settings.php'), { key: 'mfa.email_otp_enabled', value: '0' });
+        await fetchPost(page, appUrl('settings.php'), { key: 'mfa.totp_enabled',      value: '1' });
         await logout(page);
     });
 
@@ -212,10 +216,10 @@ test.describe('Email OTP admin controls', () => {
         await ensureEmailOtpEnrolled(EMAIL_OTP_USER);
         await login(page, ADMIN_USER, ADMIN_PASS);
         await page.goto(appUrl('settings.php'));
-        await fetchPost(page, appUrl('settings.php'), {
-            key: 'mfa.email_otp_enabled',
-            value: '1',
-        });
+        // Admin tests don't log in as EMAIL_OTP_USER so the sibling-disable
+        // dance isn't strictly required, but apply the same pattern for
+        // consistency with the other beforeEach blocks in this file.
+        await fetchPost(page, appUrl('settings.php'), { key: 'mfa.email_otp_enabled', value: '1' });
         await logout(page);
     });
 
