@@ -3877,6 +3877,106 @@ function backup_encrypt_stream(string $srcPath, string $dstPath, string $appSecr
 }
 
 /**
+ * Stream-decrypt $srcPath (v2 IPAMBKP2 format) into $dstPath. Two-pass:
+ * pass 1 verifies HMAC over the whole encrypted file; pass 2 writes plaintext.
+ * Plaintext is never produced if HMAC verification fails.
+ *
+ * @throws RuntimeException on bad magic, truncation, or HMAC mismatch.
+ */
+function backup_decrypt_stream(string $srcPath, string $dstPath, string $appSecret): void
+{
+    if ($appSecret === '') {
+        throw new RuntimeException('backup decryption requires app_secret to be set in config.php');
+    }
+    $size = @filesize($srcPath);
+    if ($size === false) {
+        throw new RuntimeException('backup_decrypt_stream: cannot stat source');
+    }
+    $headerLen = strlen(BACKUP_MAGIC_V2) + BACKUP_SALT_LEN + BACKUP_CTR_IV_LEN;
+    $minLen = $headerLen + BACKUP_HMAC_LEN;
+    if ($size < $minLen) {
+        throw new RuntimeException('backup_decrypt_stream: file too short');
+    }
+    $ctLen = $size - $minLen;
+
+    $in = @fopen($srcPath, 'rb');
+    if ($in === false) {
+        throw new RuntimeException('backup_decrypt_stream: cannot open source');
+    }
+
+    try {
+        $header = (string) fread($in, $headerLen);
+        if (strlen($header) !== $headerLen) {
+            throw new RuntimeException('backup_decrypt_stream: short header read');
+        }
+        if (substr($header, 0, 8) !== BACKUP_MAGIC_V2) {
+            throw new RuntimeException('backup_decrypt_stream: bad magic');
+        }
+        $salt = substr($header, 8, BACKUP_SALT_LEN);
+        $iv   = substr($header, 8 + BACKUP_SALT_LEN, BACKUP_CTR_IV_LEN);
+
+        $keys = ipam_hkdf_sha256($appSecret, 'ipam-v3:backup-v2:' . bin2hex($salt), 64);
+        $encKey = substr($keys, 0, 32);
+        $macKey = substr($keys, 32, 32);
+
+        // Pass 1: HMAC verify over magic||salt||iv||ciphertext
+        $hmacCtx = hash_init('sha256', HASH_HMAC, $macKey);
+        hash_update($hmacCtx, $header);
+        $remaining = $ctLen;
+        while ($remaining > 0) {
+            $want = (int) min(BACKUP_STREAM_CHUNK, $remaining);
+            $buf = fread($in, $want);
+            if ($buf === false || strlen($buf) !== $want) {
+                throw new RuntimeException('backup_decrypt_stream: short ciphertext read');
+            }
+            hash_update($hmacCtx, $buf);
+            $remaining -= $want;
+        }
+        $observed = (string) fread($in, BACKUP_HMAC_LEN);
+        if (strlen($observed) !== BACKUP_HMAC_LEN) {
+            throw new RuntimeException('backup_decrypt_stream: short hmac read');
+        }
+        $expected = hash_final($hmacCtx, true);
+        if (!hash_equals($expected, $observed)) {
+            throw new RuntimeException('backup_decrypt_stream: hmac mismatch');
+        }
+
+        // Pass 2: stream decrypt to $dstPath
+        if (fseek($in, $headerLen) !== 0) {
+            throw new RuntimeException('backup_decrypt_stream: rewind failed');
+        }
+        $out = @fopen($dstPath, 'wb');
+        if ($out === false) {
+            throw new RuntimeException('backup_decrypt_stream: cannot open dst');
+        }
+        try {
+            $counter = $iv;
+            $remaining = $ctLen;
+            while ($remaining > 0) {
+                $want = (int) min(BACKUP_STREAM_CHUNK, $remaining);
+                $buf = fread($in, $want);
+                if ($buf === false || strlen($buf) !== $want) {
+                    throw new RuntimeException('backup_decrypt_stream: short ciphertext read (pass 2)');
+                }
+                $pt = openssl_decrypt($buf, 'aes-256-ctr', $encKey, OPENSSL_RAW_DATA, $counter);
+                if ($pt === false) {
+                    throw new RuntimeException('backup_decrypt_stream: openssl_decrypt failed');
+                }
+                if (fwrite($out, $pt) !== strlen($pt)) {
+                    throw new RuntimeException('backup_decrypt_stream: short write to dst');
+                }
+                $counter = ipam_backup_advance_ctr($counter, intdiv(strlen($buf) + 15, 16));
+                $remaining -= $want;
+            }
+        } finally {
+            fclose($out);
+        }
+    } finally {
+        fclose($in);
+    }
+}
+
+/**
  * Advance a 16-byte big-endian counter block by $blocks (treats the whole
  * 16 bytes as a single big-endian integer). Returns the new counter; the
  * input is unchanged.
