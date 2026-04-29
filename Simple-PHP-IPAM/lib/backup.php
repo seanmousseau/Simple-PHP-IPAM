@@ -166,24 +166,56 @@ function ipam_backup_native_cmd(string $driver, array $config): array
     $pass = is_string($config['db_pass'] ?? null) ? $config['db_pass'] : '';
     $existingEnv = getenv(); // returns array<string,string> when called without args
 
+    // Mirror the running app's connection target. Substituting defaults for
+    // omitted DSN keys would force TCP onto Unix-socket configs (mismatching
+    // mysqldump/pg_dump against the wrong daemon or auth method) and could
+    // silently dump the wrong database if dbname is absent. Build the cmd
+    // exactly from what the DSN says; require dbname; otherwise omit flags
+    // so the dump tool uses the same default lookup path PDO did.
     if ($driver === 'mysql') {
-        $host = preg_match('/host=([^;]+)/i', $dsn, $m) ? $m[1] : '127.0.0.1';
-        $port = preg_match('/port=([^;]+)/i', $dsn, $m) ? $m[1] : '3306';
-        $name = preg_match('/dbname=([^;]+)/i', $dsn, $m) ? $m[1] : 'ipam';
+        if (!preg_match('/dbname=([^;]+)/i', $dsn, $m)) {
+            throw new RuntimeException('ipam_backup_native_cmd: dbname missing from db_dsn');
+        }
+        $name = $m[1];
+        $cmd  = ['mysqldump', '--single-transaction', '--routines'];
+        if (preg_match('/unix_socket=([^;]+)/i', $dsn, $m)) {
+            $cmd[] = '--socket';
+            $cmd[] = $m[1];
+        } elseif (preg_match('/host=([^;]+)/i', $dsn, $m)) {
+            $cmd[] = '-h';
+            $cmd[] = $m[1];
+        }
+        if (preg_match('/port=([^;]+)/i', $dsn, $m)) {
+            $cmd[] = '-P';
+            $cmd[] = $m[1];
+        }
+        $cmd[] = '-u';
+        $cmd[] = $user;
+        $cmd[] = $name;
         return [
-            'cmd' => [
-                'mysqldump', '--single-transaction', '--routines',
-                '-h', $host, '-P', $port, '-u', $user, $name,
-            ],
+            'cmd' => $cmd,
             'env' => array_merge($existingEnv, ['MYSQL_PWD' => $pass]),
         ];
     }
     if ($driver === 'pgsql') {
-        $host = preg_match('/host=([^;]+)/i', $dsn, $m) ? $m[1] : '127.0.0.1';
-        $port = preg_match('/port=([^;]+)/i', $dsn, $m) ? $m[1] : '5432';
-        $name = preg_match('/dbname=([^;]+)/i', $dsn, $m) ? $m[1] : 'ipam';
+        if (!preg_match('/dbname=([^;]+)/i', $dsn, $m)) {
+            throw new RuntimeException('ipam_backup_native_cmd: dbname missing from db_dsn');
+        }
+        $name = $m[1];
+        $cmd  = ['pg_dump'];
+        if (preg_match('/host=([^;]+)/i', $dsn, $m)) {
+            $cmd[] = '-h';
+            $cmd[] = $m[1];
+        }
+        if (preg_match('/port=([^;]+)/i', $dsn, $m)) {
+            $cmd[] = '-p';
+            $cmd[] = $m[1];
+        }
+        $cmd[] = '-U';
+        $cmd[] = $user;
+        $cmd[] = $name;
         return [
-            'cmd' => ['pg_dump', '-h', $host, '-p', $port, '-U', $user, $name],
+            'cmd' => $cmd,
             'env' => array_merge($existingEnv, ['PGPASSWORD' => $pass]),
         ];
     }
