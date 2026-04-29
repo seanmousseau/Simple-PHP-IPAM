@@ -10,14 +10,12 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
 ### Changed
 - Encrypted backups now stream both during creation and during restore staging. The new on-disk format (`IPAMBKP2`) uses AES-256-CTR + HMAC-SHA256 in encrypt-then-MAC mode, with 64 KiB streaming chunks. Memory usage is bounded regardless of database size — multi-GB backups no longer OOM (#769).
-- Restore is two-pass: pass 1 streams HMAC verification over the whole encrypted file; pass 2 writes plaintext only after the MAC has matched. Plaintext is never produced if verification fails.
+- Restore is single-pass: each chunk is decrypted into a temporary file in the destination directory while an HMAC accumulates over the same ciphertext. The temp file is atomically renamed to the staged path only after the trailing MAC matches; on any failure the temp is unlinked, so failed verification leaves no plaintext file behind.
+- Backward compatibility: v3.17 and v3.18 single-shot AES-256-GCM backups (`IPAMBKP1`) continue to restore unchanged via the back-compat decrypt path. No migration required for existing backups.
 
 ### Security
-- Per-file HKDF salt: every v2 backup derives a fresh enc_key + mac_key via `HKDF-SHA256(app_secret, 'ipam-v3:backup-v2:' || hex(salt))`. Two backups with the same `app_secret` no longer share key material.
+- Per-file HKDF salt fed through the RFC 5869 `salt` parameter (HKDF-Extract): every v2 backup derives a fresh enc_key + mac_key via `HKDF-SHA256(app_secret, info='ipam-v3:backup-v2', salt=<random 16 B>)`. Two backups with the same `app_secret` no longer share key material.
 - HMAC covers magic + salt + iv + ciphertext, so an attacker cannot tamper with the header.
-
-### Compatibility
-- v3.17 and v3.18 single-shot AES-256-GCM backups (`IPAMBKP1`) continue to restore unchanged via the back-compat decrypt path. No migration required.
 
 ---
 

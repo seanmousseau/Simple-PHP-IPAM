@@ -89,8 +89,13 @@ final class BackupStreamCryptoTest extends TestCase
         $blob[100] = chr(ord($blob[100]) ^ 0xff);
         file_put_contents($enc, $blob);
 
-        $this->expectExceptionMessageMatches('/hmac mismatch/');
-        backup_decrypt_stream($enc, $dst, $secret);
+        try {
+            backup_decrypt_stream($enc, $dst, $secret);
+            $this->fail('Expected RuntimeException');
+        } catch (RuntimeException $e) {
+            $this->assertMatchesRegularExpression('/hmac mismatch/', $e->getMessage());
+            $this->assertFileDoesNotExist($dst, 'no plaintext should remain at $dst on failed verification');
+        }
     }
 
     public function testTamperedHmacTagFails(): void
@@ -107,8 +112,13 @@ final class BackupStreamCryptoTest extends TestCase
         $blob[$last] = chr(ord($blob[$last]) ^ 0x01);
         file_put_contents($enc, $blob);
 
-        $this->expectExceptionMessageMatches('/hmac mismatch/');
-        backup_decrypt_stream($enc, $dst, $secret);
+        try {
+            backup_decrypt_stream($enc, $dst, $secret);
+            $this->fail('Expected RuntimeException');
+        } catch (RuntimeException $e) {
+            $this->assertMatchesRegularExpression('/hmac mismatch/', $e->getMessage());
+            $this->assertFileDoesNotExist($dst, 'no plaintext should remain at $dst on failed verification');
+        }
     }
 
     public function testTruncatedFileFails(): void
@@ -123,8 +133,12 @@ final class BackupStreamCryptoTest extends TestCase
         $blob = (string) file_get_contents($enc);
         file_put_contents($enc, substr($blob, 0, strlen($blob) - 8));
 
-        $this->expectException(RuntimeException::class);
-        backup_decrypt_stream($enc, $dst, $secret);
+        try {
+            backup_decrypt_stream($enc, $dst, $secret);
+            $this->fail('Expected RuntimeException');
+        } catch (RuntimeException $e) {
+            $this->assertFileDoesNotExist($dst, 'no plaintext should remain at $dst on truncation');
+        }
     }
 
     /**
@@ -133,7 +147,13 @@ final class BackupStreamCryptoTest extends TestCase
      *
      * Skipped if the test host has less than 512 MiB of free /tmp space.
      *
+     * Runs in a separate PHP process — `memory_get_peak_usage(true)` reports
+     * the peak for the entire process, so co-running tests in the same worker
+     * would pollute the measurement. Process isolation gives a clean baseline.
+     *
      * @group slow
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
      */
     public function testLargePayloadStreamsBelowMemoryCap(): void
     {

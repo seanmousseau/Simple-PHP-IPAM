@@ -201,19 +201,15 @@ After 14 days of daily backups, the 8th-oldest daily file is deleted, keeping th
 
 ## Encryption
 
-When `encrypt` is enabled on a destination, the backup dump is encrypted with **AES-256-GCM** before upload. The encryption key is derived from `app_secret` (from `config.php`) using HKDF-SHA256 with the info string `'ipam-v3:backup'`.
+When `encrypt` is enabled on a destination, the backup dump is encrypted before upload. New backups created on v3.19.0+ use the **v2 streaming format** (`IPAMBKP2`): AES-256-CTR + HMAC-SHA256 in encrypt-then-MAC mode, with a per-file HKDF salt and 64 KiB streaming chunks. Memory usage is bounded regardless of database size — multi-GB databases no longer OOM during encrypted backup runs.
 
-**File format:**
+Backups created on v3.17 and v3.18 use a **legacy v1 format** (`IPAMBKP1`, single-shot AES-256-GCM). The v1 format is no longer produced by v3.19+ but remains fully supported for restore via a back-compat decrypt path: existing v1 files restore unchanged on v3.19+, no migration required.
 
-```
-[8 bytes magic: "IPAMBKP1"] [12 bytes random IV] [ciphertext] [16 bytes GCM tag]
-```
-
-The magic header (`IPAMBKP1`) identifies the format version. The decryption helper rejects any file that does not start with this header. Future format versions will use a different magic string, enabling clean detection and a clear error message.
+The full byte layout of both formats and the magic-byte dispatcher used on restore are documented in the [On-disk format](#on-disk-format) section below.
 
 **Encrypted files have the `.enc` suffix** appended to the normal filename, for example:
 
-```
+```text
 ipam-20260428-020000.sqlite.enc
 ```
 
@@ -343,7 +339,7 @@ Encrypted backups carry an 8-byte magic header that identifies the format. v3.19
 
 ### v2 — `IPAMBKP2` (v3.19.0+, streaming)
 
-```
+```text
 offset  size   field
 0       8      magic  = "IPAMBKP2"
 8       16     salt   = random_bytes(16)        ; per-file HKDF salt
@@ -352,15 +348,15 @@ offset  size   field
 40+N    32     hmac   = HMAC-SHA256(mac_key, magic || salt || iv || ciphertext)
 ```
 
-- Per-file salt → fresh enc_key (32 B) + mac_key (32 B) derived via `ipam_hkdf_sha256($appSecret, 'ipam-v3:backup-v2:' . bin2hex($salt), 64)`.
-- Encrypt-then-MAC (RFC-7366 style); HMAC covers magic + salt + iv + ciphertext, so an attacker cannot tamper with the header.
-- Restore is two-pass: pass 1 streams HMAC verification over the whole file, pass 2 streams plaintext to disk. Plaintext is never written until the MAC has matched.
+- Per-file salt fed to HKDF as the RFC 5869 `salt` parameter (HKDF-Extract): `ipam_hkdf_sha256($appSecret, info='ipam-v3:backup-v2', length=64, salt=$salt)`. First 32 bytes → enc_key; last 32 bytes → mac_key. Putting the random bytes in `salt` (not `info`) is what RFC 5869 specifies for entropy strengthening of the extractor.
+- Encrypt-then-MAC; HMAC covers magic + salt + iv + ciphertext, so an attacker cannot tamper with the header.
+- Restore is single-pass: each chunk is decrypted into a temporary file (`$dstPath . '.decrypting.<rand>'`) while the HMAC accumulates over the same ciphertext. The temp file is atomically renamed to `$dstPath` only after the trailing MAC matches; on any failure path the temp is unlinked, so a failed verification leaves no plaintext file behind. This avoids the TOCTOU window of a two-pass design that re-reads the source between verify and decrypt.
 - 64 KiB streaming chunks; AES-CTR counter block is advanced manually between chunks (`+chunk_blocks`).
 - Memory-bound by `BACKUP_STREAM_CHUNK` (64 KiB) regardless of payload size.
 
 ### v1 — `IPAMBKP1` (v3.17–v3.18, single-shot AES-256-GCM)
 
-```
+```text
 offset  size  field
 0       8     magic = "IPAMBKP1"
 8       12    iv

@@ -281,7 +281,7 @@ Skipping this manual check during a release run is a gate violation. The check i
 
 `testing/playwright/tests/visual-regression.spec.ts-snapshots/` holds per-platform PNG baselines (`*-darwin.png`, `*-linux.png`). Filenames include the host OS because Chromium's text shaping and AA differ between CoreText (macOS) and HarfBuzz+FreeType (Linux Docker), producing low-amplitude pixel diffs even when the bundled `@font-face` woff2s render identically.
 
-CI's `playwright.yml` job runs in Linux Docker, so it only validates and refreshes `*-linux.png` baselines. **Darwin baselines drift over time** — every release that grows `demo_seed.php` (more rows on subnets/dashboard) or restructures a captured page will eventually push the rendered page taller than the committed darwin baseline, and a `vendor/bin` local-mac gate run shows a cluster of 8–10 visual-regression failures with the signature: `Expected an image WIDTHpx by Hpx, received WIDTHpx by H'px` where `H' < H`, all on `subnets-*` and `dashboard-*` across the 4 viewports.
+CI's `playwright.yml` job runs in Linux Docker, so it only validates and refreshes `*-linux.png` baselines. **Darwin baselines drift over time** — every release that grows `demo_seed.php` (more rows on the captured pages) or restructures a captured page will eventually push the rendered page taller than the committed darwin baseline, and a local-mac VR run shows a cluster of visual-regression failures with the signature: `Expected an image WIDTHpx by Hpx, received WIDTHpx by H'px` where `H' < H`, on `subnets-*` / `addresses-*` / `search-*` across the 4 viewports. (Dashboard is excluded from automated VR — see the section above.)
 
 **This is not a regression.** It is platform-suffixed baseline maintenance debt.
 

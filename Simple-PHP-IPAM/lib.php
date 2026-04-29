@@ -3824,7 +3824,10 @@ function backup_encrypt_stream(string $srcPath, string $dstPath, string $appSecr
     }
     $salt = random_bytes(BACKUP_SALT_LEN);
     $iv   = random_bytes(BACKUP_CTR_IV_LEN);
-    $keys = ipam_hkdf_sha256($appSecret, 'ipam-v3:backup-v2:' . bin2hex($salt), 64);
+    // Per-file salt is passed via HKDF's salt parameter (used in HKDF-Extract)
+    // for proper RFC 5869 strengthening. The fixed 'ipam-v3:backup-v2' goes in
+    // info for domain separation across purposes.
+    $keys = ipam_hkdf_sha256($appSecret, 'ipam-v3:backup-v2', 64, $salt);
     $encKey = substr($keys, 0, 32);
     $macKey = substr($keys, 32, 32);
 
@@ -3877,11 +3880,18 @@ function backup_encrypt_stream(string $srcPath, string $dstPath, string $appSecr
 }
 
 /**
- * Stream-decrypt $srcPath (v2 IPAMBKP2 format) into $dstPath. Two-pass:
- * pass 1 verifies HMAC over the whole encrypted file; pass 2 writes plaintext.
- * Plaintext is never produced if HMAC verification fails.
+ * Stream-decrypt $srcPath (v2 IPAMBKP2 format) into $dstPath.
  *
- * @throws RuntimeException on bad magic, truncation, or HMAC mismatch.
+ * Single-pass: decrypts each ciphertext chunk into a temporary file in the
+ * same directory as $dstPath while accumulating an HMAC-SHA256 over the
+ * exact bytes that were just decrypted (encrypt-then-MAC verification of
+ * the same buffer). The temp file is atomically renamed to $dstPath only
+ * after the trailing HMAC tag matches; on any failure path the temp is
+ * unlinked, so a failed verification leaves no plaintext file behind at
+ * $dstPath. Avoids the TOCTOU window of a two-pass design where the
+ * source file could change between verify and decrypt.
+ *
+ * @throws RuntimeException on bad magic, truncation, openssl failure, or HMAC mismatch.
  */
 function backup_decrypt_stream(string $srcPath, string $dstPath, string $appSecret): void
 {
@@ -3904,6 +3914,8 @@ function backup_decrypt_stream(string $srcPath, string $dstPath, string $appSecr
         throw new RuntimeException('backup_decrypt_stream: cannot open source');
     }
 
+    $tmpPath = $dstPath . '.decrypting.' . bin2hex(random_bytes(4));
+    $out = null;
     try {
         $header = (string) fread($in, $headerLen);
         if (strlen($header) !== $headerLen) {
@@ -3915,13 +3927,20 @@ function backup_decrypt_stream(string $srcPath, string $dstPath, string $appSecr
         $salt = substr($header, 8, BACKUP_SALT_LEN);
         $iv   = substr($header, 8 + BACKUP_SALT_LEN, BACKUP_CTR_IV_LEN);
 
-        $keys = ipam_hkdf_sha256($appSecret, 'ipam-v3:backup-v2:' . bin2hex($salt), 64);
+        // Per-file salt is passed via HKDF's salt parameter (HKDF-Extract).
+        $keys = ipam_hkdf_sha256($appSecret, 'ipam-v3:backup-v2', 64, $salt);
         $encKey = substr($keys, 0, 32);
         $macKey = substr($keys, 32, 32);
 
-        // Pass 1: HMAC verify over magic||salt||iv||ciphertext
+        $out = @fopen($tmpPath, 'wb');
+        if ($out === false) {
+            throw new RuntimeException('backup_decrypt_stream: cannot open tmp dst');
+        }
+
+        // Single-pass decrypt + HMAC over the exact bytes processed.
         $hmacCtx = hash_init('sha256', HASH_HMAC, $macKey);
         hash_update($hmacCtx, $header);
+        $counter = $iv;
         $remaining = $ctLen;
         while ($remaining > 0) {
             $want = (int) min(BACKUP_STREAM_CHUNK, $remaining);
@@ -3930,6 +3949,14 @@ function backup_decrypt_stream(string $srcPath, string $dstPath, string $appSecr
                 throw new RuntimeException('backup_decrypt_stream: short ciphertext read');
             }
             hash_update($hmacCtx, $buf);
+            $pt = openssl_decrypt($buf, 'aes-256-ctr', $encKey, OPENSSL_RAW_DATA, $counter);
+            if ($pt === false) {
+                throw new RuntimeException('backup_decrypt_stream: openssl_decrypt failed');
+            }
+            if (fwrite($out, $pt) !== strlen($pt)) {
+                throw new RuntimeException('backup_decrypt_stream: short write to tmp');
+            }
+            $counter = ipam_backup_advance_ctr($counter, intdiv(strlen($buf) + 15, 16));
             $remaining -= $want;
         }
         $observed = (string) fread($in, BACKUP_HMAC_LEN);
@@ -3941,36 +3968,20 @@ function backup_decrypt_stream(string $srcPath, string $dstPath, string $appSecr
             throw new RuntimeException('backup_decrypt_stream: hmac mismatch');
         }
 
-        // Pass 2: stream decrypt to $dstPath
-        if (fseek($in, $headerLen) !== 0) {
-            throw new RuntimeException('backup_decrypt_stream: rewind failed');
+        // HMAC verified — close out, atomically rename tmp into place.
+        fclose($out);
+        $out = null;
+        if (!@rename($tmpPath, $dstPath)) {
+            throw new RuntimeException('backup_decrypt_stream: rename to dst failed');
         }
-        $out = @fopen($dstPath, 'wb');
-        if ($out === false) {
-            throw new RuntimeException('backup_decrypt_stream: cannot open dst');
-        }
-        try {
-            $counter = $iv;
-            $remaining = $ctLen;
-            while ($remaining > 0) {
-                $want = (int) min(BACKUP_STREAM_CHUNK, $remaining);
-                $buf = fread($in, $want);
-                if ($buf === false || strlen($buf) !== $want) {
-                    throw new RuntimeException('backup_decrypt_stream: short ciphertext read (pass 2)');
-                }
-                $pt = openssl_decrypt($buf, 'aes-256-ctr', $encKey, OPENSSL_RAW_DATA, $counter);
-                if ($pt === false) {
-                    throw new RuntimeException('backup_decrypt_stream: openssl_decrypt failed');
-                }
-                if (fwrite($out, $pt) !== strlen($pt)) {
-                    throw new RuntimeException('backup_decrypt_stream: short write to dst');
-                }
-                $counter = ipam_backup_advance_ctr($counter, intdiv(strlen($buf) + 15, 16));
-                $remaining -= $want;
-            }
-        } finally {
+    } catch (Throwable $e) {
+        if (is_resource($out)) {
             fclose($out);
         }
+        if (is_file($tmpPath)) {
+            @unlink($tmpPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmpPath built from $dstPath + random suffix; no user input
+        }
+        throw $e;
     } finally {
         fclose($in);
     }
@@ -4003,7 +4014,12 @@ function backup_decrypt_to_path(string $srcPath, string $dstPath, string $appSec
             throw new RuntimeException('backup_decrypt_to_path: cannot read v1 blob');
         }
         $plain = backup_decrypt($blob, $appSecret);
-        if (@file_put_contents($dstPath, $plain) === false) {
+        $written = @file_put_contents($dstPath, $plain);
+        if ($written !== strlen($plain)) {
+            // Partial write (e.g. disk full) — discard truncated plaintext.
+            if (is_file($dstPath)) {
+                @unlink($dstPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $dstPath is caller-supplied tmpfile path, no user input
+            }
             throw new RuntimeException('backup_decrypt_to_path: cannot write v1 plaintext');
         }
         return;
