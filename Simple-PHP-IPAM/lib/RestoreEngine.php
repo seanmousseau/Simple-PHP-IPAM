@@ -58,9 +58,12 @@ final class RestoreEngine
 
         // Verify against backup_log row if one exists for this filename.
         // Mismatch is fatal — never apply a backup whose stored checksum disagrees.
+        // Restrict to type='backup' rows — restore rows write the same filename
+        // but their checksum field would not match (and may be NULL).
         $stmt = $this->db->prepare(
             "SELECT checksum FROM backup_log
              WHERE destination_id = :d AND filename = :f AND status = 'success'
+               AND (type = 'backup' OR type IS NULL)
              ORDER BY started_at DESC LIMIT 1"
         );
         $stmt->execute([':d' => $destinationId, ':f' => $remoteName]);
@@ -111,24 +114,36 @@ final class RestoreEngine
     /**
      * Sign a staged file path so caller can pass it back to apply()/dryRun()
      * via a query parameter without an attacker forging arbitrary paths.
+     *
+     * The signature binds the path AND any metadata (filename, destination_id)
+     * the caller will hand back later. An attacker who flips the destination
+     * or filename POST field will produce a signature mismatch.
+     *
+     * @param array{filename?:string,destination_id?:int,size?:int} $meta
      */
-    public function sign(string $stagedPath): string
+    public function sign(string $stagedPath, array $meta = []): string
     {
         $appSecret = is_string($this->config['app_secret'] ?? null) ? $this->config['app_secret'] : '';
         if ($appSecret === '') {
             throw new RuntimeException('RestoreEngine: cannot sign without app_secret');
         }
         $key = ipam_hkdf_sha256($appSecret, 'ipam-v3:restore-stage', 32);
-        return hash_hmac('sha256', $stagedPath, $key);
+        $message = $stagedPath
+            . "\0filename=" . (isset($meta['filename']) ? (string) $meta['filename'] : '')
+            . "\0destination_id=" . (isset($meta['destination_id']) ? (string) (int) $meta['destination_id'] : '')
+            . "\0size=" . (isset($meta['size']) ? (string) (int) $meta['size'] : '');
+        return hash_hmac('sha256', $message, $key);
     }
 
     /**
      * Verify a signed staged-file token. Returns the path on success or null.
+     *
+     * @param array{filename?:string,destination_id?:int,size?:int} $meta
      */
-    public function verifySigned(string $stagedPath, string $signature): ?string
+    public function verifySigned(string $stagedPath, string $signature, array $meta = []): ?string
     {
         try {
-            $expected = $this->sign($stagedPath);
+            $expected = $this->sign($stagedPath, $meta);
         } catch (Throwable) {
             return null;
         }

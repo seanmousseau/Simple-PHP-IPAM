@@ -45,15 +45,30 @@ try {
     exit;
 }
 
-audit($db, 'remote_backup.download', 'destination', $destId, "name=$name as=$as");
-
 if ($as === 'staged') {
+    // Generate signature BEFORE auditing or returning JSON — sign() can throw
+    // on empty app_secret, and we'd rather fail noisily without an audit row
+    // claiming the download succeeded.
+    try {
+        $signature = $engine->sign($staged['path'], [
+            'filename' => $staged['filename'],
+            'destination_id' => $destId,
+            'size' => $staged['size'],
+        ]);
+    } catch (Throwable $e) {
+        error_log('[download_remote_backup] sign failed: ' . $e->getMessage());
+        http_response_code(500);
+        header('Content-Type: text/plain');
+        echo "500 Cannot sign staged token (see server log for details)\n";
+        exit;
+    }
+    audit($db, 'remote_backup.download', 'destination', $destId, "name=$name as=staged");
     header('Content-Type: application/json');
     // nosemgrep: php.lang.security.xss.echoed-request -- Content-Type is application/json; json_encode provides structural escaping; no HTML rendering
     echo json_encode([
         'ok'        => true,
         'path'      => $staged['path'],
-        'signature' => $engine->sign($staged['path']),
+        'signature' => $signature,
         'size'      => $staged['size'],
         'filename'  => $staged['filename'],
         'encrypted' => $staged['encrypted'],
@@ -62,6 +77,9 @@ if ($as === 'staged') {
     // Phase 13's restore_web.php cleans it up after dry-run/apply.
     exit;
 }
+
+// File-streaming branch: audit after we've committed to streaming.
+audit($db, 'remote_backup.download', 'destination', $destId, "name=$name as=file");
 
 // Default: stream the decrypted staged file as a download.
 // basename() strips path components but does not remove quotes or CR/LF.

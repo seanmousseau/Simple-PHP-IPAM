@@ -31,7 +31,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             try {
                 $staged = $engine->prepareForRestore($destId, $name);
                 $stagedPath = $staged['path'];
-                $stagedSig = $engine->sign($stagedPath);
+                $stagedSig = $engine->sign($stagedPath, [
+                    'filename' => $staged['filename'],
+                    'destination_id' => $destId,
+                    'size' => $staged['size'],
+                ]);
                 $stagedFilename = $staged['filename'];
                 $stagedSize = $staged['size'];
                 $stagedDestId = $destId;
@@ -49,7 +53,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stagedFilename = to_str($_POST['staged_filename'] ?? '');
             $stagedSize = to_int($_POST['staged_size'] ?? 0);
             $stagedDestId = to_int($_POST['staged_destination_id'] ?? 0);
-            $verified = $engine->verifySigned($stagedPath, $stagedSig);
+            $verified = $engine->verifySigned($stagedPath, $stagedSig, [
+                'filename' => $stagedFilename,
+                'destination_id' => $stagedDestId,
+                'size' => $stagedSize,
+            ]);
             if ($verified === null) {
                 $err = 'Invalid or expired staged file token.';
             } else {
@@ -75,15 +83,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($confirm !== 'RESTORE') {
                 $err = 'Confirmation text must be "RESTORE" exactly.';
             } else {
-                $verified = $engine->verifySigned($stagedPath, $stagedSig);
+                $verified = $engine->verifySigned($stagedPath, $stagedSig, [
+                    'filename' => $stagedFilename,
+                    'destination_id' => $stagedDestId,
+                    'size' => $stagedSize,
+                ]);
                 if ($verified === null) {
                     $err = 'Invalid or expired staged file token.';
                 } else {
                     try {
                         $result = $engine->apply($verified, $stagedFilename, $stagedDestId > 0 ? $stagedDestId : null);
-                        audit($db, 'db.restore', 'system', null,
-                              "file=$stagedFilename tables=" . $result['tables_restored']
-                              . " statements=" . $result['statements']);
+                        // RestoreEngine::apply() already emits the success db.restore audit.
+                        // Avoid double-writing here.
                         // Cleanup staged file after successful apply.
                         // Re-resolve via realpath() at the call site (project semgrep sanitizer pattern).
                         $cleanupReal = realpath($verified);
