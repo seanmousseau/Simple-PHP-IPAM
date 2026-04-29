@@ -10,6 +10,8 @@ The release bundle **ships with the release PR**, not in a follow-up PR. Feature
 
 Normal feature PRs into `dev` through the session. Every feature/fix/docs commit goes through its own review cycle; nothing in this phase is release-specific.
 
+**Before locking scope, re-validate every milestone issue body against current code.** Issue bodies are written at filing time and may not reflect post-CR-round reality. Two of five #762 items deferred from the v3.17.0 release were already shipped during v3.17 CR rounds before v3.18.0 kicked off — assuming the issue body was authoritative would have meant duplicate-fixing already-fixed code. For each open milestone issue, grep for the named function / file / line ranges and confirm the described problem still exists. Update the issue body or close the line item before scope-lock.
+
 ### Phase 2 — prepare the release on `dev`
 
 Once everything that belongs in `vX.Y.Z` is on `dev`, do the following **in order** on `dev`:
@@ -48,11 +50,16 @@ Once everything that belongs in `vX.Y.Z` is on `dev`, do the following **in orde
     ```
     Only proceed if the full suite is green (pre-existing flaky tests excepted — log them in the PR description).
 12. Run the dev-direct pipeline only if the release touches something the containerized harness can't cover (real-IdP OIDC, `test_api.sh` regressions, `timezone.spec.ts`).
-13. **Clean `Simple-PHP-IPAM/data/` of any local test debris** before building — the release script excludes `*.sqlite` but **not** `*.sqlite.*.bak`, `demo_last_reset.txt`, or any other runtime artifacts. Stray files get baked into the tarball otherwise:
+13. **Clean `Simple-PHP-IPAM/` of any local test debris** before building — the release script excludes `*.sqlite` but **not** the various artifacts produced by `bootstrap-app.sh` and prior runs. Run all of these:
     ```bash
+    git restore Simple-PHP-IPAM/config.php                       # bootstrap-app.sh rewrites this
+    rm -f Simple-PHP-IPAM/config.php.prebootstrap-backup         # bootstrap-app.sh's saved original
+    rm -f Simple-PHP-IPAM/config.php.bak-v3upgrade               # legacy upgrade-script backup
     rm -f Simple-PHP-IPAM/data/*.bak Simple-PHP-IPAM/data/demo_last_reset.txt
+    rm -rf Simple-PHP-IPAM/data/sessions                         # PHP session files from local runs
     ls Simple-PHP-IPAM/data/   # expect only ipam.sqlite, tmp/, possibly .htaccess
     ```
+    Stray files baked into the tarball is a recurring class of bug across releases — the cleanup glob has grown over time. Treat `git status` showing anything under `Simple-PHP-IPAM/` other than your release-prep edits as a red flag.
 14. **Build the bundle:**
     ```bash
     ./releases/make_releases.sh Simple-PHP-IPAM X.Y.Z
@@ -77,7 +84,13 @@ Once everything that belongs in `vX.Y.Z` is on `dev`, do the following **in orde
 If CodeRabbit or a human reviewer asks for a change on the open PR:
 
 1. Make the code/doc/test fix on `dev` and re-run the relevant local gate checks.
-2. **Rebuild the bundle so it reflects the fix.** This is non-negotiable: the merged `releases/ipam-X.Y.Z/ipam-X.Y.Z.tar.gz` must match the final code state. Delete the old artifact, rerun the cleanup + build, commit as a new `chore(release): rebuild vX.Y.Z bundle after review fixes` commit (or amend, if the review round happens on a single unreviewed change):
+2. **Rebuild the bundle so it reflects the fix — but only if the fix touched files inside `Simple-PHP-IPAM/`.** The bundle is built from the `Simple-PHP-IPAM/` subtree only; top-level files (`.coderabbit.yaml`, `.github/`, `composer.json`, `docs/`, `releases/`, `tests/`, `website/`) are NOT in the tarball and changes to them do NOT require a rebuild. If the only files changed since the last bundle commit are outside `Simple-PHP-IPAM/`, the existing tarball still matches the deployed code state — skip the rebuild. Verify with:
+
+   ```bash
+   git diff --stat releases/ipam-X.Y.Z/SHA256SUMS..HEAD -- Simple-PHP-IPAM/
+   ```
+
+   If the diff is empty, no rebuild is needed and the tarball stays valid through merge. Otherwise rebuild is non-negotiable: the merged `releases/ipam-X.Y.Z/ipam-X.Y.Z.tar.gz` must match the final code state. Delete the old artifact, rerun the cleanup + build, commit as a new `chore(release): rebuild vX.Y.Z bundle after review fixes` commit (or amend, if the review round happens on a single unreviewed change):
    ```bash
    rm -rf releases/ipam-X.Y.Z ipam-X.Y.Z
    rm -f Simple-PHP-IPAM/data/*.bak Simple-PHP-IPAM/data/demo_last_reset.txt

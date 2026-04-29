@@ -62,6 +62,7 @@ Operational procedures live alongside the code, one Read away. CLAUDE.md is poli
 | `docs/internal/adding-a-page.md` | Creating a new PHP page |
 | `docs/internal/investigating-ci-failure.md` | A check went red on a PR |
 | `docs/internal/release-kickoff-prompt.md` | Starting a new release session (paste-and-go template) |
+| `docs/internal/coderabbit-config.md` | Debugging `.coderabbit.yaml` ↔ org-config inheritance (early-access opt-in for pre-merge checks) |
 
 ---
 
