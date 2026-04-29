@@ -3810,6 +3810,94 @@ function backup_encrypt(string $plain, string $appSecret): string
 }
 
 /**
+ * Stream-encrypt $srcPath into $dstPath using the v2 (IPAMBKP2) format:
+ * AES-256-CTR + HMAC-SHA256 in encrypt-then-MAC mode.
+ *
+ * Memory bound is BACKUP_STREAM_CHUNK + bookkeeping, regardless of input size.
+ *
+ * @throws RuntimeException on I/O, openssl, or appSecret failure.
+ */
+function backup_encrypt_stream(string $srcPath, string $dstPath, string $appSecret): void
+{
+    if ($appSecret === '') {
+        throw new RuntimeException('backup encryption requires app_secret to be set in config.php');
+    }
+    $salt = random_bytes(BACKUP_SALT_LEN);
+    $iv   = random_bytes(BACKUP_CTR_IV_LEN);
+    $keys = ipam_hkdf_sha256($appSecret, 'ipam-v3:backup-v2:' . bin2hex($salt), 64);
+    $encKey = substr($keys, 0, 32);
+    $macKey = substr($keys, 32, 32);
+
+    $in = @fopen($srcPath, 'rb');
+    if ($in === false) {
+        throw new RuntimeException('backup_encrypt_stream: cannot open source');
+    }
+    $out = @fopen($dstPath, 'wb');
+    if ($out === false) {
+        fclose($in);
+        throw new RuntimeException('backup_encrypt_stream: cannot open dest');
+    }
+
+    try {
+        $header = BACKUP_MAGIC_V2 . $salt . $iv;
+        if (fwrite($out, $header) !== strlen($header)) {
+            throw new RuntimeException('backup_encrypt_stream: short write on header');
+        }
+        $hmacCtx = hash_init('sha256', HASH_HMAC, $macKey);
+        hash_update($hmacCtx, $header);
+
+        $counter = $iv;
+        while (!feof($in)) {
+            $chunk = fread($in, BACKUP_STREAM_CHUNK);
+            if ($chunk === false) {
+                throw new RuntimeException('backup_encrypt_stream: read failed');
+            }
+            if ($chunk === '') {
+                continue;
+            }
+            $ct = openssl_encrypt($chunk, 'aes-256-ctr', $encKey, OPENSSL_RAW_DATA, $counter);
+            if ($ct === false) {
+                throw new RuntimeException('backup_encrypt_stream: openssl_encrypt failed');
+            }
+            if (fwrite($out, $ct) !== strlen($ct)) {
+                throw new RuntimeException('backup_encrypt_stream: short write on ciphertext');
+            }
+            hash_update($hmacCtx, $ct);
+            $counter = ipam_backup_advance_ctr($counter, intdiv(strlen($chunk) + 15, 16));
+        }
+
+        $tag = hash_final($hmacCtx, true);
+        if (fwrite($out, $tag) !== BACKUP_HMAC_LEN) {
+            throw new RuntimeException('backup_encrypt_stream: short write on hmac');
+        }
+    } finally {
+        fclose($in);
+        fclose($out);
+    }
+}
+
+/**
+ * Advance a 16-byte big-endian counter block by $blocks (treats the whole
+ * 16 bytes as a single big-endian integer). Returns the new counter; the
+ * input is unchanged.
+ */
+function ipam_backup_advance_ctr(string $counter, int $blocks): string
+{
+    $unpacked = unpack('C*', $counter);
+    if ($unpacked === false) {
+        throw new RuntimeException('ipam_backup_advance_ctr: unpack failed');
+    }
+    $bytes = array_values($unpacked);
+    $carry = $blocks;
+    for ($i = 15; $i >= 0 && $carry > 0; $i--) {
+        $sum = $bytes[$i] + ($carry & 0xff);
+        $bytes[$i] = $sum & 0xff;
+        $carry = ($carry >> 8) + ($sum >> 8);
+    }
+    return pack('C*', ...$bytes);
+}
+
+/**
  * Decrypt a backup payload produced by backup_encrypt().
  *
  * Verifies the magic header and GCM authentication tag before returning
