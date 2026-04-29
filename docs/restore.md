@@ -1,8 +1,3 @@
----
-title: Restore from a Backup
-nav_order: 11
----
-
 # Restore from a Backup
 
 > **v3.17.0** adds a browser-based restore wizard (`restore_web.php`) that stages a backup file from a remote destination, shows a dry-run preview, and applies the restore after an explicit confirmation step. The legacy CLI restore (`restore.php`) is unchanged.
