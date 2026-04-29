@@ -557,6 +557,30 @@ Include `https://claude.ai/code/session_...` in commit body.
 
 ---
 
+## In-repo Claude Code automations
+
+Project-local agents, skills, and hooks live under `.claude/`. Use them — they encode procedure-doc rules and the documented footguns.
+
+**Subagents** (`.claude/agents/`, invoke via Agent tool with `subagent_type`):
+- `migration-reviewer` — run after editing `migrations.php`. Checks the four SQLite/FK footguns.
+- `multi-engine-schema-parity` — run after editing any of `schema.sql` / `schema.mysql.sql` / `schema.pgsql.sql`, or after a migration adds a table. Flags structural drift before `SchemaParityTest` does.
+- `ip-binary-auditor` — run on any diff that touches `ip_bin` / `network_bin`, IP parsing, subnet math, ping/scan, or DB binds for binary columns.
+- `phpcs-style-fixer` — run before commit if you edited `.php`. Surfaces real PHPCS violations and respects the documented PSR-12 exclusions.
+
+**Skills** (`.claude/skills/`, invoke via Skill tool or `/<name>`):
+- `/add-migration` — scaffold a new migration with FK-safe patterns and idempotency guards.
+- `/release-kickoff` — plan and execute a release end-to-end.
+- `/release-gate` — pre-existing local gate runner.
+
+**Hooks** (`.claude/hooks/`, fire automatically on Edit/Write):
+- `block-sensitive-paths.sh` (PreToolUse) — refuses edits to release tarballs, `Simple-PHP-IPAM/data/`, `config.php`, `vendor/`, `node_modules/`.
+- `php-lint.sh` (PostToolUse) — `php -l` on every edited `.php` file.
+- `phpstan-changed.sh` (PostToolUse) — PHPStan L9 single-file analysis on edited files under `Simple-PHP-IPAM/`. Skips silently if `vendor/bin/phpstan` is missing.
+
+**MCP servers** (`.mcp.json` + user-scope `MCP_DOCKER`): SQLite (project-scoped to `data/ipam.sqlite`), Memory MCP, Semgrep, Playwright, Chrome DevTools, context7. Memory MCP is the agent session-state store — see top of this doc.
+
+---
+
 ## Key constraints and gotchas
 
 - **Runtime dependencies are allowed but curated** — see the "Runtime dependencies" section below for the policy and current whitelist. Historical note: this project shipped with zero runtime deps through v2.7.0 and adopted a curated dep policy in v2.8.0 to avoid hand-rolling security-sensitive protocols. The `vendor/` directory is gitignored in the repo but **is shipped in the release tarball** — end users still deploy by extracting the tarball with no build step. `composer install --no-dev` runs at release bundle time, not at install time on the target.

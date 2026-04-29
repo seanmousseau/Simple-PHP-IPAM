@@ -39,5 +39,13 @@ case "$rel" in
     echo "Refused: config.php is per-install and gitignored. Edit config on the target deploy, not in the repo." >&2
     exit 2
     ;;
+  vendor/*|Simple-PHP-IPAM/vendor/*)
+    echo "Refused: vendor/ is Composer-managed. Edit composer.json and run 'composer install' instead of hand-editing dep source." >&2
+    exit 2
+    ;;
+  node_modules/*)
+    echo "Refused: node_modules/ is generated. Edit package.json and reinstall." >&2
+    exit 2
+    ;;
 esac
 exit 0
