@@ -9,6 +9,7 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
+  - [v3.17.0](#v3170) — Backup destinations, schedules, GFS retention, encryption, web restore wizard (no breaking changes)
   - [v3.16.0](#v3160) — Admin TOTP toggle, preferred MFA method, unified MFA card, Settings tabs, portable case-insensitive search (no breaking changes)
   - [v3.15.2](#v3152) — Bug fixes: passkey registration with password managers, MFA method choice, stale-session redirect (no breaking changes)
   - [v3.15.1](#v3151) — Bug fixes: post-login redirect, email charset, banner false positive (no breaking changes)
@@ -108,6 +109,40 @@ The backup is left in place after a successful upgrade. You can remove it manual
 ---
 
 ## Version-specific upgrade notes
+
+### v3.17.0
+
+**New tables:** `backup_destinations`, `backup_schedules`, `backup_log`. Migration `3.17.0-backup` is automatic and idempotent.
+
+**New pages:**
+- `destinations.php` — Backup destinations admin (admin only)
+- `backup_history.php` — Backup history log with Schedules tab (admin only)
+- `remote_backups.php` — Remote backup browser (admin only)
+- `restore_web.php` — Web-based restore wizard with dry-run and confirmation typing gate (admin only)
+- `download_remote_backup.php` — AJAX endpoint: download a file from a destination to the admin's browser
+- `test_destination.php` — AJAX endpoint: test a destination connection
+- `run_backup_now.php` — AJAX endpoint: trigger a schedule immediately
+
+**New runtime dependency:** `phpseclib/phpseclib ^3.0` (SFTP transport, MIT license, zero transitive runtime deps). Bundled in the release tarball; no `composer install` needed at install time. Source installs must run `composer install --no-dev` after upgrade.
+
+**New settings registry keys:**
+- `backup.notify_on_failure` (bool, default `true`) — send an email to `alert_email` when a backup run fails.
+- `backup.notify_on_success` (bool, default `false`) — send an email to `alert_email` when a backup run succeeds.
+
+**New audit actions:** `destination.create`, `destination.update`, `destination.delete`, `destination.test`, `backup.run`, `backup.failed`, `backup.retention_pruned`, `db.restore_stage`, `db.restore_dryrun`, `db.restore`, `remote_backup.delete`, `remote_backup.verify`, `remote_backup.download`, `remote_backup.download_failed`.
+
+**Cron:** if you already have `cron.php` scheduled, backup schedules run automatically the next time it fires. No additional cron entry is needed.
+
+**SQLite-only for backup dumps:** v3.17.0 uses the existing SQLite-only `ipam_db_dump_stream()` helper for the backup dump. MySQL and PostgreSQL backup dumps are planned for a follow-up release. The legacy v3.7.0 `backup.php` CLI is unchanged and continues to write to `backup_history`.
+
+**`app_secret` is required for encrypted backups.** The key must be set in `config.php` (not the `settings` table — it must be available before the database is opened). If you have not yet set `app_secret`, either leave the Encrypt option unchecked on each destination or set `app_secret` first:
+
+```bash
+php -r "echo bin2hex(random_bytes(32));"
+# Add the output as 'app_secret' => '<value>' in config.php
+```
+
+---
 
 ### v3.16.0
 

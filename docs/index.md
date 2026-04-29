@@ -31,6 +31,7 @@ A lightweight, self-hosted IP Address Management (IPAM) tool built with **PHP 8.
 - **Multi-method MFA** — TOTP, Email OTP, and WebAuthn passkeys; unified Account-page card; users pick a preferred method; full switch graph between methods at login; admin global toggles per method
 - **Audit log** — append-only, full change history with configurable retention and batch pruning
 - **Database backup & restore** — scheduled CLI backup (SQLite/MySQL/PostgreSQL) with SHA-256 verification, retention rotation, and restore with dry-run mode; admin backup history page
+- **Backup destinations & schedules (v3.17+)** — write backups to S3-compatible storage, SFTP, or local paths; GFS (Grandfather-Father-Son) retention; AES-256-GCM encryption; web-based restore wizard with dry-run preview and confirmation typing gate
 - **Operational health dashboard** — real-time metrics (DB size, backup status, scanning health, webhook delivery, auth/security, system info) with color-coded status indicators
 - **Utilisation alerts** — email when subnets exceed thresholds
 - **Email password recovery** — token-based reset flow with rate limiting
@@ -63,7 +64,9 @@ See the [Installation guide](install.md) to get up and running in minutes.
 | [OIDC / SSO](oidc.md) | PKCE flow setup with Keycloak, Azure AD, Okta, etc. |
 | [SMTP & Email](smtp.md) | SMTP configuration, alerts, password recovery |
 | [Security](security.md) | Hardening checklist, CSP, HTTPS, firewall, TOTP 2FA, Email OTP, Passkeys/WebAuthn |
-| [Backup & Restore](backup.md) | Database backup CLI, scheduled backups, restore workflow, disaster recovery |
+| [Backup & Restore (legacy CLI)](backup.md) | Legacy database backup CLI, scheduled backups, restore workflow, disaster recovery |
+| [Backup Destinations & Schedules](backups.md) | Set up S3, SFTP, or local backups with GFS retention and encryption. *(v3.17.0+)* |
+| [Restore from a Backup](restore.md) | Web-based restore wizard with dry-run preview and confirmation typing gate. *(v3.17.0+)* |
 | [Upgrading](upgrading.md) | Version upgrade instructions and changelog |
 
 ## License

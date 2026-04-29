@@ -1,6 +1,12 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/version.php';
+require_once __DIR__ . '/lib/BackupClientInterface.php';
+require_once __DIR__ . '/lib/S3Client.php';
+require_once __DIR__ . '/lib/SftpClient.php';
+require_once __DIR__ . '/lib/LocalBackupClient.php';
+require_once __DIR__ . '/lib/BackupEngine.php';
+require_once __DIR__ . '/lib/RestoreEngine.php';
 
 /**
  * Returns the active SQL dialect (#378). ipam_db() bootstraps this once per
@@ -1528,6 +1534,22 @@ function ipam_setting_definitions(): array
             'default'     => '',
             'sensitive'   => false,
             'config_key'  => ['backup', 'dir'],
+        ],
+        'backup.notify_on_failure' => [
+            'label'       => 'Notify on backup failure',
+            'description' => 'Email notification when a backup fails.',
+            'type'        => 'bool',
+            'group'       => 'backup',
+            'default'     => true,
+            'sensitive'   => false,
+        ],
+        'backup.notify_on_success' => [
+            'label'       => 'Notify on backup success',
+            'description' => 'Email notification when a backup succeeds.',
+            'type'        => 'bool',
+            'group'       => 'backup',
+            'default'     => false,
+            'sensitive'   => false,
         ],
 
         // --- Limits ---
@@ -3727,6 +3749,543 @@ function backup_info(array $config): array
         'count'       => count($files),
         'dir'         => $dir,
     ];
+}
+
+// ── Backup encryption constants (Phase 2 / #694) ────────────────────────────
+const BACKUP_MAGIC   = 'IPAMBKP1';  // 8-byte magic + version tag
+const BACKUP_IV_LEN  = 12;          // AES-256-GCM recommended IV length
+const BACKUP_TAG_LEN = 16;          // GCM authentication tag length (max)
+
+/**
+ * Derive a fixed-length key from a master secret using HKDF-SHA-256.
+ *
+ * Thin wrapper around PHP's native hash_hkdf() (PHP 7.1.2+). Keeping this as
+ * a named function makes call-sites self-documenting and lets tests verify the
+ * RFC 5869 Test Case 1 vector directly. The $salt parameter is optional and
+ * defaults to the all-zeros salt that HKDF specifies when salt is omitted.
+ *
+ * @param string $ikm    Input keying material (e.g. $config['app_secret'])
+ * @param string $info   Context string distinguishing key purposes
+ * @param int    $length Output length in bytes (1–255 × hash-length for SHA-256)
+ * @param string $salt   Optional salt; pass '' to use HKDF's default zero-salt
+ */
+function ipam_hkdf_sha256(string $ikm, string $info, int $length, string $salt = ''): string
+{
+    if ($length <= 0) {
+        throw new RuntimeException('ipam_hkdf_sha256: length must be positive');
+    }
+    return hash_hkdf('sha256', $ikm, $length, $info, $salt);
+}
+
+/**
+ * Encrypt a backup payload with AES-256-GCM.
+ *
+ * The output format is:
+ *   BACKUP_MAGIC (8 bytes) | IV (12 bytes) | GCM tag (16 bytes) | ciphertext
+ *
+ * The AES key is derived from $appSecret via HKDF-SHA-256 with a fixed
+ * purpose string, so a compromise of the ciphertext alone does not expose
+ * $appSecret or any other derived key.
+ *
+ * @throws RuntimeException on openssl failure (should never happen on a
+ *         supported PHP build, but we must not silently return bad data)
+ */
+function backup_encrypt(string $plain, string $appSecret): string
+{
+    if ($appSecret === '') {
+        throw new RuntimeException('backup encryption requires app_secret to be set in config.php');
+    }
+    $key = ipam_hkdf_sha256($appSecret, 'ipam-v3:backup', 32);
+    $iv  = random_bytes(BACKUP_IV_LEN);
+    $tag = '';
+    $ct  = openssl_encrypt($plain, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag, '', BACKUP_TAG_LEN);
+    if ($ct === false) {
+        throw new RuntimeException('backup encryption failed');
+    }
+    return BACKUP_MAGIC . $iv . $tag . $ct;
+}
+
+/**
+ * Decrypt a backup payload produced by backup_encrypt().
+ *
+ * Verifies the magic header and GCM authentication tag before returning
+ * plaintext. Any tampering with the ciphertext, tag, or IV — or passing
+ * a plain-text file instead of an encrypted blob — causes a RuntimeException
+ * with a non-leaky message (no oracle information about which part failed).
+ *
+ * Forward-compat note: future format versions will use a different magic
+ * (e.g. "IPAMBKP2") and a newer decoder. The error message on version
+ * mismatch is intentionally identical to the bad-magic path so the format
+ * version itself is not leaked through the exception text. Callers should
+ * surface a user-friendly "backup created by newer version" error when
+ * appropriate based on the loaded software version, not by parsing the
+ * exception message.
+ *
+ * @throws RuntimeException on bad magic, truncation, or authentication failure
+ */
+function backup_decrypt(string $blob, string $appSecret): string
+{
+    if ($appSecret === '') {
+        throw new RuntimeException('backup decryption requires app_secret to be set in config.php');
+    }
+    $minLen = strlen(BACKUP_MAGIC) + BACKUP_IV_LEN + BACKUP_TAG_LEN;
+    if (strlen($blob) < $minLen) {
+        throw new RuntimeException('encrypted blob too short');
+    }
+    if (substr($blob, 0, strlen(BACKUP_MAGIC)) !== BACKUP_MAGIC) {
+        throw new RuntimeException('not an IPAM backup blob (bad magic)');
+    }
+    $offset = strlen(BACKUP_MAGIC);
+    $iv  = substr($blob, $offset, BACKUP_IV_LEN);
+    $tag = substr($blob, $offset + BACKUP_IV_LEN, BACKUP_TAG_LEN);
+    $ct  = substr($blob, $offset + BACKUP_IV_LEN + BACKUP_TAG_LEN);
+    $key = ipam_hkdf_sha256($appSecret, 'ipam-v3:backup', 32);
+    $pt  = openssl_decrypt($ct, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag);
+    if ($pt === false) {
+        throw new RuntimeException('backup decryption failed (auth or key)');
+    }
+    return $pt;
+}
+
+// ── GFS Retention Engine (#695) ───────────────────────────────────────────────
+
+/**
+ * Select backup log IDs that should be deleted according to a GFS
+ * (Grandfather-Father-Son) retention policy.
+ *
+ * Algorithm
+ * ---------
+ * 1. Sort $backups newest-first by created_at.
+ * 2. Walk in order, assigning each backup to up to four tier slots:
+ *    - hourly  → slot key "Y-m-d H" (UTC)
+ *    - daily   → slot key "Y-m-d"   (UTC)
+ *    - weekly  → slot key "YYYY-WW"  (ISO 8601 week)
+ *    - monthly → slot key "Y-m"     (UTC)
+ * 3. For each tier with a positive keep_* count, the FIRST backup encountered
+ *    in a given slot (i.e. the newest in that slot) wins the slot until the
+ *    tier's capacity is exhausted.
+ * 4. A backup is KEPT if it wins at least one slot in any tier.
+ * 5. Safety guard: the newest backup overall is always kept, even when all
+ *    keep_* counts are zero.
+ * 6. Everything else goes into the delete list.
+ *
+ * Tier promotion note: tiers are independent. A backup that falls outside the
+ * hourly window (e.g. yesterday's backup when keep_hourly=1) can still win a
+ * daily, weekly, or monthly slot without first winning an hourly slot.
+ *
+ * @param array<int, array{id: int, created_at: string}> $backups
+ *        Flat list of backup records; order does not matter.
+ * @param array{keep_hourly: int, keep_daily: int, keep_weekly: int, keep_monthly: int} $config
+ *        Retention counts per tier. A count of 0 disables that tier entirely.
+ * @param int|null $nowEpoch  UTC epoch for the "current time" (injectable for tests).
+ *                            When null, uses time().
+ * @return int[]  IDs from $backups that should be deleted.
+ */
+function ipam_gfs_select_for_deletion(array $backups, array $config, ?int $nowEpoch = null): array
+{
+    if (count($backups) === 0) {
+        return [];
+    }
+
+    // Sort newest-first; stable sort preserves relative order of ties (not critical,
+    // but deterministic across PHP versions).
+    usort($backups, static function (array $a, array $b): int {
+        return strcmp($b['created_at'], $a['created_at']);
+    });
+
+    $newestId = (int) $backups[0]['id'];
+
+    $keepHourly  = max(0, (int) $config['keep_hourly']);
+    $keepDaily   = max(0, (int) $config['keep_daily']);
+    $keepWeekly  = max(0, (int) $config['keep_weekly']);
+    $keepMonthly = max(0, (int) $config['keep_monthly']);
+
+    // Slot tracking per tier: slot_key → count of backups already assigned to that slot.
+    $hourlySlots  = [];
+    $dailySlots   = [];
+    $weeklySlots  = [];
+    $monthlySlots = [];
+
+    // Count of unique slots filled so far per tier (used to stop once capacity reached).
+    $hourlyFilled  = 0;
+    $dailyFilled   = 0;
+    $weeklyFilled  = 0;
+    $monthlyFilled = 0;
+
+    $keepIds = [];
+
+    foreach ($backups as $backup) {
+        $id = (int) $backup['id'];
+
+        // Safety guard: always keep the newest backup.
+        if ($id === $newestId) {
+            $keepIds[$id] = true;
+            // Still run through the tier logic below so it counts toward slot capacity.
+        }
+
+        $epoch = strtotime($backup['created_at']);
+        if ($epoch === false) {
+            // Unparseable timestamp: treat as very old (epoch 0) — should never happen on well-formed data.
+            $epoch = 0;
+        }
+
+        $kept = isset($keepIds[$id]);
+
+        // Hourly tier
+        if ($keepHourly > 0) {
+            $slot = gmdate('Y-m-d H', $epoch);
+            if (!isset($hourlySlots[$slot])) {
+                // First (newest) backup in this slot wins it, if capacity remains.
+                if ($hourlyFilled < $keepHourly) {
+                    $hourlySlots[$slot] = true;
+                    $hourlyFilled++;
+                    $keepIds[$id] = true;
+                    $kept = true;
+                }
+                // If capacity exhausted, the slot winner is still recorded as "seen"
+                // so later (older) backups in the same slot are not mistakenly counted.
+                $hourlySlots[$slot] = true;
+            }
+            // Subsequent backups in the same slot: slot already claimed; they do not win it.
+        }
+
+        // Daily tier
+        if ($keepDaily > 0) {
+            $slot = gmdate('Y-m-d', $epoch);
+            if (!isset($dailySlots[$slot])) {
+                if ($dailyFilled < $keepDaily) {
+                    $dailySlots[$slot] = true;
+                    $dailyFilled++;
+                    $keepIds[$id] = true;
+                    $kept = true;
+                }
+                $dailySlots[$slot] = true;
+            }
+        }
+
+        // Weekly tier (ISO 8601 week: "YYYY-WW")
+        if ($keepWeekly > 0) {
+            $slot = gmdate('o-W', $epoch); // 'o' = ISO year (may differ from 'Y' at year boundary)
+            if (!isset($weeklySlots[$slot])) {
+                if ($weeklyFilled < $keepWeekly) {
+                    $weeklySlots[$slot] = true;
+                    $weeklyFilled++;
+                    $keepIds[$id] = true;
+                    $kept = true;
+                }
+                $weeklySlots[$slot] = true;
+            }
+        }
+
+        // Monthly tier
+        if ($keepMonthly > 0) {
+            $slot = gmdate('Y-m', $epoch);
+            if (!isset($monthlySlots[$slot])) {
+                if ($monthlyFilled < $keepMonthly) {
+                    $monthlySlots[$slot] = true;
+                    $monthlyFilled++;
+                    $keepIds[$id] = true;
+                    $kept = true;
+                }
+                $monthlySlots[$slot] = true;
+            }
+        }
+
+        // Suppress unused variable warning from static analysis: $kept is set for
+        // documentation clarity but only $keepIds drives the decision.
+        unset($kept);
+    }
+
+    // Build delete list: every input ID not in the keep set.
+    $delete = [];
+    foreach ($backups as $backup) {
+        $id = (int) $backup['id'];
+        if (!isset($keepIds[$id])) {
+            $delete[] = $id;
+        }
+    }
+
+    return $delete;
+}
+
+/**
+ * DB-aware GFS retention wrapper for a single backup destination.
+ *
+ * Fetches the destination's GFS schedule config from backup_schedules, fetches
+ * all successful backup_log rows for the destination, calls
+ * ipam_gfs_select_for_deletion() to determine which rows to prune, updates
+ * each pruned row's status to 'retention_pruned', audits the operation, and
+ * returns the count of rows pruned.
+ *
+ * Remote-delete stub: the actual delete-from-remote call requires a
+ * BackupClientInterface implementation (landing in Phase 4 / #692). Until then
+ * the remote-delete step throws RuntimeException with a clear message so callers
+ * know it is not yet wired. The backup_log row update and audit still occur
+ * (wrapped in try/catch so a remote-delete failure does not prevent the DB record
+ * from being marked and counted).
+ *
+ * @param PDO $db             Application database connection.
+ * @param int $destinationId  ID of the backup_destinations row.
+ * @return int                Count of backup_log rows marked as retention_pruned.
+ */
+function ipam_backup_apply_retention(PDO $db, int $destinationId): int
+{
+    // ── 1. Fetch destination info (type needed for future client dispatch) ──────
+    $destStmt = $db->prepare("SELECT id, name, type FROM backup_destinations WHERE id = :id");
+    $destStmt->execute([':id' => $destinationId]);
+    $dest = $destStmt->fetch();
+    if (!is_array($dest)) {
+        throw new \InvalidArgumentException("backup_destinations row not found: id={$destinationId}");
+    }
+
+    // ── 2. Fetch GFS config from backup_schedules (sane defaults if no schedule) ─
+    $schedStmt = $db->prepare(
+        "SELECT retention_hourly, retention_daily, retention_weekly, retention_monthly
+         FROM backup_schedules
+         WHERE destination_id = :did AND is_active = 1
+         LIMIT 1"
+    );
+    $schedStmt->execute([':did' => $destinationId]);
+    $sched = $schedStmt->fetch();
+
+    if (is_array($sched)) {
+        $gfsConfig = [
+            'keep_hourly'  => to_int($sched['retention_hourly']),
+            'keep_daily'   => to_int($sched['retention_daily']),
+            'keep_weekly'  => to_int($sched['retention_weekly']),
+            'keep_monthly' => to_int($sched['retention_monthly']),
+        ];
+    } else {
+        // No schedule: use conservative defaults so unscheduled destinations are
+        // still protected from unbounded log growth.
+        $gfsConfig = [
+            'keep_hourly'  => 0,
+            'keep_daily'   => 7,
+            'keep_weekly'  => 4,
+            'keep_monthly' => 3,
+        ];
+    }
+
+    // ── 3. Fetch successful backup_log rows for this destination ─────────────
+    // backup_log uses started_at for GFS bucketing (no created_at column).
+    $logStmt = $db->prepare(
+        "SELECT id, filename, started_at AS created_at
+         FROM backup_log
+         WHERE destination_id = :did AND status = 'success'
+         ORDER BY started_at DESC"
+    );
+    $logStmt->execute([':did' => $destinationId]);
+    $rows = $logStmt->fetchAll();
+
+    if (count($rows) === 0) {
+        return 0;
+    }
+
+    // ── 4. Determine which IDs to prune ───────────────────────────────────────
+    $toDelete = ipam_gfs_select_for_deletion($rows, $gfsConfig);
+
+    if (count($toDelete) === 0) {
+        return 0;
+    }
+
+    // Index rows by id for filename lookup
+    $rowById = [];
+    foreach ($rows as $r) {
+        if (is_array($r) && isset($r['id']) && is_numeric($r['id'])) {
+            $rowById[(int) $r['id']] = $r;
+        }
+    }
+
+    // Build a client for the destination so we can actually delete remote files.
+    $cfgJson = '';
+    $destStmt2 = $db->prepare("SELECT config FROM backup_destinations WHERE id = :id");
+    $destStmt2->execute([':id' => $destinationId]);
+    $cfgRow = $destStmt2->fetch();
+    if (is_array($cfgRow) && is_string($cfgRow['config'] ?? null)) {
+        $cfgJson = $cfgRow['config'];
+    }
+    $cfgArr = json_decode($cfgJson, true);
+    $typedCfg = [];
+    if (is_array($cfgArr)) {
+        foreach ($cfgArr as $k => $v) {
+            if (is_string($k)) $typedCfg[$k] = $v;
+        }
+    }
+    $client = null;
+    try {
+        $type = is_string($dest['type'] ?? null) ? $dest['type'] : '';
+        $client = match ($type) {
+            's3'    => new S3Client($typedCfg),
+            'sftp'  => new SftpClient($typedCfg),
+            'local' => new LocalBackupClient($typedCfg),
+            default => null,
+        };
+    } catch (\Throwable $e) {
+        error_log('[ipam_backup_apply_retention] cannot construct client: ' . $e->getMessage());
+        $client = null;
+    }
+
+    // ── 5. For each ID: attempt remote delete; mark DB row ONLY if remote delete succeeded ──
+    $pruned = 0;
+    foreach ($toDelete as $logId) {
+        $row = $rowById[(int) $logId] ?? null;
+        $filename = is_array($row) && is_string($row['filename'] ?? null) ? $row['filename'] : '';
+        $remoteDeleted = false;
+
+        if ($client !== null && $filename !== '') {
+            try {
+                // BackupClientInterface::delete() returns bool — true = removed, false = not found.
+                // Treat both as success for retention purposes (the goal is "no longer present").
+                $client->delete($filename);
+                $remoteDeleted = true;
+            } catch (\Throwable $e) {
+                error_log('[ipam_backup_apply_retention] remote delete failed for log_id=' . $logId . ' file=' . $filename . ': ' . $e->getMessage());
+                $remoteDeleted = false;
+            }
+        }
+
+        if (!$remoteDeleted) {
+            // Do NOT mark this row as retention_pruned — the remote object is still there.
+            // Leaving the row at status='success' so the next retention pass will try again.
+            continue;
+        }
+
+        try {
+            $db->prepare(
+                "UPDATE backup_log SET status = 'retention_pruned' WHERE id = :id"
+            )->execute([':id' => $logId]);
+            $pruned++;
+        } catch (\Exception $e) {
+            error_log('[ipam_backup_apply_retention] failed to mark log_id=' . $logId . ': ' . $e->getMessage());
+        }
+    }
+
+    // ── 6. Audit ──────────────────────────────────────────────────────────────
+    if ($pruned > 0) {
+        audit(
+            $db,
+            'backup.retention_pruned',
+            'backup_destination',
+            $destinationId,
+            'count=' . $pruned . ' destination=' . $destinationId
+        );
+    }
+
+    return $pruned;
+}
+
+/**
+ * Compute the next clock-aligned run time for a backup schedule.
+ *
+ * @param array<string,mixed> $schedule schedule row, requires 'frequency'; uses
+ *                                       'time_of_day' (HH:MM), 'day_of_week' (0-6, Mon=1),
+ *                                       'day_of_month' (1-28).
+ * @param ?int $nowEpoch injectable UTC epoch for testing; defaults to time()
+ * @return int next-run UTC epoch
+ */
+function ipam_backup_next_run_at(array $schedule, ?int $nowEpoch = null): int
+{
+    $now = $nowEpoch ?? time();
+    $freq = is_string($schedule['frequency'] ?? null) ? $schedule['frequency'] : 'daily';
+
+    // Parse time_of_day "HH:MM" -> [hour, minute]
+    $timeOfDay = is_string($schedule['time_of_day'] ?? null) ? $schedule['time_of_day'] : '02:00';
+    $parts = explode(':', $timeOfDay);
+    $hour = (int) $parts[0];
+    $minute = count($parts) > 1 ? (int) $parts[1] : 0;
+    if ($hour < 0 || $hour > 23) $hour = 2;
+    if ($minute < 0 || $minute > 59) $minute = 0;
+
+    if ($freq === 'hourly') {
+        // Next exact HH:00 strictly after now.
+        $aligned = gmmktime((int) gmdate('H', $now) + 1, 0, 0,
+                            (int) gmdate('n', $now), (int) gmdate('j', $now), (int) gmdate('Y', $now));
+        return is_int($aligned) ? $aligned : $now + 3600;
+    }
+
+    if ($freq === 'weekly') {
+        $targetDow = isset($schedule['day_of_week']) && is_numeric($schedule['day_of_week'])
+            ? ((int) $schedule['day_of_week']) : 1; // Mon default
+        if ($targetDow < 0) $targetDow = 0;
+        if ($targetDow > 6) $targetDow = 6;
+        // PHP gmdate('N') returns 1=Mon..7=Sun. day_of_week convention: 0=Sun..6=Sat (per #690 schema).
+        // Convert: schema 0 (Sun) -> PHP 7; schema 1..6 -> PHP 1..6.
+        $phpDow = $targetDow === 0 ? 7 : $targetDow;
+        $currentDow = (int) gmdate('N', $now);
+        $daysAhead = ($phpDow - $currentDow + 7) % 7;
+        $candidate = gmmktime($hour, $minute, 0,
+                              (int) gmdate('n', $now), (int) gmdate('j', $now) + $daysAhead, (int) gmdate('Y', $now));
+        if (!is_int($candidate)) return $now + 7 * 86400;
+        if ($candidate <= $now) $candidate += 7 * 86400;
+        return $candidate;
+    }
+
+    if ($freq === 'monthly') {
+        $targetDom = isset($schedule['day_of_month']) && is_numeric($schedule['day_of_month'])
+            ? ((int) $schedule['day_of_month']) : 1;
+        if ($targetDom < 1) $targetDom = 1;
+        if ($targetDom > 28) $targetDom = 28;
+        $candidate = gmmktime($hour, $minute, 0,
+                              (int) gmdate('n', $now), $targetDom, (int) gmdate('Y', $now));
+        if (!is_int($candidate)) return $now + 30 * 86400;
+        if ($candidate <= $now) {
+            $candidate = gmmktime($hour, $minute, 0,
+                                  (int) gmdate('n', $now) + 1, $targetDom, (int) gmdate('Y', $now));
+            if (!is_int($candidate)) return $now + 30 * 86400;
+        }
+        return $candidate;
+    }
+
+    // 'daily' (and unknown) — next HH:MM today or tomorrow
+    $candidate = gmmktime($hour, $minute, 0,
+                          (int) gmdate('n', $now), (int) gmdate('j', $now), (int) gmdate('Y', $now));
+    if (!is_int($candidate)) return $now + 86400;
+    if ($candidate <= $now) $candidate += 86400;
+    return $candidate;
+}
+
+/**
+ * Email notification on backup completion. Best-effort: failures logged, never thrown.
+ *
+ * @param array<string,mixed> $dest backup_destinations row
+ * @param string $status 'success' | 'failure'
+ * @param string $detail filename on success, error message on failure
+ */
+function ipam_backup_notify(PDO $db, array $dest, string $status, string $detail): void
+{
+    $notifyFailure = (bool) ipam_setting('backup.notify_on_failure');
+    $notifySuccess = (bool) ipam_setting('backup.notify_on_success');
+    if ($status === 'failure' && !$notifyFailure) return;
+    if ($status === 'success' && !$notifySuccess) return;
+
+    // Resolve recipients via the same multi-user picker the rest of the
+    // alerting system uses (alert.recipient_user_ids → users.email).
+    // Falls back to the deprecated alert_email setting only if no users selected.
+    $recipients = ipam_resolve_alert_recipients($db);
+    if ($recipients === []) {
+        $legacy = trim(to_str(ipam_setting('alert.email')));
+        if ($legacy !== '') $recipients = [$legacy];
+    }
+    if ($recipients === []) return;
+
+    $destName = is_string($dest['name'] ?? null) ? $dest['name'] : 'unknown';
+    $subject = sprintf('[IPAM] Backup %s: %s', strtoupper($status), $destName);
+    $body = sprintf(
+        "Backup %s for destination \"%s\".\n\nDetail: %s\n",
+        $status, $destName, $detail
+    );
+
+    foreach ($recipients as $to) {
+        try {
+            if (function_exists('ipam_send_mail')) {
+                ipam_send_mail($to, $subject, $body);
+            } else {
+                @mail($to, $subject, $body);
+            }
+        } catch (Throwable $e) {
+            error_log('[backup] notify failed for ' . $to . ': ' . $e->getMessage());
+        }
+    }
 }
 
 /**
@@ -6215,6 +6774,10 @@ function page_header(string $title, array $opts = []): void
                 echo "<a class='sidebar-link" . ($activePage === 'users' ? ' is-active' : '') . "' href='users.php'>" . icon('users') . " Users</a>";
                 echo "<a class='sidebar-link" . ($activePage === 'api_keys' ? ' is-active' : '') . "' href='api_keys.php'>" . icon('key') . " API Keys</a>";
                 echo "<a class='sidebar-link" . ($activePage === 'webhooks' ? ' is-active' : '') . "' href='webhooks.php'>" . icon('webhook') . " Webhooks</a>";
+                echo "<a class='sidebar-link" . ($activePage === 'destinations' ? ' is-active' : '') . "' href='destinations.php'>" . icon('server-stack') . " Destinations</a>";
+                echo "<a class='sidebar-link" . ($activePage === 'backup_history' ? ' is-active' : '') . "' href='backup_history.php'>" . icon('audit') . " Backup History</a>";
+                echo "<a class='sidebar-link" . ($activePage === 'remote_backups' ? ' is-active' : '') . "' href='remote_backups.php'>" . icon('server-stack') . " Remote Backups</a>";
+                echo "<a class='sidebar-link" . ($activePage === 'restore_web' ? ' is-active' : '') . "' href='restore_web.php'>" . icon('upload') . " Restore Database</a>";
                 echo "<a class='sidebar-link" . ($activePage === 'import_csv' ? ' is-active' : '') . "' href='import_csv.php'>" . icon('upload') . " Import CSV</a>";
                 echo "<a class='sidebar-link" . ($activePage === 'import_arp' ? ' is-active' : '') . "' href='import_arp.php'>" . icon('arp') . " ARP Import</a>";
                 echo "<a class='sidebar-link" . ($activePage === 'reports' ? ' is-active' : '') . "' href='reports.php'>" . icon('reports') . " Reports</a>";

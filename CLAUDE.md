@@ -33,7 +33,7 @@ Two cheap calls. The first loads your profile + preferences. The second returns 
 
 ## Project overview
 
-> **Current shipped version: v3.16.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v4.0.0 describes future work — **do not apply it to current v3.x code**. Current-state rules are the ones that do not cite a future version.
+> **Current shipped version: v3.17.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v4.0.0 describes future work — **do not apply it to current v3.x code**. Current-state rules are the ones that do not cite a future version.
 
 Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application built with **PHP 8.2+ and SQLite**. It has **no npm build step** — all CSS and JavaScript are vanilla. Starting in v2.9.0, the application will ship a small, carefully curated set of Composer-managed runtime dependencies bundled into the release tarball, so end users still deploy by extracting the tarball with no build step. The web root is `Simple-PHP-IPAM/` (the subdirectory, not the repo root).
 
@@ -110,6 +110,13 @@ Dev tooling at the repo root (not deployed): `composer.json`, `composer.lock`, `
 | `reports.php` | yes | admin | Utilization history report: time-series of address counts per subnet with subnet filter and CSV export |
 | `export_utilization_history.php` | yes | any | CSV export: utilization history snapshots |
 | `health.php` | yes | admin | Operational health dashboard: DB metrics, backup status, scanning, webhooks, auth/security, system info; 60s cache; `?nocache=1` bypass (v3.7.0) |
+| `destinations.php` | yes | admin | Backup destinations admin: S3 / SFTP / Local destination CRUD, schedules with GFS retention, Test-Connection and Run-Now AJAX (v3.17.0) |
+| `backup_history.php` | yes | admin | Backup history log: paginated entries with destination/status/date filters, Type column distinguishing backup vs restore (v3.17.0) |
+| `remote_backups.php` | yes | admin | Remote backup browser: per-destination file listing with Download / Verify / Delete actions (v3.17.0) |
+| `restore_web.php` | yes | admin | Web restore wizard: 3-step flow (stage → dry-run preview → live apply) with `RESTORE` confirm-typing gate (v3.17.0) |
+| `download_remote_backup.php` | yes | admin | AJAX/file endpoint: downloads + decrypts a remote backup; signed staged-file token for handoff to `restore_web.php` (v3.17.0) |
+| `test_destination.php` | yes | admin | AJAX endpoint: invokes BackupClient `test()` for a destination id, returns JSON `{ok, message, latency_ms}` (v3.17.0) |
+| `run_backup_now.php` | yes | admin | AJAX endpoint: synchronously runs `BackupEngine::runForDestination` for a destination id, returns JSON (v3.17.0) |
 | `backup.php` | CLI | — | CLI-only database backup runner; returns 403 on web access (v3.7.0) |
 | `restore.php` | CLI | — | CLI-only database restore with --dry-run, --force; returns 403 on web access (v3.7.0) |
 
@@ -201,7 +208,7 @@ Migrations live in `migrations.php` as an associative array of version string �
 
 **When adding a new version:** add the migration closure, bump `version.php`, update `CHANGELOG.md` (keepachangelog format).
 
-> **Current shipped version: v3.16.0.** `Creating new data tables in post-v4.0.0 releases` is **forward-looking** (applies to any migration whose version sorts after v4.0.0, including v4.0.x patches) — ignore it for all current v3.x work. `Modifying the schema (multi-engine, from v2.9.0 onward)` and `Runtime dependencies` are **currently active** rules (apply to v2.9.0+ including the current v3.16.0).
+> **Current shipped version: v3.17.0.** `Creating new data tables in post-v4.0.0 releases` is **forward-looking** (applies to any migration whose version sorts after v4.0.0, including v4.0.x patches) — ignore it for all current v3.x work. `Modifying the schema (multi-engine, from v2.9.0 onward)` and `Runtime dependencies` are **currently active** rules (apply to v2.9.0+ including the current v3.17.0).
 
 ### Multi-tenancy model *(v4.0.0, opt-in)*
 
@@ -316,6 +323,7 @@ A new dep must meet **all** of the following criteria:
 | phpmailer/phpmailer | ^6.9 | Direct SMTP delivery (replaces native `mail()` when smtp.enabled=true). Hand-rolling SMTP+TLS+AUTH is error-prone and a security risk; PHPMailer has >5 years of active maintenance, is used by WordPress/Joomla/Drupal, has zero transitive runtime deps, and is licensed LGPL-2.1-or-later with an explicit bundling exception (PHPMailer FAQ). | #415, v3.1.0 |
 | robthree/twofactorauth | ^2.1 | TOTP (RFC 6238) secret generation, code verification, otpauth:// URI for QR enrollment. Hand-rolling TOTP is error-prone (time-sync drift, HMAC, counter management); this library has zero transitive runtime deps, MIT license, pure PHP 8. | #418, v3.6.0 |
 | lbuchs/webauthn | ^2.1 | WebAuthn server-side challenge/response — attestation verification, assertion verification, COSE key parsing. Hand-rolling WebAuthn is a security risk (CBOR-encoded COSE keys, cryptographic signature chains, RP ID binding); `lbuchs/WebAuthn` has been actively maintained since 2019, is widely used in the PHP WebAuthn ecosystem, has zero transitive runtime deps, MIT license, pure PHP 8.0+. | #687, v3.15.0 |
+| phpseclib/phpseclib | ^3.0 | SFTP transport for backup destinations. Hand-rolling SSH/SFTP is a security risk (key exchange, packet framing); phpseclib is >10y mature, pure PHP (no ext-ssh2 required), MIT, minimal transitive deps. | #693, v3.17.0 |
 
 **Vendored frontend assets (assets/vendor/):**
 

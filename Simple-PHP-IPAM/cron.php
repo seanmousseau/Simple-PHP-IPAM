@@ -306,7 +306,76 @@ try {
 }
 
 // ---------------------------------------------------------------------------
-// Task 9: Demo mode database reset (was Task 7 pre-v3.3.0)
+// Task 9: Backup schedules (v3.17.0 — fire any backup_schedules rows that are due)
+// ---------------------------------------------------------------------------
+try {
+    $stmt = $db->query(
+        "SELECT s.*, d.name AS dest_name
+         FROM backup_schedules s
+         JOIN backup_destinations d ON d.id = s.destination_id
+         WHERE s.is_active = 1 AND d.is_active = 1
+           AND (s.next_run_at IS NULL OR s.next_run_at <= " . ipam_dialect()->now() . ")"
+    );
+    $due = ($stmt !== false) ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
+    $totalSched = count($due);
+    $okSched = 0;
+    $failSched = 0;
+    foreach ($due as $sched) {
+        if (!is_array($sched)) continue;
+        $destId = isset($sched['destination_id']) && is_numeric($sched['destination_id'])
+            ? (int) $sched['destination_id'] : 0;
+        $schedId = isset($sched['id']) && is_numeric($sched['id']) ? (int) $sched['id'] : 0;
+        if ($destId <= 0 || $schedId <= 0) continue;
+
+        $runOk = false;
+        try {
+            $engine = new BackupEngine($db, $config);
+            $engine->runForDestination($destId, 'schedule');
+            $runOk = true;
+            $okSched++;
+        } catch (Throwable $e) {
+            $failSched++;
+            $fail('backup_schedule', 'schedule_id=' . $schedId . ' ' . $e->getMessage());
+        }
+
+        // Always record last_run_at (so admins see the attempt); advance next_run_at
+        // only on success so failed runs are retried on the next cron tick.
+        $sNorm = [];
+        foreach ($sched as $k => $v) {
+            if (is_string($k)) $sNorm[$k] = $v;
+        }
+        try {
+            if ($runOk) {
+                $next = ipam_backup_next_run_at($sNorm);
+                $upd = $db->prepare(
+                    "UPDATE backup_schedules
+                       SET last_run_at = " . ipam_dialect()->now() . ",
+                           next_run_at = :next
+                     WHERE id = :id"
+                );
+                $upd->execute([
+                    ':next' => gmdate('Y-m-d H:i:s', $next),
+                    ':id'   => $schedId,
+                ]);
+            } else {
+                $upd = $db->prepare(
+                    "UPDATE backup_schedules
+                       SET last_run_at = " . ipam_dialect()->now() . "
+                     WHERE id = :id"
+                );
+                $upd->execute([':id' => $schedId]);
+            }
+        } catch (Throwable $e) {
+            $fail('backup_schedule', 'next_run_update schedule_id=' . $schedId . ' ' . $e->getMessage());
+        }
+    }
+    $emit(['task' => 'backup_schedules', 'due' => $totalSched, 'ok' => $okSched, 'failed' => $failSched, 'ts' => $now]);
+} catch (Throwable $e) {
+    $fail('backup_schedules', $e->getMessage());
+}
+
+// ---------------------------------------------------------------------------
+// Task 10: Demo mode database reset (was Task 7 pre-v3.3.0, Task 9 pre-v3.17.0)
 // ---------------------------------------------------------------------------
 try {
     $demoEnabled = !empty($config['demo_mode']['enabled']);

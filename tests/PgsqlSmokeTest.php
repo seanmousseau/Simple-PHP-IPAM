@@ -148,7 +148,8 @@ final class PgsqlSmokeTest extends TestCase
         // Bump to 50 in v3.16.0 (#746): schema.pgsql.sql preseed now includes
         // 3.16.0-preferred-mfa-method. Add 1 to this count for every new
         // migration row added to schema.pgsql.sql in subsequent releases.
-        $this->assertSame(50, (int)$row['c']);
+        // Bumped to 51 in v3.17.0 (#690): added 3.17.0-backup.
+        $this->assertSame(51, (int)$row['c']);
     }
 
     public function testBootstrapAdminUserInserted(): void

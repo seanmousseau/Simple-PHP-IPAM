@@ -12,16 +12,17 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.16.0
+## What's new in v3.17.0
 
-UX-focused release: a unified MFA experience, a Settings page that no longer scrolls forever, and search that finally works the same on every supported database.
+Web-based backup and restore: configure remote destinations, run encrypted scheduled backups with GFS retention, and restore from a remote file through a web wizard with dry-run preview.
 
-- **Two-Factor Authentication card on the Account page.** TOTP, Email OTP, and Passkeys now live in a single card with consistent status pills, action affordances, and "preserved enrollment" hints when an admin globally disables a method.
-- **Preferred MFA method picker.** Users with multiple methods enrolled can choose which one challenges them first at login. Falls back gracefully if the preferred method becomes unusable.
-- **Full MFA switch graph at login.** Every verify page (TOTP / Email OTP / Passkey) can now swap to either of the others mid-login if the user has them enrolled. Extends v3.15.2's TOTP-page-only buttons to the full 3×2 graph.
-- **Admin TOTP toggle.** New `mfa.totp_enabled` setting (default on) lets admins globally disable TOTP without revoking individual enrollments — re-enabling restores every user's TOTP without re-enrollment. Settings page also warns when TOTP is on but `app_secret` is missing from `config.php`.
-- **Settings page tab navigation.** 16 groups consolidated into 5 left-rail tabs (General, Authentication, Notifications, Data & Maintenance, Integrations). URL state via `?tab=`. Mobile collapses to a `<select>`. Legacy `#group-<key>` bookmarks auto-redirect to the right tab.
-- **Case-insensitive search on every engine.** PostgreSQL was previously case-sensitive — fixed. New `Dialect::lower_expr()` / `case_fold_value()` give the search/export pipeline a single portable code path across SQLite, MySQL, and PostgreSQL.
+- **Backup destinations.** S3-compatible (AWS, MinIO, Backblaze B2, Wasabi, DigitalOcean Spaces, Cloudflare R2 — hand-rolled Sig V4, no AWS SDK), SFTP (via `phpseclib`), and Local filesystem. Test-connection button. Per-destination encrypt toggle. Manage at **Admin → Destinations**.
+- **Schedules with GFS retention.** Hourly / daily / weekly / monthly with clock-aligned next-run, plus retention counters that always preserve the newest backup. Wired into `cron.php`. Manual "Run now" via AJAX. Email notifications on success / failure.
+- **AES-256-GCM encryption** with HKDF-SHA256 key derivation from `app_secret`. Magic header `IPAMBKP1` for forward-compat. Tamper detection on every byte of the blob.
+- **Backup history page.** Paginated log with destination / status / date / type filters, a Status-by-destination summary card, and Backup vs Restore type distinction.
+- **Remote backup browser.** Per-destination file listing with verify (re-checksum) and delete actions.
+- **Web restore wizard.** Three-step flow — stage from remote → dry-run preview (tables, row deltas, schema diff, warnings) → live apply with `RESTORE` confirmation typing gate. Wraps in a transaction; runs `apply_migrations()` post-restore.
+- **Full audit trail.** New audit actions across the destination/backup/restore lifecycle. Restores show as a separate type on the history page.
 
 [Full changelog →](CHANGELOG.md)
 

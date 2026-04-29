@@ -593,3 +593,61 @@ CREATE TABLE IF NOT EXISTS webauthn_credentials (
   last_used_at  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_webauthn_credentials_user ON webauthn_credentials(user_id);
+
+-- v3.17.0 #690: Backup destinations, schedules, and log
+-- Note: backup_history (v3.7.0) remains for CLI-only backup.php use.
+-- backup_log is distinct: it has FK references to destinations and schedules.
+CREATE TABLE IF NOT EXISTS backup_destinations (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT    NOT NULL,
+  type       TEXT    NOT NULL,
+  config     TEXT    NOT NULL DEFAULT '{}',
+  encrypt    INTEGER NOT NULL DEFAULT 1,
+  is_active  INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TRIGGER IF NOT EXISTS backup_destinations_updated_at
+AFTER UPDATE ON backup_destinations
+FOR EACH ROW
+BEGIN
+  UPDATE backup_destinations SET updated_at = datetime('now') WHERE id = OLD.id;
+END;
+
+CREATE TABLE IF NOT EXISTS backup_schedules (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  destination_id    INTEGER NOT NULL REFERENCES backup_destinations(id) ON DELETE CASCADE,
+  frequency         TEXT    NOT NULL DEFAULT 'daily'
+                            CHECK (frequency IN ('hourly','daily','weekly','monthly')),
+  time_of_day       TEXT    NOT NULL DEFAULT '02:00',
+  day_of_week       INTEGER CHECK (day_of_week IS NULL OR day_of_week BETWEEN 0 AND 6),
+  day_of_month      INTEGER CHECK (day_of_month IS NULL OR day_of_month BETWEEN 1 AND 28),
+  retention_hourly  INTEGER NOT NULL DEFAULT 0  CHECK (retention_hourly  >= 0),
+  retention_daily   INTEGER NOT NULL DEFAULT 7  CHECK (retention_daily   >= 0),
+  retention_weekly  INTEGER NOT NULL DEFAULT 4  CHECK (retention_weekly  >= 0),
+  retention_monthly INTEGER NOT NULL DEFAULT 3  CHECK (retention_monthly >= 0),
+  is_active         INTEGER NOT NULL DEFAULT 1  CHECK (is_active IN (0,1)),
+  last_run_at       TEXT,
+  next_run_at       TEXT,
+  created_at        TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_backup_schedules_destination ON backup_schedules(destination_id);
+CREATE INDEX IF NOT EXISTS idx_backup_schedules_next_run ON backup_schedules(next_run_at);
+
+CREATE TABLE IF NOT EXISTS backup_log (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  destination_id INTEGER REFERENCES backup_destinations(id) ON DELETE SET NULL,
+  schedule_id    INTEGER REFERENCES backup_schedules(id)    ON DELETE SET NULL,
+  triggered_by   TEXT    NOT NULL DEFAULT 'manual',
+  type           TEXT    NOT NULL DEFAULT 'backup'
+                          CHECK (type IN ('backup','restore')),
+  status         TEXT    NOT NULL DEFAULT 'pending',
+  filename       TEXT,
+  size_bytes     INTEGER,
+  checksum       TEXT,
+  error_message  TEXT,
+  started_at     TEXT    NOT NULL DEFAULT (datetime('now')),
+  completed_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_backup_log_destination ON backup_log(destination_id);
+CREATE INDEX IF NOT EXISTS idx_backup_log_started_at ON backup_log(started_at DESC);

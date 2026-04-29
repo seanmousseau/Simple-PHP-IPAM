@@ -2580,3 +2580,128 @@ function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
     if (next) next.focus();
   });
 }());
+
+/* === v3.17 destinations admin === */
+(function () {
+    if (!document.querySelector('.destination-form, [data-edit-destination], [data-test-destination], [data-run-now]')) {
+        return;
+    }
+
+    function getCsrf() {
+        var el = document.querySelector('input[name="csrf"]');
+        return el ? el.value : '';
+    }
+
+    // Type selector swap. Hidden fieldsets must also disable their inputs so that
+    // HTML5 validation on `required` inputs in non-active fieldsets does not block
+    // form submission (otherwise the browser silently rejects the submit).
+    var sel = document.querySelector('[data-destination-type-selector]');
+    if (sel) {
+        var updateFieldset = function () {
+            document.querySelectorAll('.destination-fields').forEach(function (fs) {
+                var active = fs.dataset.type === sel.value;
+                fs.hidden = !active;
+                fs.querySelectorAll('input, textarea, select').forEach(function (el) {
+                    el.disabled = !active;
+                });
+            });
+        };
+        sel.addEventListener('change', updateFieldset);
+        updateFieldset();
+    }
+
+    // Test connection
+    document.querySelectorAll('[data-test-destination]').forEach(function (btn) {
+        btn.addEventListener('click', function (ev) {
+            ev.preventDefault();
+            var id = btn.dataset.testDestination;
+            btn.disabled = true;
+            var orig = btn.textContent;
+            btn.textContent = 'Testing…';
+            var fd = new FormData();
+            fd.append('csrf', getCsrf());
+            fd.append('id', id);
+            fetch('test_destination.php', { method: 'POST', body: fd })
+                .then(function (r) { return r.json(); })
+                .then(function (j) {
+                    if (j.ok) {
+                        btn.textContent = '✓ ' + (j.message || 'connected') + (j.latency_ms != null ? ' (' + j.latency_ms + 'ms)' : '');
+                        btn.classList.add('button-success');
+                    } else {
+                        btn.textContent = '✗ ' + (j.message || 'failed');
+                        btn.classList.add('button-danger');
+                    }
+                })
+                .catch(function () {
+                    btn.textContent = '✗ network error';
+                    btn.classList.add('button-danger');
+                })
+                .finally(function () {
+                    setTimeout(function () {
+                        btn.disabled = false;
+                        btn.textContent = orig;
+                        btn.classList.remove('button-success', 'button-danger');
+                    }, 5000);
+                });
+        });
+    });
+
+    // Run now
+    document.querySelectorAll('[data-run-now]').forEach(function (btn) {
+        btn.addEventListener('click', function (ev) {
+            ev.preventDefault();
+            if (!confirm('Run backup now for this destination?')) return;
+            var destId = btn.dataset.runNow;
+            btn.disabled = true;
+            var orig = btn.textContent;
+            btn.textContent = 'Running…';
+            var fd = new FormData();
+            fd.append('csrf', getCsrf());
+            fd.append('destination_id', destId);
+            fetch('run_backup_now.php', { method: 'POST', body: fd })
+                .then(function (r) { return r.json(); })
+                .then(function (j) {
+                    if (j.ok) {
+                        btn.textContent = '✓ ' + j.filename + ' (' + j.size + ' bytes)';
+                        btn.classList.add('button-success');
+                    } else {
+                        btn.textContent = '✗ ' + (j.message || 'failed');
+                        btn.classList.add('button-danger');
+                    }
+                })
+                .catch(function () {
+                    btn.textContent = '✗ network error';
+                    btn.classList.add('button-danger');
+                })
+                .finally(function () {
+                    setTimeout(function () {
+                        btn.disabled = false;
+                        btn.textContent = orig;
+                        btn.classList.remove('button-success', 'button-danger');
+                    }, 8000);
+                });
+        });
+    });
+}());
+
+/* === v3.17 restore confirm-typing gate === */
+(function () {
+    var input = document.getElementById('restore-confirm-input');
+    var button = document.getElementById('restore-apply-button');
+    if (!input || !button) return;
+    input.addEventListener('input', function () {
+        button.disabled = (input.value !== 'RESTORE');
+    });
+})();
+
+/* === v3.17 remote_backups Delete-with-confirm (CSP-safe; replaces inline onsubmit) === */
+(function () {
+    document.querySelectorAll('form[data-confirm-delete]').forEach(function (form) {
+        form.addEventListener('submit', function (ev) {
+            var name = form.getAttribute('data-confirm-delete') || 'this file';
+            if (!window.confirm('Delete ' + name + ' from the remote destination?')) {
+                ev.preventDefault();
+            }
+        });
+    });
+})();

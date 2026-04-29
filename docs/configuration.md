@@ -39,6 +39,8 @@ The keys below are seeded into the `settings` table by the v2.6.0 migration and 
 | `backup.dir` | string | `''` | Directory where backup files are written. Empty = `data/backups/` relative to app root. Created automatically on first backup. *(v3.7.0)* |
 | `backup.retention` | int | `7` | Number of backup files to retain; oldest files beyond this count are deleted after each backup. *(v3.7.0)* |
 | `backup.frequency` | string | `daily` | How often to run automatic backups. Accepted values: `daily`, `weekly`. *(v3.7.0)* |
+| `backup.notify_on_failure` | bool | `true` | Send an email to `alert_email` when a scheduled or manual backup run fails. *(v3.17.0)* |
+| `backup.notify_on_success` | bool | `false` | Send an email to `alert_email` when a scheduled or manual backup run succeeds. *(v3.17.0)* |
 | `housekeeping.audit_log_retention_days` | int | `0` | Days to keep audit log entries. Entries older than this are pruned during scheduled housekeeping. Set to `0` to never prune. *(v3.7.0)* |
 | *(config.php only)* `recovery_mode` | bool | `false` | Emergency login recovery mode (see below). |
 | `alert.recipient_user_ids` | json | `[]` | (v2.8.0+) Active user IDs that receive utilization alerts. Picked from a multi-select on **Settings → Alerting**; only users with a non-empty email are eligible. Inactive users / cleared emails drop out automatically at send time. |
