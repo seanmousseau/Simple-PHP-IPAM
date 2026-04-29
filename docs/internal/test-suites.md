@@ -208,3 +208,57 @@ Do not push until **all drivers are green**. A failing CI run wastes Action minu
 - You suspect a bug that only reproduces behind the reverse-proxy / shared Chrome stack
 
 For those scenarios, follow the full dev-direct pipeline in the *Running the test suites* section above (Deploy → Pre-flight cleanup → Verify admin login → test_api.sh / Playwright dev-direct). For everything else, trust the CI run.
+
+## Containerized harness — recurring footguns
+
+The containerized harness is mostly self-contained, but it does mutate a few files in the working tree and a few categories of test interact in ways that are easy to miss until a full-suite run on pgsql or mysql surfaces them. Read this section before any release-gate run, and before any commit that includes `Simple-PHP-IPAM/config.php`.
+
+### `bootstrap-app.sh` overwrites `config.php`
+
+`bootstrap-app.sh sqlite|mysql|pgsql` rewrites `Simple-PHP-IPAM/config.php` to point at the per-driver test container, and saves the original to `Simple-PHP-IPAM/config.php.prebootstrap-backup`. `teardown-app.sh` restores the original — but only if you reach it cleanly. If the bootstrap is run again before teardown, or the teardown is interrupted, your working tree is left pointing at the test driver.
+
+**Always run before any commit:**
+
+```bash
+git restore Simple-PHP-IPAM/config.php
+rm -f Simple-PHP-IPAM/config.php.prebootstrap-backup
+```
+
+If you don't, your release-prep commit will land at `HEAD` with `config.php` pointing at `pgsql:host=ipam-pw-pgsql:5432;dbname=ipam_pw`, which is a real bug that ships in the bundle.
+
+The release-workflow Phase 2 step 13 cleanup list now includes this; do it routinely.
+
+### Tests that depend on cascade side-effects
+
+Several specs were authored against the legacy `group=mfa` POST cascade behaviour: posting a settings group with a missing boolean key sets that key to `false` as a side effect of HTML form convention. This was load-bearing — `email_otp.spec.ts`'s `beforeEach` posted `group=mfa, k_mfa__email_otp_enabled=1` to enable Email OTP AND, by side effect, disable `mfa.totp_enabled` and `mfa.passkeys_enabled` so the test user's login routed to email OTP rather than a competing verify page.
+
+When v3.18.0 (#756) added a per-key save path that does not cascade, those side-effect dependencies broke under parallel workers — the test user kept TOTP/passkey enrollments from earlier specs and login routed to the wrong verify page.
+
+**When changing settings/auth POST semantics, sweep specs for sibling-bool re-assertion bandages** before assuming you've covered all callers:
+
+```bash
+grep -rn "k_mfa__\|group: 'mfa'" testing/playwright/tests/
+```
+
+If a spec posts `group=mfa` with only one key set, it is almost certainly relying on the cascade as a side-effect setup mechanism — verify by reading the test, then either keep the legacy POST shape if you really need cascade-clear behaviour, or convert to per-key POSTs that explicitly disable each sibling. Don't migrate blindly.
+
+### Each spec needs a unique CIDR for fixtures it creates
+
+`testing/playwright/fixtures/ipam.ts` exports a shared `TEST_CIDR2='10.88.0.0/24'` and `TEST_IP='10.88.0.10'` constant. Five specs (`addresses`, `contacts`, `exports`, `search`, `unassigned`) all create `10.88.0.0/24` and address `10.88.0.10` in their `beforeAll`. Under parallel workers (the Playwright default), these specs race: one spec's `afterAll` deletes the subnet while another spec is mid-test, and `subnetIdFor()` starts returning the wrong row.
+
+**New specs that create subnets at module scope MUST claim a unique CIDR.** Convention: declare a local constant in the spec file, with a unique-to-the-file `10.NN.0.0/24`:
+
+```ts
+// testing/playwright/tests/my-new-feature.spec.ts
+const MY_FEATURE_CIDR = '10.NN.0.0/24'; // pick NN unique to this file
+const MY_FEATURE_IP   = '10.NN.0.10';
+```
+
+Currently in use:
+- `10.88.0.0/24` — `addresses`, `contacts`, `exports`, `search` (legacy shared via `TEST_CIDR2`)
+- `10.91.0.0/24` — `unassigned` (carved out in v3.18.0 #760)
+- `10.93.0.0/24` — `custom-fields-csv`
+
+Pick a fresh `NN` outside that set (`10.92`, `10.94`, `10.95`, …) for any new spec. The shared `TEST_CIDR2` constant is for legacy specs only — new specs declare a local constant. Do not migrate the four legacy specs off `TEST_CIDR2` unless you are also addressing the CIDR-race directly; partial migration leaves the same race in a smaller surface.
+
+The `deleteSubnet()` fixture in `testing/playwright/fixtures/ipam.ts` is now a bounded loop (defence-in-depth against orphan rows when `UNIQUE(cidr, vrf_id)` doesn't dedupe NULL `vrf_id` per SQL standard), but the loop is not a substitute for unique-CIDR-per-spec — the loop only handles the same spec's own orphans, not cross-spec races.

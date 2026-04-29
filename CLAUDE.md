@@ -31,6 +31,18 @@ Two cheap calls. The first loads your profile + preferences. The second returns 
 
 ---
 
+## Quick start (new session)
+
+```bash
+composer install                              # one-time, installs dev tools to vendor/
+bash testing/bootstrap-app.sh sqlite          # spin up dockerized app + seed for local testing
+vendor/bin/phpunit && vendor/bin/phpstan analyse && vendor/bin/phpcs
+```
+
+Web root is `Simple-PHP-IPAM/`. Bootstrap entry is `Simple-PHP-IPAM/init.php`. See `docs/internal/test-suites.md` before pushing.
+
+---
+
 ## Project overview
 
 > **Current shipped version: v3.18.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v4.0.0 describes future work — **do not apply it to current v3.x code**. Current-state rules are the ones that do not cite a future version.
@@ -62,6 +74,7 @@ Operational procedures live alongside the code, one Read away. CLAUDE.md is poli
 | `docs/internal/adding-a-page.md` | Creating a new PHP page |
 | `docs/internal/investigating-ci-failure.md` | A check went red on a PR |
 | `docs/internal/release-kickoff-prompt.md` | Starting a new release session (paste-and-go template) |
+| `docs/internal/coderabbit-config.md` | Debugging `.coderabbit.yaml` ↔ org-config inheritance (early-access opt-in for pre-merge checks) |
 
 ---
 
@@ -215,8 +228,8 @@ Pre-v4.0.0 migrations do not need to worry about this — they predate tenancy a
 Once v2.9.0 lands, the project ships three schema files that must stay in sync:
 
 - `schema.sql` — SQLite (authoritative for fresh SQLite installs)
-- `schema.mysql.sql` — MySQL 8.0+ (lands in v2.10.0)
-- `schema.pgsql.sql` — PostgreSQL 14+ (lands in v2.11.0)
+- `schema.mysql.sql` — MySQL 8.0+ (shipped v2.10.0)
+- `schema.pgsql.sql` — PostgreSQL 14+ (shipped v2.11.0)
 
 **When adding or modifying a table, column, index, or constraint:** update all three files in the same PR. No exceptions. The `SchemaParityTest` in CI will fail the build if the three files diverge on any structural element (table set, column set, type class, nullability, default kind, FK target, FK on-delete action). Type classes are normalised — `BLOB` / `VARBINARY(16)` / `BYTEA` all map to `"binary"`, so you do not need to match exact type names, only semantic equivalents.
 
@@ -226,9 +239,9 @@ Migrations remain the source of truth for schema evolution. The three schema fil
 
 **Do not introduce a schema templating system.** This was evaluated during v2.9.0 planning and rejected: three plain SQL files are easier to review, easier to debug against a live database, and aligned with the project's vanilla-PHP ethos. The parity test plus migration-replay test is sufficient drift protection.
 
-### Runtime dependencies *(applies from v2.9.0+)*
+### Runtime dependencies *(in force since v2.9.0)*
 
-Adopted in v2.9.0. The project uses Composer-managed runtime dependencies under a narrow, curated policy. The goals are (1) to avoid hand-rolling security-sensitive network protocols and cryptography and (2) to preserve the "rsync and run" deployment story for end users.
+The project uses Composer-managed runtime dependencies under a narrow, curated policy. The goals are (1) to avoid hand-rolling security-sensitive network protocols and cryptography and (2) to preserve the "rsync and run" deployment story for end users.
 
 **Deployment model:**
 
