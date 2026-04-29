@@ -47,6 +47,22 @@ Other top-level directories: `testing/` (API test suite and sample datasets), `r
 
 Dev tooling at the repo root (not deployed): `composer.json`, `composer.lock`, `phpstan.neon`, `phpstan-baseline.neon`, `.phpcs.xml`, `phpunit.xml`. Run `composer install` once to install tools into `vendor/` (gitignored).
 
+### Procedure docs (`docs/internal/`)
+
+Operational procedures live alongside the code, one Read away. CLAUDE.md is policy and architecture; these are the "how do I do X" recipes.
+
+| Doc | Use when |
+|---|---|
+| `docs/internal/page-inventory.md` | Looking up existing pages or adding a new one |
+| `docs/internal/test-suites.md` | Running tests locally or fixing CI failures (Local gate before push) |
+| `docs/internal/release-workflow.md` | Cutting a regular release (Phase 1–4) |
+| `docs/internal/hotfix-release.md` | Cutting a hotfix off `main` |
+| `docs/internal/marketing-site.md` | Anything touching `simplephpipam.com` (version bump, new docs, cache purge) |
+| `docs/internal/adding-a-migration.md` | Writing a `migrations.php` closure |
+| `docs/internal/adding-a-page.md` | Creating a new PHP page |
+| `docs/internal/investigating-ci-failure.md` | A check went red on a PR |
+| `docs/internal/release-kickoff-prompt.md` | Starting a new release session (paste-and-go template) |
+
 ---
 
 ## Page inventory
