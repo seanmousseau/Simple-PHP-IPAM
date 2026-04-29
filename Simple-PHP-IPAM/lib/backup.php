@@ -232,6 +232,58 @@ function ipam_backup_update_log_failure(PDO $db, int $logId, string $error): voi
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Restore — staging-dir guards (#762 item 3)
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Throw RuntimeException unless the candidate path resolves to something
+ * under Simple-PHP-IPAM/data/tmp/. Defence-in-depth: every restore code
+ * path that writes a file MUST call this on the target before writing,
+ * so a future refactor that introduces user input into the path
+ * construction fails closed instead of silently writing outside the
+ * staging area.
+ *
+ * The target file may not exist yet (writes go to fresh paths), so the
+ * containment check is anchored on the parent directory's realpath plus
+ * the candidate's basename.
+ */
+function ipam_restore_assert_staged_path(string $path): void
+{
+    if ($path === '') {
+        throw new RuntimeException('ipam_restore: empty staged path');
+    }
+    $tmpDir = realpath(dirname(__DIR__) . '/data/tmp');
+    if ($tmpDir === false) {
+        throw new RuntimeException('ipam_restore: data/tmp/ does not exist');
+    }
+    // The file itself may not exist yet — anchor on the parent directory.
+    $parent = realpath(dirname($path));
+    if ($parent === false) {
+        throw new RuntimeException('ipam_restore: parent of staged path does not resolve');
+    }
+    if (!str_starts_with($parent . '/', rtrim($tmpDir, '/') . '/')) {
+        throw new RuntimeException('ipam_restore: staged path is not under data/tmp/');
+    }
+}
+
+/**
+ * Resolve a candidate path to its canonical realpath, returning null if
+ * the file does not exist or does not resolve to something under
+ * Simple-PHP-IPAM/data/tmp/. Used by read-side callers (verify-signed,
+ * read-staged-sql) that need the canonical form to operate on.
+ */
+function ipam_restore_canonicalize_staged(string $path): ?string
+{
+    if ($path === '') return null;
+    $tmpDir = realpath(dirname(__DIR__) . '/data/tmp');
+    if ($tmpDir === false) return null;
+    $real = realpath($path);
+    if ($real === false) return null;
+    if (!str_starts_with($real . '/', rtrim($tmpDir, '/') . '/')) return null;
+    return $real;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Restore
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -312,10 +364,12 @@ function ipam_restore_prepare_for_restore(PDO $db, array $config, int $destinati
                 throw new RuntimeException('ipam_restore: cannot read downloaded blob');
             }
             $plain = backup_decrypt($cipherBlob, $appSecret);
+            ipam_restore_assert_staged_path($stagedPath); // #762 item 3 — defence-in-depth before write
             if (@file_put_contents($stagedPath, $plain) === false) {
                 throw new RuntimeException('ipam_restore: cannot write staged file');
             }
         } else {
+            ipam_restore_assert_staged_path($stagedPath); // #762 item 3 — defence-in-depth before write
             if (!@copy($downloadPath, $stagedPath)) {
                 throw new RuntimeException('ipam_restore: cannot stage downloaded file');
             }
@@ -377,15 +431,10 @@ function ipam_restore_verify_signed(array $config, string $stagedPath, string $s
         return null;
     }
     if (!hash_equals($expected, $signature)) return null;
-    // Containment guard: must be under data/tmp/. Canonicalize BOTH sides
-    // so symlinked deployments (release dir → /opt/ipam-current → /opt/ipam-X.Y.Z/)
-    // don't reject otherwise-valid staged files.
-    $tmpDir = realpath(dirname(__DIR__) . '/data/tmp');
-    if ($tmpDir === false) return null;
-    $real = realpath($stagedPath);
-    if ($real === false) return null;
-    if (!str_starts_with($real . '/', rtrim($tmpDir, '/') . '/')) return null;
-    return $real;
+    // Containment guard via centralized helper (#762 item 3): symlinked
+    // deployments (release dir → /opt/ipam-current → /opt/ipam-X.Y.Z/) get
+    // canonicalised on both sides, so otherwise-valid staged files resolve.
+    return ipam_restore_canonicalize_staged($stagedPath);
 }
 
 /**
@@ -595,12 +644,10 @@ function ipam_restore_apply(PDO $db, string $stagedPath, string $realFilename = 
 
 function ipam_restore_read_staged_sql(string $stagedPath): string
 {
-    // Containment guard: must be under data/tmp/. Defence-in-depth in case
-    // an upstream signature/validation step is bypassed or refactored.
-    $tmpDir = dirname(__DIR__) . '/data/tmp';
-    $real = realpath($stagedPath);
-    $tmpReal = realpath($tmpDir);
-    if ($real === false || $tmpReal === false || !str_starts_with($real . '/', rtrim($tmpReal, '/') . '/')) {
+    // Containment guard via centralized helper (#762 item 3): defence-in-depth
+    // in case an upstream signature/validation step is bypassed or refactored.
+    $real = ipam_restore_canonicalize_staged($stagedPath);
+    if ($real === null) {
         throw new RuntimeException('ipam_restore: staged file is not under data/tmp/');
     }
     if (!is_file($real)) {
