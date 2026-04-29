@@ -3754,6 +3754,11 @@ function backup_info(array $config): array
 const BACKUP_MAGIC   = 'IPAMBKP1';  // 8-byte magic + version tag
 const BACKUP_IV_LEN  = 12;          // AES-256-GCM recommended IV length
 const BACKUP_TAG_LEN = 16;          // GCM authentication tag length (max)
+const BACKUP_MAGIC_V2     = 'IPAMBKP2';  // 8-byte streaming format magic
+const BACKUP_SALT_LEN     = 16;          // HKDF salt length (v2)
+const BACKUP_CTR_IV_LEN   = 16;          // AES-256-CTR initial counter block
+const BACKUP_HMAC_LEN     = 32;          // HMAC-SHA256 tag length
+const BACKUP_STREAM_CHUNK = 65536;       // 64 KiB; counter step = 4096 blocks per chunk
 
 /**
  * Derive a fixed-length key from a master secret using HKDF-SHA-256.
