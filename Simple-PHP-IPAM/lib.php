@@ -4606,20 +4606,28 @@ function ipam_destination_merge_secrets(array $post, array $existingCfg, string 
  */
 function ipam_destination_test_now(PDO $db, int $destId, string $triggeredBy = 'manual'): array
 {
+    // Audit every failure on the way to the client too — invalid IDs, missing
+    // rows, and unparseable config previously slipped past the destination.test
+    // audit trail.
+    $fail = static function (?int $entityId, string $message) use ($db, $triggeredBy): array {
+        audit($db, 'destination.test', 'destination', $entityId, "triggered_by=$triggeredBy fail");
+        return ['ok' => false, 'message' => $message, 'latency_ms' => null];
+    };
+
     if ($destId <= 0) {
-        return ['ok' => false, 'message' => 'Invalid destination id', 'latency_ms' => null];
+        return $fail(null, 'Invalid destination id');
     }
     $stmt = $db->prepare("SELECT * FROM backup_destinations WHERE id = :id");
     $stmt->execute([':id' => $destId]);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
     if (!is_array($row)) {
-        return ['ok' => false, 'message' => 'Destination not found', 'latency_ms' => null];
+        return $fail($destId, 'Destination not found');
     }
     $type = is_string($row['type'] ?? null) ? $row['type'] : '';
     $cfgJson = is_string($row['config'] ?? null) ? $row['config'] : '{}';
     $cfg = json_decode($cfgJson, true);
     if (!is_array($cfg)) {
-        return ['ok' => false, 'message' => 'Destination config invalid', 'latency_ms' => null];
+        return $fail($destId, 'Destination config invalid');
     }
     /** @var array<string,mixed> $typedCfg */
     $typedCfg = [];

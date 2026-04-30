@@ -75,6 +75,45 @@ final class DestinationTestNowTest extends TestCase
         $this->assertSame('Invalid destination id', $result['message']);
     }
 
+    public function testInvalidIdEmitsAuditRow(): void
+    {
+        $db = $this->seedDb('/tmp');
+        ipam_destination_test_now($db, 0, 'manual');
+        $row = $db->query("SELECT action, entity_type, entity_id, details FROM audit_log ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+        $this->assertIsArray($row);
+        $this->assertSame('destination.test', $row['action']);
+        $this->assertSame('destination', $row['entity_type']);
+        $this->assertNull($row['entity_id'], 'invalid-id failure must audit with NULL entity_id');
+        $this->assertStringContainsString('triggered_by=manual fail', (string) $row['details']);
+    }
+
+    public function testMissingDestinationEmitsAuditRow(): void
+    {
+        $db = $this->seedDb('/tmp');
+        ipam_destination_test_now($db, 999, 'auto-on-save');
+        $row = $db->query("SELECT action, entity_id, details FROM audit_log ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+        $this->assertIsArray($row);
+        $this->assertSame('destination.test', $row['action']);
+        $this->assertSame(999, (int) $row['entity_id']);
+        $this->assertStringContainsString('triggered_by=auto-on-save fail', (string) $row['details']);
+    }
+
+    public function testInvalidConfigJsonEmitsAuditRow(): void
+    {
+        $db = $this->seedDb('/tmp');
+        // Corrupt the config column to non-JSON; helper should fail-with-audit
+        // rather than fall through to a typed client.
+        $db->exec("UPDATE backup_destinations SET config = 'not json' WHERE id = 1");
+        $result = ipam_destination_test_now($db, 1, 'manual');
+        $this->assertFalse($result['ok']);
+        $this->assertSame('Destination config invalid', $result['message']);
+        $row = $db->query("SELECT action, entity_id, details FROM audit_log ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC);
+        $this->assertIsArray($row);
+        $this->assertSame('destination.test', $row['action']);
+        $this->assertSame(1, (int) $row['entity_id']);
+        $this->assertStringContainsString('fail', (string) $row['details']);
+    }
+
     /** Build an in-memory SQLite with the minimum schema the helper touches. */
     private function seedDb(string $localPath): PDO
     {
