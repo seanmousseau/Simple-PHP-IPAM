@@ -177,14 +177,14 @@ class SftpClient implements BackupClientInterface
      * @return list<array{name:string,size:int,last_modified:string,checksum:?string}>
      * @throws RuntimeException on transport error
      */
-    public function list(): array
+    public function listObjects(): array
     {
         $sftp = $this->connect();
 
         $raw = $sftp->rawlist($this->remotePath);
         if ($raw === false) {
             throw new RuntimeException(
-                "SftpClient::list: rawlist failed for path '{$this->remotePath}'"
+                "SftpClient::listObjects: rawlist failed for path '{$this->remotePath}'"
             );
         }
 

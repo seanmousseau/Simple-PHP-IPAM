@@ -295,7 +295,7 @@ class S3Client implements BackupClientInterface
      * @return list<array{name:string,size:int,last_modified:string,checksum:?string}>
      * @throws RuntimeException on HTTP error or XML parse failure
      */
-    public function list(): array
+    public function listObjects(): array
     {
         $results           = [];
         $continuationToken = null;

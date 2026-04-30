@@ -128,7 +128,7 @@ if ($selectedId > 0) {
         $listError = 'Selected destination is invalid or inactive.';
     } else {
         try {
-            $entries = $client->list();
+            $entries = $client->listObjects();
         } catch (Throwable $e) {
             $listError = 'Could not list remote files: ' . $e->getMessage();
         }
