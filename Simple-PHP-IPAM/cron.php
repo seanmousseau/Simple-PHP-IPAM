@@ -354,8 +354,7 @@ try {
                 $upd = $db->prepare(
                     "UPDATE backup_schedules
                        SET last_run_at = " . ipam_dialect()->now() . ",
-                           next_run_at = :next,
-                           updated_at  = " . ipam_dialect()->now() . "
+                           next_run_at = :next
                      WHERE id = :id"
                 );
                 $upd->execute([
@@ -365,8 +364,7 @@ try {
             } else {
                 $upd = $db->prepare(
                     "UPDATE backup_schedules
-                       SET last_run_at = " . ipam_dialect()->now() . ",
-                           updated_at  = " . ipam_dialect()->now() . "
+                       SET last_run_at = " . ipam_dialect()->now() . "
                      WHERE id = :id"
                 );
                 $upd->execute([':id' => $schedId]);

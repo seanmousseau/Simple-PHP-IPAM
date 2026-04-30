@@ -637,7 +637,7 @@ page_header('Backup Destinations');
                       <option value="monthly" <?= $freq === 'monthly' ? 'selected' : '' ?>>Monthly</option>
                     </select>
                   </label>
-                  <label data-freq-field="time_of_day">Time of day (UTC, HH:MM) <input type="text" name="time_of_day" value="<?= e(to_str($s['time_of_day'])) ?>" pattern="[0-2][0-9]:[0-5][0-9]"></label>
+                  <label data-freq-field="time_of_day">Time of day (UTC, HH:MM) <input type="text" name="time_of_day" value="<?= e(to_str($s['time_of_day'])) ?>" pattern="(0[0-9]|1[0-9]|2[0-3]):[0-5][0-9]"></label>
                   <label data-freq-field="day_of_week">Day of week (Sun=0..Sat=6) <input type="number" name="day_of_week" min="0" max="6" value="<?= to_int($s['day_of_week']) ?>"></label>
                   <label data-freq-field="day_of_month">Day of month (1-28) <input type="number" name="day_of_month" min="1" max="28" value="<?= to_int($s['day_of_month']) ?>"></label>
                   <label>Retain hourly  <input type="number" name="retention_hourly"  min="0" value="<?= to_int($s['retention_hourly'])  ?>"></label>

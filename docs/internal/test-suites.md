@@ -208,7 +208,7 @@ Do not push until **all drivers are green**. A failing CI run wastes Action minu
 - `ci-minio` — S3 destination targeting the MinIO sidecar (bucket `ipam-backups`, prefix `ci/`)
 - `ci-local` — local destination at `data/tmp/ipam-backup-ci-local`
 
-`tests/backup-integration.spec.ts` exercises connection-test → run-now → backup_history round-trip against both destinations on each driver. **This gate is REQUIRED for any change that touches the backup engine** — specifically:
+`testing/playwright/tests/backup-integration.spec.ts` exercises connection-test → run-now → backup_history round-trip against both destinations on each driver. **This gate is REQUIRED for any change that touches the backup engine** — specifically:
 
 - `Simple-PHP-IPAM/lib/backup.php`
 - `Simple-PHP-IPAM/lib/S3Client.php`

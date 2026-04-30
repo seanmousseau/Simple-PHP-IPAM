@@ -31,12 +31,15 @@ final class DestinationTestNowTest extends TestCase
     public function testTestDestinationPhpDelegatesToHelper(): void
     {
         // Lock in that the public endpoint delegates rather than re-implementing the probe.
+        // Assert the concrete call signature including the 'manual' triggered_by tag,
+        // not just a substring — otherwise a stray reference in a comment or
+        // string would let semantic drift slip through (#1050 CR review).
         $source = file_get_contents(__DIR__ . '/../Simple-PHP-IPAM/test_destination.php');
         $this->assertIsString($source);
-        $this->assertStringContainsString(
-            'ipam_destination_test_now(',
+        $this->assertMatchesRegularExpression(
+            '/ipam_destination_test_now\s*\(\s*\$db\s*,\s*\$id\s*,\s*[\'"]manual[\'"]\s*\)/',
             $source,
-            'test_destination.php must delegate to the shared helper'
+            'test_destination.php must delegate to ipam_destination_test_now($db, $id, \'manual\')'
         );
     }
 

@@ -17,7 +17,7 @@
       <option value="monthly">Monthly</option>
     </select>
   </label>
-  <label data-freq-field="time_of_day">Time of day (UTC, HH:MM) <input type="text" name="time_of_day" value="02:00" pattern="[0-2][0-9]:[0-5][0-9]"></label>
+  <label data-freq-field="time_of_day">Time of day (UTC, HH:MM) <input type="text" name="time_of_day" value="02:00" pattern="(0[0-9]|1[0-9]|2[0-3]):[0-5][0-9]"></label>
   <label data-freq-field="day_of_week">Day of week (Sun=0..Sat=6, weekly only) <input type="number" name="day_of_week" min="0" max="6" value="1"></label>
   <label data-freq-field="day_of_month">Day of month (1-28, monthly only) <input type="number" name="day_of_month" min="1" max="28" value="1"></label>
   <label>Retain hourly <input type="number" name="retention_hourly" value="24" min="0"></label>

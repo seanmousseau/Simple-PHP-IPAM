@@ -35,11 +35,6 @@ const DEST_LOCAL = 'ci-local';
 let ctx: BrowserContext;
 let page: Page;
 
-// Captures the unique filename produced by each `run-now` test so the
-// follow-up history-row check can target *that specific run* rather than
-// matching "any" success row in the shared CI database.
-const runFilenames: Record<string, string> = {};
-
 async function findDestRow(p: Page, name: string) {
   return p.locator('table.data-table tbody tr', { hasText: name }).first();
 }
@@ -97,9 +92,14 @@ test.describe('Backup integration (MinIO + local)', () => {
       expect(res.json.ok, `test_destination(${destName}) failed: ${res.json?.message ?? res.body}`).toBe(true);
     });
 
-    test(`${destName}: run-now uploads a backup successfully`, async () => {
+    test(`${destName}: run-now → backup_history success row round-trip`, async () => {
+      // Combined into a single test so the unique filename produced by run-now
+      // never crosses test boundaries — eliminates the module-state coupling
+      // that breaks under retries / parallel workers (CR review on PR #1050).
       const id = await destIdByName(page, destName);
       const csrf = await getCsrf(page);
+
+      // ── run-now: upload a backup ──────────────────────────────────────────
       const res = await postForm(page, 'run_backup_now.php', {
         destination_id: String(id),
         csrf,
@@ -109,17 +109,11 @@ test.describe('Backup integration (MinIO + local)', () => {
       expect(res.json.size, 'size must be > 0').toBeGreaterThan(0);
       expect(typeof res.json.filename, 'filename must be a non-empty string').toBe('string');
       expect(res.json.filename.length).toBeGreaterThan(0);
-      runFilenames[destName] = res.json.filename;
-    });
+      const expectedFilename: string = res.json.filename;
 
-    test(`${destName}: backup_history shows a success row with a checksum`, async () => {
-      const id = await destIdByName(page, destName);
-      const expectedFilename = runFilenames[destName];
-      expect(expectedFilename, `prior run-now test must have captured a filename for ${destName}`).toBeTruthy();
+      // ── backup_history: success row for *this* run ───────────────────────
       await page.goto(appUrl(`backup_history.php?destination_id=${id}&status=success`));
 
-      // Match the row written by *this run*, not any prior success row in the
-      // shared CI DB. Filename is rendered in column 5 (see column comment below).
       const successRow = page.locator('table.data-table tbody tr', {
         has: page.locator('span.badge-success'),
         hasText: expectedFilename,

@@ -683,7 +683,11 @@ function ipam_user_timezone(?int $userId = null): string
  */
 function ipam_format_datetime(string|int|null $utc, ?string $fmt = null, ?int $userId = null): string
 {
-    if ($utc === null || $utc === '' || $utc === 0) return '';
+    // Guard zero-ish inputs in either form: int 0 from epoch math, string '0'
+    // from `to_str()` of a DB column, or literal empty string. Without the
+    // string-'0' check, a default/zero timestamp falls through to DateTime()
+    // and renders as a bogus 1970 date instead of blank.
+    if ($utc === null || $utc === '' || $utc === 0 || $utc === '0') return '';
     $fmt = $fmt ?? 'Y-m-d H:i T';
     try {
         if (is_int($utc)) {
@@ -3533,15 +3537,6 @@ function run_db_backup_if_due(PDO $db, array $config): bool
     try {
         if (!backup_is_due($config)) return false;
 
-        $dir = backup_dir($config);
-        if (!is_dir($dir)) {
-            if (!@mkdir($dir, 0700, true)) return false;
-            // Deny direct web access to backup files.
-            @file_put_contents($dir . '/.htaccess',
-                "<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n" .
-                "<IfModule !mod_authz_core.c>\n    Deny from all\n</IfModule>\n");
-        }
-
         $driver    = ipam_dialect()->driver_name();
         $ts        = date('Y-m-d-His');
         $startedAt = date('Y-m-d H:i:s');
@@ -3556,9 +3551,39 @@ function run_db_backup_if_due(PDO $db, array $config): bool
         // human-readable name to put in the subject line.
         $legacyDest = ['name' => 'local backup (' . $driver . ')'];
 
+        // Centralised "abort with notification + history row" helper. Earlier
+        // versions of this function bailed out of pre-condition failures
+        // (mkdir, missing DB file) silently — operators got no email and no
+        // history-table row, so they could miss days of failed backups before
+        // an audit caught it (#791 follow-up).
+        $abortWith = static function (string $reason, string $filename = '') use ($db, $legacyDest, $driver, $startedAt, $t0): bool {
+            backup_history_insert(
+                $db, $filename, 0, '', $driver,
+                $startedAt, date('Y-m-d H:i:s'),
+                (int) ((microtime(true) - $t0) * 1000),
+                $filename, 'failed', $reason
+            );
+            try { ipam_backup_notify($db, $legacyDest, 'failure', $reason); }
+            catch (Throwable $ne) { error_log('[backup] notify dispatch failed: ' . $ne->getMessage()); }
+            return false;
+        };
+
+        $dir = backup_dir($config);
+        if (!is_dir($dir)) {
+            if (!@mkdir($dir, 0700, true)) {
+                return $abortWith('Failed to create backup directory: ' . $dir);
+            }
+            // Deny direct web access to backup files.
+            @file_put_contents($dir . '/.htaccess',
+                "<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n" .
+                "<IfModule !mod_authz_core.c>\n    Deny from all\n</IfModule>\n");
+        }
+
         if ($driver === 'sqlite') {
             $dbPath = $gConf['db_path'] !== '' ? $gConf['db_path'] : (__DIR__ . '/data/ipam.sqlite');
-            if (!is_file($dbPath)) return false;
+            if (!is_file($dbPath)) {
+                return $abortWith('SQLite database file not found: ' . $dbPath);
+            }
 
             try { $db->exec("PRAGMA wal_checkpoint(FULL)"); } catch (Throwable) {}
 
@@ -4461,10 +4486,13 @@ function ipam_backup_apply_retention(PDO $db, int $destinationId, ?int $nowEpoch
 
     // ── 6. Audit ──────────────────────────────────────────────────────────────
     if ($pruned > 0) {
+        // Matches the rest of the destinations.* / backup.* audit events,
+        // which all use entity_type='destination'. CR review on PR #1050
+        // flagged the prior 'backup_destination' as the outlier.
         audit(
             $db,
             'backup.retention_pruned',
-            'backup_destination',
+            'destination',
             $destinationId,
             'count=' . $pruned . ' destination=' . $destinationId
         );
