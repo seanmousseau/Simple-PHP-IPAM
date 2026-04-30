@@ -2618,6 +2618,39 @@ function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
         return el ? el.value : '';
     }
 
+    // Edit drawer toggles for destinations and schedules (#778, #780).
+    function bindToggle(triggerAttr, cancelAttr) {
+        document.querySelectorAll('[' + triggerAttr + ']').forEach(function (btn) {
+            btn.addEventListener('click', function (ev) {
+                ev.preventDefault();
+                var row = document.getElementById(btn.getAttribute('aria-controls'));
+                if (!row) return;
+                var open = row.hasAttribute('hidden');
+                if (open) {
+                    row.removeAttribute('hidden');
+                    btn.setAttribute('aria-expanded', 'true');
+                    var firstInput = row.querySelector('input:not([type=hidden]):not([disabled]), select, textarea');
+                    if (firstInput) firstInput.focus();
+                } else {
+                    row.setAttribute('hidden', '');
+                    btn.setAttribute('aria-expanded', 'false');
+                }
+            });
+        });
+        document.querySelectorAll('[' + cancelAttr + ']').forEach(function (btn) {
+            btn.addEventListener('click', function (ev) {
+                ev.preventDefault();
+                var id = btn.getAttribute(cancelAttr);
+                var row = btn.closest('tr');
+                var trigger = document.querySelector('[' + triggerAttr + '="' + id + '"]');
+                if (row) row.setAttribute('hidden', '');
+                if (trigger) trigger.setAttribute('aria-expanded', 'false');
+            });
+        });
+    }
+    bindToggle('data-edit-destination', 'data-edit-destination-cancel');
+    bindToggle('data-edit-schedule',    'data-edit-schedule-cancel');
+
     // Type selector swap. Hidden fieldsets must also disable their inputs so that
     // HTML5 validation on `required` inputs in non-active fieldsets does not block
     // form submission (otherwise the browser silently rejects the submit).
