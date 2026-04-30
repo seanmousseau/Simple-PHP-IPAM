@@ -116,6 +116,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ]);
                 $newId = (int) $db->lastInsertId();
                 audit($db, 'destination.create', 'destination', $newId, "name=$name type=$type");
+                // #787: auto-run Test on Save. Result stashed in session flash and
+                // rendered inline on the destination row after redirect.
+                $_SESSION['flash_test'] = [
+                    'destination_id' => $newId,
+                    'result'         => ipam_destination_test_now($db, $newId, 'auto-on-save'),
+                ];
                 header('Location: destinations.php?flash=created');
                 exit;
             }
@@ -137,47 +143,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $err = 'Invalid destination type.';
         } else {
             // Load existing config to carry over secrets not re-submitted
-            $existing = $db->prepare("SELECT config FROM backup_destinations WHERE id=:id");
+            $existing = $db->prepare("SELECT type, config FROM backup_destinations WHERE id=:id");
             $existing->execute([':id' => $id]);
             $existingRow = $existing->fetch();
             /** @var array<string, mixed> $existingCfg */
             $existingCfg = [];
+            $existingType = '';
             if (is_array($existingRow)) {
+                $existingType = to_str($existingRow['type']);
                 $decoded = json_decode(to_str($existingRow['config']), true);
                 if (is_array($decoded)) {
                     $existingCfg = $decoded;
                 }
             }
 
-            // Merge existing secrets so blank password/key fields don't wipe them
-            if ($type === 's3' && to_str($_POST['s3_secret_key'] ?? '') === '' && isset($existingCfg['secret_key'])) {
-                $_POST['s3_secret_key'] = $existingCfg['secret_key'];
-            }
-            if ($type === 'sftp' && to_str($_POST['sftp_password'] ?? '') === '' && isset($existingCfg['password'])) {
-                $_POST['sftp_password'] = $existingCfg['password'];
-            }
-            if ($type === 'sftp' && to_str($_POST['sftp_private_key'] ?? '') === '' && isset($existingCfg['private_key'])) {
-                $_POST['sftp_private_key'] = to_str($existingCfg['private_key']);
-            }
-
-            $cfg = ipam_destinations_collect_config($type, $_POST);
-            if (is_string($cfg)) {
-                $err = $cfg;
+            if (!is_array($existingRow)) {
+                http_response_code(404);
+                $err = 'Destination not found.';
+            } elseif ($existingType !== '' && $type !== $existingType) {
+                // Hard guard: type cannot change on update — schemas are incompatible (#778).
+                http_response_code(400);
+                $err = 'Destination type cannot be changed. Delete and recreate to switch types.';
             } else {
-                $now  = ipam_dialect()->now();
-                $stmt = $db->prepare(
-                    "UPDATE backup_destinations SET name=:n, type=:t, config=:c, encrypt=:e, updated_at=$now WHERE id=:id"
-                );
-                $stmt->execute([
-                    ':n'  => $name,
-                    ':t'  => $type,
-                    ':c'  => json_encode($cfg, JSON_UNESCAPED_SLASHES),
-                    ':e'  => $encrypt,
-                    ':id' => $id,
-                ]);
-                audit($db, 'destination.update', 'destination', $id, "name=$name type=$type");
-                header('Location: destinations.php?flash=updated');
-                exit;
+                // Merge existing secrets so omitted/blank fields don't wipe them (#793).
+                $_POST = ipam_destination_merge_secrets($_POST, $existingCfg, $type);
+
+                $cfg = ipam_destinations_collect_config($type, $_POST);
+                if (is_string($cfg)) {
+                    $err = $cfg;
+                } else {
+                    $now  = ipam_dialect()->now();
+                    $stmt = $db->prepare(
+                        "UPDATE backup_destinations SET name=:n, type=:t, config=:c, encrypt=:e, updated_at=$now WHERE id=:id"
+                    );
+                    $stmt->execute([
+                        ':n'  => $name,
+                        ':t'  => $type,
+                        ':c'  => json_encode($cfg, JSON_UNESCAPED_SLASHES),
+                        ':e'  => $encrypt,
+                        ':id' => $id,
+                    ]);
+                    audit($db, 'destination.update', 'destination', $id, "name=$name type=$type");
+                    // #787: auto-run Test on Save.
+                    $_SESSION['flash_test'] = [
+                        'destination_id' => $id,
+                        'result'         => ipam_destination_test_now($db, $id, 'auto-on-save'),
+                    ];
+                    header('Location: destinations.php?flash=updated');
+                    exit;
+                }
             }
         }
     }
@@ -226,22 +240,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $retWeekly   = max(0, to_int($_POST['retention_weekly']  ?? '4'));
         $retMonthly  = max(0, to_int($_POST['retention_monthly'] ?? '12'));
 
+        // #781: normalise fields that don't apply to the chosen frequency to NULL,
+        // regardless of what the client posted (defence-in-depth against forced fields).
+        $dowParam = ($frequency === 'weekly')  ? $dayOfWeek  : null;
+        $domParam = ($frequency === 'monthly') ? $dayOfMonth : null;
+
         if ($destId <= 0) {
             $err = 'Destination is required.';
         } elseif (!in_array($frequency, ['hourly', 'daily', 'weekly', 'monthly'], true)) {
             $err = 'Invalid frequency.';
         } elseif (!preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $timeOfDay)) {
             $err = 'Time of day must be in HH:MM format (e.g. 02:00).';
-        } elseif ($dayOfWeek < 0 || $dayOfWeek > 6) {
+        } elseif ($dowParam !== null && ($dowParam < 0 || $dowParam > 6)) {
             $err = 'Day of week must be 0–6.';
-        } elseif ($dayOfMonth < 1 || $dayOfMonth > 28) {
+        } elseif ($domParam !== null && ($domParam < 1 || $domParam > 28)) {
             $err = 'Day of month must be 1–28.';
         } else {
             $nextRunAt = gmdate('Y-m-d H:i:s', ipam_backup_next_run_at([
                 'frequency'    => $frequency,
                 'time_of_day'  => $timeOfDay,
-                'day_of_week'  => $dayOfWeek,
-                'day_of_month' => $dayOfMonth,
+                'day_of_week'  => $dowParam ?? 0,
+                'day_of_month' => $domParam ?? 1,
             ]));
             $now  = ipam_dialect()->now();
             $stmt = $db->prepare(
@@ -255,8 +274,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':did'  => $destId,
                 ':freq' => $frequency,
                 ':tod'  => $timeOfDay,
-                ':dow'  => $dayOfWeek,
-                ':dom'  => $dayOfMonth,
+                ':dow'  => $dowParam,
+                ':dom'  => $domParam,
                 ':rh'   => $retHourly,
                 ':rd'   => $retDaily,
                 ':rw'   => $retWeekly,
@@ -282,23 +301,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $retWeekly  = max(0, to_int($_POST['retention_weekly']  ?? '4'));
         $retMonthly = max(0, to_int($_POST['retention_monthly'] ?? '12'));
 
+        // #781: normalise fields that don't apply to the chosen frequency to NULL.
+        $dowParam = ($frequency === 'weekly')  ? $dayOfWeek  : null;
+        $domParam = ($frequency === 'monthly') ? $dayOfMonth : null;
+
         if ($id <= 0) {
             $err = 'Invalid schedule ID.';
         } elseif (!in_array($frequency, ['hourly', 'daily', 'weekly', 'monthly'], true)) {
             $err = 'Invalid frequency.';
         } elseif (!preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $timeOfDay)) {
             $err = 'Time of day must be in HH:MM format (e.g. 02:00).';
-        } elseif ($dayOfWeek < 0 || $dayOfWeek > 6) {
+        } elseif ($dowParam !== null && ($dowParam < 0 || $dowParam > 6)) {
             $err = 'Day of week must be 0–6.';
-        } elseif ($dayOfMonth < 1 || $dayOfMonth > 28) {
+        } elseif ($domParam !== null && ($domParam < 1 || $domParam > 28)) {
             $err = 'Day of month must be 1–28.';
         } else {
             // Recompute next_run_at since the schedule timing fields may have changed.
             $nextRunAt = gmdate('Y-m-d H:i:s', ipam_backup_next_run_at([
                 'frequency'    => $frequency,
                 'time_of_day'  => $timeOfDay,
-                'day_of_week'  => $dayOfWeek,
-                'day_of_month' => $dayOfMonth,
+                'day_of_week'  => $dowParam ?? 0,
+                'day_of_month' => $domParam ?? 1,
             ]));
             $stmt = $db->prepare(
                 "UPDATE backup_schedules SET
@@ -310,8 +333,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->execute([
                 ':freq' => $frequency,
                 ':tod'  => $timeOfDay,
-                ':dow'  => $dayOfWeek,
-                ':dom'  => $dayOfMonth,
+                ':dow'  => $dowParam,
+                ':dom'  => $domParam,
                 ':rh'   => $retHourly,
                 ':rd'   => $retDaily,
                 ':rw'   => $retWeekly,
@@ -371,6 +394,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     };
 }
 
+// ── Auto-test flash (#787) — pop session value, surface inline on the row ────
+$flashTestId       = 0;
+$flashTestOk       = false;
+$flashTestMsg      = '';
+$flashTestLatency  = null;
+if (isset($_SESSION['flash_test']) && is_array($_SESSION['flash_test'])) {
+    $ft           = $_SESSION['flash_test'];
+    $flashTestId  = is_int($ft['destination_id'] ?? null) ? $ft['destination_id'] : 0;
+    $resultRaw    = is_array($ft['result'] ?? null) ? $ft['result'] : [];
+    $flashTestOk  = (bool) ($resultRaw['ok'] ?? false);
+    $flashTestMsg = is_string($resultRaw['message'] ?? null) ? $resultRaw['message'] : '';
+    $rawLatency   = $resultRaw['latency_ms'] ?? null;
+    $flashTestLatency = is_int($rawLatency) ? $rawLatency
+        : (is_numeric($rawLatency) ? (int) $rawLatency : null);
+    unset($_SESSION['flash_test']);
+}
+
 // ── Data fetch ────────────────────────────────────────────────────────────────
 $destStmt = $db->query("SELECT * FROM backup_destinations ORDER BY name");
 /** @var list<array<string, mixed>> $destinations */
@@ -412,28 +452,70 @@ page_header('Backup Destinations');
           </tr>
         </thead>
         <tbody>
-          <?php foreach ($destinations as $d): ?>
+          <?php foreach ($destinations as $d):
+              $destId   = to_int($d['id']);
+              $destType = to_str($d['type']);
+              $decoded  = json_decode(to_str($d['config']), true);
+              /** @var array<string, mixed> $destCfg */
+              $destCfg  = is_array($decoded) ? $decoded : [];
+          ?>
             <tr>
               <td><?= e(to_str($d['name'])) ?></td>
-              <td><span class="badge badge-type-<?= e(to_str($d['type'])) ?>"><?= e(strtoupper(to_str($d['type']))) ?></span></td>
+              <td><span class="badge badge-type-<?= e($destType) ?>"><?= e(strtoupper($destType)) ?></span></td>
               <td><?= to_int($d['encrypt']) === 1 ? 'Yes' : 'No' ?></td>
               <td><?= to_int($d['is_active']) === 1 ? 'Active' : 'Disabled' ?></td>
               <td class="actions">
-                <!-- Edit currently has no in-page form; deferred to v3.18 polish (#762). Hidden so it's not a no-op affordance. -->
-                <button class="action-pill" data-test-destination="<?= to_int($d['id']) ?>">Test</button>
+                <?php
+                if ($flashTestId === $destId && $flashTestMsg !== '') {
+                    $latencySuffix = ($flashTestLatency !== null && $flashTestLatency >= 0)
+                        ? ' (' . (int) $flashTestLatency . ' ms)'
+                        : '';
+                    $badgeText = ($flashTestOk ? '✓ ' : '✗ ') . $flashTestMsg . $latencySuffix;
+                    $badgeClass = $flashTestOk ? 'badge-success' : 'badge-failed';
+                ?>
+                  <span class="badge <?= e($badgeClass) ?>" data-auto-test-result>
+                    <?= e($badgeText) ?>
+                  </span>
+                <?php } ?>
+                <button class="action-pill" type="button" data-edit-destination="<?= $destId ?>" aria-controls="edit-destination-<?= $destId ?>" aria-expanded="false">Edit</button>
+                <button class="action-pill" data-test-destination="<?= $destId ?>">Test</button>
+                <button class="action-pill" data-run-now="<?= $destId ?>">Run now</button>
                 <form method="post" style="display:inline" data-confirm-delete="this destination (schedules will be removed)">
                   <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
                   <input type="hidden" name="action" value="delete_destination">
-                  <input type="hidden" name="id" value="<?= to_int($d['id']) ?>">
+                  <input type="hidden" name="id" value="<?= $destId ?>">
                   <button class="action-pill button-danger" type="submit">Delete</button>
                 </form>
                 <form method="post" style="display:inline">
                   <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
                   <input type="hidden" name="action" value="toggle_active_destination">
-                  <input type="hidden" name="id" value="<?= to_int($d['id']) ?>">
+                  <input type="hidden" name="id" value="<?= $destId ?>">
                   <button class="action-pill button-secondary" type="submit">
                     <?= to_int($d['is_active']) === 1 ? 'Disable' : 'Enable' ?>
                   </button>
+                </form>
+              </td>
+            </tr>
+            <tr id="edit-destination-<?= $destId ?>" class="edit-destination-row" hidden>
+              <td colspan="5">
+                <form method="post" class="destination-form destination-edit-form">
+                  <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                  <input type="hidden" name="action" value="update_destination">
+                  <input type="hidden" name="id" value="<?= $destId ?>">
+                  <input type="hidden" name="type" value="<?= e($destType) ?>">
+                  <label>Name <input type="text" name="name" value="<?= e(to_str($d['name'])) ?>" required maxlength="100"></label>
+                  <label>Type
+                    <input type="text" value="<?= e(strtoupper($destType)) ?>" disabled readonly>
+                    <small class="muted">Type is locked. Delete and recreate to change.</small>
+                  </label>
+                  <label class="checkbox"><input type="checkbox" name="encrypt" <?= to_int($d['encrypt']) === 1 ? 'checked' : '' ?>> Encrypt with AES-256-GCM (recommended)</label>
+                  <?php $cfg = $destCfg; ?>
+                  <fieldset>
+                    <legend><?= e(strtoupper($destType)) ?> connection</legend>
+                    <?php require __DIR__ . '/views/destination_form_' . $destType . '.php'; ?>
+                  </fieldset>
+                  <button type="submit" class="action-pill">Save changes</button>
+                  <button type="button" class="action-pill button-secondary" data-edit-destination-cancel="<?= $destId ?>">Cancel</button>
                 </form>
               </td>
             </tr>
@@ -513,20 +595,22 @@ page_header('Backup Destinations');
                 $when = '—';
             }
           ?>
+            <?php $schedId = to_int($s['id']); ?>
             <tr>
               <td><?= e($destName) ?></td>
               <td><?= e($freq) ?></td>
               <td><?= e($when) ?></td>
               <td><?= to_int($s['retention_hourly']) ?>/<?= to_int($s['retention_daily']) ?>/<?= to_int($s['retention_weekly']) ?>/<?= to_int($s['retention_monthly']) ?></td>
-              <td><?= e(to_str($s['last_run_at'] ?? '—')) ?></td>
-              <td><?= e(to_str($s['next_run_at'] ?? '—')) ?></td>
+              <td><?= e(ipam_format_datetime(to_str($s['last_run_at'] ?? '')) ?: '—') ?></td>
+              <td><?= e(ipam_format_datetime(to_str($s['next_run_at'] ?? '')) ?: '—') ?></td>
               <td><?= to_int($s['is_active']) === 1 ? 'Active' : 'Disabled' ?></td>
               <td class="actions">
+                <button class="action-pill" type="button" data-edit-schedule="<?= $schedId ?>" aria-controls="edit-schedule-<?= $schedId ?>" aria-expanded="false">Edit</button>
                 <button class="action-pill" data-run-now="<?= to_int($s['destination_id']) ?>">Run now</button>
                 <form method="post" style="display:inline">
                   <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
                   <input type="hidden" name="action" value="toggle_active_schedule">
-                  <input type="hidden" name="id" value="<?= to_int($s['id']) ?>">
+                  <input type="hidden" name="id" value="<?= $schedId ?>">
                   <button class="action-pill button-secondary" type="submit">
                     <?= to_int($s['is_active']) === 1 ? 'Disable' : 'Enable' ?>
                   </button>
@@ -534,8 +618,34 @@ page_header('Backup Destinations');
                 <form method="post" style="display:inline" data-confirm-delete="this schedule">
                   <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
                   <input type="hidden" name="action" value="delete_schedule">
-                  <input type="hidden" name="id" value="<?= to_int($s['id']) ?>">
+                  <input type="hidden" name="id" value="<?= $schedId ?>">
                   <button class="action-pill button-danger" type="submit">Delete</button>
+                </form>
+              </td>
+            </tr>
+            <tr id="edit-schedule-<?= $schedId ?>" class="edit-schedule-row" hidden>
+              <td colspan="8">
+                <form method="post" class="schedule-form schedule-edit-form">
+                  <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                  <input type="hidden" name="action" value="update_schedule">
+                  <input type="hidden" name="id" value="<?= $schedId ?>">
+                  <label>Frequency
+                    <select name="frequency" required>
+                      <option value="hourly"  <?= $freq === 'hourly'  ? 'selected' : '' ?>>Hourly</option>
+                      <option value="daily"   <?= $freq === 'daily'   ? 'selected' : '' ?>>Daily</option>
+                      <option value="weekly"  <?= $freq === 'weekly'  ? 'selected' : '' ?>>Weekly</option>
+                      <option value="monthly" <?= $freq === 'monthly' ? 'selected' : '' ?>>Monthly</option>
+                    </select>
+                  </label>
+                  <label data-freq-field="time_of_day">Time of day (UTC, HH:MM) <input type="text" name="time_of_day" value="<?= e(to_str($s['time_of_day'])) ?>" pattern="(0[0-9]|1[0-9]|2[0-3]):[0-5][0-9]"></label>
+                  <label data-freq-field="day_of_week">Day of week (Sun=0..Sat=6) <input type="number" name="day_of_week" min="0" max="6" value="<?= to_int($s['day_of_week']) ?>"></label>
+                  <label data-freq-field="day_of_month">Day of month (1-28) <input type="number" name="day_of_month" min="1" max="28" value="<?= to_int($s['day_of_month']) ?>"></label>
+                  <label>Retain hourly  <input type="number" name="retention_hourly"  min="0" value="<?= to_int($s['retention_hourly'])  ?>"></label>
+                  <label>Retain daily   <input type="number" name="retention_daily"   min="0" value="<?= to_int($s['retention_daily'])   ?>"></label>
+                  <label>Retain weekly  <input type="number" name="retention_weekly"  min="0" value="<?= to_int($s['retention_weekly'])  ?>"></label>
+                  <label>Retain monthly <input type="number" name="retention_monthly" min="0" value="<?= to_int($s['retention_monthly']) ?>"></label>
+                  <button type="submit" class="action-pill">Save changes</button>
+                  <button type="button" class="action-pill button-secondary" data-edit-schedule-cancel="<?= $schedId ?>">Cancel</button>
                 </form>
               </td>
             </tr>

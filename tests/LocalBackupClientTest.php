@@ -57,7 +57,7 @@ final class LocalBackupClientTest extends TestCase
         file_put_contents($this->dir . '/old.bak', 'x');
         touch($this->dir . '/old.bak', time() - 3600);
         file_put_contents($this->dir . '/new.bak', 'y');
-        $list = $c->list();
+        $list = $c->listObjects();
         $this->assertCount(2, $list);
         $this->assertSame('new.bak', $list[0]['name']);
         $this->assertSame('old.bak', $list[1]['name']);

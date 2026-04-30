@@ -22,12 +22,14 @@ async function ensureTestDestination(page: Page): Promise<void> {
   const exists = await page.locator(`tbody tr:has-text("${TEST_DEST_NAME}")`).count();
   if (exists > 0) return;
 
-  await page.locator('input[name="name"]').fill(TEST_DEST_NAME);
-  await page.locator('select[name="type"]').selectOption('local');
-  const enc = page.locator('input[name="encrypt"]');
+  // Scope to the create form to avoid matching per-row Edit drawers (#778).
+  const createForm = page.locator('form.destination-form:not(.destination-edit-form)');
+  await createForm.locator('input[name="name"]').fill(TEST_DEST_NAME);
+  await createForm.locator('select[name="type"]').selectOption('local');
+  const enc = createForm.locator('input[name="encrypt"]');
   if (await enc.isChecked()) await enc.uncheck();
-  await page.locator('input[name="local_path"]').fill(TEST_DEST_PATH);
-  await page.locator('form.destination-form button[type="submit"]').click();
+  await createForm.locator('input[name="local_path"]').fill(TEST_DEST_PATH);
+  await createForm.locator('button[type="submit"]').click();
   await page.waitForLoadState('networkidle');
   await expect(page.locator(`tbody tr:has-text("${TEST_DEST_NAME}")`)).toBeVisible();
 }

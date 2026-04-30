@@ -295,7 +295,7 @@ class S3Client implements BackupClientInterface
      * @return list<array{name:string,size:int,last_modified:string,checksum:?string}>
      * @throws RuntimeException on HTTP error or XML parse failure
      */
-    public function list(): array
+    public function listObjects(): array
     {
         $results           = [];
         $continuationToken = null;
@@ -797,9 +797,20 @@ class S3Client implements BackupClientInterface
                 return "$code: $message";
             }
         }
-        // Return first 200 chars of raw body stripped of anything that looks
-        // like a key or signature (sequences of 20+ hex or base64 chars)
-        $safe = preg_replace('/[A-Za-z0-9+\/]{20,}/', '[redacted]', substr($body, 0, 500));
-        return is_string($safe) ? $safe : '[unparseable error]';
+        // Truncate to 500 chars and redact only known-sensitive content. The
+        // previous blanket `[A-Za-z0-9+/]{20,}` rule destroyed anything long
+        // and alphanumeric — bucket names without dashes, S3 keys, the error
+        // Code itself ("SignatureDoesNotMatch" is 21 chars). Two-stage
+        // approach now: (1) context-aware element redaction; (2) defense in
+        // depth against 64-char hex (HMAC-SHA256 signature length).
+        $truncated = substr($body, 0, 500);
+        $sensitive = '(Signature|AWSAccessKeyId|SignatureProvided|StringToSign|StringToSignBytes|CanonicalRequest)';
+        $redacted  = preg_replace(
+            '#<' . $sensitive . '\b[^>]*>[^<]*</\1>#i',
+            '<$1>[redacted]</$1>',
+            $truncated
+        );
+        $redacted = preg_replace('/\b[a-fA-F0-9]{64}\b/', '[redacted]', $redacted ?? $truncated);
+        return is_string($redacted) ? $redacted : '[unparseable error]';
     }
 }

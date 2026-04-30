@@ -80,7 +80,7 @@ final class LocalBackupClient implements BackupClientInterface
     }
 
     /** @return list<array{name:string,size:int,last_modified:string,checksum:?string}> */
-    public function list(): array
+    public function listObjects(): array
     {
         $entries = [];
         $iter = @scandir($this->directory);

@@ -78,6 +78,12 @@ function ipam_backup_run_for_destination(
         ipam_backup_update_log_failure($db, $logId, $e->getMessage());
         audit($db, 'backup.failed', 'destination', $destId,
               'remote=' . $remoteName . ' error=' . substr($e->getMessage(), 0, 200));
+        try {
+            ipam_backup_notify($db, $dest, 'failure',
+                'remote=' . $remoteName . ' error=' . $e->getMessage());
+        } catch (Throwable $ne) {
+            error_log('[backup] notify dispatch failed: ' . $ne->getMessage());
+        }
         @unlink($tmpFile); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmpFile is tempnam()-generated, no user input
         throw $e;
     }
@@ -93,6 +99,13 @@ function ipam_backup_run_for_destination(
 
     audit($db, 'backup.run', 'destination', $destId,
           'remote=' . $remoteName . ' size=' . $size . ' pruned=' . $pruned);
+
+    try {
+        ipam_backup_notify($db, $dest, 'success',
+            'remote=' . $remoteName . ' size=' . $size . ' pruned=' . $pruned);
+    } catch (Throwable $ne) {
+        error_log('[backup] notify dispatch failed: ' . $ne->getMessage());
+    }
 
     return [
         'log_id' => $logId,

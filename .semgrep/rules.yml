@@ -417,6 +417,37 @@ rules:
   # Known violations are suppressed with `// nosemgrep: ipam-inline-script-csp`
   # plus a reference to the tracking issue.
   # ---------------------------------------------------------------------------
+  # ---------------------------------------------------------------------------
+  # ipam-display-tz-bypass (#782)
+  #
+  # Display-side timestamps must round-trip through ipam_format_datetime() so
+  # they render in the user's configured timezone. A direct gmdate() / date()
+  # call inside an echoed expression silently shows UTC (or server-local time)
+  # to every user regardless of their TZ preference. Server-side / SQL /
+  # filename / log uses are fine — the rule only matches inline-echo contexts.
+  # Convert with: <?= e(ipam_format_datetime($utcOrEpoch)) ?>
+  # ---------------------------------------------------------------------------
+  - id: ipam-display-tz-bypass
+    patterns:
+      - pattern-either:
+          - pattern-regex: '<\?=\s*[^?]*\bgmdate\s*\('
+          - pattern-regex: '<\?=\s*[^?]*\bdate\s*\('
+      - pattern-not-regex: 'nosemgrep'
+    paths:
+      include:
+        - "**/Simple-PHP-IPAM/*.php"
+        - "**/Simple-PHP-IPAM/views/*.php"
+    message: >
+      Display-side gmdate()/date() bypasses the user's timezone. Route through
+      ipam_format_datetime($utcStringOrEpoch) so timestamps render in the user's
+      configured TZ. Server-side / SQL / filename uses do not need this rule;
+      mark them with `// nosemgrep: ipam-display-tz-bypass` if necessary.
+    languages: [generic]
+    severity: ERROR
+    metadata:
+      category: ux
+      confidence: MEDIUM
+
   - id: ipam-inline-script-csp
     patterns:
       - pattern-regex: '<script\s*>'

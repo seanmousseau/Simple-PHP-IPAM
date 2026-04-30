@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.20.0] - 2026-04-30
+
+Backup destinations UX + reliability polish. No schema migrations, no new runtime dependencies, no breaking changes.
+
+### Added
+- **Inline Edit drawers for destinations and schedules on `destinations.php`** — edit name, type, config, retention, frequency, day-of-week, day-of-month, time-of-day, and credentials in place. Replaces the previous "delete and recreate to change anything" workflow. (#778, #780)
+- **Per-destination Run-now action** — destination rows now expose their own "Run backup now" button; previously only schedules could trigger a manual run. (#779)
+- **Auto-run Test on Save** — creating or editing a destination now triggers `test_destination.php` automatically and renders an inline pass/fail badge with latency and any error text. Eliminates the "save then click Test then maybe see a flash on next page load" two-step. (#787)
+- **MinIO-backed end-to-end backup integration test in CI (#789)** — the full pipeline (dump → encrypt → upload → list → download → decrypt → verify) runs against a real S3-compatible server on every push, across SQLite / MySQL / PostgreSQL. Sidecar pattern via `bootstrap-app.sh` (always-on `ipam-pw-net` Docker network); MinIO container started/torn down with the test app, idempotent destination seeding via `seed-backup-destinations.php`.
+
+### Changed
+- **Backup timestamps render in the user's configured timezone** instead of UTC across `backup_history.php` and the destinations tables. Uses `ipam_format_datetime()` everywhere; a new semgrep rule (`ipam-backup-utc-timestamp`) prevents future drift back to raw `gmdate()` / `date()` in echo context. (#782)
+- **Schedule form hides fields that don't apply to the selected frequency** — `day_of_week` is hidden for hourly/daily/monthly; `day_of_month` for hourly/daily/weekly; `time_of_day` for hourly. JS toggles `[hidden]` on the field row + label via `data-freq-field` attributes; server-side normalisers null out hidden fields on submit so stale values can't leak from a frequency change. (#781)
+- **`BackupClientInterface::list()` renamed to `listObjects()`** to avoid collision with PHP's `list()` language construct. Internal interface only — no public API surface. Site-local code that called the method directly needs the rename. (#796)
+- **`backup.php` CLI uses `getopt()` for flag parsing** and documents its exit codes. `-f`, `--force`, and `--force=1` are now interchangeable. Web requests still return HTTP 403. (#794)
+
+### Fixed
+- **Destination secret-merge logic hardened** — the form's secret-merge path previously assumed every credential field was always submitted, so a partially-submitted form could null out an existing key. New `ipam_destination_merge_secrets()` helper is a pure function with explicit per-field merge semantics, plus a guard that rejects type changes on existing rows (S3 → SFTP would have left orphaned config keys). (#793, #778)
+- **`ipam_backup_notify()` wired into both orchestrators** — success and failure email was previously dead code on the schedule path. Cron-driven and manual Run-now backups now both fire notifications reliably; a regression test pins the call. (#791)
+- **S3 error-body redaction scoped to signature/credential XML elements** — the previous regex stripped any 20+ char base64-ish run from response bodies, which collaterally erased XML node text in unrelated S3 errors (e.g. bucket-not-found). Redaction now targets `<Signature>` / `<AWSAccessKeyId>` / credential-bearing elements specifically. (#795)
+- **Schedule create-form Playwright selectors no longer collide with Edit-drawer fields** — the new inline Edit drawers introduced duplicate field IDs in the DOM; create-form selectors are now scoped via `:not([hidden])` and within the create-form scope so strict-mode locators match exactly one element.
+
+### Security
+- **`ipam-backup-utc-timestamp` semgrep rule** — prevents reintroduction of UTC-formatted backup timestamps in echo context (regression guard for #782).
+
+---
+
 ## [3.19.1] - 2026-04-29
 
 Hotfix release closing two long-standing gaps in the v3.17.0 remote-backup pipeline.
@@ -1248,6 +1275,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.20.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.19.1...v3.20.0
 [3.19.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.19.0...v3.19.1
 [3.19.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.18.0...v3.19.0
 [3.18.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.17.0...v3.18.0

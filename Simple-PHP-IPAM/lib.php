@@ -668,22 +668,37 @@ function ipam_user_timezone(?int $userId = null): string
 }
 
 /**
- * Format a UTC timestamp string for display in the current user's timezone.
+ * Format a UTC timestamp for display in the current user's timezone.
+ *
+ * Accepts either:
+ *   - a UTC datetime string (e.g. "2026-04-30 12:34:56" or ISO-8601 "...Z")
+ *   - an int Unix epoch (seconds since 1970-01-01 UTC)
  *
  * Default format includes the TZ abbreviation ('Y-m-d H:i T'). Pass $fmt to
  * override, or $userId to render in a specific user's timezone rather than the
- * session user's.
+ * session user's. Empty string / 0 / null returns ''.
+ *
+ * #782: this is the single display-side path for UTC→user-TZ conversion. New
+ * code MUST route through here rather than calling gmdate()/date() inline.
  */
-function ipam_format_datetime(string $utc, ?string $fmt = null, ?int $userId = null): string
+function ipam_format_datetime(string|int|null $utc, ?string $fmt = null, ?int $userId = null): string
 {
-    if ($utc === '') return '';
+    // Guard zero-ish inputs in either form: int 0 from epoch math, string '0'
+    // from `to_str()` of a DB column, or literal empty string. Without the
+    // string-'0' check, a default/zero timestamp falls through to DateTime()
+    // and renders as a bogus 1970 date instead of blank.
+    if ($utc === null || $utc === '' || $utc === 0 || $utc === '0') return '';
     $fmt = $fmt ?? 'Y-m-d H:i T';
     try {
-        $dt = new \DateTime($utc, new \DateTimeZone('UTC'));
+        if (is_int($utc)) {
+            $dt = (new \DateTime('@' . $utc))->setTimezone(new \DateTimeZone('UTC'));
+        } else {
+            $dt = new \DateTime($utc, new \DateTimeZone('UTC'));
+        }
         $dt->setTimezone(new \DateTimeZone(ipam_user_timezone($userId)));
         return $dt->format($fmt);
     } catch (\Exception) {
-        return $utc;
+        return is_int($utc) ? (string) $utc : $utc;
     }
 }
 
@@ -3522,15 +3537,6 @@ function run_db_backup_if_due(PDO $db, array $config): bool
     try {
         if (!backup_is_due($config)) return false;
 
-        $dir = backup_dir($config);
-        if (!is_dir($dir)) {
-            if (!@mkdir($dir, 0700, true)) return false;
-            // Deny direct web access to backup files.
-            @file_put_contents($dir . '/.htaccess',
-                "<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n" .
-                "<IfModule !mod_authz_core.c>\n    Deny from all\n</IfModule>\n");
-        }
-
         $driver    = ipam_dialect()->driver_name();
         $ts        = date('Y-m-d-His');
         $startedAt = date('Y-m-d H:i:s');
@@ -3540,9 +3546,44 @@ function run_db_backup_if_due(PDO $db, array $config): bool
         /** @var IpamConfig $gConf */
         $gConf = $GLOBALS['config'];
 
+        // Synthetic destination for ipam_backup_notify(): the legacy v3.7 path
+        // has no row in backup_destinations, so the notifier just gets a
+        // human-readable name to put in the subject line.
+        $legacyDest = ['name' => 'local backup (' . $driver . ')'];
+
+        // Centralised "abort with notification + history row" helper. Earlier
+        // versions of this function bailed out of pre-condition failures
+        // (mkdir, missing DB file) silently — operators got no email and no
+        // history-table row, so they could miss days of failed backups before
+        // an audit caught it (#791 follow-up).
+        $abortWith = static function (string $reason, string $filename = '') use ($db, $legacyDest, $driver, $startedAt, $t0): bool {
+            backup_history_insert(
+                $db, $filename, 0, '', $driver,
+                $startedAt, date('Y-m-d H:i:s'),
+                (int) ((microtime(true) - $t0) * 1000),
+                $filename, 'failed', $reason
+            );
+            try { ipam_backup_notify($db, $legacyDest, 'failure', $reason); }
+            catch (Throwable $ne) { error_log('[backup] notify dispatch failed: ' . $ne->getMessage()); }
+            return false;
+        };
+
+        $dir = backup_dir($config);
+        if (!is_dir($dir)) {
+            if (!@mkdir($dir, 0700, true)) {
+                return $abortWith('Failed to create backup directory: ' . $dir);
+            }
+            // Deny direct web access to backup files.
+            @file_put_contents($dir . '/.htaccess',
+                "<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n" .
+                "<IfModule !mod_authz_core.c>\n    Deny from all\n</IfModule>\n");
+        }
+
         if ($driver === 'sqlite') {
             $dbPath = $gConf['db_path'] !== '' ? $gConf['db_path'] : (__DIR__ . '/data/ipam.sqlite');
-            if (!is_file($dbPath)) return false;
+            if (!is_file($dbPath)) {
+                return $abortWith('SQLite database file not found: ' . $dbPath);
+            }
 
             try { $db->exec("PRAGMA wal_checkpoint(FULL)"); } catch (Throwable) {}
 
@@ -3551,6 +3592,8 @@ function run_db_backup_if_due(PDO $db, array $config): bool
                 backup_history_insert($db, basename($dest), 0, '', $driver,
                     $startedAt, date('Y-m-d H:i:s'), (int)((microtime(true) - $t0) * 1000),
                     $dest, 'failed', 'copy() failed');
+                try { ipam_backup_notify($db, $legacyDest, 'failure', 'copy() failed for ' . basename($dest)); }
+                catch (Throwable $ne) { error_log('[backup] notify dispatch failed: ' . $ne->getMessage()); }
                 return false;
             }
             @chmod($dest, 0600);
@@ -3590,6 +3633,8 @@ function run_db_backup_if_due(PDO $db, array $config): bool
                 backup_history_insert($db, basename($dest), 0, '', $driver,
                     $startedAt, date('Y-m-d H:i:s'), (int)((microtime(true) - $t0) * 1000),
                     $dest, 'failed', 'mysqldump failed');
+                try { ipam_backup_notify($db, $legacyDest, 'failure', 'mysqldump failed for ' . basename($dest)); }
+                catch (Throwable $ne) { error_log('[backup] notify dispatch failed: ' . $ne->getMessage()); }
                 return false;
             }
 
@@ -3624,6 +3669,8 @@ function run_db_backup_if_due(PDO $db, array $config): bool
                 backup_history_insert($db, basename($dest), 0, '', $driver,
                     $startedAt, date('Y-m-d H:i:s'), (int)((microtime(true) - $t0) * 1000),
                     $dest, 'failed', 'pg_dump failed');
+                try { ipam_backup_notify($db, $legacyDest, 'failure', 'pg_dump failed for ' . basename($dest)); }
+                catch (Throwable $ne) { error_log('[backup] notify dispatch failed: ' . $ne->getMessage()); }
                 return false;
             }
 
@@ -3647,6 +3694,12 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             $state = ['last_backup' => time(), 'last_file' => basename($dest ?? '')];
             @file_put_contents(backup_state_path(), json_encode($state));
             @chmod(backup_state_path(), 0600);
+            try {
+                ipam_backup_notify($db, $legacyDest, 'success',
+                    'file=' . basename($dest) . ' driver=' . $driver);
+            } catch (Throwable $ne) {
+                error_log('[backup] notify dispatch failed: ' . $ne->getMessage());
+            }
         }
     } finally {
         @flock($lock, LOCK_UN);
@@ -4433,10 +4486,13 @@ function ipam_backup_apply_retention(PDO $db, int $destinationId, ?int $nowEpoch
 
     // ── 6. Audit ──────────────────────────────────────────────────────────────
     if ($pruned > 0) {
+        // Matches the rest of the destinations.* / backup.* audit events,
+        // which all use entity_type='destination'. CR review on PR #1050
+        // flagged the prior 'backup_destination' as the outlier.
         audit(
             $db,
             'backup.retention_pruned',
-            'backup_destination',
+            'destination',
             $destinationId,
             'count=' . $pruned . ' destination=' . $destinationId
         );
@@ -4513,6 +4569,123 @@ function ipam_backup_next_run_at(array $schedule, ?int $nowEpoch = null): int
     if (!is_int($candidate)) return $now + 86400;
     if ($candidate <= $now) $candidate += 86400;
     return $candidate;
+}
+
+/**
+ * Merge secrets from an existing destination config into a submitted form payload
+ * so that omitted or blank-string secret fields preserve the stored value, and
+ * non-empty submitted values replace it (#793).
+ *
+ * Explicit clear: callers may submit "<postKey>__clear=1" to force a stored
+ * secret to be removed. This wins over the preserve-on-blank behaviour and lets
+ * operators rotate authentication modes (e.g. switching SFTP from password to
+ * key-only) without delete-and-recreate.
+ *
+ * Pure function — no I/O. Designed for unit testing.
+ *
+ * @param  array<string, mixed> $post         Submitted form fields ($_POST shape).
+ * @param  array<string, mixed> $existingCfg  Decoded JSON config from backup_destinations.config.
+ * @param  string               $type         's3'|'sftp'|'local'.
+ * @return array<string, mixed>               $post with secret fields backfilled or cleared.
+ */
+function ipam_destination_merge_secrets(array $post, array $existingCfg, string $type): array
+{
+    $pairs = [];
+    if ($type === 's3') {
+        $pairs = [['s3_secret_key', 'secret_key']];
+    } elseif ($type === 'sftp') {
+        $pairs = [
+            ['sftp_password',    'password'],
+            ['sftp_private_key', 'private_key'],
+        ];
+    }
+    foreach ($pairs as [$postKey, $cfgKey]) {
+        $clearKey = $postKey . '__clear';
+        $clearRequested = isset($post[$clearKey])
+            && in_array($post[$clearKey], ['1', 1, true, 'true', 'on'], true);
+        if ($clearRequested) {
+            // Explicit clear: blow away both the submitted value (if any) and the
+            // preserved one. collect_config will then treat the field as absent.
+            $post[$postKey] = '';
+            continue;
+        }
+        $omitted = !array_key_exists($postKey, $post);
+        $blank   = !$omitted && is_string($post[$postKey]) && $post[$postKey] === '';
+        if (($omitted || $blank) && isset($existingCfg[$cfgKey])) {
+            $post[$postKey] = to_str($existingCfg[$cfgKey]);
+        }
+    }
+    return $post;
+}
+
+/**
+ * Probe a backup destination for reachability and credential validity.
+ *
+ * Centralised so test_destination.php (manual click) and the auto-on-save path
+ * in destinations.php (#787) share one implementation. Loads the row, decodes
+ * config, constructs the typed client, and returns the same JSON-shape the
+ * client's test() method produces. Audit-logs result with the supplied
+ * triggered_by tag.
+ *
+ * @param  PDO    $db
+ * @param  int    $destId
+ * @param  string $triggeredBy 'manual' | 'auto-on-save'
+ * @return array{ok:bool,message:string,latency_ms:?int}
+ */
+function ipam_destination_test_now(PDO $db, int $destId, string $triggeredBy = 'manual'): array
+{
+    // Audit every failure on the way to the client too — invalid IDs, missing
+    // rows, and unparseable config previously slipped past the destination.test
+    // audit trail.
+    $fail = static function (?int $entityId, string $message) use ($db, $triggeredBy): array {
+        audit($db, 'destination.test', 'destination', $entityId, "triggered_by=$triggeredBy fail");
+        return ['ok' => false, 'message' => $message, 'latency_ms' => null];
+    };
+
+    if ($destId <= 0) {
+        return $fail(null, 'Invalid destination id');
+    }
+    $stmt = $db->prepare("SELECT * FROM backup_destinations WHERE id = :id");
+    $stmt->execute([':id' => $destId]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($row)) {
+        return $fail($destId, 'Destination not found');
+    }
+    $type = is_string($row['type'] ?? null) ? $row['type'] : '';
+    $cfgJson = is_string($row['config'] ?? null) ? $row['config'] : '{}';
+    $cfg = json_decode($cfgJson, true);
+    if (!is_array($cfg)) {
+        return $fail($destId, 'Destination config invalid');
+    }
+    /** @var array<string,mixed> $typedCfg */
+    $typedCfg = [];
+    foreach ($cfg as $k => $v) {
+        if (is_string($k)) $typedCfg[$k] = $v;
+    }
+    try {
+        $client = match ($type) {
+            's3'    => new S3Client($typedCfg),
+            'sftp'  => new SftpClient($typedCfg),
+            'local' => new LocalBackupClient($typedCfg),
+            default => throw new RuntimeException('Unknown destination type'),
+        };
+        $result = $client->test();
+        audit($db, 'destination.test', 'destination', $destId,
+            "triggered_by=$triggeredBy " . ($result['ok'] ? 'ok' : 'fail'));
+        return $result;
+    } catch (Throwable $e) {
+        // Don't log the raw exception message — backup-transport exceptions can
+        // include endpoint URLs, access keys, or auth payloads. Log only the
+        // class name; the client layer is responsible for surfacing redacted
+        // user-facing detail via the returned message.
+        error_log('[destination_test] dest=' . $destId . ' exception=' . get_class($e));
+        audit($db, 'destination.test', 'destination', $destId, "triggered_by=$triggeredBy fail");
+        return [
+            'ok'         => false,
+            'message'    => 'Connection failed (' . get_class($e) . ')',
+            'latency_ms' => null,
+        ];
+    }
 }
 
 /**

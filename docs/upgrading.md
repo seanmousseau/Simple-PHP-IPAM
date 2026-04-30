@@ -9,6 +9,7 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
+  - [v3.20.0](#v3200) — Backup destinations UX polish: inline Edit drawers, Run-now per destination, frequency-aware schedule fields, auto-Test on Save, TZ-correct timestamps, notify wiring, S3 redaction scope fix (no breaking changes)
   - [v3.19.1](#v3191) — **Hotfix:** S3 destinations actually work (SigV4 fix), MySQL/PG cloud backups unblocked, S3 download body-leak fixed (no breaking changes)
   - [v3.18.0](#v3180) — Per-toggle Settings save, backup/restore polish, contacts docs, pgsql test flake fix (no breaking changes)
   - [v3.17.0](#v3170) — Backup destinations, schedules, GFS retention, encryption, web restore wizard (no breaking changes)
@@ -111,6 +112,25 @@ The backup is left in place after a successful upgrade. You can remove it manual
 ---
 
 ## Version-specific upgrade notes
+
+### v3.20.0
+
+Backup destinations UX + reliability polish. **No new pages, no schema migrations, no new runtime dependencies.** Standard upgrade: `bash upgrade.sh --yes <docroot>`.
+
+Highlights (all on `destinations.php` / `backup_history.php`):
+
+- **Inline Edit drawers** for destinations and schedules — edit name, type, config, retention, frequency, and credentials in place without a separate page (#778, #780). Secret-merge is hardened so partially-submitted forms cannot null out an existing key, and destination *type* changes are rejected on existing rows (#793).
+- **Run-now per destination** — destination rows have their own "Run backup now" action; previously only schedules could trigger a manual run (#779).
+- **Frequency-aware schedule fields** — selecting `hourly` / `daily` / `weekly` / `monthly` / `cron` hides the rows that don't apply (e.g. day-of-week is hidden for hourly), eliminating the "what value does this field even take for this frequency?" question (#781).
+- **Auto-run Test on Save** — creating or editing a destination now triggers the connectivity test automatically and renders an inline pass/fail badge with the latency and any error message (#787).
+- **Timestamps render in the user's configured timezone** instead of UTC across `backup_history.php` and the destination tables (#782). A semgrep guard rule prevents future drift back to raw UTC rendering.
+- **Notification dispatch wired into both orchestrators** — `ipam_backup_notify()` was previously dead code on the schedule path; success and failure email now fires reliably from cron and from manual Run-now (#791).
+- **`backup_schedules.updated_at` is now bumped on every cron transition** (success and failure), so the column reflects actual last-touched time (#792).
+- **S3 error-body redaction is scoped to signature/credential XML elements** — long base64-ish runs in unrelated XML node text are no longer stripped, restoring full error context for non-auth S3 failures (#795).
+- **`BackupClientInterface::list()` renamed to `listObjects()`** to avoid collision with PHP's `list()` language construct (#796). Site-local code that called the method directly (unlikely — internal interface) needs the rename.
+- **`backup.php` CLI** uses `getopt()` for flag parsing and documents its exit codes (#794).
+
+End-to-end coverage now includes a **MinIO-backed integration test in CI** (#789) — the backup pipeline (dump → encrypt → upload → list → download → decrypt → verify) runs against a real S3-compatible server on every push across all three database engines.
 
 ### v3.19.1
 

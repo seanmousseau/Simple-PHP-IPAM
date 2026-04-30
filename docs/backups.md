@@ -1,6 +1,8 @@
 # Backup Destinations & Schedules
 
 > **v3.17.0** introduces scheduled remote backups — write backup files to S3-compatible object storage, SFTP servers, or local paths, with GFS (Grandfather-Father-Son) retention, AES-256-GCM encryption, and browser-based history. This guide covers the new system. The legacy `backup.php` CLI (v3.7.0) still exists and continues to write SQLite files to `data/backups/`; see [Backup & Restore (legacy)](backup.md) for that workflow.
+>
+> **v3.20.0 polish:** destinations and schedules now have inline Edit drawers; destination rows have their own Run-now action; the schedule form hides fields that don't apply to the selected frequency; Save runs the connectivity test automatically and renders an inline pass/fail badge; timestamps render in your configured timezone instead of UTC; success/failure email now fires reliably from cron (was previously dead code on the schedule path).
 
 ---
 
@@ -374,3 +376,16 @@ v1 backups are restored via the legacy `backup_decrypt()` path. Restoring a v1 b
 - Anything else → `RuntimeException`.
 
 The legacy v3.7.0 `backup.php` CLI is unchanged and continues to write `.sqlite` files to `data/backups/`. It is not affected by this feature.
+
+### `backup.php` CLI exit codes
+
+The CLI runner has a stable exit-code contract for wrapper scripts (cron, systemd timers, monitoring agents):
+
+| Exit | Meaning |
+|------|---------|
+| 0 | Backup ran and completed successfully. |
+| 1 | DB / config / dump failure, or another process holds the backup lock. The orchestrator currently collapses both into the same return; v3.21.0 (#797) introduces a structured result so lock-held becomes its own exit code 2. |
+| 2 | Reserved for "already running" (see exit 1 note above). |
+| 3 | Backup not due — either `backup.enabled=false` in settings, or no schedule is currently due and `--force` was not passed. |
+
+The CLI accepts `-f`, `--force`, and `--force=1` interchangeably as of v3.20.0 (#794). Web requests to `backup.php` always return HTTP 403 Forbidden; the script is CLI-only.

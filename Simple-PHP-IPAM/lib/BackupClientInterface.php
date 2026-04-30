@@ -32,7 +32,7 @@ interface BackupClientInterface
      *
      * @return list<array{name:string,size:int,last_modified:string,checksum:?string}>
      */
-    public function list(): array;
+    public function listObjects(): array;
 
     /**
      * Delete a single remote file by name.

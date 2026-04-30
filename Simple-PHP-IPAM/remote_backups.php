@@ -128,7 +128,7 @@ if ($selectedId > 0) {
         $listError = 'Selected destination is invalid or inactive.';
     } else {
         try {
-            $entries = $client->list();
+            $entries = $client->listObjects();
         } catch (Throwable $e) {
             $listError = 'Could not list remote files: ' . $e->getMessage();
         }
@@ -183,7 +183,7 @@ page_header('Remote Backups');
             <tr>
               <td><?= e($name) ?> <?php if ($isEnc): ?><span class="badge">encrypted</span><?php endif; ?></td>
               <td><?= number_format($size) ?> bytes</td>
-              <td><?= e($modified) ?></td>
+              <td><?= e(ipam_format_datetime(to_str($modified))) ?></td>
               <td title="<?= e($checksum) ?>"><?= e($csShort) ?></td>
               <td class="actions">
                 <form method="post" action="download_remote_backup.php" style="display:inline">
