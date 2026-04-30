@@ -22,6 +22,7 @@ const DEST_S3_NAME    = 'pw-test-s3-dest';
 const DEST_SFTP_NAME  = 'pw-test-sftp-dest';
 const DEST_LOCAL_NAME = 'pw-test-local-dest';
 const DEST_TEST_NAME  = 'pw-test-conn-dest';   // used for the test-connection failure path
+const DEST_AUTOTEST_NAME = 'pw-autotest-dest'; // used for #787 auto-Test-on-Save
 
 let ctx: BrowserContext;
 let page: Page;
@@ -65,7 +66,7 @@ test.afterAll(async () => {
   // Best-effort cleanup: remove any destinations created during the suite.
   // Schedules are cascade-deleted when the destination is removed.
   try {
-    for (const name of [DEST_S3_NAME, DEST_SFTP_NAME, DEST_LOCAL_NAME, DEST_TEST_NAME]) {
+    for (const name of [DEST_S3_NAME, DEST_SFTP_NAME, DEST_LOCAL_NAME, DEST_TEST_NAME, DEST_AUTOTEST_NAME]) {
       await cleanupDest(page, name);
     }
   } catch { /* ignore */ }
@@ -255,6 +256,28 @@ test.describe('Backup destinations admin', () => {
     // The visible type display is a disabled input — server enforces the lock too.
     const typeBox = editRow.locator('input[disabled][readonly]').first();
     await expect(typeBox).toBeDisabled();
+  });
+
+  test('auto-Test on Save surfaces inline failure badge without manual click (#787)', async () => {
+    await page.goto(appUrl('destinations.php'));
+    const f = createDestForm(page);
+    await f.locator('[data-destination-type-selector]').selectOption('s3');
+    await f.locator('input[name="name"]').fill(DEST_AUTOTEST_NAME);
+    await f.locator('input[name="s3_endpoint"]').fill('http://127.0.0.1:1');
+    await f.locator('input[name="s3_region"]').fill('us-east-1');
+    await f.locator('input[name="s3_bucket"]').fill('fail-bucket');
+    await f.locator('input[name="s3_access_key"]').fill('AUTOFAILKEY');
+    await f.locator('input[name="s3_secret_key"]').fill('autofailsecret');
+    await f.locator('button[type="submit"]').click();
+    // Auto-test runs server-side before the redirect; allow up to 30s for the
+    // S3 HEAD probe to fail against the closed port.
+    await page.waitForURL(/destinations\.php\?flash=created/, { timeout: 30_000 });
+
+    const row = await findDestRow(page, DEST_AUTOTEST_NAME);
+    const badge = row.locator('[data-auto-test-result]');
+    await expect(badge).toBeVisible();
+    await expect(badge).toHaveClass(/badge-failed/);
+    await expect(badge).toContainText('✗');
   });
 
   test('Test connection button indicates failure for a closed-port endpoint', async () => {

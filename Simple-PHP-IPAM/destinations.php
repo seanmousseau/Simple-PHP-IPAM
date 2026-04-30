@@ -116,6 +116,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ]);
                 $newId = (int) $db->lastInsertId();
                 audit($db, 'destination.create', 'destination', $newId, "name=$name type=$type");
+                // #787: auto-run Test on Save. Result stashed in session flash and
+                // rendered inline on the destination row after redirect.
+                $_SESSION['flash_test'] = [
+                    'destination_id' => $newId,
+                    'result'         => ipam_destination_test_now($db, $newId, 'auto-on-save'),
+                ];
                 header('Location: destinations.php?flash=created');
                 exit;
             }
@@ -175,6 +181,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ':id' => $id,
                     ]);
                     audit($db, 'destination.update', 'destination', $id, "name=$name type=$type");
+                    // #787: auto-run Test on Save.
+                    $_SESSION['flash_test'] = [
+                        'destination_id' => $id,
+                        'result'         => ipam_destination_test_now($db, $id, 'auto-on-save'),
+                    ];
                     header('Location: destinations.php?flash=updated');
                     exit;
                 }
@@ -380,6 +391,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
     };
 }
 
+// ── Auto-test flash (#787) — pop session value, surface inline on the row ────
+$flashTestId   = 0;
+$flashTestOk   = false;
+$flashTestMsg  = '';
+if (isset($_SESSION['flash_test']) && is_array($_SESSION['flash_test'])) {
+    $ft           = $_SESSION['flash_test'];
+    $flashTestId  = is_int($ft['destination_id'] ?? null) ? $ft['destination_id'] : 0;
+    $resultRaw    = is_array($ft['result'] ?? null) ? $ft['result'] : [];
+    $flashTestOk  = (bool) ($resultRaw['ok'] ?? false);
+    $flashTestMsg = is_string($resultRaw['message'] ?? null) ? $resultRaw['message'] : '';
+    unset($_SESSION['flash_test']);
+}
+
 // ── Data fetch ────────────────────────────────────────────────────────────────
 $destStmt = $db->query("SELECT * FROM backup_destinations ORDER BY name");
 /** @var list<array<string, mixed>> $destinations */
@@ -434,6 +458,11 @@ page_header('Backup Destinations');
               <td><?= to_int($d['encrypt']) === 1 ? 'Yes' : 'No' ?></td>
               <td><?= to_int($d['is_active']) === 1 ? 'Active' : 'Disabled' ?></td>
               <td class="actions">
+                <?php if ($flashTestId === $destId && $flashTestMsg !== ''): ?>
+                  <span class="badge <?= $flashTestOk ? 'badge-success' : 'badge-failed' ?>" data-auto-test-result>
+                    <?= $flashTestOk ? '✓ ' : '✗ ' ?><?= e($flashTestMsg) ?>
+                  </span>
+                <?php endif; ?>
                 <button class="action-pill" type="button" data-edit-destination="<?= $destId ?>" aria-controls="edit-destination-<?= $destId ?>" aria-expanded="false">Edit</button>
                 <button class="action-pill" data-test-destination="<?= $destId ?>">Test</button>
                 <button class="action-pill" data-run-now="<?= $destId ?>">Run now</button>

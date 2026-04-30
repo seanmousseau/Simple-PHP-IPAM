@@ -12,49 +12,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
-$id = to_int($_POST['id'] ?? 0);
-if ($id <= 0) {
-    echo json_encode(['ok' => false, 'message' => 'Invalid destination id']);
-    exit;
-}
-
-$stmt = $db->prepare("SELECT * FROM backup_destinations WHERE id = :id");
-$stmt->execute([':id' => $id]);
-$row = $stmt->fetch(PDO::FETCH_ASSOC);
-if (!is_array($row)) {
-    echo json_encode(['ok' => false, 'message' => 'Destination not found']);
-    exit;
-}
-
-$type = is_string($row['type'] ?? null) ? $row['type'] : '';
-$cfgJson = is_string($row['config'] ?? null) ? $row['config'] : '{}';
-$cfg = json_decode($cfgJson, true);
-if (!is_array($cfg)) {
-    echo json_encode(['ok' => false, 'message' => 'Destination config invalid']);
-    exit;
-}
-/** @var array<string,mixed> $typedCfg */
-$typedCfg = [];
-foreach ($cfg as $k => $v) {
-    if (is_string($k)) $typedCfg[$k] = $v;
-}
-
-try {
-    $client = match ($type) {
-        's3'    => new S3Client($typedCfg),
-        'sftp'  => new SftpClient($typedCfg),
-        'local' => new LocalBackupClient($typedCfg),
-        default => throw new RuntimeException('Unknown destination type'),
-    };
-    $result = $client->test();
-    audit($db, 'destination.test', 'destination', $id, $result['ok'] ? 'ok' : 'fail');
-    echo json_encode($result);
-} catch (Throwable $e) {
-    error_log('[test_destination] dest=' . $id . ' error=' . $e->getMessage());
-    audit($db, 'destination.test', 'destination', $id, 'fail');
-    echo json_encode([
-        'ok'         => false,
-        'message'    => 'Connection failed (see server log for details)',
-        'latency_ms' => null,
-    ]);
-}
+$idRaw = filter_input(INPUT_POST, 'id', FILTER_VALIDATE_INT);
+$id    = is_int($idRaw) ? $idRaw : 0;
+$result = ipam_destination_test_now($db, $id, 'manual');
+echo json_encode($result);

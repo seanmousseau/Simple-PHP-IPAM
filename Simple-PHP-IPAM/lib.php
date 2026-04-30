@@ -4566,6 +4566,64 @@ function ipam_destination_merge_secrets(array $post, array $existingCfg, string 
 }
 
 /**
+ * Probe a backup destination for reachability and credential validity.
+ *
+ * Centralised so test_destination.php (manual click) and the auto-on-save path
+ * in destinations.php (#787) share one implementation. Loads the row, decodes
+ * config, constructs the typed client, and returns the same JSON-shape the
+ * client's test() method produces. Audit-logs result with the supplied
+ * triggered_by tag.
+ *
+ * @param  PDO    $db
+ * @param  int    $destId
+ * @param  string $triggeredBy 'manual' | 'auto-on-save'
+ * @return array{ok:bool,message:string,latency_ms:?int}
+ */
+function ipam_destination_test_now(PDO $db, int $destId, string $triggeredBy = 'manual'): array
+{
+    if ($destId <= 0) {
+        return ['ok' => false, 'message' => 'Invalid destination id', 'latency_ms' => null];
+    }
+    $stmt = $db->prepare("SELECT * FROM backup_destinations WHERE id = :id");
+    $stmt->execute([':id' => $destId]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($row)) {
+        return ['ok' => false, 'message' => 'Destination not found', 'latency_ms' => null];
+    }
+    $type = is_string($row['type'] ?? null) ? $row['type'] : '';
+    $cfgJson = is_string($row['config'] ?? null) ? $row['config'] : '{}';
+    $cfg = json_decode($cfgJson, true);
+    if (!is_array($cfg)) {
+        return ['ok' => false, 'message' => 'Destination config invalid', 'latency_ms' => null];
+    }
+    /** @var array<string,mixed> $typedCfg */
+    $typedCfg = [];
+    foreach ($cfg as $k => $v) {
+        if (is_string($k)) $typedCfg[$k] = $v;
+    }
+    try {
+        $client = match ($type) {
+            's3'    => new S3Client($typedCfg),
+            'sftp'  => new SftpClient($typedCfg),
+            'local' => new LocalBackupClient($typedCfg),
+            default => throw new RuntimeException('Unknown destination type'),
+        };
+        $result = $client->test();
+        audit($db, 'destination.test', 'destination', $destId,
+            "triggered_by=$triggeredBy " . ($result['ok'] ? 'ok' : 'fail'));
+        return $result;
+    } catch (Throwable $e) {
+        error_log('[destination_test] dest=' . $destId . ' error=' . $e->getMessage());
+        audit($db, 'destination.test', 'destination', $destId, "triggered_by=$triggeredBy fail");
+        return [
+            'ok'         => false,
+            'message'    => 'Connection failed (see server log for details)',
+            'latency_ms' => null,
+        ];
+    }
+}
+
+/**
  * Email notification on backup completion. Best-effort: failures logged, never thrown.
  *
  * @param array<string,mixed> $dest backup_destinations row
