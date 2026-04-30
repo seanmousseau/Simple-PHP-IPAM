@@ -2651,6 +2651,35 @@ function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
     bindToggle('data-edit-destination', 'data-edit-destination-cancel');
     bindToggle('data-edit-schedule',    'data-edit-schedule-cancel');
 
+    // #781: hide schedule fields that don't apply to the chosen frequency.
+    // Matrix: hourly = none; daily = time_of_day; weekly = time_of_day + day_of_week;
+    // monthly = time_of_day + day_of_month. Hidden inputs are also disabled so that
+    // the browser drops them from the submitted payload (defence-in-depth: server
+    // also normalises non-applicable fields to NULL).
+    function applyFreqGating(form) {
+        var sel = form.querySelector('select[name="frequency"]');
+        if (!sel) return;
+        var freq = sel.value;
+        var visible = { time_of_day: false, day_of_week: false, day_of_month: false };
+        if (freq === 'daily')   { visible.time_of_day = true; }
+        if (freq === 'weekly')  { visible.time_of_day = true; visible.day_of_week  = true; }
+        if (freq === 'monthly') { visible.time_of_day = true; visible.day_of_month = true; }
+        form.querySelectorAll('[data-freq-field]').forEach(function (el) {
+            var key = el.getAttribute('data-freq-field');
+            var show = !!visible[key];
+            el.hidden = !show;
+            el.querySelectorAll('input, select, textarea').forEach(function (i) {
+                i.disabled = !show;
+            });
+        });
+    }
+    document.querySelectorAll('form.schedule-form').forEach(function (form) {
+        var sel = form.querySelector('select[name="frequency"]');
+        if (!sel) return;
+        sel.addEventListener('change', function () { applyFreqGating(form); });
+        applyFreqGating(form);
+    });
+
     // Type selector swap. Hidden fieldsets must also disable their inputs so that
     // HTML5 validation on `required` inputs in non-active fieldsets does not block
     // form submission (otherwise the browser silently rejects the submit).

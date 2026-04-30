@@ -226,22 +226,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $retWeekly   = max(0, to_int($_POST['retention_weekly']  ?? '4'));
         $retMonthly  = max(0, to_int($_POST['retention_monthly'] ?? '12'));
 
+        // #781: normalise fields that don't apply to the chosen frequency to NULL,
+        // regardless of what the client posted (defence-in-depth against forced fields).
+        $dowParam = ($frequency === 'weekly')  ? $dayOfWeek  : null;
+        $domParam = ($frequency === 'monthly') ? $dayOfMonth : null;
+
         if ($destId <= 0) {
             $err = 'Destination is required.';
         } elseif (!in_array($frequency, ['hourly', 'daily', 'weekly', 'monthly'], true)) {
             $err = 'Invalid frequency.';
         } elseif (!preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $timeOfDay)) {
             $err = 'Time of day must be in HH:MM format (e.g. 02:00).';
-        } elseif ($dayOfWeek < 0 || $dayOfWeek > 6) {
+        } elseif ($dowParam !== null && ($dowParam < 0 || $dowParam > 6)) {
             $err = 'Day of week must be 0–6.';
-        } elseif ($dayOfMonth < 1 || $dayOfMonth > 28) {
+        } elseif ($domParam !== null && ($domParam < 1 || $domParam > 28)) {
             $err = 'Day of month must be 1–28.';
         } else {
             $nextRunAt = gmdate('Y-m-d H:i:s', ipam_backup_next_run_at([
                 'frequency'    => $frequency,
                 'time_of_day'  => $timeOfDay,
-                'day_of_week'  => $dayOfWeek,
-                'day_of_month' => $dayOfMonth,
+                'day_of_week'  => $dowParam ?? 0,
+                'day_of_month' => $domParam ?? 1,
             ]));
             $now  = ipam_dialect()->now();
             $stmt = $db->prepare(
@@ -255,8 +260,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':did'  => $destId,
                 ':freq' => $frequency,
                 ':tod'  => $timeOfDay,
-                ':dow'  => $dayOfWeek,
-                ':dom'  => $dayOfMonth,
+                ':dow'  => $dowParam,
+                ':dom'  => $domParam,
                 ':rh'   => $retHourly,
                 ':rd'   => $retDaily,
                 ':rw'   => $retWeekly,
@@ -282,23 +287,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $retWeekly  = max(0, to_int($_POST['retention_weekly']  ?? '4'));
         $retMonthly = max(0, to_int($_POST['retention_monthly'] ?? '12'));
 
+        // #781: normalise fields that don't apply to the chosen frequency to NULL.
+        $dowParam = ($frequency === 'weekly')  ? $dayOfWeek  : null;
+        $domParam = ($frequency === 'monthly') ? $dayOfMonth : null;
+
         if ($id <= 0) {
             $err = 'Invalid schedule ID.';
         } elseif (!in_array($frequency, ['hourly', 'daily', 'weekly', 'monthly'], true)) {
             $err = 'Invalid frequency.';
         } elseif (!preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $timeOfDay)) {
             $err = 'Time of day must be in HH:MM format (e.g. 02:00).';
-        } elseif ($dayOfWeek < 0 || $dayOfWeek > 6) {
+        } elseif ($dowParam !== null && ($dowParam < 0 || $dowParam > 6)) {
             $err = 'Day of week must be 0–6.';
-        } elseif ($dayOfMonth < 1 || $dayOfMonth > 28) {
+        } elseif ($domParam !== null && ($domParam < 1 || $domParam > 28)) {
             $err = 'Day of month must be 1–28.';
         } else {
             // Recompute next_run_at since the schedule timing fields may have changed.
             $nextRunAt = gmdate('Y-m-d H:i:s', ipam_backup_next_run_at([
                 'frequency'    => $frequency,
                 'time_of_day'  => $timeOfDay,
-                'day_of_week'  => $dayOfWeek,
-                'day_of_month' => $dayOfMonth,
+                'day_of_week'  => $dowParam ?? 0,
+                'day_of_month' => $domParam ?? 1,
             ]));
             $stmt = $db->prepare(
                 "UPDATE backup_schedules SET
@@ -310,8 +319,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->execute([
                 ':freq' => $frequency,
                 ':tod'  => $timeOfDay,
-                ':dow'  => $dayOfWeek,
-                ':dom'  => $dayOfMonth,
+                ':dow'  => $dowParam,
+                ':dom'  => $domParam,
                 ':rh'   => $retHourly,
                 ':rd'   => $retDaily,
                 ':rw'   => $retWeekly,
@@ -585,9 +594,9 @@ page_header('Backup Destinations');
                       <option value="monthly" <?= $freq === 'monthly' ? 'selected' : '' ?>>Monthly</option>
                     </select>
                   </label>
-                  <label>Time of day (UTC, HH:MM) <input type="text" name="time_of_day" value="<?= e(to_str($s['time_of_day'])) ?>" pattern="[0-2][0-9]:[0-5][0-9]"></label>
-                  <label>Day of week (Sun=0..Sat=6) <input type="number" name="day_of_week" min="0" max="6" value="<?= to_int($s['day_of_week']) ?>"></label>
-                  <label>Day of month (1-28) <input type="number" name="day_of_month" min="1" max="28" value="<?= to_int($s['day_of_month']) ?>"></label>
+                  <label data-freq-field="time_of_day">Time of day (UTC, HH:MM) <input type="text" name="time_of_day" value="<?= e(to_str($s['time_of_day'])) ?>" pattern="[0-2][0-9]:[0-5][0-9]"></label>
+                  <label data-freq-field="day_of_week">Day of week (Sun=0..Sat=6) <input type="number" name="day_of_week" min="0" max="6" value="<?= to_int($s['day_of_week']) ?>"></label>
+                  <label data-freq-field="day_of_month">Day of month (1-28) <input type="number" name="day_of_month" min="1" max="28" value="<?= to_int($s['day_of_month']) ?>"></label>
                   <label>Retain hourly  <input type="number" name="retention_hourly"  min="0" value="<?= to_int($s['retention_hourly'])  ?>"></label>
                   <label>Retain daily   <input type="number" name="retention_daily"   min="0" value="<?= to_int($s['retention_daily'])   ?>"></label>
                   <label>Retain weekly  <input type="number" name="retention_weekly"  min="0" value="<?= to_int($s['retention_weekly'])  ?>"></label>

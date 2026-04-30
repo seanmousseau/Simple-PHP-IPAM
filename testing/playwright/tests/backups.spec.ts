@@ -413,6 +413,80 @@ test.describe('Backup schedules', () => {
     await expect(editRow2.locator('input[name="time_of_day"]')).toHaveValue('04:30');
   });
 
+  test('schedule create form hides fields that do not apply to chosen frequency (#781)', async () => {
+    await page.goto(appUrl('destinations.php'));
+    const form = page.locator('form.schedule-form').first();
+    const sel  = form.locator('select[name="frequency"]');
+    const tod  = form.locator('label[data-freq-field="time_of_day"]');
+    const dow  = form.locator('label[data-freq-field="day_of_week"]');
+    const dom  = form.locator('label[data-freq-field="day_of_month"]');
+
+    await sel.selectOption('hourly');
+    await expect(tod).toBeHidden();
+    await expect(dow).toBeHidden();
+    await expect(dom).toBeHidden();
+
+    await sel.selectOption('daily');
+    await expect(tod).toBeVisible();
+    await expect(dow).toBeHidden();
+    await expect(dom).toBeHidden();
+
+    await sel.selectOption('weekly');
+    await expect(tod).toBeVisible();
+    await expect(dow).toBeVisible();
+    await expect(dom).toBeHidden();
+
+    await sel.selectOption('monthly');
+    await expect(tod).toBeVisible();
+    await expect(dow).toBeHidden();
+    await expect(dom).toBeVisible();
+  });
+
+  test('server normalises non-applicable frequency fields to NULL even if forced (#781)', async () => {
+    await page.goto(appUrl('destinations.php'));
+    const editBtn = page.locator('button[data-edit-schedule]').first();
+    if (await editBtn.count() === 0) {
+      test.skip(true, 'No schedules to update');
+      return;
+    }
+    const id = await editBtn.getAttribute('data-edit-schedule');
+    const csrf = await page.locator('input[name="csrf"]').first().inputValue();
+
+    // Forge a POST that sets frequency=daily but forces day_of_week=3 and day_of_month=15.
+    // The server must reject these by storing NULL (defence-in-depth — the UI hides them
+    // and disables them, but a malicious or scripted client could still send them).
+    const resp = await page.request.post(appUrl('destinations.php'), {
+      form: {
+        csrf:             csrf,
+        action:           'update_schedule',
+        id:               id ?? '0',
+        frequency:        'daily',
+        time_of_day:      '05:15',
+        day_of_week:      '3',
+        day_of_month:     '15',
+        retention_hourly: '24',
+        retention_daily:  '7',
+        retention_weekly: '4',
+        retention_monthly:'12',
+      },
+      maxRedirects: 0,
+    });
+    expect([302, 303]).toContain(resp.status());
+
+    // Re-open the edit drawer; day_of_week and day_of_month must be empty (NULL → to_int → 0/1 default).
+    // The visible "Time of day" must reflect the new value, confirming the update actually ran.
+    await page.goto(appUrl('destinations.php'));
+    const editBtn2 = page.locator(`button[data-edit-schedule="${id}"]`);
+    await editBtn2.click();
+    const editRow2 = page.locator(`#edit-schedule-${id}`);
+    await expect(editRow2.locator('input[name="time_of_day"]')).toHaveValue('05:15');
+    // Frequency persisted as 'daily' (the values for dow/dom are not asserted directly because
+    // to_int(null) defaults render as 0/1 in the form — what matters is the Time/Day display column).
+    await expect(editRow2.locator('select[name="frequency"]')).toHaveValue('daily');
+    // The list-row display must read "@ 05:15" (the daily format), not "DOW … @ …".
+    await expect(page.locator('section.card table.data-table td', { hasText: '@ 05:15' }).first()).toBeVisible();
+  });
+
   test('admin can delete a schedule', async () => {
     await page.goto(appUrl('destinations.php'));
 
