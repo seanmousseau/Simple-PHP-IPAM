@@ -587,8 +587,8 @@ page_header('Backup Destinations');
               <td><?= e($freq) ?></td>
               <td><?= e($when) ?></td>
               <td><?= to_int($s['retention_hourly']) ?>/<?= to_int($s['retention_daily']) ?>/<?= to_int($s['retention_weekly']) ?>/<?= to_int($s['retention_monthly']) ?></td>
-              <td><?= e(to_str($s['last_run_at'] ?? '—')) ?></td>
-              <td><?= e(to_str($s['next_run_at'] ?? '—')) ?></td>
+              <td><?= e(ipam_format_datetime(to_str($s['last_run_at'] ?? '')) ?: '—') ?></td>
+              <td><?= e(ipam_format_datetime(to_str($s['next_run_at'] ?? '')) ?: '—') ?></td>
               <td><?= to_int($s['is_active']) === 1 ? 'Active' : 'Disabled' ?></td>
               <td class="actions">
                 <button class="action-pill" type="button" data-edit-schedule="<?= $schedId ?>" aria-controls="edit-schedule-<?= $schedId ?>" aria-expanded="false">Edit</button>

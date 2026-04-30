@@ -27,7 +27,7 @@ The keys below are seeded into the `settings` table by the v2.6.0 migration and 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
 | `branding.site_name` | string | `Simple PHP IPAM` | App display name in browser tab, nav bar, and login page. |
-| `branding.timezone` | string | `UTC` | PHP timezone identifier used to render timestamps. |
+| `branding.timezone` | string | `UTC` | PHP timezone identifier used to render timestamps. All UI timestamp display goes through `ipam_format_datetime()` (`lib.php`), which converts the underlying UTC value to either the per-user TZ preference or this branding default. New code must route timestamps through that helper instead of calling `gmdate()` / `date()` inline; the `ipam-display-tz-bypass` semgrep rule (`.semgrep/rules.yml`) enforces this in CI. |
 | `security.session_idle_seconds` | int | `1800` | Session idle timeout before auto-logout. |
 | `security.login_max_attempts` | int | `5` | Failed logins per window before IP lockout. |
 | `security.login_lockout_seconds` | int | `900` | Lockout window length. |

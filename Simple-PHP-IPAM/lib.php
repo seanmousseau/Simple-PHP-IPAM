@@ -668,22 +668,33 @@ function ipam_user_timezone(?int $userId = null): string
 }
 
 /**
- * Format a UTC timestamp string for display in the current user's timezone.
+ * Format a UTC timestamp for display in the current user's timezone.
+ *
+ * Accepts either:
+ *   - a UTC datetime string (e.g. "2026-04-30 12:34:56" or ISO-8601 "...Z")
+ *   - an int Unix epoch (seconds since 1970-01-01 UTC)
  *
  * Default format includes the TZ abbreviation ('Y-m-d H:i T'). Pass $fmt to
  * override, or $userId to render in a specific user's timezone rather than the
- * session user's.
+ * session user's. Empty string / 0 / null returns ''.
+ *
+ * #782: this is the single display-side path for UTC→user-TZ conversion. New
+ * code MUST route through here rather than calling gmdate()/date() inline.
  */
-function ipam_format_datetime(string $utc, ?string $fmt = null, ?int $userId = null): string
+function ipam_format_datetime(string|int|null $utc, ?string $fmt = null, ?int $userId = null): string
 {
-    if ($utc === '') return '';
+    if ($utc === null || $utc === '' || $utc === 0) return '';
     $fmt = $fmt ?? 'Y-m-d H:i T';
     try {
-        $dt = new \DateTime($utc, new \DateTimeZone('UTC'));
+        if (is_int($utc)) {
+            $dt = (new \DateTime('@' . $utc))->setTimezone(new \DateTimeZone('UTC'));
+        } else {
+            $dt = new \DateTime($utc, new \DateTimeZone('UTC'));
+        }
         $dt->setTimezone(new \DateTimeZone(ipam_user_timezone($userId)));
         return $dt->format($fmt);
     } catch (\Exception) {
-        return $utc;
+        return is_int($utc) ? (string) $utc : $utc;
     }
 }
 
