@@ -137,47 +137,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $err = 'Invalid destination type.';
         } else {
             // Load existing config to carry over secrets not re-submitted
-            $existing = $db->prepare("SELECT config FROM backup_destinations WHERE id=:id");
+            $existing = $db->prepare("SELECT type, config FROM backup_destinations WHERE id=:id");
             $existing->execute([':id' => $id]);
             $existingRow = $existing->fetch();
             /** @var array<string, mixed> $existingCfg */
             $existingCfg = [];
+            $existingType = '';
             if (is_array($existingRow)) {
+                $existingType = to_str($existingRow['type']);
                 $decoded = json_decode(to_str($existingRow['config']), true);
                 if (is_array($decoded)) {
                     $existingCfg = $decoded;
                 }
             }
 
-            // Merge existing secrets so blank password/key fields don't wipe them
-            if ($type === 's3' && to_str($_POST['s3_secret_key'] ?? '') === '' && isset($existingCfg['secret_key'])) {
-                $_POST['s3_secret_key'] = $existingCfg['secret_key'];
-            }
-            if ($type === 'sftp' && to_str($_POST['sftp_password'] ?? '') === '' && isset($existingCfg['password'])) {
-                $_POST['sftp_password'] = $existingCfg['password'];
-            }
-            if ($type === 'sftp' && to_str($_POST['sftp_private_key'] ?? '') === '' && isset($existingCfg['private_key'])) {
-                $_POST['sftp_private_key'] = to_str($existingCfg['private_key']);
-            }
-
-            $cfg = ipam_destinations_collect_config($type, $_POST);
-            if (is_string($cfg)) {
-                $err = $cfg;
+            // Hard guard: type cannot change on update — schemas are incompatible (#778).
+            if ($existingType !== '' && $type !== $existingType) {
+                http_response_code(400);
+                $err = 'Destination type cannot be changed. Delete and recreate to switch types.';
             } else {
-                $now  = ipam_dialect()->now();
-                $stmt = $db->prepare(
-                    "UPDATE backup_destinations SET name=:n, type=:t, config=:c, encrypt=:e, updated_at=$now WHERE id=:id"
-                );
-                $stmt->execute([
-                    ':n'  => $name,
-                    ':t'  => $type,
-                    ':c'  => json_encode($cfg, JSON_UNESCAPED_SLASHES),
-                    ':e'  => $encrypt,
-                    ':id' => $id,
-                ]);
-                audit($db, 'destination.update', 'destination', $id, "name=$name type=$type");
-                header('Location: destinations.php?flash=updated');
-                exit;
+                // Merge existing secrets so omitted/blank fields don't wipe them (#793).
+                $_POST = ipam_destination_merge_secrets($_POST, $existingCfg, $type);
+
+                $cfg = ipam_destinations_collect_config($type, $_POST);
+                if (is_string($cfg)) {
+                    $err = $cfg;
+                } else {
+                    $now  = ipam_dialect()->now();
+                    $stmt = $db->prepare(
+                        "UPDATE backup_destinations SET name=:n, type=:t, config=:c, encrypt=:e, updated_at=$now WHERE id=:id"
+                    );
+                    $stmt->execute([
+                        ':n'  => $name,
+                        ':t'  => $type,
+                        ':c'  => json_encode($cfg, JSON_UNESCAPED_SLASHES),
+                        ':e'  => $encrypt,
+                        ':id' => $id,
+                    ]);
+                    audit($db, 'destination.update', 'destination', $id, "name=$name type=$type");
+                    header('Location: destinations.php?flash=updated');
+                    exit;
+                }
             }
         }
     }

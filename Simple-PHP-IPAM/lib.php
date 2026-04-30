@@ -4533,6 +4533,39 @@ function ipam_backup_next_run_at(array $schedule, ?int $nowEpoch = null): int
 }
 
 /**
+ * Merge secrets from an existing destination config into a submitted form payload
+ * so that omitted or blank-string secret fields preserve the stored value, and
+ * non-empty submitted values replace it (#793).
+ *
+ * Pure function — no I/O. Designed for unit testing.
+ *
+ * @param  array<string, mixed> $post         Submitted form fields ($_POST shape).
+ * @param  array<string, mixed> $existingCfg  Decoded JSON config from backup_destinations.config.
+ * @param  string               $type         's3'|'sftp'|'local'.
+ * @return array<string, mixed>               $post with secret fields backfilled where appropriate.
+ */
+function ipam_destination_merge_secrets(array $post, array $existingCfg, string $type): array
+{
+    $pairs = [];
+    if ($type === 's3') {
+        $pairs = [['s3_secret_key', 'secret_key']];
+    } elseif ($type === 'sftp') {
+        $pairs = [
+            ['sftp_password',    'password'],
+            ['sftp_private_key', 'private_key'],
+        ];
+    }
+    foreach ($pairs as [$postKey, $cfgKey]) {
+        $omitted = !array_key_exists($postKey, $post);
+        $blank   = !$omitted && is_string($post[$postKey]) && $post[$postKey] === '';
+        if (($omitted || $blank) && isset($existingCfg[$cfgKey])) {
+            $post[$postKey] = to_str($existingCfg[$cfgKey]);
+        }
+    }
+    return $post;
+}
+
+/**
  * Email notification on backup completion. Best-effort: failures logged, never thrown.
  *
  * @param array<string,mixed> $dest backup_destinations row
