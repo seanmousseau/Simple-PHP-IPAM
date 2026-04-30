@@ -32,6 +32,24 @@ Once everything that belongs in `vX.Y.Z` is on `dev`, do the following **in orde
 7. Bump the asset cache-buster `?v=X.Y.Z` in `page_header()` (`lib.php`) **and** `demo_gate.php:74-75` if any CSS/JS changed.
 8. Update `CHANGELOG.md` with the full `## [X.Y.Z] - YYYY-MM-DD` entry and add the comparison link at the bottom.
 9. Update `README.md` — replace the existing `## What's new in vA.B.C` block **in place** with a vX.Y.Z summary (README only ever carries the single latest release).
+9a. **Audit the new CHANGELOG section for unresolved deferral language.** Run:
+    ```bash
+    bash testing/scripts/check_changelog_followups.sh CHANGELOG.md
+    ```
+    Any match for `follow-up`, `deferred`, `pending`, `to be added`, `coming soon`, `will be added`, `future release`, `tracked separately`, or `in a (future|later)` MUST either reference a GitHub issue (`#NNN`) on the same line, or live under a top-level `### Known limitations` subsection of the release entry where each line still references an issue. The lint enforces this; CI will fail without it. Surfaced as #785 after a v3.17.0 CHANGELOG bullet shipped saying "MySQL/PostgreSQL backup pending follow-up" with NO tracking issue — three releases passed before an operator hit the gap in production. Documented in this file so the convention can't be forgotten.
+
+    **Known-limitations convention:** any release that ships a feature in a partial / engine-restricted / opt-in state MUST add a `### Known limitations` subsection at the top of the release entry, BEFORE `### Added` / `### Changed`. Each item must include a tracking issue. Format:
+    ```markdown
+    ## [X.Y.Z] - YYYY-MM-DD
+
+    ### Known limitations
+    - **<feature> is partial.** <one-line scope description>. Tracked as #NNN, target milestone vA.B.C.
+
+    ### Added
+    ...
+    ```
+    This makes partial-ship visible at the top of the release notes (and the marketing-site What's New section) instead of buried in a mid-bullet aside.
+
 10. Run the full local gate until clean:
     ```bash
     for f in Simple-PHP-IPAM/<changed>.php; do php -l "$f"; done

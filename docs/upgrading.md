@@ -9,6 +9,7 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
+  - [v3.19.1](#v3191) — **Hotfix:** S3 destinations actually work (SigV4 fix), MySQL/PG cloud backups unblocked, S3 download body-leak fixed (no breaking changes)
   - [v3.18.0](#v3180) — Per-toggle Settings save, backup/restore polish, contacts docs, pgsql test flake fix (no breaking changes)
   - [v3.17.0](#v3170) — Backup destinations, schedules, GFS retention, encryption, web restore wizard (no breaking changes)
   - [v3.16.0](#v3160) — Admin TOTP toggle, preferred MFA method, unified MFA card, Settings tabs, portable case-insensitive search (no breaking changes)
@@ -110,6 +111,17 @@ The backup is left in place after a successful upgrade. You can remove it manual
 ---
 
 ## Version-specific upgrade notes
+
+### v3.19.1
+
+Hotfix release. **No new pages, no schema migrations, no new runtime dependencies.** Standard upgrade: `bash upgrade.sh --yes <docroot>`.
+
+**If you are on v3.17.0 / v3.18.0 / v3.19.0 and tried to use a remote backup destination (S3 / SFTP / Local), READ THIS:**
+
+- **S3 destinations were broken on every v3.17–v3.19 release.** A SigV4 canonical-request canonicalization bug caused every S3-compatible server (AWS, Wasabi, MinIO, Ceph) to reject the signature with HTTP 403 `SignatureDoesNotMatch`. The bug is fixed in v3.19.1 — re-test your destination after upgrading. Existing destination rows and credentials work unchanged; no re-entry required.
+- **MySQL and PostgreSQL operators were locked out of remote destinations entirely.** `ipam_backup_dump_to_tmp()` hard-threw on non-SQLite drivers in v3.17–v3.19 — the dump step never ran, so no remote-destination backup ever completed for non-SQLite operators. v3.19.1 dispatches to `mysqldump` / `pg_dump` natively (passwords via env, never on cmdline) and gzips the output, so all three engines now produce a `.sql.gz` that flows through the existing encryption + upload pipeline. **Local-disk backups via the legacy `backup.php` CLI runner — which DID support all three engines — continued to work the whole time, so no data was at risk during the gap; only off-box / cloud-replicated backups were unavailable.**
+
+After upgrading, if you set up a destination during the broken window and gave up: it should work now. If you set up a destination and never tested it: test it now.
 
 ### v3.18.0
 

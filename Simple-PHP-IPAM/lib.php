@@ -3687,12 +3687,22 @@ function backup_run_dump(array $cmd, array $env, string $destPath, int $timeoutS
     // Poll for process completion with a hard deadline so a hung mysqldump/pg_dump
     // never blocks a web request thread indefinitely. Non-blocking stderr reads
     // prevent the process from stalling when the pipe buffer fills up.
-    $stderr   = '';
-    $deadline = time() + $timeoutSecs;
+    $stderr    = '';
+    $finalExit = -1;
+    $deadline  = time() + $timeoutSecs;
     while (true) {
         $chunk = fread($pipes[2], 4096);
         if ($chunk !== false && $chunk !== '') $stderr .= $chunk;
-        if (!proc_get_status($proc)['running']) break;
+        $status = proc_get_status($proc);
+        if (!$status['running']) {
+            // Capture exitcode here BEFORE proc_close — on PHP builds with
+            // --enable-sigchild, proc_close returns -1 unconditionally because
+            // the SIGCHLD has already been reaped. proc_get_status returns the
+            // real code on glibc builds and -1 on sigchild-enabled builds; we
+            // treat -1 as "unreliable, fall back to file inspection".
+            $finalExit = $status['exitcode'];
+            break;
+        }
         if (time() > $deadline) {
             proc_terminate($proc);
             fclose($pipes[2]);
@@ -3708,11 +3718,24 @@ function backup_run_dump(array $cmd, array $env, string $destPath, int $timeoutS
         if ($chunk !== false && $chunk !== '') $stderr .= $chunk;
     }
     fclose($pipes[2]);
-    $exit = proc_close($proc);
+    proc_close($proc);
 
-    if ($exit !== 0) {
+    // Exit-code interpretation:
+    //   $finalExit > 0  → definite failure (tool reported error code).
+    //   $finalExit == 0 → definite success.
+    //   $finalExit == -1 → unreliable (sigchild build); use file-size as
+    //                       fallback. mysqldump and pg_dump never produce
+    //                       output on auth/connection failure, so a non-empty
+    //                       dest file is a strong success signal.
+    if ($finalExit > 0) {
         @unlink($destPath); // nosemgrep: php.lang.security.unlink-use.unlink-use
-        error_log('backup_run_dump failed (exit=' . $exit . '): ' . trim($stderr));
+        error_log('backup_run_dump failed (exit=' . $finalExit . '): ' . trim($stderr));
+        return false;
+    }
+    $size = @filesize($destPath);
+    if ($size === false || $size === 0) {
+        @unlink($destPath); // nosemgrep: php.lang.security.unlink-use.unlink-use
+        error_log('backup_run_dump failed (exit=' . $finalExit . ', empty output): ' . trim($stderr));
         return false;
     }
     @chmod($destPath, 0600);

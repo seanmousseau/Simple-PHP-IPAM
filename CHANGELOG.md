@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.19.1] - 2026-04-29
+
+Hotfix release closing two long-standing gaps in the v3.17.0 remote-backup pipeline.
+
+### Fixed
+- **S3 destinations: HTTP 403 SignatureDoesNotMatch on every signed request (#784).** `S3Client::canonicalRequest()` emitted three newlines (`\n\n\n`) between the canonical-headers block and SignedHeaders where AWS SigV4 spec mandates two. The bug was a vestigial empty-string element in the `implode` argument list that compensated for an unrealistic test-input shape; in production every S3-compatible server (Wasabi, AWS, MinIO, Ceph) recomputed the canonical request from the wire bytes and rejected the resulting signature. Existing in v3.17.0–v3.19.0; no operator using S3 destinations was able to upload a backup to any S3-compatible service for those three releases. Added a `tests/S3CanonicalRequestTest.php` regression suite that pins the canonical-request layout against AWS SigV4 spec textbook inputs and an independent HMAC reference, plus an explicit `@param` contract on `canonicalRequest()` that headers must end with `\n`.
+
+### Changed
+- **Engine-agnostic remote-backup dump (#783).** `ipam_backup_dump_to_tmp()` no longer hard-throws on non-SQLite drivers. Added `ipam_backup_native_cmd()` helper (in `lib/backup.php`) and extended the dump function to dispatch by driver: SQLite via the existing `ipam_db_dump_stream` + gzip path; MySQL via `mysqldump` (password via `MYSQL_PWD` env, never on cmdline); PostgreSQL via `pg_dump` (`PGPASSWORD` env). Output format is `.sql.gz` for all three engines so the encryption + upload pipeline downstream is unchanged. Closes the v3.17.0 deferral that shipped without a tracking issue (see process fix below).
+
+### Process / infrastructure
+- **CHANGELOG follow-up lint (#785).** New `testing/scripts/check_changelog_followups.sh` and CI step in `php-qa.yml` that fails the build if a release entry contains deferral language (`follow-up`, `deferred`, `pending`, etc.) without a `#NNN` tracking-issue reference. Origin: a v3.17.0 CHANGELOG bullet shipped saying "MySQL/PostgreSQL backup pending follow-up" with NO issue, vanished from project memory, and surfaced only when an operator hit the gap on prod. `docs/internal/release-workflow.md` Phase 2 updated with the audit step and a top-level `### Known limitations` convention for any release that ships a feature partial.
+
+### Operator notes for v3.17.0 / v3.18.0 / v3.19.0 upgraders
+- If you tried to configure an S3 backup destination on v3.17–v3.19 and got HTTP 403 SignatureDoesNotMatch, the bug is fixed in v3.19.1. Re-test the destination after upgrading; existing destination rows + credentials work unchanged.
+- If you are on MySQL or PostgreSQL and were told "SQLite-only dump" when running a backup, that restriction is lifted in v3.19.1. Local-disk backups via the legacy `backup.php` CLI runner (which DID support all three engines) continue to work as before.
+
+---
+
 ## [3.19.0] - 2026-04-29
 
 ### Changed
@@ -1229,6 +1248,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.19.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.19.0...v3.19.1
 [3.19.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.18.0...v3.19.0
 [3.18.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.17.0...v3.18.0
 [3.17.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.16.0...v3.17.0

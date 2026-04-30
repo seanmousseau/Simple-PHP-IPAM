@@ -127,6 +127,10 @@ jobs:
         # Runs after install so the lock file's resolved versions are checked.
         run: composer audit --no-dev --locked
 
+      - name: CHANGELOG follow-up lint (issue #785)
+        if: matrix.engine == 'sqlite'
+        run: bash testing/scripts/check_changelog_followups.sh CHANGELOG.md
+
       - name: PHP Lint
         run: find Simple-PHP-IPAM -name '*.php' -not -path '*/data/*' | sort | xargs -n1 php -l
 
