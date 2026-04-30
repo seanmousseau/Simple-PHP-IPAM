@@ -185,18 +185,26 @@ if ($driver === 'sqlite') {
     $stderr = stream_get_contents($pipes[2]);
     fclose($pipes[1]);
     fclose($pipes[2]);
-    $exit = proc_close($proc);
-    if ($exit !== 0) {
-        restore_die("mysql restore failed (exit={$exit}): " . trim((string)$stderr));
+    // Capture exit code via proc_get_status BEFORE proc_close — on PHP
+    // builds with --enable-sigchild proc_close reaps SIGCHLD itself and
+    // returns -1 unconditionally. proc_get_status returns the real code
+    // on glibc and -1 on sigchild builds; we treat -1 as "unreliable,
+    // fall back to checking target DB post-conditions" (#805 / B-P0-3).
+    $status    = proc_get_status($proc);
+    $finalExit = $status['exitcode'];
+    proc_close($proc);
+    $check = ipam_restore_proc_check($finalExit, 'mysql', (string)$stderr, $db);
+    if (!$check['ok']) {
+        restore_die($check['message']);
     }
-    restore_info("Restored to {$dbName} on {$host}.");
+    restore_info("Restored to {$dbName} on {$host}. (proc verdict: {$check['verdict']})");
 
     restore_info("Applying migrations...");
     $applied = apply_migrations($db);
     restore_info("Migrations applied: " . (empty($applied) ? '(none)' : implode(', ', $applied)));
 
     audit($db, 'restore.run', 'system', null,
-        "MySQL restore from: " . basename($fromAbs) . " sha256={$sha256}");
+        "MySQL restore from: " . basename($fromAbs) . " sha256={$sha256} ({$check['verdict']})");
 
 } elseif ($driver === 'pgsql') {
     $host   = to_str($gConf['db_host'] ?? '127.0.0.1');
@@ -234,18 +242,22 @@ if ($driver === 'sqlite') {
     $stderr = stream_get_contents($pipes[2]);
     fclose($pipes[1]);
     fclose($pipes[2]);
-    $exit = proc_close($proc);
-    if ($exit !== 0) {
-        restore_die("psql restore failed (exit={$exit}): " . trim((string)$stderr));
+    // See mysql branch above for the sigchild-fallback rationale (#805 / B-P0-3).
+    $status    = proc_get_status($proc);
+    $finalExit = $status['exitcode'];
+    proc_close($proc);
+    $check = ipam_restore_proc_check($finalExit, 'psql', (string)$stderr, $db);
+    if (!$check['ok']) {
+        restore_die($check['message']);
     }
-    restore_info("Restored to {$dbName} on {$host}.");
+    restore_info("Restored to {$dbName} on {$host}. (proc verdict: {$check['verdict']})");
 
     restore_info("Applying migrations...");
     $applied = apply_migrations($db);
     restore_info("Migrations applied: " . (empty($applied) ? '(none)' : implode(', ', $applied)));
 
     audit($db, 'restore.run', 'system', null,
-        "PostgreSQL restore from: " . basename($fromAbs) . " sha256={$sha256}");
+        "PostgreSQL restore from: " . basename($fromAbs) . " sha256={$sha256} ({$check['verdict']})");
 
 } else {
     restore_die("Unsupported driver: {$driver}");

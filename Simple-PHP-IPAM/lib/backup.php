@@ -822,6 +822,67 @@ function ipam_restore_read_staged_sql(string $stagedPath): string
 }
 
 /**
+ * Validate the verdict of a restore proc_open run, accounting for sigchild
+ * PHP builds where proc_close returns -1 unconditionally.
+ *
+ * Why (rewrite under #805 / B-P0-3): v3.19.1 #783 added a file-size fallback
+ * for sigchild ambiguity in `backup_run_dump`. The same proc_close
+ * unreliability exists in the mysql/psql restore paths in `restore.php`,
+ * but a "file size" post-condition makes no sense for a restore — the
+ * tool produces no output file. The right post-condition is that the
+ * target DB is in the expected state: at minimum, `schema_migrations`
+ * is populated. A successful restore from any IPAM dump always lands at
+ * least one migration row.
+ *
+ * Pure: takes the captured exit code (caller must read it via
+ * proc_get_status BEFORE proc_close, since proc_close on sigchild
+ * builds reaps the SIGCHLD itself), returns a verdict struct. Never
+ * exits / dies — the caller decides how to surface a failure.
+ *
+ * @return array{ok: bool, verdict: string, message: string}
+ */
+function ipam_restore_proc_check(int $exitCode, string $tool, string $stderr, PDO $db): array
+{
+    if ($exitCode > 0) {
+        return [
+            'ok'      => false,
+            'verdict' => "exit={$exitCode}",
+            'message' => "{$tool} restore failed (exit={$exitCode}): " . trim($stderr),
+        ];
+    }
+    if ($exitCode === 0) {
+        return ['ok' => true, 'verdict' => 'exit=0', 'message' => ''];
+    }
+    // exitCode === -1 → sigchild build: exit code is unreliable.
+    // Fall back to confirming the target DB has the expected post-state.
+    try {
+        $stmt = $db->query("SELECT COUNT(*) FROM schema_migrations");
+        if ($stmt === false) {
+            throw new RuntimeException('schema_migrations COUNT query returned false');
+        }
+        $migCount = (int)$stmt->fetchColumn();
+    } catch (Throwable $e) {
+        return [
+            'ok'      => false,
+            'verdict' => 'exit=-1 (sigchild); schema_migrations check failed',
+            'message' => "{$tool} restore: exit code unreliable AND schema_migrations check failed: " . $e->getMessage(),
+        ];
+    }
+    if ($migCount < 1) {
+        return [
+            'ok'      => false,
+            'verdict' => 'exit=-1 (sigchild); schema_migrations empty',
+            'message' => "{$tool} restore: exit code unreliable AND schema_migrations is empty — restore did not produce expected post-state. stderr: " . trim($stderr),
+        ];
+    }
+    return [
+        'ok'      => true,
+        'verdict' => "exit=-1 (sigchild) → post-condition OK ({$migCount} migrations present)",
+        'message' => '',
+    ];
+}
+
+/**
  * Split a SQL dump into top-level statements via a character-level lexer.
  *
  * Why a real lexer (rewrite under #806 / B-P0-4): the prior line-oriented
