@@ -3540,6 +3540,11 @@ function run_db_backup_if_due(PDO $db, array $config): bool
         /** @var IpamConfig $gConf */
         $gConf = $GLOBALS['config'];
 
+        // Synthetic destination for ipam_backup_notify(): the legacy v3.7 path
+        // has no row in backup_destinations, so the notifier just gets a
+        // human-readable name to put in the subject line.
+        $legacyDest = ['name' => 'local backup (' . $driver . ')'];
+
         if ($driver === 'sqlite') {
             $dbPath = $gConf['db_path'] !== '' ? $gConf['db_path'] : (__DIR__ . '/data/ipam.sqlite');
             if (!is_file($dbPath)) return false;
@@ -3551,6 +3556,8 @@ function run_db_backup_if_due(PDO $db, array $config): bool
                 backup_history_insert($db, basename($dest), 0, '', $driver,
                     $startedAt, date('Y-m-d H:i:s'), (int)((microtime(true) - $t0) * 1000),
                     $dest, 'failed', 'copy() failed');
+                try { ipam_backup_notify($db, $legacyDest, 'failure', 'copy() failed for ' . basename($dest)); }
+                catch (Throwable $ne) { error_log('[backup] notify dispatch failed: ' . $ne->getMessage()); }
                 return false;
             }
             @chmod($dest, 0600);
@@ -3590,6 +3597,8 @@ function run_db_backup_if_due(PDO $db, array $config): bool
                 backup_history_insert($db, basename($dest), 0, '', $driver,
                     $startedAt, date('Y-m-d H:i:s'), (int)((microtime(true) - $t0) * 1000),
                     $dest, 'failed', 'mysqldump failed');
+                try { ipam_backup_notify($db, $legacyDest, 'failure', 'mysqldump failed for ' . basename($dest)); }
+                catch (Throwable $ne) { error_log('[backup] notify dispatch failed: ' . $ne->getMessage()); }
                 return false;
             }
 
@@ -3624,6 +3633,8 @@ function run_db_backup_if_due(PDO $db, array $config): bool
                 backup_history_insert($db, basename($dest), 0, '', $driver,
                     $startedAt, date('Y-m-d H:i:s'), (int)((microtime(true) - $t0) * 1000),
                     $dest, 'failed', 'pg_dump failed');
+                try { ipam_backup_notify($db, $legacyDest, 'failure', 'pg_dump failed for ' . basename($dest)); }
+                catch (Throwable $ne) { error_log('[backup] notify dispatch failed: ' . $ne->getMessage()); }
                 return false;
             }
 
@@ -3647,6 +3658,12 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             $state = ['last_backup' => time(), 'last_file' => basename($dest ?? '')];
             @file_put_contents(backup_state_path(), json_encode($state));
             @chmod(backup_state_path(), 0600);
+            try {
+                ipam_backup_notify($db, $legacyDest, 'success',
+                    'file=' . basename($dest) . ' driver=' . $driver);
+            } catch (Throwable $ne) {
+                error_log('[backup] notify dispatch failed: ' . $ne->getMessage());
+            }
         }
     } finally {
         @flock($lock, LOCK_UN);
