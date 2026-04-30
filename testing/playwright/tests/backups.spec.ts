@@ -33,6 +33,11 @@ async function findDestRow(p: Page, name: string) {
   return p.locator('table.data-table tbody tr', { hasText: name }).first();
 }
 
+/** The "Add a destination" create form, scoped to exclude per-row edit drawers. */
+function createDestForm(p: Page) {
+  return p.locator('form.destination-form:not(.destination-edit-form)');
+}
+
 /**
  * Delete a destination by name via the delete form on destinations.php.
  * No-ops if the row is not found.
@@ -106,18 +111,19 @@ test.describe('Backup destinations admin', () => {
 
   test('admin can create an S3 destination', async () => {
     await page.goto(appUrl('destinations.php'));
+    const f = createDestForm(page);
 
     // Select S3 type (it is the default, but be explicit).
-    await page.locator('[data-destination-type-selector]').selectOption('s3');
+    await f.locator('[data-destination-type-selector]').selectOption('s3');
 
-    await page.locator('input[name="name"]').fill(DEST_S3_NAME);
-    await page.locator('input[name="s3_endpoint"]').fill('https://s3.example.com');
-    await page.locator('input[name="s3_region"]').fill('us-east-1');
-    await page.locator('input[name="s3_bucket"]').fill('pw-test-bucket');
-    await page.locator('input[name="s3_access_key"]').fill('AKIATESTKEY');
-    await page.locator('input[name="s3_secret_key"]').fill('secretvalue');
+    await f.locator('input[name="name"]').fill(DEST_S3_NAME);
+    await f.locator('input[name="s3_endpoint"]').fill('https://s3.example.com');
+    await f.locator('input[name="s3_region"]').fill('us-east-1');
+    await f.locator('input[name="s3_bucket"]').fill('pw-test-bucket');
+    await f.locator('input[name="s3_access_key"]').fill('AKIATESTKEY');
+    await f.locator('input[name="s3_secret_key"]').fill('secretvalue');
 
-    await page.locator('form.destination-form button[type="submit"]').click();
+    await f.locator('button[type="submit"]').click();
     await page.waitForURL(/destinations\.php/, { timeout: 15_000 });
 
     // Row must appear in destinations table with the S3 type badge.
@@ -128,16 +134,17 @@ test.describe('Backup destinations admin', () => {
 
   test('admin can create an SFTP destination', async () => {
     await page.goto(appUrl('destinations.php'));
-    await page.locator('[data-destination-type-selector]').selectOption('sftp');
+    const f = createDestForm(page);
+    await f.locator('[data-destination-type-selector]').selectOption('sftp');
 
-    await page.locator('input[name="name"]').fill(DEST_SFTP_NAME);
-    await page.locator('input[name="sftp_host"]').fill('sftp.example.com');
-    await page.locator('input[name="sftp_port"]').fill('22');
-    await page.locator('input[name="sftp_username"]').fill('backupuser');
-    await page.locator('input[name="sftp_password"]').fill('sftppassword');
-    await page.locator('input[name="sftp_remote_path"]').fill('/backups/ipam/');
+    await f.locator('input[name="name"]').fill(DEST_SFTP_NAME);
+    await f.locator('input[name="sftp_host"]').fill('sftp.example.com');
+    await f.locator('input[name="sftp_port"]').fill('22');
+    await f.locator('input[name="sftp_username"]').fill('backupuser');
+    await f.locator('input[name="sftp_password"]').fill('sftppassword');
+    await f.locator('input[name="sftp_remote_path"]').fill('/backups/ipam/');
 
-    await page.locator('form.destination-form button[type="submit"]').click();
+    await f.locator('button[type="submit"]').click();
     await page.waitForURL(/destinations\.php/, { timeout: 15_000 });
 
     const row = await findDestRow(page, DEST_SFTP_NAME);
@@ -147,12 +154,13 @@ test.describe('Backup destinations admin', () => {
 
   test('admin can create a Local destination', async () => {
     await page.goto(appUrl('destinations.php'));
-    await page.locator('[data-destination-type-selector]').selectOption('local');
+    const f = createDestForm(page);
+    await f.locator('[data-destination-type-selector]').selectOption('local');
 
-    await page.locator('input[name="name"]').fill(DEST_LOCAL_NAME);
-    await page.locator('input[name="local_path"]').fill('data/backups/pw-test');
+    await f.locator('input[name="name"]').fill(DEST_LOCAL_NAME);
+    await f.locator('input[name="local_path"]').fill('data/backups/pw-test');
 
-    await page.locator('form.destination-form button[type="submit"]').click();
+    await f.locator('button[type="submit"]').click();
     await page.waitForURL(/destinations\.php/, { timeout: 15_000 });
 
     const row = await findDestRow(page, DEST_LOCAL_NAME);
@@ -230,14 +238,15 @@ test.describe('Backup destinations admin', () => {
     // First ensure a destination exists that we can test against.
     await page.goto(appUrl('destinations.php'));
     // Create a throwaway S3 dest pointing at a closed port.
-    await page.locator('[data-destination-type-selector]').selectOption('s3');
-    await page.locator('input[name="name"]').fill(DEST_TEST_NAME);
-    await page.locator('input[name="s3_endpoint"]').fill('http://127.0.0.1:1');
-    await page.locator('input[name="s3_region"]').fill('us-east-1');
-    await page.locator('input[name="s3_bucket"]').fill('fail-bucket');
-    await page.locator('input[name="s3_access_key"]').fill('FAILKEY');
-    await page.locator('input[name="s3_secret_key"]').fill('failsecret');
-    await page.locator('form.destination-form button[type="submit"]').click();
+    const f = createDestForm(page);
+    await f.locator('[data-destination-type-selector]').selectOption('s3');
+    await f.locator('input[name="name"]').fill(DEST_TEST_NAME);
+    await f.locator('input[name="s3_endpoint"]').fill('http://127.0.0.1:1');
+    await f.locator('input[name="s3_region"]').fill('us-east-1');
+    await f.locator('input[name="s3_bucket"]').fill('fail-bucket');
+    await f.locator('input[name="s3_access_key"]').fill('FAILKEY');
+    await f.locator('input[name="s3_secret_key"]').fill('failsecret');
+    await f.locator('button[type="submit"]').click();
     await page.waitForURL(/destinations\.php/, { timeout: 15_000 });
 
     // Find the Test button for this destination and click it.
@@ -289,13 +298,11 @@ test.describe('Backup destinations admin', () => {
 
   test('empty name prevents destination save (required attribute)', async () => {
     await page.goto(appUrl('destinations.php'));
+    const f = createDestForm(page);
     // Ensure name is empty (it should be by default on a fresh load).
-    await page.locator('input[name="name"]').fill('');
+    await f.locator('input[name="name"]').fill('');
 
-    // Intercept the submit and check for native validation.
-    // We listen for the form submit event: if the browser validates and blocks it,
-    // the URL will NOT change. We click and then assert we're still on the same page.
-    await page.locator('form.destination-form button[type="submit"]').click();
+    await f.locator('button[type="submit"]').click();
 
     // Give it a moment to potentially navigate.
     await page.waitForTimeout(800);
@@ -303,11 +310,9 @@ test.describe('Backup destinations admin', () => {
 
     // Should still be on destinations.php (no redirect happened).
     expect(afterUrl).toContain('destinations.php');
-    // The before/after URL should match (no ?flash= appended).
     expect(afterUrl).not.toContain('flash=created');
 
-    // Optionally: check that the name input is marked invalid (HTML5 :invalid pseudo).
-    const isInvalid = await page.locator('input[name="name"]').evaluate(
+    const isInvalid = await f.locator('input[name="name"]').evaluate(
       (el: HTMLInputElement) => !el.validity.valid,
     );
     expect(isInvalid, 'Name input should be invalid when empty').toBeTruthy();
