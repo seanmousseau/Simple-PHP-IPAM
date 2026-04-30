@@ -538,7 +538,7 @@ render_security_banner('db_tools', 'Database import will overwrite all existing 
     <tr><th>Stat</th><th>Value</th></tr>
     <tr>
       <td>Last backup</td>
-      <td><?= $bInfo['last_backup'] ? e(date('Y-m-d H:i:s', $bInfo['last_backup'])) : '<span class=\'muted\'>Never</span>' ?></td>
+      <td><?= $bInfo['last_backup'] ? e(ipam_format_datetime(to_int($bInfo['last_backup']))) : '<span class=\'muted\'>Never</span>' ?></td>
     </tr>
     <tr>
       <td>Last backup file</td>

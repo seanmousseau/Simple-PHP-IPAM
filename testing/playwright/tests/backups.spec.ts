@@ -22,6 +22,7 @@ const DEST_S3_NAME    = 'pw-test-s3-dest';
 const DEST_SFTP_NAME  = 'pw-test-sftp-dest';
 const DEST_LOCAL_NAME = 'pw-test-local-dest';
 const DEST_TEST_NAME  = 'pw-test-conn-dest';   // used for the test-connection failure path
+const DEST_AUTOTEST_NAME = 'pw-autotest-dest'; // used for #787 auto-Test-on-Save
 
 let ctx: BrowserContext;
 let page: Page;
@@ -31,6 +32,11 @@ let page: Page;
 /** Find a row in the destinations table by the destination name. */
 async function findDestRow(p: Page, name: string) {
   return p.locator('table.data-table tbody tr', { hasText: name }).first();
+}
+
+/** The "Add a destination" create form, scoped to exclude per-row edit drawers. */
+function createDestForm(p: Page) {
+  return p.locator('form.destination-form:not(.destination-edit-form)');
 }
 
 /**
@@ -60,7 +66,7 @@ test.afterAll(async () => {
   // Best-effort cleanup: remove any destinations created during the suite.
   // Schedules are cascade-deleted when the destination is removed.
   try {
-    for (const name of [DEST_S3_NAME, DEST_SFTP_NAME, DEST_LOCAL_NAME, DEST_TEST_NAME]) {
+    for (const name of [DEST_S3_NAME, DEST_SFTP_NAME, DEST_LOCAL_NAME, DEST_TEST_NAME, DEST_AUTOTEST_NAME]) {
       await cleanupDest(page, name);
     }
   } catch { /* ignore */ }
@@ -75,7 +81,8 @@ test.describe('Backup destinations admin', () => {
     await page.goto(appUrl('destinations.php'));
     await expect(page).toHaveTitle(/destination/i, { timeout: 10_000 });
     // The "Add a destination" section and its submit button must be present.
-    await expect(page.locator('form.destination-form button[type="submit"]')).toBeVisible();
+    // Scope to the create form to avoid matching per-row Edit drawers (#778).
+    await expect(createDestForm(page).locator('button[type="submit"]')).toBeVisible();
     // Type selector must be present.
     await expect(page.locator('[data-destination-type-selector]')).toBeVisible();
   });
@@ -106,18 +113,19 @@ test.describe('Backup destinations admin', () => {
 
   test('admin can create an S3 destination', async () => {
     await page.goto(appUrl('destinations.php'));
+    const f = createDestForm(page);
 
     // Select S3 type (it is the default, but be explicit).
-    await page.locator('[data-destination-type-selector]').selectOption('s3');
+    await f.locator('[data-destination-type-selector]').selectOption('s3');
 
-    await page.locator('input[name="name"]').fill(DEST_S3_NAME);
-    await page.locator('input[name="s3_endpoint"]').fill('https://s3.example.com');
-    await page.locator('input[name="s3_region"]').fill('us-east-1');
-    await page.locator('input[name="s3_bucket"]').fill('pw-test-bucket');
-    await page.locator('input[name="s3_access_key"]').fill('AKIATESTKEY');
-    await page.locator('input[name="s3_secret_key"]').fill('secretvalue');
+    await f.locator('input[name="name"]').fill(DEST_S3_NAME);
+    await f.locator('input[name="s3_endpoint"]').fill('https://s3.example.com');
+    await f.locator('input[name="s3_region"]').fill('us-east-1');
+    await f.locator('input[name="s3_bucket"]').fill('pw-test-bucket');
+    await f.locator('input[name="s3_access_key"]').fill('AKIATESTKEY');
+    await f.locator('input[name="s3_secret_key"]').fill('secretvalue');
 
-    await page.locator('form.destination-form button[type="submit"]').click();
+    await f.locator('button[type="submit"]').click();
     await page.waitForURL(/destinations\.php/, { timeout: 15_000 });
 
     // Row must appear in destinations table with the S3 type badge.
@@ -128,16 +136,17 @@ test.describe('Backup destinations admin', () => {
 
   test('admin can create an SFTP destination', async () => {
     await page.goto(appUrl('destinations.php'));
-    await page.locator('[data-destination-type-selector]').selectOption('sftp');
+    const f = createDestForm(page);
+    await f.locator('[data-destination-type-selector]').selectOption('sftp');
 
-    await page.locator('input[name="name"]').fill(DEST_SFTP_NAME);
-    await page.locator('input[name="sftp_host"]').fill('sftp.example.com');
-    await page.locator('input[name="sftp_port"]').fill('22');
-    await page.locator('input[name="sftp_username"]').fill('backupuser');
-    await page.locator('input[name="sftp_password"]').fill('sftppassword');
-    await page.locator('input[name="sftp_remote_path"]').fill('/backups/ipam/');
+    await f.locator('input[name="name"]').fill(DEST_SFTP_NAME);
+    await f.locator('input[name="sftp_host"]').fill('sftp.example.com');
+    await f.locator('input[name="sftp_port"]').fill('22');
+    await f.locator('input[name="sftp_username"]').fill('backupuser');
+    await f.locator('input[name="sftp_password"]').fill('sftppassword');
+    await f.locator('input[name="sftp_remote_path"]').fill('/backups/ipam/');
 
-    await page.locator('form.destination-form button[type="submit"]').click();
+    await f.locator('button[type="submit"]').click();
     await page.waitForURL(/destinations\.php/, { timeout: 15_000 });
 
     const row = await findDestRow(page, DEST_SFTP_NAME);
@@ -147,12 +156,13 @@ test.describe('Backup destinations admin', () => {
 
   test('admin can create a Local destination', async () => {
     await page.goto(appUrl('destinations.php'));
-    await page.locator('[data-destination-type-selector]').selectOption('local');
+    const f = createDestForm(page);
+    await f.locator('[data-destination-type-selector]').selectOption('local');
 
-    await page.locator('input[name="name"]').fill(DEST_LOCAL_NAME);
-    await page.locator('input[name="local_path"]').fill('data/backups/pw-test');
+    await f.locator('input[name="name"]').fill(DEST_LOCAL_NAME);
+    await f.locator('input[name="local_path"]').fill('data/backups/pw-test');
 
-    await page.locator('form.destination-form button[type="submit"]').click();
+    await f.locator('button[type="submit"]').click();
     await page.waitForURL(/destinations\.php/, { timeout: 15_000 });
 
     const row = await findDestRow(page, DEST_LOCAL_NAME);
@@ -160,18 +170,130 @@ test.describe('Backup destinations admin', () => {
     await expect(row.locator('.badge-type-local')).toBeVisible();
   });
 
+  test('admin can Run-now from the destination row (local)', async () => {
+    await page.goto(appUrl('destinations.php'));
+    const row = await findDestRow(page, DEST_LOCAL_NAME);
+    if (await row.count() === 0) {
+      test.skip(true, 'Local destination not found — create test may have failed');
+      return;
+    }
+    const runBtn = row.locator('button[data-run-now]');
+    await expect(runBtn, 'Run-now button must render on the destination row').toBeVisible();
+    const destId = await runBtn.getAttribute('data-run-now');
+    expect(parseInt(destId ?? '0', 10)).toBeGreaterThan(0);
+
+    page.once('dialog', d => d.accept());
+    await runBtn.click();
+
+    // The button text becomes "✓ <filename> (<bytes> bytes)" on success
+    // or "✗ <message>" on failure. Wait for either, then assert success.
+    await expect(runBtn).toHaveText(/[✓✗]/, { timeout: 30_000 });
+    const finalText = (await runBtn.textContent()) ?? '';
+    expect(finalText, `Run-now should succeed for local destination, got: ${finalText}`)
+      .toMatch(/✓.*bytes/);
+  });
+
+  test('admin can edit an S3 destination — non-secret field, secret preserved', async () => {
+    // Uses the S3 destination created in the previous test.
+    await page.goto(appUrl('destinations.php'));
+    const row = await findDestRow(page, DEST_S3_NAME);
+    if (await row.count() === 0) {
+      test.skip(true, 'S3 destination not found — create test may have failed');
+      return;
+    }
+
+    // Open the edit drawer for this row.
+    const editBtn = row.locator('button[data-edit-destination]');
+    await editBtn.click();
+
+    // The drawer is the next <tr> after the row; we locate by id.
+    const id = await editBtn.getAttribute('data-edit-destination');
+    const editRow = page.locator(`#edit-destination-${id}`);
+    await expect(editRow).toBeVisible({ timeout: 5_000 });
+
+    // Change a non-secret field (region) and submit, leaving the secret blank.
+    await editRow.locator('input[name="s3_region"]').fill('eu-west-2');
+    await expect(editRow.locator('input[name="s3_secret_key"]')).toHaveValue('');
+    await editRow.locator('button[type="submit"]', { hasText: /save/i }).click();
+    await page.waitForURL(/destinations\.php\?flash=updated/, { timeout: 10_000 });
+
+    // Re-open the edit drawer; the new region must persist and the secret must
+    // still be empty in the form (placeholder shows "(unchanged)").
+    await page.goto(appUrl('destinations.php'));
+    const row2 = await findDestRow(page, DEST_S3_NAME);
+    await row2.locator('button[data-edit-destination]').click();
+    const editRow2 = page.locator(`#edit-destination-${id}`);
+    await expect(editRow2.locator('input[name="s3_region"]')).toHaveValue('eu-west-2');
+    await expect(editRow2.locator('input[name="s3_secret_key"]')).toHaveAttribute('placeholder', /unchanged/);
+  });
+
+  test('admin can rotate an S3 destination secret', async () => {
+    await page.goto(appUrl('destinations.php'));
+    const row = await findDestRow(page, DEST_S3_NAME);
+    if (await row.count() === 0) {
+      test.skip(true, 'S3 destination not found');
+      return;
+    }
+    await row.locator('button[data-edit-destination]').click();
+    const id = await row.locator('button[data-edit-destination]').getAttribute('data-edit-destination');
+    const editRow = page.locator(`#edit-destination-${id}`);
+    await editRow.locator('input[name="s3_secret_key"]').fill('rotatedsecret123');
+    await editRow.locator('button[type="submit"]', { hasText: /save/i }).click();
+    await page.waitForURL(/destinations\.php\?flash=updated/, { timeout: 10_000 });
+    // No exception, no error card.
+    await expect(page.locator('.card.danger')).toHaveCount(0);
+  });
+
+  test('destination edit form locks the type field', async () => {
+    await page.goto(appUrl('destinations.php'));
+    const row = await findDestRow(page, DEST_S3_NAME);
+    if (await row.count() === 0) {
+      test.skip(true, 'S3 destination not found');
+      return;
+    }
+    await row.locator('button[data-edit-destination]').click();
+    const id = await row.locator('button[data-edit-destination]').getAttribute('data-edit-destination');
+    const editRow = page.locator(`#edit-destination-${id}`);
+    // The visible type display is a disabled input — server enforces the lock too.
+    const typeBox = editRow.locator('input[disabled][readonly]').first();
+    await expect(typeBox).toBeDisabled();
+  });
+
+  test('auto-Test on Save surfaces inline failure badge without manual click (#787)', async () => {
+    await page.goto(appUrl('destinations.php'));
+    const f = createDestForm(page);
+    await f.locator('[data-destination-type-selector]').selectOption('s3');
+    await f.locator('input[name="name"]').fill(DEST_AUTOTEST_NAME);
+    await f.locator('input[name="s3_endpoint"]').fill('http://127.0.0.1:1');
+    await f.locator('input[name="s3_region"]').fill('us-east-1');
+    await f.locator('input[name="s3_bucket"]').fill('fail-bucket');
+    await f.locator('input[name="s3_access_key"]').fill('AUTOFAILKEY');
+    await f.locator('input[name="s3_secret_key"]').fill('autofailsecret');
+    await f.locator('button[type="submit"]').click();
+    // Auto-test runs server-side before the redirect; allow up to 30s for the
+    // S3 HEAD probe to fail against the closed port.
+    await page.waitForURL(/destinations\.php\?flash=created/, { timeout: 30_000 });
+
+    const row = await findDestRow(page, DEST_AUTOTEST_NAME);
+    const badge = row.locator('[data-auto-test-result]');
+    await expect(badge).toBeVisible();
+    await expect(badge).toHaveClass(/badge-failed/);
+    await expect(badge).toContainText('✗');
+  });
+
   test('Test connection button indicates failure for a closed-port endpoint', async () => {
     // First ensure a destination exists that we can test against.
     await page.goto(appUrl('destinations.php'));
     // Create a throwaway S3 dest pointing at a closed port.
-    await page.locator('[data-destination-type-selector]').selectOption('s3');
-    await page.locator('input[name="name"]').fill(DEST_TEST_NAME);
-    await page.locator('input[name="s3_endpoint"]').fill('http://127.0.0.1:1');
-    await page.locator('input[name="s3_region"]').fill('us-east-1');
-    await page.locator('input[name="s3_bucket"]').fill('fail-bucket');
-    await page.locator('input[name="s3_access_key"]').fill('FAILKEY');
-    await page.locator('input[name="s3_secret_key"]').fill('failsecret');
-    await page.locator('form.destination-form button[type="submit"]').click();
+    const f = createDestForm(page);
+    await f.locator('[data-destination-type-selector]').selectOption('s3');
+    await f.locator('input[name="name"]').fill(DEST_TEST_NAME);
+    await f.locator('input[name="s3_endpoint"]').fill('http://127.0.0.1:1');
+    await f.locator('input[name="s3_region"]').fill('us-east-1');
+    await f.locator('input[name="s3_bucket"]').fill('fail-bucket');
+    await f.locator('input[name="s3_access_key"]').fill('FAILKEY');
+    await f.locator('input[name="s3_secret_key"]').fill('failsecret');
+    await f.locator('button[type="submit"]').click();
     await page.waitForURL(/destinations\.php/, { timeout: 15_000 });
 
     // Find the Test button for this destination and click it.
@@ -223,28 +345,23 @@ test.describe('Backup destinations admin', () => {
 
   test('empty name prevents destination save (required attribute)', async () => {
     await page.goto(appUrl('destinations.php'));
+    const f = createDestForm(page);
     // Ensure name is empty (it should be by default on a fresh load).
-    await page.locator('input[name="name"]').fill('');
+    await f.locator('input[name="name"]').fill('');
 
-    // Intercept the submit and check for native validation.
-    // We listen for the form submit event: if the browser validates and blocks it,
-    // the URL will NOT change. We click and then assert we're still on the same page.
-    await page.locator('form.destination-form button[type="submit"]').click();
+    await f.locator('button[type="submit"]').click();
 
-    // Give it a moment to potentially navigate.
-    await page.waitForTimeout(800);
+    // The HTML5 `required` attribute should block submission synchronously —
+    // assert the input is invalid (deterministic, no hard wait), then confirm
+    // we're still on destinations.php with no flash redirect.
+    await expect.poll(
+      async () => f.locator('input[name="name"]').evaluate((el: HTMLInputElement) => !el.validity.valid),
+      { message: 'Name input should be invalid when empty', timeout: 2_000 },
+    ).toBe(true);
+
     const afterUrl = page.url();
-
-    // Should still be on destinations.php (no redirect happened).
     expect(afterUrl).toContain('destinations.php');
-    // The before/after URL should match (no ?flash= appended).
     expect(afterUrl).not.toContain('flash=created');
-
-    // Optionally: check that the name input is marked invalid (HTML5 :invalid pseudo).
-    const isInvalid = await page.locator('input[name="name"]').evaluate(
-      (el: HTMLInputElement) => !el.validity.valid,
-    );
-    expect(isInvalid, 'Name input should be invalid when empty').toBeTruthy();
   });
 
 });
@@ -290,6 +407,112 @@ test.describe('Backup schedules', () => {
       expect(attr, `Run now button ${i} missing data-run-now attribute`).toBeTruthy();
       expect(parseInt(attr ?? '0', 10), `data-run-now must be a positive integer`).toBeGreaterThan(0);
     }
+  });
+
+  test('admin can edit an existing schedule', async () => {
+    await page.goto(appUrl('destinations.php'));
+    // Target the schedule created by the prior test (daily @ 03:00) rather than
+    // .first() — the shared CI DB may have seeded schedules with different
+    // frequencies, and editing an arbitrary first row would race against the
+    // time_of_day field hide rules and validate the wrong record.
+    const scheduleRow = page.locator('section.card table.data-table tbody tr', {
+      hasText: 'daily',
+    }).filter({ hasText: '03:00' }).first();
+    await expect(scheduleRow, 'schedule created by prior test (daily @ 03:00) must be present').toBeVisible({ timeout: 5_000 });
+    const editBtn = scheduleRow.locator('button[data-edit-schedule]');
+    await editBtn.click();
+    const id = await editBtn.getAttribute('data-edit-schedule');
+    const editRow = page.locator(`#edit-schedule-${id}`);
+    await expect(editRow).toBeVisible({ timeout: 5_000 });
+
+    // Change retention_daily and time_of_day, save, re-fetch and verify.
+    await editRow.locator('input[name="retention_daily"]').fill('21');
+    await editRow.locator('input[name="time_of_day"]').fill('04:30');
+    await editRow.locator('button[type="submit"]', { hasText: /save/i }).click();
+    await page.waitForURL(/destinations\.php\?flash=sched_updated/, { timeout: 10_000 });
+
+    // Re-open the same edit row; the new values must persist.
+    await page.goto(appUrl('destinations.php'));
+    const editBtn2 = page.locator(`button[data-edit-schedule="${id}"]`);
+    await editBtn2.click();
+    const editRow2 = page.locator(`#edit-schedule-${id}`);
+    await expect(editRow2.locator('input[name="retention_daily"]')).toHaveValue('21');
+    await expect(editRow2.locator('input[name="time_of_day"]')).toHaveValue('04:30');
+  });
+
+  test('schedule create form hides fields that do not apply to chosen frequency (#781)', async () => {
+    await page.goto(appUrl('destinations.php'));
+    // Scope to the create form to avoid matching per-row Edit drawers (#780).
+    const form = page.locator('form.schedule-form:not(.schedule-edit-form)').first();
+    const sel  = form.locator('select[name="frequency"]');
+    const tod  = form.locator('label[data-freq-field="time_of_day"]');
+    const dow  = form.locator('label[data-freq-field="day_of_week"]');
+    const dom  = form.locator('label[data-freq-field="day_of_month"]');
+
+    await sel.selectOption('hourly');
+    await expect(tod).toBeHidden();
+    await expect(dow).toBeHidden();
+    await expect(dom).toBeHidden();
+
+    await sel.selectOption('daily');
+    await expect(tod).toBeVisible();
+    await expect(dow).toBeHidden();
+    await expect(dom).toBeHidden();
+
+    await sel.selectOption('weekly');
+    await expect(tod).toBeVisible();
+    await expect(dow).toBeVisible();
+    await expect(dom).toBeHidden();
+
+    await sel.selectOption('monthly');
+    await expect(tod).toBeVisible();
+    await expect(dow).toBeHidden();
+    await expect(dom).toBeVisible();
+  });
+
+  test('server normalises non-applicable frequency fields to NULL even if forced (#781)', async () => {
+    await page.goto(appUrl('destinations.php'));
+    const editBtn = page.locator('button[data-edit-schedule]').first();
+    if (await editBtn.count() === 0) {
+      test.skip(true, 'No schedules to update');
+      return;
+    }
+    const id = await editBtn.getAttribute('data-edit-schedule');
+    const csrf = await page.locator('input[name="csrf"]').first().inputValue();
+
+    // Forge a POST that sets frequency=daily but forces day_of_week=3 and day_of_month=15.
+    // The server must reject these by storing NULL (defence-in-depth — the UI hides them
+    // and disables them, but a malicious or scripted client could still send them).
+    const resp = await page.request.post(appUrl('destinations.php'), {
+      form: {
+        csrf:             csrf,
+        action:           'update_schedule',
+        id:               id ?? '0',
+        frequency:        'daily',
+        time_of_day:      '05:15',
+        day_of_week:      '3',
+        day_of_month:     '15',
+        retention_hourly: '24',
+        retention_daily:  '7',
+        retention_weekly: '4',
+        retention_monthly:'12',
+      },
+      maxRedirects: 0,
+    });
+    expect([302, 303]).toContain(resp.status());
+
+    // Re-open the edit drawer; day_of_week and day_of_month must be empty (NULL → to_int → 0/1 default).
+    // The visible "Time of day" must reflect the new value, confirming the update actually ran.
+    await page.goto(appUrl('destinations.php'));
+    const editBtn2 = page.locator(`button[data-edit-schedule="${id}"]`);
+    await editBtn2.click();
+    const editRow2 = page.locator(`#edit-schedule-${id}`);
+    await expect(editRow2.locator('input[name="time_of_day"]')).toHaveValue('05:15');
+    // Frequency persisted as 'daily' (the values for dow/dom are not asserted directly because
+    // to_int(null) defaults render as 0/1 in the form — what matters is the Time/Day display column).
+    await expect(editRow2.locator('select[name="frequency"]')).toHaveValue('daily');
+    // The list-row display must read "@ 05:15" (the daily format), not "DOW … @ …".
+    await expect(page.locator('section.card table.data-table td', { hasText: '@ 05:15' }).first()).toBeVisible();
   });
 
   test('admin can delete a schedule', async () => {

@@ -668,22 +668,33 @@ function ipam_user_timezone(?int $userId = null): string
 }
 
 /**
- * Format a UTC timestamp string for display in the current user's timezone.
+ * Format a UTC timestamp for display in the current user's timezone.
+ *
+ * Accepts either:
+ *   - a UTC datetime string (e.g. "2026-04-30 12:34:56" or ISO-8601 "...Z")
+ *   - an int Unix epoch (seconds since 1970-01-01 UTC)
  *
  * Default format includes the TZ abbreviation ('Y-m-d H:i T'). Pass $fmt to
  * override, or $userId to render in a specific user's timezone rather than the
- * session user's.
+ * session user's. Empty string / 0 / null returns ''.
+ *
+ * #782: this is the single display-side path for UTC→user-TZ conversion. New
+ * code MUST route through here rather than calling gmdate()/date() inline.
  */
-function ipam_format_datetime(string $utc, ?string $fmt = null, ?int $userId = null): string
+function ipam_format_datetime(string|int|null $utc, ?string $fmt = null, ?int $userId = null): string
 {
-    if ($utc === '') return '';
+    if ($utc === null || $utc === '' || $utc === 0) return '';
     $fmt = $fmt ?? 'Y-m-d H:i T';
     try {
-        $dt = new \DateTime($utc, new \DateTimeZone('UTC'));
+        if (is_int($utc)) {
+            $dt = (new \DateTime('@' . $utc))->setTimezone(new \DateTimeZone('UTC'));
+        } else {
+            $dt = new \DateTime($utc, new \DateTimeZone('UTC'));
+        }
         $dt->setTimezone(new \DateTimeZone(ipam_user_timezone($userId)));
         return $dt->format($fmt);
     } catch (\Exception) {
-        return $utc;
+        return is_int($utc) ? (string) $utc : $utc;
     }
 }
 
@@ -4530,6 +4541,123 @@ function ipam_backup_next_run_at(array $schedule, ?int $nowEpoch = null): int
     if (!is_int($candidate)) return $now + 86400;
     if ($candidate <= $now) $candidate += 86400;
     return $candidate;
+}
+
+/**
+ * Merge secrets from an existing destination config into a submitted form payload
+ * so that omitted or blank-string secret fields preserve the stored value, and
+ * non-empty submitted values replace it (#793).
+ *
+ * Explicit clear: callers may submit "<postKey>__clear=1" to force a stored
+ * secret to be removed. This wins over the preserve-on-blank behaviour and lets
+ * operators rotate authentication modes (e.g. switching SFTP from password to
+ * key-only) without delete-and-recreate.
+ *
+ * Pure function — no I/O. Designed for unit testing.
+ *
+ * @param  array<string, mixed> $post         Submitted form fields ($_POST shape).
+ * @param  array<string, mixed> $existingCfg  Decoded JSON config from backup_destinations.config.
+ * @param  string               $type         's3'|'sftp'|'local'.
+ * @return array<string, mixed>               $post with secret fields backfilled or cleared.
+ */
+function ipam_destination_merge_secrets(array $post, array $existingCfg, string $type): array
+{
+    $pairs = [];
+    if ($type === 's3') {
+        $pairs = [['s3_secret_key', 'secret_key']];
+    } elseif ($type === 'sftp') {
+        $pairs = [
+            ['sftp_password',    'password'],
+            ['sftp_private_key', 'private_key'],
+        ];
+    }
+    foreach ($pairs as [$postKey, $cfgKey]) {
+        $clearKey = $postKey . '__clear';
+        $clearRequested = isset($post[$clearKey])
+            && in_array($post[$clearKey], ['1', 1, true, 'true', 'on'], true);
+        if ($clearRequested) {
+            // Explicit clear: blow away both the submitted value (if any) and the
+            // preserved one. collect_config will then treat the field as absent.
+            $post[$postKey] = '';
+            continue;
+        }
+        $omitted = !array_key_exists($postKey, $post);
+        $blank   = !$omitted && is_string($post[$postKey]) && $post[$postKey] === '';
+        if (($omitted || $blank) && isset($existingCfg[$cfgKey])) {
+            $post[$postKey] = to_str($existingCfg[$cfgKey]);
+        }
+    }
+    return $post;
+}
+
+/**
+ * Probe a backup destination for reachability and credential validity.
+ *
+ * Centralised so test_destination.php (manual click) and the auto-on-save path
+ * in destinations.php (#787) share one implementation. Loads the row, decodes
+ * config, constructs the typed client, and returns the same JSON-shape the
+ * client's test() method produces. Audit-logs result with the supplied
+ * triggered_by tag.
+ *
+ * @param  PDO    $db
+ * @param  int    $destId
+ * @param  string $triggeredBy 'manual' | 'auto-on-save'
+ * @return array{ok:bool,message:string,latency_ms:?int}
+ */
+function ipam_destination_test_now(PDO $db, int $destId, string $triggeredBy = 'manual'): array
+{
+    // Audit every failure on the way to the client too — invalid IDs, missing
+    // rows, and unparseable config previously slipped past the destination.test
+    // audit trail.
+    $fail = static function (?int $entityId, string $message) use ($db, $triggeredBy): array {
+        audit($db, 'destination.test', 'destination', $entityId, "triggered_by=$triggeredBy fail");
+        return ['ok' => false, 'message' => $message, 'latency_ms' => null];
+    };
+
+    if ($destId <= 0) {
+        return $fail(null, 'Invalid destination id');
+    }
+    $stmt = $db->prepare("SELECT * FROM backup_destinations WHERE id = :id");
+    $stmt->execute([':id' => $destId]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($row)) {
+        return $fail($destId, 'Destination not found');
+    }
+    $type = is_string($row['type'] ?? null) ? $row['type'] : '';
+    $cfgJson = is_string($row['config'] ?? null) ? $row['config'] : '{}';
+    $cfg = json_decode($cfgJson, true);
+    if (!is_array($cfg)) {
+        return $fail($destId, 'Destination config invalid');
+    }
+    /** @var array<string,mixed> $typedCfg */
+    $typedCfg = [];
+    foreach ($cfg as $k => $v) {
+        if (is_string($k)) $typedCfg[$k] = $v;
+    }
+    try {
+        $client = match ($type) {
+            's3'    => new S3Client($typedCfg),
+            'sftp'  => new SftpClient($typedCfg),
+            'local' => new LocalBackupClient($typedCfg),
+            default => throw new RuntimeException('Unknown destination type'),
+        };
+        $result = $client->test();
+        audit($db, 'destination.test', 'destination', $destId,
+            "triggered_by=$triggeredBy " . ($result['ok'] ? 'ok' : 'fail'));
+        return $result;
+    } catch (Throwable $e) {
+        // Don't log the raw exception message — backup-transport exceptions can
+        // include endpoint URLs, access keys, or auth payloads. Log only the
+        // class name; the client layer is responsible for surfacing redacted
+        // user-facing detail via the returned message.
+        error_log('[destination_test] dest=' . $destId . ' exception=' . get_class($e));
+        audit($db, 'destination.test', 'destination', $destId, "triggered_by=$triggeredBy fail");
+        return [
+            'ok'         => false,
+            'message'    => 'Connection failed (' . get_class($e) . ')',
+            'latency_ms' => null,
+        ];
+    }
 }
 
 /**

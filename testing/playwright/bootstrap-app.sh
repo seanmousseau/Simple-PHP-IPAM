@@ -57,6 +57,16 @@ mailhog_enabled="${IPAM_TEST_MAILHOG:-0}"
 mailhog_name="${IPAM_TEST_MAILHOG_NAME:-ipam-pw-mailhog}"
 mailhog_web_port="${IPAM_TEST_MAILHOG_WEB_PORT:-8026}"
 
+# MinIO sidecar (#789): always-on S3-compatible object store for the backup
+# integration spec. Reachable from PHP at http://minio:9000 over the docker
+# network. Credentials and bucket name are hardcoded — fixture-only, never
+# touches real cloud infra.
+minio_name="${IPAM_TEST_MINIO_NAME:-ipam-pw-minio}"
+minio_mc_name="${IPAM_TEST_MINIO_MC_NAME:-ipam-pw-minio-mc}"
+minio_root_user="${IPAM_TEST_MINIO_USER:-testkey}"
+minio_root_pass="${IPAM_TEST_MINIO_PASS:-testsecret123}"
+minio_bucket="${IPAM_TEST_MINIO_BUCKET:-ipam-backups}"
+
 if ! command -v docker >/dev/null 2>&1; then
     echo "bootstrap-app.sh: docker is required but not found in PATH" >&2
     exit 3
@@ -121,12 +131,10 @@ else
     docker build --quiet -t "$image" -f "$script_dir/Dockerfile.apache" "$script_dir" >/dev/null
 fi
 
-# 3. For mysql/pgsql, spin up a docker network + the DB service container
-#    and wait for it to accept connections before seeding.
-if [[ "$driver" != "sqlite" ]]; then
-    echo "bootstrap-app: creating docker network $network"
-    docker network create "$network" >/dev/null 2>&1 || true
-fi
+# 3. Always create the docker network — MinIO is always-on (#789) and joins it
+#    along with mysql/pgsql/mailhog when those are active. Idempotent.
+echo "bootstrap-app: creating docker network $network"
+docker network create "$network" >/dev/null 2>&1 || true
 
 if [[ "$driver" == "mysql" ]]; then
     echo "bootstrap-app: starting MySQL 8.0 service container $mysql_name"
@@ -204,12 +212,7 @@ if [[ "$driver" == "pgsql" ]]; then
 fi
 
 # 3b. MailHog SMTP trap (opt-in via IPAM_TEST_MAILHOG=1).
-# SQLite driver does not create a network in step 3, so create it here.
 if [[ "$mailhog_enabled" == "1" ]]; then
-    if [[ "$driver" == "sqlite" ]]; then
-        echo "bootstrap-app: creating docker network $network (for MailHog)"
-        docker network create "$network" >/dev/null 2>&1 || true
-    fi
     echo "bootstrap-app: starting MailHog SMTP trap $mailhog_name"
     docker rm -f "$mailhog_name" >/dev/null 2>&1 || true
     docker run -d --rm --name "$mailhog_name" \
@@ -220,15 +223,59 @@ if [[ "$mailhog_enabled" == "1" ]]; then
     echo "bootstrap-app: MailHog web UI available at http://127.0.0.1:${mailhog_web_port}"
 fi
 
+# 3c. MinIO S3-compatible object store (#789, always-on).
+# Reachable from the IPAM container at http://minio:9000. Credentials are
+# fixture-only (testkey / testsecret123). The integration spec exercises a
+# round-trip backup against this. Bucket is created via `minio/mc` after
+# the server reports healthy.
+echo "bootstrap-app: starting MinIO $minio_name"
+docker rm -f "$minio_name" >/dev/null 2>&1 || true
+docker run -d --rm --name "$minio_name" \
+    --network "$network" \
+    --network-alias minio \
+    -e "MINIO_ROOT_USER=$minio_root_user" \
+    -e "MINIO_ROOT_PASSWORD=$minio_root_pass" \
+    minio/minio:latest server /data >/dev/null
+
+echo "bootstrap-app: waiting for MinIO ready (up to 60s)"
+for i in $(seq 1 30); do
+    # /minio/health/live returns 200 once the server has finished boot.
+    if docker run --rm --network "$network" curlimages/curl:latest \
+        -fsS "http://minio:9000/minio/health/live" >/dev/null 2>&1; then
+        echo "bootstrap-app: MinIO ready"
+        break
+    fi
+    if [[ "$i" -eq 30 ]]; then
+        echo "bootstrap-app: MinIO did not become ready in 60s" >&2
+        docker logs "$minio_name" >&2 || true
+        exit 1
+    fi
+    sleep 2
+done
+
+echo "bootstrap-app: creating MinIO bucket $minio_bucket via mc"
+docker rm -f "$minio_mc_name" >/dev/null 2>&1 || true
+docker run --rm --name "$minio_mc_name" \
+    --network "$network" \
+    --entrypoint /bin/sh \
+    minio/mc:latest \
+    -ec 'mc alias set local http://minio:9000 "$1" "$2" >/dev/null
+         mc mb -p "local/$3" >/dev/null
+         echo "bootstrap-app: MinIO bucket $3 ready"' \
+    sh "$minio_root_user" "$minio_root_pass" "$minio_bucket" \
+    || {
+        echo "bootstrap-app: MinIO bucket creation failed" >&2
+        docker logs "$minio_name" >&2 || true
+        exit 1
+    }
+
 # 4. Run migrate + demo seed inside a throwaway container so there is no host
 #    PHP version dependency. Uses the same image the long-running container uses.
 #    For mysql, the throwaway container joins the docker network so it can
 #    resolve the MySQL hostname.
 echo "bootstrap-app: running migrate.php and demo_seed.php"
 seed_docker_args=(-v "$app_dir:/var/www/html" -w /var/www/html)
-if [[ "$driver" != "sqlite" ]] || [[ "$mailhog_enabled" == "1" ]]; then
-    seed_docker_args+=(--network "$network")
-fi
+seed_docker_args+=(--network "$network")
 # File-level config mount for the seed container — mirrors the same guard used
 # for the long-running container (see below). OneDrive (or other cloud-sync
 # tools) can revert config.php on the host between the `cp` above and the
@@ -248,8 +295,14 @@ unset _seed_cfg
 if [[ -d "$repo_root/vendor" ]]; then
     seed_docker_args+=(-v "$repo_root/vendor:/var/www/vendor:ro")
 fi
+seed_docker_args+=(
+    -v "$script_dir/fixtures/seed-backup-destinations.php:/tmp/seed-backup-destinations.php:ro"
+    -e "IPAM_TEST_MINIO_USER=$minio_root_user"
+    -e "IPAM_TEST_MINIO_PASS=$minio_root_pass"
+    -e "IPAM_TEST_MINIO_BUCKET=$minio_bucket"
+)
 docker run --rm "${seed_docker_args[@]}" -e SEED_2FA_TEST_USER=1 -e SEED_EMAIL_OTP_TEST_USER=1 -e SEED_PASSKEY_TEST_USER=1 -e DEMO_SEED_FORCE=1 "$image" \
-    bash -c 'php migrate.php && php demo_seed.php && chmod -R a+rwX data' \
+    bash -c 'php migrate.php && php demo_seed.php && php /tmp/seed-backup-destinations.php && chmod -R a+rwX data' \
     >/tmp/ipam-pw-seed.log 2>&1 || {
         echo "bootstrap-app: seeding failed, log follows:" >&2
         cat /tmp/ipam-pw-seed.log >&2
@@ -324,9 +377,7 @@ case "$driver" in
 esac
 run_docker_args+=(-v "${_test_cfg}:/var/www/html/config.php:ro")
 unset _test_cfg
-if [[ "$driver" != "sqlite" ]] || [[ "$mailhog_enabled" == "1" ]]; then
-    run_docker_args+=(--network "$network")
-fi
+run_docker_args+=(--network "$network")
 if [[ -d "$repo_root/vendor" ]]; then
     run_docker_args+=(-v "$repo_root/vendor:/var/www/vendor:ro")
 fi

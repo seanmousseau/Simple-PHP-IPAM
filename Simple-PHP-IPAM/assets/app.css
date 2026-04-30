@@ -1947,6 +1947,10 @@ button:active,.button:active,.action-pill:active{transform:translateY(1px)}
     display: flex; flex-direction: column; gap: var(--space-4);
     font-weight: 500;
 }
+/* The display:flex above wins over the UA `[hidden]{display:none}` rule by
+   specificity, so the JS frequency-field gating (#781) needs an explicit
+   override to keep `el.hidden = true` actually hiding the label. */
+.destination-form label[hidden], .schedule-form label[hidden] { display: none; }
 .destination-form .checkbox { flex-direction: row; align-items: center; gap: var(--space-6); }
 .destination-fields {
     grid-column: 1 / -1;
