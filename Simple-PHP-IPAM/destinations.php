@@ -157,8 +157,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
 
-            // Hard guard: type cannot change on update — schemas are incompatible (#778).
-            if ($existingType !== '' && $type !== $existingType) {
+            if (!is_array($existingRow)) {
+                http_response_code(404);
+                $err = 'Destination not found.';
+            } elseif ($existingType !== '' && $type !== $existingType) {
+                // Hard guard: type cannot change on update — schemas are incompatible (#778).
                 http_response_code(400);
                 $err = 'Destination type cannot be changed. Delete and recreate to switch types.';
             } else {
@@ -392,15 +395,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 }
 
 // ── Auto-test flash (#787) — pop session value, surface inline on the row ────
-$flashTestId   = 0;
-$flashTestOk   = false;
-$flashTestMsg  = '';
+$flashTestId       = 0;
+$flashTestOk       = false;
+$flashTestMsg      = '';
+$flashTestLatency  = null;
 if (isset($_SESSION['flash_test']) && is_array($_SESSION['flash_test'])) {
     $ft           = $_SESSION['flash_test'];
     $flashTestId  = is_int($ft['destination_id'] ?? null) ? $ft['destination_id'] : 0;
     $resultRaw    = is_array($ft['result'] ?? null) ? $ft['result'] : [];
     $flashTestOk  = (bool) ($resultRaw['ok'] ?? false);
     $flashTestMsg = is_string($resultRaw['message'] ?? null) ? $resultRaw['message'] : '';
+    $rawLatency   = $resultRaw['latency_ms'] ?? null;
+    $flashTestLatency = is_int($rawLatency) ? $rawLatency
+        : (is_numeric($rawLatency) ? (int) $rawLatency : null);
     unset($_SESSION['flash_test']);
 }
 
@@ -458,11 +465,18 @@ page_header('Backup Destinations');
               <td><?= to_int($d['encrypt']) === 1 ? 'Yes' : 'No' ?></td>
               <td><?= to_int($d['is_active']) === 1 ? 'Active' : 'Disabled' ?></td>
               <td class="actions">
-                <?php if ($flashTestId === $destId && $flashTestMsg !== ''): ?>
-                  <span class="badge <?= $flashTestOk ? 'badge-success' : 'badge-failed' ?>" data-auto-test-result>
-                    <?= $flashTestOk ? '✓ ' : '✗ ' ?><?= e($flashTestMsg) ?>
+                <?php
+                if ($flashTestId === $destId && $flashTestMsg !== '') {
+                    $latencySuffix = ($flashTestLatency !== null && $flashTestLatency >= 0)
+                        ? ' (' . (int) $flashTestLatency . ' ms)'
+                        : '';
+                    $badgeText = ($flashTestOk ? '✓ ' : '✗ ') . $flashTestMsg . $latencySuffix;
+                    $badgeClass = $flashTestOk ? 'badge-success' : 'badge-failed';
+                ?>
+                  <span class="badge <?= e($badgeClass) ?>" data-auto-test-result>
+                    <?= e($badgeText) ?>
                   </span>
-                <?php endif; ?>
+                <?php } ?>
                 <button class="action-pill" type="button" data-edit-destination="<?= $destId ?>" aria-controls="edit-destination-<?= $destId ?>" aria-expanded="false">Edit</button>
                 <button class="action-pill" data-test-destination="<?= $destId ?>">Test</button>
                 <button class="action-pill" data-run-now="<?= $destId ?>">Run now</button>

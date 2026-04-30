@@ -351,18 +351,17 @@ test.describe('Backup destinations admin', () => {
 
     await f.locator('button[type="submit"]').click();
 
-    // Give it a moment to potentially navigate.
-    await page.waitForTimeout(800);
-    const afterUrl = page.url();
+    // The HTML5 `required` attribute should block submission synchronously —
+    // assert the input is invalid (deterministic, no hard wait), then confirm
+    // we're still on destinations.php with no flash redirect.
+    await expect.poll(
+      async () => f.locator('input[name="name"]').evaluate((el: HTMLInputElement) => !el.validity.valid),
+      { message: 'Name input should be invalid when empty', timeout: 2_000 },
+    ).toBe(true);
 
-    // Should still be on destinations.php (no redirect happened).
+    const afterUrl = page.url();
     expect(afterUrl).toContain('destinations.php');
     expect(afterUrl).not.toContain('flash=created');
-
-    const isInvalid = await f.locator('input[name="name"]').evaluate(
-      (el: HTMLInputElement) => !el.validity.valid,
-    );
-    expect(isInvalid, 'Name input should be invalid when empty').toBeTruthy();
   });
 
 });
@@ -412,11 +411,15 @@ test.describe('Backup schedules', () => {
 
   test('admin can edit an existing schedule', async () => {
     await page.goto(appUrl('destinations.php'));
-    const editBtn = page.locator('button[data-edit-schedule]').first();
-    if (await editBtn.count() === 0) {
-      test.skip(true, 'No schedules present — schedule create test may have failed');
-      return;
-    }
+    // Target the schedule created by the prior test (daily @ 03:00) rather than
+    // .first() — the shared CI DB may have seeded schedules with different
+    // frequencies, and editing an arbitrary first row would race against the
+    // time_of_day field hide rules and validate the wrong record.
+    const scheduleRow = page.locator('section.card table.data-table tbody tr', {
+      hasText: 'daily',
+    }).filter({ hasText: '03:00' }).first();
+    await expect(scheduleRow, 'schedule created by prior test (daily @ 03:00) must be present').toBeVisible({ timeout: 5_000 });
+    const editBtn = scheduleRow.locator('button[data-edit-schedule]');
     await editBtn.click();
     const id = await editBtn.getAttribute('data-edit-schedule');
     const editRow = page.locator(`#edit-schedule-${id}`);

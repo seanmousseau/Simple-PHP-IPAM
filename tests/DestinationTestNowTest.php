@@ -23,7 +23,9 @@ final class DestinationTestNowTest extends TestCase
         $this->assertSame('db',           $params[0]->getName());
         $this->assertSame('destId',       $params[1]->getName());
         $this->assertSame('triggeredBy',  $params[2]->getName());
-        $this->assertTrue($params[2]->isOptional(), 'triggeredBy must default to "manual"');
+        $this->assertTrue($params[2]->isOptional(), 'triggeredBy must be optional');
+        $this->assertTrue($params[2]->isDefaultValueAvailable(), 'triggeredBy must have a default value');
+        $this->assertSame('manual', $params[2]->getDefaultValue(), 'triggeredBy default must be the literal string "manual"');
     }
 
     public function testTestDestinationPhpDelegatesToHelper(): void

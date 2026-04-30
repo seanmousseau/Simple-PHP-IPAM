@@ -4548,12 +4548,17 @@ function ipam_backup_next_run_at(array $schedule, ?int $nowEpoch = null): int
  * so that omitted or blank-string secret fields preserve the stored value, and
  * non-empty submitted values replace it (#793).
  *
+ * Explicit clear: callers may submit "<postKey>__clear=1" to force a stored
+ * secret to be removed. This wins over the preserve-on-blank behaviour and lets
+ * operators rotate authentication modes (e.g. switching SFTP from password to
+ * key-only) without delete-and-recreate.
+ *
  * Pure function — no I/O. Designed for unit testing.
  *
  * @param  array<string, mixed> $post         Submitted form fields ($_POST shape).
  * @param  array<string, mixed> $existingCfg  Decoded JSON config from backup_destinations.config.
  * @param  string               $type         's3'|'sftp'|'local'.
- * @return array<string, mixed>               $post with secret fields backfilled where appropriate.
+ * @return array<string, mixed>               $post with secret fields backfilled or cleared.
  */
 function ipam_destination_merge_secrets(array $post, array $existingCfg, string $type): array
 {
@@ -4567,6 +4572,15 @@ function ipam_destination_merge_secrets(array $post, array $existingCfg, string 
         ];
     }
     foreach ($pairs as [$postKey, $cfgKey]) {
+        $clearKey = $postKey . '__clear';
+        $clearRequested = isset($post[$clearKey])
+            && in_array($post[$clearKey], ['1', 1, true, 'true', 'on'], true);
+        if ($clearRequested) {
+            // Explicit clear: blow away both the submitted value (if any) and the
+            // preserved one. collect_config will then treat the field as absent.
+            $post[$postKey] = '';
+            continue;
+        }
         $omitted = !array_key_exists($postKey, $post);
         $blank   = !$omitted && is_string($post[$postKey]) && $post[$postKey] === '';
         if (($omitted || $blank) && isset($existingCfg[$cfgKey])) {
@@ -4624,11 +4638,15 @@ function ipam_destination_test_now(PDO $db, int $destId, string $triggeredBy = '
             "triggered_by=$triggeredBy " . ($result['ok'] ? 'ok' : 'fail'));
         return $result;
     } catch (Throwable $e) {
-        error_log('[destination_test] dest=' . $destId . ' error=' . $e->getMessage());
+        // Don't log the raw exception message — backup-transport exceptions can
+        // include endpoint URLs, access keys, or auth payloads. Log only the
+        // class name; the client layer is responsible for surfacing redacted
+        // user-facing detail via the returned message.
+        error_log('[destination_test] dest=' . $destId . ' exception=' . get_class($e));
         audit($db, 'destination.test', 'destination', $destId, "triggered_by=$triggeredBy fail");
         return [
             'ok'         => false,
-            'message'    => 'Connection failed (see server log for details)',
+            'message'    => 'Connection failed (' . get_class($e) . ')',
             'latency_ms' => null,
         ];
     }

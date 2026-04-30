@@ -142,4 +142,49 @@ final class DestinationSecretMergeTest extends TestCase
         $this->assertSame('S3_STORED', $result['s3_secret_key']);
         $this->assertArrayNotHasKey('sftp_password', $result);
     }
+
+    public function testS3SecretClearWinsOverPreserve(): void
+    {
+        $post     = ['s3_secret_key' => '', 's3_secret_key__clear' => '1'];
+        $existing = ['secret_key' => 'S3_STORED'];
+
+        $result = ipam_destination_merge_secrets($post, $existing, 's3');
+
+        $this->assertSame('', $result['s3_secret_key']);
+    }
+
+    public function testSftpPasswordClearWinsOverPreserve(): void
+    {
+        $post     = ['sftp_password' => '', 'sftp_password__clear' => '1'];
+        $existing = ['password' => 'STORED'];
+
+        $result = ipam_destination_merge_secrets($post, $existing, 'sftp');
+
+        $this->assertSame('', $result['sftp_password']);
+    }
+
+    public function testSftpPrivateKeyClearWinsOverSubmittedReplacement(): void
+    {
+        // Even if a new value is submitted, an explicit __clear sentinel removes it.
+        $post     = [
+            'sftp_private_key'        => "-----BEGIN OPENSSH-----\nNEW\n-----END-----",
+            'sftp_private_key__clear' => '1',
+        ];
+        $existing = ['private_key' => "-----BEGIN OPENSSH-----\nSTORED\n-----END-----"];
+
+        $result = ipam_destination_merge_secrets($post, $existing, 'sftp');
+
+        $this->assertSame('', $result['sftp_private_key']);
+    }
+
+    public function testClearSentinelOnlyAcceptsTruthyValues(): void
+    {
+        // '0' / 'false' / empty string must NOT trigger a clear.
+        $post     = ['sftp_password' => '', 'sftp_password__clear' => '0'];
+        $existing = ['password' => 'STORED'];
+
+        $result = ipam_destination_merge_secrets($post, $existing, 'sftp');
+
+        $this->assertSame('STORED', $result['sftp_password']);
+    }
 }

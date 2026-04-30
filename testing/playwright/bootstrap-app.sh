@@ -259,7 +259,10 @@ docker run --rm --name "$minio_mc_name" \
     --network "$network" \
     --entrypoint /bin/sh \
     minio/mc:latest \
-    -c "mc alias set local http://minio:9000 $minio_root_user $minio_root_pass >/dev/null && mc mb -p local/$minio_bucket >/dev/null && echo bootstrap-app: MinIO bucket $minio_bucket ready" \
+    -ec 'mc alias set local http://minio:9000 "$1" "$2" >/dev/null
+         mc mb -p "local/$3" >/dev/null
+         echo "bootstrap-app: MinIO bucket $3 ready"' \
+    sh "$minio_root_user" "$minio_root_pass" "$minio_bucket" \
     || {
         echo "bootstrap-app: MinIO bucket creation failed" >&2
         docker logs "$minio_name" >&2 || true

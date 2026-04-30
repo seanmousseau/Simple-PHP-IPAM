@@ -35,6 +35,11 @@ const DEST_LOCAL = 'ci-local';
 let ctx: BrowserContext;
 let page: Page;
 
+// Captures the unique filename produced by each `run-now` test so the
+// follow-up history-row check can target *that specific run* rather than
+// matching "any" success row in the shared CI database.
+const runFilenames: Record<string, string> = {};
+
 async function findDestRow(p: Page, name: string) {
   return p.locator('table.data-table tbody tr', { hasText: name }).first();
 }
@@ -104,16 +109,22 @@ test.describe('Backup integration (MinIO + local)', () => {
       expect(res.json.size, 'size must be > 0').toBeGreaterThan(0);
       expect(typeof res.json.filename, 'filename must be a non-empty string').toBe('string');
       expect(res.json.filename.length).toBeGreaterThan(0);
+      runFilenames[destName] = res.json.filename;
     });
 
     test(`${destName}: backup_history shows a success row with a checksum`, async () => {
       const id = await destIdByName(page, destName);
+      const expectedFilename = runFilenames[destName];
+      expect(expectedFilename, `prior run-now test must have captured a filename for ${destName}`).toBeTruthy();
       await page.goto(appUrl(`backup_history.php?destination_id=${id}&status=success`));
 
+      // Match the row written by *this run*, not any prior success row in the
+      // shared CI DB. Filename is rendered in column 5 (see column comment below).
       const successRow = page.locator('table.data-table tbody tr', {
         has: page.locator('span.badge-success'),
+        hasText: expectedFilename,
       }).first();
-      await expect(successRow, `at least one success row must exist for ${destName}`)
+      await expect(successRow, `success row for ${destName} filename ${expectedFilename} must be visible`)
         .toBeVisible({ timeout: 10_000 });
 
       // backup_history.php column order (verified in source):

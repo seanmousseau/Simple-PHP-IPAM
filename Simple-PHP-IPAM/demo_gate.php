@@ -78,8 +78,8 @@ $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM'
   // edits invalidate the browser cache without an IPAM_VERSION bump.
   $cssMtime = (int)@filemtime(__DIR__ . '/assets/app.css');
   $jsMtime  = (int)@filemtime(__DIR__ . '/assets/app.js');
-  $cssV     = '3.18.0' . ($cssMtime > 0 ? '.' . $cssMtime : '');
-  $jsV      = '3.18.0' . ($jsMtime  > 0 ? '.' . $jsMtime  : '');
+  $cssV     = IPAM_VERSION . ($cssMtime > 0 ? '.' . $cssMtime : '');
+  $jsV      = IPAM_VERSION . ($jsMtime  > 0 ? '.' . $jsMtime  : '');
   ?>
   <link rel="stylesheet" href="assets/app.css?v=<?= e($cssV) ?>">
   <script defer src="assets/app.js?v=<?= e($jsV) ?>"></script>
