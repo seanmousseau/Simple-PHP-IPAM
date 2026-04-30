@@ -12,13 +12,17 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.19.1
+## What's new in v3.20.0
 
-Hotfix release closing two long-standing gaps in the v3.17 remote-backup pipeline:
+Backup destinations UX + reliability polish. No schema migrations, no breaking changes.
 
-- **S3 destinations now actually work.** A SigV4 canonicalization bug present since v3.17.0 caused every S3-compatible server (AWS, Wasabi, MinIO, Ceph) to reject signatures with HTTP 403. If you tried to configure an S3 destination on v3.17–v3.19 and gave up, re-test it on v3.19.1 — existing destinations and credentials work unchanged.
-- **Remote backup destinations are now engine-agnostic.** MySQL and PostgreSQL operators can finally configure cloud destinations (S3 / SFTP / Local) — the dump engine now dispatches to `mysqldump` / `pg_dump` for non-SQLite drivers. Output is `.sql.gz` for all three engines; encryption and upload paths are unchanged.
-- **v3.19.0 streaming encrypted backups** ship in v3.19.1 too: 64 KiB chunked AES-256-CTR + HMAC-SHA256, per-file HKDF salt, multi-GB databases no longer OOM. v3.17/v3.18 single-shot-GCM backups continue to restore unchanged via the back-compat decrypt path.
+- **Inline Edit drawers** for destinations and schedules on `destinations.php` — change name, type, config, retention, frequency, day-of-week / day-of-month / time-of-day, and credentials in place. Replaces the previous "delete and recreate to change anything" workflow.
+- **Per-destination Run-now action** — destination rows have their own "Run backup now" button; previously only schedules could trigger a manual run.
+- **Auto-run Test on Save** — creating or editing a destination triggers the connectivity test automatically and renders an inline pass/fail badge with latency and any error text.
+- **Frequency-aware schedule fields** — selecting `hourly` / `daily` / `weekly` / `monthly` hides the rows that don't apply, eliminating "what value does this field even take for this frequency?" ambiguity.
+- **Timestamps render in your configured timezone** instead of UTC across the backup history and destinations tables; a new semgrep guard rule prevents future drift back to raw UTC rendering.
+- **Notification dispatch wired into both orchestrators** — success/failure email was previously dead code on the schedule path; cron-driven and manual Run-now backups both fire notifications reliably.
+- **MinIO-backed end-to-end backup integration test in CI** — the full pipeline (dump → encrypt → upload → list → download → decrypt → verify) runs against a real S3-compatible server on every push, across SQLite / MySQL / PostgreSQL.
 
 [Full changelog →](CHANGELOG.md)
 

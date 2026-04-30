@@ -1,6 +1,8 @@
 # Backup Destinations & Schedules
 
 > **v3.17.0** introduces scheduled remote backups — write backup files to S3-compatible object storage, SFTP servers, or local paths, with GFS (Grandfather-Father-Son) retention, AES-256-GCM encryption, and browser-based history. This guide covers the new system. The legacy `backup.php` CLI (v3.7.0) still exists and continues to write SQLite files to `data/backups/`; see [Backup & Restore (legacy)](backup.md) for that workflow.
+>
+> **v3.20.0 polish:** destinations and schedules now have inline Edit drawers; destination rows have their own Run-now action; the schedule form hides fields that don't apply to the selected frequency; Save runs the connectivity test automatically and renders an inline pass/fail badge; timestamps render in your configured timezone instead of UTC; success/failure email now fires reliably from cron (was previously dead code on the schedule path).
 
 ---
 
