@@ -427,6 +427,7 @@ page_header('Backup Destinations');
               <td class="actions">
                 <button class="action-pill" type="button" data-edit-destination="<?= $destId ?>" aria-controls="edit-destination-<?= $destId ?>" aria-expanded="false">Edit</button>
                 <button class="action-pill" data-test-destination="<?= $destId ?>">Test</button>
+                <button class="action-pill" data-run-now="<?= $destId ?>">Run now</button>
                 <form method="post" style="display:inline" data-confirm-delete="this destination (schedules will be removed)">
                   <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
                   <input type="hidden" name="action" value="delete_destination">

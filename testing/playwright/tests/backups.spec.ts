@@ -168,6 +168,29 @@ test.describe('Backup destinations admin', () => {
     await expect(row.locator('.badge-type-local')).toBeVisible();
   });
 
+  test('admin can Run-now from the destination row (local)', async () => {
+    await page.goto(appUrl('destinations.php'));
+    const row = await findDestRow(page, DEST_LOCAL_NAME);
+    if (await row.count() === 0) {
+      test.skip(true, 'Local destination not found — create test may have failed');
+      return;
+    }
+    const runBtn = row.locator('button[data-run-now]');
+    await expect(runBtn, 'Run-now button must render on the destination row').toBeVisible();
+    const destId = await runBtn.getAttribute('data-run-now');
+    expect(parseInt(destId ?? '0', 10)).toBeGreaterThan(0);
+
+    page.once('dialog', d => d.accept());
+    await runBtn.click();
+
+    // The button text becomes "✓ <filename> (<bytes> bytes)" on success
+    // or "✗ <message>" on failure. Wait for either, then assert success.
+    await expect(runBtn).toHaveText(/[✓✗]/, { timeout: 30_000 });
+    const finalText = (await runBtn.textContent()) ?? '';
+    expect(finalText, `Run-now should succeed for local destination, got: ${finalText}`)
+      .toMatch(/✓.*bytes/);
+  });
+
   test('admin can edit an S3 destination — non-secret field, secret preserved', async () => {
     // Uses the S3 destination created in the previous test.
     await page.goto(appUrl('destinations.php'));
