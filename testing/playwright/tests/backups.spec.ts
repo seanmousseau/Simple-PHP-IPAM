@@ -160,6 +160,72 @@ test.describe('Backup destinations admin', () => {
     await expect(row.locator('.badge-type-local')).toBeVisible();
   });
 
+  test('admin can edit an S3 destination — non-secret field, secret preserved', async () => {
+    // Uses the S3 destination created in the previous test.
+    await page.goto(appUrl('destinations.php'));
+    const row = await findDestRow(page, DEST_S3_NAME);
+    if (await row.count() === 0) {
+      test.skip(true, 'S3 destination not found — create test may have failed');
+      return;
+    }
+
+    // Open the edit drawer for this row.
+    const editBtn = row.locator('button[data-edit-destination]');
+    await editBtn.click();
+
+    // The drawer is the next <tr> after the row; we locate by id.
+    const id = await editBtn.getAttribute('data-edit-destination');
+    const editRow = page.locator(`#edit-destination-${id}`);
+    await expect(editRow).toBeVisible({ timeout: 5_000 });
+
+    // Change a non-secret field (region) and submit, leaving the secret blank.
+    await editRow.locator('input[name="s3_region"]').fill('eu-west-2');
+    await expect(editRow.locator('input[name="s3_secret_key"]')).toHaveValue('');
+    await editRow.locator('button[type="submit"]', { hasText: /save/i }).click();
+    await page.waitForURL(/destinations\.php\?flash=updated/, { timeout: 10_000 });
+
+    // Re-open the edit drawer; the new region must persist and the secret must
+    // still be empty in the form (placeholder shows "(unchanged)").
+    await page.goto(appUrl('destinations.php'));
+    const row2 = await findDestRow(page, DEST_S3_NAME);
+    await row2.locator('button[data-edit-destination]').click();
+    const editRow2 = page.locator(`#edit-destination-${id}`);
+    await expect(editRow2.locator('input[name="s3_region"]')).toHaveValue('eu-west-2');
+    await expect(editRow2.locator('input[name="s3_secret_key"]')).toHaveAttribute('placeholder', /unchanged/);
+  });
+
+  test('admin can rotate an S3 destination secret', async () => {
+    await page.goto(appUrl('destinations.php'));
+    const row = await findDestRow(page, DEST_S3_NAME);
+    if (await row.count() === 0) {
+      test.skip(true, 'S3 destination not found');
+      return;
+    }
+    await row.locator('button[data-edit-destination]').click();
+    const id = await row.locator('button[data-edit-destination]').getAttribute('data-edit-destination');
+    const editRow = page.locator(`#edit-destination-${id}`);
+    await editRow.locator('input[name="s3_secret_key"]').fill('rotatedsecret123');
+    await editRow.locator('button[type="submit"]', { hasText: /save/i }).click();
+    await page.waitForURL(/destinations\.php\?flash=updated/, { timeout: 10_000 });
+    // No exception, no error card.
+    await expect(page.locator('.card.danger')).toHaveCount(0);
+  });
+
+  test('destination edit form locks the type field', async () => {
+    await page.goto(appUrl('destinations.php'));
+    const row = await findDestRow(page, DEST_S3_NAME);
+    if (await row.count() === 0) {
+      test.skip(true, 'S3 destination not found');
+      return;
+    }
+    await row.locator('button[data-edit-destination]').click();
+    const id = await row.locator('button[data-edit-destination]').getAttribute('data-edit-destination');
+    const editRow = page.locator(`#edit-destination-${id}`);
+    // The visible type display is a disabled input — server enforces the lock too.
+    const typeBox = editRow.locator('input[disabled][readonly]').first();
+    await expect(typeBox).toBeDisabled();
+  });
+
   test('Test connection button indicates failure for a closed-port endpoint', async () => {
     // First ensure a destination exists that we can test against.
     await page.goto(appUrl('destinations.php'));
@@ -290,6 +356,33 @@ test.describe('Backup schedules', () => {
       expect(attr, `Run now button ${i} missing data-run-now attribute`).toBeTruthy();
       expect(parseInt(attr ?? '0', 10), `data-run-now must be a positive integer`).toBeGreaterThan(0);
     }
+  });
+
+  test('admin can edit an existing schedule', async () => {
+    await page.goto(appUrl('destinations.php'));
+    const editBtn = page.locator('button[data-edit-schedule]').first();
+    if (await editBtn.count() === 0) {
+      test.skip(true, 'No schedules present — schedule create test may have failed');
+      return;
+    }
+    await editBtn.click();
+    const id = await editBtn.getAttribute('data-edit-schedule');
+    const editRow = page.locator(`#edit-schedule-${id}`);
+    await expect(editRow).toBeVisible({ timeout: 5_000 });
+
+    // Change retention_daily and time_of_day, save, re-fetch and verify.
+    await editRow.locator('input[name="retention_daily"]').fill('21');
+    await editRow.locator('input[name="time_of_day"]').fill('04:30');
+    await editRow.locator('button[type="submit"]', { hasText: /save/i }).click();
+    await page.waitForURL(/destinations\.php\?flash=sched_updated/, { timeout: 10_000 });
+
+    // Re-open the same edit row; the new values must persist.
+    await page.goto(appUrl('destinations.php'));
+    const editBtn2 = page.locator(`button[data-edit-schedule="${id}"]`);
+    await editBtn2.click();
+    const editRow2 = page.locator(`#edit-schedule-${id}`);
+    await expect(editRow2.locator('input[name="retention_daily"]')).toHaveValue('21');
+    await expect(editRow2.locator('input[name="time_of_day"]')).toHaveValue('04:30');
   });
 
   test('admin can delete a schedule', async () => {
