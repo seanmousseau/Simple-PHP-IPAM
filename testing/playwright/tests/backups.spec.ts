@@ -81,7 +81,8 @@ test.describe('Backup destinations admin', () => {
     await page.goto(appUrl('destinations.php'));
     await expect(page).toHaveTitle(/destination/i, { timeout: 10_000 });
     // The "Add a destination" section and its submit button must be present.
-    await expect(page.locator('form.destination-form button[type="submit"]')).toBeVisible();
+    // Scope to the create form to avoid matching per-row Edit drawers (#778).
+    await expect(createDestForm(page).locator('button[type="submit"]')).toBeVisible();
     // Type selector must be present.
     await expect(page.locator('[data-destination-type-selector]')).toBeVisible();
   });
@@ -438,7 +439,8 @@ test.describe('Backup schedules', () => {
 
   test('schedule create form hides fields that do not apply to chosen frequency (#781)', async () => {
     await page.goto(appUrl('destinations.php'));
-    const form = page.locator('form.schedule-form').first();
+    // Scope to the create form to avoid matching per-row Edit drawers (#780).
+    const form = page.locator('form.schedule-form:not(.schedule-edit-form)').first();
     const sel  = form.locator('select[name="frequency"]');
     const tod  = form.locator('label[data-freq-field="time_of_day"]');
     const dow  = form.locator('label[data-freq-field="day_of_week"]');
