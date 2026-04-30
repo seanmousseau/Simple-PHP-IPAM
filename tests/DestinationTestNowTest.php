@@ -55,6 +55,10 @@ final class DestinationTestNowTest extends TestCase
             $this->assertNotNull($result['latency_ms']);
             $this->assertGreaterThanOrEqual(0, $result['latency_ms']);
         } finally {
+            // LocalBackupClient::test() is a pure read (is_dir + is_writable);
+            // it never writes into $sub, so a single rmdir() of the empty dir
+            // is sufficient. If a future probe variant starts writing a blob,
+            // promote this to a recursive cleanup at that point.
             @rmdir($sub);
         }
     }
