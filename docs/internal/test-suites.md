@@ -221,6 +221,27 @@ SFTP coverage is intentionally out of scope (deferred to v3.23.0 #833 — requir
 
 The image (`testing/playwright/Dockerfile.apache`) bundles `default-mysql-client` and `postgresql-client` so the native dump path can run inside the test container — without these, `mysqldump` / `pg_dump` invocations fail and the upload short-circuits.
 
+#### MinIO image tag pinning + retry (#1049, v3.21.0)
+
+`bootstrap-app.sh` pins both `minio/minio` and `minio/mc` to specific dated release tags rather than `:latest`. Surrounding each `docker run` is a 3-attempt retry loop with 1s / 5s / 15s exponential backoff that first tries `docker image inspect` (cache hit) and only falls back to `docker pull` when the image is genuinely missing. This was added after PR #1048 (v3.20.0) red-failed on a transient Docker Hub network timeout pulling `minio/minio:latest` (run 25186888919) — the MinIO sidecar is now on the critical path for every Playwright run on every driver, so a single transient pull failure was breaking the gate.
+
+The tags currently pinned in `bootstrap-app.sh`:
+
+| Image | Tag |
+|---|---|
+| `minio/minio` | `RELEASE.2025-09-07T16-13-09Z` |
+| `minio/mc`    | `RELEASE.2025-08-13T08-35-41Z` |
+
+**Tag-bump cadence:** roughly every 6 months, or whenever a MinIO security advisory or feature we depend on lands. Process:
+
+1. Pick a recent stable release from <https://hub.docker.com/r/minio/minio/tags?name=RELEASE> (avoid `-cpuv1` variants — they're for older CPUs).
+2. Pick a matching `minio/mc` tag from <https://hub.docker.com/r/minio/mc/tags?name=RELEASE> dated within ±2 weeks of the server tag — server/client compatibility is best when versions are close.
+3. Update both `minio_image` and `minio_mc_image` defaults at the top of `testing/playwright/bootstrap-app.sh`.
+4. Run a full local 3-driver gate (sqlite/mysql/pgsql) to confirm the new tag's `/minio/health/live` endpoint and bucket-create flow still work as expected. (MinIO occasionally tightens defaults between releases — admin port relocation, default IAM policy changes, etc.)
+5. Update this table.
+
+`IPAM_TEST_MINIO_IMAGE` and `IPAM_TEST_MINIO_MC_IMAGE` env vars exist for one-off override (e.g., bisecting a regression against an older tag) without editing the script.
+
 **Manual dev-direct testing is only needed when:**
 - You need `testing/scripts/test_api.sh` against a real deployment specifically (the containerized `DOCKER_CONTAINER=ipam-pw-test` path in CI covers regression on every PR via #451 — see the **test_api.sh** subsection above)
 - You're verifying `timezone.spec.ts` (SSH-based remote config patching — skipped against containerized targets)

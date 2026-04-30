@@ -66,11 +66,47 @@ minio_mc_name="${IPAM_TEST_MINIO_MC_NAME:-ipam-pw-minio-mc}"
 minio_root_user="${IPAM_TEST_MINIO_USER:-testkey}"
 minio_root_pass="${IPAM_TEST_MINIO_PASS:-testsecret123}"
 minio_bucket="${IPAM_TEST_MINIO_BUCKET:-ipam-backups}"
+# Pinned MinIO image tags (#1049). The :latest tag is not safe on the
+# critical path: the SQLite job in PR #1048 (run 25186888919) red-failed
+# on a Docker Hub network timeout pulling minio/minio:latest. Pinned
+# tags layer-cache better on the runner and aren't GC'd from edge
+# caches as aggressively. Tag-bump cadence documented in
+# docs/internal/test-suites.md.
+minio_image="${IPAM_TEST_MINIO_IMAGE:-minio/minio:RELEASE.2025-09-07T16-13-09Z}"
+minio_mc_image="${IPAM_TEST_MINIO_MC_IMAGE:-minio/mc:RELEASE.2025-08-13T08-35-41Z}"
 
 if ! command -v docker >/dev/null 2>&1; then
     echo "bootstrap-app.sh: docker is required but not found in PATH" >&2
     exit 3
 fi
+
+# Pull a Docker image with bounded retry, defending against transient
+# Docker Hub flakes on the critical path (#1049). Skips the pull
+# entirely if the image is already present locally. Backoff is
+# deliberately short on attempt 1 (1s) and stretches to 15s by attempt
+# 3 — long enough to outlast a registry blip without padding the gate
+# meaningfully on the happy path.
+docker_pull_with_retry() {
+    local image="$1"
+    local attempt sleep_for
+    if docker image inspect "$image" >/dev/null 2>&1; then
+        return 0
+    fi
+    for attempt in 1 2 3; do
+        if docker pull --quiet "$image" >/dev/null 2>&1; then
+            return 0
+        fi
+        case "$attempt" in
+            1) sleep_for=1 ;;
+            2) sleep_for=5 ;;
+            3) sleep_for=15 ;;
+        esac
+        echo "bootstrap-app: docker pull $image failed (attempt $attempt/3); retrying in ${sleep_for}s" >&2
+        sleep "$sleep_for"
+    done
+    echo "bootstrap-app: docker pull $image failed after 3 attempts" >&2
+    return 1
+}
 
 # 1. Back up any existing config.php and install the test fixture matching
 #    the requested driver. The sqlite and mysql fixtures carry every default
@@ -228,14 +264,15 @@ fi
 # fixture-only (testkey / testsecret123). The integration spec exercises a
 # round-trip backup against this. Bucket is created via `minio/mc` after
 # the server reports healthy.
-echo "bootstrap-app: starting MinIO $minio_name"
+echo "bootstrap-app: starting MinIO $minio_name (image=$minio_image)"
+docker_pull_with_retry "$minio_image" || exit 1
 docker rm -f "$minio_name" >/dev/null 2>&1 || true
 docker run -d --rm --name "$minio_name" \
     --network "$network" \
     --network-alias minio \
     -e "MINIO_ROOT_USER=$minio_root_user" \
     -e "MINIO_ROOT_PASSWORD=$minio_root_pass" \
-    minio/minio:latest server /data >/dev/null
+    "$minio_image" server /data >/dev/null
 
 echo "bootstrap-app: waiting for MinIO ready (up to 60s)"
 for i in $(seq 1 30); do
@@ -253,12 +290,13 @@ for i in $(seq 1 30); do
     sleep 2
 done
 
-echo "bootstrap-app: creating MinIO bucket $minio_bucket via mc"
+echo "bootstrap-app: creating MinIO bucket $minio_bucket via mc (image=$minio_mc_image)"
+docker_pull_with_retry "$minio_mc_image" || exit 1
 docker rm -f "$minio_mc_name" >/dev/null 2>&1 || true
 docker run --rm --name "$minio_mc_name" \
     --network "$network" \
     --entrypoint /bin/sh \
-    minio/mc:latest \
+    "$minio_mc_image" \
     -ec 'mc alias set local http://minio:9000 "$1" "$2" >/dev/null
          mc mb -p "local/$3" >/dev/null
          echo "bootstrap-app: MinIO bucket $3 ready"' \
