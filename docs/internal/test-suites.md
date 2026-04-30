@@ -201,6 +201,26 @@ bash testing/playwright/teardown-app.sh
 
 Do not push until **all drivers are green**. A failing CI run wastes Action minutes and creates PR noise.
 
+### Backup integration gate (#789, v3.20.0)
+
+`bootstrap-app.sh` always starts a MinIO sidecar (`http://minio:9000`) on the docker network and seeds two `backup_destinations` rows via `testing/playwright/fixtures/seed-backup-destinations.php`:
+
+- `ci-minio` — S3 destination targeting the MinIO sidecar (bucket `ipam-backups`, prefix `ci/`)
+- `ci-local` — local destination at `data/tmp/ipam-backup-ci-local`
+
+`tests/backup-integration.spec.ts` exercises connection-test → run-now → backup_history round-trip against both destinations on each driver. **This gate is REQUIRED for any change that touches the backup engine** — specifically:
+
+- `Simple-PHP-IPAM/lib/backup.php`
+- `Simple-PHP-IPAM/lib/S3Client.php`
+- `Simple-PHP-IPAM/lib/SftpClient.php`
+- `Simple-PHP-IPAM/lib/LocalBackupClient.php`
+- `Simple-PHP-IPAM/lib/BackupClientInterface.php`
+- `run_db_backup_if_due` / `backup_run_dump` paths in `lib.php`
+
+SFTP coverage is intentionally out of scope (deferred to v3.23.0 #833 — requires an `sshd` sidecar). The MinIO + local pair is enough to catch regressions in the upload path on all three engines.
+
+The image (`testing/playwright/Dockerfile.apache`) bundles `default-mysql-client` and `postgresql-client` so the native dump path can run inside the test container — without these, `mysqldump` / `pg_dump` invocations fail and the upload short-circuits.
+
 **Manual dev-direct testing is only needed when:**
 - You need `testing/scripts/test_api.sh` against a real deployment specifically (the containerized `DOCKER_CONTAINER=ipam-pw-test` path in CI covers regression on every PR via #451 — see the **test_api.sh** subsection above)
 - You're verifying `timezone.spec.ts` (SSH-based remote config patching — skipped against containerized targets)
