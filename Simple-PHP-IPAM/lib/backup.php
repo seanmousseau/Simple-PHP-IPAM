@@ -821,30 +821,227 @@ function ipam_restore_read_staged_sql(string $stagedPath): string
     return $data;
 }
 
-/** @return list<string> */
+/**
+ * Split a SQL dump into top-level statements via a character-level lexer.
+ *
+ * Why a real lexer (rewrite under #806 / B-P0-4): the prior line-oriented
+ * splitter mis-split any non-trivial dump — semicolons inside string
+ * literals, identifier quotes, line/block comments, PostgreSQL
+ * dollar-quoted bodies, or compound BEGIN…END blocks would all bleed
+ * across statement boundaries (or split mid-statement). T13 in
+ * tests/RestoreSplitterTest.php encodes the failure modes.
+ *
+ * The lexer streams the source once and tracks state for: single-quoted
+ * strings (with `''` escape), double-quoted identifiers, MySQL backtick
+ * identifiers, PostgreSQL dollar-quoted strings (`$tag$...$tag$`),
+ * `--` line comments, `/* … *\/` block comments, and BEGIN…END depth.
+ * `BEGIN TRANSACTION` / `BEGIN;` / `BEGIN WORK` are recognised as
+ * transaction starts, not compound blocks. A statement boundary is a
+ * top-level `;` outside every quoted/commented/depth context.
+ *
+ * @return list<string>
+ */
 function ipam_restore_split_sql_statements(string $sql): array
 {
-    // Naive splitter by semicolon at line end; sufficient for the
-    // ipam_db_dump_stream output which is line-oriented and uses
-    // ; LF as terminator. Skips multi-line BEGIN/END trigger bodies
-    // by tracking depth.
     $out = [];
     $buf = '';
     $depth = 0;
-    foreach (explode("\n", $sql) as $line) {
-        $stripped = trim($line);
-        if (preg_match('/\bBEGIN\b/i', $stripped) && !preg_match('/\bBEGIN TRANSACTION\b/i', $stripped)) {
-            $depth++;
+    $len = strlen($sql);
+    $i = 0;
+
+    while ($i < $len) {
+        $c = $sql[$i];
+        $next = $i + 1 < $len ? $sql[$i + 1] : '';
+
+        // ── line comment ── -- ... \n (or end of input)
+        if ($c === '-' && $next === '-') {
+            while ($i < $len && $sql[$i] !== "\n") {
+                $buf .= $sql[$i];
+                $i++;
+            }
+            continue;
         }
-        $buf .= $line . "\n";
-        if (preg_match('/\bEND\s*;?\s*$/i', $stripped) && $depth > 0) {
+
+        // ── block comment ── /* ... */ (does not nest in standard SQL)
+        if ($c === '/' && $next === '*') {
+            $buf .= '/*';
+            $i += 2;
+            while ($i < $len) {
+                if ($sql[$i] === '*' && $i + 1 < $len && $sql[$i + 1] === '/') {
+                    $buf .= '*/';
+                    $i += 2;
+                    break;
+                }
+                $buf .= $sql[$i];
+                $i++;
+            }
+            continue;
+        }
+
+        // ── single-quoted string ── '...' with '' escape
+        if ($c === "'") {
+            $buf .= "'";
+            $i++;
+            while ($i < $len) {
+                if ($sql[$i] === "'" && $i + 1 < $len && $sql[$i + 1] === "'") {
+                    // Escaped quote: consume both as part of the literal
+                    $buf .= "''";
+                    $i += 2;
+                    continue;
+                }
+                if ($sql[$i] === "'") {
+                    $buf .= "'";
+                    $i++;
+                    break;
+                }
+                $buf .= $sql[$i];
+                $i++;
+            }
+            continue;
+        }
+
+        // ── double-quoted identifier ── "..."  (ANSI / PostgreSQL)
+        if ($c === '"') {
+            $buf .= '"';
+            $i++;
+            while ($i < $len) {
+                if ($sql[$i] === '"') {
+                    $buf .= '"';
+                    $i++;
+                    break;
+                }
+                $buf .= $sql[$i];
+                $i++;
+            }
+            continue;
+        }
+
+        // ── backtick-quoted identifier ── `...`  (MySQL)
+        if ($c === '`') {
+            $buf .= '`';
+            $i++;
+            while ($i < $len) {
+                if ($sql[$i] === '`') {
+                    $buf .= '`';
+                    $i++;
+                    break;
+                }
+                $buf .= $sql[$i];
+                $i++;
+            }
+            continue;
+        }
+
+        // ── PostgreSQL dollar-quoted string ── $tag$ ... $tag$
+        if ($c === '$') {
+            // Look for opening tag: $ <ident-chars> $
+            $j = $i + 1;
+            while ($j < $len) {
+                $cj = $sql[$j];
+                if ($cj === '$') {
+                    break;
+                }
+                // Tag may only be identifier chars (letters, digits, underscore).
+                if (!(($cj >= 'a' && $cj <= 'z') || ($cj >= 'A' && $cj <= 'Z') || ($cj >= '0' && $cj <= '9') || $cj === '_')) {
+                    break;
+                }
+                $j++;
+            }
+            if ($j < $len && $sql[$j] === '$') {
+                $tag = substr($sql, $i, $j - $i + 1); // includes the two $
+                $buf .= $tag;
+                $i = $j + 1;
+                $tagLen = strlen($tag);
+                while ($i < $len) {
+                    if ($sql[$i] === '$' && substr($sql, $i, $tagLen) === $tag) {
+                        $buf .= $tag;
+                        $i += $tagLen;
+                        break;
+                    }
+                    $buf .= $sql[$i];
+                    $i++;
+                }
+                continue;
+            }
+            // Lone $ — fall through and treat as ordinary char
+        }
+
+        // ── BEGIN ... END block depth (only at top level / NORMAL state) ──
+        // Detect a BEGIN word boundary that is not BEGIN TRANSACTION/WORK/;.
+        // We're at NORMAL state at this point because all comment/quote/dollar
+        // branches above continue'd.
+        if (($c === 'B' || $c === 'b')
+            && ($i === 0 || !ctype_alnum($sql[$i - 1]) && $sql[$i - 1] !== '_')
+            && $i + 4 < $len
+            && strcasecmp(substr($sql, $i, 5), 'BEGIN') === 0
+            && ($i + 5 >= $len || !(ctype_alnum($sql[$i + 5]) || $sql[$i + 5] === '_'))) {
+            // Look past whitespace for the next significant token.
+            $k = $i + 5;
+            while ($k < $len && ctype_space($sql[$k])) {
+                $k++;
+            }
+            $isTxn = false;
+            if ($k < $len) {
+                $nextCh = $sql[$k];
+                if ($nextCh === ';') {
+                    $isTxn = true; // BEGIN; → transaction start
+                } elseif ($k + 10 < $len && strcasecmp(substr($sql, $k, 11), 'TRANSACTION') === 0
+                          && ($k + 11 >= $len || !(ctype_alnum($sql[$k + 11]) || $sql[$k + 11] === '_'))) {
+                    $isTxn = true;
+                } elseif ($k + 3 < $len && strcasecmp(substr($sql, $k, 4), 'WORK') === 0
+                          && ($k + 4 >= $len || !(ctype_alnum($sql[$k + 4]) || $sql[$k + 4] === '_'))) {
+                    $isTxn = true;
+                } elseif ($k + 7 < $len && strcasecmp(substr($sql, $k, 8), 'IMMEDIATE') === 0) {
+                    $isTxn = true; // SQLite: BEGIN IMMEDIATE
+                } elseif ($k + 7 < $len && strcasecmp(substr($sql, $k, 8), 'DEFERRED') === 0) {
+                    $isTxn = true; // SQLite: BEGIN DEFERRED
+                } elseif ($k + 8 < $len && strcasecmp(substr($sql, $k, 9), 'EXCLUSIVE') === 0) {
+                    $isTxn = true; // SQLite: BEGIN EXCLUSIVE
+                }
+            } else {
+                $isTxn = true; // bare BEGIN at end of input
+            }
+            if (!$isTxn) {
+                $depth++;
+            }
+            $buf .= substr($sql, $i, 5);
+            $i += 5;
+            continue;
+        }
+
+        // ── END decrements depth ──
+        if (($c === 'E' || $c === 'e')
+            && ($i === 0 || !ctype_alnum($sql[$i - 1]) && $sql[$i - 1] !== '_')
+            && $i + 2 < $len
+            && strcasecmp(substr($sql, $i, 3), 'END') === 0
+            && ($i + 3 >= $len || !(ctype_alnum($sql[$i + 3]) || $sql[$i + 3] === '_'))
+            && $depth > 0) {
             $depth--;
+            $buf .= substr($sql, $i, 3);
+            $i += 3;
+            continue;
         }
-        if ($depth === 0 && str_ends_with(rtrim($line), ';')) {
-            $out[] = trim($buf);
+
+        // ── statement terminator ──
+        if ($c === ';' && $depth === 0) {
+            $buf .= ';';
+            $stmt = trim($buf);
+            if ($stmt !== '') {
+                $out[] = $stmt;
+            }
             $buf = '';
+            $i++;
+            continue;
         }
+
+        // Default: copy byte through.
+        $buf .= $c;
+        $i++;
     }
-    if (trim($buf) !== '') $out[] = trim($buf);
+
+    $tail = trim($buf);
+    if ($tail !== '') {
+        $out[] = $tail;
+    }
     return $out;
 }
