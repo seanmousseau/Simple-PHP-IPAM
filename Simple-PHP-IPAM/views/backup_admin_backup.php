@@ -26,6 +26,10 @@ declare(strict_types=1);
       <a href="backup_admin.php?tab=destinations">Destinations tab</a> first.
     </p>
   <?php else: ?>
+    <?php /* Hidden CSRF input — read by getCsrf() in app.js for the run-now fetch.
+             Without this, the fetch fires with an empty token and run_backup_now.php
+             rejects with 403, leaving the user with a "✗ network error" message. */ ?>
+    <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
     <div class="run-now-bar">
       <label for="run-now-destination">Destination
         <select id="run-now-destination">

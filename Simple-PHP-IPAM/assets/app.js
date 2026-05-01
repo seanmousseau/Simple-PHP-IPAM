@@ -2609,7 +2609,10 @@ function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
 
 /* === v3.17 destinations admin === */
 (function () {
-    if (!document.querySelector('.destination-form, [data-edit-destination], [data-test-destination], [data-run-now]')) {
+    // Selector list must include every trigger this IIFE wires up. Missing
+    // [data-run-now-target] here used to short-circuit the entire block on
+    // the unified Backup tab (#1040), leaving the Run-now button inert.
+    if (!document.querySelector('.destination-form, [data-edit-destination], [data-test-destination], [data-run-now], [data-run-now-target]')) {
         return;
     }
 
