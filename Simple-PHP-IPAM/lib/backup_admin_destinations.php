@@ -430,3 +430,46 @@ function ipam_destinations_load_state(\PDO $db): array
         'flashTestLatency' => $flashTestLatency,
     ];
 }
+
+/**
+ * Render the destination or schedule edit form for the global drawer.
+ *
+ * @return string|null  Rendered HTML, or null if $form is unknown or the row is missing.
+ */
+function ipam_render_destination_edit_drawer(\PDO $db, int $id, string $form): ?string
+{
+    if ($form !== 'destination' && $form !== 'schedule') {
+        return null;
+    }
+    $st = $db->prepare("SELECT * FROM backup_destinations WHERE id = :id");
+    $st->execute([':id' => $id]);
+    $row = $st->fetch(\PDO::FETCH_ASSOC);
+    if (!is_array($row)) {
+        return null;
+    }
+    /** @var array<string, mixed> $dest */
+    $dest = $row;
+
+    $rawConfig = $dest['config'] ?? null;
+    $decoded   = is_string($rawConfig) ? json_decode($rawConfig, true) : null;
+    $config    = is_array($decoded) ? $decoded : [];
+
+    $sched = null;
+    if ($form === 'schedule') {
+        $st = $db->prepare("SELECT * FROM backup_schedules WHERE destination_id = :id LIMIT 1");
+        $st->execute([':id' => $id]);
+        $row = $st->fetch(\PDO::FETCH_ASSOC);
+        $sched = is_array($row) ? $row : null;
+        if ($sched === null) {
+            return null;
+        }
+    }
+
+    ob_start();
+    if ($form === 'destination') {
+        require __DIR__ . '/../views/_destination_edit_destination_form.php';
+    } else {
+        require __DIR__ . '/../views/_destination_edit_schedule_form.php';
+    }
+    return (string) ob_get_clean();
+}
