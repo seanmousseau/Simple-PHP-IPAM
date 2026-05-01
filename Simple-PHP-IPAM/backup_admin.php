@@ -50,11 +50,32 @@ $activeDescription = htmlspecialchars($tabs[$activeTab]['description'], ENT_QUOT
 // Per-tab pre-render dispatch. Each branch may emit a header() redirect on
 // POST and exit; load state for the GET render otherwise. Must run before
 // page_header() so handlers can redirect cleanly.
-$destState = null;
+$destState    = null;
+$histState    = null;
+$backupDests  = null;
+$restoreState = null;
+$notifyState  = null;
 if ($activeTab === 'destinations') {
     require __DIR__ . '/lib/backup_admin_destinations.php';
     $destErr   = ipam_destinations_handle_post($db, 'backup_admin.php?tab=destinations');
     $destState = ipam_destinations_load_state($db);
+} elseif ($activeTab === 'history') {
+    require __DIR__ . '/lib/backup_admin_history.php';
+    $histState = ipam_backup_history_load_state($db);
+} elseif ($activeTab === 'backup') {
+    $stmt = $db->query("SELECT id, name FROM backup_destinations WHERE is_active = 1 ORDER BY name");
+    /** @var list<array<string, mixed>> $backupDests */
+    $backupDests = $stmt !== false ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
+} elseif ($activeTab === 'restore') {
+    require __DIR__ . '/lib/backup_admin_restore.php';
+    $restoreState = ipam_backup_admin_restore_handle($db, $config);
+} elseif ($activeTab === 'notifications') {
+    $notifyState = [
+        'notifyOnFailure' => (bool) ipam_setting('backup.notify_on_failure'),
+        'notifyOnSuccess' => (bool) ipam_setting('backup.notify_on_success'),
+        'alertEmail'      => to_str(ipam_setting('alert_email') ?? ''),
+        'smtpEnabled'     => (bool) ipam_setting('smtp.enabled'),
+    ];
 }
 
 page_header('Backup & Restore');
@@ -105,36 +126,21 @@ page_header('Backup & Restore');
           'flashTestLatency' => $destState['flashTestLatency'],
       ]);
   ?>
-  <?php elseif ($activeTab === 'history'): ?>
-    <section class="card">
-      <p class="muted">
-        Unified backup history has not yet ported into this surface. Use
-        <a href="backup_history.php">the legacy backup history page</a> until commit 3 lands.
-      </p>
-    </section>
-  <?php elseif ($activeTab === 'backup'): ?>
-    <section class="card">
-      <p class="muted">
-        Manual run + schedule editing has not yet ported into this surface. Use
-        <a href="backup_admin.php?tab=destinations">the Destinations tab</a> for run-now and
-        schedule edits until commit 4 lands.
-      </p>
-    </section>
-  <?php elseif ($activeTab === 'restore'): ?>
-    <section class="card">
-      <p class="muted">
-        The restore wizard has not yet ported into this surface. Use
-        <a href="restore_web.php">the legacy restore page</a> until commit 5 lands.
-      </p>
-    </section>
-  <?php elseif ($activeTab === 'notifications'): ?>
-    <section class="card">
-      <p class="muted">
-        Notification preferences have not yet ported into this surface. Backup-related
-        settings currently live in <a href="settings.php?tab=backups">Settings → Backups</a>
-        until commit 6 lands.
-      </p>
-    </section>
+  <?php elseif ($activeTab === 'history' && $histState !== null):
+      ipam_render('backup_admin_history', array_merge($histState, [
+          'self'       => 'backup_admin.php',
+          'extraQuery' => 'tab=history',
+      ]));
+  ?>
+  <?php elseif ($activeTab === 'backup' && $backupDests !== null):
+      ipam_render('backup_admin_backup', ['destinations' => $backupDests]);
+  ?>
+  <?php elseif ($activeTab === 'restore' && $restoreState !== null):
+      ipam_render('backup_admin_restore', $restoreState);
+  ?>
+  <?php elseif ($activeTab === 'notifications' && $notifyState !== null):
+      ipam_render('backup_admin_notifications', $notifyState);
+  ?>
   <?php endif; ?>
 </div>
 

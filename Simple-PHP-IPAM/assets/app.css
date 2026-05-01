@@ -1936,6 +1936,16 @@ button:active,.button:active,.action-pill:active{transform:translateY(1px)}
   .settings-mobile-nav{display:block}
 }
 
+/* === v3.21 backup_admin Backup tab run-now bar === */
+.run-now-bar{
+  display:flex;
+  flex-wrap:wrap;
+  gap:.75rem;
+  align-items:flex-end;
+  margin-top:.5rem;
+}
+.run-now-bar label{display:flex;flex-direction:column;gap:.25rem;font-size:var(--text-sm,.875rem);font-weight:600}
+
 /* === v3.21 backup_admin tab bar === */
 .tab-bar{
   border-bottom:1px solid var(--border);

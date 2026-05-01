@@ -2735,6 +2735,52 @@ function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
     });
 
     // Run now
+    // v3.21.0 #797 Backup tab — run-now button paired with a destination
+    // <select>. Result text is rendered into the configured aria-live span.
+    document.querySelectorAll('[data-run-now-target]').forEach(function (btn) {
+        btn.addEventListener('click', function (ev) {
+            ev.preventDefault();
+            var sel = document.getElementById(btn.dataset.runNowTarget);
+            var out = document.getElementById(btn.dataset.runNowResult || '');
+            if (!sel) return;
+            var destId = sel.value;
+            if (!destId || destId === '0') return;
+            if (!confirm('Run backup now for the selected destination?')) return;
+            btn.disabled = true;
+            sel.disabled = true;
+            var orig = btn.textContent;
+            btn.textContent = 'Running…';
+            if (out) { out.textContent = ''; out.classList.remove('success', 'danger'); }
+            var fd = new FormData();
+            fd.append('csrf', getCsrf());
+            fd.append('destination_id', destId);
+            fetch('run_backup_now.php', { method: 'POST', body: fd })
+                .then(function (r) { return r.json(); })
+                .then(function (j) {
+                    if (out) {
+                        if (j.ok) {
+                            out.textContent = '✓ ' + j.filename + ' (' + j.size + ' bytes)';
+                            out.classList.add('success');
+                        } else {
+                            out.textContent = '✗ ' + (j.message || 'failed');
+                            out.classList.add('danger');
+                        }
+                    }
+                })
+                .catch(function () {
+                    if (out) {
+                        out.textContent = '✗ network error';
+                        out.classList.add('danger');
+                    }
+                })
+                .finally(function () {
+                    btn.disabled = false;
+                    sel.disabled = false;
+                    btn.textContent = orig;
+                });
+        });
+    });
+
     document.querySelectorAll('[data-run-now]').forEach(function (btn) {
         btn.addEventListener('click', function (ev) {
             ev.preventDefault();
