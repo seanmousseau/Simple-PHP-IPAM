@@ -116,4 +116,47 @@ final class BackupAdminHistoryActionsTest extends TestCase
         $this->assertFalse($result['ok']);
         $this->assertSame('not_found', $result['error']);
     }
+
+    public function testDeleteRefusesOnProtectedRow(): void
+    {
+        $id = $this->seedRunWithFile('x', ['is_protected' => 1]);
+        $result = ipam_backup_run_delete($this->db, $id);
+        $this->assertFalse($result['ok']);
+        $this->assertSame('protected', $result['error']);
+        $this->assertSame(1, (int) $this->db->query("SELECT COUNT(*) FROM backup_runs WHERE id = $id")->fetchColumn());
+        $this->assertFileExists($this->tmpDir . '/ipam-test.sql');
+    }
+
+    public function testDeleteSuccessRemovesFileAndRow(): void
+    {
+        $id = $this->seedRunWithFile('x');
+        $result = ipam_backup_run_delete($this->db, $id);
+        $this->assertTrue($result['ok']);
+        $this->assertTrue($result['removed']);
+        $this->assertSame(0, (int) $this->db->query("SELECT COUNT(*) FROM backup_runs WHERE id = $id")->fetchColumn());
+        $this->assertFileDoesNotExist($this->tmpDir . '/ipam-test.sql');
+    }
+
+    public function testDeleteWhenDestinationDeleteFailsLeavesRow(): void
+    {
+        $id = $this->seedRunWithFile('x');
+        // Make the destination directory read-only so unlink fails. Restore
+        // perms in finally so tearDown can clean up.
+        chmod($this->tmpDir, 0500);
+        try {
+            $result = ipam_backup_run_delete($this->db, $id);
+        } finally {
+            chmod($this->tmpDir, 0700);
+        }
+        $this->assertFalse($result['ok']);
+        $this->assertSame('destination_unreachable', $result['error']);
+        $this->assertSame(1, (int) $this->db->query("SELECT COUNT(*) FROM backup_runs WHERE id = $id")->fetchColumn());
+    }
+
+    public function testDeleteUnknownIdReturnsNotFound(): void
+    {
+        $result = ipam_backup_run_delete($this->db, 99999);
+        $this->assertFalse($result['ok']);
+        $this->assertSame('not_found', $result['error']);
+    }
 }

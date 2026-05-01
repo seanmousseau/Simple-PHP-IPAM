@@ -182,7 +182,7 @@ function ipam_backup_client_for_destination(\PDO $db, int $destId): ?BackupClien
     /** @var array<string,mixed> $row */
     try {
         return ipam_backup_dest_client($row);
-    } catch (\Throwable $e) {
+    } catch (\Throwable) {
         return null;
     }
 }
@@ -259,8 +259,7 @@ function ipam_backup_history_handle_post(\PDO $db): void
         return;
     }
     $action = to_str($_POST['action'] ?? '');
-    // action=delete is wired in Task 5 alongside ipam_backup_run_delete().
-    if ($action !== 'verify') {
+    if ($action !== 'verify' && $action !== 'delete') {
         return;
     }
     csrf_require();
@@ -275,6 +274,85 @@ function ipam_backup_history_handle_post(\PDO $db): void
         exit;
     }
 
-    echo (string) json_encode(ipam_backup_run_verify($db, $id));
+    if ($action === 'verify') {
+        echo (string) json_encode(ipam_backup_run_verify($db, $id));
+        exit;
+    }
+
+    // action=delete — require the literal DELETE confirm string before
+    // mutating. The drawer JS surfaces a type-to-confirm gate; this is
+    // defence-in-depth for forged or scripted requests.
+    if (to_str($_POST['confirm'] ?? '') !== 'DELETE') {
+        http_response_code(400);
+        echo (string) json_encode(['ok' => false, 'error' => 'confirm_required']);
+        exit;
+    }
+    $result = ipam_backup_run_delete($db, $id);
+    if (!($result['ok'] ?? false)) {
+        $err = to_str($result['error'] ?? '');
+        $status = match ($err) {
+            'protected'               => 409,
+            'destination_unreachable' => 502,
+            'not_found'               => 404,
+            default                   => 400,
+        };
+        http_response_code($status);
+    }
+    echo (string) json_encode($result);
     exit;
+}
+
+/**
+ * Best-effort delete of a backup_runs row's artifact at the destination,
+ * followed by the row delete. Refuses on is_protected = 1.
+ *
+ * Order matters: the file is removed first; only on success is the row
+ * dropped. If the destination is unreachable the row is left intact so a
+ * retry is possible (or, eventually, the auto-purge from #1053 will clean
+ * it up after retention expires).
+ *
+ * Result keys:
+ *   ['ok' => true,  'removed' => true]
+ *   ['ok' => false, 'error' => 'not_found' | 'protected' | 'destination_unreachable',
+ *                   'message' => '<str>']
+ *
+ * @return array<string,mixed>
+ */
+function ipam_backup_run_delete(\PDO $db, int $runId): array
+{
+    $st = $db->prepare("SELECT * FROM backup_runs WHERE id = :id");
+    $st->execute([':id' => $runId]);
+    $row = $st->fetch(\PDO::FETCH_ASSOC);
+    if (!is_array($row)) {
+        return ['ok' => false, 'error' => 'not_found'];
+    }
+    if (to_int($row['is_protected'] ?? 0) === 1) {
+        return ['ok' => false, 'error' => 'protected'];
+    }
+
+    $filename = to_str($row['filename'] ?? '');
+    if ($filename !== '') {
+        // Defence-in-depth filename guard, mirroring remote_backups.php.
+        // The filename is sourced from backup_runs.filename which the backup
+        // engine sets to a generated name, but reject path-like values
+        // before they reach any client->delete() implementation.
+        if (str_contains($filename, '/') || str_contains($filename, '\\')
+            || str_contains($filename, "\0") || str_starts_with($filename, '.')) {
+            return ['ok' => false, 'error' => 'destination_unreachable', 'message' => 'Stored filename rejected by safety guard.'];
+        }
+        $client = ipam_backup_client_for_destination($db, to_int($row['destination_id']));
+        if ($client !== null) {
+            try {
+                $client->delete($filename); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $filename is DB-sourced and validated above against path separators
+                audit($db, 'remote_backup.delete', 'backup_run', $runId, $filename);
+            } catch (\Throwable $e) {
+                audit($db, 'remote_backup.delete_failed', 'backup_run', $runId, $e->getMessage());
+                return ['ok' => false, 'error' => 'destination_unreachable', 'message' => $e->getMessage()];
+            }
+        }
+    }
+
+    $db->prepare("DELETE FROM backup_runs WHERE id = :id")->execute([':id' => $runId]);
+    audit($db, 'backup_run.delete', 'backup_run', $runId, '');
+    return ['ok' => true, 'removed' => true];
 }
