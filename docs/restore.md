@@ -1,8 +1,3 @@
----
-title: Restore
-nav_order: 10
----
-
 # Restore from a backup
 
 > **v3.21.0** moves the restore wizard into the unified backup admin surface at **Admin → Backup & Restore → Restore** (`backup_admin.php?tab=restore`). The legacy `restore_web.php` URL still resolves but new bookmarks should use the unified surface. The CLI restore (`restore.php`) is unchanged.

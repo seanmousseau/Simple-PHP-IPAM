@@ -1,8 +1,3 @@
----
-title: Backups
-nav_order: 9
----
-
 # Backups
 
 > **v3.21.0** consolidates every backup and restore screen into a single admin surface at **Admin → Backup & Restore** (`backup_admin.php`). Six legacy pages (`db_tools.php`'s backup half, `destinations.php`, `backup_history.php`, `remote_backups.php`, `restore_web.php`, and the Backups section of `settings.php`) are retired. Their URLs still resolve for now (legacy bookmarks 301 to the new location) but no documentation should reference them.
