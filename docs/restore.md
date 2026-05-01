@@ -2,6 +2,8 @@
 
 > **v3.21.0** moves the restore wizard into the unified backup admin surface at **Admin → Backup & Restore → Restore** (`backup_admin.php?tab=restore`). The legacy `restore_web.php` URL still resolves but new bookmarks should use the unified surface. The CLI restore (`restore.php`) is unchanged.
 >
+> **What ships in v3.21.x:** restoring **Database** backups (engine-native dumps produced by the same engine) — through the web wizard for SQLite and through the CLI (`restore.php` + engine-native tools) for MySQL/PostgreSQL. **Logical-backup restore ships in v3.22.0** ([backup_overhaul §C](https://github.com/seanmousseau/Simple-PHP-IPAM/blob/main/docs/internal/backup_overhaul.md)). The Logical-backup paths described below ("Logical backup — restore through `restore.php`") document the v3.22.0 end-state; in v3.21.x there are no Logical backup files to restore because the [backup runner](backups.md) only produces Database backups.
+>
 > See **[Backups](backups.md)** for backup creation, destinations, schedules, and encryption.
 
 ---
@@ -255,13 +257,13 @@ Failed restores are recorded in `backup_runs` with `status = 'failed'` and a det
 
 ## Engine support
 
-| Engine | Logical backup restore | Database backup restore (web) | Database backup restore (CLI) |
+| Engine | Database backup restore (web) | Database backup restore (CLI) | Logical backup restore (v3.22.0) |
 |---|---|---|---|
-| SQLite | yes (web + CLI) | yes (web + CLI) | yes |
-| MySQL | yes (web + CLI) | not in v3.21.0 — use CLI | yes |
-| PostgreSQL | yes (web + CLI) | not in v3.21.0 — use CLI | yes |
+| SQLite | yes (web + CLI) | yes | v3.22.0 (web + CLI) |
+| MySQL | not in v3.21.x — use CLI | yes | v3.22.0 (web + CLI) |
+| PostgreSQL | not in v3.21.x — use CLI | yes | v3.22.0 (web + CLI) |
 
-Cross-engine Database-backup restore in the web wizard is tracked in [#797 / F18](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/797) for v3.24.0.
+The Logical-backup restore column lists the v3.22.0 end-state. In v3.21.x the runner doesn't exist, so there are no Logical-backup files to restore — every existing backup is a Database backup. Cross-engine Database-backup restore in the web wizard is tracked in [#797 / F18](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/797) for v3.24.0.
 
 ---
 
