@@ -23,7 +23,9 @@ function ipam_backup_history_qs(
     int $page,
     string $type,
     string $self,
-    string $extraQuery = ''
+    string $extraQuery = '',
+    string $backupType = '',
+    string $since = ''
 ): string {
     $parts = [];
     if ($extraQuery !== '') $parts[] = $extraQuery;
@@ -32,8 +34,34 @@ function ipam_backup_history_qs(
     if ($from !== '')       $parts[] = 'from=' . urlencode($from);
     if ($to !== '')         $parts[] = 'to=' . urlencode($to);
     if ($type !== '')       $parts[] = 'type=' . urlencode($type);
+    if ($backupType !== '') $parts[] = 'backup_type=' . urlencode($backupType);
+    if ($since !== '')      $parts[] = 'since=' . urlencode($since);
     if ($page > 1)          $parts[] = 'page=' . $page;
     return $parts ? ($self . '?' . implode('&', $parts)) : $self;
+}
+
+/**
+ * Build a chip-link URL: copy current filter state, override one dimension.
+ * Pass `$override = ['key' => 'value']`; an empty value clears that filter.
+ *
+ * @param array<string, int|string> $current All current filter values.
+ * @param array<string, int|string> $override Single-key map of the dimension to change.
+ */
+function ipam_backup_history_chip_url(string $self, string $extraQuery, array $current, array $override): string
+{
+    $merged = array_merge($current, $override);
+    return ipam_backup_history_qs(
+        to_int($merged['destination_id'] ?? 0),
+        to_str($merged['status']         ?? ''),
+        to_str($merged['from']           ?? ''),
+        to_str($merged['to']             ?? ''),
+        1, // any chip click resets pagination
+        to_str($merged['type']           ?? ''),
+        $self,
+        $extraQuery,
+        to_str($merged['backup_type']    ?? ''),
+        to_str($merged['since']          ?? ''),
+    );
 }
 
 /**
@@ -42,8 +70,8 @@ function ipam_backup_history_qs(
  * @return array{
  *   rows: list<array<string, mixed>>,
  *   total: int,
- *   pages: int,
- *   page: int,
+ *   pages: positive-int,
+ *   page: positive-int,
  *   perPage: int,
  *   stats: list<array<string, mixed>>,
  *   destinations: list<array<string, mixed>>,
@@ -52,6 +80,8 @@ function ipam_backup_history_qs(
  *   filterFrom: string,
  *   filterTo: string,
  *   filterType: string,
+ *   filterBackupType: string,
+ *   filterSince: string,
  *   safeFrom: string,
  *   safeTo: string
  * }
@@ -61,15 +91,19 @@ function ipam_backup_history_load_state(\PDO $db): array
     $page    = max(1, to_int($_GET['page'] ?? 1));
     $perPage = 50;
 
-    $filterDest   = to_int($_GET['destination_id'] ?? 0);
-    $filterStatus = to_str($_GET['status'] ?? '');
-    $rawFrom      = to_str($_GET['from'] ?? '');
-    $rawTo        = to_str($_GET['to']   ?? '');
-    $filterFrom   = preg_match('/^\d{4}-\d{2}-\d{2}$/', $rawFrom) ? $rawFrom : '';
-    $filterTo     = preg_match('/^\d{4}-\d{2}-\d{2}$/', $rawTo)   ? $rawTo   : '';
-    $safeFrom     = htmlspecialchars($filterFrom, ENT_QUOTES, 'UTF-8');
-    $safeTo       = htmlspecialchars($filterTo,   ENT_QUOTES, 'UTF-8');
-    $filterType   = to_str($_GET['type'] ?? '');
+    $filterDest       = to_int($_GET['destination_id'] ?? 0);
+    $filterStatus     = to_str($_GET['status'] ?? '');
+    $rawFrom          = to_str($_GET['from'] ?? '');
+    $rawTo            = to_str($_GET['to']   ?? '');
+    $filterFrom       = preg_match('/^\d{4}-\d{2}-\d{2}$/', $rawFrom) ? $rawFrom : '';
+    $filterTo         = preg_match('/^\d{4}-\d{2}-\d{2}$/', $rawTo)   ? $rawTo   : '';
+    $safeFrom         = htmlspecialchars($filterFrom, ENT_QUOTES, 'UTF-8');
+    $safeTo           = htmlspecialchars($filterTo,   ENT_QUOTES, 'UTF-8');
+    $filterType       = to_str($_GET['type'] ?? '');
+    $rawBackupType    = to_str($_GET['backup_type'] ?? '');
+    $filterBackupType = in_array($rawBackupType, ['database', 'logical'], true) ? $rawBackupType : '';
+    $rawSince         = to_str($_GET['since'] ?? '');
+    $filterSince      = in_array($rawSince, ['24h', '7d', '30d'], true) ? $rawSince : '';
 
     $where  = [];
     $params = [];
@@ -89,10 +123,23 @@ function ipam_backup_history_load_state(\PDO $db): array
         $where[]       = 'l.started_at <= :to';
         $params[':to'] = $filterTo . ' 23:59:59';
     }
+    if ($filterSince !== '') {
+        // Preset time chips: translate 24h / 7d / 30d into a started_at floor.
+        // Computed in PHP (UTC) to keep the SQL portable across SQLite/MySQL/PG.
+        $intervals = ['24h' => 86400, '7d' => 604800, '30d' => 2592000];
+        $cutoff    = gmdate('Y-m-d H:i:s', time() - $intervals[$filterSince]);
+        $where[]              = 'l.started_at >= :since';
+        $params[':since']     = $cutoff;
+    }
+    if ($filterBackupType !== '') {
+        $where[]                = 'l.backup_type = :bt';
+        $params[':bt']          = $filterBackupType;
+    }
     // v3.21.0 §A1 (#799/#808): backup_runs only tracks backup runs. The
-    // restore-side type filter no longer matches anything; keep the URL
-    // parameter for back-compat — 'restore' yields zero rows; 'backup' is
-    // a no-op filter.
+    // restore-side `type` filter no longer matches anything; keep the URL
+    // parameter for back-compat — `type=restore` yields zero rows;
+    // `type=backup` is a no-op. Use `backup_type=database|logical` instead
+    // (#804).
     if ($filterType === 'restore') {
         $where[] = '1 = 0';
     }
@@ -147,13 +194,15 @@ function ipam_backup_history_load_state(\PDO $db): array
         'perPage'      => $perPage,
         'stats'        => $stats,
         'destinations' => $destinations,
-        'filterDest'   => $filterDest,
-        'filterStatus' => $filterStatus,
-        'filterFrom'   => $filterFrom,
-        'filterTo'     => $filterTo,
-        'filterType'   => $filterType,
-        'safeFrom'     => $safeFrom,
-        'safeTo'       => $safeTo,
+        'filterDest'       => $filterDest,
+        'filterStatus'     => $filterStatus,
+        'filterFrom'       => $filterFrom,
+        'filterTo'         => $filterTo,
+        'filterType'       => $filterType,
+        'filterBackupType' => $filterBackupType,
+        'filterSince'      => $filterSince,
+        'safeFrom'         => $safeFrom,
+        'safeTo'           => $safeTo,
     ];
 }
 

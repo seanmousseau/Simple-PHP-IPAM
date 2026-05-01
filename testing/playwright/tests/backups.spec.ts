@@ -620,6 +620,48 @@ test.describe('Backup history', () => {
     expect(page.url()).toContain(`destination_id=${firstDestValue}`);
   });
 
+  test('filter chips bar renders Status / Backup type / Time rows (#804)', async () => {
+    await page.goto(appUrl('backup_history.php'));
+    const chips = page.locator('[data-filter-chips]');
+    await expect(chips).toBeVisible();
+    // Each dimension contributes at least one active chip.
+    await expect(chips.locator('a[data-chip-dim="status"].is-active')).toHaveCount(1);
+    await expect(chips.locator('a[data-chip-dim="backup_type"].is-active')).toHaveCount(1);
+    await expect(chips.locator('a[data-chip-dim="since"].is-active')).toHaveCount(1);
+    // Default state: All chips are active for every dimension.
+    await expect(chips.locator('a[data-chip-dim="status"][data-chip-value=""]')).toHaveClass(/is-active/);
+    await expect(chips.locator('a[data-chip-dim="backup_type"][data-chip-value=""]')).toHaveClass(/is-active/);
+    await expect(chips.locator('a[data-chip-dim="since"][data-chip-value=""]')).toHaveClass(/is-active/);
+  });
+
+  test('clicking a chip narrows the URL and Clear-all resets it (#804)', async () => {
+    await page.goto(appUrl('backup_history.php'));
+    // Click the "Last 7d" time chip.
+    await page.locator('[data-filter-chips] a[data-chip-dim="since"][data-chip-value="7d"]').click();
+    await page.waitForURL(/since=7d/, { timeout: 10_000 });
+    expect(page.url()).toContain('since=7d');
+    // Active chip reflects the selection.
+    await expect(
+      page.locator('[data-filter-chips] a[data-chip-dim="since"][data-chip-value="7d"]')
+    ).toHaveClass(/is-active/);
+    // Clear-all chip is now visible and resets the filters.
+    const clearAll = page.locator('[data-filter-chips] a.filter-chip-clear');
+    await expect(clearAll).toBeVisible();
+    await clearAll.click();
+    await page.waitForLoadState('load');
+    expect(page.url()).not.toContain('since=');
+  });
+
+  test('backup_type chip narrows the URL with the renamed param (#804)', async () => {
+    await page.goto(appUrl('backup_history.php'));
+    await page.locator('[data-filter-chips] a[data-chip-dim="backup_type"][data-chip-value="database"]').click();
+    await page.waitForURL(/backup_type=database/, { timeout: 10_000 });
+    expect(page.url()).toContain('backup_type=database');
+    // No PHP fatal.
+    const body = await page.locator('body').textContent() ?? '';
+    expect(body).not.toContain('Fatal error');
+  });
+
   test('status badge CSS classes are correct in rendered rows', async () => {
     // This test verifies the badge class mapping works. If there are no rows in
     // the log, we fall back to a source-code read to confirm the template is wired.

@@ -17,6 +17,8 @@ declare(strict_types=1);
  * @var string                     $filterFrom
  * @var string                     $filterTo
  * @var string                     $filterType
+ * @var string                     $filterBackupType
+ * @var string                     $filterSince
  * @var string                     $safeFrom
  * @var string                     $safeTo
  * @var string                     $self           Page URL (e.g. 'backup_history.php' or 'backup_admin.php?tab=history')
@@ -25,6 +27,27 @@ declare(strict_types=1);
 
 // Reset URL drops every filter, keeps $extraQuery (so tab=history persists).
 $resetUrl = $extraQuery !== '' ? ($self . '?' . $extraQuery) : $self;
+
+// Snapshot of current filter state used to compute chip URLs (#804).
+$currentFilters = [
+    'destination_id' => $filterDest,
+    'status'         => $filterStatus,
+    'from'           => $filterFrom,
+    'to'             => $filterTo,
+    'type'           => $filterType,
+    'backup_type'    => $filterBackupType,
+    'since'          => $filterSince,
+];
+$chipUrl = static fn (string $key, string $value): string =>
+    ipam_backup_history_chip_url($self, $extraQuery, $currentFilters, [$key => $value]);
+
+$anyFilterActive = $filterDest > 0
+    || $filterStatus !== ''
+    || $filterFrom !== ''
+    || $filterTo !== ''
+    || $filterType !== ''
+    || $filterBackupType !== ''
+    || $filterSince !== '';
 ?>
   <?php if (!empty($stats)): ?>
   <section class="card">
@@ -47,6 +70,63 @@ $resetUrl = $extraQuery !== '' ? ($self . '?' . $extraQuery) : $self;
 
   <section class="card">
     <h2>Filter</h2>
+
+    <?php
+      // #804 — chip rows for the three single-value dimensions (status, backup
+      // type, time preset). Each chip is a plain <a> that mutates exactly one
+      // URL parameter; tests can rely on the rendered href without JS.
+      $statusChips = [
+          ''                 => 'All',
+          'running'          => 'Running',
+          'success'          => 'Success',
+          'failed'           => 'Failed',
+          'retention_pruned' => 'Retention pruned',
+      ];
+      $typeChips = [
+          ''         => 'All',
+          'database' => 'Database',
+          'logical'  => 'Logical',
+      ];
+      $sinceChips = [
+          ''    => 'All time',
+          '24h' => 'Last 24h',
+          '7d'  => 'Last 7d',
+          '30d' => 'Last 30d',
+      ];
+    ?>
+    <div class="filter-chips" data-filter-chips>
+      <div class="filter-chip-row">
+        <span class="filter-chip-label">Status</span>
+        <?php foreach ($statusChips as $val => $label): ?>
+          <a class="filter-chip <?= $filterStatus === $val ? 'is-active' : '' ?>"
+             data-chip-dim="status"
+             data-chip-value="<?= e($val) ?>"
+             href="<?= e($chipUrl('status', $val)) ?>"><?= e($label) ?></a>
+        <?php endforeach; ?>
+      </div>
+      <div class="filter-chip-row">
+        <span class="filter-chip-label">Backup type</span>
+        <?php foreach ($typeChips as $val => $label): ?>
+          <a class="filter-chip <?= $filterBackupType === $val ? 'is-active' : '' ?>"
+             data-chip-dim="backup_type"
+             data-chip-value="<?= e($val) ?>"
+             href="<?= e($chipUrl('backup_type', $val)) ?>"><?= e($label) ?></a>
+        <?php endforeach; ?>
+      </div>
+      <div class="filter-chip-row">
+        <span class="filter-chip-label">Time</span>
+        <?php foreach ($sinceChips as $val => $label): ?>
+          <a class="filter-chip <?= $filterSince === $val ? 'is-active' : '' ?>"
+             data-chip-dim="since"
+             data-chip-value="<?= e($val) ?>"
+             href="<?= e($chipUrl('since', $val)) ?>"><?= e($label) ?></a>
+        <?php endforeach; ?>
+      </div>
+      <?php if ($anyFilterActive): ?>
+        <a class="filter-chip filter-chip-clear" href="<?= e($resetUrl) ?>">Clear all</a>
+      <?php endif; ?>
+    </div>
+
     <form method="get" class="filter-bar">
       <?php if ($extraQuery !== ''): ?>
         <?php
@@ -75,11 +155,11 @@ $resetUrl = $extraQuery !== '' ? ($self . '?' . $extraQuery) : $self;
           <?php endforeach; ?>
         </select>
       </label>
-      <label>Type
-        <select name="type">
+      <label>Backup type
+        <select name="backup_type">
           <option value="">— Any —</option>
-          <option value="backup"  <?= $filterType === 'backup'  ? 'selected' : '' ?>>Backup</option>
-          <option value="restore" <?= $filterType === 'restore' ? 'selected' : '' ?>>Restore</option>
+          <option value="database" <?= $filterBackupType === 'database' ? 'selected' : '' ?>>Database</option>
+          <option value="logical"  <?= $filterBackupType === 'logical'  ? 'selected' : '' ?>>Logical</option>
         </select>
       </label>
       <label>From <input type="date" name="from" value="<?= e($filterFrom) ?>"></label>
@@ -135,7 +215,7 @@ $resetUrl = $extraQuery !== '' ? ($self . '?' . $extraQuery) : $self;
       <nav class="pagination">
         <?php for ($p = 1; $p <= $pages; $p++): ?>
           <a class="action-pill <?= $p === $page ? 'is-active' : '' ?>"
-             href="<?= e(ipam_backup_history_qs($filterDest, $filterStatus, $filterFrom, $filterTo, $p, $filterType, $self, $extraQuery)) ?>"><?= $p ?></a>
+             href="<?= e(ipam_backup_history_qs($filterDest, $filterStatus, $filterFrom, $filterTo, $p, $filterType, $self, $extraQuery, $filterBackupType, $filterSince)) ?>"><?= $p ?></a>
         <?php endfor; ?>
       </nav>
       <?php endif; ?>

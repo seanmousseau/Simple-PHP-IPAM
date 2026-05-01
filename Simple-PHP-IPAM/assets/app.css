@@ -2023,6 +2023,31 @@ button:active,.button:active,.action-pill:active{transform:translateY(1px)}
 /* v3.17 backup history */
 .filter-bar { display: flex; flex-wrap: wrap; gap: var(--space-8); align-items: end; }
 .filter-bar label { display: flex; flex-direction: column; gap: var(--space-2); }
+
+/* v3.21.0 #804 — backup history filter chips */
+.filter-chips { display: flex; flex-direction: column; gap: var(--space-4); margin-bottom: var(--space-6); }
+.filter-chip-row { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; }
+.filter-chip-label { font-size: var(--font-size-0); color: var(--muted); min-width: 6rem; }
+.filter-chip {
+    display: inline-block;
+    padding: var(--space-2) var(--space-5);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-round);
+    background: var(--card);
+    color: var(--fg);
+    text-decoration: none;
+    font-size: var(--font-size-0);
+    line-height: 1.4;
+}
+.filter-chip:hover { border-color: var(--link); color: var(--link); }
+.filter-chip.is-active {
+    background: color-mix(in srgb, var(--link) 12%, var(--card));
+    border-color: var(--link);
+    color: var(--link);
+    font-weight: 600;
+}
+.filter-chip-clear { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 30%, var(--border)); }
+.filter-chip-clear:hover { border-color: var(--danger); color: var(--danger); }
 .badge-success          { background: color-mix(in srgb, var(--success) 15%, var(--card) 85%); color: var(--success); }
 .badge-failed           { background: color-mix(in srgb, var(--danger) 15%, var(--card) 85%);  color: var(--danger); }
 .badge-running          { background: color-mix(in srgb, var(--link) 15%, var(--card) 85%);    color: var(--link); }
