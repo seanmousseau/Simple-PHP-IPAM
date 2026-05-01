@@ -33,11 +33,13 @@ final class BackupAdminRbacTest extends TestCase
     public static function adminFilesProvider(): array
     {
         return [
-            ['Simple-PHP-IPAM/backup_admin.php'],     // unified surface (F1)
-            ['Simple-PHP-IPAM/run_backup_now.php'],   // run-now POST handler (F3)
-            ['Simple-PHP-IPAM/backup_history.php'],   // legacy URL
-            ['Simple-PHP-IPAM/backups.php'],          // legacy URL (301 → db_tools)
-            ['Simple-PHP-IPAM/restore_web.php'],      // legacy URL
+            ['Simple-PHP-IPAM/backup_admin.php'],            // unified surface (F1)
+            ['Simple-PHP-IPAM/run_backup_now.php'],          // run-now POST handler (F3)
+            ['Simple-PHP-IPAM/backup_history.php'],          // legacy URL
+            ['Simple-PHP-IPAM/backups.php'],                 // legacy URL (301 → db_tools)
+            ['Simple-PHP-IPAM/restore_web.php'],             // legacy URL
+            ['Simple-PHP-IPAM/backup_run_detail.php'],       // drawer partial (#803, F11)
+            ['Simple-PHP-IPAM/destination_edit_drawer.php'], // drawer partial (#803, F12)
         ];
     }
 
