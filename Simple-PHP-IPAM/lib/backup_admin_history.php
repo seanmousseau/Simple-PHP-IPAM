@@ -390,14 +390,20 @@ function ipam_backup_run_delete(\PDO $db, int $runId): array
             return ['ok' => false, 'error' => 'destination_unreachable', 'message' => 'Stored filename rejected by safety guard.'];
         }
         $client = ipam_backup_client_for_destination($db, to_int($row['destination_id']));
-        if ($client !== null) {
-            try {
-                $client->delete($filename); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $filename is DB-sourced and validated above against path separators
-                audit($db, 'remote_backup.delete', 'backup_run', $runId, $filename);
-            } catch (\Throwable $e) {
-                audit($db, 'remote_backup.delete_failed', 'backup_run', $runId, $e->getMessage());
-                return ['ok' => false, 'error' => 'destination_unreachable', 'message' => $e->getMessage()];
-            }
+        if ($client === null) {
+            // Destination row deleted or invalid — keep the backup_runs row so
+            // the artifact reference is not lost. Operator must reconnect the
+            // destination (or hand-delete via the storage console) before this
+            // entry can be cleared. (CR feedback PR #1054.)
+            audit($db, 'remote_backup.delete_failed', 'backup_run', $runId, 'destination client not found');
+            return ['ok' => false, 'error' => 'destination_unreachable', 'message' => 'destination client not found'];
+        }
+        try {
+            $client->delete($filename); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $filename is DB-sourced and validated above against path separators
+            audit($db, 'remote_backup.delete', 'backup_run', $runId, $filename);
+        } catch (\Throwable $e) {
+            audit($db, 'remote_backup.delete_failed', 'backup_run', $runId, $e->getMessage());
+            return ['ok' => false, 'error' => 'destination_unreachable', 'message' => $e->getMessage()];
         }
     }
 

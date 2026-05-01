@@ -2027,16 +2027,16 @@ button:active,.button:active,.action-pill:active{transform:translateY(1px)}
 /* v3.21.0 #804 — backup history filter chips */
 .filter-chips { display: flex; flex-direction: column; gap: var(--space-4); margin-bottom: var(--space-6); }
 .filter-chip-row { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; }
-.filter-chip-label { font-size: var(--font-size-0); color: var(--muted); min-width: 6rem; }
+.filter-chip-label { font-size: var(--font-size-xs); color: var(--muted); min-width: 6rem; }
 .filter-chip {
     display: inline-block;
     padding: var(--space-2) var(--space-5);
     border: 1px solid var(--border);
-    border-radius: var(--radius-round);
+    border-radius: var(--radius-pill);
     background: var(--card);
     color: var(--fg);
     text-decoration: none;
-    font-size: var(--font-size-0);
+    font-size: var(--font-size-xs);
     line-height: 1.4;
 }
 .filter-chip:hover { border-color: var(--link); color: var(--link); }
@@ -2063,7 +2063,7 @@ button:active,.button:active,.action-pill:active{transform:translateY(1px)}
 .drawer-meta dl.kv-grid dd { margin: 0; }
 .drawer-section { margin-top: var(--space-7); }
 .drawer-section h4 { margin: 0 0 var(--space-3); font-size: var(--font-size-3xl); }
-.drawer-error-text { white-space: pre-wrap; word-break: break-word; background: color-mix(in srgb, var(--danger) 6%, var(--card)); padding: var(--space-4); border-radius: var(--radius-sm); }
+.drawer-error-text { white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; background: color-mix(in srgb, var(--danger) 6%, var(--card)); padding: var(--space-4); border-radius: var(--radius-sm); }
 .drawer-error { padding: var(--space-6); border: 1px solid var(--danger); border-radius: var(--radius-md); background: color-mix(in srgb, var(--danger) 6%, var(--card)); }
 .drawer-actions { margin-top: var(--space-9); display: flex; gap: var(--space-4); justify-content: flex-end; flex-wrap: wrap; }
 .drawer-actions .button-danger:not(:disabled) { margin-left: auto; }

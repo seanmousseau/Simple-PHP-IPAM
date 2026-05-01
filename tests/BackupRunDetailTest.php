@@ -18,14 +18,34 @@ final class BackupRunDetailTest extends TestCase
 {
     private \PDO $db;
 
+    /** @var mixed */
+    private $previousGlobalDb = null;
+
+    private bool $hadGlobalDb = false;
+
     protected function setUp(): void
     {
+        // CR feedback PR #1054: snapshot $GLOBALS['db'] (set by other suites)
+        // before we overwrite it, then restore in tearDown so this suite does
+        // not leak its in-memory DB into later tests that read the global.
+        $this->hadGlobalDb      = array_key_exists('db', $GLOBALS);
+        $this->previousGlobalDb = $this->hadGlobalDb ? $GLOBALS['db'] : null;
+
         $this->db = new \PDO('sqlite::memory:');
         $this->db->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
         $this->db->exec((string) file_get_contents(__DIR__ . '/../Simple-PHP-IPAM/schema.sql'));
         $this->db->exec("INSERT INTO backup_destinations (id, name, type) VALUES (1, 'pw-local', 'local')");
         // Some sessions/CSRF helpers expect $GLOBALS['db']; not relevant here, but sane to set.
         $GLOBALS['db'] = $this->db;
+    }
+
+    protected function tearDown(): void
+    {
+        if ($this->hadGlobalDb) {
+            $GLOBALS['db'] = $this->previousGlobalDb;
+        } else {
+            unset($GLOBALS['db']);
+        }
     }
 
     /**

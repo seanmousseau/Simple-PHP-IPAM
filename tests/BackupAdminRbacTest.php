@@ -54,14 +54,15 @@ final class BackupAdminRbacTest extends TestCase
         $head = (string) file_get_contents($absPath, false, null, 0, 8192);
         $this->assertNotEmpty($head, "Could not read first 8KB of $relPath");
 
-        // Strip block comments, line comments, and string literals so a
-        // commented-out guard or a docblock example cannot satisfy the
-        // check.
+        // CR feedback PR #1054: assert the literal 'admin' argument, not just
+        // a `require_role('')` shape, so `require_role('readonly')` does NOT
+        // satisfy the test. Strip block + line comments first so a
+        // commented-out call cannot count, then match against the un-stripped
+        // string contents directly.
         $codeOnly = (string) preg_replace('!/\*[\s\S]*?\*/!', '', $head);
         $codeOnly = (string) preg_replace('/^\s*(?:\/\/|#[^!]).*$/m', '', $codeOnly);
-        $codeOnly = (string) preg_replace("/'[^'\\n]*'|\"[^\"\\n]*\"/", "''", $codeOnly);
 
-        $pattern = "/\brequire_role\s*\(\s*''\s*\)/";
+        $pattern = "/\brequire_role\\s*\\(\\s*['\\\"]admin['\\\"]\\s*\\)/";
         if (!preg_match($pattern, $codeOnly, $m, PREG_OFFSET_CAPTURE)) {
             $this->fail(
                 "$relPath must gate with require_role('admin'). Add near the top:\n"
@@ -70,6 +71,11 @@ final class BackupAdminRbacTest extends TestCase
             );
         }
         $guardOffset = (int) $m[0][1];
+
+        // After confirming the admin guard, strip string literals so the
+        // pre-guard echo/print scan cannot trip on legitimate constants
+        // containing those words inside string contents.
+        $codeOnly = (string) preg_replace("/'[^'\\n]*'|\"[^\"\\n]*\"/", "''", $codeOnly);
 
         // The guard must come before output or DB-mutating side effects.
         // require/include of init.php and lib.php is fine (those bring

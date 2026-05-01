@@ -75,33 +75,22 @@ test.describe('Restore wizard', () => {
     await expect(page.locator('.danger')).toContainText(/Stage failed|file not found/);
   });
 
-  test('confirm-typing gate disables the Apply button until "RESTORE" is typed', async ({ page }) => {
-    // Smoke-test the JS gate by injecting the form structure manually since
-    // reaching Step 3 organically requires a real staged file.
-    await page.goto(appUrl('destinations.php'));
-    await page.evaluate(() => {
-      const form = document.createElement('form');
-      form.id = 'restore-apply-form';
-      const input = document.createElement('input');
-      input.id = 'restore-confirm-input';
-      input.type = 'text';
-      const btn = document.createElement('button');
-      btn.id = 'restore-apply-button';
-      btn.disabled = true;
-      btn.textContent = 'Apply restore';
-      form.append(input, btn);
-      document.body.appendChild(form);
-      input.addEventListener('input', () => {
-        btn.disabled = (input.value !== 'RESTORE');
-      });
-    });
-    const button = page.locator('#restore-apply-button');
-    const input = page.locator('#restore-confirm-input');
-    await expect(button).toBeDisabled();
-    await input.fill('restore');
-    await expect(button).toBeDisabled();
-    await input.fill('RESTORE');
-    await expect(button).toBeEnabled();
+  test('confirm-typing gate JS binds the real Step 3 controls', async ({ page }) => {
+    // CR feedback PR #1054: previous form-injection version of this test
+    // bound its own listener to a fake DOM and would have passed even if
+    // the shipped gate IIFE in app.js disappeared. Assert against the real
+    // bundle source: the gate must look up `#restore-confirm-input` and
+    // `#restore-apply-button`, attach an `input` listener, and toggle
+    // `disabled` based on the literal "RESTORE" string. Reaching Step 3
+    // organically still requires a real staged file, which the bootstrap
+    // does not provide; this contract test pins the JS instead so a
+    // regression that removes or renames the gate fails immediately.
+    const resp = await page.request.get(appUrl('assets/app.js'));
+    expect(resp.ok(), 'assets/app.js must be reachable').toBe(true);
+    const src = await resp.text();
+    expect(src, 'gate binds restore-confirm-input').toContain("getElementById('restore-confirm-input')");
+    expect(src, 'gate binds restore-apply-button').toContain("getElementById('restore-apply-button')");
+    expect(src, 'gate toggles disabled on the literal "RESTORE"').toMatch(/input\.value\s*!==\s*['"]RESTORE['"]/);
   });
 
   test('login.php?restored=1 surfaces the post-restore banner', async ({ page }) => {
@@ -146,33 +135,17 @@ test.describe('Restore wizard', () => {
       await expect(page.locator('.danger').first()).toContainText(/Stage failed|file not found/);
     });
 
-    test('confirm-typing gate disables Apply until RESTORE is typed (unified surface)', async ({ page }) => {
-      // Same DOM-injection smoke test as on restore_web.php — proves the
-      // gate JS is loaded and bound on the unified surface.
+    test('confirm-typing gate JS is loaded on the unified surface', async ({ page }) => {
+      // CR feedback PR #1054: see the same assertion above for restore_web.php.
+      // Loading the unified Restore tab also pulls assets/app.js — confirm
+      // the gate IIFE is in the bundle that the unified surface serves.
       await page.goto(appUrl('backup_admin.php?tab=restore'));
-      await page.evaluate(() => {
-        const form = document.createElement('form');
-        form.id = 'restore-apply-form';
-        const input = document.createElement('input');
-        input.id = 'restore-confirm-input';
-        input.type = 'text';
-        const btn = document.createElement('button');
-        btn.id = 'restore-apply-button';
-        btn.disabled = true;
-        btn.textContent = 'Apply restore';
-        form.append(input, btn);
-        document.body.appendChild(form);
-        input.addEventListener('input', () => {
-          btn.disabled = (input.value !== 'RESTORE');
-        });
-      });
-      const button = page.locator('#restore-apply-button');
-      const input  = page.locator('#restore-confirm-input');
-      await expect(button).toBeDisabled();
-      await input.fill('restore');
-      await expect(button).toBeDisabled();
-      await input.fill('RESTORE');
-      await expect(button).toBeEnabled();
+      const resp = await page.request.get(appUrl('assets/app.js'));
+      expect(resp.ok(), 'assets/app.js must be reachable').toBe(true);
+      const src = await resp.text();
+      expect(src).toContain("getElementById('restore-confirm-input')");
+      expect(src).toContain("getElementById('restore-apply-button')");
+      expect(src).toMatch(/input\.value\s*!==\s*['"]RESTORE['"]/);
     });
 
     test('legacy restore_web.php and unified ?tab=restore render structurally identical wizards', async ({ page }) => {

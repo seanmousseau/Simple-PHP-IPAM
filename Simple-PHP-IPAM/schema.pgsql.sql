@@ -737,7 +737,7 @@ CREATE TABLE IF NOT EXISTS backup_schedules (
   next_run_at       TIMESTAMP NULL,
   created_at        TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
 );
-CREATE INDEX IF NOT EXISTS idx_backup_schedules_destination ON backup_schedules(destination_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_backup_schedules_destination ON backup_schedules(destination_id);
 CREATE INDEX IF NOT EXISTS idx_backup_schedules_next_run ON backup_schedules(next_run_at);
 
 -- v3.21.0 #799 (§A1): unified backup_runs replaces backup_history + backup_log.
@@ -832,5 +832,7 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.14.0-email-otp'),
   ('3.15.0-passkeys'),
   ('3.16.0-preferred-mfa-method'),
-  ('3.17.0-backup')
+  ('3.17.0-backup'),
+  ('3.21.0-backup-runs'),
+  ('3.21.0-schedule-unique')
 ON CONFLICT (version) DO NOTHING;

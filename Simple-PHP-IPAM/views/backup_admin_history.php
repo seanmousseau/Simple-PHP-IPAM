@@ -200,7 +200,8 @@ $anyFilterActive = $filterDest > 0
             <td><?= e($started) ?></td>
             <td><?= e(to_str($r['dest_name'] ?? 'unknown')) ?></td>
             <td><?= e(to_str($r['triggered_by'])) ?></td>
-            <td><span class="badge badge-backup">Backup</span></td>
+            <?php $btType = to_str($r['backup_type'] ?? ''); ?>
+            <td><span class="badge badge-backup"><?= e($btType !== '' ? ucfirst($btType) : 'Backup') ?></span></td>
             <td><span class="badge <?= e($statusClass) ?>"><?= e($statusVal) ?></span></td>
             <td><?= e(to_str($r['filename'] ?? '—')) ?></td>
             <td><?= $r['size_bytes'] !== null ? number_format(to_int($r['size_bytes'])) : '—' ?></td>

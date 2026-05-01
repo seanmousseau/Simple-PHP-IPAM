@@ -2073,10 +2073,23 @@ var IpamDrawer = (function () {
         _openFromUrl(trigger);
     });
 
+    var _drawerRequestSeq = 0;
+
     function _openFromUrl(trigger) {
         var url   = trigger.getAttribute('data-drawer-url');
         var title = trigger.getAttribute('data-drawer-title') || 'Details';
         if (!url) return;
+        // CR feedback PR #1054: same-origin guard before injecting via innerHTML.
+        // Comment promises "trusted same-origin partial" — enforce it here so
+        // a future trigger with an absolute or user-influenced URL can't break
+        // the contract and turn this into a DOM-XSS sink.
+        try {
+            var resolved = new URL(url, window.location.href);
+            if (resolved.origin !== window.location.origin) return;
+            url = resolved.toString();
+        } catch (_e) {
+            return;
+        }
         open(title, '');
         var bodyEl = document.getElementById('global-drawer-body');
         if (!bodyEl) return;
@@ -2086,19 +2099,26 @@ var IpamDrawer = (function () {
         loading.className = 'muted';
         loading.textContent = 'Loading…';
         bodyEl.appendChild(loading);
+        // CR feedback PR #1054: ignore stale fetches. Two rapid clicks (run A
+        // then run B) could otherwise let A's slower response overwrite B's
+        // already-rendered body, leaving the title and Verify/Delete form
+        // out of sync. Each call increments the seq; only the latest renders.
+        var requestSeq = ++_drawerRequestSeq;
         fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'text/html' } })
             .then(function (r) {
                 if (!r.ok) throw new Error('HTTP ' + r.status);
                 return r.text();
             })
             .then(function (html) {
-                bodyEl.innerHTML = html;  // trusted same-origin partial (admin-gated, server-rendered); see comment above
+                if (requestSeq !== _drawerRequestSeq) return;
+                bodyEl.innerHTML = html;  // trusted same-origin partial (admin-gated, server-rendered); origin-checked above
                 // Notify rebindable widgets that fresh DOM was injected so they
                 // can re-attach event listeners (e.g. schedule-form freq gating).
                 var ev = new CustomEvent('drawer:loaded', { detail: { drawer: drawer, body: bodyEl } });
                 document.dispatchEvent(ev);
             })
             .catch(function (err) {
+                if (requestSeq !== _drawerRequestSeq) return;
                 // Error state — build via DOM, do not interpolate err.message into HTML.
                 while (bodyEl.firstChild) bodyEl.removeChild(bodyEl.firstChild);
                 var box = document.createElement('div');
@@ -2215,6 +2235,15 @@ var IpamDrawer = (function () {
         input.addEventListener('input', function () { arm.disabled = (input.value !== 'DELETE'); });
         cancel.addEventListener('click', function () { danger.remove(); });
         arm.addEventListener('click', function () {
+            // CR feedback PR #1054: lock destructive controls before fetch.
+            // The remote-delete path is non-idempotent (DELETE on the storage
+            // backend); a fast double-click could fire two requests, the
+            // second of which fails because the artifact is already gone, and
+            // the user sees a confusing error after the first delete already
+            // succeeded. Disable arm + cancel for the in-flight window; only
+            // re-enable on failure paths.
+            arm.disabled    = true;
+            cancel.disabled = true;
             var resultEl = form.querySelector('#drawer-action-result');
             if (resultEl) {
                 resultEl.hidden = false;
@@ -2244,7 +2273,8 @@ var IpamDrawer = (function () {
                             resultEl.textContent = 'Delete failed (' + status + '): ' + (j.message || j.error || 'unknown');
                         }
                         // Unlock for retry once destination is reachable.
-                        arm.disabled = (input.value !== 'DELETE');
+                        cancel.disabled = false;
+                        arm.disabled    = (input.value !== 'DELETE');
                     }
                 })
                 .catch(function (err) {
@@ -2252,6 +2282,8 @@ var IpamDrawer = (function () {
                         resultEl.classList.add('is-error');
                         resultEl.textContent = 'Delete request failed: ' + (err && err.message ? err.message : 'network error');
                     }
+                    cancel.disabled = false;
+                    arm.disabled    = (input.value !== 'DELETE');
                 });
         });
     }

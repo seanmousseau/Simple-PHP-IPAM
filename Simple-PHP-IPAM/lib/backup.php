@@ -831,7 +831,7 @@ function ipam_restore_read_staged_sql(string $stagedPath): string
  *
  * @return array{ok: bool, verdict: string, message: string}
  */
-function ipam_restore_proc_check(int $exitCode, string $tool, string $stderr, PDO $db): array
+function ipam_restore_proc_check(int $exitCode, string $tool, string $stderr, PDO $db, int $preMigCount = 0): array
 {
     if ($exitCode > 0) {
         return [
@@ -845,6 +845,10 @@ function ipam_restore_proc_check(int $exitCode, string $tool, string $stderr, PD
     }
     // exitCode === -1 → sigchild build: exit code is unreliable.
     // Fall back to confirming the target DB has the expected post-state.
+    // CR feedback PR #1054: an absolute count is dangerous — if the target
+    // already had `schema_migrations` populated and the restore tool died
+    // before touching the DB, the count is still > 0 and we'd report success.
+    // Compare against the pre-restore count instead.
     try {
         $stmt = $db->query("SELECT COUNT(*) FROM schema_migrations");
         if ($stmt === false) {
@@ -858,16 +862,16 @@ function ipam_restore_proc_check(int $exitCode, string $tool, string $stderr, PD
             'message' => "{$tool} restore: exit code unreliable AND schema_migrations check failed: " . $e->getMessage(),
         ];
     }
-    if ($migCount < 1) {
+    if ($migCount <= $preMigCount) {
         return [
             'ok'      => false,
-            'verdict' => 'exit=-1 (sigchild); schema_migrations empty',
-            'message' => "{$tool} restore: exit code unreliable AND schema_migrations is empty — restore did not produce expected post-state. stderr: " . trim($stderr),
+            'verdict' => "exit=-1 (sigchild); schema_migrations not advanced (pre={$preMigCount}, post={$migCount})",
+            'message' => "{$tool} restore: exit code unreliable AND schema_migrations did not advance (pre={$preMigCount}, post={$migCount}) — restore did not produce expected post-state. stderr: " . trim($stderr),
         ];
     }
     return [
         'ok'      => true,
-        'verdict' => "exit=-1 (sigchild) → post-condition OK ({$migCount} migrations present)",
+        'verdict' => "exit=-1 (sigchild) → post-condition OK (pre={$preMigCount}, post={$migCount})",
         'message' => '',
     ];
 }
@@ -929,11 +933,21 @@ function ipam_restore_split_sql_statements(string $sql): array
             continue;
         }
 
-        // ── single-quoted string ── '...' with '' escape
+        // ── single-quoted string ── '...' with '' or \' escape
         if ($c === "'") {
             $buf .= "'";
             $i++;
             while ($i < $len) {
+                // Backslash escape (MySQL default `\'`, also `\\`, `\n`, etc.).
+                // Consume the backslash and the following character verbatim
+                // so an escaped quote can't terminate the string. Required for
+                // MySQL dumps; harmless for SQLite/Postgres standard mode
+                // where `\` is a literal byte. (CR feedback PR #1054.)
+                if ($sql[$i] === "\\" && $i + 1 < $len) {
+                    $buf .= $sql[$i] . $sql[$i + 1];
+                    $i += 2;
+                    continue;
+                }
                 if ($sql[$i] === "'" && $i + 1 < $len && $sql[$i + 1] === "'") {
                     // Escaped quote: consume both as part of the literal
                     $buf .= "''";

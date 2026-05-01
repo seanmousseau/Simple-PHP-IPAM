@@ -2730,6 +2730,76 @@ function ipam_migrations(): array
                 $db->exec("DROP TABLE backup_history");
             }
         },
+
+        // v3.21.0 — enforce one schedule per destination (CR feedback on PR #1054).
+        // The drawer + edit-schedule flow already assumes one schedule per
+        // destination (ipam_render_destination_edit_drawer() does LIMIT 1);
+        // without a UNIQUE constraint, duplicates were silently possible.
+        // Dedupe existing rows (keep highest id), then add the unique index.
+        '3.21.0-schedule-unique' => static function (PDO $db): void {
+            $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+
+            // Dedupe — engine-portable two-step: find duplicates, delete losers.
+            $dupes = $db->query(
+                "SELECT destination_id, MAX(id) AS keep_id, COUNT(*) AS n
+                   FROM backup_schedules
+                  GROUP BY destination_id
+                 HAVING COUNT(*) > 1"
+            );
+            if ($dupes !== false) {
+                $rows = $dupes->fetchAll(PDO::FETCH_ASSOC);
+                $del  = $db->prepare(
+                    "DELETE FROM backup_schedules
+                      WHERE destination_id = :did
+                        AND id <> :keep"
+                );
+                foreach ($rows as $r) {
+                    $del->execute([
+                        ':did'  => (int) $r['destination_id'],
+                        ':keep' => (int) $r['keep_id'],
+                    ]);
+                }
+            }
+
+            // Index/constraint creation — guard for re-runs across all engines.
+            if ($driver === 'sqlite') {
+                $db->exec(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_backup_schedules_destination
+                       ON backup_schedules(destination_id)"
+                );
+                // The non-unique idx_backup_schedules_destination becomes
+                // redundant once the unique index covers destination_id lookups.
+                $db->exec("DROP INDEX IF EXISTS idx_backup_schedules_destination");
+            } elseif ($driver === 'mysql') {
+                $hasUq = $db->query(
+                    "SELECT COUNT(*) FROM information_schema.statistics
+                      WHERE table_schema = DATABASE()
+                        AND table_name   = 'backup_schedules'
+                        AND index_name   = 'uq_backup_schedules_destination'"
+                );
+                if ($hasUq !== false && (int) $hasUq->fetchColumn() === 0) {
+                    $db->exec(
+                        "ALTER TABLE backup_schedules
+                            ADD UNIQUE KEY uq_backup_schedules_destination (destination_id)"
+                    );
+                }
+                $hasOldIdx = $db->query(
+                    "SELECT COUNT(*) FROM information_schema.statistics
+                      WHERE table_schema = DATABASE()
+                        AND table_name   = 'backup_schedules'
+                        AND index_name   = 'idx_backup_schedules_destination'"
+                );
+                if ($hasOldIdx !== false && (int) $hasOldIdx->fetchColumn() === 1) {
+                    $db->exec("ALTER TABLE backup_schedules DROP INDEX idx_backup_schedules_destination");
+                }
+            } else { // pgsql
+                $db->exec(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_backup_schedules_destination
+                       ON backup_schedules(destination_id)"
+                );
+                $db->exec("DROP INDEX IF EXISTS idx_backup_schedules_destination");
+            }
+        },
     ];
 }
 

@@ -107,6 +107,7 @@ function ipam_destinations_redirect(string $base, string $flashCode = ''): never
 function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
 {
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') return '';
+    csrf_require();
 
     $action = to_str($_POST['action'] ?? '');
 
@@ -250,6 +251,16 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
         }
         if ($domParam !== null && ($domParam < 1 || $domParam > 28)) {
             return 'Day of month must be 1–28.';
+        }
+
+        // CR feedback PR #1054: enforce one schedule per destination at the app
+        // layer too. The DB-side UNIQUE constraint added in the
+        // 3.21.0-schedule-unique migration backstops this; the app check returns
+        // a friendlier error before we hit the SQLSTATE error.
+        $existing = $db->prepare("SELECT COUNT(*) FROM backup_schedules WHERE destination_id = :did");
+        $existing->execute([':did' => $destId]);
+        if ((int) $existing->fetchColumn() > 0) {
+            return 'A schedule already exists for this destination. Edit the existing one instead.';
         }
 
         $nextRunAt = gmdate('Y-m-d H:i:s', ipam_backup_next_run_at([

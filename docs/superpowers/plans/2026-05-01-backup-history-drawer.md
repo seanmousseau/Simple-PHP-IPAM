@@ -1145,7 +1145,7 @@ In `views/backup_admin_destinations.php:70`:
         data-drawer-title="Edit destination — <?= e(to_str($d['name'])) ?>">Edit</button>
 ```
 
-Then **remove** the inline `<tr id="edit-destination-<?= $destId ?>" …>` block (lines `89-110`) entirely. Same for the Edit schedule button at line 198 and the inline schedule row at lines 216-238 — replace with `data-drawer-url="destination_edit_drawer.php?id=<?= $schedId ?>&form=schedule"` and delete the inline tr.
+Then **remove** the inline `<tr id="edit-destination-<?= $destId ?>" …>` block (lines `89-110`) entirely. Same for the Edit schedule button at line 198 and the inline schedule row at lines 216-238 — replace with `data-drawer-url="destination_edit_drawer.php?id=<?= to_int($s['destination_id']) ?>&form=schedule"` and delete the inline tr. **Note (CR feedback PR #1054 / 2026-05-01):** the schedule drawer URL must carry the **destination id**, not the schedule's own primary key — `ipam_render_destination_edit_drawer(..., 'schedule')` looks the schedule up via `WHERE destination_id = :id LIMIT 1`. The shipped implementation uses `to_int($s['destination_id'])`; this plan line previously read `$schedId` and was the only stale reference.
 
 - [ ] **Step 2: Update Playwright selectors in `backups.spec.ts`**
 

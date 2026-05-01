@@ -264,9 +264,11 @@ The **History** tab is a paginated view of every row in `backup_runs`.
 | Status | `running`, `success`, `failed`, or `retention_pruned`. |
 | Size | Uncompressed dump size. |
 | Duration | Elapsed time between started_at and completed_at. |
-| Actions | Download (re-fetch from destination), Verify (SHA-256 recheck), Delete (removes the row; does not delete the file on the destination). |
+| Actions | Download (re-fetch from destination), Verify (SHA-256 recheck), Delete (removes both the `backup_runs` row AND the artifact on the destination, with a literal `DELETE` confirmation). |
 
-A per-row detail drawer with the full `backup_runs` payload, schedule context, and verify/download/delete actions ships in [#803](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/803). Filter chips for status / destination / time range ship in [#804](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/804). This guide is updated when those land.
+**Per-row detail drawer ([#803](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/803), shipped v3.21.0).** Click any history row to open a drawer showing the full `backup_runs` payload (started/completed timestamps, size, checksum, error message) plus three actions: **Verify** re-downloads the artifact and SHA-256-compares against the stored checksum; **Download** is a signed link via `download_remote_backup.php`; **Delete** requires typing the literal string `DELETE` and removes both the row and the remote artifact (audited as `remote_backup.delete` / `remote_backup.delete_failed`). Disabled buttons carry `title=` tooltips explaining why (e.g. retained-by-policy rows, missing artifact, in-flight runs).
+
+**Filter chips ([#804](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/804), shipped v3.21.0).** Three chip rows above the history table — **Status** (All / Running / Success / Failed / Retention pruned), **Backup type** (All / Database / Logical), **Time** (All time / Last 24h / Last 7d / Last 30d). Each chip is a plain link that mutates one URL parameter (`status`, `backup_type`, `since`); a **Clear all** chip appears when any filter is non-default. Custom date ranges and the destination dropdown remain available below the chips for fine-grained control.
 
 ---
 

@@ -64,20 +64,33 @@ test.describe('Run-now inline progress (#1040, #801)', () => {
 
     test('Run-now disables the button + select while the request is in flight', async () => {
         page.once('dialog', d => d.accept());
-        // Start watching the disabled state immediately after the click; the
-        // request resolves quickly against a local destination so we sample
-        // via Promise.all rather than racing on toBeDisabled directly.
-        const click = page.locator('#run-now-button').click();
-        await click;
-        // The button transitions to "Running…" + disabled while the fetch
-        // is open. Catch that transition before the fetch resolves.
-        // (The label revert happens in the .finally() handler in app.js.)
-        await expect(page.locator('#run-now-result')).not.toBeEmpty({ timeout: 30_000 });
-        // After completion: the button + select are re-enabled and the
-        // button label is restored.
-        await expect(page.locator('#run-now-button')).toBeEnabled();
-        await expect(page.locator('#run-now-destination')).toBeEnabled();
-        await expect(page.locator('#run-now-button')).toHaveText('Run backup now');
+        // CR feedback PR #1054: assert the in-flight disabled state, not
+        // just the post-completion enabled state. The local-filesystem
+        // backup path resolves in low-double-digit milliseconds against
+        // SQLite, so we route-intercept run_backup_now.php and inject a
+        // small delay to guarantee a visible window in which to assert
+        // disabled. A regression that stops disabling the controls during
+        // the request would now fail this test rather than silently pass.
+        await page.route('**/run_backup_now.php', async (route) => {
+            await new Promise((res) => setTimeout(res, 750));
+            await route.continue();
+        });
+        try {
+            const button      = page.locator('#run-now-button');
+            const destination = page.locator('#run-now-destination');
+            await Promise.all([
+                button.click(),
+                expect(button).toBeDisabled({ timeout: 5_000 }),
+                expect(destination).toBeDisabled({ timeout: 5_000 }),
+            ]);
+            // Wait for the request to complete, then assert restored state.
+            await expect(page.locator('#run-now-result')).not.toBeEmpty({ timeout: 30_000 });
+            await expect(button).toBeEnabled();
+            await expect(destination).toBeEnabled();
+            await expect(button).toHaveText('Run backup now');
+        } finally {
+            await page.unroute('**/run_backup_now.php');
+        }
     });
 
     test('successful Run-now writes a ✓ checkmark and applies .success styling', async () => {
@@ -113,10 +126,11 @@ test.describe('Run-now inline progress (#1040, #801)', () => {
         await page.reload();
         await page.locator('#run-now-destination').selectOption({ label: DEST_LOCAL });
         await page.locator('#run-now-button').click();
-        // Give the confirm-dismiss a moment to settle; the result span
-        // should remain empty.
-        await page.waitForTimeout(250);
+        // CR feedback PR #1054: avoid hard wait. After cancelling the confirm,
+        // app.js never starts a fetch; the button/select stay enabled and the
+        // result span stays empty. Assert the button-enabled state (which the
+        // confirm-cancel branch leaves untouched) as the deterministic signal.
+        await expect(page.locator('#run-now-button')).toBeEnabled({ timeout: 2_000 });
         await expect(result).toBeEmpty();
-        await expect(page.locator('#run-now-button')).toBeEnabled();
     });
 });

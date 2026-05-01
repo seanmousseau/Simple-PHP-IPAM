@@ -615,7 +615,7 @@ CREATE TABLE IF NOT EXISTS backup_schedules (
   next_run_at       TEXT,
   created_at        TEXT    NOT NULL DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_backup_schedules_destination ON backup_schedules(destination_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_backup_schedules_destination ON backup_schedules(destination_id);
 CREATE INDEX IF NOT EXISTS idx_backup_schedules_next_run ON backup_schedules(next_run_at);
 
 -- v3.21.0 #799 (§A1): unified backup_runs replaces backup_history + backup_log.

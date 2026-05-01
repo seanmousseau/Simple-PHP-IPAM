@@ -721,7 +721,7 @@ CREATE TABLE IF NOT EXISTS backup_schedules (
   CONSTRAINT chk_bsched_ret_weekly  CHECK (retention_weekly  >= 0),
   CONSTRAINT chk_bsched_ret_monthly CHECK (retention_monthly >= 0),
   CONSTRAINT chk_bsched_active     CHECK (is_active IN (0,1)),
-  KEY idx_backup_schedules_destination (destination_id),
+  UNIQUE KEY uq_backup_schedules_destination (destination_id),
   KEY idx_backup_schedules_next_run (next_run_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -818,6 +818,8 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.14.0-email-otp'),
   ('3.15.0-passkeys'),
   ('3.16.0-preferred-mfa-method'),
-  ('3.17.0-backup');
+  ('3.17.0-backup'),
+  ('3.21.0-backup-runs'),
+  ('3.21.0-schedule-unique');
 
 SET FOREIGN_KEY_CHECKS = 1;

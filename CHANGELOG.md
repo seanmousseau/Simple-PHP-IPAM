@@ -39,8 +39,8 @@ Unified Backup & Restore admin surface, restore-wizard rewrite, and a single `ba
 ### Removed
 - **`db_tools.php` Database admin sidebar nav entry**. The page itself is retained for direct-URL data-export flows but no longer exposes any backup functionality and is no longer linked from the sidebar. (#798)
 
-### Deferred to v3.22.0
-- **`backup_runs.created_at` audit column** (#809, B-P1-31). The issue's spec admits `created_at == started_at in practice`; formal column split needs a table rebuild because SQLite forbids non-constant `DEFAULT (datetime('now'))` on `ALTER TABLE ADD COLUMN`. Pairs naturally with v3.22.0's planned concurrency-hardening migration window.
+### Known limitations
+- **`backup_runs.created_at` audit column** (#809, B-P1-31) is deferred to v3.22.0. The issue's spec admits `created_at == started_at in practice`; formal column split needs a table rebuild because SQLite forbids non-constant `DEFAULT (datetime('now'))` on `ALTER TABLE ADD COLUMN`. Pairs naturally with v3.22.0's planned concurrency-hardening migration window.
 
 ## [3.20.0] - 2026-04-30
 

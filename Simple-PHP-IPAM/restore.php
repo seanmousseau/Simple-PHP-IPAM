@@ -168,6 +168,18 @@ if ($driver === 'sqlite') {
     $cmd = ['mysql', '-h', $host, '-P', $port, '-u', $user, $dbName];
     $env = array_merge(getenv() ?: [], ['MYSQL_PWD' => $pass]);
 
+    // Capture schema_migrations count before the restore so the sigchild
+    // post-condition check compares pre vs post (CR feedback PR #1054).
+    $preMigCount = 0;
+    try {
+        $preMigStmt = $db->query("SELECT COUNT(*) FROM schema_migrations");
+        if ($preMigStmt !== false) {
+            $preMigCount = (int) $preMigStmt->fetchColumn();
+        }
+    } catch (Throwable $_e) {
+        // schema_migrations might not exist yet on a fresh target; treat as 0.
+    }
+
     $pipes = [];
     // nosemgrep
     $proc = proc_open( // nosemgrep
@@ -195,7 +207,7 @@ if ($driver === 'sqlite') {
     $status    = proc_get_status($proc);
     $finalExit = $status['exitcode'];
     proc_close($proc);
-    $check = ipam_restore_proc_check($finalExit, 'mysql', (string)$stderr, $db);
+    $check = ipam_restore_proc_check($finalExit, 'mysql', (string)$stderr, $db, $preMigCount);
     if (!$check['ok']) {
         restore_die($check['message']);
     }
@@ -226,6 +238,18 @@ if ($driver === 'sqlite') {
     $cmd = ['psql', '-h', $host, '-p', $port, '-U', $user, $dbName];
     $env = array_merge(getenv() ?: [], ['PGPASSWORD' => $pass]);
 
+    // Capture schema_migrations count before the restore so the sigchild
+    // post-condition check compares pre vs post (CR feedback PR #1054).
+    $preMigCount = 0;
+    try {
+        $preMigStmt = $db->query("SELECT COUNT(*) FROM schema_migrations");
+        if ($preMigStmt !== false) {
+            $preMigCount = (int) $preMigStmt->fetchColumn();
+        }
+    } catch (Throwable $_e) {
+        // schema_migrations might not exist yet on a fresh target.
+    }
+
     $pipes = [];
     $proc = proc_open( // nosemgrep
         $cmd,
@@ -248,7 +272,7 @@ if ($driver === 'sqlite') {
     $status    = proc_get_status($proc);
     $finalExit = $status['exitcode'];
     proc_close($proc);
-    $check = ipam_restore_proc_check($finalExit, 'psql', (string)$stderr, $db);
+    $check = ipam_restore_proc_check($finalExit, 'psql', (string)$stderr, $db, $preMigCount);
     if (!$check['ok']) {
         restore_die($check['message']);
     }

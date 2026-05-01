@@ -50,27 +50,40 @@ final class RestoreProcCheckTest extends TestCase
         $this->assertStringContainsString('Access denied', $r['message']);
     }
 
-    public function testSigchildAmbiguousWithMigrationsPopulatedIsSuccess(): void
+    public function testSigchildAmbiguousWithMigrationsAdvancedIsSuccess(): void
     {
-        // exit=-1 on sigchild builds; the schema_migrations table is the
-        // canonical post-condition signal. Any populated count is enough.
+        // exit=-1 on sigchild builds; schema_migrations advanced past the
+        // pre-restore count is the canonical post-condition signal.
+        // (CR feedback PR #1054: compare pre/post, not absolute count.)
         $db = $this->makeDb(migrationRows: 5);
-        $r  = ipam_restore_proc_check(-1, 'mysql', '', $db);
+        $r  = ipam_restore_proc_check(-1, 'mysql', '', $db, /*preMigCount*/ 0);
         $this->assertTrue($r['ok']);
         $this->assertStringContainsString('exit=-1 (sigchild)', $r['verdict']);
-        $this->assertStringContainsString('post-condition OK (5 migrations present)', $r['verdict']);
+        $this->assertStringContainsString('post-condition OK (pre=0, post=5)', $r['verdict']);
         $this->assertSame('', $r['message']);
     }
 
     public function testSigchildAmbiguousWithEmptySchemaMigrationsIsFailure(): void
     {
-        // Empty schema_migrations means the dump never wrote it — restore
-        // produced no usable post-state. Stay on the safe side and fail.
+        // Empty schema_migrations and pre=0 means the dump never wrote it —
+        // restore produced no usable post-state. Fail safe.
         $db = $this->makeDb(migrationRows: 0);
-        $r  = ipam_restore_proc_check(-1, 'mysql', 'silent stderr', $db);
+        $r  = ipam_restore_proc_check(-1, 'mysql', 'silent stderr', $db, /*preMigCount*/ 0);
         $this->assertFalse($r['ok']);
-        $this->assertStringContainsString('schema_migrations empty', $r['verdict']);
+        $this->assertStringContainsString('schema_migrations not advanced', $r['verdict']);
         $this->assertStringContainsString('did not produce expected post-state', $r['message']);
+    }
+
+    public function testSigchildAmbiguousWithUnchangedCountIsFailure(): void
+    {
+        // CR feedback PR #1054: pre=5, post=5 means the restore tool died
+        // before touching the DB but the table was already populated. The
+        // old absolute-count check would call this success; the pre/post
+        // compare correctly fails it.
+        $db = $this->makeDb(migrationRows: 5);
+        $r  = ipam_restore_proc_check(-1, 'mysql', 'silent stderr', $db, /*preMigCount*/ 5);
+        $this->assertFalse($r['ok']);
+        $this->assertStringContainsString('not advanced (pre=5, post=5)', $r['verdict']);
     }
 
     public function testSigchildAmbiguousWithMissingSchemaMigrationsTableIsFailure(): void

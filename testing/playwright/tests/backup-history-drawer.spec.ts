@@ -8,6 +8,9 @@ import { login, appUrl, ADMIN_USER, ADMIN_PASS, newAuthContext } from '../fixtur
 
 let ctx:  BrowserContext;
 let page: Page;
+// CR feedback PR #1054: capture the run id this suite creates so the delete
+// test only removes its own row instead of clobbering shared seed data.
+let suiteRunId: string | null = null;
 
 test.describe('Backup history drawer (#803)', () => {
 
@@ -16,16 +19,35 @@ test.describe('Backup history drawer (#803)', () => {
     page = await ctx.newPage();
     await login(page, ADMIN_USER, ADMIN_PASS);
 
-    // Best-effort: kick off one Run-now so there's at least one history row.
-    // The 'destinations' tab on the unified surface exposes a Run-now button
-    // per destination row when a destination exists.
-    await page.goto(appUrl('backup_admin.php?tab=destinations'));
-    const runNow = page.locator('button[data-run-now]').first();
-    if (await runNow.count() > 0) {
-      await runNow.click();
-      // Run-now is async (kicked off via fetch); give the server a moment to
-      // record at least the run row before we navigate to history.
-      await page.waitForTimeout(1500);
+    // Snapshot the existing top history row id (if any) so we can detect a
+    // newly-inserted run rather than waiting on a fixed timer.
+    await page.goto(appUrl('backup_admin.php?tab=history'));
+    const priorTop = await page.locator('tr.history-row').first().getAttribute('data-run-id').catch(() => null);
+
+    // Best-effort: kick off one Run-now via the Backup tab (which targets a
+    // known-good destination) so there's at least one history row. Falls
+    // through cleanly if the bootstrap doesn't expose the button — tests
+    // below skip when no rows are seeded.
+    await page.goto(appUrl('backup_admin.php?tab=backup'));
+    const runNow = page.locator('#run-now-button');
+    if (await runNow.count() > 0 && await runNow.isVisible().catch(() => false)) {
+      page.once('dialog', d => d.accept());
+      await runNow.click().catch(() => null);
+      // Best-effort wait for a new row at the top of History. We accept
+      // either a new id or no change (tests that need a row will skip).
+      // 30s budget absorbs slow dump/upload paths in CI; null result is
+      // tolerated (this is non-blocking setup).
+      await expect.poll(async () => {
+        await page.goto(appUrl('backup_admin.php?tab=history'));
+        const top = await page.locator('tr.history-row').first().getAttribute('data-run-id').catch(() => null);
+        return top !== null && top !== priorTop ? top : null;
+      }, { timeout: 30_000 }).not.toBeNull().catch(() => null);
+
+      suiteRunId = await page.locator('tr.history-row').first().getAttribute('data-run-id').catch(() => null);
+      // Only treat as "this suite's run" if it's actually new.
+      if (suiteRunId === priorTop) {
+        suiteRunId = null;
+      }
     }
   });
 
@@ -94,12 +116,15 @@ test.describe('Backup history drawer (#803)', () => {
   });
 
   test('Delete requires literal DELETE confirmation and removes the row', async () => {
-    await page.goto(appUrl('backup_admin.php?tab=history'));
-    const before = await page.locator('tr.history-row').count();
-    test.skip(before === 0, 'No rows to delete');
+    // CR feedback PR #1054: target the run created in beforeAll, not
+    // .first() — sequential workers share the SQLite DB, so deleting an
+    // arbitrary row could clobber fixture data or hit a protected row.
+    test.skip(suiteRunId === null, 'beforeAll did not create a suite run');
+    const runId = suiteRunId as string;
 
-    const target  = page.locator('tr.history-row').first();
-    const runId   = await target.getAttribute('data-run-id');
+    await page.goto(appUrl('backup_admin.php?tab=history'));
+    const target = page.locator(`tr.history-row[data-run-id="${runId}"]`);
+    await expect(target, 'suite-created run still in history').toBeVisible();
     await target.click();
     const drawer  = page.locator('#global-drawer');
     await expect(drawer).toBeVisible();

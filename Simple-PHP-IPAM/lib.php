@@ -9657,13 +9657,15 @@ function ipam_render_backup_run_detail(\PDO $db, int $id): ?string
     );
     $st->execute([':id' => $id]);
     $row = $st->fetch(\PDO::FETCH_ASSOC);
-    if (!$row) {
+    if (!is_array($row)) {
         return null;
     }
 
-    $hasArtifact = ($row['status'] === 'success') && !empty($row['filename']);
-    $isRunning   = ($row['status'] === 'running');
-    $isProtected = (int) ($row['is_protected'] ?? 0) === 1;
+    $status      = to_str($row['status'] ?? '');
+    $filename    = to_str($row['filename'] ?? '');
+    $hasArtifact = ($status === 'success') && $filename !== '';
+    $isRunning   = ($status === 'running');
+    $isProtected = to_int($row['is_protected'] ?? 0) === 1;
 
     $disabled = [
         'verify'   => !$hasArtifact || $isRunning,

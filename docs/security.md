@@ -542,6 +542,6 @@ The wizard threads four pieces of state across the three steps via signed tokens
 
 ### Checksum verification
 
-If the originating backup row in `backup_log` (filtered to `type = 'backup'`) has a non-empty `checksum`, `prepareForRestore()` recomputes SHA-256 of the on-the-wire blob (BEFORE decryption) and refuses to stage the file on mismatch. The downloaded blob is unlinked and a `RuntimeException` is thrown — no audit success row, no staged file leftover.
+If the originating row in `backup_runs` (filtered to `backup_type IN ('database','logical')` with `triggered_by IN ('schedule','manual','cli')`) has a non-empty `checksum`, `prepareForRestore()` recomputes SHA-256 of the on-the-wire blob (BEFORE decryption) and refuses to stage the file on mismatch. The downloaded blob is unlinked and a `RuntimeException` is thrown — no audit success row, no staged file leftover.
 
 See [Restore from a backup](restore.md) for the full wizard workflow.

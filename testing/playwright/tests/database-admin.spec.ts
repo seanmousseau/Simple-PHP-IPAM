@@ -30,9 +30,11 @@ test('sidebar no longer carries a "Database" link (#798 retirement)', async () =
 });
 
 test('db_tools.php is still reachable via direct URL', async () => {
-  await page.goto('db_tools.php');
-  // Page must still load (admins may have bookmarks or external refs); only
-  // the sidebar entry retires. 200 + recognisable content is enough.
+  // CR feedback PR #1054: assert the response actually loaded, not just
+  // the URL — toHaveURL alone passes even on a 5xx.
+  const response = await page.goto('db_tools.php');
+  expect(response, 'page.goto must return a response').not.toBeNull();
+  expect(response?.ok()).toBe(true);
   await expect(page).toHaveURL(/db_tools\.php/);
 });
 

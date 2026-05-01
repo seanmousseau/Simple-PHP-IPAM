@@ -46,6 +46,7 @@ function ipam_backup_admin_restore_handle(\PDO $db, array $config): array
     $myUserId = is_int($me['id'] ?? null) ? $me['id'] : 0;
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        csrf_require();
         if (demo_mode_enabled()) {
             $err = 'Restore is disabled in demo mode.';
         } elseif (ipam_restore_wizard_is_rate_limited($db, $myUserId ?: null)) {
@@ -165,8 +166,16 @@ function ipam_backup_admin_restore_handle(\PDO $db, array $config): array
                         @set_time_limit(0);
                         try {
                             ipam_restore_apply($db, $verified, $stagedFilename, $stagedDestId > 0 ? $stagedDestId : null);
+                            // Match the staging-failure cleanup: only unlink
+                            // when the resolved path lives under data/tmp/.
                             $cleanupReal = realpath($verified);
-                            if ($cleanupReal !== false && is_file($cleanupReal)) {
+                            $tmpReal     = realpath(__DIR__ . '/../data/tmp');
+                            if (
+                                $cleanupReal !== false
+                                && $tmpReal !== false
+                                && str_starts_with($cleanupReal . DIRECTORY_SEPARATOR, rtrim($tmpReal, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR)
+                                && is_file($cleanupReal)
+                            ) {
                                 @unlink($cleanupReal); // nosemgrep: php.lang.security.unlink-use.unlink-use -- realpath() under data/tmp/
                             }
                             ipam_restore_wizard_invalidate_session();

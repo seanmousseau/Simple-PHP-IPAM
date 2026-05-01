@@ -22,7 +22,20 @@ $destType = to_str($dest['type']);
   <?php $cfg = $config; ?>
   <fieldset>
     <legend><?= e(strtoupper($destType)) ?> connection</legend>
-    <?php require __DIR__ . '/destination_form_' . $destType . '.php'; ?>
+    <?php
+    // CR feedback PR #1054: fail-closed allowlist before dynamic require.
+    // `$destType` should already be constrained by backup_destinations.type CHECK,
+    // but defense in depth — never let a hostile DB row LFI this template.
+    $allowedTypes = ['s3', 'sftp', 'local'];
+    if (!in_array($destType, $allowedTypes, true)) {
+        throw new RuntimeException('Unsupported destination type: ' . $destType);
+    }
+    $partial = __DIR__ . '/destination_form_' . $destType . '.php';
+    if (!is_file($partial)) {
+        throw new RuntimeException('Missing destination form partial: ' . $destType);
+    }
+    require $partial;
+    ?>
   </fieldset>
   <div class="drawer-actions">
     <button type="submit" class="action-pill">Save changes</button>

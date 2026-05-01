@@ -46,15 +46,15 @@ declare(strict_types=1);
   <?php elseif ($phase === RESTORE_WIZARD_PHASE_STAGED): ?>
     <section class="card">
       <h2>Step 2: dry-run preview</h2>
-      <p>Staged: <strong><?= htmlspecialchars($stagedFilename, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></strong> (<?= htmlspecialchars(number_format($stagedSize), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?> bytes)</p>
+      <p>Staged: <strong><?= e($stagedFilename) ?></strong> (<?= e(number_format($stagedSize)) ?> bytes)</p>
       <form method="post">
-        <input type="hidden" name="csrf" value="<?= htmlspecialchars(csrf_token(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
+        <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
         <input type="hidden" name="step" value="dryrun">
-        <input type="hidden" name="staged_path" value="<?= htmlspecialchars($stagedPath, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
-        <input type="hidden" name="staged_sig" value="<?= htmlspecialchars($stagedSig, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
-        <input type="hidden" name="staged_filename" value="<?= htmlspecialchars($stagedFilename, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
-        <input type="hidden" name="staged_size" value="<?= htmlspecialchars((string) $stagedSize, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
-        <input type="hidden" name="staged_destination_id" value="<?= htmlspecialchars((string) $stagedDestId, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
+        <input type="hidden" name="staged_path" value="<?= e($stagedPath) ?>">
+        <input type="hidden" name="staged_sig" value="<?= e($stagedSig) ?>">
+        <input type="hidden" name="staged_filename" value="<?= e($stagedFilename) ?>">
+        <input type="hidden" name="staged_size" value="<?= e((string) $stagedSize) ?>">
+        <input type="hidden" name="staged_destination_id" value="<?= e((string) $stagedDestId) ?>">
         <button type="submit" class="action-pill">Run dry-run</button>
       </form>
     </section>

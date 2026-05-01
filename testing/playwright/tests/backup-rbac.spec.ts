@@ -132,6 +132,23 @@ test('readonly is blocked from legacy restore_web.php (403)', async () => {
   expect(resp.status()).toBe(403);
 });
 
+// CR feedback PR #1054: cover the new drawer-partial endpoints introduced
+// in v3.21.0. Structural lint in tests/BackupAdminRbacTest.php asserts the
+// require_role('admin') guard is present in source; the HTTP-level checks
+// below confirm the guard actually rejects readonly callers in practice.
+const DRAWER_ENDPOINTS = [
+  'backup_run_detail.php?id=1',
+  'destination_edit_drawer.php?id=1&form=destination',
+  'destination_edit_drawer.php?id=1&form=schedule',
+] as const;
+
+for (const path of DRAWER_ENDPOINTS) {
+  test(`readonly is blocked from ${path} (403)`, async () => {
+    const resp = await page.request.get(appUrl(path), { maxRedirects: 0 });
+    expect(resp.status()).toBe(403);
+  });
+}
+
 test('logged-out user is redirected from backup_admin.php to login', async () => {
   // Use a fresh context with no session so we exercise the unauthenticated path.
   const anonCtx = await page.context().browser()!.newContext({ ignoreHTTPSErrors: true });

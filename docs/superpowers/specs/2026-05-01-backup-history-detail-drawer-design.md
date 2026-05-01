@@ -45,7 +45,7 @@ The Destinations tab gets the same treatment: edit destination and edit schedule
 
 ### 3.3 Data flow — opening the drawer
 
-```
+```text
 Click row
   → JS reads data-drawer-url
   → fetch GET backup_run_detail.php?id=N
@@ -56,7 +56,7 @@ Click row
 
 ### 3.4 Data flow — Verify
 
-```
+```text
 Verify button click
   → JS POST backup_admin.php?tab=history with { csrf, action=verify, id }
   → handler streams the file from the destination
@@ -68,7 +68,7 @@ Verify button click
 
 ### 3.5 Data flow — Delete
 
-```
+```text
 Delete button click
   → drawer expands an inline "danger zone" with a text input
   → user types DELETE
@@ -84,7 +84,7 @@ Delete button click
 
 ## 4. Drawer body — History detail
 
-```
+```text
 ─────────────────────────────────────
 Run #1234 — success                  ✕
 ─────────────────────────────────────

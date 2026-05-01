@@ -733,6 +733,10 @@ Reference for every table, column, foreign key, and uniqueness constraint in the
 
 - `destination_id` → `backup_destinations.id` ON DELETE CASCADE
 
+**Unique constraints**
+
+- (`destination_id`)
+
 ## `backup_runs`
 
 | Column | SQLite | MySQL | PostgreSQL | Null | Default | Notes |
