@@ -2035,12 +2035,82 @@ var IpamDrawer = (function () {
     document.addEventListener('click', function (e) {
         var btn = e.target.closest ? e.target.closest('[data-drawer-title]') : null;
         if (!btn) return;
+        // [data-drawer-url] elements have their own delegate below; don't double-handle.
+        if (btn.hasAttribute('data-drawer-url')) return;
         e.preventDefault();
         open(
             btn.getAttribute('data-drawer-title') || '',
             btn.getAttribute('data-drawer-tpl')   || ''
         );
     });
+
+    // Event delegation — handle [data-drawer-url] elements (#803).
+    // Loads an HTML partial via fetch and injects it into the drawer body.
+    //
+    // Trust model: the partial is fetched from a same-origin admin-gated
+    // endpoint (require_role('admin')) that emits server-rendered HTML with
+    // every user-controlled value passed through e()/htmlspecialchars. This
+    // matches the trust model of the existing template-id path above
+    // (bodyEl.innerHTML = tpl.innerHTML). innerHTML is safe here because
+    // (a) the source is our own server, (b) admins are already trusted,
+    // (c) <script> tags injected via innerHTML do not execute in modern
+    // browsers per the HTML spec.
+    document.addEventListener('click', function (e) {
+        var trigger = e.target.closest ? e.target.closest('[data-drawer-url]') : null;
+        if (!trigger) return;
+        if (e.target.closest && e.target.closest('#global-drawer')) return;  // already-open drawer
+        e.preventDefault();
+        _openFromUrl(trigger);
+    });
+
+    document.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        var trigger = e.target.closest ? e.target.closest('[data-drawer-url]') : null;
+        if (!trigger) return;
+        var tag = (e.target.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || tag === 'select' || tag === 'button') return;
+        e.preventDefault();
+        _openFromUrl(trigger);
+    });
+
+    function _openFromUrl(trigger) {
+        var url   = trigger.getAttribute('data-drawer-url');
+        var title = trigger.getAttribute('data-drawer-title') || 'Details';
+        if (!url) return;
+        open(title, '');
+        var bodyEl = document.getElementById('global-drawer-body');
+        if (!bodyEl) return;
+        // Loading state — fully DOM-constructed, no untrusted input involved.
+        while (bodyEl.firstChild) bodyEl.removeChild(bodyEl.firstChild);
+        var loading = document.createElement('p');
+        loading.className = 'muted';
+        loading.textContent = 'Loading…';
+        bodyEl.appendChild(loading);
+        fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'text/html' } })
+            .then(function (r) {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.text();
+            })
+            .then(function (html) { bodyEl.innerHTML = html; })  // trusted same-origin partial; see comment above
+            .catch(function (err) {
+                // Error state — build via DOM, do not interpolate err.message into HTML.
+                while (bodyEl.firstChild) bodyEl.removeChild(bodyEl.firstChild);
+                var box = document.createElement('div');
+                box.className = 'drawer-error';
+                box.setAttribute('role', 'alert');
+                var p = document.createElement('p');
+                p.textContent = 'Could not load details: ' + ((err && err.message) ? err.message : 'unknown error');
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'action-pill';
+                btn.id = 'drawer-retry';
+                btn.textContent = 'Retry';
+                btn.addEventListener('click', function () { _openFromUrl(trigger); });
+                box.appendChild(p);
+                box.appendChild(btn);
+                bodyEl.appendChild(box);
+            });
+    }
 
     return { open: open, close: close };
 }());
