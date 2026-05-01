@@ -1936,6 +1936,44 @@ button:active,.button:active,.action-pill:active{transform:translateY(1px)}
   .settings-mobile-nav{display:block}
 }
 
+/* === v3.21 backup_admin tab bar === */
+.tab-bar{
+  border-bottom:1px solid var(--border);
+  margin:0 0 1rem 0;
+  overflow-x:auto;
+  -webkit-overflow-scrolling:touch;
+}
+.tab-bar__list{
+  list-style:none;
+  margin:0;
+  padding:0;
+  display:flex;
+  gap:.25rem;
+  flex-wrap:nowrap;
+}
+.tab-bar__item{margin:0}
+.tab-bar__link{
+  display:inline-block;
+  padding:.5rem .9rem;
+  border:1px solid transparent;
+  border-bottom:none;
+  border-top-left-radius:var(--radius-md,8px);
+  border-top-right-radius:var(--radius-md,8px);
+  color:var(--fg);
+  text-decoration:none;
+  font-size:var(--text-sm,.875rem);
+  white-space:nowrap;
+  transform:translateY(1px);
+}
+.tab-bar__link:hover{background:var(--card)}
+.tab-bar__link:focus-visible{outline:2px solid var(--link);outline-offset:-2px}
+.tab-bar__link.is-active,
+.tab-bar__link[aria-current="page"]{
+  background:var(--card);
+  border-color:var(--border);
+  font-weight:600;
+}
+
 /* === v3.17 destinations + backup history === */
 .destination-form, .schedule-form {
     display: grid;
