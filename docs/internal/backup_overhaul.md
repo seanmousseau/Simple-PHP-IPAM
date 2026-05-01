@@ -685,20 +685,20 @@ Each milestone is now ≤16 items, single-theme. Less context-switching mid-rele
 
 | ID | Type | Title | Cur | Sugg | Pri | Notes |
 |---|---|---|---|---|---|---|
-| F1 | Func | Unified `Backup & Restore` admin (5 tabs) | — | v3.21 | P0 | Anchor |
-| F2 | Func | Retire `db_tools.php` Database entry | — | v3.21 | P0 | Comes with F1 |
-| F3 | Func | Single backup-history view (§A1 `backup_runs`) | — | v3.21 | P0 | Schema migration + data merge |
-| U1 | UI | Drawer-driven CRUD across surface | — | v3.21 | P0 | Comes with F1 |
-| U2 | UI | Inline progress reporting on Run-now | — | v3.21 | P1 | Replaces redirect-and-flash |
-| U7 | UI | Empty-state copy across tabs | — | v3.21 | P2 | Comes with F1 |
+| ~~F1~~ | ~~Func~~ | ~~Unified `Backup & Restore` admin (5 tabs)~~ | #797 | **DONE 2026-05-01** | P0 | Shipped Wave 4 — `backup_admin.php` with 5 tabs (Destinations / Backup / History / Restore / Notifications). |
+| ~~F2~~ | ~~Func~~ | ~~Retire `db_tools.php` Database entry~~ | #798 | **DONE 2026-05-01** | P0 | Sidebar nav entry removed (`lib.php:7225` comment); `db_tools.php` retained as direct-URL data-export tool only, no backup UI. |
+| ~~F3~~ | ~~Func~~ | ~~Single backup-history view (§A1 `backup_runs`)~~ | #799 | **DONE 2026-05-01** | P0 | Shipped Wave 2 — `backup_runs` table replaces `backup_log`+`backup_history`; legacy tables dropped at end of migration. |
+| ~~U1~~ | ~~UI~~ | ~~Drawer-driven CRUD across surface~~ | #800 | **DONE 2026-05-01** | P0 | Global drawer (#803) for History details + Destinations editors; webhooks / notifications / restore-wizard already drawer-driven. |
+| ~~U2~~ | ~~UI~~ | ~~Inline progress reporting on Run-now~~ | #801 | **DONE 2026-05-01** | P1 | Run-now now async + inline result panel; replaces redirect-and-flash. |
+| ~~U7~~ | ~~UI~~ | ~~Empty-state copy across tabs~~ | #802 | **DONE 2026-05-01** | P2 | "No backup runs found" / "No history" empty-state strings on Backup + History views. |
 | ~~F11~~ | ~~Func~~ | ~~Per-row backup detail drawer in History~~ | #803 | **DONE 2026-05-01** | P2 | Shipped: `backup_run_detail.php` partial + drawer triggers in History; `destination_edit_drawer.php` partial + drawer triggers replace inline editors on Destinations for unified-surface consistency. Follow-ups filed: #1052 (bulk multi-select delete) and #1053 (auto retention purge), both v3.22.0. |
 | ~~F12~~ | ~~Func~~ | ~~Filter chips on History~~ | #804 | **DONE 2026-05-01** | P2 | Three chip rows (Status / Backup type / Time) above the existing form; chip clicks mutate single URL params, no JS; Clear-all chip resets. URL `type=` renamed to `backup_type=` (database\|logical), legacy `type=restore` still yields zero rows. |
-| B-P0-3 | Audit | **Sigchild fix in `restore.php`** | — | v3.21 | **P0** | Same bug v3.19.1 fixed in `backup_run_dump` |
-| B-P0-4 | Audit | **SQL splitter rewrite (real lexer)** | — | v3.21 | **P0** | T13 first |
-| Restore wizard rewrite | Audit | Step-machine + token + cleanup (#6/#43/#50/#56/#61/#62) | — | v3.21 | P1 | Bundle |
-| F38 | Func | Drop ambiguous `type`+`triggered_by` combo | — | v3.21 | P1 | §A1 schema cleanup |
-| B-P1-31 | Audit | `started_at` vs `created_at` divergence | — | v3.21 | P1 | Fixed by §A1 |
-| T13 | Test | SQL splitter property test | — | v3.21 | P0 | Ships before splitter rewrite |
+| ~~B-P0-3~~ | ~~Audit~~ | ~~**Sigchild fix in `restore.php`**~~ | #805 | **DONE 2026-05-01** | **P0** | Same fallback applied as v3.19.1's fix to `backup_run_dump`. |
+| ~~B-P0-4~~ | ~~Audit~~ | ~~**SQL splitter rewrite (real lexer)**~~ | #806 | **DONE 2026-05-01** | **P0** | Shipped Wave 1 (commit 90552da); covered by `RestoreSplitterTest`. |
+| ~~Restore wizard rewrite~~ | ~~Audit~~ | ~~Step-machine + token + cleanup (#6/#43/#50/#56/#61/#62)~~ | #807 | **DONE 2026-05-01** | P1 | Shipped Wave 3 — `lib/restore_wizard.php` phase-locked state machine + `restore_web` rewrite + Playwright updates. |
+| ~~F38~~ | ~~Func~~ | ~~Drop ambiguous `type`+`triggered_by` combo~~ | #808 | **DONE 2026-05-01** | P1 | `backup_runs` schema uses `backup_type` (database\|logical) + `triggered_by` (schedule\|manual\|cli) as separate axes. |
+| B-P1-31 | Audit | `started_at` vs `created_at` divergence | #809 | **DEFERRED → v3.22.0** | P1 | `started_at` already serves as row insert time (orchestrator INSERTs at run start; spec admits `created_at == started_at in practice`). Formal `created_at` column needs a table rebuild (SQLite forbids non-constant DEFAULT on ADD COLUMN). Re-targeted to v3.22.0 alongside concurrency-hardening migration window. See [#809 comment 2026-05-01](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/809#issuecomment-4360231729). |
+| ~~T13~~ | ~~Test~~ | ~~SQL splitter property test~~ | #810 | **DONE 2026-05-01** | P0 | Shipped Wave 1 alongside the lexer rewrite; `tests/RestoreSplitterTest.php`. |
 | ~~T10~~ | ~~Test~~ | ~~Non-admin role test on all new pages~~ | #811 | **DONE 2026-05-01** | P0 | Shipped: `tests/BackupAdminRbacTest.php` (structural lint) + `testing/playwright/tests/backup-rbac.spec.ts` (HTTP-level). |
 | ~~D1~~ | ~~Doc~~ | ~~Rewrite `docs/backups.md` for unified surface~~ | #812 | **DONE 2026-05-01** | P0 | Rewritten end-to-end for unified surface. Obsolete `docs/backup.md` removed. |
 | ~~D2~~ | ~~Doc~~ | ~~New `docs/restore.md`~~ | #813 | **DONE 2026-05-01** | P0 | Rewritten for unified Restore tab; both Logical / Database paths documented; cross-version policy formalised. |
