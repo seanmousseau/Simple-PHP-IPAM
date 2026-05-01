@@ -6,6 +6,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.21.0] - 2026-05-01
+
+Unified Backup & Restore admin surface, restore-wizard rewrite, and a single `backup_runs` history table merging the two legacy logs. Theme: collapse the six pre-existing backup pages into one tabbed admin surface with consistent drawer-driven CRUD. Includes a P0 sigchild fix on the restore path and a real-lexer SQL splitter rewrite.
+
+### Added
+- **Unified `Backup & Restore` admin (5 tabs)** at `backup_admin.php` — Destinations, Backup, History, Restore, Notifications. The legacy URLs (`backup_history.php`, `destinations.php`, `restore_web.php`, `notifications.php`) continue to work as direct entry points but the sidebar nav points at the unified surface. (#797)
+- **Per-row backup detail drawer on the History tab** — clicking a history row opens a global drawer showing run metadata (started, completed, size, checksum, error) plus three actions: Verify (re-downloads the artifact and SHA-256 compares against the stored checksum), Download (signed link via `download_remote_backup.php`), and Delete (requires typing `DELETE` literal-string confirmation; deletes both the DB row and the remote artifact, audits `remote_backup.delete` / `remote_backup.delete_failed`). (#803)
+- **Filter chips on History** — three chip rows (Status / Backup type / Time) above the existing form. Chip clicks mutate single URL parameters (`status`, `backup_type`, `since`); a Clear-all chip resets all filters. Time chips are `Last 24h / 7d / 30d / All time`; the Backup type axis (`database` | `logical`) replaces the obsolete `backup`/`restore` selector and the URL parameter renames from `type=` to `backup_type=`. (#804)
+- **Drawer-driven CRUD across the surface** — Destination editors and schedule editors now open in the global drawer (`destination_edit_drawer.php` partial endpoint). Replaces the inline `<tr id="edit-destination-…">` collapsing rows; the single drawer pattern is now the canonical CRUD UI for backup admin. (#800, #803)
+- **Inline progress reporting on Run-now** — manual backups dispatch async and report success/failure inline in the page rather than redirect-and-flash. (#801)
+- **Empty-state copy across all five tabs** — "No history yet — kick off a Run-now to populate this view" / "No destinations configured — add one below" rather than blank tables. (#802)
+- **Manual upload-and-restore flow** in the Restore tab with passphrase entry for `IPAMBKP2`/`IPAMBKP3` archives.
+- **`tests/BackupAdminRbacTest.php`** — structural lint asserting every backup admin page contains `require_role('admin')` in the first 8 KB. Covers all five tabs plus the two drawer-partial endpoints (`backup_run_detail.php`, `destination_edit_drawer.php`). Paired with `testing/playwright/tests/backup-rbac.spec.ts` for HTTP-level coverage. (#811)
+- **`tests/RestoreSplitterTest.php`** — property tests for the SQL statement splitter, exercising synthetic dumps with embedded semicolons, multi-line strings, and dollar-quoted PostgreSQL function bodies. Pinned before the splitter rewrite. (#810)
+- **`testing/playwright/tests/backup-history-drawer.spec.ts`** — E2E coverage for the per-row drawer (open, action wiring, disabled-state for retained-by-policy rows, DELETE-confirm flow). (#803)
+
+### Changed
+- **Single `backup_runs` history table** consolidating the two legacy logs (`backup_history` from v3.7's CLI runner + `backup_log` from v3.17's destination runner). Migration copies all rows from both into the new table preserving destination/schedule linkage where present, then drops the legacy tables. The new schema explicitly separates `backup_type` (database | logical) from `triggered_by` (schedule | manual | cli) — these were previously conflated in `backup_log.type` and `backup_history.triggered_by` with non-orthogonal values. (#799, #808)
+- **Restore wizard rewritten as a phase-locked state machine** in `lib/restore_wizard.php`. Adds upload-token persistence across phases, deterministic step-machine transitions, explicit cleanup on every exit path, and `set_time_limit(0)` + session invalidation around the restore execution phase. Closes #6, #43, #50, #56, #61, #62. (#807)
+- **SQL splitter rewritten as a real lexer** rather than naive `;`-split. Correctly handles escaped quotes, multi-line string literals, dollar-quoted PostgreSQL function bodies, and `--` / `/* */` comments. Pinned by `RestoreSplitterTest`. (#806)
+- **Backup history filter URL parameter renamed** `type=backup|restore` → `backup_type=database|logical`. The legacy `type=restore` value still parses (yields zero rows in `backup_runs` since the restore axis is no longer tracked there); existing bookmarks of `type=backup` are no-ops. (#804)
+- **`docs/backups.md` rewritten end-to-end** for the unified surface; obsolete `docs/backup.md` removed. (#812)
+- **`docs/restore.md` rewritten** covering both Logical and Database restore paths, the manual upload flow, the same-or-newer cross-version restore policy, and CLI restore commands for MySQL/PostgreSQL Database backups. (#813)
+- **New `docs/internal/backup-restore-runbook.md`** — operator runbook for incident response (restore from S3, verify integrity, cross-version restore). Living doc; eight failure modes covered at v3.21.0. (#814)
+
+### Fixed
+- **Sigchild fix on `restore.php`'s `proc_close`** — the same fallback v3.19.1 applied to `backup_run_dump`. Prevents a sigchild-handler race that returned exit code -1 on slow-to-terminate child processes. (#805)
+- **Schedule edit drawer freq-field gating** when injected via the new global-drawer fetch — the existing `applyFreqGating()` was bound only at DOMContentLoaded, so drawer-loaded forms left `day_of_month` with `value="0"` against `min="1"`, silently blocking HTML5 form validation. Drawer fetch now dispatches a `drawer:loaded` CustomEvent and the gating re-binds against newly-injected `form.schedule-form`.
+- **`backup_runs.started_at` populated unambiguously** by both orchestrators (CLI and destination runner). Closes the `started_at` vs `created_at` divergence in queries; `started_at` is now the canonical "when did this run begin" timestamp. (A separate audit-only `created_at` column is deferred to v3.22.0 — see #809.)
+
+### Removed
+- **`db_tools.php` Database admin sidebar nav entry**. The page itself is retained for direct-URL data-export flows but no longer exposes any backup functionality and is no longer linked from the sidebar. (#798)
+
+### Deferred to v3.22.0
+- **`backup_runs.created_at` audit column** (#809, B-P1-31). The issue's spec admits `created_at == started_at in practice`; formal column split needs a table rebuild because SQLite forbids non-constant `DEFAULT (datetime('now'))` on `ALTER TABLE ADD COLUMN`. Pairs naturally with v3.22.0's planned concurrency-hardening migration window.
+
 ## [3.20.0] - 2026-04-30
 
 Backup destinations UX + reliability polish. No schema migrations, no new runtime dependencies, no breaking changes.
@@ -1275,6 +1311,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.21.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.20.0...v3.21.0
 [3.20.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.19.1...v3.20.0
 [3.19.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.19.0...v3.19.1
 [3.19.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.18.0...v3.19.0
