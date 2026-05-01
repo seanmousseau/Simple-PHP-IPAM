@@ -339,9 +339,9 @@ No breaking changes. No manual migration steps required — `migrate.php` handle
 | `audit.retention_days` | `365` | Days to retain audit log entries; 0 = never prune |
 | `audit.prune_batch_size` | `1000` | Rows deleted per prune pass |
 
-**Action required to enable backups:** Set `backup.enabled = true` at Admin → Settings and ensure `cron.php` is scheduled (see [docs/backup.md](backup.md) for cron setup). SQLite installs: no additional configuration. MySQL/PostgreSQL installs: verify the `mysqldump`/`pg_dump` binary is on the server's `PATH`.
+**Action required to enable backups:** Set `backup.enabled = true` at Admin → Settings and ensure `cron.php` is scheduled (see [docs/backups.md](backups.md) for cron setup). SQLite installs: no additional configuration. MySQL/PostgreSQL installs: verify the `mysqldump`/`pg_dump` binary is on the server's `PATH`.
 
-See [docs/backup.md](backup.md) for the full backup, restore, and disaster-recovery reference.
+See [docs/backups.md](backups.md) for the full backup, restore, and disaster-recovery reference.
 
 ---
 

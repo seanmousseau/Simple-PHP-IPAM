@@ -699,10 +699,10 @@ Each milestone is now ≤16 items, single-theme. Less context-switching mid-rele
 | F38 | Func | Drop ambiguous `type`+`triggered_by` combo | — | v3.21 | P1 | §A1 schema cleanup |
 | B-P1-31 | Audit | `started_at` vs `created_at` divergence | — | v3.21 | P1 | Fixed by §A1 |
 | T13 | Test | SQL splitter property test | — | v3.21 | P0 | Ships before splitter rewrite |
-| T10 | Test | Non-admin role test on all new pages | — | v3.21 | P0 | New surface = new RBAC surface |
-| D1 | Doc | Rewrite `docs/backups.md` for unified surface | — | v3.21 | P0 | Same PR as F1 |
-| D2 | Doc | New `docs/restore.md` | — | v3.21 | P0 | Same PR as restore rewrite |
-| D11 | Doc | New `docs/internal/backup-restore-runbook.md` | — | v3.21 | P1 | Operator runbook |
+| ~~T10~~ | ~~Test~~ | ~~Non-admin role test on all new pages~~ | #811 | **DONE 2026-05-01** | P0 | Shipped: `tests/BackupAdminRbacTest.php` (structural lint) + `testing/playwright/tests/backup-rbac.spec.ts` (HTTP-level). |
+| ~~D1~~ | ~~Doc~~ | ~~Rewrite `docs/backups.md` for unified surface~~ | #812 | **DONE 2026-05-01** | P0 | Rewritten end-to-end for unified surface. Obsolete `docs/backup.md` removed. |
+| ~~D2~~ | ~~Doc~~ | ~~New `docs/restore.md`~~ | #813 | **DONE 2026-05-01** | P0 | Rewritten for unified Restore tab; both Logical / Database paths documented; cross-version policy formalised. |
+| ~~D11~~ | ~~Doc~~ | ~~New `docs/internal/backup-restore-runbook.md`~~ | #814 | **DONE 2026-05-01** | P1 | Initial runbook with eight failure modes; living doc. |
 
 **v3.21.0 total: ~18 items.** Single theme: surface + restore.
 

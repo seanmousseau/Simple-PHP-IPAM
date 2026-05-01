@@ -523,12 +523,12 @@ Encrypted blobs carry the magic header `IPAMBKP1` (8 bytes, format version 1). T
 
 ## Restore audit (v3.17.0+)
 
-Every restore operation performed via the web wizard (`restore_web.php`) is recorded in two places:
+Every restore operation performed via the web wizard (`backup_admin.php?tab=restore`, formerly `restore_web.php`) is recorded in two places:
 
 1. **`audit_log`** — actions `db.restore_stage` / `db.restore_stage_failed`, `db.restore_dryrun` / `db.restore_dryrun_failed`, `db.restore` / `db.restore_failed`. Failure variants capture the truncated error message in the detail field.
-2. **`backup_log`** — a row with `type = 'restore'`, `triggered_by = 'web_restore'`, with `status` updated `running` → `success` / `failed` as the operation progresses, and the destination linked from the explicit `staged_destination_id` field signed into the wizard token (not inferred from filename — same backup name on multiple destinations would otherwise be ambiguous).
+2. **`backup_runs`** — a row with `triggered_by = 'manual'` (web wizard) or `'cli'` (CLI), with `status` updated `running` → `success` / `failed` as the operation progresses, and the destination linked from the explicit `staged_destination_id` field signed into the wizard token (not inferred from filename — same backup name on multiple destinations would otherwise be ambiguous). Prior to v3.21.0 these rows lived in `backup_log` with `type = 'restore'`; the v3.21 schema migration consolidates `backup_log` and `backup_history` into `backup_runs`.
 
-Restore entries are visible on the Backup History page and are filterable via the Type column. The `backup_log.type` column is the canonical discriminator (`'backup'` vs `'restore'`).
+Restore entries are visible on the History tab and filterable by status, destination, and time range.
 
 The web restore wizard requires admin role and CSRF on every step. Live apply additionally requires the user to type `RESTORE` exactly into the confirmation field before the Apply button is enabled. This typing gate is enforced server-side — the AJAX handler verifies the submitted confirmation string and rejects the request if it does not match exactly.
 
