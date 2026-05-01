@@ -7213,14 +7213,18 @@ function page_header(string $title, array $opts = []): void
                 echo "<a class='sidebar-link" . ($activePage === 'users' ? ' is-active' : '') . "' href='users.php'>" . icon('users') . " Users</a>";
                 echo "<a class='sidebar-link" . ($activePage === 'api_keys' ? ' is-active' : '') . "' href='api_keys.php'>" . icon('key') . " API Keys</a>";
                 echo "<a class='sidebar-link" . ($activePage === 'webhooks' ? ' is-active' : '') . "' href='webhooks.php'>" . icon('webhook') . " Webhooks</a>";
-                echo "<a class='sidebar-link" . ($activePage === 'destinations' ? ' is-active' : '') . "' href='destinations.php'>" . icon('server-stack') . " Destinations</a>";
-                echo "<a class='sidebar-link" . ($activePage === 'backup_history' ? ' is-active' : '') . "' href='backup_history.php'>" . icon('audit') . " Backup History</a>";
-                echo "<a class='sidebar-link" . ($activePage === 'remote_backups' ? ' is-active' : '') . "' href='remote_backups.php'>" . icon('server-stack') . " Remote Backups</a>";
-                echo "<a class='sidebar-link" . ($activePage === 'restore_web' ? ' is-active' : '') . "' href='restore_web.php'>" . icon('upload') . " Restore Database</a>";
+                // v3.21.0 Wave 4 #797: unified Backup & Restore admin surface replaces
+                // the four prior entries (destinations, backup_history, remote_backups,
+                // restore_web). The legacy pages remain reachable as thin wrappers so
+                // existing bookmarks and Playwright specs keep working.
+                $isBackupAdmin = in_array($activePage, ['backup_admin', 'destinations', 'backup_history', 'remote_backups', 'restore_web'], true);
+                echo "<a class='sidebar-link" . ($isBackupAdmin ? ' is-active' : '') . "' href='backup_admin.php'>" . icon('server-stack') . " Backup &amp; Restore</a>";
                 echo "<a class='sidebar-link" . ($activePage === 'import_csv' ? ' is-active' : '') . "' href='import_csv.php'>" . icon('upload') . " Import CSV</a>";
                 echo "<a class='sidebar-link" . ($activePage === 'import_arp' ? ' is-active' : '') . "' href='import_arp.php'>" . icon('arp') . " ARP Import</a>";
                 echo "<a class='sidebar-link" . ($activePage === 'reports' ? ' is-active' : '') . "' href='reports.php'>" . icon('reports') . " Reports</a>";
-                echo "<a class='sidebar-link" . ($activePage === 'db_tools' ? ' is-active' : '') . "' href='db_tools.php'>" . icon('database') . " Database</a>";
+                // v3.21.0 Wave 4 #798: db_tools.php Database admin entry retires. The
+                // file stays functional for direct access (data-export flows live there
+                // until they relocate); the sidebar link is gone.
                 echo "<a class='sidebar-link" . ($activePage === 'health' ? ' is-active' : '') . "' href='health.php'>" . icon('health') . " Health</a>";
                 echo "<a class='sidebar-link" . ($activePage === 'settings' ? ' is-active' : '') . "' href='settings.php'>" . icon('settings') . " Settings</a>";
                 echo "</div>";
