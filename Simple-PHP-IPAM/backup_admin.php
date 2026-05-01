@@ -47,6 +47,16 @@ if (!isset($tabs[$activeTab])) $activeTab = 'backup';
 $activeLabel       = htmlspecialchars($tabs[$activeTab]['label'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 $activeDescription = htmlspecialchars($tabs[$activeTab]['description'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 
+// Per-tab pre-render dispatch. Each branch may emit a header() redirect on
+// POST and exit; load state for the GET render otherwise. Must run before
+// page_header() so handlers can redirect cleanly.
+$destState = null;
+if ($activeTab === 'destinations') {
+    require __DIR__ . '/lib/backup_admin_destinations.php';
+    $destErr   = ipam_destinations_handle_post($db, 'backup_admin.php?tab=destinations');
+    $destState = ipam_destinations_load_state($db);
+}
+
 page_header('Backup & Restore');
 ?>
 <div class="breadcrumbs">
@@ -79,39 +89,54 @@ page_header('Backup & Restore');
   </ul>
 </nav>
 
-<section class="card" aria-labelledby="backup-admin-tab-title">
+<div class="backup-admin-tab" aria-labelledby="backup-admin-tab-title">
   <h2 id="backup-admin-tab-title" style="margin-top:0;"><?= $activeLabel ?></h2>
   <p class="muted"><?= $activeDescription ?></p>
 
-  <?php if ($activeTab === 'destinations'): ?>
-    <p class="muted">
-      Destinations editing has not yet ported into this surface. Use
-      <a href="destinations.php">the legacy destinations page</a> until commit 2 lands.
-    </p>
+  <?php if ($activeTab === 'destinations' && $destState !== null):
+      ipam_render('backup_admin_destinations', [
+          'err'              => $destErr,
+          'flash'            => $destState['flash'],
+          'destinations'     => $destState['destinations'],
+          'schedules'        => $destState['schedules'],
+          'flashTestId'      => $destState['flashTestId'],
+          'flashTestOk'      => $destState['flashTestOk'],
+          'flashTestMsg'     => $destState['flashTestMsg'],
+          'flashTestLatency' => $destState['flashTestLatency'],
+      ]);
+  ?>
   <?php elseif ($activeTab === 'history'): ?>
-    <p class="muted">
-      Unified backup history has not yet ported into this surface. Use
-      <a href="backup_history.php">the legacy backup history page</a> until commit 3 lands.
-    </p>
+    <section class="card">
+      <p class="muted">
+        Unified backup history has not yet ported into this surface. Use
+        <a href="backup_history.php">the legacy backup history page</a> until commit 3 lands.
+      </p>
+    </section>
   <?php elseif ($activeTab === 'backup'): ?>
-    <p class="muted">
-      Manual run + schedule editing has not yet ported into this surface. Use
-      <a href="destinations.php">the legacy destinations page</a> for run-now and schedule edits
-      until commit 4 lands.
-    </p>
+    <section class="card">
+      <p class="muted">
+        Manual run + schedule editing has not yet ported into this surface. Use
+        <a href="backup_admin.php?tab=destinations">the Destinations tab</a> for run-now and
+        schedule edits until commit 4 lands.
+      </p>
+    </section>
   <?php elseif ($activeTab === 'restore'): ?>
-    <p class="muted">
-      The restore wizard has not yet ported into this surface. Use
-      <a href="restore_web.php">the legacy restore page</a> until commit 5 lands.
-    </p>
+    <section class="card">
+      <p class="muted">
+        The restore wizard has not yet ported into this surface. Use
+        <a href="restore_web.php">the legacy restore page</a> until commit 5 lands.
+      </p>
+    </section>
   <?php elseif ($activeTab === 'notifications'): ?>
-    <p class="muted">
-      Notification preferences have not yet ported into this surface. Backup-related
-      settings currently live in <a href="settings.php?tab=backups">Settings → Backups</a>
-      until commit 6 lands.
-    </p>
+    <section class="card">
+      <p class="muted">
+        Notification preferences have not yet ported into this surface. Backup-related
+        settings currently live in <a href="settings.php?tab=backups">Settings → Backups</a>
+        until commit 6 lands.
+      </p>
+    </section>
   <?php endif; ?>
-</section>
+</div>
 
 <?php
 page_footer();
