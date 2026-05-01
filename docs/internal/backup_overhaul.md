@@ -692,7 +692,7 @@ Each milestone is now ≤16 items, single-theme. Less context-switching mid-rele
 | U2 | UI | Inline progress reporting on Run-now | — | v3.21 | P1 | Replaces redirect-and-flash |
 | U7 | UI | Empty-state copy across tabs | — | v3.21 | P2 | Comes with F1 |
 | ~~F11~~ | ~~Func~~ | ~~Per-row backup detail drawer in History~~ | #803 | **DONE 2026-05-01** | P2 | Shipped: `backup_run_detail.php` partial + drawer triggers in History; `destination_edit_drawer.php` partial + drawer triggers replace inline editors on Destinations for unified-surface consistency. Follow-ups filed: #1052 (bulk multi-select delete) and #1053 (auto retention purge), both v3.22.0. |
-| F12 | Func | Filter chips on History | — | v3.21 | P2 | Comes with F3 |
+| ~~F12~~ | ~~Func~~ | ~~Filter chips on History~~ | #804 | **DONE 2026-05-01** | P2 | Three chip rows (Status / Backup type / Time) above the existing form; chip clicks mutate single URL params, no JS; Clear-all chip resets. URL `type=` renamed to `backup_type=` (database\|logical), legacy `type=restore` still yields zero rows. |
 | B-P0-3 | Audit | **Sigchild fix in `restore.php`** | — | v3.21 | **P0** | Same bug v3.19.1 fixed in `backup_run_dump` |
 | B-P0-4 | Audit | **SQL splitter rewrite (real lexer)** | — | v3.21 | **P0** | T13 first |
 | Restore wizard rewrite | Audit | Step-machine + token + cleanup (#6/#43/#50/#56/#61/#62) | — | v3.21 | P1 | Bundle |
