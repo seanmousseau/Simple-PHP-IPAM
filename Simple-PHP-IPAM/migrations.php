@@ -2727,25 +2727,25 @@ function ipam_migrations(): array
             $histCount = $histCountPre;
             if (!$skipCopy && $histCount > 0) {
                 $sel = $db->query("SELECT status, filename, size_bytes, sha256, error, started_at, completed_at FROM backup_history ORDER BY id");
-                    if ($sel === false) {
-                        throw new \RuntimeException("3.21.0-backup-runs: SELECT failed on backup_history");
-                    }
-                    $ins = $db->prepare(
-                        "INSERT INTO backup_runs " .
-                        "(destination_id, schedule_id, backup_type, encryption_mode, triggered_by, status, filename, size_bytes, checksum, source_version, is_protected, error_message, started_at, completed_at) " .
-                        "VALUES (NULL, NULL, 'database', 'unencrypted', 'cli', :status, :filename, :size_bytes, :checksum, '0.0.0', 0, :error_message, :started_at, :completed_at)"
-                    );
-                    /** @var array<string, mixed> $row */
-                    foreach ($sel as $row) {
-                        $rawStatus = is_string($row['status']) ? strtolower($row['status']) : '';
-                        $status = in_array($rawStatus, ['success', 'failed', 'retention_pruned'], true) ? $rawStatus : 'failed';
-                        $ins->execute([
-                            ':status'        => $status,
-                            ':filename'      => $row['filename'],
-                            ':size_bytes'    => $row['size_bytes'],
-                            ':checksum'      => $row['sha256'],
-                            ':error_message' => $row['error'],
-                            ':started_at'    => $row['started_at'],
+                if ($sel === false) {
+                    throw new \RuntimeException("3.21.0-backup-runs: SELECT failed on backup_history");
+                }
+                $ins = $db->prepare(
+                    "INSERT INTO backup_runs " .
+                    "(destination_id, schedule_id, backup_type, encryption_mode, triggered_by, status, filename, size_bytes, checksum, source_version, is_protected, error_message, started_at, completed_at) " .
+                    "VALUES (NULL, NULL, 'database', 'unencrypted', 'cli', :status, :filename, :size_bytes, :checksum, '0.0.0', 0, :error_message, :started_at, :completed_at)"
+                );
+                /** @var array<string, mixed> $row */
+                foreach ($sel as $row) {
+                    $rawStatus = is_string($row['status']) ? strtolower($row['status']) : '';
+                    $status = in_array($rawStatus, ['success', 'failed', 'retention_pruned'], true) ? $rawStatus : 'failed';
+                    $ins->execute([
+                        ':status'        => $status,
+                        ':filename'      => $row['filename'],
+                        ':size_bytes'    => $row['size_bytes'],
+                        ':checksum'      => $row['sha256'],
+                        ':error_message' => $row['error'],
+                        ':started_at'    => $row['started_at'],
                         ':completed_at'  => $row['completed_at'],
                     ]);
                 }
