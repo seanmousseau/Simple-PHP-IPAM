@@ -749,8 +749,9 @@ Each milestone is now ≤16 items, single-theme. Less context-switching mid-rele
 | T2 | Test | OpenSSH-server sidecar for SFTP coverage | — | v3.23 | P0 | Test debt |
 | T3 | Test | Local destination CI coverage | — | v3.23 | P0 | Test debt |
 | T4 | Test | Restore-to-empty-DB row-count parity | — | v3.23 | P0 | All 3 engines |
+| F-LEGACY-DEPR | Func | Deprecate Settings → Data & Maintenance → Backup; migrate `backup.enabled=true` config to a Local destination + schedule on first page load; make Notifications tab editable | #1058 | v3.23 | P1 | Surfaced post-v3.21.0 ship: §1 row at line 19 documents the gap but no F-item existed. Pairs with F21 (Notifications config resolution). Pre-req for B-P1-15 ("After legacy retires"). Hard removal of `run_db_backup_if_due` + `backup.*` keys is tracked in v3.26.0 #1059. |
 
-**v3.23.0 total: ~12 items.** Mostly mechanical cleanups; F18 is the visible feature.
+**v3.23.0 total: ~13 items.** Mostly mechanical cleanups; F18 is the visible feature.
 
 ### v3.24.0 — Encryption v3 (`IPAMBKP3`) + manual restore
 
@@ -801,6 +802,7 @@ Each milestone is now ≤16 items, single-theme. Less context-switching mid-rele
 |---|---|---|---|---|---|---|
 | Cross-engine restore | Func | sqlite-dump → mysql-target, etc. | — | v3.26+ | P2 | AGREED defer §5c' |
 | T5 | Test | Cross-engine restore tests | — | v3.26+ | P2 | Follows F18+F19 |
+| F-LEGACY-RM | Func | Retire `run_db_backup_if_due` and remove the 6 `backup.*` settings keys + Settings → Data & Maintenance → Backup group | #1059 | v3.26 | P0 | Final cutover for the legacy v3.7 single-destination filesystem-only runner. Depends on #1058 (v3.23.0 deprecation + migration helper). Last backup-focus release before v4.0.0 — appropriate place for the hard removal so v4.0.0 ships clean of both backup paths. |
 | ~~F20~~ | ~~Func~~ | ~~Backup type selector `Database` vs `Data`~~ | — | **DROPPED** | — | Resolved 2026-04-29: superseded by §2.1.1 two-type model |
 
 ### v4.0.0 — multi-tenancy (frozen scope; 25 issues already filed)
