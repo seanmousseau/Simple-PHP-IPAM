@@ -563,24 +563,6 @@ CREATE TABLE IF NOT EXISTS rate_limit_buckets (
 -- Separate index on window_start alone accelerates the DELETE prune query.
 CREATE INDEX IF NOT EXISTS idx_rate_limit_buckets_window_start ON rate_limit_buckets(window_start);
 
--- v3.7.0 #423: Backup history — one row per backup run
-CREATE TABLE IF NOT EXISTS backup_history (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  filename      TEXT    NOT NULL,
-  size_bytes    INTEGER,
-  sha256        TEXT,
-  db_driver     TEXT    NOT NULL,
-  started_at    TEXT    NOT NULL,
-  completed_at  TEXT,
-  duration_ms   INTEGER,
-  target        TEXT    NOT NULL DEFAULT 'local',
-  target_path   TEXT,
-  status        TEXT    NOT NULL DEFAULT 'pending',
-  error         TEXT,
-  created_at    TEXT    NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_backup_history_started_at ON backup_history(started_at);
-
 -- v3.15.0 #688: WebAuthn/Passkey credentials
 CREATE TABLE IF NOT EXISTS webauthn_credentials (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -594,9 +576,11 @@ CREATE TABLE IF NOT EXISTS webauthn_credentials (
 );
 CREATE INDEX IF NOT EXISTS idx_webauthn_credentials_user ON webauthn_credentials(user_id);
 
--- v3.17.0 #690: Backup destinations, schedules, and log
--- Note: backup_history (v3.7.0) remains for CLI-only backup.php use.
--- backup_log is distinct: it has FK references to destinations and schedules.
+-- v3.17.0 #690 + v3.21.0 #799: Backup destinations, schedules, and runs.
+-- The legacy backup_history (v3.7.0 #423) and backup_log (v3.17.0 #690) tables
+-- were collapsed into backup_runs in v3.21.0 (§A1 of backup_overhaul.md). The
+-- 3.21.0-backup-runs migration creates backup_runs, copies surviving rows in,
+-- and drops both legacy tables on upgrade.
 CREATE TABLE IF NOT EXISTS backup_destinations (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   name       TEXT    NOT NULL,
@@ -634,20 +618,32 @@ CREATE TABLE IF NOT EXISTS backup_schedules (
 CREATE INDEX IF NOT EXISTS idx_backup_schedules_destination ON backup_schedules(destination_id);
 CREATE INDEX IF NOT EXISTS idx_backup_schedules_next_run ON backup_schedules(next_run_at);
 
-CREATE TABLE IF NOT EXISTS backup_log (
-  id             INTEGER PRIMARY KEY AUTOINCREMENT,
-  destination_id INTEGER REFERENCES backup_destinations(id) ON DELETE SET NULL,
-  schedule_id    INTEGER REFERENCES backup_schedules(id)    ON DELETE SET NULL,
-  triggered_by   TEXT    NOT NULL DEFAULT 'manual',
-  type           TEXT    NOT NULL DEFAULT 'backup'
-                          CHECK (type IN ('backup','restore')),
-  status         TEXT    NOT NULL DEFAULT 'pending',
-  filename       TEXT,
-  size_bytes     INTEGER,
-  checksum       TEXT,
-  error_message  TEXT,
-  started_at     TEXT    NOT NULL DEFAULT (datetime('now')),
-  completed_at   TEXT
+-- v3.21.0 #799 (§A1): unified backup_runs replaces backup_history + backup_log.
+-- Single enum `triggered_by` (schedule|manual|cli) drops the ambiguous
+-- type+triggered_by combo from backup_log (#808 / F38). Single timestamp pair
+-- (started_at + completed_at) closes B-P1-31 / #809.
+CREATE TABLE IF NOT EXISTS backup_runs (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  destination_id  INTEGER REFERENCES backup_destinations(id) ON DELETE SET NULL,
+  schedule_id     INTEGER REFERENCES backup_schedules(id)    ON DELETE SET NULL,
+  backup_type     TEXT    NOT NULL DEFAULT 'database'
+                          CHECK (backup_type IN ('database','logical')),
+  encryption_mode TEXT    NOT NULL DEFAULT 'unencrypted'
+                          CHECK (encryption_mode IN ('stored','transitory','unencrypted')),
+  triggered_by    TEXT    NOT NULL DEFAULT 'manual'
+                          CHECK (triggered_by IN ('schedule','manual','cli')),
+  status          TEXT    NOT NULL DEFAULT 'running'
+                          CHECK (status IN ('running','success','failed')),
+  filename        TEXT,
+  size_bytes      INTEGER,
+  checksum        TEXT,
+  source_version  TEXT    NOT NULL DEFAULT '0.0.0',
+  is_protected    INTEGER NOT NULL DEFAULT 0  CHECK (is_protected IN (0,1)),
+  error_message   TEXT,
+  started_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+  completed_at    TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_backup_log_destination ON backup_log(destination_id);
-CREATE INDEX IF NOT EXISTS idx_backup_log_started_at ON backup_log(started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_backup_runs_destination ON backup_runs(destination_id);
+CREATE INDEX IF NOT EXISTS idx_backup_runs_schedule    ON backup_runs(schedule_id);
+CREATE INDEX IF NOT EXISTS idx_backup_runs_started     ON backup_runs(started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_backup_runs_protected   ON backup_runs(is_protected) WHERE is_protected = 1;
