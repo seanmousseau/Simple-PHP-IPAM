@@ -2091,7 +2091,13 @@ var IpamDrawer = (function () {
                 if (!r.ok) throw new Error('HTTP ' + r.status);
                 return r.text();
             })
-            .then(function (html) { bodyEl.innerHTML = html; })  // trusted same-origin partial; see comment above
+            .then(function (html) {
+                bodyEl.innerHTML = html;  // trusted same-origin partial (admin-gated, server-rendered); see comment above
+                // Notify rebindable widgets that fresh DOM was injected so they
+                // can re-attach event listeners (e.g. schedule-form freq gating).
+                var ev = new CustomEvent('drawer:loaded', { detail: { drawer: drawer, body: bodyEl } });
+                document.dispatchEvent(ev);
+            })
             .catch(function (err) {
                 // Error state — build via DOM, do not interpolate err.message into HTML.
                 while (bodyEl.firstChild) bodyEl.removeChild(bodyEl.firstChild);
@@ -2882,11 +2888,19 @@ function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
             });
         });
     }
-    document.querySelectorAll('form.schedule-form').forEach(function (form) {
+    function bindScheduleForm(form) {
+        if (!form || form.dataset.freqBound === '1') return;
         var sel = form.querySelector('select[name="frequency"]');
         if (!sel) return;
         sel.addEventListener('change', function () { applyFreqGating(form); });
         applyFreqGating(form);
+        form.dataset.freqBound = '1';
+    }
+    document.querySelectorAll('form.schedule-form').forEach(bindScheduleForm);
+    // Drawer-injected schedule forms need re-binding (#803).
+    document.addEventListener('drawer:loaded', function (e) {
+        var body = (e && e.detail && e.detail.body) || document;
+        body.querySelectorAll('form.schedule-form').forEach(bindScheduleForm);
     });
 
     // Type selector swap. Hidden fieldsets must also disable their inputs so that

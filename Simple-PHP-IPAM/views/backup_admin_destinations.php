@@ -45,9 +45,6 @@ declare(strict_types=1);
           <?php foreach ($destinations as $d):
               $destId   = to_int($d['id']);
               $destType = to_str($d['type']);
-              $decoded  = json_decode(to_str($d['config']), true);
-              /** @var array<string, mixed> $destCfg */
-              $destCfg  = is_array($decoded) ? $decoded : [];
           ?>
             <tr>
               <td><?= e(to_str($d['name'])) ?></td>
@@ -67,7 +64,9 @@ declare(strict_types=1);
                     <?= e($badgeText) ?>
                   </span>
                 <?php } ?>
-                <button class="action-pill" type="button" data-edit-destination="<?= $destId ?>" aria-controls="edit-destination-<?= $destId ?>" aria-expanded="false">Edit</button>
+                <button class="action-pill" type="button"
+                        data-drawer-url="destination_edit_drawer.php?id=<?= $destId ?>&amp;form=destination"
+                        data-drawer-title="Edit destination &mdash; <?= e(to_str($d['name'])) ?>">Edit</button>
                 <button class="action-pill" data-test-destination="<?= $destId ?>">Test</button>
                 <button class="action-pill" data-run-now="<?= $destId ?>">Run now</button>
                 <form method="post" style="display:inline" data-confirm-delete="this destination (schedules will be removed)">
@@ -83,29 +82,6 @@ declare(strict_types=1);
                   <button class="action-pill button-secondary" type="submit">
                     <?= to_int($d['is_active']) === 1 ? 'Disable' : 'Enable' ?>
                   </button>
-                </form>
-              </td>
-            </tr>
-            <tr id="edit-destination-<?= $destId ?>" class="edit-destination-row" hidden>
-              <td colspan="5">
-                <form method="post" class="destination-form destination-edit-form">
-                  <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
-                  <input type="hidden" name="action" value="update_destination">
-                  <input type="hidden" name="id" value="<?= $destId ?>">
-                  <input type="hidden" name="type" value="<?= e($destType) ?>">
-                  <label>Name <input type="text" name="name" value="<?= e(to_str($d['name'])) ?>" required maxlength="100"></label>
-                  <label>Type
-                    <input type="text" value="<?= e(strtoupper($destType)) ?>" disabled readonly>
-                    <small class="muted">Type is locked. Delete and recreate to change.</small>
-                  </label>
-                  <label class="checkbox"><input type="checkbox" name="encrypt" <?= to_int($d['encrypt']) === 1 ? 'checked' : '' ?>> Encrypt with AES-256-GCM (recommended)</label>
-                  <?php $cfg = $destCfg; ?>
-                  <fieldset>
-                    <legend><?= e(strtoupper($destType)) ?> connection</legend>
-                    <?php require __DIR__ . '/destination_form_' . $destType . '.php'; ?>
-                  </fieldset>
-                  <button type="submit" class="action-pill">Save changes</button>
-                  <button type="button" class="action-pill button-secondary" data-edit-destination-cancel="<?= $destId ?>">Cancel</button>
                 </form>
               </td>
             </tr>
@@ -195,7 +171,9 @@ declare(strict_types=1);
               <td><?= e(ipam_format_datetime(to_str($s['next_run_at'] ?? '')) ?: '—') ?></td>
               <td><?= to_int($s['is_active']) === 1 ? 'Active' : 'Disabled' ?></td>
               <td class="actions">
-                <button class="action-pill" type="button" data-edit-schedule="<?= $schedId ?>" aria-controls="edit-schedule-<?= $schedId ?>" aria-expanded="false">Edit</button>
+                <button class="action-pill" type="button"
+                        data-drawer-url="destination_edit_drawer.php?id=<?= to_int($s['destination_id']) ?>&amp;form=schedule"
+                        data-drawer-title="Edit schedule">Edit</button>
                 <button class="action-pill" data-run-now="<?= to_int($s['destination_id']) ?>">Run now</button>
                 <form method="post" style="display:inline">
                   <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
@@ -210,32 +188,6 @@ declare(strict_types=1);
                   <input type="hidden" name="action" value="delete_schedule">
                   <input type="hidden" name="id" value="<?= $schedId ?>">
                   <button class="action-pill button-danger" type="submit">Delete</button>
-                </form>
-              </td>
-            </tr>
-            <tr id="edit-schedule-<?= $schedId ?>" class="edit-schedule-row" hidden>
-              <td colspan="8">
-                <form method="post" class="schedule-form schedule-edit-form">
-                  <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
-                  <input type="hidden" name="action" value="update_schedule">
-                  <input type="hidden" name="id" value="<?= $schedId ?>">
-                  <label>Frequency
-                    <select name="frequency" required>
-                      <option value="hourly"  <?= $freq === 'hourly'  ? 'selected' : '' ?>>Hourly</option>
-                      <option value="daily"   <?= $freq === 'daily'   ? 'selected' : '' ?>>Daily</option>
-                      <option value="weekly"  <?= $freq === 'weekly'  ? 'selected' : '' ?>>Weekly</option>
-                      <option value="monthly" <?= $freq === 'monthly' ? 'selected' : '' ?>>Monthly</option>
-                    </select>
-                  </label>
-                  <label data-freq-field="time_of_day">Time of day (UTC, HH:MM) <input type="text" name="time_of_day" value="<?= e(to_str($s['time_of_day'])) ?>" pattern="(0[0-9]|1[0-9]|2[0-3]):[0-5][0-9]"></label>
-                  <label data-freq-field="day_of_week">Day of week (Sun=0..Sat=6) <input type="number" name="day_of_week" min="0" max="6" value="<?= to_int($s['day_of_week']) ?>"></label>
-                  <label data-freq-field="day_of_month">Day of month (1-28) <input type="number" name="day_of_month" min="1" max="28" value="<?= to_int($s['day_of_month']) ?>"></label>
-                  <label>Retain hourly  <input type="number" name="retention_hourly"  min="0" value="<?= to_int($s['retention_hourly'])  ?>"></label>
-                  <label>Retain daily   <input type="number" name="retention_daily"   min="0" value="<?= to_int($s['retention_daily'])   ?>"></label>
-                  <label>Retain weekly  <input type="number" name="retention_weekly"  min="0" value="<?= to_int($s['retention_weekly'])  ?>"></label>
-                  <label>Retain monthly <input type="number" name="retention_monthly" min="0" value="<?= to_int($s['retention_monthly']) ?>"></label>
-                  <button type="submit" class="action-pill">Save changes</button>
-                  <button type="button" class="action-pill button-secondary" data-edit-schedule-cancel="<?= $schedId ?>">Cancel</button>
                 </form>
               </td>
             </tr>
