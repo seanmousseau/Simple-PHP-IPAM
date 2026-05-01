@@ -2636,11 +2636,37 @@ function ipam_migrations(): array
             // (stale rows that never completed). 'success' and 'failed' pass
             // through. triggered_by is normalized server-side: anything other
             // than the new enum values is coerced to 'manual'.
+            //
+            // CR feedback PR #1054: backup_log has a `type IN ('backup',
+            // 'restore')` column that backup_runs.backup_type cannot
+            // represent (the new schema only allows 'database' / 'logical').
+            // Filter `type = 'restore'` rows OUT of the copy: those events
+            // are already recorded in audit_log under `db.restore_*` and
+            // mislabeling them as backup runs would corrupt the History
+            // surface. Only the backup-axis rows migrate here.
+            // $expected below subtracts the filtered rows from the parity
+            // check so the count check still works.
+            // SQLite holds a read lock on a table for as long as any
+            // PDOStatement reading from it stays in scope. Wrap the COUNT
+            // query in a helper so the statement object is freed before the
+            // DROP TABLE at the end of this migration runs — matching the
+            // pre-existing $countTable pattern.
+            $countTableWhere = static function (string $table, string $where) use ($db): int {
+                $q = $db->query("SELECT COUNT(*) FROM {$table} WHERE {$where}");
+                if ($q === false) {
+                    return 0;
+                }
+                $n = (int) $q->fetchColumn();
+                $q->closeCursor();
+                return $n;
+            };
+            $logRestoreCount = 0;
             $logCount = 0;
             if ($tableExists('backup_log')) {
                 $logCount = $countTable('backup_log');
+                $logRestoreCount = $countTableWhere('backup_log', "type = 'restore'");
                 if ($logCount > 0) {
-                    $sel = $db->query("SELECT destination_id, schedule_id, triggered_by, status, filename, size_bytes, checksum, error_message, started_at, completed_at FROM backup_log ORDER BY id");
+                    $sel = $db->query("SELECT destination_id, schedule_id, type, triggered_by, status, filename, size_bytes, checksum, error_message, started_at, completed_at FROM backup_log WHERE type IS NULL OR type = 'backup' ORDER BY id");
                     if ($sel === false) {
                         throw new \RuntimeException("3.21.0-backup-runs: SELECT failed on backup_log");
                     }
@@ -2706,13 +2732,20 @@ function ipam_migrations(): array
             }
 
             // ── 4. Row-count parity check (§A1 step 5) ───────────────────
-            $expected = $logCount + $histCount;
+            // CR feedback PR #1054: exact equality, not lower-bound. A
+            // partial prior run that copied some rows would otherwise pass
+            // the `>=` check and the legacy tables would be dropped while
+            // backup_runs still held a duplicate-on-rerun set. Equal counts
+            // (allowing for filtered legacy 'restore' rows that are
+            // intentionally not migrated) means a clean copy.
+            $expected = ($logCount - $logRestoreCount) + $histCount;
             if ($expected > 0) {
                 $actual = $countTable('backup_runs');
-                if ($actual < $expected) {
+                if ($actual !== $expected) {
                     throw new \RuntimeException(
                         "3.21.0-backup-runs migration: row-count parity check failed. " .
-                        "Expected at least {$expected} backup_runs rows (backup_log={$logCount} + backup_history={$histCount}), " .
+                        "Expected exactly {$expected} backup_runs rows " .
+                        "(backup_log={$logCount} − restore-filtered={$logRestoreCount} + backup_history={$histCount}), " .
                         "got {$actual}. Aborting before drop of legacy tables."
                     );
                 }
@@ -2748,16 +2781,36 @@ function ipam_migrations(): array
             );
             if ($dupes !== false) {
                 $rows = $dupes->fetchAll(PDO::FETCH_ASSOC);
-                $del  = $db->prepare(
+                // CR feedback PR #1054: backup_runs.schedule_id has
+                // ON DELETE SET NULL — naively deleting loser schedules
+                // would null out the schedule_id on every historical run
+                // attached to those ids. Repoint child rows to the surviving
+                // schedule first so provenance is preserved. (Loser
+                // schedules and the keep schedule all have the same
+                // destination_id, so this is the closest-to-truth mapping
+                // we can do without storing the original schedule's full
+                // shape on each run.)
+                $repoint = $db->prepare(
+                    "UPDATE backup_runs
+                        SET schedule_id = :keep
+                      WHERE schedule_id IN (
+                              SELECT id FROM backup_schedules
+                               WHERE destination_id = :did
+                                 AND id <> :keep
+                            )"
+                );
+                $del = $db->prepare(
                     "DELETE FROM backup_schedules
                       WHERE destination_id = :did
                         AND id <> :keep"
                 );
                 foreach ($rows as $r) {
-                    $del->execute([
+                    $params = [
                         ':did'  => (int) $r['destination_id'],
                         ':keep' => (int) $r['keep_id'],
-                    ]);
+                    ];
+                    $repoint->execute($params);
+                    $del->execute($params);
                 }
             }
 

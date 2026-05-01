@@ -3512,6 +3512,17 @@ function backup_runs_insert_cli(
             ':sa'  => $startedAt,
             ':ca'  => $completedAt,
         ]);
+        // CR feedback PR #1054: emit an audit entry so scheduled / CLI backups
+        // are visible in the central audit trail like every other significant
+        // operational action. Best-effort: never block the backup run on the
+        // audit insert failing.
+        audit(
+            $db,
+            $status === 'success' ? 'backup.run' : 'backup.run_failed',
+            'backup_run',
+            null,
+            'triggered_by=cli filename=' . $filename . ' status=' . $status
+        );
     } catch (Throwable) {
         // best-effort
     }
@@ -4387,10 +4398,16 @@ function ipam_backup_apply_retention(PDO $db, int $destinationId, ?int $nowEpoch
 
     // ── 3. Fetch successful backup_runs rows for this destination ───────────
     // backup_runs uses started_at for GFS bucketing (no created_at column).
+    // CR feedback PR #1054: exclude is_protected=1 rows from the prune set.
+    // Retention must respect the manual protection flag the same way the UI
+    // delete-action does, otherwise auto-prune can wipe a row the operator
+    // explicitly protected.
     $logStmt = $db->prepare(
         "SELECT id, filename, started_at AS created_at
          FROM backup_runs
-         WHERE destination_id = :did AND status = 'success'
+         WHERE destination_id = :did
+           AND status = 'success'
+           AND is_protected = 0
          ORDER BY started_at DESC"
     );
     $logStmt->execute([':did' => $destinationId]);

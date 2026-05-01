@@ -76,15 +76,29 @@ document.addEventListener('click', function (e) {
             if (!r.ok) throw new Error('HTTP ' + r.status);
             return r.text();
         })
-        .then(function (html) { bodyEl.innerHTML = html; })
+        .then(function (html) {
+            bodyEl.innerHTML = html;
+            // CR feedback PR #1054 (round 2): emit a post-injection hook so
+            // page-load-bound widgets (e.g. schedule-form frequency gating)
+            // can re-attach to the drawer DOM. The shipped impl in
+            // assets/app.js dispatches `drawer:loaded` here; the gating
+            // listener lives next to applyFreqGating() and matches the
+            // form.schedule-form selector inside the body element.
+            document.dispatchEvent(new CustomEvent('drawer:loaded', { detail: { drawer: drawer, body: bodyEl } }));
+        })
         .catch(function (err) {
             bodyEl.innerHTML =
                 '<div class="drawer-error" role="alert">' +
                 '<p>Could not load details: ' + (err && err.message ? err.message : 'unknown error') + '</p>' +
                 '<button type="button" class="action-pill" id="drawer-retry">Retry</button>' +
                 '</div>';
+            // CR feedback PR #1054 (round 2): the retry must NOT close the
+            // drawer — `trigger.click()` re-enters the same opener and
+            // races with the response, so closing right after hides the
+            // drawer mid-flight. The shipped impl just re-invokes the
+            // opener directly: `_openFromUrl(trigger)`.
             var retry = document.getElementById('drawer-retry');
-            if (retry) retry.addEventListener('click', function () { trigger.click(); IpamGlobalDrawer.close(); });
+            if (retry) retry.addEventListener('click', function () { _openFromUrl(trigger); });
         });
 });
 ```
@@ -943,7 +957,7 @@ function _backupRunDeletePromptThenSubmit(form, runId, csrf) {
 }
 ```
 
-The Download action is intentionally not handled here — its `<button>` should be replaced in the partial with an `<a href="download_remote_backup.php?run_id=N">` so the browser handles streaming naturally. Update Task 2's `_backup_run_detail_body.php` accordingly: change the Download `<button>` to an `<a class="action-pill" data-action="download" href="download_remote_backup.php?run_id=<?= (int) $row['id'] ?>">Download</a>`. If `download_remote_backup.php` accepts a different parameter today (likely `dest_id` + `filename`), pass those instead — confirm with `grep -n "REQUEST\\['" Simple-PHP-IPAM/download_remote_backup.php` before wiring.
+The Download action is intentionally not handled here — when downloadable, render an `<a href="download_remote_backup.php?run_id=N">` so the browser handles streaming naturally. **CR feedback PR #1054 (round 2):** anchors ignore the HTML `disabled` attribute, so an unconditional `<a>` would be clickable for failed/running rows whose state matrix requires Download to be disabled. Use a conditional render in `_backup_run_detail_body.php`: when `$disabled['download']` is false, emit the anchor; otherwise emit `<button type="button" class="action-pill" data-action="download" disabled>` (with the same `title=` tooltip the matrix provides). The shipped partial already does this. If `download_remote_backup.php` accepts a different parameter today (likely `dest_id` + `filename`), pass those instead — confirm with `grep -n "REQUEST\\['" Simple-PHP-IPAM/download_remote_backup.php` before wiring.
 
 - [ ] **Step 7: Lint, run all PHPUnit, commit**
 

@@ -16,7 +16,7 @@
  */
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import {
-  login, logout, fetchPost, appUrl,
+  login, logout, fetchPost, getCsrf, appUrl,
   ADMIN_USER, ADMIN_PASS, RO_USER, RO_PASS,
   newAuthContext,
 } from '../fixtures/ipam';
@@ -105,8 +105,15 @@ for (const tab of TABS) {
 }
 
 test('readonly is blocked from run_backup_now.php (403)', async () => {
+  // CR feedback PR #1054: include a valid CSRF token so the 403 is
+  // attributable to the role guard, not the CSRF check (which would also
+  // emit a 403). With both layers present, the test would pass even if
+  // the role check regressed but CSRF still blocked. The readonly user
+  // is logged in via the suite-level `page`, so its CSRF cookie/token is
+  // valid here.
+  const csrf = await getCsrf(page);
   const resp = await page.request.post(appUrl('run_backup_now.php'), {
-    form: { destination_id: '1' },
+    form: { csrf, destination_id: '1' },
     maxRedirects: 0,
   });
   expect(resp.status()).toBe(403);
@@ -114,8 +121,10 @@ test('readonly is blocked from run_backup_now.php (403)', async () => {
 
 for (const handler of POST_HANDLERS) {
   test(`readonly POST to ${handler.path} is blocked (403)`, async () => {
+    // Same CSRF rationale as above — see the run_backup_now test.
+    const csrf = await getCsrf(page);
     const resp = await page.request.post(appUrl(handler.path), {
-      form: handler.form,
+      form: { csrf, ...handler.form },
       maxRedirects: 0,
     });
     expect(resp.status()).toBe(403);

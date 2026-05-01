@@ -254,32 +254,41 @@ function ipam_backup_client_for_destination(\PDO $db, int $destId): ?BackupClien
  */
 function ipam_backup_run_verify(\PDO $db, int $runId): array
 {
+    // CR feedback PR #1054: every early-return failure path now records a
+    // backup_run.verify_failed audit so operator-driven verifies that fail
+    // because the destination is broken stay visible in the audit trail.
     $st = $db->prepare("SELECT * FROM backup_runs WHERE id = :id");
     $st->execute([':id' => $runId]);
     $row = $st->fetch(\PDO::FETCH_ASSOC);
     if (!is_array($row)) {
+        audit($db, 'backup_run.verify_failed', 'backup_run', $runId, (string) json_encode(['error' => 'not_found']));
         return ['ok' => false, 'error' => 'not_found'];
     }
     $filename = to_str($row['filename'] ?? '');
     $expected = to_str($row['checksum'] ?? '');
     if ($filename === '' || $expected === '') {
+        audit($db, 'backup_run.verify_failed', 'backup_run', $runId, (string) json_encode(['error' => 'no_artifact', 'reason' => 'filename or checksum empty']));
         return ['ok' => false, 'error' => 'no_artifact'];
     }
     $client = ipam_backup_client_for_destination($db, to_int($row['destination_id']));
     if (!$client) {
+        audit($db, 'backup_run.verify_failed', 'backup_run', $runId, (string) json_encode(['error' => 'unreachable', 'reason' => 'destination missing or invalid']));
         return ['ok' => false, 'error' => 'unreachable', 'message' => 'destination missing or invalid'];
     }
     $tmp = sys_get_temp_dir() . '/ipam-verify-' . bin2hex(random_bytes(8));
     try {
         $found = $client->download($filename, $tmp);
         if (!$found) {
+            audit($db, 'backup_run.verify_failed', 'backup_run', $runId, (string) json_encode(['error' => 'no_artifact', 'reason' => 'download returned false', 'filename' => $filename]));
             return ['ok' => false, 'error' => 'no_artifact'];
         }
         $hash = hash_file('sha256', $tmp);
         if ($hash === false) {
+            audit($db, 'backup_run.verify_failed', 'backup_run', $runId, (string) json_encode(['error' => 'unreachable', 'reason' => 'hash_file failed']));
             return ['ok' => false, 'error' => 'unreachable', 'message' => 'hash_file failed'];
         }
     } catch (\Throwable $e) {
+        audit($db, 'backup_run.verify_failed', 'backup_run', $runId, (string) json_encode(['error' => 'unreachable', 'reason' => $e->getMessage()]));
         return ['ok' => false, 'error' => 'unreachable', 'message' => $e->getMessage()];
     } finally {
         if (is_file($tmp)) {
@@ -369,13 +378,18 @@ function ipam_backup_history_handle_post(\PDO $db): void
  */
 function ipam_backup_run_delete(\PDO $db, int $runId): array
 {
+    // CR feedback PR #1054: every refused / failed delete now records a
+    // backup_run.delete_failed audit so denied destructive actions stay
+    // visible in the audit trail.
     $st = $db->prepare("SELECT * FROM backup_runs WHERE id = :id");
     $st->execute([':id' => $runId]);
     $row = $st->fetch(\PDO::FETCH_ASSOC);
     if (!is_array($row)) {
+        audit($db, 'backup_run.delete_failed', 'backup_run', $runId, 'not_found');
         return ['ok' => false, 'error' => 'not_found'];
     }
     if (to_int($row['is_protected'] ?? 0) === 1) {
+        audit($db, 'backup_run.delete_failed', 'backup_run', $runId, 'protected');
         return ['ok' => false, 'error' => 'protected'];
     }
 
@@ -387,6 +401,7 @@ function ipam_backup_run_delete(\PDO $db, int $runId): array
         // before they reach any client->delete() implementation.
         if (str_contains($filename, '/') || str_contains($filename, '\\')
             || str_contains($filename, "\0") || str_starts_with($filename, '.')) {
+            audit($db, 'backup_run.delete_failed', 'backup_run', $runId, 'filename_rejected_by_safety_guard');
             return ['ok' => false, 'error' => 'destination_unreachable', 'message' => 'Stored filename rejected by safety guard.'];
         }
         $client = ipam_backup_client_for_destination($db, to_int($row['destination_id']));
@@ -398,8 +413,17 @@ function ipam_backup_run_delete(\PDO $db, int $runId): array
             audit($db, 'remote_backup.delete_failed', 'backup_run', $runId, 'destination client not found');
             return ['ok' => false, 'error' => 'destination_unreachable', 'message' => 'destination client not found'];
         }
+        // CR feedback PR #1054 (plan doc:812): BackupClientInterface::delete()
+        // returns bool — true on success, false on failure, exception on
+        // transport errors. Treating "no exception" as success would let the
+        // backup_runs row be deleted while the remote artifact persists.
+        // Gate the row-level DELETE on an explicit `=== true`.
         try {
-            $client->delete($filename); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $filename is DB-sourced and validated above against path separators
+            $ok = $client->delete($filename); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $filename is DB-sourced and validated above against path separators
+            if ($ok !== true) {
+                audit($db, 'remote_backup.delete_failed', 'backup_run', $runId, 'client returned false for ' . $filename);
+                return ['ok' => false, 'error' => 'remote_delete_failed', 'message' => 'destination client refused the delete'];
+            }
             audit($db, 'remote_backup.delete', 'backup_run', $runId, $filename);
         } catch (\Throwable $e) {
             audit($db, 'remote_backup.delete_failed', 'backup_run', $runId, $e->getMessage());

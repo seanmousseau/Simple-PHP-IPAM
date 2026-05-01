@@ -862,11 +862,23 @@ function ipam_restore_proc_check(int $exitCode, string $tool, string $stderr, PD
             'message' => "{$tool} restore: exit code unreliable AND schema_migrations check failed: " . $e->getMessage(),
         ];
     }
-    if ($migCount <= $preMigCount) {
+    // CR feedback PR #1054: a same-version restore can legitimately leave
+    // the count unchanged — the dump contains the same schema_migrations
+    // rows already present on the target. Only fail on a genuine regression
+    // (`post < pre`) and on the "pre=0 and post=0" case (no rows at all,
+    // means the restore tool never wrote anything).
+    if ($migCount < $preMigCount) {
         return [
             'ok'      => false,
-            'verdict' => "exit=-1 (sigchild); schema_migrations not advanced (pre={$preMigCount}, post={$migCount})",
-            'message' => "{$tool} restore: exit code unreliable AND schema_migrations did not advance (pre={$preMigCount}, post={$migCount}) — restore did not produce expected post-state. stderr: " . trim($stderr),
+            'verdict' => "exit=-1 (sigchild); schema_migrations regressed (pre={$preMigCount}, post={$migCount})",
+            'message' => "{$tool} restore: exit code unreliable AND schema_migrations regressed (pre={$preMigCount}, post={$migCount}) — restore lost rows. stderr: " . trim($stderr),
+        ];
+    }
+    if ($migCount === 0) {
+        return [
+            'ok'      => false,
+            'verdict' => 'exit=-1 (sigchild); schema_migrations empty',
+            'message' => "{$tool} restore: exit code unreliable AND schema_migrations is empty — restore did not produce expected post-state. stderr: " . trim($stderr),
         ];
     }
     return [

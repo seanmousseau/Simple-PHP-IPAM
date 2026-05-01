@@ -92,10 +92,15 @@ function ipam_restore_wizard_recent_attempts(PDO $db, ?int $userId, int $windowS
     // SQL portable across SQLite/MySQL/Postgres without engine-specific
     // interval arithmetic.
     $cutoff = gmdate('Y-m-d H:i:s', time() - $windowSeconds);
+    // CR feedback PR #1054: don't count denial entries in the limiter — the
+    // `db.restore_rate_limited` row written when this function blocks an
+    // attempt would otherwise re-extend the lockout window with every
+    // bounced retry. Count only intent-to-act actions (stage/dryrun/apply).
     $st = $db->prepare(
         "SELECT COUNT(*) FROM audit_log
          WHERE user_id = :uid
            AND action LIKE 'db.restore_%'
+           AND action <> 'db.restore_rate_limited'
            AND created_at >= :cutoff"
     );
     $st->execute([':uid' => $userId, ':cutoff' => $cutoff]);

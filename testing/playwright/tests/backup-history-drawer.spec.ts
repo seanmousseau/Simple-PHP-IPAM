@@ -51,7 +51,27 @@ test.describe('Backup history drawer (#803)', () => {
     }
   });
 
-  test.afterAll(async () => { await ctx?.close(); });
+  test.afterAll(async () => {
+    // CR feedback PR #1054 (round 2): the delete test exercises the
+    // suite-created run, but it can skip (e.g. when the row's delete
+    // button is disabled by retention policy). Workers are sequential
+    // and share the SQLite DB, so any leaked row would persist into
+    // later specs. Unconditionally clean up here.
+    if (suiteRunId !== null && page) {
+      try {
+        const csrf = await page.locator('input[name="csrf"]').first().inputValue().catch(() => '');
+        if (csrf !== '') {
+          await page.request.post(appUrl('backup_admin.php?tab=history'), {
+            form: { csrf, action: 'delete', id: suiteRunId, confirm: 'DELETE' },
+            maxRedirects: 0,
+          });
+        }
+      } catch (_e) {
+        // Best-effort: never fail the suite on teardown errors.
+      }
+    }
+    await ctx?.close();
+  });
 
   test('clicking a history row opens the detail drawer', async () => {
     await page.goto(appUrl('backup_admin.php?tab=history'));

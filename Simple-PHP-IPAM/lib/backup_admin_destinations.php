@@ -277,18 +277,33 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
                  next_run_at, is_active, created_at)
              VALUES (:did, :freq, :tod, :dow, :dom, :rh, :rd, :rw, :rm, :nra, 1, $now)"
         );
-        $stmt->execute([
-            ':did'  => $destId,
-            ':freq' => $frequency,
-            ':tod'  => $timeOfDay,
-            ':dow'  => $dowParam,
-            ':dom'  => $domParam,
-            ':rh'   => $retHourly,
-            ':rd'   => $retDaily,
-            ':rw'   => $retWeekly,
-            ':rm'   => $retMonthly,
-            ':nra'  => $nextRunAt,
-        ]);
+        // CR feedback PR #1054: the COUNT() preflight above is advisory; two
+        // concurrent submits can still race past it and trip the
+        // UNIQUE(destination_id) constraint installed by the
+        // 3.21.0-schedule-unique migration. Catch the unique-violation here
+        // and return the same friendly message rather than letting it 500.
+        try {
+            $stmt->execute([
+                ':did'  => $destId,
+                ':freq' => $frequency,
+                ':tod'  => $timeOfDay,
+                ':dow'  => $dowParam,
+                ':dom'  => $domParam,
+                ':rh'   => $retHourly,
+                ':rd'   => $retDaily,
+                ':rw'   => $retWeekly,
+                ':rm'   => $retMonthly,
+                ':nra'  => $nextRunAt,
+            ]);
+        } catch (\PDOException $e) {
+            $sqlState = $e->errorInfo[0] ?? '';
+            // 23000 → MySQL/SQLite generic integrity-constraint violation
+            // 23505 → PostgreSQL unique-violation
+            if ($sqlState === '23000' || $sqlState === '23505') {
+                return 'A schedule already exists for this destination. Edit the existing one instead.';
+            }
+            throw $e;
+        }
         $newSchedId = (int) $db->lastInsertId();
         audit($db, 'schedule.create', 'schedule', $newSchedId, "destination_id=$destId frequency=$frequency");
         ipam_destinations_redirect($redirectBase, 'sched_created');

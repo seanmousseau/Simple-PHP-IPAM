@@ -70,20 +70,31 @@ final class RestoreProcCheckTest extends TestCase
         $db = $this->makeDb(migrationRows: 0);
         $r  = ipam_restore_proc_check(-1, 'mysql', 'silent stderr', $db, /*preMigCount*/ 0);
         $this->assertFalse($r['ok']);
-        $this->assertStringContainsString('schema_migrations not advanced', $r['verdict']);
+        $this->assertStringContainsString('schema_migrations empty', $r['verdict']);
         $this->assertStringContainsString('did not produce expected post-state', $r['message']);
     }
 
-    public function testSigchildAmbiguousWithUnchangedCountIsFailure(): void
+    public function testSigchildAmbiguousWithUnchangedCountIsSuccess(): void
     {
-        // CR feedback PR #1054: pre=5, post=5 means the restore tool died
-        // before touching the DB but the table was already populated. The
-        // old absolute-count check would call this success; the pre/post
-        // compare correctly fails it.
+        // CR feedback PR #1054 (round 2): a same-version restore from a
+        // dump that already matches the target's schema_migrations rowset
+        // legitimately leaves the count unchanged (post == pre). Treat
+        // that as success; only `post < pre` (a genuine regression) is
+        // rejected. The empty-pre case is still rejected by the test
+        // above because the SUT explicitly fails when post == 0.
         $db = $this->makeDb(migrationRows: 5);
+        $r  = ipam_restore_proc_check(-1, 'mysql', '', $db, /*preMigCount*/ 5);
+        $this->assertTrue($r['ok']);
+        $this->assertStringContainsString('post-condition OK (pre=5, post=5)', $r['verdict']);
+    }
+
+    public function testSigchildAmbiguousWithRegressedCountIsFailure(): void
+    {
+        // pre=5, post=3 → restore lost rows. Genuine regression, fail.
+        $db = $this->makeDb(migrationRows: 3);
         $r  = ipam_restore_proc_check(-1, 'mysql', 'silent stderr', $db, /*preMigCount*/ 5);
         $this->assertFalse($r['ok']);
-        $this->assertStringContainsString('not advanced (pre=5, post=5)', $r['verdict']);
+        $this->assertStringContainsString('regressed (pre=5, post=3)', $r['verdict']);
     }
 
     public function testSigchildAmbiguousWithMissingSchemaMigrationsTableIsFailure(): void
