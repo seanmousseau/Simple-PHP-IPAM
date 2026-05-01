@@ -7,18 +7,6 @@ parameters:
 			path: Simple-PHP-IPAM/backup.php
 
 		-
-			message: '#^Cannot access offset ''sha256'' on mixed\.$#'
-			identifier: offsetAccess.nonOffsetAccessible
-			count: 1
-			path: Simple-PHP-IPAM/db_tools.php
-
-		-
-			message: '#^Cannot access offset ''target_path'' on mixed\.$#'
-			identifier: offsetAccess.nonOffsetAccessible
-			count: 3
-			path: Simple-PHP-IPAM/db_tools.php
-
-		-
 			message: '#^Variable \$db might not be defined\.$#'
 			identifier: variable.undefined
 			count: 3

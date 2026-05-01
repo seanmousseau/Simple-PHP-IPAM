@@ -2551,7 +2551,7 @@ function ipam_migrations(): array
                         triggered_by    TEXT    NOT NULL DEFAULT 'manual'
                                                 CHECK (triggered_by IN ('schedule','manual','cli')),
                         status          TEXT    NOT NULL DEFAULT 'running'
-                                                CHECK (status IN ('running','success','failed')),
+                                                CHECK (status IN ('running','success','failed','retention_pruned')),
                         filename        TEXT,
                         size_bytes      INTEGER,
                         checksum        TEXT,
@@ -2587,7 +2587,7 @@ function ipam_migrations(): array
                         CONSTRAINT chk_brun_backup_type     CHECK (backup_type IN ('database','logical')),
                         CONSTRAINT chk_brun_encryption_mode CHECK (encryption_mode IN ('stored','transitory','unencrypted')),
                         CONSTRAINT chk_brun_triggered_by    CHECK (triggered_by IN ('schedule','manual','cli')),
-                        CONSTRAINT chk_brun_status          CHECK (status IN ('running','success','failed')),
+                        CONSTRAINT chk_brun_status          CHECK (status IN ('running','success','failed','retention_pruned')),
                         CONSTRAINT chk_brun_protected       CHECK (is_protected IN (0,1)),
                         KEY idx_backup_runs_destination (destination_id),
                         KEY idx_backup_runs_schedule    (schedule_id),
@@ -2606,7 +2606,7 @@ function ipam_migrations(): array
                         triggered_by    TEXT      NOT NULL DEFAULT 'manual'
                                                   CHECK (triggered_by IN ('schedule','manual','cli')),
                         status          TEXT      NOT NULL DEFAULT 'running'
-                                                  CHECK (status IN ('running','success','failed')),
+                                                  CHECK (status IN ('running','success','failed','retention_pruned')),
                         filename        TEXT      NULL,
                         size_bytes      BIGINT    NULL,
                         checksum        TEXT      NULL,
@@ -2652,7 +2652,7 @@ function ipam_migrations(): array
                     /** @var array<string, mixed> $row */
                     foreach ($sel as $row) {
                         $rawStatus = is_string($row['status']) ? strtolower($row['status']) : '';
-                        $status = in_array($rawStatus, ['success', 'failed'], true) ? $rawStatus : 'failed';
+                        $status = in_array($rawStatus, ['success', 'failed', 'retention_pruned'], true) ? $rawStatus : 'failed';
                         $rawTrig = is_string($row['triggered_by']) ? strtolower($row['triggered_by']) : 'manual';
                         $triggered = in_array($rawTrig, ['schedule', 'manual', 'cli'], true) ? $rawTrig : 'manual';
                         $ins->execute([
@@ -2691,7 +2691,7 @@ function ipam_migrations(): array
                     /** @var array<string, mixed> $row */
                     foreach ($sel as $row) {
                         $rawStatus = is_string($row['status']) ? strtolower($row['status']) : '';
-                        $status = in_array($rawStatus, ['success', 'failed'], true) ? $rawStatus : 'failed';
+                        $status = in_array($rawStatus, ['success', 'failed', 'retention_pruned'], true) ? $rawStatus : 'failed';
                         $ins->execute([
                             ':status'        => $status,
                             ':filename'      => $row['filename'],

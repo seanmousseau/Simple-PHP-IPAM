@@ -62,10 +62,12 @@ restore_info("Backup file : {$fromAbs}");
 restore_info("Size        : " . format_bytes((int)$fileSize));
 restore_info("SHA-256     : {$sha256}");
 
-// Try to find a matching backup_history record for integrity check
+// Try to find a matching backup_runs record for integrity check.
+// v3.21.0 §A1 (#799): backup_history was collapsed into backup_runs;
+// sha256 column → checksum.
 $histRow = false;
 try {
-    $st = $db->prepare("SELECT * FROM backup_history WHERE sha256=:h ORDER BY started_at DESC LIMIT 1");
+    $st = $db->prepare("SELECT * FROM backup_runs WHERE checksum=:h ORDER BY started_at DESC LIMIT 1");
     $st->execute([':h' => $sha256]);
     $histRow = $st->fetch();
 } catch (Throwable) {}
@@ -73,7 +75,7 @@ try {
 if ($histRow) {
     restore_info("History     : found — recorded on " . to_str($histRow['started_at'] ?? ''));
 } else {
-    restore_info("History     : not found in backup_history (untracked or different install)");
+    restore_info("History     : not found in backup_runs (untracked or different install)");
 }
 
 /** @var IpamConfig $gConf */

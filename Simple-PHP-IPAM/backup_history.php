@@ -28,17 +28,17 @@ if (in_array($filterStatus, ['running', 'success', 'failed', 'retention_pruned']
 }
 if ($filterFrom !== '') { $where[] = 'l.started_at >= :from'; $params[':from'] = $filterFrom; }
 if ($filterTo !== '')   { $where[] = 'l.started_at <= :to';   $params[':to']   = $filterTo . ' 23:59:59'; }
+// v3.21.0 §A1 (#799/#808): backup_runs only tracks backup runs. The
+// restore-side type filter no longer matches anything (#807 will land
+// proper restore tracking). Keep the URL parameter for back-compat —
+// 'restore' just yields zero rows; 'backup' is a no-op filter.
 if ($filterType === 'restore') {
-    // Use the dedicated 'type' column (added in v3.17 migration). Fall back
-    // to triggered_by inference for any pre-migration rows that may exist.
-    $where[] = "(l.type = 'restore' OR l.triggered_by LIKE 'web_restore%')";
-} elseif ($filterType === 'backup') {
-    $where[] = "(l.type = 'backup' OR (l.type IS NULL AND l.triggered_by NOT LIKE 'web_restore%'))";
+    $where[] = '1 = 0';
 }
 $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
 
 // Total count
-$countStmt = $db->prepare("SELECT COUNT(*) FROM backup_log l $whereSql");
+$countStmt = $db->prepare("SELECT COUNT(*) FROM backup_runs l $whereSql");
 $countStmt->execute($params);
 $total = (int) $countStmt->fetchColumn();
 
@@ -48,7 +48,7 @@ $offset = ($page - 1) * $perPage;
 
 // Page rows — LIMIT/OFFSET via bound params to satisfy static-analysis tools
 $rowSql = "SELECT l.*, d.name AS dest_name
-           FROM backup_log l
+           FROM backup_runs l
            LEFT JOIN backup_destinations d ON d.id = l.destination_id
            $whereSql
            ORDER BY l.started_at DESC
@@ -63,9 +63,9 @@ $rows = $rowsStmt->fetchAll(PDO::FETCH_ASSOC);
 // Stats: last successful per destination, total storage, next scheduled
 $stats = $db->query(
     "SELECT d.id AS dest_id, d.name AS dest_name,
-            (SELECT MAX(started_at) FROM backup_log
+            (SELECT MAX(started_at) FROM backup_runs
               WHERE destination_id = d.id AND status = 'success') AS last_success,
-            (SELECT COALESCE(SUM(size_bytes), 0) FROM backup_log
+            (SELECT COALESCE(SUM(size_bytes), 0) FROM backup_runs
               WHERE destination_id = d.id AND status = 'success') AS total_bytes,
             (SELECT MIN(next_run_at) FROM backup_schedules
               WHERE destination_id = d.id AND is_active = 1) AS next_run

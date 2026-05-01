@@ -3479,31 +3479,39 @@ function backup_is_due(array $config): bool
 }
 
 /**
- * Record a row to backup_history. Best-effort: swallows all errors so a
- * missing table (fresh install before migration runs) never blocks the backup.
+ * Record a CLI-runner backup run to backup_runs (#799 §A1). Best-effort:
+ * swallows all errors so a missing table (fresh install before migration
+ * runs) never blocks the backup. Always uses backup_type='database',
+ * encryption_mode='unencrypted', triggered_by='cli', destination_id=NULL —
+ * the legacy v3.7 CLI runner path produced unencrypted local-disk dumps
+ * with no remote destination linkage.
  */
-function backup_history_insert(PDO $db, string $filename, int $sizeBytes,
-    string $sha256, string $driver, string $startedAt, string $completedAt,
-    int $durationMs, string $targetPath, string $status, string $error = ''): void
-{
+function backup_runs_insert_cli(
+    PDO $db,
+    string $filename,
+    int $sizeBytes,
+    string $checksum,
+    string $startedAt,
+    string $completedAt,
+    string $status,
+    string $error = ''
+): void {
     try {
-        $db->prepare("INSERT INTO backup_history
-            (filename, size_bytes, sha256, db_driver, started_at, completed_at,
-             duration_ms, target, target_path, status, error)
-            VALUES
-            (:fn, :sz, :h, :dr, :sa, :ca, :dur, 'local', :tp, :st, :err)")
-           ->execute([
-               ':fn'  => $filename,
-               ':sz'  => $sizeBytes,
-               ':h'   => $sha256,
-               ':dr'  => $driver,
-               ':sa'  => $startedAt,
-               ':ca'  => $completedAt,
-               ':dur' => $durationMs,
-               ':tp'  => $targetPath,
-               ':st'  => $status,
-               ':err' => $error,
-           ]);
+        $db->prepare(
+            "INSERT INTO backup_runs " .
+            "(destination_id, schedule_id, backup_type, encryption_mode, triggered_by, status, " .
+            " filename, size_bytes, checksum, source_version, is_protected, error_message, started_at, completed_at) " .
+            "VALUES (NULL, NULL, 'database', 'unencrypted', 'cli', :st, :fn, :sz, :ck, :sv, 0, :err, :sa, :ca)"
+        )->execute([
+            ':st'  => $status,
+            ':fn'  => $filename,
+            ':sz'  => $sizeBytes,
+            ':ck'  => $checksum,
+            ':sv'  => IPAM_VERSION,
+            ':err' => $error,
+            ':sa'  => $startedAt,
+            ':ca'  => $completedAt,
+        ]);
     } catch (Throwable) {
         // best-effort
     }
@@ -3516,7 +3524,7 @@ function backup_history_insert(PDO $db, string $filename, int $sizeBytes,
  * - MySQL:  mysqldump via proc_open (password via env var, never on command line).
  * - Postgres: pg_dump via proc_open (password via PGPASSWORD env var).
  *
- * All engines record to backup_history with SHA-256 for integrity verification.
+ * All engines record to backup_runs with SHA-256 for integrity verification.
  * Returns true if a backup was written, false otherwise.
  */
 /** @param IpamConfig $config */
@@ -3540,7 +3548,6 @@ function run_db_backup_if_due(PDO $db, array $config): bool
         $driver    = ipam_dialect()->driver_name();
         $ts        = date('Y-m-d-His');
         $startedAt = date('Y-m-d H:i:s');
-        $t0        = microtime(true);
         $retention = max(1, to_int(ipam_setting('backup.retention')));
 
         /** @var IpamConfig $gConf */
@@ -3556,12 +3563,11 @@ function run_db_backup_if_due(PDO $db, array $config): bool
         // (mkdir, missing DB file) silently — operators got no email and no
         // history-table row, so they could miss days of failed backups before
         // an audit caught it (#791 follow-up).
-        $abortWith = static function (string $reason, string $filename = '') use ($db, $legacyDest, $driver, $startedAt, $t0): bool {
-            backup_history_insert(
-                $db, $filename, 0, '', $driver,
+        $abortWith = static function (string $reason, string $filename = '') use ($db, $legacyDest, $startedAt): bool {
+            backup_runs_insert_cli(
+                $db, $filename, 0, '',
                 $startedAt, date('Y-m-d H:i:s'),
-                (int) ((microtime(true) - $t0) * 1000),
-                $filename, 'failed', $reason
+                'failed', $reason
             );
             try { ipam_backup_notify($db, $legacyDest, 'failure', $reason); }
             catch (Throwable $ne) { error_log('[backup] notify dispatch failed: ' . $ne->getMessage()); }
@@ -3589,9 +3595,8 @@ function run_db_backup_if_due(PDO $db, array $config): bool
 
             $dest = $dir . '/ipam-' . $ts . '.sqlite';
             if (!@copy($dbPath, $dest)) {
-                backup_history_insert($db, basename($dest), 0, '', $driver,
-                    $startedAt, date('Y-m-d H:i:s'), (int)((microtime(true) - $t0) * 1000),
-                    $dest, 'failed', 'copy() failed');
+                backup_runs_insert_cli($db, basename($dest), 0, '',
+                    $startedAt, date('Y-m-d H:i:s'), 'failed', 'copy() failed');
                 try { ipam_backup_notify($db, $legacyDest, 'failure', 'copy() failed for ' . basename($dest)); }
                 catch (Throwable $ne) { error_log('[backup] notify dispatch failed: ' . $ne->getMessage()); }
                 return false;
@@ -3600,9 +3605,8 @@ function run_db_backup_if_due(PDO $db, array $config): bool
 
             $sha256 = hash_file('sha256', $dest) ?: '';
             $size   = (int)(@filesize($dest) ?: 0);
-            $dur    = (int)((microtime(true) - $t0) * 1000);
-            backup_history_insert($db, basename($dest), $size, $sha256, $driver,
-                $startedAt, date('Y-m-d H:i:s'), $dur, $dest, 'success');
+            backup_runs_insert_cli($db, basename($dest), $size, $sha256,
+                $startedAt, date('Y-m-d H:i:s'), 'success');
 
             // Prune old SQLite backups
             $files = glob($dir . '/ipam-*.sqlite');
@@ -3630,9 +3634,8 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             $env = array_merge(getenv() ?: [], ['MYSQL_PWD' => $pass]);
             $ret = backup_run_dump($cmd, $env, $dest);
             if (!$ret) {
-                backup_history_insert($db, basename($dest), 0, '', $driver,
-                    $startedAt, date('Y-m-d H:i:s'), (int)((microtime(true) - $t0) * 1000),
-                    $dest, 'failed', 'mysqldump failed');
+                backup_runs_insert_cli($db, basename($dest), 0, '',
+                    $startedAt, date('Y-m-d H:i:s'), 'failed', 'mysqldump failed');
                 try { ipam_backup_notify($db, $legacyDest, 'failure', 'mysqldump failed for ' . basename($dest)); }
                 catch (Throwable $ne) { error_log('[backup] notify dispatch failed: ' . $ne->getMessage()); }
                 return false;
@@ -3640,9 +3643,8 @@ function run_db_backup_if_due(PDO $db, array $config): bool
 
             $sha256 = hash_file('sha256', $dest) ?: '';
             $size   = (int)(@filesize($dest) ?: 0);
-            $dur    = (int)((microtime(true) - $t0) * 1000);
-            backup_history_insert($db, basename($dest), $size, $sha256, $driver,
-                $startedAt, date('Y-m-d H:i:s'), $dur, $dest, 'success');
+            backup_runs_insert_cli($db, basename($dest), $size, $sha256,
+                $startedAt, date('Y-m-d H:i:s'), 'success');
 
             $files = glob($dir . '/ipam-*.sql');
             if (is_array($files)) {
@@ -3666,9 +3668,8 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             $env = array_merge(getenv() ?: [], ['PGPASSWORD' => $pass]);
             $ret = backup_run_dump($cmd, $env, $dest);
             if (!$ret) {
-                backup_history_insert($db, basename($dest), 0, '', $driver,
-                    $startedAt, date('Y-m-d H:i:s'), (int)((microtime(true) - $t0) * 1000),
-                    $dest, 'failed', 'pg_dump failed');
+                backup_runs_insert_cli($db, basename($dest), 0, '',
+                    $startedAt, date('Y-m-d H:i:s'), 'failed', 'pg_dump failed');
                 try { ipam_backup_notify($db, $legacyDest, 'failure', 'pg_dump failed for ' . basename($dest)); }
                 catch (Throwable $ne) { error_log('[backup] notify dispatch failed: ' . $ne->getMessage()); }
                 return false;
@@ -3676,9 +3677,8 @@ function run_db_backup_if_due(PDO $db, array $config): bool
 
             $sha256 = hash_file('sha256', $dest) ?: '';
             $size   = (int)(@filesize($dest) ?: 0);
-            $dur    = (int)((microtime(true) - $t0) * 1000);
-            backup_history_insert($db, basename($dest), $size, $sha256, $driver,
-                $startedAt, date('Y-m-d H:i:s'), $dur, $dest, 'success');
+            backup_runs_insert_cli($db, basename($dest), $size, $sha256,
+                $startedAt, date('Y-m-d H:i:s'), 'success');
 
             $files = glob($dir . '/ipam-*.sql');
             if (is_array($files)) {
@@ -4331,17 +4331,12 @@ function ipam_gfs_select_for_deletion(array $backups, array $config, ?int $nowEp
  * DB-aware GFS retention wrapper for a single backup destination.
  *
  * Fetches the destination's GFS schedule config from backup_schedules, fetches
- * all successful backup_log rows for the destination, calls
+ * all successful backup_runs rows for the destination, calls
  * ipam_gfs_select_for_deletion() to determine which rows to prune, updates
  * each pruned row's status to 'retention_pruned', audits the operation, and
  * returns the count of rows pruned.
  *
- * Remote-delete stub: the actual delete-from-remote call requires a
- * BackupClientInterface implementation (landing in Phase 4 / #692). Until then
- * the remote-delete step throws RuntimeException with a clear message so callers
- * know it is not yet wired. The backup_log row update and audit still occur
- * (wrapped in try/catch so a remote-delete failure does not prevent the DB record
- * from being marked and counted).
+ * Reads from backup_runs (v3.21.0 #799 §A1; replaces backup_log).
  *
  * @param PDO $db             Application database connection.
  * @param int $destinationId  ID of the backup_destinations row.
@@ -4350,7 +4345,7 @@ function ipam_gfs_select_for_deletion(array $backups, array $config, ?int $nowEp
  *                            and the cron tick can pin this to a specific epoch
  *                            so retention does not drift between request entry
  *                            and the actual prune.
- * @return int                Count of backup_log rows marked as retention_pruned.
+ * @return int                Count of backup_runs rows marked as retention_pruned.
  */
 function ipam_backup_apply_retention(PDO $db, int $destinationId, ?int $nowEpoch = null): int
 {
@@ -4390,11 +4385,11 @@ function ipam_backup_apply_retention(PDO $db, int $destinationId, ?int $nowEpoch
         ];
     }
 
-    // ── 3. Fetch successful backup_log rows for this destination ─────────────
-    // backup_log uses started_at for GFS bucketing (no created_at column).
+    // ── 3. Fetch successful backup_runs rows for this destination ───────────
+    // backup_runs uses started_at for GFS bucketing (no created_at column).
     $logStmt = $db->prepare(
         "SELECT id, filename, started_at AS created_at
-         FROM backup_log
+         FROM backup_runs
          WHERE destination_id = :did AND status = 'success'
          ORDER BY started_at DESC"
     );
@@ -4476,7 +4471,7 @@ function ipam_backup_apply_retention(PDO $db, int $destinationId, ?int $nowEpoch
 
         try {
             $db->prepare(
-                "UPDATE backup_log SET status = 'retention_pruned' WHERE id = :id"
+                "UPDATE backup_runs SET status = 'retention_pruned' WHERE id = :id"
             )->execute([':id' => $logId]);
             $pruned++;
         } catch (\Exception $e) {

@@ -12,18 +12,20 @@ declare(strict_types=1);
  *   1. Dump the database to a gzipped tmp file (SQLite-only as of v3.17.0).
  *   2. Optionally encrypt with AES-256-GCM via backup_encrypt().
  *   3. Upload via the destination-specific BackupClientInterface.
- *   4. Insert/update a row in backup_log.
+ *   4. Insert/update a row in backup_runs.
  *   5. Apply GFS retention via ipam_backup_apply_retention().
  *
  * Pipeline (restore from a remote backup):
  *   1. Download the remote blob to data/tmp/ via the destination client.
- *   2. Verify SHA-256 against backup_log.checksum (#762 item 4).
+ *   2. Verify SHA-256 against backup_runs.checksum (#762 item 4).
  *   3. Decrypt if encrypted, stage as .sql.gz under data/tmp/.
  *   4. Sign the staged path so the wizard can hand it back safely.
  *   5. Dry-run, then apply with PRAGMA foreign_keys = OFF inside a transaction.
  *
- * Additive to the legacy v3.7.0 backup.php CLI which writes to backup_history;
- * this module writes to the v3.17 backup_log table.
+ * v3.21.0 (#799 §A1): backup_history (v3.7 CLI) and backup_log (v3.17
+ * destination runner) were collapsed into a single backup_runs table.
+ * Both the CLI runner in lib.php and this destination runner now write
+ * to backup_runs.
  */
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -352,14 +354,43 @@ function ipam_backup_encrypt_to_tmp(string $srcPath, string $appSecret): string
     return $tmp;
 }
 
+/**
+ * Insert a backup_runs row for a destination-driven backup. Status starts as
+ * 'running' (v3.21.0 enum) and gets promoted to 'success' or 'failed' on
+ * completion. Encryption mode is captured from the destination's `encrypt`
+ * flag — encrypted destinations write 'stored' (v3.17 IPAMBKP2 mode);
+ * unencrypted destinations write 'unencrypted'.
+ */
 function ipam_backup_insert_log(PDO $db, int $destId, string $triggeredBy, string $status, string $filename): int
 {
     $now = ipam_dialect()->now();
+
+    // Resolve encryption mode from the destination's encrypt flag.
+    $encMode = 'unencrypted';
+    try {
+        $eStmt = $db->prepare("SELECT encrypt FROM backup_destinations WHERE id = :id");
+        $eStmt->execute([':id' => $destId]);
+        $enc = $eStmt->fetchColumn();
+        if ($enc !== false && (int) $enc === 1) {
+            $encMode = 'stored';
+        }
+    } catch (Throwable) {
+        // best-effort; falls back to 'unencrypted' if the lookup fails
+    }
+
     $stmt = $db->prepare(
-        "INSERT INTO backup_log (destination_id, triggered_by, status, filename, started_at)
-         VALUES (:d, :t, :s, :f, $now)"
+        "INSERT INTO backup_runs " .
+        "(destination_id, schedule_id, backup_type, encryption_mode, triggered_by, status, filename, source_version, started_at) " .
+        "VALUES (:d, NULL, 'database', :em, :t, :s, :f, :sv, $now)"
     );
-    $stmt->execute([':d' => $destId, ':t' => $triggeredBy, ':s' => $status, ':f' => $filename]);
+    $stmt->execute([
+        ':d'  => $destId,
+        ':em' => $encMode,
+        ':t'  => $triggeredBy,
+        ':s'  => $status,
+        ':f'  => $filename,
+        ':sv' => IPAM_VERSION,
+    ]);
     return (int) $db->lastInsertId();
 }
 
@@ -368,7 +399,7 @@ function ipam_backup_update_log_success(PDO $db, int $logId, array $meta): void
 {
     $now = ipam_dialect()->now();
     $stmt = $db->prepare(
-        "UPDATE backup_log SET status='success', size_bytes=:sz, checksum=:cs, completed_at=$now WHERE id=:id"
+        "UPDATE backup_runs SET status='success', size_bytes=:sz, checksum=:cs, completed_at=$now WHERE id=:id"
     );
     $stmt->execute([':sz' => $meta['size'], ':cs' => $meta['checksum'], ':id' => $logId]);
 }
@@ -377,7 +408,7 @@ function ipam_backup_update_log_failure(PDO $db, int $logId, string $error): voi
 {
     $now = ipam_dialect()->now();
     $stmt = $db->prepare(
-        "UPDATE backup_log SET status='failed', error_message=:e, completed_at=$now WHERE id=:id"
+        "UPDATE backup_runs SET status='failed', error_message=:e, completed_at=$now WHERE id=:id"
     );
     $stmt->execute([':e' => substr($error, 0, 1000), ':id' => $logId]);
 }
@@ -486,14 +517,13 @@ function ipam_restore_prepare_for_restore(PDO $db, array $config, int $destinati
         throw new RuntimeException('ipam_restore: cannot hash downloaded file');
     }
 
-    // Verify against backup_log row if one exists for this filename.
+    // Verify against backup_runs row if one exists for this filename.
     // Mismatch is fatal — never apply a backup whose stored checksum disagrees.
-    // Restrict to type='backup' rows — restore rows write the same filename
-    // but their checksum field would not match (and may be NULL).
+    // backup_runs only tracks backup runs (no type=restore rows since v3.21.0
+    // §A1), so no type filter is needed.
     $stmt = $db->prepare(
-        "SELECT checksum FROM backup_log
+        "SELECT checksum FROM backup_runs
          WHERE destination_id = :d AND filename = :f AND status = 'success'
-           AND (type = 'backup' OR type IS NULL)
          ORDER BY started_at DESC LIMIT 1"
     );
     $stmt->execute([':d' => $destinationId, ':f' => $remoteName]);
@@ -679,35 +709,11 @@ function ipam_restore_apply(PDO $db, string $stagedPath, string $realFilename = 
         throw new RuntimeException('ipam_restore: apply only supports sqlite in v3.17.0');
     }
 
-    // Log entry — track restore in backup_log for visibility on history page (#701).
-    // Use the real backup filename (passed by caller) when available; fall back
-    // to the staged tmp filename only if not provided. The staged tmp filename
-    // (e.g. restore_staged_<rand>.sql.gz) is meaningless for history viewers.
+    // v3.21.0 §A1 (#799/#808): backup_runs only tracks backup runs (no
+    // type='restore' rows). Restore activity is recorded via audit_log
+    // below. Proper restore-runs tracking lands with the restore wizard
+    // rewrite in #807 (Wave 3).
     $filename = $realFilename !== '' ? $realFilename : basename($stagedPath);
-
-    // destination_id: prefer explicit caller-supplied value (the same id that
-    // staged the file). Fall back to filename lookup only if the caller didn't
-    // know — and even then, prefer the most recent success across destinations
-    // since same-name backups on multiple destinations are inherently ambiguous.
-    $destId = $destinationId !== null && $destinationId > 0 ? $destinationId : null;
-    if ($destId === null) {
-        $matchStmt = $db->prepare(
-            "SELECT destination_id FROM backup_log
-             WHERE filename = :f AND status = 'success'
-             ORDER BY started_at DESC LIMIT 1"
-        );
-        $matchStmt->execute([':f' => $filename]);
-        $matched = $matchStmt->fetchColumn();
-        if (is_numeric($matched)) $destId = (int) $matched;
-    }
-
-    $now = ipam_dialect()->now();
-    $logStmt = $db->prepare(
-        "INSERT INTO backup_log (destination_id, triggered_by, type, status, filename, started_at)
-         VALUES (:d, 'web_restore', 'restore', 'running', :f, $now)"
-    );
-    $logStmt->execute([':d' => $destId, ':f' => $filename]);
-    $logId = (int) $db->lastInsertId();
 
     $sql = ipam_restore_read_staged_sql($stagedPath);
 
@@ -732,27 +738,10 @@ function ipam_restore_apply(PDO $db, string $stagedPath, string $realFilename = 
         $db->commit();
     } catch (Throwable $e) {
         if ($db->inTransaction()) $db->rollBack();
-        // Mark log entry failed — swallow any logging error so the real exception propagates
-        try {
-            $nowF = ipam_dialect()->now();
-            $updF = $db->prepare(
-                "UPDATE backup_log SET status = 'failed', error_message = :e, completed_at = $nowF WHERE id = :id"
-            );
-            $updF->execute([':e' => substr($e->getMessage(), 0, 1000), ':id' => $logId]);
-        } catch (Throwable) { /* swallow */ }
         throw new RuntimeException('ipam_restore: apply failed — ' . $e->getMessage(), 0, $e);
     } finally {
         $db->exec('PRAGMA foreign_keys = ON');
     }
-
-    // Mark log entry success
-    try {
-        $now2 = ipam_dialect()->now();
-        $upd = $db->prepare(
-            "UPDATE backup_log SET status = 'success', size_bytes = :sz, completed_at = $now2 WHERE id = :id"
-        );
-        $upd->execute([':sz' => filesize($stagedPath) ?: 0, ':id' => $logId]);
-    } catch (Throwable) { /* swallow logging failures */ }
 
     // Bring schema up to date if backup is from older version
     try {
@@ -763,8 +752,9 @@ function ipam_restore_apply(PDO $db, string $stagedPath, string $realFilename = 
     }
 
     // Audit: significant destructive action. Records into audit_log so
-    // operators can see who restored what and when, independent of the
-    // backup_log row we already updated above.
+    // operators can see who restored what and when. (Pre-v3.21.0 the
+    // restore also wrote a type='restore' row to backup_log; that path
+    // is gone now per §A1 / #808.)
     try {
         audit(
             $db,

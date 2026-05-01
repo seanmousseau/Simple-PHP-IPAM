@@ -750,7 +750,7 @@ CREATE TABLE IF NOT EXISTS backup_runs (
   CONSTRAINT chk_brun_backup_type     CHECK (backup_type IN ('database','logical')),
   CONSTRAINT chk_brun_encryption_mode CHECK (encryption_mode IN ('stored','transitory','unencrypted')),
   CONSTRAINT chk_brun_triggered_by    CHECK (triggered_by IN ('schedule','manual','cli')),
-  CONSTRAINT chk_brun_status          CHECK (status IN ('running','success','failed')),
+  CONSTRAINT chk_brun_status          CHECK (status IN ('running','success','failed','retention_pruned')),
   CONSTRAINT chk_brun_protected       CHECK (is_protected IN (0,1)),
   KEY idx_backup_runs_destination (destination_id),
   KEY idx_backup_runs_schedule    (schedule_id),

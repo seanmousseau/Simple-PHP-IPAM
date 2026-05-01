@@ -633,7 +633,7 @@ CREATE TABLE IF NOT EXISTS backup_runs (
   triggered_by    TEXT    NOT NULL DEFAULT 'manual'
                           CHECK (triggered_by IN ('schedule','manual','cli')),
   status          TEXT    NOT NULL DEFAULT 'running'
-                          CHECK (status IN ('running','success','failed')),
+                          CHECK (status IN ('running','success','failed','retention_pruned')),
   filename        TEXT,
   size_bytes      INTEGER,
   checksum        TEXT,
