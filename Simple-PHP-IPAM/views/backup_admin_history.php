@@ -110,16 +110,18 @@ $resetUrl = $extraQuery !== '' ? ($self . '?' . $extraQuery) : $self;
           $cs          = to_str($r['checksum'] ?? '');
           $csShort     = $cs !== '' ? (substr($cs, 0, 12) . '…') : '—';
         ?>
-          <tr>
+          <?php $runId = to_int($r['id']); ?>
+          <tr class="history-row"
+              tabindex="0"
+              data-run-id="<?= $runId ?>"
+              data-drawer-url="backup_run_detail.php?id=<?= $runId ?>"
+              data-drawer-title="Run #<?= $runId ?>"
+              aria-label="Open details for run <?= $runId ?>">
             <td><?= e($started) ?></td>
             <td><?= e(to_str($r['dest_name'] ?? 'unknown')) ?></td>
             <td><?= e(to_str($r['triggered_by'])) ?></td>
             <td><span class="badge badge-backup">Backup</span></td>
-            <td><span class="badge <?= e($statusClass) ?>"><?= e($statusVal) ?></span>
-                <?php if ($statusVal === 'failed' && to_str($r['error_message'] ?? '') !== ''): ?>
-                  <details><summary class="muted">error</summary><pre><?= e(to_str($r['error_message'])) ?></pre></details>
-                <?php endif; ?>
-            </td>
+            <td><span class="badge <?= e($statusClass) ?>"><?= e($statusVal) ?></span></td>
             <td><?= e(to_str($r['filename'] ?? '—')) ?></td>
             <td><?= $r['size_bytes'] !== null ? number_format(to_int($r['size_bytes'])) : '—' ?></td>
             <td><?= e($duration) ?></td>
