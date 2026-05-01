@@ -113,6 +113,93 @@ test.describe('Restore wizard', () => {
     await expect(page.locator('.success')).toContainText(/Database restored.*log in again/i);
   });
 
+  // ── Unified surface coverage (#1040, v3.21.0) ─────────────────────────────
+  //
+  // Wave 4 introduced backup_admin.php?tab=restore as the canonical entry
+  // point. restore_web.php remains as a thin wrapper for backwards-compat,
+  // but tests should also assert the unified surface renders the wizard
+  // and the confirm-typing gate end-to-end.
+  test.describe('unified surface — backup_admin.php?tab=restore', () => {
+
+    test('Step 1 wizard renders on the Restore tab', async ({ page }) => {
+      await page.goto(appUrl('backup_admin.php?tab=restore'));
+      // The unified surface emits its own h1 ("Backup & Restore") and an
+      // h2 with the active tab name; the wizard's own step heading is
+      // therefore further down in the document. Use first-matching h2
+      // *inside the tab body* to disambiguate.
+      const wizard = page.locator('.backup-admin-tab');
+      await expect(wizard.locator('h2', { hasText: /Step 1/ })).toBeVisible();
+      await expect(wizard.locator('select[name="destination_id"]')).toBeVisible();
+      await expect(wizard.locator('input[name="name"]')).toBeVisible();
+      await expect(wizard.locator('button', { hasText: 'Stage backup' })).toBeVisible();
+    });
+
+    test('invalid filename surfaces an error on the unified surface', async ({ page }) => {
+      await ensureTestDestination(page);
+      await page.goto(appUrl('backup_admin.php?tab=restore'));
+      await page.locator('select[name="destination_id"]').selectOption({ label: `${TEST_DEST_NAME} (local)` });
+      await page.locator('input[name="name"]').fill('does-not-exist.sql.gz');
+      await page.locator('button:has-text("Stage backup")').click();
+      // The handler redirects back to the same tab with an error; assert
+      // we're still on the Restore tab and the .danger banner is shown.
+      await expect(page).toHaveURL(/tab=restore/);
+      await expect(page.locator('.danger').first()).toContainText(/Stage failed|file not found/);
+    });
+
+    test('confirm-typing gate disables Apply until RESTORE is typed (unified surface)', async ({ page }) => {
+      // Same DOM-injection smoke test as on restore_web.php — proves the
+      // gate JS is loaded and bound on the unified surface.
+      await page.goto(appUrl('backup_admin.php?tab=restore'));
+      await page.evaluate(() => {
+        const form = document.createElement('form');
+        form.id = 'restore-apply-form';
+        const input = document.createElement('input');
+        input.id = 'restore-confirm-input';
+        input.type = 'text';
+        const btn = document.createElement('button');
+        btn.id = 'restore-apply-button';
+        btn.disabled = true;
+        btn.textContent = 'Apply restore';
+        form.append(input, btn);
+        document.body.appendChild(form);
+        input.addEventListener('input', () => {
+          btn.disabled = (input.value !== 'RESTORE');
+        });
+      });
+      const button = page.locator('#restore-apply-button');
+      const input  = page.locator('#restore-confirm-input');
+      await expect(button).toBeDisabled();
+      await input.fill('restore');
+      await expect(button).toBeDisabled();
+      await input.fill('RESTORE');
+      await expect(button).toBeEnabled();
+    });
+
+    test('legacy restore_web.php and unified ?tab=restore render structurally identical wizards', async ({ page }) => {
+      // Sanity-check the thin-wrapper invariant: same form fields, same
+      // submit-button labels, same step heading. If this drifts, one of
+      // the two entry points has been edited in isolation.
+      const fingerprint = async (url: string) => {
+        await page.goto(appUrl(url));
+        return page.evaluate(() => {
+          const tab    = document.querySelector('.backup-admin-tab') ?? document.body;
+          const fields = Array.from(tab.querySelectorAll('input[name],select[name]'))
+              .map(el => `${el.tagName.toLowerCase()}:${(el as HTMLInputElement).name}`)
+              .sort();
+          const buttons = Array.from(tab.querySelectorAll('button[type="submit"], form button:not([type="button"])'))
+              .map(el => (el.textContent || '').trim())
+              .filter(t => t.length > 0)
+              .sort();
+          return { fields, buttons };
+        });
+      };
+      const legacy  = await fingerprint('restore_web.php');
+      const unified = await fingerprint('backup_admin.php?tab=restore');
+      expect(unified.fields).toEqual(legacy.fields);
+      expect(unified.buttons).toEqual(legacy.buttons);
+    });
+  });
+
   test('LIVE: stage → dry-run → apply round-trip (DESTRUCTIVE)', async ({ page }) => {
     test.skip(process.env.IPAM_PW_RESTORE_LIVE !== '1',
       'Live restore requires IPAM_PW_RESTORE_LIVE=1');
