@@ -254,6 +254,9 @@ $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM'
   <?php if ($timedOut && !$error): ?>
     <p class="warning">Your session expired due to inactivity. Please log in again.</p>
   <?php endif; ?>
+  <?php if (!empty($_GET['restored'])): ?>
+    <p class="success">Database restored. Please log in again.</p>
+  <?php endif; ?>
   <?php if ($error): ?><p class="danger"><?= e($error) ?></p><?php endif; ?>
 
   <?php if ($oidcActive): ?>
