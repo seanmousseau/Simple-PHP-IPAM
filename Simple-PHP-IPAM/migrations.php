@@ -2810,13 +2810,18 @@ function ipam_migrations(): array
                 // destination_id, so this is the closest-to-truth mapping
                 // we can do without storing the original schedule's full
                 // shape on each run.)
+                // Use distinct placeholder names per occurrence: PDO with
+                // EMULATE_PREPARES=false (MySQL native prepares) treats
+                // each placeholder occurrence as its own parameter slot
+                // and rejects repeated `:keep` with HY093 "Invalid
+                // parameter number". Bind both occurrences explicitly.
                 $repoint = $db->prepare(
                     "UPDATE backup_runs
-                        SET schedule_id = :keep
+                        SET schedule_id = :keep_target
                       WHERE schedule_id IN (
                               SELECT id FROM backup_schedules
                                WHERE destination_id = :did
-                                 AND id <> :keep
+                                 AND id <> :keep_filter
                             )"
                 );
                 $del = $db->prepare(
@@ -2825,12 +2830,17 @@ function ipam_migrations(): array
                         AND id <> :keep"
                 );
                 foreach ($rows as $r) {
-                    $params = [
-                        ':did'  => (int) $r['destination_id'],
-                        ':keep' => (int) $r['keep_id'],
-                    ];
-                    $repoint->execute($params);
-                    $del->execute($params);
+                    $did  = (int) $r['destination_id'];
+                    $keep = (int) $r['keep_id'];
+                    $repoint->execute([
+                        ':keep_target' => $keep,
+                        ':did'         => $did,
+                        ':keep_filter' => $keep,
+                    ]);
+                    $del->execute([
+                        ':did'  => $did,
+                        ':keep' => $keep,
+                    ]);
                 }
             }
 

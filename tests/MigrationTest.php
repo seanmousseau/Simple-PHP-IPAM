@@ -1123,4 +1123,70 @@ class MigrationTest extends TestCase
         $nonNullAfter = (int)$db->query("SELECT COUNT(*) FROM settings WHERE tenant_id IS NOT NULL")->fetchColumn();
         $this->assertSame(0, $nonNullAfter, 'tenant_id must remain NULL for all rows after idempotent re-run');
     }
+
+    // -------------------------------------------------------------------------
+    // 3.21.0-schedule-unique (v3.21.1 hotfix regression)
+    // -------------------------------------------------------------------------
+
+    /**
+     * v3.21.1 hotfix regression: the dedup loop in 3.21.0-schedule-unique
+     * issued an UPDATE that referenced `:keep` twice in the same query.
+     * MySQL native prepared statements (PDO with EMULATE_PREPARES=false)
+     * treat each placeholder occurrence as its own parameter slot and
+     * reject the execute call with HY093 "Invalid parameter number".
+     *
+     * SQLite doesn't enforce the same rule, so the bug only surfaced on
+     * the prod MySQL deploy. This test pre-seeds duplicate schedules
+     * BEFORE running migrations, which forces the dedup loop body to
+     * execute. It also verifies that historical backup_runs.schedule_id
+     * is re-pointed to the surviving schedule before the loser rows are
+     * deleted (the second guarantee from the round-2 CR feedback).
+     */
+    public function testV321ScheduleUniqueDedupRepointsBackupRuns(): void
+    {
+        // Build a pre-v3.21 state and stop right before schedule-unique
+        // would run, so we can seed duplicates ourselves.
+        $db = $this->makePreVrfDb();
+
+        // Run all migrations through 3.21.0-backup-runs but NOT
+        // 3.21.0-schedule-unique. We do this by applying migrations once
+        // (which runs everything), then deleting the schedule-unique row
+        // from schema_migrations, dropping the unique index/constraint
+        // we want to re-create, and seeding duplicates.
+        apply_migrations($db);
+        $db->exec("DROP INDEX IF EXISTS uq_backup_schedules_destination");
+        $db->exec("DELETE FROM schema_migrations WHERE version = '3.21.0-schedule-unique'");
+
+        // Seed: one destination, three schedules pointing at it (a real
+        // operator could end up here via cron-replay or test fixtures
+        // pre-dating the unique constraint).
+        $db->exec("INSERT INTO backup_destinations (id, name, type) VALUES (1, 'pw-local', 'local')");
+        $db->exec("INSERT INTO backup_schedules (id, destination_id, frequency, time_of_day) VALUES (10, 1, 'daily', '02:00'), (11, 1, 'daily', '03:00'), (12, 1, 'daily', '04:00')");
+
+        // And seed a backup_runs row attached to each schedule.
+        $db->exec("INSERT INTO backup_runs (id, destination_id, schedule_id, backup_type, status, started_at) VALUES (100, 1, 10, 'database', 'success', '2026-05-01 02:00:00'), (101, 1, 11, 'database', 'success', '2026-05-01 03:00:00'), (102, 1, 12, 'database', 'success', '2026-05-01 04:00:00')");
+
+        // Re-run migrations. Only schedule-unique should now apply (the
+        // others are still recorded in schema_migrations).
+        $applied = apply_migrations($db);
+        $this->assertContains('3.21.0-schedule-unique', $applied);
+
+        // After dedup: only the highest-id schedule (12) survives.
+        $remainingIds = array_column(
+            $db->query("SELECT id FROM backup_schedules WHERE destination_id = 1 ORDER BY id")->fetchAll(\PDO::FETCH_ASSOC),
+            'id'
+        );
+        $this->assertSame([12], array_map('intval', $remainingIds), 'dedup must keep the highest-id schedule');
+
+        // Every backup_runs row's schedule_id points at the survivor.
+        $repointedIds = array_column(
+            $db->query("SELECT schedule_id FROM backup_runs WHERE destination_id = 1 ORDER BY id")->fetchAll(\PDO::FETCH_ASSOC),
+            'schedule_id'
+        );
+        $this->assertSame([12, 12, 12], array_map('intval', $repointedIds), 'backup_runs.schedule_id must be repointed to the surviving schedule before losers are deleted');
+
+        // The unique index is back in place.
+        $idxs = $db->query("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'backup_schedules'")->fetchAll(\PDO::FETCH_COLUMN);
+        $this->assertContains('uq_backup_schedules_destination', $idxs);
+    }
 }

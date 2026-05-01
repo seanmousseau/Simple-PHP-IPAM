@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.21.1] - 2026-05-01
+
+Hotfix for v3.21.0. The new `3.21.0-schedule-unique` migration's dedup loop issued an UPDATE that referenced the named placeholder `:keep` twice in the same query (`SET schedule_id = :keep … AND id <> :keep`). On MySQL with PDO native prepared statements (the project's default — `EMULATE_PREPARES = false`), each placeholder occurrence is a distinct slot, so executing with one `:keep` value tripped `SQLSTATE[HY093]: Invalid parameter number` and rolled the upgrade back. SQLite tolerates the reuse, which is why the bug only surfaced on the prod MySQL deploy (demo, with no duplicate schedules, never reached the dedup loop body).
+
+### Fixed
+- **`3.21.0-schedule-unique` dedup-loop UPDATE on MySQL.** The repoint statement now uses distinct placeholder names per occurrence (`:keep_target` for the SET, `:keep_filter` for the subquery WHERE), bound separately at execute time. Behavior is unchanged on SQLite/PG. (#1054 production-deploy regression.)
+- **New `tests/MigrationTest.php::testV321ScheduleUniqueDedupRepointsBackupRuns` regression.** Pre-seeds duplicate `backup_schedules` rows with attached `backup_runs` history before running migrations, asserts that (a) the highest-id schedule survives, (b) every historical `backup_runs.schedule_id` is repointed to the survivor before the loser rows are deleted, and (c) the unique index lands afterward. (The MySQL-specific HY093 itself isn't reproducible on SQLite, but the dedup-with-repoint behavior is.)
+
 ## [3.21.0] - 2026-05-01
 
 Unified Backup & Restore admin surface, restore-wizard rewrite, and a single `backup_runs` history table merging the two legacy logs. Theme: collapse the six pre-existing backup pages into one tabbed admin surface with consistent drawer-driven CRUD. Includes a P0 sigchild fix on the restore path and a real-lexer SQL splitter rewrite.
@@ -1311,6 +1319,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.21.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.21.0...v3.21.1
 [3.21.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.20.0...v3.21.0
 [3.20.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.19.1...v3.20.0
 [3.19.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.19.0...v3.19.1
