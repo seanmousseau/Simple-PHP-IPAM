@@ -434,6 +434,7 @@ Find the `<tr>` rendering in `views/backup_admin_history.php` (currently each ro
 ```php
 <tr class="history-row"
     tabindex="0"
+    data-run-id="<?= (int) $r['id'] ?>"
     data-drawer-url="backup_run_detail.php?id=<?= (int) $r['id'] ?>"
     data-drawer-title="Run #<?= (int) $r['id'] ?>"
     aria-label="Open details for run <?= (int) $r['id'] ?>">
@@ -627,10 +628,16 @@ function ipam_backup_run_verify(\PDO $db, int $runId): array
     }
     $client = ipam_backup_client_for_destination($db, (int) $row['destination_id']);
     if (!$client) return ['ok' => false, 'error' => 'unreachable', 'message' => 'destination missing'];
+    $tmp = sys_get_temp_dir() . '/ipam-verify-' . bin2hex(random_bytes(8));
     try {
-        $hash = $client->sha256((string) $row['filename']);
+        $found = $client->download((string) $row['filename'], $tmp);
+        if (!$found) return ['ok' => false, 'error' => 'no_artifact'];
+        $hash = hash_file('sha256', $tmp);
+        if ($hash === false) return ['ok' => false, 'error' => 'unreachable', 'message' => 'hash_file failed'];
     } catch (\Throwable $e) {
         return ['ok' => false, 'error' => 'unreachable', 'message' => $e->getMessage()];
+    } finally {
+        if (is_file($tmp)) @unlink($tmp);
     }
     $expected = (string) $row['checksum'];
     $auditAction = ($hash === $expected) ? 'backup_run.verify' : 'backup_run.verify_failed';
@@ -639,9 +646,31 @@ function ipam_backup_run_verify(\PDO $db, int $runId): array
 }
 ```
 
-If `ipam_backup_client_for_destination()` does not yet exist, locate the existing destination → client factory and re-export it under that name (most likely already at `Simple-PHP-IPAM/lib/backup.php` — search with `grep -n "function ipam_backup_client" Simple-PHP-IPAM/lib*.php Simple-PHP-IPAM/lib/`). If the existing factory is named differently, alias it inside this helper rather than duplicate.
+**Note:** `ipam_backup_client_for_destination($db, $id)` does NOT exist. The existing factory is `ipam_backup_dest_client(array $dest)` in `Simple-PHP-IPAM/lib/backup.php:143` and takes a destination *row array*. Inline a thin helper at the top of `lib/backup_admin_history.php`:
 
-If the `BackupClientInterface` does not yet expose `sha256()`, add a method that streams the remote file through `hash_init('sha256')` / `hash_update()` / `hash_final()`. The Local client reads from disk; S3 and SFTP clients stream over the wire. **Required addition:** add the method to `lib/BackupClientInterface.php` and implement it on each existing client. PHPUnit test for this slice is the verify test in this task.
+```php
+function ipam_backup_client_for_destination(\PDO $db, int $destId): ?BackupClientInterface
+{
+    $st = $db->prepare("SELECT * FROM backup_destinations WHERE id = :id");
+    $st->execute([':id' => $destId]);
+    $row = $st->fetch(\PDO::FETCH_ASSOC);
+    if (!$row) return null;
+    return ipam_backup_dest_client($row);
+}
+```
+
+**Note:** `BackupClientInterface` does NOT have an `sha256()` method, and we are NOT adding one. Verify uses the existing `download(string $remoteName, string $destPath): bool` method to fetch into a temp file in `data/tmp/`, computes `hash_file('sha256', $tmp)`, and unlinks the temp afterwards. This works uniformly across Local/S3/SFTP clients with zero interface change. Add the temp-fetch logic inside `ipam_backup_run_verify()`:
+
+```php
+$tmp = sys_get_temp_dir() . '/ipam-verify-' . bin2hex(random_bytes(8));
+try {
+    $ok = $client->download((string) $row['filename'], $tmp);
+    if (!$ok) return ['ok' => false, 'error' => 'no_artifact'];
+    $hash = hash_file('sha256', $tmp);
+} finally {
+    if (is_file($tmp)) @unlink($tmp);
+}
+```
 
 - [ ] **Step 4: Run the verify tests, expect green**
 
@@ -898,7 +927,7 @@ function _backupRunDeletePromptThenSubmit(form, runId, csrf) {
                 if (j.ok) {
                     resultEl.classList.add('is-ok');
                     resultEl.textContent = 'Deleted.';
-                    var row = document.querySelector('.history-row[data-drawer-url$="id=' + runId + '"]');
+                    var row = document.querySelector('.history-row[data-run-id="' + runId + '"]');
                     if (row) row.remove();
                     setTimeout(function () { if (window.IpamGlobalDrawer) IpamGlobalDrawer.close(); }, 600);
                 } else {
