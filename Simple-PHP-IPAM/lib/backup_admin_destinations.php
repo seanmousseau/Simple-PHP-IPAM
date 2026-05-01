@@ -13,6 +13,30 @@ declare(strict_types=1);
  */
 
 /**
+ * Pre-DML existence check for an id-keyed row. SQLite's PDO driver returns
+ * 0 from rowCount() unconditionally, so the portable equivalent of "did
+ * the UPDATE/DELETE actually hit a row?" is a SELECT 1 before mutating.
+ *
+ * Used by the six DML-by-id handlers (edit/delete/toggle for destinations
+ * and schedules) so a stale or tampered id cannot produce a false-positive
+ * audit entry. (CR feedback PR #1054 round 3.)
+ */
+function ipam_dest_row_exists(\PDO $db, string $table, int $id): bool
+{
+    if ($id <= 0) {
+        return false;
+    }
+    // Table name comes from a static-string literal at every call site;
+    // never user input. Validated allowlist for defense in depth.
+    if (!in_array($table, ['backup_destinations', 'backup_schedules'], true)) {
+        return false;
+    }
+    $st = $db->prepare("SELECT 1 FROM {$table} WHERE id = :id");
+    $st->execute([':id' => $id]);
+    return $st->fetchColumn() !== false;
+}
+
+/**
  * Collect and validate type-specific destination config from $_POST.
  *
  * @param  string               $type  's3'|'sftp'|'local'
@@ -182,6 +206,13 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
         $cfg = ipam_destinations_collect_config($type, $_POST);
         if (is_string($cfg)) return $cfg;
 
+        // CR feedback PR #1054 round 3: verify the row exists BEFORE the
+        // DML so a stale/tampered id can't produce a false-positive audit
+        // entry. SQLite PDO returns 0 from rowCount() unconditionally, so
+        // existence-check via SELECT is the portable pattern.
+        if (!ipam_dest_row_exists($db, 'backup_destinations', $id)) {
+            return 'Destination not found.';
+        }
         $now  = ipam_dialect()->now();
         $stmt = $db->prepare(
             "UPDATE backup_destinations SET name=:n, type=:t, config=:c, encrypt=:e, updated_at=$now WHERE id=:id"
@@ -204,6 +235,9 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
     if ($action === 'delete_destination') {
         $id = to_int($_POST['id'] ?? '0');
         if ($id <= 0) return 'Invalid destination ID.';
+        if (!ipam_dest_row_exists($db, 'backup_destinations', $id)) {
+            return 'Destination not found.';
+        }
         $db->prepare("DELETE FROM backup_destinations WHERE id=:id")->execute([':id' => $id]);
         audit($db, 'destination.delete', 'destination', $id, "id=$id");
         ipam_destinations_redirect($redirectBase, 'deleted');
@@ -212,6 +246,9 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
     if ($action === 'toggle_active_destination') {
         $id = to_int($_POST['id'] ?? '0');
         if ($id <= 0) return 'Invalid destination ID.';
+        if (!ipam_dest_row_exists($db, 'backup_destinations', $id)) {
+            return 'Destination not found.';
+        }
         $now  = ipam_dialect()->now();
         $stmt = $db->prepare(
             "UPDATE backup_destinations SET is_active = CASE WHEN is_active=1 THEN 0 ELSE 1 END, updated_at=$now WHERE id=:id"
@@ -297,9 +334,19 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
             ]);
         } catch (\PDOException $e) {
             $sqlState = $e->errorInfo[0] ?? '';
-            // 23000 → MySQL/SQLite generic integrity-constraint violation
-            // 23505 → PostgreSQL unique-violation
-            if ($sqlState === '23000' || $sqlState === '23505') {
+            $msg      = (string) ($e->errorInfo[2] ?? $e->getMessage());
+            // 23505 (PostgreSQL) is unique-only.
+            // 23000 (MySQL/SQLite) covers BOTH unique AND foreign-key
+            // violations — narrow it to "unique" specifically (CR feedback
+            // PR #1054 round 3) so an FK race (destination deleted between
+            // the COUNT preflight and the INSERT) is not mislabeled as a
+            // duplicate-schedule error. Both engines include the word
+            // "UNIQUE" in their unique-violation messages
+            // ("Duplicate entry … for key 'uq_…'" / "UNIQUE constraint
+            // failed: backup_schedules.destination_id"); FK-violation
+            // messages do not.
+            if ($sqlState === '23505'
+                || ($sqlState === '23000' && stripos($msg, 'unique') !== false)) {
                 return 'A schedule already exists for this destination. Edit the existing one instead.';
             }
             throw $e;
@@ -336,6 +383,9 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
         if ($domParam !== null && ($domParam < 1 || $domParam > 28)) {
             return 'Day of month must be 1–28.';
         }
+        if (!ipam_dest_row_exists($db, 'backup_schedules', $id)) {
+            return 'Schedule not found.';
+        }
 
         $nextRunAt = gmdate('Y-m-d H:i:s', ipam_backup_next_run_at([
             'frequency'    => $frequency,
@@ -369,6 +419,9 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
     if ($action === 'delete_schedule') {
         $id = to_int($_POST['id'] ?? '0');
         if ($id <= 0) return 'Invalid schedule ID.';
+        if (!ipam_dest_row_exists($db, 'backup_schedules', $id)) {
+            return 'Schedule not found.';
+        }
         $db->prepare("DELETE FROM backup_schedules WHERE id=:id")->execute([':id' => $id]);
         audit($db, 'schedule.delete', 'schedule', $id, "id=$id");
         ipam_destinations_redirect($redirectBase, 'sched_deleted');
@@ -377,6 +430,9 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
     if ($action === 'toggle_active_schedule') {
         $id = to_int($_POST['id'] ?? '0');
         if ($id <= 0) return 'Invalid schedule ID.';
+        if (!ipam_dest_row_exists($db, 'backup_schedules', $id)) {
+            return 'Schedule not found.';
+        }
         $stmt = $db->prepare(
             "UPDATE backup_schedules SET is_active = CASE WHEN is_active=1 THEN 0 ELSE 1 END WHERE id=:id"
         );

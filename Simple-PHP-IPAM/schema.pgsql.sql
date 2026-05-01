@@ -735,9 +735,9 @@ CREATE TABLE IF NOT EXISTS backup_schedules (
   is_active         SMALLINT  NOT NULL DEFAULT 1  CHECK (is_active IN (0,1)),
   last_run_at       TIMESTAMP NULL,
   next_run_at       TIMESTAMP NULL,
-  created_at        TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
+  created_at        TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
+  CONSTRAINT uq_backup_schedules_destination UNIQUE (destination_id)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS uq_backup_schedules_destination ON backup_schedules(destination_id);
 CREATE INDEX IF NOT EXISTS idx_backup_schedules_next_run ON backup_schedules(next_run_at);
 
 -- v3.21.0 #799 (§A1): unified backup_runs replaces backup_history + backup_log.

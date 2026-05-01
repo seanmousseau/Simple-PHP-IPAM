@@ -2660,40 +2660,63 @@ function ipam_migrations(): array
                 $q->closeCursor();
                 return $n;
             };
+
+            // Pre-compute counts so we can decide whether a prior partial
+            // run has already populated backup_runs (CR feedback PR #1054
+            // round 3).
             $logRestoreCount = 0;
             $logCount = 0;
             if ($tableExists('backup_log')) {
                 $logCount = $countTable('backup_log');
                 $logRestoreCount = $countTableWhere('backup_log', "type = 'restore'");
-                if ($logCount > 0) {
-                    $sel = $db->query("SELECT destination_id, schedule_id, type, triggered_by, status, filename, size_bytes, checksum, error_message, started_at, completed_at FROM backup_log WHERE type IS NULL OR type = 'backup' ORDER BY id");
-                    if ($sel === false) {
-                        throw new \RuntimeException("3.21.0-backup-runs: SELECT failed on backup_log");
-                    }
-                    $ins = $db->prepare(
-                        "INSERT INTO backup_runs " .
-                        "(destination_id, schedule_id, backup_type, encryption_mode, triggered_by, status, filename, size_bytes, checksum, source_version, is_protected, error_message, started_at, completed_at) " .
-                        "VALUES (:destination_id, :schedule_id, 'database', 'stored', :triggered_by, :status, :filename, :size_bytes, :checksum, '0.0.0', 0, :error_message, :started_at, :completed_at)"
+            }
+            $histCountPre = $tableExists('backup_history') ? $countTable('backup_history') : 0;
+            $expectedCopied = ($logCount - $logRestoreCount) + $histCountPre;
+            $actualBefore   = $countTable('backup_runs');
+            $skipCopy       = false;
+            if ($expectedCopied > 0 && $actualBefore > 0) {
+                if ($actualBefore === $expectedCopied) {
+                    // Prior partial run already copied a complete set; skip
+                    // copy and proceed to the legacy-table drop. Idempotent
+                    // rerun. (CR feedback PR #1054 round 3.)
+                    $skipCopy = true;
+                } else {
+                    throw new \RuntimeException(
+                        "3.21.0-backup-runs migration: pre-copy mismatch — backup_runs already has {$actualBefore} rows but expected {$expectedCopied}. " .
+                        "Refusing to re-copy on top of partial state. " .
+                        "Manually reconcile (truncate backup_runs and rerun, or move legacy tables aside) before continuing."
                     );
-                    /** @var array<string, mixed> $row */
-                    foreach ($sel as $row) {
-                        $rawStatus = is_string($row['status']) ? strtolower($row['status']) : '';
-                        $status = in_array($rawStatus, ['success', 'failed', 'retention_pruned'], true) ? $rawStatus : 'failed';
-                        $rawTrig = is_string($row['triggered_by']) ? strtolower($row['triggered_by']) : 'manual';
-                        $triggered = in_array($rawTrig, ['schedule', 'manual', 'cli'], true) ? $rawTrig : 'manual';
-                        $ins->execute([
-                            ':destination_id' => $row['destination_id'],
-                            ':schedule_id'    => $row['schedule_id'],
-                            ':triggered_by'   => $triggered,
-                            ':status'         => $status,
-                            ':filename'       => $row['filename'],
-                            ':size_bytes'     => $row['size_bytes'],
-                            ':checksum'       => $row['checksum'],
-                            ':error_message'  => $row['error_message'],
-                            ':started_at'     => $row['started_at'],
-                            ':completed_at'   => $row['completed_at'],
-                        ]);
-                    }
+                }
+            }
+
+            if (!$skipCopy && $logCount > 0) {
+                $sel = $db->query("SELECT destination_id, schedule_id, type, triggered_by, status, filename, size_bytes, checksum, error_message, started_at, completed_at FROM backup_log WHERE type IS NULL OR type = 'backup' ORDER BY id");
+                if ($sel === false) {
+                    throw new \RuntimeException("3.21.0-backup-runs: SELECT failed on backup_log");
+                }
+                $ins = $db->prepare(
+                    "INSERT INTO backup_runs " .
+                    "(destination_id, schedule_id, backup_type, encryption_mode, triggered_by, status, filename, size_bytes, checksum, source_version, is_protected, error_message, started_at, completed_at) " .
+                    "VALUES (:destination_id, :schedule_id, 'database', 'stored', :triggered_by, :status, :filename, :size_bytes, :checksum, '0.0.0', 0, :error_message, :started_at, :completed_at)"
+                );
+                /** @var array<string, mixed> $row */
+                foreach ($sel as $row) {
+                    $rawStatus = is_string($row['status']) ? strtolower($row['status']) : '';
+                    $status = in_array($rawStatus, ['success', 'failed', 'retention_pruned'], true) ? $rawStatus : 'failed';
+                    $rawTrig = is_string($row['triggered_by']) ? strtolower($row['triggered_by']) : 'manual';
+                    $triggered = in_array($rawTrig, ['schedule', 'manual', 'cli'], true) ? $rawTrig : 'manual';
+                    $ins->execute([
+                        ':destination_id' => $row['destination_id'],
+                        ':schedule_id'    => $row['schedule_id'],
+                        ':triggered_by'   => $triggered,
+                        ':status'         => $status,
+                        ':filename'       => $row['filename'],
+                        ':size_bytes'     => $row['size_bytes'],
+                        ':checksum'       => $row['checksum'],
+                        ':error_message'  => $row['error_message'],
+                        ':started_at'     => $row['started_at'],
+                        ':completed_at'   => $row['completed_at'],
+                    ]);
                 }
             }
 
@@ -2701,11 +2724,9 @@ function ipam_migrations(): array
             // backup_history.error → backup_runs.error_message;
             // backup_history.sha256 → backup_runs.checksum.
             // No destination/schedule linkage existed in the legacy CLI table.
-            $histCount = 0;
-            if ($tableExists('backup_history')) {
-                $histCount = $countTable('backup_history');
-                if ($histCount > 0) {
-                    $sel = $db->query("SELECT status, filename, size_bytes, sha256, error, started_at, completed_at FROM backup_history ORDER BY id");
+            $histCount = $histCountPre;
+            if (!$skipCopy && $histCount > 0) {
+                $sel = $db->query("SELECT status, filename, size_bytes, sha256, error, started_at, completed_at FROM backup_history ORDER BY id");
                     if ($sel === false) {
                         throw new \RuntimeException("3.21.0-backup-runs: SELECT failed on backup_history");
                     }
@@ -2725,9 +2746,8 @@ function ipam_migrations(): array
                             ':checksum'      => $row['sha256'],
                             ':error_message' => $row['error'],
                             ':started_at'    => $row['started_at'],
-                            ':completed_at'  => $row['completed_at'],
-                        ]);
-                    }
+                        ':completed_at'  => $row['completed_at'],
+                    ]);
                 }
             }
 
@@ -2846,10 +2866,23 @@ function ipam_migrations(): array
                     $db->exec("ALTER TABLE backup_schedules DROP INDEX idx_backup_schedules_destination");
                 }
             } else { // pgsql
-                $db->exec(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_backup_schedules_destination
-                       ON backup_schedules(destination_id)"
+                // PG distinguishes UNIQUE CONSTRAINT (in
+                // information_schema.table_constraints) from UNIQUE INDEX
+                // (in pg_indexes). SchemaParityTest queries the former, so
+                // use ADD CONSTRAINT — Postgres implicitly creates the
+                // backing index. Guard with information_schema for re-runs.
+                $hasUq = $db->query(
+                    "SELECT COUNT(*) FROM information_schema.table_constraints
+                      WHERE table_name      = 'backup_schedules'
+                        AND constraint_name = 'uq_backup_schedules_destination'
+                        AND constraint_type = 'UNIQUE'"
                 );
+                if ($hasUq !== false && (int) $hasUq->fetchColumn() === 0) {
+                    $db->exec(
+                        "ALTER TABLE backup_schedules
+                            ADD CONSTRAINT uq_backup_schedules_destination UNIQUE (destination_id)"
+                    );
+                }
                 $db->exec("DROP INDEX IF EXISTS idx_backup_schedules_destination");
             }
         },
