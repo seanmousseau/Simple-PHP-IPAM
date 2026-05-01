@@ -156,3 +156,125 @@ function ipam_backup_history_load_state(\PDO $db): array
         'safeTo'       => $safeTo,
     ];
 }
+
+/**
+ * Drawer-action helpers for the History tab (#803, F11).
+ *
+ * Verify and Delete are exposed as actions on the per-row drawer; both
+ * are POST handlers wired in backup_admin.php's tab=history dispatch.
+ * Each helper returns a JSON-serialisable array. The wiring layer maps
+ * the structured `error` keys to HTTP status codes.
+ */
+
+/**
+ * Resolve a destination row by id and return its BackupClientInterface.
+ * Thin wrapper around ipam_backup_dest_client(array) to keep callers
+ * id-based; returns null when the destination is missing or invalid.
+ */
+function ipam_backup_client_for_destination(\PDO $db, int $destId): ?BackupClientInterface
+{
+    $st = $db->prepare("SELECT * FROM backup_destinations WHERE id = :id");
+    $st->execute([':id' => $destId]);
+    $row = $st->fetch(\PDO::FETCH_ASSOC);
+    if (!is_array($row)) {
+        return null;
+    }
+    /** @var array<string,mixed> $row */
+    try {
+        return ipam_backup_dest_client($row);
+    } catch (\Throwable $e) {
+        return null;
+    }
+}
+
+/**
+ * Re-fetches a backup_runs row's artifact from its destination and
+ * recomputes SHA-256 to compare against the recorded checksum.
+ *
+ * Strategy: download() into a tmp file, hash_file('sha256'), unlink.
+ * Works uniformly across Local/S3/SFTP without modifying
+ * BackupClientInterface (no per-driver streaming hash needed).
+ *
+ * Result keys:
+ *   ['ok' => true,  'expected' => '<hex>', 'actual' => '<hex>']
+ *   ['ok' => false, 'expected' => '<hex>', 'actual' => '<hex>']  (mismatch)
+ *   ['ok' => false, 'error' => 'not_found' | 'no_artifact' | 'unreachable',
+ *                   'message' => '<str>']
+ *
+ * @return array<string,mixed>
+ */
+function ipam_backup_run_verify(\PDO $db, int $runId): array
+{
+    $st = $db->prepare("SELECT * FROM backup_runs WHERE id = :id");
+    $st->execute([':id' => $runId]);
+    $row = $st->fetch(\PDO::FETCH_ASSOC);
+    if (!is_array($row)) {
+        return ['ok' => false, 'error' => 'not_found'];
+    }
+    $filename = to_str($row['filename'] ?? '');
+    $expected = to_str($row['checksum'] ?? '');
+    if ($filename === '' || $expected === '') {
+        return ['ok' => false, 'error' => 'no_artifact'];
+    }
+    $client = ipam_backup_client_for_destination($db, to_int($row['destination_id']));
+    if (!$client) {
+        return ['ok' => false, 'error' => 'unreachable', 'message' => 'destination missing or invalid'];
+    }
+    $tmp = sys_get_temp_dir() . '/ipam-verify-' . bin2hex(random_bytes(8));
+    try {
+        $found = $client->download($filename, $tmp);
+        if (!$found) {
+            return ['ok' => false, 'error' => 'no_artifact'];
+        }
+        $hash = hash_file('sha256', $tmp);
+        if ($hash === false) {
+            return ['ok' => false, 'error' => 'unreachable', 'message' => 'hash_file failed'];
+        }
+    } catch (\Throwable $e) {
+        return ['ok' => false, 'error' => 'unreachable', 'message' => $e->getMessage()];
+    } finally {
+        if (is_file($tmp)) {
+            @unlink($tmp);
+        }
+    }
+
+    $auditAction = ($hash === $expected) ? 'backup_run.verify' : 'backup_run.verify_failed';
+    audit($db, $auditAction, 'backup_run', $runId, (string) json_encode(['expected' => $expected, 'actual' => $hash]));
+    return ['ok' => $hash === $expected, 'expected' => $expected, 'actual' => $hash];
+}
+
+/**
+ * POST dispatch for the History tab (#803).
+ *
+ * Handles two AJAX actions emitted by the per-row drawer:
+ *   action=verify  → ipam_backup_run_verify()
+ *   action=delete  → ipam_backup_run_delete() (DELETE confirm gate)
+ *
+ * Exits with a JSON response when the request matches; returns silently
+ * so the caller can fall through to the GET render path otherwise.
+ */
+function ipam_backup_history_handle_post(\PDO $db): void
+{
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        return;
+    }
+    $action = to_str($_POST['action'] ?? '');
+    // action=delete is wired in Task 5 alongside ipam_backup_run_delete().
+    if ($action !== 'verify') {
+        return;
+    }
+    csrf_require();
+    $idRaw = filter_input(INPUT_POST, 'id', FILTER_VALIDATE_INT);
+    $id    = is_int($idRaw) && $idRaw > 0 ? $idRaw : 0;
+
+    header('Content-Type: application/json');
+
+    if ($id === 0) {
+        http_response_code(400);
+        echo (string) json_encode(['ok' => false, 'error' => 'bad_request']);
+        exit;
+    }
+
+    echo (string) json_encode(ipam_backup_run_verify($db, $id));
+    exit;
+}

@@ -61,6 +61,8 @@ if ($activeTab === 'destinations') {
     $destState = ipam_destinations_load_state($db);
 } elseif ($activeTab === 'history') {
     require __DIR__ . '/lib/backup_admin_history.php';
+    require_once __DIR__ . '/lib/backup.php';  // ipam_backup_dest_client() for verify/delete
+    ipam_backup_history_handle_post($db);
     $histState = ipam_backup_history_load_state($db);
 } elseif ($activeTab === 'backup') {
     $stmt = $db->query("SELECT id, name FROM backup_destinations WHERE is_active = 1 ORDER BY name");
