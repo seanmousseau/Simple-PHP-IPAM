@@ -621,27 +621,6 @@ CREATE TABLE IF NOT EXISTS rate_limit_buckets (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ---------------------------------------------------------------------------
--- backup_history (v3.7.0, #423)
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS backup_history (
-  id            INT UNSIGNED NOT NULL AUTO_INCREMENT,
-  filename      VARCHAR(512) NOT NULL,
-  size_bytes    BIGINT,
-  sha256        VARCHAR(64),
-  db_driver     VARCHAR(16)  NOT NULL,
-  started_at    DATETIME     NOT NULL,
-  completed_at  DATETIME,
-  duration_ms   INT,
-  target        VARCHAR(32)  NOT NULL DEFAULT 'local',
-  target_path   TEXT,
-  status        VARCHAR(16)  NOT NULL DEFAULT 'pending',
-  error         TEXT,
-  created_at    DATETIME     NOT NULL DEFAULT (UTC_TIMESTAMP()),
-  PRIMARY KEY (id),
-  KEY idx_backup_history_started_at (started_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- ---------------------------------------------------------------------------
 -- webauthn_credentials (v3.15.0 #688: WebAuthn/Passkey credentials)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS webauthn_credentials (
@@ -697,9 +676,11 @@ CREATE TRIGGER IF NOT EXISTS custom_field_defs_updated_at
   SET NEW.updated_at = UTC_TIMESTAMP();
 
 -- ---------------------------------------------------------------------------
--- backup_destinations / backup_schedules / backup_log (v3.17.0, #690)
--- backup_history (v3.7.0) remains for CLI-only backup.php use.
--- backup_log is distinct: FK references to destinations and schedules.
+-- backup_destinations / backup_schedules / backup_runs (v3.17.0 #690 + v3.21.0 #799).
+-- The legacy backup_history (v3.7.0 #423) and backup_log (v3.17.0 #690) tables
+-- were collapsed into backup_runs in v3.21.0 (§A1 of backup_overhaul.md). The
+-- 3.21.0-backup-runs migration creates backup_runs, copies surviving rows in,
+-- and drops both legacy tables on upgrade.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS backup_destinations (
   id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -740,27 +721,41 @@ CREATE TABLE IF NOT EXISTS backup_schedules (
   CONSTRAINT chk_bsched_ret_weekly  CHECK (retention_weekly  >= 0),
   CONSTRAINT chk_bsched_ret_monthly CHECK (retention_monthly >= 0),
   CONSTRAINT chk_bsched_active     CHECK (is_active IN (0,1)),
-  KEY idx_backup_schedules_destination (destination_id),
+  UNIQUE KEY uq_backup_schedules_destination (destination_id),
   KEY idx_backup_schedules_next_run (next_run_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS backup_log (
+-- v3.21.0 #799 (§A1): unified backup_runs replaces backup_history + backup_log.
+-- Single enum `triggered_by` (schedule|manual|cli) drops the ambiguous
+-- type+triggered_by combo from backup_log (#808 / F38). Single timestamp pair
+-- (started_at + completed_at) closes B-P1-31 / #809.
+CREATE TABLE IF NOT EXISTS backup_runs (
   id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   destination_id  BIGINT UNSIGNED NULL,
   schedule_id     BIGINT UNSIGNED NULL,
-  triggered_by    VARCHAR(32)  NOT NULL DEFAULT 'manual',
-  type            VARCHAR(16)  NOT NULL DEFAULT 'backup',
-  status          VARCHAR(16)  NOT NULL DEFAULT 'pending',
+  backup_type     VARCHAR(16)  NOT NULL DEFAULT 'database',
+  encryption_mode VARCHAR(16)  NOT NULL DEFAULT 'unencrypted',
+  triggered_by    VARCHAR(16)  NOT NULL DEFAULT 'manual',
+  status          VARCHAR(16)  NOT NULL DEFAULT 'running',
   filename        TEXT         NULL,
   size_bytes      BIGINT       NULL,
   checksum        VARCHAR(128) NULL,
+  source_version  VARCHAR(32)  NOT NULL DEFAULT '0.0.0',
+  is_protected    TINYINT(1)   NOT NULL DEFAULT 0,
   error_message   TEXT         NULL,
   started_at      DATETIME     NOT NULL DEFAULT (UTC_TIMESTAMP()),
   completed_at    DATETIME     NULL,
-  CONSTRAINT fk_blog_dest  FOREIGN KEY (destination_id) REFERENCES backup_destinations(id) ON DELETE SET NULL,
-  CONSTRAINT fk_blog_sched FOREIGN KEY (schedule_id)    REFERENCES backup_schedules(id)    ON DELETE SET NULL,
-  KEY idx_backup_log_destination (destination_id),
-  KEY idx_backup_log_started_at (started_at)
+  CONSTRAINT fk_brun_dest  FOREIGN KEY (destination_id) REFERENCES backup_destinations(id) ON DELETE SET NULL,
+  CONSTRAINT fk_brun_sched FOREIGN KEY (schedule_id)    REFERENCES backup_schedules(id)    ON DELETE SET NULL,
+  CONSTRAINT chk_brun_backup_type     CHECK (backup_type IN ('database','logical')),
+  CONSTRAINT chk_brun_encryption_mode CHECK (encryption_mode IN ('stored','transitory','unencrypted')),
+  CONSTRAINT chk_brun_triggered_by    CHECK (triggered_by IN ('schedule','manual','cli')),
+  CONSTRAINT chk_brun_status          CHECK (status IN ('running','success','failed','retention_pruned')),
+  CONSTRAINT chk_brun_protected       CHECK (is_protected IN (0,1)),
+  KEY idx_backup_runs_destination (destination_id),
+  KEY idx_backup_runs_schedule    (schedule_id),
+  KEY idx_backup_runs_started     (started_at),
+  KEY idx_backup_runs_protected   (is_protected)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------------
@@ -823,6 +818,8 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.14.0-email-otp'),
   ('3.15.0-passkeys'),
   ('3.16.0-preferred-mfa-method'),
-  ('3.17.0-backup');
+  ('3.17.0-backup'),
+  ('3.21.0-backup-runs'),
+  ('3.21.0-schedule-unique');
 
 SET FOREIGN_KEY_CHECKS = 1;

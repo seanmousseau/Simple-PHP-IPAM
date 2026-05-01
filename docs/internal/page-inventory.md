@@ -57,19 +57,20 @@
 | `index.php` | — | — | Redirects to dashboard (if logged in) or login |
 | `status.php` | — | — | Health check JSON endpoint (`{"status":"ok"}`) for load balancers/uptime monitors |
 | `set_theme.php` | yes | any | AJAX POST: persists theme preference to `users.theme` |
-| `db_tools.php` | yes | admin | Unified Database admin page: backup history (all engines), SQL export/import (SQLite only), manual WAL backup; absorbs backups.php (v3.9.0) |
+| `db_tools.php` | yes | admin | SQL export/import and manual WAL backup (SQLite only). The backup half was migrated to `backup_admin.php` in v3.21.0; this page is no longer in the sidebar but remains reachable by direct URL for the data-export half. |
 | `demo_gate.php` | — | — | Demo mode bot challenge gate (pre-login) |
-| `backups.php` | yes | admin | Redirects 301 to `db_tools.php` as of v3.9.0 (was: standalone Backup History page, v3.7.0) |
+| `backup_admin.php` | yes | admin | **Unified Backup & Restore admin surface (v3.21.0).** Five tabs via `?tab=backup\|restore\|destinations\|notifications\|history`. Replaces six legacy pages (`destinations.php`, `backup_history.php`, `remote_backups.php`, `restore_web.php`, `backups.php`, and the backup half of `db_tools.php`) — those URLs still 301 here for legacy bookmarks. |
 | `reports.php` | yes | admin | Utilization history report: time-series of address counts per subnet with subnet filter and CSV export |
 | `export_utilization_history.php` | yes | any | CSV export: utilization history snapshots |
 | `health.php` | yes | admin | Operational health dashboard: DB metrics, backup status, scanning, webhooks, auth/security, system info; 60s cache; `?nocache=1` bypass (v3.7.0) |
-| `destinations.php` | yes | admin | Backup destinations admin: S3 / SFTP / Local destination CRUD, schedules with GFS retention, Test-Connection and Run-Now AJAX (v3.17.0) |
-| `backup_history.php` | yes | admin | Backup history log: paginated entries with destination/status/date filters, Type column distinguishing backup vs restore (v3.17.0) |
-| `remote_backups.php` | yes | admin | Remote backup browser: per-destination file listing with Download / Verify / Delete actions (v3.17.0) |
-| `restore_web.php` | yes | admin | Web restore wizard: 3-step flow (stage → dry-run preview → live apply) with `RESTORE` confirm-typing gate (v3.17.0) |
-| `download_remote_backup.php` | yes | admin | AJAX/file endpoint: downloads + decrypts a remote backup; signed staged-file token for handoff to `restore_web.php` (v3.17.0) |
+| `destinations.php` | yes | admin | **Retired in v3.21.0** — 301 to `backup_admin.php?tab=destinations` for legacy bookmarks. Original v3.17.0 page is gone. |
+| `backup_history.php` | yes | admin | **Retired in v3.21.0** — 301 to `backup_admin.php?tab=history` for legacy bookmarks. |
+| `remote_backups.php` | yes | admin | **Retired in v3.21.0** — folded into `backup_admin.php?tab=history` (per-row Download/Verify/Delete actions). |
+| `restore_web.php` | yes | admin | **Retired in v3.21.0** — 301 to `backup_admin.php?tab=restore` for legacy bookmarks. |
+| `backups.php` | yes | admin | **Retired in v3.21.0** — 301 to `backup_admin.php` (was: 301 to `db_tools.php` since v3.9.0). |
+| `download_remote_backup.php` | yes | admin | AJAX/file endpoint: downloads + decrypts a remote backup; signed staged-file token for handoff to the Restore tab (v3.17.0) |
 | `test_destination.php` | yes | admin | AJAX endpoint: invokes BackupClient `test()` for a destination id, returns JSON `{ok, message, latency_ms}` (v3.17.0) |
-| `run_backup_now.php` | yes | admin | AJAX endpoint: synchronously runs `ipam_backup_run_for_destination()` for a destination id, returns JSON (v3.17.0; refactored from class to procedural in v3.18.0) |
+| `run_backup_now.php` | yes | admin | AJAX endpoint behind the **Backup → Run backup now** button. Synchronously runs `ipam_backup_run_for_destination()` for a destination id, returns JSON (v3.17.0; refactored from class to procedural in v3.18.0). |
 | `backup.php` | CLI | — | CLI-only database backup runner; returns 403 on web access (v3.7.0) |
 | `restore.php` | CLI | — | CLI-only database restore with --dry-run, --force; returns 403 on web access (v3.7.0) |
 

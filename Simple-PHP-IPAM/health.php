@@ -86,11 +86,12 @@ if ($data === null) {
     $backupCount  = 0;
     $storageUsed  = 0;
     try {
+        // v3.21.0 §A1 (#799): backup_history was collapsed into backup_runs.
         $r = $db->query(
-            "SELECT started_at, status FROM backup_history ORDER BY started_at DESC LIMIT 1"
+            "SELECT started_at, status FROM backup_runs ORDER BY started_at DESC LIMIT 1"
         )?->fetch();
         if ($r) { $lastBackup = to_str($r['started_at'] ?? ''); $lastStatus = to_str($r['status'] ?? ''); }
-        $r2 = $db->query("SELECT COUNT(*) AS c, COALESCE(SUM(size_bytes),0) AS s FROM backup_history WHERE status='success'")?->fetch();
+        $r2 = $db->query("SELECT COUNT(*) AS c, COALESCE(SUM(size_bytes),0) AS s FROM backup_runs WHERE status='success'")?->fetch();
         if ($r2) { $backupCount = to_int($r2['c']); $storageUsed = to_int($r2['s']); }
     } catch (Throwable) {}
     $backupDir   = backup_dir($config);

@@ -1,10 +1,11 @@
 /**
  * database-admin.spec.ts
  *
- * Tests for the consolidated Database admin page (#615).
- * db_tools.php absorbed backup history from backups.php.
- * backups.php now 301-redirects to db_tools.php.
- * The nav shows one "Database" link (not two separate links).
+ * Originally introduced for #615 (consolidated Database admin page that
+ * absorbed backup history). v3.21.0 Wave 4 #798 retires the sidebar
+ * "Database" entry: db_tools.php still works via direct URL, but the
+ * sidebar link is gone in favour of the unified Backup & Restore surface.
+ * These assertions now lock in the retirement instead of the presence.
  */
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import { login, newAuthContext, ADMIN_USER, ADMIN_PASS } from '../fixtures/ipam';
@@ -22,11 +23,18 @@ test.afterAll(async () => {
   await ctx?.close();
 });
 
-test('"Database" nav link navigates to db_tools.php', async () => {
+test('sidebar no longer carries a "Database" link (#798 retirement)', async () => {
   await page.goto('dashboard.php');
-  const dbLink = page.locator('a.sidebar-link[href="db_tools.php"]');
-  await expect(dbLink).toBeVisible();
-  await dbLink.click();
+  const dbLinks = page.locator('a.sidebar-link[href="db_tools.php"]');
+  await expect(dbLinks).toHaveCount(0);
+});
+
+test('db_tools.php is still reachable via direct URL', async () => {
+  // CR feedback PR #1054: assert the response actually loaded, not just
+  // the URL — toHaveURL alone passes even on a 5xx.
+  const response = await page.goto('db_tools.php');
+  expect(response, 'page.goto must return a response').not.toBeNull();
+  expect(response?.ok()).toBe(true);
   await expect(page).toHaveURL(/db_tools\.php/);
 });
 
@@ -34,18 +42,6 @@ test('nav has no separate "Backups" link', async () => {
   await page.goto('db_tools.php');
   const backupsLink = page.locator('.sidebar-link', { hasText: /^Backups$/ });
   await expect(backupsLink).toHaveCount(0);
-});
-
-test('nav has exactly one "Database" link', async () => {
-  await page.goto('db_tools.php');
-  const dbLinks = page.locator('a.sidebar-link[href="db_tools.php"]');
-  await expect(dbLinks).toHaveCount(1);
-});
-
-test('"Database" nav link is marked active on db_tools.php', async () => {
-  await page.goto('db_tools.php');
-  const dbLink = page.locator('a.sidebar-link.is-active[href="db_tools.php"]');
-  await expect(dbLink).toBeVisible();
 });
 
 test('#backup-history section is present on db_tools.php', async () => {

@@ -282,18 +282,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
 }
 
 /* ------------------------------------------------------------------ *
- * POST: backup_history delete                                         *
+ * POST: backup_runs delete (CLI runner rows; v3.21.0 §A1 / #799)      *
+ *                                                                     *
+ * The legacy backup_history table stored a full target_path; backup_runs
+ * stores only filename. The on-disk path is reconstructed from
+ * backup_dir($config) and the filename is constrained to a single path
+ * component (basename) before joining, so a user-supplied filename
+ * cannot escape the backup directory.
  * ------------------------------------------------------------------ */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'backup_delete') {
     csrf_require();
     $delId = to_int($_POST['id'] ?? 0);
     if ($delId > 0) {
-        $st = $db->prepare("SELECT * FROM backup_history WHERE id=:id");
+        $st = $db->prepare("SELECT * FROM backup_runs WHERE id=:id AND triggered_by='cli'");
         $st->execute([':id' => $delId]);
         $bkRow = $st->fetch();
-        if ($bkRow) {
-            $delPath    = to_str($bkRow['target_path'] ?? '');
+        if (is_array($bkRow)) {
             $allowedDir = realpath(backup_dir($config));
+            $rowFile    = basename(to_str($bkRow['filename'] ?? ''));
+            $delPath    = ($allowedDir !== false && $rowFile !== '') ? ($allowedDir . DIRECTORY_SEPARATOR . $rowFile) : '';
             $realDel    = $delPath !== '' ? (realpath($delPath) ?: '') : '';
             $fileOk     = true; // assume no file to remove unless we try
             // Only unlink if the file is inside the configured backup directory
@@ -303,13 +310,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'backu
                 $fileOk = unlink($realDel); // nosemgrep: php.lang.security.unlink-use.unlink-use
             }
             if ($fileOk) {
-                $db->prepare("DELETE FROM backup_history WHERE id=:id")->execute([':id' => $delId]);
-                audit($db, 'backup.deleted', 'backup_history', $delId,
-                    'Deleted backup record: ' . basename($delPath));
+                $db->prepare("DELETE FROM backup_runs WHERE id=:id")->execute([':id' => $delId]);
+                audit($db, 'backup.deleted', 'backup_runs', $delId,
+                    'Deleted backup record: ' . $rowFile);
                 $msg = 'Backup record deleted.';
             } else {
-                audit($db, 'backup.delete_failed', 'backup_history', $delId,
-                    'Failed to delete backup file: ' . basename($delPath));
+                audit($db, 'backup.delete_failed', 'backup_runs', $delId,
+                    'Failed to delete backup file: ' . $rowFile);
                 $err = 'Failed to delete the backup file — record kept.';
             }
         } else {
@@ -319,20 +326,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'backu
 }
 
 /* ------------------------------------------------------------------ *
- * POST: backup_history verify                                         *
+ * POST: backup_runs verify                                            *
  * ------------------------------------------------------------------ */
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'backup_verify') {
     csrf_require();
     $verifyId = to_int($_POST['id'] ?? 0);
     if ($verifyId > 0) {
-        $st = $db->prepare("SELECT * FROM backup_history WHERE id=:id");
+        $st = $db->prepare("SELECT * FROM backup_runs WHERE id=:id AND triggered_by='cli'");
         $st->execute([':id' => $verifyId]);
         $bkRow = $st->fetch();
-        if ($bkRow) {
-            $verPath      = to_str($bkRow['target_path'] ?? '');
-            $expected     = to_str($bkRow['sha256'] ?? '');
-            $realVer      = $verPath !== '' ? (realpath($verPath) ?: false) : false;
+        if (is_array($bkRow)) {
             $allowedVerDir = realpath(backup_dir($config));
+            $rowFile      = basename(to_str($bkRow['filename'] ?? ''));
+            $verPath      = ($allowedVerDir !== false && $rowFile !== '') ? ($allowedVerDir . DIRECTORY_SEPARATOR . $rowFile) : '';
+            $expected     = to_str($bkRow['checksum'] ?? '');
+            $realVer      = $verPath !== '' ? (realpath($verPath) ?: false) : false;
             if ($realVer === false || $allowedVerDir === false
                 || !str_starts_with($realVer, $allowedVerDir . DIRECTORY_SEPARATOR)) {
                 $err = 'Backup path is outside the allowed backup directory.';
@@ -344,11 +352,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'backu
                 $actual = hash_file('sha256', $realVer) ?: '';
                 if (hash_equals($expected, $actual)) {
                     $msg = 'SHA-256 verified OK. File integrity confirmed.';
-                    audit($db, 'backup.verified', 'backup_history', $verifyId,
+                    audit($db, 'backup.verified', 'backup_runs', $verifyId,
                         'SHA-256 verified OK for: ' . basename($realVer));
                 } else {
                     $err = 'SHA-256 MISMATCH — backup file may be corrupted.';
-                    audit($db, 'backup.verify_failed', 'backup_history', $verifyId,
+                    audit($db, 'backup.verify_failed', 'backup_runs', $verifyId,
                         'SHA-256 mismatch for: ' . basename($realVer));
                 }
             }
@@ -359,21 +367,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'backu
 }
 
 /* ------------------------------------------------------------------ *
- * GET: backup_history download                                        *
+ * GET: backup_runs download                                           *
  * ------------------------------------------------------------------ */
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($_GET['action'] ?? '') === 'backup_download') {
     $dlId = to_int($_GET['id'] ?? 0);
     if ($dlId > 0) {
-        $st = $db->prepare("SELECT * FROM backup_history WHERE id=:id");
+        $st = $db->prepare("SELECT * FROM backup_runs WHERE id=:id AND triggered_by='cli'");
         $st->execute([':id' => $dlId]);
         $bkRow = $st->fetch();
-        if ($bkRow) {
-            $dlPath     = to_str($bkRow['target_path'] ?? '');
-            $realDl     = $dlPath !== '' ? (realpath($dlPath) ?: false) : false;
+        if (is_array($bkRow)) {
             $allowedDlDir = realpath(backup_dir($config));
+            $rowFile    = basename(to_str($bkRow['filename'] ?? ''));
+            $dlPath     = ($allowedDlDir !== false && $rowFile !== '') ? ($allowedDlDir . DIRECTORY_SEPARATOR . $rowFile) : '';
+            $realDl     = $dlPath !== '' ? (realpath($dlPath) ?: false) : false;
             if ($realDl === false || $allowedDlDir === false
                 || !str_starts_with($realDl, $allowedDlDir . DIRECTORY_SEPARATOR)) {
-                audit($db, 'backup.download_denied', 'backup_history', $dlId,
+                audit($db, 'backup.download_denied', 'backup_runs', $dlId,
                     'Path confinement check failed for backup id ' . $dlId);
                 http_response_code(403);
                 exit('Access denied.');
@@ -386,7 +395,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && ($_GET['action'] ?? '') === 'backup_
                 header('Content-Length: ' . $dlSize);
                 header('X-Content-Type-Options: nosniff');
                 readfile($realDl);
-                audit($db, 'backup.downloaded', 'backup_history', $dlId,
+                audit($db, 'backup.downloaded', 'backup_runs', $dlId,
                     'Downloaded backup: ' . $dlFilename);
                 exit;
             }
@@ -447,7 +456,9 @@ $bInfo         = backup_info($config);
  * ------------------------------------------------------------------ */
 $bkpRows = [];
 try {
-    $bkpSt = $db->query("SELECT * FROM backup_history ORDER BY started_at DESC LIMIT 50");
+    // v3.21.0 §A1 (#799): backup_history collapsed into backup_runs.
+    // Filter to triggered_by='cli' for parity with the legacy CLI-runner UI.
+    $bkpSt = $db->query("SELECT * FROM backup_runs WHERE triggered_by='cli' ORDER BY started_at DESC LIMIT 50");
     /** @var list<array<string, mixed>> $bkpRows */
     $bkpRows = $bkpSt ? $bkpSt->fetchAll() : [];
 } catch (Throwable) {
@@ -592,24 +603,31 @@ render_security_banner('db_tools', 'Database import will overwrite all existing 
       <thead>
         <tr style="background:var(--bg);border-bottom:1px solid var(--border)">
           <th style="padding:.6rem 1rem;text-align:left;font-weight:600;white-space:nowrap">File</th>
-          <th style="padding:.6rem 1rem;text-align:left;font-weight:600;white-space:nowrap">Driver</th>
+          <th style="padding:.6rem 1rem;text-align:left;font-weight:600;white-space:nowrap">Source version</th>
           <th style="padding:.6rem 1rem;text-align:right;font-weight:600;white-space:nowrap">Size</th>
           <th style="padding:.6rem 1rem;text-align:left;font-weight:600;white-space:nowrap">SHA-256</th>
           <th style="padding:.6rem 1rem;text-align:left;font-weight:600;white-space:nowrap">Started</th>
-          <th style="padding:.6rem 1rem;text-align:right;font-weight:600;white-space:nowrap">Duration</th>
+          <th style="padding:.6rem 1rem;text-align:left;font-weight:600;white-space:nowrap">Completed</th>
           <th style="padding:.6rem 1rem;text-align:center;font-weight:600;white-space:nowrap">Status</th>
           <th style="padding:.6rem 1rem;text-align:right;font-weight:600;white-space:nowrap">Actions</th>
         </tr>
       </thead>
       <tbody>
-        <?php foreach ($bkpRows as $bk):
+        <?php
+        $bkpDirAbs = realpath(backup_dir($config));
+        foreach ($bkpRows as $bk):
             $bkId    = to_int($bk['id'] ?? 0);
             $bkStatus = to_str($bk['status'] ?? 'unknown');
-            $bkSha   = to_str($bk['sha256'] ?? '');
-            $bkPath  = to_str($bk['target_path'] ?? '');
+            // v3.21.0 §A1 (#799): backup_runs replaces backup_history.
+            // sha256 → checksum; target_path is gone (reconstructed from
+            // backup_dir + filename); duration_ms is gone (replaced by
+            // showing started_at + completed_at).
+            $bkSha    = to_str($bk['checksum'] ?? '');
+            $bkFile   = basename(to_str($bk['filename'] ?? ''));
+            $bkPath   = ($bkpDirAbs !== false && $bkFile !== '') ? ($bkpDirAbs . DIRECTORY_SEPARATOR . $bkFile) : '';
             $bkFileOk = ($bkPath !== '' && is_file($bkPath));
-            $bkDur   = to_int($bk['duration_ms'] ?? 0);
-            $bkDurStr = $bkDur > 0 ? ($bkDur >= 1000 ? round($bkDur / 1000, 1) . 's' : $bkDur . 'ms') : '—';
+            $bkSrcVer = to_str($bk['source_version'] ?? '');
+            $bkComp   = to_str($bk['completed_at'] ?? '');
 
             if ($bkStatus === 'success') {
                 $bkBadgeBg = 'var(--success)'; $bkBadgeFg = '#fff';
@@ -629,7 +647,7 @@ render_security_banner('db_tools', 'Database import will overwrite all existing 
             <?php endif; ?>
           </td>
           <td style="padding:.6rem 1rem">
-            <code style="font-size:.85em"><?= e(to_str($bk['db_driver'] ?? '')) ?></code>
+            <code style="font-size:.85em"><?= e($bkSrcVer) ?></code>
           </td>
           <td style="padding:.6rem 1rem;text-align:right;white-space:nowrap">
             <?= e(format_bytes(to_int($bk['size_bytes'] ?? 0))) ?>
@@ -644,8 +662,8 @@ render_security_banner('db_tools', 'Database import will overwrite all existing 
           <td style="padding:.6rem 1rem;white-space:nowrap">
             <?= e(to_str($bk['started_at'] ?? '')) ?>
           </td>
-          <td style="padding:.6rem 1rem;text-align:right;white-space:nowrap">
-            <?= e($bkDurStr) ?>
+          <td style="padding:.6rem 1rem;white-space:nowrap">
+            <?= $bkComp !== '' ? e($bkComp) : '<span class="muted">—</span>' ?>
           </td>
           <td style="padding:.6rem 1rem;text-align:center">
             <span class="badge" style="background:<?= $bkBadgeBg ?>;color:<?= $bkBadgeFg ?>"><?= e($bkStatus) ?></span>

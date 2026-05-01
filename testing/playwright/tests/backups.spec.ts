@@ -202,29 +202,32 @@ test.describe('Backup destinations admin', () => {
       return;
     }
 
-    // Open the edit drawer for this row.
-    const editBtn = row.locator('button[data-edit-destination]');
+    // Open the global drawer for this row.
+    const editBtn = row.locator('button[data-drawer-url*="form=destination"]');
     await editBtn.click();
 
-    // The drawer is the next <tr> after the row; we locate by id.
-    const id = await editBtn.getAttribute('data-edit-destination');
-    const editRow = page.locator(`#edit-destination-${id}`);
-    await expect(editRow).toBeVisible({ timeout: 5_000 });
+    // Drawer body holds the edit form; wait for it to render.
+    const drawer = page.locator('#global-drawer');
+    await expect(drawer).toBeVisible({ timeout: 5_000 });
+    const drawerUrl = await editBtn.getAttribute('data-drawer-url') ?? '';
+    const id = (drawerUrl.match(/id=(\d+)/) ?? [])[1] ?? '';
+    await expect(drawer.locator('input[name="id"]')).toHaveValue(id);
 
     // Change a non-secret field (region) and submit, leaving the secret blank.
-    await editRow.locator('input[name="s3_region"]').fill('eu-west-2');
-    await expect(editRow.locator('input[name="s3_secret_key"]')).toHaveValue('');
-    await editRow.locator('button[type="submit"]', { hasText: /save/i }).click();
-    await page.waitForURL(/destinations\.php\?flash=updated/, { timeout: 10_000 });
+    await drawer.locator('input[name="s3_region"]').fill('eu-west-2');
+    await expect(drawer.locator('input[name="s3_secret_key"]')).toHaveValue('');
+    await drawer.locator('button[type="submit"]', { hasText: /save/i }).click();
+    await page.waitForURL(/(destinations\.php|backup_admin\.php).*flash=updated/, { timeout: 10_000 });
 
     // Re-open the edit drawer; the new region must persist and the secret must
     // still be empty in the form (placeholder shows "(unchanged)").
     await page.goto(appUrl('destinations.php'));
     const row2 = await findDestRow(page, DEST_S3_NAME);
-    await row2.locator('button[data-edit-destination]').click();
-    const editRow2 = page.locator(`#edit-destination-${id}`);
-    await expect(editRow2.locator('input[name="s3_region"]')).toHaveValue('eu-west-2');
-    await expect(editRow2.locator('input[name="s3_secret_key"]')).toHaveAttribute('placeholder', /unchanged/);
+    await row2.locator('button[data-drawer-url*="form=destination"]').click();
+    const drawer2 = page.locator('#global-drawer');
+    await expect(drawer2).toBeVisible({ timeout: 5_000 });
+    await expect(drawer2.locator('input[name="s3_region"]')).toHaveValue('eu-west-2');
+    await expect(drawer2.locator('input[name="s3_secret_key"]')).toHaveAttribute('placeholder', /unchanged/);
   });
 
   test('admin can rotate an S3 destination secret', async () => {
@@ -234,12 +237,12 @@ test.describe('Backup destinations admin', () => {
       test.skip(true, 'S3 destination not found');
       return;
     }
-    await row.locator('button[data-edit-destination]').click();
-    const id = await row.locator('button[data-edit-destination]').getAttribute('data-edit-destination');
-    const editRow = page.locator(`#edit-destination-${id}`);
-    await editRow.locator('input[name="s3_secret_key"]').fill('rotatedsecret123');
-    await editRow.locator('button[type="submit"]', { hasText: /save/i }).click();
-    await page.waitForURL(/destinations\.php\?flash=updated/, { timeout: 10_000 });
+    await row.locator('button[data-drawer-url*="form=destination"]').click();
+    const drawer = page.locator('#global-drawer');
+    await expect(drawer).toBeVisible({ timeout: 5_000 });
+    await drawer.locator('input[name="s3_secret_key"]').fill('rotatedsecret123');
+    await drawer.locator('button[type="submit"]', { hasText: /save/i }).click();
+    await page.waitForURL(/(destinations\.php|backup_admin\.php).*flash=updated/, { timeout: 10_000 });
     // No exception, no error card.
     await expect(page.locator('.card.danger')).toHaveCount(0);
   });
@@ -251,11 +254,11 @@ test.describe('Backup destinations admin', () => {
       test.skip(true, 'S3 destination not found');
       return;
     }
-    await row.locator('button[data-edit-destination]').click();
-    const id = await row.locator('button[data-edit-destination]').getAttribute('data-edit-destination');
-    const editRow = page.locator(`#edit-destination-${id}`);
+    await row.locator('button[data-drawer-url*="form=destination"]').click();
+    const drawer = page.locator('#global-drawer');
+    await expect(drawer).toBeVisible({ timeout: 5_000 });
     // The visible type display is a disabled input — server enforces the lock too.
-    const typeBox = editRow.locator('input[disabled][readonly]').first();
+    const typeBox = drawer.locator('input[disabled][readonly]').first();
     await expect(typeBox).toBeDisabled();
   });
 
@@ -419,30 +422,33 @@ test.describe('Backup schedules', () => {
       hasText: 'daily',
     }).filter({ hasText: '03:00' }).first();
     await expect(scheduleRow, 'schedule created by prior test (daily @ 03:00) must be present').toBeVisible({ timeout: 5_000 });
-    const editBtn = scheduleRow.locator('button[data-edit-schedule]');
+    const editBtn = scheduleRow.locator('button[data-drawer-url*="form=schedule"]');
     await editBtn.click();
-    const id = await editBtn.getAttribute('data-edit-schedule');
-    const editRow = page.locator(`#edit-schedule-${id}`);
-    await expect(editRow).toBeVisible({ timeout: 5_000 });
+    const drawer = page.locator('#global-drawer');
+    await expect(drawer).toBeVisible({ timeout: 5_000 });
+    const drawerUrl = await editBtn.getAttribute('data-drawer-url') ?? '';
+    const destId = (drawerUrl.match(/id=(\d+)/) ?? [])[1] ?? '';
 
     // Change retention_daily and time_of_day, save, re-fetch and verify.
-    await editRow.locator('input[name="retention_daily"]').fill('21');
-    await editRow.locator('input[name="time_of_day"]').fill('04:30');
-    await editRow.locator('button[type="submit"]', { hasText: /save/i }).click();
-    await page.waitForURL(/destinations\.php\?flash=sched_updated/, { timeout: 10_000 });
+    await drawer.locator('input[name="retention_daily"]').fill('21');
+    await drawer.locator('input[name="time_of_day"]').fill('04:30');
+    await drawer.locator('button[type="submit"]', { hasText: /save/i }).click();
+    await page.waitForURL(/(destinations\.php|backup_admin\.php).*flash=sched_updated/, { timeout: 10_000 });
 
-    // Re-open the same edit row; the new values must persist.
+    // Re-open the same edit drawer; the new values must persist.
     await page.goto(appUrl('destinations.php'));
-    const editBtn2 = page.locator(`button[data-edit-schedule="${id}"]`);
+    const editBtn2 = page.locator(`button[data-drawer-url*="id=${destId}&form=schedule"]`);
     await editBtn2.click();
-    const editRow2 = page.locator(`#edit-schedule-${id}`);
-    await expect(editRow2.locator('input[name="retention_daily"]')).toHaveValue('21');
-    await expect(editRow2.locator('input[name="time_of_day"]')).toHaveValue('04:30');
+    const drawer2 = page.locator('#global-drawer');
+    await expect(drawer2).toBeVisible({ timeout: 5_000 });
+    await expect(drawer2.locator('input[name="retention_daily"]')).toHaveValue('21');
+    await expect(drawer2.locator('input[name="time_of_day"]')).toHaveValue('04:30');
   });
 
   test('schedule create form hides fields that do not apply to chosen frequency (#781)', async () => {
     await page.goto(appUrl('destinations.php'));
-    // Scope to the create form to avoid matching per-row Edit drawers (#780).
+    // Edit forms now live in the global drawer, so the only schedule-form on the
+    // page is the create form. Keep the historical class scoping for clarity.
     const form = page.locator('form.schedule-form:not(.schedule-edit-form)').first();
     const sel  = form.locator('select[name="frequency"]');
     const tod  = form.locator('label[data-freq-field="time_of_day"]');
@@ -472,12 +478,20 @@ test.describe('Backup schedules', () => {
 
   test('server normalises non-applicable frequency fields to NULL even if forced (#781)', async () => {
     await page.goto(appUrl('destinations.php'));
-    const editBtn = page.locator('button[data-edit-schedule]').first();
+    const editBtn = page.locator('button[data-drawer-url*="form=schedule"]').first();
     if (await editBtn.count() === 0) {
       test.skip(true, 'No schedules to update');
       return;
     }
-    const id = await editBtn.getAttribute('data-edit-schedule');
+    // Open the drawer to obtain the schedule id (rendered as the hidden "id"
+    // input in the schedule form) and the destination id (used to re-open the
+    // drawer in the assertion phase).
+    await editBtn.click();
+    const drawer = page.locator('#global-drawer');
+    await expect(drawer).toBeVisible({ timeout: 5_000 });
+    const schedId = await drawer.locator('input[name="id"]').inputValue();
+    const drawerUrl = await editBtn.getAttribute('data-drawer-url') ?? '';
+    const destId = (drawerUrl.match(/id=(\d+)/) ?? [])[1] ?? '';
     const csrf = await page.locator('input[name="csrf"]').first().inputValue();
 
     // Forge a POST that sets frequency=daily but forces day_of_week=3 and day_of_month=15.
@@ -487,7 +501,7 @@ test.describe('Backup schedules', () => {
       form: {
         csrf:             csrf,
         action:           'update_schedule',
-        id:               id ?? '0',
+        id:               schedId,
         frequency:        'daily',
         time_of_day:      '05:15',
         day_of_week:      '3',
@@ -504,13 +518,14 @@ test.describe('Backup schedules', () => {
     // Re-open the edit drawer; day_of_week and day_of_month must be empty (NULL → to_int → 0/1 default).
     // The visible "Time of day" must reflect the new value, confirming the update actually ran.
     await page.goto(appUrl('destinations.php'));
-    const editBtn2 = page.locator(`button[data-edit-schedule="${id}"]`);
+    const editBtn2 = page.locator(`button[data-drawer-url*="id=${destId}&form=schedule"]`);
     await editBtn2.click();
-    const editRow2 = page.locator(`#edit-schedule-${id}`);
-    await expect(editRow2.locator('input[name="time_of_day"]')).toHaveValue('05:15');
+    const drawer2 = page.locator('#global-drawer');
+    await expect(drawer2).toBeVisible({ timeout: 5_000 });
+    await expect(drawer2.locator('input[name="time_of_day"]')).toHaveValue('05:15');
     // Frequency persisted as 'daily' (the values for dow/dom are not asserted directly because
     // to_int(null) defaults render as 0/1 in the form — what matters is the Time/Day display column).
-    await expect(editRow2.locator('select[name="frequency"]')).toHaveValue('daily');
+    await expect(drawer2.locator('select[name="frequency"]')).toHaveValue('daily');
     // The list-row display must read "@ 05:15" (the daily format), not "DOW … @ …".
     await expect(page.locator('section.card table.data-table td', { hasText: '@ 05:15' }).first()).toBeVisible();
   });
@@ -603,6 +618,48 @@ test.describe('Backup history', () => {
     await page.waitForURL(/backup_history\.php/, { timeout: 10_000 });
 
     expect(page.url()).toContain(`destination_id=${firstDestValue}`);
+  });
+
+  test('filter chips bar renders Status / Backup type / Time rows (#804)', async () => {
+    await page.goto(appUrl('backup_history.php'));
+    const chips = page.locator('[data-filter-chips]');
+    await expect(chips).toBeVisible();
+    // Each dimension contributes at least one active chip.
+    await expect(chips.locator('a[data-chip-dim="status"].is-active')).toHaveCount(1);
+    await expect(chips.locator('a[data-chip-dim="backup_type"].is-active')).toHaveCount(1);
+    await expect(chips.locator('a[data-chip-dim="since"].is-active')).toHaveCount(1);
+    // Default state: All chips are active for every dimension.
+    await expect(chips.locator('a[data-chip-dim="status"][data-chip-value=""]')).toHaveClass(/is-active/);
+    await expect(chips.locator('a[data-chip-dim="backup_type"][data-chip-value=""]')).toHaveClass(/is-active/);
+    await expect(chips.locator('a[data-chip-dim="since"][data-chip-value=""]')).toHaveClass(/is-active/);
+  });
+
+  test('clicking a chip narrows the URL and Clear-all resets it (#804)', async () => {
+    await page.goto(appUrl('backup_history.php'));
+    // Click the "Last 7d" time chip.
+    await page.locator('[data-filter-chips] a[data-chip-dim="since"][data-chip-value="7d"]').click();
+    await page.waitForURL(/since=7d/, { timeout: 10_000 });
+    expect(page.url()).toContain('since=7d');
+    // Active chip reflects the selection.
+    await expect(
+      page.locator('[data-filter-chips] a[data-chip-dim="since"][data-chip-value="7d"]')
+    ).toHaveClass(/is-active/);
+    // Clear-all chip is now visible and resets the filters.
+    const clearAll = page.locator('[data-filter-chips] a.filter-chip-clear');
+    await expect(clearAll).toBeVisible();
+    await clearAll.click();
+    await page.waitForLoadState('load');
+    expect(page.url()).not.toContain('since=');
+  });
+
+  test('backup_type chip narrows the URL with the renamed param (#804)', async () => {
+    await page.goto(appUrl('backup_history.php'));
+    await page.locator('[data-filter-chips] a[data-chip-dim="backup_type"][data-chip-value="database"]').click();
+    await page.waitForURL(/backup_type=database/, { timeout: 10_000 });
+    expect(page.url()).toContain('backup_type=database');
+    // No PHP fatal.
+    const body = await page.locator('body').textContent() ?? '';
+    expect(body).not.toContain('Fatal error');
   });
 
   test('status badge CSS classes are correct in rendered rows', async () => {

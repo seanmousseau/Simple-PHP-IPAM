@@ -1440,4 +1440,4 @@ DHCP configuration export (ISC `dhcpd.conf` and Kea 2.x JSON) is available via t
 
 ## Backup resources
 
-> **Note:** Backup-related tables (`backup_destinations`, `backup_schedules`, `backup_log`) are not exposed via the REST API in v3.17.0. Use the admin UI at `destinations.php` (destinations and schedules) and `backup_history.php` (history log).
+> **Note:** Backup-related tables (`backup_destinations`, `backup_schedules`, `backup_runs`) are not exposed via the REST API. Use the unified admin surface at `backup_admin.php` (Backup, Restore, Destinations, Notifications, History tabs). See [Backups](backups.md) and [Restore](restore.md).

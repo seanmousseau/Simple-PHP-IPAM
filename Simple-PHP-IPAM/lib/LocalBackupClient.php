@@ -116,7 +116,15 @@ final class LocalBackupClient implements BackupClientInterface
         if ($safe === false || !str_starts_with($safe . '/', $this->directory)) {
             return false;
         }
-        return @unlink($safe); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $safe is realpath()-validated and confirmed under $this->directory
+        // Per BackupClientInterface contract: true on success, throw on
+        // unexpected errors. Permission denial / read-only parent dir is
+        // an unexpected error — distinguish from "already gone" so the
+        // caller can leave the history row intact for retry (#803).
+        $ok = @unlink($safe); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $safe is realpath()-validated and confirmed under $this->directory
+        if (!$ok && is_file($safe)) {
+            throw new RuntimeException('LocalBackupClient: unlink failed (file still present)');
+        }
+        return true;
     }
 
     /** @return array{ok:bool,message:string,latency_ms:int} */

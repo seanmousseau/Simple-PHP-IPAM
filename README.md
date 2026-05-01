@@ -12,17 +12,22 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.20.0
+## What's new in v3.21.0
 
-Backup destinations UX + reliability polish. No schema migrations, no breaking changes.
+Unified Backup & Restore admin surface, restore-wizard rewrite, and a single `backup_runs` history table. Six pre-existing backup pages collapse into one tabbed admin surface with consistent drawer-driven CRUD.
 
-- **Inline Edit drawers** for destinations and schedules on `destinations.php` — change name, type, config, retention, frequency, day-of-week / day-of-month / time-of-day, and credentials in place. Replaces the previous "delete and recreate to change anything" workflow.
-- **Per-destination Run-now action** — destination rows have their own "Run backup now" button; previously only schedules could trigger a manual run.
-- **Auto-run Test on Save** — creating or editing a destination triggers the connectivity test automatically and renders an inline pass/fail badge with latency and any error text.
-- **Frequency-aware schedule fields** — selecting `hourly` / `daily` / `weekly` / `monthly` hides the rows that don't apply, eliminating "what value does this field even take for this frequency?" ambiguity.
-- **Timestamps render in your configured timezone** instead of UTC across the backup history and destinations tables; a new semgrep guard rule prevents future drift back to raw UTC rendering.
-- **Notification dispatch wired into both orchestrators** — success/failure email was previously dead code on the schedule path; cron-driven and manual Run-now backups both fire notifications reliably.
-- **MinIO-backed end-to-end backup integration test in CI** — the full pipeline (dump → encrypt → upload → list → download → decrypt → verify) runs against a real S3-compatible server on every push, across SQLite / MySQL / PostgreSQL.
+- **Unified `Backup & Restore` admin (5 tabs)** at `backup_admin.php` — Destinations, Backup, History, Restore, Notifications. Legacy URLs still work; the sidebar nav points at the unified surface.
+- **Per-row backup detail drawer** on the History tab — click any row to open run metadata, then Verify (re-downloads + SHA-256 compares), Download, or Delete (literal `DELETE` confirmation, removes both the row and the remote artifact).
+- **Filter chips on History** — three chip rows (Status / Backup type / Time) above the form; `Last 24h / 7d / 30d / All time` presets, a `database` | `logical` axis, single-URL-param toggles, no JS, Clear-all chip resets.
+- **Drawer-driven CRUD** — destination and schedule editors moved from inline-row collapsing UI into the global drawer, matching the rest of the admin surface.
+- **Inline Run-now progress** — manual backups dispatch async and report success/failure inline rather than redirect-and-flash.
+- **Single `backup_runs` history table** consolidating the v3.7 CLI runner's `backup_history` and the v3.17 destination runner's `backup_log`. Migration preserves all rows from both legacy tables.
+- **Restore wizard rewritten as a phase-locked state machine** — upload-token persistence across phases, deterministic step transitions, explicit cleanup on every exit path. Closes a long tail of restore-edge bugs (#6, #43, #50, #56, #61, #62).
+- **SQL splitter rewritten as a real lexer** — handles escaped quotes, multi-line literals, dollar-quoted PostgreSQL function bodies, and SQL comments. Fixes the "split on every `;`" failure mode on complex dumps.
+- **Sigchild fix on `restore.php`** — the same fallback v3.19.1 applied to `backup_run_dump` is now on the restore path.
+- **Manual upload-and-restore flow** in the Restore tab with passphrase entry for `IPAMBKP2`/`IPAMBKP3` archives.
+- **`db_tools.php` Database admin sidebar nav entry retired** — the page itself is retained for direct-URL data-export flows but no longer exposes any backup functionality.
+- **`docs/backups.md` and `docs/restore.md` rewritten end-to-end** for the unified surface; new internal `docs/internal/backup-restore-runbook.md` for incident response.
 
 [Full changelog →](CHANGELOG.md)
 

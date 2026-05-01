@@ -62,10 +62,12 @@ restore_info("Backup file : {$fromAbs}");
 restore_info("Size        : " . format_bytes((int)$fileSize));
 restore_info("SHA-256     : {$sha256}");
 
-// Try to find a matching backup_history record for integrity check
+// Try to find a matching backup_runs record for integrity check.
+// v3.21.0 §A1 (#799): backup_history was collapsed into backup_runs;
+// sha256 column → checksum.
 $histRow = false;
 try {
-    $st = $db->prepare("SELECT * FROM backup_history WHERE sha256=:h ORDER BY started_at DESC LIMIT 1");
+    $st = $db->prepare("SELECT * FROM backup_runs WHERE checksum=:h ORDER BY started_at DESC LIMIT 1");
     $st->execute([':h' => $sha256]);
     $histRow = $st->fetch();
 } catch (Throwable) {}
@@ -73,7 +75,7 @@ try {
 if ($histRow) {
     restore_info("History     : found — recorded on " . to_str($histRow['started_at'] ?? ''));
 } else {
-    restore_info("History     : not found in backup_history (untracked or different install)");
+    restore_info("History     : not found in backup_runs (untracked or different install)");
 }
 
 /** @var IpamConfig $gConf */
@@ -166,6 +168,18 @@ if ($driver === 'sqlite') {
     $cmd = ['mysql', '-h', $host, '-P', $port, '-u', $user, $dbName];
     $env = array_merge(getenv() ?: [], ['MYSQL_PWD' => $pass]);
 
+    // Capture schema_migrations count before the restore so the sigchild
+    // post-condition check compares pre vs post (CR feedback PR #1054).
+    $preMigCount = 0;
+    try {
+        $preMigStmt = $db->query("SELECT COUNT(*) FROM schema_migrations");
+        if ($preMigStmt !== false) {
+            $preMigCount = (int) $preMigStmt->fetchColumn();
+        }
+    } catch (Throwable $_e) {
+        // schema_migrations might not exist yet on a fresh target; treat as 0.
+    }
+
     $pipes = [];
     // nosemgrep
     $proc = proc_open( // nosemgrep
@@ -185,18 +199,26 @@ if ($driver === 'sqlite') {
     $stderr = stream_get_contents($pipes[2]);
     fclose($pipes[1]);
     fclose($pipes[2]);
-    $exit = proc_close($proc);
-    if ($exit !== 0) {
-        restore_die("mysql restore failed (exit={$exit}): " . trim((string)$stderr));
+    // Capture exit code via proc_get_status BEFORE proc_close — on PHP
+    // builds with --enable-sigchild proc_close reaps SIGCHLD itself and
+    // returns -1 unconditionally. proc_get_status returns the real code
+    // on glibc and -1 on sigchild builds; we treat -1 as "unreliable,
+    // fall back to checking target DB post-conditions" (#805 / B-P0-3).
+    $status    = proc_get_status($proc);
+    $finalExit = $status['exitcode'];
+    proc_close($proc);
+    $check = ipam_restore_proc_check($finalExit, 'mysql', (string)$stderr, $db, $preMigCount);
+    if (!$check['ok']) {
+        restore_die($check['message']);
     }
-    restore_info("Restored to {$dbName} on {$host}.");
+    restore_info("Restored to {$dbName} on {$host}. (proc verdict: {$check['verdict']})");
 
     restore_info("Applying migrations...");
     $applied = apply_migrations($db);
     restore_info("Migrations applied: " . (empty($applied) ? '(none)' : implode(', ', $applied)));
 
     audit($db, 'restore.run', 'system', null,
-        "MySQL restore from: " . basename($fromAbs) . " sha256={$sha256}");
+        "MySQL restore from: " . basename($fromAbs) . " sha256={$sha256} ({$check['verdict']})");
 
 } elseif ($driver === 'pgsql') {
     $host   = to_str($gConf['db_host'] ?? '127.0.0.1');
@@ -216,6 +238,18 @@ if ($driver === 'sqlite') {
     $cmd = ['psql', '-h', $host, '-p', $port, '-U', $user, $dbName];
     $env = array_merge(getenv() ?: [], ['PGPASSWORD' => $pass]);
 
+    // Capture schema_migrations count before the restore so the sigchild
+    // post-condition check compares pre vs post (CR feedback PR #1054).
+    $preMigCount = 0;
+    try {
+        $preMigStmt = $db->query("SELECT COUNT(*) FROM schema_migrations");
+        if ($preMigStmt !== false) {
+            $preMigCount = (int) $preMigStmt->fetchColumn();
+        }
+    } catch (Throwable $_e) {
+        // schema_migrations might not exist yet on a fresh target.
+    }
+
     $pipes = [];
     $proc = proc_open( // nosemgrep
         $cmd,
@@ -234,18 +268,22 @@ if ($driver === 'sqlite') {
     $stderr = stream_get_contents($pipes[2]);
     fclose($pipes[1]);
     fclose($pipes[2]);
-    $exit = proc_close($proc);
-    if ($exit !== 0) {
-        restore_die("psql restore failed (exit={$exit}): " . trim((string)$stderr));
+    // See mysql branch above for the sigchild-fallback rationale (#805 / B-P0-3).
+    $status    = proc_get_status($proc);
+    $finalExit = $status['exitcode'];
+    proc_close($proc);
+    $check = ipam_restore_proc_check($finalExit, 'psql', (string)$stderr, $db, $preMigCount);
+    if (!$check['ok']) {
+        restore_die($check['message']);
     }
-    restore_info("Restored to {$dbName} on {$host}.");
+    restore_info("Restored to {$dbName} on {$host}. (proc verdict: {$check['verdict']})");
 
     restore_info("Applying migrations...");
     $applied = apply_migrations($db);
     restore_info("Migrations applied: " . (empty($applied) ? '(none)' : implode(', ', $applied)));
 
     audit($db, 'restore.run', 'system', null,
-        "PostgreSQL restore from: " . basename($fromAbs) . " sha256={$sha256}");
+        "PostgreSQL restore from: " . basename($fromAbs) . " sha256={$sha256} ({$check['verdict']})");
 
 } else {
     restore_die("Unsupported driver: {$driver}");
