@@ -10,7 +10,7 @@
  * Coverage per destination:
  *   1. test_destination.php → ok=true (connection works against the real target)
  *   2. run_backup_now.php   → ok=true with non-empty filename and size > 0
- *   3. backup_history.php   → success row with a populated checksum
+ *   3. backup_history.php   → success row in backup_runs (v3.21.0 §A1) with a populated checksum
  *
  * Out of scope (deferred):
  *   - SFTP transport — covered in v3.23.0 #833 (requires sshd sidecar).
@@ -92,7 +92,7 @@ test.describe('Backup integration (MinIO + local)', () => {
       expect(res.json.ok, `test_destination(${destName}) failed: ${res.json?.message ?? res.body}`).toBe(true);
     });
 
-    test(`${destName}: run-now → backup_history success row round-trip`, async () => {
+    test(`${destName}: run-now → backup_runs success row round-trip`, async () => {
       // Combined into a single test so the unique filename produced by run-now
       // never crosses test boundaries — eliminates the module-state coupling
       // that breaks under retries / parallel workers (CR review on PR #1050).

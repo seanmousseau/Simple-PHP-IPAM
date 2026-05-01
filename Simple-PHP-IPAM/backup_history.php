@@ -173,16 +173,11 @@ page_header('Backup History');
             <td><?= e(to_str($r['dest_name'] ?? 'unknown')) ?></td>
             <td><?= e(to_str($r['triggered_by'])) ?></td>
             <td><?php
-              // Prefer the dedicated 'type' column added in v3.17 migration; fall back
-              // to triggered_by inference for any pre-migration rows.
-              $rowType = to_str($r['type'] ?? '');
-              if ($rowType === '') {
-                  $rowType = str_starts_with(to_str($r['triggered_by']), 'web_restore') ? 'restore' : 'backup';
-              }
-              $isRestore = ($rowType === 'restore');
-              $typeLabel = $isRestore ? 'Restore' : 'Backup';
-              $typeClass = $isRestore ? 'badge-restore' : 'badge-backup';
-            ?><span class="badge <?= e($typeClass) ?>"><?= e($typeLabel) ?></span></td>
+              // v3.21.0 §A1 (#799/#808): backup_runs only tracks backup runs.
+              // Restore tracking moves elsewhere with the wizard rewrite (#807).
+              // The Type column stays so column indices in the consuming
+              // Playwright spec remain stable until Wave 4 retires this page.
+            ?><span class="badge badge-backup">Backup</span></td>
             <td><span class="badge <?= e($statusClass) ?>"><?= e($statusVal) ?></span>
                 <?php if ($statusVal === 'failed' && to_str($r['error_message'] ?? '') !== ''): ?>
                   <details><summary class="muted">error</summary><pre><?= e(to_str($r['error_message'])) ?></pre></details>
