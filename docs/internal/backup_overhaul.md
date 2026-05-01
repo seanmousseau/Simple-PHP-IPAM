@@ -691,7 +691,7 @@ Each milestone is now ≤16 items, single-theme. Less context-switching mid-rele
 | U1 | UI | Drawer-driven CRUD across surface | — | v3.21 | P0 | Comes with F1 |
 | U2 | UI | Inline progress reporting on Run-now | — | v3.21 | P1 | Replaces redirect-and-flash |
 | U7 | UI | Empty-state copy across tabs | — | v3.21 | P2 | Comes with F1 |
-| F11 | Func | Per-row backup detail drawer in History | — | v3.21 | P2 | Comes with F3 |
+| ~~F11~~ | ~~Func~~ | ~~Per-row backup detail drawer in History~~ | #803 | **DONE 2026-05-01** | P2 | Shipped: `backup_run_detail.php` partial + drawer triggers in History; `destination_edit_drawer.php` partial + drawer triggers replace inline editors on Destinations for unified-surface consistency. Follow-ups filed: #1052 (bulk multi-select delete) and #1053 (auto retention purge), both v3.22.0. |
 | F12 | Func | Filter chips on History | — | v3.21 | P2 | Comes with F3 |
 | B-P0-3 | Audit | **Sigchild fix in `restore.php`** | — | v3.21 | **P0** | Same bug v3.19.1 fixed in `backup_run_dump` |
 | B-P0-4 | Audit | **SQL splitter rewrite (real lexer)** | — | v3.21 | **P0** | T13 first |
@@ -726,8 +726,10 @@ Each milestone is now ≤16 items, single-theme. Less context-switching mid-rele
 | T15 | Test | Concurrency: two cron procs same schedule | — | v3.22 | P1 | With F33 |
 | #770 | GH/test | MFA preferred-switch e2e (moved from v3.21) | v3.21 | v3.22 | P1 | Non-backup; fits anywhere |
 | #775 | GH/test | VR dashboard harness (moved from v3.21) | v3.21 | v3.22 | P1 | Non-backup; fits anywhere |
+| #1052 | Func | Bulk multi-select delete on backup History | — | v3.22 | P1 | Reuses #803 server-side delete handler (`ipam_backup_run_delete`); UI adds row checkboxes + bulk action bar. |
+| #1053 | Func | Automatic `backup_runs` retention purge | — | v3.22 | P1 | Mirrors `audit.retention_days`; cron-driven prune of completed rows past the configured horizon. |
 
-**v3.22.0 total: ~12 items.** Deliberately small; backend-only; no UI churn means easier review.
+**v3.22.0 total: ~14 items.** Deliberately small; backend-only; no UI churn means easier review.
 
 ### v3.23.0 — PDO restore + maintainability cleanups
 
