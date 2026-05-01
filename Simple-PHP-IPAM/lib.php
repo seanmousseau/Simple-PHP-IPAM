@@ -9633,3 +9633,52 @@ function ipam_dashboard_growth(PDO $db, int $days = 30): array {
     }
     return $series;
 }
+
+/**
+ * Renders the drawer body partial for a single backup_runs row.
+ * Used by backup_run_detail.php (#803). Returns null when the id does
+ * not resolve so the endpoint can return 404.
+ *
+ * Disabled-state matrix is the source of truth for both the rendered
+ * UI and the BackupRunDetailTest contract:
+ *   - status='running'                         → all three actions disabled
+ *   - status!='success' OR filename empty      → verify/download disabled
+ *   - is_protected=1                           → delete disabled
+ *
+ * @return string|null
+ */
+function ipam_render_backup_run_detail(\PDO $db, int $id): ?string
+{
+    $st = $db->prepare(
+        "SELECT r.*, d.name AS dest_name, d.type AS dest_type
+           FROM backup_runs r
+           LEFT JOIN backup_destinations d ON d.id = r.destination_id
+          WHERE r.id = :id"
+    );
+    $st->execute([':id' => $id]);
+    $row = $st->fetch(\PDO::FETCH_ASSOC);
+    if (!$row) {
+        return null;
+    }
+
+    $hasArtifact = ($row['status'] === 'success') && !empty($row['filename']);
+    $isRunning   = ($row['status'] === 'running');
+    $isProtected = (int) ($row['is_protected'] ?? 0) === 1;
+
+    $disabled = [
+        'verify'   => !$hasArtifact || $isRunning,
+        'download' => !$hasArtifact || $isRunning,
+        'delete'   => $isRunning || $isProtected,
+    ];
+    $tooltip = [
+        'verify'   => $isRunning ? 'Run not finished' : (!$hasArtifact ? 'No artifact at destination' : ''),
+        'download' => $isRunning ? 'Run not finished' : (!$hasArtifact ? 'No artifact at destination' : ''),
+        'delete'   => $isRunning
+            ? 'Cannot delete a run in progress'
+            : ($isProtected ? 'This run is protected. Unprotect it from the schedule\'s retention settings before deleting.' : ''),
+    ];
+
+    ob_start();
+    require __DIR__ . '/views/_backup_run_detail_body.php';
+    return (string) ob_get_clean();
+}
