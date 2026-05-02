@@ -38,7 +38,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $flash = 'File deleted from remote.';
                     }
                 } elseif ($action === 'verify') {
-                    // Download to a tmp file, recompute SHA-256, compare with backup_log if entry exists
+                    // Download to a tmp file, recompute SHA-256, compare with backup_runs if entry exists.
+                    // v3.21.0 §A1 (#799): backup_log was collapsed into backup_runs.
                     $tmp = tempnam(sys_get_temp_dir(), 'rbverify_');
                     if ($tmp === false) throw new RuntimeException('tempnam failed');
                     try {
@@ -50,7 +51,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 $err = 'Checksum failed.';
                             } else {
                                 // Compare with stored checksum if available
-                                $stmt = $db->prepare("SELECT checksum FROM backup_log
+                                $stmt = $db->prepare("SELECT checksum FROM backup_runs
                                     WHERE destination_id = :d AND filename = :f AND status = 'success'
                                     ORDER BY started_at DESC LIMIT 1");
                                 $stmt->execute([':d' => $postDestId, ':f' => $postName]);

@@ -2035,6 +2035,8 @@ var IpamDrawer = (function () {
     document.addEventListener('click', function (e) {
         var btn = e.target.closest ? e.target.closest('[data-drawer-title]') : null;
         if (!btn) return;
+        // [data-drawer-url] elements have their own delegate below; don't double-handle.
+        if (btn.hasAttribute('data-drawer-url')) return;
         e.preventDefault();
         open(
             btn.getAttribute('data-drawer-title') || '',
@@ -2042,7 +2044,249 @@ var IpamDrawer = (function () {
         );
     });
 
+    // Event delegation — handle [data-drawer-url] elements (#803).
+    // Loads an HTML partial via fetch and injects it into the drawer body.
+    //
+    // Trust model: the partial is fetched from a same-origin admin-gated
+    // endpoint (require_role('admin')) that emits server-rendered HTML with
+    // every user-controlled value passed through e()/htmlspecialchars. This
+    // matches the trust model of the existing template-id path above
+    // (bodyEl.innerHTML = tpl.innerHTML). innerHTML is safe here because
+    // (a) the source is our own server, (b) admins are already trusted,
+    // (c) <script> tags injected via innerHTML do not execute in modern
+    // browsers per the HTML spec.
+    document.addEventListener('click', function (e) {
+        var trigger = e.target.closest ? e.target.closest('[data-drawer-url]') : null;
+        if (!trigger) return;
+        if (e.target.closest && e.target.closest('#global-drawer')) return;  // already-open drawer
+        e.preventDefault();
+        _openFromUrl(trigger);
+    });
+
+    document.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        var trigger = e.target.closest ? e.target.closest('[data-drawer-url]') : null;
+        if (!trigger) return;
+        var tag = (e.target.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || tag === 'select' || tag === 'button') return;
+        e.preventDefault();
+        _openFromUrl(trigger);
+    });
+
+    var _drawerRequestSeq = 0;
+
+    function _openFromUrl(trigger) {
+        var url   = trigger.getAttribute('data-drawer-url');
+        var title = trigger.getAttribute('data-drawer-title') || 'Details';
+        if (!url) return;
+        // CR feedback PR #1054: same-origin guard before injecting via innerHTML.
+        // Comment promises "trusted same-origin partial" — enforce it here so
+        // a future trigger with an absolute or user-influenced URL can't break
+        // the contract and turn this into a DOM-XSS sink.
+        try {
+            var resolved = new URL(url, window.location.href);
+            if (resolved.origin !== window.location.origin) return;
+            url = resolved.toString();
+        } catch (_e) {
+            return;
+        }
+        open(title, '');
+        var bodyEl = document.getElementById('global-drawer-body');
+        if (!bodyEl) return;
+        // Loading state — fully DOM-constructed, no untrusted input involved.
+        while (bodyEl.firstChild) bodyEl.removeChild(bodyEl.firstChild);
+        var loading = document.createElement('p');
+        loading.className = 'muted';
+        loading.textContent = 'Loading…';
+        bodyEl.appendChild(loading);
+        // CR feedback PR #1054: ignore stale fetches. Two rapid clicks (run A
+        // then run B) could otherwise let A's slower response overwrite B's
+        // already-rendered body, leaving the title and Verify/Delete form
+        // out of sync. Each call increments the seq; only the latest renders.
+        var requestSeq = ++_drawerRequestSeq;
+        fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'text/html' } })
+            .then(function (r) {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.text();
+            })
+            .then(function (html) {
+                if (requestSeq !== _drawerRequestSeq) return;
+                bodyEl.innerHTML = html;  // trusted same-origin partial (admin-gated, server-rendered); origin-checked above
+                // Notify rebindable widgets that fresh DOM was injected so they
+                // can re-attach event listeners (e.g. schedule-form freq gating).
+                var ev = new CustomEvent('drawer:loaded', { detail: { drawer: drawer, body: bodyEl } });
+                document.dispatchEvent(ev);
+            })
+            .catch(function (err) {
+                if (requestSeq !== _drawerRequestSeq) return;
+                // Error state — build via DOM, do not interpolate err.message into HTML.
+                while (bodyEl.firstChild) bodyEl.removeChild(bodyEl.firstChild);
+                var box = document.createElement('div');
+                box.className = 'drawer-error';
+                box.setAttribute('role', 'alert');
+                var p = document.createElement('p');
+                p.textContent = 'Could not load details: ' + ((err && err.message) ? err.message : 'unknown error');
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'action-pill';
+                btn.id = 'drawer-retry';
+                btn.textContent = 'Retry';
+                btn.addEventListener('click', function () { _openFromUrl(trigger); });
+                box.appendChild(p);
+                box.appendChild(btn);
+                bodyEl.appendChild(box);
+            });
+    }
+
     return { open: open, close: close };
+}());
+
+// Backup History drawer action handlers (#803).
+// Verify and Delete are exposed inside the drawer body partial as
+// <button data-action="verify|delete">. Download is a normal anchor.
+(function () {
+    document.addEventListener('click', function (e) {
+        var btn = e.target.closest ? e.target.closest('#backup-run-actions [data-action]') : null;
+        if (!btn || btn.disabled) return;
+        var action = btn.getAttribute('data-action');
+        if (action !== 'verify' && action !== 'delete') return;
+        e.preventDefault();
+        var form = btn.closest('#backup-run-actions');
+        if (!form) return;
+        var runId = form.getAttribute('data-run-id');
+        var csrfInput = form.querySelector('input[name=csrf]');
+        var csrf = csrfInput ? csrfInput.value : '';
+        if (!runId || !csrf) return;
+        if (action === 'verify') _backupRunVerify(form, runId, csrf);
+        else                     _backupRunDeletePromptThenSubmit(form, runId, csrf);
+    });
+
+    function _backupRunVerify(form, runId, csrf) {
+        var resultEl = form.querySelector('#drawer-action-result');
+        if (!resultEl) return;
+        resultEl.hidden = false;
+        resultEl.className = 'drawer-action-result';
+        resultEl.textContent = 'Verifying…';
+        var fd = new FormData();
+        fd.append('csrf', csrf);
+        fd.append('action', 'verify');
+        fd.append('id', runId);
+        fetch('backup_admin.php?tab=history', { method: 'POST', body: fd, credentials: 'same-origin' })
+            .then(function (r) { return r.json().then(function (j) { return [r.status, j]; }); })
+            .then(function (pair) {
+                var j = pair[1];
+                if (j.ok) {
+                    resultEl.classList.add('is-ok');
+                    resultEl.textContent = 'Verified — sha256 matches (' + (j.actual || '').slice(0, 12) + '…).';
+                } else if (j.expected && j.actual) {
+                    resultEl.classList.add('is-error');
+                    resultEl.textContent = 'Checksum mismatch — recorded ' + j.expected.slice(0, 12) + '… vs destination ' + j.actual.slice(0, 12) + '…';
+                } else {
+                    resultEl.classList.add('is-error');
+                    resultEl.textContent = 'Verify failed: ' + (j.message || j.error || 'unknown');
+                }
+            })
+            .catch(function (err) {
+                resultEl.classList.add('is-error');
+                resultEl.textContent = 'Verify request failed: ' + (err && err.message ? err.message : 'network error');
+            });
+    }
+
+    function _backupRunDeletePromptThenSubmit(form, runId, csrf) {
+        if (form.querySelector('.drawer-danger')) return;  // already prompting
+        var danger = document.createElement('div');
+        danger.className = 'drawer-danger';
+
+        var label = document.createElement('label');
+        label.textContent = 'Type DELETE to confirm. This removes the file at the destination AND the history row. This cannot be undone.';
+
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.id = 'drawer-delete-confirm';
+        input.autocomplete = 'off';
+
+        var btnRow = document.createElement('div');
+        btnRow.style.marginTop = '0.5rem';
+        btnRow.style.display = 'flex';
+        btnRow.style.gap = '0.5rem';
+        btnRow.style.justifyContent = 'flex-end';
+
+        var cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.className = 'action-pill button-secondary';
+        cancel.id = 'drawer-delete-cancel';
+        cancel.textContent = 'Cancel';
+
+        var arm = document.createElement('button');
+        arm.type = 'button';
+        arm.className = 'action-pill button-danger';
+        arm.id = 'drawer-delete-arm';
+        arm.textContent = 'Delete';
+        arm.disabled = true;
+
+        btnRow.appendChild(cancel);
+        btnRow.appendChild(arm);
+        danger.appendChild(label);
+        danger.appendChild(input);
+        danger.appendChild(btnRow);
+        form.appendChild(danger);
+        input.focus();
+
+        input.addEventListener('input', function () { arm.disabled = (input.value !== 'DELETE'); });
+        cancel.addEventListener('click', function () { danger.remove(); });
+        arm.addEventListener('click', function () {
+            // CR feedback PR #1054: lock destructive controls before fetch.
+            // The remote-delete path is non-idempotent (DELETE on the storage
+            // backend); a fast double-click could fire two requests, the
+            // second of which fails because the artifact is already gone, and
+            // the user sees a confusing error after the first delete already
+            // succeeded. Disable arm + cancel for the in-flight window; only
+            // re-enable on failure paths.
+            arm.disabled    = true;
+            cancel.disabled = true;
+            var resultEl = form.querySelector('#drawer-action-result');
+            if (resultEl) {
+                resultEl.hidden = false;
+                resultEl.className = 'drawer-action-result';
+                resultEl.textContent = 'Deleting…';
+            }
+            var fd = new FormData();
+            fd.append('csrf', csrf);
+            fd.append('action', 'delete');
+            fd.append('id', runId);
+            fd.append('confirm', 'DELETE');
+            fetch('backup_admin.php?tab=history', { method: 'POST', body: fd, credentials: 'same-origin' })
+                .then(function (r) { return r.json().then(function (j) { return [r.status, j]; }); })
+                .then(function (pair) {
+                    var status = pair[0], j = pair[1];
+                    if (j.ok) {
+                        if (resultEl) {
+                            resultEl.classList.add('is-ok');
+                            resultEl.textContent = 'Deleted.';
+                        }
+                        var row = document.querySelector('.history-row[data-run-id="' + runId + '"]');
+                        if (row && row.parentNode) row.parentNode.removeChild(row);
+                        setTimeout(function () { if (window.IpamDrawer) IpamDrawer.close(); }, 600);
+                    } else {
+                        if (resultEl) {
+                            resultEl.classList.add('is-error');
+                            resultEl.textContent = 'Delete failed (' + status + '): ' + (j.message || j.error || 'unknown');
+                        }
+                        // Unlock for retry once destination is reachable.
+                        cancel.disabled = false;
+                        arm.disabled    = (input.value !== 'DELETE');
+                    }
+                })
+                .catch(function (err) {
+                    if (resultEl) {
+                        resultEl.classList.add('is-error');
+                        resultEl.textContent = 'Delete request failed: ' + (err && err.message ? err.message : 'network error');
+                    }
+                    cancel.disabled = false;
+                    arm.disabled    = (input.value !== 'DELETE');
+                });
+        });
+    }
 }());
 
 // IpamVirtualTable — utility for future viewport-based row rendering
@@ -2609,7 +2853,10 @@ function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
 
 /* === v3.17 destinations admin === */
 (function () {
-    if (!document.querySelector('.destination-form, [data-edit-destination], [data-test-destination], [data-run-now]')) {
+    // Selector list must include every trigger this IIFE wires up. Missing
+    // [data-run-now-target] here used to short-circuit the entire block on
+    // the unified Backup tab (#1040), leaving the Run-now button inert.
+    if (!document.querySelector('.destination-form, [data-edit-destination], [data-test-destination], [data-run-now], [data-run-now-target]')) {
         return;
     }
 
@@ -2673,11 +2920,19 @@ function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
             });
         });
     }
-    document.querySelectorAll('form.schedule-form').forEach(function (form) {
+    function bindScheduleForm(form) {
+        if (!form || form.dataset.freqBound === '1') return;
         var sel = form.querySelector('select[name="frequency"]');
         if (!sel) return;
         sel.addEventListener('change', function () { applyFreqGating(form); });
         applyFreqGating(form);
+        form.dataset.freqBound = '1';
+    }
+    document.querySelectorAll('form.schedule-form').forEach(bindScheduleForm);
+    // Drawer-injected schedule forms need re-binding (#803).
+    document.addEventListener('drawer:loaded', function (e) {
+        var body = (e && e.detail && e.detail.body) || document;
+        body.querySelectorAll('form.schedule-form').forEach(bindScheduleForm);
     });
 
     // Type selector swap. Hidden fieldsets must also disable their inputs so that
@@ -2735,6 +2990,52 @@ function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
     });
 
     // Run now
+    // v3.21.0 #797 Backup tab — run-now button paired with a destination
+    // <select>. Result text is rendered into the configured aria-live span.
+    document.querySelectorAll('[data-run-now-target]').forEach(function (btn) {
+        btn.addEventListener('click', function (ev) {
+            ev.preventDefault();
+            var sel = document.getElementById(btn.dataset.runNowTarget);
+            var out = document.getElementById(btn.dataset.runNowResult || '');
+            if (!sel) return;
+            var destId = sel.value;
+            if (!destId || destId === '0') return;
+            if (!confirm('Run backup now for the selected destination?')) return;
+            btn.disabled = true;
+            sel.disabled = true;
+            var orig = btn.textContent;
+            btn.textContent = 'Running…';
+            if (out) { out.textContent = ''; out.classList.remove('success', 'danger'); }
+            var fd = new FormData();
+            fd.append('csrf', getCsrf());
+            fd.append('destination_id', destId);
+            fetch('run_backup_now.php', { method: 'POST', body: fd })
+                .then(function (r) { return r.json(); })
+                .then(function (j) {
+                    if (out) {
+                        if (j.ok) {
+                            out.textContent = '✓ ' + j.filename + ' (' + j.size + ' bytes)';
+                            out.classList.add('success');
+                        } else {
+                            out.textContent = '✗ ' + (j.message || 'failed');
+                            out.classList.add('danger');
+                        }
+                    }
+                })
+                .catch(function () {
+                    if (out) {
+                        out.textContent = '✗ network error';
+                        out.classList.add('danger');
+                    }
+                })
+                .finally(function () {
+                    btn.disabled = false;
+                    sel.disabled = false;
+                    btn.textContent = orig;
+                });
+        });
+    });
+
     document.querySelectorAll('[data-run-now]').forEach(function (btn) {
         btn.addEventListener('click', function (ev) {
             ev.preventDefault();

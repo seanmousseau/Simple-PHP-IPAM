@@ -69,7 +69,7 @@ The sidebar is divided into two sections:
 | Import CSV | `import_csv.php` |
 | ARP Import | `import_arp.php` |
 | Reports | `reports.php` |
-| Database | `db_tools.php` — backup history (all engines), SQL export/import and manual WAL backup (SQLite only) |
+| Backup & Restore | `backup_admin.php` — unified backup admin surface (Backup, Restore, Destinations, Notifications, History tabs) |
 | Health | `health.php` |
 | Settings | `settings.php` |
 

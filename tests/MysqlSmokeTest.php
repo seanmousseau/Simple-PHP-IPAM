@@ -158,7 +158,10 @@ final class MysqlSmokeTest extends TestCase
         // the regression gate here. If a new historical migration is
         // added, this must go up too.
         // Bumped to 51 in v3.17.0 (#690): added 3.17.0-backup.
-        $this->assertSame(51, (int)$row['c']);
+        // Bumped to 53 in v3.21.0 (#797 / #1054 CR): added 3.21.0-backup-runs
+        // and 3.21.0-schedule-unique to the pre-seed list so fresh installs
+        // don't replay them.
+        $this->assertSame(53, (int)$row['c']);
     }
 
     public function testBootstrapAdminUserInserted(): void

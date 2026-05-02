@@ -930,10 +930,11 @@ class MigrationTest extends TestCase
     // -------------------------------------------------------------------------
 
     /**
-     * The 3.17.0-backup migration must create backup_destinations,
-     * backup_schedules, and backup_log with all required columns.
+     * After the full migration chain (through v3.21.0): backup_destinations
+     * and backup_schedules survive; backup_log + backup_history are dropped
+     * and replaced by the unified backup_runs table (#799 §A1).
      */
-    public function testV317BackupTablesAdded(): void
+    public function testBackupTablesAfterFullChain(): void
     {
         $db = $this->makePreVrfDb();
         apply_migrations($db);
@@ -957,51 +958,127 @@ class MigrationTest extends TestCase
             'day_of_week', 'day_of_month',
             'retention_hourly', 'retention_daily', 'retention_weekly', 'retention_monthly',
             'is_active', 'last_run_at', 'next_run_at', 'created_at',
-        ] as $c) {
+            ] as $c) {
             $this->assertContains($c, $cols, "backup_schedules missing column: $c");
         }
 
-        // backup_log
+        // backup_runs (unified table introduced by 3.21.0-backup-runs)
         $cols = array_column(
-            $db->query("PRAGMA table_info(backup_log)")->fetchAll(PDO::FETCH_ASSOC),
+            $db->query("PRAGMA table_info(backup_runs)")->fetchAll(PDO::FETCH_ASSOC),
             'name'
         );
         foreach ([
-            'id', 'destination_id', 'schedule_id', 'triggered_by', 'type', 'status',
-            'filename', 'size_bytes', 'checksum', 'error_message',
+            'id', 'destination_id', 'schedule_id', 'backup_type', 'encryption_mode',
+            'triggered_by', 'status', 'filename', 'size_bytes', 'checksum',
+            'source_version', 'is_protected', 'error_message',
             'started_at', 'completed_at',
-        ] as $c) {
-            $this->assertContains($c, $cols, "backup_log missing column: $c");
+            ] as $c) {
+            $this->assertContains($c, $cols, "backup_runs missing column: $c");
         }
-    }
 
-    /**
-     * The 3.17.0-backup migration must be idempotent: a second apply_migrations()
-     * call on an already-migrated database must not throw.
-     */
-    public function testV317MigrationIsIdempotent(): void
-    {
-        $db = $this->makePreVrfDb();
-        apply_migrations($db);
-
-        // Delete the stamp to force re-execution of the closure body.
-        $db->exec("DELETE FROM schema_migrations WHERE version = '3.17.0-backup'");
-        apply_migrations($db); // must not throw
-
-        // Tables must still exist with correct structure.
+        // Legacy tables must be gone.
         $tables = array_column(
             $db->query("SELECT name FROM sqlite_master WHERE type='table'")->fetchAll(PDO::FETCH_ASSOC),
             'name'
         );
-        $this->assertContains('backup_destinations', $tables, 'backup_destinations must still exist after idempotent re-run');
-        $this->assertContains('backup_schedules',    $tables, 'backup_schedules must still exist after idempotent re-run');
-        $this->assertContains('backup_log',          $tables, 'backup_log must still exist after idempotent re-run');
+        $this->assertNotContains('backup_log',     $tables, 'backup_log must be dropped by 3.21.0-backup-runs');
+        $this->assertNotContains('backup_history', $tables, 'backup_history must be dropped by 3.21.0-backup-runs');
+    }
 
-        // Version stamp must be re-recorded.
-        $marker = $db->query(
-            "SELECT 1 FROM schema_migrations WHERE version = '3.17.0-backup'"
-        )->fetchColumn();
-        $this->assertNotFalse($marker, 'schema_migrations stamp must be re-recorded after idempotent re-run');
+    /**
+     * 3.21.0-backup-runs: data-copy test. Recreate the legacy backup_log +
+     * backup_history tables with sample rows post-migration, drop backup_runs
+     * and the 3.21 stamp, then re-run apply_migrations() to exercise the
+     * copy-and-drop path. Asserts row counts, status normalization, and the
+     * fixed encryption_mode / triggered_by mapping per §A1.
+     */
+    public function testV321BackupRunsRowCopy(): void
+    {
+        $db = $this->makePreVrfDb();
+        apply_migrations($db);
+
+        // Drop the unified table and the version stamp so 3.21 re-runs.
+        $db->exec("DROP TABLE backup_runs");
+        $db->exec("DELETE FROM schema_migrations WHERE version = '3.21.0-backup-runs'");
+
+        // Recreate legacy tables with their v3.17.0 / v3.7.0 shape (subset of
+        // columns the migration reads).
+        $db->exec("CREATE TABLE backup_log (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            destination_id  INTEGER,
+            schedule_id     INTEGER,
+            triggered_by    TEXT NOT NULL DEFAULT 'manual',
+            type            TEXT NOT NULL DEFAULT 'backup',
+            status          TEXT NOT NULL DEFAULT 'pending',
+            filename        TEXT,
+            size_bytes      INTEGER,
+            checksum        TEXT,
+            error_message   TEXT,
+            started_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            completed_at    TEXT
+        )");
+        $db->exec("CREATE TABLE backup_history (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            filename      TEXT NOT NULL,
+            size_bytes    INTEGER,
+            sha256        TEXT,
+            db_driver     TEXT NOT NULL,
+            started_at    TEXT NOT NULL,
+            completed_at  TEXT,
+            duration_ms   INTEGER,
+            target        TEXT NOT NULL DEFAULT 'local',
+            target_path   TEXT,
+            status        TEXT NOT NULL DEFAULT 'pending',
+            error         TEXT,
+            created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        )");
+
+        // backup_log: 3 rows. One success/schedule, one stale-pending (should
+        // normalize to 'failed'), one with an unknown triggered_by value.
+        $db->exec("INSERT INTO backup_log (triggered_by, status, filename, size_bytes, checksum, started_at, completed_at) VALUES ('schedule', 'success', 'log-a.sql.gz', 1024, 'abc', '2026-04-01 00:00:00', '2026-04-01 00:00:05')");
+        $db->exec("INSERT INTO backup_log (triggered_by, status, filename, started_at) VALUES ('manual', 'pending', 'log-b.sql.gz', '2026-04-02 00:00:00')");
+        $db->exec("INSERT INTO backup_log (triggered_by, status, filename, started_at) VALUES ('cron', 'failed', 'log-c.sql.gz', '2026-04-03 00:00:00')");
+
+        // backup_history: 2 rows.
+        $db->exec("INSERT INTO backup_history (filename, size_bytes, sha256, db_driver, status, started_at, completed_at) VALUES ('hist-a.sql.gz', 2048, 'def', 'sqlite', 'success', '2026-04-04 00:00:00', '2026-04-04 00:00:03')");
+        $db->exec("INSERT INTO backup_history (filename, db_driver, status, started_at, error) VALUES ('hist-b.sql.gz', 'sqlite', 'failed', '2026-04-05 00:00:00', 'bad permissions')");
+
+        apply_migrations($db);
+
+        // Total parity (3 + 2 = 5).
+        $count = (int) $db->query("SELECT COUNT(*) FROM backup_runs")->fetchColumn();
+        $this->assertSame(5, $count, 'backup_runs must hold all migrated rows');
+
+        // backup_log rows: encryption_mode='stored', backup_type='database'.
+        $logRow = $db->query("SELECT encryption_mode, backup_type, triggered_by, status FROM backup_runs WHERE filename = 'log-a.sql.gz'")
+            ->fetch(PDO::FETCH_ASSOC);
+        $this->assertSame('stored',   $logRow['encryption_mode']);
+        $this->assertSame('database', $logRow['backup_type']);
+        $this->assertSame('schedule', $logRow['triggered_by']);
+        $this->assertSame('success',  $logRow['status']);
+
+        // Stale 'pending' should normalize to 'failed'.
+        $staleStatus = $db->query("SELECT status FROM backup_runs WHERE filename = 'log-b.sql.gz'")->fetchColumn();
+        $this->assertSame('failed', $staleStatus);
+
+        // Unknown triggered_by ('cron') coerced to 'manual'.
+        $coerced = $db->query("SELECT triggered_by FROM backup_runs WHERE filename = 'log-c.sql.gz'")->fetchColumn();
+        $this->assertSame('manual', $coerced);
+
+        // backup_history rows: encryption_mode='unencrypted', triggered_by='cli'.
+        $histRow = $db->query("SELECT encryption_mode, triggered_by, checksum FROM backup_runs WHERE filename = 'hist-a.sql.gz'")
+            ->fetch(PDO::FETCH_ASSOC);
+        $this->assertSame('unencrypted', $histRow['encryption_mode']);
+        $this->assertSame('cli',         $histRow['triggered_by']);
+        $this->assertSame('def',         $histRow['checksum'], 'sha256 must map to checksum');
+
+        // Legacy tables dropped after copy.
+        $tables = array_column(
+            $db->query("SELECT name FROM sqlite_master WHERE type='table'")->fetchAll(PDO::FETCH_ASSOC),
+            'name'
+        );
+        $this->assertNotContains('backup_log',     $tables);
+        $this->assertNotContains('backup_history', $tables);
     }
 
     // -------------------------------------------------------------------------
@@ -1045,5 +1122,71 @@ class MigrationTest extends TestCase
 
         $nonNullAfter = (int)$db->query("SELECT COUNT(*) FROM settings WHERE tenant_id IS NOT NULL")->fetchColumn();
         $this->assertSame(0, $nonNullAfter, 'tenant_id must remain NULL for all rows after idempotent re-run');
+    }
+
+    // -------------------------------------------------------------------------
+    // 3.21.0-schedule-unique (v3.21.1 hotfix regression)
+    // -------------------------------------------------------------------------
+
+    /**
+     * v3.21.1 hotfix regression: the dedup loop in 3.21.0-schedule-unique
+     * issued an UPDATE that referenced `:keep` twice in the same query.
+     * MySQL native prepared statements (PDO with EMULATE_PREPARES=false)
+     * treat each placeholder occurrence as its own parameter slot and
+     * reject the execute call with HY093 "Invalid parameter number".
+     *
+     * SQLite doesn't enforce the same rule, so the bug only surfaced on
+     * the prod MySQL deploy. This test pre-seeds duplicate schedules
+     * BEFORE running migrations, which forces the dedup loop body to
+     * execute. It also verifies that historical backup_runs.schedule_id
+     * is re-pointed to the surviving schedule before the loser rows are
+     * deleted (the second guarantee from the round-2 CR feedback).
+     */
+    public function testV321ScheduleUniqueDedupRepointsBackupRuns(): void
+    {
+        // Build a pre-v3.21 state and stop right before schedule-unique
+        // would run, so we can seed duplicates ourselves.
+        $db = $this->makePreVrfDb();
+
+        // Run all migrations through 3.21.0-backup-runs but NOT
+        // 3.21.0-schedule-unique. We do this by applying migrations once
+        // (which runs everything), then deleting the schedule-unique row
+        // from schema_migrations, dropping the unique index/constraint
+        // we want to re-create, and seeding duplicates.
+        apply_migrations($db);
+        $db->exec("DROP INDEX IF EXISTS uq_backup_schedules_destination");
+        $db->exec("DELETE FROM schema_migrations WHERE version = '3.21.0-schedule-unique'");
+
+        // Seed: one destination, three schedules pointing at it (a real
+        // operator could end up here via cron-replay or test fixtures
+        // pre-dating the unique constraint).
+        $db->exec("INSERT INTO backup_destinations (id, name, type) VALUES (1, 'pw-local', 'local')");
+        $db->exec("INSERT INTO backup_schedules (id, destination_id, frequency, time_of_day) VALUES (10, 1, 'daily', '02:00'), (11, 1, 'daily', '03:00'), (12, 1, 'daily', '04:00')");
+
+        // And seed a backup_runs row attached to each schedule.
+        $db->exec("INSERT INTO backup_runs (id, destination_id, schedule_id, backup_type, status, started_at) VALUES (100, 1, 10, 'database', 'success', '2026-05-01 02:00:00'), (101, 1, 11, 'database', 'success', '2026-05-01 03:00:00'), (102, 1, 12, 'database', 'success', '2026-05-01 04:00:00')");
+
+        // Re-run migrations. Only schedule-unique should now apply (the
+        // others are still recorded in schema_migrations).
+        $applied = apply_migrations($db);
+        $this->assertContains('3.21.0-schedule-unique', $applied);
+
+        // After dedup: only the highest-id schedule (12) survives.
+        $remainingIds = array_column(
+            $db->query("SELECT id FROM backup_schedules WHERE destination_id = 1 ORDER BY id")->fetchAll(\PDO::FETCH_ASSOC),
+            'id'
+        );
+        $this->assertSame([12], array_map('intval', $remainingIds), 'dedup must keep the highest-id schedule');
+
+        // Every backup_runs row's schedule_id points at the survivor.
+        $repointedIds = array_column(
+            $db->query("SELECT schedule_id FROM backup_runs WHERE destination_id = 1 ORDER BY id")->fetchAll(\PDO::FETCH_ASSOC),
+            'schedule_id'
+        );
+        $this->assertSame([12, 12, 12], array_map('intval', $repointedIds), 'backup_runs.schedule_id must be repointed to the surviving schedule before losers are deleted');
+
+        // The unique index is back in place.
+        $idxs = $db->query("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'backup_schedules'")->fetchAll(\PDO::FETCH_COLUMN);
+        $this->assertContains('uq_backup_schedules_destination', $idxs);
     }
 }

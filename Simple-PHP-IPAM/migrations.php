@@ -2497,6 +2497,405 @@ function ipam_migrations(): array
                 }
             }
         },
+
+        // v3.21.0 #799 (§A1 of backup_overhaul.md): collapse the legacy
+        // backup_history (v3.7.0 CLI runner) and backup_log (v3.17.0
+        // destination runner) tables into a single backup_runs table.
+        //
+        // Also implements:
+        //   #808 / F38 — drop the ambiguous type+triggered_by combo from
+        //   backup_log; keep a single triggered_by enum (schedule|manual|cli).
+        //   #809 / B-P1-31 — unify started_at/created_at divergence; the new
+        //   table has only started_at + completed_at.
+        //
+        // Migration sequence (per §A1):
+        //   1. Create backup_runs table with the new shape.
+        //   2. Copy backup_log rows in (backup_type='database',
+        //      encryption_mode='stored').
+        //   3. Copy backup_history rows in (backup_type='database',
+        //      encryption_mode='unencrypted', triggered_by='cli',
+        //      destination_id=NULL).
+        //   4. Verify row-count parity; abort if mismatch.
+        //   5. Drop backup_history and backup_log.
+        //
+        // Idempotent on fresh installs: schema.sql/schema.mysql.sql/
+        // schema.pgsql.sql already create backup_runs, and neither legacy
+        // table exists, so each step is guarded by table existence checks.
+        '3.21.0-backup-runs' => static function (PDO $db): void {
+            $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+
+            $tableExists = static function (string $name) use ($db, $driver): bool {
+                if ($driver === 'sqlite') {
+                    $st = $db->prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=:n");
+                } elseif ($driver === 'mysql') {
+                    $st = $db->prepare("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = :n");
+                } else { // pgsql
+                    $st = $db->prepare("SELECT tablename FROM pg_tables WHERE schemaname = ANY(current_schemas(false)) AND tablename = :n");
+                }
+                $st->execute([':n' => $name]);
+                return (bool) $st->fetchColumn();
+            };
+
+            // ── 1. Create backup_runs (skip on fresh installs where schema.sql
+            // already created it) ──────────────────────────────────────────
+            if (!$tableExists('backup_runs')) {
+                if ($driver === 'sqlite') {
+                    $db->exec("CREATE TABLE backup_runs (
+                        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                        destination_id  INTEGER REFERENCES backup_destinations(id) ON DELETE SET NULL,
+                        schedule_id     INTEGER REFERENCES backup_schedules(id)    ON DELETE SET NULL,
+                        backup_type     TEXT    NOT NULL DEFAULT 'database'
+                                                CHECK (backup_type IN ('database','logical')),
+                        encryption_mode TEXT    NOT NULL DEFAULT 'unencrypted'
+                                                CHECK (encryption_mode IN ('stored','transitory','unencrypted')),
+                        triggered_by    TEXT    NOT NULL DEFAULT 'manual'
+                                                CHECK (triggered_by IN ('schedule','manual','cli')),
+                        status          TEXT    NOT NULL DEFAULT 'running'
+                                                CHECK (status IN ('running','success','failed','retention_pruned')),
+                        filename        TEXT,
+                        size_bytes      INTEGER,
+                        checksum        TEXT,
+                        source_version  TEXT    NOT NULL DEFAULT '0.0.0',
+                        is_protected    INTEGER NOT NULL DEFAULT 0  CHECK (is_protected IN (0,1)),
+                        error_message   TEXT,
+                        started_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+                        completed_at    TEXT
+                    )");
+                    $db->exec("CREATE INDEX IF NOT EXISTS idx_backup_runs_destination ON backup_runs(destination_id)");
+                    $db->exec("CREATE INDEX IF NOT EXISTS idx_backup_runs_schedule    ON backup_runs(schedule_id)");
+                    $db->exec("CREATE INDEX IF NOT EXISTS idx_backup_runs_started     ON backup_runs(started_at DESC)");
+                    $db->exec("CREATE INDEX IF NOT EXISTS idx_backup_runs_protected   ON backup_runs(is_protected) WHERE is_protected = 1");
+                } elseif ($driver === 'mysql') {
+                    $db->exec("CREATE TABLE backup_runs (
+                        id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                        destination_id  BIGINT UNSIGNED NULL,
+                        schedule_id     BIGINT UNSIGNED NULL,
+                        backup_type     VARCHAR(16)  NOT NULL DEFAULT 'database',
+                        encryption_mode VARCHAR(16)  NOT NULL DEFAULT 'unencrypted',
+                        triggered_by    VARCHAR(16)  NOT NULL DEFAULT 'manual',
+                        status          VARCHAR(16)  NOT NULL DEFAULT 'running',
+                        filename        TEXT         NULL,
+                        size_bytes      BIGINT       NULL,
+                        checksum        VARCHAR(128) NULL,
+                        source_version  VARCHAR(32)  NOT NULL DEFAULT '0.0.0',
+                        is_protected    TINYINT(1)   NOT NULL DEFAULT 0,
+                        error_message   TEXT         NULL,
+                        started_at      DATETIME     NOT NULL DEFAULT (UTC_TIMESTAMP()),
+                        completed_at    DATETIME     NULL,
+                        CONSTRAINT fk_brun_dest  FOREIGN KEY (destination_id) REFERENCES backup_destinations(id) ON DELETE SET NULL,
+                        CONSTRAINT fk_brun_sched FOREIGN KEY (schedule_id)    REFERENCES backup_schedules(id)    ON DELETE SET NULL,
+                        CONSTRAINT chk_brun_backup_type     CHECK (backup_type IN ('database','logical')),
+                        CONSTRAINT chk_brun_encryption_mode CHECK (encryption_mode IN ('stored','transitory','unencrypted')),
+                        CONSTRAINT chk_brun_triggered_by    CHECK (triggered_by IN ('schedule','manual','cli')),
+                        CONSTRAINT chk_brun_status          CHECK (status IN ('running','success','failed','retention_pruned')),
+                        CONSTRAINT chk_brun_protected       CHECK (is_protected IN (0,1)),
+                        KEY idx_backup_runs_destination (destination_id),
+                        KEY idx_backup_runs_schedule    (schedule_id),
+                        KEY idx_backup_runs_started     (started_at),
+                        KEY idx_backup_runs_protected   (is_protected)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+                } else { // pgsql
+                    $db->exec("CREATE TABLE backup_runs (
+                        id              BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+                        destination_id  BIGINT    NULL REFERENCES backup_destinations(id) ON DELETE SET NULL,
+                        schedule_id     BIGINT    NULL REFERENCES backup_schedules(id)    ON DELETE SET NULL,
+                        backup_type     TEXT      NOT NULL DEFAULT 'database'
+                                                  CHECK (backup_type IN ('database','logical')),
+                        encryption_mode TEXT      NOT NULL DEFAULT 'unencrypted'
+                                                  CHECK (encryption_mode IN ('stored','transitory','unencrypted')),
+                        triggered_by    TEXT      NOT NULL DEFAULT 'manual'
+                                                  CHECK (triggered_by IN ('schedule','manual','cli')),
+                        status          TEXT      NOT NULL DEFAULT 'running'
+                                                  CHECK (status IN ('running','success','failed','retention_pruned')),
+                        filename        TEXT      NULL,
+                        size_bytes      BIGINT    NULL,
+                        checksum        TEXT      NULL,
+                        source_version  TEXT      NOT NULL DEFAULT '0.0.0',
+                        is_protected    SMALLINT  NOT NULL DEFAULT 0  CHECK (is_protected IN (0,1)),
+                        error_message   TEXT      NULL,
+                        started_at      TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
+                        completed_at    TIMESTAMP NULL
+                    )");
+                    $db->exec("CREATE INDEX IF NOT EXISTS idx_backup_runs_destination ON backup_runs(destination_id)");
+                    $db->exec("CREATE INDEX IF NOT EXISTS idx_backup_runs_schedule    ON backup_runs(schedule_id)");
+                    $db->exec("CREATE INDEX IF NOT EXISTS idx_backup_runs_started     ON backup_runs(started_at DESC)");
+                    $db->exec("CREATE INDEX IF NOT EXISTS idx_backup_runs_protected   ON backup_runs(is_protected) WHERE is_protected = 1");
+                }
+            }
+
+            $countTable = static function (string $table) use ($db): int {
+                $q = $db->query("SELECT COUNT(*) FROM {$table}");
+                if ($q === false) {
+                    throw new \RuntimeException("3.21.0-backup-runs: COUNT query failed for {$table}");
+                }
+                return (int) $q->fetchColumn();
+            };
+
+            // ── 2. Copy backup_log rows ──────────────────────────────────
+            // Status normalization: legacy 'pending'/'started'/etc. → 'failed'
+            // (stale rows that never completed). 'success' and 'failed' pass
+            // through. triggered_by is normalized server-side: anything other
+            // than the new enum values is coerced to 'manual'.
+            //
+            // CR feedback PR #1054: backup_log has a `type IN ('backup',
+            // 'restore')` column that backup_runs.backup_type cannot
+            // represent (the new schema only allows 'database' / 'logical').
+            // Filter `type = 'restore'` rows OUT of the copy: those events
+            // are already recorded in audit_log under `db.restore_*` and
+            // mislabeling them as backup runs would corrupt the History
+            // surface. Only the backup-axis rows migrate here.
+            // $expected below subtracts the filtered rows from the parity
+            // check so the count check still works.
+            // SQLite holds a read lock on a table for as long as any
+            // PDOStatement reading from it stays in scope. Wrap the COUNT
+            // query in a helper so the statement object is freed before the
+            // DROP TABLE at the end of this migration runs — matching the
+            // pre-existing $countTable pattern.
+            $countTableWhere = static function (string $table, string $where) use ($db): int {
+                $q = $db->query("SELECT COUNT(*) FROM {$table} WHERE {$where}");
+                if ($q === false) {
+                    return 0;
+                }
+                $n = (int) $q->fetchColumn();
+                $q->closeCursor();
+                return $n;
+            };
+
+            // Pre-compute counts so we can decide whether a prior partial
+            // run has already populated backup_runs (CR feedback PR #1054
+            // round 3).
+            $logRestoreCount = 0;
+            $logCount = 0;
+            if ($tableExists('backup_log')) {
+                $logCount = $countTable('backup_log');
+                $logRestoreCount = $countTableWhere('backup_log', "type = 'restore'");
+            }
+            $histCountPre = $tableExists('backup_history') ? $countTable('backup_history') : 0;
+            $expectedCopied = ($logCount - $logRestoreCount) + $histCountPre;
+            $actualBefore   = $countTable('backup_runs');
+            $skipCopy       = false;
+            if ($expectedCopied > 0 && $actualBefore > 0) {
+                if ($actualBefore === $expectedCopied) {
+                    // Prior partial run already copied a complete set; skip
+                    // copy and proceed to the legacy-table drop. Idempotent
+                    // rerun. (CR feedback PR #1054 round 3.)
+                    $skipCopy = true;
+                } else {
+                    throw new \RuntimeException(
+                        "3.21.0-backup-runs migration: pre-copy mismatch — backup_runs already has {$actualBefore} rows but expected {$expectedCopied}. " .
+                        "Refusing to re-copy on top of partial state. " .
+                        "Manually reconcile (truncate backup_runs and rerun, or move legacy tables aside) before continuing."
+                    );
+                }
+            }
+
+            if (!$skipCopy && $logCount > 0) {
+                $sel = $db->query("SELECT destination_id, schedule_id, type, triggered_by, status, filename, size_bytes, checksum, error_message, started_at, completed_at FROM backup_log WHERE type IS NULL OR type = 'backup' ORDER BY id");
+                if ($sel === false) {
+                    throw new \RuntimeException("3.21.0-backup-runs: SELECT failed on backup_log");
+                }
+                $ins = $db->prepare(
+                    "INSERT INTO backup_runs " .
+                    "(destination_id, schedule_id, backup_type, encryption_mode, triggered_by, status, filename, size_bytes, checksum, source_version, is_protected, error_message, started_at, completed_at) " .
+                    "VALUES (:destination_id, :schedule_id, 'database', 'stored', :triggered_by, :status, :filename, :size_bytes, :checksum, '0.0.0', 0, :error_message, :started_at, :completed_at)"
+                );
+                /** @var array<string, mixed> $row */
+                foreach ($sel as $row) {
+                    $rawStatus = is_string($row['status']) ? strtolower($row['status']) : '';
+                    $status = in_array($rawStatus, ['success', 'failed', 'retention_pruned'], true) ? $rawStatus : 'failed';
+                    $rawTrig = is_string($row['triggered_by']) ? strtolower($row['triggered_by']) : 'manual';
+                    $triggered = in_array($rawTrig, ['schedule', 'manual', 'cli'], true) ? $rawTrig : 'manual';
+                    $ins->execute([
+                        ':destination_id' => $row['destination_id'],
+                        ':schedule_id'    => $row['schedule_id'],
+                        ':triggered_by'   => $triggered,
+                        ':status'         => $status,
+                        ':filename'       => $row['filename'],
+                        ':size_bytes'     => $row['size_bytes'],
+                        ':checksum'       => $row['checksum'],
+                        ':error_message'  => $row['error_message'],
+                        ':started_at'     => $row['started_at'],
+                        ':completed_at'   => $row['completed_at'],
+                    ]);
+                }
+            }
+
+            // ── 3. Copy backup_history rows (CLI runner, v3.7.0) ─────────
+            // backup_history.error → backup_runs.error_message;
+            // backup_history.sha256 → backup_runs.checksum.
+            // No destination/schedule linkage existed in the legacy CLI table.
+            $histCount = $histCountPre;
+            if (!$skipCopy && $histCount > 0) {
+                $sel = $db->query("SELECT status, filename, size_bytes, sha256, error, started_at, completed_at FROM backup_history ORDER BY id");
+                if ($sel === false) {
+                    throw new \RuntimeException("3.21.0-backup-runs: SELECT failed on backup_history");
+                }
+                $ins = $db->prepare(
+                    "INSERT INTO backup_runs " .
+                    "(destination_id, schedule_id, backup_type, encryption_mode, triggered_by, status, filename, size_bytes, checksum, source_version, is_protected, error_message, started_at, completed_at) " .
+                    "VALUES (NULL, NULL, 'database', 'unencrypted', 'cli', :status, :filename, :size_bytes, :checksum, '0.0.0', 0, :error_message, :started_at, :completed_at)"
+                );
+                /** @var array<string, mixed> $row */
+                foreach ($sel as $row) {
+                    $rawStatus = is_string($row['status']) ? strtolower($row['status']) : '';
+                    $status = in_array($rawStatus, ['success', 'failed', 'retention_pruned'], true) ? $rawStatus : 'failed';
+                    $ins->execute([
+                        ':status'        => $status,
+                        ':filename'      => $row['filename'],
+                        ':size_bytes'    => $row['size_bytes'],
+                        ':checksum'      => $row['sha256'],
+                        ':error_message' => $row['error'],
+                        ':started_at'    => $row['started_at'],
+                        ':completed_at'  => $row['completed_at'],
+                    ]);
+                }
+            }
+
+            // ── 4. Row-count parity check (§A1 step 5) ───────────────────
+            // CR feedback PR #1054: exact equality, not lower-bound. A
+            // partial prior run that copied some rows would otherwise pass
+            // the `>=` check and the legacy tables would be dropped while
+            // backup_runs still held a duplicate-on-rerun set. Equal counts
+            // (allowing for filtered legacy 'restore' rows that are
+            // intentionally not migrated) means a clean copy.
+            $expected = ($logCount - $logRestoreCount) + $histCount;
+            if ($expected > 0) {
+                $actual = $countTable('backup_runs');
+                if ($actual !== $expected) {
+                    throw new \RuntimeException(
+                        "3.21.0-backup-runs migration: row-count parity check failed. " .
+                        "Expected exactly {$expected} backup_runs rows " .
+                        "(backup_log={$logCount} − restore-filtered={$logRestoreCount} + backup_history={$histCount}), " .
+                        "got {$actual}. Aborting before drop of legacy tables."
+                    );
+                }
+            }
+
+            // ── 5. Drop legacy tables ────────────────────────────────────
+            // Neither table has children that reference it (FKs point IN
+            // from backup_log to backup_destinations, not the other way),
+            // so DROP is safe with FK enforcement off (apply_migrations
+            // disables it for the migration scope).
+            if ($tableExists('backup_log')) {
+                $db->exec("DROP TABLE backup_log");
+            }
+            if ($tableExists('backup_history')) {
+                $db->exec("DROP TABLE backup_history");
+            }
+        },
+
+        // v3.21.0 — enforce one schedule per destination (CR feedback on PR #1054).
+        // The drawer + edit-schedule flow already assumes one schedule per
+        // destination (ipam_render_destination_edit_drawer() does LIMIT 1);
+        // without a UNIQUE constraint, duplicates were silently possible.
+        // Dedupe existing rows (keep highest id), then add the unique index.
+        '3.21.0-schedule-unique' => static function (PDO $db): void {
+            $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+
+            // Dedupe — engine-portable two-step: find duplicates, delete losers.
+            $dupes = $db->query(
+                "SELECT destination_id, MAX(id) AS keep_id, COUNT(*) AS n
+                   FROM backup_schedules
+                  GROUP BY destination_id
+                 HAVING COUNT(*) > 1"
+            );
+            if ($dupes !== false) {
+                $rows = $dupes->fetchAll(PDO::FETCH_ASSOC);
+                // CR feedback PR #1054: backup_runs.schedule_id has
+                // ON DELETE SET NULL — naively deleting loser schedules
+                // would null out the schedule_id on every historical run
+                // attached to those ids. Repoint child rows to the surviving
+                // schedule first so provenance is preserved. (Loser
+                // schedules and the keep schedule all have the same
+                // destination_id, so this is the closest-to-truth mapping
+                // we can do without storing the original schedule's full
+                // shape on each run.)
+                // Use distinct placeholder names per occurrence: PDO with
+                // EMULATE_PREPARES=false (MySQL native prepares) treats
+                // each placeholder occurrence as its own parameter slot
+                // and rejects repeated `:keep` with HY093 "Invalid
+                // parameter number". Bind both occurrences explicitly.
+                $repoint = $db->prepare(
+                    "UPDATE backup_runs
+                        SET schedule_id = :keep_target
+                      WHERE schedule_id IN (
+                              SELECT id FROM backup_schedules
+                               WHERE destination_id = :did
+                                 AND id <> :keep_filter
+                            )"
+                );
+                $del = $db->prepare(
+                    "DELETE FROM backup_schedules
+                      WHERE destination_id = :did
+                        AND id <> :keep"
+                );
+                foreach ($rows as $r) {
+                    $did  = (int) $r['destination_id'];
+                    $keep = (int) $r['keep_id'];
+                    $repoint->execute([
+                        ':keep_target' => $keep,
+                        ':did'         => $did,
+                        ':keep_filter' => $keep,
+                    ]);
+                    $del->execute([
+                        ':did'  => $did,
+                        ':keep' => $keep,
+                    ]);
+                }
+            }
+
+            // Index/constraint creation — guard for re-runs across all engines.
+            if ($driver === 'sqlite') {
+                $db->exec(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_backup_schedules_destination
+                       ON backup_schedules(destination_id)"
+                );
+                // The non-unique idx_backup_schedules_destination becomes
+                // redundant once the unique index covers destination_id lookups.
+                $db->exec("DROP INDEX IF EXISTS idx_backup_schedules_destination");
+            } elseif ($driver === 'mysql') {
+                $hasUq = $db->query(
+                    "SELECT COUNT(*) FROM information_schema.statistics
+                      WHERE table_schema = DATABASE()
+                        AND table_name   = 'backup_schedules'
+                        AND index_name   = 'uq_backup_schedules_destination'"
+                );
+                if ($hasUq !== false && (int) $hasUq->fetchColumn() === 0) {
+                    $db->exec(
+                        "ALTER TABLE backup_schedules
+                            ADD UNIQUE KEY uq_backup_schedules_destination (destination_id)"
+                    );
+                }
+                $hasOldIdx = $db->query(
+                    "SELECT COUNT(*) FROM information_schema.statistics
+                      WHERE table_schema = DATABASE()
+                        AND table_name   = 'backup_schedules'
+                        AND index_name   = 'idx_backup_schedules_destination'"
+                );
+                if ($hasOldIdx !== false && (int) $hasOldIdx->fetchColumn() === 1) {
+                    $db->exec("ALTER TABLE backup_schedules DROP INDEX idx_backup_schedules_destination");
+                }
+            } else { // pgsql
+                // PG distinguishes UNIQUE CONSTRAINT (in
+                // information_schema.table_constraints) from UNIQUE INDEX
+                // (in pg_indexes). SchemaParityTest queries the former, so
+                // use ADD CONSTRAINT — Postgres implicitly creates the
+                // backing index. Guard with information_schema for re-runs.
+                $hasUq = $db->query(
+                    "SELECT COUNT(*) FROM information_schema.table_constraints
+                      WHERE table_name      = 'backup_schedules'
+                        AND constraint_name = 'uq_backup_schedules_destination'
+                        AND constraint_type = 'UNIQUE'"
+                );
+                if ($hasUq !== false && (int) $hasUq->fetchColumn() === 0) {
+                    $db->exec(
+                        "ALTER TABLE backup_schedules
+                            ADD CONSTRAINT uq_backup_schedules_destination UNIQUE (destination_id)"
+                    );
+                }
+                $db->exec("DROP INDEX IF EXISTS idx_backup_schedules_destination");
+            }
+        },
     ];
 }
 

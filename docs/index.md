@@ -65,9 +65,8 @@ See the [Installation guide](install.md) to get up and running in minutes.
 | [OIDC / SSO](oidc.md) | PKCE flow setup with Keycloak, Azure AD, Okta, etc. |
 | [SMTP & Email](smtp.md) | SMTP configuration, alerts, password recovery |
 | [Security](security.md) | Hardening checklist, CSP, HTTPS, firewall, TOTP 2FA, Email OTP, Passkeys/WebAuthn |
-| [Backup & Restore (legacy CLI)](backup.md) | Legacy database backup CLI, scheduled backups, restore workflow, disaster recovery |
-| [Backup Destinations & Schedules](backups.md) | Set up S3, SFTP, or local backups with GFS retention and encryption. *(v3.17.0+)* |
-| [Restore from a Backup](restore.md) | Web-based restore wizard with dry-run preview and confirmation typing gate. *(v3.17.0+)* |
+| [Backups](backups.md) | Unified backup admin surface: destinations (S3 / SFTP / local), schedules with GFS retention, encryption, history, notifications. |
+| [Restore](restore.md) | Web wizard and CLI restore paths, Logical vs Database backups, cross-version policy. |
 | [Upgrading](upgrading.md) | Version upgrade instructions and changelog |
 
 ## License

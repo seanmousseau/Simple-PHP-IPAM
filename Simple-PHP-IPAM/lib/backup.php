@@ -12,18 +12,20 @@ declare(strict_types=1);
  *   1. Dump the database to a gzipped tmp file (SQLite-only as of v3.17.0).
  *   2. Optionally encrypt with AES-256-GCM via backup_encrypt().
  *   3. Upload via the destination-specific BackupClientInterface.
- *   4. Insert/update a row in backup_log.
+ *   4. Insert/update a row in backup_runs.
  *   5. Apply GFS retention via ipam_backup_apply_retention().
  *
  * Pipeline (restore from a remote backup):
  *   1. Download the remote blob to data/tmp/ via the destination client.
- *   2. Verify SHA-256 against backup_log.checksum (#762 item 4).
+ *   2. Verify SHA-256 against backup_runs.checksum (#762 item 4).
  *   3. Decrypt if encrypted, stage as .sql.gz under data/tmp/.
  *   4. Sign the staged path so the wizard can hand it back safely.
  *   5. Dry-run, then apply with PRAGMA foreign_keys = OFF inside a transaction.
  *
- * Additive to the legacy v3.7.0 backup.php CLI which writes to backup_history;
- * this module writes to the v3.17 backup_log table.
+ * v3.21.0 (#799 §A1): backup_history (v3.7 CLI) and backup_log (v3.17
+ * destination runner) were collapsed into a single backup_runs table.
+ * Both the CLI runner in lib.php and this destination runner now write
+ * to backup_runs.
  */
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -352,14 +354,43 @@ function ipam_backup_encrypt_to_tmp(string $srcPath, string $appSecret): string
     return $tmp;
 }
 
+/**
+ * Insert a backup_runs row for a destination-driven backup. Status starts as
+ * 'running' (v3.21.0 enum) and gets promoted to 'success' or 'failed' on
+ * completion. Encryption mode is captured from the destination's `encrypt`
+ * flag — encrypted destinations write 'stored' (v3.17 IPAMBKP2 mode);
+ * unencrypted destinations write 'unencrypted'.
+ */
 function ipam_backup_insert_log(PDO $db, int $destId, string $triggeredBy, string $status, string $filename): int
 {
     $now = ipam_dialect()->now();
+
+    // Resolve encryption mode from the destination's encrypt flag.
+    $encMode = 'unencrypted';
+    try {
+        $eStmt = $db->prepare("SELECT encrypt FROM backup_destinations WHERE id = :id");
+        $eStmt->execute([':id' => $destId]);
+        $enc = $eStmt->fetchColumn();
+        if ($enc !== false && (int) $enc === 1) {
+            $encMode = 'stored';
+        }
+    } catch (Throwable) {
+        // best-effort; falls back to 'unencrypted' if the lookup fails
+    }
+
     $stmt = $db->prepare(
-        "INSERT INTO backup_log (destination_id, triggered_by, status, filename, started_at)
-         VALUES (:d, :t, :s, :f, $now)"
+        "INSERT INTO backup_runs " .
+        "(destination_id, schedule_id, backup_type, encryption_mode, triggered_by, status, filename, source_version, started_at) " .
+        "VALUES (:d, NULL, 'database', :em, :t, :s, :f, :sv, $now)"
     );
-    $stmt->execute([':d' => $destId, ':t' => $triggeredBy, ':s' => $status, ':f' => $filename]);
+    $stmt->execute([
+        ':d'  => $destId,
+        ':em' => $encMode,
+        ':t'  => $triggeredBy,
+        ':s'  => $status,
+        ':f'  => $filename,
+        ':sv' => IPAM_VERSION,
+    ]);
     return (int) $db->lastInsertId();
 }
 
@@ -368,7 +399,7 @@ function ipam_backup_update_log_success(PDO $db, int $logId, array $meta): void
 {
     $now = ipam_dialect()->now();
     $stmt = $db->prepare(
-        "UPDATE backup_log SET status='success', size_bytes=:sz, checksum=:cs, completed_at=$now WHERE id=:id"
+        "UPDATE backup_runs SET status='success', size_bytes=:sz, checksum=:cs, completed_at=$now WHERE id=:id"
     );
     $stmt->execute([':sz' => $meta['size'], ':cs' => $meta['checksum'], ':id' => $logId]);
 }
@@ -377,7 +408,7 @@ function ipam_backup_update_log_failure(PDO $db, int $logId, string $error): voi
 {
     $now = ipam_dialect()->now();
     $stmt = $db->prepare(
-        "UPDATE backup_log SET status='failed', error_message=:e, completed_at=$now WHERE id=:id"
+        "UPDATE backup_runs SET status='failed', error_message=:e, completed_at=$now WHERE id=:id"
     );
     $stmt->execute([':e' => substr($error, 0, 1000), ':id' => $logId]);
 }
@@ -486,14 +517,13 @@ function ipam_restore_prepare_for_restore(PDO $db, array $config, int $destinati
         throw new RuntimeException('ipam_restore: cannot hash downloaded file');
     }
 
-    // Verify against backup_log row if one exists for this filename.
+    // Verify against backup_runs row if one exists for this filename.
     // Mismatch is fatal — never apply a backup whose stored checksum disagrees.
-    // Restrict to type='backup' rows — restore rows write the same filename
-    // but their checksum field would not match (and may be NULL).
+    // backup_runs only tracks backup runs (no type=restore rows since v3.21.0
+    // §A1), so no type filter is needed.
     $stmt = $db->prepare(
-        "SELECT checksum FROM backup_log
+        "SELECT checksum FROM backup_runs
          WHERE destination_id = :d AND filename = :f AND status = 'success'
-           AND (type = 'backup' OR type IS NULL)
          ORDER BY started_at DESC LIMIT 1"
     );
     $stmt->execute([':d' => $destinationId, ':f' => $remoteName]);
@@ -679,35 +709,11 @@ function ipam_restore_apply(PDO $db, string $stagedPath, string $realFilename = 
         throw new RuntimeException('ipam_restore: apply only supports sqlite in v3.17.0');
     }
 
-    // Log entry — track restore in backup_log for visibility on history page (#701).
-    // Use the real backup filename (passed by caller) when available; fall back
-    // to the staged tmp filename only if not provided. The staged tmp filename
-    // (e.g. restore_staged_<rand>.sql.gz) is meaningless for history viewers.
+    // v3.21.0 §A1 (#799/#808): backup_runs only tracks backup runs (no
+    // type='restore' rows). Restore activity is recorded via audit_log
+    // below. Proper restore-runs tracking lands with the restore wizard
+    // rewrite in #807 (Wave 3).
     $filename = $realFilename !== '' ? $realFilename : basename($stagedPath);
-
-    // destination_id: prefer explicit caller-supplied value (the same id that
-    // staged the file). Fall back to filename lookup only if the caller didn't
-    // know — and even then, prefer the most recent success across destinations
-    // since same-name backups on multiple destinations are inherently ambiguous.
-    $destId = $destinationId !== null && $destinationId > 0 ? $destinationId : null;
-    if ($destId === null) {
-        $matchStmt = $db->prepare(
-            "SELECT destination_id FROM backup_log
-             WHERE filename = :f AND status = 'success'
-             ORDER BY started_at DESC LIMIT 1"
-        );
-        $matchStmt->execute([':f' => $filename]);
-        $matched = $matchStmt->fetchColumn();
-        if (is_numeric($matched)) $destId = (int) $matched;
-    }
-
-    $now = ipam_dialect()->now();
-    $logStmt = $db->prepare(
-        "INSERT INTO backup_log (destination_id, triggered_by, type, status, filename, started_at)
-         VALUES (:d, 'web_restore', 'restore', 'running', :f, $now)"
-    );
-    $logStmt->execute([':d' => $destId, ':f' => $filename]);
-    $logId = (int) $db->lastInsertId();
 
     $sql = ipam_restore_read_staged_sql($stagedPath);
 
@@ -732,27 +738,10 @@ function ipam_restore_apply(PDO $db, string $stagedPath, string $realFilename = 
         $db->commit();
     } catch (Throwable $e) {
         if ($db->inTransaction()) $db->rollBack();
-        // Mark log entry failed — swallow any logging error so the real exception propagates
-        try {
-            $nowF = ipam_dialect()->now();
-            $updF = $db->prepare(
-                "UPDATE backup_log SET status = 'failed', error_message = :e, completed_at = $nowF WHERE id = :id"
-            );
-            $updF->execute([':e' => substr($e->getMessage(), 0, 1000), ':id' => $logId]);
-        } catch (Throwable) { /* swallow */ }
         throw new RuntimeException('ipam_restore: apply failed — ' . $e->getMessage(), 0, $e);
     } finally {
         $db->exec('PRAGMA foreign_keys = ON');
     }
-
-    // Mark log entry success
-    try {
-        $now2 = ipam_dialect()->now();
-        $upd = $db->prepare(
-            "UPDATE backup_log SET status = 'success', size_bytes = :sz, completed_at = $now2 WHERE id = :id"
-        );
-        $upd->execute([':sz' => filesize($stagedPath) ?: 0, ':id' => $logId]);
-    } catch (Throwable) { /* swallow logging failures */ }
 
     // Bring schema up to date if backup is from older version
     try {
@@ -763,8 +752,9 @@ function ipam_restore_apply(PDO $db, string $stagedPath, string $realFilename = 
     }
 
     // Audit: significant destructive action. Records into audit_log so
-    // operators can see who restored what and when, independent of the
-    // backup_log row we already updated above.
+    // operators can see who restored what and when. (Pre-v3.21.0 the
+    // restore also wrote a type='restore' row to backup_log; that path
+    // is gone now per §A1 / #808.)
     try {
         audit(
             $db,
@@ -821,30 +811,314 @@ function ipam_restore_read_staged_sql(string $stagedPath): string
     return $data;
 }
 
-/** @return list<string> */
+/**
+ * Validate the verdict of a restore proc_open run, accounting for sigchild
+ * PHP builds where proc_close returns -1 unconditionally.
+ *
+ * Why (rewrite under #805 / B-P0-3): v3.19.1 #783 added a file-size fallback
+ * for sigchild ambiguity in `backup_run_dump`. The same proc_close
+ * unreliability exists in the mysql/psql restore paths in `restore.php`,
+ * but a "file size" post-condition makes no sense for a restore — the
+ * tool produces no output file. The right post-condition is that the
+ * target DB is in the expected state: at minimum, `schema_migrations`
+ * is populated. A successful restore from any IPAM dump always lands at
+ * least one migration row.
+ *
+ * Pure: takes the captured exit code (caller must read it via
+ * proc_get_status BEFORE proc_close, since proc_close on sigchild
+ * builds reaps the SIGCHLD itself), returns a verdict struct. Never
+ * exits / dies — the caller decides how to surface a failure.
+ *
+ * @return array{ok: bool, verdict: string, message: string}
+ */
+function ipam_restore_proc_check(int $exitCode, string $tool, string $stderr, PDO $db, int $preMigCount = 0): array
+{
+    if ($exitCode > 0) {
+        return [
+            'ok'      => false,
+            'verdict' => "exit={$exitCode}",
+            'message' => "{$tool} restore failed (exit={$exitCode}): " . trim($stderr),
+        ];
+    }
+    if ($exitCode === 0) {
+        return ['ok' => true, 'verdict' => 'exit=0', 'message' => ''];
+    }
+    // exitCode === -1 → sigchild build: exit code is unreliable.
+    // Fall back to confirming the target DB has the expected post-state.
+    // CR feedback PR #1054: an absolute count is dangerous — if the target
+    // already had `schema_migrations` populated and the restore tool died
+    // before touching the DB, the count is still > 0 and we'd report success.
+    // Compare against the pre-restore count instead.
+    try {
+        $stmt = $db->query("SELECT COUNT(*) FROM schema_migrations");
+        if ($stmt === false) {
+            throw new RuntimeException('schema_migrations COUNT query returned false');
+        }
+        $migCount = (int)$stmt->fetchColumn();
+    } catch (Throwable $e) {
+        return [
+            'ok'      => false,
+            'verdict' => 'exit=-1 (sigchild); schema_migrations check failed',
+            'message' => "{$tool} restore: exit code unreliable AND schema_migrations check failed: " . $e->getMessage(),
+        ];
+    }
+    // CR feedback PR #1054: a same-version restore can legitimately leave
+    // the count unchanged — the dump contains the same schema_migrations
+    // rows already present on the target. Only fail on a genuine regression
+    // (`post < pre`) and on the "pre=0 and post=0" case (no rows at all,
+    // means the restore tool never wrote anything).
+    if ($migCount < $preMigCount) {
+        return [
+            'ok'      => false,
+            'verdict' => "exit=-1 (sigchild); schema_migrations regressed (pre={$preMigCount}, post={$migCount})",
+            'message' => "{$tool} restore: exit code unreliable AND schema_migrations regressed (pre={$preMigCount}, post={$migCount}) — restore lost rows. stderr: " . trim($stderr),
+        ];
+    }
+    if ($migCount === 0) {
+        return [
+            'ok'      => false,
+            'verdict' => 'exit=-1 (sigchild); schema_migrations empty',
+            'message' => "{$tool} restore: exit code unreliable AND schema_migrations is empty — restore did not produce expected post-state. stderr: " . trim($stderr),
+        ];
+    }
+    return [
+        'ok'      => true,
+        'verdict' => "exit=-1 (sigchild) → post-condition OK (pre={$preMigCount}, post={$migCount})",
+        'message' => '',
+    ];
+}
+
+/**
+ * Split a SQL dump into top-level statements via a character-level lexer.
+ *
+ * Why a real lexer (rewrite under #806 / B-P0-4): the prior line-oriented
+ * splitter mis-split any non-trivial dump — semicolons inside string
+ * literals, identifier quotes, line/block comments, PostgreSQL
+ * dollar-quoted bodies, or compound BEGIN…END blocks would all bleed
+ * across statement boundaries (or split mid-statement). T13 in
+ * tests/RestoreSplitterTest.php encodes the failure modes.
+ *
+ * The lexer streams the source once and tracks state for: single-quoted
+ * strings (with `''` escape), double-quoted identifiers, MySQL backtick
+ * identifiers, PostgreSQL dollar-quoted strings (`$tag$...$tag$`),
+ * `--` line comments, `/* … *\/` block comments, and BEGIN…END depth.
+ * `BEGIN TRANSACTION` / `BEGIN;` / `BEGIN WORK` are recognised as
+ * transaction starts, not compound blocks. A statement boundary is a
+ * top-level `;` outside every quoted/commented/depth context.
+ *
+ * @return list<string>
+ */
 function ipam_restore_split_sql_statements(string $sql): array
 {
-    // Naive splitter by semicolon at line end; sufficient for the
-    // ipam_db_dump_stream output which is line-oriented and uses
-    // ; LF as terminator. Skips multi-line BEGIN/END trigger bodies
-    // by tracking depth.
     $out = [];
     $buf = '';
     $depth = 0;
-    foreach (explode("\n", $sql) as $line) {
-        $stripped = trim($line);
-        if (preg_match('/\bBEGIN\b/i', $stripped) && !preg_match('/\bBEGIN TRANSACTION\b/i', $stripped)) {
-            $depth++;
+    $len = strlen($sql);
+    $i = 0;
+
+    while ($i < $len) {
+        $c = $sql[$i];
+        $next = $i + 1 < $len ? $sql[$i + 1] : '';
+
+        // ── line comment ── -- ... \n (or end of input)
+        if ($c === '-' && $next === '-') {
+            while ($i < $len && $sql[$i] !== "\n") {
+                $buf .= $sql[$i];
+                $i++;
+            }
+            continue;
         }
-        $buf .= $line . "\n";
-        if (preg_match('/\bEND\s*;?\s*$/i', $stripped) && $depth > 0) {
+
+        // ── block comment ── /* ... */ (does not nest in standard SQL)
+        if ($c === '/' && $next === '*') {
+            $buf .= '/*';
+            $i += 2;
+            while ($i < $len) {
+                if ($sql[$i] === '*' && $i + 1 < $len && $sql[$i + 1] === '/') {
+                    $buf .= '*/';
+                    $i += 2;
+                    break;
+                }
+                $buf .= $sql[$i];
+                $i++;
+            }
+            continue;
+        }
+
+        // ── single-quoted string ── '...' with '' or \' escape
+        if ($c === "'") {
+            $buf .= "'";
+            $i++;
+            while ($i < $len) {
+                // Backslash escape (MySQL default `\'`, also `\\`, `\n`, etc.).
+                // Consume the backslash and the following character verbatim
+                // so an escaped quote can't terminate the string. Required for
+                // MySQL dumps; harmless for SQLite/Postgres standard mode
+                // where `\` is a literal byte. (CR feedback PR #1054.)
+                if ($sql[$i] === "\\" && $i + 1 < $len) {
+                    $buf .= $sql[$i] . $sql[$i + 1];
+                    $i += 2;
+                    continue;
+                }
+                if ($sql[$i] === "'" && $i + 1 < $len && $sql[$i + 1] === "'") {
+                    // Escaped quote: consume both as part of the literal
+                    $buf .= "''";
+                    $i += 2;
+                    continue;
+                }
+                if ($sql[$i] === "'") {
+                    $buf .= "'";
+                    $i++;
+                    break;
+                }
+                $buf .= $sql[$i];
+                $i++;
+            }
+            continue;
+        }
+
+        // ── double-quoted identifier ── "..."  (ANSI / PostgreSQL)
+        if ($c === '"') {
+            $buf .= '"';
+            $i++;
+            while ($i < $len) {
+                if ($sql[$i] === '"') {
+                    $buf .= '"';
+                    $i++;
+                    break;
+                }
+                $buf .= $sql[$i];
+                $i++;
+            }
+            continue;
+        }
+
+        // ── backtick-quoted identifier ── `...`  (MySQL)
+        if ($c === '`') {
+            $buf .= '`';
+            $i++;
+            while ($i < $len) {
+                if ($sql[$i] === '`') {
+                    $buf .= '`';
+                    $i++;
+                    break;
+                }
+                $buf .= $sql[$i];
+                $i++;
+            }
+            continue;
+        }
+
+        // ── PostgreSQL dollar-quoted string ── $tag$ ... $tag$
+        if ($c === '$') {
+            // Look for opening tag: $ <ident-chars> $
+            $j = $i + 1;
+            while ($j < $len) {
+                $cj = $sql[$j];
+                if ($cj === '$') {
+                    break;
+                }
+                // Tag may only be identifier chars (letters, digits, underscore).
+                if (!(($cj >= 'a' && $cj <= 'z') || ($cj >= 'A' && $cj <= 'Z') || ($cj >= '0' && $cj <= '9') || $cj === '_')) {
+                    break;
+                }
+                $j++;
+            }
+            if ($j < $len && $sql[$j] === '$') {
+                $tag = substr($sql, $i, $j - $i + 1); // includes the two $
+                $buf .= $tag;
+                $i = $j + 1;
+                $tagLen = strlen($tag);
+                while ($i < $len) {
+                    if ($sql[$i] === '$' && substr($sql, $i, $tagLen) === $tag) {
+                        $buf .= $tag;
+                        $i += $tagLen;
+                        break;
+                    }
+                    $buf .= $sql[$i];
+                    $i++;
+                }
+                continue;
+            }
+            // Lone $ — fall through and treat as ordinary char
+        }
+
+        // ── BEGIN ... END block depth (only at top level / NORMAL state) ──
+        // Detect a BEGIN word boundary that is not BEGIN TRANSACTION/WORK/;.
+        // We're at NORMAL state at this point because all comment/quote/dollar
+        // branches above continue'd.
+        if (($c === 'B' || $c === 'b')
+            && ($i === 0 || !ctype_alnum($sql[$i - 1]) && $sql[$i - 1] !== '_')
+            && $i + 4 < $len
+            && strcasecmp(substr($sql, $i, 5), 'BEGIN') === 0
+            && ($i + 5 >= $len || !(ctype_alnum($sql[$i + 5]) || $sql[$i + 5] === '_'))) {
+            // Look past whitespace for the next significant token.
+            $k = $i + 5;
+            while ($k < $len && ctype_space($sql[$k])) {
+                $k++;
+            }
+            $isTxn = false;
+            if ($k < $len) {
+                $nextCh = $sql[$k];
+                if ($nextCh === ';') {
+                    $isTxn = true; // BEGIN; → transaction start
+                } elseif ($k + 10 < $len && strcasecmp(substr($sql, $k, 11), 'TRANSACTION') === 0
+                          && ($k + 11 >= $len || !(ctype_alnum($sql[$k + 11]) || $sql[$k + 11] === '_'))) {
+                    $isTxn = true;
+                } elseif ($k + 3 < $len && strcasecmp(substr($sql, $k, 4), 'WORK') === 0
+                          && ($k + 4 >= $len || !(ctype_alnum($sql[$k + 4]) || $sql[$k + 4] === '_'))) {
+                    $isTxn = true;
+                } elseif ($k + 7 < $len && strcasecmp(substr($sql, $k, 8), 'IMMEDIATE') === 0) {
+                    $isTxn = true; // SQLite: BEGIN IMMEDIATE
+                } elseif ($k + 7 < $len && strcasecmp(substr($sql, $k, 8), 'DEFERRED') === 0) {
+                    $isTxn = true; // SQLite: BEGIN DEFERRED
+                } elseif ($k + 8 < $len && strcasecmp(substr($sql, $k, 9), 'EXCLUSIVE') === 0) {
+                    $isTxn = true; // SQLite: BEGIN EXCLUSIVE
+                }
+            } else {
+                $isTxn = true; // bare BEGIN at end of input
+            }
+            if (!$isTxn) {
+                $depth++;
+            }
+            $buf .= substr($sql, $i, 5);
+            $i += 5;
+            continue;
+        }
+
+        // ── END decrements depth ──
+        if (($c === 'E' || $c === 'e')
+            && ($i === 0 || !ctype_alnum($sql[$i - 1]) && $sql[$i - 1] !== '_')
+            && $i + 2 < $len
+            && strcasecmp(substr($sql, $i, 3), 'END') === 0
+            && ($i + 3 >= $len || !(ctype_alnum($sql[$i + 3]) || $sql[$i + 3] === '_'))
+            && $depth > 0) {
             $depth--;
+            $buf .= substr($sql, $i, 3);
+            $i += 3;
+            continue;
         }
-        if ($depth === 0 && str_ends_with(rtrim($line), ';')) {
-            $out[] = trim($buf);
+
+        // ── statement terminator ──
+        if ($c === ';' && $depth === 0) {
+            $buf .= ';';
+            $stmt = trim($buf);
+            if ($stmt !== '') {
+                $out[] = $stmt;
+            }
             $buf = '';
+            $i++;
+            continue;
         }
+
+        // Default: copy byte through.
+        $buf .= $c;
+        $i++;
     }
-    if (trim($buf) !== '') $out[] = trim($buf);
+
+    $tail = trim($buf);
+    if ($tail !== '') {
+        $out[] = $tail;
+    }
     return $out;
 }
