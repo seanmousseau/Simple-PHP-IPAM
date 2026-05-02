@@ -1622,6 +1622,15 @@ function ipam_setting_definitions(): array
             'default'     => false,
             'sensitive'   => false,
         ],
+        'backup.dump_ssl_verify' => [
+            'label'       => 'Verify MySQL/MariaDB TLS server certificate during backup/restore',
+            'description' => 'When ON, mysqldump / mysql / mysql-restore verify the server TLS certificate chain against the system trust store. When OFF (default), they still use TLS encryption if the server offers it but skip cert verification — matches PHP PDO_MYSQL\'s default behaviour and lets the app connect to internal servers with self-signed certificates. Operators with a properly-chained CA cert should enable this.',
+            'type'        => 'bool',
+            'group'       => 'backup',
+            'default'     => false,
+            'sensitive'   => false,
+            'config_key'  => ['backup', 'dump_ssl_verify'],
+        ],
         'backup.notify_encryption_change' => [
             'label'       => 'Email on destination encryption-mode change',
             'description' => 'Send a notification when an admin toggles a destination between encrypted and plaintext.',
@@ -3759,13 +3768,19 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             $pass   = to_str($gConf['db_pass'] ?? '');
             $dest   = $dir . '/ipam-' . $ts . '.sql';
 
+            // Resolve setting before tempnam so an ipam_setting() throw
+            // doesn't leak a 0600 password file (PR #1080 CR round 2).
+            $verifySsl = (bool) ipam_setting('backup.dump_ssl_verify');
             // Route the password through a 0600 --defaults-extra-file so it
             // never appears in /proc/<pid>/environ or `ps eww` output (#820).
             // The file MUST be unlinked on every exit path below.
             $credFile = ipam_backup_write_mysql_defaults_file($pass);
             // --defaults-extra-file MUST be the first mysqldump argument.
+            // (--no-login-paths AND --ssl-mode for Oracle MySQL — both
+            // follow-ups tracked in #1081, gated on a probe helper.)
             $cmd = [
                 'mysqldump', '--defaults-extra-file=' . $credFile,
+                $verifySsl ? '--ssl-verify-server-cert=on' : '--ssl-verify-server-cert=off',
                 '--single-transaction', '--routines',
                 '-h', $host, '-P', $port, '-u', $user, $dbName,
             ];

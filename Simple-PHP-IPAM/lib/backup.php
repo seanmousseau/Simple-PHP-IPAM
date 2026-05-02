@@ -471,15 +471,15 @@ function ipam_backup_dest_client(array $dest): BackupClientInterface
  * dump tool. Shared by the v3.17 remote-destination pipeline and the
  * legacy CLI backup runner so both stay in sync if a flag changes.
  *
- * Password is passed via env (MYSQL_PWD / PGPASSWORD), never on the command
- * line. Inherited DB password env vars from the parent shell are stripped
- * defensively before merging in our own value (PR #1074 CR). Migrating
- * this caller to the temp-file pattern (#820 destination orchestrator
- * extension) is deferred to v3.22.1 hotfix — the original v3.22.0 #820 fix
- * shipped lib.php and restore.php only.
+ * Password is routed via a 0600 temp credential file (`--defaults-extra-file`
+ * for mysql, `PGPASSFILE` for pgsql) so it never appears in the process
+ * environment or on the command line. The returned `cred_file` path MUST
+ * be unlink()ed by the caller after the dump completes (use try/finally).
+ * Inherited `MYSQL_PWD` / `PGPASSWORD` from the parent shell are stripped
+ * defensively (#820 PR #1074 CR / completes #1075).
  *
  * @param array<string,mixed> $config global $config
- * @return array{cmd: list<string>, env: array<string,string>}
+ * @return array{cmd: list<string>, env: array<string,string>, cred_file: string}
  */
 function ipam_backup_native_cmd(string $driver, array $config): array
 {
@@ -487,23 +487,39 @@ function ipam_backup_native_cmd(string $driver, array $config): array
     $user = is_string($config['db_user'] ?? null) ? $config['db_user'] : '';
     $pass = is_string($config['db_pass'] ?? null) ? $config['db_pass'] : '';
     $existingEnv = getenv(); // returns array<string,string> when called without args
-    // Strip any inherited DB password env vars before merging in our own.
-    // A parent shell already exporting MYSQL_PWD/PGPASSWORD shouldn't be
-    // able to silently override what the app intends to send to the child.
+    // Strip any inherited DB password env vars before passing to the child.
+    // If the runner was started by a shell/service that already has these
+    // set, they'd otherwise still leak into /proc/<pid>/environ even though
+    // we route the real cred via a temp file.
     unset($existingEnv['MYSQL_PWD'], $existingEnv['PGPASSWORD']);
 
-    // Mirror the running app's connection target. Substituting defaults for
-    // omitted DSN keys would force TCP onto Unix-socket configs (mismatching
-    // mysqldump/pg_dump against the wrong daemon or auth method) and could
-    // silently dump the wrong database if dbname is absent. Build the cmd
-    // exactly from what the DSN says; require dbname; otherwise omit flags
-    // so the dump tool uses the same default lookup path PDO did.
     if ($driver === 'mysql') {
         if (!preg_match('/dbname=([^;]+)/i', $dsn, $m)) {
             throw new RuntimeException('ipam_backup_native_cmd: dbname missing from db_dsn');
         }
         $name = $m[1];
-        $cmd  = ['mysqldump', '--single-transaction', '--routines'];
+        // Resolve setting BEFORE writing the temp cred file so that an
+        // ipam_setting() throw doesn't leak a 0600 password file in /tmp
+        // (PR #1080 CR round 2). --ssl-verify-server-cert is opt-in via
+        // backup.dump_ssl_verify; default false matches PDO_MYSQL
+        // (PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT) so v3.22.0 operators on
+        // internal/on-prem MySQL with self-signed certs are not regressed.
+        $verifySsl = (bool) ipam_setting('backup.dump_ssl_verify');
+        $credFile  = ipam_backup_write_mysql_defaults_file($pass);
+        // --defaults-extra-file MUST be the FIRST argument; mysql/mysqldump
+        // ignore it otherwise (libmysql parses it before any other option).
+        // (Two related v3.23.0 follow-ups tracked in #1081, both gated on
+        // a one-time client-flavor + version probe that we don't have yet:
+        //   1) --no-login-paths to neutralise ~/.mylogin.cnf override —
+        //      added in MariaDB 11.4; CI's MariaDB 10.11 rejects it.
+        //   2) --ssl-mode for Oracle MySQL clients — currently we always
+        //      emit --ssl-verify-server-cert which is MariaDB-canonical
+        //      and accepted but deprecated on Oracle MySQL 8.x; may be
+        //      removed in MySQL 9.x.
+        // Both fixes share the same probe-and-cache helper — bundle them.)
+        $cmd  = ['mysqldump', '--defaults-extra-file=' . $credFile,
+                 $verifySsl ? '--ssl-verify-server-cert=on' : '--ssl-verify-server-cert=off',
+                 '--single-transaction', '--routines'];
         if (preg_match('/unix_socket=([^;]+)/i', $dsn, $m)) {
             $cmd[] = '--socket';
             $cmd[] = $m[1];
@@ -519,8 +535,9 @@ function ipam_backup_native_cmd(string $driver, array $config): array
         $cmd[] = $user;
         $cmd[] = $name;
         return [
-            'cmd' => $cmd,
-            'env' => array_merge($existingEnv, ['MYSQL_PWD' => $pass]),
+            'cmd'       => $cmd,
+            'env'       => $existingEnv,
+            'cred_file' => $credFile,
         ];
     }
     if ($driver === 'pgsql') {
@@ -528,6 +545,7 @@ function ipam_backup_native_cmd(string $driver, array $config): array
             throw new RuntimeException('ipam_backup_native_cmd: dbname missing from db_dsn');
         }
         $name = $m[1];
+        $credFile = ipam_backup_write_pgpass_file($pass);
         $cmd  = ['pg_dump'];
         if (preg_match('/host=([^;]+)/i', $dsn, $m)) {
             $cmd[] = '-h';
@@ -541,8 +559,9 @@ function ipam_backup_native_cmd(string $driver, array $config): array
         $cmd[] = $user;
         $cmd[] = $name;
         return [
-            'cmd' => $cmd,
-            'env' => array_merge($existingEnv, ['PGPASSWORD' => $pass]),
+            'cmd'       => $cmd,
+            'env'       => array_merge($existingEnv, ['PGPASSFILE' => $credFile]),
+            'cred_file' => $credFile,
         ];
     }
     throw new RuntimeException('ipam_backup_native_cmd: unsupported driver ' . $driver);
@@ -599,8 +618,8 @@ function ipam_backup_dump_to_tmp(PDO $db): string
             global $config;
             $cfg = is_array($config ?? null) ? $config : [];
             $tmpSql = $tmp . '.sql';
+            $native = ipam_backup_native_cmd($driver, $cfg);
             try {
-                $native = ipam_backup_native_cmd($driver, $cfg);
                 // 10-minute deadline matches what an interactive admin would tolerate;
                 // larger DBs that legitimately need more should run via cron instead.
                 if (!backup_run_dump($native['cmd'], $native['env'], $tmpSql, 600)) {
@@ -636,6 +655,10 @@ function ipam_backup_dump_to_tmp(PDO $db): string
             } finally {
                 if (is_file($tmpSql)) {
                     @unlink($tmpSql); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmpSql is tempnam()-generated, no user input
+                }
+                // Unlink the 0600 password file regardless of dump outcome.
+                if (is_file($native['cred_file'])) {
+                    @unlink($native['cred_file']); // nosemgrep: php.lang.security.unlink-use.unlink-use -- tempnam-generated
                 }
             }
             return $tmpGz;

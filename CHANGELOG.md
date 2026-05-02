@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.22.1] - 2026-05-02
+
+Hotfix for v3.22.0. Two production-affecting issues with MySQL/MariaDB backups:
+
+1. **MariaDB 11.4+ / MySQL 8.4+ clients verify the server certificate chain by default.** Both `mysql`/`mysqldump` invocations from v3.22.0 (legacy CLI runner in `lib.php`, restore in `restore.php`) failed against any MySQL/MariaDB server with a self-signed certificate — common on internal/on-prem deployments. The error surfaces as `mysqldump: Got error: 2026: "TLS/SSL error: self-signed certificate in certificate chain"` and the operator-facing Run-now / Restore reports `fclose(): Argument #1 ($stream) must be of type resource, null given` (the secondary cascade through `ipam_backup_dump_to_tmp`). PDO already connects without verifying the server cert (PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT defaults to false), so the dump/restore wrappers should match.
+
+2. **#1075 completes the v3.22.0 #820 destination orchestrator credential migration.** v3.22.0 routed mysql/psql passwords through 0600 temp files for the legacy CLI path and the restore path; the v3.17+ destination dump pipeline (`lib/backup.php::ipam_backup_native_cmd`) was attempted in PR #1074 but reverted at the last minute when the same TLS issue (above) made MySQL/MariaDB Run-now fail in CI. With #1 fixed, the temp-file pattern can now ship for the destination orchestrator too.
+
+### Added
+- **New setting `backup.dump_ssl_verify`** (bool, default false) — controls whether `mysqldump` / `mysql` client invocations verify the MySQL/MariaDB server TLS certificate chain. Default off matches PHP PDO_MYSQL's default behaviour (`PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT` defaults false) and lets the app connect to internal/on-prem servers with self-signed certs. Operators with a properly-chained CA cert can flip the setting to ON for stricter verification.
+
+### Fixed
+- **mysqldump / mysql client TLS verification (CR fix on PR #1080)** — `--ssl-verify-server-cert` is now toggled by the new `backup.dump_ssl_verify` setting (default off — same outcome as the original v3.22.1 patch but operator-overridable, fixing the CR finding that the flag was hardcoded and command-line precedence prevented `/etc/mysql/conf.d/` override). All three call sites: `Simple-PHP-IPAM/lib/backup.php::ipam_backup_native_cmd` (destination orchestrator), `Simple-PHP-IPAM/lib.php` (legacy CLI runner), and `Simple-PHP-IPAM/restore.php` (mysql restore).
+- **`--no-login-paths` deferred to v3.23.0 (#1081).** Initially added to all mysqldump/mysql invocations during PR #1080 CR remediation, but reverted because MariaDB 10.x clients (which Debian 12's `default-mysql-client` resolves to and which CI uses) reject the flag with "unknown option" and the dump fails outright. v3.23.0 will add a one-time `mysqldump --help` probe to detect support and conditionally enable. Until then the `~/.mylogin.cnf`-substitution attack surface remains — bounded by the requirement that an attacker first land a login-path entry in the app-server account's home directory, an unusual threat model.
+
+### Security
+- **DB credentials no longer in the process environment for the destination orchestrator** (#1075, completes #820). `lib/backup.php::ipam_backup_native_cmd` now routes the password through a 0600 temp credential file (`--defaults-extra-file` for mysql, `PGPASSFILE` for pgsql) instead of `MYSQL_PWD` / `PGPASSWORD` env vars. The v3.22.0 #820 fix shipped this for the legacy CLI runner and restore path; the destination orchestrator (the primary v3.21+ code path) was reverted at PR #1074 due to the TLS issue above and now ships in this hotfix. Inherited password env vars from the parent shell are still stripped defensively before `proc_open`.
+
 ## [3.22.0] - 2026-05-02
 
 Backup/restore concurrency hardening, cron architecture rework, and the v3.22.0 Notifications scope from `backup_overhaul.md` §2.4. Theme: lock-file/DB-level guards across backup runs, prune, retention, and scheduled tests; the §2.4 per-event email surface; a stale-row reaper so a crashed orchestrator can't permanently block fresh runs. Eleven milestone issues plus the §2.4 placeholder commitment.
@@ -1352,6 +1370,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.22.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.22.0...v3.22.1
 [3.22.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.21.1...v3.22.0
 [3.21.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.21.0...v3.21.1
 [3.21.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.20.0...v3.21.0

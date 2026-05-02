@@ -12,21 +12,12 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.22.0
+## What's new in v3.22.1
 
-Backup/restore concurrency hardening, cron architecture rework, and the §2.4 Notifications scope. Eleven milestone issues plus the §2.4 placeholder commitment.
+Hotfix for v3.22.0. Two production-affecting issues with MySQL/MariaDB backups, both rooted in the same MariaDB 11.4+ / MySQL 8.4+ client default of verifying the server certificate chain — which breaks against any internal/on-prem MySQL with a self-signed cert.
 
-- **Per-schedule pessimistic claim** — `BEGIN IMMEDIATE` on SQLite, `FOR UPDATE SKIP LOCKED` on MySQL/PostgreSQL. Closes the SELECT-then-UPDATE race where two cron processes could both fire the same due schedule. (#816)
-- **Stale-running-row reaper + concurrency guard** — any `backup_runs` row stuck in `running` past the threshold (default 7200s) gets force-marked `failed` so a crashed/killed orchestrator can't permanently block fresh runs. (#815)
-- **Per-event email notifications (§2.4)** — replaces the read-only summary with an editable surface covering eight events: backup-success (scheduled/manual), backup-failure (scheduled/manual), destination connection-test failure, schedule-overdue, retention-prune, encryption-mode change. Includes a server-side connection re-test (alerts on healthy → failing transition) and an overdue detector (per-schedule cooldown).
-- **Bulk multi-select delete on the History tab** — checkboxes + bulk-action bar, CSRF-protected, whole-batch refusal on protected rows. (#1052)
-- **Time-based auto-purge for `backup_runs`** — new `backup_runs.retention_days` (default 90) and `backup_runs.prune_batch_size` (default 500) settings; cron deletes old rows in batches, skipping `running` and protected. (#1053)
-- **Soft time budget for the scanner** — long sweeps no longer starve scheduled backups; scanner defers to next tick when over budget. (#817)
-- **DB credentials no longer in the process environment** — `mysqldump`/`pg_dump` route through `--defaults-extra-file` (0600 temp file) and `PGPASSFILE` (0600 pgpass) instead of `MYSQL_PWD`/`PGPASSWORD`. Fixes a cred-leak via `/proc/<pid>/environ`. (#820)
-- **WAL checkpoint exceptions surfaced** — empty `catch (Throwable) {}` replaced with audit + error_log; failure no longer aborts backup/restore but is now visible. (#819)
-- **`schedule_id` populated on `backup_runs`** — silent NULL since v3.21.0; orchestrator now plumbs the claimed schedule's id through. (#821)
-- **Failed scheduled runs no longer auto-retry every cron tick** — `next_run_at` advanced at claim time, not after success. `Run-now` is the recovery path. Eliminates one-alert-per-tick on persistently-failing destinations.
-- **Behavior change** — see CHANGELOG for full notes; the retired `backup.notify_on_failure` / `backup.notify_on_success` settings are replaced by the eight new event-specific keys with sensible defaults preserving prior intent.
+- **mysql / mysqldump / mysql-restore TLS verification fixed.** `--ssl-verify-server-cert=off` added to all three call sites in `Simple-PHP-IPAM/lib/backup.php`, `lib.php`, and `restore.php`. Matches PHP PDO_MYSQL's default behaviour (PDO already connects without verifying). Production operators with a verifiable TLS chain can re-enable verification via their own `/etc/mysql/conf.d/` override. The error surfaced as `mysqldump: Got error: 2026: "TLS/SSL error: self-signed certificate in certificate chain"` and the operator-facing Run-now / Restore reported `fclose(): Argument #1 ($stream) must be of type resource, null given` (secondary cascade).
+- **#1075 — destination orchestrator credentials now via 0600 temp file.** Completes the v3.22.0 #820 fix. The legacy CLI runner and restore path shipped temp-file routing in v3.22.0; the v3.17+ destination dump pipeline (`lib/backup.php::ipam_backup_native_cmd`) was attempted in PR #1074 but reverted at the last minute when the TLS issue above made MySQL/MariaDB Run-now fail in CI. With the TLS fix in place, the temp-file pattern ships for every `mysqldump` / `pg_dump` invocation in the app — no more `MYSQL_PWD`/`PGPASSWORD` env vars carrying secrets to the child process.
 
 [Full changelog →](CHANGELOG.md)
 

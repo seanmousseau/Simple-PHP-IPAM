@@ -175,12 +175,20 @@ if ($driver === 'sqlite') {
         exit(0);
     }
 
+    // Resolve setting before tempnam so an ipam_setting() throw doesn't
+    // leak a 0600 password file (PR #1080 CR round 2).
+    $verifySsl = (bool) ipam_setting('backup.dump_ssl_verify');
     // Route the password through a 0600 --defaults-extra-file so it never
     // appears in /proc/<pid>/environ or `ps eww` (#820). The file is unlinked
     // in the finally block below regardless of how the proc_open block exits.
     $credFile = ipam_backup_write_mysql_defaults_file($pass);
     // --defaults-extra-file MUST be the first mysql argument.
+    // --no-login-paths + --ssl-verify-server-cert toggling per
+    // lib/backup.php::ipam_backup_native_cmd rationale (PR #1080 CR / #1075).
+    // (--no-login-paths AND --ssl-mode for Oracle MySQL — both follow-ups
+    // tracked in #1081, gated on a probe helper.)
     $cmd = ['mysql', '--defaults-extra-file=' . $credFile,
+            $verifySsl ? '--ssl-verify-server-cert=on' : '--ssl-verify-server-cert=off',
             '-h', $host, '-P', $port, '-u', $user, $dbName];
     $env = getenv() ?: [];
     // Strip any inherited DB password env vars so a parent shell that
