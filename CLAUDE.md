@@ -305,7 +305,7 @@ Asset cache-buster: update `?v=X.Y.Z` in the `<link>` and `<script>` tags in `pa
 
 ## Audit logging
 
-Call `audit(PDO $db, string $action, string $entityType, ?int $entityId, string $details)` for every significant action. Convention for `$action`: `<entity>.<verb>` — lowercase, dot-separated, verb is one of `create`/`update`/`delete`/`toggle_active`/`set_role`/etc. Reuse the existing vocabulary so log queries (`WHERE action LIKE 'subnet.%'`) stay consistent.
+Call `audit(PDO $db, string $action, string $entityType, ?int $entityId, string $details = '')` for every significant action. Convention for `$action`: `<entity>.<verb>` — lowercase, dot-separated, verb is one of `create`/`update`/`delete`/`toggle_active`/`set_role`/etc. Reuse the existing vocabulary so log queries (`WHERE action LIKE 'subnet.%'`) stay consistent.
 
 **Full action vocabulary (auth, entities, users, scanner, etc.) lives in `docs/internal/audit-actions.md`.** Update that table when adding a new action.
 

@@ -81,18 +81,19 @@ Use `ipam_dialect()->now()` for timestamps — never hard-code `datetime('now')`
 
 ### 3. Wire the dispatch
 
-`api.php` has a single `switch ($resource)` block near the bottom. Add a `case`:
+`api.php` uses a `match ($resource)` block with nested `match ($method)` for each resource. Add a new branch to the outer match:
 
 ```php
-case 'widgets':
-    if ($method === 'GET') api_widgets($db);
-    if ($method === 'POST') api_widgets_create($db, $apiKey, $body);
-    if ($method === 'PUT' && $id > 0) api_widgets_update($db, $apiKey, $id, $body);
-    if ($method === 'DELETE' && $id > 0) api_widgets_delete($db, $apiKey, $id);
-    api_error(405, 'Method not allowed');
+'widgets' => match ($method) {
+    'GET'    => api_widgets($db),
+    'POST'   => api_widgets_create($db, $apiKey, $body),
+    'PUT'    => api_widgets_update($db, $apiKey, to_int($_GET['id'] ?? 0), $body),
+    'DELETE' => api_widgets_delete($db, $apiKey, to_int($_GET['id'] ?? 0)),
+    default  => api_error(405, 'Method not allowed.'),
+},
 ```
 
-The variables `$method`, `$resource`, `$id`, `$body`, and `$apiKey` are already in scope from the dispatcher.
+The variables `$method`, `$resource`, `$body`, and `$apiKey` are already in scope from the dispatcher. The `id` is read from `$_GET['id']` per-arm where needed (the existing handlers do this with `to_int($_GET['id'] ?? 0)` — match that pattern).
 
 ### 4. Authentication & authorization
 
@@ -110,7 +111,7 @@ audit($db, 'widget.create', 'widget', $id, json_encode([...]));
 
 Action naming follows the existing convention (`<entity>.<verb>`) — see `CLAUDE.md` → "Audit logging" for the canonical list. Do not invent new verbs casually; match `create`/`update`/`delete`/`toggle_active`/etc. so log queries stay searchable.
 
-The fourth argument (`$details`) should be a JSON-encoded snapshot of what changed — for create, the new values; for update, the diff; for delete, the row that was removed.
+The fifth argument (`$details`, optional — defaults to `''`) should be a JSON-encoded snapshot of what changed — for create, the new values; for update, the diff; for delete, the row that was removed. JSON is the recommended convention for greppable audit history; the column itself is plain `TEXT` so any string is valid.
 
 ### 6. Update the OpenAPI spec
 

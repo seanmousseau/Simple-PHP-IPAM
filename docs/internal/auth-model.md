@@ -128,7 +128,7 @@ Three methods, all gated by per-user enrollment + per-install policy.
 - `auth.mfa_method_switch` — user changed their preferred method
 - `auth.mfa_preferred_set` — admin or user set the default method for an account
 
-The `auth-actions.md` doc has the full action vocabulary.
+The `audit-actions.md` doc has the full action vocabulary.
 
 ---
 

@@ -58,7 +58,7 @@ A dependency-addition PR has a fixed shape. Reviewers will look for all of it.
 1. **`composer.json`** — `require` block addition with a tight version constraint (`^X.Y` for libs that follow semver carefully; `^X.Y.Z` if minor versions have introduced breakage in the past).
 2. **`composer.lock`** — committed, generated locally with `composer update <vendor/pkg>`. Never commit a wholesale `composer update` with this dep PR; isolate the change.
 3. **`CLAUDE.md`** — add a row to the "Current runtime dependency whitelist" table:
-   ```
+   ```text
    | <vendor/pkg> | ^X.Y | <one-line purpose> | #<issue>, v<release> |
    ```
    Do **not** edit any of the surrounding policy prose in the same PR — keep policy edits in a separate PR if needed.

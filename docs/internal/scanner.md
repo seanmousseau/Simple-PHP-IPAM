@@ -57,7 +57,7 @@ These are load-bearing — getting them wrong creates command injection / privil
 
 ## Audit actions
 
-```
+```text
 scan.run                scan.schedule_create
 scan.schedule_update    scan.schedule_delete
 address.arp_import

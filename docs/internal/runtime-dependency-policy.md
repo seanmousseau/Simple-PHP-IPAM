@@ -67,7 +67,7 @@ Tailwind, Bootstrap, React, Vue, Svelte, Sass, PostCSS, and every similar tool r
 - **IPAM business logic.** Subnet math, CIDR parsing, address allocation, audit logging, permission checks, etc. All of this is bespoke to the project and has no library equivalent worth pulling in.
 - **UI and rendering.** All HTML is hand-authored PHP. No templating engines (no Twig/Blade/Latte/Smarty — no new syntax, no compile cache, no reserved directives), no frontend frameworks (no React/Vue/Svelte), no CSS preprocessors (no Sass/Less). **Exception:** shared `ipam_render($view, $props)` helpers that `require` a PHP file under `Simple-PHP-IPAM/views/*.php` with `extract($props)` ARE allowed and encouraged — they are ordinary PHP functions, not a DSL. The anti-pattern is a compiled syntax layer, not code reuse. Data-viz primitives are covered by the carve-out.
 - **Simple utilities.** If it can be done in 20 lines of vanilla PHP, it should be done in 20 lines of vanilla PHP. Do not pull in a library for one function.
-- **"Nice to have" conveniences.** Libraries that make code 5% cleaner are not worth the dep. The bar is "hand-rolling is meaningfully dangerous or expensive," not "this API is nicer."
+- **"Nice-to-have" conveniences.** Libraries that make code 5% cleaner are not worth the dep. The bar is "hand-rolling is meaningfully dangerous or expensive," not "this API is nicer."
 
 ---
 

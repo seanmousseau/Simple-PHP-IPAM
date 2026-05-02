@@ -2,13 +2,13 @@
 
 > Canonical list of every `audit()` action string used in the codebase. The naming convention is the load-bearing rule (kept in `CLAUDE.md`); this is the lookup table.
 
-Call signature: `audit(PDO $db, string $action, string $entityType, ?int $entityId, string $details)`. The `$details` field is a JSON-encoded snapshot of the change.
+Call signature: `audit(PDO $db, string $action, string $entityType, ?int $entityId, string $details = ''): void` (see `Simple-PHP-IPAM/lib.php`). `$details` is optional and defaults to `''`. By convention `$details` is a JSON-encoded snapshot of the change so the audit log stays greppable, but the column is plain `TEXT` and any string is accepted.
 
 **Convention:** `<entity>.<verb>` — lowercase, dot-separated, verb is one of `create`/`update`/`delete`/`toggle_active`/`set_role`/`reset_password`/etc. Never invent new verbs casually; reuse the existing vocabulary so log queries (`WHERE action LIKE 'subnet.%'`) stay consistent.
 
 ## Auth
 
-```
+```text
 auth.login              auth.login_failed       auth.login_blocked
 auth.oidc_login         auth.oidc_provision     auth.oidc_link       auth.oidc_failed
 auth.mfa_method_switch  auth.mfa_preferred_set
@@ -17,7 +17,7 @@ auth.totp_login         auth.email_otp_login    auth.passkey_challenge
 
 ## Core entities
 
-```
+```text
 subnet.create   subnet.update   subnet.delete
 address.create  address.update  address.delete
 site.create     site.update     site.delete
@@ -29,7 +29,7 @@ tag.create      tag.update      tag.delete
 
 ## Users & access
 
-```
+```text
 user.create         user.delete         user.toggle_active
 user.set_role       user.reset_password user.update_profile
 user.oidc_link      user.oidc_unlink
@@ -39,20 +39,20 @@ apikey.create       apikey.deactivate   apikey.activate     apikey.delete
 
 ## Custom fields
 
-```
+```text
 custom_field.create  custom_field.update  custom_field.delete  custom_field.reorder
 ```
 
 ## DHCP & address operations
 
-```
+```text
 dhcp_pool.reserve   dhcp_pool.clear
 address.arp_import
 ```
 
 ## Bulk import/export
 
-```
+```text
 db.export   db.import   db.import_failed
 export.*    import.*
 ```
@@ -61,14 +61,14 @@ The `export.*` and `import.*` wildcards cover per-entity bulk operations (`expor
 
 ## Scanner
 
-```
+```text
 scan.run                 scan.schedule_create
 scan.schedule_update     scan.schedule_delete
 ```
 
 ## Settings
 
-```
+```text
 setting.update
 ```
 

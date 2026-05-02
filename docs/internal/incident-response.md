@@ -8,7 +8,7 @@
 
 ## The four phases
 
-```
+```text
 Detect  →  Triage  →  Hotfix  →  Post-mortem
 ```
 
@@ -121,7 +121,7 @@ Do this within 24 hours of the deploy, while the context is fresh. The output is
 
 Add to the affected release entity (`project:simple-php-ipam:release:vX.Y.Z`):
 
-```
+```text
 INCIDENT — <one-line description>
 
 What broke: <symptom users saw>
