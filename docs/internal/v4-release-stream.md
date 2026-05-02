@@ -42,19 +42,64 @@ This is a **sustainability decision, not a technical one.** When a licensing mod
 
 ---
 
-## Release sequencing (proposed, ~6 releases)
+## Release sequencing (12 releases)
 
-| Release | Headline | Major tickets | Notes |
-|---|---|---|---|
-| **v4.0.0** | i18n infrastructure + extraction sweep | `_()` / `_n()` helpers, locale resolution + cascade, `users.locale` column, `branding.default_locale` setting, `ext-gettext` + `ext-intl` requirement bump, en-CA + en-US baseline catalogs, ~40 pages wrapped in `_()`. **Phases 1+2 of `i18n-design.md`** | Plumbing-heavy, low-risk per phase. Currency to ship the foundation before any non-English translation work begins |
-| **v4.1.0** | Auth bundle: RBAC + JWT lib swap + groups + ACLs | #456 editable RBAC, #417 firebase/php-jwt swap, #334 user groups, #333 per-subnet ACLs | Already targeted to v4.1.0. Trio (#456+#334+#333) form a coherent permissions story; #417 retires hand-rolled JWT/JWK code |
-| **v4.2.0** | i18n phase 3 — first non-English translation | fr-CA full catalog (~200-400 strings). Validate translator workflow end-to-end. **Phase 3 of `i18n-design.md`** | First real test of plural-form support, text expansion, layout stress |
-| **v4.3.0** | SAML 2.0 SSO | `onelogin/php-saml` adoption (Service Provider role only), SAML config UI, IdP metadata import, audit actions for SAML auth, docs | Recommended library: `onelogin/php-saml` (lightweight; SimpleSAMLphp is overkill for SP-only) |
-| **v4.4.0** | LDAP / Active Directory bind | `symfony/ldap` adoption, LDAP config UI, group→role mapping, bind cache, docs | Recommended library: `symfony/ldap` (cleanly wraps `ext-ldap` without the full framework) |
-| **v4.5.0** | OAuth 2.0 generic provider support | `league/oauth2-client` for non-OIDC providers (GitHub, GitLab, Bitbucket, custom). Supplements existing OIDC | Many large enterprises have custom OAuth IdPs that aren't OIDC-compliant; this fills the gap |
-| **v4.6.0+** | SCIM provisioning + i18n phase 4 (Weblate workflow) | Hand-rolled SCIM 2.0 endpoints over existing user table; self-hosted Weblate for community translations | SCIM is REST — building it on top of the existing user surface is the cheapest option. Weblate opens up community-driven translations |
+Each release has one coherent theme. Stream takes IPAM from "single English-only org tool" to "multi-language enterprise-auth-capable IPAM" across 12 minor releases. Maintainer is comfortable stretching cadence over speed; each release should be reviewable on its own.
 
-Sequencing is **suggestive, not locked.** Specific decisions about which features ship in which exact release are made at scope-lock time per release-workflow.
+Each row links to a tracking epic in the GitHub milestone of that name. Sub-issues per release are spawned at scope-lock per `release-kickoff-prompt.md`.
+
+| # | Release | Headline | Tracking | Why this slot |
+|---|---|---|---|---|
+| 1 | **v4.0.0** | i18n infrastructure (phase 1) | [#1064](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/1064) | Foundation. Major version bump announces the v4 stream theme. User-visible payoff: language picker exists in Account page (English variants only) |
+| 2 | **v4.1.0** | i18n extraction sweep (phase 2) | [#1063](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/1063) | Mechanical wrap-every-string PR. Must follow v4.0; unblocks any actual translation. Separated for review burden |
+| 3 | **v4.2.0** | OIDC engine swap (firebase/php-jwt) | [#417](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/417) | Retire hand-rolled JWT/JWK code. Foundational for SAML signing in v4.7.0. Small, focused, security-positive |
+| 4 | **v4.3.0** | RBAC foundation: user groups | [#334](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/334) | New `groups` table + `user_groups` join. Must come before editable RBAC; doing alone keeps scope tight |
+| 5 | **v4.4.0** | Editable RBAC engine | [#456](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/456) | Replace hard-coded `admin`/`readonly` checks with permission-target gates. Headline RBAC release. Builds on v4.3 (groups) |
+| 6 | **v4.5.0** | Per-subnet ACLs | [#333](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/333) | Resource-level ACLs complementing role-level RBAC. Completes the permissions story |
+| 7 | **v4.6.0** | i18n first non-English: fr-CA (phase 3) | [#1066](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/1066) | First real translation. Validates translator workflow, plural-forms, text expansion. Interleave point — visible i18n progress between auth releases |
+| 8 | **v4.7.0** | SAML 2.0 SSO | [#1065](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/1065) | First major enterprise auth integration. `onelogin/php-saml`. Reuses JWT primitives from v4.2 |
+| 9 | **v4.8.0** | LDAP / Active Directory | [#1069](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/1069) | Most-requested enterprise auth gap. `symfony/ldap`. Independent of SAML |
+| 10 | **v4.9.0** | Generic OAuth 2.0 providers | [#1070](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/1070) | Supplements existing OIDC. `league/oauth2-client` for GitHub/GitLab/Bitbucket/custom |
+| 11 | **v4.10.0** | SCIM 2.0 provisioning | [#1068](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/1068) | Lifecycle automation from Okta/Azure AD/etc. Hand-rolled REST over existing user table |
+| 12 | **v4.11.0** | i18n crowdsourcing: Weblate (phase 4) | [#1071](https://github.com/seanmousseau/Simple-PHP-IPAM/issues/1071) | Wraps the v4.x stream. Self-hosted Weblate, community translations |
+
+### Stream characteristics
+
+- **12 minor releases** — comparable to the existing v3.22 → v3.35 cadence depth.
+- **No release "wastes" a version slot.** Every release has a clear user-facing payoff or a foundational must-do. No procedural releases.
+- **Every release is independently shippable.** Each has its own changelog story. If a release slips, the rest can still proceed (with the hard-constraint exceptions below).
+- **Patch versions reserved for hotfixes** per existing release model. Additional language catalogs after v4.6.0 can ship as v4.6.1/v4.6.2/etc. (catalog-only patches; no app code changes).
+- **`firebase/php-jwt` adoption demoted from "Explicitly not adopted"** in `runtime-dependency-policy.md` — needs corresponding policy doc update at v4.2.0 ship time.
+- Sequencing is **structured, not locked**. Specific feature scope per release is made at scope-lock time per `release-workflow.md`. The hard constraints (below) cannot move; soft constraints can.
+
+### Hard sequencing constraints
+
+These cannot be reordered without breaking dependencies:
+
+- **v4.0 → v4.1** — extraction sweep requires the helpers from infrastructure
+- **v4.0 → v4.6** — first translation requires the catalog wired up
+- **v4.2 → v4.7** — SAML signing reuses JWT primitives; do the swap first
+- **v4.3 → v4.4** — RBAC's permission target should be groups from day one (avoid users → groups refactor mid-RBAC release)
+- **v4.4 → v4.5** — per-subnet ACLs check role permissions; need the role engine first
+- **v4.6 → v4.11** — Weblate without a shipped non-English catalog has nothing to crowdsource
+
+### Soft sequencing constraints
+
+Preferred but flexible:
+
+- **i18n + auth interleave** — v4.0/v4.1 i18n; v4.2 OIDC swap; v4.3/v4.4/v4.5 RBAC; v4.6 i18n; v4.7-4.10 auth; v4.11 i18n. Users see steady progress on both fronts; neither stream feels stalled
+- **OIDC swap before SAML** — minor sequencing nicety; SAML's signing implementation is cleaner inheriting new JWT primitives rather than soon-to-be-retired code
+- **LDAP before OAuth** — enterprise demand for LDAP is more universal than for non-OIDC OAuth; ship the bigger lift first
+
+### When to stop or shorten
+
+Mid-stream sustainability checkpoint after **v4.5 or v4.6**. If any of these are true:
+
+- **Community translation interest hasn't materialized** → drop v4.11.0 (Weblate is overhead without contributors)
+- **Enterprise SAML/LDAP demand hasn't materialized** → drop or reorder v4.7-v4.10 (e.g. ship LDAP only, defer SAML/OAuth/SCIM)
+- **Maintainer bandwidth / burnout signals** → consolidate remaining auth releases (e.g. SAML + LDAP into one release)
+
+The point of the schedule is to have a clear plan; the point of the checkpoint is to avoid sunk-cost completion if reality diverges from the plan.
 
 ---
 
