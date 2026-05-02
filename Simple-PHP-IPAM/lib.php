@@ -1565,6 +1565,27 @@ function ipam_setting_definitions(): array
             'default'     => false,
             'sensitive'   => false,
         ],
+        'backup_runs.retention_days' => [
+            'label'       => 'Backup history retention (days)',
+            'description' => 'Keep backup_runs rows this many days. 0 disables auto-purge. Protected runs (is_protected=1) and in-flight rows are never auto-purged.',
+            'type'        => 'int',
+            'group'       => 'backup',
+            'default'     => 90,
+            'sensitive'   => false,
+            'config_key'  => null,
+            'min'         => 0,
+        ],
+        'backup_runs.prune_batch_size' => [
+            'label'       => 'Backup history prune batch size',
+            'description' => 'Max rows to delete per cron tick. Prevents long lock holds on large purges.',
+            'type'        => 'int',
+            'group'       => 'backup',
+            'default'     => 500,
+            'sensitive'   => false,
+            'config_key'  => null,
+            'min'         => 1,
+            'max'         => 10000,
+        ],
 
         // --- Limits ---
         'limits.import_csv_max_mb' => [

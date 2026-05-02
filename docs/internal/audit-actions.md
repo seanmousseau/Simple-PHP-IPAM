@@ -79,10 +79,12 @@ Single action covers every setting change. The `$details` JSON contains old and 
 ```text
 backup.failed              backup.skipped_concurrent     backup.reaped
 backup.retention_pruned    backup.wal_checkpoint_failed
-backup_run.bulk_delete
+backup_run.bulk_delete     backup_run.purge
 ```
 
 `backup_run.bulk_delete` (`entity_type=backup_run`) — emitted once per row deleted via the History tab's bulk-select UI (v3.22.0 #1052). One audit entry per row keeps forensics aligned with the per-row `backup_run.delete` / `backup_run.delete_failed` vocabulary; `$details` carries `actor=bulk` so bulk deletions are distinguishable from single-row drawer deletes.
+
+`backup_run.purge` (`entity_type=system`, `entity_id=null`) — emitted once per cron tick that actually deletes rows during the time-based `backup_runs` purge (v3.22.0 #1053). Driven by `backup_runs.retention_days` and `backup_runs.prune_batch_size`; skips rows with `status='running'` (reaper's job) and `is_protected=1` (operator keep). One audit entry per call (not per row) — purge volume can be large and per-row entries would drown the audit log; `$details` carries `deleted=N retention_days=R batch_size=B`. No row is emitted on a no-op tick.
 
 `backup.skipped_concurrent` (`entity_type=destination`) — orchestrator refused to start because a non-stale `running` row already exists for the destination (v3.22.0 #815).
 

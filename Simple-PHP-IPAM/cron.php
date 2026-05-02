@@ -228,6 +228,35 @@ try {
 }
 
 // ---------------------------------------------------------------------------
+// Task 6b: backup_runs row purge (v3.22.0 #1053)
+//
+// Time-based purge of old backup_runs rows. Pairs with the reaper above —
+// the reaper handles in-flight rows that got stuck, this handles rows that
+// completed long enough ago that they're no longer useful for forensics.
+// Protected rows (is_protected=1) and 'running' rows are never auto-purged.
+// Remote-blob retention is the GFS path's concern; this is row housekeeping.
+// ---------------------------------------------------------------------------
+try {
+    $retentionDays = to_int(ipam_setting('backup_runs.retention_days'));
+    if ($retentionDays > 0) {
+        $batchSize = to_int(ipam_setting('backup_runs.prune_batch_size'));
+        if ($batchSize <= 0) $batchSize = 500;
+        $purged = ipam_backup_runs_purge($db, $retentionDays, $batchSize);
+        $emit([
+            'task'           => 'backup_runs_purge',
+            'purged'         => $purged,
+            'retention_days' => $retentionDays,
+            'batch_size'     => $batchSize,
+            'ts'             => $now,
+        ]);
+    } else {
+        $emit(['task' => 'backup_runs_purge', 'skipped' => true, 'reason' => 'retention_days=0', 'ts' => $now]);
+    }
+} catch (Throwable $e) {
+    $fail('backup_runs_purge', $e->getMessage());
+}
+
+// ---------------------------------------------------------------------------
 // Task 7: Backup schedules (v3.17.0 — fire any backup_schedules rows that are due)
 //
 // Reordered ahead of the scanner in v3.22.0 (#817): scheduled backups are

@@ -240,6 +240,63 @@ function ipam_backup_active_run_id(PDO $db, int $destId, int $thresholdSecs = IP
     return is_numeric($id) ? (int) $id : null;
 }
 
+/**
+ * Delete backup_runs rows older than $retentionDays in batches of $batchSize.
+ * Returns the number of rows actually deleted on this call.
+ *
+ * Skips rows whose status is 'running' (let the reaper handle those — #815)
+ * and rows where is_protected = 1 (operator-marked keep).
+ *
+ * Uses a portable SELECT-id-then-DELETE-by-id-list pattern rather than
+ * `DELETE ... LIMIT N` because the latter is non-portable: SQLite only
+ * supports it when compiled with SQLITE_ENABLE_UPDATE_DELETE_LIMIT (not the
+ * default in many distros), MySQL supports it natively, and PostgreSQL has
+ * no equivalent.
+ *
+ * One audit entry per call (not per row) — see backup_run.purge in
+ * docs/internal/audit-actions.md.
+ */
+function ipam_backup_runs_purge(PDO $db, int $retentionDays, int $batchSize): int {
+    if ($retentionDays <= 0) return 0;
+    if ($batchSize <= 0) return 0;
+
+    $cutoff = gmdate('Y-m-d H:i:s', time() - $retentionDays * 86400);
+
+    $sel = $db->prepare(
+        "SELECT id FROM backup_runs
+          WHERE started_at < :cutoff
+            AND status != 'running'
+            AND (is_protected IS NULL OR is_protected = 0)
+          ORDER BY id ASC
+          LIMIT " . $batchSize
+    );
+    $sel->execute([':cutoff' => $cutoff]);
+    /** @var list<int|string> $ids */
+    $ids = $sel->fetchAll(PDO::FETCH_COLUMN) ?: [];
+    if (count($ids) === 0) return 0;
+
+    $intIds = [];
+    foreach ($ids as $raw) {
+        if (is_numeric($raw)) $intIds[] = (int) $raw;
+    }
+    if (count($intIds) === 0) return 0;
+
+    $placeholders = implode(',', array_fill(0, count($intIds), '?'));
+    $del = $db->prepare(
+        "DELETE FROM backup_runs WHERE id IN ($placeholders)"
+    );
+    $del->execute($intIds);
+    $count = $del->rowCount();
+
+    if ($count > 0) {
+        audit($db, 'backup_run.purge', 'system', null,
+              'deleted=' . $count
+              . ' retention_days=' . $retentionDays
+              . ' batch_size=' . $batchSize);
+    }
+    return $count;
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Backup
 // ────────────────────────────────────────────────────────────────────────────
