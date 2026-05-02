@@ -309,6 +309,22 @@ try {
 }
 
 // ---------------------------------------------------------------------------
+// Task 8b: Backup stale-run reaper (v3.22.0 #815)
+//
+// Marks any backup_runs row stuck in 'running' past the reap threshold as
+// 'failed' so a crashed/killed orchestrator can't permanently block fresh
+// runs. The orchestrator also calls this inline as a defensive sweep, but
+// the cron task ensures liveness on systems that have scheduled backups
+// disabled and only run manual orchestrators.
+// ---------------------------------------------------------------------------
+try {
+    $reaped = ipam_backup_reap_stale_runs($db);
+    $emit(['task' => 'backup_reaper', 'reaped' => $reaped, 'ts' => $now]);
+} catch (Throwable $e) {
+    $fail('backup_reaper', $e->getMessage());
+}
+
+// ---------------------------------------------------------------------------
 // Task 9: Backup schedules (v3.17.0 — fire any backup_schedules rows that are due)
 //
 // v3.22.0 (#816): per-row pessimistic claim closes the SELECT-then-UPDATE race

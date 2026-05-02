@@ -162,6 +162,85 @@ function ipam_backup_finalize_schedule_run(PDO $db, int $scheduleId): void {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Concurrency guard + stale-row reaper (v3.22.0 #815)
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Default reaper threshold in seconds. A 'running' row older than this is
+ * presumed dead (orchestrator OOM-killed, server rebooted mid-dump, kill -9,
+ * deploy restart, etc.) and gets force-marked 'failed' so subsequent runs
+ * aren't blocked forever. Covers a generous 1h dump+upload window with a 2×
+ * safety factor; small/medium databases finish in well under that.
+ */
+const IPAM_BACKUP_REAP_THRESHOLD_SECS = 7200;
+
+/**
+ * Mark stuck 'running' backup_runs rows as 'failed' and audit each one. Used
+ * by the cron reaper task and as a defensive sweep at the top of
+ * ipam_backup_run_for_destination(). Returns the number of rows reaped.
+ *
+ * Race-safe: the UPDATE re-asserts status='running', so two ticks reaping
+ * the same row produce one audit entry, not two.
+ */
+function ipam_backup_reap_stale_runs(PDO $db, int $thresholdSecs = IPAM_BACKUP_REAP_THRESHOLD_SECS): int {
+    if ($thresholdSecs < 60) $thresholdSecs = 60;
+    $cutoff = gmdate('Y-m-d H:i:s', time() - $thresholdSecs);
+
+    $sel = $db->prepare(
+        "SELECT id, destination_id FROM backup_runs
+          WHERE status = 'running' AND started_at < :cutoff"
+    );
+    $sel->execute([':cutoff' => $cutoff]);
+    /** @var list<array<string,mixed>> $rows */
+    $rows = $sel->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    if (count($rows) === 0) return 0;
+
+    $reaped = 0;
+    $upd = $db->prepare(
+        "UPDATE backup_runs
+            SET status = 'failed',
+                completed_at = " . ipam_dialect()->now() . ",
+                error_message = :msg
+          WHERE id = :id AND status = 'running'"
+    );
+    foreach ($rows as $row) {
+        $rowId  = isset($row['id']) && is_numeric($row['id']) ? (int) $row['id'] : 0;
+        $destId = isset($row['destination_id']) && is_numeric($row['destination_id'])
+            ? (int) $row['destination_id'] : 0;
+        if ($rowId <= 0) continue;
+
+        $upd->execute([
+            ':msg' => 'reaper: stuck running past ' . $thresholdSecs . 's threshold, presumed dead',
+            ':id'  => $rowId,
+        ]);
+        if ($upd->rowCount() > 0) {
+            audit($db, 'backup.reaped', 'backup_run', $rowId,
+                  'destination_id=' . $destId . ' threshold_secs=' . $thresholdSecs);
+            $reaped++;
+        }
+    }
+    return $reaped;
+}
+
+/**
+ * Returns the id of any non-stale 'running' backup_runs row for the given
+ * destination, or null if none. Used as a concurrency guard so two runs
+ * (manual + scheduled, or two ticks racing) cannot both proceed against the
+ * same destination — the second sees the first's row and aborts cleanly.
+ */
+function ipam_backup_active_run_id(PDO $db, int $destId, int $thresholdSecs = IPAM_BACKUP_REAP_THRESHOLD_SECS): ?int {
+    $cutoff = gmdate('Y-m-d H:i:s', time() - $thresholdSecs);
+    $stmt = $db->prepare(
+        "SELECT id FROM backup_runs
+          WHERE destination_id = :dest AND status = 'running' AND started_at >= :cutoff
+          ORDER BY started_at DESC LIMIT 1"
+    );
+    $stmt->execute([':dest' => $destId, ':cutoff' => $cutoff]);
+    $id = $stmt->fetchColumn();
+    return is_numeric($id) ? (int) $id : null;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Backup
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -178,6 +257,22 @@ function ipam_backup_run_for_destination(
     string $triggeredBy = 'manual',
     ?int $nowEpoch = null
 ): array {
+    // v3.22.0 #815: concurrency guard. Reap stuck rows first (so a row that
+    // *looks* active but is past the threshold doesn't permanently block
+    // legitimate runs), then refuse to start if a non-stale running row
+    // exists for this destination.
+    ipam_backup_reap_stale_runs($db);
+    $activeId = ipam_backup_active_run_id($db, $destId);
+    if ($activeId !== null) {
+        audit($db, 'backup.skipped_concurrent', 'destination', $destId,
+              'active_run_id=' . $activeId . ' triggered_by=' . $triggeredBy);
+        throw new RuntimeException(
+            'ipam_backup: another run is already in progress for destination=' . $destId
+            . ' (run id=' . $activeId . '). Concurrent runs are blocked; wait for the active'
+            . ' run to finish or use the reaper if it is stuck.'
+        );
+    }
+
     $dest = ipam_backup_dest_load($db, $destId);
     $client = ipam_backup_dest_client($dest);
 
