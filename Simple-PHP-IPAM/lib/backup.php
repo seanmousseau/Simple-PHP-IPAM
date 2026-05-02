@@ -29,6 +29,139 @@ declare(strict_types=1);
  */
 
 // ────────────────────────────────────────────────────────────────────────────
+// Schedule claim (v3.22.0 #816)
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Atomically claim one due backup_schedules row for execution and advance
+ * its next_run_at to the next scheduled time. Returns the claimed row or
+ * null when nothing is due.
+ *
+ * Closes the SELECT-then-UPDATE race in cron.php where two ticks could
+ * fetch the same schedule and both fire it. The advance happens inside a
+ * short transaction; the actual backup runs OUTSIDE the transaction so we
+ * don't hold a row lock for the duration of the dump+upload.
+ *
+ *   SQLite     — BEGIN IMMEDIATE acquires the database write lock; a
+ *                concurrent BEGIN IMMEDIATE blocks (or returns SQLITE_BUSY,
+ *                which we retry with backoff).
+ *   MySQL/PG   — SELECT ... FOR UPDATE SKIP LOCKED returns the next
+ *                unclaimed row instead of blocking on one another tick is
+ *                already advancing.
+ *
+ * Failed runs do NOT auto-retry on the next cron tick (next_run_at is
+ * advanced on claim, before the run starts). This is the documented
+ * v3.22.0 behaviour change — Run-now is the recovery path. The previous
+ * "retry on every tick until success" behaviour interacted poorly with
+ * destinations that fail predictably (e.g. expired credentials), keeping
+ * cron busy and producing one alert per tick.
+ *
+ * @return array<string,mixed>|null
+ */
+function ipam_backup_claim_due_schedule(PDO $db): ?array {
+    $dialect     = ipam_dialect();
+    $nowSql      = $dialect->now();
+    $isSqlite    = $dialect->driver_name() === 'sqlite';
+    $maxAttempts = 5;
+
+    for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
+        $started = false;
+        try {
+            if ($isSqlite) {
+                // BEGIN IMMEDIATE acquires the SQLite write lock right away
+                // so concurrent claims serialize at the database, not in PHP.
+                // PDO does not track manual BEGIN, so commit/rollback must
+                // also go through exec() rather than the PDO methods.
+                $db->exec("BEGIN IMMEDIATE");
+            } else {
+                $db->beginTransaction();
+            }
+            $started = true;
+
+            $sql = "SELECT s.*, d.name AS dest_name
+                      FROM backup_schedules s
+                      JOIN backup_destinations d ON d.id = s.destination_id
+                     WHERE s.is_active = 1 AND d.is_active = 1
+                       AND (s.next_run_at IS NULL OR s.next_run_at <= $nowSql)
+                     ORDER BY s.next_run_at ASC, s.id ASC
+                     LIMIT 1";
+            if (!$isSqlite) {
+                // SKIP LOCKED so a concurrent cron sees the next unclaimed
+                // row instead of blocking on a row another tick is advancing.
+                $sql .= " FOR UPDATE SKIP LOCKED";
+            }
+
+            $stmt = $db->query($sql);
+            $raw  = ($stmt !== false) ? $stmt->fetch(PDO::FETCH_ASSOC) : false;
+            if (!is_array($raw) || !isset($raw['id']) || !is_numeric($raw['id'])) {
+                if ($isSqlite) $db->exec("COMMIT");
+                else $db->commit();
+                return null;
+            }
+            // is_numeric guard above ensures $raw['id'] is string|int|float.
+            $rawId = $raw['id'];
+            $scheduleId = is_string($rawId) ? (int) $rawId : (int) (is_int($rawId) ? $rawId : (float) $rawId);
+            // Normalize PDO's array<int|string,mixed> down to the contract we
+            // expose, dropping any non-string keys defensively.
+            /** @var array<string,mixed> $row */
+            $row = [];
+            foreach ($raw as $k => $v) {
+                if (is_string($k)) $row[$k] = $v;
+            }
+
+            $next = ipam_backup_next_run_at($row);
+            $upd  = $db->prepare(
+                "UPDATE backup_schedules SET next_run_at = :next WHERE id = :id"
+            );
+            $upd->execute([
+                ':next' => gmdate('Y-m-d H:i:s', $next),
+                ':id'   => $scheduleId,
+            ]);
+
+            if ($isSqlite) $db->exec("COMMIT");
+            else $db->commit();
+            return $row;
+        } catch (Throwable $e) {
+            if ($started) {
+                try {
+                    if ($isSqlite) {
+                        $db->exec("ROLLBACK");
+                    } elseif ($db->inTransaction()) {
+                        $db->rollBack();
+                    }
+                } catch (Throwable) {}
+            }
+            // SQLite BEGIN IMMEDIATE may fail with SQLITE_BUSY when another
+            // process holds the write lock — back off and retry.
+            $msg = $e->getMessage();
+            $busy = $isSqlite && (
+                str_contains($msg, 'database is locked')
+                || str_contains($msg, 'SQLITE_BUSY')
+                || str_contains($msg, 'database table is locked')
+            );
+            if ($busy) {
+                usleep(50_000 * ($attempt + 1));
+                continue;
+            }
+            throw $e;
+        }
+    }
+    return null;
+}
+
+/**
+ * Record the outcome of a scheduled backup run. Always sets last_run_at so
+ * admins see the attempt regardless of success/failure. next_run_at is left
+ * at the value claim() set — failed runs wait for the next scheduled tick.
+ */
+function ipam_backup_finalize_schedule_run(PDO $db, int $scheduleId): void {
+    $upd = $db->prepare(
+        "UPDATE backup_schedules SET last_run_at = " . ipam_dialect()->now() . " WHERE id = :id"
+    );
+    $upd->execute([':id' => $scheduleId]);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Backup
 // ────────────────────────────────────────────────────────────────────────────
 

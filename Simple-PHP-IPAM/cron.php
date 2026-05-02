@@ -310,67 +310,40 @@ try {
 
 // ---------------------------------------------------------------------------
 // Task 9: Backup schedules (v3.17.0 — fire any backup_schedules rows that are due)
+//
+// v3.22.0 (#816): per-row pessimistic claim closes the SELECT-then-UPDATE race
+// where two cron processes could fetch the same due schedule and both fire it.
+// next_run_at is advanced inside the claim transaction; the backup runs OUTSIDE
+// the transaction so a long dump+upload doesn't hold a row lock. Failed runs
+// no longer auto-retry on the next tick (Run-now is the recovery path).
 // ---------------------------------------------------------------------------
 try {
-    $stmt = $db->query(
-        "SELECT s.*, d.name AS dest_name
-         FROM backup_schedules s
-         JOIN backup_destinations d ON d.id = s.destination_id
-         WHERE s.is_active = 1 AND d.is_active = 1
-           AND (s.next_run_at IS NULL OR s.next_run_at <= " . ipam_dialect()->now() . ")"
-    );
-    $due = ($stmt !== false) ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
-    $totalSched = count($due);
-    $okSched = 0;
-    $failSched = 0;
-    foreach ($due as $sched) {
-        if (!is_array($sched)) continue;
-        $destId = isset($sched['destination_id']) && is_numeric($sched['destination_id'])
+    $totalSched = 0;
+    $okSched    = 0;
+    $failSched  = 0;
+    while (($sched = ipam_backup_claim_due_schedule($db)) !== null) {
+        $totalSched++;
+        $destId  = isset($sched['destination_id']) && is_numeric($sched['destination_id'])
             ? (int) $sched['destination_id'] : 0;
         $schedId = isset($sched['id']) && is_numeric($sched['id']) ? (int) $sched['id'] : 0;
         if ($destId <= 0 || $schedId <= 0) continue;
 
-        $runOk = false;
         try {
             // Pass the cron-tick epoch through to retention so prune timing
             // is aligned to the tick rather than drifting with time() (#762).
             ipam_backup_run_for_destination($db, $config, $destId, 'schedule', $tickEpoch);
-            $runOk = true;
             $okSched++;
         } catch (Throwable $e) {
             $failSched++;
             $fail('backup_schedule', 'schedule_id=' . $schedId . ' ' . $e->getMessage());
         }
 
-        // Always record last_run_at (so admins see the attempt); advance next_run_at
-        // only on success so failed runs are retried on the next cron tick.
-        $sNorm = [];
-        foreach ($sched as $k => $v) {
-            if (is_string($k)) $sNorm[$k] = $v;
-        }
+        // Always record last_run_at so admins see the attempt regardless of
+        // success/failure. next_run_at was advanced at claim time.
         try {
-            if ($runOk) {
-                $next = ipam_backup_next_run_at($sNorm);
-                $upd = $db->prepare(
-                    "UPDATE backup_schedules
-                       SET last_run_at = " . ipam_dialect()->now() . ",
-                           next_run_at = :next
-                     WHERE id = :id"
-                );
-                $upd->execute([
-                    ':next' => gmdate('Y-m-d H:i:s', $next),
-                    ':id'   => $schedId,
-                ]);
-            } else {
-                $upd = $db->prepare(
-                    "UPDATE backup_schedules
-                       SET last_run_at = " . ipam_dialect()->now() . "
-                     WHERE id = :id"
-                );
-                $upd->execute([':id' => $schedId]);
-            }
+            ipam_backup_finalize_schedule_run($db, $schedId);
         } catch (Throwable $e) {
-            $fail('backup_schedule', 'next_run_update schedule_id=' . $schedId . ' ' . $e->getMessage());
+            $fail('backup_schedule', 'finalize schedule_id=' . $schedId . ' ' . $e->getMessage());
         }
     }
     $emit(['task' => 'backup_schedules', 'due' => $totalSched, 'ok' => $okSched, 'failed' => $failSched, 'ts' => $now]);
