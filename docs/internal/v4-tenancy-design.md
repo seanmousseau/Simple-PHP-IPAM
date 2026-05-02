@@ -1,8 +1,10 @@
-# v4.0.0 multi-tenancy design
+# Multi-tenancy design (DEFERRED)
 
-> Forward-looking design for the v4.0.0 multi-tenancy release. **Not currently in force** — v4.0.0 has not shipped. This doc is the locked design that v4.0.0 implementation will follow; CLAUDE.md keeps only a one-line pointer.
+> **Status: deferred indefinitely.** Originally planned as v4.0.0, now parked under the `Multi-tenancy (deferred)` GitHub milestone (not a version). Sustainability rationale: the primary beneficiary of multi-tenancy is MSPs running IPAM-as-a-service for many customers; the project has no commercial licensing infrastructure to capture value back from that use case, leaving the project to carry maintenance burden of a feature whose biggest economic beneficiaries return nothing. **Revive when** (a) a licensing model exists (freemium with tenant cap, dual-license, etc.), or (b) a co-maintainer steps up to share the burden.
 >
-> Read this when: planning v4.0.0 work, designing a feature that needs to be tenant-aware, or writing a migration whose version sorts after v4.0.0.
+> The v4.x release stream now focuses on enterprise auth + i18n instead — see `v4-release-stream.md`.
+>
+> **The design below is preserved intact** so that whenever multi-tenancy revives, the architectural decisions don't have to be re-litigated. Read this when: evaluating revival of multi-tenancy, designing a feature that *would* be tenant-aware once revived, or asked "what was the v4.0.0 plan before it deferred?"
 
 ---
 
