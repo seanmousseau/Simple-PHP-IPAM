@@ -12,22 +12,21 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.21.0
+## What's new in v3.22.0
 
-Unified Backup & Restore admin surface, restore-wizard rewrite, and a single `backup_runs` history table. Six pre-existing backup pages collapse into one tabbed admin surface with consistent drawer-driven CRUD.
+Backup/restore concurrency hardening, cron architecture rework, and the §2.4 Notifications scope. Eleven milestone issues plus the §2.4 placeholder commitment.
 
-- **Unified `Backup & Restore` admin (5 tabs)** at `backup_admin.php` — Destinations, Backup, History, Restore, Notifications. Legacy URLs still work; the sidebar nav points at the unified surface.
-- **Per-row backup detail drawer** on the History tab — click any row to open run metadata, then Verify (re-downloads + SHA-256 compares), Download, or Delete (literal `DELETE` confirmation, removes both the row and the remote artifact).
-- **Filter chips on History** — three chip rows (Status / Backup type / Time) above the form; `Last 24h / 7d / 30d / All time` presets, a `database` | `logical` axis, single-URL-param toggles, no JS, Clear-all chip resets.
-- **Drawer-driven CRUD** — destination and schedule editors moved from inline-row collapsing UI into the global drawer, matching the rest of the admin surface.
-- **Inline Run-now progress** — manual backups dispatch async and report success/failure inline rather than redirect-and-flash.
-- **Single `backup_runs` history table** consolidating the v3.7 CLI runner's `backup_history` and the v3.17 destination runner's `backup_log`. Migration preserves all rows from both legacy tables.
-- **Restore wizard rewritten as a phase-locked state machine** — upload-token persistence across phases, deterministic step transitions, explicit cleanup on every exit path. Closes a long tail of restore-edge bugs (#6, #43, #50, #56, #61, #62).
-- **SQL splitter rewritten as a real lexer** — handles escaped quotes, multi-line literals, dollar-quoted PostgreSQL function bodies, and SQL comments. Fixes the "split on every `;`" failure mode on complex dumps.
-- **Sigchild fix on `restore.php`** — the same fallback v3.19.1 applied to `backup_run_dump` is now on the restore path.
-- **Manual upload-and-restore flow** in the Restore tab with passphrase entry for `IPAMBKP2`/`IPAMBKP3` archives.
-- **`db_tools.php` Database admin sidebar nav entry retired** — the page itself is retained for direct-URL data-export flows but no longer exposes any backup functionality.
-- **`docs/backups.md` and `docs/restore.md` rewritten end-to-end** for the unified surface; new internal `docs/internal/backup-restore-runbook.md` for incident response.
+- **Per-schedule pessimistic claim** — `BEGIN IMMEDIATE` on SQLite, `FOR UPDATE SKIP LOCKED` on MySQL/PostgreSQL. Closes the SELECT-then-UPDATE race where two cron processes could both fire the same due schedule. (#816)
+- **Stale-running-row reaper + concurrency guard** — any `backup_runs` row stuck in `running` past the threshold (default 7200s) gets force-marked `failed` so a crashed/killed orchestrator can't permanently block fresh runs. (#815)
+- **Per-event email notifications (§2.4)** — replaces the read-only summary with an editable surface covering eight events: backup-success (scheduled/manual), backup-failure (scheduled/manual), destination connection-test failure, schedule-overdue, retention-prune, encryption-mode change. Includes a server-side connection re-test (alerts on healthy → failing transition) and an overdue detector (per-schedule cooldown).
+- **Bulk multi-select delete on the History tab** — checkboxes + bulk-action bar, CSRF-protected, whole-batch refusal on protected rows. (#1052)
+- **Time-based auto-purge for `backup_runs`** — new `backup_runs.retention_days` (default 90) and `backup_runs.prune_batch_size` (default 500) settings; cron deletes old rows in batches, skipping `running` and protected. (#1053)
+- **Soft time budget for the scanner** — long sweeps no longer starve scheduled backups; scanner defers to next tick when over budget. (#817)
+- **DB credentials no longer in the process environment** — `mysqldump`/`pg_dump` route through `--defaults-extra-file` (0600 temp file) and `PGPASSFILE` (0600 pgpass) instead of `MYSQL_PWD`/`PGPASSWORD`. Fixes a cred-leak via `/proc/<pid>/environ`. (#820)
+- **WAL checkpoint exceptions surfaced** — empty `catch (Throwable) {}` replaced with audit + error_log; failure no longer aborts backup/restore but is now visible. (#819)
+- **`schedule_id` populated on `backup_runs`** — silent NULL since v3.21.0; orchestrator now plumbs the claimed schedule's id through. (#821)
+- **Failed scheduled runs no longer auto-retry every cron tick** — `next_run_at` advanced at claim time, not after success. `Run-now` is the recovery path. Eliminates one-alert-per-tick on persistently-failing destinations.
+- **Behavior change** — see CHANGELOG for full notes; the retired `backup.notify_on_failure` / `backup.notify_on_success` settings are replaced by the eight new event-specific keys with sensible defaults preserving prior intent.
 
 [Full changelog →](CHANGELOG.md)
 

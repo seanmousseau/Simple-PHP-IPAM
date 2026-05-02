@@ -156,16 +156,18 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
         if ($name === '') return 'Name is required.';
         if (!in_array($type, ['s3', 'sftp', 'local'], true)) return 'Invalid destination type.';
 
-        $existing = $db->prepare("SELECT type, config FROM backup_destinations WHERE id=:id");
+        $existing = $db->prepare("SELECT type, config, encrypt FROM backup_destinations WHERE id=:id");
         $existing->execute([':id' => $id]);
         $existingRow = $existing->fetch();
         /** @var array<string, mixed> $existingCfg */
         $existingCfg  = [];
-        $existingType = '';
+        $existingType    = '';
+        $existingEncrypt = 0;
         if (is_array($existingRow)) {
             $existingType = to_str($existingRow['type']);
             $decoded = json_decode(to_str($existingRow['config']), true);
             if (is_array($decoded)) $existingCfg = $decoded;
+            $existingEncrypt = to_int($existingRow['encrypt'] ?? 0) === 1 ? 1 : 0;
         }
 
         if (!is_array($existingRow)) {
@@ -204,6 +206,27 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
             return 'Destination not found.';
         }
         audit($db, 'destination.update', 'destination', $id, "name=$name type=$type");
+
+        // Encryption-mode change: separate audit entry + notification (#§2.4
+        // v3.22.0). Tracked independently of the generic destination.update
+        // audit so an operator scanning for crypto-policy changes can filter
+        // on backup.encryption_change without having to diff old/new payloads.
+        if ($existingEncrypt !== $encrypt) {
+            $oldMode = $existingEncrypt === 1 ? 'encrypted' : 'plaintext';
+            $newMode = $encrypt === 1 ? 'encrypted' : 'plaintext';
+            audit($db, 'backup.encryption_change', 'destination', $id,
+                "name=$name old=$oldMode new=$newMode");
+            try {
+                ipam_backup_notify($db, 'encryption_change', [
+                    'dest'     => ['name' => $name],
+                    'old_mode' => $oldMode,
+                    'new_mode' => $newMode,
+                ]);
+            } catch (\Throwable $ne) {
+                error_log('[backup] encryption-change notify dispatch failed: ' . $ne->getMessage());
+            }
+        }
+
         $_SESSION['flash_test'] = [
             'destination_id' => $id,
             'result'         => ipam_destination_test_now($db, $id, 'auto-on-save'),

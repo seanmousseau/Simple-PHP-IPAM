@@ -29,6 +29,281 @@ declare(strict_types=1);
  */
 
 // ────────────────────────────────────────────────────────────────────────────
+// Schedule claim (v3.22.0 #816)
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Atomically claim one due backup_schedules row for execution and advance
+ * its next_run_at to the next scheduled time. Returns the claimed row or
+ * null when nothing is due.
+ *
+ * Closes the SELECT-then-UPDATE race in cron.php where two ticks could
+ * fetch the same schedule and both fire it. The advance happens inside a
+ * short transaction; the actual backup runs OUTSIDE the transaction so we
+ * don't hold a row lock for the duration of the dump+upload.
+ *
+ *   SQLite     — BEGIN IMMEDIATE acquires the database write lock; a
+ *                concurrent BEGIN IMMEDIATE blocks (or returns SQLITE_BUSY,
+ *                which we retry with backoff).
+ *   MySQL/PG   — SELECT ... FOR UPDATE SKIP LOCKED returns the next
+ *                unclaimed row instead of blocking on one another tick is
+ *                already advancing.
+ *
+ * Failed runs do NOT auto-retry on the next cron tick (next_run_at is
+ * advanced on claim, before the run starts). This is the documented
+ * v3.22.0 behaviour change — Run-now is the recovery path. The previous
+ * "retry on every tick until success" behaviour interacted poorly with
+ * destinations that fail predictably (e.g. expired credentials), keeping
+ * cron busy and producing one alert per tick.
+ *
+ * @return array<string,mixed>|null
+ */
+function ipam_backup_claim_due_schedule(PDO $db): ?array {
+    $dialect     = ipam_dialect();
+    $nowSql      = $dialect->now();
+    $isSqlite    = $dialect->driver_name() === 'sqlite';
+    $maxAttempts = 5;
+    $lastBusy    = null;
+
+    for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
+        $started = false;
+        try {
+            if ($isSqlite) {
+                // BEGIN IMMEDIATE acquires the SQLite write lock right away
+                // so concurrent claims serialize at the database, not in PHP.
+                // PDO does not track manual BEGIN, so commit/rollback must
+                // also go through exec() rather than the PDO methods.
+                $db->exec("BEGIN IMMEDIATE");
+            } else {
+                $db->beginTransaction();
+            }
+            $started = true;
+
+            $sql = "SELECT s.*, d.name AS dest_name
+                      FROM backup_schedules s
+                      JOIN backup_destinations d ON d.id = s.destination_id
+                     WHERE s.is_active = 1 AND d.is_active = 1
+                       AND (s.next_run_at IS NULL OR s.next_run_at <= $nowSql)
+                     ORDER BY s.next_run_at ASC, s.id ASC
+                     LIMIT 1";
+            if (!$isSqlite) {
+                // SKIP LOCKED so a concurrent cron sees the next unclaimed
+                // row instead of blocking on a row another tick is advancing.
+                $sql .= " FOR UPDATE SKIP LOCKED";
+            }
+
+            $stmt = $db->query($sql);
+            $raw  = ($stmt !== false) ? $stmt->fetch(PDO::FETCH_ASSOC) : false;
+            if (!is_array($raw) || !isset($raw['id']) || !is_numeric($raw['id'])) {
+                if ($isSqlite) $db->exec("COMMIT");
+                else $db->commit();
+                return null;
+            }
+            // is_numeric guard above ensures $raw['id'] is string|int|float.
+            $rawId = $raw['id'];
+            $scheduleId = is_string($rawId) ? (int) $rawId : (int) (is_int($rawId) ? $rawId : (float) $rawId);
+            // Normalize PDO's array<int|string,mixed> down to the contract we
+            // expose, dropping any non-string keys defensively.
+            /** @var array<string,mixed> $row */
+            $row = [];
+            foreach ($raw as $k => $v) {
+                if (is_string($k)) $row[$k] = $v;
+            }
+
+            $next = ipam_backup_next_run_at($row);
+            $upd  = $db->prepare(
+                "UPDATE backup_schedules SET next_run_at = :next WHERE id = :id"
+            );
+            $upd->execute([
+                ':next' => gmdate('Y-m-d H:i:s', $next),
+                ':id'   => $scheduleId,
+            ]);
+
+            if ($isSqlite) $db->exec("COMMIT");
+            else $db->commit();
+            return $row;
+        } catch (Throwable $e) {
+            if ($started) {
+                try {
+                    if ($isSqlite) {
+                        $db->exec("ROLLBACK");
+                    } elseif ($db->inTransaction()) {
+                        $db->rollBack();
+                    }
+                } catch (Throwable) {}
+            }
+            // SQLite BEGIN IMMEDIATE may fail with SQLITE_BUSY when another
+            // process holds the write lock — back off and retry.
+            $msg = $e->getMessage();
+            $busy = $isSqlite && (
+                str_contains($msg, 'database is locked')
+                || str_contains($msg, 'SQLITE_BUSY')
+                || str_contains($msg, 'database table is locked')
+            );
+            if ($busy) {
+                $lastBusy = $e;
+                usleep(50_000 * ($attempt + 1));
+                continue;
+            }
+            throw $e;
+        }
+    }
+    // Exhausted retries on SQLITE_BUSY — surface the failure rather than
+    // returning null, which the caller would interpret as "nothing due"
+    // and silently skip a backup that was actually contended (#816 CR).
+    if ($lastBusy instanceof Throwable) throw $lastBusy;
+    return null;
+}
+
+/**
+ * Record the outcome of a scheduled backup run. Always sets last_run_at so
+ * admins see the attempt regardless of success/failure. next_run_at is left
+ * at the value claim() set — failed runs wait for the next scheduled tick.
+ */
+function ipam_backup_finalize_schedule_run(PDO $db, int $scheduleId): void {
+    $upd = $db->prepare(
+        "UPDATE backup_schedules SET last_run_at = " . ipam_dialect()->now() . " WHERE id = :id"
+    );
+    $upd->execute([':id' => $scheduleId]);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Concurrency guard + stale-row reaper (v3.22.0 #815)
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Default reaper threshold in seconds. A 'running' row older than this is
+ * presumed dead (orchestrator OOM-killed, server rebooted mid-dump, kill -9,
+ * deploy restart, etc.) and gets force-marked 'failed' so subsequent runs
+ * aren't blocked forever. Covers a generous 1h dump+upload window with a 2×
+ * safety factor; small/medium databases finish in well under that.
+ */
+const IPAM_BACKUP_REAP_THRESHOLD_SECS = 7200;
+
+/**
+ * Mark stuck 'running' backup_runs rows as 'failed' and audit each one. Used
+ * by the cron reaper task and as a defensive sweep at the top of
+ * ipam_backup_run_for_destination(). Returns the number of rows reaped.
+ *
+ * Race-safe: the UPDATE re-asserts status='running', so two ticks reaping
+ * the same row produce one audit entry, not two.
+ */
+function ipam_backup_reap_stale_runs(PDO $db, int $thresholdSecs = IPAM_BACKUP_REAP_THRESHOLD_SECS): int {
+    if ($thresholdSecs < 60) $thresholdSecs = 60;
+    $cutoff = gmdate('Y-m-d H:i:s', time() - $thresholdSecs);
+
+    $sel = $db->prepare(
+        "SELECT id, destination_id FROM backup_runs
+          WHERE status = 'running' AND started_at < :cutoff"
+    );
+    $sel->execute([':cutoff' => $cutoff]);
+    /** @var list<array<string,mixed>> $rows */
+    $rows = $sel->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    if (count($rows) === 0) return 0;
+
+    $reaped = 0;
+    $upd = $db->prepare(
+        "UPDATE backup_runs
+            SET status = 'failed',
+                completed_at = " . ipam_dialect()->now() . ",
+                error_message = :msg
+          WHERE id = :id AND status = 'running'"
+    );
+    foreach ($rows as $row) {
+        $rowId  = isset($row['id']) && is_numeric($row['id']) ? (int) $row['id'] : 0;
+        $destId = isset($row['destination_id']) && is_numeric($row['destination_id'])
+            ? (int) $row['destination_id'] : 0;
+        if ($rowId <= 0) continue;
+
+        $upd->execute([
+            ':msg' => 'reaper: stuck running past ' . $thresholdSecs . 's threshold, presumed dead',
+            ':id'  => $rowId,
+        ]);
+        if ($upd->rowCount() > 0) {
+            audit($db, 'backup.reaped', 'backup_run', $rowId,
+                  'destination_id=' . $destId . ' threshold_secs=' . $thresholdSecs);
+            $reaped++;
+        }
+    }
+    return $reaped;
+}
+
+/**
+ * Returns the id of any non-stale 'running' backup_runs row for the given
+ * destination, or null if none. Used as a concurrency guard so two runs
+ * (manual + scheduled, or two ticks racing) cannot both proceed against the
+ * same destination — the second sees the first's row and aborts cleanly.
+ */
+function ipam_backup_active_run_id(PDO $db, int $destId, int $thresholdSecs = IPAM_BACKUP_REAP_THRESHOLD_SECS): ?int {
+    $cutoff = gmdate('Y-m-d H:i:s', time() - $thresholdSecs);
+    $stmt = $db->prepare(
+        "SELECT id FROM backup_runs
+          WHERE destination_id = :dest AND status = 'running' AND started_at >= :cutoff
+          ORDER BY started_at DESC LIMIT 1"
+    );
+    $stmt->execute([':dest' => $destId, ':cutoff' => $cutoff]);
+    $id = $stmt->fetchColumn();
+    return is_numeric($id) ? (int) $id : null;
+}
+
+/**
+ * Delete backup_runs rows older than $retentionDays in batches of $batchSize.
+ * Returns the number of rows actually deleted on this call.
+ *
+ * Skips rows whose status is 'running' (let the reaper handle those — #815)
+ * and rows where is_protected = 1 (operator-marked keep).
+ *
+ * Uses a portable SELECT-id-then-DELETE-by-id-list pattern rather than
+ * `DELETE ... LIMIT N` because the latter is non-portable: SQLite only
+ * supports it when compiled with SQLITE_ENABLE_UPDATE_DELETE_LIMIT (not the
+ * default in many distros), MySQL supports it natively, and PostgreSQL has
+ * no equivalent.
+ *
+ * One audit entry per call (not per row) — see backup_run.purge in
+ * docs/internal/audit-actions.md.
+ */
+function ipam_backup_runs_purge(PDO $db, int $retentionDays, int $batchSize): int {
+    if ($retentionDays <= 0) return 0;
+    if ($batchSize <= 0) return 0;
+
+    $cutoff = gmdate('Y-m-d H:i:s', time() - $retentionDays * 86400);
+
+    $sel = $db->prepare(
+        "SELECT id FROM backup_runs
+          WHERE started_at < :cutoff
+            AND status != 'running'
+            AND (is_protected IS NULL OR is_protected = 0)
+          ORDER BY id ASC
+          LIMIT " . $batchSize
+    );
+    $sel->execute([':cutoff' => $cutoff]);
+    /** @var list<int|string> $ids */
+    $ids = $sel->fetchAll(PDO::FETCH_COLUMN) ?: [];
+    if (count($ids) === 0) return 0;
+
+    $intIds = [];
+    foreach ($ids as $raw) {
+        if (is_numeric($raw)) $intIds[] = (int) $raw;
+    }
+    if (count($intIds) === 0) return 0;
+
+    $placeholders = implode(',', array_fill(0, count($intIds), '?'));
+    $del = $db->prepare(
+        "DELETE FROM backup_runs WHERE id IN ($placeholders)"
+    );
+    $del->execute($intIds);
+    $count = $del->rowCount();
+
+    if ($count > 0) {
+        audit($db, 'backup_run.purge', 'system', null,
+              'deleted=' . $count
+              . ' retention_days=' . $retentionDays
+              . ' batch_size=' . $batchSize);
+    }
+    return $count;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Backup
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -43,9 +318,29 @@ function ipam_backup_run_for_destination(
     array $config,
     int $destId,
     string $triggeredBy = 'manual',
-    ?int $nowEpoch = null
+    ?int $nowEpoch = null,
+    ?int $scheduleId = null
 ): array {
+    // v3.22.0 #815: concurrency guard. Reap stuck rows first (so a row that
+    // *looks* active but is past the threshold doesn't permanently block
+    // legitimate runs), then refuse to start if a non-stale running row
+    // exists for this destination.
+    ipam_backup_reap_stale_runs($db);
+    $activeId = ipam_backup_active_run_id($db, $destId);
+    if ($activeId !== null) {
+        audit($db, 'backup.skipped_concurrent', 'destination', $destId,
+              'active_run_id=' . $activeId . ' triggered_by=' . $triggeredBy);
+        throw new RuntimeException(
+            'ipam_backup: another run is already in progress for destination=' . $destId
+            . ' (run id=' . $activeId . '). Concurrent runs are blocked; wait for the active'
+            . ' run to finish or use the reaper if it is stuck.'
+        );
+    }
+
     $dest = ipam_backup_dest_load($db, $destId);
+    // Thread triggered_by into the destination row so ipam_backup_notify()
+    // can pick the right scheduled-vs-manual notification setting (v3.22.0).
+    $dest['triggered_by'] = $triggeredBy;
     $client = ipam_backup_dest_client($dest);
 
     $tmpSql = ipam_backup_dump_to_tmp($db);
@@ -69,7 +364,7 @@ function ipam_backup_run_for_destination(
     // Random 8-hex-char suffix prevents filename collisions when two
     // runs land in the same second (e.g. manual + scheduled overlap).
     $remoteName = sprintf('ipam-backup-%s-%s%s', gmdate('Ymd-His'), bin2hex(random_bytes(4)), $extension);
-    $logId = ipam_backup_insert_log($db, $destId, $triggeredBy, 'running', $remoteName);
+    $logId = ipam_backup_insert_log($db, $destId, $triggeredBy, 'running', $remoteName, $scheduleId);
 
     try {
         $meta = $client->upload($tmpFile, $remoteName);
@@ -97,6 +392,14 @@ function ipam_backup_run_for_destination(
         $pruned = ipam_backup_apply_retention($db, $destId, $nowEpoch);
     } catch (Throwable $e) {
         error_log('[backup] retention failed for destination ' . $destId . ': ' . $e->getMessage());
+    }
+
+    if ($pruned > 0) {
+        try {
+            ipam_backup_notify($db, 'retention_prune', ['dest' => $dest, 'pruned' => $pruned]);
+        } catch (Throwable $ne) {
+            error_log('[backup] retention notify dispatch failed: ' . $ne->getMessage());
+        }
     }
 
     audit($db, 'backup.run', 'destination', $destId,
@@ -168,8 +471,12 @@ function ipam_backup_dest_client(array $dest): BackupClientInterface
  * dump tool. Shared by the v3.17 remote-destination pipeline and the
  * legacy CLI backup runner so both stay in sync if a flag changes.
  *
- * Password is always passed via env (MYSQL_PWD / PGPASSWORD), never on
- * the command line.
+ * Password is passed via env (MYSQL_PWD / PGPASSWORD), never on the command
+ * line. Inherited DB password env vars from the parent shell are stripped
+ * defensively before merging in our own value (PR #1074 CR). Migrating
+ * this caller to the temp-file pattern (#820 destination orchestrator
+ * extension) is deferred to v3.22.1 hotfix — the original v3.22.0 #820 fix
+ * shipped lib.php and restore.php only.
  *
  * @param array<string,mixed> $config global $config
  * @return array{cmd: list<string>, env: array<string,string>}
@@ -180,6 +487,10 @@ function ipam_backup_native_cmd(string $driver, array $config): array
     $user = is_string($config['db_user'] ?? null) ? $config['db_user'] : '';
     $pass = is_string($config['db_pass'] ?? null) ? $config['db_pass'] : '';
     $existingEnv = getenv(); // returns array<string,string> when called without args
+    // Strip any inherited DB password env vars before merging in our own.
+    // A parent shell already exporting MYSQL_PWD/PGPASSWORD shouldn't be
+    // able to silently override what the app intends to send to the child.
+    unset($existingEnv['MYSQL_PWD'], $existingEnv['PGPASSWORD']);
 
     // Mirror the running app's connection target. Substituting defaults for
     // omitted DSN keys would force TCP onto Unix-socket configs (mismatching
@@ -361,8 +672,14 @@ function ipam_backup_encrypt_to_tmp(string $srcPath, string $appSecret): string
  * flag — encrypted destinations write 'stored' (v3.17 IPAMBKP2 mode);
  * unencrypted destinations write 'unencrypted'.
  */
-function ipam_backup_insert_log(PDO $db, int $destId, string $triggeredBy, string $status, string $filename): int
-{
+function ipam_backup_insert_log(
+    PDO $db,
+    int $destId,
+    string $triggeredBy,
+    string $status,
+    string $filename,
+    ?int $scheduleId = null
+): int {
     $now = ipam_dialect()->now();
 
     // Resolve encryption mode from the destination's encrypt flag.
@@ -381,16 +698,20 @@ function ipam_backup_insert_log(PDO $db, int $destId, string $triggeredBy, strin
     $stmt = $db->prepare(
         "INSERT INTO backup_runs " .
         "(destination_id, schedule_id, backup_type, encryption_mode, triggered_by, status, filename, source_version, started_at) " .
-        "VALUES (:d, NULL, 'database', :em, :t, :s, :f, :sv, $now)"
+        "VALUES (:d, :sid, 'database', :em, :t, :s, :f, :sv, $now)"
     );
-    $stmt->execute([
-        ':d'  => $destId,
-        ':em' => $encMode,
-        ':t'  => $triggeredBy,
-        ':s'  => $status,
-        ':f'  => $filename,
-        ':sv' => IPAM_VERSION,
-    ]);
+    $stmt->bindValue(':d',   $destId, PDO::PARAM_INT);
+    if ($scheduleId === null) {
+        $stmt->bindValue(':sid', null, PDO::PARAM_NULL);
+    } else {
+        $stmt->bindValue(':sid', $scheduleId, PDO::PARAM_INT);
+    }
+    $stmt->bindValue(':em',  $encMode);
+    $stmt->bindValue(':t',   $triggeredBy);
+    $stmt->bindValue(':s',   $status);
+    $stmt->bindValue(':f',   $filename);
+    $stmt->bindValue(':sv',  IPAM_VERSION);
+    $stmt->execute();
     return (int) $db->lastInsertId();
 }
 
@@ -1121,4 +1442,121 @@ function ipam_restore_split_sql_statements(string $sql): array
         $out[] = $tail;
     }
     return $out;
+}
+
+/**
+ * Schedule-overdue detector (cron Task 6d, v3.22.0 §2.4).
+ *
+ * Walks `backup_schedules` JOIN `backup_destinations` for active
+ * (schedule + destination) rows, computes a cutoff at `now - graceMinutes`,
+ * and treats any schedule whose `next_run_at` predates the cutoff as
+ * overdue. For each newly-overdue schedule, writes a `backup.schedule_overdue`
+ * audit row and (when `$notifyEnabled`) dispatches an email via
+ * `ipam_backup_notify('schedule_overdue', ...)`.
+ *
+ * Per-schedule cooldown is keyed by the `next_run_at` value at the time the
+ * alert fires: once a schedule has been alerted for a given expected_at, no
+ * further alert is emitted until the schedule successfully fires (which moves
+ * `next_run_at` forward) and goes overdue again. State persists in the JSON
+ * setting `backup.schedule_overdue_state`.
+ *
+ * The function isolates the cron logic so it can be unit-tested without
+ * spinning up the cron pipeline. Behaviour matches the inline version that
+ * shipped in commit 5a26a95 byte-for-byte.
+ *
+ * @param int|null $nowTs Override "now" timestamp for tests; pass null in prod.
+ * @return array{
+ *     overdue:       int,
+ *     alerted:       list<int>,
+ *     grace_minutes: int,
+ * } overdue = total overdue schedules detected; alerted = schedule_ids that
+ *   were freshly alerted on this call (i.e. cooldown did not suppress).
+ */
+function ipam_backup_detect_overdue_schedules(PDO $db, ?int $nowTs = null): array
+{
+    $notifyEnabled = (bool) ipam_setting('backup.notify_schedule_overdue');
+    $graceMinutes  = to_int(ipam_setting('backup.notify_overdue_grace_minutes'));
+    if ($graceMinutes < 5) $graceMinutes = 5;
+
+    $stateRaw = to_str(ipam_setting('backup.schedule_overdue_state', '{}'));
+    $stateDecoded = json_decode($stateRaw, true);
+    /** @var array<string, array<string, mixed>> $overdueState */
+    $overdueState = is_array($stateDecoded) ? $stateDecoded : [];
+
+    $stmt = $db->query("
+        SELECT s.id AS schedule_id, s.destination_id, s.next_run_at,
+               d.name AS destination_name, d.is_active AS dest_active
+        FROM backup_schedules s
+        JOIN backup_destinations d ON d.id = s.destination_id
+        WHERE s.is_active = 1
+          AND d.is_active = 1
+          AND s.next_run_at IS NOT NULL
+    ");
+    /** @var list<array<string, mixed>> $rows */
+    $rows = $stmt !== false ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
+    $nowTs    = $nowTs ?? time();
+    $cutoffTs = $nowTs - ($graceMinutes * 60);
+    $overdueCount  = 0;
+    /** @var list<int> $alertedIds */
+    $alertedIds    = [];
+    $aliveSchedKeys = [];
+
+    foreach ($rows as $r) {
+        $schedId = to_int($r['schedule_id'] ?? 0);
+        if ($schedId <= 0) continue;
+        $aliveSchedKeys[(string) $schedId] = true;
+        $nextRunAt = to_str($r['next_run_at'] ?? '');
+        if ($nextRunAt === '') continue;
+        $nextRunTs = strtotime($nextRunAt . ' UTC');
+        if ($nextRunTs === false) continue;
+        if ($nextRunTs >= $cutoffTs) continue;
+
+        $overdueCount++;
+        $key = (string) $schedId;
+        $prev = $overdueState[$key] ?? [];
+        $alertedFor = is_string($prev['alerted_for'] ?? null) ? $prev['alerted_for'] : '';
+
+        if ($alertedFor === $nextRunAt) {
+            // Already alerted on this exact expected-fire-time; skip until the
+            // schedule fires and moves next_run_at forward.
+            continue;
+        }
+
+        $overdueMinutes = (int) floor(($nowTs - $nextRunTs) / 60);
+        $destName = to_str($r['destination_name'] ?? 'unknown');
+        audit($db, 'backup.schedule_overdue', 'schedule', $schedId,
+              "destination=$destName expected_at=$nextRunAt overdue_minutes=$overdueMinutes");
+        if ($notifyEnabled) {
+            try {
+                ipam_backup_notify($db, 'schedule_overdue', [
+                    'schedule_id'      => $schedId,
+                    'destination_name' => $destName,
+                    'expected_at'      => $nextRunAt,
+                    'overdue_minutes'  => $overdueMinutes,
+                ]);
+            } catch (Throwable $ne) {
+                error_log('[backup] schedule-overdue notify dispatch failed: ' . $ne->getMessage());
+            }
+        }
+        $overdueState[$key] = [
+            'alerted_for'     => $nextRunAt,
+            'last_alerted_at' => date('c', $nowTs),
+        ];
+        $alertedIds[] = $schedId;
+    }
+
+    foreach (array_keys($overdueState) as $k) {
+        if (!isset($aliveSchedKeys[$k])) unset($overdueState[$k]);
+    }
+
+    $encoded = json_encode($overdueState, JSON_UNESCAPED_SLASHES);
+    if (is_string($encoded)) {
+        ipam_setting_set($db, 'backup.schedule_overdue_state', $encoded);
+    }
+
+    return [
+        'overdue'       => $overdueCount,
+        'alerted'       => $alertedIds,
+        'grace_minutes' => $graceMinutes,
+    ];
 }

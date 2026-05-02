@@ -72,11 +72,78 @@ if ($activeTab === 'destinations') {
     require __DIR__ . '/lib/backup_admin_restore.php';
     $restoreState = ipam_backup_admin_restore_handle($db, $config);
 } elseif ($activeTab === 'notifications') {
+    /** @var string $notifyFlash */
+    $notifyFlash = '';
+    /** @var string $notifyFlashKind */
+    $notifyFlashKind = 'success';
+
+    $notifyEventKeys = [
+        'success_scheduled', 'success_manual',
+        'failure_scheduled', 'failure_manual',
+        'destination_conn_failure', 'schedule_overdue',
+        'retention_prune', 'encryption_change',
+    ];
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST'
+        && to_str($_POST['action'] ?? '') === 'save_notifications'
+    ) {
+        $uid = to_int($_SESSION['uid'] ?? 0);
+        try {
+            $db->beginTransaction();
+            foreach ($notifyEventKeys as $evKey) {
+                $val = isset($_POST['event_' . $evKey]);
+                ipam_setting_set($db, 'backup.notify_' . $evKey, $val, $uid > 0 ? $uid : null);
+            }
+            $grace = to_int($_POST['overdue_grace_minutes'] ?? 60);
+            if ($grace < 5) $grace = 5;
+            if ($grace > 1440) $grace = 1440;
+            ipam_setting_set($db, 'backup.notify_overdue_grace_minutes', $grace, $uid > 0 ? $uid : null);
+            $db->commit();
+            $notifyFlash = 'Notification preferences saved.';
+        } catch (\Throwable $e) {
+            if ($db->inTransaction()) $db->rollBack();
+            $notifyFlash = 'Failed to save preferences: ' . $e->getMessage();
+            $notifyFlashKind = 'danger';
+        }
+    }
+
+    $events = [];
+    foreach ($notifyEventKeys as $evKey) {
+        $events[$evKey] = (bool) ipam_setting('backup.notify_' . $evKey);
+    }
+
+    // Resolve the multi-user alert recipients for display.
+    $alertUserIdsRaw = ipam_setting('alert.recipient_user_ids');
+    $alertUserIds = [];
+    if (is_array($alertUserIdsRaw)) {
+        foreach ($alertUserIdsRaw as $rid) {
+            if (is_numeric($rid)) $alertUserIds[] = (int) $rid;
+        }
+    }
+    $alertUsers = [];
+    if ($alertUserIds !== []) {
+        $placeholders = implode(',', array_fill(0, count($alertUserIds), '?'));
+        $stmt = $db->prepare(
+            "SELECT id, username, email FROM users WHERE id IN ($placeholders) AND email <> '' ORDER BY username"
+        );
+        $stmt->execute($alertUserIds);
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $u) {
+            $alertUsers[] = [
+                'id'       => to_int($u['id'] ?? 0),
+                'username' => to_str($u['username'] ?? ''),
+                'email'    => to_str($u['email'] ?? ''),
+            ];
+        }
+    }
+
     $notifyState = [
-        'notifyOnFailure' => (bool) ipam_setting('backup.notify_on_failure'),
-        'notifyOnSuccess' => (bool) ipam_setting('backup.notify_on_success'),
-        'alertEmail'      => to_str(ipam_setting('alert_email') ?? ''),
-        'smtpEnabled'     => (bool) ipam_setting('smtp.enabled'),
+        'events'              => $events,
+        'overdueGraceMinutes' => to_int(ipam_setting('backup.notify_overdue_grace_minutes')),
+        'alertEmail'          => to_str(ipam_setting('alert.email') ?? ''),
+        'smtpEnabled'         => (bool) ipam_setting('smtp.enabled'),
+        'alertUsers'          => $alertUsers,
+        'flash'               => $notifyFlash,
+        'flashKind'           => $notifyFlashKind,
     ];
 }
 
