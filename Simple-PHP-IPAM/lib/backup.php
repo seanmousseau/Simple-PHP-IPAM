@@ -1429,3 +1429,120 @@ function ipam_restore_split_sql_statements(string $sql): array
     }
     return $out;
 }
+
+/**
+ * Schedule-overdue detector (cron Task 6d, v3.22.0 §2.4).
+ *
+ * Walks `backup_schedules` JOIN `backup_destinations` for active
+ * (schedule + destination) rows, computes a cutoff at `now - graceMinutes`,
+ * and treats any schedule whose `next_run_at` predates the cutoff as
+ * overdue. For each newly-overdue schedule, writes a `backup.schedule_overdue`
+ * audit row and (when `$notifyEnabled`) dispatches an email via
+ * `ipam_backup_notify('schedule_overdue', ...)`.
+ *
+ * Per-schedule cooldown is keyed by the `next_run_at` value at the time the
+ * alert fires: once a schedule has been alerted for a given expected_at, no
+ * further alert is emitted until the schedule successfully fires (which moves
+ * `next_run_at` forward) and goes overdue again. State persists in the JSON
+ * setting `backup.schedule_overdue_state`.
+ *
+ * The function isolates the cron logic so it can be unit-tested without
+ * spinning up the cron pipeline. Behaviour matches the inline version that
+ * shipped in commit 5a26a95 byte-for-byte.
+ *
+ * @param int|null $nowTs Override "now" timestamp for tests; pass null in prod.
+ * @return array{
+ *     overdue:       int,
+ *     alerted:       list<int>,
+ *     grace_minutes: int,
+ * } overdue = total overdue schedules detected; alerted = schedule_ids that
+ *   were freshly alerted on this call (i.e. cooldown did not suppress).
+ */
+function ipam_backup_detect_overdue_schedules(PDO $db, ?int $nowTs = null): array
+{
+    $notifyEnabled = (bool) ipam_setting('backup.notify_schedule_overdue');
+    $graceMinutes  = to_int(ipam_setting('backup.notify_overdue_grace_minutes'));
+    if ($graceMinutes < 5) $graceMinutes = 5;
+
+    $stateRaw = to_str(ipam_setting('backup.schedule_overdue_state', '{}'));
+    $stateDecoded = json_decode($stateRaw, true);
+    /** @var array<string, array<string, mixed>> $overdueState */
+    $overdueState = is_array($stateDecoded) ? $stateDecoded : [];
+
+    $stmt = $db->query("
+        SELECT s.id AS schedule_id, s.destination_id, s.next_run_at,
+               d.name AS destination_name, d.is_active AS dest_active
+        FROM backup_schedules s
+        JOIN backup_destinations d ON d.id = s.destination_id
+        WHERE s.is_active = 1
+          AND d.is_active = 1
+          AND s.next_run_at IS NOT NULL
+    ");
+    /** @var list<array<string, mixed>> $rows */
+    $rows = $stmt !== false ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
+    $nowTs    = $nowTs ?? time();
+    $cutoffTs = $nowTs - ($graceMinutes * 60);
+    $overdueCount  = 0;
+    /** @var list<int> $alertedIds */
+    $alertedIds    = [];
+    $aliveSchedKeys = [];
+
+    foreach ($rows as $r) {
+        $schedId = to_int($r['schedule_id'] ?? 0);
+        if ($schedId <= 0) continue;
+        $aliveSchedKeys[(string) $schedId] = true;
+        $nextRunAt = to_str($r['next_run_at'] ?? '');
+        if ($nextRunAt === '') continue;
+        $nextRunTs = strtotime($nextRunAt . ' UTC');
+        if ($nextRunTs === false) continue;
+        if ($nextRunTs >= $cutoffTs) continue;
+
+        $overdueCount++;
+        $key = (string) $schedId;
+        $prev = $overdueState[$key] ?? [];
+        $alertedFor = is_string($prev['alerted_for'] ?? null) ? $prev['alerted_for'] : '';
+
+        if ($alertedFor === $nextRunAt) {
+            // Already alerted on this exact expected-fire-time; skip until the
+            // schedule fires and moves next_run_at forward.
+            continue;
+        }
+
+        $overdueMinutes = (int) floor(($nowTs - $nextRunTs) / 60);
+        $destName = to_str($r['destination_name'] ?? 'unknown');
+        audit($db, 'backup.schedule_overdue', 'schedule', $schedId,
+              "destination=$destName expected_at=$nextRunAt overdue_minutes=$overdueMinutes");
+        if ($notifyEnabled) {
+            try {
+                ipam_backup_notify($db, 'schedule_overdue', [
+                    'schedule_id'      => $schedId,
+                    'destination_name' => $destName,
+                    'expected_at'      => $nextRunAt,
+                    'overdue_minutes'  => $overdueMinutes,
+                ]);
+            } catch (Throwable $ne) {
+                error_log('[backup] schedule-overdue notify dispatch failed: ' . $ne->getMessage());
+            }
+        }
+        $overdueState[$key] = [
+            'alerted_for'     => $nextRunAt,
+            'last_alerted_at' => date('c', $nowTs),
+        ];
+        $alertedIds[] = $schedId;
+    }
+
+    foreach (array_keys($overdueState) as $k) {
+        if (!isset($aliveSchedKeys[$k])) unset($overdueState[$k]);
+    }
+
+    $encoded = json_encode($overdueState, JSON_UNESCAPED_SLASHES);
+    if (is_string($encoded)) {
+        ipam_setting_set($db, 'backup.schedule_overdue_state', $encoded);
+    }
+
+    return [
+        'overdue'       => $overdueCount,
+        'alerted'       => $alertedIds,
+        'grace_minutes' => $graceMinutes,
+    ];
+}
