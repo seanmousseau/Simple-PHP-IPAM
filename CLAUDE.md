@@ -76,6 +76,18 @@ Operational procedures live alongside the code, one Read away. CLAUDE.md is poli
 | `docs/internal/release-kickoff-prompt.md` | Starting a new release session (paste-and-go template) |
 | `docs/internal/coderabbit-config.md` | Debugging `.coderabbit.yaml` ↔ org-config inheritance (early-access opt-in for pre-merge checks) |
 | `docs/internal/data-dictionary.md` | **Generated** — looking up a column type, FK, or unique constraint across SQLite/MySQL/PostgreSQL. Refresh with `php tools/generate-data-dictionary.php` after any schema change |
+| `docs/internal/lessons-learned.md` | Curated rollup of cross-release lessons (migration footguns, binary IP rules, deploy/release gotchas, testing discipline, auth pitfalls). Read at session start; update only when a lesson generalises across more than one release |
+| `docs/internal/deploy-targets.md` | Deploying a release bundle to any of the 7 targets (demo, prod, 4 testing instances, marketing site). Host vs container `upgrade.sh`, deploy ordering, rollback |
+| `docs/internal/adding-a-runtime-dependency.md` | Proposing a new Composer package or vendored frontend asset. Six acceptance criteria, PR shape, whitelist update |
+| `docs/internal/adding-a-setting.md` | Adding an admin-tunable setting via `ipam_setting_definitions()`. Resolution order, registry fields, sensitive-value handling |
+| `docs/internal/incident-response.md` | Production regression playbook. Detect → triage → hotfix → post-mortem; when to hotfix vs defer; promotion to lessons-learned |
+| `docs/internal/adding-an-api-endpoint.md` | Extending `api.php`. Handler shape, dispatch wiring, OpenAPI spec update, readonly-key enforcement, integration test |
+| `docs/internal/auth-model.md` | Auth helpers, OIDC implementation details, MFA (TOTP/Email OTP/WebAuthn), claim mapping, session config. Read when touching login/MFA code |
+| `docs/internal/audit-actions.md` | Full vocabulary of `audit()` action strings. Update when adding a new action |
+| `docs/internal/scanner.md` | Scanner subsystem reference — tables, helpers, security patterns. Read when touching scan/probe/ARP code |
+| `docs/internal/runtime-dependency-policy.md` | Full policy text behind the `vendor/` whitelist. The whitelist + summary stays in CLAUDE.md; rationale lives here |
+| `docs/internal/v4-tenancy-design.md` | Forward-looking v4.0.0 multi-tenancy design (opt-in wizard, `/t/slug/` URLs, settings cascade, HKDF per-tenant keys, post-v4 table rules). Not in force in v3.x |
+| `docs/internal/cleanup.md` | Pre-ticket backlog for low-risk code-health items. Add a row when spotting cleanup-worthy code during other work; batch into a GH issue once items accumulate |
 
 ---
 
@@ -171,58 +183,15 @@ Migrations live in `migrations.php` as an associative array of version string �
 
 > **Current shipped version: v3.20.0.** `Creating new data tables in post-v4.0.0 releases` is **forward-looking** (applies to any migration whose version sorts after v4.0.0, including v4.0.x patches) — ignore it for all current v3.x work. `Modifying the schema (multi-engine, from v2.9.0 onward)` and `Runtime dependencies` are **currently active** rules (apply to v2.9.0+ including the current v3.20.0).
 
-### Multi-tenancy model *(v4.0.0, opt-in)*
+### Multi-tenancy (v4.0.0 — forward-looking)
 
-Multi-tenancy in v4.0.0 is **opt-in**. The v4.0.0 schema migration always runs (adds `tenant_id` columns, creates the `tenants` table, assigns all existing data to a built-in "default" tenant), but the multi-tenancy *feature* is disabled by default. The app behaves identically to v3.x until an admin explicitly activates it. This means every install — including single-tenant self-hosted installs that never intend to use multi-tenancy — gets the schema upgrade automatically and works correctly without any further action.
+Full design lives in **`docs/internal/v4-tenancy-design.md`**. Summary:
 
-**Activation is via an explicit conversion wizard**, not a settings toggle flip. The wizard:
-1. Runs a pre-flight check (prerequisites met, admin email set, HTTPS enforced)
-2. Prompts the admin to name the default tenant (name, slug, contact email)
-3. Shows a summary of all rows to be assigned (subnet count, address count, user count, etc.) with a clear "this cannot be undone without a restore" warning
-4. Requires the admin to type the tenant name to confirm (same pattern as GitHub repository deletion)
-5. Sets `multi_tenancy_enabled = true` in the `settings` table and creates a `tenancy.enabled` audit log entry
-6. Redirects to the tenant management page
-
-This is a one-way operation. Reversing it requires a database restore.
-
-**SQLite and multi-tenancy:** SQLite installs receive the default tenant and schema migration like any other engine, but creating additional tenants is disabled (`multi_tenancy_enabled` cannot be set to `true` on SQLite). SQLite is single-tenant by design.
-
-**Tenant URL resolution — `/t/slug/` path prefix (decided 2026-04-24):** tenant context is resolved via a `/t/{slug}/` URL path prefix. Subdomains are not supported natively — operators who want subdomain branding use a reverse proxy (`acme.ipam.example.com` → `/t/acme/`). Single-tenant installs have zero URL change. Apache rewrite: `RewriteRule ^t/([a-z0-9-]+)/(.*)$ /$2 [E=IPAM_TENANT:$1,L]`. `init.php` reads `$_SERVER['IPAM_TENANT']`, resolves the tenant slug, sets and validates `$_SESSION['tenant_id']` on every request.
-
-**Root URL `/` with multi-tenancy enabled:** shows a **tenant discovery page** — not a super-admin panel and not a direct login. User enters their organization slug or friendly name (case-insensitive match against `tenants.slug` OR `tenants.name`); system redirects to `/t/slug/login.php`. Super-admins log in through the discovery page like any other user — they are regular users with `is_super_admin = 1` on a home tenant; their flag activates the global panel and tenant switcher after login. No special super-admin URL. Direct links to `/t/slug/login.php` bypass the discovery page — both paths work. Single-tenant installs: `/` shows the normal login page as today; discovery page never shown.
-
-**Settings cascade — tenant → global fallback (decided 2026-04-24):** `ipam_setting()` resolves in order: (1) tenant-specific row, (2) global row (tenant_id IS NULL), (3) `$GLOBALS['config']` via the registry's `config_key` path (v2.6 back-compat for installs that have not yet migrated config.php values to the DB), (4) registry default → caller default. The `settings` table has a nullable `tenant_id` column. Uniqueness is enforced per engine: SQLite and PostgreSQL use partial unique indexes (`uq_settings_global WHERE tenant_id IS NULL`, `uq_settings_tenant WHERE tenant_id IS NOT NULL`); MySQL uses a composite `UNIQUE(tenant_id, key)` with a per-write advisory lock (`GET_LOCK`) to serialise concurrent INSERTs for global rows, because MySQL's composite UNIQUE allows multiple NULL values in the same column. All v3.x rows use `tenant_id = NULL`. Tenant admins can never read or write global-layer settings — the UI shows a read-only "Using system settings" indicator when falling back to global (e.g. SMTP). Only super-admins can access the global layer.
-
-### `app_secret` and per-tenant key derivation
-
-`app_secret` is a server-level master key. It **must always live in `config.php`**, never in the database. Its purpose is to protect data *in* the DB — storing it in the same place it protects defeats the entire security model. This rule is unconditional: no feature, migration, or "convenience" justification overrides it.
-
-**Current use (v3.x):** `app_secret` is used directly as the key material for TOTP secret generation. All users on a single-tenant install share the same effective key.
-
-**Per-tenant key isolation (v4.0.0):** rather than storing per-tenant secrets in the DB (which would put the key and the protected data in the same breach radius), per-tenant keys are **derived at runtime** via HKDF:
-
-```text
-tenant_key(tenant_id, purpose) = HKDF-SHA256(app_secret, "ipam-v4:" || tenant_id || ":" || purpose)
-```
-
-- `purpose` is a fixed string per use case: `"totp"`, `"backup"`, etc.
-- Each tenant gets a cryptographically unique key per purpose with no extra storage
-- A DB breach of one tenant's rows does not expose another tenant's keys
-- `app_secret` remains the single point of trust, outside the DB
-
-**Key rotation:** rotating `app_secret` invalidates all derived keys — existing TOTP enrollments stop working and backup encryption keys change. This is the correct and expected behaviour; operators are responsible for rotating deliberately and with a plan (re-enroll users, re-encrypt backups). If zero-disruption rotation becomes a hard requirement in future, envelope encryption (per-tenant secrets encrypted with `app_secret`, stored in `tenants` table) can be adopted at that point — but that adds complexity and is not the v4.0.0 plan.
-
-**Auto-generation:** the v4.0.0 conversion wizard generates a cryptographically strong `app_secret` if `config.php` does not already contain one, writes it to `config.php` once, and never touches it again. This is the only time auto-generation occurs — runtime auto-generation is forbidden.
-
-### Creating new data tables in post-v4.0.0 releases *(applies to any migration whose version sorts after v4.0.0, including v4.0.x patches)*
-
-Once v4.0.0 has shipped and the tenancy migration has run, every data table in the IPAM schema has a `tenant_id` column pointing at the `tenants` table. **Any migration in a release numbered greater than v4.0.0 that creates a new data table must include `tenant_id` in the `CREATE TABLE` statement from day one**, with `NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT` and an index on `tenant_id`.
-
-This rule exists because the v4.0.0 tenancy migration only backfills tables that existed at the time it ran. A table created in v4.1.0, v5.0.0, or any later release is outside that migration's reach and must carry its own tenant scoping from creation.
-
-Pre-v4.0.0 migrations do not need to worry about this — they predate tenancy and are handled automatically by v4.0.0's runtime table enumeration (see #406 for implementation). The rule applies strictly to migrations whose version key sorts greater than v4.0.0 under natural-sort ordering.
-
-**Exception:** tables that are explicitly global and not tenant-scoped (e.g. `users`, `tenants` itself, future `system_health` or similar) do not take `tenant_id`. Note: `settings` is **not** an exception — it has a nullable `tenant_id` column since v3.13.0 and uses a tenant→global fallback model. When adding a genuinely global table, document in the migration closure why it is global, and update `docs/tenancy.md` to list it as an exception.
+- **Opt-in.** Schema migration runs on every v4.0.0 install but feature is off by default. App behaves identically to v3.x until an admin runs the conversion wizard. SQLite is single-tenant only.
+- **URL model.** `/t/{slug}/` path prefix (decided 2026-04-24). Single-tenant installs have zero URL change.
+- **Settings cascade.** `ipam_setting()` resolves tenant-row → global-row → `$GLOBALS['config']` → registry default. All v3.x rows use `tenant_id = NULL`; the cascade contract is in force today.
+- **`app_secret` stays in `config.php`, never in DB.** Per-tenant keys are HKDF-derived at runtime (`HKDF-SHA256(app_secret, "ipam-v4:" || tenant_id || ":" || purpose)`). This rule is unconditional.
+- **Post-v4.0.0 migrations creating data tables MUST include `tenant_id NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT`** plus an index. Applies to any migration version sorting greater than v4.0.0 under natural-sort. Read `v4-tenancy-design.md` before adding such a table.
 
 ### Modifying the schema (multi-engine, from v2.9.0 onward) *(applies from v2.9.0+)*
 
@@ -244,74 +213,29 @@ Migrations remain the source of truth for schema evolution. The three schema fil
 
 ### Runtime dependencies *(in force since v2.9.0)*
 
-The project uses Composer-managed runtime dependencies under a narrow, curated policy. The goals are (1) to avoid hand-rolling security-sensitive network protocols and cryptography and (2) to preserve the "rsync and run" deployment story for end users.
+Full policy + rationale lives in **`docs/internal/runtime-dependency-policy.md`**. Procedure for adding a dep is in **`docs/internal/adding-a-runtime-dependency.md`**. Load-bearing summary:
 
-**Deployment model:**
-
-- `vendor/` is gitignored and never committed
-- `releases/make_releases.sh` runs `composer install --no-dev --optimize-autoloader` against the working tree before building the tarball
-- The tarball includes `vendor/` with all production deps pre-built
-- End users extract the tarball and run — no `composer install` on the server, no network access to packagist required at install time
-- `.htaccess` inside `vendor/` denies all web access to bundled library source
-- Security advisories are tracked via `composer audit` in CI (scheduled nightly and on every PR)
-
-**When a runtime dependency is acceptable:**
-
-A new dep must meet **all** of the following criteria:
-
-1. **Narrow purpose.** It solves a security-sensitive protocol or standards compliance problem where hand-rolling is error-prone. Canonical examples: SMTP, SAML, OAuth/OIDC/JWT verification, LDAP, TOTP.
-2. **Mature.** >5 years of active maintenance, with visible security advisories and a track record of prompt response.
-3. **Widely used.** Big enough user base that bugs get found by someone else first. "Thousands of GitHub stars" is not a metric but "used by WordPress, Drupal, Joomla" is.
-4. **Minimal dependency tree.** Prefer libraries with zero or few transitive deps. A 300KB lib with 20 transitive deps is worse than a 500KB lib with none.
-5. **Liberal license.** MIT, BSD, Apache 2.0. No GPL-family licenses (viral), no LGPL (complicated for bundled distribution).
-6. **Maintainer justification.** Adding a new dep requires a PR that updates this section with the dep name, version constraint, purpose, and a one-paragraph justification explaining why vanilla PHP is a poor fit.
-
-**Data-visualization primitives — the one carve-out.** Sparklines, time-series charts, gauges, heatmaps, and similar chart primitives MAY use a curated, vendored library if hand-rolling would require reinventing axis scaling, tick generation, DPI-aware canvas rendering, or responsive sizing. The bar is the same as the SMTP/SAML rule above: narrow purpose, mature, wide adoption, minimal deps, liberal license. Additional constraints specific to viz libraries: (a) **vanilla JS only** — no framework deps, no build step, (b) **self-hosted** under `Simple-PHP-IPAM/assets/vendor/` rather than Composer, (c) **single file** or small handful of files that can be copied in with no transitive deps, (d) **under ~50KB minified** — "lean" is a hard criterion here. Adding a viz library still requires a CLAUDE.md PR with the same justification as a Composer dep. The v3.8.0 UI rework is expected to vendor uPlot (~40KB, zero deps, MIT) for the dashboard time-series work; see #513.
-
-**Design token libraries — the second carve-out.** Curated collections of CSS custom properties (spacing, sizing, typography, colour, shadows, borders, easings) MAY be vendored under the same rules as the viz carve-out above. This exists because maintaining a homegrown token scale across ~40 pages is error-prone and because proven token libraries encode years of accessibility and responsive-design work that would otherwise have to be reinvented. Constraints identical to viz libraries: **vanilla CSS only** (no Sass, no PostCSS, no build step), **self-hosted** under `assets/vendor/`, **single file or small handful**, **under ~50KB minified**, liberal license, mature, wide adoption. A vendored token library is a *source* of tokens — the project-specific overrides still live in `assets/app.css` and take precedence. v2.13.0 #506 vendors [Open Props](https://open-props.style) (~30KB, MIT, curated and maintained by Adam Argyle of Google Chrome DevRel) as the token source instead of hand-rolling `--space-*`, `--size-*`, `--radius-*`, `--font-size-*`, etc. The project's own brand tokens (`--link`, `--bg`, `--fg`, `--card`, IPAM-specific semantic classes) remain hand-authored in `assets/app.css` and consume Open Props primitives where useful.
-
-**Important: neither carve-out re-opens the frontend-framework door.** Tailwind, Bootstrap, React, Vue, Svelte, Sass, PostCSS, and every similar tool remain explicitly forbidden. The carve-outs are narrow exceptions for **primitive data** (chart points, design tokens) — not for component libraries, utility-class vocabularies, or rendering engines. When in doubt: vanilla CSS and vanilla JS are the default, and a new dep needs a PR with a written justification.
-
-**When a runtime dependency is NOT acceptable:**
-
-- **IPAM business logic.** Subnet math, CIDR parsing, address allocation, audit logging, permission checks, etc. All of this is bespoke to the project and has no library equivalent worth pulling in.
-- **UI and rendering.** All HTML is hand-authored PHP. No templating engines (no Twig/Blade/Latte/Smarty — no new syntax, no compile cache, no reserved directives), no frontend frameworks (no React/Vue/Svelte), no CSS preprocessors (no Sass/Less). **Exception:** shared `ipam_render($view, $props)` helpers that `require` a PHP file under `Simple-PHP-IPAM/views/*.php` with `extract($props)` ARE allowed and encouraged — they are ordinary PHP functions, not a DSL. The anti-pattern is a compiled syntax layer, not code reuse. Data-viz primitives covered by the carve-out above.
-- **Simple utilities.** If it can be done in 20 lines of vanilla PHP, it should be done in 20 lines of vanilla PHP. Do not pull in a library for one function.
-- **"Nice to have" conveniences.** Libraries that make code 5% cleaner are not worth the dep. The bar is "hand-rolling is meaningfully dangerous or expensive," not "this API is nicer."
+- **Goal:** avoid hand-rolling security-sensitive protocols/crypto while preserving the "rsync and run" deployment story.
+- **Deployment:** `vendor/` is gitignored; `releases/make_releases.sh` runs `composer install --no-dev` and ships `vendor/` in the tarball. End users do not run Composer.
+- **Six acceptance criteria** for any new dep (narrow purpose, mature, widely used, minimal tree, liberal license, maintainer justification PR). See policy doc.
+- **Carve-outs** for vendored frontend assets: data-viz primitives (e.g. uPlot) and design tokens (e.g. Open Props), under `Simple-PHP-IPAM/assets/vendor/`, vanilla JS/CSS only, ≤50KB. Carve-outs do **not** re-open the frontend-framework door — Tailwind/React/Vue/Sass remain forbidden.
 
 **Current runtime dependency whitelist:**
 
 | Package | Version | Purpose | Justified in |
 |---|---|---|---|
-| phpmailer/phpmailer | ^6.9 | Direct SMTP delivery (replaces native `mail()` when smtp.enabled=true). Hand-rolling SMTP+TLS+AUTH is error-prone and a security risk; PHPMailer has >5 years of active maintenance, is used by WordPress/Joomla/Drupal, has zero transitive runtime deps, and is licensed LGPL-2.1-or-later with an explicit bundling exception (PHPMailer FAQ). | #415, v3.1.0 |
-| robthree/twofactorauth | ^2.1 | TOTP (RFC 6238) secret generation, code verification, otpauth:// URI for QR enrollment. Hand-rolling TOTP is error-prone (time-sync drift, HMAC, counter management); this library has zero transitive runtime deps, MIT license, pure PHP 8. | #418, v3.6.0 |
-| lbuchs/webauthn | ^2.1 | WebAuthn server-side challenge/response — attestation verification, assertion verification, COSE key parsing. Hand-rolling WebAuthn is a security risk (CBOR-encoded COSE keys, cryptographic signature chains, RP ID binding); `lbuchs/WebAuthn` has been actively maintained since 2019, is widely used in the PHP WebAuthn ecosystem, has zero transitive runtime deps, MIT license, pure PHP 8.0+. | #687, v3.15.0 |
-| phpseclib/phpseclib | ^3.0 | SFTP transport for backup destinations. Hand-rolling SSH/SFTP is a security risk (key exchange, packet framing); phpseclib is >10y mature, pure PHP (no ext-ssh2 required), MIT, minimal transitive deps. | #693, v3.17.0 |
+| phpmailer/phpmailer | ^6.9 | Direct SMTP delivery (replaces native `mail()` when smtp.enabled=true). LGPL-2.1-or-later with PHPMailer's bundling exception. | #415, v3.1.0 |
+| robthree/twofactorauth | ^2.1 | TOTP (RFC 6238) secret generation, code verification, otpauth:// URI for QR enrollment. MIT, zero deps. | #418, v3.6.0 |
+| lbuchs/webauthn | ^2.1 | WebAuthn server-side challenge/response — attestation verification, assertion verification, COSE key parsing. MIT, zero deps. | #687, v3.15.0 |
+| phpseclib/phpseclib | ^3.0 | SFTP transport for backup destinations. MIT, pure PHP (no ext-ssh2 required). | #693, v3.17.0 |
 
 **Vendored frontend assets (assets/vendor/):**
 
 | File | Size | Source | Purpose | Justified in |
 |---|---|---|---|---|
-| `qrcode.min.js` | ~20KB | cdnjs (qrcodejs 1.0.0, MIT) | QR code canvas rendering for TOTP enrollment — generates the `otpauth://` QR code in the browser so users can scan with any authenticator app. Vendored as a single file under `assets/vendor/`, self-hosted, vanilla JS, zero deps, no build step, MIT licensed, ~20KB. | #418, v3.6.0 |
+| `qrcode.min.js` | ~20KB | cdnjs (qrcodejs 1.0.0, MIT) | QR code canvas rendering for TOTP enrollment. | #418, v3.6.0 |
 
-Future candidates to be evaluated on a case-by-case basis as feature work surfaces them.
-
-**Explicitly not adopted (deliberate choices):**
-
-- No HTTP client library yet. `ext-curl` + careful wrapping is the current path for webhook dispatch (#399, v3.3.0). May revisit if curl wrapping proves painful at implementation time — Guzzle or symfony/http-client would be the likely candidates.
-- No JWT / JWK library yet. The hand-rolled OIDC in `lib.php` works and is not being retrofitted on speculation. May revisit if a security-sensitive bug surfaces or if the RFC tracking burden becomes obviously not worth it.
-- No JSON Schema validator. Custom fields (#313, v3.5.0) use a bespoke lightweight type system, not JSON Schema.
-- No templating engine, no DI container, no service locator, no ORM. These are architectural departures that do not fit this project's philosophy.
-
-### When to use classes vs functions
-
-The project's application code is predominantly procedural — `lib.php` is a bag of top-level functions, and most pages are procedural PHP. The one deliberate exception is the `Dialect` family of classes under `dialects/` (introduced in v2.9.0), which encapsulates per-engine SQL differences.
-
-**Classes are appropriate for polymorphic contracts with a small, closed set of implementations.** The `Dialect` interface with `SqliteDialect` / `MysqlDialect` / `PgsqlDialect` is the canonical example: the contract says "every DB engine must implement these methods with these signatures," and PHPStan level 9 enforces that at compile time. Without an interface, we would have to reinvent the same guarantee with array shape annotations or runtime dispatch, both of which are worse.
-
-**Classes are not appropriate for utility functions, request handlers, or anything that would otherwise be a plain function.** Do not OO-ify `lib.php`. Do not wrap handlers in controller classes. Do not introduce a service locator or DI container. When in doubt, write a function.
-
-**Namespaces are not used.** The project has zero namespaces today and a hand-rolled autoloader is not worth the complexity for the small number of classes we expect to introduce. Keep class names unambiguous (`Dialect`, `SqliteDialect`, etc.) and `require_once` explicitly in `init.php` or `lib.php`.
+**Procedural code is the default.** No namespaces, no DI container, no ORM, no templating engine. The one deliberate class hierarchy is `Dialect` / `SqliteDialect` / `MysqlDialect` / `PgsqlDialect` for per-engine SQL differences — see `runtime-dependency-policy.md` → "When to use classes vs functions".
 
 ---
 
@@ -349,26 +273,9 @@ The last-active-admin guard uses: count active admins **excluding the target use
 
 ---
 
-## OIDC authentication
+## OIDC, MFA, and full auth reference
 
-Authorization Code + PKCE flow, pure PHP, no Composer packages, requires `openssl` extension.
-
-Key functions in `lib.php`:
-- `oidc_enabled(array $config): bool`
-- `oidc_discovery(array $config): array` — fetches/caches `/.well-known/openid-configuration`
-- `oidc_jwks(string $uri, bool $forceRefresh): array` — fetches/caches JWKS
-- `oidc_verify_id_token(string $idToken, array $jwks, array $expect): array` — verifies RS256/384/512
-- `jwk_rsa_to_pem(array $jwk): string` — DER SubjectPublicKeyInfo from JWK `n`/`e`, no ext-gmp
-
-Cache files live in `data/tmp/` with 1-hour TTL. A single automatic cache-bust retry handles in-flight key rotation.
-
-**Claim mapping on login:**
-- `preferred_username` → username (fallback: email local-part, then `sub`)
-- `name` → display name
-- `email` → email field
-- `sub` → `users.oidc_sub` (unique, partial index where NOT NULL)
-
-**Auto-link order:** first tries `preferred_username` match, then `email`/username match, then provisions a new account.
+Helper functions, claim mapping, JWKS caching, MFA methods (TOTP / Email OTP / WebAuthn passkeys), and session configuration live in **`docs/internal/auth-model.md`**. Authorization Code + PKCE flow; hand-rolled (no JWT library — see `runtime-dependency-policy.md` "Explicitly not adopted").
 
 ---
 
@@ -398,66 +305,19 @@ Asset cache-buster: update `?v=X.Y.Z` in the `<link>` and `<script>` tags in `pa
 
 ## Audit logging
 
-Call `audit(PDO $db, string $action, string $entityType, ?int $entityId, string $details)` for every significant action. Convention for `$action`:
+Call `audit(PDO $db, string $action, string $entityType, ?int $entityId, string $details = '')` for every significant action. Convention for `$action`: `<entity>.<verb>` — lowercase, dot-separated, verb is one of `create`/`update`/`delete`/`toggle_active`/`set_role`/etc. Reuse the existing vocabulary so log queries (`WHERE action LIKE 'subnet.%'`) stay consistent.
 
-```
-auth.login          auth.login_failed       auth.login_blocked
-auth.oidc_login     auth.oidc_provision     auth.oidc_link       auth.oidc_failed
-auth.mfa_method_switch                      auth.mfa_preferred_set
-auth.totp_login     auth.email_otp_login    auth.passkey_challenge
-subnet.create       subnet.update           subnet.delete
-address.create      address.update          address.delete
-user.create         user.delete             user.toggle_active
-user.set_role       user.reset_password     user.update_profile
-user.oidc_link      user.oidc_unlink
-site.create         site.update             site.delete
-vlan.create         vlan.update             vlan.delete
-vrf.create          vrf.update              vrf.delete
-contact.create      contact.update          contact.delete
-tag.create          tag.update              tag.delete
-custom_field.create custom_field.update     custom_field.delete     custom_field.reorder
-apikey.create       apikey.deactivate       apikey.activate      apikey.delete
-dhcp_pool.reserve   dhcp_pool.clear
-db.export           db.import               db.import_failed
-export.*            import.*
-scan.run            scan.schedule_create    scan.schedule_update   scan.schedule_delete
-address.arp_import
-```
+**Full action vocabulary (auth, entities, users, scanner, etc.) lives in `docs/internal/audit-actions.md`.** Update that table when adding a new action.
 
 ---
 
-## Scanner (v2.3.0)
+## Scanner
 
-### New tables
-- **`scan_schedules`** — per-subnet scan configuration: `subnet_id` (UNIQUE FK), `method` (icmp|tcp|both), `tcp_port`, `interval_minutes`, `is_active`, `last_run_at`
-- **`scan_results`** — one row per IP per scan run: `subnet_id`, `address_id` (nullable FK), `ip`, `method`, `is_up`, `latency_ms`, `scanned_at`
+Tables (`scan_schedules`, `scan_results`), columns (`addresses.last_seen_at`, `is_stale`), pages (`scan_history.php`, `import_arp.php`, `scan_run.php`), and the full helper-function reference live in **`docs/internal/scanner.md`**. Load-bearing security rules:
 
-### New columns on `addresses`
-- `last_seen_at TEXT` — datetime of last successful ping/TCP response
-- `is_stale INTEGER NOT NULL DEFAULT 0` — set by `ipam_mark_stale_addresses()`
-
-### New pages
-- `scan_history.php` — read-only scan timeline; requires `require_login()` (no admin gate)
-- `import_arp.php` — ARP import wizard; requires `require_write_access()` and CSRF
-- `scan_run.php` — CLI-only scan runner; must guard `PHP_SAPI !== 'cli'` at top
-
-### Scanner functions in lib.php
-- `ipam_probe_icmp(string $ip, int $timeoutMs): ?int` — IP **must** be pre-validated via `normalize_ip()` before this call; uses `proc_open()` with system `ping`; OS-aware flags (`-W ms` macOS, `-W s` Linux)
-- `ipam_probe_tcp(string $ip, int $port, int $timeoutMs): ?int` — IP and port **must** be validated; uses `fsockopen()`
-- `ipam_scan_subnet(PDO $db, int $subnetId, string $method, ?int $tcpPort): array{scanned:int,up:int,down:int,skipped:int,stale_marked:int}` — enforces /28 cap for synchronous calls. Skips reserved IPs (network + IPv4 broadcast) via `ipam_subnet_reserved_bins()`; counted in `skipped`. (v2.5.0 / #363)
-- `ipam_mark_stale_addresses(PDO $db, int $subnetId, int $missThreshold = 3): int` — runs in a transaction; audit logged if rows changed. Also skips reserved IPs so they never accrue a stale flag.
-- `ipam_subnet_reserved_bins(PDO $db, int $subnetId): array{network:?string, broadcast:?string}` — binary IPs excluded from scan/stale passes. Nulls for IPv6, /31, /32.
-- `ipam_compute_broadcast_bin(string $netBin, int $prefix): ?string` — pure IPv4 broadcast calculation; unit-tested in `tests/UtilTest.php`. Returns null for IPv6, /31, /32.
-- `ipam_parse_arp_table(string $raw): array` — uses `filter_var(FILTER_VALIDATE_IP)` + MAC regex; never trusts raw input
-- `ipam_apply_arp_import(PDO $db, array $entries, int $subnetId): array` — returns `['matched', 'updated']` stats
-
-### Security patterns
-- **IP injection guard**: raw `$_GET`/`$_POST` IPs must go through `normalize_ip()` before `proc_open()`/`fsockopen()`. Semgrep rule `ipam-proc-open-safe` enforces this.
-- **CLI-only guard**: `scan_run.php` must `header('HTTP/1.1 403 Forbidden'); exit(1)` on non-CLI SAPI.
-- **Sync cap**: `api_scan_run()` checks prefix ≤ 28 and returns HTTP 400 for larger subnets.
-
-### Nav
-Admin dropdown includes **ARP Import** (`import_arp.php`). Subnet rows include a **Scan History** action pill.
+- **IP injection guard:** raw `$_GET`/`$_POST` IPs **must** go through `normalize_ip()` before `proc_open()` / `fsockopen()`. Semgrep rule `ipam-proc-open-safe` enforces this.
+- **CLI-only guard:** `scan_run.php` must `header('HTTP/1.1 403 Forbidden'); exit(1)` on non-CLI SAPI.
+- **Sync cap:** `api_scan_run()` rejects prefix > 28 with HTTP 400.
 
 ---
 
