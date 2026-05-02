@@ -501,17 +501,20 @@ function ipam_backup_native_cmd(string $driver, array $config): array
         $credFile = ipam_backup_write_mysql_defaults_file($pass);
         // --defaults-extra-file MUST be the FIRST argument; mysql/mysqldump
         // ignore it otherwise (libmysql parses it before any other option).
-        // --ssl-verify-server-cert=off matches what PHP's PDO_MYSQL does by
-        // default (PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT defaults false).
-        // MariaDB 11.4+ client and MySQL 8.4+ client default to verifying
-        // the server cert chain, which breaks against the self-signed certs
-        // common on internal/on-prem MySQL — and PDO already connected
-        // successfully without verifying, so the dump should match.
-        // Operators with proper TLS chains can re-enable verification via
-        // their own /etc/mysql/conf.d/ override (#1075).
+        // --no-login-paths skips ~/.mylogin.cnf so an operator's login-path
+        // file can't override the temp credential we just wrote (PR #1080
+        // CR; without this the cred file's password defense is partial).
         $cmd  = ['mysqldump', '--defaults-extra-file=' . $credFile,
-                 '--ssl-verify-server-cert=off',
-                 '--single-transaction', '--routines'];
+                 '--no-login-paths'];
+        // --ssl-verify-server-cert is opt-in via setting backup.dump_ssl_verify.
+        // Default false matches PDO_MYSQL's default
+        // (PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT) so v3.22.0 operators on
+        // internal/on-prem MySQL with self-signed certs are not regressed.
+        // Operators with a verifiable CA chain can flip the setting to ON.
+        $verifySsl = (bool) ipam_setting('backup.dump_ssl_verify');
+        $cmd[] = $verifySsl ? '--ssl-verify-server-cert=on' : '--ssl-verify-server-cert=off';
+        $cmd[] = '--single-transaction';
+        $cmd[] = '--routines';
         if (preg_match('/unix_socket=([^;]+)/i', $dsn, $m)) {
             $cmd[] = '--socket';
             $cmd[] = $m[1];

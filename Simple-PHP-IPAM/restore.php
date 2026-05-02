@@ -180,10 +180,12 @@ if ($driver === 'sqlite') {
     // in the finally block below regardless of how the proc_open block exits.
     $credFile = ipam_backup_write_mysql_defaults_file($pass);
     // --defaults-extra-file MUST be the first mysql argument.
-    // --ssl-verify-server-cert=off matches PDO_MYSQL default; see
-    // lib/backup.php::ipam_backup_native_cmd for full rationale (#1075).
+    // --no-login-paths + --ssl-verify-server-cert toggling per
+    // lib/backup.php::ipam_backup_native_cmd rationale (PR #1080 CR / #1075).
+    $verifySsl = (bool) ipam_setting('backup.dump_ssl_verify');
     $cmd = ['mysql', '--defaults-extra-file=' . $credFile,
-            '--ssl-verify-server-cert=off',
+            '--no-login-paths',
+            $verifySsl ? '--ssl-verify-server-cert=on' : '--ssl-verify-server-cert=off',
             '-h', $host, '-P', $port, '-u', $user, $dbName];
     $env = getenv() ?: [];
     // Strip any inherited DB password env vars so a parent shell that
