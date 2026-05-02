@@ -498,23 +498,23 @@ function ipam_backup_native_cmd(string $driver, array $config): array
             throw new RuntimeException('ipam_backup_native_cmd: dbname missing from db_dsn');
         }
         $name = $m[1];
-        $credFile = ipam_backup_write_mysql_defaults_file($pass);
+        // Resolve setting BEFORE writing the temp cred file so that an
+        // ipam_setting() throw doesn't leak a 0600 password file in /tmp
+        // (PR #1080 CR round 2). --ssl-verify-server-cert is opt-in via
+        // backup.dump_ssl_verify; default false matches PDO_MYSQL
+        // (PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT) so v3.22.0 operators on
+        // internal/on-prem MySQL with self-signed certs are not regressed.
+        $verifySsl = (bool) ipam_setting('backup.dump_ssl_verify');
+        $credFile  = ipam_backup_write_mysql_defaults_file($pass);
         // --defaults-extra-file MUST be the FIRST argument; mysql/mysqldump
         // ignore it otherwise (libmysql parses it before any other option).
         // --no-login-paths skips ~/.mylogin.cnf so an operator's login-path
         // file can't override the temp credential we just wrote (PR #1080
         // CR; without this the cred file's password defense is partial).
         $cmd  = ['mysqldump', '--defaults-extra-file=' . $credFile,
-                 '--no-login-paths'];
-        // --ssl-verify-server-cert is opt-in via setting backup.dump_ssl_verify.
-        // Default false matches PDO_MYSQL's default
-        // (PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT) so v3.22.0 operators on
-        // internal/on-prem MySQL with self-signed certs are not regressed.
-        // Operators with a verifiable CA chain can flip the setting to ON.
-        $verifySsl = (bool) ipam_setting('backup.dump_ssl_verify');
-        $cmd[] = $verifySsl ? '--ssl-verify-server-cert=on' : '--ssl-verify-server-cert=off';
-        $cmd[] = '--single-transaction';
-        $cmd[] = '--routines';
+                 '--no-login-paths',
+                 $verifySsl ? '--ssl-verify-server-cert=on' : '--ssl-verify-server-cert=off',
+                 '--single-transaction', '--routines'];
         if (preg_match('/unix_socket=([^;]+)/i', $dsn, $m)) {
             $cmd[] = '--socket';
             $cmd[] = $m[1];

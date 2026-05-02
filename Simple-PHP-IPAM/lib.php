@@ -1629,6 +1629,7 @@ function ipam_setting_definitions(): array
             'group'       => 'backup',
             'default'     => false,
             'sensitive'   => false,
+            'config_key'  => ['backup', 'dump_ssl_verify'],
         ],
         'backup.notify_encryption_change' => [
             'label'       => 'Email on destination encryption-mode change',
@@ -3767,6 +3768,9 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             $pass   = to_str($gConf['db_pass'] ?? '');
             $dest   = $dir . '/ipam-' . $ts . '.sql';
 
+            // Resolve setting before tempnam so an ipam_setting() throw
+            // doesn't leak a 0600 password file (PR #1080 CR round 2).
+            $verifySsl = (bool) ipam_setting('backup.dump_ssl_verify');
             // Route the password through a 0600 --defaults-extra-file so it
             // never appears in /proc/<pid>/environ or `ps eww` output (#820).
             // The file MUST be unlinked on every exit path below.
@@ -3775,7 +3779,6 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             // --no-login-paths and --ssl-verify-server-cert toggling follow
             // the rationale in lib/backup.php::ipam_backup_native_cmd
             // (PR #1080 CR / #1075).
-            $verifySsl = (bool) ipam_setting('backup.dump_ssl_verify');
             $cmd = [
                 'mysqldump', '--defaults-extra-file=' . $credFile,
                 '--no-login-paths',
