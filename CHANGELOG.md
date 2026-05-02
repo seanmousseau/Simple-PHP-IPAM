@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.22.0] - 2026-05-02
+
+Backup/restore concurrency hardening, cron architecture rework, and the v3.22.0 Notifications scope from `backup_overhaul.md` §2.4. Theme: lock-file/DB-level guards across backup runs, prune, retention, and scheduled tests; the §2.4 per-event email surface; a stale-row reaper so a crashed orchestrator can't permanently block fresh runs. Eleven milestone issues plus the §2.4 placeholder commitment.
+
+### Added
+- **Per-schedule pessimistic claim** in `cron.php` Task 6 — `BEGIN IMMEDIATE` on SQLite, `FOR UPDATE SKIP LOCKED` on MySQL/PostgreSQL. Closes the SELECT-then-UPDATE race where two cron processes could both fire the same due schedule. (#816)
+- **Stale-running-row reaper** + active-run concurrency guard in `lib/backup.php`. Any `backup_runs` row stuck in `running` past the threshold (default 7200s) gets force-marked `failed` so a crashed/killed orchestrator can't block fresh runs. The orchestrator runs the reaper inline as a defensive sweep; cron runs it on every tick so liveness doesn't depend on operator action. (#815)
+- **Soft time budget for the scanner** (`IPAM_CRON_SCANNER_BUDGET_SECS = 600`). When elapsed time on a tick exceeds the budget, the scan block defers to the next tick — earlier work (backups, webhook delivery) never starves on a long sweep. (#817)
+- **Bulk multi-select delete on the History tab** — checkboxes + bulk-action bar reusing the `addresses.php` / `subnets.php` pattern, CSRF-protected POST handler, per-row delegation to `ipam_backup_run_delete()`, whole-batch refusal on protected rows. (#1052)
+- **Time-based auto-purge for `backup_runs` rows** — new settings `backup_runs.retention_days` (default 90, 0 disables) and `backup_runs.prune_batch_size` (default 500). Cron task deletes rows older than retention in batches; skips `running` and `is_protected = 1` rows. One audit entry per call (not per row) — purge volume can be in the thousands. (#1053)
+- **§2.4 Notifications — per-event email preferences.** Replaces the v3.21.0 read-only summary with an editable surface covering eight events: backup-success (scheduled / manual), backup-failure (scheduled / manual), destination connection-test failure, schedule-overdue, retention-prune, encryption-mode change. Two new cron tasks: destination connection re-test (alerts on healthy → failing transition) and schedule-overdue detector (cooldown via JSON map keyed by schedule_id). All settings global-only — per-schedule overrides remain parking-lot per §2.4.
+- **New audit actions**: `backup.skipped_concurrent`, `backup.reaped`, `backup.wal_checkpoint_failed`, `backup_run.bulk_delete`, `backup_run.purge`, `backup.connection_test_failed`, `backup.schedule_overdue`, `backup.encryption_change`.
+- **Test coverage** — `tests/CronConcurrencyTest.php` (7 methods, includes `pcntl_fork` actually-concurrent path), `tests/BackupReaperTest.php` (6), `tests/NotificationDispatcherTest.php` (6), `tests/OverdueDetectorTest.php` (6). Closes the test categories from #1041. (#823, #822)
+
+### Changed
+- **Cron task ordering reshuffled.** Scheduled backups now run BEFORE the scanner; scanner is last among heavy tasks, gated by the soft time budget. New layout: tmp_cleanup → audit prune → address-history prune → utilization alerts → legacy db_backup → backup reaper → backup_runs purge → backup_schedules → webhook retry → webhook prune → connection re-test → overdue detector → scanner → demo_reset. (#817)
+- **Scheduled-run failure semantics.** `next_run_at` is now advanced at claim time, not after success. Failed scheduled runs no longer auto-retry on the next tick — `Run-now` is the recovery path. The previous "retry every tick until success" interacted poorly with destinations failing predictably (expired credentials, etc.) and produced one alert per tick. (#816)
+- **`ipam_backup_notify()`** rewritten as event/context dispatcher; the legacy 4-arg signature is preserved as a thin shim so `BackupNotifyWiringTest`'s source-scan still holds.
+- **Old notification settings retired** — `backup.notify_on_failure` and `backup.notify_on_success` no longer in the registry. Defaults of the eight new keys preserve prior operator intent (failure_scheduled+manual ON; success_scheduled+manual OFF). Orphaned rows in the `settings` table are harmless until a future cleanup migration sweeps them.
+- **`schedule_id` is now populated on `backup_runs`.** `cron.php` passes the claimed schedule's id through `ipam_backup_run_for_destination()` into `ipam_backup_insert_log()`; insert binds `PDO::PARAM_NULL` for manual runs. Closes silent NULL since v3.21.0. (#821)
+
+### Fixed
+- **WAL checkpoint exceptions are no longer silent.** `lib.php` and `restore.php` previously had empty `catch (Throwable) {}` around `PRAGMA wal_checkpoint(...)`. Both now audit `backup.wal_checkpoint_failed`, `error_log` the message, and continue (checkpoint is best-effort, not correctness-critical). (#819)
+- **Cross-suite `custom_field_defs` leak.** `testing/playwright/tests/custom-fields-csv.spec.ts` self-heals via a pre-create cleanup that deletes by `key` (not by id), and the teardown id-delete falls through to a key-delete on any failure. Stops `cf_csv_spec_txt` from leaking across runs and cascading into `test_api.sh` 422s. (#1051)
+- **Notifications-tab Playwright fixtures.** Rewrote the read-only-summary describe block as an editable-preferences block (8 toggles, grace-minutes input, CSRF, recipients summary). Regenerated all eight `backup-admin-notifications-*` visual-regression baselines for the post-§2.4 view.
+
+### Security
+- **DB credentials no longer in the process environment.** `mysqldump`/`mysql` route through `--defaults-extra-file=<tmp>` (0600-mode `[client]` section file); `pg_dump`/`psql` use `PGPASSFILE=<tmp>` (0600-mode pgpass line). Anything reading `/proc/<pid>/environ` (other root processes, `ps -e` on some distros, container runtime introspection) can no longer see the secret. New helpers `ipam_backup_write_mysql_defaults_file()` / `ipam_backup_write_pgpass_file()`; callers wrap `proc_open` in `try/finally` so the temp file is unlinked on every exit path including `restore_die()`. (#820)
+
+### Closed during scope-lock as already-shipped
+- **#818** — `backup_run_dump` pipe-buffer fill risk. Verified the non-blocking stderr drain landed in commit `b30fd5d7` on 2026-04-22, eight days before the issue was filed. The deadlock the audit finding describes cannot occur in current code.
+- **#809** — unify `started_at` vs `created_at` in `backup_runs`. Verified v3.21.0 #799 collapsed `backup_history` + `backup_log` into the unified `backup_runs` table; the schema comment at `schema.sql:624` carries the explicit closure note. Naming differs from the issue body's spec (`completed_at` ≡ requested `finished_at`); the requested separate `created_at` was deliberately not added since the orchestrator inserts the row AND begins the run in the same call.
+
 ## [3.21.1] - 2026-05-01
 
 Hotfix for v3.21.0. The new `3.21.0-schedule-unique` migration's dedup loop issued an UPDATE that referenced the named placeholder `:keep` twice in the same query (`SET schedule_id = :keep … AND id <> :keep`). On MySQL with PDO native prepared statements (the project's default — `EMULATE_PREPARES = false`), each placeholder occurrence is a distinct slot, so executing with one `:keep` value tripped `SQLSTATE[HY093]: Invalid parameter number` and rolled the upgrade back. SQLite tolerates the reuse, which is why the bug only surfaced on the prod MySQL deploy (demo, with no duplicate schedules, never reached the dedup loop body).
@@ -1319,6 +1352,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.22.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.21.1...v3.22.0
 [3.21.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.21.0...v3.21.1
 [3.21.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.20.0...v3.21.0
 [3.20.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.19.1...v3.20.0
