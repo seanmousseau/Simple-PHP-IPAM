@@ -3770,6 +3770,11 @@ function run_db_backup_if_due(PDO $db, array $config): bool
                 '-h', $host, '-P', $port, '-u', $user, $dbName,
             ];
             $env = getenv() ?: [];
+            // Strip any inherited DB password env vars so a parent shell
+            // already exporting these can't leak the secret to the child
+            // even though we route the real cred via --defaults-extra-file
+            // (#820 PR #1074 CR).
+            unset($env['MYSQL_PWD'], $env['PGPASSWORD']);
             try {
                 $ret = backup_run_dump($cmd, $env, $dest);
             } finally {
@@ -3813,7 +3818,12 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             // unlinked on every exit path below.
             $credFile = ipam_backup_write_pgpass_file($pass);
             $cmd = ['pg_dump', '-h', $host, '-p', $port, '-U', $user, $dbName];
-            $env = array_merge(getenv() ?: [], ['PGPASSFILE' => $credFile]);
+            $env = getenv() ?: [];
+            // Strip any inherited DB password env vars before merging in
+            // PGPASSFILE so the parent shell can't leak a secret into
+            // the child (#820 PR #1074 CR).
+            unset($env['MYSQL_PWD'], $env['PGPASSWORD']);
+            $env['PGPASSFILE'] = $credFile;
             try {
                 $ret = backup_run_dump($cmd, $env, $dest);
             } finally {

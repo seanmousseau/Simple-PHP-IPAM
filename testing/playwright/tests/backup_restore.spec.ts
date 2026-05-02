@@ -188,13 +188,40 @@ test.describe('Notifications tab — editable preferences', () => {
         }
     });
 
-    test('default checkbox states match the setting registry defaults', async () => {
+    test('checkbox states match the setting registry defaults after explicit reset', async () => {
+        // Tests share a single SQLite DB (workers=1). An earlier test that
+        // toggles any backup.notify_* setting would otherwise make this
+        // assertion flaky. Submit the form with the registry-default values
+        // first so the assertion reflects the contract, not stale shared
+        // state. (#1074 CR comment on backup_restore.spec.ts:199.)
+        const csrf = await page.locator('.backup-admin-tab form input[type="hidden"][name="csrf"]').first().getAttribute('value');
+        if (!csrf) throw new Error('csrf token missing on notifications form');
+        const formAction = await page.locator('.backup-admin-tab form[method="post"]').first().getAttribute('action');
+        if (!formAction) throw new Error('notifications form action missing');
+        const targetUrl = new URL(formAction, page.url()).toString();
+        const body = new URLSearchParams();
+        body.append('csrf', csrf);
+        body.append('action', 'save_notifications');
+        body.append('overdue_grace_minutes', '60');
+        for (const key of EVENT_KEYS) {
+            if (DEFAULT_ON.has(key)) body.append(`event_${key}`, '1');
+            // unchecked checkboxes are simply absent from form data
+        }
+        const resetResp = await page.request.post(targetUrl, {
+            form: Object.fromEntries(body),
+            failOnStatusCode: false,
+        });
+        if (!resetResp.ok() && resetResp.status() !== 302) {
+            throw new Error(`reset POST returned ${resetResp.status()}`);
+        }
+        await page.goto(tabUrl('notifications'));
+
         for (const key of EVENT_KEYS) {
             const cb = page.locator(`.backup-admin-tab form input[type="checkbox"][name="event_${key}"]`);
             if (DEFAULT_ON.has(key)) {
-                await expect(cb, `${key} should default ON`).toBeChecked();
+                await expect(cb, `${key} should be ON after reset`).toBeChecked();
             } else {
-                await expect(cb, `${key} should default OFF`).not.toBeChecked();
+                await expect(cb, `${key} should be OFF after reset`).not.toBeChecked();
             }
         }
     });

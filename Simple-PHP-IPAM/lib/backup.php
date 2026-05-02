@@ -63,6 +63,7 @@ function ipam_backup_claim_due_schedule(PDO $db): ?array {
     $nowSql      = $dialect->now();
     $isSqlite    = $dialect->driver_name() === 'sqlite';
     $maxAttempts = 5;
+    $lastBusy    = null;
 
     for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
         $started = false;
@@ -140,12 +141,17 @@ function ipam_backup_claim_due_schedule(PDO $db): ?array {
                 || str_contains($msg, 'database table is locked')
             );
             if ($busy) {
+                $lastBusy = $e;
                 usleep(50_000 * ($attempt + 1));
                 continue;
             }
             throw $e;
         }
     }
+    // Exhausted retries on SQLITE_BUSY — surface the failure rather than
+    // returning null, which the caller would interpret as "nothing due"
+    // and silently skip a backup that was actually contended (#816 CR).
+    if ($lastBusy instanceof Throwable) throw $lastBusy;
     return null;
 }
 
@@ -465,11 +471,15 @@ function ipam_backup_dest_client(array $dest): BackupClientInterface
  * dump tool. Shared by the v3.17 remote-destination pipeline and the
  * legacy CLI backup runner so both stay in sync if a flag changes.
  *
- * Password is always passed via env (MYSQL_PWD / PGPASSWORD), never on
- * the command line.
+ * Password is routed via a 0600 temp credential file (`--defaults-extra-file`
+ * for mysql, `PGPASSFILE` for pgsql) so it never appears in the process
+ * environment or on the command line. The returned `cred_file` path MUST
+ * be unlink()ed by the caller after the dump completes (use try/finally).
+ * Inherited `MYSQL_PWD` / `PGPASSWORD` from the parent shell are stripped
+ * defensively (#820 PR #1074 CR).
  *
  * @param array<string,mixed> $config global $config
- * @return array{cmd: list<string>, env: array<string,string>}
+ * @return array{cmd: list<string>, env: array<string,string>, cred_file: string}
  */
 function ipam_backup_native_cmd(string $driver, array $config): array
 {
@@ -477,6 +487,11 @@ function ipam_backup_native_cmd(string $driver, array $config): array
     $user = is_string($config['db_user'] ?? null) ? $config['db_user'] : '';
     $pass = is_string($config['db_pass'] ?? null) ? $config['db_pass'] : '';
     $existingEnv = getenv(); // returns array<string,string> when called without args
+    // Strip any inherited DB password env vars before passing to the child.
+    // If the runner was started by a shell/service that already has these
+    // set, they'd otherwise still leak into /proc/<pid>/environ even though
+    // we route the real cred via a temp file.
+    unset($existingEnv['MYSQL_PWD'], $existingEnv['PGPASSWORD']);
 
     // Mirror the running app's connection target. Substituting defaults for
     // omitted DSN keys would force TCP onto Unix-socket configs (mismatching
@@ -489,7 +504,10 @@ function ipam_backup_native_cmd(string $driver, array $config): array
             throw new RuntimeException('ipam_backup_native_cmd: dbname missing from db_dsn');
         }
         $name = $m[1];
-        $cmd  = ['mysqldump', '--single-transaction', '--routines'];
+        $credFile = ipam_backup_write_mysql_defaults_file($pass);
+        // --defaults-extra-file MUST be the FIRST argument; mysql/mysqldump
+        // ignore it otherwise (libmysql parses it before any other option).
+        $cmd  = ['mysqldump', '--defaults-extra-file=' . $credFile, '--single-transaction', '--routines'];
         if (preg_match('/unix_socket=([^;]+)/i', $dsn, $m)) {
             $cmd[] = '--socket';
             $cmd[] = $m[1];
@@ -505,8 +523,9 @@ function ipam_backup_native_cmd(string $driver, array $config): array
         $cmd[] = $user;
         $cmd[] = $name;
         return [
-            'cmd' => $cmd,
-            'env' => array_merge($existingEnv, ['MYSQL_PWD' => $pass]),
+            'cmd'       => $cmd,
+            'env'       => $existingEnv,
+            'cred_file' => $credFile,
         ];
     }
     if ($driver === 'pgsql') {
@@ -514,6 +533,7 @@ function ipam_backup_native_cmd(string $driver, array $config): array
             throw new RuntimeException('ipam_backup_native_cmd: dbname missing from db_dsn');
         }
         $name = $m[1];
+        $credFile = ipam_backup_write_pgpass_file($pass);
         $cmd  = ['pg_dump'];
         if (preg_match('/host=([^;]+)/i', $dsn, $m)) {
             $cmd[] = '-h';
@@ -527,8 +547,9 @@ function ipam_backup_native_cmd(string $driver, array $config): array
         $cmd[] = $user;
         $cmd[] = $name;
         return [
-            'cmd' => $cmd,
-            'env' => array_merge($existingEnv, ['PGPASSWORD' => $pass]),
+            'cmd'       => $cmd,
+            'env'       => array_merge($existingEnv, ['PGPASSFILE' => $credFile]),
+            'cred_file' => $credFile,
         ];
     }
     throw new RuntimeException('ipam_backup_native_cmd: unsupported driver ' . $driver);
@@ -585,8 +606,8 @@ function ipam_backup_dump_to_tmp(PDO $db): string
             global $config;
             $cfg = is_array($config ?? null) ? $config : [];
             $tmpSql = $tmp . '.sql';
+            $native = ipam_backup_native_cmd($driver, $cfg);
             try {
-                $native = ipam_backup_native_cmd($driver, $cfg);
                 // 10-minute deadline matches what an interactive admin would tolerate;
                 // larger DBs that legitimately need more should run via cron instead.
                 if (!backup_run_dump($native['cmd'], $native['env'], $tmpSql, 600)) {
@@ -622,6 +643,12 @@ function ipam_backup_dump_to_tmp(PDO $db): string
             } finally {
                 if (is_file($tmpSql)) {
                     @unlink($tmpSql); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmpSql is tempnam()-generated, no user input
+                }
+                // Unlink the 0600 password file regardless of dump outcome.
+                // Lifetime is bounded by this scope so a crashed worker
+                // cannot leave the cred at rest.
+                if (is_file($native['cred_file'])) {
+                    @unlink($native['cred_file']); // nosemgrep: php.lang.security.unlink-use.unlink-use -- tempnam-generated, no user input
                 }
             }
             return $tmpGz;

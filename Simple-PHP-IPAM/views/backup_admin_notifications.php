@@ -97,14 +97,18 @@ $rows = [
         <?php foreach ($rows as $row):
             $checked = !empty($events[$row['key']]); ?>
           <tr>
-            <th scope="row" style="text-align:left;"><?= e($row['label']) ?></th>
+            <th scope="row"
+                id="notify-label-<?= e($row['key']) ?>"
+                style="text-align:left;"><?= e($row['label']) ?></th>
             <td>
               <label class="toggle-switch" style="display:inline-flex;align-items:center;gap:.4rem;">
                 <input type="checkbox"
+                       id="event_<?= e($row['key']) ?>"
                        name="event_<?= e($row['key']) ?>"
                        value="1"
+                       aria-labelledby="notify-label-<?= e($row['key']) ?>"
                        <?= $checked ? 'checked' : '' ?>>
-                <span class="muted"><?= $checked ? 'on' : 'off' ?></span>
+                <span class="muted" aria-hidden="true"><?= $checked ? 'on' : 'off' ?></span>
               </label>
             </td>
             <td class="muted"><?= e($row['help']) ?></td>

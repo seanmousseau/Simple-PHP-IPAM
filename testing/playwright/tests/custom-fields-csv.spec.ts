@@ -56,12 +56,18 @@ async function findCfDefIdByKey(p: Page, key: string): Promise<number | null> {
         const action = f.querySelector<HTMLInputElement>('input[name="action"]');
         if (action?.value === 'delete') {
           const idInp = f.querySelector<HTMLInputElement>('input[name="id"]');
-          if (idInp) return parseInt(idInp.value, 10);
+          if (idInp) {
+            const id = Number.parseInt(idInp.value, 10);
+            if (Number.isFinite(id)) return id;
+          }
         }
       }
       // Fallback: any input[name=id] in the row
       const idInp = row.querySelector<HTMLInputElement>('input[name="id"]');
-      if (idInp) return parseInt(idInp.value, 10);
+      if (idInp) {
+        const id = Number.parseInt(idInp.value, 10);
+        if (Number.isFinite(id)) return id;
+      }
       return null;
     }
     return null;

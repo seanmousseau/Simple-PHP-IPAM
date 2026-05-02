@@ -282,6 +282,7 @@ try {
     $tested = 0;
     $newlyFailing = 0;
     $recovered = 0;
+    $errored = 0;
 
     foreach ($destRows as $destRow) {
         $destId = to_int($destRow['id'] ?? 0);
@@ -292,49 +293,66 @@ try {
         $prev = $healthMap[$key] ?? [];
         $prevStatus = is_string($prev['status'] ?? null) ? $prev['status'] : 'unknown';
 
-        $result = ipam_destination_test_now($db, $destId, 'cron-recheck');
-        $ok = $result['ok'] === true;
-        $resultMessage = $result['message'];
+        try {
+            $result = ipam_destination_test_now($db, $destId, 'cron-recheck');
+            $ok = $result['ok'] === true;
+            $resultMessage = $result['message'];
 
-        $entry = [
-            'last_ok_at'      => is_string($prev['last_ok_at'] ?? null) ? $prev['last_ok_at'] : null,
-            'last_failed_at'  => is_string($prev['last_failed_at'] ?? null) ? $prev['last_failed_at'] : null,
-            'last_alerted_at' => to_int($prev['last_alerted_at'] ?? 0),
-            'status'          => $ok ? 'ok' : 'failing',
-        ];
-        if ($ok) {
-            $entry['last_ok_at'] = date('c', $nowTs);
-            if ($prevStatus === 'failing') {
-                $recovered++;
-                $entry['last_alerted_at'] = 0; // reset cooldown so next failure alerts immediately
-            }
-        } else {
-            $entry['last_failed_at'] = date('c', $nowTs);
-            $shouldAlert = ($prevStatus !== 'failing')
-                || (($nowTs - to_int($entry['last_alerted_at'])) >= $cooldownSecs && to_int($entry['last_alerted_at']) > 0);
-            if ($prevStatus !== 'failing') {
-                $newlyFailing++;
-            }
-            // Only the healthy→failing transition triggers the alert per §2.4
-            // (delta-only). The cooldown applies if state has been "failing"
-            // for so long that a re-alert is justified, but the spec says
-            // "don't alert every tick once it's known-broken" — keep the
-            // shouldAlert restricted to transitions for ship-1 simplicity.
-            if ($connFailureNotifyEnabled && $prevStatus !== 'failing') {
-                audit($db, 'backup.connection_test_failed', 'destination', $destId,
-                      'name=' . $destName . ' message=' . substr($resultMessage, 0, 200));
-                try {
-                    ipam_backup_notify($db, 'destination_conn_failure', [
-                        'dest'    => ['name' => $destName],
-                        'message' => $resultMessage !== '' ? $resultMessage : 'unknown',
-                    ]);
-                    $entry['last_alerted_at'] = $nowTs;
-                } catch (Throwable $ne) {
-                    error_log('[backup] conn-failure notify dispatch failed: ' . $ne->getMessage());
+            $entry = [
+                'last_ok_at'      => is_string($prev['last_ok_at'] ?? null) ? $prev['last_ok_at'] : null,
+                'last_failed_at'  => is_string($prev['last_failed_at'] ?? null) ? $prev['last_failed_at'] : null,
+                'last_alerted_at' => to_int($prev['last_alerted_at'] ?? 0),
+                'status'          => $ok ? 'ok' : 'failing',
+            ];
+            if ($ok) {
+                $entry['last_ok_at'] = date('c', $nowTs);
+                if ($prevStatus === 'failing') {
+                    $recovered++;
+                    $entry['last_alerted_at'] = 0; // reset cooldown so next failure alerts immediately
+                }
+            } else {
+                $entry['last_failed_at'] = date('c', $nowTs);
+                $shouldAlert = ($prevStatus !== 'failing')
+                    || (($nowTs - to_int($entry['last_alerted_at'])) >= $cooldownSecs && to_int($entry['last_alerted_at']) > 0);
+                if ($prevStatus !== 'failing') {
+                    $newlyFailing++;
+                }
+                // Only the healthy→failing transition triggers the alert per §2.4
+                // (delta-only). The cooldown applies if state has been "failing"
+                // for so long that a re-alert is justified, but the spec says
+                // "don't alert every tick once it's known-broken" — keep the
+                // shouldAlert restricted to transitions for ship-1 simplicity.
+                if ($connFailureNotifyEnabled && $prevStatus !== 'failing') {
+                    audit($db, 'backup.connection_test_failed', 'destination', $destId,
+                          'name=' . $destName . ' message=' . substr($resultMessage, 0, 200));
+                    try {
+                        ipam_backup_notify($db, 'destination_conn_failure', [
+                            'dest'    => ['name' => $destName],
+                            'message' => $resultMessage !== '' ? $resultMessage : 'unknown',
+                        ]);
+                        $entry['last_alerted_at'] = $nowTs;
+                    } catch (Throwable $ne) {
+                        error_log('[backup] conn-failure notify dispatch failed: ' . $ne->getMessage());
+                    }
                 }
             }
+            $healthMap[$key] = $entry;
+        } catch (Throwable $te) {
+            // One bad destination must not abort the whole loop or block
+            // persistence of $healthMap for the destinations that did
+            // complete. Mark this entry as unknown so we don't mistake
+            // an iteration error for a healthy state on the next tick.
+            error_log('[backup] destination_health iteration failed for dest ' . $destId
+                . ' (' . $destName . '): ' . $te->getMessage());
+            $errored++;
+            $healthMap[$key] = [
+                'last_ok_at'      => is_string($prev['last_ok_at'] ?? null) ? $prev['last_ok_at'] : null,
+                'last_failed_at'  => is_string($prev['last_failed_at'] ?? null) ? $prev['last_failed_at'] : null,
+                'last_alerted_at' => to_int($prev['last_alerted_at'] ?? 0),
+                'status'          => 'unknown',
+            ];
+            continue;
         }
-        $healthMap[$key] = $entry;
     }
 
     // Drop entries for destinations that no longer exist or are inactive so

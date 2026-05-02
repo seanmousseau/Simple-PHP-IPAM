@@ -22,6 +22,7 @@ Backup/restore concurrency hardening, cron architecture rework, and the v3.22.0 
 
 ### Changed
 - **Cron task ordering reshuffled.** Scheduled backups now run BEFORE the scanner; scanner is last among heavy tasks, gated by the soft time budget. New layout: tmp_cleanup → audit prune → address-history prune → utilization alerts → legacy db_backup → backup reaper → backup_runs purge → backup_schedules → webhook retry → webhook prune → connection re-test → overdue detector → scanner → demo_reset. (#817)
+- **`started_at` / `created_at` unification on `backup_runs`** — confirmed already-shipped during v3.22.0 scope-lock. v3.21.0 #799 collapsed `backup_history` + `backup_log` into the unified `backup_runs` table; the schema comment at `schema.sql:624` carries the explicit closure note. Naming differs from the issue body's spec (`completed_at` ≡ requested `finished_at`); the requested separate `created_at` was deliberately not added since the orchestrator inserts the row AND begins the run in the same call. (#809)
 - **Scheduled-run failure semantics.** `next_run_at` is now advanced at claim time, not after success. Failed scheduled runs no longer auto-retry on the next tick — `Run-now` is the recovery path. The previous "retry every tick until success" interacted poorly with destinations failing predictably (expired credentials, etc.) and produced one alert per tick. (#816)
 - **`ipam_backup_notify()`** rewritten as event/context dispatcher; the legacy 4-arg signature is preserved as a thin shim so `BackupNotifyWiringTest`'s source-scan still holds.
 - **Old notification settings retired** — `backup.notify_on_failure` and `backup.notify_on_success` no longer in the registry. Defaults of the eight new keys preserve prior operator intent (failure_scheduled+manual ON; success_scheduled+manual OFF). Orphaned rows in the `settings` table are harmless until a future cleanup migration sweeps them.
@@ -32,12 +33,10 @@ Backup/restore concurrency hardening, cron architecture rework, and the v3.22.0 
 - **Cross-suite `custom_field_defs` leak.** `testing/playwright/tests/custom-fields-csv.spec.ts` self-heals via a pre-create cleanup that deletes by `key` (not by id), and the teardown id-delete falls through to a key-delete on any failure. Stops `cf_csv_spec_txt` from leaking across runs and cascading into `test_api.sh` 422s. (#1051)
 - **Notifications-tab Playwright fixtures.** Rewrote the read-only-summary describe block as an editable-preferences block (8 toggles, grace-minutes input, CSRF, recipients summary). Regenerated all eight `backup-admin-notifications-*` visual-regression baselines for the post-§2.4 view.
 
+- **`backup_run_dump` pipe-buffer fill risk** — confirmed already-shipped during v3.22.0 scope-lock. Verified the non-blocking stderr drain landed in commit `b30fd5d7` on 2026-04-22, eight days before the issue was filed. The deadlock the audit finding describes cannot occur in current code. (#818)
+
 ### Security
 - **DB credentials no longer in the process environment.** `mysqldump`/`mysql` route through `--defaults-extra-file=<tmp>` (0600-mode `[client]` section file); `pg_dump`/`psql` use `PGPASSFILE=<tmp>` (0600-mode pgpass line). Anything reading `/proc/<pid>/environ` (other root processes, `ps -e` on some distros, container runtime introspection) can no longer see the secret. New helpers `ipam_backup_write_mysql_defaults_file()` / `ipam_backup_write_pgpass_file()`; callers wrap `proc_open` in `try/finally` so the temp file is unlinked on every exit path including `restore_die()`. (#820)
-
-### Closed during scope-lock as already-shipped
-- **#818** — `backup_run_dump` pipe-buffer fill risk. Verified the non-blocking stderr drain landed in commit `b30fd5d7` on 2026-04-22, eight days before the issue was filed. The deadlock the audit finding describes cannot occur in current code.
-- **#809** — unify `started_at` vs `created_at` in `backup_runs`. Verified v3.21.0 #799 collapsed `backup_history` + `backup_log` into the unified `backup_runs` table; the schema comment at `schema.sql:624` carries the explicit closure note. Naming differs from the issue body's spec (`completed_at` ≡ requested `finished_at`); the requested separate `created_at` was deliberately not added since the orchestrator inserts the row AND begins the run in the same call.
 
 ## [3.21.1] - 2026-05-01
 

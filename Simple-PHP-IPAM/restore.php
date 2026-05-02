@@ -183,6 +183,11 @@ if ($driver === 'sqlite') {
     $cmd = ['mysql', '--defaults-extra-file=' . $credFile,
             '-h', $host, '-P', $port, '-u', $user, $dbName];
     $env = getenv() ?: [];
+    // Strip any inherited DB password env vars so a parent shell that
+    // already has these set can't leak the secret into the child via
+    // /proc/<pid>/environ even though we route the real cred via
+    // --defaults-extra-file (#820 PR #1074 CR).
+    unset($env['MYSQL_PWD'], $env['PGPASSWORD']);
 
     // Capture schema_migrations count before the restore so the sigchild
     // post-condition check compares pre vs post (CR feedback PR #1054).
@@ -270,7 +275,12 @@ if ($driver === 'sqlite') {
     // non-interactive scripts. The file is unlinked in the finally block below.
     $credFile = ipam_backup_write_pgpass_file($pass);
     $cmd = ['psql', '-h', $host, '-p', $port, '-U', $user, $dbName];
-    $env = array_merge(getenv() ?: [], ['PGPASSFILE' => $credFile]);
+    $env = getenv() ?: [];
+    // Strip any inherited DB password env vars before merging in PGPASSFILE
+    // so the parent shell can't leak a secret into the child even though
+    // we route the real cred via PGPASSFILE (#820 PR #1074 CR).
+    unset($env['MYSQL_PWD'], $env['PGPASSWORD']);
+    $env['PGPASSFILE'] = $credFile;
 
     // Capture schema_migrations count before the restore so the sigchild
     // post-condition check compares pre vs post (CR feedback PR #1054).

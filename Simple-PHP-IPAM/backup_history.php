@@ -184,10 +184,15 @@ page_header('Backup History');
 <script><!-- nosemgrep: ipam-inline-script-csp — #1052: bulk-select wiring is scoped to this page; lifting into assets/app.js tracked separately so v3.22.0 ships the operator feature without touching the global bundle -->
 (function () {
     "use strict";
-    var table = document.querySelector("section.card .data-table");
+    // Find the first history row first, then derive the table from it.
+    // The "Status by destination" summary table is also `.data-table` but
+    // contains no `.history-row` rows; if it renders before the entries
+    // table, a `.data-table`-first lookup picks the wrong element and the
+    // bulk UI never initializes.
+    var firstHistoryRow = document.querySelector("section.card .data-table tbody tr.history-row");
+    if (!firstHistoryRow) return;
+    var table = firstHistoryRow.closest("table");
     if (!table) return;
-    // Only operate on the History entries table — the "Status by destination"
-    // summary table is also `.data-table` but its rows have no `.history-row`.
     var rows = table.querySelectorAll("tbody tr.history-row");
     if (rows.length === 0) return;
 
