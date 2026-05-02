@@ -97,6 +97,19 @@ $tickEpoch = time(); // Pinned UTC epoch for the entire tick — passed through
                      // tick rather than drifting with time() across long runs (#762).
 $exitCode  = 0;
 
+// ---------------------------------------------------------------------------
+// Soft time budget for the scanner (v3.22.0 #817).
+//
+// The scanner is the only task in this runner whose work is unbounded — a
+// /22 sweep with slow-responding hosts can easily exceed the cron interval.
+// Earlier tasks (backups, webhook delivery, etc.) are time-sensitive and
+// must not be starved. If the tick has already spent more than this many
+// seconds on prior work by the time the scanner's turn comes, defer the
+// scanner to the next tick. This is a soft budget — no in-flight scan is
+// killed; the scan block is simply skipped for this tick.
+// ---------------------------------------------------------------------------
+const IPAM_CRON_SCANNER_BUDGET_SECS = 600;
+
 /** @param array<string, mixed> $data */
 $emit = function (array $data): void {
     echo json_encode($data, JSON_UNESCAPED_SLASHES) . "\n";
@@ -194,9 +207,125 @@ try {
 }
 
 // ---------------------------------------------------------------------------
-// Task 6: Network scanning — all active schedules that are due
+// Task 6: Backup stale-run reaper (v3.22.0 #815)
+//
+// Reordered ahead of the schedule loop in v3.22.0 (#817): the backup
+// schedule loop relies on the "active run" guard, which depends on the
+// reaper having cleared any stale 'running' rows from a crashed prior tick.
+// Running the reaper first makes the schedule loop's claim path reliable.
+//
+// Marks any backup_runs row stuck in 'running' past the reap threshold as
+// 'failed' so a crashed/killed orchestrator can't permanently block fresh
+// runs. The orchestrator also calls this inline as a defensive sweep, but
+// the cron task ensures liveness on systems that have scheduled backups
+// disabled and only run manual orchestrators.
 // ---------------------------------------------------------------------------
 try {
+    $reaped = ipam_backup_reap_stale_runs($db);
+    $emit(['task' => 'backup_reaper', 'reaped' => $reaped, 'ts' => $now]);
+} catch (Throwable $e) {
+    $fail('backup_reaper', $e->getMessage());
+}
+
+// ---------------------------------------------------------------------------
+// Task 7: Backup schedules (v3.17.0 — fire any backup_schedules rows that are due)
+//
+// Reordered ahead of the scanner in v3.22.0 (#817): scheduled backups are
+// time-sensitive ("did last night's backup run?") and must not be starved
+// by a slow scanner sweep monopolising the cron tick.
+//
+// v3.22.0 (#816): per-row pessimistic claim closes the SELECT-then-UPDATE race
+// where two cron processes could fetch the same due schedule and both fire it.
+// next_run_at is advanced inside the claim transaction; the backup runs OUTSIDE
+// the transaction so a long dump+upload doesn't hold a row lock. Failed runs
+// no longer auto-retry on the next tick (Run-now is the recovery path).
+// ---------------------------------------------------------------------------
+try {
+    $totalSched = 0;
+    $okSched    = 0;
+    $failSched  = 0;
+    while (($sched = ipam_backup_claim_due_schedule($db)) !== null) {
+        $totalSched++;
+        $destId  = isset($sched['destination_id']) && is_numeric($sched['destination_id'])
+            ? (int) $sched['destination_id'] : 0;
+        $schedId = isset($sched['id']) && is_numeric($sched['id']) ? (int) $sched['id'] : 0;
+        if ($destId <= 0 || $schedId <= 0) continue;
+
+        try {
+            // Pass the cron-tick epoch through to retention so prune timing
+            // is aligned to the tick rather than drifting with time() (#762).
+            // Pass schedule_id so the backup_runs row is linked back to the
+            // schedule that triggered it (#821) — UI joins on this for the
+            // "Triggered by" column on the backup history view.
+            ipam_backup_run_for_destination($db, $config, $destId, 'schedule', $tickEpoch, $schedId);
+            $okSched++;
+        } catch (Throwable $e) {
+            $failSched++;
+            $fail('backup_schedule', 'schedule_id=' . $schedId . ' ' . $e->getMessage());
+        }
+
+        // Always record last_run_at so admins see the attempt regardless of
+        // success/failure. next_run_at was advanced at claim time.
+        try {
+            ipam_backup_finalize_schedule_run($db, $schedId);
+        } catch (Throwable $e) {
+            $fail('backup_schedule', 'finalize schedule_id=' . $schedId . ' ' . $e->getMessage());
+        }
+    }
+    $emit(['task' => 'backup_schedules', 'due' => $totalSched, 'ok' => $okSched, 'failed' => $failSched, 'ts' => $now]);
+} catch (Throwable $e) {
+    $fail('backup_schedules', $e->getMessage());
+}
+
+// ---------------------------------------------------------------------------
+// Task 8: Webhook delivery retry (attempt pending deliveries up to 3 times)
+// ---------------------------------------------------------------------------
+try {
+    $retried = ipam_webhook_retry_pending($db, $config);
+    $emit(['task' => 'webhook_retry', 'retried' => $retried, 'ts' => $now]);
+} catch (Throwable $e) {
+    $fail('webhook_retry', $e->getMessage());
+}
+
+// ---------------------------------------------------------------------------
+// Task 9: Webhook delivery log prune (per webhook.retention_days setting)
+// ---------------------------------------------------------------------------
+try {
+    $retentionDays = to_int(ipam_setting('webhook.retention_days'));
+    if ($retentionDays > 0) {
+        $pruned = ipam_webhook_prune($db, $retentionDays);
+        $emit(['task' => 'webhook_prune', 'pruned' => $pruned, 'retention_days' => $retentionDays, 'ts' => $now]);
+    } else {
+        $emit(['task' => 'webhook_prune', 'skipped' => true, 'reason' => 'retention_days=0', 'ts' => $now]);
+    }
+} catch (Throwable $e) {
+    $fail('webhook_prune', $e->getMessage());
+}
+
+// ---------------------------------------------------------------------------
+// Task 10: Network scanning — all active schedules that are due
+//
+// Reordered to run last among the heavy tasks in v3.22.0 (#817). Scanner
+// work is unbounded (a /22 sweep can take many minutes) so it must not
+// block backups, webhook delivery, or other time-sensitive work.
+//
+// Soft time budget: if the cron tick has already spent more than
+// IPAM_CRON_SCANNER_BUDGET_SECS on prior tasks, defer scanner to the next
+// tick rather than risk blowing past the cron interval. No in-flight scan
+// is killed — the entire scan block is simply skipped this tick.
+// ---------------------------------------------------------------------------
+try {
+    $elapsedSecs = time() - $tickEpoch;
+    if ($elapsedSecs > IPAM_CRON_SCANNER_BUDGET_SECS) {
+        $emit([
+            'task'         => 'scan',
+            'skipped'      => true,
+            'reason'       => 'time_budget_exhausted',
+            'budget_secs'  => IPAM_CRON_SCANNER_BUDGET_SECS,
+            'elapsed_secs' => $elapsedSecs,
+            'ts'           => $now,
+        ]);
+    } else {
     // Fetch every active schedule and filter "is due" in PHP so the query
     // stays engine-agnostic — SQLite's `datetime(col, '+N minutes')` and
     // `||` string concatenation are not portable to MySQL / Postgres. The
@@ -279,99 +408,14 @@ try {
 
         $emit(array_merge(['task' => 'scan_summary', 'ts' => $now], $scanSummary));
     }
+    }
 } catch (Throwable $e) {
     $fail('scan', $e->getMessage());
 }
 
 // ---------------------------------------------------------------------------
-// Task 7: Webhook delivery retry (attempt pending deliveries up to 3 times)
-// ---------------------------------------------------------------------------
-try {
-    $retried = ipam_webhook_retry_pending($db, $config);
-    $emit(['task' => 'webhook_retry', 'retried' => $retried, 'ts' => $now]);
-} catch (Throwable $e) {
-    $fail('webhook_retry', $e->getMessage());
-}
-
-// ---------------------------------------------------------------------------
-// Task 8: Webhook delivery log prune (per webhook.retention_days setting)
-// ---------------------------------------------------------------------------
-try {
-    $retentionDays = to_int(ipam_setting('webhook.retention_days'));
-    if ($retentionDays > 0) {
-        $pruned = ipam_webhook_prune($db, $retentionDays);
-        $emit(['task' => 'webhook_prune', 'pruned' => $pruned, 'retention_days' => $retentionDays, 'ts' => $now]);
-    } else {
-        $emit(['task' => 'webhook_prune', 'skipped' => true, 'reason' => 'retention_days=0', 'ts' => $now]);
-    }
-} catch (Throwable $e) {
-    $fail('webhook_prune', $e->getMessage());
-}
-
-// ---------------------------------------------------------------------------
-// Task 8b: Backup stale-run reaper (v3.22.0 #815)
-//
-// Marks any backup_runs row stuck in 'running' past the reap threshold as
-// 'failed' so a crashed/killed orchestrator can't permanently block fresh
-// runs. The orchestrator also calls this inline as a defensive sweep, but
-// the cron task ensures liveness on systems that have scheduled backups
-// disabled and only run manual orchestrators.
-// ---------------------------------------------------------------------------
-try {
-    $reaped = ipam_backup_reap_stale_runs($db);
-    $emit(['task' => 'backup_reaper', 'reaped' => $reaped, 'ts' => $now]);
-} catch (Throwable $e) {
-    $fail('backup_reaper', $e->getMessage());
-}
-
-// ---------------------------------------------------------------------------
-// Task 9: Backup schedules (v3.17.0 — fire any backup_schedules rows that are due)
-//
-// v3.22.0 (#816): per-row pessimistic claim closes the SELECT-then-UPDATE race
-// where two cron processes could fetch the same due schedule and both fire it.
-// next_run_at is advanced inside the claim transaction; the backup runs OUTSIDE
-// the transaction so a long dump+upload doesn't hold a row lock. Failed runs
-// no longer auto-retry on the next tick (Run-now is the recovery path).
-// ---------------------------------------------------------------------------
-try {
-    $totalSched = 0;
-    $okSched    = 0;
-    $failSched  = 0;
-    while (($sched = ipam_backup_claim_due_schedule($db)) !== null) {
-        $totalSched++;
-        $destId  = isset($sched['destination_id']) && is_numeric($sched['destination_id'])
-            ? (int) $sched['destination_id'] : 0;
-        $schedId = isset($sched['id']) && is_numeric($sched['id']) ? (int) $sched['id'] : 0;
-        if ($destId <= 0 || $schedId <= 0) continue;
-
-        try {
-            // Pass the cron-tick epoch through to retention so prune timing
-            // is aligned to the tick rather than drifting with time() (#762).
-            // Pass schedule_id so the backup_runs row is linked back to the
-            // schedule that triggered it (#821) — UI joins on this for the
-            // "Triggered by" column on the backup history view.
-            ipam_backup_run_for_destination($db, $config, $destId, 'schedule', $tickEpoch, $schedId);
-            $okSched++;
-        } catch (Throwable $e) {
-            $failSched++;
-            $fail('backup_schedule', 'schedule_id=' . $schedId . ' ' . $e->getMessage());
-        }
-
-        // Always record last_run_at so admins see the attempt regardless of
-        // success/failure. next_run_at was advanced at claim time.
-        try {
-            ipam_backup_finalize_schedule_run($db, $schedId);
-        } catch (Throwable $e) {
-            $fail('backup_schedule', 'finalize schedule_id=' . $schedId . ' ' . $e->getMessage());
-        }
-    }
-    $emit(['task' => 'backup_schedules', 'due' => $totalSched, 'ok' => $okSched, 'failed' => $failSched, 'ts' => $now]);
-} catch (Throwable $e) {
-    $fail('backup_schedules', $e->getMessage());
-}
-
-// ---------------------------------------------------------------------------
-// Task 10: Demo mode database reset (was Task 7 pre-v3.3.0, Task 9 pre-v3.17.0)
+// Task 11: Demo mode database reset (was Task 7 pre-v3.3.0, Task 9 pre-v3.17.0,
+// Task 10 pre-v3.22.0). Kept last because it is irreversible-on-misuse.
 // ---------------------------------------------------------------------------
 try {
     $demoEnabled = !empty($config['demo_mode']['enabled']);
