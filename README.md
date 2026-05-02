@@ -12,12 +12,12 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.22.1
+## What's new in v3.22.2
 
-Hotfix for v3.22.0. Two production-affecting issues with MySQL/MariaDB backups, both rooted in the same MariaDB 11.4+ / MySQL 8.4+ client default of verifying the server certificate chain — which breaks against any internal/on-prem MySQL with a self-signed cert.
+Hotfix for v3.22.1. Production MySQL backups failed against Oracle MySQL 8.x clients because the v3.22.1 SSL-verify flag emitted the MariaDB-canonical `--ssl-verify-server-cert=on/off` form, which Oracle MySQL 8.4 rejects as an unknown variable. The diagnostic only landed in PHP's `error_log`, so operators saw a generic "see error_log" message in the UI without a clear path to the cause.
 
-- **mysql / mysqldump / mysql-restore TLS verification fixed.** `--ssl-verify-server-cert=off` added to all three call sites in `Simple-PHP-IPAM/lib/backup.php`, `lib.php`, and `restore.php`. Matches PHP PDO_MYSQL's default behaviour (PDO already connects without verifying). Production operators with a verifiable TLS chain can re-enable verification via their own `/etc/mysql/conf.d/` override. The error surfaced as `mysqldump: Got error: 2026: "TLS/SSL error: self-signed certificate in certificate chain"` and the operator-facing Run-now / Restore reported `fclose(): Argument #1 ($stream) must be of type resource, null given` (secondary cascade).
-- **#1075 — destination orchestrator credentials now via 0600 temp file.** Completes the v3.22.0 #820 fix. The legacy CLI runner and restore path shipped temp-file routing in v3.22.0; the v3.17+ destination dump pipeline (`lib/backup.php::ipam_backup_native_cmd`) was attempted in PR #1074 but reverted at the last minute when the TLS issue above made MySQL/MariaDB Run-now fail in CI. With the TLS fix in place, the temp-file pattern ships for every `mysqldump` / `pg_dump` invocation in the app — no more `MYSQL_PWD`/`PGPASSWORD` env vars carrying secrets to the child process.
+- **`mysqldump` / `mysql` SSL verify flag is now flavor-aware.** A new `ipam_mysql_client_flavor()` probe classifies the local client as MariaDB or Oracle MySQL once per request and emits the correct dialect — `--skip-ssl-verify-server-cert` for MariaDB, `--ssl-mode=*` for Oracle MySQL. Fixes a regression introduced in v3.22.1 that broke every prod backup running against Oracle MySQL ≥ 8.x while still keeping MariaDB 11.x (whose client verifies by default) working.
+- **Backup failure cause now visible in the UI and email notifications.** `backup_run_dump()` captures `mysqldump` / `pg_dump` stderr and surfaces it through the `backup_runs.error_message` column and the failure-notification message body (truncated to 500 chars), instead of leaving the diagnostic only in the PHP error log.
 
 [Full changelog →](CHANGELOG.md)
 
