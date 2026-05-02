@@ -25,14 +25,75 @@ let page:     Page;
 let subnetId: number | null = null;
 let cfDefId:  number | null = null;
 
+/**
+ * Look up the id of an existing custom-field definition by key by scraping the
+ * admin page. Returns null if no definition with that key is currently rendered.
+ *
+ * Stable selectors (see custom_fields.php ~L348–402):
+ *   <tr>
+ *     <td><code class="monospace">{key}</code></td>          ← exact-text match
+ *     ...
+ *     <form …><input name="action" value="delete">
+ *             <input name="id"     value="{id}"></form>
+ *   </tr>
+ *
+ * Matching the <code class="monospace"> child by exact text avoids false hits
+ * on labels/descriptions that happen to contain the key as a substring, and
+ * pulling the id from the row's delete-action form (rather than the first
+ * input[name=id], shared with the update form) is unambiguous.
+ */
+async function findCfDefIdByKey(p: Page, key: string): Promise<number | null> {
+  await p.goto('custom_fields.php');
+  return await p.evaluate((k: string) => {
+    const codes = document.querySelectorAll<HTMLElement>('tr td code.monospace');
+    for (const code of codes) {
+      if ((code.textContent ?? '').trim() !== k) continue;
+      const row = code.closest('tr');
+      if (!row) continue;
+      // Prefer the delete form's hidden id (unambiguous)
+      const forms = row.querySelectorAll<HTMLFormElement>('form');
+      for (const f of forms) {
+        const action = f.querySelector<HTMLInputElement>('input[name="action"]');
+        if (action?.value === 'delete') {
+          const idInp = f.querySelector<HTMLInputElement>('input[name="id"]');
+          if (idInp) return parseInt(idInp.value, 10);
+        }
+      }
+      // Fallback: any input[name=id] in the row
+      const idInp = row.querySelector<HTMLInputElement>('input[name="id"]');
+      if (idInp) return parseInt(idInp.value, 10);
+      return null;
+    }
+    return null;
+  }, key);
+}
+
+/**
+ * Idempotent delete-by-key. Looks up the def (if any) and POSTs delete.
+ * Safe to call when no def with that key exists — used for both pre-create
+ * cleanup (self-healing against leaks from prior failed runs) and as a
+ * fallback if id-based teardown fails or never captured an id.
+ */
+async function deleteCfDefByKey(p: Page, key: string): Promise<void> {
+  const id = await findCfDefIdByKey(p, key);
+  if (id !== null) {
+    await fetchPost(p, appUrl('custom_fields.php'), {
+      action: 'delete', id: String(id),
+    });
+  }
+}
+
 test.beforeAll(async ({ browser }: { browser: Browser }) => {
   ctx  = await newAuthContext(browser);
   page = await ctx.newPage();
   await login(page, ADMIN_USER, ADMIN_PASS);
 
-  // Clean up any leftover state
+  // Clean up any leftover state. Pre-create delete-by-KEY makes the test
+  // self-healing against leaks from prior failed runs (e.g. scrape miss
+  // or aborted teardown that never captured an id).
   await page.goto('subnets.php');
   await deleteSubnet(page, CF_CSV_CIDR);
+  await deleteCfDefByKey(page, CF_KEY);
 
   // Create test subnet
   await fetchPost(page, appUrl('subnets.php'), {
@@ -47,29 +108,10 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
     label: CF_LABEL, type: 'text', options: '[]', sort_order: '95', is_required: '0',
   });
 
-  // Navigate to the admin page and find the definition ID from the delete form
-  await page.goto('custom_fields.php');
-  cfDefId = await page.evaluate((key: string) => {
-    // Look for a form or link with data-id or a delete input that matches the key
-    const rows = document.querySelectorAll('tr');
-    for (const row of rows) {
-      if (row.textContent?.includes(key)) {
-        // Try button or input with name="id"
-        const inp = row.querySelector<HTMLInputElement>('input[name="id"]');
-        if (inp) return parseInt(inp.value, 10);
-        // Try data-id attribute on a button
-        const btn = row.querySelector<HTMLElement>('[data-id]');
-        if (btn) return parseInt(btn.getAttribute('data-id') ?? '0', 10);
-        // Try form action with id= in query string
-        const form = row.querySelector<HTMLFormElement>('form[action*="id="]');
-        if (form) {
-          const m = form.action.match(/id=(\d+)/);
-          if (m) return parseInt(m[1], 10);
-        }
-      }
-    }
-    return null;
-  }, CF_KEY);
+  // Capture the id for fast id-based teardown. Uses the same exact-text
+  // <code class="monospace"> selector as the cleanup helper. If this scrape
+  // somehow misses, the afterAll fallback (delete-by-key) still cleans up.
+  cfDefId = await findCfDefIdByKey(page, CF_KEY);
 
   // Create a seed address for export tests
   if (subnetId !== null) {
@@ -82,11 +124,24 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
 
 test.afterAll(async () => {
   try {
-    // Delete CF definition
+    // Delete CF definition. Try id-based delete first (fast path); fall
+    // through to a delete-by-key lookup if the id was never captured or
+    // the id-based delete fails for any reason. This guarantees we never
+    // leak `cf_csv_spec_txt` across runs (which collides with test_api.sh
+    // and causes 422 errors on later CF tests).
+    let idDeleteOk = false;
     if (cfDefId !== null) {
-      await fetchPost(page, appUrl('custom_fields.php'), {
-        action: 'delete', id: String(cfDefId),
-      });
+      try {
+        await fetchPost(page, appUrl('custom_fields.php'), {
+          action: 'delete', id: String(cfDefId),
+        });
+        idDeleteOk = true;
+      } catch {
+        idDeleteOk = false;
+      }
+    }
+    if (!idDeleteOk) {
+      try { await deleteCfDefByKey(page, CF_KEY); } catch { /* best-effort */ }
     }
     // Delete test subnet (cascades addresses)
     await page.goto('subnets.php');
