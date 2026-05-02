@@ -247,9 +247,11 @@ A single backup file can occupy multiple tier slots simultaneously (e.g. a Sunda
 **Future state Sean called out:** PDO-only restore would unlock **web-based restore for tenancy hosts** that don't have shell access (shared hosting, locked-down containers). That bonus motivates the eventual revisit but doesn't justify front-loading the work into this overhaul.
 
 **Implication for the overhaul:**
-- v3.22.0 ships Database backup with the existing shell-out implementation, just behind the new unified UI.
+- Database backup currently runs through the existing shell-out implementation (lib/backup.php destination orchestrator + lib.php legacy CLI runner). It's wired into the unified UI from v3.21.0 onward.
 - `mysqldump` / `pg_dump` host prereqs documented.
 - No new code in this area until the revisit.
+
+> **Scope correction (2026-05-02):** earlier drafts of this section said "v3.22.0 ships Database backup … behind the new unified UI." That's stale. v3.22.0 was scope-locked to backend concurrency + cron architecture only (see §9 v3.22.0 row — "pure backend, no UI"). The Database-as-it-stands has been live in the unified UI since v3.21.0. The Logical-format DUMP engine + the destination/Run-now picker UI ship in **v3.25.0** (#849 + #1076); the Logical-format RESTORE engine ships in **v3.23.0** (#824).
 
 **Future work (parking lot, not committed):**
 - F26 (new): MySQL-PDO Database backup using `SHOW CREATE TABLE` shortcut — ~4 weeks of focused work, eliminates `mysqldump` host dep
@@ -271,19 +273,25 @@ Same outcome as 4a: operators who want zero CLI dependency use Logical backups e
 
 Already locked in §2.1.1: Logical backup is our format, PDO-only by definition. Engine-portable. No CLI tools involved.
 
-### 5c'. Cross-engine logical restore — AGREED 2026-04-29: defer to v3.23.0+
+### 5c'. Cross-engine logical restore — AGREED 2026-04-29: defer to v3.26.0+
 
-**Decision:** v3.22.0 ships Logical backup with **same-engine restore only**. Cross-engine restore (sqlite-source → mysql-target, etc.) defers to v3.23.0+.
+**Decision:** Logical backup ships with **same-engine restore only**. Cross-engine restore (sqlite-source → mysql-target, etc.) defers to v3.26.0+.
 
 Sean: *"Defer. I expect several releases to clean things up."*
 
-**Why:** cross-engine adds 4-6 weeks of type-mapping work (engine-specific type-coercion, constraint translation, sequence/auto-increment handling) on top of an already-large v3.22.0. Better to ship same-engine Logical first, give it track record, then add cross-engine as a v3.23.0+ unlock that builds on the `Dialect` class infrastructure already proving engine-portable type translation since v2.9.0.
+**Why:** cross-engine adds 4-6 weeks of type-mapping work (engine-specific type-coercion, constraint translation, sequence/auto-increment handling). Better to ship same-engine Logical first, give it track record, then add cross-engine as a later unlock that builds on the `Dialect` class infrastructure already proving engine-portable type translation since v2.9.0. Tracked: same-engine Logical RESTORE in v3.23.0 (#824), Logical DUMP + picker UI in v3.25.0 (#849, #1076), cross-engine restore in v3.26.0+ (#861).
+
+> **Scope correction (2026-05-02):** earlier drafts said "v3.22.0 ships Logical backup with same-engine restore only." Stale. v3.22.0 was scope-locked to backend concurrency + cron only (see §9 v3.22.0 row — "pure backend, no UI"). Logical RESTORE moved to v3.23.0; Logical DUMP + picker UI to v3.25.0.
 
 ### 5d. Both formats ship — Logical primary, Database escape hatch — AGREED 2026-04-29
 
 Sean (paraphrased): "B is a good middle-of-the-road. We could also leave operators to perform their own DB backups. But at least B gives us the option."
 
-**Both Database and Logical formats ship.** UI / docs / defaults treat **Logical as the recommended path** for most operators; Database is positioned as an "engine-native escape hatch" for operators who want byte-for-byte engine fidelity AND have CLI tools available.
+**Both Database and Logical formats ship by v3.25.0.** UI / docs / defaults treat **Logical as the recommended path** for most operators; Database is positioned as an "engine-native escape hatch" for operators who want byte-for-byte engine fidelity AND have CLI tools available.
+
+**Timeline (concrete):**
+- Database format — already wired into the unified UI since v3.21.0. No-op for v3.22.0 (which was concurrency + cron only; see §9).
+- Logical format — RESTORE engine in v3.23.0 (#824), DUMP engine in v3.25.0 (#849), destination/Run-now picker UI in v3.25.0 (#1076). Until v3.25.0 ships, every backup row is `backup_type='database'` because the picker/dump path doesn't exist yet — the History tab's `backup_type` filter chip exists but only one value can be written.
 
 | | Logical (primary) | Database (escape hatch) |
 |---|---|---|
@@ -783,7 +791,8 @@ Each milestone is now ≤16 items, single-theme. Less context-switching mid-rele
 | F15 | Func | Retention re-homed at destination level | — | v3.25 | P1 | §3 AGREED |
 | F14 | Func | "Protect this backup" flag on rows | — | v3.25 | P1 | §3 |
 | F10 | Func | Default destination selector | — | v3.25 | P2 | §2.3 |
-| F19 | Func | PDO-based dump (logical) | — | v3.25 | P1 | Per §5 cycle plan |
+| F19 | Func | PDO-based dump (logical) | — | v3.25 | P1 | Per §5 cycle plan; #849 |
+| F19a | Func | **Destination + Run-now Logical/Database picker UI** | — | v3.25 | **P1** | Companion to F19; without this the dump engine has no operator-facing entry point. #1076 |
 | F24 | Func | "Verify all backups" bulk action | — | v3.25 | P2 | New |
 | F25 | Func | Opt-out encryption for trusted local | — | v3.25 | P2 | New |
 | F34 | Func | Range-request resume in S3Client::download | — | v3.25 | P2 | Audit #28 |
@@ -796,7 +805,7 @@ Each milestone is now ≤16 items, single-theme. Less context-switching mid-rele
 | T8 | Test | Destination-disabled mid-backup | — | v3.25 | P2 | Graceful failure |
 | T9 | Test | Large-DB streaming test (>1GB) | — | v3.25 | P2 | Memory bounds |
 
-**v3.25.0 total: ~15 items.** Polish-heavy; can absorb minor cuts if it slips.
+**v3.25.0 total: ~16 items** (was 15; F19a / #1076 added during v3.22.0 post-mortem when the Logical/Database picker UI surfaced as a previously-untracked dependency of F19/#849). Polish-heavy; can absorb minor cuts if it slips.
 
 ### v3.26.0+ — Cross-engine restore parking lot
 
