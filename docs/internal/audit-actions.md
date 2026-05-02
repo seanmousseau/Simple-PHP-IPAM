@@ -79,7 +79,10 @@ Single action covers every setting change. The `$details` JSON contains old and 
 ```text
 backup.failed              backup.skipped_concurrent     backup.reaped
 backup.retention_pruned    backup.wal_checkpoint_failed
+backup_run.bulk_delete
 ```
+
+`backup_run.bulk_delete` (`entity_type=backup_run`) — emitted once per row deleted via the History tab's bulk-select UI (v3.22.0 #1052). One audit entry per row keeps forensics aligned with the per-row `backup_run.delete` / `backup_run.delete_failed` vocabulary; `$details` carries `actor=bulk` so bulk deletions are distinguishable from single-row drawer deletes.
 
 `backup.skipped_concurrent` (`entity_type=destination`) — orchestrator refused to start because a non-stale `running` row already exists for the destination (v3.22.0 #815).
 
