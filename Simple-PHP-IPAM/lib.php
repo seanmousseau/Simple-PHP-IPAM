@@ -3764,8 +3764,13 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             // The file MUST be unlinked on every exit path below.
             $credFile = ipam_backup_write_mysql_defaults_file($pass);
             // --defaults-extra-file MUST be the first mysqldump argument.
+            // --ssl-verify-server-cert=off matches PDO_MYSQL's default behavior
+            // and lets us connect to self-signed servers (common on internal
+            // on-prem MySQL deployments) — see lib/backup.php::ipam_backup_native_cmd
+            // for the full rationale (#1075).
             $cmd = [
                 'mysqldump', '--defaults-extra-file=' . $credFile,
+                '--ssl-verify-server-cert=off',
                 '--single-transaction', '--routines',
                 '-h', $host, '-P', $port, '-u', $user, $dbName,
             ];
