@@ -255,7 +255,8 @@ function ipam_backup_run_for_destination(
     array $config,
     int $destId,
     string $triggeredBy = 'manual',
-    ?int $nowEpoch = null
+    ?int $nowEpoch = null,
+    ?int $scheduleId = null
 ): array {
     // v3.22.0 #815: concurrency guard. Reap stuck rows first (so a row that
     // *looks* active but is past the threshold doesn't permanently block
@@ -297,7 +298,7 @@ function ipam_backup_run_for_destination(
     // Random 8-hex-char suffix prevents filename collisions when two
     // runs land in the same second (e.g. manual + scheduled overlap).
     $remoteName = sprintf('ipam-backup-%s-%s%s', gmdate('Ymd-His'), bin2hex(random_bytes(4)), $extension);
-    $logId = ipam_backup_insert_log($db, $destId, $triggeredBy, 'running', $remoteName);
+    $logId = ipam_backup_insert_log($db, $destId, $triggeredBy, 'running', $remoteName, $scheduleId);
 
     try {
         $meta = $client->upload($tmpFile, $remoteName);
@@ -589,8 +590,14 @@ function ipam_backup_encrypt_to_tmp(string $srcPath, string $appSecret): string
  * flag — encrypted destinations write 'stored' (v3.17 IPAMBKP2 mode);
  * unencrypted destinations write 'unencrypted'.
  */
-function ipam_backup_insert_log(PDO $db, int $destId, string $triggeredBy, string $status, string $filename): int
-{
+function ipam_backup_insert_log(
+    PDO $db,
+    int $destId,
+    string $triggeredBy,
+    string $status,
+    string $filename,
+    ?int $scheduleId = null
+): int {
     $now = ipam_dialect()->now();
 
     // Resolve encryption mode from the destination's encrypt flag.
@@ -609,16 +616,20 @@ function ipam_backup_insert_log(PDO $db, int $destId, string $triggeredBy, strin
     $stmt = $db->prepare(
         "INSERT INTO backup_runs " .
         "(destination_id, schedule_id, backup_type, encryption_mode, triggered_by, status, filename, source_version, started_at) " .
-        "VALUES (:d, NULL, 'database', :em, :t, :s, :f, :sv, $now)"
+        "VALUES (:d, :sid, 'database', :em, :t, :s, :f, :sv, $now)"
     );
-    $stmt->execute([
-        ':d'  => $destId,
-        ':em' => $encMode,
-        ':t'  => $triggeredBy,
-        ':s'  => $status,
-        ':f'  => $filename,
-        ':sv' => IPAM_VERSION,
-    ]);
+    $stmt->bindValue(':d',   $destId, PDO::PARAM_INT);
+    if ($scheduleId === null) {
+        $stmt->bindValue(':sid', null, PDO::PARAM_NULL);
+    } else {
+        $stmt->bindValue(':sid', $scheduleId, PDO::PARAM_INT);
+    }
+    $stmt->bindValue(':em',  $encMode);
+    $stmt->bindValue(':t',   $triggeredBy);
+    $stmt->bindValue(':s',   $status);
+    $stmt->bindValue(':f',   $filename);
+    $stmt->bindValue(':sv',  IPAM_VERSION);
+    $stmt->execute();
     return (int) $db->lastInsertId();
 }
 

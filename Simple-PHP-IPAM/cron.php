@@ -347,7 +347,10 @@ try {
         try {
             // Pass the cron-tick epoch through to retention so prune timing
             // is aligned to the tick rather than drifting with time() (#762).
-            ipam_backup_run_for_destination($db, $config, $destId, 'schedule', $tickEpoch);
+            // Pass schedule_id so the backup_runs row is linked back to the
+            // schedule that triggered it (#821) — UI joins on this for the
+            // "Triggered by" column on the backup history view.
+            ipam_backup_run_for_destination($db, $config, $destId, 'schedule', $tickEpoch, $schedId);
             $okSched++;
         } catch (Throwable $e) {
             $failSched++;
