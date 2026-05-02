@@ -508,11 +508,16 @@ function ipam_backup_native_cmd(string $driver, array $config): array
         $credFile  = ipam_backup_write_mysql_defaults_file($pass);
         // --defaults-extra-file MUST be the FIRST argument; mysql/mysqldump
         // ignore it otherwise (libmysql parses it before any other option).
-        // --no-login-paths skips ~/.mylogin.cnf so an operator's login-path
-        // file can't override the temp credential we just wrote (PR #1080
-        // CR; without this the cred file's password defense is partial).
+        // (Two related v3.23.0 follow-ups tracked in #1081, both gated on
+        // a one-time client-flavor + version probe that we don't have yet:
+        //   1) --no-login-paths to neutralise ~/.mylogin.cnf override —
+        //      added in MariaDB 11.4; CI's MariaDB 10.11 rejects it.
+        //   2) --ssl-mode for Oracle MySQL clients — currently we always
+        //      emit --ssl-verify-server-cert which is MariaDB-canonical
+        //      and accepted but deprecated on Oracle MySQL 8.x; may be
+        //      removed in MySQL 9.x.
+        // Both fixes share the same probe-and-cache helper — bundle them.)
         $cmd  = ['mysqldump', '--defaults-extra-file=' . $credFile,
-                 '--no-login-paths',
                  $verifySsl ? '--ssl-verify-server-cert=on' : '--ssl-verify-server-cert=off',
                  '--single-transaction', '--routines'];
         if (preg_match('/unix_socket=([^;]+)/i', $dsn, $m)) {

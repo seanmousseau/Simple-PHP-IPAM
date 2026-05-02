@@ -185,8 +185,9 @@ if ($driver === 'sqlite') {
     // --defaults-extra-file MUST be the first mysql argument.
     // --no-login-paths + --ssl-verify-server-cert toggling per
     // lib/backup.php::ipam_backup_native_cmd rationale (PR #1080 CR / #1075).
+    // (--no-login-paths AND --ssl-mode for Oracle MySQL — both follow-ups
+    // tracked in #1081, gated on a probe helper.)
     $cmd = ['mysql', '--defaults-extra-file=' . $credFile,
-            '--no-login-paths',
             $verifySsl ? '--ssl-verify-server-cert=on' : '--ssl-verify-server-cert=off',
             '-h', $host, '-P', $port, '-u', $user, $dbName];
     $env = getenv() ?: [];

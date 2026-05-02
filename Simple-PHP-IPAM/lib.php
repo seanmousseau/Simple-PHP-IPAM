@@ -3776,12 +3776,10 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             // The file MUST be unlinked on every exit path below.
             $credFile = ipam_backup_write_mysql_defaults_file($pass);
             // --defaults-extra-file MUST be the first mysqldump argument.
-            // --no-login-paths and --ssl-verify-server-cert toggling follow
-            // the rationale in lib/backup.php::ipam_backup_native_cmd
-            // (PR #1080 CR / #1075).
+            // (--no-login-paths AND --ssl-mode for Oracle MySQL — both
+            // follow-ups tracked in #1081, gated on a probe helper.)
             $cmd = [
                 'mysqldump', '--defaults-extra-file=' . $credFile,
-                '--no-login-paths',
                 $verifySsl ? '--ssl-verify-server-cert=on' : '--ssl-verify-server-cert=off',
                 '--single-transaction', '--routines',
                 '-h', $host, '-P', $port, '-u', $user, $dbName,
