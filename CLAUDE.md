@@ -87,6 +87,7 @@ Operational procedures live alongside the code, one Read away. CLAUDE.md is poli
 | `docs/internal/scanner.md` | Scanner subsystem reference — tables, helpers, security patterns. Read when touching scan/probe/ARP code |
 | `docs/internal/runtime-dependency-policy.md` | Full policy text behind the `vendor/` whitelist. The whitelist + summary stays in CLAUDE.md; rationale lives here |
 | `docs/internal/v4-tenancy-design.md` | Forward-looking v4.0.0 multi-tenancy design (opt-in wizard, `/t/slug/` URLs, settings cascade, HKDF per-tenant keys, post-v4 table rules). Not in force in v3.x |
+| `docs/internal/cleanup.md` | Pre-ticket backlog for low-risk code-health items. Add a row when spotting cleanup-worthy code during other work; batch into a GH issue once items accumulate |
 
 ---
 
