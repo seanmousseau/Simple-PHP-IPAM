@@ -145,42 +145,95 @@ test.describe('Sidebar — Backup & Restore entry (#797, #798)', () => {
     });
 });
 
-// ── Notifications tab — read-only summary ──────────────────────────────────────
+// ── Notifications tab — editable preferences (v3.22.0 §2.4) ───────────────────
 
-test.describe('Notifications tab — read-only summary', () => {
+test.describe('Notifications tab — editable preferences', () => {
+
+    // 8 event toggles (boolean) — keys match ipam_setting_definitions() event_*.
+    // Default-ON keys per the registry; all others default OFF.
+    const EVENT_KEYS = [
+        'success_scheduled',
+        'success_manual',
+        'failure_scheduled',
+        'failure_manual',
+        'destination_conn_failure',
+        'schedule_overdue',
+        'retention_prune',
+        'encryption_change',
+    ] as const;
+    const DEFAULT_ON = new Set([
+        'failure_scheduled',
+        'failure_manual',
+        'destination_conn_failure',
+        'schedule_overdue',
+        'encryption_change',
+    ]);
 
     test.beforeEach(async () => {
         await page.goto(tabUrl('notifications'));
     });
 
-    test('renders the four notification preference rows', async () => {
-        const rows = page.locator('.backup-admin-tab .data-table tbody tr');
-        await expect(rows).toHaveCount(4);
-        await expect(rows.nth(0)).toContainText('Notify on backup failure');
-        await expect(rows.nth(1)).toContainText('Notify on backup success');
-        await expect(rows.nth(2)).toContainText('Recipient (alert_email)');
-        await expect(rows.nth(3)).toContainText('SMTP delivery');
+    test('renders an editable form scoped to backup_admin.php?tab=notifications', async () => {
+        const form = page.locator('.backup-admin-tab form[method="post"]');
+        await expect(form).toHaveCount(1);
+        await expect(form).toHaveAttribute('action', /backup_admin\.php\?tab=notifications/);
+        // Hidden action discriminator the controller dispatches on.
+        await expect(form.locator('input[type="hidden"][name="action"][value="save_notifications"]')).toHaveCount(1);
     });
 
-    test('every row has an "Edit in Settings" deep-link (no inline editing)', async () => {
-        const rows = page.locator('.backup-admin-tab .data-table tbody tr');
-        for (let i = 0; i < 4; i++) {
-            const link = rows.nth(i).locator('a', { hasText: 'Edit in Settings' });
-            await expect(link).toHaveCount(1);
-            await expect(link).toHaveAttribute('href', /^settings\.php\?tab=/);
+    test('renders all 8 event toggles as checkboxes with stable name= attrs', async () => {
+        for (const key of EVENT_KEYS) {
+            const cb = page.locator(`.backup-admin-tab form input[type="checkbox"][name="event_${key}"]`);
+            await expect(cb, `event toggle for ${key}`).toHaveCount(1);
         }
     });
 
-    test('on/off badges render for boolean settings (not free-form text)', async () => {
-        const failureRow = page.locator('.backup-admin-tab .data-table tbody tr', { hasText: 'Notify on backup failure' });
-        const smtpRow    = page.locator('.backup-admin-tab .data-table tbody tr', { hasText: 'SMTP delivery' });
-        await expect(failureRow.locator('.badge')).toHaveCount(1);
-        await expect(smtpRow.locator('.badge')).toHaveCount(1);
+    test('default checkbox states match the setting registry defaults', async () => {
+        for (const key of EVENT_KEYS) {
+            const cb = page.locator(`.backup-admin-tab form input[type="checkbox"][name="event_${key}"]`);
+            if (DEFAULT_ON.has(key)) {
+                await expect(cb, `${key} should default ON`).toBeChecked();
+            } else {
+                await expect(cb, `${key} should default OFF`).not.toBeChecked();
+            }
+        }
     });
 
-    test('no <form> elements — confirms the tab is read-only', async () => {
-        // The Notifications tab body must not render any form. All editing
-        // routes through the deep-links into settings.php.
-        await expect(page.locator('.backup-admin-tab form')).toHaveCount(0);
+    test('renders the schedule-overdue grace-minutes integer input (default 60)', async () => {
+        const grace = page.locator('.backup-admin-tab form input[type="number"][name="overdue_grace_minutes"]');
+        await expect(grace).toHaveCount(1);
+        await expect(grace).toHaveValue('60');
+        await expect(grace).toHaveAttribute('min', '5');
+        await expect(grace).toHaveAttribute('max', '1440');
+    });
+
+    test('CSRF hidden input is present in the editable form', async () => {
+        const csrf = page.locator('.backup-admin-tab form input[type="hidden"][name="csrf"]');
+        await expect(csrf).toHaveCount(1);
+        const value = await csrf.getAttribute('value');
+        expect(value, 'csrf token should be a non-empty string').toBeTruthy();
+        expect((value ?? '').length).toBeGreaterThan(8);
+    });
+
+    test('submit button is present', async () => {
+        await expect(
+            page.locator('.backup-admin-tab form button[type="submit"]', { hasText: /Save preferences/i }),
+        ).toHaveCount(1);
+    });
+
+    test('recipients summary card renders SMTP status + alert recipients', async () => {
+        // Second card on the tab — recipients summary still surfaces SMTP
+        // delivery state and the existing alert.email / alert.recipient_user_ids
+        // configuration, with deep-links into settings.php for editing.
+        const recipients = page.locator('.backup-admin-tab section.card').filter({
+            has: page.locator('h3', { hasText: /^\s*Recipients\s*$/ }),
+        });
+        await expect(recipients).toHaveCount(1);
+        await expect(recipients.locator('tbody tr', { hasText: /SMTP delivery/i })).toHaveCount(1);
+        await expect(recipients.locator('tbody tr', { hasText: /Selected alert users/i })).toHaveCount(1);
+        // Deep-link into the alerts group of settings.php still exists.
+        await expect(
+            recipients.locator('a[href*="settings.php?tab=general"]'),
+        ).not.toHaveCount(0);
     });
 });
