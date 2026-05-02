@@ -87,7 +87,8 @@ Operational procedures live alongside the code, one Read away. CLAUDE.md is poli
 | `docs/internal/scanner.md` | Scanner subsystem reference — tables, helpers, security patterns. Read when touching scan/probe/ARP code |
 | `docs/internal/runtime-dependency-policy.md` | Full policy text behind the `vendor/` whitelist. The whitelist + summary stays in CLAUDE.md; rationale lives here |
 | `docs/internal/v4-tenancy-design.md` | Forward-looking v4.0.0 multi-tenancy design (opt-in wizard, `/t/slug/` URLs, settings cascade, HKDF per-tenant keys, post-v4 table rules). Not in force in v3.x |
-| `docs/internal/i18n-design.md` | Forward-looking i18n/l10n design (Gettext, per-user locale cascade, 4-phase rollout, sequencing with v4.0). Not in force; locks decisions before implementation work begins |
+| `docs/internal/i18n-design.md` | Forward-looking i18n/l10n design (Gettext, per-user locale cascade, 4-phase rollout). Candidate for v4.0.0 + v4.2.0 per `v4-release-stream.md` |
+| `docs/internal/v4-release-stream.md` | v4.x stream strategy — enterprise auth + global reach. Sequencing for i18n + RBAC + SAML + LDAP + OAuth + SCIM across ~6 releases. Multi-tenancy explicitly NOT in v4.x (deferred — see `v4-tenancy-design.md` header) |
 | `docs/internal/cleanup.md` | Pre-ticket backlog for low-risk code-health items. Add a row when spotting cleanup-worthy code during other work; batch into a GH issue once items accumulate |
 
 ---

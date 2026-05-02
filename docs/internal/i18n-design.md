@@ -1,6 +1,8 @@
 # Internationalization (i18n) and localization (l10n) — design
 
-> **Forward-looking design.** Not in force. No version assigned yet. This doc locks the architectural decisions so future implementation work doesn't have to re-litigate them. Mirrors the pattern of `v4-tenancy-design.md`.
+> **Forward-looking design.** Not in force. **Candidate for v4.0.0 + v4.2.0 (phase 3)** as part of the v4.x enterprise-auth + global-reach stream — see `v4-release-stream.md` for the full stream rationale and sequencing.
+>
+> This doc locks the architectural decisions so future implementation work doesn't have to re-litigate them. Mirrors the pattern of `v4-tenancy-design.md` (now deferred — see its header).
 >
 > Read this when: scoping the i18n release stream, evaluating a feature that touches user-facing strings, or designing a related preference (timezone, date format, currency).
 
