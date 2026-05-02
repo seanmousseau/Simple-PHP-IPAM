@@ -1549,21 +1549,110 @@ function ipam_setting_definitions(): array
             'sensitive'   => false,
             'config_key'  => ['backup', 'dir'],
         ],
-        'backup.notify_on_failure' => [
-            'label'       => 'Notify on backup failure',
-            'description' => 'Email notification when a backup fails.',
+        // --- Notifications (v3.22.0 §2.4) ---
+        // Per-event toggles split scheduled-vs-manual on the success/failure
+        // axis (§2.4 lists the two as independent — operators commonly want
+        // "tell me when scheduled fail" + "stay silent on manual" or vice
+        // versa). Per-schedule overrides are parking-lot work.
+        // Legacy keys backup.notify_on_failure / backup.notify_on_success
+        // were retired here; ipam_backup_notify() reads the new keys directly.
+        'backup.notify_success_scheduled' => [
+            'label'       => 'Email on scheduled-backup success',
+            'description' => 'Send a notification when a scheduled backup completes successfully. Off by default — successful schedules can be very noisy.',
+            'type'        => 'bool',
+            'group'       => 'backup',
+            'default'     => false,
+            'sensitive'   => false,
+        ],
+        'backup.notify_success_manual' => [
+            'label'       => 'Email on manual-backup success',
+            'description' => 'Send a notification when an operator-triggered (Run-now) backup completes successfully.',
+            'type'        => 'bool',
+            'group'       => 'backup',
+            'default'     => false,
+            'sensitive'   => false,
+        ],
+        'backup.notify_failure_scheduled' => [
+            'label'       => 'Email on scheduled-backup failure',
+            'description' => 'Send a notification when a scheduled backup fails.',
             'type'        => 'bool',
             'group'       => 'backup',
             'default'     => true,
             'sensitive'   => false,
         ],
-        'backup.notify_on_success' => [
-            'label'       => 'Notify on backup success',
-            'description' => 'Email notification when a backup succeeds.',
+        'backup.notify_failure_manual' => [
+            'label'       => 'Email on manual-backup failure',
+            'description' => 'Send a notification when an operator-triggered (Run-now) backup fails.',
+            'type'        => 'bool',
+            'group'       => 'backup',
+            'default'     => true,
+            'sensitive'   => false,
+        ],
+        'backup.notify_destination_conn_failure' => [
+            'label'       => 'Email on destination connection-test failure',
+            'description' => "Periodically re-tests every active backup destination from the cron tick. When a previously-healthy destination starts failing, send one email (with a cooldown). No email is sent on recovery.",
+            'type'        => 'bool',
+            'group'       => 'backup',
+            'default'     => true,
+            'sensitive'   => false,
+        ],
+        'backup.notify_schedule_overdue' => [
+            'label'       => 'Email when a backup schedule is overdue',
+            'description' => 'Send a notification when a schedule should have fired but has not (cron stuck, host crashed, etc.).',
+            'type'        => 'bool',
+            'group'       => 'backup',
+            'default'     => true,
+            'sensitive'   => false,
+        ],
+        'backup.notify_overdue_grace_minutes' => [
+            'label'       => 'Schedule-overdue grace period (minutes)',
+            'description' => 'How many minutes past the expected next_run_at before a schedule is considered overdue and emailed.',
+            'type'        => 'int',
+            'group'       => 'backup',
+            'default'     => 60,
+            'sensitive'   => false,
+            'min'         => 5,
+            'max'         => 1440,
+        ],
+        'backup.notify_retention_prune' => [
+            'label'       => 'Email retention-prune summaries',
+            'description' => 'Send a notification each time retention deletes blobs from a destination. Verbose — off by default.',
             'type'        => 'bool',
             'group'       => 'backup',
             'default'     => false,
             'sensitive'   => false,
+        ],
+        'backup.notify_encryption_change' => [
+            'label'       => 'Email on destination encryption-mode change',
+            'description' => 'Send a notification when an admin toggles a destination between encrypted and plaintext.',
+            'type'        => 'bool',
+            'group'       => 'backup',
+            'default'     => true,
+            'sensitive'   => false,
+        ],
+        // Internal — JSON map { destId: { last_ok_at, last_failed_at,
+        // last_alerted_at, status } } maintained by cron Task 6c. Hidden
+        // from the settings UI (group/label not surfaced) but stored in
+        // settings to avoid a new schema migration.
+        'backup.destination_health' => [
+            'label'       => 'Destination health (internal)',
+            'description' => 'Internal — periodic destination health map maintained by cron. Not user-editable.',
+            'type'        => 'string',
+            'group'       => 'backup',
+            'default'     => '{}',
+            'sensitive'   => false,
+            'hidden'      => true,
+        ],
+        // Internal — JSON map { schedId: { last_alerted_at } } maintained by
+        // cron Task 6d. Hidden from the settings UI.
+        'backup.schedule_overdue_state' => [
+            'label'       => 'Schedule overdue state (internal)',
+            'description' => 'Internal — last-alerted timestamps per overdue schedule. Not user-editable.',
+            'type'        => 'string',
+            'group'       => 'backup',
+            'default'     => '{}',
+            'sensitive'   => false,
+            'hidden'      => true,
         ],
         'backup_runs.retention_days' => [
             'label'       => 'Backup history retention (days)',
@@ -3588,7 +3677,7 @@ function run_db_backup_if_due(PDO $db, array $config): bool
         // Synthetic destination for ipam_backup_notify(): the legacy v3.7 path
         // has no row in backup_destinations, so the notifier just gets a
         // human-readable name to put in the subject line.
-        $legacyDest = ['name' => 'local backup (' . $driver . ')'];
+        $legacyDest = ['name' => 'local backup (' . $driver . ')', 'triggered_by' => 'scheduled'];
 
         // Centralised "abort with notification + history row" helper. Earlier
         // versions of this function bailed out of pre-condition failures
@@ -4814,22 +4903,86 @@ function ipam_destination_test_now(PDO $db, int $destId, string $triggeredBy = '
 }
 
 /**
- * Email notification on backup completion. Best-effort: failures logged, never thrown.
+ * Email notification dispatcher for backup-subsystem events. Best-effort:
+ * failures logged, never thrown. Each event reads its own enable flag from
+ * the settings registry and returns early if disabled.
  *
- * @param array<string,mixed> $dest backup_destinations row
- * @param string $status 'success' | 'failure'
- * @param string $detail filename on success, error message on failure
+ * Supported events (v3.22.0 §2.4):
+ *   - 'success_scheduled'         context: ['dest' => row, 'detail' => string]
+ *   - 'success_manual'            context: ['dest' => row, 'detail' => string]
+ *   - 'failure_scheduled'         context: ['dest' => row, 'detail' => string]
+ *   - 'failure_manual'            context: ['dest' => row, 'detail' => string]
+ *   - 'destination_conn_failure'  context: ['dest' => row, 'message' => string]
+ *   - 'schedule_overdue'          context: ['schedule_id' => int, 'destination_name' => string,
+ *                                            'expected_at' => string, 'overdue_minutes' => int]
+ *   - 'retention_prune'           context: ['dest' => row, 'pruned' => int]
+ *   - 'encryption_change'         context: ['dest' => row, 'old_mode' => string, 'new_mode' => string]
+ *
+ * Backwards compatibility: the v3.21.x signature
+ *     ipam_backup_notify(PDO $db, array $dest, string $status, string $detail)
+ * is preserved — when the second arg is an array, this delegates to the new
+ * dispatch path with `$status` mapped to the appropriate event by inspecting
+ * `$dest['triggered_by']` if present (defaults to 'scheduled').
+ *
+ * @param array<string,mixed>|string $eventOrDest  Event slug, or legacy $dest row
+ * @param array<string,mixed>|string $contextOrStatus  Event context, or legacy 'success'|'failure'
+ * @param string                     $legacyDetail  Legacy detail string when called with old signature
  */
-function ipam_backup_notify(PDO $db, array $dest, string $status, string $detail): void
-{
-    $notifyFailure = (bool) ipam_setting('backup.notify_on_failure');
-    $notifySuccess = (bool) ipam_setting('backup.notify_on_success');
-    if ($status === 'failure' && !$notifyFailure) return;
-    if ($status === 'success' && !$notifySuccess) return;
+function ipam_backup_notify(
+    PDO $db,
+    array|string $eventOrDest,
+    array|string $contextOrStatus = [],
+    string $legacyDetail = ''
+): void {
+    // ----- Legacy signature shim -------------------------------------------
+    // Pre-v3.22.0: ipam_backup_notify($db, $destRow, 'success'|'failure', $detail)
+    // The BackupNotifyWiringTest source-scan test still asserts the old
+    // call-site shape, so we preserve it. New callers should use the
+    // event/context form.
+    if (is_array($eventOrDest)) {
+        $dest      = $eventOrDest;
+        $status    = is_string($contextOrStatus) ? $contextOrStatus : '';
+        $triggered = is_string($dest['triggered_by'] ?? null) ? $dest['triggered_by'] : 'scheduled';
+        $event = match (true) {
+            $status === 'success' && $triggered === 'manual'   => 'success_manual',
+            $status === 'success'                              => 'success_scheduled',
+            $status === 'failure' && $triggered === 'manual'   => 'failure_manual',
+            $status === 'failure'                              => 'failure_scheduled',
+            default                                            => '',
+        };
+        if ($event === '') return;
+        ipam_backup_notify_dispatch($db, $event, ['dest' => $dest, 'detail' => $legacyDetail]);
+        return;
+    }
 
-    // Resolve recipients via the same multi-user picker the rest of the
-    // alerting system uses (alert.recipient_user_ids → users.email).
-    // Falls back to the deprecated alert_email setting only if no users selected.
+    // ----- New signature ---------------------------------------------------
+    $event   = $eventOrDest;
+    $context = is_array($contextOrStatus) ? $contextOrStatus : [];
+    ipam_backup_notify_dispatch($db, $event, $context);
+}
+
+/**
+ * Internal dispatch — looks up the per-event enable flag, formats subject +
+ * body, and hands off to the shared mail pipeline.
+ *
+ * @param array<string,mixed> $context
+ */
+function ipam_backup_notify_dispatch(PDO $db, string $event, array $context): void
+{
+    $settingKey = match ($event) {
+        'success_scheduled'        => 'backup.notify_success_scheduled',
+        'success_manual'           => 'backup.notify_success_manual',
+        'failure_scheduled'        => 'backup.notify_failure_scheduled',
+        'failure_manual'           => 'backup.notify_failure_manual',
+        'destination_conn_failure' => 'backup.notify_destination_conn_failure',
+        'schedule_overdue'         => 'backup.notify_schedule_overdue',
+        'retention_prune'          => 'backup.notify_retention_prune',
+        'encryption_change'        => 'backup.notify_encryption_change',
+        default                    => '',
+    };
+    if ($settingKey === '' || !((bool) ipam_setting($settingKey))) return;
+
+    // Recipients via the same multi-user picker as every other alert.
     $recipients = ipam_resolve_alert_recipients($db);
     if ($recipients === []) {
         $legacy = trim(to_str(ipam_setting('alert.email')));
@@ -4837,12 +4990,67 @@ function ipam_backup_notify(PDO $db, array $dest, string $status, string $detail
     }
     if ($recipients === []) return;
 
+    $dest = is_array($context['dest'] ?? null) ? $context['dest'] : [];
     $destName = is_string($dest['name'] ?? null) ? $dest['name'] : 'unknown';
-    $subject = sprintf('[IPAM] Backup %s: %s', strtoupper($status), $destName);
-    $body = sprintf(
-        "Backup %s for destination \"%s\".\n\nDetail: %s\n",
-        $status, $destName, $detail
-    );
+
+    [$subject, $body] = match ($event) {
+        'success_scheduled' => [
+            sprintf('[IPAM] Backup SUCCESS (scheduled): %s', $destName),
+            sprintf("Scheduled backup succeeded for destination \"%s\".\n\nDetail: %s\n",
+                $destName, to_str($context['detail'] ?? '')),
+        ],
+        'success_manual' => [
+            sprintf('[IPAM] Backup SUCCESS (manual): %s', $destName),
+            sprintf("Manual backup succeeded for destination \"%s\".\n\nDetail: %s\n",
+                $destName, to_str($context['detail'] ?? '')),
+        ],
+        'failure_scheduled' => [
+            sprintf('[IPAM] Backup FAILURE (scheduled): %s', $destName),
+            sprintf("Scheduled backup FAILED for destination \"%s\".\n\nDetail: %s\n",
+                $destName, to_str($context['detail'] ?? '')),
+        ],
+        'failure_manual' => [
+            sprintf('[IPAM] Backup FAILURE (manual): %s', $destName),
+            sprintf("Manual backup FAILED for destination \"%s\".\n\nDetail: %s\n",
+                $destName, to_str($context['detail'] ?? '')),
+        ],
+        'destination_conn_failure' => [
+            sprintf('[IPAM] Destination connection test failing: %s', $destName),
+            sprintf(
+                "Periodic connection test for backup destination \"%s\" started failing.\n\nMessage: %s\n\n"
+                . "No further alerts will be sent for this destination until it recovers, then fails again.\n",
+                $destName, to_str($context['message'] ?? 'unknown')
+            ),
+        ],
+        'schedule_overdue' => [
+            sprintf('[IPAM] Backup schedule overdue: %s',
+                to_str($context['destination_name'] ?? 'unknown')),
+            sprintf(
+                "A backup schedule has not fired when expected.\n\n"
+                . "Destination: %s\nExpected at: %s\nOverdue by: %d minute(s)\nSchedule ID: %d\n\n"
+                . "Likely causes: cron not running, host crashed, or the orchestrator is stuck.\n",
+                to_str($context['destination_name'] ?? 'unknown'),
+                to_str($context['expected_at'] ?? 'unknown'),
+                to_int($context['overdue_minutes'] ?? 0),
+                to_int($context['schedule_id'] ?? 0)
+            ),
+        ],
+        'retention_prune' => [
+            sprintf('[IPAM] Retention prune ran on %s', $destName),
+            sprintf("Retention deleted %d backup blob(s) from destination \"%s\".\n",
+                to_int($context['pruned'] ?? 0), $destName),
+        ],
+        'encryption_change' => [
+            sprintf('[IPAM] Destination encryption mode changed: %s', $destName),
+            sprintf(
+                "An administrator changed the encryption mode on destination \"%s\".\n\n"
+                . "Old mode: %s\nNew mode: %s\n",
+                $destName, to_str($context['old_mode'] ?? ''), to_str($context['new_mode'] ?? '')
+            ),
+        ],
+        default => ['', ''],
+    };
+    if ($subject === '') return;
 
     foreach ($recipients as $to) {
         try {

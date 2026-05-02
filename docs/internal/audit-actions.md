@@ -77,9 +77,10 @@ Single action covers every setting change. The `$details` JSON contains old and 
 ## Backups
 
 ```text
-backup.failed              backup.skipped_concurrent     backup.reaped
-backup.retention_pruned    backup.wal_checkpoint_failed
-backup_run.bulk_delete     backup_run.purge
+backup.failed                       backup.skipped_concurrent     backup.reaped
+backup.retention_pruned             backup.wal_checkpoint_failed
+backup.connection_test_failed       backup.schedule_overdue       backup.encryption_change
+backup_run.bulk_delete              backup_run.purge
 ```
 
 `backup_run.bulk_delete` (`entity_type=backup_run`) — emitted once per row deleted via the History tab's bulk-select UI (v3.22.0 #1052). One audit entry per row keeps forensics aligned with the per-row `backup_run.delete` / `backup_run.delete_failed` vocabulary; `$details` carries `actor=bulk` so bulk deletions are distinguishable from single-row drawer deletes.
@@ -91,6 +92,12 @@ backup_run.bulk_delete     backup_run.purge
 `backup.reaped` (`entity_type=backup_run`) — reaper marked a stuck `running` row as `failed` past the threshold (v3.22.0 #815). The orchestrator runs the reaper inline; cron Task 8b runs it independently every tick so liveness doesn't depend on someone clicking Run-now.
 
 `backup.wal_checkpoint_failed` (`entity_type=system`, `entity_id=null`) — SQLite `PRAGMA wal_checkpoint(...)` raised an exception during a backup or restore (v3.22.0 #819). The `$details` field encodes `context=<site> error=<truncated message>` where `<site>` is `backup` or `restore`. The checkpoint is best-effort (an optimization, not a correctness requirement) so the operation continues after logging.
+
+`backup.connection_test_failed` (`entity_type=destination`) — emitted by cron Task 6c when a destination's periodic connection re-test transitions from healthy to failing (v3.22.0 §2.4). Emitted once per healthy→failing transition, not on every persistent-failure tick — the per-destination state map in the `backup.destination_health` setting gates re-alerting until recovery. `$details` carries `name=<destname> message=<truncated client error>`. Recovery does not emit a corresponding audit row.
+
+`backup.schedule_overdue` (`entity_type=schedule`) — emitted by cron Task 6d when an active schedule's `next_run_at` is older than `now() - backup.notify_overdue_grace_minutes` and no alert has yet been emitted for that exact `next_run_at` value (v3.22.0 §2.4). Per-schedule cooldown lives in the `backup.schedule_overdue_state` setting, keyed by schedule id; once the schedule actually fires (advancing `next_run_at`), the state resets and a fresh overdue cycle is detectable. `$details` carries `destination=<destname> expected_at=<iso> overdue_minutes=N`.
+
+`backup.encryption_change` (`entity_type=destination`) — emitted by the destination edit handler in `lib/backup_admin_destinations.php` when an admin toggles the `encrypt` flag on an existing destination (v3.22.0 §2.4). Recorded independently of the generic `destination.update` audit so a security-conscious operator can grep audit history for all crypto-policy changes without having to diff the generic update payload. `$details` carries `name=<destname> old=<encrypted|plaintext> new=<encrypted|plaintext>`.
 
 ---
 

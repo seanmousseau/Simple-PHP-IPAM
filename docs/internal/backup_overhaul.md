@@ -105,7 +105,7 @@ UI:
 - Hide-fields-on-frequency for the schedule attached to the destination (#781). *AGREED, applies to whichever tab hosts the schedule editor.*
 - Timestamps in user TZ (#782). *AGREED.*
 
-### 2.4 `Notifications` tab — AGREED 2026-04-29
+### 2.4 `Notifications` tab — AGREED 2026-04-29 / SHIPPED v3.22.0 (global-only)
 
 **Dedicated `Notifications` tab.** Lives at the top level of the unified surface, alongside Backup / Restore / Destinations / History. Operators expect to find notification settings in a recognizable place; folding them under Backup buries them.
 
@@ -113,13 +113,15 @@ UI:
 
 **Per-schedule override:** parking lot — eventual target shape is "global default + per-schedule override," but ship global-only in v3.22.0 and revisit per-schedule overrides after operators have used the global path. Reduces v3.22.0 scope; per-schedule needs UI surface in the schedule-edit drawer that we don't have to design upfront.
 
-**Events covered (proposal — refine in implementation memo):**
-- Backup-success: per-schedule (event-fired by scheduled run completing) and per-manual-run (event-fired by manual run completing). Operator picks "all", "failures only", or "off".
-- Backup-failure: same axes.
-- Destination connection-test failure: server-side periodic re-test of all destinations; alert if a previously-working destination starts failing.
-- Schedule-overdue: a schedule that should have fired but hasn't (cron blocked, host crashed, etc.) — alert after N missed cycles.
-- Retention-prune notices: optional ("verbose mode") summary of "we deleted N files via retention policy on destination X."
-- Encryption-mode change: audit-style alert when an operator/tenant changes encryption mode on a destination.
+**Events covered — DONE in v3.22.0:**
+- Backup-success — split into `backup.notify_success_scheduled` and `backup.notify_success_manual`. Each is an independent boolean toggle (off by default for both). DONE.
+- Backup-failure — split into `backup.notify_failure_scheduled` and `backup.notify_failure_manual`. Both default ON. DONE.
+- Destination connection-test failure — cron Task 6c re-tests every active destination per tick; per-destination state in the `backup.destination_health` JSON setting; only the healthy→failing transition emits a notification (no recovery alert, no re-alert on persistent failure until recovery). DONE.
+- Schedule-overdue — cron Task 6d fires when `next_run_at` is older than `now - backup.notify_overdue_grace_minutes`; per-schedule cooldown in the `backup.schedule_overdue_state` JSON setting, keyed by `next_run_at` so a single overdue cycle alerts exactly once. DONE.
+- Retention-prune notices — optional verbose summary, off by default. Emitted from `ipam_backup_run_for_destination` after each successful prune. DONE.
+- Encryption-mode change — emitted by the destination edit handler when the `encrypt` flag transitions; a separate `backup.encryption_change` audit row is also recorded. DONE.
+
+Per-event configuration ships as 8 booleans + 1 integer (overdue grace) in `ipam_setting_definitions()` under the `backup` group, surfaced on the editable Notifications tab. **Per-schedule overrides remain parking-lot work** — the per-event global toggles cover ~90% of operator use cases and the per-schedule UI surface still does not exist.
 
 **v4.0.0 tenancy implication:** "global" is per-tenant. Each tenant configures their own. Super-admin configures system-level events (e.g., "destination connection-test failure" on a destination that crosses multiple tenants' shared infrastructure).
 

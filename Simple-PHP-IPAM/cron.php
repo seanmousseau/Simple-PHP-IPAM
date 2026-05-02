@@ -257,6 +257,215 @@ try {
 }
 
 // ---------------------------------------------------------------------------
+// Task 6c: Destination connection re-test (v3.22.0 §2.4 Notifications)
+//
+// Runs ipam_destination_test_now() against every active destination once per
+// cron tick. Per-destination state lives in the JSON setting
+// `backup.destination_health` keyed by destination id; the alert fires only
+// on a healthy → failing transition (delta-only). A 6h cooldown on
+// last_alerted_at prevents re-alerting on persistent failures every tick.
+// Recovery (failing → healthy) is tracked but does not emit an email.
+// ---------------------------------------------------------------------------
+try {
+    $connFailureNotifyEnabled = (bool) ipam_setting('backup.notify_destination_conn_failure');
+    /** @var list<array<string, mixed>> $destRows */
+    $destStmt = $db->query("SELECT id, name FROM backup_destinations WHERE is_active = 1 ORDER BY id");
+    $destRows = $destStmt !== false ? $destStmt->fetchAll(PDO::FETCH_ASSOC) : [];
+
+    $stateRaw = to_str(ipam_setting('backup.destination_health', '{}'));
+    $stateDecoded = json_decode($stateRaw, true);
+    /** @var array<string, array<string, mixed>> $healthMap */
+    $healthMap = is_array($stateDecoded) ? $stateDecoded : [];
+
+    $cooldownSecs = 6 * 3600;
+    $nowTs = time();
+    $tested = 0;
+    $newlyFailing = 0;
+    $recovered = 0;
+
+    foreach ($destRows as $destRow) {
+        $destId = to_int($destRow['id'] ?? 0);
+        if ($destId <= 0) continue;
+        $destName = to_str($destRow['name'] ?? ('destination ' . $destId));
+        $tested++;
+        $key = (string) $destId;
+        $prev = $healthMap[$key] ?? [];
+        $prevStatus = is_string($prev['status'] ?? null) ? $prev['status'] : 'unknown';
+
+        $result = ipam_destination_test_now($db, $destId, 'cron-recheck');
+        $ok = $result['ok'] === true;
+        $resultMessage = $result['message'];
+
+        $entry = [
+            'last_ok_at'      => is_string($prev['last_ok_at'] ?? null) ? $prev['last_ok_at'] : null,
+            'last_failed_at'  => is_string($prev['last_failed_at'] ?? null) ? $prev['last_failed_at'] : null,
+            'last_alerted_at' => to_int($prev['last_alerted_at'] ?? 0),
+            'status'          => $ok ? 'ok' : 'failing',
+        ];
+        if ($ok) {
+            $entry['last_ok_at'] = date('c', $nowTs);
+            if ($prevStatus === 'failing') {
+                $recovered++;
+                $entry['last_alerted_at'] = 0; // reset cooldown so next failure alerts immediately
+            }
+        } else {
+            $entry['last_failed_at'] = date('c', $nowTs);
+            $shouldAlert = ($prevStatus !== 'failing')
+                || (($nowTs - to_int($entry['last_alerted_at'])) >= $cooldownSecs && to_int($entry['last_alerted_at']) > 0);
+            if ($prevStatus !== 'failing') {
+                $newlyFailing++;
+            }
+            // Only the healthy→failing transition triggers the alert per §2.4
+            // (delta-only). The cooldown applies if state has been "failing"
+            // for so long that a re-alert is justified, but the spec says
+            // "don't alert every tick once it's known-broken" — keep the
+            // shouldAlert restricted to transitions for ship-1 simplicity.
+            if ($connFailureNotifyEnabled && $prevStatus !== 'failing') {
+                audit($db, 'backup.connection_test_failed', 'destination', $destId,
+                      'name=' . $destName . ' message=' . substr($resultMessage, 0, 200));
+                try {
+                    ipam_backup_notify($db, 'destination_conn_failure', [
+                        'dest'    => ['name' => $destName],
+                        'message' => $resultMessage !== '' ? $resultMessage : 'unknown',
+                    ]);
+                    $entry['last_alerted_at'] = $nowTs;
+                } catch (Throwable $ne) {
+                    error_log('[backup] conn-failure notify dispatch failed: ' . $ne->getMessage());
+                }
+            }
+        }
+        $healthMap[$key] = $entry;
+    }
+
+    // Drop entries for destinations that no longer exist or are inactive so
+    // the map doesn't grow unbounded.
+    $aliveKeys = [];
+    foreach ($destRows as $destRow) {
+        $aliveKeys[(string) to_int($destRow['id'] ?? 0)] = true;
+    }
+    foreach (array_keys($healthMap) as $k) {
+        if (!isset($aliveKeys[$k])) unset($healthMap[$k]);
+    }
+
+    $encoded = json_encode($healthMap, JSON_UNESCAPED_SLASHES);
+    if (is_string($encoded)) {
+        ipam_setting_set($db, 'backup.destination_health', $encoded);
+    }
+
+    $emit([
+        'task'           => 'destination_health',
+        'tested'         => $tested,
+        'newly_failing'  => $newlyFailing,
+        'recovered'      => $recovered,
+        'ts'             => $now,
+    ]);
+} catch (Throwable $e) {
+    $fail('destination_health', $e->getMessage());
+}
+
+// ---------------------------------------------------------------------------
+// Task 6d: Schedule-overdue detector (v3.22.0 §2.4 Notifications)
+//
+// Reads `backup.notify_overdue_grace_minutes` and computes a cutoff. Any
+// active schedule whose next_run_at is older than the cutoff is overdue.
+// Per-schedule cooldown lives in the JSON setting
+// `backup.schedule_overdue_state` keyed by schedule id; once an alert has
+// fired for a given (schedule_id, expected_at) pair, no further alerts are
+// sent until the schedule actually fires (advancing next_run_at) and goes
+// overdue again.
+// ---------------------------------------------------------------------------
+try {
+    $overdueEnabled = (bool) ipam_setting('backup.notify_schedule_overdue');
+    $graceMinutes = to_int(ipam_setting('backup.notify_overdue_grace_minutes'));
+    if ($graceMinutes < 5) $graceMinutes = 5;
+
+    $stateRaw = to_str(ipam_setting('backup.schedule_overdue_state', '{}'));
+    $stateDecoded = json_decode($stateRaw, true);
+    /** @var array<string, array<string, mixed>> $overdueState */
+    $overdueState = is_array($stateDecoded) ? $stateDecoded : [];
+
+    $stmt = $db->query("
+        SELECT s.id AS schedule_id, s.destination_id, s.next_run_at,
+               d.name AS destination_name, d.is_active AS dest_active
+        FROM backup_schedules s
+        JOIN backup_destinations d ON d.id = s.destination_id
+        WHERE s.is_active = 1
+          AND d.is_active = 1
+          AND s.next_run_at IS NOT NULL
+    ");
+    /** @var list<array<string, mixed>> $rows */
+    $rows = $stmt !== false ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
+    $nowTs = time();
+    $cutoffTs = $nowTs - ($graceMinutes * 60);
+    $overdueCount = 0;
+    $alertedCount = 0;
+    $aliveSchedKeys = [];
+
+    foreach ($rows as $r) {
+        $schedId = to_int($r['schedule_id'] ?? 0);
+        if ($schedId <= 0) continue;
+        $aliveSchedKeys[(string) $schedId] = true;
+        $nextRunAt = to_str($r['next_run_at'] ?? '');
+        if ($nextRunAt === '') continue;
+        $nextRunTs = strtotime($nextRunAt . ' UTC');
+        if ($nextRunTs === false) continue;
+        if ($nextRunTs >= $cutoffTs) continue; // not overdue
+
+        $overdueCount++;
+        $key = (string) $schedId;
+        $prev = $overdueState[$key] ?? [];
+        $alertedFor = is_string($prev['alerted_for'] ?? null) ? $prev['alerted_for'] : '';
+
+        if ($alertedFor === $nextRunAt) {
+            // Already alerted on this exact expected-fire-time; skip until the
+            // schedule successfully fires (which will move next_run_at forward).
+            continue;
+        }
+
+        $overdueMinutes = (int) floor(($nowTs - $nextRunTs) / 60);
+        $destName = to_str($r['destination_name'] ?? 'unknown');
+        audit($db, 'backup.schedule_overdue', 'schedule', $schedId,
+              "destination=$destName expected_at=$nextRunAt overdue_minutes=$overdueMinutes");
+        if ($overdueEnabled) {
+            try {
+                ipam_backup_notify($db, 'schedule_overdue', [
+                    'schedule_id'      => $schedId,
+                    'destination_name' => $destName,
+                    'expected_at'      => $nextRunAt,
+                    'overdue_minutes'  => $overdueMinutes,
+                ]);
+            } catch (Throwable $ne) {
+                error_log('[backup] schedule-overdue notify dispatch failed: ' . $ne->getMessage());
+            }
+        }
+        $overdueState[$key] = [
+            'alerted_for'     => $nextRunAt,
+            'last_alerted_at' => date('c', $nowTs),
+        ];
+        $alertedCount++;
+    }
+
+    foreach (array_keys($overdueState) as $k) {
+        if (!isset($aliveSchedKeys[$k])) unset($overdueState[$k]);
+    }
+
+    $encoded = json_encode($overdueState, JSON_UNESCAPED_SLASHES);
+    if (is_string($encoded)) {
+        ipam_setting_set($db, 'backup.schedule_overdue_state', $encoded);
+    }
+
+    $emit([
+        'task'           => 'schedule_overdue',
+        'overdue'        => $overdueCount,
+        'alerted'        => $alertedCount,
+        'grace_minutes'  => $graceMinutes,
+        'ts'             => $now,
+    ]);
+} catch (Throwable $e) {
+    $fail('schedule_overdue', $e->getMessage());
+}
+
+// ---------------------------------------------------------------------------
 // Task 7: Backup schedules (v3.17.0 — fire any backup_schedules rows that are due)
 //
 // Reordered ahead of the scanner in v3.22.0 (#817): scheduled backups are

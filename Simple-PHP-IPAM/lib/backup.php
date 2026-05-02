@@ -332,6 +332,9 @@ function ipam_backup_run_for_destination(
     }
 
     $dest = ipam_backup_dest_load($db, $destId);
+    // Thread triggered_by into the destination row so ipam_backup_notify()
+    // can pick the right scheduled-vs-manual notification setting (v3.22.0).
+    $dest['triggered_by'] = $triggeredBy;
     $client = ipam_backup_dest_client($dest);
 
     $tmpSql = ipam_backup_dump_to_tmp($db);
@@ -383,6 +386,14 @@ function ipam_backup_run_for_destination(
         $pruned = ipam_backup_apply_retention($db, $destId, $nowEpoch);
     } catch (Throwable $e) {
         error_log('[backup] retention failed for destination ' . $destId . ': ' . $e->getMessage());
+    }
+
+    if ($pruned > 0) {
+        try {
+            ipam_backup_notify($db, 'retention_prune', ['dest' => $dest, 'pruned' => $pruned]);
+        } catch (Throwable $ne) {
+            error_log('[backup] retention notify dispatch failed: ' . $ne->getMessage());
+        }
     }
 
     audit($db, 'backup.run', 'destination', $destId,
