@@ -3602,7 +3602,18 @@ function run_db_backup_if_due(PDO $db, array $config): bool
                 return $abortWith('SQLite database file not found: ' . $dbPath);
             }
 
-            try { $db->exec("PRAGMA wal_checkpoint(FULL)"); } catch (Throwable) {}
+            // WAL checkpoint is a best-effort flush before the file copy; if it
+            // fails we surface the error via audit + error_log but DO NOT abort.
+            // A checkpoint failure means the copy may include unflushed WAL pages
+            // (worst case the WAL file accompanies the .sqlite copy on next backup),
+            // not corruption — so this is logged as a warning, not a hard error.
+            try {
+                $db->exec("PRAGMA wal_checkpoint(FULL)");
+            } catch (Throwable $e) {
+                audit($db, 'backup.wal_checkpoint_failed', 'system', null,
+                    'context=backup error=' . substr($e->getMessage(), 0, 200));
+                error_log("[backup] wal_checkpoint failed at backup: " . $e->getMessage());
+            }
 
             $dest = $dir . '/ipam-' . $ts . '.sqlite';
             if (!@copy($dbPath, $dest)) {
@@ -3638,12 +3649,22 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             $pass   = to_str($gConf['db_pass'] ?? '');
             $dest   = $dir . '/ipam-' . $ts . '.sql';
 
+            // Route the password through a 0600 --defaults-extra-file so it
+            // never appears in /proc/<pid>/environ or `ps eww` output (#820).
+            // The file MUST be unlinked on every exit path below.
+            $credFile = ipam_backup_write_mysql_defaults_file($pass);
+            // --defaults-extra-file MUST be the first mysqldump argument.
             $cmd = [
-                'mysqldump', '--single-transaction', '--routines',
+                'mysqldump', '--defaults-extra-file=' . $credFile,
+                '--single-transaction', '--routines',
                 '-h', $host, '-P', $port, '-u', $user, $dbName,
             ];
-            $env = array_merge(getenv() ?: [], ['MYSQL_PWD' => $pass]);
-            $ret = backup_run_dump($cmd, $env, $dest);
+            $env = getenv() ?: [];
+            try {
+                $ret = backup_run_dump($cmd, $env, $dest);
+            } finally {
+                @unlink($credFile); // nosemgrep: php.lang.security.unlink-use.unlink-use
+            }
             if (!$ret) {
                 backup_runs_insert_cli($db, basename($dest), 0, '',
                     $startedAt, date('Y-m-d H:i:s'), 'failed', 'mysqldump failed');
@@ -3675,9 +3696,19 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             $pass   = to_str($gConf['db_pass'] ?? '');
             $dest   = $dir . '/ipam-' . $ts . '.sql';
 
+            // Route the password through a 0600 PGPASSFILE so it never appears
+            // in /proc/<pid>/environ or `ps eww` (#820). PGPASSFILE itself is
+            // an env var carrying a *path*, not the secret — this is libpq's
+            // documented pattern for non-interactive scripts. The file MUST be
+            // unlinked on every exit path below.
+            $credFile = ipam_backup_write_pgpass_file($pass);
             $cmd = ['pg_dump', '-h', $host, '-p', $port, '-U', $user, $dbName];
-            $env = array_merge(getenv() ?: [], ['PGPASSWORD' => $pass]);
-            $ret = backup_run_dump($cmd, $env, $dest);
+            $env = array_merge(getenv() ?: [], ['PGPASSFILE' => $credFile]);
+            try {
+                $ret = backup_run_dump($cmd, $env, $dest);
+            } finally {
+                @unlink($credFile); // nosemgrep: php.lang.security.unlink-use.unlink-use
+            }
             if (!$ret) {
                 backup_runs_insert_cli($db, basename($dest), 0, '',
                     $startedAt, date('Y-m-d H:i:s'), 'failed', 'pg_dump failed');
@@ -3721,9 +3752,70 @@ function run_db_backup_if_due(PDO $db, array $config): bool
 }
 
 /**
+ * Write a MySQL [client] defaults-extra-file containing the password and return
+ * its absolute path. The file is created with 0600 permissions because it stores
+ * the database credential at rest in a temp directory shared with other users
+ * on the host (#820). Caller MUST `unlink()` the returned path on every exit
+ * path — typically wrapped in try/finally around the proc_open invocation that
+ * consumes `--defaults-extra-file=<path>`.
+ *
+ * The file's `[client]` section is consumed by mysql/mysqldump when passed as
+ * the FIRST argument (must come before all other CLI args).
+ */
+function ipam_backup_write_mysql_defaults_file(string $pass): string
+{
+    $path = tempnam(sys_get_temp_dir(), 'ipam_dbcred_');
+    if ($path === false) {
+        throw new RuntimeException('Failed to allocate temp file for MySQL credential');
+    }
+    // tempnam creates with 0600 on most unixes, but tighten explicitly before
+    // writing so the secret is never observable through a wider mode.
+    @chmod($path, 0600);
+    $contents = "[client]\npassword=" . $pass . "\n";
+    if (file_put_contents($path, $contents, LOCK_EX) === false) {
+        @unlink($path); // nosemgrep: php.lang.security.unlink-use.unlink-use
+        throw new RuntimeException('Failed to write MySQL credential file');
+    }
+    @chmod($path, 0600);
+    return $path;
+}
+
+/**
+ * Write a Postgres pgpass-format file containing the password and return its
+ * absolute path. The file is created with 0600 permissions (libpq REQUIRES
+ * mode <= 0600 or it ignores the file). Caller MUST `unlink()` the returned
+ * path on every exit path.
+ *
+ * Format is libpq's documented pgpass syntax: `host:port:database:user:password`
+ * with `*` as a wildcard for everything but the password (#820). The path is
+ * passed to psql/pg_dump via the `PGPASSFILE` env var, which is the documented
+ * Postgres pattern for non-interactive scripts — the env var carries the path,
+ * not the secret itself.
+ */
+function ipam_backup_write_pgpass_file(string $pass): string
+{
+    $path = tempnam(sys_get_temp_dir(), 'ipam_dbcred_');
+    if ($path === false) {
+        throw new RuntimeException('Failed to allocate temp file for Postgres credential');
+    }
+    @chmod($path, 0600);
+    // Escape ':' and '\' inside the password per libpq's pgpass rules.
+    $escaped = str_replace(['\\', ':'], ['\\\\', '\\:'], $pass);
+    $contents = "*:*:*:*:" . $escaped . "\n";
+    if (file_put_contents($path, $contents, LOCK_EX) === false) {
+        @unlink($path); // nosemgrep: php.lang.security.unlink-use.unlink-use
+        throw new RuntimeException('Failed to write Postgres credential file');
+    }
+    @chmod($path, 0600);
+    return $path;
+}
+
+/**
  * Run a dump command (mysqldump / pg_dump) writing stdout to $destPath.
  * Uses array-form proc_open so no shell injection is possible.
- * Password is passed via $env, never on the command line.
+ * Credentials are passed via a 0600 temp file referenced from $cmd
+ * (`--defaults-extra-file`) or $env (`PGPASSFILE`), never via env-borne secrets
+ * or CLI args (#820).
  *
  * @param list<string> $cmd
  * @param array<string,string> $env

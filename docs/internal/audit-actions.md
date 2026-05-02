@@ -78,12 +78,14 @@ Single action covers every setting change. The `$details` JSON contains old and 
 
 ```text
 backup.failed              backup.skipped_concurrent     backup.reaped
-backup.retention_pruned
+backup.retention_pruned    backup.wal_checkpoint_failed
 ```
 
 `backup.skipped_concurrent` (`entity_type=destination`) — orchestrator refused to start because a non-stale `running` row already exists for the destination (v3.22.0 #815).
 
 `backup.reaped` (`entity_type=backup_run`) — reaper marked a stuck `running` row as `failed` past the threshold (v3.22.0 #815). The orchestrator runs the reaper inline; cron Task 8b runs it independently every tick so liveness doesn't depend on someone clicking Run-now.
+
+`backup.wal_checkpoint_failed` (`entity_type=system`, `entity_id=null`) — SQLite `PRAGMA wal_checkpoint(...)` raised an exception during a backup or restore (v3.22.0 #819). The `$details` field encodes `context=<site> error=<truncated message>` where `<site>` is `backup` or `restore`. The checkpoint is best-effort (an optimization, not a correctness requirement) so the operation continues after logging.
 
 ---
 

@@ -122,7 +122,17 @@ if ($driver === 'sqlite') {
     $walPath = $dbPath . '-wal';
     if (is_file($walPath) && filesize($walPath) > 0) {
         restore_info("Warning: WAL file exists ({$walPath}) — flushing before restore.");
-        try { $db->exec("PRAGMA wal_checkpoint(TRUNCATE)"); } catch (Throwable) {}
+        // WAL truncate is a best-effort cleanup before overwriting the DB file;
+        // if it fails we surface the error via audit + error_log but DO NOT abort
+        // (the upcoming copy() will replace the file regardless — checkpoint is
+        // an optimization, not a correctness requirement).
+        try {
+            $db->exec("PRAGMA wal_checkpoint(TRUNCATE)");
+        } catch (Throwable $e) {
+            audit($db, 'backup.wal_checkpoint_failed', 'system', null,
+                'context=restore error=' . substr($e->getMessage(), 0, 200));
+            error_log("[backup] wal_checkpoint failed at restore: " . $e->getMessage());
+        }
     }
 
     // Close existing connection before overwriting the file
@@ -165,8 +175,14 @@ if ($driver === 'sqlite') {
         exit(0);
     }
 
-    $cmd = ['mysql', '-h', $host, '-P', $port, '-u', $user, $dbName];
-    $env = array_merge(getenv() ?: [], ['MYSQL_PWD' => $pass]);
+    // Route the password through a 0600 --defaults-extra-file so it never
+    // appears in /proc/<pid>/environ or `ps eww` (#820). The file is unlinked
+    // in the finally block below regardless of how the proc_open block exits.
+    $credFile = ipam_backup_write_mysql_defaults_file($pass);
+    // --defaults-extra-file MUST be the first mysql argument.
+    $cmd = ['mysql', '--defaults-extra-file=' . $credFile,
+            '-h', $host, '-P', $port, '-u', $user, $dbName];
+    $env = getenv() ?: [];
 
     // Capture schema_migrations count before the restore so the sigchild
     // post-condition check compares pre vs post (CR feedback PR #1054).
@@ -180,33 +196,46 @@ if ($driver === 'sqlite') {
         // schema_migrations might not exist yet on a fresh target; treat as 0.
     }
 
-    $pipes = [];
-    // nosemgrep
-    $proc = proc_open( // nosemgrep
-        $cmd,
-        [
-            0 => ['file', $fromAbs, 'r'],
-            1 => ['pipe', 'w'],
-            2 => ['pipe', 'w'],
-        ],
-        $pipes,
-        null,
-        $env
-    );
-    if (!is_resource($proc)) {
+    $stderr    = '';
+    $finalExit = -1;
+    $procOk    = false;
+    try {
+        $pipes = [];
+        // nosemgrep
+        $proc = proc_open( // nosemgrep
+            $cmd,
+            [
+                0 => ['file', $fromAbs, 'r'],
+                1 => ['pipe', 'w'],
+                2 => ['pipe', 'w'],
+            ],
+            $pipes,
+            null,
+            $env
+        );
+        if (!is_resource($proc)) {
+            // credFile is cleaned up by the outer finally before restore_die exits.
+            $procOk = false;
+        } else {
+            $procOk = true;
+            $stderr = stream_get_contents($pipes[2]);
+            fclose($pipes[1]);
+            fclose($pipes[2]);
+            // Capture exit code via proc_get_status BEFORE proc_close — on PHP
+            // builds with --enable-sigchild proc_close reaps SIGCHLD itself and
+            // returns -1 unconditionally. proc_get_status returns the real code
+            // on glibc and -1 on sigchild builds; we treat -1 as "unreliable,
+            // fall back to checking target DB post-conditions" (#805 / B-P0-3).
+            $status    = proc_get_status($proc);
+            $finalExit = $status['exitcode'];
+            proc_close($proc);
+        }
+    } finally {
+        @unlink($credFile); // nosemgrep: php.lang.security.unlink-use.unlink-use
+    }
+    if (!$procOk) {
         restore_die("Failed to start mysql process.");
     }
-    $stderr = stream_get_contents($pipes[2]);
-    fclose($pipes[1]);
-    fclose($pipes[2]);
-    // Capture exit code via proc_get_status BEFORE proc_close — on PHP
-    // builds with --enable-sigchild proc_close reaps SIGCHLD itself and
-    // returns -1 unconditionally. proc_get_status returns the real code
-    // on glibc and -1 on sigchild builds; we treat -1 as "unreliable,
-    // fall back to checking target DB post-conditions" (#805 / B-P0-3).
-    $status    = proc_get_status($proc);
-    $finalExit = $status['exitcode'];
-    proc_close($proc);
     $check = ipam_restore_proc_check($finalExit, 'mysql', (string)$stderr, $db, $preMigCount);
     if (!$check['ok']) {
         restore_die($check['message']);
@@ -235,8 +264,13 @@ if ($driver === 'sqlite') {
         exit(0);
     }
 
+    // Route the password through a 0600 PGPASSFILE so it never appears in
+    // /proc/<pid>/environ or `ps eww` (#820). PGPASSFILE itself is an env var
+    // carrying a *path*, not the secret — libpq's documented pattern for
+    // non-interactive scripts. The file is unlinked in the finally block below.
+    $credFile = ipam_backup_write_pgpass_file($pass);
     $cmd = ['psql', '-h', $host, '-p', $port, '-U', $user, $dbName];
-    $env = array_merge(getenv() ?: [], ['PGPASSWORD' => $pass]);
+    $env = array_merge(getenv() ?: [], ['PGPASSFILE' => $credFile]);
 
     // Capture schema_migrations count before the restore so the sigchild
     // post-condition check compares pre vs post (CR feedback PR #1054).
@@ -250,28 +284,41 @@ if ($driver === 'sqlite') {
         // schema_migrations might not exist yet on a fresh target.
     }
 
-    $pipes = [];
-    $proc = proc_open( // nosemgrep
-        $cmd,
-        [
-            0 => ['file', $fromAbs, 'r'],
-            1 => ['pipe', 'w'],
-            2 => ['pipe', 'w'],
-        ],
-        $pipes,
-        null,
-        $env
-    );
-    if (!is_resource($proc)) {
+    $stderr    = '';
+    $finalExit = -1;
+    $procOk    = false;
+    try {
+        $pipes = [];
+        $proc = proc_open( // nosemgrep
+            $cmd,
+            [
+                0 => ['file', $fromAbs, 'r'],
+                1 => ['pipe', 'w'],
+                2 => ['pipe', 'w'],
+            ],
+            $pipes,
+            null,
+            $env
+        );
+        if (!is_resource($proc)) {
+            $procOk = false;
+        } else {
+            $procOk = true;
+            $stderr = stream_get_contents($pipes[2]);
+            fclose($pipes[1]);
+            fclose($pipes[2]);
+            // See mysql branch above for the sigchild-fallback rationale
+            // (#805 / B-P0-3).
+            $status    = proc_get_status($proc);
+            $finalExit = $status['exitcode'];
+            proc_close($proc);
+        }
+    } finally {
+        @unlink($credFile); // nosemgrep: php.lang.security.unlink-use.unlink-use
+    }
+    if (!$procOk) {
         restore_die("Failed to start psql process.");
     }
-    $stderr = stream_get_contents($pipes[2]);
-    fclose($pipes[1]);
-    fclose($pipes[2]);
-    // See mysql branch above for the sigchild-fallback rationale (#805 / B-P0-3).
-    $status    = proc_get_status($proc);
-    $finalExit = $status['exitcode'];
-    proc_close($proc);
     $check = ipam_restore_proc_check($finalExit, 'psql', (string)$stderr, $db, $preMigCount);
     if (!$check['ok']) {
         restore_die($check['message']);
