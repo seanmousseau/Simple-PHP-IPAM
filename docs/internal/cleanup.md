@@ -24,13 +24,13 @@ If an item is large (>30 lines diff) or touches multiple files, file it as a GH 
 | **Comment rot** | Comments that have drifted from the code they describe |
 | **Stale TODOs** | TODO/FIXME comments older than 12 months whose context is recoverable |
 | **Doc drift** | Internal docs (under `docs/internal/`) that reference code that has moved or been renamed |
+| **Localization** | Canadian English standardization (deferred — see backlog row). Maintainer is in Canada; eventual goal is `colour`/`normalise`/`organize`/`program` consistency across code, comments, UI strings, and docs. Holding for a dedicated localization release stream so changes don't bleed into feature releases |
 
 ## Active backlog (not yet ticketed)
 
 | Added | Item | Where | Category | Notes |
 |---|---|---|---|---|
-
-*(empty — see "Tracked" below)*
+| 2026-05-01 | Canadian English standardization across code, comments, UI strings, docs | Repo-wide | Localization | Deferred to a dedicated localization release stream (no version assigned). Maintainer is in Canada. Today the codebase is mixed British/American (e.g. `colour`, `normalise` British; `Authorization Code` American as it's a spec proper noun). When the localization stream is spun up, audit + sweep in one PR per surface (code, UI, docs) to keep diffs reviewable. Until then, keep CR spelling nits flagged as deliberate-not-applied with a one-line reason — see PR #1061 round 2 |
 
 ## Tracked (in a GH issue)
 
