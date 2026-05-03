@@ -32,10 +32,11 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
 
   <?php if ($groupKey === 'backup'): ?>
   <div class="warning settings-warning" role="status">
-    <strong>This section is deprecated and will be removed in v3.26.0.</strong>
+    <strong>This section is deprecated and is scheduled for removal in v3.26.0.</strong>
     The unified <a href="backup_admin.php">Backup &amp; Restore</a> admin surface replaces it &mdash;
     create destinations, schedules, and notification preferences there. The legacy keys below
-    remain readable as a fallback for one release; new installs should not edit them.
+    remain readable through v3.25.0 as a fallback so existing installs aren&rsquo;t broken by the
+    upgrade; new installs should not edit them.
   </div>
   <?php endif; ?>
 

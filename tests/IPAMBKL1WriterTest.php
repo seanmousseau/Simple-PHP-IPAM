@@ -75,7 +75,7 @@ class IPAMBKL1WriterTest extends TestCase
             "VALUES (:cidr, 4, '10.1.0.0', :nb, 24, 'office', :site)"
         );
         $stmt->bindValue(':cidr', $cidr);
-        $stmt->bindValue(':nb', $networkBin, PDO::PARAM_LOB);
+        ipam_bind_binary($stmt, ':nb', $networkBin);
         $stmt->bindValue(':site', $rootId, PDO::PARAM_INT);
         $stmt->execute();
         $subnetId = (int) $this->db->lastInsertId();
@@ -88,7 +88,7 @@ class IPAMBKL1WriterTest extends TestCase
             );
             $stmt->bindValue(':s', $subnetId, PDO::PARAM_INT);
             $stmt->bindValue(':ip', $ip);
-            $stmt->bindValue(':bin', inet_pton($ip), PDO::PARAM_LOB);
+            ipam_bind_binary($stmt, ':bin', (string) inet_pton($ip));
             $stmt->bindValue(':h', "host$i");
             $stmt->execute();
         }

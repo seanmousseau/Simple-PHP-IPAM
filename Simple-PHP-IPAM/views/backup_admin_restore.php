@@ -77,6 +77,11 @@ declare(strict_types=1);
             </thead>
             <tbody>
               <?php foreach ($browseEntries as $row):
+                  // Only gate Restore on rows EXPLICITLY recorded as
+                  // database-type. 'unknown' (no backup_runs row) lets the
+                  // dispatcher in ipam_restore_apply() sniff the magic
+                  // bytes at stage time — IPAMBKL1 files copied in or
+                  // surviving history pruning are still restorable.
                   $isDb = $row['backup_type'] === 'database';
                   $degraded = $isDb && $browseDegradedDb !== '';
                   $checksum = $row['checksum'];
@@ -96,8 +101,10 @@ declare(strict_types=1);
                   <td>
                     <?php if ($row['backup_type'] === 'logical'): ?>
                       <span class="badge badge-success">Logical</span>
-                    <?php else: ?>
+                    <?php elseif ($row['backup_type'] === 'database'): ?>
                       <span class="badge">Database</span>
+                    <?php else: ?>
+                      <span class="badge muted" title="No backup_runs row for this object — type will be sniffed at stage time">Unknown</span>
                     <?php endif; ?>
                   </td>
                   <td><span title="<?= e($checksum) ?>"><?= $checksumShort ?></span></td>

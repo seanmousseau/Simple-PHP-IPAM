@@ -118,6 +118,7 @@ if ($activeTab === 'destinations') {
         // ]
         $schedRaw = $_POST['sched'] ?? [];
         $schedInput = is_array($schedRaw) ? $schedRaw : [];
+        $missingSchedules = [];
         try {
             $db->beginTransaction();
             $upd = $db->prepare(
@@ -142,9 +143,22 @@ if ($activeTab === 'destinations') {
                 $upd->bindValue(':nr', $nr, $nr === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
                 $upd->bindValue(':id', $sid, PDO::PARAM_INT);
                 $upd->execute();
+                if ($upd->rowCount() === 0) {
+                    // Schedule deleted between page render and form submit.
+                    // Surface a partial-success notice instead of silently
+                    // claiming everything saved (CR feedback PR #1090).
+                    $missingSchedules[] = $sid;
+                }
             }
             $db->commit();
-            $notifyFlash = 'Per-schedule notification overrides saved.';
+            if (!empty($missingSchedules)) {
+                $notifyFlash    = 'Saved overrides for ' . (count($schedInput) - count($missingSchedules))
+                                  . ' schedule(s); ' . count($missingSchedules)
+                                  . ' schedule(s) no longer exist (id=' . implode(', ', $missingSchedules) . ').';
+                $notifyFlashKind = 'warning';
+            } else {
+                $notifyFlash = 'Per-schedule notification overrides saved.';
+            }
         } catch (\Throwable $e) {
             if ($db->inTransaction()) $db->rollBack();
             $notifyFlash = 'Failed to save per-schedule overrides: ' . $e->getMessage();

@@ -3628,20 +3628,68 @@ function ipam_legacy_backup_migrate_if_due(PDO $db): void
             $db->beginTransaction();
         }
 
+        // Canonicalise the legacy directory the same way backup_dir() does
+        // so a relative `backup.dir` setting (e.g. "data/backups") resolves
+        // to the absolute path the legacy runner uses. Otherwise the
+        // unified runner would target a sibling directory and operators
+        // would lose access to existing on-disk backups.
         $dir = trim(to_str(ipam_setting('backup.dir')));
         if ($dir === '') {
             $dir = __DIR__ . '/data/backups';
+        } elseif (!str_starts_with($dir, '/')) {
+            $dir = __DIR__ . '/' . $dir;
         }
+        // Resolve `..` segments without requiring the directory to exist
+        // (matches backup_dir()'s normalisation in lib.php #113).
+        $parts = [];
+        foreach (explode('/', $dir) as $segment) {
+            if ($segment === '..') { array_pop($parts); }
+            elseif ($segment !== '' && $segment !== '.') { $parts[] = $segment; }
+        }
+        $dir = '/' . implode('/', $parts);
         $configJson = json_encode(['path' => $dir]);
         if (!is_string($configJson)) $configJson = '{}';
 
-        $name = 'Legacy local backups';
-        $ins = $db->prepare(
-            "INSERT INTO backup_destinations (name, type, config, encrypt, is_active)
-             VALUES (:n, 'local', :cfg, 0, 1)"
+        // Reuse an existing local destination if one already points at the
+        // legacy directory — covers two cases: (a) a prior migration run
+        // failed before stamping the sentinel, leaving the destination row
+        // committed; (b) an admin already created the matching destination
+        // by hand. Inserting again would duplicate rows and produce two
+        // schedules pointing at the same target.
+        $findDest = $db->prepare(
+            "SELECT id FROM backup_destinations
+              WHERE type = 'local' AND config = :cfg
+              LIMIT 1"
         );
-        $ins->execute([':n' => $name, ':cfg' => $configJson]);
-        $destId = ipam_last_insert_id($db, 'backup_destinations');
+        $findDest->execute([':cfg' => $configJson]);
+        $existingDest = $findDest->fetch(PDO::FETCH_ASSOC);
+        if (is_array($existingDest)) {
+            $destId = to_int($existingDest['id'] ?? 0);
+        } else {
+            $name = 'Legacy local backups';
+            $ins = $db->prepare(
+                "INSERT INTO backup_destinations (name, type, config, encrypt, is_active)
+                 VALUES (:n, 'local', :cfg, 0, 1)"
+            );
+            $ins->execute([':n' => $name, ':cfg' => $configJson]);
+            $destId = ipam_last_insert_id($db, 'backup_destinations');
+        }
+
+        // Same idempotency guard for the schedule — if one already exists
+        // for this destination, skip insert. backup_schedules has UNIQUE
+        // KEY uq_backup_schedules_destination as of v3.21.0 so a second
+        // INSERT would throw; check explicitly so the audit message is
+        // clear instead of a SQL error.
+        $findSched = $db->prepare("SELECT id FROM backup_schedules WHERE destination_id = :d LIMIT 1");
+        $findSched->execute([':d' => $destId]);
+        if ($findSched->fetchColumn() !== false) {
+            // Schedule already exists — stamp sentinel and return.
+            ipam_setting_set($db, 'backup.legacy_migrated_v3_23_0', true);
+            if ($ownTx && $db->inTransaction()) {
+                $db->commit();
+            }
+            return;
+        }
 
         $legacyFreq = strtolower(trim(to_str(ipam_setting('backup.frequency'))));
         $legacyRet  = max(1, to_int(ipam_setting('backup.retention')));

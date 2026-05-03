@@ -146,7 +146,7 @@ Readers compute the running sha256 as they consume body rows; on the footer line
 
 ## Restore compatibility — schema_version axis
 
-The only compatibility decision the restorer makes is `header.schema_version` vs the install's current `MAX(schema_migrations.version)`:
+The only compatibility decision the restorer makes is `header.schema_version` vs the install's current `MAX(id)` from `schema_migrations` (the row-count high-water mark — `schema_migrations.version` is a free-form text label per the column type and is not used for ordering):
 
 | Source vs target | Behaviour |
 |---|---|

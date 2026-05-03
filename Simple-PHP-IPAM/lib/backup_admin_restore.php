@@ -234,7 +234,17 @@ function ipam_backup_admin_restore_handle(\PDO $db, array $config): array
             foreach ($objects as $obj) {
                 $name = $obj['name'];
                 $run  = $runIndex[$name] ?? null;
-                $type = is_array($run) && is_string($run['backup_type'] ?? null) ? $run['backup_type'] : 'database';
+                // Default to 'unknown' rather than 'database' for objects
+                // with no backup_runs row. An IPAMBKL1 file copied into the
+                // destination, or one whose history was pruned, has no
+                // record here — defaulting to 'database' would let the
+                // degraded-restore gate disable Restore on mysql/pgsql
+                // installs missing the native CLI even though the file
+                // is actually a Logical-format dump that doesn't need it.
+                // The dispatcher in ipam_restore_apply() sniffs the magic
+                // bytes at stage time so the safe default is "I don't
+                // know yet, let staging decide".
+                $type = is_array($run) && is_string($run['backup_type'] ?? null) ? $run['backup_type'] : 'unknown';
                 $browseEntries[] = [
                     'name'         => $name,
                     'size'         => $obj['size'],
@@ -290,5 +300,6 @@ function ipam_restore_degraded_database_unsupported(array $config): string
     if ($rc === 0) return '';
     return 'This install runs on ' . $driver . ' but the `' . $bin . '` CLI is not on the web server\'s PATH; '
         . 'Database-format backups can\'t be restored in-place. Download to your machine and replay manually, '
-        . 'or use a Logical (IPAMBKL1) backup once #1076 ships the picker UI.';
+        . 'or restore from an existing Logical (IPAMBKL1) backup — those use the engine-agnostic PDO path '
+        . 'and don\'t need the native CLI.';
 }

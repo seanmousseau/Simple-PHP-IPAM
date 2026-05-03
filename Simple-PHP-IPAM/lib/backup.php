@@ -2320,13 +2320,30 @@ function ipam_backup_logical_dump(PDO $db, string $outputPath, ?int $tenantId = 
     $hashCtx   = hash_init('sha256');
     $totalRows = 0;
 
+    // Each gzwrite goes through here so disk-full / compression-error
+    // surfaces as a thrown RuntimeException rather than a silently
+    // truncated dump that the operator only discovers at restore time
+    // (CR feedback PR #1090). Mirrors the $written !== strlen($chunk)
+    // pattern in ipam_backup_dump_to_tmp().
+    $write = static function ($gz, string $payload, string $what) use ($outputPath): void {
+        $written = gzwrite($gz, $payload);
+        if ($written === false || $written !== strlen($payload)) {
+            $writtenStr = $written === false ? 'false' : (string) $written;
+            throw new RuntimeException(
+                'ipam_backup_logical_dump: gzwrite failed on ' . $what
+                . ' — wrote ' . $writtenStr . ' of ' . strlen($payload) . ' bytes to ' . $outputPath
+                . ' (likely disk-full or compression error)'
+            );
+        }
+    };
+
     try {
         // Magic line.
-        gzwrite($gz, "IPAMBKL1\n");
+        $write($gz, "IPAMBKL1\n", 'magic');
 
         // Header line. Not part of body checksum.
         $headerJson = (string) json_encode($header, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        gzwrite($gz, $headerJson . "\n");
+        $write($gz, $headerJson . "\n", 'header');
 
         // Body — rows in topo-sorted table order.
         foreach ($tableOrder as $table) {
@@ -2338,7 +2355,7 @@ function ipam_backup_logical_dump(PDO $db, string $outputPath, ?int $tenantId = 
                 );
                 $payload = $line . "\n";
                 hash_update($hashCtx, $payload);
-                gzwrite($gz, $payload);
+                $write($gz, $payload, 'body row in table ' . $table);
                 $totalRows++;
             }
         }
@@ -2351,7 +2368,7 @@ function ipam_backup_logical_dump(PDO $db, string $outputPath, ?int $tenantId = 
             'total_rows'      => $totalRows,
         ];
         $footerJson = (string) json_encode($footer, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        gzwrite($gz, $footerJson . "\n");
+        $write($gz, $footerJson . "\n", 'footer');
     } finally {
         gzclose($gz);
     }

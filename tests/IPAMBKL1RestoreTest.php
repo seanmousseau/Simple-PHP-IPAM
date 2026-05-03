@@ -67,7 +67,7 @@ class IPAMBKL1RestoreTest extends TestCase
             "VALUES (:cidr, 4, '10.1.0.0', :nb, 24, 'office', :site)"
         );
         $stmt->bindValue(':cidr', $this->sourceSubnetCidr);
-        $stmt->bindValue(':nb', inet_pton('10.1.0.0'), PDO::PARAM_LOB);
+        ipam_bind_binary($stmt, ':nb', (string) inet_pton('10.1.0.0'));
         $stmt->bindValue(':site', $this->sourceRootSiteId, PDO::PARAM_INT);
         $stmt->execute();
         $this->sourceSubnetId = (int) $db->lastInsertId();
@@ -79,7 +79,7 @@ class IPAMBKL1RestoreTest extends TestCase
             );
             $stmt->bindValue(':s', $this->sourceSubnetId, PDO::PARAM_INT);
             $stmt->bindValue(':ip', $ip);
-            $stmt->bindValue(':bin', inet_pton($ip), PDO::PARAM_LOB);
+            ipam_bind_binary($stmt, ':bin', (string) inet_pton($ip));
             $stmt->bindValue(':h', "host$i");
             $stmt->execute();
         }

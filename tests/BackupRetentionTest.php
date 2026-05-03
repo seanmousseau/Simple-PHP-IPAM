@@ -435,7 +435,6 @@ final class BackupRetentionTest extends TestCase
      */
     public function testKeepZeroDisablesTier(): void
     {
-        $now = strtotime('2026-04-28 12:00:00');
         $backups = $this->backups([
             [1, '2026-04-28 11:00:00'],
             [2, '2026-04-28 10:00:00'],
@@ -470,7 +469,6 @@ final class BackupRetentionTest extends TestCase
      */
     public function testTieBreakSameSlot(): void
     {
-        $now = strtotime('2026-04-28 12:00:00');
         $backups = $this->backups([
             [1, '2026-04-28 11:50:00'], // newest — wins hourly
             [2, '2026-04-28 11:30:00'], // same hour → loses hourly, but same daily as id=1 → loses daily, same weekly as id=1 → loses weekly, same monthly → loses monthly → pruned
@@ -495,7 +493,6 @@ final class BackupRetentionTest extends TestCase
      */
     public function testAllBackupsInOneTier(): void
     {
-        $now = strtotime('2026-04-28 12:00:00');
         $backups = $this->backups([
             [1, '2026-04-28 11:00:00'],
             [2, '2026-04-27 11:00:00'],
@@ -522,7 +519,6 @@ final class BackupRetentionTest extends TestCase
      */
     public function testNTPSkewedTimestamps(): void
     {
-        $now = strtotime('2026-04-28 12:00:00');
         // id=2 has a forward-skewed timestamp claiming to be the newest, even
         // though id=1 is the most-recently-inserted by id ordering.
         $backups = $this->backups([

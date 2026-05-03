@@ -130,7 +130,7 @@ class IPAMBKL1RowCountParityTest extends TestCase
             );
             $stmt->bindValue(':cidr', $cidr);
             $stmt->bindValue(':net',  "10.$i.0.0");
-            $stmt->bindValue(':nb',   inet_pton("10.$i.0.0"), PDO::PARAM_LOB);
+            ipam_bind_binary($stmt, ':nb', (string) inet_pton("10.$i.0.0"));
             $stmt->bindValue(':desc', "subnet $i");
             $stmt->bindValue(':site', $hqId, PDO::PARAM_INT);
             $stmt->execute();
@@ -147,7 +147,7 @@ class IPAMBKL1RowCountParityTest extends TestCase
                 );
                 $stmt->bindValue(':s',   $sid, PDO::PARAM_INT);
                 $stmt->bindValue(':ip',  $ip);
-                $stmt->bindValue(':bin', inet_pton($ip), PDO::PARAM_LOB);
+                ipam_bind_binary($stmt, ':bin', (string) inet_pton($ip));
                 $stmt->bindValue(':h',   "host-$i-$j");
                 $stmt->bindValue(':st',  $j === 1 ? 'reserved' : 'used');
                 $stmt->execute();
