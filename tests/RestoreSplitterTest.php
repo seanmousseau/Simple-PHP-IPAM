@@ -297,6 +297,69 @@ SQL;
         $this->assertSame('SELECT 2;', trim($out[1]));
     }
 
+    // ── #830 corruption detection (truncated input) ─────────────────────────
+
+    public function testUnterminatedSingleQuotedStringThrows(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/unterminated single-quoted string/');
+        $this->split("INSERT INTO foo VALUES ('partial");
+    }
+
+    public function testUnterminatedDoubleQuotedIdentifierThrows(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/unterminated double-quoted identifier/');
+        $this->split('SELECT "halfway');
+    }
+
+    public function testUnterminatedBacktickIdentifierThrows(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/unterminated backtick identifier/');
+        $this->split('SELECT `halfway');
+    }
+
+    public function testUnterminatedBlockCommentThrows(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/unterminated .* block comment/');
+        $this->split("SELECT 1; /* truncated comment");
+    }
+
+    public function testUnterminatedDollarQuotedStringThrows(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/unterminated dollar-quoted string \$body\$/');
+        $this->split('CREATE FUNCTION f() RETURNS void AS $body$ BEGIN partial');
+    }
+
+    public function testUnclosedBeginEndBlockThrows(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/unterminated BEGIN…END block/');
+        $this->split("CREATE TRIGGER t BEFORE INSERT ON foo BEGIN INSERT INTO log VALUES (1);");
+        // Trailing END would close the depth; absence of END = truncated procedure body.
+    }
+
+    public function testUnterminatedLineCommentIsAllowed(): void
+    {
+        // Line comments at EOF without trailing \n are semantically valid
+        // and must NOT throw — the regression-guarded path stays permissive
+        // for legitimate trailing comments. The lexer yields the trailing
+        // comment text as a separate "statement"; ipam_restore_apply filters
+        // these via `str_starts_with(ltrim($stmt), '--')` so they're a
+        // no-op at the exec level.
+        $out = $this->split("SELECT 1; -- trailing note");
+        $this->assertSame('SELECT 1;', trim($out[0]));
+        // Real-statement count after the apply-style comment filter:
+        $real = array_values(array_filter(
+            $out,
+            static fn(string $s): bool => !str_starts_with(ltrim($s), '--')
+        ));
+        $this->assertCount(1, $real, 'after comment filter, only the real statement remains');
+    }
+
     // ── #829 stage 3: streaming memory bound ─────────────────────────────────
 
     /**

@@ -1486,12 +1486,19 @@ function ipam_restore_split_sql_statements(iterable $chunks): \Generator
         // ── block comment ── /* ... */ (does not nest in standard SQL)
         if ($c === '/' && $next === '*') {
             $i += 2;
+            $closed = false;
             while ($ensure(2)) {
                 if ($buf[$i] === '*' && $buf[$i + 1] === '/') {
                     $i += 2;
+                    $closed = true;
                     break;
                 }
                 $i++;
+            }
+            if (!$closed) {
+                throw new RuntimeException(
+                    'ipam_restore_split: unterminated /* block comment at end of input — backup may be truncated'
+                );
             }
             continue;
         }
@@ -1499,6 +1506,7 @@ function ipam_restore_split_sql_statements(iterable $chunks): \Generator
         // ── single-quoted string ── '...' with '' or \' escape
         if ($c === "'") {
             $i++;
+            $closed = false;
             while ($ensure(1)) {
                 // Backslash escape (MySQL default `\'`, also `\\`, `\n`, etc.).
                 // Consume the backslash and the following character verbatim
@@ -1514,9 +1522,15 @@ function ipam_restore_split_sql_statements(iterable $chunks): \Generator
                         continue;
                     }
                     $i++;
+                    $closed = true;
                     break;
                 }
                 $i++;
+            }
+            if (!$closed) {
+                throw new RuntimeException(
+                    "ipam_restore_split: unterminated single-quoted string at end of input — backup may be truncated"
+                );
             }
             continue;
         }
@@ -1524,12 +1538,19 @@ function ipam_restore_split_sql_statements(iterable $chunks): \Generator
         // ── double-quoted identifier ── "..."  (ANSI / PostgreSQL)
         if ($c === '"') {
             $i++;
+            $closed = false;
             while ($ensure(1)) {
                 if ($buf[$i] === '"') {
                     $i++;
+                    $closed = true;
                     break;
                 }
                 $i++;
+            }
+            if (!$closed) {
+                throw new RuntimeException(
+                    'ipam_restore_split: unterminated double-quoted identifier at end of input — backup may be truncated'
+                );
             }
             continue;
         }
@@ -1537,12 +1558,19 @@ function ipam_restore_split_sql_statements(iterable $chunks): \Generator
         // ── backtick-quoted identifier ── `...`  (MySQL)
         if ($c === '`') {
             $i++;
+            $closed = false;
             while ($ensure(1)) {
                 if ($buf[$i] === '`') {
                     $i++;
+                    $closed = true;
                     break;
                 }
                 $i++;
+            }
+            if (!$closed) {
+                throw new RuntimeException(
+                    'ipam_restore_split: unterminated backtick identifier at end of input — backup may be truncated'
+                );
             }
             continue;
         }
@@ -1569,12 +1597,19 @@ function ipam_restore_split_sql_statements(iterable $chunks): \Generator
                 $tag = substr($buf, $i, $j - $i + 1); // includes the two $
                 $tagLen = strlen($tag);
                 $i = $j + 1;
+                $closed = false;
                 while ($ensure($tagLen)) {
                     if ($buf[$i] === '$' && substr($buf, $i, $tagLen) === $tag) {
                         $i += $tagLen;
+                        $closed = true;
                         break;
                     }
                     $i++;
+                }
+                if (!$closed) {
+                    throw new RuntimeException(
+                        "ipam_restore_split: unterminated dollar-quoted string {$tag} at end of input — backup may be truncated"
+                    );
                 }
                 continue;
             }
@@ -1658,7 +1693,17 @@ function ipam_restore_split_sql_statements(iterable $chunks): \Generator
         $i++;
     }
 
-    // Final flush — any unterminated tail is a complete statement.
+    // EOF reached at top level. An open BEGIN ... END block means the dump
+    // ends mid-procedure body — almost certainly truncation.
+    if ($depth > 0) {
+        throw new RuntimeException(
+            "ipam_restore_split: unterminated BEGIN…END block (depth={$depth}) at end of input — backup may be truncated"
+        );
+    }
+
+    // Final flush — any unterminated tail (no trailing ';') is a complete
+    // statement. Line-comment-at-EOF is legitimate and lands here as empty
+    // tail after trim.
     $tail = trim(substr($buf, $stmtStart));
     if ($tail !== '') {
         yield $tail;
