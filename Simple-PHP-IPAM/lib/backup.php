@@ -1091,14 +1091,15 @@ function ipam_restore_dry_run(PDO $db, string $stagedPath): array
         throw new RuntimeException('ipam_restore: dry-run only supports sqlite in v3.17.0');
     }
 
-    $sql = ipam_restore_read_staged_sql($stagedPath);
-
-    // Count INSERT/CREATE statements for each table.
+    // Count INSERT/CREATE statements for each table by streaming the dump
+    // line-at-a-time. Chunks from ipam_restore_read_staged_sql are already
+    // line-aligned (gzgets / fgets), so iteration matches the prior
+    // explode("\n") shape without buffering the full plaintext.
     $tableInsertCounts = [];
     $createdTables = [];
     $warnings = [];
 
-    foreach (explode("\n", $sql) as $line) {
+    foreach (ipam_restore_read_staged_sql($stagedPath) as $line) {
         $trim = ltrim($line);
         if ($trim === '' || str_starts_with($trim, '--')) continue;
 
@@ -1176,8 +1177,6 @@ function ipam_restore_apply(PDO $db, string $stagedPath, string $realFilename = 
     // rewrite in #807 (Wave 3).
     $filename = $realFilename !== '' ? $realFilename : basename($stagedPath);
 
-    $sql = ipam_restore_read_staged_sql($stagedPath);
-
     $tablesSeen = [];
     $statements = 0;
 
@@ -1187,7 +1186,11 @@ function ipam_restore_apply(PDO $db, string $stagedPath, string $realFilename = 
     $db->exec('PRAGMA foreign_keys = OFF');
     $db->beginTransaction();
     try {
-        foreach (ipam_restore_split_sql_statements([$sql]) as $stmt) {
+        // Stream chunks → splitter → exec. Bounded memory regardless of
+        // dump size — the splitter GCs its buffer after each yielded
+        // statement (#829, v3.23.0).
+        $chunks = ipam_restore_read_staged_sql($stagedPath);
+        foreach (ipam_restore_split_sql_statements($chunks) as $stmt) {
             if ($stmt === '' || str_starts_with(ltrim($stmt), '--')) continue;
             $db->exec($stmt);
             $statements++;
@@ -1237,7 +1240,28 @@ function ipam_restore_apply(PDO $db, string $stagedPath, string $realFilename = 
     ];
 }
 
-function ipam_restore_read_staged_sql(string $stagedPath): string
+/**
+ * Stream the staged backup file as line-aligned chunks.
+ *
+ * Yields chunks of plaintext SQL — typically one line per yield via
+ * `gzgets` / `fgets`, occasionally larger if a single line exceeds the
+ * stream-buffer size — so callers (the splitter, the dry-run statement
+ * scan) never need to hold the full plaintext in memory. Memory is
+ * bounded by the longest single line plus one stream buffer (typically
+ * a few KB), independent of total input size.
+ *
+ * #829 (v3.23.0): replaces the prior `: string` form which read the
+ * entire decompressed dump into a single buffer and OOM'd on multi-GB
+ * backups. The streaming model is the prerequisite for #824 PDO restore
+ * engine landing in the same release.
+ *
+ * @return \Generator<string>  Plaintext SQL chunks in source order.
+ * @throws RuntimeException    if the staged path is invalid, the file is
+ *                             missing, gzopen fails, or gzread reports
+ *                             corruption (truncation distinguished from
+ *                             clean EOF via `gzeof`).
+ */
+function ipam_restore_read_staged_sql(string $stagedPath): \Generator
 {
     // Containment guard via centralized helper (#762 item 3): defence-in-depth
     // in case an upstream signature/validation step is bypassed or refactored.
@@ -1248,28 +1272,51 @@ function ipam_restore_read_staged_sql(string $stagedPath): string
     if (!is_file($real)) {
         throw new RuntimeException('ipam_restore: staged file not found');
     }
+
     if (str_ends_with($real, '.sql.gz')) {
-        $data = '';
         $fh = @gzopen($real, 'rb');
-        if ($fh === false) throw new RuntimeException('ipam_restore: gzopen failed');
+        if ($fh === false) {
+            throw new RuntimeException('ipam_restore: gzopen failed');
+        }
         try {
-            while (!gzeof($fh)) {
-                $chunk = gzread($fh, 65536);
-                if ($chunk === false) {
-                    // gzread() returning false is a corruption error, NOT EOF.
-                    // gzeof() catches end-of-file; reaching here means truncation.
-                    throw new RuntimeException('ipam_restore: gzread error — backup may be truncated');
+            // Read until gzgets returns false. gzgets returns up to 64KB or
+            // to the next \n, whichever is smaller; lines in IPAM dumps are
+            // typically < 1KB (one INSERT per line). After the loop, gzeof
+            // distinguishes clean end-of-file from corruption (truncation).
+            while (true) {
+                $line = gzgets($fh, 65536);
+                if ($line === false) {
+                    break;
                 }
-                $data .= $chunk;
+                yield $line;
+            }
+            if (!gzeof($fh)) {
+                throw new RuntimeException('ipam_restore: gzgets error — backup may be truncated');
             }
         } finally {
             gzclose($fh);
         }
-        return $data;
+        return;
     }
-    $data = @file_get_contents($real);
-    if ($data === false) throw new RuntimeException('ipam_restore: cannot read staged file');
-    return $data;
+
+    $fh = @fopen($real, 'rb');
+    if ($fh === false) {
+        throw new RuntimeException('ipam_restore: cannot open staged file');
+    }
+    try {
+        while (true) {
+            $line = fgets($fh, 65536);
+            if ($line === false) {
+                break;
+            }
+            yield $line;
+        }
+        if (!feof($fh)) {
+            throw new RuntimeException('ipam_restore: fgets error');
+        }
+    } finally {
+        fclose($fh);
+    }
 }
 
 /**
