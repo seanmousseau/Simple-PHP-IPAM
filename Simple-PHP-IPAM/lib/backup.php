@@ -2263,3 +2263,413 @@ function ipam_backup_logical_dump(PDO $db, string $outputPath, ?int $tenantId = 
         'exported_at'     => $exportedAt,
     ];
 }
+
+// =========================================================================
+// IPAMBKL1 — Logical-format restore (reader)
+// =========================================================================
+
+/**
+ * Introspect a table's FK columns and their target tables/columns.
+ *
+ * @return list<array{from:string,table:string,to:string}>
+ */
+function ipam_logical_introspect_fks(PDO $db, string $table): array
+{
+    $driverAttr = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    $driver = is_string($driverAttr) ? $driverAttr : '';
+    $out = [];
+    if ($driver === 'sqlite') {
+        $stmt = $db->query("PRAGMA foreign_key_list(\"$table\")");
+        $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
+        foreach ($rows as $r) {
+            if (!is_array($r)) continue;
+            $from = $r['from'] ?? null;
+            $tgt  = $r['table'] ?? null;
+            $to   = $r['to'] ?? null;
+            if (is_string($from) && is_string($tgt) && is_string($to)) {
+                $out[] = ['from' => $from, 'table' => $tgt, 'to' => $to];
+            }
+        }
+    }
+    // Multi-engine introspection (mysql information_schema, pg pg_constraint)
+    // lands with the 3-driver dockerized tests in #1042.
+    return $out;
+}
+
+/**
+ * Detect a table's primary-key column when it's a single auto-increment
+ * integer (the IPAM convention — `id INTEGER PRIMARY KEY`). Returns the
+ * column name, or null if the PK is composite, non-integer (e.g.
+ * schema_migrations.version), or otherwise non-strip-on-insert.
+ */
+function ipam_logical_detect_autoincrement_pk(PDO $db, string $table): ?string
+{
+    $driverAttr = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    $driver = is_string($driverAttr) ? $driverAttr : '';
+    if ($driver !== 'sqlite') {
+        return null; // multi-engine support lands with #1042
+    }
+    $stmt = $db->query("PRAGMA table_info(\"$table\")");
+    $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
+    $pkCols = [];
+    foreach ($rows as $r) {
+        if (!is_array($r)) continue;
+        $pkRank = $r['pk'] ?? 0;
+        if (is_numeric($pkRank) && (int) $pkRank > 0) {
+            $pkCols[] = $r;
+        }
+    }
+    if (count($pkCols) !== 1) {
+        return null; // composite PK (join tables) — no auto-increment to strip
+    }
+    $col  = $pkCols[0];
+    $name = is_string($col['name'] ?? null) ? $col['name'] : '';
+    $type = strtoupper(is_string($col['type'] ?? null) ? $col['type'] : '');
+    if ($type !== 'INTEGER' || $name === '') {
+        return null;
+    }
+    return $name;
+}
+
+/**
+ * Per-engine FK-bracket: temporarily disable FK enforcement so the dump
+ * can be replayed in topo order without ordering-dependent constraint
+ * violations. Returns a closure that restores the prior setting.
+ *
+ * SQLite requires the PRAGMA to be set BEFORE BEGIN TRANSACTION (CLAUDE.md);
+ * the caller is responsible for that ordering.
+ */
+function ipam_logical_open_fk_bracket(PDO $db): callable
+{
+    $driverAttr = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    $driver = is_string($driverAttr) ? $driverAttr : '';
+    if ($driver === 'sqlite') {
+        $priorStmt = $db->query('PRAGMA foreign_keys');
+        $priorRaw  = $priorStmt !== false ? $priorStmt->fetchColumn() : 0;
+        $priorOn   = is_numeric($priorRaw) && (int) $priorRaw === 1;
+        $db->exec('PRAGMA foreign_keys = OFF');
+        return function () use ($db, $priorOn): void {
+            $db->exec('PRAGMA foreign_keys = ' . ($priorOn ? 'ON' : 'OFF'));
+        };
+    }
+    if ($driver === 'mysql') {
+        $db->exec('SET FOREIGN_KEY_CHECKS = 0');
+        return function () use ($db): void {
+            $db->exec('SET FOREIGN_KEY_CHECKS = 1');
+        };
+    }
+    if ($driver === 'pgsql') {
+        $db->exec("SET session_replication_role = 'replica'");
+        return function () use ($db): void {
+            $db->exec("SET session_replication_role = 'origin'");
+        };
+    }
+    return function (): void {};
+}
+
+/**
+ * Apply an IPAMBKL1 Logical-format dump onto the given PDO connection
+ * via re-emit-IDs replay with FK remapping.
+ *
+ * Spec: docs/internal/ipambkl1-format.md → "Replay strategy — re-emit IDs".
+ *
+ * Process:
+ *   1. Read magic line, header line. Validate schema_version (refuse newer).
+ *   2. Open per-engine FK bracket BEFORE transaction (sqlite ordering rule).
+ *   3. Stream body. For each row:
+ *      - Look up table's FK metadata.
+ *      - Remap FK column values via idmap (set NULL for self-referential).
+ *      - Strip auto-increment PK if the table has one.
+ *      - INSERT. Capture lastInsertId. Record idmap[table][source_pk] = target_pk.
+ *   4. Validate footer checksum + total_rows.
+ *   5. Second pass over self-referential tables to UPDATE the self-FKs.
+ *   6. Commit transaction.
+ *   7. Restore FK enforcement (always — finally clause).
+ *
+ * @return array{total_rows:int,checksum_ok:bool,schema_version:int}
+ */
+function ipam_restore_logical_apply(PDO $db, string $inputPath): array
+{
+    if (!is_file($inputPath)) {
+        throw new RuntimeException('ipam_restore_logical_apply: input file not found: ' . $inputPath);
+    }
+    $gz = gzopen($inputPath, 'rb');
+    if ($gz === false) {
+        throw new RuntimeException('ipam_restore_logical_apply: cannot open input for reading: ' . $inputPath);
+    }
+
+    try {
+        // Magic.
+        $magic = rtrim((string) gzgets($gz), "\n");
+        if ($magic !== 'IPAMBKL1') {
+            throw new RuntimeException('ipam_restore_logical_apply: unrecognised magic: ' . var_export($magic, true));
+        }
+
+        // Header.
+        $headerLine = (string) gzgets($gz);
+        $header = json_decode($headerLine, true);
+        if (!is_array($header) || ($header['header'] ?? false) !== true) {
+            throw new RuntimeException('ipam_restore_logical_apply: missing or malformed header line');
+        }
+        $rawSchemaVersion    = $header['schema_version'] ?? 0;
+        $sourceSchemaVersion = is_numeric($rawSchemaVersion) ? (int) $rawSchemaVersion : 0;
+        $targetSchemaVersion = ipam_logical_schema_version($db);
+        if ($sourceSchemaVersion > $targetSchemaVersion) {
+            throw new RuntimeException(
+                'ipam_restore_logical_apply: backup schema is newer than install — ' .
+                "source=$sourceSchemaVersion, target=$targetSchemaVersion. Upgrade the install first."
+            );
+        }
+
+        // FK bracket BEFORE transaction (sqlite rule).
+        $closeBracket = ipam_logical_open_fk_bracket($db);
+        $db->beginTransaction();
+
+        // Wipe every replayable table so the dump's data fully replaces the
+        // target's prior contents.
+        //
+        // Two exceptions:
+        //   - schema_migrations: preserved because the target already ran
+        //     apply_migrations() to reach a compatible schema_version, and
+        //     that history must survive restore.
+        //   - audit_log: append-only by trigger (audit_log_no_delete);
+        //     DELETE would abort the transaction. Source's audit_log rows
+        //     append to whatever the target carries — which is informative,
+        //     not a corruption. user_id columns reference source IDs that
+        //     no longer exist post-re-emit, but audit_log.user_id has no FK
+        //     constraint and the username TEXT column preserves the
+        //     human-readable identity.
+        //
+        // FK enforcement is off (bracketed above) so wipe order doesn't
+        // matter; iterating in reverse topo order is still a polite gesture
+        // for any DB engine that benefits from child-before-parent deletes.
+        $tableOrder = ipam_logical_table_order($db);
+        $skipWipe   = ['schema_migrations', 'audit_log'];
+        foreach (array_reverse($tableOrder) as $t) {
+            if (in_array($t, $skipWipe, true)) continue;
+            $db->exec("DELETE FROM \"$t\"");
+        }
+
+        $idmap = [];        // idmap[table][source_id] = target_id
+        $selfFkPending = []; // [table => list of {source_pk, source_self_fk}]
+        $totalRows = 0;
+        $hashCtx   = hash_init('sha256');
+        $footer    = null;
+
+        try {
+            while (!gzeof($gz)) {
+                $line = gzgets($gz);
+                if ($line === false || $line === '') break;
+                $trim = rtrim($line, "\n");
+                if ($trim === '') continue;
+
+                $obj = json_decode($trim, true);
+                if (!is_array($obj)) {
+                    throw new RuntimeException('ipam_restore_logical_apply: malformed body line');
+                }
+
+                if (($obj['footer'] ?? false) === true) {
+                    $footer = $obj;
+                    break;
+                }
+
+                $table = $obj['table'] ?? null;
+                $row   = $obj['row']   ?? null;
+                if (!is_string($table) || !is_array($row)) {
+                    throw new RuntimeException('ipam_restore_logical_apply: malformed row line (missing table/row)');
+                }
+
+                // Body checksum + total_rows count every body line, regardless of
+                // whether the row is replayed — so the file's footer integrity is
+                // independent of restore-side filter rules.
+                hash_update($hashCtx, $line);
+                $totalRows++;
+
+                // schema_migrations rows are skipped on restore: the target install
+                // ran apply_migrations() before this function was called, so it
+                // already carries an equivalent migration history. The source's
+                // schema_version (consulted earlier for compat) is the meaningful
+                // signal; the row contents are redundant.
+                if ($table === 'schema_migrations') {
+                    continue;
+                }
+
+                // Narrow row keys to string for replay_row's array<string,mixed> signature.
+                $rowNarrow = [];
+                foreach ($row as $k => $v) {
+                    $rowNarrow[(string) $k] = $v;
+                }
+                ipam_logical_replay_row($db, $table, $rowNarrow, $idmap, $selfFkPending);
+            }
+
+            if (!is_array($footer)) {
+                throw new RuntimeException('ipam_restore_logical_apply: missing footer line');
+            }
+            $expectedChecksum = is_string($footer['checksum_sha256'] ?? null) ? $footer['checksum_sha256'] : '';
+            $actualChecksum   = hash_final($hashCtx);
+            if (!hash_equals($expectedChecksum, $actualChecksum)) {
+                throw new RuntimeException(
+                    "ipam_restore_logical_apply: body checksum mismatch — " .
+                    "expected $expectedChecksum, got $actualChecksum"
+                );
+            }
+            $rawTotal      = $footer['total_rows'] ?? -1;
+            $expectedTotal = is_numeric($rawTotal) ? (int) $rawTotal : -1;
+            if ($expectedTotal !== $totalRows) {
+                throw new RuntimeException(
+                    "ipam_restore_logical_apply: total_rows mismatch — " .
+                    "footer=$expectedTotal, observed=$totalRows"
+                );
+            }
+
+            // Pass 2 — self-referential UPDATEs.
+            foreach ($selfFkPending as $table => $pending) {
+                foreach ($pending as $entry) {
+                    $sourcePk     = $entry['source_pk'];
+                    $sourceSelfFk = $entry['source_self_fk'];
+                    $col          = $entry['col'];
+                    $targetPk     = $idmap[$table][$sourcePk] ?? null;
+                    $targetSelfFk = $idmap[$table][$sourceSelfFk] ?? null;
+                    if ($targetPk === null || $targetSelfFk === null) {
+                        // Either source row missing (shouldn't happen) or parent missing.
+                        // Skip silently — pass 1 already inserted with NULL self-FK.
+                        continue;
+                    }
+                    $stmt = $db->prepare("UPDATE \"$table\" SET \"$col\" = :v WHERE id = :pk");
+                    $stmt->execute([':v' => $targetSelfFk, ':pk' => $targetPk]);
+                }
+            }
+
+            $db->commit();
+        } catch (Throwable $e) {
+            if ($db->inTransaction()) $db->rollBack();
+            throw $e;
+        } finally {
+            $closeBracket();
+        }
+
+        return [
+            'total_rows'     => $totalRows,
+            'checksum_ok'    => true,
+            'schema_version' => $sourceSchemaVersion,
+        ];
+    } finally {
+        gzclose($gz);
+    }
+}
+
+/**
+ * Replay a single body row: remap FK columns, strip auto-increment PK,
+ * INSERT, capture lastInsertId, update idmap. Self-referential FKs are
+ * deferred to pass 2 by setting NULL initially and recording in
+ * $selfFkPending.
+ *
+ * @param array<string,mixed>                              $row
+ * @param array<string,array<int|string,int>>              $idmap
+ * @param array<string,list<array{source_pk:int|string,source_self_fk:int|string,col:string}>> $selfFkPending
+ */
+function ipam_logical_replay_row(
+    PDO $db,
+    string $table,
+    array $row,
+    array &$idmap,
+    array &$selfFkPending
+): void {
+    static $tableMeta = [];
+    if (!isset($tableMeta[$table])) {
+        $tableMeta[$table] = [
+            'fks' => ipam_logical_introspect_fks($db, $table),
+            'pk'  => ipam_logical_detect_autoincrement_pk($db, $table),
+        ];
+    }
+    $fks = $tableMeta[$table]['fks'];
+    $pk  = $tableMeta[$table]['pk'];
+
+    // Decode every value back from wire form (binary $bin envelopes etc).
+    $decoded = [];
+    foreach ($row as $col => $val) {
+        $decoded[(string) $col] = ipam_logical_decode_value($val);
+    }
+
+    // Remember source PK if the table has one.
+    $sourcePk = null;
+    if ($pk !== null && array_key_exists($pk, $decoded)) {
+        $sourcePk = $decoded[$pk];
+    }
+
+    // FK remapping pass.
+    $selfFkSnapshot = null;
+    $selfFkCol      = null;
+    foreach ($fks as $fk) {
+        $col       = $fk['from'];
+        $tgtTable  = $fk['table'];
+        if (!array_key_exists($col, $decoded)) continue;
+        $srcVal = $decoded[$col];
+        if ($srcVal === null) continue;
+
+        // Source FK value must be int or string — anything else is data corruption.
+        if (!is_int($srcVal) && !is_string($srcVal)) {
+            throw new RuntimeException(
+                "ipam_restore_logical_apply: $table.$col FK value has unsupported type " . gettype($srcVal)
+            );
+        }
+
+        if ($tgtTable === $table) {
+            // Self-referential: defer to pass 2; insert with NULL.
+            $selfFkSnapshot = $srcVal;
+            $selfFkCol      = $col;
+            $decoded[$col]  = null;
+            continue;
+        }
+        $mapped = $idmap[$tgtTable][$srcVal] ?? null;
+        if ($mapped === null) {
+            $srcRepr = is_int($srcVal) ? (string) $srcVal : $srcVal;
+            throw new RuntimeException(
+                "ipam_restore_logical_apply: unresolved FK — $table.$col references $tgtTable.{$fk['to']} " .
+                "with source value $srcRepr but no target row recorded. Likely cause: dump's table_order is " .
+                "not topologically sorted parents-first."
+            );
+        }
+        $decoded[$col] = $mapped;
+    }
+
+    // Strip auto-increment PK so target engine assigns a fresh one.
+    if ($pk !== null && array_key_exists($pk, $decoded)) {
+        unset($decoded[$pk]);
+    }
+
+    // INSERT with named placeholders.
+    $cols   = array_keys($decoded);
+    $colList = implode(', ', array_map(fn($c) => '"' . $c . '"', $cols));
+    $phList  = implode(', ', array_map(fn($c) => ':' . $c, $cols));
+    $stmt = $db->prepare("INSERT INTO \"$table\" ($colList) VALUES ($phList)");
+
+    foreach ($cols as $c) {
+        $val = $decoded[$c];
+        $param = ':' . $c;
+        $kind  = ipam_logical_column_kind($c);
+        if ($kind === 'binary' && is_string($val)) {
+            ipam_bind_binary($stmt, $param, $val);
+        } else {
+            $stmt->bindValue($param, $val);
+        }
+    }
+    $stmt->execute();
+
+    // Record idmap entry + defer self-FK if applicable.
+    if ($pk !== null && (is_int($sourcePk) || is_string($sourcePk))) {
+        $targetPk = (int) $db->lastInsertId();
+        if (!isset($idmap[$table])) $idmap[$table] = [];
+        $idmap[$table][$sourcePk] = $targetPk;
+
+        if ($selfFkSnapshot !== null && $selfFkCol !== null) {
+            // selfFkSnapshot was already type-narrowed in the FK-remap loop above
+            // (only int|string survives that pass; anything else throws).
+            $selfFkPending[$table][] = [
+                'source_pk'      => $sourcePk,
+                'source_self_fk' => $selfFkSnapshot,
+                'col'            => $selfFkCol,
+            ];
+        }
+    }
+}
