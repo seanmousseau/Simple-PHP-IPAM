@@ -60,11 +60,21 @@ $status = to_str($row['status']);
 <?php endif; ?>
 
 <?php
-// Download is a normal browser navigation through the existing
-// download_remote_backup.php endpoint; render as <a> when enabled,
-// <button disabled> when not (so disabled-state matrix is uniform).
-$downloadHref = 'download_remote_backup.php?run_id=' . $runId;
+// Download posts to download_remote_backup.php (POST + CSRF required) with
+// destination_id + name (filename) from the joined row. Rendered as a sibling
+// form so the submit button can live inside the shared .drawer-actions row
+// via the HTML5 `form=` attribute without nesting forms.
+$downloadDestId = to_int($row['destination_id'] ?? 0);
+$downloadName   = to_str($row['filename'] ?? '');
 ?>
+<?php if (!$disabled['download']): ?>
+<form id="backup-run-download" method="post" action="download_remote_backup.php" style="display:none">
+  <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+  <input type="hidden" name="destination_id" value="<?= $downloadDestId ?>">
+  <input type="hidden" name="name" value="<?= e($downloadName) ?>">
+  <input type="hidden" name="as" value="file">
+</form>
+<?php endif; ?>
 <form id="backup-run-actions" data-run-id="<?= $runId ?>">
   <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
   <div class="drawer-actions">
@@ -76,7 +86,7 @@ $downloadHref = 'download_remote_backup.php?run_id=' . $runId;
       <button type="button" class="action-pill" data-action="download" disabled
               <?= $tooltip['download'] !== '' ? 'title="' . e($tooltip['download']) . '"' : '' ?>>Download</button>
     <?php else: ?>
-      <a class="action-pill" data-action="download" href="<?= e($downloadHref) ?>">Download</a>
+      <button type="submit" form="backup-run-download" class="action-pill" data-action="download">Download</button>
     <?php endif; ?>
 
     <button type="button" class="action-pill button-danger" data-action="delete"

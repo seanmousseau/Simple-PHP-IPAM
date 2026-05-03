@@ -2143,7 +2143,8 @@ var IpamDrawer = (function () {
 
 // Backup History drawer action handlers (#803).
 // Verify and Delete are exposed inside the drawer body partial as
-// <button data-action="verify|delete">. Download is a normal anchor.
+// <button data-action="verify|delete">. Download is a submit button bound
+// via form="backup-run-download" to a sibling POST form (CSRF + dest_id + name).
 (function () {
     document.addEventListener('click', function (e) {
         var btn = e.target.closest ? e.target.closest('#backup-run-actions [data-action]') : null;
