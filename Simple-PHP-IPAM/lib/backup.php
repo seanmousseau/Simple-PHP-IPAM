@@ -467,6 +467,115 @@ function ipam_backup_dest_client(array $dest): BackupClientInterface
 }
 
 /**
+ * Detect the flavor of the locally-installed `mysqldump` / `mysql` client.
+ *
+ * Returns one of `'mariadb'`, `'mysql'`, or `'unknown'`. Result is cached for
+ * the lifetime of the request because the probe shells out to `mysqldump
+ * --version` and we don't want to repeat that for every dump invocation.
+ *
+ * Why we need this (v3.22.2): MariaDB and Oracle MySQL clients diverged on
+ * SSL/TLS option spelling around the MariaDB 11.x / Oracle MySQL 8.4
+ * timeframe. The dialects are mutually incompatible:
+ *
+ *   - MariaDB 11.x: `--ssl-verify-server-cert` (bare = ON), `--ssl-verify-server-cert=on/off`,
+ *     `--skip-ssl-verify-server-cert` (= OFF). Rejects `--ssl-mode=*`.
+ *   - Oracle MySQL 8.4: `--ssl-mode=DISABLED|PREFERRED|VERIFY_*` is the
+ *     canonical replacement. Rejects `--ssl-verify-server-cert=on/off` and
+ *     `--skip-ssl-verify-server-cert` as unknown options.
+ *
+ * Without flavor-aware emission a single hard-coded SSL flag bricks half the
+ * field. The deferred follow-up #1081 (`--no-login-paths` and `--ssl-mode`
+ * adoption) was supposed to introduce this probe; the v3.22.1 SSL flag
+ * regression on Oracle MySQL prod made it a hotfix item instead.
+ *
+ * The probe is best-effort: any `proc_open` failure or missing binary
+ * returns 'unknown' and call sites omit the SSL flag entirely.
+ *
+ * Cached per-binary so a host with split-vendor `mysql` / `mysqldump`
+ * (e.g. distro-package mysqldump + custom-installed mysql client) gets the
+ * correct dialect for each tool independently.
+ */
+function ipam_mysql_client_flavor(string $binary = 'mysqldump'): string
+{
+    /** @var array<string,string> $cache */
+    static $cache = [];
+    // Restrict to the two binaries we ever invoke; an unexpected value would
+    // otherwise become an attacker-influenced argv if a caller forwarded user
+    // input. Both are constant strings in our codebase today, but pin the
+    // contract anyway.
+    if ($binary !== 'mysqldump' && $binary !== 'mysql') {
+        return 'unknown';
+    }
+    if (isset($cache[$binary])) {
+        return $cache[$binary];
+    }
+    $pipes = [];
+    // Constant array-form invocation; bypasses the shell entirely so no
+    // injection surface exists. PHP 8+ raises Error (not returns false) when
+    // proc_open is in disable_functions, so we treat both failure modes as
+    // "unknown flavor" — call sites then omit the SSL flag and the operator
+    // sees the real cause via the surfaced stderr from backup_run_dump.
+    try {
+        $proc = proc_open( // nosemgrep
+            [$binary, '--version'],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes
+        );
+    } catch (Throwable $e) {
+        return $cache[$binary] = 'unknown';
+    }
+    if (!is_resource($proc)) {
+        return $cache[$binary] = 'unknown';
+    }
+    $stdout = stream_get_contents($pipes[1]) ?: '';
+    $stderr = stream_get_contents($pipes[2]) ?: '';
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    proc_close($proc);
+    $haystack = $stdout . "\n" . $stderr;
+    if (stripos($haystack, 'MariaDB') !== false) {
+        return $cache[$binary] = 'mariadb';
+    }
+    if (stripos($haystack, 'MySQL') !== false) {
+        return $cache[$binary] = 'mysql';
+    }
+    return $cache[$binary] = 'unknown';
+}
+
+/**
+ * Build the SSL-related arguments for `mysqldump` / `mysql` based on the
+ * detected client flavor and the operator's `backup.dump_ssl_verify` setting.
+ * Returns an empty list when the safe behaviour is "emit nothing" (Oracle
+ * MySQL with verify off — the client default `--ssl-mode=PREFERRED` does not
+ * verify the server certificate, which is what we want).
+ *
+ * The probe is run against the binary actually being invoked so a host with a
+ * MariaDB `mysqldump` and an Oracle `mysql` (or vice versa) gets the right
+ * dialect for each call site.
+ *
+ * @return list<string>
+ */
+function ipam_mysql_ssl_verify_args(bool $verify, string $binary = 'mysqldump'): array
+{
+    $flavor = ipam_mysql_client_flavor($binary);
+    if ($flavor === 'mariadb') {
+        // MariaDB 11.x defaults to verify-on, so we MUST emit something
+        // explicit when verify is off, otherwise self-signed servers break.
+        return $verify ? ['--ssl-verify-server-cert'] : ['--skip-ssl-verify-server-cert'];
+    }
+    if ($flavor === 'mysql') {
+        // Oracle MySQL 8.x defaults to ssl-mode=PREFERRED (TLS if available,
+        // no cert verification). For verify-off we omit the flag — emitting
+        // --ssl-mode=DISABLED would gratuitously turn off TLS encryption too.
+        return $verify ? ['--ssl-mode=VERIFY_IDENTITY'] : [];
+    }
+    // Unknown flavor: emit nothing and hope the client defaults to a sane
+    // non-verifying mode. Worst case the operator sees a clear error in the
+    // surfaced stderr (v3.22.2) and can pin a flavor manually.
+    return [];
+}
+
+/**
  * Build the proc_open command + env for the configured DB driver's native
  * dump tool. Shared by the v3.17 remote-destination pipeline and the
  * legacy CLI backup runner so both stay in sync if a flag changes.
@@ -508,18 +617,17 @@ function ipam_backup_native_cmd(string $driver, array $config): array
         $credFile  = ipam_backup_write_mysql_defaults_file($pass);
         // --defaults-extra-file MUST be the FIRST argument; mysql/mysqldump
         // ignore it otherwise (libmysql parses it before any other option).
-        // (Two related v3.23.0 follow-ups tracked in #1081, both gated on
-        // a one-time client-flavor + version probe that we don't have yet:
-        //   1) --no-login-paths to neutralise ~/.mylogin.cnf override —
-        //      added in MariaDB 11.4; CI's MariaDB 10.11 rejects it.
-        //   2) --ssl-mode for Oracle MySQL clients — currently we always
-        //      emit --ssl-verify-server-cert which is MariaDB-canonical
-        //      and accepted but deprecated on Oracle MySQL 8.x; may be
-        //      removed in MySQL 9.x.
-        // Both fixes share the same probe-and-cache helper — bundle them.)
-        $cmd  = ['mysqldump', '--defaults-extra-file=' . $credFile,
-                 $verifySsl ? '--ssl-verify-server-cert=on' : '--ssl-verify-server-cert=off',
-                 '--single-transaction', '--routines'];
+        //
+        // SSL verify flag is flavor-aware (see ipam_mysql_ssl_verify_args).
+        // MariaDB and Oracle MySQL clients diverged on the option spelling
+        // around the 11.x/8.4 timeframe — a hard-coded form bricks half the
+        // field in either direction.
+        $cmd = ['mysqldump', '--defaults-extra-file=' . $credFile];
+        foreach (ipam_mysql_ssl_verify_args($verifySsl) as $sslArg) {
+            $cmd[] = $sslArg;
+        }
+        $cmd[] = '--single-transaction';
+        $cmd[] = '--routines';
         if (preg_match('/unix_socket=([^;]+)/i', $dsn, $m)) {
             $cmd[] = '--socket';
             $cmd[] = $m[1];
@@ -622,8 +730,18 @@ function ipam_backup_dump_to_tmp(PDO $db): string
             try {
                 // 10-minute deadline matches what an interactive admin would tolerate;
                 // larger DBs that legitimately need more should run via cron instead.
-                if (!backup_run_dump($native['cmd'], $native['env'], $tmpSql, 600)) {
-                    throw new RuntimeException('ipam_backup: ' . $driver . ' dump failed (see error_log)');
+                $dumpErr = '';
+                if (!backup_run_dump($native['cmd'], $native['env'], $tmpSql, 600, $dumpErr)) {
+                    // v3.22.2: surface stderr in the exception so the cause lands
+                    // in backup_runs.error_message and the UI; previously the diagnostic
+                    // was only available in the PHP error_log, which on LSWS/FPM
+                    // installs is operationally hard to find. Truncate to 500 chars
+                    // so a verbose stderr doesn't blow the row's column width.
+                    $detail = $dumpErr !== '' ? $dumpErr : 'see error_log';
+                    if (strlen($detail) > 500) {
+                        $detail = substr($detail, 0, 497) . '...';
+                    }
+                    throw new RuntimeException('ipam_backup: ' . $driver . ' dump failed: ' . $detail);
                 }
                 $in = @fopen($tmpSql, 'rb');
                 if ($in === false) {

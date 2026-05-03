@@ -12,12 +12,11 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.22.1
+## What's new in v3.22.3
 
-Hotfix for v3.22.0. Two production-affecting issues with MySQL/MariaDB backups, both rooted in the same MariaDB 11.4+ / MySQL 8.4+ client default of verifying the server certificate chain — which breaks against any internal/on-prem MySQL with a self-signed cert.
+Hotfix for v3.22.2. Clicking **Download** on any successful row in the Backup History drawer (`backup_admin.php?tab=history`) returned `405 POST required` because the drawer rendered the link as a `GET <a href>` while the `download_remote_backup.php` endpoint is POST-only and reads `destination_id` + `name` (not `run_id`). Other Download entry points (e.g. the Restore tab's destination browser at `remote_backups.php`) already used a POST form and were unaffected.
 
-- **mysql / mysqldump / mysql-restore TLS verification fixed.** `--ssl-verify-server-cert=off` added to all three call sites in `Simple-PHP-IPAM/lib/backup.php`, `lib.php`, and `restore.php`. Matches PHP PDO_MYSQL's default behaviour (PDO already connects without verifying). Production operators with a verifiable TLS chain can re-enable verification via their own `/etc/mysql/conf.d/` override. The error surfaced as `mysqldump: Got error: 2026: "TLS/SSL error: self-signed certificate in certificate chain"` and the operator-facing Run-now / Restore reported `fclose(): Argument #1 ($stream) must be of type resource, null given` (secondary cascade).
-- **#1075 — destination orchestrator credentials now via 0600 temp file.** Completes the v3.22.0 #820 fix. The legacy CLI runner and restore path shipped temp-file routing in v3.22.0; the v3.17+ destination dump pipeline (`lib/backup.php::ipam_backup_native_cmd`) was attempted in PR #1074 but reverted at the last minute when the TLS issue above made MySQL/MariaDB Run-now fail in CI. With the TLS fix in place, the temp-file pattern ships for every `mysqldump` / `pg_dump` invocation in the app — no more `MYSQL_PWD`/`PGPASSWORD` env vars carrying secrets to the child process.
+- **History-drawer Download is now a POST submit.** `views/_backup_run_detail_body.php` emits a sibling `<form id="backup-run-download" method="post" action="download_remote_backup.php">` with `csrf`, `destination_id`, the run's `filename`, and `as=file`; the Download button inside `.drawer-actions` is bound to it via the HTML5 `form="..."` attribute so the visual layout and disabled-state matrix line up with Verify and Delete.
 
 [Full changelog →](CHANGELOG.md)
 
