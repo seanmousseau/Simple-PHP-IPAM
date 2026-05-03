@@ -161,7 +161,8 @@ final class MysqlSmokeTest extends TestCase
         // Bumped to 53 in v3.21.0 (#797 / #1054 CR): added 3.21.0-backup-runs
         // and 3.21.0-schedule-unique to the pre-seed list so fresh installs
         // don't replay them.
-        $this->assertSame(53, (int)$row['c']);
+        // Bumped to 54 in v3.23.0 (#825): added 3.23.0-notify-overrides.
+        $this->assertSame(54, (int)$row['c']);
     }
 
     public function testBootstrapAdminUserInserted(): void

@@ -711,6 +711,11 @@ CREATE TABLE IF NOT EXISTS backup_schedules (
   is_active           TINYINT(1)   NOT NULL DEFAULT 1,
   last_run_at         DATETIME     NULL,
   next_run_at         DATETIME     NULL,
+  -- v3.23.0 #825 (F21): per-schedule notification overrides — see schema.sql.
+  notify_override     TINYINT(1)   NOT NULL DEFAULT 0,
+  notify_on_failure   TINYINT(1)   NULL,
+  notify_on_success   TINYINT(1)   NULL,
+  notify_recipients   TEXT         NULL,
   created_at          DATETIME     NOT NULL DEFAULT (UTC_TIMESTAMP()),
   CONSTRAINT fk_bsched_dest FOREIGN KEY (destination_id) REFERENCES backup_destinations(id) ON DELETE CASCADE,
   CONSTRAINT chk_bsched_frequency  CHECK (frequency IN ('hourly','daily','weekly','monthly')),
@@ -721,6 +726,9 @@ CREATE TABLE IF NOT EXISTS backup_schedules (
   CONSTRAINT chk_bsched_ret_weekly  CHECK (retention_weekly  >= 0),
   CONSTRAINT chk_bsched_ret_monthly CHECK (retention_monthly >= 0),
   CONSTRAINT chk_bsched_active     CHECK (is_active IN (0,1)),
+  CONSTRAINT chk_bsched_notify_override CHECK (notify_override IN (0,1)),
+  CONSTRAINT chk_bsched_notify_failure  CHECK (notify_on_failure IS NULL OR notify_on_failure IN (0,1)),
+  CONSTRAINT chk_bsched_notify_success  CHECK (notify_on_success IS NULL OR notify_on_success IN (0,1)),
   UNIQUE KEY uq_backup_schedules_destination (destination_id),
   KEY idx_backup_schedules_next_run (next_run_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -820,6 +828,7 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.16.0-preferred-mfa-method'),
   ('3.17.0-backup'),
   ('3.21.0-backup-runs'),
-  ('3.21.0-schedule-unique');
+  ('3.21.0-schedule-unique'),
+  ('3.23.0-notify-overrides');
 
 SET FOREIGN_KEY_CHECKS = 1;

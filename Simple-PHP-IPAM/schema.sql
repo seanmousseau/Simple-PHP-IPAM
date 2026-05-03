@@ -613,6 +613,15 @@ CREATE TABLE IF NOT EXISTS backup_schedules (
   is_active         INTEGER NOT NULL DEFAULT 1  CHECK (is_active IN (0,1)),
   last_run_at       TEXT,
   next_run_at       TEXT,
+  -- v3.23.0 #825 (F21): per-schedule notification overrides. When
+  -- notify_override = 0, ipam_backup_notify() resolves against the global
+  -- backup.notify_* settings (the v3.20.0 behaviour). When = 1, the three
+  -- per-schedule columns take precedence. notify_recipients is CSV like
+  -- the global setting; NULL means "inherit even when overriding the bools".
+  notify_override   INTEGER NOT NULL DEFAULT 0  CHECK (notify_override IN (0,1)),
+  notify_on_failure INTEGER          CHECK (notify_on_failure IS NULL OR notify_on_failure IN (0,1)),
+  notify_on_success INTEGER          CHECK (notify_on_success IS NULL OR notify_on_success IN (0,1)),
+  notify_recipients TEXT,
   created_at        TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_backup_schedules_destination ON backup_schedules(destination_id);

@@ -735,6 +735,12 @@ CREATE TABLE IF NOT EXISTS backup_schedules (
   is_active         SMALLINT  NOT NULL DEFAULT 1  CHECK (is_active IN (0,1)),
   last_run_at       TIMESTAMP NULL,
   next_run_at       TIMESTAMP NULL,
+  -- v3.23.0 #825 (F21): per-schedule notification overrides — see schema.sql.
+  notify_override   SMALLINT  NOT NULL DEFAULT 0
+                              CHECK (notify_override IN (0,1)),
+  notify_on_failure SMALLINT  NULL CHECK (notify_on_failure IS NULL OR notify_on_failure IN (0,1)),
+  notify_on_success SMALLINT  NULL CHECK (notify_on_success IS NULL OR notify_on_success IN (0,1)),
+  notify_recipients TEXT      NULL,
   created_at        TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
   CONSTRAINT uq_backup_schedules_destination UNIQUE (destination_id)
 );
@@ -834,5 +840,6 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.16.0-preferred-mfa-method'),
   ('3.17.0-backup'),
   ('3.21.0-backup-runs'),
-  ('3.21.0-schedule-unique')
+  ('3.21.0-schedule-unique'),
+  ('3.23.0-notify-overrides')
 ON CONFLICT (version) DO NOTHING;
