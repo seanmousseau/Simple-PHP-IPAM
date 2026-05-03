@@ -1995,6 +1995,7 @@ function ipam_logical_table_order(PDO $db): array
     //     settings (→ users), password_reset_tokens (→ users),
     //     totp_backup_codes (→ users), webauthn_credentials (→ users),
     //     webhook_deliveries (→ webhooks)
+    unset($db); // forward-compat placeholder (tenancy filter in v4.0.0)
     return [
         // -- Layer 0 — no FKs, replayable in any order ---------------------
         'schema_migrations',
@@ -2041,5 +2042,224 @@ function ipam_logical_table_order(PDO $db): array
         'totp_backup_codes',
         'webauthn_credentials',
         'webhook_deliveries',
+    ];
+}
+
+// =========================================================================
+// IPAMBKL1 — Logical-format dump (writer)
+// =========================================================================
+
+/**
+ * Classify a column's encoding kind based on its name. IPAM follows a
+ * consistent convention: binary blobs end in `_bin` (ip_bin, network_bin),
+ * timestamps end in `_at` (created_at, updated_at, started_at, …). Every
+ * other column is a scalar (int, string, bool, null) and passes through
+ * the codec unchanged.
+ *
+ * Suffix-based rather than runtime introspection because SQLite's
+ * declared column types aren't strict (a column declared TEXT can hold a
+ * BLOB, etc.) and the three engines disagree on type metadata syntax.
+ * The naming convention is a stable cross-engine signal — and the
+ * conformance tests (#1042) catch any column that defies it.
+ *
+ * @return 'binary'|'timestamp'|'scalar'
+ */
+function ipam_logical_column_kind(string $columnName): string
+{
+    if (str_ends_with($columnName, '_bin')) {
+        return 'binary';
+    }
+    if (str_ends_with($columnName, '_at')) {
+        return 'timestamp';
+    }
+    return 'scalar';
+}
+
+/**
+ * Encode a single fetched row into IPAMBKL1 wire form, applying the
+ * per-column kind classifier.
+ *
+ * @param array<string,mixed> $row
+ * @return array<string,mixed>
+ */
+function ipam_logical_encode_row(array $row): array
+{
+    $out = [];
+    foreach ($row as $col => $val) {
+        $kind = ipam_logical_column_kind($col);
+        $out[$col] = ipam_logical_encode_value(
+            $val,
+            $kind === 'binary',
+            $kind === 'timestamp'
+        );
+    }
+    return $out;
+}
+
+/**
+ * Compute the integer schema_version high-water mark for the IPAMBKL1
+ * header. Defined as `COUNT(*)` of `schema_migrations` (= `MAX(id)` under
+ * apply_migrations() idempotency). Monotone over a single install's
+ * lifetime; identical on two installs sharing the same migration set.
+ *
+ * Version *labels* (e.g. "3.22.0") are TEXT and don't sort meaningfully
+ * across major releases, which is why the count is the canonical integer
+ * compatibility axis. The label of the most recent migration is carried
+ * separately as `header.last_migration_version` for human-readable
+ * diagnostics; the restorer only consults `schema_version` for compat
+ * decisions.
+ */
+function ipam_logical_schema_version(PDO $db): int
+{
+    $r = $db->query("SELECT COUNT(*) FROM schema_migrations");
+    if ($r === false) {
+        return 0;
+    }
+    $val = $r->fetchColumn();
+    return is_numeric($val) ? (int) $val : 0;
+}
+
+/**
+ * Read the most recently applied migration's version label, for
+ * diagnostic purposes only. Empty string when no migrations applied.
+ */
+function ipam_logical_last_migration_version(PDO $db): string
+{
+    $r = $db->query("SELECT version FROM schema_migrations ORDER BY id DESC LIMIT 1");
+    if ($r === false) {
+        return '';
+    }
+    $val = $r->fetchColumn();
+    return is_string($val) ? $val : '';
+}
+
+/**
+ * Stream all rows of a single table through PDO, yielding each row as
+ * an associative array. Forward-only cursor — bounded memory regardless
+ * of table size.
+ *
+ * @return Generator<array<string,mixed>>
+ */
+function ipam_logical_iterate_table(PDO $db, string $table): Generator
+{
+    // Quoting: table names from ipam_logical_table_order() are a known
+    // closed set, hand-curated in source. Double-quoting works on all
+    // three engines for ANSI-quoted identifiers.
+    $stmt = $db->query("SELECT * FROM \"$table\"");
+    if ($stmt === false) {
+        return;
+    }
+    while (($row = $stmt->fetch(PDO::FETCH_ASSOC)) !== false) {
+        if (!is_array($row)) {
+            continue;
+        }
+        // PDO::FETCH_ASSOC always yields string keys, but PHPStan's stub
+        // can't see that. Rebuild explicitly so the generic narrows to
+        // array<string, mixed> at the yield site.
+        $narrow = [];
+        foreach ($row as $k => $v) {
+            $narrow[(string) $k] = $v;
+        }
+        yield $narrow;
+    }
+}
+
+/**
+ * Write an IPAMBKL1 Logical-format dump from a live PDO connection to
+ * the given output path. Memory-bounded — table rows stream through a
+ * forward cursor; the output is gzipped line-by-line.
+ *
+ * Spec: docs/internal/ipambkl1-format.md.
+ *
+ * @param ?int $tenantId Reserved for v4.0.0; ignored in v3.23.0 (always null
+ *                       in the produced header).
+ * @return array{
+ *   total_rows:int,
+ *   row_counts:array<string,int>,
+ *   checksum_sha256:string,
+ *   schema_version:int,
+ *   exported_at:string
+ * }
+ */
+function ipam_backup_logical_dump(PDO $db, string $outputPath, ?int $tenantId = null): array
+{
+    unset($tenantId); // v4.0.0 hook
+    $tableOrder = ipam_logical_table_order($db);
+    $schemaVersion = ipam_logical_schema_version($db);
+    $lastMigration = ipam_logical_last_migration_version($db);
+    $exportedAt    = gmdate('Y-m-d\TH:i:s\Z');
+
+    // First pass: count rows per table so the header can carry row_counts
+    // upfront. The two-pass approach keeps the streaming write pure (no
+    // backpatch into the gzip stream).
+    $rowCounts = [];
+    foreach ($tableOrder as $table) {
+        $stmt = $db->query("SELECT COUNT(*) FROM \"$table\"");
+        $val = $stmt !== false ? $stmt->fetchColumn() : 0;
+        $rowCounts[$table] = is_numeric($val) ? (int) $val : 0;
+    }
+
+    $header = [
+        'header'                   => true,
+        'format_version'           => 1,
+        'schema_version'           => $schemaVersion,
+        'last_migration_version'   => $lastMigration,
+        'exported_at'              => $exportedAt,
+        'exported_by_ipam_version' => defined('IPAM_VERSION') ? IPAM_VERSION : 'unknown',
+        'tenant_id'                => null,
+        'table_order'              => $tableOrder,
+        'row_counts'               => $rowCounts,
+    ];
+
+    $gz = gzopen($outputPath, 'wb9');
+    if ($gz === false) {
+        throw new RuntimeException('ipam_backup_logical_dump: cannot open output for writing: ' . $outputPath);
+    }
+
+    $hashCtx   = hash_init('sha256');
+    $totalRows = 0;
+
+    try {
+        // Magic line.
+        gzwrite($gz, "IPAMBKL1\n");
+
+        // Header line. Not part of body checksum.
+        $headerJson = (string) json_encode($header, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        gzwrite($gz, $headerJson . "\n");
+
+        // Body — rows in topo-sorted table order.
+        foreach ($tableOrder as $table) {
+            foreach (ipam_logical_iterate_table($db, $table) as $row) {
+                $encoded = ipam_logical_encode_row($row);
+                $line    = (string) json_encode(
+                    ['table' => $table, 'row' => $encoded],
+                    JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+                );
+                $payload = $line . "\n";
+                hash_update($hashCtx, $payload);
+                gzwrite($gz, $payload);
+                $totalRows++;
+            }
+        }
+
+        $checksum = hash_final($hashCtx);
+
+        $footer = [
+            'footer'          => true,
+            'checksum_sha256' => $checksum,
+            'total_rows'      => $totalRows,
+        ];
+        $footerJson = (string) json_encode($footer, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        gzwrite($gz, $footerJson . "\n");
+    } finally {
+        gzclose($gz);
+    }
+
+    return [
+        'total_rows'      => $totalRows,
+        'row_counts'      => $rowCounts,
+        'checksum_sha256' => $checksum,
+        'schema_version'  => $schemaVersion,
+        'exported_at'     => $exportedAt,
     ];
 }

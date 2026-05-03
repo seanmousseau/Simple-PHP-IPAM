@@ -18,7 +18,7 @@ Three orthogonal version axes. Each has a specific job. Don't conflate them.
 |---|---|---|
 | **Magic suffix** (`IPAMBKL1`, `IPAMBKL2`, …) | First 8 bytes of file | **Breaking** format change. Readers refuse unrecognised magics. |
 | **`format_version`** (header field, integer) | Header JSON | Additive, backward-compat revisions. Older readers ignore unknown header fields; newer fields must not change semantics of existing fields. |
-| **`schema_version`** (header field, integer) | Header JSON | IPAM `schema_migrations` high-water mark of the source install. Drives the restorer's same-or-older-or-newer compat decision (see §"Restore compatibility" below). |
+| **`schema_version`** (header field, integer) | Header JSON | IPAM `schema_migrations` high-water mark, defined as `COUNT(*)` of the table (= `MAX(id)` under `apply_migrations()` idempotency). Monotone over a single install's lifetime; identical on two installs sharing the same migration set. Drives the restorer's same-or-older-or-newer compat decision (see §"Restore compatibility" below). The label of the most recent migration is carried separately as `last_migration_version` for human-readable diagnostics; the restorer only consults `schema_version` for compat decisions. |
 
 `IPAMBKL1` ships with `format_version=1`. Reserved future fields are listed at the bottom of this doc.
 
@@ -77,7 +77,8 @@ Required fields:
 
 - **`header`** — literal `true`. Marker.
 - **`format_version`** — integer. `1` for `IPAMBKL1`.
-- **`schema_version`** — integer. Source install's `MAX(version)` from `schema_migrations`.
+- **`schema_version`** — integer. `COUNT(*)` from source install's `schema_migrations` table. Equivalent to `MAX(id)` under apply-migrations idempotency. The compat axis the restorer evaluates.
+- **`last_migration_version`** — string. Label of the most recently applied migration (e.g. `"3.22.0"`). Diagnostic only — the restorer does not use this for compat decisions.
 - **`exported_at`** — ISO-8601 UTC timestamp string with trailing `Z`.
 - **`exported_by_ipam_version`** — string. Source install's `IPAM_VERSION` constant. Informational; not used for compat decisions.
 - **`tenant_id`** — integer or `null`. **Always `null` in v3.23.0 (no tenancy).** Reserved for v4.0.0 partial-tenant logical backups; v3.23.0 readers must accept any value but writers must always emit `null`.
