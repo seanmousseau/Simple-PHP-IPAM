@@ -4616,27 +4616,30 @@ function ipam_gfs_select_for_deletion(array $backups, array $config): array
 }
 
 /**
- * DB-aware GFS retention wrapper for a single backup destination.
+ * Compute the list of backup_runs IDs to prune for a single destination.
  *
- * Fetches the destination's GFS schedule config from backup_schedules, fetches
- * all successful backup_runs rows for the destination, calls
- * ipam_gfs_select_for_deletion() to determine which rows to prune, updates
- * each pruned row's status to 'retention_pruned', audits the operation, and
- * returns the count of rows pruned.
+ * Pure-ish: reads from backup_destinations + backup_schedules + backup_runs,
+ * but performs no mutations. Wraps ipam_gfs_select_for_deletion() with the
+ * DB plumbing — schedule resolution (with conservative defaults if absent),
+ * eligible-row filtering (status='success', is_protected=0), and slot
+ * assignment via the GFS selector. Testable in isolation against an
+ * in-memory SQLite.
  *
  * Reads from backup_runs (v3.21.0 #799 §A1; replaces backup_log).
  *
  * @param PDO $db             Application database connection.
  * @param int $destinationId  ID of the backup_destinations row.
- * @return int                Count of backup_runs rows marked as retention_pruned.
+ * @return int[]              backup_runs IDs that GFS retention selects for deletion.
+ *                            Empty array means "nothing to prune" (no candidates,
+ *                            below capacity, or all candidates protected).
+ * @throws \InvalidArgumentException  if the destination row does not exist.
  */
-function ipam_backup_apply_retention(PDO $db, int $destinationId): int
+function ipam_retention_compute_deletions(PDO $db, int $destinationId): array
 {
-    // ── 1. Fetch destination info (type needed for future client dispatch) ──────
-    $destStmt = $db->prepare("SELECT id, name, type FROM backup_destinations WHERE id = :id");
+    // ── 1. Fetch destination info — required to validate the ID ──────────────
+    $destStmt = $db->prepare("SELECT id FROM backup_destinations WHERE id = :id");
     $destStmt->execute([':id' => $destinationId]);
-    $dest = $destStmt->fetch();
-    if (!is_array($dest)) {
+    if (!is_array($destStmt->fetch())) {
         throw new \InvalidArgumentException("backup_destinations row not found: id={$destinationId}");
     }
 
@@ -4668,14 +4671,14 @@ function ipam_backup_apply_retention(PDO $db, int $destinationId): int
         ];
     }
 
-    // ── 3. Fetch successful backup_runs rows for this destination ───────────
+    // ── 3. Fetch successful backup_runs rows for this destination ────────────
     // backup_runs uses started_at for GFS bucketing (no created_at column).
     // CR feedback PR #1054: exclude is_protected=1 rows from the prune set.
     // Retention must respect the manual protection flag the same way the UI
     // delete-action does, otherwise auto-prune can wipe a row the operator
     // explicitly protected.
     $logStmt = $db->prepare(
-        "SELECT id, filename, started_at AS created_at
+        "SELECT id, started_at AS created_at
          FROM backup_runs
          WHERE destination_id = :did
            AND status = 'success'
@@ -4686,56 +4689,57 @@ function ipam_backup_apply_retention(PDO $db, int $destinationId): int
     $rows = $logStmt->fetchAll();
 
     if (count($rows) === 0) {
+        return [];
+    }
+
+    return ipam_gfs_select_for_deletion($rows, $gfsConfig);
+}
+
+/**
+ * Apply a precomputed deletion list: remote-delete each file via $client, and
+ * mark each successfully-deleted backup_runs row as 'retention_pruned'. I/O only.
+ *
+ * Failure model: the row is marked pruned ONLY if the remote delete succeeded
+ * (or the client is null and the row had no remote object). A remote-delete
+ * failure leaves the row at status='success' so the next retention pass will
+ * try again. Exceptions from the client are caught and logged; this function
+ * never throws.
+ *
+ * Audit: a single 'backup.retention_pruned' event is written when count > 0,
+ * with details "count=N destination=ID".
+ *
+ * @param PDO                        $db             Application database connection.
+ * @param BackupClientInterface|null $client         Transport client for the
+ *                                                   destination, or null if no
+ *                                                   client could be constructed
+ *                                                   (rows then stay live).
+ * @param int                        $destinationId  Destination ID — used in
+ *                                                   audit details only.
+ * @param int[]                      $ids            backup_runs IDs to prune.
+ * @return int                                       Count of rows actually
+ *                                                   marked retention_pruned.
+ */
+function ipam_retention_apply_deletions(PDO $db, ?BackupClientInterface $client, int $destinationId, array $ids): int
+{
+    if (count($ids) === 0) {
         return 0;
     }
 
-    // ── 4. Determine which IDs to prune ───────────────────────────────────────
-    $toDelete = ipam_gfs_select_for_deletion($rows, $gfsConfig);
-
-    if (count($toDelete) === 0) {
-        return 0;
-    }
-
-    // Index rows by id for filename lookup
+    // Fetch filenames for the IDs we'll attempt to delete remotely.
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $rowStmt = $db->prepare(
+        "SELECT id, filename FROM backup_runs WHERE id IN ($placeholders)"
+    );
+    $rowStmt->execute(array_map('intval', $ids));
     $rowById = [];
-    foreach ($rows as $r) {
+    foreach ($rowStmt->fetchAll() as $r) {
         if (is_array($r) && isset($r['id']) && is_numeric($r['id'])) {
             $rowById[(int) $r['id']] = $r;
         }
     }
 
-    // Build a client for the destination so we can actually delete remote files.
-    $cfgJson = '';
-    $destStmt2 = $db->prepare("SELECT config FROM backup_destinations WHERE id = :id");
-    $destStmt2->execute([':id' => $destinationId]);
-    $cfgRow = $destStmt2->fetch();
-    if (is_array($cfgRow) && is_string($cfgRow['config'] ?? null)) {
-        $cfgJson = $cfgRow['config'];
-    }
-    $cfgArr = json_decode($cfgJson, true);
-    $typedCfg = [];
-    if (is_array($cfgArr)) {
-        foreach ($cfgArr as $k => $v) {
-            if (is_string($k)) $typedCfg[$k] = $v;
-        }
-    }
-    $client = null;
-    try {
-        $type = is_string($dest['type'] ?? null) ? $dest['type'] : '';
-        $client = match ($type) {
-            's3'    => new S3Client($typedCfg),
-            'sftp'  => new SftpClient($typedCfg),
-            'local' => new LocalBackupClient($typedCfg),
-            default => null,
-        };
-    } catch (\Throwable $e) {
-        error_log('[ipam_backup_apply_retention] cannot construct client: ' . $e->getMessage());
-        $client = null;
-    }
-
-    // ── 5. For each ID: attempt remote delete; mark DB row ONLY if remote delete succeeded ──
     $pruned = 0;
-    foreach ($toDelete as $logId) {
+    foreach ($ids as $logId) {
         $row = $rowById[(int) $logId] ?? null;
         $filename = is_array($row) && is_string($row['filename'] ?? null) ? $row['filename'] : '';
         $remoteDeleted = false;
@@ -4747,14 +4751,12 @@ function ipam_backup_apply_retention(PDO $db, int $destinationId): int
                 $client->delete($filename);
                 $remoteDeleted = true;
             } catch (\Throwable $e) {
-                error_log('[ipam_backup_apply_retention] remote delete failed for log_id=' . $logId . ' file=' . $filename . ': ' . $e->getMessage());
+                error_log('[ipam_retention_apply_deletions] remote delete failed for log_id=' . $logId . ' file=' . $filename . ': ' . $e->getMessage());
                 $remoteDeleted = false;
             }
         }
 
         if (!$remoteDeleted) {
-            // Do NOT mark this row as retention_pruned — the remote object is still there.
-            // Leaving the row at status='success' so the next retention pass will try again.
             continue;
         }
 
@@ -4764,11 +4766,10 @@ function ipam_backup_apply_retention(PDO $db, int $destinationId): int
             )->execute([':id' => $logId]);
             $pruned++;
         } catch (\Exception $e) {
-            error_log('[ipam_backup_apply_retention] failed to mark log_id=' . $logId . ': ' . $e->getMessage());
+            error_log('[ipam_retention_apply_deletions] failed to mark log_id=' . $logId . ': ' . $e->getMessage());
         }
     }
 
-    // ── 6. Audit ──────────────────────────────────────────────────────────────
     if ($pruned > 0) {
         // Matches the rest of the destinations.* / backup.* audit events,
         // which all use entity_type='destination'. CR review on PR #1050
@@ -4783,6 +4784,69 @@ function ipam_backup_apply_retention(PDO $db, int $destinationId): int
     }
 
     return $pruned;
+}
+
+/**
+ * Build a typed BackupClientInterface for a destination row, or null if the
+ * destination type is unknown or the client constructor throws (e.g. invalid
+ * config). Errors are logged but never propagated — retention must remain
+ * resilient to one misconfigured destination.
+ */
+function ipam_retention_build_client(PDO $db, int $destinationId): ?BackupClientInterface
+{
+    $stmt = $db->prepare("SELECT type, config FROM backup_destinations WHERE id = :id");
+    $stmt->execute([':id' => $destinationId]);
+    $row = $stmt->fetch();
+    if (!is_array($row)) {
+        return null;
+    }
+
+    $type = is_string($row['type'] ?? null) ? $row['type'] : '';
+    $cfgJson = is_string($row['config'] ?? null) ? $row['config'] : '';
+    $cfgArr = json_decode($cfgJson, true);
+    $typedCfg = [];
+    if (is_array($cfgArr)) {
+        foreach ($cfgArr as $k => $v) {
+            if (is_string($k)) $typedCfg[$k] = $v;
+        }
+    }
+
+    try {
+        return match ($type) {
+            's3'    => new S3Client($typedCfg),
+            'sftp'  => new SftpClient($typedCfg),
+            'local' => new LocalBackupClient($typedCfg),
+            default => null,
+        };
+    } catch (\Throwable $e) {
+        error_log('[ipam_retention_build_client] cannot construct client for destination=' . $destinationId . ': ' . $e->getMessage());
+        return null;
+    }
+}
+
+/**
+ * DB-aware GFS retention orchestrator for a single backup destination.
+ *
+ * Thin wrapper that composes ipam_retention_compute_deletions() (pure-ish
+ * planning) → ipam_retention_build_client() (client construction) →
+ * ipam_retention_apply_deletions() (remote delete + DB mark + audit).
+ *
+ * Existing call signature is preserved (#826 refactor splits the body into
+ * three testable functions; the public surface stays the same so cron.php
+ * and lib/backup.php continue to work without changes).
+ *
+ * @param PDO $db             Application database connection.
+ * @param int $destinationId  ID of the backup_destinations row.
+ * @return int                Count of backup_runs rows marked as retention_pruned.
+ */
+function ipam_backup_apply_retention(PDO $db, int $destinationId): int
+{
+    $ids = ipam_retention_compute_deletions($db, $destinationId);
+    if (count($ids) === 0) {
+        return 0;
+    }
+    $client = ipam_retention_build_client($db, $destinationId);
+    return ipam_retention_apply_deletions($db, $client, $destinationId, $ids);
 }
 
 /**
