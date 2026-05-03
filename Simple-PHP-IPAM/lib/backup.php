@@ -546,6 +546,54 @@ function ipam_mysql_client_flavor(string $binary = 'mysqldump'): string
 }
 
 /**
+ * Detect whether the locally-installed `mysqldump` / `mysql` accepts the
+ * `--no-login-paths` flag (#1081). The flag, added in MariaDB 11.4 and
+ * present in Oracle MySQL 8.x, makes the client skip `~/.mylogin.cnf`
+ * regardless of `--defaults-extra-file` ordering. Without it, an operator
+ * with a matching login-path entry on the app server can substitute the
+ * password we route through `--defaults-extra-file`.
+ *
+ * Probed via `<binary> --help` (the `--version` output reliably names the
+ * vendor; the help screen is the canonical place that lists supported
+ * flags). Cached per-binary for the lifetime of the request.
+ *
+ * MariaDB <11.4 (Debian 12 default = MariaDB 10.11) rejects the flag
+ * with "unknown option" and the dump fails immediately — see PR #1080
+ * v3.22.1 hotfix CR thread for the failure mode that drove this probe.
+ */
+function ipam_mysql_client_supports_no_login_paths(string $binary = 'mysqldump'): bool
+{
+    /** @var array<string,bool> $cache */
+    static $cache = [];
+    if ($binary !== 'mysqldump' && $binary !== 'mysql') {
+        return false;
+    }
+    if (isset($cache[$binary])) {
+        return $cache[$binary];
+    }
+    $pipes = [];
+    try {
+        $proc = proc_open( // nosemgrep
+            [$binary, '--help'],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes
+        );
+    } catch (Throwable) {
+        return $cache[$binary] = false;
+    }
+    if (!is_resource($proc)) {
+        return $cache[$binary] = false;
+    }
+    $stdout = stream_get_contents($pipes[1]) ?: '';
+    $stderr = stream_get_contents($pipes[2]) ?: '';
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    proc_close($proc);
+    $haystack = $stdout . "\n" . $stderr;
+    return $cache[$binary] = str_contains($haystack, '--no-login-paths');
+}
+
+/**
  * Build the SSL-related arguments for `mysqldump` / `mysql` based on the
  * detected client flavor and the operator's `backup.dump_ssl_verify` setting.
  * Returns an empty list when the safe behaviour is "emit nothing" (Oracle
@@ -626,6 +674,12 @@ function ipam_backup_native_cmd(string $driver, array $config): array
         // around the 11.x/8.4 timeframe — a hard-coded form bricks half the
         // field in either direction.
         $cmd = ['mysqldump', '--defaults-extra-file=' . $credFile];
+        // #1081: prevent ~/.mylogin.cnf from overriding our 0600 defaults
+        // file when the client supports it (MariaDB 11.4+ / Oracle MySQL 8.x).
+        // Older MariaDB rejects the flag — probe + skip silently.
+        if (ipam_mysql_client_supports_no_login_paths('mysqldump')) {
+            $cmd[] = '--no-login-paths';
+        }
         foreach (ipam_mysql_ssl_verify_args($verifySsl) as $sslArg) {
             $cmd[] = $sslArg;
         }

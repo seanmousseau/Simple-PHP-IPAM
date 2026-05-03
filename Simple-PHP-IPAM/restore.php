@@ -185,9 +185,13 @@ if ($driver === 'sqlite') {
     // --defaults-extra-file MUST be the first mysql argument.
     // v3.22.2: SSL verify flag is flavor-aware. See
     // ipam_mysql_ssl_verify_args() in lib/backup.php for the full
-    // MariaDB-vs-Oracle-MySQL dialect rationale. (--no-login-paths follow-up
-    // is still tracked in #1081 — same probe-and-cache pattern.)
+    // MariaDB-vs-Oracle-MySQL dialect rationale.
+    // v3.23.0 #1081: --no-login-paths emitted when the client supports it
+    // (MariaDB 11.4+ / Oracle MySQL 8.x); older MariaDB rejects the flag.
     $cmd = ['mysql', '--defaults-extra-file=' . $credFile];
+    if (ipam_mysql_client_supports_no_login_paths('mysql')) {
+        $cmd[] = '--no-login-paths';
+    }
     foreach (ipam_mysql_ssl_verify_args($verifySsl, 'mysql') as $sslArg) {
         $cmd[] = $sslArg;
     }

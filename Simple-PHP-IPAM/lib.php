@@ -3902,12 +3902,16 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             // The file MUST be unlinked on every exit path below.
             $credFile = ipam_backup_write_mysql_defaults_file($pass);
             // --defaults-extra-file MUST be the first mysqldump argument.
-            // (--no-login-paths AND --ssl-mode for Oracle MySQL — both
-            // follow-ups tracked in #1081, gated on a probe helper.)
+            // v3.23.0 #1081: --no-login-paths emitted when the client
+            // supports it (MariaDB 11.4+ / Oracle MySQL 8.x). Older clients
+            // reject the flag and the dump fails immediately, so we probe.
             // v3.22.2: SSL verify flag is flavor-aware. See
             // ipam_mysql_ssl_verify_args() in lib/backup.php for the full
             // MariaDB-vs-Oracle-MySQL dialect rationale.
             $cmd = ['mysqldump', '--defaults-extra-file=' . $credFile];
+            if (ipam_mysql_client_supports_no_login_paths('mysqldump')) {
+                $cmd[] = '--no-login-paths';
+            }
             foreach (ipam_mysql_ssl_verify_args($verifySsl) as $sslArg) {
                 $cmd[] = $sslArg;
             }
