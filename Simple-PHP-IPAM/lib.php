@@ -5228,6 +5228,88 @@ function ipam_backup_notify_dispatch(PDO $db, string $event, array $context): vo
 }
 
 /**
+ * Per-schedule resolver for a notification boolean (notify_on_failure /
+ * notify_on_success). Returns the schedule's column when notify_override = 1
+ * and the column is non-NULL; otherwise the global default.
+ *
+ * Wired in by E3 alongside the Notifications-tab UI. Pure function — only
+ * touches backup_schedules; safe to call from anywhere with a $db handle.
+ */
+function ipam_backup_notify_resolve_pref(
+    PDO $db,
+    ?int $scheduleId,
+    string $boolCol,
+    bool $globalDefault
+): bool {
+    if (!in_array($boolCol, ['notify_on_failure', 'notify_on_success'], true)) {
+        throw new InvalidArgumentException(
+            "ipam_backup_notify_resolve_pref: column must be notify_on_failure or notify_on_success, got '$boolCol'"
+        );
+    }
+    if ($scheduleId === null) {
+        return $globalDefault;
+    }
+    $sql = "SELECT notify_override, $boolCol AS pref FROM backup_schedules WHERE id = :id";
+    $stmt = $db->prepare($sql);
+    $stmt->execute([':id' => $scheduleId]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($row)) {
+        return $globalDefault;
+    }
+    $rawOverride = $row['notify_override'] ?? 0;
+    $override = is_numeric($rawOverride) && (int) $rawOverride === 1;
+    if (!$override) {
+        return $globalDefault;
+    }
+    $rawPref = $row['pref'] ?? null;
+    if ($rawPref === null || !is_numeric($rawPref)) {
+        // Override row but this particular preference left NULL — inherit global.
+        return $globalDefault;
+    }
+    return (int) $rawPref === 1;
+}
+
+/**
+ * Per-schedule resolver for notification recipients. Returns the schedule's
+ * CSV recipient list when notify_override = 1 AND notify_recipients is non-NULL
+ * AND parses to a non-empty list; otherwise the global recipients.
+ *
+ * @param  list<string> $globalRecipients
+ * @return list<string>
+ */
+function ipam_backup_notify_resolve_recipients(
+    PDO $db,
+    ?int $scheduleId,
+    array $globalRecipients
+): array {
+    if ($scheduleId === null) {
+        return $globalRecipients;
+    }
+    $stmt = $db->prepare(
+        "SELECT notify_override, notify_recipients FROM backup_schedules WHERE id = :id"
+    );
+    $stmt->execute([':id' => $scheduleId]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($row)) {
+        return $globalRecipients;
+    }
+    $rawOverride = $row['notify_override'] ?? 0;
+    $override = is_numeric($rawOverride) && (int) $rawOverride === 1;
+    if (!$override) {
+        return $globalRecipients;
+    }
+    $csv = $row['notify_recipients'] ?? null;
+    if (!is_string($csv) || trim($csv) === '') {
+        return $globalRecipients;
+    }
+    $parts = array_values(array_filter(
+        array_map('trim', explode(',', $csv)),
+        static fn($s) => $s !== ''
+    ));
+    return $parts === [] ? $globalRecipients : $parts;
+}
+
+/**
  * Stream a full SQL dump of the SQLite database to a callable.
  * Each call to $write receives a chunk of SQL text.
  */
