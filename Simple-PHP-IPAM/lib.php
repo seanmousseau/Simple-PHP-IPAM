@@ -4486,11 +4486,9 @@ function backup_decrypt(string $blob, string $appSecret): string
  *        Flat list of backup records; order does not matter.
  * @param array{keep_hourly: int, keep_daily: int, keep_weekly: int, keep_monthly: int} $config
  *        Retention counts per tier. A count of 0 disables that tier entirely.
- * @param int|null $nowEpoch  UTC epoch for the "current time" (injectable for tests).
- *                            When null, uses time().
  * @return int[]  IDs from $backups that should be deleted.
  */
-function ipam_gfs_select_for_deletion(array $backups, array $config, ?int $nowEpoch = null): array
+function ipam_gfs_select_for_deletion(array $backups, array $config): array
 {
     if (count($backups) === 0) {
         return [];
@@ -4697,7 +4695,7 @@ function ipam_backup_apply_retention(PDO $db, int $destinationId, ?int $nowEpoch
     }
 
     // ── 4. Determine which IDs to prune ───────────────────────────────────────
-    $toDelete = ipam_gfs_select_for_deletion($rows, $gfsConfig, $nowEpoch);
+    $toDelete = ipam_gfs_select_for_deletion($rows, $gfsConfig);
 
     if (count($toDelete) === 0) {
         return 0;

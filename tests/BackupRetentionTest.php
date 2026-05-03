@@ -74,7 +74,7 @@ final class BackupRetentionTest extends TestCase
             [2, '2026-04-27 10:00:00'],
         ]);
         $config = ['keep_hourly' => 1, 'keep_daily' => 0, 'keep_weekly' => 0, 'keep_monthly' => 0];
-        $delete = ipam_gfs_select_for_deletion($backups, $config, $now);
+        $delete = ipam_gfs_select_for_deletion($backups, $config);
         $this->assertNotContains(1, $delete, 'newest backup (id=1) must not be in delete list');
         $this->assertContains(2, $delete, 'older backup (id=2) should be pruned');
     }
@@ -90,9 +90,7 @@ final class BackupRetentionTest extends TestCase
         ]);
         $delete = ipam_gfs_select_for_deletion(
             $backups,
-            ['keep_hourly' => 0, 'keep_daily' => 0, 'keep_weekly' => 0, 'keep_monthly' => 0],
-            $now
-        );
+            ['keep_hourly' => 0, 'keep_daily' => 0, 'keep_weekly' => 0, 'keep_monthly' => 0]);
         // Safety guard: newest must survive; id=1 must be pruned.
         $this->assertSame([1], $delete, 'newest backup must always survive');
     }
@@ -107,9 +105,7 @@ final class BackupRetentionTest extends TestCase
         ];
         $delete = ipam_gfs_select_for_deletion(
             $backups,
-            ['keep_hourly' => 0, 'keep_daily' => 0, 'keep_weekly' => 0, 'keep_monthly' => 0],
-            $now
-        );
+            ['keep_hourly' => 0, 'keep_daily' => 0, 'keep_weekly' => 0, 'keep_monthly' => 0]);
         $this->assertSame([1], $delete, 'newest backup must always survive');
     }
 
@@ -125,7 +121,7 @@ final class BackupRetentionTest extends TestCase
             [2, '2026-04-28 11:45:00'], // newer in same hour
         ]);
         $config = ['keep_hourly' => 1, 'keep_daily' => 0, 'keep_weekly' => 0, 'keep_monthly' => 0];
-        $delete = ipam_gfs_select_for_deletion($backups, $config, $now);
+        $delete = ipam_gfs_select_for_deletion($backups, $config);
         $this->assertNotContains(2, $delete, 'newer same-hour backup (id=2) must be kept');
         $this->assertContains(1, $delete, 'older same-hour backup (id=1) must be pruned');
     }
@@ -149,7 +145,7 @@ final class BackupRetentionTest extends TestCase
             [2, '2026-04-28 11:00:00'], // today — wins hourly + daily
         ]);
         $config = ['keep_hourly' => 1, 'keep_daily' => 2, 'keep_weekly' => 0, 'keep_monthly' => 0];
-        $delete = ipam_gfs_select_for_deletion($backups, $config, $now);
+        $delete = ipam_gfs_select_for_deletion($backups, $config);
         $this->assertSame([], $delete, 'both backups should be kept via different tiers');
     }
 
@@ -169,7 +165,7 @@ final class BackupRetentionTest extends TestCase
         }
         // id=1 is the oldest (25 hours ago = yesterday)
         $config = ['keep_hourly' => 24, 'keep_daily' => 2, 'keep_weekly' => 0, 'keep_monthly' => 0];
-        $delete = ipam_gfs_select_for_deletion($backups, $config, $now);
+        $delete = ipam_gfs_select_for_deletion($backups, $config);
         // The oldest (id=1, from 25h ago / yesterday) should be kept as a daily slot winner
         $this->assertNotContains(1, $delete, 'oldest backup should win yesterday daily slot');
     }
@@ -190,7 +186,7 @@ final class BackupRetentionTest extends TestCase
             [3, '2026-01-15 11:00:00'], // January newer — also wins Jan monthly; id=2 loses
         ]);
         $config = ['keep_hourly' => 0, 'keep_daily' => 0, 'keep_weekly' => 0, 'keep_monthly' => 2];
-        $delete = ipam_gfs_select_for_deletion($backups, $config, $now);
+        $delete = ipam_gfs_select_for_deletion($backups, $config);
         // Jan newest (id=3) wins Jan monthly; Dec (id=1) wins Dec monthly.
         // id=2 (older Jan) should be pruned.
         $this->assertNotContains(3, $delete, 'newest Jan backup must be kept (monthly winner)');
@@ -213,7 +209,7 @@ final class BackupRetentionTest extends TestCase
             [3, '2026-01-05 02:00:00'], // ISO 2026-W02
         ]);
         $config = ['keep_hourly' => 0, 'keep_daily' => 0, 'keep_weekly' => 3, 'keep_monthly' => 0];
-        $delete = ipam_gfs_select_for_deletion($backups, $config, $now);
+        $delete = ipam_gfs_select_for_deletion($backups, $config);
         // All three are in distinct ISO weeks; all should be kept.
         $this->assertSame([], $delete, 'each backup is in a distinct ISO week; all should be kept');
     }
@@ -242,7 +238,7 @@ final class BackupRetentionTest extends TestCase
             [7, '2026-04-28 11:00:00'], // today (newest)
         ]);
         $config = ['keep_hourly' => 0, 'keep_daily' => 3, 'keep_weekly' => 2, 'keep_monthly' => 2];
-        $delete = ipam_gfs_select_for_deletion($backups, $config, $now);
+        $delete = ipam_gfs_select_for_deletion($backups, $config);
 
         // Newest (id=7) always kept.
         $this->assertNotContains(7, $delete, 'newest must never be deleted');
@@ -268,7 +264,7 @@ final class BackupRetentionTest extends TestCase
             [2, '2026-04-28 11:45:00'], // same day, same hour (newer)
         ]);
         $config = ['keep_hourly' => 0, 'keep_daily' => 1, 'keep_weekly' => 0, 'keep_monthly' => 0];
-        $delete = ipam_gfs_select_for_deletion($backups, $config, $now);
+        $delete = ipam_gfs_select_for_deletion($backups, $config);
         $this->assertNotContains(2, $delete, 'newer backup (id=2) must be kept as daily winner');
         $this->assertContains(1, $delete, 'older backup (id=1) loses daily slot to newer and is pruned');
     }
@@ -284,9 +280,7 @@ final class BackupRetentionTest extends TestCase
         $backups = $this->backups([[42, '2026-04-28 11:00:00']]);
         $delete = ipam_gfs_select_for_deletion(
             $backups,
-            ['keep_hourly' => 0, 'keep_daily' => 0, 'keep_weekly' => 0, 'keep_monthly' => 0],
-            $now
-        );
+            ['keep_hourly' => 0, 'keep_daily' => 0, 'keep_weekly' => 0, 'keep_monthly' => 0]);
         $this->assertSame([], $delete, 'the only backup must never be deleted');
     }
 
@@ -301,7 +295,7 @@ final class BackupRetentionTest extends TestCase
             [2, '2026-04-27 20:00:00'], // same day, newer
         ]);
         $config = ['keep_hourly' => 0, 'keep_daily' => 1, 'keep_weekly' => 0, 'keep_monthly' => 0];
-        $delete = ipam_gfs_select_for_deletion($backups, $config, $now);
+        $delete = ipam_gfs_select_for_deletion($backups, $config);
         $this->assertNotContains(2, $delete, 'newer backup (id=2) must win the daily slot');
         $this->assertContains(1, $delete, 'older backup (id=1) must be pruned');
     }
@@ -321,7 +315,7 @@ final class BackupRetentionTest extends TestCase
             [1, '2026-04-28 11:00:00'],
         ]);
         $config = ['keep_hourly' => 1, 'keep_daily' => 1, 'keep_weekly' => 1, 'keep_monthly' => 1];
-        $delete = ipam_gfs_select_for_deletion($backups, $config, $now);
+        $delete = ipam_gfs_select_for_deletion($backups, $config);
         $this->assertNotContains(1, $delete, 'newest backup (id=1) must be kept');
         $this->assertContains(2, $delete, 'older backup (id=2) should be pruned when all slots taken by newer');
     }
@@ -339,7 +333,7 @@ final class BackupRetentionTest extends TestCase
             [3, '2026-04-28 11:00:00'], // April latest (newest)
         ]);
         $config = ['keep_hourly' => 0, 'keep_daily' => 0, 'keep_weekly' => 0, 'keep_monthly' => 1];
-        $delete = ipam_gfs_select_for_deletion($backups, $config, $now);
+        $delete = ipam_gfs_select_for_deletion($backups, $config);
         // Only 1 monthly slot: newest (id=3) wins the April slot.
         $this->assertNotContains(3, $delete, 'newest (id=3) wins the only April monthly slot');
         $this->assertContains(2, $delete, 'id=2 loses to id=3 for the April slot');
@@ -359,7 +353,7 @@ final class BackupRetentionTest extends TestCase
             [4, '2026-04-26 11:00:00'], // ISO 2026-W17 (this week, newest)
         ]);
         $config = ['keep_hourly' => 0, 'keep_daily' => 0, 'keep_weekly' => 2, 'keep_monthly' => 0];
-        $delete = ipam_gfs_select_for_deletion($backups, $config, $now);
+        $delete = ipam_gfs_select_for_deletion($backups, $config);
         // 2 newest weekly winners are id=4 (W17) and id=3 (W16); id=2 and id=1 are pruned.
         $this->assertNotContains(4, $delete, 'W17 winner (id=4) must be kept');
         $this->assertNotContains(3, $delete, 'W16 winner (id=3) must be kept');
@@ -401,8 +395,8 @@ final class BackupRetentionTest extends TestCase
             [5, '2026-04-28 11:00:00'],
         ]);
         $config = ['keep_hourly' => 3, 'keep_daily' => 7, 'keep_weekly' => 4, 'keep_monthly' => 3];
-        $first  = ipam_gfs_select_for_deletion($backups, $config, $now);
-        $second = ipam_gfs_select_for_deletion($backups, $config, $now);
+        $first  = ipam_gfs_select_for_deletion($backups, $config);
+        $second = ipam_gfs_select_for_deletion($backups, $config);
         $this->assertSame($first, $second, 'function must be deterministic for identical inputs');
     }
 
@@ -420,8 +414,8 @@ final class BackupRetentionTest extends TestCase
         $reversed = array_reverse($ordered);
         $config   = ['keep_hourly' => 1, 'keep_daily' => 1, 'keep_weekly' => 1, 'keep_monthly' => 1];
 
-        $fromOrdered  = ipam_gfs_select_for_deletion($ordered, $config, $now);
-        $fromReversed = ipam_gfs_select_for_deletion($reversed, $config, $now);
+        $fromOrdered  = ipam_gfs_select_for_deletion($ordered, $config);
+        $fromReversed = ipam_gfs_select_for_deletion($reversed, $config);
 
         sort($fromOrdered);
         sort($fromReversed);
@@ -452,7 +446,7 @@ final class BackupRetentionTest extends TestCase
 
         // All-zero config: newest only.
         $allZero = ['keep_hourly' => 0, 'keep_daily' => 0, 'keep_weekly' => 0, 'keep_monthly' => 0];
-        $delete = ipam_gfs_select_for_deletion($backups, $allZero, $now);
+        $delete = ipam_gfs_select_for_deletion($backups, $allZero);
         sort($delete);
         $this->assertSame([2, 3, 4, 5], $delete, 'all-zero config prunes everything except the newest');
 
@@ -460,7 +454,7 @@ final class BackupRetentionTest extends TestCase
         // id=1 wins daily/weekly/monthly. id=3 wins next-daily slot.
         // id=2 same daily slot as id=1, no hourly to fall back into → pruned.
         $hourlyOff = ['keep_hourly' => 0, 'keep_daily' => 7, 'keep_weekly' => 4, 'keep_monthly' => 3];
-        $delete = ipam_gfs_select_for_deletion($backups, $hourlyOff, $now);
+        $delete = ipam_gfs_select_for_deletion($backups, $hourlyOff);
         $this->assertContains(2, $delete, 'with hourly disabled, second-in-daily-slot loses');
         $this->assertNotContains(1, $delete, 'newest survives');
     }
@@ -483,7 +477,7 @@ final class BackupRetentionTest extends TestCase
             [3, '2026-04-28 11:10:00'], // same hour, same daily, same weekly, same monthly → pruned
         ]);
         $config = ['keep_hourly' => 1, 'keep_daily' => 1, 'keep_weekly' => 1, 'keep_monthly' => 1];
-        $delete = ipam_gfs_select_for_deletion($backups, $config, $now);
+        $delete = ipam_gfs_select_for_deletion($backups, $config);
         sort($delete);
         $this->assertSame([2, 3], $delete, 'in same-slot ties, newest wins each tier; others prune');
         $this->assertNotContains(1, $delete);
@@ -510,7 +504,7 @@ final class BackupRetentionTest extends TestCase
             [5, '2026-04-24 11:00:00'],
         ]);
         $config = ['keep_hourly' => 0, 'keep_daily' => 7, 'keep_weekly' => 4, 'keep_monthly' => 3];
-        $delete = ipam_gfs_select_for_deletion($backups, $config, $now);
+        $delete = ipam_gfs_select_for_deletion($backups, $config);
         $this->assertSame([], $delete, '5 distinct daily slots all fit in keep_daily=7 → none pruned');
     }
 
@@ -537,7 +531,7 @@ final class BackupRetentionTest extends TestCase
             [3, '2026-04-27 11:00:00'],
         ]);
         $config = ['keep_hourly' => 1, 'keep_daily' => 0, 'keep_weekly' => 0, 'keep_monthly' => 0];
-        $delete = ipam_gfs_select_for_deletion($backups, $config, $now);
+        $delete = ipam_gfs_select_for_deletion($backups, $config);
         $this->assertNotContains(2, $delete, 'forward-skewed timestamp wins newest by created_at, not by id');
         $this->assertContains(1, $delete, 'id=1 is older by created_at, no surviving tier slot');
         $this->assertContains(3, $delete);
