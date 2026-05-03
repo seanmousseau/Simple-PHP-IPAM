@@ -12,12 +12,11 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.22.2
+## What's new in v3.22.3
 
-Hotfix for v3.22.1. Production MySQL backups failed against Oracle MySQL 8.x clients because the v3.22.1 SSL-verify flag emitted the MariaDB-canonical `--ssl-verify-server-cert=on/off` form, which Oracle MySQL 8.4 rejects as an unknown variable. The diagnostic only landed in PHP's `error_log`, so operators saw a generic "see error_log" message in the UI without a clear path to the cause.
+Hotfix for v3.22.2. Clicking **Download** on any successful row in the Backup History drawer (`backup_admin.php?tab=history`) returned `405 POST required` because the drawer rendered the link as a `GET <a href>` while the `download_remote_backup.php` endpoint is POST-only and reads `destination_id` + `name` (not `run_id`). Other Download entry points (e.g. the Restore tab's destination browser at `remote_backups.php`) already used a POST form and were unaffected.
 
-- **`mysqldump` / `mysql` SSL verify flag is now flavor-aware.** A new `ipam_mysql_client_flavor()` probe classifies the local client as MariaDB or Oracle MySQL once per request and emits the correct dialect — `--skip-ssl-verify-server-cert` for MariaDB, `--ssl-mode=*` for Oracle MySQL. Fixes a regression introduced in v3.22.1 that broke every prod backup running against Oracle MySQL ≥ 8.x while still keeping MariaDB 11.x (whose client verifies by default) working.
-- **Backup failure cause now visible in the UI and email notifications.** `backup_run_dump()` captures `mysqldump` / `pg_dump` stderr and surfaces it through the `backup_runs.error_message` column and the failure-notification message body (truncated to 500 chars), instead of leaving the diagnostic only in the PHP error log.
+- **History-drawer Download is now a POST submit.** `views/_backup_run_detail_body.php` emits a sibling `<form id="backup-run-download" method="post" action="download_remote_backup.php">` with `csrf`, `destination_id`, the run's `filename`, and `as=file`; the Download button inside `.drawer-actions` is bound to it via the HTML5 `form="..."` attribute so the visual layout and disabled-state matrix line up with Verify and Delete.
 
 [Full changelog →](CHANGELOG.md)
 

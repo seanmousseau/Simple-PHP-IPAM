@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.22.3] - 2026-05-02
+
+Hotfix for v3.22.2. The Backup History per-row drawer (#803) rendered the Download action as a `GET <a href="download_remote_backup.php?run_id=...">`, but `download_remote_backup.php` is a POST-only endpoint that requires CSRF plus `destination_id` + `name` (it does not read `run_id`). Every Download click in the drawer returned `405 POST required`. Other entry points to the same endpoint (e.g. `remote_backups.php`) already used a POST form and were unaffected.
+
+### Fixed
+- **Download from Backup History drawer no longer returns 405** — `Simple-PHP-IPAM/views/_backup_run_detail_body.php` now emits a sibling `<form id="backup-run-download" method="post" action="download_remote_backup.php">` carrying `csrf`, `destination_id` (from the joined `backup_runs` row), `name` (the run's `filename`), and `as=file`. The Download button inside `.drawer-actions` is bound to that form via the HTML5 `form="..."` attribute so the disabled-state matrix and visual placement match Verify/Delete. The existing JS handler at `assets/app.js:2152` already short-circuits on `data-action="download"`, so the native form submit fires unchanged.
+
 ## [3.22.2] - 2026-05-02
 
 Hotfix for v3.22.1. Production MySQL backups failed against Oracle MySQL 8.x clients because the v3.22.1 SSL-verify flag emitted the MariaDB-canonical `=on/off` form, which Oracle MySQL 8.4 rejects with `[ERROR] unknown variable 'ssl-verify-server-cert=off'`, exit code 7. Conversely, MariaDB 11.x clients (CI's runner image) verify the server cert by default and need an explicit opt-out flag — so a one-flag-fits-all simplification regresses the other half of the field. The diagnostic also only landed in PHP's `error_log`, not the backup-run row, so operators saw a generic "see error_log" message in the UI without a clear path to the actual cause.
@@ -1384,6 +1391,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.22.3]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.22.2...v3.22.3
 [3.22.2]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.22.1...v3.22.2
 [3.22.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.22.0...v3.22.1
 [3.22.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.21.1...v3.22.0

@@ -135,6 +135,57 @@ test.describe('Backup history drawer (#803)', () => {
     expect(text.trim(), 'Verify must surface a result message').not.toBe('');
   });
 
+  test('Download on a successful run posts (not GETs) to download_remote_backup.php', async () => {
+    // Regression for v3.22.3 hotfix: pre-fix the drawer rendered Download as
+    // <a href="download_remote_backup.php?run_id=..."> which 405'd because
+    // the endpoint is POST-only and reads destination_id+name, not run_id.
+    await page.goto(appUrl('backup_admin.php?tab=history'));
+    const okRow = page.locator('tr.history-row').filter({ has: page.locator('.badge-success') }).first();
+    if (await okRow.count() === 0) {
+      test.skip(true, 'No successful run seeded; cannot exercise download happy path');
+      return;
+    }
+    await okRow.click();
+    const drawer = page.locator('#global-drawer');
+    await expect(drawer).toBeVisible();
+
+    const downloadBtn = drawer.locator('[data-action="download"]');
+    if (await downloadBtn.isDisabled()) {
+      test.skip(true, 'Download disabled for the most recent success row');
+      return;
+    }
+
+    // Must be a submit button (not <a>) bound to the sibling POST form.
+    await expect(downloadBtn).toHaveAttribute('form', 'backup-run-download');
+    const tagName = await downloadBtn.evaluate((el: Element) => el.tagName.toLowerCase());
+    expect(tagName, 'Download must be a <button>, not <a>').toBe('button');
+
+    // Sibling form must carry CSRF + destination_id + name + as=file.
+    const form = drawer.locator('form#backup-run-download');
+    await expect(form).toHaveAttribute('method', /post/i);
+    await expect(form).toHaveAttribute('action', /download_remote_backup\.php$/);
+    await expect(form.locator('input[name="csrf"]')).toHaveAttribute('value', /.+/);
+    await expect(form.locator('input[name="destination_id"]')).toHaveAttribute('value', /^[1-9][0-9]*$/);
+    await expect(form.locator('input[name="name"]')).toHaveAttribute('value', /.+/);
+    await expect(form.locator('input[name="as"]')).toHaveAttribute('value', 'file');
+
+    // Capture the actual request method when the click fires. We abort the
+    // download response itself so the test doesn't try to save a file, but
+    // we assert the method+url shape of the request the browser fired.
+    const reqPromise = page.waitForRequest(req =>
+      req.url().includes('download_remote_backup.php') && req.method() === 'POST',
+      { timeout: 5_000 },
+    );
+    // Block the response so the browser doesn't actually download.
+    await page.route('**/download_remote_backup.php', route => route.abort('aborted'));
+    await downloadBtn.click().catch(() => null);
+    const req = await reqPromise;
+    expect(req.method(), 'Download must POST').toBe('POST');
+    expect(req.postData() ?? '', 'POST body must include destination_id').toMatch(/destination_id=/);
+    expect(req.postData() ?? '', 'POST body must include csrf').toMatch(/csrf=/);
+    await page.unroute('**/download_remote_backup.php');
+  });
+
   test('Delete requires literal DELETE confirmation and removes the row', async () => {
     // CR feedback PR #1054: target the run created in beforeAll, not
     // .first() — sequential workers share the SQLite DB, so deleting an
