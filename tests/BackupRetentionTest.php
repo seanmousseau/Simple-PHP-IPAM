@@ -427,4 +427,119 @@ final class BackupRetentionTest extends TestCase
         sort($fromReversed);
         $this->assertSame($fromOrdered, $fromReversed, 'input order must not change the result');
     }
+
+    // ── #831 edge-case expansion (T11 / B-P1-45) ──────────────────────────────
+
+    /**
+     * keep_*=0 disables that tier entirely. The `if ($keep* > 0)` guards mean
+     * a zero-tier produces no slot tracking and no keepers from that tier.
+     * The newest backup is still preserved by the safety guard regardless.
+     *
+     * Behaviour documented: all-zero config keeps only the newest, prunes the
+     * rest. Mixed (e.g. keep_hourly=0 with daily/weekly/monthly>0) skips
+     * hourly without affecting other tiers' promotions.
+     */
+    public function testKeepZeroDisablesTier(): void
+    {
+        $now = strtotime('2026-04-28 12:00:00');
+        $backups = $this->backups([
+            [1, '2026-04-28 11:00:00'],
+            [2, '2026-04-28 10:00:00'],
+            [3, '2026-04-27 11:00:00'],
+            [4, '2026-04-20 11:00:00'],
+            [5, '2026-03-28 11:00:00'],
+        ]);
+
+        // All-zero config: newest only.
+        $allZero = ['keep_hourly' => 0, 'keep_daily' => 0, 'keep_weekly' => 0, 'keep_monthly' => 0];
+        $delete = ipam_gfs_select_for_deletion($backups, $allZero, $now);
+        sort($delete);
+        $this->assertSame([2, 3, 4, 5], $delete, 'all-zero config prunes everything except the newest');
+
+        // keep_hourly=0 only: hourly tier skipped, others active.
+        // id=1 wins daily/weekly/monthly. id=3 wins next-daily slot.
+        // id=2 same daily slot as id=1, no hourly to fall back into → pruned.
+        $hourlyOff = ['keep_hourly' => 0, 'keep_daily' => 7, 'keep_weekly' => 4, 'keep_monthly' => 3];
+        $delete = ipam_gfs_select_for_deletion($backups, $hourlyOff, $now);
+        $this->assertContains(2, $delete, 'with hourly disabled, second-in-daily-slot loses');
+        $this->assertNotContains(1, $delete, 'newest survives');
+    }
+
+    /**
+     * When N backups land in the same tier slot (same hour, same day, etc.),
+     * only the newest wins that slot. Others fall through to the next tier
+     * down. With sufficient lower-tier capacity they can still survive.
+     *
+     * Specifically tested: 3 backups within 1 hour. Newest wins hourly; the
+     * other two fall through to daily — same daily slot, only one wins;
+     * the third falls through to weekly. Tight config exposes the cascade.
+     */
+    public function testTieBreakSameSlot(): void
+    {
+        $now = strtotime('2026-04-28 12:00:00');
+        $backups = $this->backups([
+            [1, '2026-04-28 11:50:00'], // newest — wins hourly
+            [2, '2026-04-28 11:30:00'], // same hour → loses hourly, but same daily as id=1 → loses daily, same weekly as id=1 → loses weekly, same monthly → loses monthly → pruned
+            [3, '2026-04-28 11:10:00'], // same hour, same daily, same weekly, same monthly → pruned
+        ]);
+        $config = ['keep_hourly' => 1, 'keep_daily' => 1, 'keep_weekly' => 1, 'keep_monthly' => 1];
+        $delete = ipam_gfs_select_for_deletion($backups, $config, $now);
+        sort($delete);
+        $this->assertSame([2, 3], $delete, 'in same-slot ties, newest wins each tier; others prune');
+        $this->assertNotContains(1, $delete);
+    }
+
+    /**
+     * All backups fall into a single tier (e.g. all in the same month). Lower
+     * tiers fill normally; higher tiers see only one promotion candidate per
+     * unique higher-tier slot.
+     *
+     * Five backups across 5 distinct days within one month with keep_daily=7,
+     * keep_weekly=4, keep_monthly=3: each fills its own daily slot (5 keepers),
+     * the newest also fills the single weekly+monthly slot, none are pruned.
+     * keep_hourly=0 to keep the assertion focused on the daily→weekly→monthly cascade.
+     */
+    public function testAllBackupsInOneTier(): void
+    {
+        $now = strtotime('2026-04-28 12:00:00');
+        $backups = $this->backups([
+            [1, '2026-04-28 11:00:00'],
+            [2, '2026-04-27 11:00:00'],
+            [3, '2026-04-26 11:00:00'],
+            [4, '2026-04-25 11:00:00'],
+            [5, '2026-04-24 11:00:00'],
+        ]);
+        $config = ['keep_hourly' => 0, 'keep_daily' => 7, 'keep_weekly' => 4, 'keep_monthly' => 3];
+        $delete = ipam_gfs_select_for_deletion($backups, $config, $now);
+        $this->assertSame([], $delete, '5 distinct daily slots all fit in keep_daily=7 → none pruned');
+    }
+
+    /**
+     * NTP skew: a row's `created_at` claims a time inconsistent with insert
+     * order. The function does not check insert order — `created_at` is
+     * authoritative, sorted desc internally. A backup with a future-skewed
+     * timestamp will be treated as the newest and win the safety-guard slot.
+     *
+     * This test documents the behaviour as designed: timestamps in the input
+     * drive every decision; a row with id=5 inserted last but stamped the
+     * earliest will be pruned first if the oldest tier is full. Conversely,
+     * a row with a forward-skewed stamp will be kept as "newest" even if it
+     * was inserted out of order.
+     */
+    public function testNTPSkewedTimestamps(): void
+    {
+        $now = strtotime('2026-04-28 12:00:00');
+        // id=2 has a forward-skewed timestamp claiming to be the newest, even
+        // though id=1 is the most-recently-inserted by id ordering.
+        $backups = $this->backups([
+            [1, '2026-04-28 11:00:00'],
+            [2, '2026-04-28 23:00:00'], // skewed forward — claims newest
+            [3, '2026-04-27 11:00:00'],
+        ]);
+        $config = ['keep_hourly' => 1, 'keep_daily' => 0, 'keep_weekly' => 0, 'keep_monthly' => 0];
+        $delete = ipam_gfs_select_for_deletion($backups, $config, $now);
+        $this->assertNotContains(2, $delete, 'forward-skewed timestamp wins newest by created_at, not by id');
+        $this->assertContains(1, $delete, 'id=1 is older by created_at, no surviving tier slot');
+        $this->assertContains(3, $delete);
+    }
 }
