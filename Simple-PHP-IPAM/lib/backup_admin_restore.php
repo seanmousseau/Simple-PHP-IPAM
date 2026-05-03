@@ -198,6 +198,58 @@ function ipam_backup_admin_restore_handle(\PDO $db, array $config): array
     /** @var list<array<string, mixed>> $destinations */
     $destinations = $destStmt !== false ? $destStmt->fetchAll(PDO::FETCH_ASSOC) : [];
 
+    // #1077 — destination-driven backup browser. When ?dest=N is set on the
+    // Restore tab URL, enumerate the destination's contents via the
+    // BackupClientInterface and join with backup_runs so per-row Verify and
+    // Delete can dispatch back to the History-tab handlers (which already
+    // own those operations on backup_runs rows).
+    $browseDestId = to_int($_GET['dest'] ?? 0);
+    /** @var list<array<string,mixed>> $browseEntries */
+    $browseEntries = [];
+    $browseError = '';
+    $degraded    = ipam_restore_degraded_database_unsupported($config);
+    if ($browseDestId > 0) {
+        try {
+            $browseDest = ipam_backup_dest_load($db, $browseDestId);
+            $client = ipam_backup_dest_client($browseDest);
+            $objects = $client->listObjects();
+
+            // Map filename → backup_runs metadata (run_id, checksum, type,
+            // status). Limited to runs against this destination so a same-
+            // named file on another destination doesn't shadow.
+            $runsStmt = $db->prepare(
+                "SELECT id, filename, checksum, backup_type, status
+                   FROM backup_runs
+                  WHERE destination_id = :d AND filename IS NOT NULL"
+            );
+            $runsStmt->execute([':d' => $browseDestId]);
+            /** @var array<string,array<string,mixed>> $runIndex */
+            $runIndex = [];
+            foreach ($runsStmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                if (is_array($r) && is_string($r['filename'] ?? null)) {
+                    $runIndex[$r['filename']] = $r;
+                }
+            }
+
+            foreach ($objects as $obj) {
+                $name = $obj['name'];
+                $run  = $runIndex[$name] ?? null;
+                $type = is_array($run) && is_string($run['backup_type'] ?? null) ? $run['backup_type'] : 'database';
+                $browseEntries[] = [
+                    'name'         => $name,
+                    'size'         => $obj['size'],
+                    'last_modified' => $obj['last_modified'],
+                    'is_encrypted' => str_ends_with($name, '.enc'),
+                    'backup_type'  => $type,
+                    'checksum'     => is_array($run) && is_string($run['checksum'] ?? null) ? $run['checksum'] : '',
+                    'run_id'       => is_array($run) ? to_int($run['id'] ?? 0) : 0,
+                ];
+            }
+        } catch (Throwable $e) {
+            $browseError = 'Could not list backups for this destination: ' . $e->getMessage();
+        }
+    }
+
     return [
         'err'            => $err,
         'phase'          => $phase,
@@ -208,5 +260,35 @@ function ipam_backup_admin_restore_handle(\PDO $db, array $config): array
         'stagedDestId'   => $stagedDestId,
         'dryRunResult'   => $dryRunResult,
         'destinations'   => $destinations,
+        // #1077 browse-state
+        'browseDestId'   => $browseDestId,
+        'browseEntries'  => $browseEntries,
+        'browseError'    => $browseError,
+        'browseDegradedDb' => $degraded,
     ];
+}
+
+/**
+ * #1077 §5b — detect when the install can't restore a Database-format
+ * backup in-place. Database backups are engine-native SQL dumps; on
+ * mysql/pgsql installs they need the `mysql` / `psql` CLI on the
+ * web-server's PATH. Returns a non-empty string explaining the gap when
+ * applicable, else empty string.
+ *
+ * @param array<string,mixed> $config
+ */
+function ipam_restore_degraded_database_unsupported(array $config): string
+{
+    $driverRaw = $config['db_driver'] ?? 'sqlite';
+    $driver = is_string($driverRaw) ? $driverRaw : 'sqlite';
+    if ($driver === 'sqlite') return '';
+    $bin = $driver === 'mysql' ? 'mysql' : ($driver === 'pgsql' ? 'psql' : '');
+    if ($bin === '') return '';
+    // which-style probe; tolerate failure silently and report degraded.
+    $rc = 1;
+    @exec('command -v ' . escapeshellarg($bin) . ' 2>/dev/null', $out, $rc);
+    if ($rc === 0) return '';
+    return 'This install runs on ' . $driver . ' but the `' . $bin . '` CLI is not on the web server\'s PATH; '
+        . 'Database-format backups can\'t be restored in-place. Download to your machine and replay manually, '
+        . 'or use a Logical (IPAMBKL1) backup once #1076 ships the picker UI.';
 }
