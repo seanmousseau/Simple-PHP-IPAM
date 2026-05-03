@@ -30,6 +30,15 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
     <div class="muted"><?= e(to_str($groupMeta['description'])) ?></div>
   <?php endif; ?>
 
+  <?php if ($groupKey === 'backup'): ?>
+  <div class="warning settings-warning" role="status">
+    <strong>This section is deprecated and will be removed in v3.26.0.</strong>
+    The unified <a href="backup_admin.php">Backup &amp; Restore</a> admin surface replaces it &mdash;
+    create destinations, schedules, and notification preferences there. The legacy keys below
+    remain readable as a fallback for one release; new installs should not edit them.
+  </div>
+  <?php endif; ?>
+
   <?php if ($groupKey === 'mfa' && !(bool)to_int(ipam_setting('smtp.enabled', false))): ?>
   <div class="warning settings-warning">
     <strong>SMTP is not configured.</strong>
