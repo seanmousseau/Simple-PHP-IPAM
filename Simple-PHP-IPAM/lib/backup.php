@@ -318,7 +318,6 @@ function ipam_backup_run_for_destination(
     array $config,
     int $destId,
     string $triggeredBy = 'manual',
-    ?int $nowEpoch = null,
     ?int $scheduleId = null
 ): array {
     // v3.22.0 #815: concurrency guard. Reap stuck rows first (so a row that
@@ -389,7 +388,7 @@ function ipam_backup_run_for_destination(
 
     $pruned = 0;
     try {
-        $pruned = ipam_backup_apply_retention($db, $destId, $nowEpoch);
+        $pruned = ipam_backup_apply_retention($db, $destId);
     } catch (Throwable $e) {
         error_log('[backup] retention failed for destination ' . $destId . ': ' . $e->getMessage());
     }

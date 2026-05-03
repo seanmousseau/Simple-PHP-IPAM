@@ -4628,14 +4628,9 @@ function ipam_gfs_select_for_deletion(array $backups, array $config): array
  *
  * @param PDO $db             Application database connection.
  * @param int $destinationId  ID of the backup_destinations row.
- * @param int|null $nowEpoch  UTC epoch for the "current time" passed to the GFS
- *                            selector. When null, the selector uses time(). Tests
- *                            and the cron tick can pin this to a specific epoch
- *                            so retention does not drift between request entry
- *                            and the actual prune.
  * @return int                Count of backup_runs rows marked as retention_pruned.
  */
-function ipam_backup_apply_retention(PDO $db, int $destinationId, ?int $nowEpoch = null): int
+function ipam_backup_apply_retention(PDO $db, int $destinationId): int
 {
     // ── 1. Fetch destination info (type needed for future client dispatch) ──────
     $destStmt = $db->prepare("SELECT id, name, type FROM backup_destinations WHERE id = :id");
