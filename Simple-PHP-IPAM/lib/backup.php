@@ -1076,12 +1076,23 @@ function ipam_restore_verify_signed(array $config, string $stagedPath, string $s
  * Parse a staged .sql.gz dump and report what restoring it would do,
  * without actually modifying the database. SQLite-only (matches backup).
  *
+ * Pre-validates the dump by streaming it through ipam_restore_split_sql_statements
+ * (#830, v3.23.0). A truncated or corrupt dump trips the splitter's
+ * unterminated-state detection and throws RuntimeException — surfaced to
+ * the operator BEFORE the apply path commits to a transaction. Previously
+ * dry-run only ran a per-line regex scan that silently passed truncated
+ * dumps; the apply step then failed mid-restore with a less specific
+ * PDO::exec error and an indeterminate database state.
+ *
  * @return array{
  *   tables: list<array{name:string,current_rows:int,backup_rows:int,delta:int}>,
  *   schema_diff: list<string>,
  *   total_statements: int,
  *   warnings: list<string>,
  * }
+ * @throws RuntimeException  on driver mismatch, missing file, gzgets corruption,
+ *                            or splitter-detected truncation (unterminated string,
+ *                            identifier, comment, dollar-quote, or BEGIN block).
  */
 function ipam_restore_dry_run(PDO $db, string $stagedPath): array
 {
@@ -1091,16 +1102,16 @@ function ipam_restore_dry_run(PDO $db, string $stagedPath): array
         throw new RuntimeException('ipam_restore: dry-run only supports sqlite in v3.17.0');
     }
 
-    // Count INSERT/CREATE statements for each table by streaming the dump
-    // line-at-a-time. Chunks from ipam_restore_read_staged_sql are already
-    // line-aligned (gzgets / fgets), so iteration matches the prior
-    // explode("\n") shape without buffering the full plaintext.
+    // Stream chunks → splitter → count INSERT/CREATE per statement. The
+    // splitter throws on unterminated state at EOF (#830 1/2) so a corrupt
+    // dump fails dry-run loudly instead of silently passing the line scan.
     $tableInsertCounts = [];
     $createdTables = [];
     $warnings = [];
 
-    foreach (ipam_restore_read_staged_sql($stagedPath) as $line) {
-        $trim = ltrim($line);
+    $chunks = ipam_restore_read_staged_sql($stagedPath);
+    foreach (ipam_restore_split_sql_statements($chunks) as $stmt) {
+        $trim = ltrim($stmt);
         if ($trim === '' || str_starts_with($trim, '--')) continue;
 
         if (preg_match('/^INSERT INTO ["`]?([A-Za-z_][A-Za-z0-9_]*)["`]?/', $trim, $m)) {
