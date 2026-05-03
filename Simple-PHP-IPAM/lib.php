@@ -10078,18 +10078,23 @@ function ipam_render_backup_run_detail(\PDO $db, int $id): ?string
 
     $status      = to_str($row['status'] ?? '');
     $filename    = to_str($row['filename'] ?? '');
+    $destId      = to_int($row['destination_id'] ?? 0);
     $hasArtifact = ($status === 'success') && $filename !== '';
     $isRunning   = ($status === 'running');
     $isProtected = to_int($row['is_protected'] ?? 0) === 1;
+    // backup_runs.destination_id is ON DELETE SET NULL — an orphan row with a
+    // success status still has a filename but no destination to fetch from,
+    // so Download must be disabled (the POST endpoint rejects destId <= 0).
+    $hasDest     = $destId > 0;
 
     $disabled = [
-        'verify'   => !$hasArtifact || $isRunning,
-        'download' => !$hasArtifact || $isRunning,
+        'verify'   => !$hasArtifact || $isRunning || !$hasDest,
+        'download' => !$hasArtifact || $isRunning || !$hasDest,
         'delete'   => $isRunning || $isProtected,
     ];
     $tooltip = [
-        'verify'   => $isRunning ? 'Run not finished' : (!$hasArtifact ? 'No artifact at destination' : ''),
-        'download' => $isRunning ? 'Run not finished' : (!$hasArtifact ? 'No artifact at destination' : ''),
+        'verify'   => $isRunning ? 'Run not finished' : (!$hasArtifact ? 'No artifact at destination' : (!$hasDest ? 'Destination deleted' : '')),
+        'download' => $isRunning ? 'Run not finished' : (!$hasArtifact ? 'No artifact at destination' : (!$hasDest ? 'Destination deleted' : '')),
         'delete'   => $isRunning
             ? 'Cannot delete a run in progress'
             : ($isProtected ? 'This run is protected. Unprotect it from the schedule\'s retention settings before deleting.' : ''),
