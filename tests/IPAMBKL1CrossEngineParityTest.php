@@ -291,6 +291,12 @@ class IPAMBKL1CrossEngineParityTest extends TestCase
             $val = $r ? $r->fetchColumn() : 0;
             $out[$t] = is_numeric($val) ? (int) $val : 0;
         }
+        // Normalise key order so per-engine information_schema sort
+        // differences (MySQL 8.0 default collation vs MariaDB 10.x —
+        // underscore sorts at different positions) don't trip the
+        // assertSame() comparison. Counts are what we want to compare,
+        // not iteration order.
+        ksort($out, SORT_STRING);
         return $out;
     }
 }
