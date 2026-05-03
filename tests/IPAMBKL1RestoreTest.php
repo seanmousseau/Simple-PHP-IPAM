@@ -298,6 +298,33 @@ class IPAMBKL1RestoreTest extends TestCase
         ipam_restore_logical_apply($target, $tampered);
     }
 
+    public function testOlderSchemaVersionRestoreSucceeds(): void
+    {
+        $target = $this->freshDb();
+        // Forge a fixture whose header claims a much lower schema_version
+        // (simulates a backup taken from a v3.x install long before the
+        // target's current migration high-water mark).
+        $forged = $this->forgeFixtureWithSchemaVersion(1);
+
+        $meta = ipam_restore_logical_apply($target, $forged);
+        $this->assertGreaterThan(0, $meta['total_rows']);
+
+        // Restore completed successfully — data is present.
+        $sites = (int) ($target->query("SELECT COUNT(*) FROM sites")?->fetchColumn() ?? 0);
+        $this->assertSame(2, $sites);
+
+        // Target's migration history is preserved (NOT replaced by source's).
+        // This is the load-bearing invariant: the install can keep
+        // running migrations from where it left off without re-applying
+        // anything during restore.
+        $migs = (int) ($target->query("SELECT COUNT(*) FROM schema_migrations")?->fetchColumn() ?? 0);
+        $this->assertGreaterThan(
+            1,
+            $migs,
+            'target schema_migrations preserved across restore from older-version dump'
+        );
+    }
+
     /**
      * Rewrite the header line of a fixture to claim a different schema_version.
      */

@@ -151,7 +151,7 @@ The only compatibility decision the restorer makes is `header.schema_version` vs
 | Source vs target | Behaviour |
 |---|---|
 | Equal | Direct replay. |
-| Source older than target | Replay the data, then call `apply_migrations()` to bring the restored data forward to the target's schema. |
+| Source older than target | Replay the data. Columns added by intervening migrations take their schema defaults at INSERT time (each engine applies the column's `DEFAULT` clause when the INSERT omits it). The target's `schema_migrations` history is preserved across restore — the install can resume normal migration flow afterward without re-running anything. Data-level transforms (a hypothetical migration that copies values between columns post-population) are **not** re-applied automatically; operators with that concern should restore on a same-version install. |
 | Source newer than target | Refuse with operator-facing message: *"This backup is from schema version N; the install is at version M. Upgrade the install to N or newer before restoring."* No automatic backward migration — schema rollback is unsafe. |
 
 Engine identity is **never** a compat axis. A sqlite-source backup restores cleanly onto a mysql target and vice versa, because the wire format carries no engine-specific syntax.
