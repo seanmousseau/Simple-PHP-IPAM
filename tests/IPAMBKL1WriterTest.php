@@ -37,12 +37,21 @@ class IPAMBKL1WriterTest extends TestCase
         apply_migrations($this->db);
         $this->seedFixture();
 
-        $this->outPath = tempnam(sys_get_temp_dir(), 'ipambkl1_test_') . '.bkl1.gz';
+        // tempnam() returns a unique pre-created path; appending '.bkl1.gz'
+        // would orphan the original file on every test run. Use the
+        // tempnam() path directly as the gz output (gzopen overwrites it),
+        // and bail loudly if temp allocation fails.
+        $tmp = tempnam(sys_get_temp_dir(), 'ipambkl1_test_');
+        if ($tmp === false) {
+            $this->fail('tempnam() failed to allocate output fixture path');
+        }
+        $this->outPath = $tmp;
     }
 
-    // No tearDown — tempnam() files are OS-cleaned and tiny (a few KB
-    // each). Avoiding unlink() here also keeps the semgrep
-    // ipam-unlink-user-path rule from firing on test scaffolding.
+    // No tearDown — files under sys_get_temp_dir() are OS-cleaned, tiny
+    // (a few KB each), and never escape the test process. Avoiding
+    // unlink() here also keeps the semgrep ipam-unlink-user-path rule
+    // from firing on test scaffolding.
 
     /**
      * Seed a small representative dataset. Returns nothing — caller

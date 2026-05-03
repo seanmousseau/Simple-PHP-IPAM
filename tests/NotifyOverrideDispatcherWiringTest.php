@@ -37,45 +37,46 @@ final class NotifyOverrideDispatcherWiringTest extends TestCase
     public function testOrchestratorThreadsScheduleIdIntoDest(): void
     {
         $src = $this->functionSource('ipam_backup_run_for_destination');
-        $this->assertStringContainsString(
-            "\$dest['schedule_id']",
+        // Token-level assertion: the actual $scheduleId variable must be
+        // assigned into $dest['schedule_id'] — substring presence isn't
+        // sufficient since either token could appear in dead/manual-only
+        // branches without ever wiring up. Regex tolerates whitespace and
+        // double-quoted vs single-quoted key.
+        $this->assertMatchesRegularExpression(
+            '/\$dest\[[\'"]schedule_id[\'"]\]\s*=\s*\$scheduleId\b/',
             $src,
-            'orchestrator must thread schedule_id into $dest so dispatcher can resolve overrides'
-        );
-        $this->assertStringContainsString(
-            '$scheduleId',
-            $src,
-            'schedule_id thread must come from the $scheduleId parameter'
+            'orchestrator must assign $scheduleId into $dest[\'schedule_id\']'
         );
     }
 
     public function testDispatcherCallsResolverForScheduledEvents(): void
     {
         $src = $this->functionSource('ipam_backup_notify_dispatch');
-        $this->assertStringContainsString(
-            'ipam_backup_notify_resolve_pref',
+        // Pin the actual call shape: resolver name + the boolean column name
+        // as a literal string argument. Catches reordered args / partial
+        // wires that a substring check would miss.
+        $this->assertMatchesRegularExpression(
+            '/ipam_backup_notify_resolve_pref\s*\([^)]*[\'"]notify_on_failure[\'"]/',
             $src,
-            'dispatcher must call resolve_pref for failure_scheduled / success_scheduled events'
+            'dispatcher must invoke resolve_pref with the notify_on_failure column for failure_scheduled'
         );
-        $this->assertStringContainsString(
-            "'notify_on_failure'",
+        $this->assertMatchesRegularExpression(
+            '/ipam_backup_notify_resolve_pref\s*\([^)]*[\'"]notify_on_success[\'"]/',
             $src,
-            'dispatcher must resolve notify_on_failure for failure_scheduled'
-        );
-        $this->assertStringContainsString(
-            "'notify_on_success'",
-            $src,
-            'dispatcher must resolve notify_on_success for success_scheduled'
+            'dispatcher must invoke resolve_pref with the notify_on_success column for success_scheduled'
         );
     }
 
     public function testDispatcherCallsRecipientResolver(): void
     {
         $src = $this->functionSource('ipam_backup_notify_dispatch');
-        $this->assertStringContainsString(
-            'ipam_backup_notify_resolve_recipients',
+        // Recipient resolver must take both $scheduleId and the prior $recipients
+        // result (or its global fallback). Pin the call shape rather than a
+        // bare substring.
+        $this->assertMatchesRegularExpression(
+            '/ipam_backup_notify_resolve_recipients\s*\([^)]*\$scheduleId[^)]*\$recipients\s*\)/',
             $src,
-            'dispatcher must call resolve_recipients to honour per-schedule recipient overrides'
+            'dispatcher must invoke resolve_recipients with both $scheduleId and the global $recipients list'
         );
     }
 }

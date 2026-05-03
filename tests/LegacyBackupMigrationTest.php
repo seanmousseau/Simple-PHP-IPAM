@@ -123,8 +123,13 @@ class LegacyBackupMigrationTest extends TestCase
 
         // Legacy keys MUST stay readable for one release as a fallback,
         // per #1058 acceptance ("Do NOT touch the existing Settings keys yet").
+        // All four legacy backup.* keys must round-trip — if a future
+        // refactor cleared backup.retention but the other three stayed,
+        // the migration contract would break and a 3-key check would
+        // miss it.
         $this->assertTrue((bool) ipam_setting('backup.enabled'));
         $this->assertSame('daily', ipam_setting('backup.frequency'));
+        $this->assertSame(7, (int) ipam_setting('backup.retention'));
         $this->assertSame('/tmp/x', ipam_setting('backup.dir'));
     }
 

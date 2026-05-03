@@ -53,8 +53,10 @@ class IPAMBKL1CrossEngineParityTest extends TestCase
 
         // Fixture lives under sys_get_temp_dir() and is overwritten next run;
         // OS tmp reaper handles cleanup. Keeping it on disk also aids debugging
-        // when a parity assertion fails.
-        $fixture = tempnam(sys_get_temp_dir(), "ipambkl1_xe_") . '.bkl1.gz';
+        // when a parity assertion fails. Use the tempnam() path directly so
+        // the original allocation isn't orphaned by a `.bkl1.gz` append.
+        $fixture = tempnam(sys_get_temp_dir(), 'ipambkl1_xe_');
+        $this->assertNotFalse($fixture, 'tempnam() allocation must succeed');
         ipam_backup_logical_dump($source, $fixture);
 
         $target = $this->freshDb($tgt);

@@ -40,7 +40,10 @@ class IPAMBKL1RowCountParityTest extends TestCase
 
         // Dump → fresh target → restore via dispatcher (which sniffs IPAMBKL1
         // magic and delegates to the logical path).
-        $fixture = tempnam(sys_get_temp_dir(), 'ipambkl1_t4_') . '.bkl1.gz';
+        // tempnam() returns a pre-created unique path; append-only is enough
+        // since gzopen overwrites — no orphan original.
+        $fixture = tempnam(sys_get_temp_dir(), 'ipambkl1_t4_');
+        $this->assertNotFalse($fixture, 'tempnam() allocation must succeed');
         ipam_backup_logical_dump($source, $fixture);
 
         $target = $this->freshDb();

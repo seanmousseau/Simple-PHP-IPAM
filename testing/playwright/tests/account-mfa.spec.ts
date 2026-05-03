@@ -343,6 +343,18 @@ test.describe('Preserved-enrollment hints (#755)', () => {
     // wiring is asserted by the markup test on line 316).
     // -------------------------------------------------------------------
 
+    // Restore the all-three-on baseline that the describe-level beforeEach
+    // installs. Wrap MFA-mutating tests below so a mid-test failure can't
+    // leak partial toggle state into the next test before its beforeEach
+    // re-runs (CR feedback PR #1090).
+    const restoreAllMfaOn = async (p: import('@playwright/test').Page): Promise<void> => {
+        await setMfaToggles(p, {
+            'k_mfa__totp_enabled':      '1',
+            'k_mfa__email_otp_enabled': '1',
+            'k_mfa__passkeys_enabled':  '1',
+        });
+    };
+
     test('Live click — totp_verify → switch_to_email lands on email_otp_verify (#770)', async ({ page }) => {
         test.skip(!isEmailOtpSeeded(), 'SEED_EMAIL_OTP_TEST_USER not set');
         test.skip(process.env.IPAM_TEST_MAILHOG !== '1', 'requires IPAM_TEST_MAILHOG=1 (clicking switch_to_email triggers SMTP delivery)');
@@ -355,20 +367,23 @@ test.describe('Preserved-enrollment hints (#755)', () => {
             'k_mfa__totp_enabled':      '1',
             'k_mfa__email_otp_enabled': '1',
         });
+        try {
+            await page.goto(appUrl('login.php'));
+            await page.locator('[name=username]').fill(EMAIL_OTP_USER);
+            await page.locator('[name=password]').fill(EMAIL_OTP_PASS);
+            await page.locator('button[type=submit]').click();
+            await page.waitForURL(/totp_verify\.php/, { timeout: 30_000 });
 
-        await page.goto(appUrl('login.php'));
-        await page.locator('[name=username]').fill(EMAIL_OTP_USER);
-        await page.locator('[name=password]').fill(EMAIL_OTP_PASS);
-        await page.locator('button[type=submit]').click();
-        await page.waitForURL(/totp_verify\.php/, { timeout: 30_000 });
-
-        // Click the live switch_to_email button — its form posts to the
-        // same handler that login.php uses; landing on email_otp_verify
-        // means the dispatch graph correctly re-routes the challenge.
-        const switchForm = page.locator('form input[name=action][value=switch_to_email]').locator('..');
-        await switchForm.locator('button[type=submit]').click();
-        await page.waitForURL(/email_otp_verify\.php/, { timeout: 30_000 });
-        expect(page.url()).toMatch(/email_otp_verify\.php/);
+            // Click the live switch_to_email button — its form posts to the
+            // same handler that login.php uses; landing on email_otp_verify
+            // means the dispatch graph correctly re-routes the challenge.
+            const switchForm = page.locator('form input[name=action][value=switch_to_email]').locator('..');
+            await switchForm.locator('button[type=submit]').click();
+            await page.waitForURL(/email_otp_verify\.php/, { timeout: 30_000 });
+            expect(page.url()).toMatch(/email_otp_verify\.php/);
+        } finally {
+            await restoreAllMfaOn(page);
+        }
     });
 
     test('Live click — email_otp_verify → switch_to_totp lands on totp_verify (#770)', async ({ page }) => {
@@ -380,24 +395,27 @@ test.describe('Preserved-enrollment hints (#755)', () => {
             'k_mfa__totp_enabled':      '1',
             'k_mfa__email_otp_enabled': '1',
         });
+        try {
+            // Drive into email_otp_verify by switching from totp_verify (the
+            // user's preferred method is TOTP since it was enrolled first).
+            await page.goto(appUrl('login.php'));
+            await page.locator('[name=username]').fill(EMAIL_OTP_USER);
+            await page.locator('[name=password]').fill(EMAIL_OTP_PASS);
+            await page.locator('button[type=submit]').click();
+            await page.waitForURL(/totp_verify\.php/, { timeout: 30_000 });
 
-        // Drive into email_otp_verify by switching from totp_verify (the
-        // user's preferred method is TOTP since it was enrolled first).
-        await page.goto(appUrl('login.php'));
-        await page.locator('[name=username]').fill(EMAIL_OTP_USER);
-        await page.locator('[name=password]').fill(EMAIL_OTP_PASS);
-        await page.locator('button[type=submit]').click();
-        await page.waitForURL(/totp_verify\.php/, { timeout: 30_000 });
+            const toEmail = page.locator('form input[name=action][value=switch_to_email]').locator('..');
+            await toEmail.locator('button[type=submit]').click();
+            await page.waitForURL(/email_otp_verify\.php/, { timeout: 30_000 });
 
-        const toEmail = page.locator('form input[name=action][value=switch_to_email]').locator('..');
-        await toEmail.locator('button[type=submit]').click();
-        await page.waitForURL(/email_otp_verify\.php/, { timeout: 30_000 });
-
-        // Now click switch_to_totp — should land back on totp_verify.
-        const toTotp = page.locator('form input[name=action][value=switch_to_totp]').locator('..');
-        await toTotp.locator('button[type=submit]').click();
-        await page.waitForURL(/totp_verify\.php/, { timeout: 30_000 });
-        expect(page.url()).toMatch(/totp_verify\.php/);
+            // Now click switch_to_totp — should land back on totp_verify.
+            const toTotp = page.locator('form input[name=action][value=switch_to_totp]').locator('..');
+            await toTotp.locator('button[type=submit]').click();
+            await page.waitForURL(/totp_verify\.php/, { timeout: 30_000 });
+            expect(page.url()).toMatch(/totp_verify\.php/);
+        } finally {
+            await restoreAllMfaOn(page);
+        }
     });
 
     test('Passkey row shows "Disabled by admin" pill when globally OFF and no creds', async ({ page }) => {
