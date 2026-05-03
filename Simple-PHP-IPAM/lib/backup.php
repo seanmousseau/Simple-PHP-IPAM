@@ -2188,7 +2188,7 @@ function ipam_logical_iterate_table(PDO $db, string $table): Generator
     // Quoting: table names from ipam_logical_table_order() are a known
     // closed set, hand-curated in source. Double-quoting works on all
     // three engines for ANSI-quoted identifiers.
-    $stmt = $db->query("SELECT * FROM \"$table\"");
+    $stmt = $db->query("SELECT * FROM " . ipam_logical_q($db, $table));
     if ($stmt === false) {
         return;
     }
@@ -2237,7 +2237,7 @@ function ipam_backup_logical_dump(PDO $db, string $outputPath, ?int $tenantId = 
     // backpatch into the gzip stream).
     $rowCounts = [];
     foreach ($tableOrder as $table) {
-        $stmt = $db->query("SELECT COUNT(*) FROM \"$table\"");
+        $stmt = $db->query("SELECT COUNT(*) FROM " . ipam_logical_q($db, $table));
         $val = $stmt !== false ? $stmt->fetchColumn() : 0;
         $rowCounts[$table] = is_numeric($val) ? (int) $val : 0;
     }
@@ -2310,6 +2310,39 @@ function ipam_backup_logical_dump(PDO $db, string $outputPath, ?int $tenantId = 
 // =========================================================================
 // IPAMBKL1 — Logical-format restore (reader)
 // =========================================================================
+
+/**
+ * Convert an IPAMBKL1-wire timestamp ('YYYY-MM-DDTHH:MM:SSZ') to MySQL's
+ * accepted DATETIME literal form ('YYYY-MM-DD HH:MM:SS'). With the default
+ * sql_mode MySQL rejects the ISO 'T'/'Z' separators with error 1292;
+ * sqlite and pgsql accept either form. Any string that isn't shaped like
+ * an ISO-Z timestamp passes through unchanged so non-timestamp values
+ * accidentally suffixed `_at` (none today, but defensive) aren't mangled.
+ */
+function ipam_logical_timestamp_for_mysql(string $value): string
+{
+    if (preg_match('/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})Z$/', $value, $m)) {
+        return $m[1] . ' ' . $m[2];
+    }
+    return $value;
+}
+
+/**
+ * Quote a SQL identifier for the active driver. MySQL needs backticks;
+ * SQLite and Postgres take ANSI double-quotes. Without this branch the
+ * IPAMBKL1 writer/reader emit `"foo"` which MySQL reads as a string
+ * literal and rejects with a 1064 syntax error. Existing IPAM code
+ * already follows this convention (see ipam_key_col() in lib.php).
+ */
+function ipam_logical_q(PDO $db, string $ident): string
+{
+    $driverAttr = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    $driver = is_string($driverAttr) ? $driverAttr : '';
+    if ($driver === 'mysql') {
+        return '`' . str_replace('`', '``', $ident) . '`';
+    }
+    return '"' . str_replace('"', '""', $ident) . '"';
+}
 
 /**
  * Introspect a table's FK columns and their target tables/columns.
@@ -2574,7 +2607,7 @@ function ipam_restore_logical_apply(PDO $db, string $inputPath): array
         $skipWipe   = ['schema_migrations', 'audit_log'];
         foreach (array_reverse($tableOrder) as $t) {
             if (in_array($t, $skipWipe, true)) continue;
-            $db->exec("DELETE FROM \"$t\"");
+            $db->exec("DELETE FROM " . ipam_logical_q($db, $t));
         }
 
         $idmap = [];        // idmap[table][source_id] = target_id
@@ -2650,7 +2683,8 @@ function ipam_restore_logical_apply(PDO $db, string $inputPath): array
             }
 
             // Pass 2 — self-referential UPDATEs.
-            foreach ($selfFkPending as $table => $pending) {
+            foreach ($selfFkPending as $tableKey => $pending) {
+                $table = (string) $tableKey;
                 foreach ($pending as $entry) {
                     $sourcePk     = $entry['source_pk'];
                     $sourceSelfFk = $entry['source_self_fk'];
@@ -2662,7 +2696,10 @@ function ipam_restore_logical_apply(PDO $db, string $inputPath): array
                         // Skip silently — pass 1 already inserted with NULL self-FK.
                         continue;
                     }
-                    $stmt = $db->prepare("UPDATE \"$table\" SET \"$col\" = :v WHERE id = :pk");
+                    $stmt = $db->prepare(
+                        "UPDATE " . ipam_logical_q($db, $table)
+                        . " SET " . ipam_logical_q($db, $col) . " = :v WHERE id = :pk"
+                    );
                     $stmt->execute([':v' => $targetSelfFk, ':pk' => $targetPk]);
                 }
             }
@@ -2771,20 +2808,25 @@ function ipam_logical_replay_row(
     $driverAttr = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
     $driver     = is_string($driverAttr) ? $driverAttr : '';
     $cols   = array_keys($decoded);
-    $colList = implode(', ', array_map(fn($c) => '"' . $c . '"', $cols));
+    $colList = implode(', ', array_map(fn($c) => ipam_logical_q($db, (string) $c), $cols));
     $phList  = implode(', ', array_map(fn($c) => ':' . $c, $cols));
-    $sql = "INSERT INTO \"$table\" ($colList) VALUES ($phList)";
+    $sql = "INSERT INTO " . ipam_logical_q($db, $table) . " ($colList) VALUES ($phList)";
     if ($driver === 'pgsql' && $pk !== null) {
-        $sql .= " RETURNING \"$pk\"";
+        $sql .= " RETURNING " . ipam_logical_q($db, $pk);
     }
     $stmt = $db->prepare($sql);
 
     foreach ($cols as $c) {
         $val = $decoded[$c];
         $param = ':' . $c;
-        $kind  = ipam_logical_column_kind($c);
+        $kind  = ipam_logical_column_kind((string) $c);
         if ($kind === 'binary' && is_string($val)) {
             ipam_bind_binary($stmt, $param, $val);
+        } elseif ($kind === 'timestamp' && $driver === 'mysql' && is_string($val)) {
+            // MySQL DATETIME with default sql_mode rejects ISO-8601 'T'/'Z'
+            // form — coerce 'YYYY-MM-DDTHH:MM:SSZ' → 'YYYY-MM-DD HH:MM:SS'.
+            // sqlite and pgsql accept either form natively.
+            $stmt->bindValue($param, ipam_logical_timestamp_for_mysql($val));
         } else {
             $stmt->bindValue($param, $val);
         }
