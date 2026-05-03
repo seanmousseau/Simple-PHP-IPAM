@@ -183,13 +183,21 @@ if ($driver === 'sqlite') {
     // in the finally block below regardless of how the proc_open block exits.
     $credFile = ipam_backup_write_mysql_defaults_file($pass);
     // --defaults-extra-file MUST be the first mysql argument.
-    // --no-login-paths + --ssl-verify-server-cert toggling per
-    // lib/backup.php::ipam_backup_native_cmd rationale (PR #1080 CR / #1075).
-    // (--no-login-paths AND --ssl-mode for Oracle MySQL — both follow-ups
-    // tracked in #1081, gated on a probe helper.)
-    $cmd = ['mysql', '--defaults-extra-file=' . $credFile,
-            $verifySsl ? '--ssl-verify-server-cert=on' : '--ssl-verify-server-cert=off',
-            '-h', $host, '-P', $port, '-u', $user, $dbName];
+    // v3.22.2: SSL verify flag is flavor-aware. See
+    // ipam_mysql_ssl_verify_args() in lib/backup.php for the full
+    // MariaDB-vs-Oracle-MySQL dialect rationale. (--no-login-paths follow-up
+    // is still tracked in #1081 — same probe-and-cache pattern.)
+    $cmd = ['mysql', '--defaults-extra-file=' . $credFile];
+    foreach (ipam_mysql_ssl_verify_args($verifySsl, 'mysql') as $sslArg) {
+        $cmd[] = $sslArg;
+    }
+    $cmd[] = '-h';
+    $cmd[] = $host;
+    $cmd[] = '-P';
+    $cmd[] = $port;
+    $cmd[] = '-u';
+    $cmd[] = $user;
+    $cmd[] = $dbName;
     $env = getenv() ?: [];
     // Strip any inherited DB password env vars so a parent shell that
     // already has these set can't leak the secret into the child via

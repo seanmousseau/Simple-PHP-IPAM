@@ -3778,27 +3778,40 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             // --defaults-extra-file MUST be the first mysqldump argument.
             // (--no-login-paths AND --ssl-mode for Oracle MySQL — both
             // follow-ups tracked in #1081, gated on a probe helper.)
-            $cmd = [
-                'mysqldump', '--defaults-extra-file=' . $credFile,
-                $verifySsl ? '--ssl-verify-server-cert=on' : '--ssl-verify-server-cert=off',
-                '--single-transaction', '--routines',
-                '-h', $host, '-P', $port, '-u', $user, $dbName,
-            ];
+            // v3.22.2: SSL verify flag is flavor-aware. See
+            // ipam_mysql_ssl_verify_args() in lib/backup.php for the full
+            // MariaDB-vs-Oracle-MySQL dialect rationale.
+            $cmd = ['mysqldump', '--defaults-extra-file=' . $credFile];
+            foreach (ipam_mysql_ssl_verify_args($verifySsl) as $sslArg) {
+                $cmd[] = $sslArg;
+            }
+            $cmd[] = '--single-transaction';
+            $cmd[] = '--routines';
+            $cmd[] = '-h';
+            $cmd[] = $host;
+            $cmd[] = '-P';
+            $cmd[] = $port;
+            $cmd[] = '-u';
+            $cmd[] = $user;
+            $cmd[] = $dbName;
             $env = getenv() ?: [];
             // Strip any inherited DB password env vars so a parent shell
             // already exporting these can't leak the secret to the child
             // even though we route the real cred via --defaults-extra-file
             // (#820 PR #1074 CR).
             unset($env['MYSQL_PWD'], $env['PGPASSWORD']);
+            $dumpErr = '';
             try {
-                $ret = backup_run_dump($cmd, $env, $dest);
+                $ret = backup_run_dump($cmd, $env, $dest, 120, $dumpErr);
             } finally {
                 @unlink($credFile); // nosemgrep: php.lang.security.unlink-use.unlink-use
             }
             if (!$ret) {
+                $why = $dumpErr !== '' ? 'mysqldump failed: ' . $dumpErr : 'mysqldump failed';
+                $whyTrunc = strlen($why) > 500 ? substr($why, 0, 497) . '...' : $why;
                 backup_runs_insert_cli($db, basename($dest), 0, '',
-                    $startedAt, date('Y-m-d H:i:s'), 'failed', 'mysqldump failed');
-                try { ipam_backup_notify($db, $legacyDest, 'failure', 'mysqldump failed for ' . basename($dest)); }
+                    $startedAt, date('Y-m-d H:i:s'), 'failed', $whyTrunc);
+                try { ipam_backup_notify($db, $legacyDest, 'failure', $whyTrunc . ' (' . basename($dest) . ')'); }
                 catch (Throwable $ne) { error_log('[backup] notify dispatch failed: ' . $ne->getMessage()); }
                 return false;
             }
@@ -3839,15 +3852,18 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             // the child (#820 PR #1074 CR).
             unset($env['MYSQL_PWD'], $env['PGPASSWORD']);
             $env['PGPASSFILE'] = $credFile;
+            $dumpErr = '';
             try {
-                $ret = backup_run_dump($cmd, $env, $dest);
+                $ret = backup_run_dump($cmd, $env, $dest, 120, $dumpErr);
             } finally {
                 @unlink($credFile); // nosemgrep: php.lang.security.unlink-use.unlink-use
             }
             if (!$ret) {
+                $why = $dumpErr !== '' ? 'pg_dump failed: ' . $dumpErr : 'pg_dump failed';
+                $whyTrunc = strlen($why) > 500 ? substr($why, 0, 497) . '...' : $why;
                 backup_runs_insert_cli($db, basename($dest), 0, '',
-                    $startedAt, date('Y-m-d H:i:s'), 'failed', 'pg_dump failed');
-                try { ipam_backup_notify($db, $legacyDest, 'failure', 'pg_dump failed for ' . basename($dest)); }
+                    $startedAt, date('Y-m-d H:i:s'), 'failed', $whyTrunc);
+                try { ipam_backup_notify($db, $legacyDest, 'failure', $whyTrunc . ' (' . basename($dest) . ')'); }
                 catch (Throwable $ne) { error_log('[backup] notify dispatch failed: ' . $ne->getMessage()); }
                 return false;
             }
@@ -3955,22 +3971,55 @@ function ipam_backup_write_pgpass_file(string $pass): string
  * @param list<string> $cmd
  * @param array<string,string> $env
  */
-function backup_run_dump(array $cmd, array $env, string $destPath, int $timeoutSecs = 120): bool
+/**
+ * @param list<string>            $cmd
+ * @param array<string,string>    $env
+ * @param string                  $errorOut Captured stderr/diagnostic on failure (v3.22.2).
+ *                                          Populated even when the function returns false so
+ *                                          callers can surface the cause in a backup-run row's
+ *                                          `error_message` instead of leaving operators to
+ *                                          grep PHP error_log.
+ */
+function backup_run_dump(array $cmd, array $env, string $destPath, int $timeoutSecs = 120, string &$errorOut = ''): bool
 {
+    $errorOut = '';
     $pipes = [];
+    $bin = $cmd[0] ?? 'dump';
     // $cmd is built from admin config values only (never user input); array-form
     // proc_open bypasses the shell entirely so no injection is possible.
-    $proc  = proc_open($cmd, // nosemgrep
-        [
-            0 => ['pipe', 'r'],
-            1 => ['file', $destPath, 'w'],
-            2 => ['pipe', 'w'],
-        ],
-        $pipes,
-        null,
-        $env
-    );
-    if (!is_resource($proc)) return false;
+    //
+    // PHP 8+ raises Error (not returns false) when an internal function appears
+    // in disable_functions, so we catch Throwable and route both failure modes
+    // through the same diagnostic surface — otherwise a hardened php.ini with
+    // proc_open disabled would skip $errorOut population entirely and leave
+    // operators with an empty backup_runs.error_message.
+    try {
+        $proc = proc_open($cmd, // nosemgrep
+            [
+                0 => ['pipe', 'r'],
+                1 => ['file', $destPath, 'w'],
+                2 => ['pipe', 'w'],
+            ],
+            $pipes,
+            null,
+            $env
+        );
+    } catch (Throwable $e) {
+        $errorOut = 'proc_open threw ' . get_class($e) . ' starting ' . $bin . ': ' . $e->getMessage();
+        error_log('backup_run_dump: ' . $errorOut);
+        @unlink($destPath); // nosemgrep: php.lang.security.unlink-use.unlink-use
+        return false;
+    }
+    if (!is_resource($proc)) {
+        // Most likely cause: dump binary not on $PATH in the SAPI's restricted
+        // environment. Surface the binary name so an operator looking at
+        // backup_runs.error_message immediately sees "mysqldump not executable"
+        // rather than an empty diagnostic.
+        $errorOut = 'proc_open failed to start ' . $bin . ' (not on PATH or disabled)';
+        error_log('backup_run_dump: ' . $errorOut);
+        @unlink($destPath); // nosemgrep: php.lang.security.unlink-use.unlink-use
+        return false;
+    }
 
     fclose($pipes[0]);
     stream_set_blocking($pipes[2], false);
@@ -3999,7 +4048,8 @@ function backup_run_dump(array $cmd, array $env, string $destPath, int $timeoutS
             fclose($pipes[2]);
             proc_close($proc);
             @unlink($destPath); // nosemgrep: php.lang.security.unlink-use.unlink-use
-            error_log('backup_run_dump: killed after ' . $timeoutSecs . 's timeout');
+            $errorOut = 'killed after ' . $timeoutSecs . 's timeout';
+            error_log('backup_run_dump: ' . $errorOut);
             return false;
         }
         usleep(100000); // 100ms polling interval
@@ -4020,13 +4070,15 @@ function backup_run_dump(array $cmd, array $env, string $destPath, int $timeoutS
     //                       dest file is a strong success signal.
     if ($finalExit > 0) {
         @unlink($destPath); // nosemgrep: php.lang.security.unlink-use.unlink-use
-        error_log('backup_run_dump failed (exit=' . $finalExit . '): ' . trim($stderr));
+        $errorOut = 'exit=' . $finalExit . ': ' . trim($stderr);
+        error_log('backup_run_dump failed (' . $errorOut . ')');
         return false;
     }
     $size = @filesize($destPath);
     if ($size === false || $size === 0) {
         @unlink($destPath); // nosemgrep: php.lang.security.unlink-use.unlink-use
-        error_log('backup_run_dump failed (exit=' . $finalExit . ', empty output): ' . trim($stderr));
+        $errorOut = 'exit=' . $finalExit . ', empty output: ' . trim($stderr);
+        error_log('backup_run_dump failed (' . $errorOut . ')');
         return false;
     }
     @chmod($destPath, 0600);
