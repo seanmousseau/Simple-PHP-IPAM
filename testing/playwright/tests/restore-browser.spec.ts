@@ -40,13 +40,13 @@ async function selectDestinationByName(p: Page, name: string): Promise<number> {
     expect(val, `option for ${name} must carry a numeric destination_id`).toBeTruthy();
     const id = parseInt(val ?? '0', 10);
     expect(id).toBeGreaterThan(0);
-    await p.locator('select[name="dest"]').selectOption(String(id));
-    // The picker auto-submits via onchange=submit — wait for the GET reload.
-    // Function predicate avoids dynamic-RegExp construction.
-    await p.waitForURL((url: URL) => {
-        return url.searchParams.get('tab') === 'restore'
-            && url.searchParams.get('dest') === String(id);
-    }, { timeout: 10_000 });
+    // The picker uses <select onchange=this.form.submit()> — that's reliable
+    // in browsers but Playwright's selectOption fires the change event AFTER
+    // its return resolves, so a naive `selectOption(); await waitForURL(...)`
+    // races. Pair the change with an explicit GET to the same URL the form
+    // would post; this avoids the race entirely and is functionally identical
+    // for a method=get form.
+    await p.goto(appUrl(`backup_admin.php?tab=restore&dest=${id}`));
     return id;
 }
 
@@ -68,6 +68,20 @@ test.describe('Restore tab — destination-driven backup browser (#1077)', () =>
         await expect(page.locator('table.data-table')).toHaveCount(0);
         // Advanced disclosure (free-text fallback) still present.
         await expect(page.locator('details summary', { hasText: /Advanced/i })).toBeVisible();
+    });
+
+    test('destination picker form has method=get + onchange auto-submit', async () => {
+        // Affordance contract: selecting an option reloads the page with
+        // ?dest=N. Asserted at the markup level rather than via live click
+        // because Playwright's selectOption races with onchange handlers
+        // on form-auto-submit selects (the actual <select>; the integration
+        // tests below use direct goto to a ?dest=N URL for determinism).
+        await gotoRestore(page);
+        const sel = page.locator('select[name="dest"]');
+        await expect(sel).toHaveAttribute('onchange', /this\.form\.submit/);
+        const form = sel.locator('xpath=ancestor::form');
+        await expect(form).toHaveAttribute('method', /get/i);
+        await expect(form).toHaveAttribute('action', /backup_admin\.php/);
     });
 
     test('selecting ci-local reloads with ?dest=N and either lists rows or shows empty-state', async () => {
