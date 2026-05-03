@@ -3598,6 +3598,12 @@ function ipam_legacy_retention_prune_by_mtime(string $glob, int $retention): voi
  *
  * Idempotent: re-running after the sentinel is set, or with a destination
  * already present for the legacy directory, is a no-op.
+ *
+ * Transaction caveat: this helper opens its own transaction iff there is
+ * none active. Callers MUST NOT invoke it inside an outer transaction —
+ * any rollback from a failed schedule INSERT would unwind the outer
+ * caller's work alongside the partial migration. init.php is the only
+ * intended entry point and runs at top-level page bootstrap (no outer tx).
  */
 function ipam_legacy_backup_migrate_if_due(PDO $db): void
 {

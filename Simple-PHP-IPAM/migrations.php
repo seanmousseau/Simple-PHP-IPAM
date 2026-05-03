@@ -2957,8 +2957,10 @@ function ipam_migrations(): array
                     'notify_recipients' => "ALTER TABLE backup_schedules ADD COLUMN notify_recipients TEXT NULL",
                 ],
             ];
-            $wanted = ['notify_override', 'notify_on_failure', 'notify_on_success', 'notify_recipients'];
-            foreach ($wanted as $col) {
+            // Iterate the per-driver DDL keys directly so a future column
+            // added to $defs but missed from a separate "wanted" list can't
+            // be silently skipped.
+            foreach (array_keys($defs[$driver]) as $col) {
                 if (!in_array($col, $existing, true)) {
                     $db->exec($defs[$driver][$col]);
                 }
