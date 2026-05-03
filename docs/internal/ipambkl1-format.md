@@ -51,6 +51,7 @@ A line missing all three sentinels is a corrupt stream and aborts replay.
   "header": true,
   "format_version": 1,
   "schema_version": 47,
+  "last_migration_version": "3.23.0-notify-overrides",
   "exported_at": "2026-05-03T18:42:11Z",
   "exported_by_ipam_version": "3.23.0",
   "tenant_id": null,

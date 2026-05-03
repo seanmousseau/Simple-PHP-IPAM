@@ -73,7 +73,7 @@ Functionality:
 - **Topological table order in the dump.** `header.table_order` must be a parents-first topo-sort of the FK graph (e.g. `sites` → `vlans` (FK→sites) → `vrfs` → `subnets` (FKs→sites,vlans,vrfs) → `addresses` (FK→subnets) → join tables → audit). The writer is responsible for emitting in this order; the reader replays in receipt order without re-sorting. IPAM's FK graph is a DAG so a static order is sufficient.
 - **Self-referential tables** (`sites.parent_id`) replay in two passes: first pass inserts every row with `parent_id = NULL`, capturing the idmap; second pass walks the same table again issuing `UPDATE ... SET parent_id = idmap[source_parent_id]`. Format encodes nothing extra — the restorer knows which tables are self-referential from the live schema.
 - **Join tables** (`subnet_tags`, `address_tags`) have no own PK to remap; both columns are FKs and both get looked up in idmap. They sit at the end of `table_order`.
-- **Tables without auto-increment PKs** (`schema_migrations` keyed by `version` string) are inserted verbatim — no idmap entry, no remap.
+- **Tables without auto-increment PKs** (`schema_migrations` keyed by `version` string) — `schema_migrations` is the special case: the IPAMBKL1 reader **skips** it entirely so the target install's existing migration history is preserved across restore. Other join-table-shaped rows would normally be inserted verbatim with no idmap entry; `schema_migrations` is excluded from the wipe pass and from replay, full stop.
 - **`audit_log`** is append-only (UPDATE/DELETE blocked by trigger). Its `id` is auto-increment and gets re-emitted; its `user_id` is an FK to `users` and gets remapped.
 
 > **Design note (2026-05-03):** chose re-emit-IDs over preserve-source-PKs. Preserve was simpler for v3.23.0's whole-install single-tenant scope, but re-emit is the path that survives v4.0.0 multi-tenancy unchanged — partial-tenant restore into a populated install needs FK remapping by definition, and shipping the format with re-emit semantics from day one means the v3.23.0 → v4.0.0 transition doesn't introduce a format break or a "remap-target" mode bolt-on. Pay the complexity once, in v3.23.0, where the test surface is simplest.
@@ -297,7 +297,7 @@ Sean (2026-05-03): *"It could be any engine to any engine (completely agnostic o
 | `header.schema_version` vs install | Behaviour |
 |---|---|
 | Equal | Direct replay. |
-| Older | Replay, then `apply_migrations()` brings the data forward to current schema. |
+| Older | Replay directly into the target's current schema. Columns added by intervening migrations take their schema defaults at INSERT time (each engine applies the column's `DEFAULT` clause when the INSERT omits it). The target's `schema_migrations` history is preserved across restore — `apply_migrations()` is **not** re-run as part of restore. Data-level transforms (a hypothetical migration that copies values between columns post-population) are not re-applied automatically; operators with that concern should restore on a same-version install. |
 | Newer | Refuse with "this backup is from schema vN; the install is at vM (older). Upgrade the install first." |
 
 **Tracked:** full IPAMBKL1 backend (dump + restore + engine-agnostic + schema_version compat) in v3.23.0 (#824). Operator-facing picker UI in v3.25.0 (#1076). Issue #861 (originally "cross-engine restore parking lot") is closed-as-resolved by this design.

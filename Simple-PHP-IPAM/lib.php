@@ -1663,6 +1663,21 @@ function ipam_setting_definitions(): array
             'sensitive'   => false,
             'hidden'      => true,
         ],
+        // Internal — sentinel stamped by ipam_legacy_backup_migrate_if_due()
+        // (#1058) once the legacy backup.* config has been materialised into
+        // a unified Local destination + schedule (or once the helper has
+        // confirmed there's nothing to migrate). Gates run_db_backup_if_due()
+        // in init.php so the legacy v3.7 runner doesn't fire after the
+        // unified path has taken over.
+        'backup.legacy_migrated_v3_23_0' => [
+            'label'       => 'Legacy backup migration sentinel (internal)',
+            'description' => 'Internal — set to true once the legacy backup.* config has been migrated to a unified destination + schedule, or skipped because legacy backups were never enabled. Not user-editable.',
+            'type'        => 'bool',
+            'group'       => 'backup',
+            'default'     => false,
+            'sensitive'   => false,
+            'hidden'      => true,
+        ],
         'backup_runs.retention_days' => [
             'label'       => 'Backup history retention (days)',
             'description' => 'Keep backup_runs rows this many days. 0 disables auto-purge. Protected runs (is_protected=1) and in-flight rows are never auto-purged.',
@@ -3656,9 +3671,14 @@ function ipam_legacy_backup_migrate_if_due(PDO $db): void
         // committed; (b) an admin already created the matching destination
         // by hand. Inserting again would duplicate rows and produce two
         // schedules pointing at the same target.
+        // Only adopt ACTIVE matching destinations — an admin who has
+        // explicitly disabled the destination should not have the legacy
+        // migration silently re-enable backups against it (CR feedback
+        // PR #1092). If the only match is inactive, fall through to the
+        // INSERT branch and the operator will see a fresh active row.
         $findDest = $db->prepare(
             "SELECT id FROM backup_destinations
-              WHERE type = 'local' AND config = :cfg
+              WHERE type = 'local' AND config = :cfg AND is_active = 1
               LIMIT 1"
         );
         $findDest->execute([':cfg' => $configJson]);
