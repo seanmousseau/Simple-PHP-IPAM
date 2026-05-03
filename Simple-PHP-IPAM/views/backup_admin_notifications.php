@@ -4,19 +4,25 @@ declare(strict_types=1);
 /**
  * Notifications tab — backup-event email preferences (editable).
  *
- * v3.22.0 §2.4: GLOBAL-only granularity per event. Per-schedule overrides
- * remain parking-lot work (they need a schedule-edit drawer surface that
- * does not exist yet) — see docs/internal/backup_overhaul.md §2.4.
- *
- * Eight booleans + one integer (overdue grace). Each toggle maps 1:1 to a
- * setting key in ipam_setting_definitions(); ipam_backup_notify_dispatch()
- * reads the setting before sending and returns early if disabled.
+ * Two stacked sections:
+ *   1. Global event toggles (8 booleans + overdue-grace minutes). Each maps
+ *      to a `backup.notify_*` setting key; ipam_backup_notify_dispatch()
+ *      reads them before sending.
+ *   2. Per-schedule overrides (v3.23.0 #825): each schedule may opt to
+ *      override the global failure/success defaults and pin its own
+ *      recipient CSV. Tri-state per field (Inherit / On / Off) so an admin
+ *      can override a subset.
  *
  * @var array<string, bool>           $events
  * @var int                           $overdueGraceMinutes
  * @var string                        $alertEmail
  * @var bool                          $smtpEnabled
  * @var list<array{id:int,email:string,username:string}> $alertUsers
+ * @var list<array{
+ *        id:int, destination_name:string, frequency:string, time_of_day:string,
+ *        is_active:bool, override:bool,
+ *        failure_state:string, success_state:string, recipients:string
+ *      }> $scheduleOverrides
  * @var string                        $flash
  * @var string                        $flashKind
  */
@@ -76,9 +82,10 @@ $rows = [
 <section class="card">
   <h3 style="margin-top:0;">Backup notification preferences</h3>
   <p class="muted">
-    Notifications use the global <strong>Alert email recipients</strong> list and the existing SMTP delivery pipeline.
-    Settings on this tab apply to <strong>all</strong> destinations and schedules; per-schedule overrides are
-    future work (see <code>docs/internal/backup_overhaul.md</code> §2.4 parking lot).
+    These global toggles apply to every destination and schedule by default.
+    Per-schedule overrides (below) can promote or suppress notifications for individual schedules without
+    affecting the rest. Notifications use the global <strong>Alert email recipients</strong> list and the
+    existing SMTP delivery pipeline unless a schedule pins its own recipient CSV.
   </p>
 
   <form method="post" action="backup_admin.php?tab=notifications">
@@ -179,4 +186,92 @@ $rows = [
       </tr>
     </tbody>
   </table>
+</section>
+
+<section class="card" style="margin-top:1.5rem;">
+  <h3 style="margin-top:0;">Per-schedule overrides</h3>
+  <p class="muted">
+    Each schedule can override the <em>Scheduled-backup failure</em> and <em>Scheduled-backup success</em>
+    defaults and pin its own recipient CSV. <strong>Inherit</strong> uses the global toggle above; choose
+    <strong>On</strong> or <strong>Off</strong> to override that one field. Recipients left blank inherit
+    the global alert-user list. Manual-run, retention, overdue and connection-test events stay global.
+  </p>
+
+  <?php if ($scheduleOverrides === []): ?>
+    <p class="muted">No backup schedules defined yet — create one on the
+       <a href="backup_admin.php?tab=backup">Backup tab</a> and it will appear here.</p>
+  <?php else: ?>
+    <form method="post" action="backup_admin.php?tab=notifications">
+      <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+      <input type="hidden" name="action" value="save_schedule_notify_overrides">
+      <table class="data-table" style="margin-bottom:1rem;">
+        <thead>
+          <tr>
+            <th scope="col">Schedule</th>
+            <th scope="col">Override</th>
+            <th scope="col">On failure</th>
+            <th scope="col">On success</th>
+            <th scope="col">Recipients (CSV)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php foreach ($scheduleOverrides as $s):
+              $sid     = (int) $s['id'];
+              $label   = $s['destination_name'] . ' &mdash; ' . $s['frequency'] . ' @ ' . $s['time_of_day'];
+              $ovChk   = $s['override'] ? 'checked' : '';
+              $fState  = $s['failure_state'];
+              $sState  = $s['success_state'];
+              $recip   = $s['recipients'];
+              $tristateOpts = [
+                  'inherit' => 'Inherit',
+                  'on'      => 'On',
+                  'off'     => 'Off',
+              ];
+          ?>
+            <tr>
+              <th scope="row" style="text-align:left;">
+                <?= e((string) $s['destination_name']) ?>
+                <span class="muted">&mdash; <?= e($s['frequency']) ?> @ <?= e($s['time_of_day']) ?></span>
+                <?php if (!$s['is_active']): ?>
+                  <span class="badge" title="Schedule is inactive">inactive</span>
+                <?php endif; ?>
+              </th>
+              <td>
+                <label style="display:inline-flex;align-items:center;gap:.4rem;">
+                  <input type="checkbox"
+                         name="sched[<?= $sid ?>][override]"
+                         value="1"
+                         <?= $ovChk ?>>
+                  <span class="muted" aria-hidden="true">override</span>
+                </label>
+              </td>
+              <?php foreach ([['failure', $fState], ['success', $sState]] as $pair):
+                  [$field, $current] = $pair; ?>
+                <td>
+                  <select name="sched[<?= $sid ?>][<?= e($field) ?>]" aria-label="<?= e($label) ?> <?= e($field) ?>">
+                    <?php foreach ($tristateOpts as $val => $disp): ?>
+                      <option value="<?= e($val) ?>" <?= $current === $val ? 'selected' : '' ?>>
+                        <?= e($disp) ?>
+                      </option>
+                    <?php endforeach; ?>
+                  </select>
+                </td>
+              <?php endforeach; ?>
+              <td>
+                <input type="text"
+                       name="sched[<?= $sid ?>][recipients]"
+                       value="<?= e($recip) ?>"
+                       placeholder="ops@example.com, oncall@example.com"
+                       style="width:100%;min-width:14rem;">
+              </td>
+            </tr>
+          <?php endforeach; ?>
+        </tbody>
+      </table>
+      <div style="display:flex;gap:.5rem;align-items:center;">
+        <button type="submit" class="button-primary">Save per-schedule overrides</button>
+        <span class="muted">Override applies on the next run of each affected schedule.</span>
+      </div>
+    </form>
+  <?php endif; ?>
 </section>

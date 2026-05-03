@@ -5252,6 +5252,39 @@ function ipam_backup_notify_dispatch(PDO $db, string $event, array $context): vo
 }
 
 /**
+ * Map the per-field UI tri-state radio value to the storage form for the
+ * notify_on_failure / notify_on_success columns:
+ *   'on'      → 1   (override-and-enable)
+ *   'off'     → 0   (override-and-suppress)
+ *   anything else (incl. 'inherit') → null
+ *
+ * Centralised here so the controller and any future API endpoint share one
+ * source of truth for the encoding.
+ */
+function ipam_admin_notify_tristate_to_db(mixed $raw): ?int
+{
+    if (!is_string($raw)) return null;
+    return match ($raw) {
+        'on'  => 1,
+        'off' => 0,
+        default => null,
+    };
+}
+
+/**
+ * Inverse of ipam_admin_notify_tristate_to_db() — picks the radio value
+ * to mark `checked` when rendering the per-schedule override form.
+ */
+function ipam_admin_notify_tristate_from_db(mixed $raw): string
+{
+    if ($raw === null) return 'inherit';
+    if (is_numeric($raw)) {
+        return ((int) $raw) === 1 ? 'on' : 'off';
+    }
+    return 'inherit';
+}
+
+/**
  * Per-schedule resolver for a notification boolean (notify_on_failure /
  * notify_on_success). Returns the schedule's column when notify_override = 1
  * and the column is non-NULL; otherwise the global default.
