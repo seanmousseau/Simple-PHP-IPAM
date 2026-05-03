@@ -46,7 +46,10 @@ test.describe('Restore wizard', () => {
   test('admin sees restore page; readonly user gets 403', async ({ page, browser }) => {
     await page.goto(appUrl('restore_web.php'));
     await expect(page.locator('h1')).toContainText('Restore Database');
-    await expect(page.locator('select[name="destination_id"]')).toBeVisible();
+    // v3.23.0 #1077: Step 1's primary destination picker is now <select
+    // name="dest"> (drives the destination-driven browser). The legacy
+    // <select name="destination_id"> moved to the Advanced disclosure.
+    await expect(page.locator('select[name="dest"]')).toBeVisible();
 
     const ctx = await browser.newContext();
     const ro = await ctx.newPage();
@@ -62,6 +65,9 @@ test.describe('Restore wizard', () => {
   test('step 1: select source UI is present', async ({ page }) => {
     await page.goto(appUrl('restore_web.php'));
     await expect(page.locator('h2').first()).toContainText('Step 1');
+    // v3.23.0 #1077: the legacy free-text Stage form moved under an
+    // Advanced disclosure; expand it before asserting the inputs are visible.
+    await page.locator('details summary', { hasText: /Advanced/i }).click();
     await expect(page.locator('input[name="name"]')).toBeVisible();
     await expect(page.locator('button:has-text("Stage backup")')).toBeVisible();
   });
@@ -69,9 +75,10 @@ test.describe('Restore wizard', () => {
   test('step 1: invalid filename surfaces an error', async ({ page }) => {
     await ensureTestDestination(page);
     await page.goto(appUrl('restore_web.php'));
-    await page.locator('select[name="destination_id"]').selectOption({ label: `${TEST_DEST_NAME} (local)` });
-    await page.locator('input[name="name"]').fill('does-not-exist.sql.gz');
-    await page.locator('button:has-text("Stage backup")').click();
+    await page.locator('details summary', { hasText: /Advanced/i }).click();
+    await page.locator('details select[name="destination_id"]').selectOption({ label: `${TEST_DEST_NAME} (local)` });
+    await page.locator('details input[name="name"]').fill('does-not-exist.sql.gz');
+    await page.locator('details button:has-text("Stage backup")').click();
     await expect(page.locator('.danger')).toContainText(/Stage failed|file not found/);
   });
 
@@ -118,17 +125,22 @@ test.describe('Restore wizard', () => {
       // *inside the tab body* to disambiguate.
       const wizard = page.locator('.backup-admin-tab');
       await expect(wizard.locator('h2', { hasText: /Step 1/ })).toBeVisible();
-      await expect(wizard.locator('select[name="destination_id"]')).toBeVisible();
-      await expect(wizard.locator('input[name="name"]')).toBeVisible();
-      await expect(wizard.locator('button', { hasText: 'Stage backup' })).toBeVisible();
+      // v3.23.0 #1077: the primary picker is the destination-driven browser
+      // (select[name="dest"]); the legacy free-text form moved under an
+      // Advanced disclosure. Open it to assert the inputs are still wired.
+      await wizard.locator('details summary', { hasText: /Advanced/i }).click();
+      await expect(wizard.locator('details select[name="destination_id"]')).toBeVisible();
+      await expect(wizard.locator('details input[name="name"]')).toBeVisible();
+      await expect(wizard.locator('details button', { hasText: 'Stage backup' })).toBeVisible();
     });
 
     test('invalid filename surfaces an error on the unified surface', async ({ page }) => {
       await ensureTestDestination(page);
       await page.goto(appUrl('backup_admin.php?tab=restore'));
-      await page.locator('select[name="destination_id"]').selectOption({ label: `${TEST_DEST_NAME} (local)` });
-      await page.locator('input[name="name"]').fill('does-not-exist.sql.gz');
-      await page.locator('button:has-text("Stage backup")').click();
+      await page.locator('details summary', { hasText: /Advanced/i }).click();
+      await page.locator('details select[name="destination_id"]').selectOption({ label: `${TEST_DEST_NAME} (local)` });
+      await page.locator('details input[name="name"]').fill('does-not-exist.sql.gz');
+      await page.locator('details button:has-text("Stage backup")').click();
       // The handler redirects back to the same tab with an error; assert
       // we're still on the Restore tab and the .danger banner is shown.
       await expect(page).toHaveURL(/tab=restore/);

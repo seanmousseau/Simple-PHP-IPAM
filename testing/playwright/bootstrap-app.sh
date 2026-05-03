@@ -75,6 +75,17 @@ minio_bucket="${IPAM_TEST_MINIO_BUCKET:-ipam-backups}"
 minio_image="${IPAM_TEST_MINIO_IMAGE:-minio/minio:RELEASE.2025-09-07T16-13-09Z}"
 minio_mc_image="${IPAM_TEST_MINIO_MC_IMAGE:-minio/mc:RELEASE.2025-08-13T08-35-41Z}"
 
+# OpenSSH-server sidecar (#833): always-on SFTP target for the backup
+# integration spec, reachable from PHP at sftp://sftp:22 over the docker
+# network. Auth uses the committed fixture keypair under
+# testing/playwright/fixtures/sftp/ — same secret on every run, never
+# protects real data. Pinned tag for the same layer-cache reasons as MinIO.
+sftp_name="${IPAM_TEST_SFTP_NAME:-ipam-pw-sftp}"
+sftp_image="${IPAM_TEST_SFTP_IMAGE:-linuxserver/openssh-server:10.2_p1-r0-ls223}"
+sftp_user="${IPAM_TEST_SFTP_USER:-ipam}"
+sftp_pass="${IPAM_TEST_SFTP_PASS:-ipam-sftp-fixture-pass}"
+sftp_remote_dir="${IPAM_TEST_SFTP_DIR:-/config/backups}"
+
 if ! command -v docker >/dev/null 2>&1; then
     echo "bootstrap-app.sh: docker is required but not found in PATH" >&2
     exit 3
@@ -307,6 +318,55 @@ docker run --rm --name "$minio_mc_name" \
         exit 1
     }
 
+# 3d. OpenSSH-server sidecar (#833, always-on).
+# Reachable from the IPAM container at sftp://sftp:22. Auth uses the
+# committed fixture keypair (linuxserver/openssh-server reads
+# /config/.ssh/authorized_keys at boot) plus a fixed password fallback.
+# Bucket-equivalent target dir is /config/backups, owned by the in-image
+# `ipam` user.
+echo "bootstrap-app: starting SFTP $sftp_name (image=$sftp_image)"
+docker_pull_with_retry "$sftp_image" || exit 1
+docker rm -f "$sftp_name" >/dev/null 2>&1 || true
+docker run -d --rm --name "$sftp_name" \
+    --network "$network" \
+    --network-alias sftp \
+    -e "PUID=1000" \
+    -e "PGID=1000" \
+    -e "TZ=UTC" \
+    -e "USER_NAME=$sftp_user" \
+    -e "USER_PASSWORD=$sftp_pass" \
+    -e "PASSWORD_ACCESS=true" \
+    -e "PUBLIC_KEY=$(cat "$script_dir/fixtures/sftp/ipam_pw_sftp.pub")" \
+    "$sftp_image" >/dev/null
+
+echo "bootstrap-app: waiting for SFTP ready (up to 60s)"
+for i in $(seq 1 30); do
+    # The image listens on :2222 internally by default. We probe sshd from
+    # a throwaway alpine container on the same docker network — alpine is
+    # already present in the runner from earlier MinIO bucket-creation step
+    # buffer-cache, and reliably ships nc.
+    if docker run --rm --network "$network" alpine:3 \
+        sh -c 'nc -z sftp 2222' >/dev/null 2>&1; then
+        echo "bootstrap-app: SFTP ready"
+        break
+    fi
+    if [[ "$i" -eq 30 ]]; then
+        echo "bootstrap-app: SFTP did not become ready in 60s" >&2
+        docker logs "$sftp_name" >&2 || true
+        exit 1
+    fi
+    sleep 2
+done
+
+# Pre-create the remote backup directory inside the container so the
+# IPAM client can upload without first having to mkdir over SFTP. The
+# linuxserver image starts with PUID=1000 / PGID=1000 owning /config; we
+# create /config/backups as the same user via docker exec.
+docker exec "$sftp_name" \
+    mkdir -p "$sftp_remote_dir" 2>/dev/null || true
+docker exec "$sftp_name" \
+    chown "$sftp_user:$sftp_user" "$sftp_remote_dir" 2>/dev/null || true
+
 # 4. Run migrate + demo seed inside a throwaway container so there is no host
 #    PHP version dependency. Uses the same image the long-running container uses.
 #    For mysql, the throwaway container joins the docker network so it can
@@ -335,9 +395,14 @@ if [[ -d "$repo_root/vendor" ]]; then
 fi
 seed_docker_args+=(
     -v "$script_dir/fixtures/seed-backup-destinations.php:/tmp/seed-backup-destinations.php:ro"
+    -v "$script_dir/fixtures/sftp/ipam_pw_sftp:/tmp/ipam_pw_sftp:ro"
     -e "IPAM_TEST_MINIO_USER=$minio_root_user"
     -e "IPAM_TEST_MINIO_PASS=$minio_root_pass"
     -e "IPAM_TEST_MINIO_BUCKET=$minio_bucket"
+    -e "IPAM_TEST_SFTP_USER=$sftp_user"
+    -e "IPAM_TEST_SFTP_PASS=$sftp_pass"
+    -e "IPAM_TEST_SFTP_DIR=$sftp_remote_dir"
+    -e "IPAM_TEST_SFTP_KEYFILE=/tmp/ipam_pw_sftp"
 )
 docker run --rm "${seed_docker_args[@]}" -e SEED_2FA_TEST_USER=1 -e SEED_EMAIL_OTP_TEST_USER=1 -e SEED_PASSKEY_TEST_USER=1 -e DEMO_SEED_FORCE=1 "$image" \
     bash -c 'php migrate.php && php demo_seed.php && php /tmp/seed-backup-destinations.php && chmod -R a+rwX data' \

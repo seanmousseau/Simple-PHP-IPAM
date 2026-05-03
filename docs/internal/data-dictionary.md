@@ -727,6 +727,10 @@ Reference for every table, column, foreign key, and uniqueness constraint in the
 | `is_active` | `INTEGER` | `TINYINT(1)` | `SMALLINT` | NO | `1` |  |
 | `last_run_at` | `TEXT` | `DATETIME` | `TIMESTAMP` | YES |  |  |
 | `next_run_at` | `TEXT` | `DATETIME` | `TIMESTAMP` | YES |  |  |
+| `notify_override` | `INTEGER` | `TINYINT(1)` | `SMALLINT` | NO | `0` |  |
+| `notify_on_failure` | `INTEGER` | `TINYINT(1)` | `SMALLINT` | YES |  |  |
+| `notify_on_success` | `INTEGER` | `TINYINT(1)` | `SMALLINT` | YES |  |  |
+| `notify_recipients` | `TEXT` | `TEXT` | `TEXT` | YES |  |  |
 | `created_at` | `TEXT` | `DATETIME` | `TIMESTAMP` | NO | `datetime('now')` |  |
 
 **Foreign keys**

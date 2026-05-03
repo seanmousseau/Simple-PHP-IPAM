@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.23.0] - 2026-05-03
+
+The backup-overhaul wave. Engine-agnostic logical backup format ships end-to-end (writer + reader); per-schedule notification overrides editable in the unified Backup &amp; Restore admin surface; the legacy `backup.*` settings group is deprecated with an automatic one-shot migration to a Local destination + schedule on first v3.23.0 page load. Plus retention/scheduler refactors, OOM-safe streaming restore, three-driver SFTP/Local/MinIO integration coverage, MFA switch-graph live e2e, and a destination-driven backup browser on the Restore tab. **18 milestone issues closed in a single release.**
+
+### Known limitations
+- **Visual-regression coverage on `subnets` and `search` is paused on PostgreSQL.** Both pages render +200&ndash;470 px taller on PG than on SQLite/MySQL with no source change since v3.21.0; #1073's option (c) excluded them from the VR set pending bisection. Tracked as #1091.
+
+### Added
+- **`IPAMBKL1` engine-agnostic backup format (#824).** Full PDO-driven dump + restore backend &mdash; gzipped NDJSON with abstract types (int / string / bool / null / ISO-8601 timestamp / base64-binary). Re-emit-IDs replay strategy with two-pass self-FK resolution. Magic-byte dispatch (`IPAMBKL1` &rarr; PDO; `IPAMBKP1`/`IPAMBKP2` &rarr; existing shell-out). Three-driver 3&times;3 cross-engine round-trip parity proven against MySQL 8.0 + PostgreSQL 14.
+- **Per-schedule notification overrides (#825).** Every backup schedule may now override the global *Scheduled-backup failure* / *Scheduled-backup success* defaults and pin its own recipient CSV. Edit on `backup_admin.php?tab=notifications` &mdash; tri-state per field (Inherit / On / Off) plus optional recipient list. Schema migration `3.23.0-notify-overrides` adds four columns to `backup_schedules` (idempotent across all three engines).
+- **Destination-driven backup browser on the Restore tab (#1077).** Step 1 of the restore wizard now lists the selected destination's actual contents (filename, size, date, encryption, type, checksum) with per-row Download / Restore / Verify-Delete-link / degraded-restore notice. The free-text filename input is preserved under an Advanced disclosure for slow-LIST destinations.
+- **OpenSSH SFTP CI sidecar (#833).** `linuxserver/openssh-server` runs alongside MinIO under `bootstrap-app.sh`; the existing `backup-integration.spec.ts` now iterates `[ci-minio, ci-local, ci-sftp]` for full SFTP transport coverage.
+- **Live click-and-land tests for the MFA switch-graph buttons (#770).** TOTP &harr; Email OTP transitions are exercised end-to-end (MailHog-gated). Closes the v3.18.0 cover gap.
+- **Local destination CI coverage (#834).** Unit-level error paths (missing source, read-only directory) and a checksum round-trip alongside the existing Playwright integration coverage.
+
+### Changed
+- **`run_db_backup_if_due()` is gated by the migration sentinel.** On installs where `ipam_legacy_backup_migrate_if_due()` has materialised a unified destination + schedule, the legacy v3.7 runner is suppressed so the unified cron path doesn't double-fire.
+- **Settings &rsaquo; Data &amp; Maintenance &rsaquo; Backup section is deprecated (#1058).** A banner at the top points to `backup_admin.php`. Legacy keys remain readable through v3.25.0; hard-removal is in v3.26.0 (#1059).
+- **`ipam_backup_apply_retention()` split into compute + apply (#826).** Pure-function compute step is unit-testable in isolation; orchestrator stays thin. Dead `$nowEpoch` parameter chain dropped from the GFS selector through to the cron call site.
+- **`ipam_backup_next_run_at()` rewritten on `DateTimeImmutable` (#827)** with extracted per-frequency helpers. 18 table-driven edge cases (#832) pin behaviour.
+- **SQL splitter is a chunked generator now (#829).** Multi-gigabyte dumps stream through the restore pipeline without round-tripping the whole file as a PHP string.
+- **Dry-run pre-validates the dump via the splitter (#830).** Unterminated `BEGIN...END` blocks fail at parse time, not mid-apply.
+- **Legacy retention sorts by `filemtime`, not lex (#828).** Operator-renamed files no longer get pruned first regardless of age.
+- **`mysqldump` / `mysql` opt into `--no-login-paths` when supported (#1081).** MariaDB 11.4+ and Oracle MySQL 8.x clients get the flag; older MariaDB clients fall back gracefully.
+
+### Fixed
+- **MySQL identifier quoting in the IPAMBKL1 writer/reader.** Per-driver `ipam_logical_q()` emits backticks on MySQL and ANSI double-quotes on SQLite/PostgreSQL.
+- **MySQL DATETIME rejection of ISO-8601 'T'/'Z' form.** `ipam_logical_timestamp_for_mysql()` coerces to the space-separated literal MySQL accepts under default `sql_mode`.
+- **PostgreSQL BYTEA returns as a stream resource by default.** `PgsqlStatement` now wraps test connections (matches production `ipam_db()`) so `ipam_logical_encode_value()` doesn't reject `ip_bin` / `network_bin` columns.
+- **PostgreSQL `lastInsertId()` requires a sequence name.** The replay path uses `INSERT...RETURNING <pk>` on PostgreSQL; SQLite and MySQL keep the existing path.
+
 ## [3.22.3] - 2026-05-02
 
 Hotfix for v3.22.2. The Backup History per-row drawer (#803) rendered the Download action as a `GET <a href="download_remote_backup.php?run_id=...">`, but `download_remote_backup.php` is a POST-only endpoint that requires CSRF plus `destination_id` + `name` (it does not read `run_id`). Every Download click in the drawer returned `405 POST required`. Other entry points to the same endpoint (e.g. `remote_backups.php`) already used a POST form and were unaffected.
@@ -1391,6 +1422,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.23.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.22.3...v3.23.0
 [3.22.3]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.22.2...v3.22.3
 [3.22.2]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.22.1...v3.22.2
 [3.22.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.22.0...v3.22.1

@@ -45,7 +45,7 @@ Web root is `Simple-PHP-IPAM/`. Bootstrap entry is `Simple-PHP-IPAM/init.php`. S
 
 ## Project overview
 
-> **Current shipped version: v3.22.3** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v4.0.0 describes future work — **do not apply it to current v3.x code**. Current-state rules are the ones that do not cite a future version.
+> **Current shipped version: v3.23.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v4.0.0 describes future work — **do not apply it to current v3.x code**. Current-state rules are the ones that do not cite a future version.
 
 Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application built with **PHP 8.2+ and SQLite**. It has **no npm build step** — all CSS and JavaScript are vanilla. Starting in v2.9.0, the application will ship a small, carefully curated set of Composer-managed runtime dependencies bundled into the release tarball, so end users still deploy by extracting the tarball with no build step. The web root is `Simple-PHP-IPAM/` (the subdirectory, not the repo root).
 
@@ -90,6 +90,7 @@ Operational procedures live alongside the code, one Read away. CLAUDE.md is poli
 | `docs/internal/i18n-design.md` | Forward-looking i18n/l10n design (Gettext, per-user locale cascade, 4-phase rollout). Candidate for v4.0.0 + v4.2.0 per `v4-release-stream.md` |
 | `docs/internal/v4-release-stream.md` | v4.x stream strategy — enterprise auth + global reach. Sequencing for i18n + RBAC + SAML + LDAP + OAuth + SCIM across ~6 releases. Multi-tenancy explicitly NOT in v4.x (deferred — see `v4-tenancy-design.md` header) |
 | `docs/internal/cleanup.md` | Pre-ticket backlog for low-risk code-health items. Add a row when spotting cleanup-worthy code during other work; batch into a GH issue once items accumulate |
+| `docs/internal/ipambkl1-format.md` | `IPAMBKL1` Logical-backup format spec — magic, header/body/footer JSON shape, abstract-type encoding, re-emit-IDs replay strategy, schema_version compat. Source-of-truth for #824 (writer + reader, v3.23.0), #849/#1076 (picker UI, v3.25.0), and #1042's conformance tests. Read when touching `ipam_backup_logical_*` or `ipam_restore_logical_*`. |
 
 ---
 
@@ -183,7 +184,7 @@ Migrations live in `migrations.php` as an associative array of version string �
 
 **When adding a new version:** add the migration closure, bump `version.php`, update `CHANGELOG.md` (keepachangelog format).
 
-> **Current shipped version: v3.22.3.** `Creating new data tables in post-v4.0.0 releases` is **forward-looking** (applies to any migration whose version sorts after v4.0.0, including v4.0.x patches) — ignore it for all current v3.x work. `Modifying the schema (multi-engine, from v2.9.0 onward)` and `Runtime dependencies` are **currently active** rules (apply to v2.9.0+ including the current v3.22.3).
+> **Current shipped version: v3.23.0.** `Creating new data tables in post-v4.0.0 releases` is **forward-looking** (applies to any migration whose version sorts after v4.0.0, including v4.0.x patches) — ignore it for all current v3.x work. `Modifying the schema (multi-engine, from v2.9.0 onward)` and `Runtime dependencies` are **currently active** rules (apply to v2.9.0+ including the current v3.23.0).
 
 ### Multi-tenancy (v4.0.0 — forward-looking)
 
