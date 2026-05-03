@@ -3545,6 +3545,101 @@ function run_demo_reset_if_due(PDO $db): void
 
 /* ---------------- Database Backups ---------------- */
 
+/**
+ * v3.23.0 #1058 — one-shot legacy → unified migration helper.
+ *
+ * If `backup.enabled = true` is set on first v3.23.0 page load, create a
+ * backup_destinations row of type='local' from `backup.dir` plus a
+ * backup_schedules row from `backup.frequency` and `backup.retention`.
+ * Marks the install as migrated by setting the
+ * `backup.legacy_migrated_v3_23_0` sentinel so subsequent invocations are
+ * no-ops. The legacy `backup.*` keys are NOT cleared — they remain readable
+ * for one release as a fallback, then drop in v3.26.0.
+ *
+ * Called from init.php on every page load. The cost when not due is one
+ * setting fetch (cached per-request) plus one short-circuit return.
+ *
+ * Idempotent: re-running after the sentinel is set, or with a destination
+ * already present for the legacy directory, is a no-op.
+ */
+function ipam_legacy_backup_migrate_if_due(PDO $db): void
+{
+    if ((bool) ipam_setting('backup.legacy_migrated_v3_23_0')) {
+        return;
+    }
+    if (!(bool) ipam_setting('backup.enabled')) {
+        // Migration only runs when legacy backups were actually in use.
+        // Stamp the sentinel anyway so installs that never enabled legacy
+        // backups don't pay the lookup cost on every page load.
+        try {
+            ipam_setting_set($db, 'backup.legacy_migrated_v3_23_0', true);
+        } catch (\Throwable $e) {
+            error_log('[backup] legacy migration sentinel failed: ' . $e->getMessage());
+        }
+        return;
+    }
+
+    try {
+        $ownTx = !$db->inTransaction();
+        if ($ownTx) {
+            $db->beginTransaction();
+        }
+
+        $dir = trim(to_str(ipam_setting('backup.dir')));
+        if ($dir === '') {
+            $dir = __DIR__ . '/data/backups';
+        }
+        $configJson = json_encode(['path' => $dir]);
+        if (!is_string($configJson)) $configJson = '{}';
+
+        $name = 'Legacy local backups';
+        $ins = $db->prepare(
+            "INSERT INTO backup_destinations (name, type, config, encrypt, is_active)
+             VALUES (:n, 'local', :cfg, 0, 1)"
+        );
+        $ins->execute([':n' => $name, ':cfg' => $configJson]);
+        $destId = ipam_last_insert_id($db, 'backup_destinations');
+
+        $legacyFreq = strtolower(trim(to_str(ipam_setting('backup.frequency'))));
+        $legacyRet  = max(1, to_int(ipam_setting('backup.retention')));
+        $freq = $legacyFreq === 'weekly' ? 'weekly' : 'daily';
+        $rd   = $freq === 'daily'  ? $legacyRet : 7;
+        $rw   = $freq === 'weekly' ? $legacyRet : 0;
+        $dow  = $freq === 'weekly' ? 0 : null;  // Sunday for weekly
+
+        $sched = $db->prepare(
+            "INSERT INTO backup_schedules
+                (destination_id, frequency, time_of_day, day_of_week,
+                 retention_daily, retention_weekly, is_active)
+             VALUES (:d, :f, '02:00', :dow, :rd, :rw, 1)"
+        );
+        $sched->bindValue(':d',   $destId, PDO::PARAM_INT);
+        $sched->bindValue(':f',   $freq, PDO::PARAM_STR);
+        $sched->bindValue(':dow', $dow, $dow === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+        $sched->bindValue(':rd',  $rd, PDO::PARAM_INT);
+        $sched->bindValue(':rw',  $rw, PDO::PARAM_INT);
+        $sched->execute();
+
+        ipam_setting_set($db, 'backup.legacy_migrated_v3_23_0', true);
+
+        try {
+            audit($db, 'backup.legacy_migrated', 'destination', $destId,
+                  "freq=$freq retention=$legacyRet dir=" . substr($dir, 0, 200));
+        } catch (\Throwable) {
+            // best-effort
+        }
+
+        if ($ownTx && $db->inTransaction()) {
+            $db->commit();
+        }
+    } catch (\Throwable $e) {
+        if ($db->inTransaction()) $db->rollBack();
+        // Lazy-housekeeping pattern: never crash the page on a best-effort
+        // background task. Operator can re-trigger by clearing the sentinel.
+        error_log('[backup] legacy migration failed: ' . $e->getMessage());
+    }
+}
+
 /** @param IpamConfig $config */
 function backup_dir(array $config): string
 {

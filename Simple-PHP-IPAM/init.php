@@ -338,6 +338,11 @@ if (!empty($config['demo_mode']['enabled'])
     }
 }
 
+// v3.23.0 #1058: one-shot migration from the legacy backup.* settings to a
+// unified Local destination + schedule. Idempotent — sentinel-guarded so
+// the cost on subsequent loads is one cached setting fetch.
+ipam_legacy_backup_migrate_if_due($db);
+
 // Run database backup if due (configurable frequency)
 if ((bool)ipam_setting('backup.enabled')) {
     run_db_backup_if_due($db, $config);
