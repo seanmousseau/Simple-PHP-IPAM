@@ -389,7 +389,7 @@ Captured from Sean's note + Claude's audit. Each entry is a candidate issue but 
 | F18 | PDO `IPAMBKL1` backend — dump + restore, engine-agnostic, schema_version compat (v3.23.0 #824; absorbs former F19 dump engine per 2026-05-03 reconciliation) | §5 | P1 |
 | F19 | Wire `ipam_backup_run()` to dispatch on picker-chosen `backup_type` (v3.25.0 #849 — surfacing only, dump engine is in F18) | §5 | P1 |
 | ~~F20~~ | ~~Backup type selector: `Database` vs `Data` (rows-only)~~ | ~~§2.1~~ | **DROPPED 2026-04-29** — §2.1.1 two-type model (Database / Logical) is sufficient; CSV/JSON export from `db_tools.php` covers rows-only use case. Resolved as not needed; possible misalignment on original proposal. |
-| F21 | Notifications config — global preference vs per-schedule | §2.4 | OPEN |
+| ~~F21~~ | ~~Notifications config — global preference vs per-schedule~~ | ~~§2.4~~ | **LANDED v3.23.0** — see §C row + #825. Per-schedule overrides editable on `backup_admin.php?tab=notifications`. |
 | F22 | "Default backup destination" tenant policy (local-disabled in v4.0.0) | §2.3 | v4.0.0 |
 | F23 | Stale-cron / scanner-blocks-backup architectural fix (cron task ordering — backup before scanner, or scanner backgrounded) | release-session find | P1 |
 | F24 | "Verify all backups" bulk action on a destination | new (Claude) | P2 |
@@ -772,7 +772,7 @@ Each milestone is now ≤16 items, single-theme. Less context-switching mid-rele
 | ID | Type | Title | Cur | Sugg | Pri | Notes |
 |---|---|---|---|---|---|---|
 | F18 | Func | PDO `IPAMBKL1` backend — dump + restore, engine-agnostic, schema_version compat | — | v3.23 | P1 | Anchor. No operator UI in v3.23.0 (backend soaks via tests; UI in v3.25.0 #1076). Absorbs former F19 (DUMP engine) per 2026-05-03 reconciliation. |
-| F21 | Func | Notifications config resolution (global + per-sched) | — | v3.23 | P1 | Builds on B-P0-2 |
+| ~~F21~~ | ~~Func~~ | ~~Notifications config resolution (global + per-sched)~~ | ~~—~~ | ~~v3.23~~ | ~~P1~~ | **Landed** — schema migration `3.23.0-notify-overrides`, resolver helpers, dispatcher wiring, and Notifications-tab UI all merged on `feat/v3.23.0` (commits `1bff0a7`, `408ff2f`, `15f8d12`, `3ffcd2c`). #825. |
 | B-P1-8 | Audit | Split `ipam_backup_apply_retention` into compute/apply | — | v3.23 | P1 | Pre-req for tests |
 | B-P1-21 | Audit | `ipam_backup_next_run_at` edge cases (T12 first) | — | v3.23 | P1 | Tests then refactor |
 | B-P1-15 | Audit | SQLite retention sort by mtime, not lex | — | v3.23 | P1 | After legacy retires |
@@ -783,7 +783,7 @@ Each milestone is now ≤16 items, single-theme. Less context-switching mid-rele
 | T2 | Test | OpenSSH-server sidecar for SFTP coverage | — | v3.23 | P0 | Test debt |
 | T3 | Test | Local destination CI coverage | — | v3.23 | P0 | Test debt |
 | T4 | Test | Restore-to-empty-DB row-count parity | — | v3.23 | P0 | All 3 engines |
-| F-LEGACY-DEPR | Func | Deprecate Settings → Data & Maintenance → Backup; migrate `backup.enabled=true` config to a Local destination + schedule on first page load; make Notifications tab editable | #1058 | v3.23 | P1 | Surfaced post-v3.21.0 ship: §1 row at line 19 documents the gap but no F-item existed. Pairs with F21 (Notifications config resolution). Pre-req for B-P1-15 ("After legacy retires"). Hard removal of `run_db_backup_if_due` + `backup.*` keys is tracked in v3.26.0 #1059. |
+| ~~F-LEGACY-DEPR~~ | ~~Func~~ | ~~Deprecate Settings → Data & Maintenance → Backup; migrate `backup.enabled=true` config to a Local destination + schedule on first page load; make Notifications tab editable~~ | ~~#1058~~ | ~~v3.23~~ | ~~P1~~ | **Landed** — deprecation banner on Settings, idempotent `ipam_legacy_backup_migrate_if_due()` helper hooked into `init.php`, Notifications tab now editable in-place per F21. Commits `352d137`, `aa3a14d`. Hard removal of `run_db_backup_if_due` + `backup.*` keys tracked separately in v3.26.0 #1059. |
 
 **v3.23.0 total: ~13 items.** Mostly mechanical cleanups; F18 is the visible feature.
 
