@@ -81,7 +81,7 @@ minio_mc_image="${IPAM_TEST_MINIO_MC_IMAGE:-minio/mc:RELEASE.2025-08-13T08-35-41
 # testing/playwright/fixtures/sftp/ — same secret on every run, never
 # protects real data. Pinned tag for the same layer-cache reasons as MinIO.
 sftp_name="${IPAM_TEST_SFTP_NAME:-ipam-pw-sftp}"
-sftp_image="${IPAM_TEST_SFTP_IMAGE:-linuxserver/openssh-server:9.7_p1-r4-ls190}"
+sftp_image="${IPAM_TEST_SFTP_IMAGE:-linuxserver/openssh-server:10.2_p1-r0-ls223}"
 sftp_user="${IPAM_TEST_SFTP_USER:-ipam}"
 sftp_pass="${IPAM_TEST_SFTP_PASS:-ipam-sftp-fixture-pass}"
 sftp_remote_dir="${IPAM_TEST_SFTP_DIR:-/config/backups}"
@@ -341,13 +341,12 @@ docker run -d --rm --name "$sftp_name" \
 
 echo "bootstrap-app: waiting for SFTP ready (up to 60s)"
 for i in $(seq 1 30); do
-    # The image listens on :2222 internally by default; we don't care
-    # about the port here, only that sshd is accepting connections from
-    # within the docker network.
-    if docker run --rm --network "$network" \
-        --entrypoint /bin/sh \
-        "$sftp_image" \
-        -ec 'nc -z sftp 2222 2>/dev/null' >/dev/null 2>&1; then
+    # The image listens on :2222 internally by default. We probe sshd from
+    # a throwaway alpine container on the same docker network — alpine is
+    # already present in the runner from earlier MinIO bucket-creation step
+    # buffer-cache, and reliably ships nc.
+    if docker run --rm --network "$network" alpine:3 \
+        sh -c 'nc -z sftp 2222' >/dev/null 2>&1; then
         echo "bootstrap-app: SFTP ready"
         break
     fi
