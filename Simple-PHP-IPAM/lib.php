@@ -3984,26 +3984,40 @@ function backup_run_dump(array $cmd, array $env, string $destPath, int $timeoutS
 {
     $errorOut = '';
     $pipes = [];
+    $bin = $cmd[0] ?? 'dump';
     // $cmd is built from admin config values only (never user input); array-form
     // proc_open bypasses the shell entirely so no injection is possible.
-    $proc  = proc_open($cmd, // nosemgrep
-        [
-            0 => ['pipe', 'r'],
-            1 => ['file', $destPath, 'w'],
-            2 => ['pipe', 'w'],
-        ],
-        $pipes,
-        null,
-        $env
-    );
+    //
+    // PHP 8+ raises Error (not returns false) when an internal function appears
+    // in disable_functions, so we catch Throwable and route both failure modes
+    // through the same diagnostic surface — otherwise a hardened php.ini with
+    // proc_open disabled would skip $errorOut population entirely and leave
+    // operators with an empty backup_runs.error_message.
+    try {
+        $proc = proc_open($cmd, // nosemgrep
+            [
+                0 => ['pipe', 'r'],
+                1 => ['file', $destPath, 'w'],
+                2 => ['pipe', 'w'],
+            ],
+            $pipes,
+            null,
+            $env
+        );
+    } catch (Throwable $e) {
+        $errorOut = 'proc_open threw ' . get_class($e) . ' starting ' . $bin . ': ' . $e->getMessage();
+        error_log('backup_run_dump: ' . $errorOut);
+        @unlink($destPath); // nosemgrep: php.lang.security.unlink-use.unlink-use
+        return false;
+    }
     if (!is_resource($proc)) {
         // Most likely cause: dump binary not on $PATH in the SAPI's restricted
-        // environment, or proc_open is disabled. Surface the binary name so an
-        // operator looking at backup_runs.error_message immediately sees
-        // "mysqldump not executable" rather than an empty diagnostic.
-        $bin = $cmd[0] ?? 'dump';
+        // environment. Surface the binary name so an operator looking at
+        // backup_runs.error_message immediately sees "mysqldump not executable"
+        // rather than an empty diagnostic.
         $errorOut = 'proc_open failed to start ' . $bin . ' (not on PATH or disabled)';
         error_log('backup_run_dump: ' . $errorOut);
+        @unlink($destPath); // nosemgrep: php.lang.security.unlink-use.unlink-use
         return false;
     }
 

@@ -511,12 +511,19 @@ function ipam_mysql_client_flavor(string $binary = 'mysqldump'): string
     }
     $pipes = [];
     // Constant array-form invocation; bypasses the shell entirely so no
-    // injection surface exists.
-    $proc = proc_open( // nosemgrep
-        [$binary, '--version'],
-        [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
-        $pipes
-    );
+    // injection surface exists. PHP 8+ raises Error (not returns false) when
+    // proc_open is in disable_functions, so we treat both failure modes as
+    // "unknown flavor" — call sites then omit the SSL flag and the operator
+    // sees the real cause via the surfaced stderr from backup_run_dump.
+    try {
+        $proc = proc_open( // nosemgrep
+            [$binary, '--version'],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes
+        );
+    } catch (Throwable $e) {
+        return $cache[$binary] = 'unknown';
+    }
     if (!is_resource($proc)) {
         return $cache[$binary] = 'unknown';
     }
