@@ -338,8 +338,22 @@ if (!empty($config['demo_mode']['enabled'])
     }
 }
 
-// Run database backup if due (configurable frequency)
-if ((bool)ipam_setting('backup.enabled')) {
+// v3.23.0 #1058: one-shot migration from the legacy backup.* settings to a
+// unified Local destination + schedule. Idempotent — sentinel-guarded so
+// the cost on subsequent loads is one cached setting fetch.
+ipam_legacy_backup_migrate_if_due($db);
+
+// Run the legacy v3.7 filesystem-only runner ONLY on installs that haven't
+// been migrated to the unified surface (#1058 CR). Once
+// ipam_legacy_backup_migrate_if_due() has materialised a backup_destinations
+// row + backup_schedules row, the unified cron path takes over and running
+// the legacy runner against the same backup.* config would produce
+// duplicate dumps, double notifications, and conflicting retention churn.
+// The legacy keys themselves stay readable as a fallback per #1058's
+// acceptance criteria; the sentinel just gates the fire-path.
+if ((bool)ipam_setting('backup.enabled')
+    && !(bool)ipam_setting('backup.legacy_migrated_v3_23_0')
+) {
     run_db_backup_if_due($db, $config);
 }
 

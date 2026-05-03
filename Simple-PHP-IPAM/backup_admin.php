@@ -107,6 +107,65 @@ if ($activeTab === 'destinations') {
         }
     }
 
+    if ($_SERVER['REQUEST_METHOD'] === 'POST'
+        && to_str($_POST['action'] ?? '') === 'save_schedule_notify_overrides'
+    ) {
+        // Per-schedule overrides: $_POST['sched'][$id] = [
+        //   'override'   => '1' | absent,
+        //   'failure'    => 'inherit' | 'on' | 'off',
+        //   'success'    => 'inherit' | 'on' | 'off',
+        //   'recipients' => string (empty = inherit),
+        // ]
+        $schedRaw = $_POST['sched'] ?? [];
+        $schedInput = is_array($schedRaw) ? $schedRaw : [];
+        $missingSchedules = [];
+        try {
+            $db->beginTransaction();
+            $upd = $db->prepare(
+                "UPDATE backup_schedules
+                    SET notify_override   = :ov,
+                        notify_on_failure = :nf,
+                        notify_on_success = :ns,
+                        notify_recipients = :nr
+                  WHERE id = :id"
+            );
+            foreach ($schedInput as $rawId => $rawFields) {
+                $sid = is_numeric($rawId) ? (int) $rawId : 0;
+                if ($sid <= 0 || !is_array($rawFields)) continue;
+                $override = isset($rawFields['override']) ? 1 : 0;
+                $nf = ipam_admin_notify_tristate_to_db($rawFields['failure']    ?? 'inherit');
+                $ns = ipam_admin_notify_tristate_to_db($rawFields['success']    ?? 'inherit');
+                $nrRaw = is_string($rawFields['recipients'] ?? null) ? trim((string) $rawFields['recipients']) : '';
+                $nr = $nrRaw === '' ? null : $nrRaw;
+                $upd->bindValue(':ov', $override, PDO::PARAM_INT);
+                $upd->bindValue(':nf', $nf, $nf === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                $upd->bindValue(':ns', $ns, $ns === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+                $upd->bindValue(':nr', $nr, $nr === null ? PDO::PARAM_NULL : PDO::PARAM_STR);
+                $upd->bindValue(':id', $sid, PDO::PARAM_INT);
+                $upd->execute();
+                if ($upd->rowCount() === 0) {
+                    // Schedule deleted between page render and form submit.
+                    // Surface a partial-success notice instead of silently
+                    // claiming everything saved (CR feedback PR #1090).
+                    $missingSchedules[] = $sid;
+                }
+            }
+            $db->commit();
+            if (!empty($missingSchedules)) {
+                $notifyFlash    = 'Saved overrides for ' . (count($schedInput) - count($missingSchedules))
+                                  . ' schedule(s); ' . count($missingSchedules)
+                                  . ' schedule(s) no longer exist (id=' . implode(', ', $missingSchedules) . ').';
+                $notifyFlashKind = 'warning';
+            } else {
+                $notifyFlash = 'Per-schedule notification overrides saved.';
+            }
+        } catch (\Throwable $e) {
+            if ($db->inTransaction()) $db->rollBack();
+            $notifyFlash = 'Failed to save per-schedule overrides: ' . $e->getMessage();
+            $notifyFlashKind = 'danger';
+        }
+    }
+
     $events = [];
     foreach ($notifyEventKeys as $evKey) {
         $events[$evKey] = (bool) ipam_setting('backup.notify_' . $evKey);
@@ -136,12 +195,41 @@ if ($activeTab === 'destinations') {
         }
     }
 
+    // Schedule list with current per-schedule override state (#825 / E3b).
+    // Joined with destinations for the human-readable label.
+    $schedRows = $db->query(
+        "SELECT s.id, s.frequency, s.time_of_day, s.is_active,
+                s.notify_override, s.notify_on_failure, s.notify_on_success,
+                s.notify_recipients,
+                d.name AS destination_name
+           FROM backup_schedules s
+           JOIN backup_destinations d ON d.id = s.destination_id
+          ORDER BY d.name, s.id"
+    );
+    $scheduleOverrides = [];
+    if ($schedRows !== false) {
+        foreach ($schedRows->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $scheduleOverrides[] = [
+                'id'                => to_int($r['id'] ?? 0),
+                'destination_name'  => to_str($r['destination_name'] ?? ''),
+                'frequency'         => to_str($r['frequency'] ?? ''),
+                'time_of_day'       => to_str($r['time_of_day'] ?? ''),
+                'is_active'         => (int) ($r['is_active'] ?? 0) === 1,
+                'override'          => (int) ($r['notify_override'] ?? 0) === 1,
+                'failure_state'     => ipam_admin_notify_tristate_from_db($r['notify_on_failure'] ?? null),
+                'success_state'     => ipam_admin_notify_tristate_from_db($r['notify_on_success'] ?? null),
+                'recipients'        => to_str($r['notify_recipients'] ?? ''),
+            ];
+        }
+    }
+
     $notifyState = [
         'events'              => $events,
         'overdueGraceMinutes' => to_int(ipam_setting('backup.notify_overdue_grace_minutes')),
         'alertEmail'          => to_str(ipam_setting('alert.email') ?? ''),
         'smtpEnabled'         => (bool) ipam_setting('smtp.enabled'),
         'alertUsers'          => $alertUsers,
+        'scheduleOverrides'   => $scheduleOverrides,
         'flash'               => $notifyFlash,
         'flashKind'           => $notifyFlashKind,
     ];

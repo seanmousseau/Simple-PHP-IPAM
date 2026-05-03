@@ -505,6 +505,18 @@ These are configured via **Admin → Settings** and take effect on the next requ
 
 ---
 
+## MySQL/MariaDB credential isolation (v3.22.1+)
+
+`mysqldump` (backup) and `mysql` (restore) consume the database password through a 0600 `--defaults-extra-file` so it never appears in `/proc/<pid>/environ` or `ps eww`. The credential file is created with `chmod 0600`, written, used, and unlinked in a `try/finally` on every code path.
+
+**Edge case (v3.23.0+, #1081):** without `--no-login-paths`, the client still consults `~/.mylogin.cnf` for matching connection profiles even when `--defaults-extra-file` is passed, because login-path resolution happens *after* the extra file in the option-file precedence order. An operator with a hostile `~/.mylogin.cnf` on the app server's filesystem could substitute the password we route through the credential file.
+
+The `--no-login-paths` flag (added in MariaDB 11.4 and Oracle MySQL 8.x) instructs the client to skip `~/.mylogin.cnf` entirely. Simple PHP IPAM probes the locally-installed `mysqldump` / `mysql` once per request via `<binary> --help` and conditionally appends the flag when supported; see `ipam_mysql_client_supports_no_login_paths()` in `Simple-PHP-IPAM/lib/backup.php`.
+
+**Known limitation:** older clients (Debian 12's default `default-mysql-client` ships MariaDB 10.11) do **not** support `--no-login-paths` and the probe falls back to the v3.22.0+ behaviour: `--defaults-extra-file` only, with the same edge-case attack surface as today. Operators on those distributions should ensure no `~/.mylogin.cnf` exists for the user the web server runs as, or upgrade the MySQL/MariaDB client to a version that supports the flag.
+
+---
+
 ## Backup encryption (v3.17.0+)
 
 Encrypted backups use **AES-256-GCM** with a 12-byte random IV and a 16-byte authentication tag appended to the ciphertext. The encryption key is derived from `config.php`'s `app_secret` via HKDF-SHA256 with the info string `'ipam-v3:backup'`, so each install (with a unique `app_secret`) has a unique backup-encryption key without storing a separate per-tenant secret.

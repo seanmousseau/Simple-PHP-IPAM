@@ -113,6 +113,22 @@ The backup is left in place after a successful upgrade. You can remove it manual
 
 ## Version-specific upgrade notes
 
+### v3.23.0
+
+Backup configuration consolidates onto the unified Backup &amp; Restore admin surface. **One schema migration**, no new runtime dependencies. Standard upgrade: `bash upgrade.sh --yes <docroot>`.
+
+Highlights:
+
+- **Per-schedule notification overrides (#825).** Every backup schedule can now opt to override the global *Scheduled-backup failure* / *Scheduled-backup success* defaults and pin its own recipient CSV. Edit on `backup_admin.php?tab=notifications` &mdash; an override section appears under the global toggles. Each override field is tri-state (Inherit / On / Off) so an admin can override a subset (e.g. failure email yes, success no) while inheriting everything else. Manual-run, retention, overdue and connection-test events stay global &mdash; the scheduling concept doesn't apply to them.
+
+- **Schema migration: `3.23.0-notify-overrides`.** Adds four columns to `backup_schedules` (`notify_override`, `notify_on_failure`, `notify_on_success`, `notify_recipients`). Idempotent across SQLite / MySQL / PostgreSQL; existing schedules default to `notify_override = 0` (use global), preserving the v3.20.0 / v3.22.0 behaviour after upgrade.
+
+- **Settings &rsaquo; Data &amp; Maintenance &rsaquo; Backup is deprecated (#1058).** A banner at the top of that section now points to `backup_admin.php`. The legacy `backup.enabled` / `backup.dir` / `backup.frequency` / `backup.retention` keys remain readable as a one-release fallback &mdash; **they are scheduled for removal in v3.26.0.** Edit your destination + schedule on the unified surface from now on.
+
+- **One-shot legacy migration (#1058).** On the first v3.23.0 page load after upgrade, an install with `backup.enabled = true` automatically materialises a Local destination (named &ldquo;Legacy local backups&rdquo;) from `backup.dir` plus a schedule from `backup.frequency` and `backup.retention`. The migration is idempotent (sentinel-guarded by `backup.legacy_migrated_v3_23_0`); installs that never enabled legacy backups still get the sentinel stamped so the helper short-circuits on subsequent loads. The legacy keys are *not* cleared &mdash; they continue to drive the legacy runner until v3.26.0.
+
+- **Engine-agnostic logical restore (#824).** New `IPAMBKL1` backup format (gzipped NDJSON with abstract types) lets a backup taken on one engine restore onto another. The dispatcher in `ipam_restore_apply()` sniffs the magic bytes and routes accordingly &mdash; existing `IPAMBKP1` / `IPAMBKP2` SQL dumps still take the engine-native shell-out path. Operator-facing picker UI lands in v3.25.0; v3.23.0 ships the full backend so the format is producible and consumable on day one.
+
 ### v3.20.0
 
 Backup destinations UX + reliability polish. **No new pages, no schema migrations, no new runtime dependencies.** Standard upgrade: `bash upgrade.sh --yes <docroot>`.

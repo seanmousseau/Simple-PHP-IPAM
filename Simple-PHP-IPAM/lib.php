@@ -3545,6 +3545,192 @@ function run_demo_reset_if_due(PDO $db): void
 
 /* ---------------- Database Backups ---------------- */
 
+/**
+ * Legacy SQLite/MySQL/PostgreSQL retention prune (#828 / B-P1-15).
+ *
+ * The legacy v3.7 backup runner globs filesystem dumps named
+ * `ipam-YYYY-MM-DD-HHMMSS.{sqlite,sql}` and keeps the most recent N. The
+ * pre-#828 implementation used `rsort()` on filenames, which only matches
+ * creation order while the timestamp prefix is intact. Operator-renamed
+ * files, alternate timestamp formats, or files copied in from another
+ * install would silently become "oldest" by lex rule and get pruned first.
+ *
+ * Sort by filemtime descending so the most recent N (by actual disk
+ * timestamp) are kept regardless of filename. Best-effort — files that
+ * vanish between glob() and stat() simply sort to the end.
+ *
+ * Hard-removal of this whole legacy runner is tracked separately in
+ * v3.26.0 #1059. Until then, this helper is the correct retention policy.
+ */
+function ipam_legacy_retention_prune_by_mtime(string $glob, int $retention): void
+{
+    $files = glob($glob);
+    if (!is_array($files) || $files === []) return;
+
+    // Build [path => mtime] then sort path desc by mtime.
+    $stamped = [];
+    foreach ($files as $f) {
+        $m = @filemtime($f);
+        $stamped[$f] = $m === false ? 0 : $m;
+    }
+    arsort($stamped, SORT_NUMERIC);
+    $ordered = array_keys($stamped);
+
+    foreach (array_slice($ordered, $retention) as $old) {
+        @unlink($old); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $old is a glob() result, not user input
+    }
+}
+
+
+/**
+ * v3.23.0 #1058 — one-shot legacy → unified migration helper.
+ *
+ * If `backup.enabled = true` is set on first v3.23.0 page load, create a
+ * backup_destinations row of type='local' from `backup.dir` plus a
+ * backup_schedules row from `backup.frequency` and `backup.retention`.
+ * Marks the install as migrated by setting the
+ * `backup.legacy_migrated_v3_23_0` sentinel so subsequent invocations are
+ * no-ops. The legacy `backup.*` keys are NOT cleared — they remain readable
+ * for one release as a fallback, then drop in v3.26.0.
+ *
+ * Called from init.php on every page load. The cost when not due is one
+ * setting fetch (cached per-request) plus one short-circuit return.
+ *
+ * Idempotent: re-running after the sentinel is set, or with a destination
+ * already present for the legacy directory, is a no-op.
+ *
+ * Transaction caveat: this helper opens its own transaction iff there is
+ * none active. Callers MUST NOT invoke it inside an outer transaction —
+ * any rollback from a failed schedule INSERT would unwind the outer
+ * caller's work alongside the partial migration. init.php is the only
+ * intended entry point and runs at top-level page bootstrap (no outer tx).
+ */
+function ipam_legacy_backup_migrate_if_due(PDO $db): void
+{
+    if ((bool) ipam_setting('backup.legacy_migrated_v3_23_0')) {
+        return;
+    }
+    if (!(bool) ipam_setting('backup.enabled')) {
+        // Migration only runs when legacy backups were actually in use.
+        // Stamp the sentinel anyway so installs that never enabled legacy
+        // backups don't pay the lookup cost on every page load.
+        try {
+            ipam_setting_set($db, 'backup.legacy_migrated_v3_23_0', true);
+        } catch (\Throwable $e) {
+            error_log('[backup] legacy migration sentinel failed: ' . $e->getMessage());
+        }
+        return;
+    }
+
+    try {
+        $ownTx = !$db->inTransaction();
+        if ($ownTx) {
+            $db->beginTransaction();
+        }
+
+        // Canonicalise the legacy directory the same way backup_dir() does
+        // so a relative `backup.dir` setting (e.g. "data/backups") resolves
+        // to the absolute path the legacy runner uses. Otherwise the
+        // unified runner would target a sibling directory and operators
+        // would lose access to existing on-disk backups.
+        $dir = trim(to_str(ipam_setting('backup.dir')));
+        if ($dir === '') {
+            $dir = __DIR__ . '/data/backups';
+        } elseif (!str_starts_with($dir, '/')) {
+            $dir = __DIR__ . '/' . $dir;
+        }
+        // Resolve `..` segments without requiring the directory to exist
+        // (matches backup_dir()'s normalisation in lib.php #113).
+        $parts = [];
+        foreach (explode('/', $dir) as $segment) {
+            if ($segment === '..') { array_pop($parts); }
+            elseif ($segment !== '' && $segment !== '.') { $parts[] = $segment; }
+        }
+        $dir = '/' . implode('/', $parts);
+        $configJson = json_encode(['path' => $dir]);
+        if (!is_string($configJson)) $configJson = '{}';
+
+        // Reuse an existing local destination if one already points at the
+        // legacy directory — covers two cases: (a) a prior migration run
+        // failed before stamping the sentinel, leaving the destination row
+        // committed; (b) an admin already created the matching destination
+        // by hand. Inserting again would duplicate rows and produce two
+        // schedules pointing at the same target.
+        $findDest = $db->prepare(
+            "SELECT id FROM backup_destinations
+              WHERE type = 'local' AND config = :cfg
+              LIMIT 1"
+        );
+        $findDest->execute([':cfg' => $configJson]);
+        $existingDest = $findDest->fetch(PDO::FETCH_ASSOC);
+        if (is_array($existingDest)) {
+            $destId = to_int($existingDest['id'] ?? 0);
+        } else {
+            $name = 'Legacy local backups';
+            $ins = $db->prepare(
+                "INSERT INTO backup_destinations (name, type, config, encrypt, is_active)
+                 VALUES (:n, 'local', :cfg, 0, 1)"
+            );
+            $ins->execute([':n' => $name, ':cfg' => $configJson]);
+            $destId = ipam_last_insert_id($db, 'backup_destinations');
+        }
+
+        // Same idempotency guard for the schedule — if one already exists
+        // for this destination, skip insert. backup_schedules has UNIQUE
+        // KEY uq_backup_schedules_destination as of v3.21.0 so a second
+        // INSERT would throw; check explicitly so the audit message is
+        // clear instead of a SQL error.
+        $findSched = $db->prepare("SELECT id FROM backup_schedules WHERE destination_id = :d LIMIT 1");
+        $findSched->execute([':d' => $destId]);
+        if ($findSched->fetchColumn() !== false) {
+            // Schedule already exists — stamp sentinel and return.
+            ipam_setting_set($db, 'backup.legacy_migrated_v3_23_0', true);
+            if ($ownTx && $db->inTransaction()) {
+                $db->commit();
+            }
+            return;
+        }
+
+        $legacyFreq = strtolower(trim(to_str(ipam_setting('backup.frequency'))));
+        $legacyRet  = max(1, to_int(ipam_setting('backup.retention')));
+        $freq = $legacyFreq === 'weekly' ? 'weekly' : 'daily';
+        $rd   = $freq === 'daily'  ? $legacyRet : 7;
+        $rw   = $freq === 'weekly' ? $legacyRet : 0;
+        $dow  = $freq === 'weekly' ? 0 : null;  // Sunday for weekly
+
+        $sched = $db->prepare(
+            "INSERT INTO backup_schedules
+                (destination_id, frequency, time_of_day, day_of_week,
+                 retention_daily, retention_weekly, is_active)
+             VALUES (:d, :f, '02:00', :dow, :rd, :rw, 1)"
+        );
+        $sched->bindValue(':d',   $destId, PDO::PARAM_INT);
+        $sched->bindValue(':f',   $freq, PDO::PARAM_STR);
+        $sched->bindValue(':dow', $dow, $dow === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
+        $sched->bindValue(':rd',  $rd, PDO::PARAM_INT);
+        $sched->bindValue(':rw',  $rw, PDO::PARAM_INT);
+        $sched->execute();
+
+        ipam_setting_set($db, 'backup.legacy_migrated_v3_23_0', true);
+
+        try {
+            audit($db, 'backup.legacy_migrated', 'destination', $destId,
+                  "freq=$freq retention=$legacyRet dir=" . substr($dir, 0, 200));
+        } catch (\Throwable) {
+            // best-effort
+        }
+
+        if ($ownTx && $db->inTransaction()) {
+            $db->commit();
+        }
+    } catch (\Throwable $e) {
+        if ($db->inTransaction()) $db->rollBack();
+        // Lazy-housekeeping pattern: never crash the page on a best-effort
+        // background task. Operator can re-trigger by clearing the sentinel.
+        error_log('[backup] legacy migration failed: ' . $e->getMessage());
+    }
+}
+
 /** @param IpamConfig $config */
 function backup_dir(array $config): string
 {
@@ -3749,14 +3935,8 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             backup_runs_insert_cli($db, basename($dest), $size, $sha256,
                 $startedAt, date('Y-m-d H:i:s'), 'success');
 
-            // Prune old SQLite backups
-            $files = glob($dir . '/ipam-*.sqlite');
-            if (is_array($files)) {
-                rsort($files);
-                foreach (array_slice($files, $retention) as $old) {
-                    @unlink($old); // nosemgrep: php.lang.security.unlink-use.unlink-use
-                }
-            }
+            // Prune old SQLite backups by mtime (#828).
+            ipam_legacy_retention_prune_by_mtime($dir . '/ipam-*.sqlite', $retention);
             $wrote = true;
 
         } elseif ($driver === 'mysql') {
@@ -3776,12 +3956,16 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             // The file MUST be unlinked on every exit path below.
             $credFile = ipam_backup_write_mysql_defaults_file($pass);
             // --defaults-extra-file MUST be the first mysqldump argument.
-            // (--no-login-paths AND --ssl-mode for Oracle MySQL — both
-            // follow-ups tracked in #1081, gated on a probe helper.)
+            // v3.23.0 #1081: --no-login-paths emitted when the client
+            // supports it (MariaDB 11.4+ / Oracle MySQL 8.x). Older clients
+            // reject the flag and the dump fails immediately, so we probe.
             // v3.22.2: SSL verify flag is flavor-aware. See
             // ipam_mysql_ssl_verify_args() in lib/backup.php for the full
             // MariaDB-vs-Oracle-MySQL dialect rationale.
             $cmd = ['mysqldump', '--defaults-extra-file=' . $credFile];
+            if (ipam_mysql_client_supports_no_login_paths('mysqldump')) {
+                $cmd[] = '--no-login-paths';
+            }
             foreach (ipam_mysql_ssl_verify_args($verifySsl) as $sslArg) {
                 $cmd[] = $sslArg;
             }
@@ -3821,13 +4005,8 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             backup_runs_insert_cli($db, basename($dest), $size, $sha256,
                 $startedAt, date('Y-m-d H:i:s'), 'success');
 
-            $files = glob($dir . '/ipam-*.sql');
-            if (is_array($files)) {
-                rsort($files);
-                foreach (array_slice($files, $retention) as $old) {
-                    @unlink($old); // nosemgrep: php.lang.security.unlink-use.unlink-use
-                }
-            }
+            // Prune old engine-native dumps by mtime (#828).
+            ipam_legacy_retention_prune_by_mtime($dir . '/ipam-*.sql', $retention);
             $wrote = true;
 
         } elseif ($driver === 'pgsql') {
@@ -3873,13 +4052,8 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             backup_runs_insert_cli($db, basename($dest), $size, $sha256,
                 $startedAt, date('Y-m-d H:i:s'), 'success');
 
-            $files = glob($dir . '/ipam-*.sql');
-            if (is_array($files)) {
-                rsort($files);
-                foreach (array_slice($files, $retention) as $old) {
-                    @unlink($old); // nosemgrep: php.lang.security.unlink-use.unlink-use
-                }
-            }
+            // Prune old engine-native dumps by mtime (#828).
+            ipam_legacy_retention_prune_by_mtime($dir . '/ipam-*.sql', $retention);
             $wrote = true;
         }
 
@@ -4486,11 +4660,9 @@ function backup_decrypt(string $blob, string $appSecret): string
  *        Flat list of backup records; order does not matter.
  * @param array{keep_hourly: int, keep_daily: int, keep_weekly: int, keep_monthly: int} $config
  *        Retention counts per tier. A count of 0 disables that tier entirely.
- * @param int|null $nowEpoch  UTC epoch for the "current time" (injectable for tests).
- *                            When null, uses time().
  * @return int[]  IDs from $backups that should be deleted.
  */
-function ipam_gfs_select_for_deletion(array $backups, array $config, ?int $nowEpoch = null): array
+function ipam_gfs_select_for_deletion(array $backups, array $config): array
 {
     if (count($backups) === 0) {
         return [];
@@ -4618,32 +4790,30 @@ function ipam_gfs_select_for_deletion(array $backups, array $config, ?int $nowEp
 }
 
 /**
- * DB-aware GFS retention wrapper for a single backup destination.
+ * Compute the list of backup_runs IDs to prune for a single destination.
  *
- * Fetches the destination's GFS schedule config from backup_schedules, fetches
- * all successful backup_runs rows for the destination, calls
- * ipam_gfs_select_for_deletion() to determine which rows to prune, updates
- * each pruned row's status to 'retention_pruned', audits the operation, and
- * returns the count of rows pruned.
+ * Pure-ish: reads from backup_destinations + backup_schedules + backup_runs,
+ * but performs no mutations. Wraps ipam_gfs_select_for_deletion() with the
+ * DB plumbing — schedule resolution (with conservative defaults if absent),
+ * eligible-row filtering (status='success', is_protected=0), and slot
+ * assignment via the GFS selector. Testable in isolation against an
+ * in-memory SQLite.
  *
  * Reads from backup_runs (v3.21.0 #799 §A1; replaces backup_log).
  *
  * @param PDO $db             Application database connection.
  * @param int $destinationId  ID of the backup_destinations row.
- * @param int|null $nowEpoch  UTC epoch for the "current time" passed to the GFS
- *                            selector. When null, the selector uses time(). Tests
- *                            and the cron tick can pin this to a specific epoch
- *                            so retention does not drift between request entry
- *                            and the actual prune.
- * @return int                Count of backup_runs rows marked as retention_pruned.
+ * @return int[]              backup_runs IDs that GFS retention selects for deletion.
+ *                            Empty array means "nothing to prune" (no candidates,
+ *                            below capacity, or all candidates protected).
+ * @throws \InvalidArgumentException  if the destination row does not exist.
  */
-function ipam_backup_apply_retention(PDO $db, int $destinationId, ?int $nowEpoch = null): int
+function ipam_retention_compute_deletions(PDO $db, int $destinationId): array
 {
-    // ── 1. Fetch destination info (type needed for future client dispatch) ──────
-    $destStmt = $db->prepare("SELECT id, name, type FROM backup_destinations WHERE id = :id");
+    // ── 1. Fetch destination info — required to validate the ID ──────────────
+    $destStmt = $db->prepare("SELECT id FROM backup_destinations WHERE id = :id");
     $destStmt->execute([':id' => $destinationId]);
-    $dest = $destStmt->fetch();
-    if (!is_array($dest)) {
+    if (!is_array($destStmt->fetch())) {
         throw new \InvalidArgumentException("backup_destinations row not found: id={$destinationId}");
     }
 
@@ -4675,14 +4845,14 @@ function ipam_backup_apply_retention(PDO $db, int $destinationId, ?int $nowEpoch
         ];
     }
 
-    // ── 3. Fetch successful backup_runs rows for this destination ───────────
+    // ── 3. Fetch successful backup_runs rows for this destination ────────────
     // backup_runs uses started_at for GFS bucketing (no created_at column).
     // CR feedback PR #1054: exclude is_protected=1 rows from the prune set.
     // Retention must respect the manual protection flag the same way the UI
     // delete-action does, otherwise auto-prune can wipe a row the operator
     // explicitly protected.
     $logStmt = $db->prepare(
-        "SELECT id, filename, started_at AS created_at
+        "SELECT id, started_at AS created_at
          FROM backup_runs
          WHERE destination_id = :did
            AND status = 'success'
@@ -4693,56 +4863,57 @@ function ipam_backup_apply_retention(PDO $db, int $destinationId, ?int $nowEpoch
     $rows = $logStmt->fetchAll();
 
     if (count($rows) === 0) {
+        return [];
+    }
+
+    return ipam_gfs_select_for_deletion($rows, $gfsConfig);
+}
+
+/**
+ * Apply a precomputed deletion list: remote-delete each file via $client, and
+ * mark each successfully-deleted backup_runs row as 'retention_pruned'. I/O only.
+ *
+ * Failure model: the row is marked pruned ONLY if the remote delete succeeded
+ * (or the client is null and the row had no remote object). A remote-delete
+ * failure leaves the row at status='success' so the next retention pass will
+ * try again. Exceptions from the client are caught and logged; this function
+ * never throws.
+ *
+ * Audit: a single 'backup.retention_pruned' event is written when count > 0,
+ * with details "count=N destination=ID".
+ *
+ * @param PDO                        $db             Application database connection.
+ * @param BackupClientInterface|null $client         Transport client for the
+ *                                                   destination, or null if no
+ *                                                   client could be constructed
+ *                                                   (rows then stay live).
+ * @param int                        $destinationId  Destination ID — used in
+ *                                                   audit details only.
+ * @param int[]                      $ids            backup_runs IDs to prune.
+ * @return int                                       Count of rows actually
+ *                                                   marked retention_pruned.
+ */
+function ipam_retention_apply_deletions(PDO $db, ?BackupClientInterface $client, int $destinationId, array $ids): int
+{
+    if (count($ids) === 0) {
         return 0;
     }
 
-    // ── 4. Determine which IDs to prune ───────────────────────────────────────
-    $toDelete = ipam_gfs_select_for_deletion($rows, $gfsConfig, $nowEpoch);
-
-    if (count($toDelete) === 0) {
-        return 0;
-    }
-
-    // Index rows by id for filename lookup
+    // Fetch filenames for the IDs we'll attempt to delete remotely.
+    $placeholders = implode(',', array_fill(0, count($ids), '?'));
+    $rowStmt = $db->prepare(
+        "SELECT id, filename FROM backup_runs WHERE id IN ($placeholders)"
+    );
+    $rowStmt->execute(array_map('intval', $ids));
     $rowById = [];
-    foreach ($rows as $r) {
+    foreach ($rowStmt->fetchAll() as $r) {
         if (is_array($r) && isset($r['id']) && is_numeric($r['id'])) {
             $rowById[(int) $r['id']] = $r;
         }
     }
 
-    // Build a client for the destination so we can actually delete remote files.
-    $cfgJson = '';
-    $destStmt2 = $db->prepare("SELECT config FROM backup_destinations WHERE id = :id");
-    $destStmt2->execute([':id' => $destinationId]);
-    $cfgRow = $destStmt2->fetch();
-    if (is_array($cfgRow) && is_string($cfgRow['config'] ?? null)) {
-        $cfgJson = $cfgRow['config'];
-    }
-    $cfgArr = json_decode($cfgJson, true);
-    $typedCfg = [];
-    if (is_array($cfgArr)) {
-        foreach ($cfgArr as $k => $v) {
-            if (is_string($k)) $typedCfg[$k] = $v;
-        }
-    }
-    $client = null;
-    try {
-        $type = is_string($dest['type'] ?? null) ? $dest['type'] : '';
-        $client = match ($type) {
-            's3'    => new S3Client($typedCfg),
-            'sftp'  => new SftpClient($typedCfg),
-            'local' => new LocalBackupClient($typedCfg),
-            default => null,
-        };
-    } catch (\Throwable $e) {
-        error_log('[ipam_backup_apply_retention] cannot construct client: ' . $e->getMessage());
-        $client = null;
-    }
-
-    // ── 5. For each ID: attempt remote delete; mark DB row ONLY if remote delete succeeded ──
     $pruned = 0;
-    foreach ($toDelete as $logId) {
+    foreach ($ids as $logId) {
         $row = $rowById[(int) $logId] ?? null;
         $filename = is_array($row) && is_string($row['filename'] ?? null) ? $row['filename'] : '';
         $remoteDeleted = false;
@@ -4754,14 +4925,12 @@ function ipam_backup_apply_retention(PDO $db, int $destinationId, ?int $nowEpoch
                 $client->delete($filename);
                 $remoteDeleted = true;
             } catch (\Throwable $e) {
-                error_log('[ipam_backup_apply_retention] remote delete failed for log_id=' . $logId . ' file=' . $filename . ': ' . $e->getMessage());
+                error_log('[ipam_retention_apply_deletions] remote delete failed for log_id=' . $logId . ' file=' . $filename . ': ' . $e->getMessage());
                 $remoteDeleted = false;
             }
         }
 
         if (!$remoteDeleted) {
-            // Do NOT mark this row as retention_pruned — the remote object is still there.
-            // Leaving the row at status='success' so the next retention pass will try again.
             continue;
         }
 
@@ -4771,11 +4940,10 @@ function ipam_backup_apply_retention(PDO $db, int $destinationId, ?int $nowEpoch
             )->execute([':id' => $logId]);
             $pruned++;
         } catch (\Exception $e) {
-            error_log('[ipam_backup_apply_retention] failed to mark log_id=' . $logId . ': ' . $e->getMessage());
+            error_log('[ipam_retention_apply_deletions] failed to mark log_id=' . $logId . ': ' . $e->getMessage());
         }
     }
 
-    // ── 6. Audit ──────────────────────────────────────────────────────────────
     if ($pruned > 0) {
         // Matches the rest of the destinations.* / backup.* audit events,
         // which all use entity_type='destination'. CR review on PR #1050
@@ -4793,6 +4961,69 @@ function ipam_backup_apply_retention(PDO $db, int $destinationId, ?int $nowEpoch
 }
 
 /**
+ * Build a typed BackupClientInterface for a destination row, or null if the
+ * destination type is unknown or the client constructor throws (e.g. invalid
+ * config). Errors are logged but never propagated — retention must remain
+ * resilient to one misconfigured destination.
+ */
+function ipam_retention_build_client(PDO $db, int $destinationId): ?BackupClientInterface
+{
+    $stmt = $db->prepare("SELECT type, config FROM backup_destinations WHERE id = :id");
+    $stmt->execute([':id' => $destinationId]);
+    $row = $stmt->fetch();
+    if (!is_array($row)) {
+        return null;
+    }
+
+    $type = is_string($row['type'] ?? null) ? $row['type'] : '';
+    $cfgJson = is_string($row['config'] ?? null) ? $row['config'] : '';
+    $cfgArr = json_decode($cfgJson, true);
+    $typedCfg = [];
+    if (is_array($cfgArr)) {
+        foreach ($cfgArr as $k => $v) {
+            if (is_string($k)) $typedCfg[$k] = $v;
+        }
+    }
+
+    try {
+        return match ($type) {
+            's3'    => new S3Client($typedCfg),
+            'sftp'  => new SftpClient($typedCfg),
+            'local' => new LocalBackupClient($typedCfg),
+            default => null,
+        };
+    } catch (\Throwable $e) {
+        error_log('[ipam_retention_build_client] cannot construct client for destination=' . $destinationId . ': ' . $e->getMessage());
+        return null;
+    }
+}
+
+/**
+ * DB-aware GFS retention orchestrator for a single backup destination.
+ *
+ * Thin wrapper that composes ipam_retention_compute_deletions() (pure-ish
+ * planning) → ipam_retention_build_client() (client construction) →
+ * ipam_retention_apply_deletions() (remote delete + DB mark + audit).
+ *
+ * Existing call signature is preserved (#826 refactor splits the body into
+ * three testable functions; the public surface stays the same so cron.php
+ * and lib/backup.php continue to work without changes).
+ *
+ * @param PDO $db             Application database connection.
+ * @param int $destinationId  ID of the backup_destinations row.
+ * @return int                Count of backup_runs rows marked as retention_pruned.
+ */
+function ipam_backup_apply_retention(PDO $db, int $destinationId): int
+{
+    $ids = ipam_retention_compute_deletions($db, $destinationId);
+    if (count($ids) === 0) {
+        return 0;
+    }
+    $client = ipam_retention_build_client($db, $destinationId);
+    return ipam_retention_apply_deletions($db, $client, $destinationId, $ids);
+}
+
+/**
  * Compute the next clock-aligned run time for a backup schedule.
  *
  * @param array<string,mixed> $schedule schedule row, requires 'frequency'; uses
@@ -4806,60 +5037,88 @@ function ipam_backup_next_run_at(array $schedule, ?int $nowEpoch = null): int
     $now = $nowEpoch ?? time();
     $freq = is_string($schedule['frequency'] ?? null) ? $schedule['frequency'] : 'daily';
 
-    // Parse time_of_day "HH:MM" -> [hour, minute]
-    $timeOfDay = is_string($schedule['time_of_day'] ?? null) ? $schedule['time_of_day'] : '02:00';
+    [$hour, $minute] = ipam_backup_parse_time_of_day(
+        is_string($schedule['time_of_day'] ?? null) ? $schedule['time_of_day'] : '02:00'
+    );
+
+    $utc = new DateTimeZone('UTC');
+    $nowDt = (new DateTimeImmutable('@' . $now))->setTimezone($utc);
+
+    if ($freq === 'hourly') {
+        // Next exact HH:00 strictly after now (ignores time_of_day).
+        return $nowDt
+            ->setTime((int) $nowDt->format('H'), 0, 0)
+            ->modify('+1 hour')
+            ->getTimestamp();
+    }
+
+    if ($freq === 'weekly') {
+        $schemaDow = isset($schedule['day_of_week']) && is_numeric($schedule['day_of_week'])
+            ? ((int) $schedule['day_of_week']) : 1; // Mon default
+        $phpDow = ipam_backup_dow_schema_to_php($schemaDow);
+        $currentDow = (int) $nowDt->format('N');
+        $daysAhead = ($phpDow - $currentDow + 7) % 7;
+        $candidate = $nowDt
+            ->setTime($hour, $minute, 0)
+            ->modify("+{$daysAhead} days");
+        if ($candidate->getTimestamp() <= $now) {
+            $candidate = $candidate->modify('+7 days');
+        }
+        return $candidate->getTimestamp();
+    }
+
+    if ($freq === 'monthly') {
+        $schemaDom = isset($schedule['day_of_month']) && is_numeric($schedule['day_of_month'])
+            ? ((int) $schedule['day_of_month']) : 1;
+        // Clamp 1..28 — anything higher would risk PHP's month-overflow
+        // normalisation pushing 31st in a 30-day month into the next month.
+        $targetDom = max(1, min(28, $schemaDom));
+        $candidate = $nowDt
+            ->setDate((int) $nowDt->format('Y'), (int) $nowDt->format('n'), $targetDom)
+            ->setTime($hour, $minute, 0);
+        if ($candidate->getTimestamp() <= $now) {
+            $candidate = $candidate->modify('+1 month');
+        }
+        return $candidate->getTimestamp();
+    }
+
+    // 'daily' (and any unknown frequency string) — next HH:MM today or tomorrow.
+    $candidate = $nowDt->setTime($hour, $minute, 0);
+    if ($candidate->getTimestamp() <= $now) {
+        $candidate = $candidate->modify('+1 day');
+    }
+    return $candidate->getTimestamp();
+}
+
+/**
+ * Convert a schema day_of_week (0=Sun..6=Sat, the convention used by
+ * backup_schedules.day_of_week per #690) to PHP's gmdate('N') convention
+ * (1=Mon..7=Sun). Out-of-range inputs clamp into [0, 6] before conversion.
+ *
+ * Pure helper — extracted from ipam_backup_next_run_at during #826/#827
+ * refactor so it can be tested in isolation and reused.
+ */
+function ipam_backup_dow_schema_to_php(int $schemaDow): int
+{
+    $clamped = max(0, min(6, $schemaDow));
+    return $clamped === 0 ? 7 : $clamped;
+}
+
+/**
+ * Parse a "HH:MM" string into a [hour, minute] tuple, clamping invalid hours
+ * to 02 (the project default backup hour) and invalid minutes to 0. A bare
+ * "HH" without a colon is accepted; the minute defaults to 0.
+ *
+ * @return array{0:int,1:int} [hour, minute] in the half-open ranges [0,24) and [0,60).
+ */
+function ipam_backup_parse_time_of_day(string $timeOfDay): array
+{
     $parts = explode(':', $timeOfDay);
     $hour = (int) $parts[0];
     $minute = count($parts) > 1 ? (int) $parts[1] : 0;
     if ($hour < 0 || $hour > 23) $hour = 2;
     if ($minute < 0 || $minute > 59) $minute = 0;
-
-    if ($freq === 'hourly') {
-        // Next exact HH:00 strictly after now.
-        $aligned = gmmktime((int) gmdate('H', $now) + 1, 0, 0,
-                            (int) gmdate('n', $now), (int) gmdate('j', $now), (int) gmdate('Y', $now));
-        return is_int($aligned) ? $aligned : $now + 3600;
-    }
-
-    if ($freq === 'weekly') {
-        $targetDow = isset($schedule['day_of_week']) && is_numeric($schedule['day_of_week'])
-            ? ((int) $schedule['day_of_week']) : 1; // Mon default
-        if ($targetDow < 0) $targetDow = 0;
-        if ($targetDow > 6) $targetDow = 6;
-        // PHP gmdate('N') returns 1=Mon..7=Sun. day_of_week convention: 0=Sun..6=Sat (per #690 schema).
-        // Convert: schema 0 (Sun) -> PHP 7; schema 1..6 -> PHP 1..6.
-        $phpDow = $targetDow === 0 ? 7 : $targetDow;
-        $currentDow = (int) gmdate('N', $now);
-        $daysAhead = ($phpDow - $currentDow + 7) % 7;
-        $candidate = gmmktime($hour, $minute, 0,
-                              (int) gmdate('n', $now), (int) gmdate('j', $now) + $daysAhead, (int) gmdate('Y', $now));
-        if (!is_int($candidate)) return $now + 7 * 86400;
-        if ($candidate <= $now) $candidate += 7 * 86400;
-        return $candidate;
-    }
-
-    if ($freq === 'monthly') {
-        $targetDom = isset($schedule['day_of_month']) && is_numeric($schedule['day_of_month'])
-            ? ((int) $schedule['day_of_month']) : 1;
-        if ($targetDom < 1) $targetDom = 1;
-        if ($targetDom > 28) $targetDom = 28;
-        $candidate = gmmktime($hour, $minute, 0,
-                              (int) gmdate('n', $now), $targetDom, (int) gmdate('Y', $now));
-        if (!is_int($candidate)) return $now + 30 * 86400;
-        if ($candidate <= $now) {
-            $candidate = gmmktime($hour, $minute, 0,
-                                  (int) gmdate('n', $now) + 1, $targetDom, (int) gmdate('Y', $now));
-            if (!is_int($candidate)) return $now + 30 * 86400;
-        }
-        return $candidate;
-    }
-
-    // 'daily' (and unknown) — next HH:MM today or tomorrow
-    $candidate = gmmktime($hour, $minute, 0,
-                          (int) gmdate('n', $now), (int) gmdate('j', $now), (int) gmdate('Y', $now));
-    if (!is_int($candidate)) return $now + 86400;
-    if ($candidate <= $now) $candidate += 86400;
-    return $candidate;
+    return [$hour, $minute];
 }
 
 /**
@@ -5057,7 +5316,25 @@ function ipam_backup_notify_dispatch(PDO $db, string $event, array $context): vo
         'encryption_change'        => 'backup.notify_encryption_change',
         default                    => '',
     };
-    if ($settingKey === '' || !((bool) ipam_setting($settingKey))) return;
+    if ($settingKey === '') return;
+
+    // Per-schedule overrides apply only to scheduled-flow events. The
+    // scheduling concept doesn't bind to manual / connection-test / overdue
+    // / retention-prune / encryption-change events, which stay global.
+    // schedule_id arrives via $dest['schedule_id'] (orchestrator threads it
+    // alongside triggered_by; null on manual runs).
+    $dest = is_array($context['dest'] ?? null) ? $context['dest'] : [];
+    $rawSched = $dest['schedule_id'] ?? null;
+    $scheduleId = is_int($rawSched) ? $rawSched
+        : (is_numeric($rawSched) ? (int) $rawSched : null);
+
+    $globalEnabled = (bool) ipam_setting($settingKey);
+    $shouldSend = match ($event) {
+        'failure_scheduled' => ipam_backup_notify_resolve_pref($db, $scheduleId, 'notify_on_failure', $globalEnabled),
+        'success_scheduled' => ipam_backup_notify_resolve_pref($db, $scheduleId, 'notify_on_success', $globalEnabled),
+        default             => $globalEnabled,
+    };
+    if (!$shouldSend) return;
 
     // Recipients via the same multi-user picker as every other alert.
     $recipients = ipam_resolve_alert_recipients($db);
@@ -5065,9 +5342,15 @@ function ipam_backup_notify_dispatch(PDO $db, string $event, array $context): vo
         $legacy = trim(to_str(ipam_setting('alert.email')));
         if ($legacy !== '') $recipients = [$legacy];
     }
+    // Per-schedule recipient override: applies to both scheduled-flow events
+    // (the only ones with a schedule_id in scope). For other events the
+    // resolver receives null and short-circuits to globals.
+    $applyRecipientOverride = $event === 'failure_scheduled' || $event === 'success_scheduled';
+    if ($applyRecipientOverride) {
+        $recipients = ipam_backup_notify_resolve_recipients($db, $scheduleId, $recipients);
+    }
     if ($recipients === []) return;
 
-    $dest = is_array($context['dest'] ?? null) ? $context['dest'] : [];
     $destName = is_string($dest['name'] ?? null) ? $dest['name'] : 'unknown';
 
     [$subject, $body] = match ($event) {
@@ -5140,6 +5423,121 @@ function ipam_backup_notify_dispatch(PDO $db, string $event, array $context): vo
             error_log('[backup] notify failed for ' . $to . ': ' . $e->getMessage());
         }
     }
+}
+
+/**
+ * Map the per-field UI tri-state radio value to the storage form for the
+ * notify_on_failure / notify_on_success columns:
+ *   'on'      → 1   (override-and-enable)
+ *   'off'     → 0   (override-and-suppress)
+ *   anything else (incl. 'inherit') → null
+ *
+ * Centralised here so the controller and any future API endpoint share one
+ * source of truth for the encoding.
+ */
+function ipam_admin_notify_tristate_to_db(mixed $raw): ?int
+{
+    if (!is_string($raw)) return null;
+    return match ($raw) {
+        'on'  => 1,
+        'off' => 0,
+        default => null,
+    };
+}
+
+/**
+ * Inverse of ipam_admin_notify_tristate_to_db() — picks the radio value
+ * to mark `checked` when rendering the per-schedule override form.
+ */
+function ipam_admin_notify_tristate_from_db(mixed $raw): string
+{
+    if ($raw === null) return 'inherit';
+    if (is_numeric($raw)) {
+        return ((int) $raw) === 1 ? 'on' : 'off';
+    }
+    return 'inherit';
+}
+
+/**
+ * Per-schedule resolver for a notification boolean (notify_on_failure /
+ * notify_on_success). Returns the schedule's column when notify_override = 1
+ * and the column is non-NULL; otherwise the global default.
+ *
+ * Wired in by E3 alongside the Notifications-tab UI. Pure function — only
+ * touches backup_schedules; safe to call from anywhere with a $db handle.
+ */
+function ipam_backup_notify_resolve_pref(
+    PDO $db,
+    ?int $scheduleId,
+    string $boolCol,
+    bool $globalDefault
+): bool {
+    if (!in_array($boolCol, ['notify_on_failure', 'notify_on_success'], true)) {
+        throw new InvalidArgumentException(
+            "ipam_backup_notify_resolve_pref: column must be notify_on_failure or notify_on_success, got '$boolCol'"
+        );
+    }
+    if ($scheduleId === null) {
+        return $globalDefault;
+    }
+    $sql = "SELECT notify_override, $boolCol AS pref FROM backup_schedules WHERE id = :id";
+    $stmt = $db->prepare($sql);
+    $stmt->execute([':id' => $scheduleId]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($row)) {
+        return $globalDefault;
+    }
+    $rawOverride = $row['notify_override'] ?? 0;
+    $override = is_numeric($rawOverride) && (int) $rawOverride === 1;
+    if (!$override) {
+        return $globalDefault;
+    }
+    $rawPref = $row['pref'] ?? null;
+    if ($rawPref === null || !is_numeric($rawPref)) {
+        // Override row but this particular preference left NULL — inherit global.
+        return $globalDefault;
+    }
+    return (int) $rawPref === 1;
+}
+
+/**
+ * Per-schedule resolver for notification recipients. Returns the schedule's
+ * CSV recipient list when notify_override = 1 AND notify_recipients is non-NULL
+ * AND parses to a non-empty list; otherwise the global recipients.
+ *
+ * @param  list<string> $globalRecipients
+ * @return list<string>
+ */
+function ipam_backup_notify_resolve_recipients(
+    PDO $db,
+    ?int $scheduleId,
+    array $globalRecipients
+): array {
+    if ($scheduleId === null) {
+        return $globalRecipients;
+    }
+    $stmt = $db->prepare(
+        "SELECT notify_override, notify_recipients FROM backup_schedules WHERE id = :id"
+    );
+    $stmt->execute([':id' => $scheduleId]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($row)) {
+        return $globalRecipients;
+    }
+    $rawOverride = $row['notify_override'] ?? 0;
+    $override = is_numeric($rawOverride) && (int) $rawOverride === 1;
+    if (!$override) {
+        return $globalRecipients;
+    }
+    $csv = $row['notify_recipients'] ?? null;
+    if (!is_string($csv) || trim($csv) === '') {
+        return $globalRecipients;
+    }
+    $parts = array_values(array_filter(
+        array_map('trim', explode(',', $csv)),
+        static fn($s) => $s !== ''
+    ));
+    return $parts === [] ? $globalRecipients : $parts;
 }
 
 /**

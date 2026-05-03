@@ -318,7 +318,6 @@ function ipam_backup_run_for_destination(
     array $config,
     int $destId,
     string $triggeredBy = 'manual',
-    ?int $nowEpoch = null,
     ?int $scheduleId = null
 ): array {
     // v3.22.0 #815: concurrency guard. Reap stuck rows first (so a row that
@@ -341,6 +340,10 @@ function ipam_backup_run_for_destination(
     // Thread triggered_by into the destination row so ipam_backup_notify()
     // can pick the right scheduled-vs-manual notification setting (v3.22.0).
     $dest['triggered_by'] = $triggeredBy;
+    // Thread schedule_id so the dispatcher can resolve per-schedule
+    // notify-overrides (v3.23.0 #825). Null on manual runs — the resolver
+    // treats null as "use global", which is the correct semantics.
+    $dest['schedule_id']  = $scheduleId;
     $client = ipam_backup_dest_client($dest);
 
     $tmpSql = ipam_backup_dump_to_tmp($db);
@@ -389,7 +392,7 @@ function ipam_backup_run_for_destination(
 
     $pruned = 0;
     try {
-        $pruned = ipam_backup_apply_retention($db, $destId, $nowEpoch);
+        $pruned = ipam_backup_apply_retention($db, $destId);
     } catch (Throwable $e) {
         error_log('[backup] retention failed for destination ' . $destId . ': ' . $e->getMessage());
     }
@@ -543,6 +546,54 @@ function ipam_mysql_client_flavor(string $binary = 'mysqldump'): string
 }
 
 /**
+ * Detect whether the locally-installed `mysqldump` / `mysql` accepts the
+ * `--no-login-paths` flag (#1081). The flag, added in MariaDB 11.4 and
+ * present in Oracle MySQL 8.x, makes the client skip `~/.mylogin.cnf`
+ * regardless of `--defaults-extra-file` ordering. Without it, an operator
+ * with a matching login-path entry on the app server can substitute the
+ * password we route through `--defaults-extra-file`.
+ *
+ * Probed via `<binary> --help` (the `--version` output reliably names the
+ * vendor; the help screen is the canonical place that lists supported
+ * flags). Cached per-binary for the lifetime of the request.
+ *
+ * MariaDB <11.4 (Debian 12 default = MariaDB 10.11) rejects the flag
+ * with "unknown option" and the dump fails immediately — see PR #1080
+ * v3.22.1 hotfix CR thread for the failure mode that drove this probe.
+ */
+function ipam_mysql_client_supports_no_login_paths(string $binary = 'mysqldump'): bool
+{
+    /** @var array<string,bool> $cache */
+    static $cache = [];
+    if ($binary !== 'mysqldump' && $binary !== 'mysql') {
+        return false;
+    }
+    if (isset($cache[$binary])) {
+        return $cache[$binary];
+    }
+    $pipes = [];
+    try {
+        $proc = proc_open( // nosemgrep
+            [$binary, '--help'],
+            [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes
+        );
+    } catch (Throwable) {
+        return $cache[$binary] = false;
+    }
+    if (!is_resource($proc)) {
+        return $cache[$binary] = false;
+    }
+    $stdout = stream_get_contents($pipes[1]) ?: '';
+    $stderr = stream_get_contents($pipes[2]) ?: '';
+    fclose($pipes[1]);
+    fclose($pipes[2]);
+    proc_close($proc);
+    $haystack = $stdout . "\n" . $stderr;
+    return $cache[$binary] = str_contains($haystack, '--no-login-paths');
+}
+
+/**
  * Build the SSL-related arguments for `mysqldump` / `mysql` based on the
  * detected client flavor and the operator's `backup.dump_ssl_verify` setting.
  * Returns an empty list when the safe behaviour is "emit nothing" (Oracle
@@ -623,6 +674,12 @@ function ipam_backup_native_cmd(string $driver, array $config): array
         // around the 11.x/8.4 timeframe — a hard-coded form bricks half the
         // field in either direction.
         $cmd = ['mysqldump', '--defaults-extra-file=' . $credFile];
+        // #1081: prevent ~/.mylogin.cnf from overriding our 0600 defaults
+        // file when the client supports it (MariaDB 11.4+ / Oracle MySQL 8.x).
+        // Older MariaDB rejects the flag — probe + skip silently.
+        if (ipam_mysql_client_supports_no_login_paths('mysqldump')) {
+            $cmd[] = '--no-login-paths';
+        }
         foreach (ipam_mysql_ssl_verify_args($verifySsl) as $sslArg) {
             $cmd[] = $sslArg;
         }
@@ -1077,12 +1134,23 @@ function ipam_restore_verify_signed(array $config, string $stagedPath, string $s
  * Parse a staged .sql.gz dump and report what restoring it would do,
  * without actually modifying the database. SQLite-only (matches backup).
  *
+ * Pre-validates the dump by streaming it through ipam_restore_split_sql_statements
+ * (#830, v3.23.0). A truncated or corrupt dump trips the splitter's
+ * unterminated-state detection and throws RuntimeException — surfaced to
+ * the operator BEFORE the apply path commits to a transaction. Previously
+ * dry-run only ran a per-line regex scan that silently passed truncated
+ * dumps; the apply step then failed mid-restore with a less specific
+ * PDO::exec error and an indeterminate database state.
+ *
  * @return array{
  *   tables: list<array{name:string,current_rows:int,backup_rows:int,delta:int}>,
  *   schema_diff: list<string>,
  *   total_statements: int,
  *   warnings: list<string>,
  * }
+ * @throws RuntimeException  on driver mismatch, missing file, gzgets corruption,
+ *                            or splitter-detected truncation (unterminated string,
+ *                            identifier, comment, dollar-quote, or BEGIN block).
  */
 function ipam_restore_dry_run(PDO $db, string $stagedPath): array
 {
@@ -1092,15 +1160,16 @@ function ipam_restore_dry_run(PDO $db, string $stagedPath): array
         throw new RuntimeException('ipam_restore: dry-run only supports sqlite in v3.17.0');
     }
 
-    $sql = ipam_restore_read_staged_sql($stagedPath);
-
-    // Count INSERT/CREATE statements for each table.
+    // Stream chunks → splitter → count INSERT/CREATE per statement. The
+    // splitter throws on unterminated state at EOF (#830 1/2) so a corrupt
+    // dump fails dry-run loudly instead of silently passing the line scan.
     $tableInsertCounts = [];
     $createdTables = [];
     $warnings = [];
 
-    foreach (explode("\n", $sql) as $line) {
-        $trim = ltrim($line);
+    $chunks = ipam_restore_read_staged_sql($stagedPath);
+    foreach (ipam_restore_split_sql_statements($chunks) as $stmt) {
+        $trim = ltrim($stmt);
         if ($trim === '' || str_starts_with($trim, '--')) continue;
 
         if (preg_match('/^INSERT INTO ["`]?([A-Za-z_][A-Za-z0-9_]*)["`]?/', $trim, $m)) {
@@ -1158,13 +1227,56 @@ function ipam_restore_dry_run(PDO $db, string $stagedPath): array
 }
 
 /**
+ * Sniff the magic line of a staged backup file to dispatch between
+ * Database-format (IPAMBKP1/2/3 wrapping mysqldump/pg_dump/SQLite SQL)
+ * and Logical-format (IPAMBKL1 wrapping NDJSON).
+ *
+ * Reads at most the first ~64 bytes through gzopen so it's safe on
+ * arbitrarily-large dumps. Returns the trimmed first line, or '' if
+ * the file isn't gzip-readable or has no recognizable magic.
+ */
+function ipam_restore_sniff_magic(string $stagedPath): string
+{
+    if (!is_file($stagedPath)) {
+        return '';
+    }
+    $gz = @gzopen($stagedPath, 'rb');
+    if ($gz === false) {
+        return '';
+    }
+    try {
+        $line = gzgets($gz, 64);
+        if ($line === false) {
+            return '';
+        }
+        return rtrim($line, "\r\n");
+    } finally {
+        gzclose($gz);
+    }
+}
+
+/**
  * Apply a staged backup to the database. Wraps in a transaction;
  * on any failure rolls back and throws.
  *
- * @return array{tables_restored:int,statements:int}
+ * @return array{tables_restored?:int,statements:int,format?:string,logical?:array<string,mixed>}
  */
 function ipam_restore_apply(PDO $db, string $stagedPath, string $realFilename = '', ?int $destinationId = null): array
 {
+    // Magic-byte dispatch (v3.23.0 #824). IPAMBKL1 → engine-agnostic
+    // PDO replay. Anything else → existing Database-format SQL-text path
+    // (sqlite-only until #1042's multi-engine work).
+    $magic = ipam_restore_sniff_magic($stagedPath);
+    if ($magic === 'IPAMBKL1') {
+        $logicalMeta = ipam_restore_logical_apply($db, $stagedPath);
+        return [
+            'format'           => 'logical',
+            'tables_restored'  => 0, // not tracked in logical path; see logical meta
+            'statements'       => $logicalMeta['total_rows'],
+            'logical'          => $logicalMeta,
+        ];
+    }
+
     $driverAttr = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
     $driver = is_string($driverAttr) ? $driverAttr : '';
     if ($driver !== 'sqlite') {
@@ -1177,8 +1289,6 @@ function ipam_restore_apply(PDO $db, string $stagedPath, string $realFilename = 
     // rewrite in #807 (Wave 3).
     $filename = $realFilename !== '' ? $realFilename : basename($stagedPath);
 
-    $sql = ipam_restore_read_staged_sql($stagedPath);
-
     $tablesSeen = [];
     $statements = 0;
 
@@ -1188,7 +1298,11 @@ function ipam_restore_apply(PDO $db, string $stagedPath, string $realFilename = 
     $db->exec('PRAGMA foreign_keys = OFF');
     $db->beginTransaction();
     try {
-        foreach (ipam_restore_split_sql_statements($sql) as $stmt) {
+        // Stream chunks → splitter → exec. Bounded memory regardless of
+        // dump size — the splitter GCs its buffer after each yielded
+        // statement (#829, v3.23.0).
+        $chunks = ipam_restore_read_staged_sql($stagedPath);
+        foreach (ipam_restore_split_sql_statements($chunks) as $stmt) {
             if ($stmt === '' || str_starts_with(ltrim($stmt), '--')) continue;
             $db->exec($stmt);
             $statements++;
@@ -1238,7 +1352,28 @@ function ipam_restore_apply(PDO $db, string $stagedPath, string $realFilename = 
     ];
 }
 
-function ipam_restore_read_staged_sql(string $stagedPath): string
+/**
+ * Stream the staged backup file as line-aligned chunks.
+ *
+ * Yields chunks of plaintext SQL — typically one line per yield via
+ * `gzgets` / `fgets`, occasionally larger if a single line exceeds the
+ * stream-buffer size — so callers (the splitter, the dry-run statement
+ * scan) never need to hold the full plaintext in memory. Memory is
+ * bounded by the longest single line plus one stream buffer (typically
+ * a few KB), independent of total input size.
+ *
+ * #829 (v3.23.0): replaces the prior `: string` form which read the
+ * entire decompressed dump into a single buffer and OOM'd on multi-GB
+ * backups. The streaming model is the prerequisite for #824 PDO restore
+ * engine landing in the same release.
+ *
+ * @return \Generator<string>  Plaintext SQL chunks in source order.
+ * @throws RuntimeException    if the staged path is invalid, the file is
+ *                             missing, gzopen fails, or gzread reports
+ *                             corruption (truncation distinguished from
+ *                             clean EOF via `gzeof`).
+ */
+function ipam_restore_read_staged_sql(string $stagedPath): \Generator
 {
     // Containment guard via centralized helper (#762 item 3): defence-in-depth
     // in case an upstream signature/validation step is bypassed or refactored.
@@ -1249,28 +1384,51 @@ function ipam_restore_read_staged_sql(string $stagedPath): string
     if (!is_file($real)) {
         throw new RuntimeException('ipam_restore: staged file not found');
     }
+
     if (str_ends_with($real, '.sql.gz')) {
-        $data = '';
         $fh = @gzopen($real, 'rb');
-        if ($fh === false) throw new RuntimeException('ipam_restore: gzopen failed');
+        if ($fh === false) {
+            throw new RuntimeException('ipam_restore: gzopen failed');
+        }
         try {
-            while (!gzeof($fh)) {
-                $chunk = gzread($fh, 65536);
-                if ($chunk === false) {
-                    // gzread() returning false is a corruption error, NOT EOF.
-                    // gzeof() catches end-of-file; reaching here means truncation.
-                    throw new RuntimeException('ipam_restore: gzread error — backup may be truncated');
+            // Read until gzgets returns false. gzgets returns up to 64KB or
+            // to the next \n, whichever is smaller; lines in IPAM dumps are
+            // typically < 1KB (one INSERT per line). After the loop, gzeof
+            // distinguishes clean end-of-file from corruption (truncation).
+            while (true) {
+                $line = gzgets($fh, 65536);
+                if ($line === false) {
+                    break;
                 }
-                $data .= $chunk;
+                yield $line;
+            }
+            if (!gzeof($fh)) {
+                throw new RuntimeException('ipam_restore: gzgets error — backup may be truncated');
             }
         } finally {
             gzclose($fh);
         }
-        return $data;
+        return;
     }
-    $data = @file_get_contents($real);
-    if ($data === false) throw new RuntimeException('ipam_restore: cannot read staged file');
-    return $data;
+
+    $fh = @fopen($real, 'rb');
+    if ($fh === false) {
+        throw new RuntimeException('ipam_restore: cannot open staged file');
+    }
+    try {
+        while (true) {
+            $line = fgets($fh, 65536);
+            if ($line === false) {
+                break;
+            }
+            yield $line;
+        }
+        if (!feof($fh)) {
+            throw new RuntimeException('ipam_restore: fgets error');
+        }
+    } finally {
+        fclose($fh);
+    }
 }
 
 /**
@@ -1368,24 +1526,70 @@ function ipam_restore_proc_check(int $exitCode, string $tool, string $stderr, PD
  * transaction starts, not compound blocks. A statement boundary is a
  * top-level `;` outside every quoted/commented/depth context.
  *
- * @return list<string>
+ * Streaming model (#829, v3.23.0): consumes an iterable of input chunks
+ * and yields complete statements as a generator. Internal buffer is
+ * GC'd after each yielded statement so memory stays bounded by the
+ * largest single statement plus one chunk — never by total input size.
+ * Pass `[$sql]` to feed a single string.
+ *
+ * @param  iterable<string> $chunks  Stream of dump bytes (lines or larger blocks).
+ * @return \Generator<string>        Trimmed top-level statements in source order.
  */
-function ipam_restore_split_sql_statements(string $sql): array
+function ipam_restore_split_sql_statements(iterable $chunks): \Generator
 {
-    $out = [];
-    $buf = '';
-    $depth = 0;
-    $len = strlen($sql);
-    $i = 0;
+    // Normalize iterable to Iterator so we can pull on demand.
+    if (is_array($chunks)) {
+        $chunks = new \ArrayIterator($chunks);
+    }
+    while ($chunks instanceof \IteratorAggregate) {
+        $chunks = $chunks->getIterator();
+    }
+    /** @var \Iterator $chunks */
+    $chunks->rewind();
 
-    while ($i < $len) {
-        $c = $sql[$i];
-        $next = $i + 1 < $len ? $sql[$i + 1] : '';
+    $buf = '';
+    $i = 0;
+    $stmtStart = 0;
+    $depth = 0;
+
+    // Pull the next non-empty chunk into $buf. Returns false at EOF.
+    $pull = function () use (&$buf, $chunks): bool {
+        while ($chunks->valid()) {
+            $c = $chunks->current();
+            $chunks->next();
+            if (is_string($c) && $c !== '') {
+                $buf .= $c;
+                return true;
+            }
+        }
+        return false;
+    };
+
+    // Ensure at least $n bytes are addressable at $i. Returns false at EOF.
+    $ensure = function (int $n) use (&$buf, &$i, $pull): bool {
+        while (strlen($buf) - $i < $n) {
+            if (!$pull()) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    // Drop bytes before $stmtStart from the buffer so $buf doesn't grow
+    // without bound across many statements. Threshold trades GC frequency
+    // against substr cost; 16KB amortises well for IPAM-shape dumps.
+    // GC runs inline at yield points (see below) so PHPStan can trace the
+    // mutation; the closure form would obscure the by-reference writes
+    // and trip the greaterOrEqual.alwaysFalse check.
+    $gcThreshold = 16384;
+
+    while ($ensure(1)) {
+        $c = $buf[$i];
+        $next = $ensure(2) ? $buf[$i + 1] : '';
 
         // ── line comment ── -- ... \n (or end of input)
         if ($c === '-' && $next === '-') {
-            while ($i < $len && $sql[$i] !== "\n") {
-                $buf .= $sql[$i];
+            while ($ensure(1) && $buf[$i] !== "\n") {
                 $i++;
             }
             continue;
@@ -1393,90 +1597,105 @@ function ipam_restore_split_sql_statements(string $sql): array
 
         // ── block comment ── /* ... */ (does not nest in standard SQL)
         if ($c === '/' && $next === '*') {
-            $buf .= '/*';
             $i += 2;
-            while ($i < $len) {
-                if ($sql[$i] === '*' && $i + 1 < $len && $sql[$i + 1] === '/') {
-                    $buf .= '*/';
+            $closed = false;
+            while ($ensure(2)) {
+                if ($buf[$i] === '*' && $buf[$i + 1] === '/') {
                     $i += 2;
+                    $closed = true;
                     break;
                 }
-                $buf .= $sql[$i];
                 $i++;
+            }
+            if (!$closed) {
+                throw new RuntimeException(
+                    'ipam_restore_split: unterminated /* block comment at end of input — backup may be truncated'
+                );
             }
             continue;
         }
 
         // ── single-quoted string ── '...' with '' or \' escape
         if ($c === "'") {
-            $buf .= "'";
             $i++;
-            while ($i < $len) {
+            $closed = false;
+            while ($ensure(1)) {
                 // Backslash escape (MySQL default `\'`, also `\\`, `\n`, etc.).
                 // Consume the backslash and the following character verbatim
-                // so an escaped quote can't terminate the string. Required for
-                // MySQL dumps; harmless for SQLite/Postgres standard mode
-                // where `\` is a literal byte. (CR feedback PR #1054.)
-                if ($sql[$i] === "\\" && $i + 1 < $len) {
-                    $buf .= $sql[$i] . $sql[$i + 1];
+                // so an escaped quote can't terminate the string.
+                if ($buf[$i] === "\\" && $ensure(2)) {
                     $i += 2;
                     continue;
                 }
-                if ($sql[$i] === "'" && $i + 1 < $len && $sql[$i + 1] === "'") {
-                    // Escaped quote: consume both as part of the literal
-                    $buf .= "''";
-                    $i += 2;
-                    continue;
-                }
-                if ($sql[$i] === "'") {
-                    $buf .= "'";
+                if ($buf[$i] === "'") {
+                    if ($ensure(2) && $buf[$i + 1] === "'") {
+                        // Escaped quote: consume both as part of the literal.
+                        $i += 2;
+                        continue;
+                    }
                     $i++;
+                    $closed = true;
                     break;
                 }
-                $buf .= $sql[$i];
                 $i++;
+            }
+            if (!$closed) {
+                throw new RuntimeException(
+                    "ipam_restore_split: unterminated single-quoted string at end of input — backup may be truncated"
+                );
             }
             continue;
         }
 
         // ── double-quoted identifier ── "..."  (ANSI / PostgreSQL)
         if ($c === '"') {
-            $buf .= '"';
             $i++;
-            while ($i < $len) {
-                if ($sql[$i] === '"') {
-                    $buf .= '"';
+            $closed = false;
+            while ($ensure(1)) {
+                if ($buf[$i] === '"') {
                     $i++;
+                    $closed = true;
                     break;
                 }
-                $buf .= $sql[$i];
                 $i++;
+            }
+            if (!$closed) {
+                throw new RuntimeException(
+                    'ipam_restore_split: unterminated double-quoted identifier at end of input — backup may be truncated'
+                );
             }
             continue;
         }
 
         // ── backtick-quoted identifier ── `...`  (MySQL)
         if ($c === '`') {
-            $buf .= '`';
             $i++;
-            while ($i < $len) {
-                if ($sql[$i] === '`') {
-                    $buf .= '`';
+            $closed = false;
+            while ($ensure(1)) {
+                if ($buf[$i] === '`') {
                     $i++;
+                    $closed = true;
                     break;
                 }
-                $buf .= $sql[$i];
                 $i++;
+            }
+            if (!$closed) {
+                throw new RuntimeException(
+                    'ipam_restore_split: unterminated backtick identifier at end of input — backup may be truncated'
+                );
             }
             continue;
         }
 
         // ── PostgreSQL dollar-quoted string ── $tag$ ... $tag$
         if ($c === '$') {
-            // Look for opening tag: $ <ident-chars> $
+            // Look for the closing $ of the opening tag.
             $j = $i + 1;
-            while ($j < $len) {
-                $cj = $sql[$j];
+            while (true) {
+                if (!$ensure($j - $i + 1)) {
+                    break;
+                }
+                $cj = $buf[$j];
                 if ($cj === '$') {
                     break;
                 }
@@ -1486,55 +1705,62 @@ function ipam_restore_split_sql_statements(string $sql): array
                 }
                 $j++;
             }
-            if ($j < $len && $sql[$j] === '$') {
-                $tag = substr($sql, $i, $j - $i + 1); // includes the two $
-                $buf .= $tag;
-                $i = $j + 1;
+            if ($ensure($j - $i + 1) && $buf[$j] === '$') {
+                $tag = substr($buf, $i, $j - $i + 1); // includes the two $
                 $tagLen = strlen($tag);
-                while ($i < $len) {
-                    if ($sql[$i] === '$' && substr($sql, $i, $tagLen) === $tag) {
-                        $buf .= $tag;
+                $i = $j + 1;
+                $closed = false;
+                while ($ensure($tagLen)) {
+                    if ($buf[$i] === '$' && substr($buf, $i, $tagLen) === $tag) {
                         $i += $tagLen;
+                        $closed = true;
                         break;
                     }
-                    $buf .= $sql[$i];
                     $i++;
+                }
+                if (!$closed) {
+                    throw new RuntimeException(
+                        "ipam_restore_split: unterminated dollar-quoted string {$tag} at end of input — backup may be truncated"
+                    );
                 }
                 continue;
             }
-            // Lone $ — fall through and treat as ordinary char
+            // Lone $ — fall through and treat as ordinary char.
         }
 
         // ── BEGIN ... END block depth (only at top level / NORMAL state) ──
         // Detect a BEGIN word boundary that is not BEGIN TRANSACTION/WORK/;.
-        // We're at NORMAL state at this point because all comment/quote/dollar
-        // branches above continue'd.
         if (($c === 'B' || $c === 'b')
-            && ($i === 0 || !ctype_alnum($sql[$i - 1]) && $sql[$i - 1] !== '_')
-            && $i + 4 < $len
-            && strcasecmp(substr($sql, $i, 5), 'BEGIN') === 0
-            && ($i + 5 >= $len || !(ctype_alnum($sql[$i + 5]) || $sql[$i + 5] === '_'))) {
+            && ($i === 0 || (!ctype_alnum($buf[$i - 1]) && $buf[$i - 1] !== '_'))
+            && $ensure(5)
+            && strcasecmp(substr($buf, $i, 5), 'BEGIN') === 0
+            && (!$ensure(6) || !(ctype_alnum($buf[$i + 5]) || $buf[$i + 5] === '_'))) {
             // Look past whitespace for the next significant token.
             $k = $i + 5;
-            while ($k < $len && ctype_space($sql[$k])) {
+            while ($ensure($k - $i + 1) && ctype_space($buf[$k])) {
                 $k++;
             }
             $isTxn = false;
-            if ($k < $len) {
-                $nextCh = $sql[$k];
+            if ($ensure($k - $i + 1)) {
+                $nextCh = $buf[$k];
                 if ($nextCh === ';') {
                     $isTxn = true; // BEGIN; → transaction start
-                } elseif ($k + 10 < $len && strcasecmp(substr($sql, $k, 11), 'TRANSACTION') === 0
-                          && ($k + 11 >= $len || !(ctype_alnum($sql[$k + 11]) || $sql[$k + 11] === '_'))) {
+                } elseif ($ensure($k - $i + 12)
+                          && strcasecmp(substr($buf, $k, 11), 'TRANSACTION') === 0
+                          && (!$ensure($k - $i + 12) || !(ctype_alnum($buf[$k + 11]) || $buf[$k + 11] === '_'))) {
                     $isTxn = true;
-                } elseif ($k + 3 < $len && strcasecmp(substr($sql, $k, 4), 'WORK') === 0
-                          && ($k + 4 >= $len || !(ctype_alnum($sql[$k + 4]) || $sql[$k + 4] === '_'))) {
+                } elseif ($ensure($k - $i + 5)
+                          && strcasecmp(substr($buf, $k, 4), 'WORK') === 0
+                          && (!$ensure($k - $i + 5) || !(ctype_alnum($buf[$k + 4]) || $buf[$k + 4] === '_'))) {
                     $isTxn = true;
-                } elseif ($k + 7 < $len && strcasecmp(substr($sql, $k, 8), 'IMMEDIATE') === 0) {
+                } elseif ($ensure($k - $i + 9)
+                          && strcasecmp(substr($buf, $k, 8), 'IMMEDIATE') === 0) {
                     $isTxn = true; // SQLite: BEGIN IMMEDIATE
-                } elseif ($k + 7 < $len && strcasecmp(substr($sql, $k, 8), 'DEFERRED') === 0) {
+                } elseif ($ensure($k - $i + 9)
+                          && strcasecmp(substr($buf, $k, 8), 'DEFERRED') === 0) {
                     $isTxn = true; // SQLite: BEGIN DEFERRED
-                } elseif ($k + 8 < $len && strcasecmp(substr($sql, $k, 9), 'EXCLUSIVE') === 0) {
+                } elseif ($ensure($k - $i + 10)
+                          && strcasecmp(substr($buf, $k, 9), 'EXCLUSIVE') === 0) {
                     $isTxn = true; // SQLite: BEGIN EXCLUSIVE
                 }
             } else {
@@ -1543,46 +1769,57 @@ function ipam_restore_split_sql_statements(string $sql): array
             if (!$isTxn) {
                 $depth++;
             }
-            $buf .= substr($sql, $i, 5);
             $i += 5;
             continue;
         }
 
         // ── END decrements depth ──
         if (($c === 'E' || $c === 'e')
-            && ($i === 0 || !ctype_alnum($sql[$i - 1]) && $sql[$i - 1] !== '_')
-            && $i + 2 < $len
-            && strcasecmp(substr($sql, $i, 3), 'END') === 0
-            && ($i + 3 >= $len || !(ctype_alnum($sql[$i + 3]) || $sql[$i + 3] === '_'))
+            && ($i === 0 || (!ctype_alnum($buf[$i - 1]) && $buf[$i - 1] !== '_'))
+            && $ensure(3)
+            && strcasecmp(substr($buf, $i, 3), 'END') === 0
+            && (!$ensure(4) || !(ctype_alnum($buf[$i + 3]) || $buf[$i + 3] === '_'))
             && $depth > 0) {
             $depth--;
-            $buf .= substr($sql, $i, 3);
             $i += 3;
             continue;
         }
 
         // ── statement terminator ──
         if ($c === ';' && $depth === 0) {
-            $buf .= ';';
-            $stmt = trim($buf);
-            if ($stmt !== '') {
-                $out[] = $stmt;
-            }
-            $buf = '';
             $i++;
+            $stmt = trim(substr($buf, $stmtStart, $i - $stmtStart));
+            if ($stmt !== '') {
+                yield $stmt;
+            }
+            $stmtStart = $i;
+            if ($stmtStart >= $gcThreshold) {
+                $buf = substr($buf, $stmtStart);
+                $i -= $stmtStart;
+                $stmtStart = 0;
+            }
             continue;
         }
 
-        // Default: copy byte through.
-        $buf .= $c;
+        // Default: advance by one byte.
         $i++;
     }
 
-    $tail = trim($buf);
-    if ($tail !== '') {
-        $out[] = $tail;
+    // EOF reached at top level. An open BEGIN ... END block means the dump
+    // ends mid-procedure body — almost certainly truncation.
+    if ($depth > 0) {
+        throw new RuntimeException(
+            "ipam_restore_split: unterminated BEGIN…END block (depth={$depth}) at end of input — backup may be truncated"
+        );
     }
-    return $out;
+
+    // Final flush — any unterminated tail (no trailing ';') is a complete
+    // statement. Line-comment-at-EOF is legitimate and lands here as empty
+    // tail after trim.
+    $tail = trim(substr($buf, $stmtStart));
+    if ($tail !== '') {
+        yield $tail;
+    }
 }
 
 /**
@@ -1700,4 +1937,996 @@ function ipam_backup_detect_overdue_schedules(PDO $db, ?int $nowTs = null): arra
         'alerted'       => $alertedIds,
         'grace_minutes' => $graceMinutes,
     ];
+}
+
+// =========================================================================
+// IPAMBKL1 — Logical-format codec
+// =========================================================================
+//
+// Spec: docs/internal/ipambkl1-format.md
+//
+// The codec is the bottom of the IPAMBKL1 stack. Every body row's column
+// values pass through ipam_logical_encode_value() on dump and through
+// ipam_logical_decode_value() on restore. The pair preserves PHP's value
+// types verbatim across the JSON round-trip and is engine-agnostic — driver
+// differences are handled at the binding layer (ipam_bind_binary()), not
+// here.
+//
+// Three column kinds need explicit handling:
+//   - Binary blobs (ip_bin, network_bin)  → {"$bin": "<base64>"} envelope
+//   - Timestamps (engine-native datetime) → ISO-8601 UTC normalised
+//   - Everything else (int/string/bool/null) → pass through; JSON handles natively
+
+/**
+ * Normalise an engine-native datetime string to canonical ISO-8601 UTC.
+ *
+ * Accepts both 'YYYY-MM-DD HH:MM:SS' (sqlite / mysql fetch) and
+ * 'YYYY-MM-DDTHH:MM:SSZ' (already canonical). Throws on anything else.
+ *
+ * Engines store TIMESTAMP / DATETIME columns in UTC by IPAM convention
+ * (see init.php session config and the migration history). This function
+ * does not perform timezone conversion — it assumes the input is already
+ * UTC and only reformats the separator and trailing 'Z'.
+ */
+function ipam_logical_normalise_timestamp(string $ts): string
+{
+    if (preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/', $ts)) {
+        return $ts;
+    }
+    if (preg_match('/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/', $ts, $m)) {
+        return $m[1] . 'T' . $m[2] . 'Z';
+    }
+    throw new InvalidArgumentException('ipam_logical_normalise_timestamp: unrecognised format: ' . $ts);
+}
+
+/**
+ * Encode a single column value into its IPAMBKL1 wire form.
+ *
+ * @param mixed $value      The raw column value as fetched from PDO.
+ * @param bool  $isBinary   True when the column is a binary blob (BLOB / VARBINARY / BYTEA).
+ * @param bool  $isTimestamp True when the column is a TIMESTAMP / DATETIME.
+ * @return mixed            JSON-serialisable scalar or {"$bin": "<base64>"} envelope. Null in → null out.
+ */
+function ipam_logical_encode_value(mixed $value, bool $isBinary = false, bool $isTimestamp = false): mixed
+{
+    if ($value === null) {
+        return null;
+    }
+    if ($isBinary) {
+        if (!is_string($value)) {
+            throw new InvalidArgumentException('ipam_logical_encode_value: binary value must be string, got ' . gettype($value));
+        }
+        return ['$bin' => base64_encode($value)];
+    }
+    if ($isTimestamp) {
+        if (!is_string($value)) {
+            throw new InvalidArgumentException('ipam_logical_encode_value: timestamp value must be string, got ' . gettype($value));
+        }
+        return ipam_logical_normalise_timestamp($value);
+    }
+    return $value;
+}
+
+/**
+ * Decode a single IPAMBKL1 wire-form value back into its PHP/SQL form.
+ *
+ * Inverse of ipam_logical_encode_value(). The {"$bin": "..."} envelope
+ * is unwrapped via base64_decode; everything else passes through. Note
+ * that timestamps remain ISO-8601 strings — every supported engine
+ * (sqlite, mysql, pg) accepts ISO timestamps in INSERT, so no conversion
+ * back to engine-native format is required.
+ *
+ * @param mixed $encoded  The decoded JSON value from a body row.
+ * @return mixed
+ */
+function ipam_logical_decode_value(mixed $encoded): mixed
+{
+    if ($encoded === null) {
+        return null;
+    }
+    if (is_array($encoded) && array_key_exists('$bin', $encoded)) {
+        $payload = $encoded['$bin'];
+        if (!is_string($payload)) {
+            throw new InvalidArgumentException('ipam_logical_decode_value: $bin payload must be string');
+        }
+        $decoded = base64_decode($payload, /* strict */ true);
+        if ($decoded === false) {
+            throw new RuntimeException('ipam_logical_decode_value: invalid base64 in $bin envelope');
+        }
+        return $decoded;
+    }
+    return $encoded;
+}
+
+/**
+ * Return the canonical IPAMBKL1 table_order list — parents-first FK-safe
+ * topological sort of every user table in the live schema.
+ *
+ * Hand-coded rather than computed via PRAGMA introspection because:
+ *   - The schema is small (38 tables) and stable; FK graph changes are rare
+ *     and always intentional (a migration that adds a table or FK).
+ *   - A hand-coded list is auditable in code review and survives engine
+ *     introspection differences (sqlite PRAGMA vs mysql information_schema
+ *     vs pg pg_constraint).
+ *   - IPAMBKL1TableOrderTest validates the list against the live FK graph
+ *     on every test run — if a schema change desyncs the list, the test
+ *     fails loudly during the gate, not silently in the dump.
+ *
+ * The PDO arg is currently unused — the function returns the same list on
+ * every engine — but is kept in the signature for forward-compat with a
+ * possible v4.0.0 tenancy-aware variant that filters per tenant_id.
+ *
+ * Self-referential tables (currently only `sites` via `parent_id`) appear
+ * once at their natural position; the restorer handles them via two-pass
+ * replay per the format spec.
+ *
+ * @return string[] Parents-first table-order list.
+ */
+function ipam_logical_table_order(PDO $db): array
+{
+    // Layout (left → right = earliest to latest replay):
+    //
+    //   Layer 0 (no incoming FKs from any other table):
+    //     schema_migrations users tags contacts vrfs webhooks api_keys
+    //     login_attempts rate_limit_buckets aggregates custom_field_defs
+    //     audit_log address_history backup_destinations
+    //
+    //   Layer 1 (depend only on layer 0):
+    //     sites (self-ref, two-pass)
+    //
+    //   Layer 2:
+    //     devices (→ sites) → device_interfaces (→ devices)
+    //     vlans (→ sites) → vlan_ranges (→ sites)
+    //     subnets (→ vrfs, vlans, sites)
+    //
+    //   Layer 3:
+    //     pd_pools (→ sites, subnets)
+    //     scan_schedules (→ subnets), alert_state, utilization_snapshots,
+    //     subnet_tags, subnet_contacts
+    //
+    //   Layer 4:
+    //     addresses (→ subnets, device_interfaces, devices, contacts)
+    //
+    //   Layer 5:
+    //     scan_results (→ addresses, subnets), address_tags, pd_delegations
+    //
+    //   Layer 6 (depend on layer-1+ peers):
+    //     backup_schedules (→ backup_destinations) → backup_runs
+    //     site_contacts (→ contacts, sites)
+    //     settings (→ users), password_reset_tokens (→ users),
+    //     totp_backup_codes (→ users), webauthn_credentials (→ users),
+    //     webhook_deliveries (→ webhooks)
+    unset($db); // forward-compat placeholder (tenancy filter in v4.0.0)
+    return [
+        // -- Layer 0 — no FKs, replayable in any order ---------------------
+        'schema_migrations',
+        'users',
+        'tags',
+        'contacts',
+        'vrfs',
+        'webhooks',
+        'api_keys',
+        'login_attempts',
+        'rate_limit_buckets',
+        'aggregates',
+        'custom_field_defs',
+        'audit_log',
+        'address_history',
+        'backup_destinations',
+        // -- Layer 1 — sites is self-referential (two-pass replay) ---------
+        'sites',
+        // -- Layer 2 — site/vlan/vrf-rooted -------------------------------
+        'devices',
+        'device_interfaces',
+        'vlans',
+        'vlan_ranges',
+        'subnets',
+        // -- Layer 3 — subnet-rooted children -----------------------------
+        'pd_pools',
+        'scan_schedules',
+        'alert_state',
+        'utilization_snapshots',
+        'subnet_tags',
+        'subnet_contacts',
+        // -- Layer 4 — addresses depends on subnets + device_interfaces ---
+        'addresses',
+        // -- Layer 5 — address-rooted children ----------------------------
+        'scan_results',
+        'address_tags',
+        'pd_delegations',
+        // -- Layer 6 — user / backup / webhook tails -----------------------
+        'backup_schedules',
+        'backup_runs',
+        'site_contacts',
+        'settings',
+        'password_reset_tokens',
+        'totp_backup_codes',
+        'webauthn_credentials',
+        'webhook_deliveries',
+    ];
+}
+
+// =========================================================================
+// IPAMBKL1 — Logical-format dump (writer)
+// =========================================================================
+
+/**
+ * Classify a column's encoding kind based on its name. IPAM follows a
+ * consistent convention: binary blobs end in `_bin` (ip_bin, network_bin),
+ * timestamps end in `_at` (created_at, updated_at, started_at, …). Every
+ * other column is a scalar (int, string, bool, null) and passes through
+ * the codec unchanged.
+ *
+ * Suffix-based rather than runtime introspection because SQLite's
+ * declared column types aren't strict (a column declared TEXT can hold a
+ * BLOB, etc.) and the three engines disagree on type metadata syntax.
+ * The naming convention is a stable cross-engine signal — and the
+ * conformance tests (#1042) catch any column that defies it.
+ *
+ * @return 'binary'|'timestamp'|'scalar'
+ */
+function ipam_logical_column_kind(string $columnName): string
+{
+    if (str_ends_with($columnName, '_bin')) {
+        return 'binary';
+    }
+    if (str_ends_with($columnName, '_at')) {
+        return 'timestamp';
+    }
+    return 'scalar';
+}
+
+/**
+ * Encode a single fetched row into IPAMBKL1 wire form, applying the
+ * per-column kind classifier.
+ *
+ * @param array<string,mixed> $row
+ * @return array<string,mixed>
+ */
+function ipam_logical_encode_row(array $row): array
+{
+    $out = [];
+    foreach ($row as $col => $val) {
+        $kind = ipam_logical_column_kind($col);
+        $out[$col] = ipam_logical_encode_value(
+            $val,
+            $kind === 'binary',
+            $kind === 'timestamp'
+        );
+    }
+    return $out;
+}
+
+/**
+ * Compute the integer schema_version high-water mark for the IPAMBKL1
+ * header. Defined as `COUNT(*)` of `schema_migrations` (= `MAX(id)` under
+ * apply_migrations() idempotency). Monotone over a single install's
+ * lifetime; identical on two installs sharing the same migration set.
+ *
+ * Version *labels* (e.g. "3.22.0") are TEXT and don't sort meaningfully
+ * across major releases, which is why the count is the canonical integer
+ * compatibility axis. The label of the most recent migration is carried
+ * separately as `header.last_migration_version` for human-readable
+ * diagnostics; the restorer only consults `schema_version` for compat
+ * decisions.
+ */
+function ipam_logical_schema_version(PDO $db): int
+{
+    $r = $db->query("SELECT COUNT(*) FROM schema_migrations");
+    if ($r === false) {
+        return 0;
+    }
+    $val = $r->fetchColumn();
+    return is_numeric($val) ? (int) $val : 0;
+}
+
+/**
+ * Read the most recently applied migration's version label, for
+ * diagnostic purposes only. Empty string when no migrations applied.
+ */
+function ipam_logical_last_migration_version(PDO $db): string
+{
+    $r = $db->query("SELECT version FROM schema_migrations ORDER BY id DESC LIMIT 1");
+    if ($r === false) {
+        return '';
+    }
+    $val = $r->fetchColumn();
+    return is_string($val) ? $val : '';
+}
+
+/**
+ * Stream all rows of a single table through PDO, yielding each row as
+ * an associative array. Forward-only cursor — bounded memory regardless
+ * of table size.
+ *
+ * @return Generator<array<string,mixed>>
+ */
+function ipam_logical_iterate_table(PDO $db, string $table): Generator
+{
+    // Quoting: table names from ipam_logical_table_order() are a known
+    // closed set, hand-curated in source. Double-quoting works on all
+    // three engines for ANSI-quoted identifiers.
+    $stmt = $db->query("SELECT * FROM " . ipam_logical_q($db, $table));
+    if ($stmt === false) {
+        return;
+    }
+    while (($row = $stmt->fetch(PDO::FETCH_ASSOC)) !== false) {
+        if (!is_array($row)) {
+            continue;
+        }
+        // PDO::FETCH_ASSOC always yields string keys, but PHPStan's stub
+        // can't see that. Rebuild explicitly so the generic narrows to
+        // array<string, mixed> at the yield site.
+        $narrow = [];
+        foreach ($row as $k => $v) {
+            $narrow[(string) $k] = $v;
+        }
+        yield $narrow;
+    }
+}
+
+/**
+ * Write an IPAMBKL1 Logical-format dump from a live PDO connection to
+ * the given output path. Memory-bounded — table rows stream through a
+ * forward cursor; the output is gzipped line-by-line.
+ *
+ * Spec: docs/internal/ipambkl1-format.md.
+ *
+ * @param ?int $tenantId Reserved for v4.0.0; ignored in v3.23.0 (always null
+ *                       in the produced header).
+ * @return array{
+ *   total_rows:int,
+ *   row_counts:array<string,int>,
+ *   checksum_sha256:string,
+ *   schema_version:int,
+ *   exported_at:string
+ * }
+ */
+function ipam_backup_logical_dump(PDO $db, string $outputPath, ?int $tenantId = null): array
+{
+    unset($tenantId); // v4.0.0 hook
+    $tableOrder = ipam_logical_table_order($db);
+    $schemaVersion = ipam_logical_schema_version($db);
+    $lastMigration = ipam_logical_last_migration_version($db);
+    $exportedAt    = gmdate('Y-m-d\TH:i:s\Z');
+
+    // First pass: count rows per table so the header can carry row_counts
+    // upfront. The two-pass approach keeps the streaming write pure (no
+    // backpatch into the gzip stream).
+    $rowCounts = [];
+    foreach ($tableOrder as $table) {
+        $stmt = $db->query("SELECT COUNT(*) FROM " . ipam_logical_q($db, $table));
+        $val = $stmt !== false ? $stmt->fetchColumn() : 0;
+        $rowCounts[$table] = is_numeric($val) ? (int) $val : 0;
+    }
+
+    $header = [
+        'header'                   => true,
+        'format_version'           => 1,
+        'schema_version'           => $schemaVersion,
+        'last_migration_version'   => $lastMigration,
+        'exported_at'              => $exportedAt,
+        'exported_by_ipam_version' => defined('IPAM_VERSION') ? IPAM_VERSION : 'unknown',
+        'tenant_id'                => null,
+        'table_order'              => $tableOrder,
+        'row_counts'               => $rowCounts,
+    ];
+
+    $gz = gzopen($outputPath, 'wb9');
+    if ($gz === false) {
+        throw new RuntimeException('ipam_backup_logical_dump: cannot open output for writing: ' . $outputPath);
+    }
+
+    $hashCtx   = hash_init('sha256');
+    $totalRows = 0;
+
+    // Each gzwrite goes through here so disk-full / compression-error
+    // surfaces as a thrown RuntimeException rather than a silently
+    // truncated dump that the operator only discovers at restore time
+    // (CR feedback PR #1090). Mirrors the $written !== strlen($chunk)
+    // pattern in ipam_backup_dump_to_tmp().
+    $write = static function ($gz, string $payload, string $what) use ($outputPath): void {
+        $written = gzwrite($gz, $payload);
+        if ($written === false || $written !== strlen($payload)) {
+            $writtenStr = $written === false ? 'false' : (string) $written;
+            throw new RuntimeException(
+                'ipam_backup_logical_dump: gzwrite failed on ' . $what
+                . ' — wrote ' . $writtenStr . ' of ' . strlen($payload) . ' bytes to ' . $outputPath
+                . ' (likely disk-full or compression error)'
+            );
+        }
+    };
+
+    try {
+        // Magic line.
+        $write($gz, "IPAMBKL1\n", 'magic');
+
+        // Header line. Not part of body checksum.
+        $headerJson = (string) json_encode($header, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $write($gz, $headerJson . "\n", 'header');
+
+        // Body — rows in topo-sorted table order.
+        foreach ($tableOrder as $table) {
+            foreach (ipam_logical_iterate_table($db, $table) as $row) {
+                $encoded = ipam_logical_encode_row($row);
+                $line    = (string) json_encode(
+                    ['table' => $table, 'row' => $encoded],
+                    JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+                );
+                $payload = $line . "\n";
+                hash_update($hashCtx, $payload);
+                $write($gz, $payload, 'body row in table ' . $table);
+                $totalRows++;
+            }
+        }
+
+        $checksum = hash_final($hashCtx);
+
+        $footer = [
+            'footer'          => true,
+            'checksum_sha256' => $checksum,
+            'total_rows'      => $totalRows,
+        ];
+        $footerJson = (string) json_encode($footer, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $write($gz, $footerJson . "\n", 'footer');
+    } finally {
+        gzclose($gz);
+    }
+
+    return [
+        'total_rows'      => $totalRows,
+        'row_counts'      => $rowCounts,
+        'checksum_sha256' => $checksum,
+        'schema_version'  => $schemaVersion,
+        'exported_at'     => $exportedAt,
+    ];
+}
+
+// =========================================================================
+// IPAMBKL1 — Logical-format restore (reader)
+// =========================================================================
+
+/**
+ * Convert an IPAMBKL1-wire timestamp ('YYYY-MM-DDTHH:MM:SSZ') to MySQL's
+ * accepted DATETIME literal form ('YYYY-MM-DD HH:MM:SS'). With the default
+ * sql_mode MySQL rejects the ISO 'T'/'Z' separators with error 1292;
+ * sqlite and pgsql accept either form. Any string that isn't shaped like
+ * an ISO-Z timestamp passes through unchanged so non-timestamp values
+ * accidentally suffixed `_at` (none today, but defensive) aren't mangled.
+ */
+function ipam_logical_timestamp_for_mysql(string $value): string
+{
+    if (preg_match('/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})Z$/', $value, $m)) {
+        return $m[1] . ' ' . $m[2];
+    }
+    return $value;
+}
+
+/**
+ * Quote a SQL identifier for the active driver. MySQL needs backticks;
+ * SQLite and Postgres take ANSI double-quotes. Without this branch the
+ * IPAMBKL1 writer/reader emit `"foo"` which MySQL reads as a string
+ * literal and rejects with a 1064 syntax error. Existing IPAM code
+ * already follows this convention (see ipam_key_col() in lib.php).
+ */
+function ipam_logical_q(PDO $db, string $ident): string
+{
+    $driverAttr = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    $driver = is_string($driverAttr) ? $driverAttr : '';
+    if ($driver === 'mysql') {
+        return '`' . str_replace('`', '``', $ident) . '`';
+    }
+    return '"' . str_replace('"', '""', $ident) . '"';
+}
+
+/**
+ * Introspect a table's FK columns and their target tables/columns.
+ *
+ * @return list<array{from:string,table:string,to:string}>
+ */
+function ipam_logical_introspect_fks(PDO $db, string $table): array
+{
+    $driverAttr = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    $driver = is_string($driverAttr) ? $driverAttr : '';
+    $out = [];
+    if ($driver === 'sqlite') {
+        $stmt = $db->query("PRAGMA foreign_key_list(\"$table\")");
+        $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
+        foreach ($rows as $r) {
+            if (!is_array($r)) continue;
+            $from = $r['from'] ?? null;
+            $tgt  = $r['table'] ?? null;
+            $to   = $r['to'] ?? null;
+            if (is_string($from) && is_string($tgt) && is_string($to)) {
+                $out[] = ['from' => $from, 'table' => $tgt, 'to' => $to];
+            }
+        }
+        return $out;
+    }
+    if ($driver === 'mysql') {
+        $stmt = $db->prepare(
+            'SELECT COLUMN_NAME AS `from`, REFERENCED_TABLE_NAME AS `table`, REFERENCED_COLUMN_NAME AS `to` '
+            . 'FROM information_schema.KEY_COLUMN_USAGE '
+            . 'WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t AND REFERENCED_TABLE_NAME IS NOT NULL '
+            . 'ORDER BY ORDINAL_POSITION'
+        );
+        $stmt->execute([':t' => $table]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($rows as $r) {
+            if (!is_array($r)) continue;
+            $from = $r['from'] ?? null;
+            $tgt  = $r['table'] ?? null;
+            $to   = $r['to'] ?? null;
+            if (is_string($from) && is_string($tgt) && is_string($to)) {
+                $out[] = ['from' => $from, 'table' => $tgt, 'to' => $to];
+            }
+        }
+        return $out;
+    }
+    if ($driver === 'pgsql') {
+        $sql = <<<'SQL'
+SELECT kcu.column_name AS "from",
+       ccu.table_name  AS "table",
+       ccu.column_name AS "to"
+  FROM information_schema.table_constraints tc
+  JOIN information_schema.key_column_usage kcu
+    ON tc.constraint_name = kcu.constraint_name
+   AND tc.table_schema    = kcu.table_schema
+  JOIN information_schema.constraint_column_usage ccu
+    ON ccu.constraint_name = tc.constraint_name
+   AND ccu.table_schema    = tc.table_schema
+ WHERE tc.constraint_type = 'FOREIGN KEY'
+   AND tc.table_name      = :t
+   AND tc.table_schema    = current_schema()
+ ORDER BY kcu.ordinal_position
+SQL;
+        $stmt = $db->prepare($sql);
+        $stmt->execute([':t' => $table]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($rows as $r) {
+            if (!is_array($r)) continue;
+            $from = $r['from'] ?? null;
+            $tgt  = $r['table'] ?? null;
+            $to   = $r['to'] ?? null;
+            if (is_string($from) && is_string($tgt) && is_string($to)) {
+                $out[] = ['from' => $from, 'table' => $tgt, 'to' => $to];
+            }
+        }
+        return $out;
+    }
+    return $out;
+}
+
+/**
+ * Detect a table's primary-key column when it's a single auto-increment
+ * integer (the IPAM convention — `id INTEGER PRIMARY KEY`). Returns the
+ * column name, or null if the PK is composite, non-integer (e.g.
+ * schema_migrations.version), or otherwise non-strip-on-insert.
+ */
+function ipam_logical_detect_autoincrement_pk(PDO $db, string $table): ?string
+{
+    $driverAttr = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    $driver = is_string($driverAttr) ? $driverAttr : '';
+    if ($driver === 'sqlite') {
+        $stmt = $db->query("PRAGMA table_info(\"$table\")");
+        $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
+        $pkCols = [];
+        foreach ($rows as $r) {
+            if (!is_array($r)) continue;
+            $pkRank = $r['pk'] ?? 0;
+            if (is_numeric($pkRank) && (int) $pkRank > 0) {
+                $pkCols[] = $r;
+            }
+        }
+        if (count($pkCols) !== 1) {
+            return null; // composite PK (join tables) — no auto-increment to strip
+        }
+        $col  = $pkCols[0];
+        $name = is_string($col['name'] ?? null) ? $col['name'] : '';
+        $type = strtoupper(is_string($col['type'] ?? null) ? $col['type'] : '');
+        if ($type !== 'INTEGER' || $name === '') {
+            return null;
+        }
+        return $name;
+    }
+    if ($driver === 'mysql') {
+        $stmt = $db->prepare(
+            'SELECT COLUMN_NAME FROM information_schema.COLUMNS '
+            . "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t AND EXTRA LIKE '%auto_increment%'"
+        );
+        $stmt->execute([':t' => $table]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        if (count($rows) !== 1) {
+            return null;
+        }
+        $name = $rows[0]['COLUMN_NAME'] ?? null;
+        return is_string($name) && $name !== '' ? $name : null;
+    }
+    if ($driver === 'pgsql') {
+        // Identity columns OR serial columns (default = nextval(...sequence...)).
+        $sql = <<<'SQL'
+SELECT c.column_name
+  FROM information_schema.columns c
+ WHERE c.table_schema = current_schema()
+   AND c.table_name   = :t
+   AND (
+        c.is_identity = 'YES'
+     OR (c.column_default IS NOT NULL AND c.column_default LIKE 'nextval(%')
+   )
+SQL;
+        $stmt = $db->prepare($sql);
+        $stmt->execute([':t' => $table]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        if (count($rows) !== 1) {
+            return null;
+        }
+        $name = $rows[0]['column_name'] ?? null;
+        return is_string($name) && $name !== '' ? $name : null;
+    }
+    return null;
+}
+
+/**
+ * Per-engine FK-bracket: temporarily disable FK enforcement so the dump
+ * can be replayed in topo order without ordering-dependent constraint
+ * violations. Returns a closure that restores the prior setting.
+ *
+ * SQLite requires the PRAGMA to be set BEFORE BEGIN TRANSACTION (CLAUDE.md);
+ * the caller is responsible for that ordering.
+ */
+function ipam_logical_open_fk_bracket(PDO $db): callable
+{
+    $driverAttr = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    $driver = is_string($driverAttr) ? $driverAttr : '';
+    if ($driver === 'sqlite') {
+        $priorStmt = $db->query('PRAGMA foreign_keys');
+        $priorRaw  = $priorStmt !== false ? $priorStmt->fetchColumn() : 0;
+        $priorOn   = is_numeric($priorRaw) && (int) $priorRaw === 1;
+        $db->exec('PRAGMA foreign_keys = OFF');
+        return function () use ($db, $priorOn): void {
+            $db->exec('PRAGMA foreign_keys = ' . ($priorOn ? 'ON' : 'OFF'));
+        };
+    }
+    if ($driver === 'mysql') {
+        $db->exec('SET FOREIGN_KEY_CHECKS = 0');
+        return function () use ($db): void {
+            $db->exec('SET FOREIGN_KEY_CHECKS = 1');
+        };
+    }
+    if ($driver === 'pgsql') {
+        $db->exec("SET session_replication_role = 'replica'");
+        return function () use ($db): void {
+            $db->exec("SET session_replication_role = 'origin'");
+        };
+    }
+    return function (): void {};
+}
+
+/**
+ * Apply an IPAMBKL1 Logical-format dump onto the given PDO connection
+ * via re-emit-IDs replay with FK remapping.
+ *
+ * Spec: docs/internal/ipambkl1-format.md → "Replay strategy — re-emit IDs".
+ *
+ * Process:
+ *   1. Read magic line, header line. Validate schema_version (refuse newer).
+ *   2. Open per-engine FK bracket BEFORE transaction (sqlite ordering rule).
+ *   3. Stream body. For each row:
+ *      - Look up table's FK metadata.
+ *      - Remap FK column values via idmap (set NULL for self-referential).
+ *      - Strip auto-increment PK if the table has one.
+ *      - INSERT. Capture lastInsertId. Record idmap[table][source_pk] = target_pk.
+ *   4. Validate footer checksum + total_rows.
+ *   5. Second pass over self-referential tables to UPDATE the self-FKs.
+ *   6. Commit transaction.
+ *   7. Restore FK enforcement (always — finally clause).
+ *
+ * @return array{total_rows:int,checksum_ok:bool,schema_version:int}
+ */
+function ipam_restore_logical_apply(PDO $db, string $inputPath): array
+{
+    if (!is_file($inputPath)) {
+        throw new RuntimeException('ipam_restore_logical_apply: input file not found: ' . $inputPath);
+    }
+    $gz = gzopen($inputPath, 'rb');
+    if ($gz === false) {
+        throw new RuntimeException('ipam_restore_logical_apply: cannot open input for reading: ' . $inputPath);
+    }
+
+    try {
+        // Magic.
+        $magic = rtrim((string) gzgets($gz), "\n");
+        if ($magic !== 'IPAMBKL1') {
+            throw new RuntimeException('ipam_restore_logical_apply: unrecognised magic: ' . var_export($magic, true));
+        }
+
+        // Header.
+        $headerLine = (string) gzgets($gz);
+        $header = json_decode($headerLine, true);
+        if (!is_array($header) || ($header['header'] ?? false) !== true) {
+            throw new RuntimeException('ipam_restore_logical_apply: missing or malformed header line');
+        }
+        $rawSchemaVersion    = $header['schema_version'] ?? 0;
+        $sourceSchemaVersion = is_numeric($rawSchemaVersion) ? (int) $rawSchemaVersion : 0;
+        $targetSchemaVersion = ipam_logical_schema_version($db);
+        if ($sourceSchemaVersion > $targetSchemaVersion) {
+            throw new RuntimeException(
+                'ipam_restore_logical_apply: backup schema is newer than install — ' .
+                "source=$sourceSchemaVersion, target=$targetSchemaVersion. Upgrade the install first."
+            );
+        }
+
+        // FK bracket BEFORE transaction (sqlite rule).
+        $closeBracket = ipam_logical_open_fk_bracket($db);
+        $db->beginTransaction();
+
+        // Wipe every replayable table so the dump's data fully replaces the
+        // target's prior contents.
+        //
+        // Two exceptions:
+        //   - schema_migrations: preserved because the target already ran
+        //     apply_migrations() to reach a compatible schema_version, and
+        //     that history must survive restore.
+        //   - audit_log: append-only by trigger (audit_log_no_delete);
+        //     DELETE would abort the transaction. Source's audit_log rows
+        //     append to whatever the target carries — which is informative,
+        //     not a corruption. user_id columns reference source IDs that
+        //     no longer exist post-re-emit, but audit_log.user_id has no FK
+        //     constraint and the username TEXT column preserves the
+        //     human-readable identity.
+        //
+        // FK enforcement is off (bracketed above) so wipe order doesn't
+        // matter; iterating in reverse topo order is still a polite gesture
+        // for any DB engine that benefits from child-before-parent deletes.
+        $tableOrder = ipam_logical_table_order($db);
+        $skipWipe   = ['schema_migrations', 'audit_log'];
+        foreach (array_reverse($tableOrder) as $t) {
+            if (in_array($t, $skipWipe, true)) continue;
+            $db->exec("DELETE FROM " . ipam_logical_q($db, $t));
+        }
+
+        $idmap = [];        // idmap[table][source_id] = target_id
+        $selfFkPending = []; // [table => list of {source_pk, source_self_fk}]
+        $totalRows = 0;
+        $hashCtx   = hash_init('sha256');
+        $footer    = null;
+
+        try {
+            while (!gzeof($gz)) {
+                $line = gzgets($gz);
+                if ($line === false || $line === '') break;
+                $trim = rtrim($line, "\n");
+                if ($trim === '') continue;
+
+                $obj = json_decode($trim, true);
+                if (!is_array($obj)) {
+                    throw new RuntimeException('ipam_restore_logical_apply: malformed body line');
+                }
+
+                if (($obj['footer'] ?? false) === true) {
+                    $footer = $obj;
+                    break;
+                }
+
+                $table = $obj['table'] ?? null;
+                $row   = $obj['row']   ?? null;
+                if (!is_string($table) || !is_array($row)) {
+                    throw new RuntimeException('ipam_restore_logical_apply: malformed row line (missing table/row)');
+                }
+
+                // Body checksum + total_rows count every body line, regardless of
+                // whether the row is replayed — so the file's footer integrity is
+                // independent of restore-side filter rules.
+                hash_update($hashCtx, $line);
+                $totalRows++;
+
+                // schema_migrations rows are skipped on restore: the target install
+                // ran apply_migrations() before this function was called, so it
+                // already carries an equivalent migration history. The source's
+                // schema_version (consulted earlier for compat) is the meaningful
+                // signal; the row contents are redundant.
+                if ($table === 'schema_migrations') {
+                    continue;
+                }
+
+                // Narrow row keys to string for replay_row's array<string,mixed> signature.
+                $rowNarrow = [];
+                foreach ($row as $k => $v) {
+                    $rowNarrow[(string) $k] = $v;
+                }
+                ipam_logical_replay_row($db, $table, $rowNarrow, $idmap, $selfFkPending);
+            }
+
+            if (!is_array($footer)) {
+                throw new RuntimeException('ipam_restore_logical_apply: missing footer line');
+            }
+            $expectedChecksum = is_string($footer['checksum_sha256'] ?? null) ? $footer['checksum_sha256'] : '';
+            $actualChecksum   = hash_final($hashCtx);
+            if (!hash_equals($expectedChecksum, $actualChecksum)) {
+                throw new RuntimeException(
+                    "ipam_restore_logical_apply: body checksum mismatch — " .
+                    "expected $expectedChecksum, got $actualChecksum"
+                );
+            }
+            $rawTotal      = $footer['total_rows'] ?? -1;
+            $expectedTotal = is_numeric($rawTotal) ? (int) $rawTotal : -1;
+            if ($expectedTotal !== $totalRows) {
+                throw new RuntimeException(
+                    "ipam_restore_logical_apply: total_rows mismatch — " .
+                    "footer=$expectedTotal, observed=$totalRows"
+                );
+            }
+
+            // Pass 2 — self-referential UPDATEs.
+            foreach ($selfFkPending as $tableKey => $pending) {
+                $table = (string) $tableKey;
+                foreach ($pending as $entry) {
+                    $sourcePk     = $entry['source_pk'];
+                    $sourceSelfFk = $entry['source_self_fk'];
+                    $col          = $entry['col'];
+                    $targetPk     = $idmap[$table][$sourcePk] ?? null;
+                    $targetSelfFk = $idmap[$table][$sourceSelfFk] ?? null;
+                    if ($targetPk === null || $targetSelfFk === null) {
+                        // Either source row missing (shouldn't happen) or parent missing.
+                        // Skip silently — pass 1 already inserted with NULL self-FK.
+                        continue;
+                    }
+                    $stmt = $db->prepare(
+                        "UPDATE " . ipam_logical_q($db, $table)
+                        . " SET " . ipam_logical_q($db, $col) . " = :v WHERE id = :pk"
+                    );
+                    $stmt->execute([':v' => $targetSelfFk, ':pk' => $targetPk]);
+                }
+            }
+
+            $db->commit();
+        } catch (Throwable $e) {
+            if ($db->inTransaction()) $db->rollBack();
+            throw $e;
+        } finally {
+            $closeBracket();
+        }
+
+        return [
+            'total_rows'     => $totalRows,
+            'checksum_ok'    => true,
+            'schema_version' => $sourceSchemaVersion,
+        ];
+    } finally {
+        gzclose($gz);
+    }
+}
+
+/**
+ * Replay a single body row: remap FK columns, strip auto-increment PK,
+ * INSERT, capture lastInsertId, update idmap. Self-referential FKs are
+ * deferred to pass 2 by setting NULL initially and recording in
+ * $selfFkPending.
+ *
+ * @param array<string,mixed>                              $row
+ * @param array<string,array<int|string,int>>              $idmap
+ * @param array<string,list<array{source_pk:int|string,source_self_fk:int|string,col:string}>> $selfFkPending
+ */
+function ipam_logical_replay_row(
+    PDO $db,
+    string $table,
+    array $row,
+    array &$idmap,
+    array &$selfFkPending
+): void {
+    static $tableMeta = [];
+    if (!isset($tableMeta[$table])) {
+        $tableMeta[$table] = [
+            'fks' => ipam_logical_introspect_fks($db, $table),
+            'pk'  => ipam_logical_detect_autoincrement_pk($db, $table),
+        ];
+    }
+    $fks = $tableMeta[$table]['fks'];
+    $pk  = $tableMeta[$table]['pk'];
+
+    // Decode every value back from wire form (binary $bin envelopes etc).
+    $decoded = [];
+    foreach ($row as $col => $val) {
+        $decoded[(string) $col] = ipam_logical_decode_value($val);
+    }
+
+    // Remember source PK if the table has one.
+    $sourcePk = null;
+    if ($pk !== null && array_key_exists($pk, $decoded)) {
+        $sourcePk = $decoded[$pk];
+    }
+
+    // FK remapping pass.
+    $selfFkSnapshot = null;
+    $selfFkCol      = null;
+    foreach ($fks as $fk) {
+        $col       = $fk['from'];
+        $tgtTable  = $fk['table'];
+        if (!array_key_exists($col, $decoded)) continue;
+        $srcVal = $decoded[$col];
+        if ($srcVal === null) continue;
+
+        // Source FK value must be int or string — anything else is data corruption.
+        if (!is_int($srcVal) && !is_string($srcVal)) {
+            throw new RuntimeException(
+                "ipam_restore_logical_apply: $table.$col FK value has unsupported type " . gettype($srcVal)
+            );
+        }
+
+        if ($tgtTable === $table) {
+            // Self-referential: defer to pass 2; insert with NULL.
+            $selfFkSnapshot = $srcVal;
+            $selfFkCol      = $col;
+            $decoded[$col]  = null;
+            continue;
+        }
+        $mapped = $idmap[$tgtTable][$srcVal] ?? null;
+        if ($mapped === null) {
+            $srcRepr = is_int($srcVal) ? (string) $srcVal : $srcVal;
+            throw new RuntimeException(
+                "ipam_restore_logical_apply: unresolved FK — $table.$col references $tgtTable.{$fk['to']} " .
+                "with source value $srcRepr but no target row recorded. Likely cause: dump's table_order is " .
+                "not topologically sorted parents-first."
+            );
+        }
+        $decoded[$col] = $mapped;
+    }
+
+    // Strip auto-increment PK so target engine assigns a fresh one.
+    if ($pk !== null && array_key_exists($pk, $decoded)) {
+        unset($decoded[$pk]);
+    }
+
+    // INSERT with named placeholders. Postgres can't use lastInsertId() without
+    // a sequence name, so it gets a RETURNING clause appended and reads back
+    // the generated PK directly. SQLite and MySQL keep the lastInsertId() path.
+    $driverAttr = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    $driver     = is_string($driverAttr) ? $driverAttr : '';
+    $cols   = array_keys($decoded);
+    $colList = implode(', ', array_map(fn($c) => ipam_logical_q($db, (string) $c), $cols));
+    $phList  = implode(', ', array_map(fn($c) => ':' . $c, $cols));
+    $sql = "INSERT INTO " . ipam_logical_q($db, $table) . " ($colList) VALUES ($phList)";
+    if ($driver === 'pgsql' && $pk !== null) {
+        $sql .= " RETURNING " . ipam_logical_q($db, $pk);
+    }
+    $stmt = $db->prepare($sql);
+
+    foreach ($cols as $c) {
+        $val = $decoded[$c];
+        $param = ':' . $c;
+        $kind  = ipam_logical_column_kind((string) $c);
+        if ($kind === 'binary' && is_string($val)) {
+            ipam_bind_binary($stmt, $param, $val);
+        } elseif ($kind === 'timestamp' && $driver === 'mysql' && is_string($val)) {
+            // MySQL DATETIME with default sql_mode rejects ISO-8601 'T'/'Z'
+            // form — coerce 'YYYY-MM-DDTHH:MM:SSZ' → 'YYYY-MM-DD HH:MM:SS'.
+            // sqlite and pgsql accept either form natively.
+            $stmt->bindValue($param, ipam_logical_timestamp_for_mysql($val));
+        } else {
+            $stmt->bindValue($param, $val);
+        }
+    }
+    $stmt->execute();
+
+    // Record idmap entry + defer self-FK if applicable.
+    if ($pk !== null && (is_int($sourcePk) || is_string($sourcePk))) {
+        if ($driver === 'pgsql') {
+            $returnedRaw = $stmt->fetchColumn();
+            $targetPk = is_numeric($returnedRaw) ? (int) $returnedRaw : 0;
+        } else {
+            $targetPk = (int) $db->lastInsertId();
+        }
+        if (!isset($idmap[$table])) $idmap[$table] = [];
+        $idmap[$table][$sourcePk] = $targetPk;
+
+        if ($selfFkSnapshot !== null && $selfFkCol !== null) {
+            // selfFkSnapshot was already type-narrowed in the FK-remap loop above
+            // (only int|string survives that pass; anything else throws).
+            $selfFkPending[$table][] = [
+                'source_pk'      => $sourcePk,
+                'source_self_fk' => $selfFkSnapshot,
+                'col'            => $selfFkCol,
+            ];
+        }
+    }
 }

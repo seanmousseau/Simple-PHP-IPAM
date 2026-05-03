@@ -8,11 +8,18 @@ declare(strict_types=1);
  *   ci-minio (s3)   → http://minio:9000 (sidecar), bucket from
  *                     IPAM_TEST_MINIO_BUCKET (default ipam-backups), prefix ci/
  *   ci-local (local) → on-disk at data/tmp/ipam-backup-ci-local
+ *   ci-sftp  (sftp)  → sftp://sftp:2222 (linuxserver/openssh-server sidecar),
+ *                      key auth from the committed ed25519 fixture; remote
+ *                      path /config/backups
  *
  * Credentials come from the bootstrap-app.sh sidecar env vars:
  *   IPAM_TEST_MINIO_USER   (default testkey)
  *   IPAM_TEST_MINIO_PASS   (default testsecret123)
  *   IPAM_TEST_MINIO_BUCKET (default ipam-backups)
+ *   IPAM_TEST_SFTP_USER    (default ipam)
+ *   IPAM_TEST_SFTP_PASS    (default ipam-sftp-fixture-pass)
+ *   IPAM_TEST_SFTP_DIR     (default /config/backups)
+ *   IPAM_TEST_SFTP_KEYFILE (default /tmp/ipam_pw_sftp — mounted by bootstrap)
  *
  * Encryption is OFF on both rows so the spec can verify SHA-256 round-trips
  * without having to know app_secret. A separate spec exercises encrypted dumps.
@@ -32,6 +39,18 @@ require $appRoot . '/init.php';
 $minioUser   = getenv('IPAM_TEST_MINIO_USER')   ?: 'testkey';
 $minioPass   = getenv('IPAM_TEST_MINIO_PASS')   ?: 'testsecret123';
 $minioBucket = getenv('IPAM_TEST_MINIO_BUCKET') ?: 'ipam-backups';
+
+$sftpUser    = getenv('IPAM_TEST_SFTP_USER')    ?: 'ipam';
+$sftpPass    = getenv('IPAM_TEST_SFTP_PASS')    ?: 'ipam-sftp-fixture-pass';
+$sftpDir     = getenv('IPAM_TEST_SFTP_DIR')     ?: '/config/backups';
+$sftpKeyfile = getenv('IPAM_TEST_SFTP_KEYFILE') ?: '/tmp/ipam_pw_sftp';
+$sftpKeyPem  = is_readable($sftpKeyfile) ? (string) file_get_contents($sftpKeyfile) : '';
+if ($sftpKeyPem === '') {
+    fwrite(STDERR, "seed-backup-destinations: SFTP key fixture missing at $sftpKeyfile\n");
+    // Fail soft — bootstrap may not have mounted the fixture (e.g. older
+    // local runs before #833). Fall back to password auth so the row still
+    // works for spec coverage; the SFTP integration spec exercises both.
+}
 
 $localPath = $appRoot . '/data/tmp/ipam-backup-ci-local';
 if (!is_dir($localPath)) {
@@ -60,6 +79,18 @@ $rows = [
         'config' => [
             'path' => $localPath,
         ],
+    ],
+    [
+        'name'   => 'ci-sftp',
+        'type'   => 'sftp',
+        'config' => array_filter([
+            'host'        => 'sftp',
+            'port'        => 2222,
+            'username'    => $sftpUser,
+            'password'    => $sftpPass,
+            'private_key' => $sftpKeyPem !== '' ? $sftpKeyPem : null,
+            'remote_path' => $sftpDir,
+        ], static fn($v) => $v !== null),
     ],
 ];
 

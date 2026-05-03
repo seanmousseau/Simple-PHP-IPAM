@@ -66,8 +66,17 @@ Functionality:
 **Single-tenant note:** for installs with no tenancy enabled (i.e. all v3.x installs and any v4.x install where the conversion wizard hasn't been run), Logical backup acts as "export the whole install minus the schema-level stuff" — no tenant_id filter applies. Same on-disk format, same restore code, same UI. v4.0.0 just layers tenant_id scoping on top.
 
 **Implication for restore UI:** the restore wizard reads the magic byte and dispatches:
-- `IPAMBKP2` (or v1 `IPAMBKP1` back-compat) → engine-native restore via `mysql --execute` / `psql -f` / SQLite import (or PDO replay if F18 lands)
-- `IPAMBKL1` → JSON parse → row-by-row PDO insert with FK-disable bracketing → re-emit IDs (since logical doesn't preserve auto-increment values across installs)
+- `IPAMBKP2` (or v1 `IPAMBKP1` back-compat) → Database format → engine-native restore via `mysql --execute` / `psql -f` / SQLite import. **Stays shell-out** per §5b — F18 in v3.23.0 is scoped to `IPAMBKL1` only.
+- `IPAMBKL1` → Logical format → NDJSON parse → row-by-row PDO insert with engine-appropriate FK bracketing → **re-emit IDs with FK remapping**. The dump records each row's source PK plus FK column values (which reference source PKs). During replay, the restorer maintains an in-memory `idmap[table][source_id] = target_id`; rows are inserted *without* the source PK (the target engine assigns a fresh one), the new PK is captured into the map, and any FK column on subsequent rows is looked up in the map and substituted with the target PK before INSERT.
+
+**Re-emit-IDs design — load-bearing requirements:**
+- **Topological table order in the dump.** `header.table_order` must be a parents-first topo-sort of the FK graph (e.g. `sites` → `vlans` (FK→sites) → `vrfs` → `subnets` (FKs→sites,vlans,vrfs) → `addresses` (FK→subnets) → join tables → audit). The writer is responsible for emitting in this order; the reader replays in receipt order without re-sorting. IPAM's FK graph is a DAG so a static order is sufficient.
+- **Self-referential tables** (`sites.parent_id`) replay in two passes: first pass inserts every row with `parent_id = NULL`, capturing the idmap; second pass walks the same table again issuing `UPDATE ... SET parent_id = idmap[source_parent_id]`. Format encodes nothing extra — the restorer knows which tables are self-referential from the live schema.
+- **Join tables** (`subnet_tags`, `address_tags`) have no own PK to remap; both columns are FKs and both get looked up in idmap. They sit at the end of `table_order`.
+- **Tables without auto-increment PKs** (`schema_migrations` keyed by `version` string) are inserted verbatim — no idmap entry, no remap.
+- **`audit_log`** is append-only (UPDATE/DELETE blocked by trigger). Its `id` is auto-increment and gets re-emitted; its `user_id` is an FK to `users` and gets remapped.
+
+> **Design note (2026-05-03):** chose re-emit-IDs over preserve-source-PKs. Preserve was simpler for v3.23.0's whole-install single-tenant scope, but re-emit is the path that survives v4.0.0 multi-tenancy unchanged — partial-tenant restore into a populated install needs FK remapping by definition, and shipping the format with re-emit semantics from day one means the v3.23.0 → v4.0.0 transition doesn't introduce a format break or a "remap-target" mode bolt-on. Pay the complexity once, in v3.23.0, where the test surface is simplest.
 
 The two restore paths share the staging + signature-token flow but diverge at the parse/replay step.
 
@@ -238,6 +247,8 @@ A single backup file can occupy multiple tier slots simultaneously (e.g. a Sunda
 
 ## 5. PDO vs CLI tools — phased decisions
 
+> **Reconciliation note (2026-05-03):** earlier passes of this section conflated **"PDO-as-runner"** with **"Logical-as-format"**. PDO is just the replay mechanism — it can target either Database-format SQL dumps (engine-bound payload) or Logical-format `IPAMBKL1` (engine-agnostic abstract-type JSON). Once the two axes are disentangled, the §5c'/§5d "RESTORE in v3.23.0, DUMP in v3.25.0" split collapses (an in-house format must ship its writer and reader together — splitting them across releases means v3.23.0 ships a reader for a format nothing produces), cross-engine restore becomes free of charge (no engine-bound types in the wire format means no type-mapping work), and the v3.25.0 work is purely the operator-facing UI. The text below has been updated accordingly. Tells that betrayed the conflation: §E line 891 listing "mysqldump/pg_dump/SQLite native parser tests" as v3.23.0's Logical-restore test surface (that's a Database-format surface), §5c''s "4–6 weeks of type-mapping" deferral rationale (only true for SQL-text formats), and #824's original body referencing "the SQL splitter" (only applies to SQL streams, not NDJSON). The dump+restore backend now lands together in v3.23.0 (#824); v3.25.0 (#849+#1076) is UI-only.
+
 ### 5a. Database backup dump engine — AGREED 2026-04-29
 
 **Decision:** **Shell-out stays for now.** `mysqldump` / `pg_dump` remain prereqs for non-SQLite installs.
@@ -251,7 +262,7 @@ A single backup file can occupy multiple tier slots simultaneously (e.g. a Sunda
 - `mysqldump` / `pg_dump` host prereqs documented.
 - No new code in this area until the revisit.
 
-> **Scope correction (2026-05-02):** earlier drafts of this section said "v3.22.0 ships Database backup … behind the new unified UI." That's stale. v3.22.0 was scope-locked to backend concurrency + cron architecture only (see §9 v3.22.0 row — "pure backend, no UI"). The Database-as-it-stands has been live in the unified UI since v3.21.0. The Logical-format DUMP engine + the destination/Run-now picker UI ship in **v3.25.0** (#849 + #1076); the Logical-format RESTORE engine ships in **v3.23.0** (#824).
+> **Scope correction (2026-05-02, superseded 2026-05-03):** earlier drafts of this section said "v3.22.0 ships Database backup … behind the new unified UI." That's stale — v3.22.0 was scope-locked to backend concurrency + cron architecture only. The Database-as-it-stands has been live in the unified UI since v3.21.0. **The 2026-05-02 split (RESTORE v3.23.0 / DUMP v3.25.0) was itself reconciled away on 2026-05-03 — see §5 reconciliation note and §5c'.** Current state: full IPAMBKL1 backend (dump + restore + engine-agnostic) lands in v3.23.0 (#824); the operator-facing picker UI lands in v3.25.0 (#1076 + #849).
 
 **Future work (parking lot, not committed):**
 - F26 (new): MySQL-PDO Database backup using `SHOW CREATE TABLE` shortcut — ~4 weeks of focused work, eliminates `mysqldump` host dep
@@ -273,25 +284,38 @@ Same outcome as 4a: operators who want zero CLI dependency use Logical backups e
 
 Already locked in §2.1.1: Logical backup is our format, PDO-only by definition. Engine-portable. No CLI tools involved.
 
-### 5c'. Cross-engine logical restore — AGREED 2026-04-29: defer to v3.26.0+
+### 5c'. Cross-engine logical restore — AGREED 2026-05-03: in scope for v3.23.0 (free as a side-effect of the format)
 
-**Decision:** Logical backup ships with **same-engine restore only**. Cross-engine restore (sqlite-source → mysql-target, etc.) defers to v3.26.0+.
+**Decision:** Logical backup is **engine-agnostic in both directions** from v3.23.0 onward. The on-disk `IPAMBKL1` format records no engine identity; the only compatibility axis is `header.schema_version` against the install's `schema_migrations` high-water mark.
 
-Sean: *"Defer. I expect several releases to clean things up."*
+Sean (2026-05-03): *"It could be any engine to any engine (completely agnostic of the underlying engine, especially needed if we ever support multi-tenant). What was discussed was that the backup needed to be restored to the same software version that the backup is from or a newer version of software. If newer, migrations would be applied as part of the restore."*
 
-**Why:** cross-engine adds 4-6 weeks of type-mapping work (engine-specific type-coercion, constraint translation, sequence/auto-increment handling). Better to ship same-engine Logical first, give it track record, then add cross-engine as a later unlock that builds on the `Dialect` class infrastructure already proving engine-portable type translation since v2.9.0. Tracked: same-engine Logical RESTORE in v3.23.0 (#824), Logical DUMP + picker UI in v3.25.0 (#849, #1076), cross-engine restore in v3.26.0+ (#861).
+**Why the earlier "defer to v3.26.0+" framing was wrong:** the prior rationale cited "4–6 weeks of type-mapping work (engine-specific type-coercion, constraint translation, sequence/auto-increment handling)." That cost only applies if the wire format carries engine-bound types — i.e. SQL text from `mysqldump`/`pg_dump`. The actual `IPAMBKL1` format uses abstract types only (int / string / bool / null / ISO-8601 timestamp / base64-binary), so engine differences resolve at *replay* time via per-engine PDO binding (`ipam_bind_binary()` for binary blobs) and per-engine FK-bracketing. Auto-increment / sequence handling falls out for free under the re-emit-IDs replay strategy (§2.1.1) — the target engine assigns fresh PKs natively, so no per-engine sequence-reset code is needed. Cross-engine therefore costs nothing extra in v3.23.0; it's the natural state of the format.
 
-> **Scope correction (2026-05-02):** earlier drafts said "v3.22.0 ships Logical backup with same-engine restore only." Stale. v3.22.0 was scope-locked to backend concurrency + cron only (see §9 v3.22.0 row — "pure backend, no UI"). Logical RESTORE moved to v3.23.0; Logical DUMP + picker UI to v3.25.0.
+**Compat rule (the only one):**
+
+| `header.schema_version` vs install | Behaviour |
+|---|---|
+| Equal | Direct replay. |
+| Older | Replay, then `apply_migrations()` brings the data forward to current schema. |
+| Newer | Refuse with "this backup is from schema vN; the install is at vM (older). Upgrade the install first." |
+
+**Tracked:** full IPAMBKL1 backend (dump + restore + engine-agnostic + schema_version compat) in v3.23.0 (#824). Operator-facing picker UI in v3.25.0 (#1076). Issue #861 (originally "cross-engine restore parking lot") is closed-as-resolved by this design.
+
+> **Stale-text trail (kept for archeology):**
+> - 2026-04-29 first draft said v3.22.0 ships same-engine Logical restore only.
+> - 2026-05-02 scope-correction moved the split to "RESTORE v3.23.0, DUMP v3.25.0" with same-engine restriction.
+> - 2026-05-03 reconciliation (this section) collapses the dump/restore split into v3.23.0 and removes the same-engine restriction. See §5 reconciliation note for the conflation that led the earlier drafts astray.
 
 ### 5d. Both formats ship — Logical primary, Database escape hatch — AGREED 2026-04-29
 
 Sean (paraphrased): "B is a good middle-of-the-road. We could also leave operators to perform their own DB backups. But at least B gives us the option."
 
-**Both Database and Logical formats ship by v3.25.0.** UI / docs / defaults treat **Logical as the recommended path** for most operators; Database is positioned as an "engine-native escape hatch" for operators who want byte-for-byte engine fidelity AND have CLI tools available.
+**Both Database and Logical formats reach the UI by v3.25.0** (Logical backend lands in v3.23.0 first, with no operator surface). UI / docs / defaults treat **Logical as the recommended path** for most operators; Database is positioned as an "engine-native escape hatch" for operators who want byte-for-byte engine fidelity AND have CLI tools available.
 
 **Timeline (concrete):**
 - Database format — already wired into the unified UI since v3.21.0. No-op for v3.22.0 (which was concurrency + cron only; see §9).
-- Logical format — RESTORE engine in v3.23.0 (#824), DUMP engine in v3.25.0 (#849), destination/Run-now picker UI in v3.25.0 (#1076). Until v3.25.0 ships, every backup row is `backup_type='database'` because the picker/dump path doesn't exist yet — the History tab's `backup_type` filter chip exists but only one value can be written.
+- Logical format — full `IPAMBKL1` backend (dump + restore, engine-agnostic, schema_version compat) in v3.23.0 (#824). No operator UI in v3.23.0; the backend is reachable only via tests so it can soak across two release cycles before exposure. Destination/Run-now picker UI surfaces it in v3.25.0 (#1076 picker + #849 wire-up). Until v3.25.0 ships, every backup row is `backup_type='database'` because no operator entry point can write a `'logical'` row — the History tab's `backup_type` filter chip exists but only one value can be written.
 
 | | Logical (primary) | Database (escape hatch) |
 |---|---|---|
@@ -362,10 +386,10 @@ Captured from Sean's note + Claude's audit. Each entry is a candidate issue but 
 | F15 | Move retention from schedule to destination level | §3 | P1 |
 | F16 | Backup-encryption-passphrase scheme (`IPAMBKP3` format) | §4 | P1 (P0 if any v4.0.0 work starts) |
 | F17 | Per-tenant HKDF key derivation in v4.0.0 | §4 | v4.0.0 |
-| F18 | PDO-based restore (engine-agnostic, no CLI dependency) | §5 | P1 |
-| F19 | PDO-based dump (follows F18 by 1+ release cycle) | §5 | P2 |
+| F18 | PDO `IPAMBKL1` backend — dump + restore, engine-agnostic, schema_version compat (v3.23.0 #824; absorbs former F19 dump engine per 2026-05-03 reconciliation) | §5 | P1 |
+| F19 | Wire `ipam_backup_run()` to dispatch on picker-chosen `backup_type` (v3.25.0 #849 — surfacing only, dump engine is in F18) | §5 | P1 |
 | ~~F20~~ | ~~Backup type selector: `Database` vs `Data` (rows-only)~~ | ~~§2.1~~ | **DROPPED 2026-04-29** — §2.1.1 two-type model (Database / Logical) is sufficient; CSV/JSON export from `db_tools.php` covers rows-only use case. Resolved as not needed; possible misalignment on original proposal. |
-| F21 | Notifications config — global preference vs per-schedule | §2.4 | OPEN |
+| ~~F21~~ | ~~Notifications config — global preference vs per-schedule~~ | ~~§2.4~~ | **LANDED v3.23.0** — see §C row + #825. Per-schedule overrides editable on `backup_admin.php?tab=notifications`. |
 | F22 | "Default backup destination" tenant policy (local-disabled in v4.0.0) | §2.3 | v4.0.0 |
 | F23 | Stale-cron / scanner-blocks-backup architectural fix (cron task ordering — backup before scanner, or scanner backgrounded) | release-session find | P1 |
 | F24 | "Verify all backups" bulk action on a destination | new (Claude) | P2 |
@@ -398,7 +422,7 @@ Captured from Sean's note + Claude's audit. Each entry is a candidate issue but 
 | T2 | OpenSSH-server sidecar for SFTP destination coverage in same CI job | new (Claude) | P0 |
 | T3 | Local destination coverage in same CI job (currently the only path with no live-server test) | new (Claude) | P0 |
 | T4 | Restore-to-empty-DB row-count parity assertion across all 3 engines | §5 | P0 |
-| T5 | Cross-engine restore tests (sqlite-dump → mysql-target, etc.) once F18 lands | §5 | P1 |
+| T5 | Cross-engine restore tests (sqlite-dump → mysql-target, etc.) — folded into #1042's 3×3 matrix in v3.23.0 per 2026-05-03 reconciliation; no longer a separate item | §5 | P1 |
 | T6 | Tamper / corruption-detection tests for `IPAMBKP3` (matching what `IPAMBKP2` got in v3.19.0) | §4 | P1 |
 | T7 | Schedule-fires-at-expected-time test (cron tick simulation) | new (Claude) | P1 |
 | T8 | "destination disabled mid-backup" test — graceful failure, audit log, no orphaned tmpfiles | new (Claude) | P2 |
@@ -747,21 +771,21 @@ Each milestone is now ≤16 items, single-theme. Less context-switching mid-rele
 
 | ID | Type | Title | Cur | Sugg | Pri | Notes |
 |---|---|---|---|---|---|---|
-| F18 | Func | PDO-based restore (logical) | — | v3.23 | P1 | Anchor |
-| F21 | Func | Notifications config resolution (global + per-sched) | — | v3.23 | P1 | Builds on B-P0-2 |
-| B-P1-8 | Audit | Split `ipam_backup_apply_retention` into compute/apply | — | v3.23 | P1 | Pre-req for tests |
-| B-P1-21 | Audit | `ipam_backup_next_run_at` edge cases (T12 first) | — | v3.23 | P1 | Tests then refactor |
-| B-P1-15 | Audit | SQLite retention sort by mtime, not lex | — | v3.23 | P1 | After legacy retires |
-| F35 | Func | Streaming gzread in restore (OOM safety) | — | v3.23 | P2 | Audit #39 |
-| F36 | Func | Pre-validate dump in dry-run | — | v3.23 | P2 | Audit #20 |
-| T11 | Test | `BackupRetentionTest` edge-case expansion | — | v3.23 | P1 | Pre-req for B-P1-8 |
-| T12 | Test | `next_run_at` table-driven edge cases | — | v3.23 | P1 | Pre-req for B-P1-21 |
-| T2 | Test | OpenSSH-server sidecar for SFTP coverage | — | v3.23 | P0 | Test debt |
-| T3 | Test | Local destination CI coverage | — | v3.23 | P0 | Test debt |
-| T4 | Test | Restore-to-empty-DB row-count parity | — | v3.23 | P0 | All 3 engines |
-| F-LEGACY-DEPR | Func | Deprecate Settings → Data & Maintenance → Backup; migrate `backup.enabled=true` config to a Local destination + schedule on first page load; make Notifications tab editable | #1058 | v3.23 | P1 | Surfaced post-v3.21.0 ship: §1 row at line 19 documents the gap but no F-item existed. Pairs with F21 (Notifications config resolution). Pre-req for B-P1-15 ("After legacy retires"). Hard removal of `run_db_backup_if_due` + `backup.*` keys is tracked in v3.26.0 #1059. |
+| F18 | Func | PDO `IPAMBKL1` backend — dump + restore, engine-agnostic, schema_version compat | — | v3.23 | P1 | Anchor. No operator UI in v3.23.0 (backend soaks via tests; UI in v3.25.0 #1076). Absorbs former F19 (DUMP engine) per 2026-05-03 reconciliation. |
+| ~~F21~~ | ~~Func~~ | ~~Notifications config resolution (global + per-sched)~~ | ~~—~~ | ~~v3.23~~ | ~~P1~~ | **Landed** — schema migration `3.23.0-notify-overrides`, resolver helpers, dispatcher wiring, and Notifications-tab UI all merged on `feat/v3.23.0` (commits `1bff0a7`, `408ff2f`, `15f8d12`, `3ffcd2c`). #825. |
+| ~~B-P1-8~~ | ~~Audit~~ | ~~Split `ipam_backup_apply_retention` into compute/apply~~ | ~~#826~~ | ~~v3.23~~ | ~~P1~~ | **Landed** — `577f6d5`, `367cbf1`, `6bb8da9` (3-commit refactor: drop dead `$nowEpoch` chain, then split into compute + apply + thin orchestrator). |
+| ~~B-P1-21~~ | ~~Audit~~ | ~~`ipam_backup_next_run_at` edge cases (T12 first)~~ | ~~#827~~ | ~~v3.23~~ | ~~P1~~ | **Landed** — `a548a39` (DateTimeImmutable + extracted helpers; T12 / #832 already covered the table-driven edge cases). |
+| ~~B-P1-15~~ | ~~Audit~~ | ~~SQLite retention sort by mtime, not lex~~ | ~~#828~~ | ~~v3.23~~ | ~~P1~~ | **Landed** — `ec41c39` (extracted `ipam_legacy_retention_prune_by_mtime` helper; replaced 3 identical rsort blocks across the sqlite/mysql/pgsql legacy paths). |
+| ~~F35~~ | ~~Func~~ | ~~Streaming gzread in restore (OOM safety)~~ | ~~#829~~ | ~~v3.23~~ | ~~P2~~ | **Landed** — `59ad8f0`, `0469940`, `cd95fa6` (SQL splitter → generator; streaming `read_staged_sql + apply/dry_run` chain; synthetic large-dump memory-bound test). |
+| ~~F36~~ | ~~Func~~ | ~~Pre-validate dump in dry-run~~ | ~~#830~~ | ~~v3.23~~ | ~~P2~~ | **Landed** — `d9364d0`, `dc43306` (splitter throws on EOF in unterminated state; dry_run pre-validates via splitter so failures surface early). |
+| ~~T11~~ | ~~Test~~ | ~~`BackupRetentionTest` edge-case expansion~~ | ~~#831~~ | ~~v3.23~~ | ~~P1~~ | **Landed** — `48fbe49` (4 edge-case retention tests covering tiebreaks, absent buckets, large counts). |
+| ~~T12~~ | ~~Test~~ | ~~`next_run_at` table-driven edge cases~~ | ~~#832~~ | ~~v3.23~~ | ~~P1~~ | **Landed** — `fa89f83` (18 table-driven cases driving the B-P1-21 refactor). |
+| ~~T2~~ | ~~Test~~ | ~~OpenSSH-server sidecar for SFTP coverage~~ | ~~#833~~ | ~~v3.23~~ | ~~P0~~ | **Landed** — `linuxserver/openssh-server` sidecar in `testing/playwright/bootstrap-app.sh`, committed ed25519 fixture keypair under `testing/playwright/fixtures/sftp/`, `ci-sftp` destination row in `seed-backup-destinations.php`, and the existing `backup-integration.spec.ts` extended to iterate `[ci-minio, ci-local, ci-sftp]` for connection-test + run-now + history-row coverage. |
+| ~~T3~~ | ~~Test~~ | ~~Local destination CI coverage~~ | ~~#834~~ | ~~v3.23~~ | ~~P0~~ | **Landed** — `c4680e1` (5 unit-level tests on the LocalBackupClient: missing source, read-only dir, checksum round-trip, missing-object download/delete; happy path was already in the Playwright `backup-integration.spec.ts` against ci-local). |
+| ~~T4~~ | ~~Test~~ | ~~Restore-to-empty-DB row-count parity~~ | ~~#835~~ | ~~v3.23~~ | ~~P0~~ | **Landed** — `74159b7` (sqlite reference case); cross-engine 3×3 matrix landed alongside in #1042 (`91e5b3d`). |
+| ~~F-LEGACY-DEPR~~ | ~~Func~~ | ~~Deprecate Settings → Data & Maintenance → Backup; migrate `backup.enabled=true` config to a Local destination + schedule on first page load; make Notifications tab editable~~ | ~~#1058~~ | ~~v3.23~~ | ~~P1~~ | **Landed** — deprecation banner on Settings, idempotent `ipam_legacy_backup_migrate_if_due()` helper hooked into `init.php`, Notifications tab now editable in-place per F21. Commits `352d137`, `aa3a14d`. Hard removal of `run_db_backup_if_due` + `backup.*` keys tracked separately in v3.26.0 #1059. |
 
-**v3.23.0 total: ~13 items.** Mostly mechanical cleanups; F18 is the visible feature.
+**v3.23.0 total: ~13 items.** Visible features: F18 (`IPAMBKL1` engine-agnostic backup format) and F21 (per-schedule notification overrides). Everything else is mechanical cleanup. **PR #1090 lands all 13.**
 
 ### v3.24.0 — Encryption v3 (`IPAMBKP3`) + manual restore
 
@@ -782,17 +806,17 @@ Each milestone is now ≤16 items, single-theme. Less context-switching mid-rele
 
 **v3.24.0 total: ~10 items.** Tightly scoped to crypto.
 
-### v3.25.0 — Retention rehome + polish + PDO dump
+### v3.25.0 — Surface Logical backend + retention rehome + polish
 
-**Theme:** moves retention to destination level, "Protect this backup" flag, default destination, PDO dump (logical), all the U-series polish.
+**Theme:** **expose the v3.23.0 IPAMBKL1 backend to operators via picker UI / Run-now flow.** Plus retention re-home to destination level, "Protect this backup" flag, default destination, and U-series polish. The backend lands in v3.23.0; v3.25.0 is the operator-facing surface that makes it reachable.
 
 | ID | Type | Title | Cur | Sugg | Pri | Notes |
 |---|---|---|---|---|---|---|
 | F15 | Func | Retention re-homed at destination level | — | v3.25 | P1 | §3 AGREED |
 | F14 | Func | "Protect this backup" flag on rows | — | v3.25 | P1 | §3 |
 | F10 | Func | Default destination selector | — | v3.25 | P2 | §2.3 |
-| F19 | Func | PDO-based dump (logical) | — | v3.25 | P1 | Per §5 cycle plan; #849 |
-| F19a | Func | **Destination + Run-now Logical/Database picker UI** | — | v3.25 | **P1** | Companion to F19; without this the dump engine has no operator-facing entry point. #1076 |
+| F19 | Func | Wire `ipam_backup_run()` to dispatch on `backup_type` (logical → v3.23.0 IPAMBKL1 backend; database → existing shell-out) | — | v3.25 | P1 | #849. **Not the dump engine** — that shipped in v3.23.0 (F18/#824). This issue is the wire-up between picker UI choice and existing backend. Per 2026-05-03 reconciliation. |
+| F19a | Func | **Destination + Run-now Logical/Database picker UI** | — | v3.25 | **P1** | #1076. Operator-facing entry point for the v3.23.0 IPAMBKL1 backend. Pairs with F19. |
 | F24 | Func | "Verify all backups" bulk action | — | v3.25 | P2 | New |
 | F25 | Func | Opt-out encryption for trusted local | — | v3.25 | P2 | New |
 | F34 | Func | Range-request resume in S3Client::download | — | v3.25 | P2 | Audit #28 |
@@ -805,14 +829,14 @@ Each milestone is now ≤16 items, single-theme. Less context-switching mid-rele
 | T8 | Test | Destination-disabled mid-backup | — | v3.25 | P2 | Graceful failure |
 | T9 | Test | Large-DB streaming test (>1GB) | — | v3.25 | P2 | Memory bounds |
 
-**v3.25.0 total: ~16 items** (was 15; F19a / #1076 added during v3.22.0 post-mortem when the Logical/Database picker UI surfaced as a previously-untracked dependency of F19/#849). Polish-heavy; can absorb minor cuts if it slips.
+**v3.25.0 total: ~16 items.** Theme is "surface the v3.23.0 backend + retention rehome + UI polish." F19 is no longer the dump engine — it's the dispatch wire-up; F19a (#1076) is the picker UI; F18 (#824) shipped the underlying IPAMBKL1 backend in v3.23.0. Polish-heavy; can absorb minor cuts if it slips.
 
-### v3.26.0+ — Cross-engine restore parking lot
+### v3.26.0+ — Legacy removal
 
 | ID | Type | Title | Cur | Sugg | Pri | Notes |
 |---|---|---|---|---|---|---|
-| Cross-engine restore | Func | sqlite-dump → mysql-target, etc. | — | v3.26+ | P2 | AGREED defer §5c' |
-| T5 | Test | Cross-engine restore tests | — | v3.26+ | P2 | Follows F18+F19 |
+| ~~Cross-engine restore~~ | ~~Func~~ | ~~sqlite-dump → mysql-target, etc.~~ | — | **MOVED → v3.23.0** | — | Resolved 2026-05-03 by IPAMBKL1 engine-agnostic format (no engine-bound types in wire format → no type-mapping work). #861 closed-as-resolved. |
+| ~~T5~~ | ~~Test~~ | ~~Cross-engine restore tests~~ | — | **MOVED → v3.23.0** | — | Folded into #1042's 3×3 cross-engine matrix. |
 | F-LEGACY-RM | Func | Retire `run_db_backup_if_due` and remove the 6 `backup.*` settings keys + Settings → Data & Maintenance → Backup group | #1059 | v3.26 | P0 | Final cutover for the legacy v3.7 single-destination filesystem-only runner. Depends on #1058 (v3.23.0 deprecation + migration helper). Last backup-focus release before v4.0.0 — appropriate place for the hard removal so v4.0.0 ships clean of both backup paths. |
 | ~~F20~~ | ~~Func~~ | ~~Backup type selector `Database` vs `Data`~~ | — | **DROPPED** | — | Resolved 2026-04-29: superseded by §2.1.1 two-type model |
 
@@ -867,9 +891,9 @@ Once §9 architectural concerns are settled and the running lists are prioritize
 - **v3.20.0** — Destinations UX cleanup (#778-#787) + #789 MinIO test + B-P0-2 notifications wire. ~14 items.
 - **v3.21.0** — Unified `Backup & Restore` surface + restore wizard rewrite + SQL splitter rewrite + sigchild fix in restore.php. **Docs:** D1, D2, D11. ~18 items.
 - **v3.22.0** — Concurrency hardening: stuck-running reaper, per-schedule lock, cron reorder, sigchild edges. Pure backend, no UI. ~12 items.
-- **v3.23.0** — PDO restore (F18), retention/scheduler refactors, maintainability cleanups, SFTP/local CI tests. ~12 items.
+- **v3.23.0** — PDO `IPAMBKL1` backend (dump + restore, engine-agnostic — F18, absorbs former F19 per 2026-05-03 reconciliation), retention/scheduler refactors, maintainability cleanups, SFTP/local CI tests. ~12 items.
 - **v3.24.0** — `IPAMBKP3` encryption + manual upload-and-restore. **Docs:** D3, D4, D5, D6, D10. ~10 items.
-- **v3.25.0** — Retention re-homed at destination, "Protect this backup" flag, PDO dump (F19), all U-series polish. ~15 items.
+- **v3.25.0** — Retention re-homed at destination, "Protect this backup" flag, **picker UI surfacing the v3.23.0 IPAMBKL1 backend** (F19a/#1076 picker + F19/#849 dispatch wire-up), all U-series polish. ~15 items.
 - **v3.26.0+** — Cross-engine restore parking lot.
 - **v4.0.0** — Per-tenant HKDF derivation (F17), tenant-scoped UI (F22). **Docs:** D7, D12. Once shipped, this doc moves to `docs/internal/attic/`.
 
@@ -888,10 +912,10 @@ Backup overhaul §8 already lists testing improvements as part of the running li
 | v3.20.0 | not added (work in flight, mostly destination UX cleanup) | — |
 | v3.21.0 | `tests: Playwright specs + drawer trap for unified Backup & Restore surface` (#1040) | Replace 4 backup-page specs with one `backup_restore.spec.ts` covering 5 tabs; drawer focus-trap; restore-wizard rewrite; manual upload; inline run-now progress; VR rebaseline. |
 | v3.22.0 | `tests: concurrency + cron-architecture hardening` (#1041) | Concurrent Run-now, schedule overlap, cron lock-file, notifications subscriptions, schedule-overdue alerting. |
-| v3.23.0 | `tests: PDO restore engine — parse + replay across all 3 dump formats` (#1042) | mysqldump / pg_dump / SQLite native parser tests; FK bracketing per engine; PDO replay integration tests; large-dump perf benchmark; tarball-deployment no-CLI assertion. |
+| v3.23.0 | `tests: IPAMBKL1 dump+restore engine — engine-agnostic round-trip + cross-engine matrix` (#1042) | IPAMBKL1 writer + reader round-trip per engine (sqlite, mysql, pg); 3×3 cross-engine restore matrix; schema_version compat (forward-migrate older, refuse-newer); abstract-type fidelity (binary blobs via base64, ISO-8601 timestamps); per-engine FK bracket; large-dump streaming memory bound; tarball-deployment no-CLI assertion. **No sequence-reset tests** — re-emit-IDs replay (§5c') makes the target engine's sequence advance naturally; explicit reset isn't part of the format. **No SQL-parser tests** — IPAMBKL1 is NDJSON, not SQL text. |
 | v3.24.0 | `tests: encryption v3 (IPAMBKP3) format + manual passphrase restore + decrypt tooling` (#1043) | IPAMBKP3 format tests; manual passphrase wizard; standalone decrypt tooling; back-compat with IPAMBKP1/2; cross-format round-trip. |
-| v3.25.0 | `tests: GFS retention table + PDO logical dump format` (#1044) | GFS daily/weekly/monthly/yearly fixtures; retention dry-run preview; `IPAMBKL1` logical dump portability; cross-engine logical-dump assertion (restore parked at v3.26+); CLI-format escape-hatch smoke test. |
-| v3.26.0+ | not yet (cross-engine restore parking lot) | — |
+| v3.25.0 | `tests: picker UI + retention rehome + GFS retention table` (#1044) | Picker-UI Playwright (Logical vs Database choice on destination + Run-now); retention-rehome migration (settings → destination row); GFS daily/weekly/monthly/yearly fixtures; retention dry-run preview; "Protect this backup" flag end-to-end; CLI-format escape-hatch smoke test. **IPAMBKL1 format tests live in #1042 (v3.23.0)** — this issue is operator-facing surface only. |
+| v3.26.0+ | legacy removal only (cross-engine restore folded into v3.23.0 #1042 per 2026-05-03 reconciliation) | — |
 
 **Cross-cutting policy** (matches `ux_overhaul.md` §12 / `code_quality_review.md` §11):
 - Each PR closing a backup-overhaul finding must update or add the matching test in the same commit.
@@ -956,7 +980,7 @@ All §C items filed as GitHub issues against their suggested milestones. **76 is
 - T15 concurrency test → #823
 
 **v3.23.0** (12 issues, #824-835):
-- F18 PDO restore → #824
+- F18 PDO IPAMBKL1 backend (dump + restore, engine-agnostic) → #824 (absorbs former F19/#849 dump engine per 2026-05-03 reconciliation; #849 demoted to v3.25.0 dispatch wire-up)
 - F21 unified notifications config → #825
 - B-P1-8 split apply_retention → #826
 - B-P1-21 next_run_at edge cases → #827
@@ -985,7 +1009,7 @@ All §C items filed as GitHub issues against their suggested milestones. **76 is
 - F15 retention rehome → #846
 - F14 is_protected flag → #847
 - F10 default destination → #848
-- F19 PDO dump → #849
+- F19 wire `ipam_backup_run()` to dispatch on picker-chosen `backup_type` → #849 (NOT the dump engine — that shipped in v3.23.0 #824 per 2026-05-03 reconciliation; this issue is operator-facing wire-up only)
 - F24 verify-all bulk → #850
 - F25 opt-out encryption → #851
 - F34 S3 range resume → #852
@@ -998,9 +1022,9 @@ All §C items filed as GitHub issues against their suggested milestones. **76 is
 - T8 destination-disabled mid-backup → #859
 - T9 large-DB streaming test → #860
 
-**v3.26.0** (2 issues, #861-862):
-- Cross-engine restore → #861
-- T5 cross-engine tests → #862
+**v3.26.0** (originally 2 issues #861-862, both resolved 2026-05-03):
+- ~~Cross-engine restore → #861~~ — closed-as-resolved by IPAMBKL1 engine-agnostic format (v3.23.0 #824). No type-mapping work needed; cross-engine is the natural state of the format.
+- ~~T5 cross-engine tests → #862~~ — folded into #1042's 3×3 cross-engine matrix in v3.23.0.
 
 **v4.0.0** (28 total: 25 pre-existing + 3 backup):
 - F17 per-tenant HKDF → #863

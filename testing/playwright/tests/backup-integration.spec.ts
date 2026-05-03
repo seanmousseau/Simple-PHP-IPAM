@@ -4,8 +4,8 @@
  *
  * Unlike backups.spec.ts (which exercises CRUD UI + a connection test on a
  * known-bad endpoint), this spec drives the full upload path against the
- * MinIO sidecar and a writable local directory seeded by bootstrap-app.sh
- * (see fixtures/seed-backup-destinations.php).
+ * MinIO, SFTP, and Local destinations seeded by bootstrap-app.sh (see
+ * fixtures/seed-backup-destinations.php).
  *
  * Coverage per destination:
  *   1. test_destination.php → ok=true (connection works against the real target)
@@ -13,7 +13,6 @@
  *   3. backup_history.php   → success row in backup_runs (v3.21.0 §A1) with a populated checksum
  *
  * Out of scope (deferred):
- *   - SFTP transport — covered in v3.23.0 #833 (requires sshd sidecar).
  *   - Restore-into-empty-DB round-trip — restore engine is exercised end-to-end
  *     by the existing restore wizard spec; the gate this file enforces is that
  *     the upload path actually delivers a usable artifact to the destination.
@@ -21,16 +20,19 @@
  * Required fixture state:
  *   - 'ci-minio'  (s3)    — seeded by seed-backup-destinations.php
  *   - 'ci-local'  (local) — seeded by seed-backup-destinations.php
+ *   - 'ci-sftp'   (sftp)  — seeded by seed-backup-destinations.php (#833)
  *
- * The MinIO sidecar lives on the docker network created by bootstrap-app.sh.
- * If either destination is missing, the spec hard-fails (rather than skipping)
- * — D1 is a required gate for any change touching the backup engine.
+ * The sidecar containers (MinIO, OpenSSH-server) live on the docker network
+ * created by bootstrap-app.sh. If any destination is missing the spec
+ * hard-fails (rather than skipping) — these are required gates for any
+ * change touching the backup engine.
  */
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import { login, appUrl, newAuthContext, ADMIN_USER, ADMIN_PASS } from '../fixtures/ipam';
 
 const DEST_S3    = 'ci-minio';
 const DEST_LOCAL = 'ci-local';
+const DEST_SFTP  = 'ci-sftp';
 
 let ctx: BrowserContext;
 let page: Page;
@@ -69,7 +71,7 @@ async function postForm(p: Page, path: string, fields: Record<string, string>): 
   return { ok: res.ok(), body: text, json };
 }
 
-test.describe('Backup integration (MinIO + local)', () => {
+test.describe('Backup integration (MinIO + local + SFTP)', () => {
   test.beforeAll(async ({ browser }: { browser: Browser }) => {
     ctx  = await newAuthContext(browser);
     page = await ctx.newPage();
@@ -80,7 +82,7 @@ test.describe('Backup integration (MinIO + local)', () => {
     await ctx.close();
   });
 
-  for (const destName of [DEST_S3, DEST_LOCAL]) {
+  for (const destName of [DEST_S3, DEST_LOCAL, DEST_SFTP]) {
     test(`${destName}: connection test succeeds`, async () => {
       const id = await destIdByName(page, destName);
       const csrf = await getCsrf(page);

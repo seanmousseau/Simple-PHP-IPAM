@@ -32,6 +32,14 @@ interface VRPage {
 // restore coverage with a mutation-isolated capture path. Until then,
 // dashboard rendering changes are a manual smoke-test item during release prep.
 //
+// `subnets` and `search` excluded as of v3.23.0 (#1073): both pages render
+// consistently +200–470 px taller on the PostgreSQL driver than on
+// SQLite/MySQL with no ascertained source change in `subnets.php` /
+// `search.php` since v3.21.0. Per #1073's explicit triage option (c),
+// removing them from the VR set matches the dashboard's "exclude until the
+// root cause is bisected" pattern. Bisection is tracked as a follow-up;
+// when fixed, restore the entries below and the corresponding baselines.
+//
 // Backup & Restore tabs (#1040, v3.21.0):
 //   - Notifications + Restore (Step 1) are captured below — both are
 //     static-only views (no data tables, no live counters) so VR is stable.
@@ -40,9 +48,7 @@ interface VRPage {
 //     other tests create and tear down. Re-evaluate once the dashboard
 //     mutation-isolation work lands.
 const PAGES: VRPage[] = [
-  { name: 'subnets', path: 'subnets.php' },
   { name: 'addresses', path: 'addresses.php' },
-  { name: 'search', path: 'search.php?q=10' },
   { name: 'login', path: 'login.php', skipAuth: true },
   { name: 'backup-admin-notifications', path: 'backup_admin.php?tab=notifications' },
   { name: 'backup-admin-restore', path: 'backup_admin.php?tab=restore' },

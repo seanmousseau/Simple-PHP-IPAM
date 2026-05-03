@@ -2896,6 +2896,76 @@ function ipam_migrations(): array
                 $db->exec("DROP INDEX IF EXISTS idx_backup_schedules_destination");
             }
         },
+
+        // v3.23.0 #825 (F21): add per-schedule notification override columns to
+        // backup_schedules. notify_override gates the override; the three
+        // override columns are nullable so an admin can mix global + override
+        // (e.g. override notify_on_failure but inherit recipients).
+        '3.23.0-notify-overrides' => static function (PDO $db): void {
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driver = is_string($driverRaw) ? $driverRaw : '';
+
+            // Existing-column lookup, per-driver. Pattern matches the inline
+            // PRAGMA / information_schema queries used in the surrounding
+            // migrations (no shared helper exists yet — see 3.21.0-* above).
+            $existing = [];
+            if ($driver === 'sqlite') {
+                $r = $db->query("PRAGMA table_info(backup_schedules)");
+                $rows = $r !== false ? $r->fetchAll(PDO::FETCH_ASSOC) : [];
+                foreach ($rows as $row) {
+                    if (is_array($row) && isset($row['name']) && is_string($row['name'])) {
+                        $existing[] = $row['name'];
+                    }
+                }
+            } elseif ($driver === 'mysql') {
+                $r = $db->query(
+                    "SELECT COLUMN_NAME FROM information_schema.COLUMNS
+                      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'backup_schedules'"
+                );
+                $existing = $r !== false ? array_map('strval', $r->fetchAll(PDO::FETCH_COLUMN)) : [];
+            } elseif ($driver === 'pgsql') {
+                $r = $db->query(
+                    "SELECT column_name FROM information_schema.columns
+                      WHERE table_schema = current_schema() AND table_name = 'backup_schedules'"
+                );
+                $existing = $r !== false ? array_map('strval', $r->fetchAll(PDO::FETCH_COLUMN)) : [];
+            } else {
+                throw new RuntimeException("3.23.0-notify-overrides: unsupported driver '$driver'");
+            }
+
+            // Per-engine column DDL. notify_override is NOT NULL DEFAULT 0 so
+            // existing rows take "use global" semantics on upgrade. The three
+            // override columns are nullable so an admin can override one
+            // setting (e.g. failure email) while inheriting another.
+            $defs = [
+                'sqlite' => [
+                    'notify_override'   => "ALTER TABLE backup_schedules ADD COLUMN notify_override INTEGER NOT NULL DEFAULT 0",
+                    'notify_on_failure' => "ALTER TABLE backup_schedules ADD COLUMN notify_on_failure INTEGER",
+                    'notify_on_success' => "ALTER TABLE backup_schedules ADD COLUMN notify_on_success INTEGER",
+                    'notify_recipients' => "ALTER TABLE backup_schedules ADD COLUMN notify_recipients TEXT",
+                ],
+                'mysql' => [
+                    'notify_override'   => "ALTER TABLE backup_schedules ADD COLUMN notify_override TINYINT(1) NOT NULL DEFAULT 0",
+                    'notify_on_failure' => "ALTER TABLE backup_schedules ADD COLUMN notify_on_failure TINYINT(1) NULL",
+                    'notify_on_success' => "ALTER TABLE backup_schedules ADD COLUMN notify_on_success TINYINT(1) NULL",
+                    'notify_recipients' => "ALTER TABLE backup_schedules ADD COLUMN notify_recipients TEXT NULL",
+                ],
+                'pgsql' => [
+                    'notify_override'   => "ALTER TABLE backup_schedules ADD COLUMN notify_override SMALLINT NOT NULL DEFAULT 0",
+                    'notify_on_failure' => "ALTER TABLE backup_schedules ADD COLUMN notify_on_failure SMALLINT NULL",
+                    'notify_on_success' => "ALTER TABLE backup_schedules ADD COLUMN notify_on_success SMALLINT NULL",
+                    'notify_recipients' => "ALTER TABLE backup_schedules ADD COLUMN notify_recipients TEXT NULL",
+                ],
+            ];
+            // Iterate the per-driver DDL keys directly so a future column
+            // added to $defs but missed from a separate "wanted" list can't
+            // be silently skipped.
+            foreach (array_keys($defs[$driver]) as $col) {
+                if (!in_array($col, $existing, true)) {
+                    $db->exec($defs[$driver][$col]);
+                }
+            }
+        },
     ];
 }
 

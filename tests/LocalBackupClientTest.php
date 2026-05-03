@@ -85,4 +85,94 @@ final class LocalBackupClientTest extends TestCase
         $this->assertTrue($r['ok']);
         $this->assertSame('directory writable', $r['message']);
     }
+
+    // -----------------------------------------------------------------------
+    // #834 / T3 — error-path + round-trip coverage for the Local destination.
+    // The Playwright integration spec exercises the happy path against a
+    // seeded ci-local destination; what was missing at the unit level was
+    // permission-denied + missing-source + a checksum-validating round-trip.
+    // -----------------------------------------------------------------------
+
+    public function testUploadFromMissingSourceThrowsCopyFailed(): void
+    {
+        $c = new LocalBackupClient(['path' => $this->dir]);
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('copy failed');
+        $c->upload($this->dir . '/does-not-exist.src', 'whatever.bak');
+    }
+
+    public function testUploadIntoReadOnlyDirThrowsCopyFailed(): void
+    {
+        if (DIRECTORY_SEPARATOR !== '/' || posix_geteuid() === 0) {
+            $this->markTestSkipped('chmod-based denial is unreliable on Windows or as root');
+        }
+        $c = new LocalBackupClient(['path' => $this->dir]);
+        $tmp = tempnam(sys_get_temp_dir(), 'lbc');
+        $this->assertNotFalse($tmp);
+        file_put_contents($tmp, 'payload');
+
+        // Strip write+execute so copy() into the dir fails with EACCES.
+        chmod($this->dir, 0o500);
+        try {
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessage('copy failed');
+            $c->upload($tmp, 'denied.bak');
+        } finally {
+            chmod($this->dir, 0o700);  // restore for tearDown
+            @unlink($tmp); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmp is tempnam()-generated
+        }
+    }
+
+    public function testUploadDownloadRoundTripChecksum(): void
+    {
+        $c = new LocalBackupClient(['path' => $this->dir]);
+
+        // Source payload — non-trivial size so a partial copy would mismatch.
+        $payload = random_bytes(8 * 1024);
+        $expectedSha = hash('sha256', $payload);
+        $tmpSrc = tempnam(sys_get_temp_dir(), 'lbc');
+        $this->assertNotFalse($tmpSrc);
+        file_put_contents($tmpSrc, $payload);
+
+        $meta = $c->upload($tmpSrc, 'rt.bak');
+        @unlink($tmpSrc); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmpSrc is tempnam()-generated
+        $this->assertSame(strlen($payload), $meta['size']);
+        $this->assertSame($expectedSha,    $meta['checksum']);
+
+        // Round-trip via download path → byte-for-byte equality.
+        $tmpDst = tempnam(sys_get_temp_dir(), 'lbc');
+        $this->assertNotFalse($tmpDst);
+        $this->assertTrue($c->download('rt.bak', $tmpDst));
+        $this->assertSame(hash_file('sha256', $tmpDst), $expectedSha);
+        @unlink($tmpDst); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmpDst is tempnam()-generated
+
+        // listObjects must surface the uploaded blob with matching size.
+        $found = null;
+        foreach ($c->listObjects() as $row) {
+            if ($row['name'] === 'rt.bak') { $found = $row; break; }
+        }
+        $this->assertNotNull($found);
+        $this->assertSame(strlen($payload), $found['size']);
+
+        // delete() must remove it and leave subsequent listObjects empty of it.
+        $this->assertTrue($c->delete('rt.bak'));
+        foreach ($c->listObjects() as $row) {
+            $this->assertNotSame('rt.bak', $row['name']);
+        }
+    }
+
+    public function testDownloadOfMissingObjectReturnsFalse(): void
+    {
+        $c = new LocalBackupClient(['path' => $this->dir]);
+        $tmpDst = tempnam(sys_get_temp_dir(), 'lbc');
+        $this->assertNotFalse($tmpDst);
+        $this->assertFalse($c->download('not-there.bak', $tmpDst));
+        @unlink($tmpDst); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmpDst is tempnam()-generated
+    }
+
+    public function testDeleteOfMissingObjectReturnsFalse(): void
+    {
+        $c = new LocalBackupClient(['path' => $this->dir]);
+        $this->assertFalse($c->delete('absent.bak'));
+    }
 }
