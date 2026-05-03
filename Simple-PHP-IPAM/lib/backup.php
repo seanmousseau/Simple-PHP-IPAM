@@ -1837,3 +1837,102 @@ function ipam_backup_detect_overdue_schedules(PDO $db, ?int $nowTs = null): arra
         'grace_minutes' => $graceMinutes,
     ];
 }
+
+// =========================================================================
+// IPAMBKL1 — Logical-format codec
+// =========================================================================
+//
+// Spec: docs/internal/ipambkl1-format.md
+//
+// The codec is the bottom of the IPAMBKL1 stack. Every body row's column
+// values pass through ipam_logical_encode_value() on dump and through
+// ipam_logical_decode_value() on restore. The pair preserves PHP's value
+// types verbatim across the JSON round-trip and is engine-agnostic — driver
+// differences are handled at the binding layer (ipam_bind_binary()), not
+// here.
+//
+// Three column kinds need explicit handling:
+//   - Binary blobs (ip_bin, network_bin)  → {"$bin": "<base64>"} envelope
+//   - Timestamps (engine-native datetime) → ISO-8601 UTC normalised
+//   - Everything else (int/string/bool/null) → pass through; JSON handles natively
+
+/**
+ * Normalise an engine-native datetime string to canonical ISO-8601 UTC.
+ *
+ * Accepts both 'YYYY-MM-DD HH:MM:SS' (sqlite / mysql fetch) and
+ * 'YYYY-MM-DDTHH:MM:SSZ' (already canonical). Throws on anything else.
+ *
+ * Engines store TIMESTAMP / DATETIME columns in UTC by IPAM convention
+ * (see init.php session config and the migration history). This function
+ * does not perform timezone conversion — it assumes the input is already
+ * UTC and only reformats the separator and trailing 'Z'.
+ */
+function ipam_logical_normalise_timestamp(string $ts): string
+{
+    if (preg_match('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/', $ts)) {
+        return $ts;
+    }
+    if (preg_match('/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/', $ts, $m)) {
+        return $m[1] . 'T' . $m[2] . 'Z';
+    }
+    throw new InvalidArgumentException('ipam_logical_normalise_timestamp: unrecognised format: ' . $ts);
+}
+
+/**
+ * Encode a single column value into its IPAMBKL1 wire form.
+ *
+ * @param mixed $value      The raw column value as fetched from PDO.
+ * @param bool  $isBinary   True when the column is a binary blob (BLOB / VARBINARY / BYTEA).
+ * @param bool  $isTimestamp True when the column is a TIMESTAMP / DATETIME.
+ * @return mixed            JSON-serialisable scalar or {"$bin": "<base64>"} envelope. Null in → null out.
+ */
+function ipam_logical_encode_value(mixed $value, bool $isBinary = false, bool $isTimestamp = false): mixed
+{
+    if ($value === null) {
+        return null;
+    }
+    if ($isBinary) {
+        if (!is_string($value)) {
+            throw new InvalidArgumentException('ipam_logical_encode_value: binary value must be string, got ' . gettype($value));
+        }
+        return ['$bin' => base64_encode($value)];
+    }
+    if ($isTimestamp) {
+        if (!is_string($value)) {
+            throw new InvalidArgumentException('ipam_logical_encode_value: timestamp value must be string, got ' . gettype($value));
+        }
+        return ipam_logical_normalise_timestamp($value);
+    }
+    return $value;
+}
+
+/**
+ * Decode a single IPAMBKL1 wire-form value back into its PHP/SQL form.
+ *
+ * Inverse of ipam_logical_encode_value(). The {"$bin": "..."} envelope
+ * is unwrapped via base64_decode; everything else passes through. Note
+ * that timestamps remain ISO-8601 strings — every supported engine
+ * (sqlite, mysql, pg) accepts ISO timestamps in INSERT, so no conversion
+ * back to engine-native format is required.
+ *
+ * @param mixed $encoded  The decoded JSON value from a body row.
+ * @return mixed
+ */
+function ipam_logical_decode_value(mixed $encoded): mixed
+{
+    if ($encoded === null) {
+        return null;
+    }
+    if (is_array($encoded) && array_key_exists('$bin', $encoded)) {
+        $payload = $encoded['$bin'];
+        if (!is_string($payload)) {
+            throw new InvalidArgumentException('ipam_logical_decode_value: $bin payload must be string');
+        }
+        $decoded = base64_decode($payload, /* strict */ true);
+        if ($decoded === false) {
+            throw new RuntimeException('ipam_logical_decode_value: invalid base64 in $bin envelope');
+        }
+        return $decoded;
+    }
+    return $encoded;
+}
