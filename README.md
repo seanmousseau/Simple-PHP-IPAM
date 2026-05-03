@@ -12,11 +12,15 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.22.3
+## What's new in v3.23.0
 
-Hotfix for v3.22.2. Clicking **Download** on any successful row in the Backup History drawer (`backup_admin.php?tab=history`) returned `405 POST required` because the drawer rendered the link as a `GET <a href>` while the `download_remote_backup.php` endpoint is POST-only and reads `destination_id` + `name` (not `run_id`). Other Download entry points (e.g. the Restore tab's destination browser at `remote_backups.php`) already used a POST form and were unaffected.
+The backup-overhaul wave. **18 milestone issues closed in a single release.** Engine-agnostic logical backup format ships end-to-end; per-schedule notification overrides are editable in the unified Backup &amp; Restore admin surface; the legacy `backup.*` settings group is deprecated with an automatic one-shot migration.
 
-- **History-drawer Download is now a POST submit.** `views/_backup_run_detail_body.php` emits a sibling `<form id="backup-run-download" method="post" action="download_remote_backup.php">` with `csrf`, `destination_id`, the run's `filename`, and `as=file`; the Download button inside `.drawer-actions` is bound to it via the HTML5 `form="..."` attribute so the visual layout and disabled-state matrix line up with Verify and Delete.
+- **`IPAMBKL1` engine-agnostic backups (#824).** Full PDO writer + reader. Re-emit-IDs replay strategy lets a backup taken on SQLite restore onto MySQL or PostgreSQL (and vice versa). Magic-byte dispatch keeps existing `IPAMBKP1`/`IPAMBKP2` SQL dumps on the engine-native shell-out path.
+- **Per-schedule notification overrides (#825).** Each schedule may override the global *failure* / *success* defaults and pin its own recipient CSV. Tri-state per field (Inherit / On / Off). Edit on `backup_admin.php?tab=notifications`. Schema migration `3.23.0-notify-overrides` adds four columns to `backup_schedules` (idempotent across all three engines).
+- **Restore tab is now a destination-driven backup browser (#1077).** Select a destination &rarr; LIST renders inline as a per-row table (filename, size, date, encryption, type, checksum) with Download / Restore / Verify-Delete-link / degraded-restore notice. Free-text fallback preserved under an Advanced disclosure.
+- **Settings &rsaquo; Data &amp; Maintenance &rsaquo; Backup is deprecated (#1058).** Banner points operators at the unified surface. On first v3.23.0 page load, an install with `backup.enabled = true` automatically materialises a Local destination + schedule from the legacy keys. Legacy keys remain readable through v3.25.0; hard-removal in v3.26.0.
+- **Operational polish.** OOM-safe streaming restore (#829), dry-run pre-validation (#830), retention by `filemtime` not lex (#828), MFA switch-graph live e2e (#770), Local + SFTP destination CI coverage (#833 / #834), `mysqldump --no-login-paths` probe (#1081), three-driver 3&times;3 cross-engine round-trip parity (#1042).
 
 [Full changelog →](CHANGELOG.md)
 
