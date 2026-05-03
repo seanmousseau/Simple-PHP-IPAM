@@ -298,6 +298,30 @@ class IPAMBKL1RestoreTest extends TestCase
         ipam_restore_logical_apply($target, $tampered);
     }
 
+    // -----------------------------------------------------------------------
+    // Wizard dispatch — ipam_restore_apply() magic-byte sniff
+    // -----------------------------------------------------------------------
+
+    public function testRestoreApplyDispatchesLogicalMagicToLogicalReader(): void
+    {
+        $target = $this->freshDb();
+        // Same fixture file built in setUp via the Logical writer.
+        $result = ipam_restore_apply($target, $this->fixturePath);
+
+        // Logical-path indicators in the result envelope.
+        $this->assertSame('logical', $result['format'] ?? null);
+
+        // And the data made it across the dispatcher.
+        $sites = (int) ($target->query("SELECT COUNT(*) FROM sites")?->fetchColumn() ?? 0);
+        $this->assertSame(2, $sites);
+    }
+
+    public function testRestoreSniffMagicDetectsIPAMBKL1(): void
+    {
+        $magic = ipam_restore_sniff_magic($this->fixturePath);
+        $this->assertSame('IPAMBKL1', $magic);
+    }
+
     public function testOlderSchemaVersionRestoreSucceeds(): void
     {
         $target = $this->freshDb();

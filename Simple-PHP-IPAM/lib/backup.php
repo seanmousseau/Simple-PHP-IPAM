@@ -1169,13 +1169,56 @@ function ipam_restore_dry_run(PDO $db, string $stagedPath): array
 }
 
 /**
+ * Sniff the magic line of a staged backup file to dispatch between
+ * Database-format (IPAMBKP1/2/3 wrapping mysqldump/pg_dump/SQLite SQL)
+ * and Logical-format (IPAMBKL1 wrapping NDJSON).
+ *
+ * Reads at most the first ~64 bytes through gzopen so it's safe on
+ * arbitrarily-large dumps. Returns the trimmed first line, or '' if
+ * the file isn't gzip-readable or has no recognizable magic.
+ */
+function ipam_restore_sniff_magic(string $stagedPath): string
+{
+    if (!is_file($stagedPath)) {
+        return '';
+    }
+    $gz = @gzopen($stagedPath, 'rb');
+    if ($gz === false) {
+        return '';
+    }
+    try {
+        $line = gzgets($gz, 64);
+        if ($line === false) {
+            return '';
+        }
+        return rtrim($line, "\r\n");
+    } finally {
+        gzclose($gz);
+    }
+}
+
+/**
  * Apply a staged backup to the database. Wraps in a transaction;
  * on any failure rolls back and throws.
  *
- * @return array{tables_restored:int,statements:int}
+ * @return array{tables_restored?:int,statements:int,format?:string,logical?:array<string,mixed>}
  */
 function ipam_restore_apply(PDO $db, string $stagedPath, string $realFilename = '', ?int $destinationId = null): array
 {
+    // Magic-byte dispatch (v3.23.0 #824). IPAMBKL1 → engine-agnostic
+    // PDO replay. Anything else → existing Database-format SQL-text path
+    // (sqlite-only until #1042's multi-engine work).
+    $magic = ipam_restore_sniff_magic($stagedPath);
+    if ($magic === 'IPAMBKL1') {
+        $logicalMeta = ipam_restore_logical_apply($db, $stagedPath);
+        return [
+            'format'           => 'logical',
+            'tables_restored'  => 0, // not tracked in logical path; see logical meta
+            'statements'       => $logicalMeta['total_rows'],
+            'logical'          => $logicalMeta,
+        ];
+    }
+
     $driverAttr = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
     $driver = is_string($driverAttr) ? $driverAttr : '';
     if ($driver !== 'sqlite') {
