@@ -3546,6 +3546,43 @@ function run_demo_reset_if_due(PDO $db): void
 /* ---------------- Database Backups ---------------- */
 
 /**
+ * Legacy SQLite/MySQL/PostgreSQL retention prune (#828 / B-P1-15).
+ *
+ * The legacy v3.7 backup runner globs filesystem dumps named
+ * `ipam-YYYY-MM-DD-HHMMSS.{sqlite,sql}` and keeps the most recent N. The
+ * pre-#828 implementation used `rsort()` on filenames, which only matches
+ * creation order while the timestamp prefix is intact. Operator-renamed
+ * files, alternate timestamp formats, or files copied in from another
+ * install would silently become "oldest" by lex rule and get pruned first.
+ *
+ * Sort by filemtime descending so the most recent N (by actual disk
+ * timestamp) are kept regardless of filename. Best-effort — files that
+ * vanish between glob() and stat() simply sort to the end.
+ *
+ * Hard-removal of this whole legacy runner is tracked separately in
+ * v3.26.0 #1059. Until then, this helper is the correct retention policy.
+ */
+function ipam_legacy_retention_prune_by_mtime(string $glob, int $retention): void
+{
+    $files = glob($glob);
+    if (!is_array($files) || $files === []) return;
+
+    // Build [path => mtime] then sort path desc by mtime.
+    $stamped = [];
+    foreach ($files as $f) {
+        $m = @filemtime($f);
+        $stamped[$f] = $m === false ? 0 : $m;
+    }
+    arsort($stamped, SORT_NUMERIC);
+    $ordered = array_keys($stamped);
+
+    foreach (array_slice($ordered, $retention) as $old) {
+        @unlink($old); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $old is a glob() result, not user input
+    }
+}
+
+
+/**
  * v3.23.0 #1058 — one-shot legacy → unified migration helper.
  *
  * If `backup.enabled = true` is set on first v3.23.0 page load, create a
@@ -3844,14 +3881,8 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             backup_runs_insert_cli($db, basename($dest), $size, $sha256,
                 $startedAt, date('Y-m-d H:i:s'), 'success');
 
-            // Prune old SQLite backups
-            $files = glob($dir . '/ipam-*.sqlite');
-            if (is_array($files)) {
-                rsort($files);
-                foreach (array_slice($files, $retention) as $old) {
-                    @unlink($old); // nosemgrep: php.lang.security.unlink-use.unlink-use
-                }
-            }
+            // Prune old SQLite backups by mtime (#828).
+            ipam_legacy_retention_prune_by_mtime($dir . '/ipam-*.sqlite', $retention);
             $wrote = true;
 
         } elseif ($driver === 'mysql') {
@@ -3916,13 +3947,8 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             backup_runs_insert_cli($db, basename($dest), $size, $sha256,
                 $startedAt, date('Y-m-d H:i:s'), 'success');
 
-            $files = glob($dir . '/ipam-*.sql');
-            if (is_array($files)) {
-                rsort($files);
-                foreach (array_slice($files, $retention) as $old) {
-                    @unlink($old); // nosemgrep: php.lang.security.unlink-use.unlink-use
-                }
-            }
+            // Prune old engine-native dumps by mtime (#828).
+            ipam_legacy_retention_prune_by_mtime($dir . '/ipam-*.sql', $retention);
             $wrote = true;
 
         } elseif ($driver === 'pgsql') {
@@ -3968,13 +3994,8 @@ function run_db_backup_if_due(PDO $db, array $config): bool
             backup_runs_insert_cli($db, basename($dest), $size, $sha256,
                 $startedAt, date('Y-m-d H:i:s'), 'success');
 
-            $files = glob($dir . '/ipam-*.sql');
-            if (is_array($files)) {
-                rsort($files);
-                foreach (array_slice($files, $retention) as $old) {
-                    @unlink($old); // nosemgrep: php.lang.security.unlink-use.unlink-use
-                }
-            }
+            // Prune old engine-native dumps by mtime (#828).
+            ipam_legacy_retention_prune_by_mtime($dir . '/ipam-*.sql', $retention);
             $wrote = true;
         }
 
