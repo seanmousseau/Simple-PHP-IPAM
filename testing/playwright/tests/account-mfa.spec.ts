@@ -327,6 +327,79 @@ test.describe('Preserved-enrollment hints (#755)', () => {
         expect(src).toContain('name="action" value="switch_to_email"');
     });
 
+    // -------------------------------------------------------------------
+    // #770 — preferred-MFA switch-graph buttons: live click → landing
+    //
+    // The markup tests above (lines 299–328) prove the buttons are wired
+    // into the templates. This block adds the missing click-and-land
+    // coverage for the two switch directions that don't require a virtual
+    // WebAuthn authenticator: switch_to_email (from totp_verify) and
+    // switch_to_totp (from email_otp_verify). Both gated on MailHog —
+    // landing on email_otp_verify, or clicking switch_to_email, triggers
+    // an OTP send via SMTP and the test would hang without it.
+    //
+    // switch_to_passkey live coverage is intentionally out of scope (the
+    // mirror requires a virtual authenticator setup; passkey-side button
+    // wiring is asserted by the markup test on line 316).
+    // -------------------------------------------------------------------
+
+    test('Live click — totp_verify → switch_to_email lands on email_otp_verify (#770)', async ({ page }) => {
+        test.skip(!isEmailOtpSeeded(), 'SEED_EMAIL_OTP_TEST_USER not set');
+        test.skip(process.env.IPAM_TEST_MAILHOG !== '1', 'requires IPAM_TEST_MAILHOG=1 (clicking switch_to_email triggers SMTP delivery)');
+        // email_otp_test_user has BOTH TOTP and Email OTP enrolled, so the
+        // user lands on totp_verify by default and the switch_to_email
+        // button is rendered.
+        await ensureEmailOtpEnrolled(EMAIL_OTP_USER);
+        await reset2faEnrollment(EMAIL_OTP_USER);
+        await setMfaToggles(page, {
+            'k_mfa__totp_enabled':      '1',
+            'k_mfa__email_otp_enabled': '1',
+        });
+
+        await page.goto(appUrl('login.php'));
+        await page.locator('[name=username]').fill(EMAIL_OTP_USER);
+        await page.locator('[name=password]').fill(EMAIL_OTP_PASS);
+        await page.locator('button[type=submit]').click();
+        await page.waitForURL(/totp_verify\.php/, { timeout: 30_000 });
+
+        // Click the live switch_to_email button — its form posts to the
+        // same handler that login.php uses; landing on email_otp_verify
+        // means the dispatch graph correctly re-routes the challenge.
+        const switchForm = page.locator('form input[name=action][value=switch_to_email]').locator('..');
+        await switchForm.locator('button[type=submit]').click();
+        await page.waitForURL(/email_otp_verify\.php/, { timeout: 30_000 });
+        expect(page.url()).toMatch(/email_otp_verify\.php/);
+    });
+
+    test('Live click — email_otp_verify → switch_to_totp lands on totp_verify (#770)', async ({ page }) => {
+        test.skip(!isEmailOtpSeeded(), 'SEED_EMAIL_OTP_TEST_USER not set');
+        test.skip(process.env.IPAM_TEST_MAILHOG !== '1', 'requires IPAM_TEST_MAILHOG=1 (landing on email_otp_verify sends an OTP code)');
+        await ensureEmailOtpEnrolled(EMAIL_OTP_USER);
+        await reset2faEnrollment(EMAIL_OTP_USER);
+        await setMfaToggles(page, {
+            'k_mfa__totp_enabled':      '1',
+            'k_mfa__email_otp_enabled': '1',
+        });
+
+        // Drive into email_otp_verify by switching from totp_verify (the
+        // user's preferred method is TOTP since it was enrolled first).
+        await page.goto(appUrl('login.php'));
+        await page.locator('[name=username]').fill(EMAIL_OTP_USER);
+        await page.locator('[name=password]').fill(EMAIL_OTP_PASS);
+        await page.locator('button[type=submit]').click();
+        await page.waitForURL(/totp_verify\.php/, { timeout: 30_000 });
+
+        const toEmail = page.locator('form input[name=action][value=switch_to_email]').locator('..');
+        await toEmail.locator('button[type=submit]').click();
+        await page.waitForURL(/email_otp_verify\.php/, { timeout: 30_000 });
+
+        // Now click switch_to_totp — should land back on totp_verify.
+        const toTotp = page.locator('form input[name=action][value=switch_to_totp]').locator('..');
+        await toTotp.locator('button[type=submit]').click();
+        await page.waitForURL(/totp_verify\.php/, { timeout: 30_000 });
+        expect(page.url()).toMatch(/totp_verify\.php/);
+    });
+
     test('Passkey row shows "Disabled by admin" pill when globally OFF and no creds', async ({ page }) => {
         // Passkeys default to OFF and the seeded admin has no credentials,
         // so the unavailable pill is present and the hint is NOT shown.
