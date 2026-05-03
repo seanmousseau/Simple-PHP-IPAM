@@ -4863,60 +4863,88 @@ function ipam_backup_next_run_at(array $schedule, ?int $nowEpoch = null): int
     $now = $nowEpoch ?? time();
     $freq = is_string($schedule['frequency'] ?? null) ? $schedule['frequency'] : 'daily';
 
-    // Parse time_of_day "HH:MM" -> [hour, minute]
-    $timeOfDay = is_string($schedule['time_of_day'] ?? null) ? $schedule['time_of_day'] : '02:00';
+    [$hour, $minute] = ipam_backup_parse_time_of_day(
+        is_string($schedule['time_of_day'] ?? null) ? $schedule['time_of_day'] : '02:00'
+    );
+
+    $utc = new DateTimeZone('UTC');
+    $nowDt = (new DateTimeImmutable('@' . $now))->setTimezone($utc);
+
+    if ($freq === 'hourly') {
+        // Next exact HH:00 strictly after now (ignores time_of_day).
+        return $nowDt
+            ->setTime((int) $nowDt->format('H'), 0, 0)
+            ->modify('+1 hour')
+            ->getTimestamp();
+    }
+
+    if ($freq === 'weekly') {
+        $schemaDow = isset($schedule['day_of_week']) && is_numeric($schedule['day_of_week'])
+            ? ((int) $schedule['day_of_week']) : 1; // Mon default
+        $phpDow = ipam_backup_dow_schema_to_php($schemaDow);
+        $currentDow = (int) $nowDt->format('N');
+        $daysAhead = ($phpDow - $currentDow + 7) % 7;
+        $candidate = $nowDt
+            ->setTime($hour, $minute, 0)
+            ->modify("+{$daysAhead} days");
+        if ($candidate->getTimestamp() <= $now) {
+            $candidate = $candidate->modify('+7 days');
+        }
+        return $candidate->getTimestamp();
+    }
+
+    if ($freq === 'monthly') {
+        $schemaDom = isset($schedule['day_of_month']) && is_numeric($schedule['day_of_month'])
+            ? ((int) $schedule['day_of_month']) : 1;
+        // Clamp 1..28 — anything higher would risk PHP's month-overflow
+        // normalisation pushing 31st in a 30-day month into the next month.
+        $targetDom = max(1, min(28, $schemaDom));
+        $candidate = $nowDt
+            ->setDate((int) $nowDt->format('Y'), (int) $nowDt->format('n'), $targetDom)
+            ->setTime($hour, $minute, 0);
+        if ($candidate->getTimestamp() <= $now) {
+            $candidate = $candidate->modify('+1 month');
+        }
+        return $candidate->getTimestamp();
+    }
+
+    // 'daily' (and any unknown frequency string) — next HH:MM today or tomorrow.
+    $candidate = $nowDt->setTime($hour, $minute, 0);
+    if ($candidate->getTimestamp() <= $now) {
+        $candidate = $candidate->modify('+1 day');
+    }
+    return $candidate->getTimestamp();
+}
+
+/**
+ * Convert a schema day_of_week (0=Sun..6=Sat, the convention used by
+ * backup_schedules.day_of_week per #690) to PHP's gmdate('N') convention
+ * (1=Mon..7=Sun). Out-of-range inputs clamp into [0, 6] before conversion.
+ *
+ * Pure helper — extracted from ipam_backup_next_run_at during #826/#827
+ * refactor so it can be tested in isolation and reused.
+ */
+function ipam_backup_dow_schema_to_php(int $schemaDow): int
+{
+    $clamped = max(0, min(6, $schemaDow));
+    return $clamped === 0 ? 7 : $clamped;
+}
+
+/**
+ * Parse a "HH:MM" string into a [hour, minute] tuple, clamping invalid hours
+ * to 02 (the project default backup hour) and invalid minutes to 0. A bare
+ * "HH" without a colon is accepted; the minute defaults to 0.
+ *
+ * @return array{0:int,1:int} [hour, minute] in the half-open ranges [0,24) and [0,60).
+ */
+function ipam_backup_parse_time_of_day(string $timeOfDay): array
+{
     $parts = explode(':', $timeOfDay);
     $hour = (int) $parts[0];
     $minute = count($parts) > 1 ? (int) $parts[1] : 0;
     if ($hour < 0 || $hour > 23) $hour = 2;
     if ($minute < 0 || $minute > 59) $minute = 0;
-
-    if ($freq === 'hourly') {
-        // Next exact HH:00 strictly after now.
-        $aligned = gmmktime((int) gmdate('H', $now) + 1, 0, 0,
-                            (int) gmdate('n', $now), (int) gmdate('j', $now), (int) gmdate('Y', $now));
-        return is_int($aligned) ? $aligned : $now + 3600;
-    }
-
-    if ($freq === 'weekly') {
-        $targetDow = isset($schedule['day_of_week']) && is_numeric($schedule['day_of_week'])
-            ? ((int) $schedule['day_of_week']) : 1; // Mon default
-        if ($targetDow < 0) $targetDow = 0;
-        if ($targetDow > 6) $targetDow = 6;
-        // PHP gmdate('N') returns 1=Mon..7=Sun. day_of_week convention: 0=Sun..6=Sat (per #690 schema).
-        // Convert: schema 0 (Sun) -> PHP 7; schema 1..6 -> PHP 1..6.
-        $phpDow = $targetDow === 0 ? 7 : $targetDow;
-        $currentDow = (int) gmdate('N', $now);
-        $daysAhead = ($phpDow - $currentDow + 7) % 7;
-        $candidate = gmmktime($hour, $minute, 0,
-                              (int) gmdate('n', $now), (int) gmdate('j', $now) + $daysAhead, (int) gmdate('Y', $now));
-        if (!is_int($candidate)) return $now + 7 * 86400;
-        if ($candidate <= $now) $candidate += 7 * 86400;
-        return $candidate;
-    }
-
-    if ($freq === 'monthly') {
-        $targetDom = isset($schedule['day_of_month']) && is_numeric($schedule['day_of_month'])
-            ? ((int) $schedule['day_of_month']) : 1;
-        if ($targetDom < 1) $targetDom = 1;
-        if ($targetDom > 28) $targetDom = 28;
-        $candidate = gmmktime($hour, $minute, 0,
-                              (int) gmdate('n', $now), $targetDom, (int) gmdate('Y', $now));
-        if (!is_int($candidate)) return $now + 30 * 86400;
-        if ($candidate <= $now) {
-            $candidate = gmmktime($hour, $minute, 0,
-                                  (int) gmdate('n', $now) + 1, $targetDom, (int) gmdate('Y', $now));
-            if (!is_int($candidate)) return $now + 30 * 86400;
-        }
-        return $candidate;
-    }
-
-    // 'daily' (and unknown) — next HH:MM today or tomorrow
-    $candidate = gmmktime($hour, $minute, 0,
-                          (int) gmdate('n', $now), (int) gmdate('j', $now), (int) gmdate('Y', $now));
-    if (!is_int($candidate)) return $now + 86400;
-    if ($candidate <= $now) $candidate += 86400;
-    return $candidate;
+    return [$hour, $minute];
 }
 
 /**
