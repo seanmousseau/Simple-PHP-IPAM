@@ -2333,9 +2333,59 @@ function ipam_logical_introspect_fks(PDO $db, string $table): array
                 $out[] = ['from' => $from, 'table' => $tgt, 'to' => $to];
             }
         }
+        return $out;
     }
-    // Multi-engine introspection (mysql information_schema, pg pg_constraint)
-    // lands with the 3-driver dockerized tests in #1042.
+    if ($driver === 'mysql') {
+        $stmt = $db->prepare(
+            'SELECT COLUMN_NAME AS `from`, REFERENCED_TABLE_NAME AS `table`, REFERENCED_COLUMN_NAME AS `to` '
+            . 'FROM information_schema.KEY_COLUMN_USAGE '
+            . 'WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t AND REFERENCED_TABLE_NAME IS NOT NULL '
+            . 'ORDER BY ORDINAL_POSITION'
+        );
+        $stmt->execute([':t' => $table]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($rows as $r) {
+            if (!is_array($r)) continue;
+            $from = $r['from'] ?? null;
+            $tgt  = $r['table'] ?? null;
+            $to   = $r['to'] ?? null;
+            if (is_string($from) && is_string($tgt) && is_string($to)) {
+                $out[] = ['from' => $from, 'table' => $tgt, 'to' => $to];
+            }
+        }
+        return $out;
+    }
+    if ($driver === 'pgsql') {
+        $sql = <<<'SQL'
+SELECT kcu.column_name AS "from",
+       ccu.table_name  AS "table",
+       ccu.column_name AS "to"
+  FROM information_schema.table_constraints tc
+  JOIN information_schema.key_column_usage kcu
+    ON tc.constraint_name = kcu.constraint_name
+   AND tc.table_schema    = kcu.table_schema
+  JOIN information_schema.constraint_column_usage ccu
+    ON ccu.constraint_name = tc.constraint_name
+   AND ccu.table_schema    = tc.table_schema
+ WHERE tc.constraint_type = 'FOREIGN KEY'
+   AND tc.table_name      = :t
+   AND tc.table_schema    = current_schema()
+ ORDER BY kcu.ordinal_position
+SQL;
+        $stmt = $db->prepare($sql);
+        $stmt->execute([':t' => $table]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($rows as $r) {
+            if (!is_array($r)) continue;
+            $from = $r['from'] ?? null;
+            $tgt  = $r['table'] ?? null;
+            $to   = $r['to'] ?? null;
+            if (is_string($from) && is_string($tgt) && is_string($to)) {
+                $out[] = ['from' => $from, 'table' => $tgt, 'to' => $to];
+            }
+        }
+        return $out;
+    }
     return $out;
 }
 
@@ -2349,29 +2399,63 @@ function ipam_logical_detect_autoincrement_pk(PDO $db, string $table): ?string
 {
     $driverAttr = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
     $driver = is_string($driverAttr) ? $driverAttr : '';
-    if ($driver !== 'sqlite') {
-        return null; // multi-engine support lands with #1042
-    }
-    $stmt = $db->query("PRAGMA table_info(\"$table\")");
-    $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
-    $pkCols = [];
-    foreach ($rows as $r) {
-        if (!is_array($r)) continue;
-        $pkRank = $r['pk'] ?? 0;
-        if (is_numeric($pkRank) && (int) $pkRank > 0) {
-            $pkCols[] = $r;
+    if ($driver === 'sqlite') {
+        $stmt = $db->query("PRAGMA table_info(\"$table\")");
+        $rows = $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
+        $pkCols = [];
+        foreach ($rows as $r) {
+            if (!is_array($r)) continue;
+            $pkRank = $r['pk'] ?? 0;
+            if (is_numeric($pkRank) && (int) $pkRank > 0) {
+                $pkCols[] = $r;
+            }
         }
+        if (count($pkCols) !== 1) {
+            return null; // composite PK (join tables) — no auto-increment to strip
+        }
+        $col  = $pkCols[0];
+        $name = is_string($col['name'] ?? null) ? $col['name'] : '';
+        $type = strtoupper(is_string($col['type'] ?? null) ? $col['type'] : '');
+        if ($type !== 'INTEGER' || $name === '') {
+            return null;
+        }
+        return $name;
     }
-    if (count($pkCols) !== 1) {
-        return null; // composite PK (join tables) — no auto-increment to strip
+    if ($driver === 'mysql') {
+        $stmt = $db->prepare(
+            'SELECT COLUMN_NAME FROM information_schema.COLUMNS '
+            . "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t AND EXTRA LIKE '%auto_increment%'"
+        );
+        $stmt->execute([':t' => $table]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        if (count($rows) !== 1) {
+            return null;
+        }
+        $name = $rows[0]['COLUMN_NAME'] ?? null;
+        return is_string($name) && $name !== '' ? $name : null;
     }
-    $col  = $pkCols[0];
-    $name = is_string($col['name'] ?? null) ? $col['name'] : '';
-    $type = strtoupper(is_string($col['type'] ?? null) ? $col['type'] : '');
-    if ($type !== 'INTEGER' || $name === '') {
-        return null;
+    if ($driver === 'pgsql') {
+        // Identity columns OR serial columns (default = nextval(...sequence...)).
+        $sql = <<<'SQL'
+SELECT c.column_name
+  FROM information_schema.columns c
+ WHERE c.table_schema = current_schema()
+   AND c.table_name   = :t
+   AND (
+        c.is_identity = 'YES'
+     OR (c.column_default IS NOT NULL AND c.column_default LIKE 'nextval(%')
+   )
+SQL;
+        $stmt = $db->prepare($sql);
+        $stmt->execute([':t' => $table]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        if (count($rows) !== 1) {
+            return null;
+        }
+        $name = $rows[0]['column_name'] ?? null;
+        return is_string($name) && $name !== '' ? $name : null;
     }
-    return $name;
+    return null;
 }
 
 /**
@@ -2681,11 +2765,19 @@ function ipam_logical_replay_row(
         unset($decoded[$pk]);
     }
 
-    // INSERT with named placeholders.
+    // INSERT with named placeholders. Postgres can't use lastInsertId() without
+    // a sequence name, so it gets a RETURNING clause appended and reads back
+    // the generated PK directly. SQLite and MySQL keep the lastInsertId() path.
+    $driverAttr = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    $driver     = is_string($driverAttr) ? $driverAttr : '';
     $cols   = array_keys($decoded);
     $colList = implode(', ', array_map(fn($c) => '"' . $c . '"', $cols));
     $phList  = implode(', ', array_map(fn($c) => ':' . $c, $cols));
-    $stmt = $db->prepare("INSERT INTO \"$table\" ($colList) VALUES ($phList)");
+    $sql = "INSERT INTO \"$table\" ($colList) VALUES ($phList)";
+    if ($driver === 'pgsql' && $pk !== null) {
+        $sql .= " RETURNING \"$pk\"";
+    }
+    $stmt = $db->prepare($sql);
 
     foreach ($cols as $c) {
         $val = $decoded[$c];
@@ -2701,7 +2793,12 @@ function ipam_logical_replay_row(
 
     // Record idmap entry + defer self-FK if applicable.
     if ($pk !== null && (is_int($sourcePk) || is_string($sourcePk))) {
-        $targetPk = (int) $db->lastInsertId();
+        if ($driver === 'pgsql') {
+            $returnedRaw = $stmt->fetchColumn();
+            $targetPk = is_numeric($returnedRaw) ? (int) $returnedRaw : 0;
+        } else {
+            $targetPk = (int) $db->lastInsertId();
+        }
         if (!isset($idmap[$table])) $idmap[$table] = [];
         $idmap[$table][$sourcePk] = $targetPk;
 
