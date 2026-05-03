@@ -1187,7 +1187,7 @@ function ipam_restore_apply(PDO $db, string $stagedPath, string $realFilename = 
     $db->exec('PRAGMA foreign_keys = OFF');
     $db->beginTransaction();
     try {
-        foreach (ipam_restore_split_sql_statements($sql) as $stmt) {
+        foreach (ipam_restore_split_sql_statements([$sql]) as $stmt) {
             if ($stmt === '' || str_starts_with(ltrim($stmt), '--')) continue;
             $db->exec($stmt);
             $statements++;
@@ -1367,24 +1367,70 @@ function ipam_restore_proc_check(int $exitCode, string $tool, string $stderr, PD
  * transaction starts, not compound blocks. A statement boundary is a
  * top-level `;` outside every quoted/commented/depth context.
  *
- * @return list<string>
+ * Streaming model (#829, v3.23.0): consumes an iterable of input chunks
+ * and yields complete statements as a generator. Internal buffer is
+ * GC'd after each yielded statement so memory stays bounded by the
+ * largest single statement plus one chunk — never by total input size.
+ * Pass `[$sql]` to feed a single string.
+ *
+ * @param  iterable<string> $chunks  Stream of dump bytes (lines or larger blocks).
+ * @return \Generator<string>        Trimmed top-level statements in source order.
  */
-function ipam_restore_split_sql_statements(string $sql): array
+function ipam_restore_split_sql_statements(iterable $chunks): \Generator
 {
-    $out = [];
-    $buf = '';
-    $depth = 0;
-    $len = strlen($sql);
-    $i = 0;
+    // Normalize iterable to Iterator so we can pull on demand.
+    if (is_array($chunks)) {
+        $chunks = new \ArrayIterator($chunks);
+    }
+    while ($chunks instanceof \IteratorAggregate) {
+        $chunks = $chunks->getIterator();
+    }
+    /** @var \Iterator $chunks */
+    $chunks->rewind();
 
-    while ($i < $len) {
-        $c = $sql[$i];
-        $next = $i + 1 < $len ? $sql[$i + 1] : '';
+    $buf = '';
+    $i = 0;
+    $stmtStart = 0;
+    $depth = 0;
+
+    // Pull the next non-empty chunk into $buf. Returns false at EOF.
+    $pull = function () use (&$buf, $chunks): bool {
+        while ($chunks->valid()) {
+            $c = $chunks->current();
+            $chunks->next();
+            if (is_string($c) && $c !== '') {
+                $buf .= $c;
+                return true;
+            }
+        }
+        return false;
+    };
+
+    // Ensure at least $n bytes are addressable at $i. Returns false at EOF.
+    $ensure = function (int $n) use (&$buf, &$i, $pull): bool {
+        while (strlen($buf) - $i < $n) {
+            if (!$pull()) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    // Drop bytes before $stmtStart from the buffer so $buf doesn't grow
+    // without bound across many statements. Threshold trades GC frequency
+    // against substr cost; 16KB amortises well for IPAM-shape dumps.
+    // GC runs inline at yield points (see below) so PHPStan can trace the
+    // mutation; the closure form would obscure the by-reference writes
+    // and trip the greaterOrEqual.alwaysFalse check.
+    $gcThreshold = 16384;
+
+    while ($ensure(1)) {
+        $c = $buf[$i];
+        $next = $ensure(2) ? $buf[$i + 1] : '';
 
         // ── line comment ── -- ... \n (or end of input)
         if ($c === '-' && $next === '-') {
-            while ($i < $len && $sql[$i] !== "\n") {
-                $buf .= $sql[$i];
+            while ($ensure(1) && $buf[$i] !== "\n") {
                 $i++;
             }
             continue;
@@ -1392,15 +1438,12 @@ function ipam_restore_split_sql_statements(string $sql): array
 
         // ── block comment ── /* ... */ (does not nest in standard SQL)
         if ($c === '/' && $next === '*') {
-            $buf .= '/*';
             $i += 2;
-            while ($i < $len) {
-                if ($sql[$i] === '*' && $i + 1 < $len && $sql[$i + 1] === '/') {
-                    $buf .= '*/';
+            while ($ensure(2)) {
+                if ($buf[$i] === '*' && $buf[$i + 1] === '/') {
                     $i += 2;
                     break;
                 }
-                $buf .= $sql[$i];
                 $i++;
             }
             continue;
@@ -1408,31 +1451,24 @@ function ipam_restore_split_sql_statements(string $sql): array
 
         // ── single-quoted string ── '...' with '' or \' escape
         if ($c === "'") {
-            $buf .= "'";
             $i++;
-            while ($i < $len) {
+            while ($ensure(1)) {
                 // Backslash escape (MySQL default `\'`, also `\\`, `\n`, etc.).
                 // Consume the backslash and the following character verbatim
-                // so an escaped quote can't terminate the string. Required for
-                // MySQL dumps; harmless for SQLite/Postgres standard mode
-                // where `\` is a literal byte. (CR feedback PR #1054.)
-                if ($sql[$i] === "\\" && $i + 1 < $len) {
-                    $buf .= $sql[$i] . $sql[$i + 1];
+                // so an escaped quote can't terminate the string.
+                if ($buf[$i] === "\\" && $ensure(2)) {
                     $i += 2;
                     continue;
                 }
-                if ($sql[$i] === "'" && $i + 1 < $len && $sql[$i + 1] === "'") {
-                    // Escaped quote: consume both as part of the literal
-                    $buf .= "''";
-                    $i += 2;
-                    continue;
-                }
-                if ($sql[$i] === "'") {
-                    $buf .= "'";
+                if ($buf[$i] === "'") {
+                    if ($ensure(2) && $buf[$i + 1] === "'") {
+                        // Escaped quote: consume both as part of the literal.
+                        $i += 2;
+                        continue;
+                    }
                     $i++;
                     break;
                 }
-                $buf .= $sql[$i];
                 $i++;
             }
             continue;
@@ -1440,15 +1476,12 @@ function ipam_restore_split_sql_statements(string $sql): array
 
         // ── double-quoted identifier ── "..."  (ANSI / PostgreSQL)
         if ($c === '"') {
-            $buf .= '"';
             $i++;
-            while ($i < $len) {
-                if ($sql[$i] === '"') {
-                    $buf .= '"';
+            while ($ensure(1)) {
+                if ($buf[$i] === '"') {
                     $i++;
                     break;
                 }
-                $buf .= $sql[$i];
                 $i++;
             }
             continue;
@@ -1456,15 +1489,12 @@ function ipam_restore_split_sql_statements(string $sql): array
 
         // ── backtick-quoted identifier ── `...`  (MySQL)
         if ($c === '`') {
-            $buf .= '`';
             $i++;
-            while ($i < $len) {
-                if ($sql[$i] === '`') {
-                    $buf .= '`';
+            while ($ensure(1)) {
+                if ($buf[$i] === '`') {
                     $i++;
                     break;
                 }
-                $buf .= $sql[$i];
                 $i++;
             }
             continue;
@@ -1472,10 +1502,13 @@ function ipam_restore_split_sql_statements(string $sql): array
 
         // ── PostgreSQL dollar-quoted string ── $tag$ ... $tag$
         if ($c === '$') {
-            // Look for opening tag: $ <ident-chars> $
+            // Look for the closing $ of the opening tag.
             $j = $i + 1;
-            while ($j < $len) {
-                $cj = $sql[$j];
+            while (true) {
+                if (!$ensure($j - $i + 1)) {
+                    break;
+                }
+                $cj = $buf[$j];
                 if ($cj === '$') {
                     break;
                 }
@@ -1485,55 +1518,55 @@ function ipam_restore_split_sql_statements(string $sql): array
                 }
                 $j++;
             }
-            if ($j < $len && $sql[$j] === '$') {
-                $tag = substr($sql, $i, $j - $i + 1); // includes the two $
-                $buf .= $tag;
-                $i = $j + 1;
+            if ($ensure($j - $i + 1) && $buf[$j] === '$') {
+                $tag = substr($buf, $i, $j - $i + 1); // includes the two $
                 $tagLen = strlen($tag);
-                while ($i < $len) {
-                    if ($sql[$i] === '$' && substr($sql, $i, $tagLen) === $tag) {
-                        $buf .= $tag;
+                $i = $j + 1;
+                while ($ensure($tagLen)) {
+                    if ($buf[$i] === '$' && substr($buf, $i, $tagLen) === $tag) {
                         $i += $tagLen;
                         break;
                     }
-                    $buf .= $sql[$i];
                     $i++;
                 }
                 continue;
             }
-            // Lone $ — fall through and treat as ordinary char
+            // Lone $ — fall through and treat as ordinary char.
         }
 
         // ── BEGIN ... END block depth (only at top level / NORMAL state) ──
         // Detect a BEGIN word boundary that is not BEGIN TRANSACTION/WORK/;.
-        // We're at NORMAL state at this point because all comment/quote/dollar
-        // branches above continue'd.
         if (($c === 'B' || $c === 'b')
-            && ($i === 0 || !ctype_alnum($sql[$i - 1]) && $sql[$i - 1] !== '_')
-            && $i + 4 < $len
-            && strcasecmp(substr($sql, $i, 5), 'BEGIN') === 0
-            && ($i + 5 >= $len || !(ctype_alnum($sql[$i + 5]) || $sql[$i + 5] === '_'))) {
+            && ($i === 0 || (!ctype_alnum($buf[$i - 1]) && $buf[$i - 1] !== '_'))
+            && $ensure(5)
+            && strcasecmp(substr($buf, $i, 5), 'BEGIN') === 0
+            && (!$ensure(6) || !(ctype_alnum($buf[$i + 5]) || $buf[$i + 5] === '_'))) {
             // Look past whitespace for the next significant token.
             $k = $i + 5;
-            while ($k < $len && ctype_space($sql[$k])) {
+            while ($ensure($k - $i + 1) && ctype_space($buf[$k])) {
                 $k++;
             }
             $isTxn = false;
-            if ($k < $len) {
-                $nextCh = $sql[$k];
+            if ($ensure($k - $i + 1)) {
+                $nextCh = $buf[$k];
                 if ($nextCh === ';') {
                     $isTxn = true; // BEGIN; → transaction start
-                } elseif ($k + 10 < $len && strcasecmp(substr($sql, $k, 11), 'TRANSACTION') === 0
-                          && ($k + 11 >= $len || !(ctype_alnum($sql[$k + 11]) || $sql[$k + 11] === '_'))) {
+                } elseif ($ensure($k - $i + 12)
+                          && strcasecmp(substr($buf, $k, 11), 'TRANSACTION') === 0
+                          && (!$ensure($k - $i + 12) || !(ctype_alnum($buf[$k + 11]) || $buf[$k + 11] === '_'))) {
                     $isTxn = true;
-                } elseif ($k + 3 < $len && strcasecmp(substr($sql, $k, 4), 'WORK') === 0
-                          && ($k + 4 >= $len || !(ctype_alnum($sql[$k + 4]) || $sql[$k + 4] === '_'))) {
+                } elseif ($ensure($k - $i + 5)
+                          && strcasecmp(substr($buf, $k, 4), 'WORK') === 0
+                          && (!$ensure($k - $i + 5) || !(ctype_alnum($buf[$k + 4]) || $buf[$k + 4] === '_'))) {
                     $isTxn = true;
-                } elseif ($k + 7 < $len && strcasecmp(substr($sql, $k, 8), 'IMMEDIATE') === 0) {
+                } elseif ($ensure($k - $i + 9)
+                          && strcasecmp(substr($buf, $k, 8), 'IMMEDIATE') === 0) {
                     $isTxn = true; // SQLite: BEGIN IMMEDIATE
-                } elseif ($k + 7 < $len && strcasecmp(substr($sql, $k, 8), 'DEFERRED') === 0) {
+                } elseif ($ensure($k - $i + 9)
+                          && strcasecmp(substr($buf, $k, 8), 'DEFERRED') === 0) {
                     $isTxn = true; // SQLite: BEGIN DEFERRED
-                } elseif ($k + 8 < $len && strcasecmp(substr($sql, $k, 9), 'EXCLUSIVE') === 0) {
+                } elseif ($ensure($k - $i + 10)
+                          && strcasecmp(substr($buf, $k, 9), 'EXCLUSIVE') === 0) {
                     $isTxn = true; // SQLite: BEGIN EXCLUSIVE
                 }
             } else {
@@ -1542,46 +1575,47 @@ function ipam_restore_split_sql_statements(string $sql): array
             if (!$isTxn) {
                 $depth++;
             }
-            $buf .= substr($sql, $i, 5);
             $i += 5;
             continue;
         }
 
         // ── END decrements depth ──
         if (($c === 'E' || $c === 'e')
-            && ($i === 0 || !ctype_alnum($sql[$i - 1]) && $sql[$i - 1] !== '_')
-            && $i + 2 < $len
-            && strcasecmp(substr($sql, $i, 3), 'END') === 0
-            && ($i + 3 >= $len || !(ctype_alnum($sql[$i + 3]) || $sql[$i + 3] === '_'))
+            && ($i === 0 || (!ctype_alnum($buf[$i - 1]) && $buf[$i - 1] !== '_'))
+            && $ensure(3)
+            && strcasecmp(substr($buf, $i, 3), 'END') === 0
+            && (!$ensure(4) || !(ctype_alnum($buf[$i + 3]) || $buf[$i + 3] === '_'))
             && $depth > 0) {
             $depth--;
-            $buf .= substr($sql, $i, 3);
             $i += 3;
             continue;
         }
 
         // ── statement terminator ──
         if ($c === ';' && $depth === 0) {
-            $buf .= ';';
-            $stmt = trim($buf);
-            if ($stmt !== '') {
-                $out[] = $stmt;
-            }
-            $buf = '';
             $i++;
+            $stmt = trim(substr($buf, $stmtStart, $i - $stmtStart));
+            if ($stmt !== '') {
+                yield $stmt;
+            }
+            $stmtStart = $i;
+            if ($stmtStart >= $gcThreshold) {
+                $buf = substr($buf, $stmtStart);
+                $i -= $stmtStart;
+                $stmtStart = 0;
+            }
             continue;
         }
 
-        // Default: copy byte through.
-        $buf .= $c;
+        // Default: advance by one byte.
         $i++;
     }
 
-    $tail = trim($buf);
+    // Final flush — any unterminated tail is a complete statement.
+    $tail = trim(substr($buf, $stmtStart));
     if ($tail !== '') {
-        $out[] = $tail;
+        yield $tail;
     }
-    return $out;
 }
 
 /**

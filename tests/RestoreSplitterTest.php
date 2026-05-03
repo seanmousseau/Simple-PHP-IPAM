@@ -20,7 +20,12 @@ final class RestoreSplitterTest extends TestCase
     /** @return list<string> */
     private function split(string $sql): array
     {
-        return ipam_restore_split_sql_statements($sql);
+        // Splitter is generator-shaped (#829, v3.23.0); wrap input string as
+        // a single chunk and materialise the generator for assertSame().
+        return iterator_to_array(
+            ipam_restore_split_sql_statements([$sql]),
+            false
+        );
     }
 
     // ── Baseline: trivial cases ──────────────────────────────────────────────
