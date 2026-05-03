@@ -90,6 +90,7 @@ Operational procedures live alongside the code, one Read away. CLAUDE.md is poli
 | `docs/internal/i18n-design.md` | Forward-looking i18n/l10n design (Gettext, per-user locale cascade, 4-phase rollout). Candidate for v4.0.0 + v4.2.0 per `v4-release-stream.md` |
 | `docs/internal/v4-release-stream.md` | v4.x stream strategy — enterprise auth + global reach. Sequencing for i18n + RBAC + SAML + LDAP + OAuth + SCIM across ~6 releases. Multi-tenancy explicitly NOT in v4.x (deferred — see `v4-tenancy-design.md` header) |
 | `docs/internal/cleanup.md` | Pre-ticket backlog for low-risk code-health items. Add a row when spotting cleanup-worthy code during other work; batch into a GH issue once items accumulate |
+| `docs/internal/ipambkl1-format.md` | `IPAMBKL1` Logical-backup format spec — magic, header/body/footer JSON shape, abstract-type encoding, re-emit-IDs replay strategy, schema_version compat. Source-of-truth for #824 (writer + reader, v3.23.0), #849/#1076 (picker UI, v3.25.0), and #1042's conformance tests. Read when touching `ipam_backup_logical_*` or `ipam_restore_logical_*`. |
 
 ---
 
