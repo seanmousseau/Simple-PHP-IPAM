@@ -1936,3 +1936,110 @@ function ipam_logical_decode_value(mixed $encoded): mixed
     }
     return $encoded;
 }
+
+/**
+ * Return the canonical IPAMBKL1 table_order list — parents-first FK-safe
+ * topological sort of every user table in the live schema.
+ *
+ * Hand-coded rather than computed via PRAGMA introspection because:
+ *   - The schema is small (38 tables) and stable; FK graph changes are rare
+ *     and always intentional (a migration that adds a table or FK).
+ *   - A hand-coded list is auditable in code review and survives engine
+ *     introspection differences (sqlite PRAGMA vs mysql information_schema
+ *     vs pg pg_constraint).
+ *   - IPAMBKL1TableOrderTest validates the list against the live FK graph
+ *     on every test run — if a schema change desyncs the list, the test
+ *     fails loudly during the gate, not silently in the dump.
+ *
+ * The PDO arg is currently unused — the function returns the same list on
+ * every engine — but is kept in the signature for forward-compat with a
+ * possible v4.0.0 tenancy-aware variant that filters per tenant_id.
+ *
+ * Self-referential tables (currently only `sites` via `parent_id`) appear
+ * once at their natural position; the restorer handles them via two-pass
+ * replay per the format spec.
+ *
+ * @return string[] Parents-first table-order list.
+ */
+function ipam_logical_table_order(PDO $db): array
+{
+    // Layout (left → right = earliest to latest replay):
+    //
+    //   Layer 0 (no incoming FKs from any other table):
+    //     schema_migrations users tags contacts vrfs webhooks api_keys
+    //     login_attempts rate_limit_buckets aggregates custom_field_defs
+    //     audit_log address_history backup_destinations
+    //
+    //   Layer 1 (depend only on layer 0):
+    //     sites (self-ref, two-pass)
+    //
+    //   Layer 2:
+    //     devices (→ sites) → device_interfaces (→ devices)
+    //     vlans (→ sites) → vlan_ranges (→ sites)
+    //     subnets (→ vrfs, vlans, sites)
+    //
+    //   Layer 3:
+    //     pd_pools (→ sites, subnets)
+    //     scan_schedules (→ subnets), alert_state, utilization_snapshots,
+    //     subnet_tags, subnet_contacts
+    //
+    //   Layer 4:
+    //     addresses (→ subnets, device_interfaces, devices, contacts)
+    //
+    //   Layer 5:
+    //     scan_results (→ addresses, subnets), address_tags, pd_delegations
+    //
+    //   Layer 6 (depend on layer-1+ peers):
+    //     backup_schedules (→ backup_destinations) → backup_runs
+    //     site_contacts (→ contacts, sites)
+    //     settings (→ users), password_reset_tokens (→ users),
+    //     totp_backup_codes (→ users), webauthn_credentials (→ users),
+    //     webhook_deliveries (→ webhooks)
+    return [
+        // -- Layer 0 — no FKs, replayable in any order ---------------------
+        'schema_migrations',
+        'users',
+        'tags',
+        'contacts',
+        'vrfs',
+        'webhooks',
+        'api_keys',
+        'login_attempts',
+        'rate_limit_buckets',
+        'aggregates',
+        'custom_field_defs',
+        'audit_log',
+        'address_history',
+        'backup_destinations',
+        // -- Layer 1 — sites is self-referential (two-pass replay) ---------
+        'sites',
+        // -- Layer 2 — site/vlan/vrf-rooted -------------------------------
+        'devices',
+        'device_interfaces',
+        'vlans',
+        'vlan_ranges',
+        'subnets',
+        // -- Layer 3 — subnet-rooted children -----------------------------
+        'pd_pools',
+        'scan_schedules',
+        'alert_state',
+        'utilization_snapshots',
+        'subnet_tags',
+        'subnet_contacts',
+        // -- Layer 4 — addresses depends on subnets + device_interfaces ---
+        'addresses',
+        // -- Layer 5 — address-rooted children ----------------------------
+        'scan_results',
+        'address_tags',
+        'pd_delegations',
+        // -- Layer 6 — user / backup / webhook tails -----------------------
+        'backup_schedules',
+        'backup_runs',
+        'site_contacts',
+        'settings',
+        'password_reset_tokens',
+        'totp_backup_codes',
+        'webauthn_credentials',
+        'webhook_deliveries',
+    ];
+}
