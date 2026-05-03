@@ -773,19 +773,19 @@ Each milestone is now ≤16 items, single-theme. Less context-switching mid-rele
 |---|---|---|---|---|---|---|
 | F18 | Func | PDO `IPAMBKL1` backend — dump + restore, engine-agnostic, schema_version compat | — | v3.23 | P1 | Anchor. No operator UI in v3.23.0 (backend soaks via tests; UI in v3.25.0 #1076). Absorbs former F19 (DUMP engine) per 2026-05-03 reconciliation. |
 | ~~F21~~ | ~~Func~~ | ~~Notifications config resolution (global + per-sched)~~ | ~~—~~ | ~~v3.23~~ | ~~P1~~ | **Landed** — schema migration `3.23.0-notify-overrides`, resolver helpers, dispatcher wiring, and Notifications-tab UI all merged on `feat/v3.23.0` (commits `1bff0a7`, `408ff2f`, `15f8d12`, `3ffcd2c`). #825. |
-| B-P1-8 | Audit | Split `ipam_backup_apply_retention` into compute/apply | — | v3.23 | P1 | Pre-req for tests |
-| B-P1-21 | Audit | `ipam_backup_next_run_at` edge cases (T12 first) | — | v3.23 | P1 | Tests then refactor |
-| B-P1-15 | Audit | SQLite retention sort by mtime, not lex | — | v3.23 | P1 | After legacy retires |
-| F35 | Func | Streaming gzread in restore (OOM safety) | — | v3.23 | P2 | Audit #39 |
-| F36 | Func | Pre-validate dump in dry-run | — | v3.23 | P2 | Audit #20 |
-| T11 | Test | `BackupRetentionTest` edge-case expansion | — | v3.23 | P1 | Pre-req for B-P1-8 |
-| T12 | Test | `next_run_at` table-driven edge cases | — | v3.23 | P1 | Pre-req for B-P1-21 |
-| T2 | Test | OpenSSH-server sidecar for SFTP coverage | — | v3.23 | P0 | Test debt |
-| T3 | Test | Local destination CI coverage | — | v3.23 | P0 | Test debt |
-| T4 | Test | Restore-to-empty-DB row-count parity | — | v3.23 | P0 | All 3 engines |
+| ~~B-P1-8~~ | ~~Audit~~ | ~~Split `ipam_backup_apply_retention` into compute/apply~~ | ~~#826~~ | ~~v3.23~~ | ~~P1~~ | **Landed** — `577f6d5`, `367cbf1`, `6bb8da9` (3-commit refactor: drop dead `$nowEpoch` chain, then split into compute + apply + thin orchestrator). |
+| ~~B-P1-21~~ | ~~Audit~~ | ~~`ipam_backup_next_run_at` edge cases (T12 first)~~ | ~~#827~~ | ~~v3.23~~ | ~~P1~~ | **Landed** — `a548a39` (DateTimeImmutable + extracted helpers; T12 / #832 already covered the table-driven edge cases). |
+| ~~B-P1-15~~ | ~~Audit~~ | ~~SQLite retention sort by mtime, not lex~~ | ~~#828~~ | ~~v3.23~~ | ~~P1~~ | **Landed** — `ec41c39` (extracted `ipam_legacy_retention_prune_by_mtime` helper; replaced 3 identical rsort blocks across the sqlite/mysql/pgsql legacy paths). |
+| ~~F35~~ | ~~Func~~ | ~~Streaming gzread in restore (OOM safety)~~ | ~~#829~~ | ~~v3.23~~ | ~~P2~~ | **Landed** — `59ad8f0`, `0469940`, `cd95fa6` (SQL splitter → generator; streaming `read_staged_sql + apply/dry_run` chain; synthetic large-dump memory-bound test). |
+| ~~F36~~ | ~~Func~~ | ~~Pre-validate dump in dry-run~~ | ~~#830~~ | ~~v3.23~~ | ~~P2~~ | **Landed** — `d9364d0`, `dc43306` (splitter throws on EOF in unterminated state; dry_run pre-validates via splitter so failures surface early). |
+| ~~T11~~ | ~~Test~~ | ~~`BackupRetentionTest` edge-case expansion~~ | ~~#831~~ | ~~v3.23~~ | ~~P1~~ | **Landed** — `48fbe49` (4 edge-case retention tests covering tiebreaks, absent buckets, large counts). |
+| ~~T12~~ | ~~Test~~ | ~~`next_run_at` table-driven edge cases~~ | ~~#832~~ | ~~v3.23~~ | ~~P1~~ | **Landed** — `fa89f83` (18 table-driven cases driving the B-P1-21 refactor). |
+| T2 | Test | OpenSSH-server sidecar for SFTP coverage | #833 | v3.23 | P0 | Test debt — deferred from v3.23.0 PR #1090. Needs a Docker Compose change in `testing/playwright/`. |
+| ~~T3~~ | ~~Test~~ | ~~Local destination CI coverage~~ | ~~#834~~ | ~~v3.23~~ | ~~P0~~ | **Landed** — `c4680e1` (5 unit-level tests on the LocalBackupClient: missing source, read-only dir, checksum round-trip, missing-object download/delete; happy path was already in the Playwright `backup-integration.spec.ts` against ci-local). |
+| ~~T4~~ | ~~Test~~ | ~~Restore-to-empty-DB row-count parity~~ | ~~#835~~ | ~~v3.23~~ | ~~P0~~ | **Landed** — `74159b7` (sqlite reference case); cross-engine 3×3 matrix landed alongside in #1042 (`91e5b3d`). |
 | ~~F-LEGACY-DEPR~~ | ~~Func~~ | ~~Deprecate Settings → Data & Maintenance → Backup; migrate `backup.enabled=true` config to a Local destination + schedule on first page load; make Notifications tab editable~~ | ~~#1058~~ | ~~v3.23~~ | ~~P1~~ | **Landed** — deprecation banner on Settings, idempotent `ipam_legacy_backup_migrate_if_due()` helper hooked into `init.php`, Notifications tab now editable in-place per F21. Commits `352d137`, `aa3a14d`. Hard removal of `run_db_backup_if_due` + `backup.*` keys tracked separately in v3.26.0 #1059. |
 
-**v3.23.0 total: ~13 items.** Mostly mechanical cleanups; F18 is the visible feature.
+**v3.23.0 total: ~13 items.** Visible features: F18 (`IPAMBKL1` engine-agnostic backup format) and F21 (per-schedule notification overrides). Everything else is mechanical cleanup. **PR #1090 lands 12 of 13 — only T2 (#833 OpenSSH SFTP sidecar) is deferred** (Docker Compose change to `testing/playwright/`).
 
 ### v3.24.0 — Encryption v3 (`IPAMBKP3`) + manual restore
 
