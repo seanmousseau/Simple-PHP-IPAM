@@ -184,7 +184,16 @@ The format does not encode "this is a two-pass table" — the restorer infers it
 
 ### Tables without auto-increment PKs
 
-`schema_migrations` (PK is the `version` string itself, not auto-increment) is inserted verbatim. No idmap entry. This is the only table in the current schema with this property; future tables of this shape are handled by the restorer detecting "PK is not INTEGER auto-increment" from the live schema.
+`schema_migrations` is **not** inserted on restore at all — the target install's `apply_migrations()` already populated it to a compatible high-water mark, and the source's rows are redundant. This preserves the target's migration history so the install can resume normal migration flow afterward.
+
+### Append-only audit table
+
+`audit_log` is wiped-skip on restore: the per-table no-DELETE trigger blocks the wipe pass, and restore does not (and cannot) drop and recreate the trigger. Source's `audit_log` rows therefore **append** to whatever the target carries. Two consequences operators should be aware of:
+
+- Rows emitted by a migration that both source and target ran (e.g. a `settings.seeded_from_config` audit entry) appear duplicated post-restore — once from the target's own migration run, once from the source's dump.
+- `audit_log.user_id` references source's `users.id` values that no longer exist after re-emit-IDs replay. The column has no FK constraint so the row inserts cleanly; the `username` TEXT column preserves the human-readable identity.
+
+This divergence is intentional — the alternative (drop triggers, DELETE, recreate triggers) trades a small amount of duplication for a much riskier restore path.
 
 ### Per-engine FK bracketing
 
