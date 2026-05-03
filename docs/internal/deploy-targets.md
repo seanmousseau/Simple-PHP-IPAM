@@ -54,11 +54,11 @@ OpenLiteSpeed runs PHP as `nobody:nogroup` — the chown is non-optional or `dat
 ### Verify
 
 ```bash
-curl -sk https://demo.simplephpipam.com/version.php  | grep -o "v${TAG}"
-curl -sk https://ipam.seanmousseau.com/version.php   | grep -o "v${TAG}"
+curl -sk https://demo.simplephpipam.com/login.php | grep -oE "app\.css\?v=${TAG}"
+curl -sk https://ipam.seanmousseau.com/login.php  | grep -oE "app\.css\?v=${TAG}"
 ```
 
-The `version.php` endpoint emits a plain-text `vX.Y.Z` string and is the cheapest post-deploy probe.
+The `login.php` page is the cheapest post-deploy probe — unauthenticated, fast, and the `<link rel="stylesheet" href="assets/app.css?v=X.Y.Z.<mtime>">` cache-buster (emitted by `page_header()` in `lib.php`) carries the deployed version string. **`version.php` is not a probe** — it only defines the `IPAM_VERSION` constant and emits no body, so OpenLiteSpeed/Apache return 403 on a direct GET.
 
 ---
 
@@ -95,12 +95,12 @@ Apache inside the container runs as `www-data`. The trailing host-side chown is 
 for inst in ipam ipam-maria ipam-mysql ipam-postgres; do
   printf "%-16s " "${inst}:"
   curl -sk -u "${IPAM_BASIC_USER}:${IPAM_BASIC_PASS}" \
-    "https://dev-direct.seanmousseau.com:8343/testing/${inst}/version.php"
-  echo
+    "https://dev-direct.seanmousseau.com:8343/testing/${inst}/login.php" \
+    | grep -oE "app\.css\?v=${TAG}" | head -1
 done
 ```
 
-Each line should print `vX.Y.Z`. A blank line or a `<br>`-laden 500 error means the migration failed for that engine — investigate before declaring the deploy complete.
+Each line should print `app.css?v=X.Y.Z` (the cache-buster carries the deployed version). A blank line or a `<br>`-laden 500 error means the migration failed for that engine — investigate before declaring the deploy complete. As above, `version.php` is not a probe.
 
 ### Migration verification
 
