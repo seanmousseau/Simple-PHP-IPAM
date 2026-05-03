@@ -5142,7 +5142,25 @@ function ipam_backup_notify_dispatch(PDO $db, string $event, array $context): vo
         'encryption_change'        => 'backup.notify_encryption_change',
         default                    => '',
     };
-    if ($settingKey === '' || !((bool) ipam_setting($settingKey))) return;
+    if ($settingKey === '') return;
+
+    // Per-schedule overrides apply only to scheduled-flow events. The
+    // scheduling concept doesn't bind to manual / connection-test / overdue
+    // / retention-prune / encryption-change events, which stay global.
+    // schedule_id arrives via $dest['schedule_id'] (orchestrator threads it
+    // alongside triggered_by; null on manual runs).
+    $dest = is_array($context['dest'] ?? null) ? $context['dest'] : [];
+    $rawSched = $dest['schedule_id'] ?? null;
+    $scheduleId = is_int($rawSched) ? $rawSched
+        : (is_numeric($rawSched) ? (int) $rawSched : null);
+
+    $globalEnabled = (bool) ipam_setting($settingKey);
+    $shouldSend = match ($event) {
+        'failure_scheduled' => ipam_backup_notify_resolve_pref($db, $scheduleId, 'notify_on_failure', $globalEnabled),
+        'success_scheduled' => ipam_backup_notify_resolve_pref($db, $scheduleId, 'notify_on_success', $globalEnabled),
+        default             => $globalEnabled,
+    };
+    if (!$shouldSend) return;
 
     // Recipients via the same multi-user picker as every other alert.
     $recipients = ipam_resolve_alert_recipients($db);
@@ -5150,9 +5168,15 @@ function ipam_backup_notify_dispatch(PDO $db, string $event, array $context): vo
         $legacy = trim(to_str(ipam_setting('alert.email')));
         if ($legacy !== '') $recipients = [$legacy];
     }
+    // Per-schedule recipient override: applies to both scheduled-flow events
+    // (the only ones with a schedule_id in scope). For other events the
+    // resolver receives null and short-circuits to globals.
+    $applyRecipientOverride = $event === 'failure_scheduled' || $event === 'success_scheduled';
+    if ($applyRecipientOverride) {
+        $recipients = ipam_backup_notify_resolve_recipients($db, $scheduleId, $recipients);
+    }
     if ($recipients === []) return;
 
-    $dest = is_array($context['dest'] ?? null) ? $context['dest'] : [];
     $destName = is_string($dest['name'] ?? null) ? $dest['name'] : 'unknown';
 
     [$subject, $body] = match ($event) {

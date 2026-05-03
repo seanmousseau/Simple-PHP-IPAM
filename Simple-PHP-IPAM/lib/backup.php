@@ -340,6 +340,10 @@ function ipam_backup_run_for_destination(
     // Thread triggered_by into the destination row so ipam_backup_notify()
     // can pick the right scheduled-vs-manual notification setting (v3.22.0).
     $dest['triggered_by'] = $triggeredBy;
+    // Thread schedule_id so the dispatcher can resolve per-schedule
+    // notify-overrides (v3.23.0 #825). Null on manual runs — the resolver
+    // treats null as "use global", which is the correct semantics.
+    $dest['schedule_id']  = $scheduleId;
     $client = ipam_backup_dest_client($dest);
 
     $tmpSql = ipam_backup_dump_to_tmp($db);
