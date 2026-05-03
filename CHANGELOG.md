@@ -11,14 +11,14 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 Hotfix for v3.22.1. Production MySQL backups failed against Oracle MySQL 8.x clients because the v3.22.1 SSL-verify flag emitted the MariaDB-canonical `=on/off` form, which Oracle MySQL 8.4 rejects with `[ERROR] unknown variable 'ssl-verify-server-cert=off'`, exit code 7. Conversely, MariaDB 11.x clients (CI's runner image) verify the server cert by default and need an explicit opt-out flag — so a one-flag-fits-all simplification regresses the other half of the field. The diagnostic also only landed in PHP's `error_log`, not the backup-run row, so operators saw a generic "see error_log" message in the UI without a clear path to the actual cause.
 
 ### Added
-- **`ipam_mysql_client_flavor()` helper** in `lib/backup.php` — probes `mysqldump --version` once per request, classifies the local client as `'mariadb'`, `'mysql'`, or `'unknown'`, and caches the result. The deferred #1081 follow-ups (`--no-login-paths`, broader `--ssl-mode` adoption) reuse this probe.
-- **`ipam_mysql_ssl_verify_args(bool $verify)`** — emits the flavor-correct flag list. MariaDB gets `--skip-ssl-verify-server-cert` (off) or `--ssl-verify-server-cert` (on). Oracle MySQL gets `--ssl-mode=VERIFY_IDENTITY` (on) or no flag (off — `ssl-mode=PREFERRED` is the client default and does not verify). Unknown flavors fall back to no flag.
+- **`ipam_mysql_client_flavor(string $binary = 'mysqldump')` helper** in `lib/backup.php` — probes `<binary> --version` once per binary, classifies the local client as `'mariadb'`, `'mysql'`, or `'unknown'`, caches per-binary so a host with split-vendor `mysql` / `mysqldump` (e.g. distro `mysqldump` plus a custom `mysql` client) gets the correct dialect for each. The deferred #1081 follow-ups (`--no-login-paths`, broader `--ssl-mode` adoption) reuse this probe.
+- **`ipam_mysql_ssl_verify_args(bool $verify, string $binary = 'mysqldump')`** — emits the flavor-correct flag list. MariaDB gets `--skip-ssl-verify-server-cert` (off) or `--ssl-verify-server-cert` (on). Oracle MySQL gets `--ssl-mode=VERIFY_IDENTITY` (on) or no flag (off — `ssl-mode=PREFERRED` is the client default and does not verify). Unknown flavors fall back to no flag.
+
+### Changed
+- **`backup_run_dump()` surfaces stderr to callers via a new optional by-reference `$errorOut` parameter.** The legacy CLI runner now records the full `mysqldump`/`pg_dump` stderr (truncated to 500 chars) in the `backup_runs.error_message` column, and the modern destination orchestrator includes it in the `RuntimeException` message that drives the failure-notification pipeline. Operators see the actual cause in the UI and email body instead of "see error_log". The `proc_open()` startup-failure branch also populates `$errorOut` (e.g. `"proc_open failed to start mysqldump (not on PATH or disabled)"`) so a missing binary is no longer an empty diagnostic.
 
 ### Fixed
 - **`mysqldump` / `mysql` SSL verify flag now flavor-aware** across all three call sites — `Simple-PHP-IPAM/lib/backup.php::ipam_backup_native_cmd` (destination orchestrator), `Simple-PHP-IPAM/lib.php` (legacy CLI runner), and `Simple-PHP-IPAM/restore.php` (mysql restore). Replaces the v3.22.1 hard-coded `--ssl-verify-server-cert=on/off` syntax that worked on MariaDB but bricked every prod backup running against Oracle MySQL ≥ 8.x.
-
-### Changed
-- **`backup_run_dump()` surfaces stderr to callers via a new optional by-reference `$errorOut` parameter.** The legacy CLI runner now records the full `mysqldump`/`pg_dump` stderr (truncated to 500 chars) in the `backup_runs.error_message` column, and the modern destination orchestrator includes it in the `RuntimeException` message that drives the failure-notification pipeline. Operators see the actual cause in the UI and email body instead of "see error_log".
 
 ## [3.22.1] - 2026-05-02
 

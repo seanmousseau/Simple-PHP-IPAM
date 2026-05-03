@@ -188,7 +188,7 @@ if ($driver === 'sqlite') {
     // MariaDB-vs-Oracle-MySQL dialect rationale. (--no-login-paths follow-up
     // is still tracked in #1081 — same probe-and-cache pattern.)
     $cmd = ['mysql', '--defaults-extra-file=' . $credFile];
-    foreach (ipam_mysql_ssl_verify_args($verifySsl) as $sslArg) {
+    foreach (ipam_mysql_ssl_verify_args($verifySsl, 'mysql') as $sslArg) {
         $cmd[] = $sslArg;
     }
     $cmd[] = '-h';

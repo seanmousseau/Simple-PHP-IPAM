@@ -3996,7 +3996,16 @@ function backup_run_dump(array $cmd, array $env, string $destPath, int $timeoutS
         null,
         $env
     );
-    if (!is_resource($proc)) return false;
+    if (!is_resource($proc)) {
+        // Most likely cause: dump binary not on $PATH in the SAPI's restricted
+        // environment, or proc_open is disabled. Surface the binary name so an
+        // operator looking at backup_runs.error_message immediately sees
+        // "mysqldump not executable" rather than an empty diagnostic.
+        $bin = $cmd[0] ?? 'dump';
+        $errorOut = 'proc_open failed to start ' . $bin . ' (not on PATH or disabled)';
+        error_log('backup_run_dump: ' . $errorOut);
+        return false;
+    }
 
     fclose($pipes[0]);
     stream_set_blocking($pipes[2], false);

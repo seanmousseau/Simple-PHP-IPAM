@@ -490,23 +490,35 @@ function ipam_backup_dest_client(array $dest): BackupClientInterface
  *
  * The probe is best-effort: any `proc_open` failure or missing binary
  * returns 'unknown' and call sites omit the SSL flag entirely.
+ *
+ * Cached per-binary so a host with split-vendor `mysql` / `mysqldump`
+ * (e.g. distro-package mysqldump + custom-installed mysql client) gets the
+ * correct dialect for each tool independently.
  */
-function ipam_mysql_client_flavor(): string
+function ipam_mysql_client_flavor(string $binary = 'mysqldump'): string
 {
-    static $cached = null;
-    if ($cached !== null) {
-        return $cached;
+    /** @var array<string,string> $cache */
+    static $cache = [];
+    // Restrict to the two binaries we ever invoke; an unexpected value would
+    // otherwise become an attacker-influenced argv if a caller forwarded user
+    // input. Both are constant strings in our codebase today, but pin the
+    // contract anyway.
+    if ($binary !== 'mysqldump' && $binary !== 'mysql') {
+        return 'unknown';
+    }
+    if (isset($cache[$binary])) {
+        return $cache[$binary];
     }
     $pipes = [];
     // Constant array-form invocation; bypasses the shell entirely so no
     // injection surface exists.
     $proc = proc_open( // nosemgrep
-        ['mysqldump', '--version'],
+        [$binary, '--version'],
         [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
         $pipes
     );
     if (!is_resource($proc)) {
-        return $cached = 'unknown';
+        return $cache[$binary] = 'unknown';
     }
     $stdout = stream_get_contents($pipes[1]) ?: '';
     $stderr = stream_get_contents($pipes[2]) ?: '';
@@ -515,12 +527,12 @@ function ipam_mysql_client_flavor(): string
     proc_close($proc);
     $haystack = $stdout . "\n" . $stderr;
     if (stripos($haystack, 'MariaDB') !== false) {
-        return $cached = 'mariadb';
+        return $cache[$binary] = 'mariadb';
     }
     if (stripos($haystack, 'MySQL') !== false) {
-        return $cached = 'mysql';
+        return $cache[$binary] = 'mysql';
     }
-    return $cached = 'unknown';
+    return $cache[$binary] = 'unknown';
 }
 
 /**
@@ -530,11 +542,15 @@ function ipam_mysql_client_flavor(): string
  * MySQL with verify off — the client default `--ssl-mode=PREFERRED` does not
  * verify the server certificate, which is what we want).
  *
+ * The probe is run against the binary actually being invoked so a host with a
+ * MariaDB `mysqldump` and an Oracle `mysql` (or vice versa) gets the right
+ * dialect for each call site.
+ *
  * @return list<string>
  */
-function ipam_mysql_ssl_verify_args(bool $verify): array
+function ipam_mysql_ssl_verify_args(bool $verify, string $binary = 'mysqldump'): array
 {
-    $flavor = ipam_mysql_client_flavor();
+    $flavor = ipam_mysql_client_flavor($binary);
     if ($flavor === 'mariadb') {
         // MariaDB 11.x defaults to verify-on, so we MUST emit something
         // explicit when verify is off, otherwise self-signed servers break.
