@@ -4840,6 +4840,352 @@ function backup_decrypt_stream(string $srcPath, string $dstPath, string $appSecr
     }
 }
 
+// ── IPAMBKP3 (v3.24.0) — three-mode streaming codec ─────────────────────────
+//
+// Header packing/unpacking helpers. The wire format is:
+//
+//   offset  size  field
+//        0     8  magic ('IPAMBKP3')
+//        8     1  mode (1=STORED, 2=TRANSITORY)
+//        9     4  argon_time         (BE uint32)
+//       13     4  argon_memory_kib   (BE uint32)
+//       17     1  argon_parallelism  (uint8)
+//       18     2  reserved (zero)
+//       20    16  argon_salt
+//       36    16  hkdf_salt
+//       52    16  ctr_iv
+//   total: 68 bytes — see BACKUP_V3_HEADER_LEN.
+//
+// Argon parameters are header-embedded so an install can tune memory/time
+// later without breaking already-encrypted backups. Bounds checks below
+// keep the parameter space sane and the verify cost bounded.
+
+const BACKUP_V3_ARGON_TIME_MAX     = 16;
+const BACKUP_V3_ARGON_MEM_KIB_MAX  = 1048576; // 1 GiB
+const BACKUP_V3_INFO_STORED        = 'ipam-backup-v3:stored:enc-mac';
+const BACKUP_V3_INFO_TRANSITORY    = 'ipam-backup-v3:transitory:enc-mac';
+
+function ipam_backup_v3_pack_header(
+    int $mode,
+    int $argonTime,
+    int $argonMemKib,
+    int $argonPar,
+    string $argonSalt,
+    string $hkdfSalt,
+    string $ctrIv
+): string {
+    if (strlen($argonSalt) !== BACKUP_ARGON2_SALT_LEN
+        || strlen($hkdfSalt) !== BACKUP_SALT_LEN
+        || strlen($ctrIv) !== BACKUP_CTR_IV_LEN) {
+        throw new RuntimeException('ipam_backup_v3_pack_header: salt/iv lengths invalid');
+    }
+    $hdr = BACKUP_MAGIC_V3
+         . chr($mode)
+         . pack('N', $argonTime)
+         . pack('N', $argonMemKib)
+         . chr($argonPar)
+         . str_repeat("\x00", BACKUP_V3_RESERVED_LEN)
+         . $argonSalt
+         . $hkdfSalt
+         . $ctrIv;
+    if (strlen($hdr) !== BACKUP_V3_HEADER_LEN) {
+        throw new RuntimeException('ipam_backup_v3_pack_header: assembled wrong length');
+    }
+    return $hdr;
+}
+
+/**
+ * @return array{mode:int,argon_time:int,argon_mem_kib:int,argon_par:int,argon_salt:string,hkdf_salt:string,ctr_iv:string}
+ */
+function ipam_backup_v3_unpack_header(string $hdr): array
+{
+    if (strlen($hdr) !== BACKUP_V3_HEADER_LEN) {
+        throw new RuntimeException('IPAMBKP3 header: wrong length');
+    }
+    if (substr($hdr, 0, 8) !== BACKUP_MAGIC_V3) {
+        throw new RuntimeException('IPAMBKP3 header: bad magic');
+    }
+    /** @var array{1:int} $tu */
+    $tu = unpack('N', substr($hdr, 9, 4));
+    /** @var array{1:int} $mu */
+    $mu = unpack('N', substr($hdr, 13, 4));
+    return [
+        'mode'          => ord($hdr[8]),
+        'argon_time'    => $tu[1],
+        'argon_mem_kib' => $mu[1],
+        'argon_par'     => ord($hdr[17]),
+        'argon_salt'    => substr($hdr, 20, BACKUP_ARGON2_SALT_LEN),
+        'hkdf_salt'     => substr($hdr, 36, BACKUP_SALT_LEN),
+        'ctr_iv'        => substr($hdr, 52, BACKUP_CTR_IV_LEN),
+    ];
+}
+
+/**
+ * Stream-encrypt $srcPath into $dstPath using the IPAMBKP3 format.
+ *
+ * Modes:
+ *   STORED      — server-side `backup_vault_key` (32 raw bytes).
+ *                 Passphrase ignored; argon_salt zero-filled.
+ *   TRANSITORY  — operator passphrase; Argon2id derives the kdf input.
+ *                 vaultKey ignored.
+ *
+ * Argon2id parameters fall back to BACKUP_ARGON2_*_DEFAULT when null.
+ * Bounded by BACKUP_V3_ARGON_TIME_MAX / BACKUP_V3_ARGON_MEM_KIB_MAX.
+ *
+ * Memory-bounded streaming (BACKUP_STREAM_CHUNK + bookkeeping). HMAC-SHA256
+ * is computed over (header || ciphertext) in encrypt-then-MAC order.
+ *
+ * @throws RuntimeException on bad parameters, I/O, openssl, or KDF failure.
+ */
+function backup_encrypt_stream_v3(
+    string $srcPath,
+    string $dstPath,
+    int $mode,
+    ?string $passphrase,
+    ?string $vaultKey,
+    ?int $argonTime = null,
+    ?int $argonMemKib = null,
+    ?int $argonParallelism = null
+): void {
+    ipam_assert_random_bytes_available();
+
+    if ($mode !== BACKUP_V3_MODE_STORED && $mode !== BACKUP_V3_MODE_TRANSITORY) {
+        throw new RuntimeException('backup_encrypt_stream_v3: invalid mode');
+    }
+
+    $aTime  = $argonTime        ?? BACKUP_ARGON2_TIME_DEFAULT;
+    $aMem   = $argonMemKib      ?? BACKUP_ARGON2_MEMORY_KIB_DEFAULT;
+    $aPar   = $argonParallelism ?? BACKUP_ARGON2_PARALLELISM_DEFAULT;
+    if ($aTime < 1 || $aTime > BACKUP_V3_ARGON_TIME_MAX) {
+        throw new RuntimeException('backup_encrypt_stream_v3: argon time out of bounds');
+    }
+    if ($aMem < 8 || $aMem > BACKUP_V3_ARGON_MEM_KIB_MAX) {
+        throw new RuntimeException('backup_encrypt_stream_v3: argon memory out of bounds');
+    }
+
+    if ($mode === BACKUP_V3_MODE_TRANSITORY) {
+        if ($passphrase === null || $passphrase === '') {
+            throw new RuntimeException('backup_encrypt_stream_v3: transitory mode requires passphrase');
+        }
+        $argonSalt = random_bytes(BACKUP_ARGON2_SALT_LEN);
+        $kdfInput  = ipam_argon2id_derive($passphrase, $argonSalt, $aTime, $aMem, $aPar, 32);
+        $info      = BACKUP_V3_INFO_TRANSITORY;
+    } else {
+        if ($vaultKey === null || strlen($vaultKey) !== BACKUP_VAULT_KEY_LEN) {
+            throw new RuntimeException(
+                'backup_encrypt_stream_v3: stored mode requires ' . BACKUP_VAULT_KEY_LEN . '-byte vaultKey'
+            );
+        }
+        // Stored mode does not run Argon2id — argon_salt is zero-filled in
+        // the header but the parameter fields still record the install's
+        // current defaults so decryption can reuse them if the mode flag is
+        // ever flipped during an upgrade migration.
+        $argonSalt = str_repeat("\x00", BACKUP_ARGON2_SALT_LEN);
+        $kdfInput  = $vaultKey;
+        $info      = BACKUP_V3_INFO_STORED;
+    }
+
+    $hkdfSalt = random_bytes(BACKUP_SALT_LEN);
+    $ctrIv    = random_bytes(BACKUP_CTR_IV_LEN);
+    $keys     = ipam_hkdf_sha256($kdfInput, $info, 64, $hkdfSalt);
+    $encKey   = substr($keys, 0, 32);
+    $macKey   = substr($keys, 32, 32);
+
+    $header = ipam_backup_v3_pack_header($mode, $aTime, $aMem, $aPar, $argonSalt, $hkdfSalt, $ctrIv);
+
+    $in = @fopen($srcPath, 'rb');
+    if ($in === false) {
+        throw new RuntimeException('backup_encrypt_stream_v3: cannot open source');
+    }
+    $out = @fopen($dstPath, 'wb');
+    if ($out === false) {
+        fclose($in);
+        throw new RuntimeException('backup_encrypt_stream_v3: cannot open dest');
+    }
+
+    try {
+        if (fwrite($out, $header) !== strlen($header)) {
+            throw new RuntimeException('backup_encrypt_stream_v3: short write on header');
+        }
+        $hmacCtx = hash_init('sha256', HASH_HMAC, $macKey);
+        hash_update($hmacCtx, $header);
+
+        $counter = $ctrIv;
+        while (!feof($in)) {
+            $chunk = fread($in, BACKUP_STREAM_CHUNK);
+            if ($chunk === false) {
+                throw new RuntimeException('backup_encrypt_stream_v3: read failed');
+            }
+            if ($chunk === '') {
+                continue;
+            }
+            $ct = openssl_encrypt($chunk, 'aes-256-ctr', $encKey, OPENSSL_RAW_DATA, $counter);
+            if ($ct === false) {
+                throw new RuntimeException('backup_encrypt_stream_v3: openssl_encrypt failed');
+            }
+            if (fwrite($out, $ct) !== strlen($ct)) {
+                throw new RuntimeException('backup_encrypt_stream_v3: short write on ciphertext');
+            }
+            hash_update($hmacCtx, $ct);
+            $counter = ipam_backup_advance_ctr($counter, intdiv(strlen($chunk) + 15, 16));
+        }
+
+        $tag = hash_final($hmacCtx, true);
+        if (fwrite($out, $tag) !== BACKUP_HMAC_LEN) {
+            throw new RuntimeException('backup_encrypt_stream_v3: short write on hmac');
+        }
+    } finally {
+        fclose($in);
+        fclose($out);
+    }
+}
+
+/**
+ * Stream-decrypt an IPAMBKP3 file at $srcPath into $dstPath.
+ *
+ * Re-derives keys from header-embedded params + salts. Verifies HMAC
+ * before atomically renaming the tempfile to $dstPath, so a failed
+ * verification leaves no plaintext on disk.
+ *
+ * Constant-time HMAC compare per #838 B-P1-40: a verify-key wrap means
+ * the success/fail paths each run a fixed number of HMACs.
+ *
+ * @throws RuntimeException on bad magic, truncation, openssl failure,
+ *         missing key/passphrase, or HMAC mismatch.
+ */
+function backup_decrypt_stream_v3(
+    string $srcPath,
+    string $dstPath,
+    ?string $passphrase,
+    ?string $vaultKey
+): void {
+    ipam_assert_random_bytes_available();
+
+    $size = @filesize($srcPath);
+    if ($size === false) {
+        throw new RuntimeException('backup_decrypt_stream_v3: cannot stat source');
+    }
+    $minLen = BACKUP_V3_HEADER_LEN + BACKUP_HMAC_LEN;
+    if ($size < $minLen) {
+        throw new RuntimeException('backup_decrypt_stream_v3: file too short');
+    }
+    $ctLen = $size - $minLen;
+
+    $in = @fopen($srcPath, 'rb');
+    if ($in === false) {
+        throw new RuntimeException('backup_decrypt_stream_v3: cannot open source');
+    }
+
+    $tmpPath = $dstPath . '.decrypting.' . bin2hex(random_bytes(4));
+    $out = null;
+    try {
+        $hdrRaw = (string) fread($in, BACKUP_V3_HEADER_LEN);
+        if (strlen($hdrRaw) !== BACKUP_V3_HEADER_LEN) {
+            throw new RuntimeException('backup_decrypt_stream_v3: short header read');
+        }
+        $hdr = ipam_backup_v3_unpack_header($hdrRaw);
+
+        $mode = $hdr['mode'];
+        if ($mode !== BACKUP_V3_MODE_STORED && $mode !== BACKUP_V3_MODE_TRANSITORY) {
+            throw new RuntimeException('backup_decrypt_stream_v3: unknown mode');
+        }
+        if ($hdr['argon_time'] < 1 || $hdr['argon_time'] > BACKUP_V3_ARGON_TIME_MAX) {
+            throw new RuntimeException('backup_decrypt_stream_v3: argon time out of bounds');
+        }
+        if ($hdr['argon_mem_kib'] < 8 || $hdr['argon_mem_kib'] > BACKUP_V3_ARGON_MEM_KIB_MAX) {
+            throw new RuntimeException('backup_decrypt_stream_v3: argon memory out of bounds');
+        }
+        if ($hdr['argon_par'] !== 1) {
+            throw new RuntimeException('backup_decrypt_stream_v3: argon parallelism != 1');
+        }
+
+        if ($mode === BACKUP_V3_MODE_TRANSITORY) {
+            if ($passphrase === null || $passphrase === '') {
+                throw new RuntimeException('backup_decrypt_stream_v3: transitory mode requires passphrase');
+            }
+            $kdfInput = ipam_argon2id_derive(
+                $passphrase,
+                $hdr['argon_salt'],
+                $hdr['argon_time'],
+                $hdr['argon_mem_kib'],
+                $hdr['argon_par'],
+                32
+            );
+            $info = BACKUP_V3_INFO_TRANSITORY;
+        } else {
+            if ($vaultKey === null || strlen($vaultKey) !== BACKUP_VAULT_KEY_LEN) {
+                throw new RuntimeException(
+                    'backup_decrypt_stream_v3: stored mode requires ' . BACKUP_VAULT_KEY_LEN . '-byte vaultKey'
+                );
+            }
+            $kdfInput = $vaultKey;
+            $info     = BACKUP_V3_INFO_STORED;
+        }
+
+        $keys   = ipam_hkdf_sha256($kdfInput, $info, 64, $hdr['hkdf_salt']);
+        $encKey = substr($keys, 0, 32);
+        $macKey = substr($keys, 32, 32);
+
+        $out = @fopen($tmpPath, 'wb');
+        if ($out === false) {
+            throw new RuntimeException('backup_decrypt_stream_v3: cannot open tmp dst');
+        }
+
+        $hmacCtx = hash_init('sha256', HASH_HMAC, $macKey);
+        hash_update($hmacCtx, $hdrRaw);
+        $counter   = $hdr['ctr_iv'];
+        $remaining = $ctLen;
+        while ($remaining > 0) {
+            $want = (int) min(BACKUP_STREAM_CHUNK, $remaining);
+            $buf  = fread($in, $want);
+            if ($buf === false || strlen($buf) !== $want) {
+                throw new RuntimeException('backup_decrypt_stream_v3: short ciphertext read');
+            }
+            hash_update($hmacCtx, $buf);
+            $pt = openssl_decrypt($buf, 'aes-256-ctr', $encKey, OPENSSL_RAW_DATA, $counter);
+            if ($pt === false) {
+                throw new RuntimeException('backup_decrypt_stream_v3: openssl_decrypt failed');
+            }
+            if (fwrite($out, $pt) !== strlen($pt)) {
+                throw new RuntimeException('backup_decrypt_stream_v3: short write to tmp');
+            }
+            $counter    = ipam_backup_advance_ctr($counter, intdiv(strlen($buf) + 15, 16));
+            $remaining -= $want;
+        }
+        $observed = (string) fread($in, BACKUP_HMAC_LEN);
+        if (strlen($observed) !== BACKUP_HMAC_LEN) {
+            throw new RuntimeException('backup_decrypt_stream_v3: short hmac read');
+        }
+        $expected = hash_final($hmacCtx, true);
+
+        // #838 B-P1-40: double-HMAC compare so success/failure paths run the
+        // same operations. The verify key is derived from macKey via a fixed
+        // sub-purpose so it cannot be swapped for a different signing key.
+        $verifyKey = ipam_hkdf_sha256($macKey, 'ipam-backup-v3:verify', 32);
+        $expectedTag = hash_hmac('sha256', $expected, $verifyKey, true);
+        $observedTag = hash_hmac('sha256', $observed, $verifyKey, true);
+        if (!hash_equals($expectedTag, $observedTag)) {
+            throw new RuntimeException('backup_decrypt_stream_v3: hmac mismatch');
+        }
+
+        fclose($out);
+        $out = null;
+        if (!@rename($tmpPath, $dstPath)) {
+            throw new RuntimeException('backup_decrypt_stream_v3: rename to dst failed');
+        }
+    } catch (Throwable $e) {
+        if (is_resource($out)) {
+            fclose($out);
+        }
+        if (is_file($tmpPath)) {
+            @unlink($tmpPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmpPath built from $dstPath + random suffix
+        }
+        throw $e;
+    } finally {
+        fclose($in);
+    }
+}
+
 /**
  * Format-detecting decrypt-to-path. Peeks the 8-byte magic header:
  *   IPAMBKP2 → backup_decrypt_stream() (v3.19+ streaming).

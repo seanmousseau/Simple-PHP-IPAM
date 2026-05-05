@@ -296,6 +296,191 @@ class BackupCryptoIpambkp3Test extends TestCase
     }
 
     // -----------------------------------------------------------------------
+    // ipam_backup_v3_pack_header / unpack — round-trip
+    // -----------------------------------------------------------------------
+
+    public function testHeaderPackUnpackRoundTrip(): void
+    {
+        $argonSalt = random_bytes(BACKUP_ARGON2_SALT_LEN);
+        $hkdfSalt  = random_bytes(BACKUP_SALT_LEN);
+        $iv        = random_bytes(BACKUP_CTR_IV_LEN);
+        $hdr = ipam_backup_v3_pack_header(
+            BACKUP_V3_MODE_TRANSITORY, 3, 65536, 1, $argonSalt, $hkdfSalt, $iv
+        );
+        $this->assertSame(BACKUP_V3_HEADER_LEN, strlen($hdr));
+        $this->assertSame('IPAMBKP3', substr($hdr, 0, 8));
+
+        $parsed = ipam_backup_v3_unpack_header($hdr);
+        $this->assertSame(BACKUP_V3_MODE_TRANSITORY, $parsed['mode']);
+        $this->assertSame(3, $parsed['argon_time']);
+        $this->assertSame(65536, $parsed['argon_mem_kib']);
+        $this->assertSame(1, $parsed['argon_par']);
+        $this->assertSame($argonSalt, $parsed['argon_salt']);
+        $this->assertSame($hkdfSalt, $parsed['hkdf_salt']);
+        $this->assertSame($iv, $parsed['ctr_iv']);
+    }
+
+    public function testHeaderUnpackRejectsBadMagic(): void
+    {
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessageMatches('/bad magic/');
+        ipam_backup_v3_unpack_header(str_repeat("\x00", BACKUP_V3_HEADER_LEN));
+    }
+
+    public function testHeaderUnpackRejectsWrongLength(): void
+    {
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessageMatches('/wrong length/');
+        ipam_backup_v3_unpack_header('IPAMBKP3short');
+    }
+
+    // -----------------------------------------------------------------------
+    // backup_encrypt_stream_v3 / backup_decrypt_stream_v3 round-trip
+    // -----------------------------------------------------------------------
+
+    /** @return array{0: string, 1: string, 2: string} [src, enc, dec] */
+    private function makeTempPaths(string $payload): array
+    {
+        $base = sys_get_temp_dir() . '/ipam-bkp3-' . bin2hex(random_bytes(4));
+        file_put_contents($base . '.src', $payload);
+        return [$base . '.src', $base . '.enc', $base . '.dec'];
+    }
+
+    private function rmf(string ...$paths): void
+    {
+        foreach ($paths as $p) {
+            if (is_file($p)) {
+                @unlink($p);
+            }
+        }
+    }
+
+    public function testStoredRoundTripSmallPayload(): void
+    {
+        $payload  = "the quick brown fox jumps over the lazy dog\n";
+        $vaultKey = random_bytes(BACKUP_VAULT_KEY_LEN);
+        [$src, $enc, $dec] = $this->makeTempPaths($payload);
+        try {
+            backup_encrypt_stream_v3($src, $enc, BACKUP_V3_MODE_STORED, null, $vaultKey);
+            $this->assertSame('IPAMBKP3', substr((string) file_get_contents($enc), 0, 8));
+
+            backup_decrypt_stream_v3($enc, $dec, null, $vaultKey);
+            $this->assertSame($payload, file_get_contents($dec));
+        } finally {
+            $this->rmf($src, $enc, $dec);
+        }
+    }
+
+    public function testTransitoryRoundTripSmallPayload(): void
+    {
+        $payload    = "transitory mode payload — UTF-8 ✓\n";
+        $passphrase = 'correct horse battery staple';
+        [$src, $enc, $dec] = $this->makeTempPaths($payload);
+        try {
+            // Use lighter argon params for test speed (still enforces parallelism=1).
+            backup_encrypt_stream_v3($src, $enc, BACKUP_V3_MODE_TRANSITORY, $passphrase, null, 2, 8192, 1);
+            backup_decrypt_stream_v3($enc, $dec, $passphrase, null);
+            $this->assertSame($payload, file_get_contents($dec));
+        } finally {
+            $this->rmf($src, $enc, $dec);
+        }
+    }
+
+    public function testStoredEncryptRequiresVaultKey(): void
+    {
+        [$src, $enc, $dec] = $this->makeTempPaths('x');
+        try {
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessageMatches('/vaultKey/');
+            backup_encrypt_stream_v3($src, $enc, BACKUP_V3_MODE_STORED, null, null);
+        } finally {
+            $this->rmf($src, $enc, $dec);
+        }
+    }
+
+    public function testTransitoryEncryptRequiresPassphrase(): void
+    {
+        [$src, $enc, $dec] = $this->makeTempPaths('x');
+        try {
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessageMatches('/passphrase/');
+            backup_encrypt_stream_v3($src, $enc, BACKUP_V3_MODE_TRANSITORY, null, null);
+        } finally {
+            $this->rmf($src, $enc, $dec);
+        }
+    }
+
+    public function testWrongPassphraseRejectedOnDecrypt(): void
+    {
+        [$src, $enc, $dec] = $this->makeTempPaths('secret data');
+        try {
+            backup_encrypt_stream_v3($src, $enc, BACKUP_V3_MODE_TRANSITORY, 'right', null, 2, 8192, 1);
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessageMatches('/hmac mismatch/');
+            backup_decrypt_stream_v3($enc, $dec, 'wrong', null);
+        } finally {
+            $this->rmf($src, $enc, $dec);
+        }
+    }
+
+    public function testWrongVaultKeyRejectedOnDecrypt(): void
+    {
+        [$src, $enc, $dec] = $this->makeTempPaths('secret data');
+        try {
+            $right = random_bytes(BACKUP_VAULT_KEY_LEN);
+            $wrong = random_bytes(BACKUP_VAULT_KEY_LEN);
+            backup_encrypt_stream_v3($src, $enc, BACKUP_V3_MODE_STORED, null, $right);
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessageMatches('/hmac mismatch/');
+            backup_decrypt_stream_v3($enc, $dec, null, $wrong);
+        } finally {
+            $this->rmf($src, $enc, $dec);
+        }
+    }
+
+    public function testFailedDecryptLeavesNoPlaintextOnDisk(): void
+    {
+        [$src, $enc, $dec] = $this->makeTempPaths('top secret');
+        try {
+            $vault = random_bytes(BACKUP_VAULT_KEY_LEN);
+            backup_encrypt_stream_v3($src, $enc, BACKUP_V3_MODE_STORED, null, $vault);
+            // Corrupt the HMAC tag — flip last byte.
+            $contents = (string) file_get_contents($enc);
+            $contents = substr($contents, 0, -1) . chr(ord(substr($contents, -1)) ^ 0x01);
+            file_put_contents($enc, $contents);
+
+            try {
+                backup_decrypt_stream_v3($enc, $dec, null, $vault);
+                $this->fail('expected hmac mismatch exception');
+            } catch (RuntimeException $e) {
+                $this->assertMatchesRegularExpression('/hmac mismatch/', $e->getMessage());
+            }
+            $this->assertFalse(is_file($dec), 'failed decrypt must not leave plaintext at dst');
+            // No stray .decrypting.* tempfile in the dest directory.
+            $stray = glob(dirname($dec) . '/' . basename($dec) . '.decrypting.*') ?: [];
+            $this->assertSame([], $stray);
+        } finally {
+            $this->rmf($src, $enc, $dec);
+        }
+    }
+
+    public function testStreamingHandlesMultiChunkPayload(): void
+    {
+        // 200 KiB > BACKUP_STREAM_CHUNK (64 KiB), exercises 4 chunks.
+        $payload = str_repeat("ABCDEFGH", 25600);
+        $this->assertSame(204800, strlen($payload));
+        $vault = random_bytes(BACKUP_VAULT_KEY_LEN);
+        [$src, $enc, $dec] = $this->makeTempPaths($payload);
+        try {
+            backup_encrypt_stream_v3($src, $enc, BACKUP_V3_MODE_STORED, null, $vault);
+            backup_decrypt_stream_v3($enc, $dec, null, $vault);
+            $this->assertSame(hash('sha256', $payload), hash_file('sha256', $dec));
+        } finally {
+            $this->rmf($src, $enc, $dec);
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Constant sanity — header layout is load-bearing for IPAMBKP3 dispatch
     // -----------------------------------------------------------------------
 
