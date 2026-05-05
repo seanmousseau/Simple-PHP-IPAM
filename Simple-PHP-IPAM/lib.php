@@ -310,6 +310,40 @@ function ipam_db(array $config): PDO
  */
 function ensure_audit_log_table(PDO $db): void
 {
+    // Per-PDO-instance fast path: once we've verified audit_log exists on
+    // this connection, skip the CREATE TABLE / CREATE INDEX / CREATE
+    // TRIGGER work on every subsequent call in the same request. The
+    // probe itself is a no-row SELECT (kilobytes-cheap on every engine).
+    //
+    // Without this short-circuit, ipam_db_init() runs the full CREATE
+    // path on every page load. On Postgres the CREATE OR REPLACE TRIGGER
+    // emitted by PgsqlDialect::append_only_trigger() races on the system
+    // catalog when multiple concurrent requests (page + sub-resource
+    // assets, or parallel API calls) hit init.php at the same time —
+    // surfacing as SQLSTATE[XX000] "tuple concurrently updated" and a
+    // sporadic 500 on whichever request lost the race. Documented in the
+    // v3.24.0 release notes.
+    //
+    // Keying on the PDO object hash means a fresh connection (bootstrap
+    // teardown + rebootstrap, or a new PHP-FPM worker spawn) re-probes
+    // and self-heals if the table was dropped. Production self-heal is
+    // preserved; the race is eliminated.
+    static $verified = [];
+    $key = spl_object_hash($db);
+    if (isset($verified[$key])) {
+        return;
+    }
+    try {
+        $probe = $db->query("SELECT 1 FROM audit_log LIMIT 0");
+        if ($probe !== false) {
+            $probe->closeCursor();
+            $verified[$key] = true;
+            return;
+        }
+    } catch (PDOException) {
+        // table missing — fall through to the full create + trigger path
+    }
+
     $d = ipam_dialect();
     // action and created_at are indexed below, so they must use the
     // indexed text type (VARCHAR on MySQL, TEXT elsewhere). Free-form
@@ -4481,41 +4515,54 @@ function ipam_argon2id_derive(
  *      includes the generated value as a copy-pasteable line so the
  *      operator can finish the install manually.
  *
+ * @param string|null $configPathOverride  Internal hook for tests so they
+ *        can exercise the autogen path against a tempfile rather than the
+ *        production config.php. Production callers MUST pass null.
  * @throws RuntimeException if the existing value is malformed or the
  *         file rewrite fails.
  */
-function ipam_backup_vault_key_or_init(): string
+function ipam_backup_vault_key_or_init(?string $configPathOverride = null): string
 {
-    static $cachedRaw = null;
-    if ($cachedRaw !== null) {
-        return $cachedRaw;
+    // Static cache is keyed on the resolved config path so a test that
+    // overrides the path does not pin the production cache, and vice
+    // versa. Without keying, a single test run could leak a tempfile-
+    // generated key to a subsequent production-path call (or vice versa)
+    // and cause spurious assertion failures.
+    static $cachedRaw = [];
+    $configPath = $configPathOverride ?? __DIR__ . '/config.php';
+    if (isset($cachedRaw[$configPath])) {
+        return $cachedRaw[$configPath];
     }
 
-    /** @var array<string,mixed> $config */
-    global $config;
-    $existing = (isset($config['backup_vault_key']) && is_string($config['backup_vault_key']))
-        ? $config['backup_vault_key']
-        : '';
-
-    if ($existing !== '') {
-        $decoded = base64_decode($existing, true);
-        if (is_string($decoded) && strlen($decoded) === BACKUP_VAULT_KEY_LEN) {
-            $cachedRaw = $decoded;
-            return $decoded;
+    // For the production-path call only, consult $config first — it was
+    // loaded by init.php and may already hold the key from an earlier
+    // require. Tests that pass an override path must rely on the file
+    // contents alone (their config.php is an isolated tempfile).
+    if ($configPathOverride === null) {
+        /** @var array<string,mixed> $config */
+        global $config;
+        $existing = (isset($config['backup_vault_key']) && is_string($config['backup_vault_key']))
+            ? $config['backup_vault_key']
+            : '';
+        if ($existing !== '') {
+            $decoded = base64_decode($existing, true);
+            if (is_string($decoded) && strlen($decoded) === BACKUP_VAULT_KEY_LEN) {
+                $cachedRaw[$configPath] = $decoded;
+                return $decoded;
+            }
+            throw new RuntimeException(
+                'backup_vault_key in config.php is malformed (expected ' .
+                BACKUP_VAULT_KEY_LEN . ' bytes base64). Clear the value to allow ' .
+                'auto-generation, or replace it with: ' .
+                'php -r "echo base64_encode(random_bytes(32));"'
+            );
         }
-        throw new RuntimeException(
-            'backup_vault_key in config.php is malformed (expected ' .
-            BACKUP_VAULT_KEY_LEN . ' bytes base64). Clear the value to allow ' .
-            'auto-generation, or replace it with: ' .
-            'php -r "echo base64_encode(random_bytes(32));"'
-        );
     }
 
     ipam_assert_random_bytes_available();
     $newRaw = random_bytes(BACKUP_VAULT_KEY_LEN);
     $newB64 = base64_encode($newRaw);
 
-    $configPath = __DIR__ . '/config.php';
     try {
         ipam_config_inject_or_replace_key($configPath, 'backup_vault_key', $newB64);
     } catch (Throwable $e) {
@@ -4529,8 +4576,11 @@ function ipam_backup_vault_key_or_init(): string
         );
     }
 
-    $config['backup_vault_key'] = $newB64;
-    $cachedRaw = $newRaw;
+    if ($configPathOverride === null) {
+        global $config;
+        $config['backup_vault_key'] = $newB64;
+    }
+    $cachedRaw[$configPath] = $newRaw;
     return $newRaw;
 }
 
