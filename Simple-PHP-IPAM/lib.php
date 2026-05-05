@@ -1549,6 +1549,18 @@ function ipam_setting_definitions(): array
             'sensitive'   => false,
             'config_key'  => ['backup', 'dir'],
         ],
+        // v3.24.0 — manual upload-restore (#837). Effective cap is the
+        // smallest of: this setting, php upload_max_filesize, post_max_size.
+        // Increasing this above PHP's runtime limits has no effect; the
+        // operator-facing description nudges them to bump both.
+        'backup_max_upload_size_mb' => [
+            'label'       => 'Manual restore upload limit (MiB)',
+            'description' => 'Maximum size of a manually-uploaded backup archive on the Restore tab. Effective cap is min(this, php.ini upload_max_filesize, post_max_size). Increase all three together for files larger than the PHP defaults.',
+            'type'        => 'int',
+            'group'       => 'backup',
+            'default'     => 2048,
+            'sensitive'   => false,
+        ],
         // --- Notifications (v3.22.0 §2.4) ---
         // Per-event toggles split scheduled-vs-manual on the success/failure
         // axis (§2.4 lists the two as independent — operators commonly want
