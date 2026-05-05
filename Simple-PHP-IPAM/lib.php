@@ -4453,6 +4453,167 @@ function ipam_argon2id_derive(
 }
 
 /**
+ * Resolve the IPAMBKP3 stored-mode vault key, lazily generating and
+ * persisting it on first use.
+ *
+ * Returns the raw 32-byte key (NOT base64). Idempotent within a request via
+ * static cache; idempotent across requests via the config.php round-trip.
+ *
+ * Resolution order:
+ *   1. Already in $config and well-formed → decode + return.
+ *   2. Already in $config but malformed → throw (refuse to silently replace
+ *      an operator-supplied value, even if broken).
+ *   3. Empty / absent → generate 32 random bytes, write to config.php in
+ *      place (replace empty slot OR inject before the trailing "];"), and
+ *      return. On write failure, throw with an actionable message that
+ *      includes the generated value as a copy-pasteable line so the
+ *      operator can finish the install manually.
+ *
+ * @throws RuntimeException if the existing value is malformed or the
+ *         file rewrite fails.
+ */
+function ipam_backup_vault_key_or_init(): string
+{
+    static $cachedRaw = null;
+    if ($cachedRaw !== null) {
+        return $cachedRaw;
+    }
+
+    /** @var array<string,mixed> $config */
+    global $config;
+    $existing = (isset($config['backup_vault_key']) && is_string($config['backup_vault_key']))
+        ? $config['backup_vault_key']
+        : '';
+
+    if ($existing !== '') {
+        $decoded = base64_decode($existing, true);
+        if (is_string($decoded) && strlen($decoded) === BACKUP_VAULT_KEY_LEN) {
+            $cachedRaw = $decoded;
+            return $decoded;
+        }
+        throw new RuntimeException(
+            'backup_vault_key in config.php is malformed (expected ' .
+            BACKUP_VAULT_KEY_LEN . ' bytes base64). Clear the value to allow ' .
+            'auto-generation, or replace it with: ' .
+            'php -r "echo base64_encode(random_bytes(32));"'
+        );
+    }
+
+    ipam_assert_random_bytes_available();
+    $newRaw = random_bytes(BACKUP_VAULT_KEY_LEN);
+    $newB64 = base64_encode($newRaw);
+
+    $configPath = __DIR__ . '/config.php';
+    try {
+        ipam_config_inject_or_replace_key($configPath, 'backup_vault_key', $newB64);
+    } catch (Throwable $e) {
+        throw new RuntimeException(
+            "backup_vault_key auto-generation could not update config.php: " .
+            $e->getMessage() . "\n\n" .
+            "Add this line to config.php manually, then retry the backup:\n" .
+            "    'backup_vault_key' => '" . $newB64 . "',",
+            0,
+            $e
+        );
+    }
+
+    $config['backup_vault_key'] = $newB64;
+    $cachedRaw = $newRaw;
+    return $newRaw;
+}
+
+/**
+ * Atomic in-place rewrite of a config.php-style PHP file to set
+ * `'$key' => '$valueB64'`. Used by ipam_backup_vault_key_or_init() and
+ * available for any future autogen scenarios.
+ *
+ * Behaviour:
+ *   - Existing single-quoted/double-quoted line for $key → replaced.
+ *   - Key absent → injected immediately before the file's last "];".
+ *   - Atomic: writes adjacent tempfile, then rename(). Preserves file
+ *     mode best-effort.
+ *
+ * Assumes $valueB64 contains only base64 characters ([A-Za-z0-9+/=]); no
+ * additional escaping is performed. Refuses to operate if the value
+ * contains a single quote.
+ *
+ * @throws RuntimeException on any I/O, parse, or atomicity failure.
+ */
+function ipam_config_inject_or_replace_key(string $configPath, string $key, string $valueB64): void
+{
+    if (!is_file($configPath)) {
+        throw new RuntimeException('config file not found: ' . $configPath);
+    }
+    if (!is_writable($configPath)) {
+        throw new RuntimeException('config file is not writable: ' . $configPath);
+    }
+    if (str_contains($valueB64, "'") || str_contains($valueB64, "\n") || str_contains($valueB64, "\r")) {
+        throw new RuntimeException('refusing to inject value containing quotes or newlines');
+    }
+    $contents = @file_get_contents($configPath);
+    if ($contents === false) {
+        throw new RuntimeException('failed to read config file');
+    }
+
+    // Match a single-line scalar string literal for $key in either quoting
+    // style. Restricted to no embedded quotes or newlines — sufficient for
+    // base64 values which use only [A-Za-z0-9+/=].
+    $pattern = sprintf(
+        '/([\'"])%s\1\s*=>\s*([\'"])[A-Za-z0-9+\/=]*\2/',
+        preg_quote($key, '/')
+    );
+    $replacement = sprintf("'%s' => '%s'", $key, $valueB64);
+
+    $count = 0;
+    if (preg_match($pattern, $contents) === 1) {
+        $new = preg_replace($pattern, $replacement, $contents, 1, $count);
+        if ($new === null || $count !== 1) {
+            throw new RuntimeException('regex replacement failed for key: ' . $key);
+        }
+    } else {
+        // Inject just before the LAST occurrence of "];" — the close of the
+        // top-level return array. Search RTL so a nested array close cannot
+        // win. Newline before injection keeps formatting parseable.
+        $lastClosePos = strrpos($contents, '];');
+        if ($lastClosePos === false) {
+            throw new RuntimeException('config file has no closing "];" — refusing to inject');
+        }
+        $injection = "    '" . $key . "' => '" . $valueB64 . "',\n";
+        $new = substr($contents, 0, $lastClosePos) . $injection . substr($contents, $lastClosePos);
+    }
+
+    // Atomic write: tempfile in the same directory + rename().
+    $dir = dirname($configPath);
+    $tmp = @tempnam($dir, '.config.tmp.');
+    if ($tmp === false) {
+        throw new RuntimeException('cannot create tempfile next to config file');
+    }
+    try {
+        $written = @file_put_contents($tmp, $new);
+        if ($written !== strlen($new)) {
+            throw new RuntimeException('short write to tempfile');
+        }
+        $perms = @fileperms($configPath);
+        if ($perms !== false) {
+            @chmod($tmp, $perms & 0777);
+        }
+        if (!@rename($tmp, $configPath)) {
+            throw new RuntimeException('rename of tempfile to config file failed');
+        }
+        $tmp = null; // ownership transferred
+    } finally {
+        if ($tmp !== null && is_file($tmp)) {
+            @unlink($tmp); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmp from tempnam(), no user input
+        }
+    }
+
+    // Best-effort: invalidate opcache so the next require sees the new value.
+    if (function_exists('opcache_invalidate')) {
+        @opcache_invalidate($configPath, true);
+    }
+}
+
+/**
  * Derive a fixed-length key from a master secret using HKDF-SHA-256.
  *
  * Thin wrapper around PHP's native hash_hkdf() (PHP 7.1.2+). Keeping this as

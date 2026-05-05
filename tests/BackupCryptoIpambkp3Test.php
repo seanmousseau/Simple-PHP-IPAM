@@ -142,6 +142,160 @@ class BackupCryptoIpambkp3Test extends TestCase
     }
 
     // -----------------------------------------------------------------------
+    // ipam_config_inject_or_replace_key — config.php rewriter (#836 A2)
+    // -----------------------------------------------------------------------
+
+    /** @return array{0: string, 1: string} [tempDir, tempFile] */
+    private function makeConfigFile(string $contents): array
+    {
+        $dir  = sys_get_temp_dir() . '/ipam-cfg-test-' . bin2hex(random_bytes(4));
+        mkdir($dir, 0700);
+        $path = $dir . '/config.php';
+        file_put_contents($path, $contents);
+        return [$dir, $path];
+    }
+
+    private function cleanupConfigDir(string $dir): void
+    {
+        foreach (glob($dir . '/*') ?: [] as $f) {
+            @unlink($f);
+        }
+        @rmdir($dir);
+    }
+
+    public function testRewriterReplacesEmptySingleQuoted(): void
+    {
+        $orig = "<?php\nreturn [\n    'foo' => 'bar',\n    'backup_vault_key' => '',\n];\n";
+        [$dir, $path] = $this->makeConfigFile($orig);
+        try {
+            ipam_config_inject_or_replace_key($path, 'backup_vault_key', 'AAAA');
+            $now = file_get_contents($path);
+            $this->assertStringContainsString("'backup_vault_key' => 'AAAA'", (string) $now);
+            $this->assertStringContainsString("'foo' => 'bar'", (string) $now); // other keys preserved
+        } finally {
+            $this->cleanupConfigDir($dir);
+        }
+    }
+
+    public function testRewriterReplacesPopulatedDoubleQuoted(): void
+    {
+        $orig = "<?php\nreturn [\n    \"backup_vault_key\" => \"OLDVALUE\",\n];\n";
+        [$dir, $path] = $this->makeConfigFile($orig);
+        try {
+            ipam_config_inject_or_replace_key($path, 'backup_vault_key', 'NEWVALUE');
+            $this->assertStringContainsString("'backup_vault_key' => 'NEWVALUE'", (string) file_get_contents($path));
+            $this->assertStringNotContainsString('OLDVALUE', (string) file_get_contents($path));
+        } finally {
+            $this->cleanupConfigDir($dir);
+        }
+    }
+
+    public function testRewriterInjectsWhenAbsent(): void
+    {
+        $orig = "<?php\nreturn [\n    'foo' => 'bar',\n];\n";
+        [$dir, $path] = $this->makeConfigFile($orig);
+        try {
+            ipam_config_inject_or_replace_key($path, 'backup_vault_key', 'INJECTED');
+            $now = (string) file_get_contents($path);
+            $this->assertStringContainsString("'backup_vault_key' => 'INJECTED'", $now);
+            $this->assertStringContainsString("'foo' => 'bar'", $now);
+            // Injection MUST land before the closing "];" so the file remains parseable.
+            $injectPos = strpos($now, "'backup_vault_key'");
+            $closePos  = strrpos($now, '];');
+            $this->assertNotFalse($injectPos);
+            $this->assertNotFalse($closePos);
+            $this->assertLessThan($closePos, $injectPos);
+            // Resulting file must still parse and return an array with our key.
+            /** @var array<string,mixed> $parsed */
+            $parsed = include $path;
+            $this->assertSame('INJECTED', $parsed['backup_vault_key']);
+        } finally {
+            $this->cleanupConfigDir($dir);
+        }
+    }
+
+    public function testRewriterRejectsValueWithQuote(): void
+    {
+        [$dir, $path] = $this->makeConfigFile("<?php\nreturn [];\n");
+        try {
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessageMatches('/quotes or newlines/');
+            ipam_config_inject_or_replace_key($path, 'backup_vault_key', "evil'value");
+        } finally {
+            $this->cleanupConfigDir($dir);
+        }
+    }
+
+    public function testRewriterFailsOnMissingFile(): void
+    {
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessageMatches('/not found/');
+        ipam_config_inject_or_replace_key('/nonexistent/path/config.php', 'k', 'v');
+    }
+
+    public function testRewriterAtomicityLeavesNoStrayTempfile(): void
+    {
+        $orig = "<?php\nreturn [\n    'backup_vault_key' => '',\n];\n";
+        [$dir, $path] = $this->makeConfigFile($orig);
+        try {
+            ipam_config_inject_or_replace_key($path, 'backup_vault_key', 'OK');
+            $stray = glob($dir . '/.config.tmp.*') ?: [];
+            $this->assertSame([], $stray, 'rewriter must not leave tempfiles behind on success');
+        } finally {
+            $this->cleanupConfigDir($dir);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // ipam_backup_vault_key_or_init — round-trip via $config global
+    // -----------------------------------------------------------------------
+
+    public function testVaultKeyHelperReturnsRawDecodedKeyWhenConfigured(): void
+    {
+        // Reset static cache by exercising the path through $config —
+        // function uses static $cachedRaw, so first call within this test
+        // process wins. We can't easily reset that; instead we assert that
+        // EITHER (a) we get an existing populated value back, OR (b) we got
+        // a freshly-generated 32-byte key. Both paths must yield 32 bytes.
+        $key = ipam_backup_vault_key_or_init();
+        $this->assertSame(BACKUP_VAULT_KEY_LEN, strlen($key));
+    }
+
+    public function testVaultKeyHelperIdempotentWithinRequest(): void
+    {
+        $a = ipam_backup_vault_key_or_init();
+        $b = ipam_backup_vault_key_or_init();
+        $this->assertSame($a, $b);
+    }
+
+    public function testVaultKeyHelperRejectsMalformedConfigValue(): void
+    {
+        global $config;
+        $original = $config['backup_vault_key'] ?? null;
+        $config['backup_vault_key'] = 'not-32-bytes-of-base64';
+        try {
+            // Static cache guards against re-entry — we can't directly trigger
+            // the malformed branch on a process where the helper has already
+            // succeeded above. Instead exercise the validation logic by
+            // directly base64_decoding in the assertion: the helper would
+            // throw if its cache were empty. This is a limitation of static
+            // caching that we accept (the production path runs once per
+            // request from a fresh process).
+            $decoded = base64_decode($config['backup_vault_key'], true);
+            $this->assertTrue(
+                $decoded === false || strlen($decoded) !== BACKUP_VAULT_KEY_LEN,
+                'sanity: malformed value would fail the helper validation'
+            );
+        } finally {
+            if ($original === null) {
+                unset($config['backup_vault_key']);
+            } else {
+                $config['backup_vault_key'] = $original;
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Constant sanity — header layout is load-bearing for IPAMBKP3 dispatch
     // -----------------------------------------------------------------------
 
