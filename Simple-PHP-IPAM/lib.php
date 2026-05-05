@@ -4675,10 +4675,17 @@ function ipam_hkdf_sha256(string $ikm, string $info, int $length, string $salt =
  */
 function backup_encrypt(string $plain, string $appSecret): string
 {
+    ipam_assert_random_bytes_available(); // #838 B-P1-35
     if ($appSecret === '') {
         throw new RuntimeException('backup encryption requires app_secret to be set in config.php');
     }
     $key = ipam_hkdf_sha256($appSecret, 'ipam-v3:backup', 32);
+    // IPAMBKP1 random-IV note (#838 B-P2-5): GCM with a 96-bit random IV is
+    // safe for the small message counts a single IPAM install produces with
+    // one app_secret-derived key (NIST SP 800-38D allows ~2^32 messages
+    // before the birthday bound becomes non-negligible). Operators with
+    // legacy IPAMBKP1 archives are advised in docs/upgrading.md to
+    // re-encrypt as IPAMBKP3 over time, but no immediate action is needed.
     $iv  = random_bytes(BACKUP_IV_LEN);
     $tag = '';
     $ct  = openssl_encrypt($plain, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag, '', BACKUP_TAG_LEN);
@@ -4698,6 +4705,7 @@ function backup_encrypt(string $plain, string $appSecret): string
  */
 function backup_encrypt_stream(string $srcPath, string $dstPath, string $appSecret): void
 {
+    ipam_assert_random_bytes_available(); // #838 B-P1-35
     if ($appSecret === '') {
         throw new RuntimeException('backup encryption requires app_secret to be set in config.php');
     }
