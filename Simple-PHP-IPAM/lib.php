@@ -5330,22 +5330,86 @@ function backup_unencrypted_unwrap_stream(string $srcPath, string $dstPath): voi
 }
 
 /**
- * Format-detecting decrypt-to-path. Peeks the 8-byte magic header:
- *   IPAMBKP2 → backup_decrypt_stream() (v3.19+ streaming).
- *   IPAMBKP1 → load full file → backup_decrypt() → write (v3.17–v3.18 back-compat,
- *              still bound by original memory ceiling for old backups).
- *
- * @throws RuntimeException on unknown magic or any underlying failure.
+ * Raised by backup_decrypt_to_path() when it recognises an IPAMBKP3 archive
+ * but the caller did not supply the credential needed to decrypt it. The
+ * `mode` property tells the caller which prompt to render (passphrase for
+ * transitory mode, vault-key load for stored mode).
  */
-function backup_decrypt_to_path(string $srcPath, string $dstPath, string $appSecret): void
+class IpamBackupKeyRequiredException extends RuntimeException
 {
+    /** @var int BACKUP_V3_MODE_STORED or BACKUP_V3_MODE_TRANSITORY */
+    public int $mode;
+
+    public function __construct(int $mode, string $message)
+    {
+        parent::__construct($message);
+        $this->mode = $mode;
+    }
+}
+
+/**
+ * Format-detecting decrypt-to-path. Peeks the 8-byte magic header and
+ * dispatches to the matching codec.
+ *
+ *   IPAMBKP3 → backup_decrypt_stream_v3() (v3.24+; stored or transitory).
+ *   IPAMBKU1 → backup_unencrypted_unwrap_stream() (v3.24+; integrity only).
+ *   IPAMBKP2 → backup_decrypt_stream()    (v3.19+ streaming, app_secret HKDF).
+ *   IPAMBKP1 → backup_decrypt()           (v3.17–v3.18, full-file GCM, legacy).
+ *
+ * Optional credentials are mode-specific:
+ *   - $passphrase  — required for IPAMBKP3 transitory mode; ignored otherwise.
+ *   - $vaultKey    — 32 raw bytes; required for IPAMBKP3 stored mode; ignored otherwise.
+ *   - $appSecret   — required for IPAMBKP1 / IPAMBKP2 legacy formats; ignored
+ *                    for v3 / unencrypted.
+ *
+ * Missing credentials throw IpamBackupKeyRequiredException so the caller can
+ * render a credential prompt without parsing exception text.
+ *
+ * @throws IpamBackupKeyRequiredException when the archive needs a
+ *         credential the caller did not provide.
+ * @throws RuntimeException on unknown magic, I/O failure, or codec errors.
+ */
+function backup_decrypt_to_path(
+    string $srcPath,
+    string $dstPath,
+    string $appSecret,
+    ?string $passphrase = null,
+    ?string $vaultKey = null
+): void {
     $fh = @fopen($srcPath, 'rb');
     if ($fh === false) {
         throw new RuntimeException('backup_decrypt_to_path: cannot open source');
     }
     $magic = (string) fread($fh, 8);
+    // For IPAMBKP3 we also need the mode byte at offset 8 to decide which
+    // credential is required before delegating.
+    $modeByte = (string) fread($fh, 1);
     fclose($fh);
 
+    if ($magic === BACKUP_MAGIC_V3) {
+        if (strlen($modeByte) !== 1) {
+            throw new RuntimeException('backup_decrypt_to_path: IPAMBKP3 truncated before mode byte');
+        }
+        $mode = ord($modeByte);
+        if ($mode === BACKUP_V3_MODE_TRANSITORY && ($passphrase === null || $passphrase === '')) {
+            throw new IpamBackupKeyRequiredException(
+                $mode,
+                'backup_decrypt_to_path: IPAMBKP3 transitory archive requires a passphrase'
+            );
+        }
+        if ($mode === BACKUP_V3_MODE_STORED && ($vaultKey === null || $vaultKey === '')) {
+            throw new IpamBackupKeyRequiredException(
+                $mode,
+                'backup_decrypt_to_path: IPAMBKP3 stored archive requires backup_vault_key'
+            );
+        }
+        backup_decrypt_stream_v3($srcPath, $dstPath, $passphrase, $vaultKey);
+        return;
+    }
+    if ($magic === BACKUP_MAGIC_UNENC) {
+        backup_unencrypted_unwrap_stream($srcPath, $dstPath);
+        return;
+    }
     if ($magic === BACKUP_MAGIC_V2) {
         backup_decrypt_stream($srcPath, $dstPath, $appSecret);
         return;

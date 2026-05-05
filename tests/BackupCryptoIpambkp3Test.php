@@ -604,6 +604,113 @@ class BackupCryptoIpambkp3Test extends TestCase
     }
 
     // -----------------------------------------------------------------------
+    // backup_decrypt_to_path dispatcher (#836 A5)
+    // -----------------------------------------------------------------------
+
+    public function testDispatcherRoutesIpambkp3Stored(): void
+    {
+        $vault = random_bytes(BACKUP_VAULT_KEY_LEN);
+        [$src, $enc, $dec] = $this->makeTempPaths('payload-stored');
+        try {
+            backup_encrypt_stream_v3($src, $enc, BACKUP_V3_MODE_STORED, null, $vault);
+            backup_decrypt_to_path($enc, $dec, 'unused-app-secret', null, $vault);
+            $this->assertSame('payload-stored', file_get_contents($dec));
+        } finally {
+            $this->rmf($src, $enc, $dec);
+        }
+    }
+
+    public function testDispatcherRoutesIpambkp3Transitory(): void
+    {
+        [$src, $enc, $dec] = $this->makeTempPaths('payload-transitory');
+        try {
+            backup_encrypt_stream_v3($src, $enc, BACKUP_V3_MODE_TRANSITORY, 'pw', null, 2, 8192, 1);
+            backup_decrypt_to_path($enc, $dec, 'unused-app-secret', 'pw', null);
+            $this->assertSame('payload-transitory', file_get_contents($dec));
+        } finally {
+            $this->rmf($src, $enc, $dec);
+        }
+    }
+
+    public function testDispatcherRoutesUnencrypted(): void
+    {
+        [$src, $wrapped, $dec] = $this->makeTempPaths('payload-unenc');
+        try {
+            backup_unencrypted_wrap_stream($src, $wrapped);
+            backup_decrypt_to_path($wrapped, $dec, 'unused', null, null);
+            $this->assertSame('payload-unenc', file_get_contents($dec));
+        } finally {
+            $this->rmf($src, $wrapped, $dec);
+        }
+    }
+
+    public function testDispatcherThrowsKeyRequiredForTransitoryWithoutPassphrase(): void
+    {
+        [$src, $enc, $dec] = $this->makeTempPaths('x');
+        try {
+            backup_encrypt_stream_v3($src, $enc, BACKUP_V3_MODE_TRANSITORY, 'pw', null, 2, 8192, 1);
+            try {
+                backup_decrypt_to_path($enc, $dec, 'unused', null, null);
+                $this->fail('expected IpamBackupKeyRequiredException');
+            } catch (IpamBackupKeyRequiredException $e) {
+                $this->assertSame(BACKUP_V3_MODE_TRANSITORY, $e->mode);
+                $this->assertMatchesRegularExpression('/passphrase/i', $e->getMessage());
+            }
+        } finally {
+            $this->rmf($src, $enc, $dec);
+        }
+    }
+
+    public function testDispatcherThrowsKeyRequiredForStoredWithoutVaultKey(): void
+    {
+        [$src, $enc, $dec] = $this->makeTempPaths('x');
+        try {
+            $vault = random_bytes(BACKUP_VAULT_KEY_LEN);
+            backup_encrypt_stream_v3($src, $enc, BACKUP_V3_MODE_STORED, null, $vault);
+            try {
+                backup_decrypt_to_path($enc, $dec, 'unused', null, null);
+                $this->fail('expected IpamBackupKeyRequiredException');
+            } catch (IpamBackupKeyRequiredException $e) {
+                $this->assertSame(BACKUP_V3_MODE_STORED, $e->mode);
+                $this->assertMatchesRegularExpression('/backup_vault_key/i', $e->getMessage());
+            }
+        } finally {
+            $this->rmf($src, $enc, $dec);
+        }
+    }
+
+    public function testDispatcherRejectsUnknownMagic(): void
+    {
+        $bad = sys_get_temp_dir() . '/ipam-bad-' . bin2hex(random_bytes(4));
+        $dst = $bad . '.dst';
+        file_put_contents($bad, 'NOTAMAGIC' . str_repeat("\x00", 100));
+        try {
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessageMatches('/unknown backup format/');
+            backup_decrypt_to_path($bad, $dst, 'app-secret', null, null);
+        } finally {
+            $this->rmf($bad, $dst);
+        }
+    }
+
+    public function testDispatcherStillRoutesIpambkp2Legacy(): void
+    {
+        // Ensure the new optional params don't break the existing v2 path.
+        $src = sys_get_temp_dir() . '/ipam-v2src-' . bin2hex(random_bytes(4));
+        $enc = $src . '.enc';
+        $dec = $src . '.dec';
+        file_put_contents($src, 'legacy v2 payload');
+        try {
+            $appSecret = 'app-secret-test-value';
+            backup_encrypt_stream($src, $enc, $appSecret);
+            backup_decrypt_to_path($enc, $dec, $appSecret); // optional params omitted
+            $this->assertSame('legacy v2 payload', file_get_contents($dec));
+        } finally {
+            $this->rmf($src, $enc, $dec);
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Constant sanity — header layout is load-bearing for IPAMBKP3 dispatch
     // -----------------------------------------------------------------------
 
