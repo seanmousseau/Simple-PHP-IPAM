@@ -174,6 +174,51 @@ declare(strict_types=1);
           <button type="submit" class="action-pill">Stage backup</button>
         </form>
       </details>
+
+      <!-- v3.24.0 #837 — manual upload-and-restore. For one-off restores
+           of a backup an operator already has on their workstation
+           (e-mail attachment, downloaded from another tool, exported
+           from a different IPAM install, etc). Distinct from "stage by
+           filename" because it does not require the file to live on a
+           configured destination. -->
+      <details style="margin-top:1.25rem;">
+        <summary>Upload a backup file from your computer</summary>
+        <form method="post" enctype="multipart/form-data" style="margin-top:.75rem;">
+          <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+          <input type="hidden" name="step" value="upload">
+          <label>Backup file
+            <input type="file" name="restore_upload" required>
+          </label>
+          <p class="muted" style="font-size:.85rem;margin:.25rem 0 .75rem;">
+            Accepts IPAMBKP1 / IPAMBKP2 / IPAMBKP3 (encrypted) or IPAMBKL1 / SQL (plain) archives.
+            Maximum size depends on <code>backup_max_upload_size_mb</code> and PHP's <code>upload_max_filesize</code>.
+            For passphrase-encrypted backups (IPAMBKP3 transitory), the next step asks for the passphrase.
+          </p>
+          <button type="submit" class="action-pill">Upload &amp; stage</button>
+        </form>
+      </details>
+    </section>
+  <?php elseif ($phase === 'needs_passphrase'): ?>
+    <!-- v3.24.0 #837 — IPAMBKP3 transitory archive landed via upload but
+         no passphrase was supplied. Re-prompt without leaving the
+         wizard. The uploaded file has already been deleted from
+         data/tmp/ at this point so the operator must re-select the
+         file along with the passphrase. -->
+    <section class="card">
+      <h2>Passphrase required</h2>
+      <p>This is a transitory-mode backup &mdash; it was encrypted with an operator-typed passphrase, not with the server's vault key.
+         Re-select the file and enter the passphrase to continue.</p>
+      <form method="post" enctype="multipart/form-data">
+        <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+        <input type="hidden" name="step" value="upload">
+        <label>Backup file
+          <input type="file" name="restore_upload" required>
+        </label>
+        <label>Passphrase
+          <input type="password" name="passphrase" required autocomplete="off">
+        </label>
+        <button type="submit" class="action-pill">Decrypt &amp; stage</button>
+      </form>
     </section>
   <?php elseif ($phase === RESTORE_WIZARD_PHASE_STAGED): ?>
     <section class="card">
