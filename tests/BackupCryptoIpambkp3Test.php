@@ -1084,6 +1084,27 @@ class BackupCryptoIpambkp3Test extends TestCase
     }
 
     // -----------------------------------------------------------------------
+    // ipam_restore_upload_error_message — pure $_FILES error mapping (#837)
+    // -----------------------------------------------------------------------
+
+    public function testUploadErrorMessageMapsKnownCodes(): void
+    {
+        $this->assertStringContainsString('upload_max_filesize', ipam_restore_upload_error_message(UPLOAD_ERR_INI_SIZE));
+        $this->assertStringContainsString('MAX_FILE_SIZE',      ipam_restore_upload_error_message(UPLOAD_ERR_FORM_SIZE));
+        $this->assertStringContainsString('incomplete',         ipam_restore_upload_error_message(UPLOAD_ERR_PARTIAL));
+        $this->assertStringContainsString('no file',            strtolower(ipam_restore_upload_error_message(UPLOAD_ERR_NO_FILE)));
+        $this->assertStringContainsString('upload_tmp_dir',     ipam_restore_upload_error_message(UPLOAD_ERR_NO_TMP_DIR));
+        $this->assertStringContainsString('write',              ipam_restore_upload_error_message(UPLOAD_ERR_CANT_WRITE));
+        $this->assertStringContainsString('extension',          ipam_restore_upload_error_message(UPLOAD_ERR_EXTENSION));
+    }
+
+    public function testUploadErrorMessageSurfacesUnknownCode(): void
+    {
+        $msg = ipam_restore_upload_error_message(9999);
+        $this->assertStringContainsString('9999', $msg);
+    }
+
+    // -----------------------------------------------------------------------
     // Constant sanity — header layout is load-bearing for IPAMBKP3 dispatch
     // -----------------------------------------------------------------------
 
