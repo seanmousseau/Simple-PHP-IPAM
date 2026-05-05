@@ -5186,6 +5186,149 @@ function backup_decrypt_stream_v3(
     }
 }
 
+// ── IPAMBKU1 (v3.24.0) — integrity-only framing for trusted-local backups ────
+//
+// Wire format: magic(8 'IPAMBKU1') | sha256(32) | plaintext(N).
+// No confidentiality — used only when the operator opts out of encryption
+// for a destination they trust (e.g. full-disk-encrypted local volume).
+// The SHA-256 catches accidental corruption / disk bit-rot.
+
+const BACKUP_UNENC_HEADER_LEN = 8 + 32; // magic + sha256
+
+/**
+ * Stream-wrap a plaintext file with the IPAMBKU1 framing.
+ *
+ * The SHA-256 is computed incrementally during write so memory stays
+ * bounded regardless of input size.
+ *
+ * @throws RuntimeException on I/O failure.
+ */
+function backup_unencrypted_wrap_stream(string $srcPath, string $dstPath): void
+{
+    $in = @fopen($srcPath, 'rb');
+    if ($in === false) {
+        throw new RuntimeException('backup_unencrypted_wrap_stream: cannot open source');
+    }
+    $out = @fopen($dstPath, 'wb');
+    if ($out === false) {
+        fclose($in);
+        throw new RuntimeException('backup_unencrypted_wrap_stream: cannot open dest');
+    }
+    try {
+        // Reserve space for the 32-byte SHA-256 by writing zero bytes; we
+        // patch this region after the body is fully streamed and hashed.
+        $headerStub = BACKUP_MAGIC_UNENC . str_repeat("\x00", 32);
+        if (fwrite($out, $headerStub) !== BACKUP_UNENC_HEADER_LEN) {
+            throw new RuntimeException('backup_unencrypted_wrap_stream: short write on header');
+        }
+        $hashCtx = hash_init('sha256');
+        while (!feof($in)) {
+            $chunk = fread($in, BACKUP_STREAM_CHUNK);
+            if ($chunk === false) {
+                throw new RuntimeException('backup_unencrypted_wrap_stream: read failed');
+            }
+            if ($chunk === '') {
+                continue;
+            }
+            hash_update($hashCtx, $chunk);
+            if (fwrite($out, $chunk) !== strlen($chunk)) {
+                throw new RuntimeException('backup_unencrypted_wrap_stream: short write on body');
+            }
+        }
+        $digest = hash_final($hashCtx, true);
+        if (strlen($digest) !== 32) {
+            throw new RuntimeException('backup_unencrypted_wrap_stream: digest wrong length');
+        }
+        // Seek back and patch the digest region.
+        if (fseek($out, 8) !== 0) {
+            throw new RuntimeException('backup_unencrypted_wrap_stream: seek to digest failed');
+        }
+        if (fwrite($out, $digest) !== 32) {
+            throw new RuntimeException('backup_unencrypted_wrap_stream: short write on digest');
+        }
+    } finally {
+        fclose($in);
+        fclose($out);
+    }
+}
+
+/**
+ * Stream-unwrap an IPAMBKU1 file. Verifies the SHA-256 over the body
+ * before atomically renaming the tempfile to $dstPath.
+ *
+ * @throws RuntimeException on bad magic, truncation, I/O failure, or
+ *         hash mismatch.
+ */
+function backup_unencrypted_unwrap_stream(string $srcPath, string $dstPath): void
+{
+    ipam_assert_random_bytes_available();
+
+    $size = @filesize($srcPath);
+    if ($size === false) {
+        throw new RuntimeException('backup_unencrypted_unwrap_stream: cannot stat source');
+    }
+    if ($size < BACKUP_UNENC_HEADER_LEN) {
+        throw new RuntimeException('backup_unencrypted_unwrap_stream: file too short');
+    }
+
+    $in = @fopen($srcPath, 'rb');
+    if ($in === false) {
+        throw new RuntimeException('backup_unencrypted_unwrap_stream: cannot open source');
+    }
+
+    $tmpPath = $dstPath . '.unwrapping.' . bin2hex(random_bytes(4));
+    $out = null;
+    try {
+        $hdr = (string) fread($in, BACKUP_UNENC_HEADER_LEN);
+        if (strlen($hdr) !== BACKUP_UNENC_HEADER_LEN) {
+            throw new RuntimeException('backup_unencrypted_unwrap_stream: short header read');
+        }
+        if (substr($hdr, 0, 8) !== BACKUP_MAGIC_UNENC) {
+            throw new RuntimeException('backup_unencrypted_unwrap_stream: bad magic');
+        }
+        $expected = substr($hdr, 8, 32);
+
+        $out = @fopen($tmpPath, 'wb');
+        if ($out === false) {
+            throw new RuntimeException('backup_unencrypted_unwrap_stream: cannot open tmp dst');
+        }
+        $hashCtx = hash_init('sha256');
+        $remaining = $size - BACKUP_UNENC_HEADER_LEN;
+        while ($remaining > 0) {
+            $want = (int) min(BACKUP_STREAM_CHUNK, $remaining);
+            $buf  = fread($in, $want);
+            if ($buf === false || strlen($buf) !== $want) {
+                throw new RuntimeException('backup_unencrypted_unwrap_stream: short body read');
+            }
+            hash_update($hashCtx, $buf);
+            if (fwrite($out, $buf) !== strlen($buf)) {
+                throw new RuntimeException('backup_unencrypted_unwrap_stream: short write to tmp');
+            }
+            $remaining -= $want;
+        }
+        $observed = hash_final($hashCtx, true);
+        if (!hash_equals($expected, $observed)) {
+            throw new RuntimeException('backup_unencrypted_unwrap_stream: sha256 mismatch');
+        }
+
+        fclose($out);
+        $out = null;
+        if (!@rename($tmpPath, $dstPath)) {
+            throw new RuntimeException('backup_unencrypted_unwrap_stream: rename to dst failed');
+        }
+    } catch (Throwable $e) {
+        if (is_resource($out)) {
+            fclose($out);
+        }
+        if (is_file($tmpPath)) {
+            @unlink($tmpPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmpPath built from $dstPath + random suffix
+        }
+        throw $e;
+    } finally {
+        fclose($in);
+    }
+}
+
 /**
  * Format-detecting decrypt-to-path. Peeks the 8-byte magic header:
  *   IPAMBKP2 → backup_decrypt_stream() (v3.19+ streaming).

@@ -481,6 +481,129 @@ class BackupCryptoIpambkp3Test extends TestCase
     }
 
     // -----------------------------------------------------------------------
+    // IPAMBKU1 wrap/unwrap (#836 A4)
+    // -----------------------------------------------------------------------
+
+    public function testUnencryptedWrapRoundTripSmall(): void
+    {
+        $payload = "trusted-local backup payload\n";
+        [$src, $wrapped, $unwrapped] = $this->makeTempPaths($payload);
+        try {
+            backup_unencrypted_wrap_stream($src, $wrapped);
+            $bin = (string) file_get_contents($wrapped);
+            $this->assertSame('IPAMBKU1', substr($bin, 0, 8));
+            $this->assertSame(hash('sha256', $payload, true), substr($bin, 8, 32));
+
+            backup_unencrypted_unwrap_stream($wrapped, $unwrapped);
+            $this->assertSame($payload, file_get_contents($unwrapped));
+        } finally {
+            $this->rmf($src, $wrapped, $unwrapped);
+        }
+    }
+
+    public function testUnencryptedWrapRoundTripMultiChunk(): void
+    {
+        $payload = str_repeat("A", 200000); // > BACKUP_STREAM_CHUNK
+        [$src, $wrapped, $unwrapped] = $this->makeTempPaths($payload);
+        try {
+            backup_unencrypted_wrap_stream($src, $wrapped);
+            backup_unencrypted_unwrap_stream($wrapped, $unwrapped);
+            $this->assertSame(hash('sha256', $payload), hash_file('sha256', $unwrapped));
+        } finally {
+            $this->rmf($src, $wrapped, $unwrapped);
+        }
+    }
+
+    public function testUnencryptedUnwrapRejectsBadMagic(): void
+    {
+        $bad = sys_get_temp_dir() . '/ipam-bad-' . bin2hex(random_bytes(4));
+        $dst = $bad . '.dst';
+        file_put_contents($bad, "NOTAMAGIC" . str_repeat("\x00", 32) . "body");
+        try {
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessageMatches('/bad magic/');
+            backup_unencrypted_unwrap_stream($bad, $dst);
+        } finally {
+            $this->rmf($bad, $dst);
+        }
+    }
+
+    public function testUnencryptedUnwrapRejectsTamperedBody(): void
+    {
+        [$src, $wrapped, $unwrapped] = $this->makeTempPaths('original body');
+        try {
+            backup_unencrypted_wrap_stream($src, $wrapped);
+            // Flip a body byte.
+            $bin = (string) file_get_contents($wrapped);
+            $bin = substr($bin, 0, 41) . chr(ord(substr($bin, 41, 1)) ^ 0x01) . substr($bin, 42);
+            file_put_contents($wrapped, $bin);
+            try {
+                backup_unencrypted_unwrap_stream($wrapped, $unwrapped);
+                $this->fail('expected sha256 mismatch');
+            } catch (RuntimeException $e) {
+                $this->assertMatchesRegularExpression('/sha256 mismatch/', $e->getMessage());
+            }
+            $this->assertFalse(is_file($unwrapped));
+        } finally {
+            $this->rmf($src, $wrapped, $unwrapped);
+        }
+    }
+
+    public function testUnencryptedUnwrapRejectsTamperedHash(): void
+    {
+        [$src, $wrapped, $unwrapped] = $this->makeTempPaths('payload');
+        try {
+            backup_unencrypted_wrap_stream($src, $wrapped);
+            $bin = (string) file_get_contents($wrapped);
+            // Flip a hash byte (offset 8..39).
+            $bin[10] = chr(ord($bin[10]) ^ 0xFF);
+            file_put_contents($wrapped, $bin);
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessageMatches('/sha256 mismatch/');
+            backup_unencrypted_unwrap_stream($wrapped, $unwrapped);
+        } finally {
+            $this->rmf($src, $wrapped, $unwrapped);
+        }
+    }
+
+    public function testUnencryptedUnwrapRejectsFileTooShort(): void
+    {
+        $short = sys_get_temp_dir() . '/ipam-short-' . bin2hex(random_bytes(4));
+        $dst   = $short . '.dst';
+        file_put_contents($short, 'IPAMBKU1'); // missing the 32-byte hash
+        try {
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessageMatches('/too short/');
+            backup_unencrypted_unwrap_stream($short, $dst);
+        } finally {
+            $this->rmf($short, $dst);
+        }
+    }
+
+    public function testUnencryptedFailedUnwrapLeavesNoStrayTempfile(): void
+    {
+        [$src, $wrapped, $unwrapped] = $this->makeTempPaths('content');
+        try {
+            backup_unencrypted_wrap_stream($src, $wrapped);
+            // Tamper.
+            $bin = (string) file_get_contents($wrapped);
+            $bin = substr($bin, 0, -1) . chr(ord(substr($bin, -1)) ^ 0x01);
+            file_put_contents($wrapped, $bin);
+            try {
+                backup_unencrypted_unwrap_stream($wrapped, $unwrapped);
+                $this->fail('expected RuntimeException on tampered hash');
+            } catch (RuntimeException) {
+                // expected
+            }
+            $stray = glob(dirname($unwrapped) . '/' . basename($unwrapped) . '.unwrapping.*') ?: [];
+            $this->assertSame([], $stray);
+            $this->assertFalse(is_file($unwrapped));
+        } finally {
+            $this->rmf($src, $wrapped, $unwrapped);
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Constant sanity — header layout is load-bearing for IPAMBKP3 dispatch
     // -----------------------------------------------------------------------
 
