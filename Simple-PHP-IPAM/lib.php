@@ -310,10 +310,10 @@ function ipam_db(array $config): PDO
  */
 function ensure_audit_log_table(PDO $db): void
 {
-    // Per-PDO-instance fast path: once we've verified audit_log exists on
-    // this connection, skip the CREATE TABLE / CREATE INDEX / CREATE
-    // TRIGGER work on every subsequent call in the same request. The
-    // probe itself is a no-row SELECT (kilobytes-cheap on every engine).
+    // Probe first: if audit_log already exists, skip the full CREATE
+    // TABLE / CREATE INDEX / CREATE TRIGGER path on this request. The
+    // probe is a no-row SELECT — a few microseconds per page on every
+    // engine.
     //
     // Without this short-circuit, ipam_db_init() runs the full CREATE
     // path on every page load. On Postgres the CREATE OR REPLACE TRIGGER
@@ -324,20 +324,15 @@ function ensure_audit_log_table(PDO $db): void
     // sporadic 500 on whichever request lost the race. Documented in the
     // v3.24.0 release notes.
     //
-    // Keying on the PDO object hash means a fresh connection (bootstrap
-    // teardown + rebootstrap, or a new PHP-FPM worker spawn) re-probes
-    // and self-heals if the table was dropped. Production self-heal is
-    // preserved; the race is eliminated.
-    static $verified = [];
-    $key = spl_object_hash($db);
-    if (isset($verified[$key])) {
-        return;
-    }
+    // No process-wide caching: demo_reset_db() drops audit_log mid-
+    // request, so a cache that persists across calls would skip the
+    // self-heal that the next request needs. The probe is cheap enough
+    // to run every time. The race protection comes from the probe
+    // gating the CREATE OR REPLACE — if the table exists, no DDL fires.
     try {
         $probe = $db->query("SELECT 1 FROM audit_log LIMIT 0");
         if ($probe !== false) {
             $probe->closeCursor();
-            $verified[$key] = true;
             return;
         }
     } catch (PDOException) {
