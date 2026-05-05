@@ -114,6 +114,24 @@ The backup is left in place after a successful upgrade. You can remove it manual
 
 ## Version-specific upgrade notes
 
+### v3.24.0
+
+Encryption-format upgrade: new **IPAMBKP3** archive format with three modes (stored / transitory / unencrypted), a new server-side secret (`backup_vault_key`), and a manual upload-and-restore wizard step. **No schema migrations**, **no new runtime dependencies** — the codec uses PHP's existing libsodium build for Argon2id and OpenSSL for AES-256-CTR. Standard upgrade: `bash upgrade.sh --yes <docroot>`.
+
+Highlights:
+
+- **`backup_vault_key` auto-generation (#836).** A new 32-byte secret in `config.php` protects scheduled stored-mode backups. Distinct from `app_secret` (which protects DB-resident data like TOTP secrets). Generated lazily on the first encrypted backup the first time you produce one on v3.24+ — the application rewrites `config.php` in place to insert the value. **No manual action is required.** Operators who prefer to pre-seed manually can run `php -r "echo base64_encode(random_bytes(32));"` and add `'backup_vault_key' => '...'` to `config.php` before the first backup. See [`configuration.md` → backup_vault_key](configuration.md#backup_vault_key) for rotation, storage, and lifecycle guidance.
+
+- **Existing IPAMBKP1 / IPAMBKP2 archives remain restorable.** The dispatcher recognises every format and routes to the matching codec. No migration is required and no operator action is forced. If you have IPAMBKP1 archives (v3.17–v3.18 vintage), consider re-encrypting them as IPAMBKP3 over time — the streaming format is memory-bounded for multi-GB databases and uses constant-time HMAC verification (#838 B-P2-5).
+
+- **Manual upload-and-restore wizard step (#837).** The Restore tab gains an *Upload a backup file from your computer* affordance for one-off restores of an archive that did not originate from a configured destination (e.g. a backup someone emailed you, or one you pulled from another tool). Accepts every supported format. For IPAMBKP3 transitory archives, the wizard prompts for the passphrase between upload and dry-run.
+
+- **`backup_max_upload_size_mb` setting (#837).** New admin-tunable upload cap, default 2048 MiB. Effective cap is the smallest of this setting, PHP's `upload_max_filesize`, and `post_max_size`. To accept larger files, raise all three.
+
+- **Standalone decrypt CLI: `tools/decrypt-backup.php` (#1043).** Decrypts an IPAMBKP1/2/3 or IPAMBKU1 archive to plaintext without a running install. Useful when the originating IPAM install is destroyed but you still hold the credential. `php tools/decrypt-backup.php --help` for usage.
+
+- **Encryption-mode vocabulary changed.** Before v3.24, internal docs sometimes used "stored / transitory / unencrypted" to describe encryption-at-rest vs. TLS-only vs. plaintext. From v3.24 onward those three labels describe **where the key comes from** — server-managed `backup_vault_key`, operator-typed passphrase, or no key at all. The wire path is always TLS-protected for S3 and SSH-protected for SFTP regardless of mode. See [`docs/backups.md` → Encryption](backups.md#encryption) for the new model.
+
 ### v3.23.0
 
 Backup configuration consolidates onto the unified Backup &amp; Restore admin surface. **One schema migration**, no new runtime dependencies. Standard upgrade: `bash upgrade.sh --yes <docroot>`.

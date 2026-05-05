@@ -43,15 +43,15 @@ Two backup types are documented here. Only Database is implemented in v3.21.x.
 
 > Both types share the same destination, schedule, encryption, and retention infrastructure. **In v3.21.x, every produced backup is a Database backup** — the type selector and Logical-backup-specific behaviour described below applies once v3.22.0 ships.
 
-Three encryption modes are available per destination:
+**v3.24.0 introduces the IPAMBKP3 format.** Three encryption modes are available, each describing where the key comes from. TLS / SSH protect the wire path independent of mode.
 
-| Mode | Behaviour | Recommended when |
+| Mode | Key source | Recommended when |
 |---|---|---|
-| **Stored** | Backup is encrypted with a key derived from `app_secret` and written encrypted at rest. The destination cannot read the contents. | Untrusted destinations (third-party S3, shared SFTP). Default. |
-| **Transitory** | Backup is encrypted in transit (TLS to S3 / SSH to SFTP) but written in plaintext at the destination. | The destination is fully trusted (e.g. an internal NFS mount with disk encryption already). |
-| **Unencrypted** | No encryption at any layer. | Local destination on the same host, or when an external system handles encryption (e.g. an LVM-encrypted volume). |
+| **Stored** | Server-managed `backup_vault_key` (separate from `app_secret`; auto-generated on first encrypted backup, lives in `config.php`). Used for every scheduled run by default. | Hands-free scheduled backups. Operator does not need to remember a passphrase. Restore reads the key from `config.php` automatically. |
+| **Transitory** | Operator-typed passphrase, never persisted. Server uses Argon2id (RFC 9106 v1.3) to derive the key with default parameters `t=3, m=64 MiB, p=1` (per-file random salt; parameters are header-embedded so future tuning is non-breaking). | Manual one-off encrypted backups whose passphrase exists only in the operator's head. Restoring requires re-typing the same passphrase. |
+| **Unencrypted** | No key. Files use the IPAMBKU1 wrapper format (magic + SHA-256 + plaintext) — integrity is still checked on restore but the contents are readable. | Trusted local destinations on hosts with full-disk encryption, or test installs where confidentiality is irrelevant. |
 
-The full byte format of encrypted files is documented in [On-disk format](#on-disk-format) below. v3.24.0's IPAMBKP3 format will replace IPAMBKP2 with a key-rotation-friendly envelope; this guide is updated when that ships.
+`backup_vault_key` is documented in [`configuration.md` → backup_vault_key](configuration.md#backup_vault_key). Existing IPAMBKP1 (v3.17–v3.18) and IPAMBKP2 (v3.19–v3.23) archives remain restorable on v3.24+ — no migration is required and no operator action is forced. See [On-disk format](#on-disk-format) for the byte layout.
 
 ---
 
@@ -181,19 +181,34 @@ A schedule is edited inline on its destination row in the Destinations tab. Clic
 
 ## Encryption
 
-Encryption is configured per destination by selecting an [encryption mode](#overview). When **Stored** mode is enabled, the dump is encrypted before upload using a key derived from `app_secret` via HKDF-SHA256. Encrypted files have the `.enc` suffix.
+Encryption is configured per destination by selecting an [encryption mode](#overview). The byte format depends on the mode and on which IPAM version produced the file.
 
-**Prerequisites for Stored mode:**
+### v3.24+ formats (IPAMBKP3, IPAMBKU1)
 
-- `app_secret` must be set in `config.php`. Generate one with:
-  ```bash
-  php -r "echo bin2hex(random_bytes(32));"
-  ```
-- The same `app_secret` must be present at both encrypt and decrypt time.
+**Stored mode** is the default for scheduled / destination-driven backups. The codec uses HKDF-SHA256 over `backup_vault_key` (a 32-byte secret separate from `app_secret`) with a per-file random salt to derive an AES-256-CTR encryption key and an HMAC-SHA256 MAC key. The body is streamed in 64-KiB chunks (memory bound is constant regardless of input size). The HMAC covers `header || ciphertext` in encrypt-then-MAC order.
 
-**Key rotation warning:** rotating `app_secret` invalidates all existing encrypted backups. Files encrypted with the old key cannot be decrypted with the new one. Before rotating, either keep a copy of the old key, decrypt all existing backups first, or take a fresh backup with the new key.
+**Transitory mode** is used for the manual upload-and-restore path when an operator wants a one-off encrypted backup whose passphrase only exists in their head. The codec runs Argon2id (RFC 9106 v1.3, parameters `t=3 / m=64 MiB / p=1` by default; per-file random salt) over the operator's passphrase to derive a 32-byte key, then HKDF-SHA256 + AES-256-CTR + HMAC-SHA256 as for stored mode. Argon2id parameters are header-embedded so future tuning is backwards-compatible.
 
-The full byte format of IPAMBKP1 (v3.17–v3.18) and IPAMBKP2 (v3.19+) is in [On-disk format](#on-disk-format). v3.24.0 introduces IPAMBKP3 with key-rotation support; this section is updated when it ships.
+**Unencrypted (IPAMBKU1)** wraps plaintext with a magic header + SHA-256 digest. Integrity is checked on restore but contents are readable. Used when an operator opts a destination out of encryption (typically a local destination on a full-disk-encrypted host).
+
+#### Prerequisites and key lifecycle
+
+- **Stored mode:** `backup_vault_key` is auto-generated on first use and written to `config.php`. See [`configuration.md` → backup_vault_key](configuration.md#backup_vault_key) for rotation and storage guidance.
+- **Transitory mode:** no server-side state. The operator types the passphrase on every backup AND every restore.
+- **Argon2id parameters** are header-embedded, so future installs can tune `t`/`m` without breaking existing backups. Bounds: `t` in `[1, 16]`, `m` in `[8 KiB, 1 GiB]`, `p` is fixed at 1 (libsodium API constraint).
+
+### Legacy formats (IPAMBKP1, IPAMBKP2)
+
+- **IPAMBKP2 (v3.19–v3.23)**: streaming AES-256-CTR + HMAC-SHA256, key derived from `app_secret` via HKDF-SHA256 with a per-file random salt. Restore is fully supported on v3.24+. The IPAMBKP2 format is no longer produced for new backups when stored-mode IPAMBKP3 is selected, but existing archives remain readable.
+- **IPAMBKP1 (v3.17–v3.18)**: single-shot AES-256-GCM with a 96-bit random IV. Decrypt loads the whole ciphertext into RAM (no streaming). Operators with multi-GB databases who hit the original OOM should take a fresh backup on v3.19+ to switch to streaming. Re-encrypting any remaining IPAMBKP1 archives as IPAMBKP3 is recommended over time.
+
+#### Key rotation warnings
+
+- Rotating `backup_vault_key` invalidates IPAMBKP3 stored-mode archives.
+- Rotating `app_secret` invalidates IPAMBKP1 and IPAMBKP2 archives.
+- IPAMBKP3 transitory archives are unaffected by either rotation (the key was the operator's passphrase, not the server's secret).
+
+The full byte layout of every format is in [On-disk format](#on-disk-format). For offline decrypts (e.g. recovering an archive when the originating install is gone), `tools/decrypt-backup.php` ships a CLI that takes the appropriate credential and produces plaintext without requiring a running install.
 
 ---
 
@@ -336,17 +351,54 @@ offset  size  field
 
 v1 backups are restored via the legacy `backup_decrypt()` path. Restoring a v1 backup loads the whole ciphertext into RAM — operators with multi-GB databases who hit the original OOM should take a fresh backup on v3.19+ to switch to the streaming v2 format.
 
+### v3 — `IPAMBKP3` (v3.24.0+, three-mode streaming)
+
+```text
+offset  size  field                       notes
+0       8     magic = "IPAMBKP3"
+8       1     mode                        1 = STORED, 2 = TRANSITORY
+9       4     argon_time      (BE u32)    ignored when mode = STORED
+13      4     argon_memory_kib (BE u32)
+17      1     argon_parallelism           must be 1 (libsodium constraint)
+18      2     reserved                    zero
+20      16    argon_salt                  zero-filled when mode = STORED
+36      16    hkdf_salt                   per-file random; HKDF-Extract input
+52      16    ctr_iv                      AES-256-CTR initial counter
+─── header total: 68 bytes ───
+68      N     ciphertext                  AES-256-CTR streaming
+68 + N  32    HMAC-SHA256                 over (header || ciphertext)
+```
+
+Key derivation:
+
+- **STORED:** `kdf_input = backup_vault_key`. HKDF-SHA256 with info `"ipam-backup-v3:stored:enc-mac"` and the per-file `hkdf_salt` produces 64 bytes — first 32 = encryption key, last 32 = MAC key.
+- **TRANSITORY:** `kdf_input = Argon2id(passphrase, argon_salt, argon_time, argon_memory_kib * 1024, parallelism=1, out_len=32)`. Same HKDF chain afterward, with info `"ipam-backup-v3:transitory:enc-mac"`.
+
+Verification at decrypt is constant-time via a double-HMAC compare over a sub-derived verify key (`HKDF(mac_key, "ipam-backup-v3:verify", 32)`). The codec writes plaintext to a temporary `<dst>.decrypting.<rand>` file and only renames to `<dst>` after HMAC verification passes — a failed verify leaves no plaintext on disk.
+
+### Unencrypted — `IPAMBKU1` (v3.24.0+, integrity wrapper)
+
+```text
+offset  size  field
+0       8     magic = "IPAMBKU1"
+8       32    sha256(plaintext)
+40      N     plaintext
+```
+
+No key material; SHA-256 catches accidental corruption / disk bit-rot. Used when an operator opts a destination out of encryption.
+
 ### Format dispatch on restore
 
-`backup_decrypt_to_path()` peeks the first 8 bytes:
+`backup_decrypt_to_path()` peeks the first 8 bytes (and, for `IPAMBKP3`, the 9th mode byte) and routes:
 
-- `IPAMBKP2` → `backup_decrypt_stream()` (streaming).
-- `IPAMBKP1` → load full file → `backup_decrypt()` → write (back-compat).
+- `IPAMBKP3` mode = STORED → `backup_decrypt_stream_v3()` with the configured `backup_vault_key`.
+- `IPAMBKP3` mode = TRANSITORY → `backup_decrypt_stream_v3()` with the operator's passphrase.
+- `IPAMBKU1` → `backup_unencrypted_unwrap_stream()` (no credential).
+- `IPAMBKP2` → `backup_decrypt_stream()` (legacy, `app_secret`).
+- `IPAMBKP1` → load full file → `backup_decrypt()` → write (legacy back-compat).
 - Anything else → `RuntimeException`.
 
-### v3 — `IPAMBKP3` (planned, v3.24.0)
-
-`IPAMBKP3` introduces an envelope structure where a per-file data-encryption key is wrapped with a key-encryption key derived from `app_secret`. This enables key rotation without re-encrypting every backup file. This section is updated when it ships.
+When the dispatcher recognises an `IPAMBKP3` archive but the caller did not supply the matching credential, it raises `IpamBackupKeyRequiredException` carrying the mode flag. The manual upload-and-restore wizard uses this to render the correct prompt (passphrase for transitory, vault-key load for stored) without parsing exception text.
 
 ---
 
