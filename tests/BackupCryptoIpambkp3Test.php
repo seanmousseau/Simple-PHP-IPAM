@@ -802,6 +802,288 @@ class BackupCryptoIpambkp3Test extends TestCase
     }
 
     // -----------------------------------------------------------------------
+    // IPAMBKP3 tamper / corruption test suite (#839, T6)
+    //
+    // Lessons-learned §5: hand-rolled crypto needs reference vectors AND
+    // tamper coverage matching IPAMBKP2. The cases below complete that
+    // coverage. Scenarios already covered earlier in this file:
+    //   - wrong vault key / wrong passphrase rejection
+    //   - flipped HMAC tag byte
+    //   - failed-decrypt tempfile cleanup
+    // -----------------------------------------------------------------------
+
+    private function makeStoredArchive(string $payload, string $vault): string
+    {
+        $src = sys_get_temp_dir() . '/ipam-tamper-src-' . bin2hex(random_bytes(4));
+        $enc = $src . '.enc';
+        file_put_contents($src, $payload);
+        backup_encrypt_stream_v3($src, $enc, BACKUP_V3_MODE_STORED, null, $vault);
+        @unlink($src);
+        return $enc;
+    }
+
+    public function testTamperTruncatedHeader(): void
+    {
+        $vault = random_bytes(BACKUP_VAULT_KEY_LEN);
+        $enc = $this->makeStoredArchive('payload', $vault);
+        try {
+            $bin = (string) file_get_contents($enc);
+            file_put_contents($enc, substr($bin, 0, 50)); // less than BACKUP_V3_HEADER_LEN
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessageMatches('/file too short|short header read/');
+            backup_decrypt_stream_v3($enc, $enc . '.dec', null, $vault);
+        } finally {
+            $this->rmf($enc, $enc . '.dec');
+        }
+    }
+
+    public function testTamperTruncatedPayload(): void
+    {
+        $vault = random_bytes(BACKUP_VAULT_KEY_LEN);
+        $enc = $this->makeStoredArchive(str_repeat('x', 200), $vault);
+        try {
+            $bin = (string) file_get_contents($enc);
+            // Drop last 40 bytes — kills HMAC tag and some ciphertext.
+            file_put_contents($enc, substr($bin, 0, strlen($bin) - 40));
+            $this->expectException(RuntimeException::class);
+            backup_decrypt_stream_v3($enc, $enc . '.dec', null, $vault);
+        } finally {
+            $this->rmf($enc, $enc . '.dec');
+        }
+    }
+
+    public function testTamperFlippedBitInBody(): void
+    {
+        $vault = random_bytes(BACKUP_VAULT_KEY_LEN);
+        $enc = $this->makeStoredArchive('payload-of-known-shape', $vault);
+        try {
+            $bin = (string) file_get_contents($enc);
+            // Flip a body byte (after the 68-byte header).
+            $pos = BACKUP_V3_HEADER_LEN + 5;
+            $bin[$pos] = chr(ord($bin[$pos]) ^ 0xFF);
+            file_put_contents($enc, $bin);
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessageMatches('/hmac mismatch/');
+            backup_decrypt_stream_v3($enc, $enc . '.dec', null, $vault);
+        } finally {
+            $this->rmf($enc, $enc . '.dec');
+        }
+    }
+
+    public function testTamperFlippedBitInHeader(): void
+    {
+        $vault = random_bytes(BACKUP_VAULT_KEY_LEN);
+        $enc = $this->makeStoredArchive('payload', $vault);
+        try {
+            $bin = (string) file_get_contents($enc);
+            // Flip a salt byte (offset 20-35 = argon_salt; offset 36-51 = hkdf_salt).
+            // hkdf_salt is in the HMAC and feeds the KDF, so any flip will fail
+            // EITHER the HMAC OR the decrypt with a non-matching tag.
+            $bin[40] = chr(ord($bin[40]) ^ 0xFF);
+            file_put_contents($enc, $bin);
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessageMatches('/hmac mismatch/');
+            backup_decrypt_stream_v3($enc, $enc . '.dec', null, $vault);
+        } finally {
+            $this->rmf($enc, $enc . '.dec');
+        }
+    }
+
+    public function testTamperModeByteFlippedToTransitory(): void
+    {
+        // Encrypt as STORED, flip mode byte to TRANSITORY in the header.
+        // Decrypt should fail because (a) header is in HMAC input so the tag
+        // fails, but ALSO (b) caller would now be missing the passphrase,
+        // surfaced as a typed exception via the dispatcher.
+        $vault = random_bytes(BACKUP_VAULT_KEY_LEN);
+        $enc = $this->makeStoredArchive('payload', $vault);
+        try {
+            $bin = (string) file_get_contents($enc);
+            $bin[8] = chr(BACKUP_V3_MODE_TRANSITORY); // flip mode byte
+            file_put_contents($enc, $bin);
+            // Through the codec directly — caller supplies vaultKey so we hit
+            // the "transitory mode requires passphrase" branch before HMAC.
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessageMatches('/transitory mode requires passphrase|hmac mismatch/');
+            backup_decrypt_stream_v3($enc, $enc . '.dec', null, $vault);
+        } finally {
+            $this->rmf($enc, $enc . '.dec');
+        }
+    }
+
+    public function testTamperArgonTimeOutOfBounds(): void
+    {
+        $vault = random_bytes(BACKUP_VAULT_KEY_LEN);
+        $enc = $this->makeStoredArchive('payload', $vault);
+        try {
+            $bin = (string) file_get_contents($enc);
+            // Patch argon_time at offset 9 to 0xFFFFFFFF — exceeds bounds.
+            $patched = substr($bin, 0, 9) . pack('N', 0xFFFFFFFF) . substr($bin, 13);
+            file_put_contents($enc, $patched);
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessageMatches('/argon time out of bounds/');
+            backup_decrypt_stream_v3($enc, $enc . '.dec', null, $vault);
+        } finally {
+            $this->rmf($enc, $enc . '.dec');
+        }
+    }
+
+    public function testTamperArgonMemoryOutOfBounds(): void
+    {
+        $vault = random_bytes(BACKUP_VAULT_KEY_LEN);
+        $enc = $this->makeStoredArchive('payload', $vault);
+        try {
+            $bin = (string) file_get_contents($enc);
+            // Patch argon_mem_kib at offset 13 to a value > BACKUP_V3_ARGON_MEM_KIB_MAX.
+            $patched = substr($bin, 0, 13) . pack('N', 0x7FFFFFFF) . substr($bin, 17);
+            file_put_contents($enc, $patched);
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessageMatches('/argon memory out of bounds/');
+            backup_decrypt_stream_v3($enc, $enc . '.dec', null, $vault);
+        } finally {
+            $this->rmf($enc, $enc . '.dec');
+        }
+    }
+
+    public function testTamperArgonParallelismNonOne(): void
+    {
+        $vault = random_bytes(BACKUP_VAULT_KEY_LEN);
+        $enc = $this->makeStoredArchive('payload', $vault);
+        try {
+            $bin = (string) file_get_contents($enc);
+            // Patch argon_par at offset 17 to 4 — libsodium constraint forbids this.
+            $bin[17] = chr(4);
+            file_put_contents($enc, $bin);
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessageMatches('/argon parallelism != 1/');
+            backup_decrypt_stream_v3($enc, $enc . '.dec', null, $vault);
+        } finally {
+            $this->rmf($enc, $enc . '.dec');
+        }
+    }
+
+    public function testTamperUnknownModeByte(): void
+    {
+        $vault = random_bytes(BACKUP_VAULT_KEY_LEN);
+        $enc = $this->makeStoredArchive('payload', $vault);
+        try {
+            $bin = (string) file_get_contents($enc);
+            $bin[8] = chr(99); // unknown mode
+            file_put_contents($enc, $bin);
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessageMatches('/unknown mode/');
+            backup_decrypt_stream_v3($enc, $enc . '.dec', null, $vault);
+        } finally {
+            $this->rmf($enc, $enc . '.dec');
+        }
+    }
+
+    public function testEmptyInputRejectedAtEncrypt(): void
+    {
+        $src = sys_get_temp_dir() . '/ipam-empty-' . bin2hex(random_bytes(4));
+        $enc = $src . '.enc';
+        $dec = $src . '.dec';
+        file_put_contents($src, '');
+        try {
+            // Encrypting an empty file is allowed — produces a valid archive
+            // with header + 0 ciphertext + 32-byte HMAC.
+            $vault = random_bytes(BACKUP_VAULT_KEY_LEN);
+            backup_encrypt_stream_v3($src, $enc, BACKUP_V3_MODE_STORED, null, $vault);
+            backup_decrypt_stream_v3($enc, $dec, null, $vault);
+            $this->assertSame('', file_get_contents($dec));
+            $this->assertSame(BACKUP_V3_HEADER_LEN + BACKUP_HMAC_LEN, filesize($enc));
+        } finally {
+            $this->rmf($src, $enc, $dec);
+        }
+    }
+
+    public function testEmptyEncryptedInputRejectedAtDecrypt(): void
+    {
+        $bad = sys_get_temp_dir() . '/ipam-bad-' . bin2hex(random_bytes(4));
+        file_put_contents($bad, '');
+        try {
+            $this->expectException(RuntimeException::class);
+            $this->expectExceptionMessageMatches('/file too short/');
+            backup_decrypt_stream_v3($bad, $bad . '.dec', null, random_bytes(BACKUP_VAULT_KEY_LEN));
+        } finally {
+            $this->rmf($bad, $bad . '.dec');
+        }
+    }
+
+    /**
+     * Reference vector — AES-256-CTR is the body cipher for IPAMBKP3.
+     * Pinning a known-answer test for AES-256-CTR catches openssl regressions
+     * and confirms the keying / IV path hasn't drifted. Uses SP 800-38A
+     * (Appendix F.5.5) test vector.
+     */
+    public function testAes256CtrReferenceVector(): void
+    {
+        // SP 800-38A F.5.5 — AES-256-CTR encryption.
+        // Key:        603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4
+        // Init Ctr:   f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff
+        // Plaintext:  6bc1bee22e409f96e93d7e117393172a (block 1)
+        // Ciphertext: 601ec313775789a5b7a7f504bbf3d228 (block 1)
+        $key  = (string) hex2bin('603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4');
+        $iv   = (string) hex2bin('f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff');
+        $pt   = (string) hex2bin('6bc1bee22e409f96e93d7e117393172a');
+        $exp  = '601ec313775789a5b7a7f504bbf3d228';
+        $ct   = openssl_encrypt($pt, 'aes-256-ctr', $key, OPENSSL_RAW_DATA, $iv);
+        $this->assertSame($exp, bin2hex((string) $ct), 'AES-256-CTR SP 800-38A F.5.5 reference vector');
+    }
+
+    /**
+     * Streaming bound — encrypt a 5 MiB payload and assert peak memory stays
+     * within reasonable bounds (chunk + bookkeeping, not the whole input).
+     * Smaller than the 100 MiB target in the plan to keep the test fast on
+     * CI; the multi-chunk codec path is exercised either way.
+     */
+    public function testStreamingPeakMemoryBound(): void
+    {
+        $size = 5 * 1024 * 1024;
+        $payload = str_repeat("ABCDEFGH", intdiv($size, 8));
+        $this->assertSame($size, strlen($payload));
+        $vault = random_bytes(BACKUP_VAULT_KEY_LEN);
+        [$src, $enc, $dec] = $this->makeTempPaths($payload);
+        try {
+            unset($payload); // release the test-side buffer
+
+            // memory_get_peak_usage() is monotonic — reset so the
+            // measurement reflects only the codec's allocations, not the
+            // earlier payload-allocation peak.
+            memory_reset_peak_usage();
+            $before = memory_get_usage();
+
+            backup_encrypt_stream_v3($src, $enc, BACKUP_V3_MODE_STORED, null, $vault);
+            $afterEnc = memory_get_peak_usage();
+
+            memory_reset_peak_usage();
+            backup_decrypt_stream_v3($enc, $dec, null, $vault);
+            $afterDec = memory_get_peak_usage();
+
+            // Peak headroom over baseline must be much less than the input
+            // size — the streaming bound says O(BACKUP_STREAM_CHUNK).
+            // Generous bound: 4 MiB, well under the 5 MiB input but loose
+            // enough that PHP runtime jitter doesn't flake the test.
+            $headroom  = max($afterEnc, $afterDec) - $before;
+            $maxAllowed = 4 * 1024 * 1024;
+            $this->assertLessThan(
+                $maxAllowed,
+                $headroom,
+                sprintf(
+                    'streaming codec used %d bytes peak headroom for a %d-byte input (cap: %d)',
+                    $headroom,
+                    $size,
+                    $maxAllowed
+                )
+            );
+
+            $this->assertSame(hash_file('sha256', $src), hash_file('sha256', $dec));
+        } finally {
+            $this->rmf($src, $enc, $dec);
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Constant sanity — header layout is load-bearing for IPAMBKP3 dispatch
     // -----------------------------------------------------------------------
 
