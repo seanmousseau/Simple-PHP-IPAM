@@ -711,6 +711,97 @@ class BackupCryptoIpambkp3Test extends TestCase
     }
 
     // -----------------------------------------------------------------------
+    // ipam_backup_vault_key_get_raw — read-only accessor (#836 A6)
+    // -----------------------------------------------------------------------
+
+    public function testVaultKeyGetRawReturnsNullWhenAbsent(): void
+    {
+        global $config;
+        $original = $config['backup_vault_key'] ?? null;
+        unset($config['backup_vault_key']);
+        try {
+            $this->assertNull(ipam_backup_vault_key_get_raw());
+        } finally {
+            if ($original !== null) {
+                $config['backup_vault_key'] = $original;
+            }
+        }
+    }
+
+    public function testVaultKeyGetRawReturnsNullWhenEmpty(): void
+    {
+        global $config;
+        $original = $config['backup_vault_key'] ?? null;
+        $config['backup_vault_key'] = '';
+        try {
+            $this->assertNull(ipam_backup_vault_key_get_raw());
+        } finally {
+            if ($original === null) {
+                unset($config['backup_vault_key']);
+            } else {
+                $config['backup_vault_key'] = $original;
+            }
+        }
+    }
+
+    public function testVaultKeyGetRawReturnsNullOnMalformedValue(): void
+    {
+        global $config;
+        $original = $config['backup_vault_key'] ?? null;
+        $config['backup_vault_key'] = 'not-base64-of-32-bytes';
+        try {
+            $this->assertNull(ipam_backup_vault_key_get_raw());
+        } finally {
+            if ($original === null) {
+                unset($config['backup_vault_key']);
+            } else {
+                $config['backup_vault_key'] = $original;
+            }
+        }
+    }
+
+    public function testVaultKeyGetRawDecodesValidValue(): void
+    {
+        global $config;
+        $original = $config['backup_vault_key'] ?? null;
+        $rawKey = random_bytes(BACKUP_VAULT_KEY_LEN);
+        $config['backup_vault_key'] = base64_encode($rawKey);
+        try {
+            $this->assertSame($rawKey, ipam_backup_vault_key_get_raw());
+        } finally {
+            if ($original === null) {
+                unset($config['backup_vault_key']);
+            } else {
+                $config['backup_vault_key'] = $original;
+            }
+        }
+    }
+
+    public function testVaultKeyGetRawDoesNotTouchConfigPhp(): void
+    {
+        // Critical: the read-only accessor must NEVER trigger the autogen
+        // path that writes config.php. Verify by ensuring no ipam_config_*
+        // tempfile lands in the same directory (i.e. autogen helper isn't
+        // called as a side effect).
+        global $config;
+        $original = $config['backup_vault_key'] ?? null;
+        unset($config['backup_vault_key']);
+        try {
+            ipam_backup_vault_key_get_raw();
+            // We can't directly observe absence of a file write across an
+            // arbitrary path, but the static-cache contract is clear: this
+            // function returns null for missing values, never lazy-generates.
+            // Re-call and assert still null (autogen would have populated it).
+            $this->assertNull(ipam_backup_vault_key_get_raw());
+            $this->assertArrayNotHasKey('backup_vault_key', $config);
+        } finally {
+            if ($original !== null) {
+                $config['backup_vault_key'] = $original;
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Constant sanity — header layout is load-bearing for IPAMBKP3 dispatch
     // -----------------------------------------------------------------------
 

@@ -4523,6 +4523,32 @@ function ipam_backup_vault_key_or_init(): string
 }
 
 /**
+ * Read-only accessor for the IPAMBKP3 vault key. Returns the 32 raw
+ * bytes if config.php holds a well-formed value, NULL otherwise.
+ *
+ * Distinct from ipam_backup_vault_key_or_init(): this never generates,
+ * never writes config.php, never throws on absent / malformed values.
+ * Intended for the decrypt path — autogen during a restore would mask
+ * the real failure (the key that ENCRYPTED the backup is gone), and we
+ * want to surface that as a clear error rather than silently produce a
+ * fresh-and-useless key.
+ */
+function ipam_backup_vault_key_get_raw(): ?string
+{
+    /** @var array<string,mixed> $config */
+    global $config;
+    $b64 = $config['backup_vault_key'] ?? null;
+    if (!is_string($b64) || $b64 === '') {
+        return null;
+    }
+    $raw = base64_decode($b64, true);
+    if (!is_string($raw) || strlen($raw) !== BACKUP_VAULT_KEY_LEN) {
+        return null;
+    }
+    return $raw;
+}
+
+/**
  * Atomic in-place rewrite of a config.php-style PHP file to set
  * `'$key' => '$valueB64'`. Used by ipam_backup_vault_key_or_init() and
  * available for any future autogen scenarios.

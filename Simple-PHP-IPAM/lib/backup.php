@@ -881,6 +881,14 @@ function ipam_backup_insert_log(
     $now = ipam_dialect()->now();
 
     // Resolve encryption mode from the destination's encrypt flag.
+    //
+    // The encryption_mode column vocabulary is ('stored','transitory',
+    // 'unencrypted') — see backup_runs schema in all three engines. The
+    // destination-driven path can only produce 'stored' (admin-managed
+    // key) or 'unencrypted' (opt-out for trusted-local). 'transitory' is
+    // emitted only by the manual upload-and-restore path (#837) where the
+    // operator types the passphrase per-action; that flow records its own
+    // backup_runs row.
     $encMode = 'unencrypted';
     try {
         $eStmt = $db->prepare("SELECT encrypt FROM backup_destinations WHERE id = :id");
@@ -1060,7 +1068,16 @@ function ipam_restore_prepare_for_restore(PDO $db, array $config, int $destinati
                 throw new RuntimeException('ipam_restore: encrypted backup but app_secret is empty');
             }
             ipam_restore_assert_staged_path($stagedPath); // #762 item 3 — defence-in-depth before write
-            backup_decrypt_to_path($downloadPath, $stagedPath, $appSecret);
+            // v3.24+: forward the vault key so the dispatcher can decrypt
+            // any IPAMBKP3 stored-mode archives that have been written into
+            // this destination by the manual upload-restore path or by a
+            // future encrypt-side rollout. Transitory archives cannot be
+            // restored on the destination-driven path (no operator
+            // passphrase available); the dispatcher throws
+            // IpamBackupKeyRequiredException which we surface as-is so the
+            // operator sees an actionable message in the UI.
+            $vaultKey = ipam_backup_vault_key_get_raw();
+            backup_decrypt_to_path($downloadPath, $stagedPath, $appSecret, null, $vaultKey);
         } else {
             ipam_restore_assert_staged_path($stagedPath); // #762 item 3 — defence-in-depth before write
             if (!@copy($downloadPath, $stagedPath)) {
