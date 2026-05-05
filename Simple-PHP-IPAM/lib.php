@@ -2447,6 +2447,10 @@ function ipam_config_stale_keys(array $config): array
         // in config.php; nested members (e.g. session.absolute_lifetime_minutes)
         // live underneath them and are reached via $config['session'][...].
         'app_secret', 'session', 'auth', 'api',
+        // v3.24.0 — IPAMBKP3 stored-mode backup encryption key. Lives in
+        // config.php (not the DB) for the same reason as app_secret: a key
+        // stored inside the data it protects defeats the security model.
+        'backup_vault_key',
     ];
     $stale = [];
     foreach (array_keys($config) as $key) {
@@ -4312,13 +4316,141 @@ function backup_info(array $config): array
 
 // ── Backup encryption constants (Phase 2 / #694) ────────────────────────────
 const BACKUP_MAGIC   = 'IPAMBKP1';  // 8-byte magic + version tag
-const BACKUP_IV_LEN  = 12;          // AES-256-GCM recommended IV length
-const BACKUP_TAG_LEN = 16;          // GCM authentication tag length (max)
+const BACKUP_IV_LEN  = 12;          // AES-256-GCM recommended IV length (12 random
+                                    // bytes per RFC 5116; #838 B-P2-46 clarifying note)
+const BACKUP_TAG_LEN = 16;          // GCM authentication tag length (16 bytes,
+                                    // SP 800-38D Table 1; #838 B-P2-46)
 const BACKUP_MAGIC_V2     = 'IPAMBKP2';  // 8-byte streaming format magic
 const BACKUP_SALT_LEN     = 16;          // HKDF salt length (v2)
 const BACKUP_CTR_IV_LEN   = 16;          // AES-256-CTR initial counter block
 const BACKUP_HMAC_LEN     = 32;          // HMAC-SHA256 tag length
 const BACKUP_STREAM_CHUNK = 65536;       // 64 KiB; counter step = 4096 blocks per chunk
+
+// ── v3.24.0 IPAMBKP3 / IPAMBKU1 constants (#836) ─────────────────────────────
+//
+// IPAMBKP3 supersedes IPAMBKP2: it derives keys from `backup_vault_key`
+// (stored mode) or an operator-supplied passphrase via Argon2id (transitory
+// mode), separating backup-at-rest protection from app_secret. IPAMBKU1 is
+// an integrity-only wrapper for trusted-local destinations.
+//
+// Header layout (big-endian on multi-byte fields):
+//
+//   IPAMBKP3 (8) | mode (1) | argon_t (4) | argon_m_kib (4) | argon_p (1)
+//                | reserved (2 zero) | argon_salt (16) | hkdf_salt (16)
+//                | ctr_iv (16) | ciphertext (N) | hmac (32)
+//   ── header size: 68 bytes
+//
+// IPAMBKU1 layout: magic (8) | sha256 (32) | plaintext (N).
+//
+// Argon2id defaults (OWASP 2024 minimum for password hashing): t=3, m=64 MiB,
+// p=1. Header-embedded so callers can tune per install without breaking
+// existing backups.
+const BACKUP_MAGIC_V3       = 'IPAMBKP3';
+const BACKUP_MAGIC_UNENC    = 'IPAMBKU1';
+const BACKUP_V3_MODE_STORED      = 1;
+const BACKUP_V3_MODE_TRANSITORY  = 2;
+const BACKUP_V3_HEADER_LEN  = 68;
+const BACKUP_V3_RESERVED_LEN = 2;
+const BACKUP_ARGON2_SALT_LEN     = 16;
+const BACKUP_ARGON2_TIME_DEFAULT       = 3;
+const BACKUP_ARGON2_MEMORY_KIB_DEFAULT = 65536;  // 64 MiB
+const BACKUP_ARGON2_PARALLELISM_DEFAULT = 1;
+const BACKUP_VAULT_KEY_LEN = 32;
+
+/**
+ * Assert that PHP's CSPRNG is functional. Cheap, idempotent (caches first
+ * success). Called from every encrypt entry point; addresses #838 B-P1-35.
+ *
+ * @throws RuntimeException if random_bytes is unavailable or fails.
+ */
+function ipam_assert_random_bytes_available(): void
+{
+    static $checked = false;
+    if ($checked) {
+        return;
+    }
+    if (!function_exists('random_bytes')) {
+        throw new RuntimeException('random_bytes() not available; PHP build is missing CSPRNG');
+    }
+    try {
+        $probe = random_bytes(1);
+    } catch (Throwable $e) {
+        throw new RuntimeException('CSPRNG probe failed: ' . $e->getMessage(), 0, $e);
+    }
+    if (strlen($probe) !== 1) {
+        throw new RuntimeException('CSPRNG probe returned wrong length');
+    }
+    $checked = true;
+}
+
+/**
+ * Derive an Argon2id tag from a passphrase. Used by IPAMBKP3 transitory mode
+ * (#836). Wraps libsodium's `sodium_crypto_pwhash` — RFC 9106 / Argon2id v1.3.
+ *
+ * libsodium constraint: parallelism is fixed at 1; we assert this so the
+ * header-recorded value cannot drift from the value used to compute the tag.
+ *
+ * @param string $passphrase   Operator-typed secret. Must be non-empty.
+ * @param string $salt         Per-file random salt (BACKUP_ARGON2_SALT_LEN bytes).
+ * @param int    $time         Argon2 t parameter (≥ 1).
+ * @param int    $memoryKib    Argon2 m parameter in KiB (≥ 8 × parallelism).
+ * @param int    $parallelism  Argon2 p parameter — must be 1 with libsodium.
+ * @param int    $outLen       Output tag length in bytes (≥ 16).
+ * @throws RuntimeException on any parameter violation or KDF failure.
+ */
+function ipam_argon2id_derive(
+    string $passphrase,
+    string $salt,
+    int $time,
+    int $memoryKib,
+    int $parallelism,
+    int $outLen
+): string {
+    if ($passphrase === '') {
+        throw new RuntimeException('ipam_argon2id_derive: passphrase must be non-empty');
+    }
+    if (strlen($salt) !== BACKUP_ARGON2_SALT_LEN) {
+        throw new RuntimeException(
+            'ipam_argon2id_derive: salt must be exactly ' . BACKUP_ARGON2_SALT_LEN . ' bytes'
+        );
+    }
+    if ($time < 1) {
+        throw new RuntimeException('ipam_argon2id_derive: time must be >= 1');
+    }
+    if ($parallelism !== 1) {
+        throw new RuntimeException(
+            'ipam_argon2id_derive: parallelism must be 1 (libsodium constraint); ' .
+            'tracked for future tuning when sodium exposes the parameter'
+        );
+    }
+    if ($memoryKib < 8 * $parallelism) {
+        throw new RuntimeException('ipam_argon2id_derive: memoryKib must be >= 8 * parallelism');
+    }
+    if ($outLen < 16) {
+        throw new RuntimeException('ipam_argon2id_derive: outLen must be >= 16');
+    }
+    if (!function_exists('sodium_crypto_pwhash')) {
+        throw new RuntimeException(
+            'ipam_argon2id_derive: libsodium pwhash not available; PHP must be built with --with-sodium'
+        );
+    }
+    try {
+        $hash = sodium_crypto_pwhash(
+            $outLen,
+            $passphrase,
+            $salt,
+            $time,
+            $memoryKib * 1024,
+            SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID13
+        );
+    } catch (SodiumException $e) {
+        throw new RuntimeException('ipam_argon2id_derive: Argon2id derivation failed: ' . $e->getMessage(), 0, $e);
+    }
+    if (strlen($hash) !== $outLen) {
+        throw new RuntimeException('ipam_argon2id_derive: Argon2id derivation produced unexpected length');
+    }
+    return $hash;
+}
 
 /**
  * Derive a fixed-length key from a master secret using HKDF-SHA-256.
