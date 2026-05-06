@@ -4714,10 +4714,16 @@ function ipam_config_inject_or_replace_key(string $configPath, string $key, stri
     }
 
     // Match a single-line scalar string literal for $key in either quoting
-    // style. Restricted to no embedded quotes or newlines — sufficient for
-    // base64 values which use only [A-Za-z0-9+/=].
+    // style, anchored to the start of a line (with optional leading
+    // whitespace) so commented-out config lines like
+    //   //  'backup_vault_key' => '',
+    // do NOT match. The line-anchor relies on the first non-whitespace
+    // character being a quote; comment prefixes (//, #, *) start with a
+    // non-quote character and are naturally rejected. Restricted to no
+    // embedded quotes or newlines — sufficient for base64 values which
+    // use only [A-Za-z0-9+/=].
     $pattern = sprintf(
-        '/([\'"])%s\1\s*=>\s*([\'"])[A-Za-z0-9+\/=]*\2/',
+        '/^[ \t]*([\'"])%s\1\s*=>\s*([\'"])[A-Za-z0-9+\/=]*\2/m',
         preg_quote($key, '/')
     );
     $replacement = sprintf("'%s' => '%s'", $key, $valueB64);

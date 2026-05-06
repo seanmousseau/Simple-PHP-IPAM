@@ -226,6 +226,31 @@ class BackupCryptoIpambkp3Test extends TestCase
         }
     }
 
+    public function testRewriterIgnoresCommentedOutKey(): void
+    {
+        // PR #1095 CR round 3: previous regex would match a commented-out
+        // config line and "succeed" without persisting a live key, leaving
+        // generated vault keys un-saved. The line-anchored pattern must
+        // skip the comment and inject a live key before "];".
+        $orig = "<?php\nreturn [\n    // 'backup_vault_key' => '',\n    'foo' => 'bar',\n];\n";
+        [$dir, $path] = $this->makeConfigFile($orig);
+        try {
+            ipam_config_inject_or_replace_key($path, 'backup_vault_key', 'LIVE');
+            $now = (string) file_get_contents($path);
+            // Original commented line preserved verbatim.
+            $this->assertStringContainsString("    // 'backup_vault_key' => '',", $now);
+            // A NEW live entry now exists — exactly once.
+            $countLive = preg_match_all("/^[ \\t]*'backup_vault_key' => 'LIVE'/m", $now);
+            $this->assertSame(1, $countLive, 'expected exactly one live backup_vault_key entry');
+            // And the file still parses.
+            /** @var array<string,mixed> $parsed */
+            $parsed = include $path;
+            $this->assertSame('LIVE', $parsed['backup_vault_key']);
+        } finally {
+            $this->cleanupConfigDir($dir);
+        }
+    }
+
     public function testRewriterFailsOnMissingFile(): void
     {
         $this->expectException(RuntimeException::class);

@@ -1178,8 +1178,13 @@ function ipam_restore_prepare_for_upload(array $config, ?string $passphrase = nu
     }
 
     $maxMb = to_int(ipam_setting('backup_max_upload_size_mb', 2048));
+    // The setting registry advertises a min of 1; if a corrupted /
+    // pre-min database row sneaks through, clamp to that minimum rather
+    // than silently expanding to the 2048 default (which would raise the
+    // cap above what the operator intended). Tightening to the smaller
+    // bound is the safer failure mode.
     if ($maxMb < 1) {
-        $maxMb = 2048;
+        $maxMb = 1;
     }
     $maxBytes = $maxMb * 1024 * 1024;
     if ($size > $maxBytes) {
@@ -1226,6 +1231,40 @@ function ipam_restore_prepare_for_upload(array $config, ?string $passphrase = nu
         // and ipam_restore_read_staged_sql() reads the compressed bytes
         // as plaintext during dry-run, rejecting otherwise valid uploads.
         $isGz = (strlen($magic) >= 2 && substr($magic, 0, 2) === "\x1f\x8b");
+
+        // Gzip is just framing; an arbitrary gzip blob proves nothing
+        // about the payload. Open a stream-only decompress and sniff the
+        // first ~128 bytes of plaintext for the same SQL-prelude / IPAMBKL1
+        // markers we accept on the uncompressed path. This rejects
+        // gzipped random garbage at the upload step rather than letting
+        // it stage and only fail at dryrun.
+        if ($isGz) {
+            $gz = @gzopen($downloadPath, 'rb');
+            if ($gz === false) {
+                throw new RuntimeException('ipam_restore_upload: cannot read gzip upload');
+            }
+            try {
+                $gzHead = strtoupper(ltrim((string) gzgets($gz, 128)));
+            } finally {
+                gzclose($gz);
+            }
+            $gzPayloadOk = (
+                str_starts_with($gzHead, 'IPAMBKL1')
+                || str_starts_with($gzHead, '--')
+                || str_starts_with($gzHead, 'BEGIN')
+                || str_starts_with($gzHead, 'CREATE')
+                || str_starts_with($gzHead, 'INSERT')
+                || str_starts_with($gzHead, 'PRAGMA')
+                || str_starts_with($gzHead, 'SET ')
+                || str_starts_with($gzHead, '/*')
+            );
+            if (!$gzPayloadOk) {
+                throw new RuntimeException(
+                    'ipam_restore_upload: unrecognised backup format ' .
+                    '(gzip payload does not look like SQL or IPAMBKL1)'
+                );
+            }
+        }
 
         // Positive plain-SQL sniff: anything that is NOT IPAM magic, NOT
         // IPAMBKL1, NOT IPAMBKU1, and NOT gzip must look like SQL text
