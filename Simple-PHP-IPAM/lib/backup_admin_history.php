@@ -317,12 +317,45 @@ function ipam_backup_history_handle_post(\PDO $db): void
         return;
     }
     $action = to_str($_POST['action'] ?? '');
-    if ($action !== 'verify' && $action !== 'delete') {
+    $jsonActions     = ['verify', 'delete'];
+    $redirectActions = ['protect_run', 'unprotect_run'];
+    if (!in_array($action, $jsonActions, true) && !in_array($action, $redirectActions, true)) {
         return;
     }
     csrf_require();
     $idRaw = filter_input(INPUT_POST, 'id', FILTER_VALIDATE_INT);
     $id    = is_int($idRaw) && $idRaw > 0 ? $idRaw : 0;
+
+    // v3.25.0 #847: protect / unprotect a backup_runs row. Plain POST →
+    // header('Location:') redirect back to the history tab. The new
+    // is_protected state shows on the badge in the next render; no flash
+    // string is needed because the visual state itself is the feedback.
+    if (in_array($action, $redirectActions, true)) {
+        $self = to_str($_SERVER['HTTP_REFERER'] ?? 'backup_admin.php?tab=history');
+        // Strip any existing query-fragment chrome to avoid open-redirect-style
+        // URL re-injection. A relative referer is fine; an absolute referer
+        // crossing the host falls back to the canonical default.
+        $parsed = parse_url($self);
+        if (is_array($parsed) && isset($parsed['host'])) {
+            $self = 'backup_admin.php?tab=history';
+        }
+        if ($id !== 0) {
+            $newFlag = $action === 'protect_run' ? 1 : 0;
+            $stmt = $db->prepare("UPDATE backup_runs SET is_protected = :p WHERE id = :id");
+            $stmt->execute([':p' => $newFlag, ':id' => $id]);
+            if ($stmt->rowCount() > 0) {
+                audit(
+                    $db,
+                    $newFlag === 1 ? 'backup.protect' : 'backup.unprotect',
+                    'backup_run',
+                    $id,
+                    'is_protected=' . $newFlag
+                );
+            }
+        }
+        header('Location: ' . $self);
+        exit;
+    }
 
     header('Content-Type: application/json');
 

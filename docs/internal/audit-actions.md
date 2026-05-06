@@ -80,6 +80,8 @@ Single action covers every setting change. The `$details` JSON contains old and 
 backup.failed                       backup.skipped_concurrent     backup.reaped
 backup.retention_pruned             backup.wal_checkpoint_failed
 backup.connection_test_failed       backup.schedule_overdue       backup.encryption_change
+backup.cancel                       backup.protect                backup.unprotect
+backup.set_default_destination      backup.verify_bulk
 backup_run.bulk_delete              backup_run.purge
 ```
 
@@ -97,7 +99,15 @@ backup_run.bulk_delete              backup_run.purge
 
 `backup.schedule_overdue` (`entity_type=schedule`) — emitted by cron Task 6d when an active schedule's `next_run_at` is older than `now() - backup.notify_overdue_grace_minutes` and no alert has yet been emitted for that exact `next_run_at` value (v3.22.0 §2.4). Per-schedule cooldown lives in the `backup.schedule_overdue_state` setting, keyed by schedule id; once the schedule actually fires (advancing `next_run_at`), the state resets and a fresh overdue cycle is detectable. `$details` carries `destination=<destname> expected_at=<iso> overdue_minutes=N`.
 
-`backup.encryption_change` (`entity_type=destination`) — emitted by the destination edit handler in `lib/backup_admin_destinations.php` when an admin toggles the `encrypt` flag on an existing destination (v3.22.0 §2.4). Recorded independently of the generic `destination.update` audit so a security-conscious operator can grep audit history for all crypto-policy changes without having to diff the generic update payload. `$details` carries `name=<destname> old=<encrypted|plaintext> new=<encrypted|plaintext>`.
+`backup.encryption_change` (`entity_type=destination`) — emitted by the destination edit handler in `lib/backup_admin_destinations.php` when an admin changes a destination's encryption mode (v3.22.0 §2.4; v3.25.0 #851 generalised from the legacy `encrypt` boolean to the `default_encryption_mode` enum `stored|transitory|unencrypted`). Recorded independently of the generic `destination.update` audit so a security-conscious operator can grep audit history for all crypto-policy changes without having to diff the generic update payload. `$details` carries `name=<destname> old=<mode> new=<mode>`.
+
+`backup.cancel` (`entity_type=destination`) — emitted by `ipam_backup_run_for_destination()` when an in-flight backup is canceled by an operator before or during upload (v3.25.0 #856). `$details` carries `run_id=<id> phase=<before-upload|mid-upload>` and the truncated underlying error when canceled mid-upload. The corresponding `backup_runs` row is marked `status='failed'` with `error_message='canceled-by-operator: <phase>'` rather than introducing a new `canceled` enum value to keep the multi-engine schema parity surface unchanged.
+
+`backup.protect` / `backup.unprotect` (`entity_type=backup_run`) — emitted by the History tab's protect/unprotect action handler in `lib/backup_admin_history.php` (v3.25.0 #847). `$details` carries `is_protected=<0|1>`. Protected rows are excluded from `ipam_retention_compute_deletions()` and refused by `ipam_backup_run_delete()` until unprotected.
+
+`backup.set_default_destination` (`entity_type=destination`) — emitted by the `set_default_destination` action handler in `lib/backup_admin_destinations.php` (v3.25.0 #848). `$details` carries `name=<destname>`. Setting a row to default clears every other row's `is_default` flag in the same transaction (single-row uniqueness enforced application-side; see `ipam_destinations_set_default()`).
+
+`backup.verify_bulk` (`entity_type=destination`) — emitted by the destination tab's "Verify all" bulk action (v3.25.0 #850). `$details` carries `total=N success=N failed=N` summary; per-row verify outcomes are emitted as the existing `backup_run.verify` audit so the bulk action does not double-log.
 
 ---
 
