@@ -38,6 +38,15 @@ class CronScheduleFireTest extends TestCase
         $this->createSchema($db);
     }
 
+    protected function tearDown(): void
+    {
+        if ($this->tmpFile !== '' && is_file($this->tmpFile)) {
+            // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmpFile is sys_get_temp_dir() + random hex; no user input
+            @unlink($this->tmpFile);
+        }
+        $this->tmpFile = '';
+    }
+
     private function openDb(): PDO
     {
         $db = new PDO('sqlite:' . $this->tmpFile);

@@ -4549,29 +4549,38 @@ function ipam_backup_vault_key_or_init(?string $configPathOverride = null): stri
         return $cachedRaw[$configPath];
     }
 
-    // For the production-path call only, consult $config first — it was
-    // loaded by init.php and may already hold the key from an earlier
-    // require. Tests that pass an override path must rely on the file
-    // contents alone (their config.php is an isolated tempfile).
+    // Source the existing-value check from $config (production path) or
+    // by re-including the override file (test / override path). Both
+    // paths apply the same well-formed/malformed validation so the
+    // semantics are identical for callers, regardless of where the key
+    // lives.
     if ($configPathOverride === null) {
         /** @var array<string,mixed> $config */
         global $config;
-        $existing = (isset($config['backup_vault_key']) && is_string($config['backup_vault_key']))
+        $existingB64 = (isset($config['backup_vault_key']) && is_string($config['backup_vault_key']))
             ? $config['backup_vault_key']
             : '';
-        if ($existing !== '') {
-            $decoded = base64_decode($existing, true);
-            if (is_string($decoded) && strlen($decoded) === BACKUP_VAULT_KEY_LEN) {
-                $cachedRaw[$configPath] = $decoded;
-                return $decoded;
-            }
-            throw new RuntimeException(
-                'backup_vault_key in config.php is malformed (expected ' .
-                BACKUP_VAULT_KEY_LEN . ' bytes base64). Clear the value to allow ' .
-                'auto-generation, or replace it with: ' .
-                'php -r "echo base64_encode(random_bytes(32));"'
-            );
+    } else {
+        $overrideCfg = include $configPath;
+        $existingB64 = '';
+        if (is_array($overrideCfg)
+            && isset($overrideCfg['backup_vault_key'])
+            && is_string($overrideCfg['backup_vault_key'])) {
+            $existingB64 = $overrideCfg['backup_vault_key'];
         }
+    }
+    if ($existingB64 !== '') {
+        $decoded = base64_decode($existingB64, true);
+        if (is_string($decoded) && strlen($decoded) === BACKUP_VAULT_KEY_LEN) {
+            $cachedRaw[$configPath] = $decoded;
+            return $decoded;
+        }
+        throw new RuntimeException(
+            'backup_vault_key in config.php is malformed (expected ' .
+            BACKUP_VAULT_KEY_LEN . ' bytes base64). Clear the value to allow ' .
+            'auto-generation, or replace it with: ' .
+            'php -r "echo base64_encode(random_bytes(32));"'
+        );
     }
 
     ipam_assert_random_bytes_available();
@@ -4581,14 +4590,39 @@ function ipam_backup_vault_key_or_init(?string $configPathOverride = null): stri
     try {
         ipam_config_inject_or_replace_key($configPath, 'backup_vault_key', $newB64);
     } catch (Throwable $e) {
+        // Generic remediation message — never embed the raw key in the
+        // exception text, since it would land in error_log / UI and leak
+        // the secret protecting every stored-mode backup. Operator can
+        // generate one manually with the documented one-liner.
         throw new RuntimeException(
-            "backup_vault_key auto-generation could not update config.php: " .
-            $e->getMessage() . "\n\n" .
-            "Add this line to config.php manually, then retry the backup:\n" .
-            "    'backup_vault_key' => '" . $newB64 . "',",
+            'backup_vault_key auto-generation could not update config.php: ' .
+            $e->getMessage() . '. ' .
+            'Generate a key manually with `php -r "echo base64_encode(random_bytes(32));"` ' .
+            "and add `'backup_vault_key' => '<value>',` to config.php, then retry.",
             0,
             $e
         );
+    }
+
+    // Concurrency guard: if two requests both reach the generate-and-
+    // write path simultaneously, only one rename wins persistence. The
+    // loser's in-memory $newRaw would still be used to encrypt the
+    // backup it's currently producing — and that backup would then be
+    // unreadable once the winner's key is the one persisted.
+    //
+    // Re-read the file post-rename to learn which key actually won,
+    // and adopt that as the canonical key for the rest of this request.
+    // Both racers end up using the same key — the one in config.php —
+    // so every produced backup is decryptable on restore.
+    /** @var array<string,mixed>|false $persistedCfg */
+    $persistedCfg = @include $configPath;
+    if (is_array($persistedCfg) && isset($persistedCfg['backup_vault_key'])
+        && is_string($persistedCfg['backup_vault_key'])) {
+        $persistedDecoded = base64_decode($persistedCfg['backup_vault_key'], true);
+        if (is_string($persistedDecoded) && strlen($persistedDecoded) === BACKUP_VAULT_KEY_LEN) {
+            $newRaw = $persistedDecoded;
+            $newB64 = $persistedCfg['backup_vault_key'];
+        }
     }
 
     if ($configPathOverride === null) {

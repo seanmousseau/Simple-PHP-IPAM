@@ -1208,13 +1208,22 @@ function ipam_restore_prepare_for_upload(array $config, ?string $passphrase = nu
                || $magic === BACKUP_MAGIC_V2
                || $magic === BACKUP_MAGIC);
         $isWrapped = ($magic === BACKUP_MAGIC_UNENC);
+        // Gzip-backed plain dumps (e.g. uploaded mysqldump | gzip output
+        // or raw .sql.gz) carry the standard gzip magic 0x1f 0x8b in the
+        // first two bytes. Without this branch they fall through to .bin
+        // and ipam_restore_read_staged_sql() reads the compressed bytes
+        // as plaintext during dry-run, rejecting otherwise valid uploads.
+        $isGz = (strlen($magic) >= 2 && substr($magic, 0, 2) === "\x1f\x8b");
 
         // Choose the staged extension. The decrypted body for v1/v2/v3 is
         // historically gzipped SQL — match the destination-driven path's
         // convention so dryrun/apply don't care which staging route fed
-        // them. For wrapped + plain inputs we keep .bin since the body's
-        // content type is determined by its own magic (IPAMBKL1 vs SQL).
-        $stagedExt  = $isEnc ? '.sql.gz' : '.bin';
+        // them. Same .sql.gz extension applies to plain gzipped uploads
+        // so the restore reader's gz-aware path picks them up. For
+        // wrapped + plain-uncompressed inputs we keep .bin since the
+        // body's content type is determined by its own magic (IPAMBKL1
+        // vs SQL).
+        $stagedExt  = ($isEnc || $isGz) ? '.sql.gz' : '.bin';
         $stagedPath = $tmpDir . '/restore_staged_' . $rand . $stagedExt;
         ipam_restore_assert_staged_path($stagedPath);
 
