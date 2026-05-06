@@ -582,14 +582,27 @@ CREATE INDEX IF NOT EXISTS idx_webauthn_credentials_user ON webauthn_credentials
 -- 3.21.0-backup-runs migration creates backup_runs, copies surviving rows in,
 -- and drops both legacy tables on upgrade.
 CREATE TABLE IF NOT EXISTS backup_destinations (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  name       TEXT    NOT NULL,
-  type       TEXT    NOT NULL,
-  config     TEXT    NOT NULL DEFAULT '{}',
-  encrypt    INTEGER NOT NULL DEFAULT 1,
-  is_active  INTEGER NOT NULL DEFAULT 1,
-  created_at TEXT    NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT    NOT NULL DEFAULT (datetime('now'))
+  id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+  name                    TEXT    NOT NULL,
+  type                    TEXT    NOT NULL,
+  config                  TEXT    NOT NULL DEFAULT '{}',
+  encrypt                 INTEGER NOT NULL DEFAULT 1,
+  is_active               INTEGER NOT NULL DEFAULT 1,
+  -- v3.25.0 #846 #848 #1076 #851: retention rehome + default flag + format/mode
+  -- defaults. Per-schedule retention_* columns on backup_schedules are
+  -- preserved through one release cycle for downgrade safety; they will be
+  -- dropped in a later release per backup_overhaul.md §C.
+  retention_hourly        INTEGER NOT NULL DEFAULT 0  CHECK (retention_hourly  >= 0),
+  retention_daily         INTEGER NOT NULL DEFAULT 7  CHECK (retention_daily   >= 0),
+  retention_weekly        INTEGER NOT NULL DEFAULT 4  CHECK (retention_weekly  >= 0),
+  retention_monthly       INTEGER NOT NULL DEFAULT 3  CHECK (retention_monthly >= 0),
+  is_default              INTEGER NOT NULL DEFAULT 0  CHECK (is_default IN (0,1)),
+  default_backup_type     TEXT    NOT NULL DEFAULT 'logical'
+                                  CHECK (default_backup_type IN ('database','logical')),
+  default_encryption_mode TEXT    NOT NULL DEFAULT 'stored'
+                                  CHECK (default_encryption_mode IN ('stored','transitory','unencrypted')),
+  created_at              TEXT    NOT NULL DEFAULT (datetime('now')),
+  updated_at              TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TRIGGER IF NOT EXISTS backup_destinations_updated_at
 AFTER UPDATE ON backup_destinations
@@ -648,6 +661,9 @@ CREATE TABLE IF NOT EXISTS backup_runs (
   checksum        TEXT,
   source_version  TEXT    NOT NULL DEFAULT '0.0.0',
   is_protected    INTEGER NOT NULL DEFAULT 0  CHECK (is_protected IN (0,1)),
+  -- v3.25.0 #856: cancel-in-flight signal. Set to 1 by the operator's Cancel
+  -- button; backup orchestrator polls at chunk boundaries and aborts on flip.
+  cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK (cancel_requested IN (0,1)),
   error_message   TEXT,
   started_at      TEXT    NOT NULL DEFAULT (datetime('now')),
   completed_at    TEXT

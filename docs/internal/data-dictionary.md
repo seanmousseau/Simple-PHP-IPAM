@@ -707,6 +707,13 @@ Reference for every table, column, foreign key, and uniqueness constraint in the
 | `config` | `TEXT` | `TEXT` | `TEXT` | NO | `'{}'` |  |
 | `encrypt` | `INTEGER` | `TINYINT(1)` | `SMALLINT` | NO | `1` |  |
 | `is_active` | `INTEGER` | `TINYINT(1)` | `SMALLINT` | NO | `1` |  |
+| `retention_hourly` | `INTEGER` | `SMALLINT` | `SMALLINT` | NO | `0` |  |
+| `retention_daily` | `INTEGER` | `SMALLINT` | `SMALLINT` | NO | `7` |  |
+| `retention_weekly` | `INTEGER` | `SMALLINT` | `SMALLINT` | NO | `4` |  |
+| `retention_monthly` | `INTEGER` | `SMALLINT` | `SMALLINT` | NO | `3` |  |
+| `is_default` | `INTEGER` | `TINYINT(1)` | `SMALLINT` | NO | `0` |  |
+| `default_backup_type` | `TEXT` | `VARCHAR(16)` | `TEXT` | NO | `'logical'` |  |
+| `default_encryption_mode` | `TEXT` | `VARCHAR(16)` | `TEXT` | NO | `'stored'` |  |
 | `created_at` | `TEXT` | `DATETIME` | `TIMESTAMP` | NO | `datetime('now')` |  |
 | `updated_at` | `TEXT` | `DATETIME` | `TIMESTAMP` | NO | `datetime('now')` |  |
 
@@ -757,6 +764,7 @@ Reference for every table, column, foreign key, and uniqueness constraint in the
 | `checksum` | `—` | `—` | `—` | YES |  |  |
 | `source_version` | `TEXT` | `VARCHAR(32)` | `TEXT` | NO | `'0.0.0'` |  |
 | `is_protected` | `INTEGER` | `TINYINT(1)` | `SMALLINT` | NO | `0` |  |
+| `cancel_requested` | `INTEGER` | `TINYINT(1)` | `SMALLINT` | NO | `0` |  |
 | `error_message` | `TEXT` | `TEXT` | `TEXT` | YES |  |  |
 | `started_at` | `TEXT` | `DATETIME` | `TIMESTAMP` | NO | `datetime('now')` |  |
 | `completed_at` | `TEXT` | `DATETIME` | `TIMESTAMP` | YES |  |  |

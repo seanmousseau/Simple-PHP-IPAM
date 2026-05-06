@@ -683,14 +683,29 @@ CREATE TRIGGER IF NOT EXISTS custom_field_defs_updated_at
 -- and drops both legacy tables on upgrade.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS backup_destinations (
-  id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  name       VARCHAR(255) NOT NULL,
-  type       VARCHAR(32)  NOT NULL,
-  config     TEXT         NOT NULL,
-  encrypt    TINYINT(1)   NOT NULL DEFAULT 1,
-  is_active  TINYINT(1)   NOT NULL DEFAULT 1,
-  created_at DATETIME     NOT NULL DEFAULT (UTC_TIMESTAMP()),
-  updated_at DATETIME     NOT NULL DEFAULT (UTC_TIMESTAMP())
+  id                      BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  name                    VARCHAR(255) NOT NULL,
+  type                    VARCHAR(32)  NOT NULL,
+  config                  TEXT         NOT NULL,
+  encrypt                 TINYINT(1)   NOT NULL DEFAULT 1,
+  is_active               TINYINT(1)   NOT NULL DEFAULT 1,
+  -- v3.25.0 #846 #848 #1076 #851: retention rehome + default flag + format/mode defaults.
+  retention_hourly        SMALLINT     NOT NULL DEFAULT 0,
+  retention_daily         SMALLINT     NOT NULL DEFAULT 7,
+  retention_weekly        SMALLINT     NOT NULL DEFAULT 4,
+  retention_monthly       SMALLINT     NOT NULL DEFAULT 3,
+  is_default              TINYINT(1)   NOT NULL DEFAULT 0,
+  default_backup_type     VARCHAR(16)  NOT NULL DEFAULT 'logical',
+  default_encryption_mode VARCHAR(16)  NOT NULL DEFAULT 'stored',
+  created_at              DATETIME     NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  updated_at              DATETIME     NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  CONSTRAINT chk_bdest_ret_hourly  CHECK (retention_hourly  >= 0),
+  CONSTRAINT chk_bdest_ret_daily   CHECK (retention_daily   >= 0),
+  CONSTRAINT chk_bdest_ret_weekly  CHECK (retention_weekly  >= 0),
+  CONSTRAINT chk_bdest_ret_monthly CHECK (retention_monthly >= 0),
+  CONSTRAINT chk_bdest_is_default  CHECK (is_default IN (0,1)),
+  CONSTRAINT chk_bdest_btype       CHECK (default_backup_type IN ('database','logical')),
+  CONSTRAINT chk_bdest_emode       CHECK (default_encryption_mode IN ('stored','transitory','unencrypted'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TRIGGER IF NOT EXISTS backup_destinations_updated_at
@@ -750,6 +765,8 @@ CREATE TABLE IF NOT EXISTS backup_runs (
   checksum        VARCHAR(128) NULL,
   source_version  VARCHAR(32)  NOT NULL DEFAULT '0.0.0',
   is_protected    TINYINT(1)   NOT NULL DEFAULT 0,
+  -- v3.25.0 #856: cancel-in-flight signal.
+  cancel_requested TINYINT(1)  NOT NULL DEFAULT 0,
   error_message   TEXT         NULL,
   started_at      DATETIME     NOT NULL DEFAULT (UTC_TIMESTAMP()),
   completed_at    DATETIME     NULL,
@@ -760,6 +777,7 @@ CREATE TABLE IF NOT EXISTS backup_runs (
   CONSTRAINT chk_brun_triggered_by    CHECK (triggered_by IN ('schedule','manual','cli')),
   CONSTRAINT chk_brun_status          CHECK (status IN ('running','success','failed','retention_pruned')),
   CONSTRAINT chk_brun_protected       CHECK (is_protected IN (0,1)),
+  CONSTRAINT chk_brun_cancel          CHECK (cancel_requested IN (0,1)),
   KEY idx_backup_runs_destination (destination_id),
   KEY idx_backup_runs_schedule    (schedule_id),
   KEY idx_backup_runs_started     (started_at),
@@ -829,6 +847,7 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.17.0-backup'),
   ('3.21.0-backup-runs'),
   ('3.21.0-schedule-unique'),
-  ('3.23.0-notify-overrides');
+  ('3.23.0-notify-overrides'),
+  ('3.25.0-backup-destination-evolution');
 
 SET FOREIGN_KEY_CHECKS = 1;
