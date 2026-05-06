@@ -1604,6 +1604,7 @@ function ipam_setting_definitions(): array
             'type'        => 'int',
             'group'       => 'backup',
             'default'     => 2048,
+            'min'         => 1,
             'sensitive'   => false,
         ],
         // --- Notifications (v3.22.0 §2.4) ---

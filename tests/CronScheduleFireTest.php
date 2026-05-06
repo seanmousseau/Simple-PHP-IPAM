@@ -122,8 +122,12 @@ class CronScheduleFireTest extends TestCase
         // And the row's next_run_at must NOT have been advanced.
         $stmt = $db->query("SELECT next_run_at FROM backup_schedules LIMIT 1");
         $this->assertInstanceOf(PDOStatement::class, $stmt);
-        $nra = (string) $stmt->fetchColumn();
-        $this->assertLessThan(gmdate('Y-m-d H:i:s'), $nra, 'next_run_at must remain in the past');
+        // fetchColumn() returns false on no rows; casting that to string
+        // would yield '' which silently passes the assertLessThan check.
+        // Guard explicitly so a missing seed row fails loudly.
+        $nra = $stmt->fetchColumn();
+        $this->assertNotFalse($nra, 'expected one seeded schedule row');
+        $this->assertLessThan(gmdate('Y-m-d H:i:s'), (string) $nra, 'next_run_at must remain in the past');
     }
 
     public function testInactiveDestinationNotFired(): void
