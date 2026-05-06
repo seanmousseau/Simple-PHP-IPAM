@@ -89,11 +89,27 @@ function ipam_backup_admin_restore_handle(\PDO $db, array $config): array
                     $phase          = RESTORE_WIZARD_PHASE_STAGED;
                     audit($db, 'db.restore_upload', 'system', null, "filename=$name size=$stagedSize");
                 } catch (IpamBackupKeyRequiredException $e) {
-                    // Surface a special phase the UI uses to render a
-                    // passphrase prompt without leaving the wizard.
-                    audit($db, 'db.restore_upload_needs_passphrase', 'system', null, "filename=$name");
-                    $err   = $e->getMessage();
-                    $phase = 'needs_passphrase';
+                    // The dispatcher raises IpamBackupKeyRequiredException for
+                    // BOTH IPAMBKP3 transitory archives (passphrase missing,
+                    // operator can re-upload + type it) AND IPAMBKP3 stored
+                    // archives whose backup_vault_key is absent on this
+                    // install (no in-band recovery — operator must restore
+                    // the key in config.php). Distinguish by mode so we
+                    // don't drop the admin onto a passphrase form they
+                    // cannot solve.
+                    $err = $e->getMessage();
+                    if ($e->mode === BACKUP_V3_MODE_TRANSITORY) {
+                        audit($db, 'db.restore_upload_needs_passphrase', 'system', null, "filename=$name");
+                        $phase = 'needs_passphrase';
+                    } else {
+                        // Stored-mode upload: the missing credential is
+                        // backup_vault_key, not a passphrase. Stay on
+                        // Step 1 with the error banner; operator must
+                        // populate config.php['backup_vault_key'] and retry.
+                        audit($db, 'db.restore_upload_failed', 'system', null,
+                              "filename=$name reason=missing_backup_vault_key");
+                        $phase = '';
+                    }
                 } catch (Throwable $e) {
                     error_log('[restore_web] upload failed: ' . $e->getMessage());
                     audit($db, 'db.restore_upload_failed', 'system', null, "filename=$name error=" . substr($e->getMessage(), 0, 200));

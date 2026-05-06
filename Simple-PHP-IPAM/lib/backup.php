@@ -1237,9 +1237,25 @@ function ipam_restore_prepare_for_upload(array $config, ?string $passphrase = nu
         } elseif ($isWrapped) {
             backup_unencrypted_unwrap_stream($downloadPath, $stagedPath);
         } else {
-            // Plain SQL / IPAMBKL1 — straight copy.
-            if (!@copy($downloadPath, $stagedPath)) {
-                throw new RuntimeException('ipam_restore_upload: cannot copy plain upload to staged path');
+            // Plain SQL / IPAMBKL1 — stage atomically via tempfile + rename.
+            // copy() can leave a partial destination if it fails part-way
+            // through; without atomic staging the helper would throw with
+            // an orphaned partial file at $stagedPath that the caller has
+            // no handle on (the function exits before returning the path).
+            $copyTmp = $stagedPath . '.copying.' . bin2hex(random_bytes(4));
+            try {
+                if (!@copy($downloadPath, $copyTmp)) {
+                    throw new RuntimeException('ipam_restore_upload: cannot copy plain upload to staged tmp');
+                }
+                if (!@rename($copyTmp, $stagedPath)) {
+                    throw new RuntimeException('ipam_restore_upload: cannot finalise staged upload');
+                }
+                $copyTmp = null;
+            } finally {
+                if ($copyTmp !== null && is_file($copyTmp)) {
+                    // nosemgrep: php.lang.security.unlink-use.unlink-use -- $copyTmp built from $stagedPath + random suffix; no user input
+                    @unlink($copyTmp);
+                }
             }
         }
     } finally {

@@ -4539,13 +4539,33 @@ function ipam_argon2id_derive(
  */
 function ipam_backup_vault_key_or_init(?string $configPathOverride = null): string
 {
+    // Defence-in-depth: the override is a test-only hook. Reject it
+    // outside CLI / PHPUnit context so a future caller that accidentally
+    // routes user input here cannot turn an `include` of an attacker-
+    // controlled path into LFI/RCE. Web-SAPI callers always operate on
+    // the production config.php only.
+    if ($configPathOverride !== null && PHP_SAPI !== 'cli') {
+        throw new RuntimeException(
+            'ipam_backup_vault_key_or_init: configPathOverride is test-only and not allowed in web SAPI'
+        );
+    }
+
     // Static cache is keyed on the resolved config path so a test that
     // overrides the path does not pin the production cache, and vice
     // versa. Without keying, a single test run could leak a tempfile-
     // generated key to a subsequent production-path call (or vice versa)
     // and cause spurious assertion failures.
     static $cachedRaw = [];
-    $configPath = $configPathOverride ?? __DIR__ . '/config.php';
+    $rawPath = $configPathOverride ?? __DIR__ . '/config.php';
+    // Canonicalise so the include target is a resolved real path on
+    // disk, not a string with `..` segments or a non-existent file. The
+    // override path MUST exist when supplied; the production path always
+    // exists (init.php loaded it earlier this request).
+    $resolved = realpath($rawPath);
+    if ($resolved === false) {
+        throw new RuntimeException('ipam_backup_vault_key_or_init: config path does not resolve: ' . $rawPath);
+    }
+    $configPath = $resolved;
     if (isset($cachedRaw[$configPath])) {
         return $cachedRaw[$configPath];
     }
