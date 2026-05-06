@@ -329,13 +329,19 @@ class S3Client implements BackupClientInterface
         }
 
         $statusCode = 0;
-        $headerCb = function ($_curl, string $hdr) use (&$statusCode): int {
+        // Capture Content-Range so a 416-EOF response (object fully transferred
+        // on a prior attempt; this Range request asks for byte=size-) can be
+        // distinguished from a legitimate 416 (CR #1096 round 4 finding).
+        $contentRange = -1;
+        $headerCb = function ($_curl, string $hdr) use (&$statusCode, &$contentRange): int {
             $line = trim($hdr);
             if (strncasecmp($line, 'HTTP/', 5) === 0) {
                 $parts = explode(' ', $line, 3);
                 if (isset($parts[1]) && ctype_digit($parts[1])) {
                     $statusCode = (int) $parts[1];
                 }
+            } elseif (preg_match('~^content-range:\s*bytes\s+\*/(\d+)~i', $line, $m)) {
+                $contentRange = (int) $m[1];
             }
             return strlen($hdr);
         };
@@ -401,12 +407,26 @@ class S3Client implements BackupClientInterface
                     $src = @fopen($sidecarPath . '.swap', 'rb');
                     $dst = @fopen($sidecarPath, 'wb');
                     if ($src !== false && $dst !== false) {
-                        @fseek($src, $resumeOffset);
-                        stream_copy_to_stream($src, $dst);
+                        // fseek returns 0 on success, -1 on failure.
+                        // stream_copy_to_stream returns the byte count on
+                        // success, false on failure (including short copies).
+                        // Validate both before declaring success — silently
+                        // proceeding on a short copy would finalize a
+                        // corrupt file. (CR #1096 round 4 critical finding.)
+                        $seekOk = (@fseek($src, $resumeOffset) === 0);
+                        $copied = $seekOk ? stream_copy_to_stream($src, $dst) : false;
                         fclose($src);
                         fclose($dst);
-                        @unlink($sidecarPath . '.swap'); // nosemgrep: php.lang.security.unlink-use.unlink-use -- locally-derived path
-                        return 'restart_full';
+                        if ($copied === $bodyOnly) {
+                            @unlink($sidecarPath . '.swap'); // nosemgrep: php.lang.security.unlink-use.unlink-use -- locally-derived path
+                            return 'restart_full';
+                        }
+                        // Short copy or seek failure — sidecar is now
+                        // truncated/empty; restore from .swap so the next
+                        // call can retry.
+                        @unlink($sidecarPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- locally-derived path
+                        @rename($sidecarPath . '.swap', $sidecarPath);
+                        throw new RuntimeException('S3Client::download: Range-ignored rewrite failed (short copy)');
                     }
                     // Either fopen failed; close any handle that did
                     // open and roll back to .swap as the canonical
@@ -431,6 +451,24 @@ class S3Client implements BackupClientInterface
         if ($code === 404) {
             @unlink($sidecarPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- locally-derived path
             return 'not_found';
+        }
+
+        // 416 with Content-Range matching the requested offset means "object
+        // already fully transferred" — happens when a prior download succeeded
+        // but the rename failed, the sidecar was preserved at object_size, and
+        // the next call computes Range: bytes=<object_size>- (off-the-end).
+        // Treat as 'complete' so the rename-retry path actually works.
+        // (CR #1096 round 4 major finding 2026-05-06.)
+        if ($code === 416 && $resumeOffset > 0 && $contentRange === $resumeOffset) {
+            // Trim the streamed 416 error body that landed in the sidecar
+            // by truncating back to the known object size before declaring
+            // complete.
+            $fp = @fopen($sidecarPath, 'r+');
+            if ($fp !== false) {
+                @ftruncate($fp, $resumeOffset);
+                fclose($fp);
+            }
+            return 'complete';
         }
 
         // Non-2xx/non-404: CURLOPT_FILE streamed the error response body
