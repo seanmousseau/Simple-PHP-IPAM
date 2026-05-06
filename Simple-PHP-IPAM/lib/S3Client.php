@@ -244,7 +244,10 @@ class S3Client implements BackupClientInterface
             }
             if ($result === 'complete' || $result === 'restart_full') {
                 if (!@rename($sidecarPath, $destPath)) {
-                    @unlink($sidecarPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $sidecarPath is locally-derived from $destPath
+                    // The download itself succeeded — the sidecar holds the
+                    // only good copy of the body. Preserve it for the next
+                    // download() call to retry the rename. (CR #1096
+                    // round 3 finding 2026-05-06.)
                     throw new RuntimeException('S3Client::download: cannot finalize destination');
                 }
                 return true;
@@ -367,6 +370,15 @@ class S3Client implements BackupClientInterface
         }
 
         if ($ok === false || $errno !== 0) {
+            // Connection dropped mid-transfer. Only preserve the sidecar
+            // when we know the bytes it holds are valid body bytes from a
+            // 206 (or 200 from offset 0) response — otherwise the bytes
+            // could be partial headers / error body and resuming would
+            // produce a corrupt file. (CR #1096 round 3 critical finding.)
+            $bodyResp = ($code === 206) || ($code === 200 && $resumeOffset === 0);
+            if (!$bodyResp) {
+                @unlink($sidecarPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- locally-derived path
+            }
             throw new RuntimeException("S3Client::download: curl error ({$errno}): {$errmsg}");
         }
 
@@ -421,8 +433,11 @@ class S3Client implements BackupClientInterface
             return 'not_found';
         }
 
-        // Non-2xx/non-404: preserve the sidecar so cross-call resume can
-        // pick up where this attempt left off. (CR #1096 major finding.)
+        // Non-2xx/non-404: CURLOPT_FILE streamed the error response body
+        // (XML <Error>...</Error>) straight into the sidecar, so it is no
+        // longer safe to resume from. Drop it; the next download() call
+        // restarts from byte 0. (CR #1096 round 3 critical finding.)
+        @unlink($sidecarPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- locally-derived path
         throw new RuntimeException("S3Client::download: HTTP {$code}");
     }
 
