@@ -572,8 +572,12 @@ ipam_skeleton_flush();
       <select name="subnet_id">
         <option value="0">-- Select --</option>
         <?php foreach ($subnetList as $s): ?>
+          <?php
+            $sDesc = trim(to_str($s['description'] ?? ''));
+            $sLabel = to_str($s['cidr']) . ($sDesc !== '' ? ' — ' . $sDesc : '');
+          ?>
           <option value="<?= to_int($s['id']) ?>" <?= (to_int($s['id']) === $selectedSubnetId) ? 'selected' : '' ?> data-site-id="<?= to_int($s['site_id'] ?? 0) ?>">
-            <?= e(to_str($s['cidr'])) ?>
+            <?= e($sLabel) ?>
           </option>
         <?php endforeach; ?>
       </select>

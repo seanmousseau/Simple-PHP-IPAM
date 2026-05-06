@@ -36,20 +36,54 @@ declare(strict_types=1);
           <tr>
             <th>Name</th>
             <th>Type</th>
-            <th>Encrypt</th>
+            <th>Format</th>
+            <th>Encryption</th>
+            <th>Default</th>
             <th>Active</th>
             <th>Actions</th>
           </tr>
         </thead>
         <tbody>
           <?php foreach ($destinations as $d):
-              $destId   = to_int($d['id']);
-              $destType = to_str($d['type']);
+              $destId    = to_int($d['id']);
+              $destType  = to_str($d['type']);
+              $destBType = to_str($d['default_backup_type'] ?? 'logical');
+              $destEMode = to_str($d['default_encryption_mode'] ?? 'stored');
+              $destIsDefault = to_int($d['is_default'] ?? 0) === 1;
           ?>
-            <tr>
-              <td><?= e(to_str($d['name'])) ?></td>
+            <tr<?= $destIsDefault ? ' class="row-default"' : '' ?>>
+              <td>
+                <?= e(to_str($d['name'])) ?>
+                <?php if ($destIsDefault): ?>
+                  <span class="badge badge-default" title="Default destination">★ default</span>
+                <?php endif; ?>
+              </td>
               <td><span class="badge badge-type-<?= e($destType) ?>"><?= e(strtoupper($destType)) ?></span></td>
-              <td><?= to_int($d['encrypt']) === 1 ? 'Yes' : 'No' ?></td>
+              <td><span class="badge badge-format-<?= e($destBType) ?>"><?= $destBType === 'logical' ? 'Logical' : 'Database' ?></span></td>
+              <td>
+                <?php
+                  $emodeLabel = match ($destEMode) {
+                      'stored'      => 'Stored key',
+                      'transitory'  => 'Per-passphrase',
+                      'unencrypted' => 'Unencrypted',
+                      default       => $destEMode,
+                  };
+                  $emodeClass = $destEMode === 'unencrypted' ? 'badge-warn' : 'badge-success';
+                ?>
+                <span class="badge <?= e($emodeClass) ?>"><?= e($emodeLabel) ?></span>
+              </td>
+              <td>
+                <?php if (!$destIsDefault): ?>
+                  <form method="post" style="display:inline">
+                    <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                    <input type="hidden" name="action" value="set_default_destination">
+                    <input type="hidden" name="id" value="<?= $destId ?>">
+                    <button class="action-pill button-secondary" type="submit" title="Make this the default destination">Set default</button>
+                  </form>
+                <?php else: ?>
+                  <span class="muted" aria-label="This destination is the default">—</span>
+                <?php endif; ?>
+              </td>
               <td><?= to_int($d['is_active']) === 1 ? 'Active' : 'Disabled' ?></td>
               <td class="actions">
                 <?php
@@ -69,7 +103,8 @@ declare(strict_types=1);
                         data-drawer-title="Edit destination &mdash; <?= e(to_str($d['name'])) ?>">Edit</button>
                 <button class="action-pill" data-test-destination="<?= $destId ?>">Test</button>
                 <button class="action-pill" data-run-now="<?= $destId ?>">Run now</button>
-                <form method="post" style="display:inline" data-confirm-delete="this destination (schedules will be removed)">
+                <button class="action-pill" data-verify-all="<?= $destId ?>" data-destination-name="<?= e(to_str($d['name'])) ?>" title="Verify every backup on this destination">Verify all</button>
+                <form method="post" style="display:inline" data-confirm-delete="this destination (schedules will be removed)" data-confirm-typename="<?= e(to_str($d['name'])) ?>">
                   <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
                   <input type="hidden" name="action" value="delete_destination">
                   <input type="hidden" name="id" value="<?= $destId ?>">
@@ -102,7 +137,6 @@ declare(strict_types=1);
           <option value="local">Local filesystem</option>
         </select>
       </label>
-      <label class="checkbox"><input type="checkbox" name="encrypt" checked> Encrypt with AES-256-GCM (recommended)</label>
 
       <fieldset class="destination-fields" data-type="s3">
         <legend>S3 connection</legend>
@@ -116,6 +150,14 @@ declare(strict_types=1);
         <legend>Local filesystem</legend>
         <?php $cfg = []; require __DIR__ . '/destination_form_local.php'; ?>
       </fieldset>
+
+      <?php
+        // v3.25.0 #1076 #851 #846 #848: shared picker fields (backup format,
+        // encryption mode, retention windows, set-as-default flag). Defaults
+        // for create form: logical, stored, 0/7/4/3, no.
+        $picker = ['type' => '']; // unknown until JS unhides the right fieldset
+        require __DIR__ . '/_destination_picker_fields.php';
+      ?>
 
       <button type="submit" class="action-pill">Create destination</button>
     </form>
