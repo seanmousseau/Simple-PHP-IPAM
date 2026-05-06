@@ -49,7 +49,15 @@ async function cleanupDest(p: Page, name: string): Promise<void> {
   if (await row.count() === 0) return;
   const deleteForm = row.locator('form:has(input[name="action"][value="delete_destination"])');
   if (await deleteForm.count() === 0) return;
-  p.once('dialog', d => d.accept());
+  // v3.25.0 #858: destination delete now opens a window.prompt() asking
+  // the operator to type the destination name. Provide the name back.
+  p.once('dialog', d => {
+    if (d.type() === 'prompt') {
+      void d.accept(name);
+    } else {
+      void d.accept();
+    }
+  });
   await deleteForm.locator('button[type="submit"]').click();
   await p.waitForURL(/destinations\.php/, { timeout: 10_000 });
 }

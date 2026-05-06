@@ -35,7 +35,10 @@ if ($pBackupType !== 'database' && $pBackupType !== 'logical') {
 $pEncMode = is_string($picker['default_encryption_mode'] ?? null)
     ? (string) $picker['default_encryption_mode']
     : 'stored';
-if (!in_array($pEncMode, ['stored', 'unencrypted'], true)) {
+// Accept all three persisted enum values; only normalise truly unknown
+// values back to 'stored'. Editing a 'transitory' destination must
+// preserve its mode (CR #1096 major finding 2026-05-06).
+if (!in_array($pEncMode, ['stored', 'transitory', 'unencrypted'], true)) {
     $pEncMode = 'stored';
 }
 $pType = is_string($picker['type'] ?? null) ? (string) $picker['type'] : '';
@@ -73,6 +76,14 @@ if (!isset($picker['retention_monthly'])) $pRetM = 3;
     <input type="radio" name="default_encryption_mode" value="stored" <?= $pEncMode === 'stored' ? 'checked' : '' ?>>
     <strong>Encrypted (stored key)</strong> — IPAMBKP3 with the install's <code>backup_vault_key</code>
   </label>
+  <?php if ($pEncMode === 'transitory'): ?>
+    <label class="radio">
+      <input type="radio" name="default_encryption_mode" value="transitory" checked>
+      <strong>Per-passphrase (transitory)</strong>
+      <span class="muted">— operator-typed passphrase, server never persists it</span>
+      <small class="muted">(retained on edit; not selectable for new destinations — used by the manual upload-and-restore flow)</small>
+    </label>
+  <?php endif; ?>
   <label class="radio">
     <input type="radio" name="default_encryption_mode" value="unencrypted"
       <?= $pEncMode === 'unencrypted' ? 'checked' : '' ?>

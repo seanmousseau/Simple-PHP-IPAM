@@ -3017,33 +3017,38 @@ function ipam_migrations(): array
                 throw new RuntimeException("3.25.0-backup-destination-evolution: unsupported driver '{$driver}'");
             };
 
+            // CHECK constraints inline so upgraded installs match the
+            // fresh-install schema exactly (CR #1096 major finding —
+            // schema-drift between alter-path and create-path). All three
+            // engines support CHECK in ADD COLUMN; the inline form keeps
+            // every constraint co-located with the column it guards.
             $destDefs = [
                 'sqlite' => [
-                    'retention_hourly'        => "ALTER TABLE backup_destinations ADD COLUMN retention_hourly  INTEGER NOT NULL DEFAULT 0",
-                    'retention_daily'         => "ALTER TABLE backup_destinations ADD COLUMN retention_daily   INTEGER NOT NULL DEFAULT 7",
-                    'retention_weekly'        => "ALTER TABLE backup_destinations ADD COLUMN retention_weekly  INTEGER NOT NULL DEFAULT 4",
-                    'retention_monthly'       => "ALTER TABLE backup_destinations ADD COLUMN retention_monthly INTEGER NOT NULL DEFAULT 3",
-                    'is_default'              => "ALTER TABLE backup_destinations ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0",
-                    'default_backup_type'     => "ALTER TABLE backup_destinations ADD COLUMN default_backup_type TEXT NOT NULL DEFAULT 'logical'",
-                    'default_encryption_mode' => "ALTER TABLE backup_destinations ADD COLUMN default_encryption_mode TEXT NOT NULL DEFAULT 'stored'",
+                    'retention_hourly'        => "ALTER TABLE backup_destinations ADD COLUMN retention_hourly  INTEGER NOT NULL DEFAULT 0 CHECK (retention_hourly  >= 0)",
+                    'retention_daily'         => "ALTER TABLE backup_destinations ADD COLUMN retention_daily   INTEGER NOT NULL DEFAULT 7 CHECK (retention_daily   >= 0)",
+                    'retention_weekly'        => "ALTER TABLE backup_destinations ADD COLUMN retention_weekly  INTEGER NOT NULL DEFAULT 4 CHECK (retention_weekly  >= 0)",
+                    'retention_monthly'       => "ALTER TABLE backup_destinations ADD COLUMN retention_monthly INTEGER NOT NULL DEFAULT 3 CHECK (retention_monthly >= 0)",
+                    'is_default'              => "ALTER TABLE backup_destinations ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0,1))",
+                    'default_backup_type'     => "ALTER TABLE backup_destinations ADD COLUMN default_backup_type TEXT NOT NULL DEFAULT 'logical' CHECK (default_backup_type IN ('database','logical'))",
+                    'default_encryption_mode' => "ALTER TABLE backup_destinations ADD COLUMN default_encryption_mode TEXT NOT NULL DEFAULT 'stored' CHECK (default_encryption_mode IN ('stored','transitory','unencrypted'))",
                 ],
                 'mysql' => [
-                    'retention_hourly'        => "ALTER TABLE backup_destinations ADD COLUMN retention_hourly  SMALLINT NOT NULL DEFAULT 0",
-                    'retention_daily'         => "ALTER TABLE backup_destinations ADD COLUMN retention_daily   SMALLINT NOT NULL DEFAULT 7",
-                    'retention_weekly'        => "ALTER TABLE backup_destinations ADD COLUMN retention_weekly  SMALLINT NOT NULL DEFAULT 4",
-                    'retention_monthly'       => "ALTER TABLE backup_destinations ADD COLUMN retention_monthly SMALLINT NOT NULL DEFAULT 3",
-                    'is_default'              => "ALTER TABLE backup_destinations ADD COLUMN is_default TINYINT(1) NOT NULL DEFAULT 0",
-                    'default_backup_type'     => "ALTER TABLE backup_destinations ADD COLUMN default_backup_type VARCHAR(16) NOT NULL DEFAULT 'logical'",
-                    'default_encryption_mode' => "ALTER TABLE backup_destinations ADD COLUMN default_encryption_mode VARCHAR(16) NOT NULL DEFAULT 'stored'",
+                    'retention_hourly'        => "ALTER TABLE backup_destinations ADD COLUMN retention_hourly  SMALLINT NOT NULL DEFAULT 0 CHECK (retention_hourly  >= 0)",
+                    'retention_daily'         => "ALTER TABLE backup_destinations ADD COLUMN retention_daily   SMALLINT NOT NULL DEFAULT 7 CHECK (retention_daily   >= 0)",
+                    'retention_weekly'        => "ALTER TABLE backup_destinations ADD COLUMN retention_weekly  SMALLINT NOT NULL DEFAULT 4 CHECK (retention_weekly  >= 0)",
+                    'retention_monthly'       => "ALTER TABLE backup_destinations ADD COLUMN retention_monthly SMALLINT NOT NULL DEFAULT 3 CHECK (retention_monthly >= 0)",
+                    'is_default'              => "ALTER TABLE backup_destinations ADD COLUMN is_default TINYINT(1) NOT NULL DEFAULT 0 CHECK (is_default IN (0,1))",
+                    'default_backup_type'     => "ALTER TABLE backup_destinations ADD COLUMN default_backup_type VARCHAR(16) NOT NULL DEFAULT 'logical' CHECK (default_backup_type IN ('database','logical'))",
+                    'default_encryption_mode' => "ALTER TABLE backup_destinations ADD COLUMN default_encryption_mode VARCHAR(16) NOT NULL DEFAULT 'stored' CHECK (default_encryption_mode IN ('stored','transitory','unencrypted'))",
                 ],
                 'pgsql' => [
-                    'retention_hourly'        => "ALTER TABLE backup_destinations ADD COLUMN retention_hourly  SMALLINT NOT NULL DEFAULT 0",
-                    'retention_daily'         => "ALTER TABLE backup_destinations ADD COLUMN retention_daily   SMALLINT NOT NULL DEFAULT 7",
-                    'retention_weekly'        => "ALTER TABLE backup_destinations ADD COLUMN retention_weekly  SMALLINT NOT NULL DEFAULT 4",
-                    'retention_monthly'       => "ALTER TABLE backup_destinations ADD COLUMN retention_monthly SMALLINT NOT NULL DEFAULT 3",
-                    'is_default'              => "ALTER TABLE backup_destinations ADD COLUMN is_default SMALLINT NOT NULL DEFAULT 0",
-                    'default_backup_type'     => "ALTER TABLE backup_destinations ADD COLUMN default_backup_type TEXT NOT NULL DEFAULT 'logical'",
-                    'default_encryption_mode' => "ALTER TABLE backup_destinations ADD COLUMN default_encryption_mode TEXT NOT NULL DEFAULT 'stored'",
+                    'retention_hourly'        => "ALTER TABLE backup_destinations ADD COLUMN retention_hourly  SMALLINT NOT NULL DEFAULT 0 CHECK (retention_hourly  >= 0)",
+                    'retention_daily'         => "ALTER TABLE backup_destinations ADD COLUMN retention_daily   SMALLINT NOT NULL DEFAULT 7 CHECK (retention_daily   >= 0)",
+                    'retention_weekly'        => "ALTER TABLE backup_destinations ADD COLUMN retention_weekly  SMALLINT NOT NULL DEFAULT 4 CHECK (retention_weekly  >= 0)",
+                    'retention_monthly'       => "ALTER TABLE backup_destinations ADD COLUMN retention_monthly SMALLINT NOT NULL DEFAULT 3 CHECK (retention_monthly >= 0)",
+                    'is_default'              => "ALTER TABLE backup_destinations ADD COLUMN is_default SMALLINT NOT NULL DEFAULT 0 CHECK (is_default IN (0,1))",
+                    'default_backup_type'     => "ALTER TABLE backup_destinations ADD COLUMN default_backup_type TEXT NOT NULL DEFAULT 'logical' CHECK (default_backup_type IN ('database','logical'))",
+                    'default_encryption_mode' => "ALTER TABLE backup_destinations ADD COLUMN default_encryption_mode TEXT NOT NULL DEFAULT 'stored' CHECK (default_encryption_mode IN ('stored','transitory','unencrypted'))",
                 ],
             ];
 
@@ -3056,13 +3061,13 @@ function ipam_migrations(): array
 
             $runDefs = [
                 'sqlite' => [
-                    'cancel_requested' => "ALTER TABLE backup_runs ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0",
+                    'cancel_requested' => "ALTER TABLE backup_runs ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK (cancel_requested IN (0,1))",
                 ],
                 'mysql' => [
-                    'cancel_requested' => "ALTER TABLE backup_runs ADD COLUMN cancel_requested TINYINT(1) NOT NULL DEFAULT 0",
+                    'cancel_requested' => "ALTER TABLE backup_runs ADD COLUMN cancel_requested TINYINT(1) NOT NULL DEFAULT 0 CHECK (cancel_requested IN (0,1))",
                 ],
                 'pgsql' => [
-                    'cancel_requested' => "ALTER TABLE backup_runs ADD COLUMN cancel_requested SMALLINT NOT NULL DEFAULT 0",
+                    'cancel_requested' => "ALTER TABLE backup_runs ADD COLUMN cancel_requested SMALLINT NOT NULL DEFAULT 0 CHECK (cancel_requested IN (0,1))",
                 ],
             ];
             $runCols = $existingCols($db, $driver, 'backup_runs');

@@ -9,6 +9,8 @@
 - [What the backup looks like](#what-the-backup-looks-like)
 - [CLI utilities](#cli-utilities)
 - [Version-specific upgrade notes](#version-specific-upgrade-notes)
+  - [v3.25.0](#v3250) — IPAMBKL1 backend surfaced via picker UI, retention re-homed to destination, U-series UX polish (no breaking changes)
+  - [v3.24.0](#v3240) — IPAMBKP3 three-mode encryption format, manual upload-and-restore, standalone decrypt-backup CLI (no breaking changes)
   - [v3.23.0](#v3230) — IPAMBKL1 engine-agnostic backups, per-schedule notification overrides, legacy backup config deprecation + auto-migration (no breaking changes)
   - [v3.20.0](#v3200) — Backup destinations UX polish: inline Edit drawers, Run-now per destination, frequency-aware schedule fields, auto-Test on Save, TZ-correct timestamps, notify wiring, S3 redaction scope fix (no breaking changes)
   - [v3.19.1](#v3191) — **Hotfix:** S3 destinations actually work (SigV4 fix), MySQL/PG cloud backups unblocked, S3 download body-leak fixed (no breaking changes)

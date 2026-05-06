@@ -331,14 +331,12 @@ function ipam_backup_history_handle_post(\PDO $db): void
     // is_protected state shows on the badge in the next render; no flash
     // string is needed because the visual state itself is the feedback.
     if (in_array($action, $redirectActions, true)) {
-        $self = to_str($_SERVER['HTTP_REFERER'] ?? 'backup_admin.php?tab=history');
-        // Strip any existing query-fragment chrome to avoid open-redirect-style
-        // URL re-injection. A relative referer is fine; an absolute referer
-        // crossing the host falls back to the canonical default.
-        $parsed = parse_url($self);
-        if (is_array($parsed) && isset($parsed['host'])) {
-            $self = 'backup_admin.php?tab=history';
-        }
+        // Always redirect to the canonical history-tab URL — never reflect
+        // HTTP_REFERER (CR #1096 major finding 2026-05-06: javascript:,
+        // arbitrary internal paths, and CRLF-tainted strings can pass a
+        // host-only allowlist). The history tab is the only legitimate
+        // landing page for protect/unprotect anyway.
+        $self = 'backup_admin.php?tab=history';
         if ($id !== 0) {
             $newFlag = $action === 'protect_run' ? 1 : 0;
             $stmt = $db->prepare("UPDATE backup_runs SET is_protected = :p WHERE id = :id");

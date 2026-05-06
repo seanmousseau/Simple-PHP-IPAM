@@ -121,12 +121,18 @@ function ipam_destinations_collect_picker(string $type, array $post): array|stri
         // default to 'stored' — the safe choice that won't get rejected on
         // remote destination types.
         if (array_key_exists('encrypt', $post)) {
-            $em = isset($post['encrypt']) && (string) $post['encrypt'] !== '' ? 'stored' : 'unencrypted';
+            $encVal = $post['encrypt'];
+            $encStr = is_scalar($encVal) ? (string) $encVal : '';
+            $em = ($encStr !== '' && $encStr !== '0') ? 'stored' : 'unencrypted';
         } else {
             $em = 'stored';
         }
     }
-    if (!in_array($em, ['stored', 'unencrypted'], true)) {
+    // Accept 'transitory' on edits so the round-trip preserves the mode for
+    // destinations that were saved that way. The picker UI only renders
+    // the transitory radio when the destination is already in that state;
+    // a fresh form has no way to opt in.
+    if (!in_array($em, ['stored', 'transitory', 'unencrypted'], true)) {
         return 'Invalid encryption mode.';
     }
     if ($em === 'unencrypted' && $type !== 'local') {
@@ -412,9 +418,11 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
             ':rm'  => $picker['retention_monthly'],
             ':id'  => $id,
         ]);
-        if ($stmt->rowCount() === 0) {
-            return 'Destination not found.';
-        }
+        // No rowCount() check here: MySQL returns 0 when the submitted
+        // values match the current row, which would falsely report
+        // "Destination not found" on no-op saves. Existence is already
+        // proven by the existingRow SELECT above. (CR #1096 major
+        // finding 2026-05-06.)
         if ($picker['is_default'] === 1) {
             ipam_destinations_set_default($db, $id);
         }

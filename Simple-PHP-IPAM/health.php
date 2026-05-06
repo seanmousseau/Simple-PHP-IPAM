@@ -453,7 +453,10 @@ page_header('Health Dashboard');
  * maintains. */
 try {
     $bdStmt = $db->query(
-        "SELECT id, name, type, is_default, is_active FROM backup_destinations ORDER BY name"
+        "SELECT id, name, type, is_default, is_active
+           FROM backup_destinations
+          WHERE is_active = 1
+          ORDER BY name"
     );
     $bdRows = $bdStmt !== false ? $bdStmt->fetchAll(PDO::FETCH_ASSOC) : [];
 } catch (\Throwable) {

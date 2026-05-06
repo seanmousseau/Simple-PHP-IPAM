@@ -3418,9 +3418,14 @@ function ipam_resolve_recipients_for_user_ids(PDO $db, array $rawIds): array
  *
  * @return array{success: bool, error: ?string, transport: string}
  */
-function ipam_send_mail(string $to, string $subject, string $bodyText, string $bodyHtml = ''): array
+function ipam_send_mail(string $to, string $subject, string $bodyText, string $bodyHtml = '', ?string $transportOverride = null): array
 {
-    $smtpEnabled = (bool) ipam_setting('smtp.enabled');
+    // v3.25.0 #1078: optional transport override lets the backup notify
+    // dispatcher force SMTP regardless of the global smtp.enabled setting.
+    // Accepted values: 'smtp' (force SMTP) or null (use global).
+    $smtpEnabled = $transportOverride === 'smtp'
+        ? true
+        : (bool) ipam_setting('smtp.enabled');
 
     if ($smtpEnabled) {
         if (!class_exists('PHPMailer\PHPMailer\PHPMailer')) {
@@ -6035,21 +6040,27 @@ function ipam_retention_compute_deletions(PDO $db, int $destinationId): array
             'keep_monthly' => to_int($destRow['retention_monthly']),
         ];
     } else {
-        // Pre-migration: fall back to any per-schedule row for transition.
+        // Pre-migration: aggregate retention across any active schedules
+        // pointing at this destination using MAX() — same most-generous
+        // semantics the migration backfill uses (CR #1096 major finding).
+        // LIMIT 1 would silently bias to whichever row PDO returned first
+        // and could prune more aggressively than intended.
         $schedStmt = $db->prepare(
-            "SELECT retention_hourly, retention_daily, retention_weekly, retention_monthly
+            "SELECT MAX(retention_hourly)  AS h,
+                    MAX(retention_daily)   AS d,
+                    MAX(retention_weekly)  AS w,
+                    MAX(retention_monthly) AS m
              FROM backup_schedules
-             WHERE destination_id = :did AND is_active = 1
-             LIMIT 1"
+             WHERE destination_id = :did AND is_active = 1"
         );
         $schedStmt->execute([':did' => $destinationId]);
         $sched = $schedStmt->fetch();
-        if (is_array($sched)) {
+        if (is_array($sched) && $sched['h'] !== null) {
             $gfsConfig = [
-                'keep_hourly'  => to_int($sched['retention_hourly']),
-                'keep_daily'   => to_int($sched['retention_daily']),
-                'keep_weekly'  => to_int($sched['retention_weekly']),
-                'keep_monthly' => to_int($sched['retention_monthly']),
+                'keep_hourly'  => to_int($sched['h']),
+                'keep_daily'   => to_int($sched['d']),
+                'keep_weekly'  => to_int($sched['w']),
+                'keep_monthly' => to_int($sched['m']),
             ];
         } else {
             $gfsConfig = [
@@ -6630,10 +6641,20 @@ function ipam_backup_notify_dispatch(PDO $db, string $event, array $context): vo
     };
     if ($subject === '') return;
 
+    // v3.25.0 #1078: read the backup-tab delivery method override.
+    // 'smtp' forces SMTP regardless of the global mail.transport / smtp.enabled
+    // settings; 'inherit' keeps the legacy behaviour. Future values
+    // ('webhook', 'slack', 'pushover') will dispatch through different
+    // helpers — for now only the inherit/smtp axis is wired.
+    $deliveryMethod = is_string(ipam_setting('backup.notify_delivery_method'))
+        ? (string) ipam_setting('backup.notify_delivery_method')
+        : 'inherit';
+    $transportOverride = $deliveryMethod === 'smtp' ? 'smtp' : null;
+
     foreach ($recipients as $to) {
         try {
             if (function_exists('ipam_send_mail')) {
-                ipam_send_mail($to, $subject, $body);
+                ipam_send_mail($to, $subject, $body, '', $transportOverride);
             } else {
                 @mail($to, $subject, $body);
             }

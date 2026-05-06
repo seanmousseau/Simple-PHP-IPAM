@@ -229,7 +229,12 @@ class S3Client implements BackupClientInterface
                     usleep(200000);
                     continue;
                 }
-                @unlink($sidecarPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $sidecarPath is locally-derived from $destPath
+                // Preserve the sidecar across thrown failures so the next
+                // download() invocation resumes from the partial bytes.
+                // (CR #1096 major finding 2026-05-06.) downloadAttempt only
+                // unlinks the sidecar when it explicitly resets it for
+                // server-ignored-Range or non-retryable HTTP — its own
+                // throw paths leave the sidecar intact already.
                 throw $e;
             }
 
@@ -246,7 +251,9 @@ class S3Client implements BackupClientInterface
             }
         }
 
-        @unlink($sidecarPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $sidecarPath is locally-derived from $destPath
+        // All attempts produced an unexpected return value (none of
+        // complete / restart_full / not_found and no exception). Treat as
+        // exhausted; preserve sidecar for cross-call resume.
         throw new RuntimeException("S3Client::download: exhausted retries (last: {$lastError})");
     }
 
@@ -289,6 +296,12 @@ class S3Client implements BackupClientInterface
 
         if ($resumeOffset > 0) {
             $headers['range'] = 'bytes=' . $resumeOffset . '-';
+            // SigV4 requires lexicographic ordering of CanonicalHeaders +
+            // SignedHeaders. PHP preserves insertion order so 'range' lands
+            // last; ksort restores 'host;range;x-amz-content-sha256;x-amz-date'.
+            // Without this S3 rejects with SignatureDoesNotMatch (CR #1096
+            // critical finding 2026-05-06).
+            ksort($headers);
             // Re-sign with the new header set so SigV4 covers it.
             $signedHeaders = implode(';', array_keys($headers));
             $canonHeaders  = $this->buildCanonicalHeaders($headers);
@@ -389,7 +402,8 @@ class S3Client implements BackupClientInterface
             return 'not_found';
         }
 
-        @unlink($sidecarPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- locally-derived path
+        // Non-2xx/non-404: preserve the sidecar so cross-call resume can
+        // pick up where this attempt left off. (CR #1096 major finding.)
         throw new RuntimeException("S3Client::download: HTTP {$code}");
     }
 
