@@ -333,6 +333,19 @@ function ensure_audit_log_table(PDO $db): void
         $probe = $db->query("SELECT 1 FROM audit_log LIMIT 0");
         if ($probe !== false) {
             $probe->closeCursor();
+            // Table exists. Verify the append-only triggers also exist;
+            // if either is missing (operator manually dropped them, an
+            // external migration omitted them, etc.) we MUST recreate
+            // them so audit-row immutability stays enforced. The probe
+            // is one extra cheap row-count query per request — much
+            // smaller than rebuilding the table + indexes — and it
+            // preserves the v3.24.0 race fix because the CREATE OR
+            // REPLACE TRIGGER path only runs when triggers are
+            // genuinely missing (rare; never on the steady-state
+            // request path).
+            if (!ipam_audit_log_triggers_present($db)) {
+                ensure_audit_log_triggers($db);
+            }
             return;
         }
     } catch (PDOException) {
@@ -412,6 +425,57 @@ function ensure_audit_log_triggers(PDO $db): void
                 throw $e;
             }
         }
+    }
+}
+
+/**
+ * Probe for the audit_log append-only triggers. Returns true iff BOTH
+ * audit_log_no_update and audit_log_no_delete exist on this driver.
+ *
+ * Used by ensure_audit_log_table() to keep the steady-state fast path
+ * cheap (one SELECT per request) while still self-healing if an external
+ * action drops the triggers — preserving the v3.24.0 race fix because
+ * CREATE OR REPLACE TRIGGER only fires when the probe says they're
+ * missing, never on the steady-state path.
+ *
+ * Per-driver SQL:
+ *   sqlite — sqlite_master where type='trigger'
+ *   mysql  — information_schema.triggers (current schema)
+ *   pgsql  — pg_trigger ⨝ pg_class on tgrelid
+ *
+ * Returns false on any probe failure so the caller falls through to
+ * ensure_audit_log_triggers() (idempotent on every engine).
+ */
+function ipam_audit_log_triggers_present(PDO $db): bool
+{
+    // Dialect::driver_name() is constrained to 'sqlite' | 'mysql' |
+    // 'pgsql' by the type system, so the match is exhaustive. If a
+    // future driver is added, PHP will surface UnhandledMatchError
+    // until the new arm lands here — exactly the safety we want.
+    $sql = match (ipam_dialect()->driver_name()) {
+        'sqlite' =>
+            "SELECT COUNT(*) FROM sqlite_master " .
+            "WHERE type = 'trigger' " .
+            "AND name IN ('audit_log_no_update', 'audit_log_no_delete')",
+        'mysql' =>
+            "SELECT COUNT(*) FROM information_schema.triggers " .
+            "WHERE event_object_table = 'audit_log' " .
+            "AND trigger_name IN ('audit_log_no_update', 'audit_log_no_delete') " .
+            "AND trigger_schema = DATABASE()",
+        'pgsql' =>
+            "SELECT COUNT(*) FROM pg_trigger t " .
+            "JOIN pg_class c ON c.oid = t.tgrelid " .
+            "WHERE c.relname = 'audit_log' " .
+            "AND t.tgname IN ('audit_log_no_update', 'audit_log_no_delete')",
+    };
+    try {
+        $st = $db->query($sql);
+        if ($st === false) {
+            return false;
+        }
+        return to_int($st->fetchColumn()) >= 2;
+    } catch (PDOException) {
+        return false;
     }
 }
 
