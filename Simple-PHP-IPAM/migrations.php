@@ -196,8 +196,11 @@ function ipam_migrations(): array
             $db->exec("UPDATE audit_log SET action = REPLACE(action, 'api_key.', 'apikey.') WHERE action LIKE 'api\_key.%' ESCAPE '\'");
             $db->exec("UPDATE audit_log SET action = 'user.change_password' WHERE action = 'user.password_change'");
 
-            // Recreate append-only triggers
-            ensure_audit_log_table($db);
+            // Recreate append-only triggers explicitly. The probe in
+            // ensure_audit_log_table() short-circuits when the table is
+            // present (it is — we only dropped triggers above), so we
+            // cannot rely on it to put the triggers back.
+            ensure_audit_log_triggers($db);
         },
 
         '1.9' => function(PDO $db) {

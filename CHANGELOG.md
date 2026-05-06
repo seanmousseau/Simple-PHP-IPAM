@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.24.0] - 2026-05-05
+
+The encryption-format release. New on-disk backup format **`IPAMBKP3`** with three modes (stored / transitory / unencrypted), a new server-side secret `backup_vault_key` separate from `app_secret`, and a manual upload-and-restore wizard step with passphrase entry. Backwards compatible &mdash; existing IPAMBKP1 and IPAMBKP2 archives remain restorable. Plus a long-running PostgreSQL intermittent finally tracked down and fixed: `ensure_audit_log_table()` was emitting `CREATE OR REPLACE TRIGGER` on every request, racing on the system catalog under concurrent PHP-FPM load.
+
+### Added
+- **`IPAMBKP3` encryption format (#836).** Three modes per backup:
+  - **Stored**: HKDF-SHA256 over a server-managed `backup_vault_key`; auto-generated on first encrypted backup, lives in `config.php` distinct from `app_secret`. Used for scheduled / destination-driven runs.
+  - **Transitory**: Argon2id (RFC 9106 v1.3, defaults `t=3 / m=64 MiB / p=1`) over an operator-typed passphrase. Server never persists the passphrase. Used for manual upload-restore where the operator wants a passphrase only they know.
+  - **Unencrypted (`IPAMBKU1`)**: integrity-only wrapper (magic + SHA-256 + plaintext) for trusted-local destinations.
+  - Single-pass streaming encrypt-then-MAC (AES-256-CTR + HMAC-SHA256). Atomic tempfile-then-rename on decrypt &mdash; a failed HMAC verify leaves no plaintext on disk. Argon2id parameters are header-embedded so future tuning is non-breaking.
+  - Comprehensive tamper / corruption test suite including AES-256-CTR SP 800-38A reference vector and 5 MiB streaming peak-memory bound assertion. `tools/decrypt-backup.php` standalone CLI ships for offline decrypts when the originating IPAM install is gone.
+- **Manual upload-and-restore wizard step (#837).** New "Upload a backup file" affordance on the Restore tab, parallel to the destination-driven browser. Accepts every supported format. For IPAMBKP3 transitory archives the wizard prompts for the passphrase between upload and dry-run via a typed `IpamBackupKeyRequiredException`. Backed by a new admin-tunable `backup_max_upload_size_mb` setting (default 2 GiB).
+- **Cron tick fire-decision tests (#840, T7).** Five PHPUnit tests cover schedule fire under inactive bits (schedule, destination, both) plus reactivation paths, complementing existing `CronConcurrencyTest` coverage.
+
+### Changed
+- **`ensure_audit_log_table()` is now probe-first.** Cheap no-row `SELECT 1 FROM audit_log LIMIT 0` short-circuits the full CREATE-TABLE / CREATE-INDEX / CREATE-TRIGGER path on every request after first init. Race protection comes from the probe gating the DDL &mdash; if the table exists, no `CREATE OR REPLACE TRIGGER` fires. `prune_audit_log()` (SQLite) and migration 1.12, which DROP triggers and previously relied on `ensure_audit_log_table()` as a side effect, now call the new `ensure_audit_log_triggers()` helper explicitly.
+- **`backup_decrypt_to_path()` signature extended** with optional `$passphrase` and `$vaultKey` parameters. v1/v2 callers pass nothing &mdash; same legacy paths run unchanged. The dispatcher peeks 9 bytes (magic + mode for IPAMBKP3) and routes to the matching codec.
+- **Encryption-mode vocabulary clarified.** Documentation now describes "stored / transitory / unencrypted" as **key-source labels**, not encryption-at-rest vs in-transit labels. The wire path is always TLS-protected for S3 and SSH-protected for SFTP regardless of mode. See [`docs/backups.md` &rarr; Encryption](docs/backups.md#encryption).
+
+### Fixed
+- **PostgreSQL `tuple concurrently updated` intermittent.** `ensure_audit_log_table()` previously emitted `PgsqlDialect::append_only_trigger()`'s `CREATE OR REPLACE TRIGGER` on every request, racing on the system catalog when concurrent requests (page + sub-resources, parallel API calls, bursty Playwright runs) all hit `init.php` at the same time. Surfaced as `SQLSTATE[XX000]` and a sporadic 500 on whichever request lost the race. SQLite + MySQL were unaffected because their dialects use racy-safe `CREATE TRIGGER IF NOT EXISTS`. Same class of issue that #1091's bisection was deferred for; both classes resolved by the probe-first change.
+- **#838 audit cluster** &mdash; `random_bytes()` availability assert at every encrypt entry point (B-P1-35), HMAC purpose-string audit across every dialect call site (B-P1-13), constant-time double-HMAC compare for IPAMBKP3 verify (B-P1-40), `BACKUP_TAG_LEN` / `BACKUP_IV_LEN` docblock clarifications (B-P2-46), and IPAMBKP1 GCM IV-reuse note in upgrade docs (B-P2-5).
+
+### Documentation
+- **`docs/backups.md`** rewritten Encryption section + IPAMBKP3 / IPAMBKU1 byte layouts in On-disk format (#842).
+- **`docs/configuration.md`** new `backup_vault_key` reference section with lifecycle, rotation, storage guidance and `app_secret` comparison table (#841).
+- **`docs/upgrading.md`** new v3.24.0 section: vault-key auto-generation, legacy archive compatibility, manual upload-restore step, encryption-mode vocabulary change (#845).
+- **`docs/internal/data-dictionary.md`** regenerated &mdash; no diff (IPAMBKP3 reuses the v3.21.0 `backup_runs.encryption_mode` column) (#843).
+
+### Security
+- New `backup_vault_key` (32 random bytes, base64 in `config.php`) auto-generated on first encrypted backup. Distinct rotation lifecycle from `app_secret`. Required for IPAMBKP3 stored mode; ignored for transitory mode (operator passphrase only) and unencrypted (no key).
+
 ## [3.23.0] - 2026-05-03
 
 The backup-overhaul wave. Engine-agnostic logical backup format ships end-to-end (writer + reader); per-schedule notification overrides editable in the unified Backup &amp; Restore admin surface; the legacy `backup.*` settings group is deprecated with an automatic one-shot migration to a Local destination + schedule on first v3.23.0 page load. Plus retention/scheduler refactors, OOM-safe streaming restore, three-driver SFTP/Local/MinIO integration coverage, MFA switch-graph live e2e, and a destination-driven backup browser on the Restore tab. **18 milestone issues closed in a single release.**
@@ -1422,6 +1454,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.24.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.23.0...v3.24.0
 [3.23.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.22.3...v3.23.0
 [3.22.3]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.22.2...v3.22.3
 [3.22.2]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.22.1...v3.22.2

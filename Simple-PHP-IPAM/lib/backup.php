@@ -881,6 +881,14 @@ function ipam_backup_insert_log(
     $now = ipam_dialect()->now();
 
     // Resolve encryption mode from the destination's encrypt flag.
+    //
+    // The encryption_mode column vocabulary is ('stored','transitory',
+    // 'unencrypted') — see backup_runs schema in all three engines. The
+    // destination-driven path can only produce 'stored' (admin-managed
+    // key) or 'unencrypted' (opt-out for trusted-local). 'transitory' is
+    // emitted only by the manual upload-and-restore path (#837) where the
+    // operator types the passphrase per-action; that flow records its own
+    // backup_runs row.
     $encMode = 'unencrypted';
     try {
         $eStmt = $db->prepare("SELECT encrypt FROM backup_destinations WHERE id = :id");
@@ -1060,7 +1068,16 @@ function ipam_restore_prepare_for_restore(PDO $db, array $config, int $destinati
                 throw new RuntimeException('ipam_restore: encrypted backup but app_secret is empty');
             }
             ipam_restore_assert_staged_path($stagedPath); // #762 item 3 — defence-in-depth before write
-            backup_decrypt_to_path($downloadPath, $stagedPath, $appSecret);
+            // v3.24+: forward the vault key so the dispatcher can decrypt
+            // any IPAMBKP3 stored-mode archives that have been written into
+            // this destination by the manual upload-restore path or by a
+            // future encrypt-side rollout. Transitory archives cannot be
+            // restored on the destination-driven path (no operator
+            // passphrase available); the dispatcher throws
+            // IpamBackupKeyRequiredException which we surface as-is so the
+            // operator sees an actionable message in the UI.
+            $vaultKey = ipam_backup_vault_key_get_raw();
+            backup_decrypt_to_path($downloadPath, $stagedPath, $appSecret, null, $vaultKey);
         } else {
             ipam_restore_assert_staged_path($stagedPath); // #762 item 3 — defence-in-depth before write
             if (!@copy($downloadPath, $stagedPath)) {
@@ -1083,6 +1100,193 @@ function ipam_restore_prepare_for_restore(PDO $db, array $config, int $destinati
         'filename'  => $remoteName,
         'encrypted' => $isEnc,
     ];
+}
+
+/**
+ * Stage an operator-uploaded backup file (#837, v3.24.0).
+ *
+ * Mirrors ipam_restore_prepare_for_restore()'s output contract so the
+ * existing wizard machinery (sign/dryrun/apply) consumes upload-staged
+ * files identically to destination-staged files.
+ *
+ * Detects the on-disk format by peeking the magic bytes:
+ *   IPAMBKP3 stored      → backup_vault_key from config (no operator prompt)
+ *   IPAMBKP3 transitory  → operator-supplied $passphrase
+ *   IPAMBKP2 / IPAMBKP1  → app_secret (legacy)
+ *   IPAMBKU1             → integrity-only unwrap (no key)
+ *   plain SQL / IPAMBKL1 → straight copy (no decrypt)
+ *
+ * For IPAMBKP3 transitory archives, throws IpamBackupKeyRequiredException
+ * when $passphrase is null/empty so the caller can render a passphrase
+ * prompt. The same exception fires when a stored archive lands but the
+ * vault key is unset on this install (operator must restore config.php
+ * before they can decrypt the archive).
+ *
+ * Reads $_FILES['restore_upload']. Caller is responsible for csrf, role,
+ * and demo-mode checks before calling.
+ *
+ * No PDO dependency: unlike the destination-driven path, an uploaded
+ * archive has no matching backup_runs row to checksum-verify against
+ * (the file did not originate from any known destination this install
+ * tracks). Integrity is enforced by the codec's HMAC / SHA-256 instead.
+ *
+ * @param array<string,mixed> $config  global $config
+ * @return array{path:string,size:int,filename:string,encrypted:bool}
+ * @throws IpamBackupKeyRequiredException when an IPAMBKP3 archive needs
+ *         a credential the caller did not supply.
+ * @throws RuntimeException on upload, format, or I/O failure.
+ */
+function ipam_restore_prepare_for_upload(array $config, ?string $passphrase = null): array
+{
+    // dirname(__DIR__) here is the Simple-PHP-IPAM/ web root (this file lives
+    // under lib/), matching the convention used by sibling helpers.
+    $tmpDir = dirname(__DIR__) . '/data/tmp';
+    if (!is_dir($tmpDir)) {
+        if (!@mkdir($tmpDir, 0775, true) && !is_dir($tmpDir)) {
+            throw new RuntimeException('ipam_restore_upload: cannot create tmp dir');
+        }
+    }
+
+    if (!isset($_FILES['restore_upload']) || !is_array($_FILES['restore_upload'])) {
+        throw new RuntimeException('ipam_restore_upload: no file uploaded');
+    }
+    $f = $_FILES['restore_upload'];
+    $err  = is_numeric($f['error'] ?? null) ? (int) $f['error'] : UPLOAD_ERR_NO_FILE;
+    $tmp  = is_string($f['tmp_name'] ?? null) ? $f['tmp_name'] : '';
+    $name = is_string($f['name'] ?? null)     ? $f['name']     : '';
+    $size = is_numeric($f['size'] ?? null)    ? (int) $f['size'] : 0;
+
+    if ($err !== UPLOAD_ERR_OK) {
+        throw new RuntimeException(ipam_restore_upload_error_message($err));
+    }
+    if ($tmp === '' || !is_uploaded_file($tmp)) {
+        throw new RuntimeException('ipam_restore_upload: invalid uploaded file');
+    }
+    if ($size <= 0) {
+        throw new RuntimeException('ipam_restore_upload: empty upload');
+    }
+
+    $maxMb = to_int(ipam_setting('backup_max_upload_size_mb', 2048));
+    if ($maxMb < 1) {
+        $maxMb = 2048;
+    }
+    $maxBytes = $maxMb * 1024 * 1024;
+    if ($size > $maxBytes) {
+        throw new RuntimeException(sprintf(
+            'ipam_restore_upload: file is %d bytes; limit is %d MiB. ' .
+            'Adjust backup_max_upload_size_mb (and PHP upload_max_filesize / post_max_size) if needed.',
+            $size,
+            $maxMb
+        ));
+    }
+
+    // Sanitise the filename for display / signing — strip path components,
+    // refuse traversal characters. The on-disk staged path uses a random
+    // suffix; this name is recorded for the operator's reference only.
+    $displayName = basename($name);
+    if ($displayName === '' || str_contains($displayName, "\0")) {
+        throw new RuntimeException('ipam_restore_upload: invalid filename');
+    }
+
+    $rand         = bin2hex(random_bytes(8));
+    $downloadPath = $tmpDir . '/restore_dl_' . $rand;
+
+    if (!@move_uploaded_file($tmp, $downloadPath)) {
+        throw new RuntimeException('ipam_restore_upload: cannot move uploaded file into tmp');
+    }
+
+    try {
+        // Peek 8 bytes to dispatch.
+        $fh = @fopen($downloadPath, 'rb');
+        if ($fh === false) {
+            throw new RuntimeException('ipam_restore_upload: cannot open uploaded file');
+        }
+        $magic = (string) fread($fh, 8);
+        fclose($fh);
+
+        $isEnc = ($magic === BACKUP_MAGIC_V3
+               || $magic === BACKUP_MAGIC_V2
+               || $magic === BACKUP_MAGIC);
+        $isWrapped = ($magic === BACKUP_MAGIC_UNENC);
+        // Gzip-backed plain dumps (e.g. uploaded mysqldump | gzip output
+        // or raw .sql.gz) carry the standard gzip magic 0x1f 0x8b in the
+        // first two bytes. Without this branch they fall through to .bin
+        // and ipam_restore_read_staged_sql() reads the compressed bytes
+        // as plaintext during dry-run, rejecting otherwise valid uploads.
+        $isGz = (strlen($magic) >= 2 && substr($magic, 0, 2) === "\x1f\x8b");
+
+        // Choose the staged extension. The decrypted body for v1/v2/v3 is
+        // historically gzipped SQL — match the destination-driven path's
+        // convention so dryrun/apply don't care which staging route fed
+        // them. Same .sql.gz extension applies to plain gzipped uploads
+        // so the restore reader's gz-aware path picks them up. For
+        // wrapped + plain-uncompressed inputs we keep .bin since the
+        // body's content type is determined by its own magic (IPAMBKL1
+        // vs SQL).
+        $stagedExt  = ($isEnc || $isGz) ? '.sql.gz' : '.bin';
+        $stagedPath = $tmpDir . '/restore_staged_' . $rand . $stagedExt;
+        ipam_restore_assert_staged_path($stagedPath);
+
+        if ($isEnc) {
+            $appSecret = is_string($config['app_secret'] ?? null) ? $config['app_secret'] : '';
+            // app_secret is required for legacy v1/v2; v3 ignores it. Pass
+            // empty string when missing so the dispatcher's branch-specific
+            // requirement check fires the appropriate error.
+            $vaultKey = ipam_backup_vault_key_get_raw();
+            backup_decrypt_to_path($downloadPath, $stagedPath, $appSecret, $passphrase, $vaultKey);
+        } elseif ($isWrapped) {
+            backup_unencrypted_unwrap_stream($downloadPath, $stagedPath);
+        } else {
+            // Plain SQL / IPAMBKL1 — straight copy.
+            if (!@copy($downloadPath, $stagedPath)) {
+                throw new RuntimeException('ipam_restore_upload: cannot copy plain upload to staged path');
+            }
+        }
+    } finally {
+        if (is_file($downloadPath)) {
+            // nosemgrep: php.lang.security.unlink-use.unlink-use -- $downloadPath generated locally from random hex; tmpDir is project-controlled
+            @unlink($downloadPath);
+        }
+    }
+
+    $stagedSize = @filesize($stagedPath);
+    if ($stagedSize === false) {
+        throw new RuntimeException('ipam_restore_upload: staged file size unreadable');
+    }
+
+    return [
+        'path'      => $stagedPath,
+        'size'      => $stagedSize,
+        'filename'  => $displayName,
+        'encrypted' => $isEnc, // wrapped (IPAMBKU1) reports as not-encrypted: integrity wrapper, no key was needed
+    ];
+}
+
+/**
+ * Translate a $_FILES['*']['error'] code into an operator-readable
+ * sentence. Keeps the ipam_restore_prepare_for_upload() body focused
+ * on flow rather than message tables.
+ */
+function ipam_restore_upload_error_message(int $code): string
+{
+    switch ($code) {
+        case UPLOAD_ERR_INI_SIZE:
+            return 'ipam_restore_upload: file exceeds PHP upload_max_filesize';
+        case UPLOAD_ERR_FORM_SIZE:
+            return 'ipam_restore_upload: file exceeds the form-declared MAX_FILE_SIZE';
+        case UPLOAD_ERR_PARTIAL:
+            return 'ipam_restore_upload: file upload was incomplete';
+        case UPLOAD_ERR_NO_FILE:
+            return 'ipam_restore_upload: no file was uploaded';
+        case UPLOAD_ERR_NO_TMP_DIR:
+            return 'ipam_restore_upload: PHP has no upload_tmp_dir configured';
+        case UPLOAD_ERR_CANT_WRITE:
+            return 'ipam_restore_upload: PHP could not write the uploaded file to disk';
+        case UPLOAD_ERR_EXTENSION:
+            return 'ipam_restore_upload: a PHP extension halted the upload';
+        default:
+            return 'ipam_restore_upload: unknown upload error (code ' . $code . ')';
+    }
 }
 
 /**

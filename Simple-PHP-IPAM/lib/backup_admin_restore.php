@@ -55,6 +55,63 @@ function ipam_backup_admin_restore_handle(\PDO $db, array $config): array
         } else {
             $step = to_str($_POST['step'] ?? '');
 
+            // 'upload' — operator-uploaded local file (#837, v3.24.0).
+            // Same downstream pipeline as 'stage': produces a staged file
+            // under data/tmp/ + a phase=staged token. Difference is the
+            // input source ($_FILES instead of a configured destination)
+            // and the credential surface (passphrase prompt for IPAMBKP3
+            // transitory archives).
+            if ($step === 'upload') {
+                $passphrase = to_str($_POST['passphrase'] ?? '');
+                $name       = to_str($_POST['display_name'] ?? '');
+                if ($name === '') {
+                    $upload = $_FILES['restore_upload'] ?? null;
+                    if (is_array($upload) && is_string($upload['name'] ?? null)) {
+                        $name = basename($upload['name']);
+                    }
+                }
+                $staged = null;
+                try {
+                    $staged = ipam_restore_prepare_for_upload(
+                        $config,
+                        $passphrase !== '' ? $passphrase : null
+                    );
+                    $meta = [
+                        'filename'       => $staged['filename'],
+                        'destination_id' => 0, // upload path has no destination
+                        'size'           => $staged['size'],
+                    ];
+                    $stagedSig      = ipam_restore_wizard_sign($config, RESTORE_WIZARD_PHASE_STAGED, $staged['path'], $meta);
+                    $stagedPath     = $staged['path'];
+                    $stagedFilename = $staged['filename'];
+                    $stagedSize     = $staged['size'];
+                    $stagedDestId   = 0;
+                    $phase          = RESTORE_WIZARD_PHASE_STAGED;
+                    audit($db, 'db.restore_upload', 'system', null, "filename=$name size=$stagedSize");
+                } catch (IpamBackupKeyRequiredException $e) {
+                    // Surface a special phase the UI uses to render a
+                    // passphrase prompt without leaving the wizard.
+                    audit($db, 'db.restore_upload_needs_passphrase', 'system', null, "filename=$name");
+                    $err   = $e->getMessage();
+                    $phase = 'needs_passphrase';
+                } catch (Throwable $e) {
+                    error_log('[restore_web] upload failed: ' . $e->getMessage());
+                    audit($db, 'db.restore_upload_failed', 'system', null, "filename=$name error=" . substr($e->getMessage(), 0, 200));
+                    if (is_array($staged)) {
+                        $orphan  = realpath($staged['path']);
+                        $tmpReal = realpath(__DIR__ . '/../data/tmp');
+                        if ($orphan !== false && $tmpReal !== false
+                            && str_starts_with($orphan . '/', rtrim($tmpReal, '/') . '/')
+                            && is_file($orphan)) {
+                            @unlink($orphan); // nosemgrep: php.lang.security.unlink-use.unlink-use -- realpath() under data/tmp/
+                        }
+                    }
+                    $stagedPath = $stagedSig = $stagedFilename = $phase = '';
+                    $stagedSize = $stagedDestId = 0;
+                    $err        = 'Upload failed: ' . $e->getMessage();
+                }
+            }
+
             if ($step === 'stage') {
                 $destId = to_int($_POST['destination_id'] ?? 0);
                 $name   = to_str($_POST['name'] ?? '');

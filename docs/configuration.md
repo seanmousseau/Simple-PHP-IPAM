@@ -86,6 +86,7 @@ The keys below are the only ones read from `config.php` at runtime in v3.x. **Al
 - [Full example](#full-example)
 - [Settings reference](#settings-reference)
 - [`app_secret`](#app_secret) *(v3.6.0)*
+- [`backup_vault_key`](#backup_vault_key) *(v3.24.0)*
 - [`session`](#session) *(v3.6.0)*
 - [`auth`](#auth) *(v3.6.0)*
 - [`api`](#api) *(v3.6.0)*
@@ -263,6 +264,47 @@ php -r "echo bin2hex(random_bytes(32));"
 ```
 
 **Important:** Changing `app_secret` after users have enrolled in 2FA will invalidate all existing TOTP secrets. Users will not be able to complete the 2FA challenge and will need an admin to reset their 2FA before they can log in. Set this value once and do not change it.
+
+---
+
+### `backup_vault_key`
+
+*(introduced in v3.24.0)*
+
+A 32-byte secret (base64-encoded) used to encrypt scheduled backups in **stored mode** — IPAMBKP3's default for destination-driven runs. Distinct from `app_secret`: `app_secret` protects DB-resident data (TOTP secrets, restore-staging tokens), `backup_vault_key` protects backup files at rest. Keeping them separate is a v4.0.0 multi-tenancy prerequisite (per-tenant keys will be HKDF-derived from `backup_vault_key`, not `app_secret`).
+
+#### Lifecycle
+
+- **Auto-generation.** On the first scheduled or stored-mode backup, if `backup_vault_key` is empty or absent, the application generates 32 random bytes and rewrites `config.php` in place to insert the new value. Operators may pre-seed it manually:
+
+  ```bash
+  php -r "echo base64_encode(random_bytes(32));"
+  ```
+
+  Then add to `config.php`:
+
+  ```php
+  'backup_vault_key' => 'your-base64-value-here',
+  ```
+
+- **Idempotent.** A populated, well-formed value (32 bytes after base64 decode) is reused. A populated but malformed value (wrong length, invalid base64) raises an error rather than silently regenerating — operators must clear or correct the value before retrying.
+- **Rotation.** Rotating `backup_vault_key` invalidates every existing IPAMBKP3 stored-mode backup. Files encrypted with the old key cannot be decrypted with the new one. Rotation procedure (manual until a CLI helper ships):
+
+  1. Decrypt all archives you still need with the current key (use `tools/decrypt-backup.php` for offline decrypts).
+  2. Replace the `backup_vault_key` value in `config.php`.
+  3. Take a fresh backup with the new key.
+
+- **Storage.** Treat `backup_vault_key` like a backup of the database itself — store it separately from the archives it encrypts. Putting both in the same off-site vault means a single compromise yields both the ciphertext AND the key.
+
+#### Relationship to `app_secret`
+
+| Concern | `app_secret` | `backup_vault_key` |
+|---|---|---|
+| Scope | DB-resident secrets (TOTP, restore tokens) | Backup files at rest (IPAMBKP3 stored mode) |
+| Used by | `lib.php` TOTP cipher; `lib/restore_wizard.php` | `lib.php` IPAMBKP3 codec; manual upload-restore |
+| Rotation breaks | All TOTP enrollments | All stored-mode backups |
+| Auto-generated | No (operator sets before first 2FA enrollment) | Yes (lazy on first encrypted backup) |
+| Required for | TOTP, MFA, restore staging | Stored-mode IPAMBKP3 only (transitory and unencrypted modes don't need it) |
 
 ---
 
