@@ -1761,6 +1761,34 @@ function ipam_setting_definitions(): array
             'default'     => true,
             'sensitive'   => false,
         ],
+        // v3.25.0 #1078: per-tab override knobs so backup notifications
+        // can target a different audience than the global alert
+        // infrastructure. Empty / 'inherit' values fall back to the
+        // global alert.recipient_user_ids + mail.transport settings.
+        'backup.notify_recipient_user_ids' => [
+            'label'       => 'Backup-specific recipient user IDs',
+            'description' => 'Override list of user IDs (JSON array) to receive backup notifications. Empty = inherit alert.recipient_user_ids.',
+            'type'        => 'json',
+            'group'       => 'backup',
+            'default'     => [],
+            'sensitive'   => false,
+        ],
+        'backup.notify_recipient_email_extra' => [
+            'label'       => 'Extra backup notification recipients',
+            'description' => 'Additional comma-separated email addresses (no user account required). Combined with the recipient list.',
+            'type'        => 'string',
+            'group'       => 'backup',
+            'default'     => '',
+            'sensitive'   => false,
+        ],
+        'backup.notify_delivery_method' => [
+            'label'       => 'Backup notification delivery method',
+            'description' => "'inherit' uses the global mail transport (current behaviour). 'smtp' explicitly forces SMTP delivery for backup notifications regardless of the global default.",
+            'type'        => 'string',
+            'group'       => 'backup',
+            'default'     => 'inherit',
+            'sensitive'   => false,
+        ],
         // Internal — JSON map { destId: { last_ok_at, last_failed_at,
         // last_alerted_at, status } } maintained by cron Task 6c. Hidden
         // from the settings UI (group/label not surfaced) but stored in
@@ -3319,8 +3347,50 @@ function prune_address_history(PDO $db, int $retentionDays): int
 function ipam_resolve_alert_recipients(PDO $db): array
 {
     $ids = ipam_setting('alert.recipient_user_ids', []);
-    if (!is_array($ids) || $ids === []) return [];
-    $intIds = array_values(array_unique(array_map(fn($v) => (int)to_str($v), $ids)));
+    return ipam_resolve_recipients_for_user_ids($db, is_array($ids) ? $ids : []);
+}
+
+/**
+ * v3.25.0 #1078: backup-specific recipient resolution. If the
+ * `backup.notify_recipient_user_ids` override is set (non-empty array),
+ * resolve against that list; otherwise fall back to the global alert
+ * recipients. Combine with any extra free-form addresses from
+ * `backup.notify_recipient_email_extra` (CSV, no user account required).
+ *
+ * @return list<string>
+ */
+function ipam_resolve_backup_notify_recipients(PDO $db): array
+{
+    $override = ipam_setting('backup.notify_recipient_user_ids', []);
+    $useOverride = is_array($override) && $override !== [];
+    $emails = $useOverride
+        ? ipam_resolve_recipients_for_user_ids($db, $override)
+        : ipam_resolve_alert_recipients($db);
+
+    $extraRaw = ipam_setting('backup.notify_recipient_email_extra', '');
+    if (is_string($extraRaw) && trim($extraRaw) !== '') {
+        foreach (explode(',', $extraRaw) as $e) {
+            $e = trim($e);
+            if ($e !== '' && filter_var($e, FILTER_VALIDATE_EMAIL) !== false) {
+                $emails[] = $e;
+            }
+        }
+    }
+    return array_values(array_unique($emails));
+}
+
+/**
+ * Resolve a list of user IDs to email addresses. Skips inactive users and
+ * users without an email. Accepts a mixed array (JSON-decoded settings
+ * value) and coerces each entry to int; non-positive entries are dropped.
+ *
+ * @param  array<int|string, mixed> $rawIds
+ * @return list<string>
+ */
+function ipam_resolve_recipients_for_user_ids(PDO $db, array $rawIds): array
+{
+    if ($rawIds === []) return [];
+    $intIds = array_values(array_unique(array_map(fn($v) => (int)to_str($v), $rawIds)));
     $intIds = array_values(array_filter($intIds, fn($i) => $i > 0));
     if ($intIds === []) return [];
 
@@ -6482,15 +6552,17 @@ function ipam_backup_notify_dispatch(PDO $db, string $event, array $context): vo
     };
     if (!$shouldSend) return;
 
-    // Recipients via the same multi-user picker as every other alert.
-    $recipients = ipam_resolve_alert_recipients($db);
+    // Recipients: v3.25.0 #1078 backup-specific override takes precedence
+    // over the global alert recipients. Empty override falls through to the
+    // legacy alert.recipient_user_ids + alert.email path.
+    $recipients = ipam_resolve_backup_notify_recipients($db);
     if ($recipients === []) {
         $legacy = trim(to_str(ipam_setting('alert.email')));
         if ($legacy !== '') $recipients = [$legacy];
     }
-    // Per-schedule recipient override: applies to both scheduled-flow events
-    // (the only ones with a schedule_id in scope). For other events the
-    // resolver receives null and short-circuits to globals.
+    // Per-schedule recipient override (v3.23.0 #825): applies on top of the
+    // backup-tab override for scheduled-flow events. Manual / system events
+    // skip this layer because there's no schedule_id in scope.
     $applyRecipientOverride = $event === 'failure_scheduled' || $event === 'success_scheduled';
     if ($applyRecipientOverride) {
         $recipients = ipam_backup_notify_resolve_recipients($db, $scheduleId, $recipients);

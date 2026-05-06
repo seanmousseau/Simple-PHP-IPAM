@@ -444,6 +444,82 @@ page_header('Health Dashboard');
 
 </div>
 
+<?php
+/* v3.25.0 #854: per-destination connectivity section. Operator-friendly
+ * read-out of every active destination's last test result so a quietly
+ * broken S3/SFTP doesn't sit unnoticed for weeks. The section is admin-only
+ * (the rest of health.php already gates by role); the data comes from the
+ * backup.destination_health setting that cron Task 6c (#§2.4 v3.22.0)
+ * maintains. */
+try {
+    $bdStmt = $db->query(
+        "SELECT id, name, type, is_default, is_active FROM backup_destinations ORDER BY name"
+    );
+    $bdRows = $bdStmt !== false ? $bdStmt->fetchAll(PDO::FETCH_ASSOC) : [];
+} catch (\Throwable) {
+    $bdRows = [];
+}
+$bdHealthRaw = function_exists('ipam_setting') ? ipam_setting('backup.destination_health') : '';
+$bdHealth    = is_string($bdHealthRaw) ? json_decode($bdHealthRaw, true) : [];
+if (!is_array($bdHealth)) {
+    $bdHealth = [];
+}
+
+$bdHealthy = 0;
+$bdUnhealthy = 0;
+$bdRowsRender = [];
+foreach ($bdRows as $r) {
+    if (!is_array($r)) continue;
+    $rid  = to_int($r['id']);
+    $st   = is_array($bdHealth[$rid] ?? null) ? $bdHealth[$rid] : [];
+    $ok   = ($st['ok'] ?? null) === true;
+    $when = is_string($st['last_test_at'] ?? null) ? $st['last_test_at'] : '';
+    $msg  = is_string($st['message'] ?? null) ? $st['message'] : '';
+    if ($when === '') {
+        $level = 'warn';
+        $valHtml = '<span class="muted">never tested</span>';
+    } elseif ($ok) {
+        $bdHealthy++;
+        $level = 'ok';
+        $valHtml = '<span class="badge badge-success">OK</span> ' . e($when);
+    } else {
+        $bdUnhealthy++;
+        $level = 'warn';
+        $valHtml = '<span class="badge badge-failed">Failed</span> ' . e($when);
+        if ($msg !== '') $valHtml .= ' &mdash; <span class="muted">' . e(substr($msg, 0, 80)) . '</span>';
+    }
+    $bdRowsRender[] = [
+        'label' => to_str($r['name']) . ' (' . strtoupper(to_str($r['type'])) . ')',
+        'html'  => $valHtml,
+        'level' => $level,
+    ];
+}
+?>
+
+<?php if (count($bdRows) > 0): ?>
+<h2 style="margin-top:1.5rem">Backup destinations</h2>
+<p class="muted" style="font-size:.85em">
+  <?= number_format($bdHealthy) ?> of <?= number_format(count($bdRows)) ?> destinations healthy
+  <?php if ($bdUnhealthy > 0): ?>
+    &mdash; <span class="warning"><?= number_format($bdUnhealthy) ?> failing</span>
+  <?php endif; ?>
+  <a href="backup_admin.php?tab=destinations" style="color:var(--link);margin-left:.5rem">Manage</a>
+</p>
+<div class="card" style="padding:0;overflow:hidden">
+  <table class="data-table">
+    <thead><tr><th>Destination</th><th>Last test</th></tr></thead>
+    <tbody>
+    <?php foreach ($bdRowsRender as $r): ?>
+      <tr>
+        <td><?= e($r['label']) ?></td>
+        <td><?= $r['html'] ?></td>
+      </tr>
+    <?php endforeach; ?>
+    </tbody>
+  </table>
+</div>
+<?php endif; ?>
+
 <p class="muted" style="margin-top:1rem;font-size:.8em">
   Cache TTL: <?= e((string)$cacheTtl) ?>s &mdash;
   <a href="health.php?nocache=1" style="color:var(--link)">Force refresh</a>
