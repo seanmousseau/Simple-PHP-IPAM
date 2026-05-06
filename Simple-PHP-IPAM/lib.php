@@ -5128,6 +5128,14 @@ function backup_encrypt_stream_v3(
     if ($aMem < 8 || $aMem > BACKUP_V3_ARGON_MEM_KIB_MAX) {
         throw new RuntimeException('backup_encrypt_stream_v3: argon memory out of bounds');
     }
+    // Mirror the decrypt-time constraint: parallelism is fixed at 1 by the
+    // libsodium pwhash API (see ipam_argon2id_derive). Reject anything
+    // else here so a caller cannot produce an archive whose header records
+    // a parallelism the decrypt path will refuse, leaving the archive
+    // undecryptable. This is the same check the decrypt path enforces.
+    if ($aPar !== 1) {
+        throw new RuntimeException('backup_encrypt_stream_v3: argon parallelism must be 1 (libsodium constraint)');
+    }
 
     if ($mode === BACKUP_V3_MODE_TRANSITORY) {
         if ($passphrase === null || $passphrase === '') {

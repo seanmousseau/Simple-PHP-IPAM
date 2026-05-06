@@ -99,6 +99,18 @@ function ipam_backup_admin_restore_handle(\PDO $db, array $config): array
                     // cannot solve.
                     $err = $e->getMessage();
                     if ($e->mode === BACKUP_V3_MODE_TRANSITORY) {
+                        // The upload helper consumes (move + unlink) the
+                        // $_FILES temp by the time we reach this branch,
+                        // so the next POST has no archive to decrypt.
+                        // Deliberate UX choice: the needs_passphrase view
+                        // re-renders the file input alongside the new
+                        // passphrase field (see views/backup_admin_restore.php)
+                        // so the operator picks the file again. Persisting
+                        // the upload in a session-keyed staging area would
+                        // cleaner but requires session-cleanup discipline +
+                        // extra security review for session-bound paths;
+                        // tracked as a v3.25.0 polish item rather than
+                        // shipping the half-built path-stash here.
                         audit($db, 'db.restore_upload_needs_passphrase', 'system', null, "filename=$name");
                         $phase = 'needs_passphrase';
                     } else {

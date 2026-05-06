@@ -1064,10 +1064,6 @@ function ipam_restore_prepare_for_restore(PDO $db, array $config, int $destinati
     try {
         if ($isEnc) {
             $appSecret = is_string($config['app_secret'] ?? null) ? $config['app_secret'] : '';
-            if ($appSecret === '') {
-                throw new RuntimeException('ipam_restore: encrypted backup but app_secret is empty');
-            }
-            ipam_restore_assert_staged_path($stagedPath); // #762 item 3 — defence-in-depth before write
             // v3.24+: forward the vault key so the dispatcher can decrypt
             // any IPAMBKP3 stored-mode archives that have been written into
             // this destination by the manual upload-restore path or by a
@@ -1077,6 +1073,21 @@ function ipam_restore_prepare_for_restore(PDO $db, array $config, int $destinati
             // IpamBackupKeyRequiredException which we surface as-is so the
             // operator sees an actionable message in the UI.
             $vaultKey = ipam_backup_vault_key_get_raw();
+            // Pre-flight credential check: we don't yet know the on-disk
+            // format (the dispatcher peeks the magic), but we can refuse
+            // up-front when neither credential is available — every
+            // encrypted format needs at least one. Allowing only one of
+            // the two means an install with vault_key but no app_secret
+            // can still restore a v3 stored archive (and vice versa for
+            // v1/v2). The dispatcher will raise the format-specific
+            // error if the actual archive needs the credential we don't
+            // have.
+            if ($appSecret === '' && $vaultKey === null) {
+                throw new RuntimeException(
+                    'ipam_restore: encrypted backup but neither app_secret nor backup_vault_key is set'
+                );
+            }
+            ipam_restore_assert_staged_path($stagedPath); // #762 item 3 — defence-in-depth before write
             backup_decrypt_to_path($downloadPath, $stagedPath, $appSecret, null, $vaultKey);
         } else {
             ipam_restore_assert_staged_path($stagedPath); // #762 item 3 — defence-in-depth before write
@@ -1208,6 +1219,7 @@ function ipam_restore_prepare_for_upload(array $config, ?string $passphrase = nu
                || $magic === BACKUP_MAGIC_V2
                || $magic === BACKUP_MAGIC);
         $isWrapped = ($magic === BACKUP_MAGIC_UNENC);
+        $isLogical = ($magic === 'IPAMBKL1');
         // Gzip-backed plain dumps (e.g. uploaded mysqldump | gzip output
         // or raw .sql.gz) carry the standard gzip magic 0x1f 0x8b in the
         // first two bytes. Without this branch they fall through to .bin
@@ -1215,14 +1227,44 @@ function ipam_restore_prepare_for_upload(array $config, ?string $passphrase = nu
         // as plaintext during dry-run, rejecting otherwise valid uploads.
         $isGz = (strlen($magic) >= 2 && substr($magic, 0, 2) === "\x1f\x8b");
 
+        // Positive plain-SQL sniff: anything that is NOT IPAM magic, NOT
+        // IPAMBKL1, NOT IPAMBKU1, and NOT gzip must look like SQL text
+        // before we accept it. Random binary garbage previously fell
+        // through to the plain-copy branch and only failed later at
+        // dryrun/apply with a confusing error; reject up-front instead
+        // so the operator gets an immediate "unrecognised backup format"
+        // message at the upload step.
+        $isPlainSql = false;
+        if (!$isEnc && !$isWrapped && !$isLogical && !$isGz) {
+            $head = strtoupper(ltrim((string) substr($magic, 0, 8)));
+            // Common dump preludes: SQL comment, BEGIN [TRANSACTION],
+            // CREATE TABLE/INDEX/...,  PRAGMA (sqlite), INSERT, SET
+            // (mysqldump session vars), -- (comment).
+            $isPlainSql = (
+                str_starts_with($head, '--')
+                || str_starts_with($head, 'BEGIN')
+                || str_starts_with($head, 'CREATE')
+                || str_starts_with($head, 'INSERT')
+                || str_starts_with($head, 'PRAGMA')
+                || str_starts_with($head, 'SET ')
+                || str_starts_with($head, '/*')
+            );
+            if (!$isPlainSql) {
+                throw new RuntimeException(
+                    'ipam_restore_upload: unrecognised backup format ' .
+                    '(expected IPAMBKP1/2/3, IPAMBKU1, IPAMBKL1, gzip, or SQL text)'
+                );
+            }
+        }
+
         // Choose the staged extension. The decrypted body for v1/v2/v3 is
         // historically gzipped SQL — match the destination-driven path's
         // convention so dryrun/apply don't care which staging route fed
         // them. Same .sql.gz extension applies to plain gzipped uploads
         // so the restore reader's gz-aware path picks them up. For
-        // wrapped + plain-uncompressed inputs we keep .bin since the
-        // body's content type is determined by its own magic (IPAMBKL1
-        // vs SQL).
+        // wrapped (IPAMBKU1), IPAMBKL1, and plain-uncompressed SQL we
+        // use .bin since the body's content type is determined by its
+        // own magic (IPAMBKL1 vs SQL) at dryrun time.
         $stagedExt  = ($isEnc || $isGz) ? '.sql.gz' : '.bin';
         $stagedPath = $tmpDir . '/restore_staged_' . $rand . $stagedExt;
         ipam_restore_assert_staged_path($stagedPath);

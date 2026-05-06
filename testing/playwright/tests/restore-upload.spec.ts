@@ -80,11 +80,13 @@ test.describe('Restore wizard — manual upload (#837)', () => {
     await expect(step2Heading.or(errorBanner)).toBeVisible();
   });
 
-  test('garbage upload either errors or stages for downstream rejection', async ({ page }) => {
+  test('garbage upload is rejected at the upload step (not deferred to dryrun)', async ({ page }) => {
     await openUploadDetails(page);
-    // Random bytes that match no magic — staged as a plain copy; the
-    // dryrun is where rejection happens. The upload step itself does
-    // not pre-validate content (would duplicate splitter logic).
+    // Random bytes that match no magic and don't look like SQL text.
+    // v3.24.0 CR fix: the upload step now positively sniffs for IPAM
+    // magic / gzip / SQL prelude and rejects everything else with an
+    // 'unrecognised backup format' error, instead of staging garbage
+    // and only failing later at dryrun.
     const garbage = Buffer.from('\x00not-a-backup-file\xff\xfe\xfd', 'binary');
     await page.locator('input[type="file"][name="restore_upload"]').setInputFiles({
       name: 'garbage.bin',
@@ -93,12 +95,9 @@ test.describe('Restore wizard — manual upload (#837)', () => {
     });
     await page.locator('button:has-text("Upload & stage")').click();
     await page.waitForLoadState('networkidle');
-    // Wizard MUST progress past Step 1 in some form — either landing on
-    // Step 2 or surfacing an error banner. Stale Step 1 with no
-    // feedback is the regression we're guarding against.
-    const step2Heading = page.locator('h2', { hasText: /Step 2|dry-run preview/i });
-    const errorBanner  = page.locator('.danger');
-    await expect(step2Heading.or(errorBanner)).toBeVisible();
+    // Error banner must appear with the unrecognised-format message;
+    // we should NOT progress past Step 1.
+    await expect(page.locator('.danger')).toContainText(/unrecognised backup format|Upload failed/i);
   });
 
   test('upload form encloses an enctype=multipart/form-data attribute', async ({ page }) => {
