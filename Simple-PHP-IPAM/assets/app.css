@@ -1400,6 +1400,22 @@ body.pw-toggle-hidden .pw-wrap .pw-input{padding-right:36px}
 .skeleton-row:nth-child(odd){width:90%}
 .skeleton-row:nth-child(even){width:70%}
 @keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+/* v3.25.0 #855: skeleton-toggle container. Ready state hides placeholder
+   rows; loading state shows them. Markup: <div data-skeleton="loading">
+   .skeleton-row siblings… </div>; JS flips data-skeleton to "ready" when
+   the fetch resolves. */
+[data-skeleton="ready"] .skeleton-row{display:none}
+@media (prefers-reduced-motion:reduce){.skeleton-row{animation:none}}
+/* v3.25.0 #847 #848 #851 #857 row badges + protected highlight */
+.row-default{background:linear-gradient(90deg,var(--card-2) 0%,var(--card) 100%)}
+.row-protected{box-shadow:inset 3px 0 0 var(--success)}
+.badge-default{background:var(--badge-bg);color:var(--link);border:1px solid var(--link)}
+.badge-protected{background:var(--success);color:#fff}
+.badge-warn{background:var(--warn);color:#fff}
+.badge-format-logical{background:var(--link);color:#fff}
+.badge-format-database{background:var(--muted);color:var(--bg)}
+.picker-backup-format,.picker-encryption-mode,.picker-retention{margin-top:var(--space-8)}
+.grid-4{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:var(--space-6)}
 
 /* --- #509: monospace font for IP/CIDR/MAC columns --- */
 .ip-cell{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
