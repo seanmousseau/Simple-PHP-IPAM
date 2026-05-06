@@ -346,12 +346,55 @@ function ipam_backup_run_for_destination(
     $dest['schedule_id']  = $scheduleId;
     $client = ipam_backup_dest_client($dest);
 
-    $tmpSql = ipam_backup_dump_to_tmp($db);
+    // v3.25.0 #1076 #849 #851: resolve backup format and encryption mode
+    // from the destination's per-destination defaults. Both columns were
+    // added by the 3.25.0-backup-destination-evolution migration with
+    // sensible defaults ('logical' / 'stored'); pre-existing rows
+    // backfill from the legacy `encrypt` flag during migration.
+    $backupType = is_string($dest['default_backup_type'] ?? null)
+        ? (string) $dest['default_backup_type']
+        : 'database';
+    if ($backupType !== 'database' && $backupType !== 'logical') {
+        $backupType = 'database';
+    }
+
+    $encMode = is_string($dest['default_encryption_mode'] ?? null)
+        ? (string) $dest['default_encryption_mode']
+        : 'stored';
+    if (!in_array($encMode, ['stored', 'transitory', 'unencrypted'], true)) {
+        $encMode = 'stored';
+    }
+    // Server-side guard: 'unencrypted' is only allowed for Local
+    // destinations (#851). Remote destinations always force 'stored'
+    // even if the column is somehow set to 'unencrypted' — UI grey-out
+    // is belt; this is suspenders.
+    $destType = is_string($dest['type'] ?? null) ? (string) $dest['type'] : '';
+    if ($encMode === 'unencrypted' && $destType !== 'local') {
+        $encMode = 'stored';
+    }
+
+    // Dispatch on backup_type (#849). Logical → IPAMBKL1 engine-agnostic
+    // dump (v3.23.0 #824). Database → existing per-engine SQL dump.
+    if ($backupType === 'logical') {
+        $tmpSqlFh = tempnam(sys_get_temp_dir(), 'ipam-backup-logical-');
+        if ($tmpSqlFh === false) {
+            throw new RuntimeException('ipam_backup: cannot create temp file for logical dump');
+        }
+        try {
+            ipam_backup_logical_dump($db, $tmpSqlFh);
+        } catch (Throwable $e) {
+            @unlink($tmpSqlFh); // nosemgrep: php.lang.security.unlink-use.unlink-use -- tempnam-generated
+            throw $e;
+        }
+        $tmpSql = $tmpSqlFh;
+        $dumpExt = '.ipambkl1.gz';
+    } else {
+        $tmpSql = ipam_backup_dump_to_tmp($db);
+        $dumpExt = '.sql.gz';
+    }
 
     $appSecret = is_string($config['app_secret'] ?? null) ? $config['app_secret'] : '';
-    $encrypt = isset($dest['encrypt']) && (is_int($dest['encrypt']) || is_string($dest['encrypt']))
-        ? (int) $dest['encrypt'] : 0;
-    if ($encrypt === 1) {
+    if ($encMode !== 'unencrypted') {
         if ($appSecret === '') {
             @unlink($tmpSql); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmpSql is tempnam()-generated, no user input
             throw new RuntimeException('ipam_backup: encryption requested but app_secret is empty');
@@ -361,13 +404,31 @@ function ipam_backup_run_for_destination(
         $extension = '.enc';
     } else {
         $tmpFile = $tmpSql;
-        $extension = '.sql.gz';
+        $extension = $dumpExt;
     }
 
     // Random 8-hex-char suffix prevents filename collisions when two
     // runs land in the same second (e.g. manual + scheduled overlap).
     $remoteName = sprintf('ipam-backup-%s-%s%s', gmdate('Ymd-His'), bin2hex(random_bytes(4)), $extension);
-    $logId = ipam_backup_insert_log($db, $destId, $triggeredBy, 'running', $remoteName, $scheduleId);
+    $logId = ipam_backup_insert_log(
+        $db,
+        $destId,
+        $triggeredBy,
+        'running',
+        $remoteName,
+        $scheduleId,
+        $backupType,
+        $encMode
+    );
+
+    // v3.25.0 #856 cancel poll: cancel between dump+encrypt and upload.
+    if (ipam_backup_should_cancel($db, $logId)) {
+        ipam_backup_mark_canceled($db, $logId, 'before-upload');
+        audit($db, 'backup.cancel', 'destination', $destId,
+              'run_id=' . $logId . ' phase=before-upload');
+        @unlink($tmpFile); // nosemgrep: php.lang.security.unlink-use.unlink-use -- tempnam-generated
+        throw new RuntimeException('ipam_backup: canceled by operator before upload');
+    }
 
     try {
         $meta = $client->upload($tmpFile, $remoteName);
@@ -375,9 +436,18 @@ function ipam_backup_run_for_destination(
         $size = $meta['size'];
         $checksum = $meta['checksum'];
     } catch (Throwable $e) {
-        ipam_backup_update_log_failure($db, $logId, $e->getMessage());
-        audit($db, 'backup.failed', 'destination', $destId,
-              'remote=' . $remoteName . ' error=' . substr($e->getMessage(), 0, 200));
+        // If a cancel was requested mid-upload, prefer the canceled
+        // status over a generic 'failed' so audit and the History row
+        // surface the operator action.
+        if (ipam_backup_should_cancel($db, $logId)) {
+            ipam_backup_mark_canceled($db, $logId, 'mid-upload');
+            audit($db, 'backup.cancel', 'destination', $destId,
+                  'run_id=' . $logId . ' phase=mid-upload error=' . substr($e->getMessage(), 0, 80));
+        } else {
+            ipam_backup_update_log_failure($db, $logId, $e->getMessage());
+            audit($db, 'backup.failed', 'destination', $destId,
+                  'remote=' . $remoteName . ' error=' . substr($e->getMessage(), 0, 200));
+        }
         try {
             ipam_backup_notify($db, $dest, 'failure',
                 'remote=' . $remoteName . ' error=' . $e->getMessage());
@@ -866,9 +936,18 @@ function ipam_backup_encrypt_to_tmp(string $srcPath, string $appSecret): string
 /**
  * Insert a backup_runs row for a destination-driven backup. Status starts as
  * 'running' (v3.21.0 enum) and gets promoted to 'success' or 'failed' on
- * completion. Encryption mode is captured from the destination's `encrypt`
- * flag — encrypted destinations write 'stored' (v3.17 IPAMBKP2 mode);
- * unencrypted destinations write 'unencrypted'.
+ * completion.
+ *
+ * v3.25.0 #849 #1076 #851: $backupType and $encryptionMode are now passed
+ * explicitly by the orchestrator, sourced from the destination's
+ * `default_backup_type` / `default_encryption_mode` columns. Defaults
+ * preserve pre-v3.25 behaviour (database / derive-from-encrypt-flag) so
+ * legacy callers still work.
+ *
+ * The encryption_mode column vocabulary is ('stored','transitory',
+ * 'unencrypted'). The destination-driven path emits 'stored' or
+ * 'unencrypted'; 'transitory' is emitted only by the manual
+ * upload-and-restore path (#837) which has its own insert site.
  */
 function ipam_backup_insert_log(
     PDO $db,
@@ -876,35 +955,39 @@ function ipam_backup_insert_log(
     string $triggeredBy,
     string $status,
     string $filename,
-    ?int $scheduleId = null
+    ?int $scheduleId = null,
+    string $backupType = 'database',
+    ?string $encryptionMode = null
 ): int {
     $now = ipam_dialect()->now();
 
-    // Resolve encryption mode from the destination's encrypt flag.
-    //
-    // The encryption_mode column vocabulary is ('stored','transitory',
-    // 'unencrypted') — see backup_runs schema in all three engines. The
-    // destination-driven path can only produce 'stored' (admin-managed
-    // key) or 'unencrypted' (opt-out for trusted-local). 'transitory' is
-    // emitted only by the manual upload-and-restore path (#837) where the
-    // operator types the passphrase per-action; that flow records its own
-    // backup_runs row.
-    $encMode = 'unencrypted';
-    try {
-        $eStmt = $db->prepare("SELECT encrypt FROM backup_destinations WHERE id = :id");
-        $eStmt->execute([':id' => $destId]);
-        $enc = $eStmt->fetchColumn();
-        if ($enc !== false && (int) $enc === 1) {
-            $encMode = 'stored';
+    if ($encryptionMode === null) {
+        // Back-compat: derive from the destination's encrypt flag, matching
+        // pre-v3.25 behaviour.
+        $encryptionMode = 'unencrypted';
+        try {
+            $eStmt = $db->prepare("SELECT encrypt FROM backup_destinations WHERE id = :id");
+            $eStmt->execute([':id' => $destId]);
+            $enc = $eStmt->fetchColumn();
+            if ($enc !== false && (int) $enc === 1) {
+                $encryptionMode = 'stored';
+            }
+        } catch (Throwable) {
+            // best-effort; falls back to 'unencrypted' if the lookup fails
         }
-    } catch (Throwable) {
-        // best-effort; falls back to 'unencrypted' if the lookup fails
+    }
+
+    if ($backupType !== 'database' && $backupType !== 'logical') {
+        $backupType = 'database';
+    }
+    if (!in_array($encryptionMode, ['stored', 'transitory', 'unencrypted'], true)) {
+        $encryptionMode = 'unencrypted';
     }
 
     $stmt = $db->prepare(
         "INSERT INTO backup_runs " .
         "(destination_id, schedule_id, backup_type, encryption_mode, triggered_by, status, filename, source_version, started_at) " .
-        "VALUES (:d, :sid, 'database', :em, :t, :s, :f, :sv, $now)"
+        "VALUES (:d, :sid, :bt, :em, :t, :s, :f, :sv, $now)"
     );
     $stmt->bindValue(':d',   $destId, PDO::PARAM_INT);
     if ($scheduleId === null) {
@@ -912,13 +995,55 @@ function ipam_backup_insert_log(
     } else {
         $stmt->bindValue(':sid', $scheduleId, PDO::PARAM_INT);
     }
-    $stmt->bindValue(':em',  $encMode);
+    $stmt->bindValue(':bt',  $backupType);
+    $stmt->bindValue(':em',  $encryptionMode);
     $stmt->bindValue(':t',   $triggeredBy);
     $stmt->bindValue(':s',   $status);
     $stmt->bindValue(':f',   $filename);
     $stmt->bindValue(':sv',  IPAM_VERSION);
     $stmt->execute();
     return (int) $db->lastInsertId();
+}
+
+/**
+ * v3.25.0 #856 cancel-in-flight: poll the cancel_requested flag on a
+ * backup_runs row. Returns true iff the operator has clicked Cancel since
+ * the run started. Best-effort: a DB hiccup returns false (better to
+ * complete the backup than to abort it on a transient lookup failure).
+ *
+ * Call this between major orchestrator boundaries (post-dump,
+ * post-encrypt, before-upload) and at any chunk boundary inside a long
+ * upload. The corresponding cleanup happens in
+ * ipam_backup_handle_cancel().
+ */
+function ipam_backup_should_cancel(PDO $db, int $runId): bool
+{
+    try {
+        $stmt = $db->prepare("SELECT cancel_requested FROM backup_runs WHERE id = :id");
+        $stmt->execute([':id' => $runId]);
+        $v = $stmt->fetchColumn();
+        return $v !== false && (int) $v === 1;
+    } catch (Throwable) {
+        return false;
+    }
+}
+
+/**
+ * v3.25.0 #856: mark a canceled run as failed with the canonical
+ * 'canceled-by-operator' error_message. Status stays 'failed' (rather than
+ * a new 'canceled' enum value) so we don't have to evolve the
+ * backup_runs.status CHECK constraint across all three engines — see the
+ * comment in lib/backup.php where this status is checked. Audit and
+ * tmpfile cleanup are the orchestrator's responsibility.
+ */
+function ipam_backup_mark_canceled(PDO $db, int $runId, string $detail = ''): void
+{
+    $now = ipam_dialect()->now();
+    $msg = 'canceled-by-operator' . ($detail !== '' ? ': ' . $detail : '');
+    $stmt = $db->prepare(
+        "UPDATE backup_runs SET status='failed', error_message=:e, completed_at=$now WHERE id=:id"
+    );
+    $stmt->execute([':e' => $msg, ':id' => $runId]);
 }
 
 /** @param array{size:int,checksum:string} $meta */

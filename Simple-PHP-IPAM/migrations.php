@@ -3093,6 +3093,16 @@ function ipam_migrations(): array
                               AND retention_weekly  = 4
                               AND retention_monthly = 3";
             $run($backfillSql);
+
+            // Backfill default_encryption_mode from the legacy `encrypt`
+            // boolean column (#851). Existing rows with encrypt=0 must keep
+            // their unencrypted semantics on upgrade — otherwise the new
+            // column default ('stored') would silently turn on encryption
+            // for previously-unencrypted destinations. Only update rows
+            // still on the column default; admin tweaks during a re-run
+            // are preserved.
+            $run("UPDATE backup_destinations SET default_encryption_mode = 'unencrypted'
+                  WHERE encrypt = 0 AND default_encryption_mode = 'stored'");
         },
     ];
 }

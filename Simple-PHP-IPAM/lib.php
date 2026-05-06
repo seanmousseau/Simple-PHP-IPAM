@@ -5920,39 +5920,75 @@ function ipam_gfs_select_for_deletion(array $backups, array $config): array
  */
 function ipam_retention_compute_deletions(PDO $db, int $destinationId): array
 {
-    // ── 1. Fetch destination info — required to validate the ID ──────────────
-    $destStmt = $db->prepare("SELECT id FROM backup_destinations WHERE id = :id");
-    $destStmt->execute([':id' => $destinationId]);
-    if (!is_array($destStmt->fetch())) {
-        throw new \InvalidArgumentException("backup_destinations row not found: id={$destinationId}");
+    // ── 1. Fetch destination retention — v3.25.0 #846 retention rehome ──────
+    // Pre-v3.25.0 retention lived on backup_schedules. v3.25.0 moved it to
+    // backup_destinations so it describes "how much to keep at this storage
+    // location" rather than "how often we write to it" (per
+    // backup_overhaul.md §3 AGREED). The migration backfilled values from
+    // any per-schedule rows; the schedule columns remain in place for one
+    // release cycle for downgrade safety but are no longer the source of
+    // truth.
+    //
+    // Read from backup_destinations first; fall back to the per-schedule
+    // row only if the destination columns are missing (pre-migration
+    // upgrade window).
+    // Probe whether the v3.25.0 retention columns are present. Pre-migration
+    // upgrade windows and minimal-schema unit-test fixtures lack them; the
+    // destination read falls back to the legacy schedule read in that case.
+    $destRow = null;
+    try {
+        $destStmt = $db->prepare(
+            "SELECT id, retention_hourly, retention_daily, retention_weekly, retention_monthly
+               FROM backup_destinations WHERE id = :id"
+        );
+        $destStmt->execute([':id' => $destinationId]);
+        $destRow = $destStmt->fetch();
+    } catch (\PDOException) {
+        $destRow = null;
     }
 
-    // ── 2. Fetch GFS config from backup_schedules (sane defaults if no schedule) ─
-    $schedStmt = $db->prepare(
-        "SELECT retention_hourly, retention_daily, retention_weekly, retention_monthly
-         FROM backup_schedules
-         WHERE destination_id = :did AND is_active = 1
-         LIMIT 1"
-    );
-    $schedStmt->execute([':did' => $destinationId]);
-    $sched = $schedStmt->fetch();
+    if ($destRow === null || $destRow === false) {
+        // Either columns missing or row missing — distinguish by an
+        // existence-only probe so we still throw on bad ID.
+        $existsStmt = $db->prepare("SELECT id FROM backup_destinations WHERE id = :id");
+        $existsStmt->execute([':id' => $destinationId]);
+        if (!is_array($existsStmt->fetch())) {
+            throw new \InvalidArgumentException("backup_destinations row not found: id={$destinationId}");
+        }
+    }
 
-    if (is_array($sched)) {
+    if (is_array($destRow) && array_key_exists('retention_hourly', $destRow)) {
         $gfsConfig = [
-            'keep_hourly'  => to_int($sched['retention_hourly']),
-            'keep_daily'   => to_int($sched['retention_daily']),
-            'keep_weekly'  => to_int($sched['retention_weekly']),
-            'keep_monthly' => to_int($sched['retention_monthly']),
+            'keep_hourly'  => to_int($destRow['retention_hourly']),
+            'keep_daily'   => to_int($destRow['retention_daily']),
+            'keep_weekly'  => to_int($destRow['retention_weekly']),
+            'keep_monthly' => to_int($destRow['retention_monthly']),
         ];
     } else {
-        // No schedule: use conservative defaults so unscheduled destinations are
-        // still protected from unbounded log growth.
-        $gfsConfig = [
-            'keep_hourly'  => 0,
-            'keep_daily'   => 7,
-            'keep_weekly'  => 4,
-            'keep_monthly' => 3,
-        ];
+        // Pre-migration: fall back to any per-schedule row for transition.
+        $schedStmt = $db->prepare(
+            "SELECT retention_hourly, retention_daily, retention_weekly, retention_monthly
+             FROM backup_schedules
+             WHERE destination_id = :did AND is_active = 1
+             LIMIT 1"
+        );
+        $schedStmt->execute([':did' => $destinationId]);
+        $sched = $schedStmt->fetch();
+        if (is_array($sched)) {
+            $gfsConfig = [
+                'keep_hourly'  => to_int($sched['retention_hourly']),
+                'keep_daily'   => to_int($sched['retention_daily']),
+                'keep_weekly'  => to_int($sched['retention_weekly']),
+                'keep_monthly' => to_int($sched['retention_monthly']),
+            ];
+        } else {
+            $gfsConfig = [
+                'keep_hourly'  => 0,
+                'keep_daily'   => 7,
+                'keep_weekly'  => 4,
+                'keep_monthly' => 3,
+            ];
+        }
     }
 
     // ── 3. Fetch successful backup_runs rows for this destination ────────────
