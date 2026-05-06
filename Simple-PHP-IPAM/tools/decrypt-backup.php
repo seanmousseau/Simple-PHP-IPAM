@@ -73,7 +73,12 @@ EOF);
     exit(2);
 }
 
-$args = $argv;
+// PHP guarantees $argv exists under CLI sapi (gated above) but PHPStan
+// does not see that implication. Pull from $_SERVER so the static type
+// is unambiguous (list<string>).
+/** @var list<string> $serverArgv */
+$serverArgv = is_array($_SERVER['argv'] ?? null) ? $_SERVER['argv'] : [];
+$args = $serverArgv;
 array_shift($args); // script name
 
 $opts = ['in' => null, 'out' => null, 'app_secret' => null, 'vault_key' => null, 'passphrase' => null];
