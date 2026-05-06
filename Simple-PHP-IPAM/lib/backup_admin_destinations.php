@@ -104,12 +104,28 @@ function ipam_destinations_collect_config(string $type, array $post): array|stri
  */
 function ipam_destinations_collect_picker(string $type, array $post): array|string
 {
+    // Tolerate a legacy POST payload that omits the picker fields entirely
+    // (Playwright fixtures + legacy admin scripts). When the format radio is
+    // missing we default to 'logical'; the encryption mode follows the
+    // legacy 'encrypt' checkbox if present, otherwise 'stored'.
     $bt = is_string($post['default_backup_type'] ?? null) ? (string) $post['default_backup_type'] : 'logical';
     if ($bt !== 'database' && $bt !== 'logical') {
         return 'Invalid backup format.';
     }
 
-    $em = is_string($post['default_encryption_mode'] ?? null) ? (string) $post['default_encryption_mode'] : 'stored';
+    if (array_key_exists('default_encryption_mode', $post)) {
+        $em = is_string($post['default_encryption_mode']) ? $post['default_encryption_mode'] : 'stored';
+    } else {
+        // Legacy payload (test fixtures + external scripts that pre-date the
+        // picker UI). Derive from the encrypt checkbox if present, otherwise
+        // default to 'stored' — the safe choice that won't get rejected on
+        // remote destination types.
+        if (array_key_exists('encrypt', $post)) {
+            $em = isset($post['encrypt']) && (string) $post['encrypt'] !== '' ? 'stored' : 'unencrypted';
+        } else {
+            $em = 'stored';
+        }
+    }
     if (!in_array($em, ['stored', 'unencrypted'], true)) {
         return 'Invalid encryption mode.';
     }

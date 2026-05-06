@@ -152,9 +152,12 @@ test.describe('address hostname round-trip', () => {
       });
 
       try {
-        // Reload and verify
+        // Reload and verify. v3.25.0 #1093 added subnet description into the
+        // subnet <select> dropdown, so getByText would also match the
+        // (hidden) <option> element. Scope to the table cell so we assert
+        // the hostname is rendered as visible page content.
         await page.goto(`addresses.php?subnet_id=${subnetId}`);
-        await expect(page.getByText(fixture.text).first()).toBeVisible();
+        await expect(page.locator('table tbody tr').filter({ hasText: fixture.text }).first()).toBeVisible();
       } finally {
         // Clean up: find the address ID and delete it
         await page.goto(`addresses.php?subnet_id=${subnetId}`);

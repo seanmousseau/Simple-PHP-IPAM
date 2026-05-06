@@ -338,7 +338,16 @@ test.describe('Backup destinations admin', () => {
     }
 
     const deleteForm = row.locator('form:has(input[name="action"][value="delete_destination"])');
-    page.once('dialog', d => d.accept());
+    // v3.25.0 #858: destination delete now requires typing the destination
+    // name in a window.prompt() dialog. Older tests that did d.accept() with
+    // no argument now have to provide the name back.
+    page.once('dialog', d => {
+        if (d.type() === 'prompt') {
+            void d.accept(DEST_SFTP_NAME);
+        } else {
+            void d.accept();
+        }
+    });
     await deleteForm.locator('button[type="submit"]').click();
     await page.waitForURL(/destinations\.php/, { timeout: 10_000 });
 

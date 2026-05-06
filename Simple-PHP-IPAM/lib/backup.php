@@ -2596,6 +2596,14 @@ function ipam_logical_column_kind(string $columnName): string
     if (str_ends_with($columnName, '_bin')) {
         return 'binary';
     }
+    // v3.25.0 fix: addresses.expires_at is a DATE column (YYYY-MM-DD), not
+    // a datetime. The _at suffix convention assumed datetime granularity but
+    // expires_at predates that convention. Surfaced 2026-05-06 by the
+    // dispatch wire-up (#849) routing demo data through the IPAMBKL1 writer.
+    // Pass through as a scalar string so JSON encodes it verbatim.
+    if ($columnName === 'expires_at') {
+        return 'scalar';
+    }
     if (str_ends_with($columnName, '_at')) {
         return 'timestamp';
     }

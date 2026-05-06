@@ -76,13 +76,13 @@ if (!isset($picker['retention_monthly'])) $pRetM = 3;
   <label class="radio">
     <input type="radio" name="default_encryption_mode" value="unencrypted"
       <?= $pEncMode === 'unencrypted' ? 'checked' : '' ?>
-      <?= $pIsLocal ? '' : 'disabled' ?>>
+      data-encryption-unencrypted-radio>
     <strong>Unencrypted</strong>
-    <span class="muted">— plaintext payload</span>
-    <?php if (!$pIsLocal): ?>
-      <small class="muted">(only available for Local destinations; remote destinations always encrypt)</small>
-    <?php else: ?>
+    <span class="muted">— plaintext payload (Local destinations only)</span>
+    <?php if ($pIsLocal): ?>
       <small class="warning">⚠ plaintext storage; only enable on a trusted volume</small>
+    <?php else: ?>
+      <small class="muted">(server rejects unencrypted on remote destinations regardless of selection)</small>
     <?php endif; ?>
   </label>
 </fieldset>
