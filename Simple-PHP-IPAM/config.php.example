@@ -42,4 +42,19 @@ return [
     // this empty on a production instance with 2FA enabled.
     // Generate with: php -r "echo bin2hex(random_bytes(32));"
     'app_secret' => '',
+
+    // --- Backup vault key (v3.24.0+) ---
+    // Used to encrypt scheduled backups (IPAMBKP3 "stored" mode). Distinct from
+    // app_secret: app_secret protects DB-resident data (TOTP secrets, restore
+    // tokens), backup_vault_key protects backup files at rest.
+    //
+    // Auto-generated on first scheduled / stored-mode backup if left empty —
+    // the application rewrites this file in place to insert a fresh 32-byte
+    // base64 value. To pre-seed manually:
+    //   php -r "echo base64_encode(random_bytes(32));"
+    //
+    // Rotation: changing this value invalidates every existing IPAMBKP3
+    // stored-mode backup. Keep a copy alongside (NOT inside) the backup
+    // archive set.
+    'backup_vault_key' => '',
 ];

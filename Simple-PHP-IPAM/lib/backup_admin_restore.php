@@ -55,6 +55,91 @@ function ipam_backup_admin_restore_handle(\PDO $db, array $config): array
         } else {
             $step = to_str($_POST['step'] ?? '');
 
+            // 'upload' — operator-uploaded local file (#837, v3.24.0).
+            // Same downstream pipeline as 'stage': produces a staged file
+            // under data/tmp/ + a phase=staged token. Difference is the
+            // input source ($_FILES instead of a configured destination)
+            // and the credential surface (passphrase prompt for IPAMBKP3
+            // transitory archives).
+            if ($step === 'upload') {
+                $passphrase = to_str($_POST['passphrase'] ?? '');
+                $name       = to_str($_POST['display_name'] ?? '');
+                if ($name === '') {
+                    $upload = $_FILES['restore_upload'] ?? null;
+                    if (is_array($upload) && is_string($upload['name'] ?? null)) {
+                        $name = basename($upload['name']);
+                    }
+                }
+                $staged = null;
+                try {
+                    $staged = ipam_restore_prepare_for_upload(
+                        $config,
+                        $passphrase !== '' ? $passphrase : null
+                    );
+                    $meta = [
+                        'filename'       => $staged['filename'],
+                        'destination_id' => 0, // upload path has no destination
+                        'size'           => $staged['size'],
+                    ];
+                    $stagedSig      = ipam_restore_wizard_sign($config, RESTORE_WIZARD_PHASE_STAGED, $staged['path'], $meta);
+                    $stagedPath     = $staged['path'];
+                    $stagedFilename = $staged['filename'];
+                    $stagedSize     = $staged['size'];
+                    $stagedDestId   = 0;
+                    $phase          = RESTORE_WIZARD_PHASE_STAGED;
+                    audit($db, 'db.restore_upload', 'system', null, "filename=$name size=$stagedSize");
+                } catch (IpamBackupKeyRequiredException $e) {
+                    // The dispatcher raises IpamBackupKeyRequiredException for
+                    // BOTH IPAMBKP3 transitory archives (passphrase missing,
+                    // operator can re-upload + type it) AND IPAMBKP3 stored
+                    // archives whose backup_vault_key is absent on this
+                    // install (no in-band recovery — operator must restore
+                    // the key in config.php). Distinguish by mode so we
+                    // don't drop the admin onto a passphrase form they
+                    // cannot solve.
+                    $err = $e->getMessage();
+                    if ($e->mode === BACKUP_V3_MODE_TRANSITORY) {
+                        // The upload helper consumes (move + unlink) the
+                        // $_FILES temp by the time we reach this branch,
+                        // so the next POST has no archive to decrypt.
+                        // Deliberate UX choice: the needs_passphrase view
+                        // re-renders the file input alongside the new
+                        // passphrase field (see views/backup_admin_restore.php)
+                        // so the operator picks the file again. Persisting
+                        // the upload in a session-keyed staging area would
+                        // cleaner but requires session-cleanup discipline +
+                        // extra security review for session-bound paths;
+                        // tracked as a v3.25.0 polish item rather than
+                        // shipping the half-built path-stash here.
+                        audit($db, 'db.restore_upload_needs_passphrase', 'system', null, "filename=$name");
+                        $phase = 'needs_passphrase';
+                    } else {
+                        // Stored-mode upload: the missing credential is
+                        // backup_vault_key, not a passphrase. Stay on
+                        // Step 1 with the error banner; operator must
+                        // populate config.php['backup_vault_key'] and retry.
+                        audit($db, 'db.restore_upload_failed', 'system', null,
+                              "filename=$name reason=missing_backup_vault_key");
+                        $phase = '';
+                    }
+                } catch (Throwable $e) {
+                    error_log('[restore_web] upload failed: ' . $e->getMessage());
+                    audit($db, 'db.restore_upload_failed', 'system', null, "filename=$name error=" . substr($e->getMessage(), 0, 200));
+                    if (is_array($staged)) {
+                        $orphan  = realpath($staged['path']);
+                        $tmpReal = realpath(__DIR__ . '/../data/tmp');
+                        if ($orphan !== false && $tmpReal !== false
+                            && str_starts_with($orphan . '/', rtrim($tmpReal, '/') . '/')
+                            && is_file($orphan)) {
+                            @unlink($orphan); // nosemgrep: php.lang.security.unlink-use.unlink-use -- realpath() under data/tmp/
+                        }
+                    }
+                    $stagedPath = $stagedSig = $stagedFilename = $phase = '';
+                    $stagedSize = $stagedDestId = 0;
+                    $err        = 'Upload failed: ' . $e->getMessage();
+                }
+            }
+
             if ($step === 'stage') {
                 $destId = to_int($_POST['destination_id'] ?? 0);
                 $name   = to_str($_POST['name'] ?? '');

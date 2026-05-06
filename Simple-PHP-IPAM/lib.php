@@ -310,6 +310,48 @@ function ipam_db(array $config): PDO
  */
 function ensure_audit_log_table(PDO $db): void
 {
+    // Probe first: if audit_log already exists, skip the full CREATE
+    // TABLE / CREATE INDEX / CREATE TRIGGER path on this request. The
+    // probe is a no-row SELECT — a few microseconds per page on every
+    // engine.
+    //
+    // Without this short-circuit, ipam_db_init() runs the full CREATE
+    // path on every page load. On Postgres the CREATE OR REPLACE TRIGGER
+    // emitted by PgsqlDialect::append_only_trigger() races on the system
+    // catalog when multiple concurrent requests (page + sub-resource
+    // assets, or parallel API calls) hit init.php at the same time —
+    // surfacing as SQLSTATE[XX000] "tuple concurrently updated" and a
+    // sporadic 500 on whichever request lost the race. Documented in the
+    // v3.24.0 release notes.
+    //
+    // No process-wide caching: demo_reset_db() drops audit_log mid-
+    // request, so a cache that persists across calls would skip the
+    // self-heal that the next request needs. The probe is cheap enough
+    // to run every time. The race protection comes from the probe
+    // gating the CREATE OR REPLACE — if the table exists, no DDL fires.
+    try {
+        $probe = $db->query("SELECT 1 FROM audit_log LIMIT 0");
+        if ($probe !== false) {
+            $probe->closeCursor();
+            // Table exists. Verify the append-only triggers also exist;
+            // if either is missing (operator manually dropped them, an
+            // external migration omitted them, etc.) we MUST recreate
+            // them so audit-row immutability stays enforced. The probe
+            // is one extra cheap row-count query per request — much
+            // smaller than rebuilding the table + indexes — and it
+            // preserves the v3.24.0 race fix because the CREATE OR
+            // REPLACE TRIGGER path only runs when triggers are
+            // genuinely missing (rare; never on the steady-state
+            // request path).
+            if (!ipam_audit_log_triggers_present($db)) {
+                ensure_audit_log_triggers($db);
+            }
+            return;
+        }
+    } catch (PDOException) {
+        // table missing — fall through to the full create + trigger path
+    }
+
     $d = ipam_dialect();
     // action and created_at are indexed below, so they must use the
     // indexed text type (VARCHAR on MySQL, TEXT elsewhere). Free-form
@@ -356,6 +398,22 @@ function ensure_audit_log_table(PDO $db): void
     };
     $createIndex($db, 'idx_audit_log_action',     'audit_log', 'action');
     $createIndex($db, 'idx_audit_log_created_at', 'audit_log', 'created_at');
+    ensure_audit_log_triggers($db);
+}
+
+/**
+ * (Re)create the audit_log append-only triggers (idempotent).
+ *
+ * Extracted from ensure_audit_log_table() so callers that explicitly
+ * DROP the triggers — currently only prune_audit_log() under SQLite —
+ * can put them back without relying on a side effect of the table-
+ * creation function. ensure_audit_log_table()'s probe returns early
+ * when the table exists, so it cannot be the recovery path for missing
+ * triggers in isolation.
+ */
+function ensure_audit_log_triggers(PDO $db): void
+{
+    $d = ipam_dialect();
     foreach ($d->append_only_trigger('audit_log') as $stmt) {
         try {
             $db->exec($stmt);
@@ -367,6 +425,57 @@ function ensure_audit_log_table(PDO $db): void
                 throw $e;
             }
         }
+    }
+}
+
+/**
+ * Probe for the audit_log append-only triggers. Returns true iff BOTH
+ * audit_log_no_update and audit_log_no_delete exist on this driver.
+ *
+ * Used by ensure_audit_log_table() to keep the steady-state fast path
+ * cheap (one SELECT per request) while still self-healing if an external
+ * action drops the triggers — preserving the v3.24.0 race fix because
+ * CREATE OR REPLACE TRIGGER only fires when the probe says they're
+ * missing, never on the steady-state path.
+ *
+ * Per-driver SQL:
+ *   sqlite — sqlite_master where type='trigger'
+ *   mysql  — information_schema.triggers (current schema)
+ *   pgsql  — pg_trigger ⨝ pg_class on tgrelid
+ *
+ * Returns false on any probe failure so the caller falls through to
+ * ensure_audit_log_triggers() (idempotent on every engine).
+ */
+function ipam_audit_log_triggers_present(PDO $db): bool
+{
+    // Dialect::driver_name() is constrained to 'sqlite' | 'mysql' |
+    // 'pgsql' by the type system, so the match is exhaustive. If a
+    // future driver is added, PHP will surface UnhandledMatchError
+    // until the new arm lands here — exactly the safety we want.
+    $sql = match (ipam_dialect()->driver_name()) {
+        'sqlite' =>
+            "SELECT COUNT(*) FROM sqlite_master " .
+            "WHERE type = 'trigger' " .
+            "AND name IN ('audit_log_no_update', 'audit_log_no_delete')",
+        'mysql' =>
+            "SELECT COUNT(*) FROM information_schema.triggers " .
+            "WHERE event_object_table = 'audit_log' " .
+            "AND trigger_name IN ('audit_log_no_update', 'audit_log_no_delete') " .
+            "AND trigger_schema = DATABASE()",
+        'pgsql' =>
+            "SELECT COUNT(*) FROM pg_trigger t " .
+            "JOIN pg_class c ON c.oid = t.tgrelid " .
+            "WHERE c.relname = 'audit_log' " .
+            "AND t.tgname IN ('audit_log_no_update', 'audit_log_no_delete')",
+    };
+    try {
+        $st = $db->query($sql);
+        if ($st === false) {
+            return false;
+        }
+        return to_int($st->fetchColumn()) >= 2;
+    } catch (PDOException) {
+        return false;
     }
 }
 
@@ -1549,6 +1658,19 @@ function ipam_setting_definitions(): array
             'sensitive'   => false,
             'config_key'  => ['backup', 'dir'],
         ],
+        // v3.24.0 — manual upload-restore (#837). Effective cap is the
+        // smallest of: this setting, php upload_max_filesize, post_max_size.
+        // Increasing this above PHP's runtime limits has no effect; the
+        // operator-facing description nudges them to bump both.
+        'backup_max_upload_size_mb' => [
+            'label'       => 'Manual restore upload limit (MiB)',
+            'description' => 'Maximum size of a manually-uploaded backup archive on the Restore tab. Effective cap is min(this, php.ini upload_max_filesize, post_max_size). Increase all three together for files larger than the PHP defaults.',
+            'type'        => 'int',
+            'group'       => 'backup',
+            'default'     => 2048,
+            'min'         => 1,
+            'sensitive'   => false,
+        ],
         // --- Notifications (v3.22.0 §2.4) ---
         // Per-event toggles split scheduled-vs-manual on the success/failure
         // axis (§2.4 lists the two as independent — operators commonly want
@@ -2447,6 +2569,10 @@ function ipam_config_stale_keys(array $config): array
         // in config.php; nested members (e.g. session.absolute_lifetime_minutes)
         // live underneath them and are reached via $config['session'][...].
         'app_secret', 'session', 'auth', 'api',
+        // v3.24.0 — IPAMBKP3 stored-mode backup encryption key. Lives in
+        // config.php (not the DB) for the same reason as app_secret: a key
+        // stored inside the data it protects defeats the security model.
+        'backup_vault_key',
     ];
     $stale = [];
     foreach (array_keys($config) as $key) {
@@ -3116,7 +3242,11 @@ function prune_audit_log(PDO $db, int $retentionDays): int
             $st->execute([':cutoff' => $cutoff]);
             $pruned = $st->rowCount();
 
-            ensure_audit_log_table($db);
+            // Recreate the append-only triggers explicitly. The probe in
+            // ensure_audit_log_table() short-circuits when the table is
+            // present (it is — we only dropped the triggers, not the
+            // table), so we cannot rely on it to put the triggers back.
+            ensure_audit_log_triggers($db);
             $db->exec("COMMIT");
         } elseif ($driver === 'mysql') {
             $db->exec("SET @ipam_bypass_append_only = 1");
@@ -4312,13 +4442,404 @@ function backup_info(array $config): array
 
 // ── Backup encryption constants (Phase 2 / #694) ────────────────────────────
 const BACKUP_MAGIC   = 'IPAMBKP1';  // 8-byte magic + version tag
-const BACKUP_IV_LEN  = 12;          // AES-256-GCM recommended IV length
-const BACKUP_TAG_LEN = 16;          // GCM authentication tag length (max)
+const BACKUP_IV_LEN  = 12;          // AES-256-GCM recommended IV length (12 random
+                                    // bytes per RFC 5116; #838 B-P2-46 clarifying note)
+const BACKUP_TAG_LEN = 16;          // GCM authentication tag length (16 bytes,
+                                    // SP 800-38D Table 1; #838 B-P2-46)
 const BACKUP_MAGIC_V2     = 'IPAMBKP2';  // 8-byte streaming format magic
 const BACKUP_SALT_LEN     = 16;          // HKDF salt length (v2)
 const BACKUP_CTR_IV_LEN   = 16;          // AES-256-CTR initial counter block
 const BACKUP_HMAC_LEN     = 32;          // HMAC-SHA256 tag length
 const BACKUP_STREAM_CHUNK = 65536;       // 64 KiB; counter step = 4096 blocks per chunk
+
+// ── v3.24.0 IPAMBKP3 / IPAMBKU1 constants (#836) ─────────────────────────────
+//
+// IPAMBKP3 supersedes IPAMBKP2: it derives keys from `backup_vault_key`
+// (stored mode) or an operator-supplied passphrase via Argon2id (transitory
+// mode), separating backup-at-rest protection from app_secret. IPAMBKU1 is
+// an integrity-only wrapper for trusted-local destinations.
+//
+// Header layout (big-endian on multi-byte fields):
+//
+//   IPAMBKP3 (8) | mode (1) | argon_t (4) | argon_m_kib (4) | argon_p (1)
+//                | reserved (2 zero) | argon_salt (16) | hkdf_salt (16)
+//                | ctr_iv (16) | ciphertext (N) | hmac (32)
+//   ── header size: 68 bytes
+//
+// IPAMBKU1 layout: magic (8) | sha256 (32) | plaintext (N).
+//
+// Argon2id defaults (OWASP 2024 minimum for password hashing): t=3, m=64 MiB,
+// p=1. Header-embedded so callers can tune per install without breaking
+// existing backups.
+const BACKUP_MAGIC_V3       = 'IPAMBKP3';
+const BACKUP_MAGIC_UNENC    = 'IPAMBKU1';
+const BACKUP_V3_MODE_STORED      = 1;
+const BACKUP_V3_MODE_TRANSITORY  = 2;
+const BACKUP_V3_HEADER_LEN  = 68;
+const BACKUP_V3_RESERVED_LEN = 2;
+const BACKUP_ARGON2_SALT_LEN     = 16;
+const BACKUP_ARGON2_TIME_DEFAULT       = 3;
+const BACKUP_ARGON2_MEMORY_KIB_DEFAULT = 65536;  // 64 MiB
+const BACKUP_ARGON2_PARALLELISM_DEFAULT = 1;
+const BACKUP_VAULT_KEY_LEN = 32;
+
+/**
+ * Assert that PHP's CSPRNG is functional. Cheap, idempotent (caches first
+ * success). Called from every encrypt entry point; addresses #838 B-P1-35.
+ *
+ * @throws RuntimeException if random_bytes is unavailable or fails.
+ */
+function ipam_assert_random_bytes_available(): void
+{
+    static $checked = false;
+    if ($checked) {
+        return;
+    }
+    if (!function_exists('random_bytes')) {
+        throw new RuntimeException('random_bytes() not available; PHP build is missing CSPRNG');
+    }
+    try {
+        $probe = random_bytes(1);
+    } catch (Throwable $e) {
+        throw new RuntimeException('CSPRNG probe failed: ' . $e->getMessage(), 0, $e);
+    }
+    if (strlen($probe) !== 1) {
+        throw new RuntimeException('CSPRNG probe returned wrong length');
+    }
+    $checked = true;
+}
+
+/**
+ * Derive an Argon2id tag from a passphrase. Used by IPAMBKP3 transitory mode
+ * (#836). Wraps libsodium's `sodium_crypto_pwhash` — RFC 9106 / Argon2id v1.3.
+ *
+ * libsodium constraint: parallelism is fixed at 1; we assert this so the
+ * header-recorded value cannot drift from the value used to compute the tag.
+ *
+ * @param string $passphrase   Operator-typed secret. Must be non-empty.
+ * @param string $salt         Per-file random salt (BACKUP_ARGON2_SALT_LEN bytes).
+ * @param int    $time         Argon2 t parameter (≥ 1).
+ * @param int    $memoryKib    Argon2 m parameter in KiB (≥ 8 × parallelism).
+ * @param int    $parallelism  Argon2 p parameter — must be 1 with libsodium.
+ * @param int    $outLen       Output tag length in bytes (≥ 16).
+ * @throws RuntimeException on any parameter violation or KDF failure.
+ */
+function ipam_argon2id_derive(
+    string $passphrase,
+    string $salt,
+    int $time,
+    int $memoryKib,
+    int $parallelism,
+    int $outLen
+): string {
+    if ($passphrase === '') {
+        throw new RuntimeException('ipam_argon2id_derive: passphrase must be non-empty');
+    }
+    if (strlen($salt) !== BACKUP_ARGON2_SALT_LEN) {
+        throw new RuntimeException(
+            'ipam_argon2id_derive: salt must be exactly ' . BACKUP_ARGON2_SALT_LEN . ' bytes'
+        );
+    }
+    if ($time < 1) {
+        throw new RuntimeException('ipam_argon2id_derive: time must be >= 1');
+    }
+    if ($parallelism !== 1) {
+        throw new RuntimeException(
+            'ipam_argon2id_derive: parallelism must be 1 (libsodium constraint); ' .
+            'tracked for future tuning when sodium exposes the parameter'
+        );
+    }
+    if ($memoryKib < 8 * $parallelism) {
+        throw new RuntimeException('ipam_argon2id_derive: memoryKib must be >= 8 * parallelism');
+    }
+    if ($outLen < 16) {
+        throw new RuntimeException('ipam_argon2id_derive: outLen must be >= 16');
+    }
+    if (!function_exists('sodium_crypto_pwhash')) {
+        throw new RuntimeException(
+            'ipam_argon2id_derive: libsodium pwhash not available; PHP must be built with --with-sodium'
+        );
+    }
+    try {
+        $hash = sodium_crypto_pwhash(
+            $outLen,
+            $passphrase,
+            $salt,
+            $time,
+            $memoryKib * 1024,
+            SODIUM_CRYPTO_PWHASH_ALG_ARGON2ID13
+        );
+    } catch (SodiumException $e) {
+        throw new RuntimeException('ipam_argon2id_derive: Argon2id derivation failed: ' . $e->getMessage(), 0, $e);
+    }
+    if (strlen($hash) !== $outLen) {
+        throw new RuntimeException('ipam_argon2id_derive: Argon2id derivation produced unexpected length');
+    }
+    return $hash;
+}
+
+/**
+ * Resolve the IPAMBKP3 stored-mode vault key, lazily generating and
+ * persisting it on first use.
+ *
+ * Returns the raw 32-byte key (NOT base64). Idempotent within a request via
+ * static cache; idempotent across requests via the config.php round-trip.
+ *
+ * Resolution order:
+ *   1. Already in $config and well-formed → decode + return.
+ *   2. Already in $config but malformed → throw (refuse to silently replace
+ *      an operator-supplied value, even if broken).
+ *   3. Empty / absent → generate 32 random bytes, write to config.php in
+ *      place (replace empty slot OR inject before the trailing "];"), and
+ *      return. On write failure, throw with an actionable message that
+ *      includes the generated value as a copy-pasteable line so the
+ *      operator can finish the install manually.
+ *
+ * @param string|null $configPathOverride  Internal hook for tests so they
+ *        can exercise the autogen path against a tempfile rather than the
+ *        production config.php. Production callers MUST pass null.
+ * @throws RuntimeException if the existing value is malformed or the
+ *         file rewrite fails.
+ */
+function ipam_backup_vault_key_or_init(?string $configPathOverride = null): string
+{
+    // Defence-in-depth: the override is a test-only hook. Reject it
+    // outside CLI / PHPUnit context so a future caller that accidentally
+    // routes user input here cannot turn an `include` of an attacker-
+    // controlled path into LFI/RCE. Web-SAPI callers always operate on
+    // the production config.php only.
+    if ($configPathOverride !== null && PHP_SAPI !== 'cli') {
+        throw new RuntimeException(
+            'ipam_backup_vault_key_or_init: configPathOverride is test-only and not allowed in web SAPI'
+        );
+    }
+
+    // Static cache is keyed on the resolved config path so a test that
+    // overrides the path does not pin the production cache, and vice
+    // versa. Without keying, a single test run could leak a tempfile-
+    // generated key to a subsequent production-path call (or vice versa)
+    // and cause spurious assertion failures.
+    static $cachedRaw = [];
+    $rawPath = $configPathOverride ?? __DIR__ . '/config.php';
+    // Canonicalise so the include target is a resolved real path on
+    // disk, not a string with `..` segments or a non-existent file. The
+    // override path MUST exist when supplied; the production path always
+    // exists (init.php loaded it earlier this request).
+    $resolved = realpath($rawPath);
+    if ($resolved === false) {
+        throw new RuntimeException('ipam_backup_vault_key_or_init: config path does not resolve: ' . $rawPath);
+    }
+    $configPath = $resolved;
+    if (isset($cachedRaw[$configPath])) {
+        return $cachedRaw[$configPath];
+    }
+
+    // Source the existing-value check from $config (production path) or
+    // by re-including the override file (test / override path). Both
+    // paths apply the same well-formed/malformed validation so the
+    // semantics are identical for callers, regardless of where the key
+    // lives.
+    if ($configPathOverride === null) {
+        /** @var array<string,mixed> $config */
+        global $config;
+        $existingB64 = (isset($config['backup_vault_key']) && is_string($config['backup_vault_key']))
+            ? $config['backup_vault_key']
+            : '';
+    } else {
+        $overrideCfg = include $configPath;
+        $existingB64 = '';
+        if (is_array($overrideCfg)
+            && isset($overrideCfg['backup_vault_key'])
+            && is_string($overrideCfg['backup_vault_key'])) {
+            $existingB64 = $overrideCfg['backup_vault_key'];
+        }
+    }
+    if ($existingB64 !== '') {
+        $decoded = base64_decode($existingB64, true);
+        if (is_string($decoded) && strlen($decoded) === BACKUP_VAULT_KEY_LEN) {
+            $cachedRaw[$configPath] = $decoded;
+            return $decoded;
+        }
+        throw new RuntimeException(
+            'backup_vault_key in config.php is malformed (expected ' .
+            BACKUP_VAULT_KEY_LEN . ' bytes base64). Clear the value to allow ' .
+            'auto-generation, or replace it with: ' .
+            'php -r "echo base64_encode(random_bytes(32));"'
+        );
+    }
+
+    ipam_assert_random_bytes_available();
+    $newRaw = random_bytes(BACKUP_VAULT_KEY_LEN);
+    $newB64 = base64_encode($newRaw);
+
+    try {
+        ipam_config_inject_or_replace_key($configPath, 'backup_vault_key', $newB64);
+    } catch (Throwable $e) {
+        // Generic remediation message — never embed the raw key in the
+        // exception text, since it would land in error_log / UI and leak
+        // the secret protecting every stored-mode backup. Operator can
+        // generate one manually with the documented one-liner.
+        throw new RuntimeException(
+            'backup_vault_key auto-generation could not update config.php: ' .
+            $e->getMessage() . '. ' .
+            'Generate a key manually with `php -r "echo base64_encode(random_bytes(32));"` ' .
+            "and add `'backup_vault_key' => '<value>',` to config.php, then retry.",
+            0,
+            $e
+        );
+    }
+
+    // Concurrency guard: if two requests both reach the generate-and-
+    // write path simultaneously, only one rename wins persistence. The
+    // loser's in-memory $newRaw would still be used to encrypt the
+    // backup it's currently producing — and that backup would then be
+    // unreadable once the winner's key is the one persisted.
+    //
+    // Re-read the file post-rename to learn which key actually won,
+    // and adopt that as the canonical key for the rest of this request.
+    // Both racers end up using the same key — the one in config.php —
+    // so every produced backup is decryptable on restore.
+    /** @var array<string,mixed>|false $persistedCfg */
+    $persistedCfg = @include $configPath;
+    if (is_array($persistedCfg) && isset($persistedCfg['backup_vault_key'])
+        && is_string($persistedCfg['backup_vault_key'])) {
+        $persistedDecoded = base64_decode($persistedCfg['backup_vault_key'], true);
+        if (is_string($persistedDecoded) && strlen($persistedDecoded) === BACKUP_VAULT_KEY_LEN) {
+            $newRaw = $persistedDecoded;
+            $newB64 = $persistedCfg['backup_vault_key'];
+        }
+    }
+
+    if ($configPathOverride === null) {
+        global $config;
+        $config['backup_vault_key'] = $newB64;
+    }
+    $cachedRaw[$configPath] = $newRaw;
+    return $newRaw;
+}
+
+/**
+ * Read-only accessor for the IPAMBKP3 vault key. Returns the 32 raw
+ * bytes if config.php holds a well-formed value, NULL otherwise.
+ *
+ * Distinct from ipam_backup_vault_key_or_init(): this never generates,
+ * never writes config.php, never throws on absent / malformed values.
+ * Intended for the decrypt path — autogen during a restore would mask
+ * the real failure (the key that ENCRYPTED the backup is gone), and we
+ * want to surface that as a clear error rather than silently produce a
+ * fresh-and-useless key.
+ */
+function ipam_backup_vault_key_get_raw(): ?string
+{
+    /** @var array<string,mixed> $config */
+    global $config;
+    $b64 = $config['backup_vault_key'] ?? null;
+    if (!is_string($b64) || $b64 === '') {
+        return null;
+    }
+    $raw = base64_decode($b64, true);
+    if (!is_string($raw) || strlen($raw) !== BACKUP_VAULT_KEY_LEN) {
+        return null;
+    }
+    return $raw;
+}
+
+/**
+ * Atomic in-place rewrite of a config.php-style PHP file to set
+ * `'$key' => '$valueB64'`. Used by ipam_backup_vault_key_or_init() and
+ * available for any future autogen scenarios.
+ *
+ * Behaviour:
+ *   - Existing single-quoted/double-quoted line for $key → replaced.
+ *   - Key absent → injected immediately before the file's last "];".
+ *   - Atomic: writes adjacent tempfile, then rename(). Preserves file
+ *     mode best-effort.
+ *
+ * Assumes $valueB64 contains only base64 characters ([A-Za-z0-9+/=]); no
+ * additional escaping is performed. Refuses to operate if the value
+ * contains a single quote.
+ *
+ * @throws RuntimeException on any I/O, parse, or atomicity failure.
+ */
+function ipam_config_inject_or_replace_key(string $configPath, string $key, string $valueB64): void
+{
+    if (!is_file($configPath)) {
+        throw new RuntimeException('config file not found: ' . $configPath);
+    }
+    if (!is_writable($configPath)) {
+        throw new RuntimeException('config file is not writable: ' . $configPath);
+    }
+    if (str_contains($valueB64, "'") || str_contains($valueB64, "\n") || str_contains($valueB64, "\r")) {
+        throw new RuntimeException('refusing to inject value containing quotes or newlines');
+    }
+    $contents = @file_get_contents($configPath);
+    if ($contents === false) {
+        throw new RuntimeException('failed to read config file');
+    }
+
+    // Match a single-line scalar string literal for $key in either quoting
+    // style, anchored to the start of a line (with optional leading
+    // whitespace) so commented-out config lines like
+    //   //  'backup_vault_key' => '',
+    // do NOT match. The line-anchor relies on the first non-whitespace
+    // character being a quote; comment prefixes (//, #, *) start with a
+    // non-quote character and are naturally rejected. Restricted to no
+    // embedded quotes or newlines — sufficient for base64 values which
+    // use only [A-Za-z0-9+/=].
+    $pattern = sprintf(
+        '/^[ \t]*([\'"])%s\1\s*=>\s*([\'"])[A-Za-z0-9+\/=]*\2/m',
+        preg_quote($key, '/')
+    );
+    $replacement = sprintf("'%s' => '%s'", $key, $valueB64);
+
+    $count = 0;
+    if (preg_match($pattern, $contents) === 1) {
+        $new = preg_replace($pattern, $replacement, $contents, 1, $count);
+        if ($new === null || $count !== 1) {
+            throw new RuntimeException('regex replacement failed for key: ' . $key);
+        }
+    } else {
+        // Inject just before the LAST occurrence of "];" — the close of the
+        // top-level return array. Search RTL so a nested array close cannot
+        // win. Newline before injection keeps formatting parseable.
+        $lastClosePos = strrpos($contents, '];');
+        if ($lastClosePos === false) {
+            throw new RuntimeException('config file has no closing "];" — refusing to inject');
+        }
+        $injection = "    '" . $key . "' => '" . $valueB64 . "',\n";
+        $new = substr($contents, 0, $lastClosePos) . $injection . substr($contents, $lastClosePos);
+    }
+
+    // Atomic write: tempfile in the same directory + rename().
+    $dir = dirname($configPath);
+    $tmp = @tempnam($dir, '.config.tmp.');
+    if ($tmp === false) {
+        throw new RuntimeException('cannot create tempfile next to config file');
+    }
+    try {
+        $written = @file_put_contents($tmp, $new);
+        if ($written !== strlen($new)) {
+            throw new RuntimeException('short write to tempfile');
+        }
+        $perms = @fileperms($configPath);
+        if ($perms !== false) {
+            @chmod($tmp, $perms & 0777);
+        }
+        if (!@rename($tmp, $configPath)) {
+            throw new RuntimeException('rename of tempfile to config file failed');
+        }
+        $tmp = null; // ownership transferred
+    } finally {
+        if ($tmp !== null && is_file($tmp)) {
+            @unlink($tmp); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmp from tempnam(), no user input
+        }
+    }
+
+    // Best-effort: invalidate opcache so the next require sees the new value.
+    if (function_exists('opcache_invalidate')) {
+        @opcache_invalidate($configPath, true);
+    }
+}
 
 /**
  * Derive a fixed-length key from a master secret using HKDF-SHA-256.
@@ -4356,10 +4877,17 @@ function ipam_hkdf_sha256(string $ikm, string $info, int $length, string $salt =
  */
 function backup_encrypt(string $plain, string $appSecret): string
 {
+    ipam_assert_random_bytes_available(); // #838 B-P1-35
     if ($appSecret === '') {
         throw new RuntimeException('backup encryption requires app_secret to be set in config.php');
     }
     $key = ipam_hkdf_sha256($appSecret, 'ipam-v3:backup', 32);
+    // IPAMBKP1 random-IV note (#838 B-P2-5): GCM with a 96-bit random IV is
+    // safe for the small message counts a single IPAM install produces with
+    // one app_secret-derived key (NIST SP 800-38D allows ~2^32 messages
+    // before the birthday bound becomes non-negligible). Operators with
+    // legacy IPAMBKP1 archives are advised in docs/upgrading.md to
+    // re-encrypt as IPAMBKP3 over time, but no immediate action is needed.
     $iv  = random_bytes(BACKUP_IV_LEN);
     $tag = '';
     $ct  = openssl_encrypt($plain, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag, '', BACKUP_TAG_LEN);
@@ -4379,6 +4907,7 @@ function backup_encrypt(string $plain, string $appSecret): string
  */
 function backup_encrypt_stream(string $srcPath, string $dstPath, string $appSecret): void
 {
+    ipam_assert_random_bytes_available(); // #838 B-P1-35
     if ($appSecret === '') {
         throw new RuntimeException('backup encryption requires app_secret to be set in config.php');
     }
@@ -4547,23 +5076,584 @@ function backup_decrypt_stream(string $srcPath, string $dstPath, string $appSecr
     }
 }
 
+// ── IPAMBKP3 (v3.24.0) — three-mode streaming codec ─────────────────────────
+//
+// Header packing/unpacking helpers. The wire format is:
+//
+//   offset  size  field
+//        0     8  magic ('IPAMBKP3')
+//        8     1  mode (1=STORED, 2=TRANSITORY)
+//        9     4  argon_time         (BE uint32)
+//       13     4  argon_memory_kib   (BE uint32)
+//       17     1  argon_parallelism  (uint8)
+//       18     2  reserved (zero)
+//       20    16  argon_salt
+//       36    16  hkdf_salt
+//       52    16  ctr_iv
+//   total: 68 bytes — see BACKUP_V3_HEADER_LEN.
+//
+// Argon parameters are header-embedded so an install can tune memory/time
+// later without breaking already-encrypted backups. Bounds checks below
+// keep the parameter space sane and the verify cost bounded.
+
+const BACKUP_V3_ARGON_TIME_MAX     = 16;
+const BACKUP_V3_ARGON_MEM_KIB_MAX  = 1048576; // 1 GiB
+const BACKUP_V3_INFO_STORED        = 'ipam-backup-v3:stored:enc-mac';
+const BACKUP_V3_INFO_TRANSITORY    = 'ipam-backup-v3:transitory:enc-mac';
+
+function ipam_backup_v3_pack_header(
+    int $mode,
+    int $argonTime,
+    int $argonMemKib,
+    int $argonPar,
+    string $argonSalt,
+    string $hkdfSalt,
+    string $ctrIv
+): string {
+    if (strlen($argonSalt) !== BACKUP_ARGON2_SALT_LEN
+        || strlen($hkdfSalt) !== BACKUP_SALT_LEN
+        || strlen($ctrIv) !== BACKUP_CTR_IV_LEN) {
+        throw new RuntimeException('ipam_backup_v3_pack_header: salt/iv lengths invalid');
+    }
+    $hdr = BACKUP_MAGIC_V3
+         . chr($mode)
+         . pack('N', $argonTime)
+         . pack('N', $argonMemKib)
+         . chr($argonPar)
+         . str_repeat("\x00", BACKUP_V3_RESERVED_LEN)
+         . $argonSalt
+         . $hkdfSalt
+         . $ctrIv;
+    if (strlen($hdr) !== BACKUP_V3_HEADER_LEN) {
+        throw new RuntimeException('ipam_backup_v3_pack_header: assembled wrong length');
+    }
+    return $hdr;
+}
+
 /**
- * Format-detecting decrypt-to-path. Peeks the 8-byte magic header:
- *   IPAMBKP2 → backup_decrypt_stream() (v3.19+ streaming).
- *   IPAMBKP1 → load full file → backup_decrypt() → write (v3.17–v3.18 back-compat,
- *              still bound by original memory ceiling for old backups).
- *
- * @throws RuntimeException on unknown magic or any underlying failure.
+ * @return array{mode:int,argon_time:int,argon_mem_kib:int,argon_par:int,argon_salt:string,hkdf_salt:string,ctr_iv:string}
  */
-function backup_decrypt_to_path(string $srcPath, string $dstPath, string $appSecret): void
+function ipam_backup_v3_unpack_header(string $hdr): array
 {
+    if (strlen($hdr) !== BACKUP_V3_HEADER_LEN) {
+        throw new RuntimeException('IPAMBKP3 header: wrong length');
+    }
+    if (substr($hdr, 0, 8) !== BACKUP_MAGIC_V3) {
+        throw new RuntimeException('IPAMBKP3 header: bad magic');
+    }
+    /** @var array{1:int} $tu */
+    $tu = unpack('N', substr($hdr, 9, 4));
+    /** @var array{1:int} $mu */
+    $mu = unpack('N', substr($hdr, 13, 4));
+    return [
+        'mode'          => ord($hdr[8]),
+        'argon_time'    => $tu[1],
+        'argon_mem_kib' => $mu[1],
+        'argon_par'     => ord($hdr[17]),
+        'argon_salt'    => substr($hdr, 20, BACKUP_ARGON2_SALT_LEN),
+        'hkdf_salt'     => substr($hdr, 36, BACKUP_SALT_LEN),
+        'ctr_iv'        => substr($hdr, 52, BACKUP_CTR_IV_LEN),
+    ];
+}
+
+/**
+ * Stream-encrypt $srcPath into $dstPath using the IPAMBKP3 format.
+ *
+ * Modes:
+ *   STORED      — server-side `backup_vault_key` (32 raw bytes).
+ *                 Passphrase ignored; argon_salt zero-filled.
+ *   TRANSITORY  — operator passphrase; Argon2id derives the kdf input.
+ *                 vaultKey ignored.
+ *
+ * Argon2id parameters fall back to BACKUP_ARGON2_*_DEFAULT when null.
+ * Bounded by BACKUP_V3_ARGON_TIME_MAX / BACKUP_V3_ARGON_MEM_KIB_MAX.
+ *
+ * Memory-bounded streaming (BACKUP_STREAM_CHUNK + bookkeeping). HMAC-SHA256
+ * is computed over (header || ciphertext) in encrypt-then-MAC order.
+ *
+ * @throws RuntimeException on bad parameters, I/O, openssl, or KDF failure.
+ */
+function backup_encrypt_stream_v3(
+    string $srcPath,
+    string $dstPath,
+    int $mode,
+    ?string $passphrase,
+    ?string $vaultKey,
+    ?int $argonTime = null,
+    ?int $argonMemKib = null,
+    ?int $argonParallelism = null
+): void {
+    ipam_assert_random_bytes_available();
+
+    if ($mode !== BACKUP_V3_MODE_STORED && $mode !== BACKUP_V3_MODE_TRANSITORY) {
+        throw new RuntimeException('backup_encrypt_stream_v3: invalid mode');
+    }
+
+    $aTime  = $argonTime        ?? BACKUP_ARGON2_TIME_DEFAULT;
+    $aMem   = $argonMemKib      ?? BACKUP_ARGON2_MEMORY_KIB_DEFAULT;
+    $aPar   = $argonParallelism ?? BACKUP_ARGON2_PARALLELISM_DEFAULT;
+    if ($aTime < 1 || $aTime > BACKUP_V3_ARGON_TIME_MAX) {
+        throw new RuntimeException('backup_encrypt_stream_v3: argon time out of bounds');
+    }
+    if ($aMem < 8 || $aMem > BACKUP_V3_ARGON_MEM_KIB_MAX) {
+        throw new RuntimeException('backup_encrypt_stream_v3: argon memory out of bounds');
+    }
+    // Mirror the decrypt-time constraint: parallelism is fixed at 1 by the
+    // libsodium pwhash API (see ipam_argon2id_derive). Reject anything
+    // else here so a caller cannot produce an archive whose header records
+    // a parallelism the decrypt path will refuse, leaving the archive
+    // undecryptable. This is the same check the decrypt path enforces.
+    if ($aPar !== 1) {
+        throw new RuntimeException('backup_encrypt_stream_v3: argon parallelism must be 1 (libsodium constraint)');
+    }
+
+    if ($mode === BACKUP_V3_MODE_TRANSITORY) {
+        if ($passphrase === null || $passphrase === '') {
+            throw new RuntimeException('backup_encrypt_stream_v3: transitory mode requires passphrase');
+        }
+        $argonSalt = random_bytes(BACKUP_ARGON2_SALT_LEN);
+        $kdfInput  = ipam_argon2id_derive($passphrase, $argonSalt, $aTime, $aMem, $aPar, 32);
+        $info      = BACKUP_V3_INFO_TRANSITORY;
+    } else {
+        if ($vaultKey === null || strlen($vaultKey) !== BACKUP_VAULT_KEY_LEN) {
+            throw new RuntimeException(
+                'backup_encrypt_stream_v3: stored mode requires ' . BACKUP_VAULT_KEY_LEN . '-byte vaultKey'
+            );
+        }
+        // Stored mode does not run Argon2id — argon_salt is zero-filled in
+        // the header but the parameter fields still record the install's
+        // current defaults so decryption can reuse them if the mode flag is
+        // ever flipped during an upgrade migration.
+        $argonSalt = str_repeat("\x00", BACKUP_ARGON2_SALT_LEN);
+        $kdfInput  = $vaultKey;
+        $info      = BACKUP_V3_INFO_STORED;
+    }
+
+    $hkdfSalt = random_bytes(BACKUP_SALT_LEN);
+    $ctrIv    = random_bytes(BACKUP_CTR_IV_LEN);
+    $keys     = ipam_hkdf_sha256($kdfInput, $info, 64, $hkdfSalt);
+    $encKey   = substr($keys, 0, 32);
+    $macKey   = substr($keys, 32, 32);
+
+    $header = ipam_backup_v3_pack_header($mode, $aTime, $aMem, $aPar, $argonSalt, $hkdfSalt, $ctrIv);
+
+    $in = @fopen($srcPath, 'rb');
+    if ($in === false) {
+        throw new RuntimeException('backup_encrypt_stream_v3: cannot open source');
+    }
+    $out = @fopen($dstPath, 'wb');
+    if ($out === false) {
+        fclose($in);
+        throw new RuntimeException('backup_encrypt_stream_v3: cannot open dest');
+    }
+
+    try {
+        if (fwrite($out, $header) !== strlen($header)) {
+            throw new RuntimeException('backup_encrypt_stream_v3: short write on header');
+        }
+        $hmacCtx = hash_init('sha256', HASH_HMAC, $macKey);
+        hash_update($hmacCtx, $header);
+
+        $counter = $ctrIv;
+        while (!feof($in)) {
+            $chunk = fread($in, BACKUP_STREAM_CHUNK);
+            if ($chunk === false) {
+                throw new RuntimeException('backup_encrypt_stream_v3: read failed');
+            }
+            if ($chunk === '') {
+                continue;
+            }
+            $ct = openssl_encrypt($chunk, 'aes-256-ctr', $encKey, OPENSSL_RAW_DATA, $counter);
+            if ($ct === false) {
+                throw new RuntimeException('backup_encrypt_stream_v3: openssl_encrypt failed');
+            }
+            if (fwrite($out, $ct) !== strlen($ct)) {
+                throw new RuntimeException('backup_encrypt_stream_v3: short write on ciphertext');
+            }
+            hash_update($hmacCtx, $ct);
+            $counter = ipam_backup_advance_ctr($counter, intdiv(strlen($chunk) + 15, 16));
+        }
+
+        $tag = hash_final($hmacCtx, true);
+        if (fwrite($out, $tag) !== BACKUP_HMAC_LEN) {
+            throw new RuntimeException('backup_encrypt_stream_v3: short write on hmac');
+        }
+    } finally {
+        fclose($in);
+        fclose($out);
+    }
+}
+
+/**
+ * Stream-decrypt an IPAMBKP3 file at $srcPath into $dstPath.
+ *
+ * Re-derives keys from header-embedded params + salts. Verifies HMAC
+ * before atomically renaming the tempfile to $dstPath, so a failed
+ * verification leaves no plaintext on disk.
+ *
+ * Constant-time HMAC compare per #838 B-P1-40: a verify-key wrap means
+ * the success/fail paths each run a fixed number of HMACs.
+ *
+ * @throws RuntimeException on bad magic, truncation, openssl failure,
+ *         missing key/passphrase, or HMAC mismatch.
+ */
+function backup_decrypt_stream_v3(
+    string $srcPath,
+    string $dstPath,
+    ?string $passphrase,
+    ?string $vaultKey
+): void {
+    ipam_assert_random_bytes_available();
+
+    $size = @filesize($srcPath);
+    if ($size === false) {
+        throw new RuntimeException('backup_decrypt_stream_v3: cannot stat source');
+    }
+    $minLen = BACKUP_V3_HEADER_LEN + BACKUP_HMAC_LEN;
+    if ($size < $minLen) {
+        throw new RuntimeException('backup_decrypt_stream_v3: file too short');
+    }
+    $ctLen = $size - $minLen;
+
+    $in = @fopen($srcPath, 'rb');
+    if ($in === false) {
+        throw new RuntimeException('backup_decrypt_stream_v3: cannot open source');
+    }
+
+    $tmpPath = $dstPath . '.decrypting.' . bin2hex(random_bytes(4));
+    $out = null;
+    try {
+        $hdrRaw = (string) fread($in, BACKUP_V3_HEADER_LEN);
+        if (strlen($hdrRaw) !== BACKUP_V3_HEADER_LEN) {
+            throw new RuntimeException('backup_decrypt_stream_v3: short header read');
+        }
+        $hdr = ipam_backup_v3_unpack_header($hdrRaw);
+
+        $mode = $hdr['mode'];
+        if ($mode !== BACKUP_V3_MODE_STORED && $mode !== BACKUP_V3_MODE_TRANSITORY) {
+            throw new RuntimeException('backup_decrypt_stream_v3: unknown mode');
+        }
+        if ($hdr['argon_time'] < 1 || $hdr['argon_time'] > BACKUP_V3_ARGON_TIME_MAX) {
+            throw new RuntimeException('backup_decrypt_stream_v3: argon time out of bounds');
+        }
+        if ($hdr['argon_mem_kib'] < 8 || $hdr['argon_mem_kib'] > BACKUP_V3_ARGON_MEM_KIB_MAX) {
+            throw new RuntimeException('backup_decrypt_stream_v3: argon memory out of bounds');
+        }
+        if ($hdr['argon_par'] !== 1) {
+            throw new RuntimeException('backup_decrypt_stream_v3: argon parallelism != 1');
+        }
+
+        if ($mode === BACKUP_V3_MODE_TRANSITORY) {
+            if ($passphrase === null || $passphrase === '') {
+                throw new RuntimeException('backup_decrypt_stream_v3: transitory mode requires passphrase');
+            }
+            $kdfInput = ipam_argon2id_derive(
+                $passphrase,
+                $hdr['argon_salt'],
+                $hdr['argon_time'],
+                $hdr['argon_mem_kib'],
+                $hdr['argon_par'],
+                32
+            );
+            $info = BACKUP_V3_INFO_TRANSITORY;
+        } else {
+            if ($vaultKey === null || strlen($vaultKey) !== BACKUP_VAULT_KEY_LEN) {
+                throw new RuntimeException(
+                    'backup_decrypt_stream_v3: stored mode requires ' . BACKUP_VAULT_KEY_LEN . '-byte vaultKey'
+                );
+            }
+            $kdfInput = $vaultKey;
+            $info     = BACKUP_V3_INFO_STORED;
+        }
+
+        $keys   = ipam_hkdf_sha256($kdfInput, $info, 64, $hdr['hkdf_salt']);
+        $encKey = substr($keys, 0, 32);
+        $macKey = substr($keys, 32, 32);
+
+        $out = @fopen($tmpPath, 'wb');
+        if ($out === false) {
+            throw new RuntimeException('backup_decrypt_stream_v3: cannot open tmp dst');
+        }
+
+        $hmacCtx = hash_init('sha256', HASH_HMAC, $macKey);
+        hash_update($hmacCtx, $hdrRaw);
+        $counter   = $hdr['ctr_iv'];
+        $remaining = $ctLen;
+        while ($remaining > 0) {
+            $want = (int) min(BACKUP_STREAM_CHUNK, $remaining);
+            $buf  = fread($in, $want);
+            if ($buf === false || strlen($buf) !== $want) {
+                throw new RuntimeException('backup_decrypt_stream_v3: short ciphertext read');
+            }
+            hash_update($hmacCtx, $buf);
+            $pt = openssl_decrypt($buf, 'aes-256-ctr', $encKey, OPENSSL_RAW_DATA, $counter);
+            if ($pt === false) {
+                throw new RuntimeException('backup_decrypt_stream_v3: openssl_decrypt failed');
+            }
+            if (fwrite($out, $pt) !== strlen($pt)) {
+                throw new RuntimeException('backup_decrypt_stream_v3: short write to tmp');
+            }
+            $counter    = ipam_backup_advance_ctr($counter, intdiv(strlen($buf) + 15, 16));
+            $remaining -= $want;
+        }
+        $observed = (string) fread($in, BACKUP_HMAC_LEN);
+        if (strlen($observed) !== BACKUP_HMAC_LEN) {
+            throw new RuntimeException('backup_decrypt_stream_v3: short hmac read');
+        }
+        $expected = hash_final($hmacCtx, true);
+
+        // #838 B-P1-40: double-HMAC compare so success/failure paths run the
+        // same operations. The verify key is derived from macKey via a fixed
+        // sub-purpose so it cannot be swapped for a different signing key.
+        $verifyKey = ipam_hkdf_sha256($macKey, 'ipam-backup-v3:verify', 32);
+        $expectedTag = hash_hmac('sha256', $expected, $verifyKey, true);
+        $observedTag = hash_hmac('sha256', $observed, $verifyKey, true);
+        if (!hash_equals($expectedTag, $observedTag)) {
+            throw new RuntimeException('backup_decrypt_stream_v3: hmac mismatch');
+        }
+
+        fclose($out);
+        $out = null;
+        if (!@rename($tmpPath, $dstPath)) {
+            throw new RuntimeException('backup_decrypt_stream_v3: rename to dst failed');
+        }
+    } catch (Throwable $e) {
+        if (is_resource($out)) {
+            fclose($out);
+        }
+        if (is_file($tmpPath)) {
+            @unlink($tmpPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmpPath built from $dstPath + random suffix
+        }
+        throw $e;
+    } finally {
+        fclose($in);
+    }
+}
+
+// ── IPAMBKU1 (v3.24.0) — integrity-only framing for trusted-local backups ────
+//
+// Wire format: magic(8 'IPAMBKU1') | sha256(32) | plaintext(N).
+// No confidentiality — used only when the operator opts out of encryption
+// for a destination they trust (e.g. full-disk-encrypted local volume).
+// The SHA-256 catches accidental corruption / disk bit-rot.
+
+const BACKUP_UNENC_HEADER_LEN = 8 + 32; // magic + sha256
+
+/**
+ * Stream-wrap a plaintext file with the IPAMBKU1 framing.
+ *
+ * The SHA-256 is computed incrementally during write so memory stays
+ * bounded regardless of input size.
+ *
+ * @throws RuntimeException on I/O failure.
+ */
+function backup_unencrypted_wrap_stream(string $srcPath, string $dstPath): void
+{
+    $in = @fopen($srcPath, 'rb');
+    if ($in === false) {
+        throw new RuntimeException('backup_unencrypted_wrap_stream: cannot open source');
+    }
+    $out = @fopen($dstPath, 'wb');
+    if ($out === false) {
+        fclose($in);
+        throw new RuntimeException('backup_unencrypted_wrap_stream: cannot open dest');
+    }
+    try {
+        // Reserve space for the 32-byte SHA-256 by writing zero bytes; we
+        // patch this region after the body is fully streamed and hashed.
+        $headerStub = BACKUP_MAGIC_UNENC . str_repeat("\x00", 32);
+        if (fwrite($out, $headerStub) !== BACKUP_UNENC_HEADER_LEN) {
+            throw new RuntimeException('backup_unencrypted_wrap_stream: short write on header');
+        }
+        $hashCtx = hash_init('sha256');
+        while (!feof($in)) {
+            $chunk = fread($in, BACKUP_STREAM_CHUNK);
+            if ($chunk === false) {
+                throw new RuntimeException('backup_unencrypted_wrap_stream: read failed');
+            }
+            if ($chunk === '') {
+                continue;
+            }
+            hash_update($hashCtx, $chunk);
+            if (fwrite($out, $chunk) !== strlen($chunk)) {
+                throw new RuntimeException('backup_unencrypted_wrap_stream: short write on body');
+            }
+        }
+        $digest = hash_final($hashCtx, true);
+        if (strlen($digest) !== 32) {
+            throw new RuntimeException('backup_unencrypted_wrap_stream: digest wrong length');
+        }
+        // Seek back and patch the digest region.
+        if (fseek($out, 8) !== 0) {
+            throw new RuntimeException('backup_unencrypted_wrap_stream: seek to digest failed');
+        }
+        if (fwrite($out, $digest) !== 32) {
+            throw new RuntimeException('backup_unencrypted_wrap_stream: short write on digest');
+        }
+    } finally {
+        fclose($in);
+        fclose($out);
+    }
+}
+
+/**
+ * Stream-unwrap an IPAMBKU1 file. Verifies the SHA-256 over the body
+ * before atomically renaming the tempfile to $dstPath.
+ *
+ * @throws RuntimeException on bad magic, truncation, I/O failure, or
+ *         hash mismatch.
+ */
+function backup_unencrypted_unwrap_stream(string $srcPath, string $dstPath): void
+{
+    ipam_assert_random_bytes_available();
+
+    $size = @filesize($srcPath);
+    if ($size === false) {
+        throw new RuntimeException('backup_unencrypted_unwrap_stream: cannot stat source');
+    }
+    if ($size < BACKUP_UNENC_HEADER_LEN) {
+        throw new RuntimeException('backup_unencrypted_unwrap_stream: file too short');
+    }
+
+    $in = @fopen($srcPath, 'rb');
+    if ($in === false) {
+        throw new RuntimeException('backup_unencrypted_unwrap_stream: cannot open source');
+    }
+
+    $tmpPath = $dstPath . '.unwrapping.' . bin2hex(random_bytes(4));
+    $out = null;
+    try {
+        $hdr = (string) fread($in, BACKUP_UNENC_HEADER_LEN);
+        if (strlen($hdr) !== BACKUP_UNENC_HEADER_LEN) {
+            throw new RuntimeException('backup_unencrypted_unwrap_stream: short header read');
+        }
+        if (substr($hdr, 0, 8) !== BACKUP_MAGIC_UNENC) {
+            throw new RuntimeException('backup_unencrypted_unwrap_stream: bad magic');
+        }
+        $expected = substr($hdr, 8, 32);
+
+        $out = @fopen($tmpPath, 'wb');
+        if ($out === false) {
+            throw new RuntimeException('backup_unencrypted_unwrap_stream: cannot open tmp dst');
+        }
+        $hashCtx = hash_init('sha256');
+        $remaining = $size - BACKUP_UNENC_HEADER_LEN;
+        while ($remaining > 0) {
+            $want = (int) min(BACKUP_STREAM_CHUNK, $remaining);
+            $buf  = fread($in, $want);
+            if ($buf === false || strlen($buf) !== $want) {
+                throw new RuntimeException('backup_unencrypted_unwrap_stream: short body read');
+            }
+            hash_update($hashCtx, $buf);
+            if (fwrite($out, $buf) !== strlen($buf)) {
+                throw new RuntimeException('backup_unencrypted_unwrap_stream: short write to tmp');
+            }
+            $remaining -= $want;
+        }
+        $observed = hash_final($hashCtx, true);
+        if (!hash_equals($expected, $observed)) {
+            throw new RuntimeException('backup_unencrypted_unwrap_stream: sha256 mismatch');
+        }
+
+        fclose($out);
+        $out = null;
+        if (!@rename($tmpPath, $dstPath)) {
+            throw new RuntimeException('backup_unencrypted_unwrap_stream: rename to dst failed');
+        }
+    } catch (Throwable $e) {
+        if (is_resource($out)) {
+            fclose($out);
+        }
+        if (is_file($tmpPath)) {
+            @unlink($tmpPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmpPath built from $dstPath + random suffix
+        }
+        throw $e;
+    } finally {
+        fclose($in);
+    }
+}
+
+/**
+ * Raised by backup_decrypt_to_path() when it recognises an IPAMBKP3 archive
+ * but the caller did not supply the credential needed to decrypt it. The
+ * `mode` property tells the caller which prompt to render (passphrase for
+ * transitory mode, vault-key load for stored mode).
+ */
+class IpamBackupKeyRequiredException extends RuntimeException
+{
+    /** @var int BACKUP_V3_MODE_STORED or BACKUP_V3_MODE_TRANSITORY */
+    public int $mode;
+
+    public function __construct(int $mode, string $message)
+    {
+        parent::__construct($message);
+        $this->mode = $mode;
+    }
+}
+
+/**
+ * Format-detecting decrypt-to-path. Peeks the 8-byte magic header and
+ * dispatches to the matching codec.
+ *
+ *   IPAMBKP3 → backup_decrypt_stream_v3() (v3.24+; stored or transitory).
+ *   IPAMBKU1 → backup_unencrypted_unwrap_stream() (v3.24+; integrity only).
+ *   IPAMBKP2 → backup_decrypt_stream()    (v3.19+ streaming, app_secret HKDF).
+ *   IPAMBKP1 → backup_decrypt()           (v3.17–v3.18, full-file GCM, legacy).
+ *
+ * Optional credentials are mode-specific:
+ *   - $passphrase  — required for IPAMBKP3 transitory mode; ignored otherwise.
+ *   - $vaultKey    — 32 raw bytes; required for IPAMBKP3 stored mode; ignored otherwise.
+ *   - $appSecret   — required for IPAMBKP1 / IPAMBKP2 legacy formats; ignored
+ *                    for v3 / unencrypted.
+ *
+ * Missing credentials throw IpamBackupKeyRequiredException so the caller can
+ * render a credential prompt without parsing exception text.
+ *
+ * @throws IpamBackupKeyRequiredException when the archive needs a
+ *         credential the caller did not provide.
+ * @throws RuntimeException on unknown magic, I/O failure, or codec errors.
+ */
+function backup_decrypt_to_path(
+    string $srcPath,
+    string $dstPath,
+    string $appSecret,
+    ?string $passphrase = null,
+    ?string $vaultKey = null
+): void {
     $fh = @fopen($srcPath, 'rb');
     if ($fh === false) {
         throw new RuntimeException('backup_decrypt_to_path: cannot open source');
     }
     $magic = (string) fread($fh, 8);
+    // For IPAMBKP3 we also need the mode byte at offset 8 to decide which
+    // credential is required before delegating.
+    $modeByte = (string) fread($fh, 1);
     fclose($fh);
 
+    if ($magic === BACKUP_MAGIC_V3) {
+        if (strlen($modeByte) !== 1) {
+            throw new RuntimeException('backup_decrypt_to_path: IPAMBKP3 truncated before mode byte');
+        }
+        $mode = ord($modeByte);
+        if ($mode === BACKUP_V3_MODE_TRANSITORY && ($passphrase === null || $passphrase === '')) {
+            throw new IpamBackupKeyRequiredException(
+                $mode,
+                'backup_decrypt_to_path: IPAMBKP3 transitory archive requires a passphrase'
+            );
+        }
+        if ($mode === BACKUP_V3_MODE_STORED && ($vaultKey === null || $vaultKey === '')) {
+            throw new IpamBackupKeyRequiredException(
+                $mode,
+                'backup_decrypt_to_path: IPAMBKP3 stored archive requires backup_vault_key'
+            );
+        }
+        backup_decrypt_stream_v3($srcPath, $dstPath, $passphrase, $vaultKey);
+        return;
+    }
+    if ($magic === BACKUP_MAGIC_UNENC) {
+        backup_unencrypted_unwrap_stream($srcPath, $dstPath);
+        return;
+    }
     if ($magic === BACKUP_MAGIC_V2) {
         backup_decrypt_stream($srcPath, $dstPath, $appSecret);
         return;
