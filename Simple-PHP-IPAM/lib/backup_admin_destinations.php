@@ -135,6 +135,70 @@ function ipam_destinations_collect_picker(string $type, array $post): array|stri
 }
 
 /**
+ * v3.25.0 #850: bulk verify every successful backup_runs row on a destination.
+ * Iterates the rows, calls ipam_backup_run_verify() per row, and returns a
+ * summary envelope plus a list of failures. Best-effort — exceptions on a
+ * single row do not abort the bulk.
+ *
+ * @return array{
+ *   ok: bool,
+ *   total: int,
+ *   success: int,
+ *   failed: int,
+ *   failures: list<array{run_id: int, filename: string, error: string}>
+ * }
+ */
+function ipam_backup_destination_verify_all(\PDO $db, int $destinationId): array
+{
+    $st = $db->prepare(
+        "SELECT id, filename FROM backup_runs
+          WHERE destination_id = :did AND status = 'success'
+          ORDER BY started_at DESC"
+    );
+    $st->execute([':did' => $destinationId]);
+    $rows = $st->fetchAll(\PDO::FETCH_ASSOC);
+
+    $success  = 0;
+    $failed   = 0;
+    $failures = [];
+    foreach ($rows as $r) {
+        if (!is_array($r)) continue;
+        $runId = to_int($r['id']);
+        try {
+            $res = ipam_backup_run_verify($db, $runId);
+            if ($res['ok'] ?? false) {
+                $success++;
+            } else {
+                $failed++;
+                $failures[] = [
+                    'run_id'   => $runId,
+                    'filename' => to_str($r['filename'] ?? ''),
+                    'error'    => to_str($res['error'] ?? 'mismatch'),
+                ];
+            }
+        } catch (\Throwable $e) {
+            $failed++;
+            $failures[] = [
+                'run_id'   => $runId,
+                'filename' => to_str($r['filename'] ?? ''),
+                'error'    => 'exception: ' . substr($e->getMessage(), 0, 80),
+            ];
+        }
+    }
+
+    audit($db, 'backup.verify_bulk', 'destination', $destinationId,
+          'total=' . count($rows) . ' success=' . $success . ' failed=' . $failed);
+
+    return [
+        'ok'       => $failed === 0,
+        'total'    => count($rows),
+        'success'  => $success,
+        'failed'   => $failed,
+        'failures' => $failures,
+    ];
+}
+
+/**
  * v3.25.0 #848: promote a destination to default. Single-row uniqueness is
  * enforced via a transaction (clear all is_default=1, then set the target).
  * MySQL 8.0 lacks partial unique indexes and the generated-column workaround
@@ -187,6 +251,20 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
 
     if (demo_mode_enabled()) {
         return 'This action is disabled in demo mode.';
+    }
+
+    // v3.25.0 #850: JSON-envelope bulk-verify (returns + exits, never falls
+    // through to the redirect handlers below).
+    if ($action === 'verify_all_destination') {
+        $id = to_int($_POST['id'] ?? '0');
+        header('Content-Type: application/json');
+        if ($id <= 0) {
+            http_response_code(400);
+            echo (string) json_encode(['ok' => false, 'error' => 'bad_request']);
+            exit;
+        }
+        echo (string) json_encode(ipam_backup_destination_verify_all($db, $id));
+        exit;
     }
 
     if ($action === 'create_destination') {
