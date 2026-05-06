@@ -18,7 +18,7 @@ class DecryptToolTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->toolPath = dirname(__DIR__) . '/tools/decrypt-backup.php';
+        $this->toolPath = dirname(__DIR__) . '/Simple-PHP-IPAM/tools/decrypt-backup.php';
         $this->tmpDir   = sys_get_temp_dir() . '/ipam-decrypt-tool-' . bin2hex(random_bytes(4));
         mkdir($this->tmpDir, 0700);
     }

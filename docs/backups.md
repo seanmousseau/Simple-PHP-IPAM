@@ -208,7 +208,7 @@ Encryption is configured per destination by selecting an [encryption mode](#over
 - Rotating `app_secret` invalidates IPAMBKP1 and IPAMBKP2 archives.
 - IPAMBKP3 transitory archives are unaffected by either rotation (the key was the operator's passphrase, not the server's secret).
 
-The full byte layout of every format is in [On-disk format](#on-disk-format). For offline decrypts (e.g. recovering an archive when the originating install is gone), `tools/decrypt-backup.php` ships a CLI that takes the appropriate credential and produces plaintext without requiring a running install.
+The full byte layout of every format is in [On-disk format](#on-disk-format). For offline decrypts (e.g. recovering an archive when the originating install is gone), `Simple-PHP-IPAM/tools/decrypt-backup.php` ships a CLI that takes the appropriate credential and produces plaintext without requiring a running install.
 
 ---
 

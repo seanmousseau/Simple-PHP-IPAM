@@ -128,7 +128,7 @@ Highlights:
 
 - **`backup_max_upload_size_mb` setting (#837).** New admin-tunable upload cap, default 2048 MiB. Effective cap is the smallest of this setting, PHP's `upload_max_filesize`, and `post_max_size`. To accept larger files, raise all three.
 
-- **Standalone decrypt CLI: `tools/decrypt-backup.php` (#1043).** Decrypts an IPAMBKP1/2/3 or IPAMBKU1 archive to plaintext without a running install. Useful when the originating IPAM install is destroyed but you still hold the credential. `php tools/decrypt-backup.php --help` for usage.
+- **Standalone decrypt CLI: `Simple-PHP-IPAM/tools/decrypt-backup.php` (#1043).** Decrypts an IPAMBKP1/2/3 or IPAMBKU1 archive to plaintext without a running install. Useful when the originating IPAM install is destroyed but you still hold the credential. `php Simple-PHP-IPAM/tools/decrypt-backup.php --help` for usage.
 
 - **Encryption-mode vocabulary changed.** Before v3.24, internal docs sometimes used "stored / transitory / unencrypted" to describe encryption-at-rest vs. TLS-only vs. plaintext. From v3.24 onward those three labels describe **where the key comes from** — server-managed `backup_vault_key`, operator-typed passphrase, or no key at all. The wire path is always TLS-protected for S3 and SSH-protected for SFTP regardless of mode. See [`docs/backups.md` → Encryption](backups.md#encryption) for the new model.
 

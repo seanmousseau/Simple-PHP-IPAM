@@ -39,9 +39,9 @@ if (PHP_SAPI !== 'cli') {
 }
 
 // Resolve repo layout: tools/ sits alongside Simple-PHP-IPAM/.
-$libPath = __DIR__ . '/../Simple-PHP-IPAM/lib.php';
+$libPath = __DIR__ . '/../lib.php';
 if (!is_file($libPath)) {
-    fwrite(STDERR, "decrypt-backup.php: cannot find Simple-PHP-IPAM/lib.php at $libPath\n");
+    fwrite(STDERR, "decrypt-backup.php: cannot find lib.php at $libPath\n");
     exit(2);
 }
 require_once $libPath;
