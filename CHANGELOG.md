@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.25.0] - 2026-05-06
+
+The operator-facing finale of the backup-overhaul stream. **Surfaces the v3.23.0 `IPAMBKL1` engine-agnostic backend via a new picker UI** (Logical default, Database under Advanced), **rehomes retention from per-schedule to per-destination**, and ships the U-series UX polish: dashboard backup card, health-page connectivity section, encryption-format icons in History, type-name-to-confirm on destination delete, skeleton loaders, cancel-in-flight on Run-now, S3 range-resume, and a Verify-all bulk action. Plus per-tab notification overrides and one orphan UX fix (subnet description in the addresses-page dropdown).
+
+### Known limitations
+- **Verify-all and Run-now cancel UX use simple confirm/alert dialogs.** Drawer-based progress UI with per-row pills will be filed against v3.26 once milestone is open. The server-side handlers, audit, and cancel infrastructure are complete and shipping.
+- **Test-suite expansion is partial.** The umbrella test issues #1044 (picker UI / retention rehome / GFS table), #859 (destination-disabled mid-backup), #860 (large-DB streaming), and #1091 (PG VR drift bisect) will land in a v3.25.x patch. The shipping code paths are exercised by the existing 794-test PHPUnit suite plus the v3.23.0 `IPAMBKL1` round-trip and v3.24.0 `IPAMBKP3` tests; this release adds operator-facing surface, not new engine code.
+
+### Added
+- **Backup format picker (#1076).** New radio on every destination form: **Logical** (engine-agnostic `IPAMBKL1`, default) or **Database** (engine-native dump, escape hatch). Run-now and schedule create both pre-fill the destination's `default_backup_type`. Backwards compatible &mdash; existing destinations migrate to `default_backup_type='logical'`.
+- **Dispatch wire-up (#849).** `ipam_backup_run_for_destination()` now branches on `backup_type` to call the v3.23.0 `IPAMBKL1` backend or the existing engine-native dump path. The hardcoded `'database'` value at `lib/backup.php:701` is gone; `backup_runs.backup_type` reflects the chosen format and the History tab's filter chip finally has both values to filter against.
+- **Retention rehome (#846).** Retention windows (hourly/daily/weekly/monthly) move from `backup_schedules` to `backup_destinations` so they describe "how much to keep at this storage location" rather than "how often we write to it." Existing per-schedule values backfill into the destination on upgrade. Per-schedule retention columns are preserved for one release cycle for downgrade safety.
+- **Default destination flag (#848).** New `is_default` column on `backup_destinations` plus "Set default" action with single-row uniqueness via transactional UPDATE. Pre-fills Run-now drawer and schedule-create form.
+- **`is_protected` UI (#847).** Per-row Protect / Unprotect action on the History tab; "★ protected" badge in the History list. Schema and retention-skip logic shipped in v3.21.0; this release completes the operator-facing surface.
+- **Opt-out encryption for trusted Local destinations (#851).** New `default_encryption_mode` column with values `stored | transitory | unencrypted`. `unencrypted` is gated to Local destinations both server-side and in the UI. Backfilled from the legacy `encrypt` boolean on upgrade so `encrypt=0` destinations stay unencrypted.
+- **Cancel-in-flight on Run-now (#856).** New `cancel_requested` column on `backup_runs`; orchestrator polls at chunk boundaries (post-dump, before-upload, mid-upload). Canceled runs land as `status='failed'` with `error_message='canceled-by-operator: <phase>'` and a `backup.cancel` audit row.
+- **S3 range-request resume (#852).** `S3Client::download()` now does up to 3 retry attempts with `Range: bytes=offset-` headers, accumulating bytes in a `<dest>.partial` sidecar across attempts. Sidecar persists across calls when download throws. Falls back to full re-download if the server returns 200 with a non-zero offset (Range ignored).
+- **Verify-all bulk action (#850).** "Verify all" button per destination row downloads + re-hashes every successful `backup_runs` row on the destination, with summary envelope `{ok, total, success, failed, failures[]}`. Audit: `backup.verify_bulk` once per bulk run.
+- **Encryption-format icon in History (#857).** Per-row pill (`v1` / `v2` / `v3` / `Plaintext` / `Per-passphrase`) derived from `encryption_mode` + `source_version`. Tooltip explains the format.
+- **Type-name-to-confirm on destination delete (#858).** Extends the existing `[data-confirm-delete]` JS so any form carrying `[data-confirm-typename]` requires the operator to type the destination name before submission.
+- **Dashboard backup card (#853).** Admin-only card on `dashboard.php` showing last run / next scheduled / total stored / destinations count.
+- **Health page destinations section (#854).** New "Backup destinations" section on `health.php` reads the existing `backup.destination_health` setting (cron Task 6c since v3.22.0) and renders one row per destination with last-test status. "X of Y healthy" headline.
+- **Per-tab notification recipients + delivery (#1078).** 3 new admin settings (`backup.notify_recipient_user_ids`, `backup.notify_recipient_email_extra`, `backup.notify_delivery_method`) let backup notifications target a different audience than the global alert infrastructure. Empty override falls back to `alert.recipient_user_ids`. Extra free-form CSV emails combine on top.
+- **Skeleton loading states (#855).** New `[data-skeleton]` attribute toggle (`loading`/`ready`) plus `window.ipamSkeleton` helper. Reuses the existing `.skeleton-row` primitive from v2.13.0; respects `prefers-reduced-motion`.
+
+### Changed
+- **`backup.encryption_change` audit generalised** from the legacy `encrypt` boolean to the `default_encryption_mode` enum (`stored | transitory | unencrypted`). `$details` now carries `name=<destname> old=<mode> new=<mode>`.
+- **Subnet description in the addresses-page dropdown (#1093).** The Subnet selector at the top of `addresses.php` renders `<cidr> — <description>` instead of bare CIDR. CIDR-first ordering preserved so existing operator muscle memory still works.
+
+### Migrations
+- `3.25.0-backup-destination-evolution` adds `retention_hourly|daily|weekly|monthly`, `is_default`, `default_backup_type`, `default_encryption_mode` to `backup_destinations`, plus `cancel_requested` to `backup_runs`. Backfills retention from any per-schedule rows (most-generous MAX) and `default_encryption_mode` from the legacy `encrypt` boolean. Idempotent. Applies cleanly across SQLite / MySQL / PostgreSQL.
+
 ## [3.24.0] - 2026-05-05
 
 The encryption-format release. New on-disk backup format **`IPAMBKP3`** with three modes (stored / transitory / unencrypted), a new server-side secret `backup_vault_key` separate from `app_secret`, and a manual upload-and-restore wizard step with passphrase entry. Backwards compatible &mdash; existing IPAMBKP1 and IPAMBKP2 archives remain restorable. Plus a long-running PostgreSQL intermittent finally tracked down and fixed: `ensure_audit_log_table()` was emitting `CREATE OR REPLACE TRIGGER` on every request, racing on the system catalog under concurrent PHP-FPM load.
@@ -1454,6 +1486,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.25.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.24.0...v3.25.0
 [3.24.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.23.0...v3.24.0
 [3.23.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.22.3...v3.23.0
 [3.22.3]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.22.2...v3.22.3

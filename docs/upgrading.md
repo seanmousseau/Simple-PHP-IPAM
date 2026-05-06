@@ -114,6 +114,18 @@ The backup is left in place after a successful upgrade. You can remove it manual
 
 ## Version-specific upgrade notes
 
+### v3.25.0
+
+Operator-facing finale of the backup overhaul. **One schema migration** (`3.25.0-backup-destination-evolution`) adds new columns to `backup_destinations` (`retention_hourly|daily|weekly|monthly`, `is_default`, `default_backup_type`, `default_encryption_mode`) and `backup_runs` (`cancel_requested`). Existing per-schedule retention values backfill into the destination on upgrade; per-schedule retention columns are preserved through this release for downgrade safety and will be dropped in a later release. **No new runtime dependencies.** Standard upgrade: `bash upgrade.sh --yes <docroot>`.
+
+Behavior changes operators will notice on first login post-upgrade:
+
+- **Backup format defaults to Logical** for newly-saved destinations. Existing destinations migrate to `default_backup_type='logical'` with no operator action required; backups continue to land at the destination. To switch a destination back to engine-native dumps, edit it and pick "Database" under the Backup format radio.
+- **Retention is configured on the Destinations tab now**, not the Backup tab. The values you had on each schedule are preserved on the matching destination automatically.
+- **`encrypt=0` destinations stay unencrypted.** The legacy `encrypt` boolean is replaced by a `default_encryption_mode` enum (`stored | transitory | unencrypted`); existing rows backfill from the boolean. Unencrypted is gated to Local destinations going forward.
+- **History tab now shows an Encryption column** with `v1` / `v2` / `v3` / `Plaintext` / `Per-passphrase` pills derived from the existing `encryption_mode` + `source_version`. No data backfill — older rows pick up the right pill from their existing fields.
+- **`backup.encryption_change` audit row vocabulary changed** from `old=encrypted|plaintext` to `old=stored|transitory|unencrypted`. Audit-log filters on the previous values keep working for pre-v3.25.0 rows; new rows use the enum vocabulary.
+
 ### v3.24.0
 
 Encryption-format upgrade: new **IPAMBKP3** archive format with three modes (stored / transitory / unencrypted), a new server-side secret (`backup_vault_key`), and a manual upload-and-restore wizard step. **No schema migrations**, **no new runtime dependencies** — the codec uses PHP's existing libsodium build for Argon2id and OpenSSL for AES-256-CTR. Standard upgrade: `bash upgrade.sh --yes <docroot>`.
