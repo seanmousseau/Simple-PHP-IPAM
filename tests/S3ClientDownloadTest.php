@@ -32,11 +32,18 @@ final class S3ClientDownloadTest extends TestCase
 {
     public function testDownloadCurlSetoptDoesNotPairFileWithReturntransfer(): void
     {
-        $ref    = new ReflectionMethod(S3Client::class, 'download');
+        // v3.25.0 #852 split the single download() call into a public
+        // download() retry/range loop and a private downloadAttempt()
+        // that performs the actual signed GET. The CURLOPT_FILE invocation
+        // moved into the private helper; the regression target follows.
+        $methodName = method_exists(S3Client::class, 'downloadAttempt')
+            ? 'downloadAttempt'
+            : 'download';
+        $ref    = new ReflectionMethod(S3Client::class, $methodName);
         $file   = $ref->getFileName();
         $start  = $ref->getStartLine();
         $end    = $ref->getEndLine();
-        $this->assertNotFalse($file, 'S3Client::download must be defined in a file');
+        $this->assertNotFalse($file, "S3Client::{$methodName} must be defined in a file");
 
         $lines  = file($file);
         $this->assertNotFalse($lines, 'must be able to read S3Client source');

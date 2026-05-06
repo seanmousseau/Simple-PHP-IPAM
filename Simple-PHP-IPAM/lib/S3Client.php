@@ -202,6 +202,61 @@ class S3Client implements BackupClientInterface
      */
     public function download(string $remoteName, string $destPath): bool
     {
+        // v3.25.0 #852 range-resume: try up to 3 attempts, appending to a
+        // sidecar partial file via Range: bytes=offset- on retries. Sidecar
+        // persists across calls when this method throws so a subsequent
+        // invocation finishes the transfer; successful completion always
+        // cleans up. If the server returns 200 with a non-zero offset
+        // request (Range ignored), the sidecar is rewritten from scratch.
+        $sidecarPath = $destPath . '.partial';
+        $maxAttempts = 3;
+        $lastError   = '';
+
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            $resumeOffset = 0;
+            if (is_file($sidecarPath)) {
+                $size = @filesize($sidecarPath);
+                if (is_int($size) && $size > 0) {
+                    $resumeOffset = $size;
+                }
+            }
+
+            try {
+                $result = $this->downloadAttempt($remoteName, $sidecarPath, $resumeOffset);
+            } catch (RuntimeException $e) {
+                $lastError = $e->getMessage();
+                if ($attempt < $maxAttempts) {
+                    usleep(200000);
+                    continue;
+                }
+                @unlink($sidecarPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $sidecarPath is locally-derived from $destPath
+                throw $e;
+            }
+
+            if ($result === 'not_found') {
+                @unlink($sidecarPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $sidecarPath is locally-derived from $destPath
+                return false;
+            }
+            if ($result === 'complete' || $result === 'restart_full') {
+                if (!@rename($sidecarPath, $destPath)) {
+                    @unlink($sidecarPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $sidecarPath is locally-derived from $destPath
+                    throw new RuntimeException('S3Client::download: cannot finalize destination');
+                }
+                return true;
+            }
+        }
+
+        @unlink($sidecarPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $sidecarPath is locally-derived from $destPath
+        throw new RuntimeException("S3Client::download: exhausted retries (last: {$lastError})");
+    }
+
+    /**
+     * Single signed-GET attempt for download(). Returns one of:
+     *   'complete', 'restart_full', 'not_found'.
+     * Throws RuntimeException on transport errors or non-2xx/non-404 codes.
+     */
+    private function downloadAttempt(string $remoteName, string $sidecarPath, int $resumeOffset): string
+    {
         $objectKey = $this->prefix . $remoteName;
         $url       = $this->objectUrl($objectKey);
         $datetime  = $this->utcDatetime();
@@ -230,59 +285,112 @@ class S3Client implements BackupClientInterface
         $sts       = self::stringToSign('AWS4-HMAC-SHA256', $datetime, $credScope, hash('sha256', $canonReq));
         $sig       = self::signature($this->secretKey, $date, $this->region, 's3', $sts);
         $authz     = self::authorizationHeader($this->accessKey, $credScope, $signedHeaders, $sig);
-
         $curlHeaders = $this->buildCurlHeaders($headers, $authz);
 
-        // Stream into a sibling tmp file first; promote to $destPath only on
-        // a successful 200 response so 404/4xx don't leave an error-body
-        // partial-write corrupting the caller's destination path.
-        $tmpDestPath = $destPath . '.dl_tmp_' . bin2hex(random_bytes(4));
-        $fh = fopen($tmpDestPath, 'wb');
-        if ($fh === false) {
-            throw new RuntimeException("S3Client::download: cannot open destination for writing");
+        if ($resumeOffset > 0) {
+            $headers['range'] = 'bytes=' . $resumeOffset . '-';
+            // Re-sign with the new header set so SigV4 covers it.
+            $signedHeaders = implode(';', array_keys($headers));
+            $canonHeaders  = $this->buildCanonicalHeaders($headers);
+            $canonReq = self::canonicalRequest(
+                'GET',
+                $this->urlPath($url),
+                (string) parse_url($url, PHP_URL_QUERY),
+                $canonHeaders,
+                $signedHeaders,
+                self::EMPTY_HASH
+            );
+            $sts   = self::stringToSign('AWS4-HMAC-SHA256', $datetime, $credScope, hash('sha256', $canonReq));
+            $sig   = self::signature($this->secretKey, $date, $this->region, 's3', $sts);
+            $authz = self::authorizationHeader($this->accessKey, $credScope, $signedHeaders, $sig);
+            $curlHeaders = $this->buildCurlHeaders($headers, $authz);
         }
 
+        $mode = $resumeOffset > 0 ? 'ab' : 'wb';
+        $fh = fopen($sidecarPath, $mode);
+        if ($fh === false) {
+            throw new RuntimeException('S3Client::download: cannot open partial sidecar for writing');
+        }
+
+        $statusCode = 0;
+        $headerCb = function ($_curl, string $hdr) use (&$statusCode): int {
+            $line = trim($hdr);
+            if (strncasecmp($line, 'HTTP/', 5) === 0) {
+                $parts = explode(' ', $line, 3);
+                if (isset($parts[1]) && ctype_digit($parts[1])) {
+                    $statusCode = (int) $parts[1];
+                }
+            }
+            return strlen($hdr);
+        };
+
         $ch = curl_init();
+        $errno  = 0;
+        $errmsg = '';
+        $code   = 0;
         try {
             // CURLOPT_FILE redirects body bytes into $fh. Must NOT also set
-            // CURLOPT_RETURNTRANSFER explicitly — even setting it to its
-            // default value of false makes curl ignore CURLOPT_FILE on
-            // PHP 8.4+ and stream the body to stdout instead, leaking the
-            // raw downloaded payload into the HTTP response of any caller
-            // (verify on remote_backups.php, restore staging, etc.).
+            // CURLOPT_RETURNTRANSFER explicitly — see download() history note.
             curl_setopt_array($ch, [
                 CURLOPT_URL            => $this->nonEmptyUrl($url),
                 CURLOPT_HTTPGET        => true,
                 CURLOPT_HTTPHEADER     => $curlHeaders,
                 CURLOPT_FILE           => $fh,
+                CURLOPT_HEADERFUNCTION => $headerCb,
                 CURLOPT_FAILONERROR    => false,
                 CURLOPT_SSL_VERIFYPEER => true,
                 CURLOPT_TIMEOUT        => 600,
             ]);
-            curl_exec($ch);
-            $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $ok     = curl_exec($ch);
+            $errno  = curl_errno($ch);
+            $errmsg = curl_error($ch);
+            $code   = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            if ($code === 0 && $statusCode > 0) {
+                $code = $statusCode;
+            }
         } finally {
             curl_close($ch);
             fclose($fh);
         }
 
+        if ($ok === false || $errno !== 0) {
+            throw new RuntimeException("S3Client::download: curl error ({$errno}): {$errmsg}");
+        }
+
+        if ($code === 206) {
+            return 'complete';
+        }
         if ($code === 200) {
-            if (!@rename($tmpDestPath, $destPath)) {
-                @unlink($tmpDestPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmpDestPath is locally-generated random
-                throw new RuntimeException("S3Client::download: cannot finalize destination");
+            if ($resumeOffset > 0) {
+                // Server ignored Range: it returned the full body and we
+                // appended it after stale bytes [0..$resumeOffset). Re-extract
+                // the appended body to the front of the sidecar.
+                $bodySize = @filesize($sidecarPath);
+                $bodyOnly = is_int($bodySize) ? max(0, $bodySize - $resumeOffset) : 0;
+                if ($bodyOnly > 0 && @rename($sidecarPath, $sidecarPath . '.swap')) {
+                    $src = @fopen($sidecarPath . '.swap', 'rb');
+                    $dst = @fopen($sidecarPath, 'wb');
+                    if ($src !== false && $dst !== false) {
+                        @fseek($src, $resumeOffset);
+                        stream_copy_to_stream($src, $dst);
+                        fclose($src);
+                        fclose($dst);
+                    }
+                    @unlink($sidecarPath . '.swap'); // nosemgrep: php.lang.security.unlink-use.unlink-use -- locally-derived path
+                    return 'restart_full';
+                }
+                @unlink($sidecarPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- locally-derived path
+                throw new RuntimeException('S3Client::download: server ignored Range; sidecar reset');
             }
-            return true;
+            return 'complete';
         }
-
-        // Non-200: discard the tmp file (which may contain an error body)
-        // and never touch $destPath.
-        @unlink($tmpDestPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmpDestPath is locally-generated random
-
         if ($code === 404) {
-            return false;
+            @unlink($sidecarPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- locally-derived path
+            return 'not_found';
         }
 
-        throw new RuntimeException("S3Client::download: HTTP $code");
+        @unlink($sidecarPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- locally-derived path
+        throw new RuntimeException("S3Client::download: HTTP {$code}");
     }
 
     /**
