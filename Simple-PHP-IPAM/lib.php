@@ -385,6 +385,22 @@ function ensure_audit_log_table(PDO $db): void
     };
     $createIndex($db, 'idx_audit_log_action',     'audit_log', 'action');
     $createIndex($db, 'idx_audit_log_created_at', 'audit_log', 'created_at');
+    ensure_audit_log_triggers($db);
+}
+
+/**
+ * (Re)create the audit_log append-only triggers (idempotent).
+ *
+ * Extracted from ensure_audit_log_table() so callers that explicitly
+ * DROP the triggers — currently only prune_audit_log() under SQLite —
+ * can put them back without relying on a side effect of the table-
+ * creation function. ensure_audit_log_table()'s probe returns early
+ * when the table exists, so it cannot be the recovery path for missing
+ * triggers in isolation.
+ */
+function ensure_audit_log_triggers(PDO $db): void
+{
+    $d = ipam_dialect();
     foreach ($d->append_only_trigger('audit_log') as $stmt) {
         try {
             $db->exec($stmt);
@@ -3161,7 +3177,11 @@ function prune_audit_log(PDO $db, int $retentionDays): int
             $st->execute([':cutoff' => $cutoff]);
             $pruned = $st->rowCount();
 
-            ensure_audit_log_table($db);
+            // Recreate the append-only triggers explicitly. The probe in
+            // ensure_audit_log_table() short-circuits when the table is
+            // present (it is — we only dropped the triggers, not the
+            // table), so we cannot rely on it to put the triggers back.
+            ensure_audit_log_triggers($db);
             $db->exec("COMMIT");
         } elseif ($driver === 'mysql') {
             $db->exec("SET @ipam_bypass_append_only = 1");
