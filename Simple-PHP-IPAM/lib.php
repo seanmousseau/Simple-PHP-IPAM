@@ -6018,7 +6018,22 @@ function ipam_retention_compute_deletions(PDO $db, int $destinationId): array
         );
         $destStmt->execute([':id' => $destinationId]);
         $destRow = $destStmt->fetch();
-    } catch (\PDOException) {
+    } catch (\PDOException $e) {
+        // Only swallow undefined-column errors — other PDO failures
+        // (deadlock, connection drop, etc.) must propagate so retention
+        // doesn't silently fall back to legacy/default values and prune
+        // too aggressively. SQLSTATE 42S22 (mysql) and 42703 (pgsql) are
+        // "undefined column"; SQLite reports HY000 with the textual
+        // 'no such column' fragment in errorInfo[2].
+        $sqlstate = (string) ($e->errorInfo[0] ?? '');
+        $msg      = (string) ($e->errorInfo[2] ?? '');
+        $missingColumn =
+            $sqlstate === '42S22'
+            || $sqlstate === '42703'
+            || ($sqlstate === 'HY000' && str_contains($msg, 'no such column'));
+        if (!$missingColumn) {
+            throw $e;
+        }
         $destRow = null;
     }
 
@@ -6654,7 +6669,14 @@ function ipam_backup_notify_dispatch(PDO $db, string $event, array $context): vo
     foreach ($recipients as $to) {
         try {
             if (function_exists('ipam_send_mail')) {
-                ipam_send_mail($to, $subject, $body, '', $transportOverride);
+                $sendResult = ipam_send_mail($to, $subject, $body, '', $transportOverride);
+                // ipam_send_mail returns success=false on transport failure
+                // without throwing — surface that here so the new
+                // forced-SMTP override doesn't fail silently.
+                if (!$sendResult['success']) {
+                    $err = is_string($sendResult['error']) ? $sendResult['error'] : 'unknown error';
+                    error_log('[backup] notify failed for ' . $to . ': ' . $err);
+                }
             } else {
                 @mail($to, $subject, $body);
             }

@@ -377,7 +377,12 @@ class S3Client implements BackupClientInterface
             if ($resumeOffset > 0) {
                 // Server ignored Range: it returned the full body and we
                 // appended it after stale bytes [0..$resumeOffset). Re-extract
-                // the appended body to the front of the sidecar.
+                // the appended body to the front of the sidecar. Order
+                // matters: any failure inside this block must restore
+                // .swap as the canonical sidecar (it's the only copy of
+                // the body bytes) — closing handles, unlinking the
+                // half-written sidecar, and renaming .swap back. (CR
+                // #1096 round 2 finding 2026-05-06.)
                 $bodySize = @filesize($sidecarPath);
                 $bodyOnly = is_int($bodySize) ? max(0, $bodySize - $resumeOffset) : 0;
                 if ($bodyOnly > 0 && @rename($sidecarPath, $sidecarPath . '.swap')) {
@@ -388,10 +393,24 @@ class S3Client implements BackupClientInterface
                         stream_copy_to_stream($src, $dst);
                         fclose($src);
                         fclose($dst);
+                        @unlink($sidecarPath . '.swap'); // nosemgrep: php.lang.security.unlink-use.unlink-use -- locally-derived path
+                        return 'restart_full';
                     }
-                    @unlink($sidecarPath . '.swap'); // nosemgrep: php.lang.security.unlink-use.unlink-use -- locally-derived path
-                    return 'restart_full';
+                    // Either fopen failed; close any handle that did
+                    // open and roll back to .swap as the canonical
+                    // sidecar so cross-call resume can still try.
+                    if ($src !== false) {
+                        fclose($src);
+                    }
+                    if ($dst !== false) {
+                        fclose($dst);
+                    }
+                    @unlink($sidecarPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- locally-derived path
+                    @rename($sidecarPath . '.swap', $sidecarPath);
+                    throw new RuntimeException('S3Client::download: Range-ignored rewrite failed (handles)');
                 }
+                // bodyOnly==0 (no usable bytes) or rename failed: drop
+                // the sidecar and signal a retryable error.
                 @unlink($sidecarPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- locally-derived path
                 throw new RuntimeException('S3Client::download: server ignored Range; sidecar reset');
             }
