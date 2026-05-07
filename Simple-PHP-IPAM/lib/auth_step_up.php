@@ -440,3 +440,59 @@ function ipam_sudo_oidc_reauth_complete(\PDO $db, int $userId, string $clientIp 
 
     return $return;
 }
+
+/**
+ * Decode the POST body produced by views/_step_up_prompt.php into the
+ * $proof array shape expected by ipam_sudo_verify(). Returns null when no
+ * step-up submission is present (caller should render the prompt) and a
+ * partial array (just ['method' => ...]) when the user clicked "Send code"
+ * or chose the OIDC re-auth method (caller intercepts before verify).
+ *
+ * @return array<string, string>|null
+ */
+function ipam_sudo_proof_from_post(): ?array
+{
+    if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') return null;
+    $method = to_str($_POST['_sudo_method'] ?? '');
+    if ($method === '') return null;
+
+    switch ($method) {
+        case 'totp':
+        case 'email_otp':
+            return [
+                'method' => $method,
+                'code'   => to_str($_POST['_sudo_code'] ?? ''),
+            ];
+        case 'password':
+            return [
+                'method'   => 'password',
+                'password' => to_str($_POST['_sudo_password'] ?? ''),
+            ];
+        case 'webauthn':
+            return [
+                'method'             => 'webauthn',
+                'client_data_json'   => to_str($_POST['_sudo_client_data_json']   ?? ''),
+                'authenticator_data' => to_str($_POST['_sudo_authenticator_data'] ?? ''),
+                'signature'          => to_str($_POST['_sudo_signature']          ?? ''),
+                'credential_id'      => to_str($_POST['_sudo_credential_id']      ?? ''),
+            ];
+        case 'oidc_reauth':
+            return ['method' => 'oidc_reauth'];
+        default:
+            return null;
+    }
+}
+
+/**
+ * Generate + send an Email OTP for the given user as part of a step-up
+ * flow. Returns true on success (caller re-renders the prompt with a
+ * "code sent" notice), false on failure (caller surfaces an error).
+ * Does NOT mint a sudo grant — the user still must submit the code,
+ * which goes through ipam_sudo_verify() like any other proof.
+ */
+function ipam_sudo_dispatch_email_otp_send(\PDO $db, int $userId): bool
+{
+    if ($userId <= 0) return false;
+    $code = ipam_email_otp_generate($db, $userId);
+    return ipam_email_otp_send($db, $userId, $code);
+}
