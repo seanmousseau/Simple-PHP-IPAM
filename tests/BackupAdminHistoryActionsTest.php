@@ -139,6 +139,19 @@ final class BackupAdminHistoryActionsTest extends TestCase
 
     public function testDeleteWhenDestinationDeleteFailsLeavesRow(): void
     {
+        // CR #1100: chmod-based read-only enforcement is bypassed when
+        // the test process runs as root (CI's mariadb/mysql/pgsql Docker
+        // jobs do). Root-owned unlink ignores the parent directory's
+        // mode and the chmod 0500 is a no-op for our purposes. Skip on
+        // root rather than rewrite the test as a unit test against a
+        // mocked filesystem — the property under test (failed unlink
+        // leaves the DB row in place) is engine-independent and is
+        // already exercised by the sqlite job's non-root environment.
+        if (function_exists('posix_geteuid') && posix_geteuid() === 0) {
+            $this->markTestSkipped(
+                'chmod-based unlink failure cannot be simulated when running as root'
+            );
+        }
         $id = $this->seedRunWithFile('x');
         // Make the destination directory read-only so unlink fails. Restore
         // perms in finally so tearDown can clean up.

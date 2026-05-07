@@ -840,6 +840,12 @@ function ipam_migrations(): array
             // rather than PRIMARY KEY(key). Use the appropriate conflict columns
             // based on what the current schema actually has so this migration
             // replays correctly in the idempotency test and on real upgrades.
+            // CR #1100: portable tenant_id detection. On mysql/pgsql the
+            // settings table also has tenant_id once 3.13.0-settings-cascade
+            // has applied, so we MUST detect it via information_schema rather
+            // than defaulting to false — otherwise the else branch hits an
+            // ON CONFLICT (key) that doesn't match the partial unique index
+            // (which is gated by tenant_id IS NULL) on PostgreSQL.
             $driver2 = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
             $hasTenantCol = false;
             if ($driver2 === 'sqlite') {
@@ -848,6 +854,14 @@ function ipam_migrations(): array
                     'name'
                 );
                 $hasTenantCol = in_array('tenant_id', $existingCols, true);
+            } elseif ($driver2 === 'mysql' || $driver2 === 'pgsql') {
+                $sch = $driver2 === 'mysql' ? 'DATABASE()' : 'current_schema()';
+                $st = $db->query(
+                    "SELECT column_name FROM information_schema.columns "
+                    . "WHERE table_schema = {$sch} AND table_name = 'settings'"
+                );
+                $cols = $st !== false ? array_map('strval', $st->fetchAll(PDO::FETCH_COLUMN)) : [];
+                $hasTenantCol = in_array('tenant_id', $cols, true);
             }
             $kc = ipam_key_col();
             if ($hasTenantCol) {
@@ -863,7 +877,12 @@ function ipam_migrations(): array
                     )->execute([':k' => 'alert.recipient_user_ids']);
                 }
             } else {
-                $ignore = ipam_dialect()->upsert_or_ignore('settings', [$kc]);
+                // CR #1100: upsert_or_ignore() backtick-quotes the column
+                // name itself on MySQL, so pass the BARE 'key' here rather
+                // than $kc (which is already pre-quoted). Otherwise MySQL
+                // sees `` `key` `` and parses it as the literal identifier
+                // " `key` ", emitting "near 'key`` = ``key`'" at parse time.
+                $ignore = ipam_dialect()->upsert_or_ignore('settings', ['key']);
                 $db->prepare(
                     "INSERT INTO settings ($kc, value, type) VALUES (:k, '[]', 'json') $ignore"
                 )->execute([':k' => 'alert.recipient_user_ids']);
