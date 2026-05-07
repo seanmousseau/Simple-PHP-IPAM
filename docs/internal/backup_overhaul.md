@@ -206,7 +206,7 @@ A single backup file can occupy multiple tier slots simultaneously (e.g. a Sunda
 
 | Mode | Passphrase source | Used for | Trade-off |
 |---|---|---|---|
-| **Stored** (automated) | Operator/tenant sets at destination setup. Encrypted at rest with `config['backup_vault_key']` (new key, separate from `app_secret`). v4.0.0 layers per-tenant HKDF derivation: `tenant_vault = HKDF(backup_vault_key, "ipam-v4:tenant_id:vault")` so the tenant's stored passphrase is unwrappable only with that tenant's derived key. | Scheduled / unattended runs **AND** manual runs against the same destination (operator does NOT have to re-type the stored passphrase for manual runs — the stored passphrase is the destination's identity). | Convenience; host-compromise → all stored passphrases recoverable → all backup files decryptable |
+| **Stored** (automated) | Operator/tenant sets at destination setup. Encrypted at rest with the install's `backup_vault_key` (DB-resident master, see §4.1 below — new key, separate from `app_secret`). v4.0.0 layers per-tenant HKDF derivation: `tenant_vault = HKDF(backup_vault_key, "ipam-v4:tenant_id:vault")` so the tenant's stored passphrase is unwrappable only with that tenant's derived key. | Scheduled / unattended runs **AND** manual runs against the same destination (operator does NOT have to re-type the stored passphrase for manual runs — the stored passphrase is the destination's identity). | Convenience; host-compromise → all stored passphrases recoverable → all backup files decryptable |
 | **Transitory** (manual only) | Operator types at backup time. Server never persists. Restore requires same passphrase to be re-typed. | Off-site / portable copies, "give me a one-off encrypted backup with a passphrase only I know" | Secure: a host compromise reveals nothing about the backup encryption. Can't automate. Operator must remember / record passphrase out-of-band. |
 | **Unencrypted** | None | Trusted local destinations, full-disk-encrypted hosts, dev/test installs | Trivial; plaintext at rest. Files are still SHA-256 integrity-checked. |
 
@@ -228,12 +228,31 @@ A single backup file can occupy multiple tier slots simultaneously (e.g. a Sunda
 **Key separation, recorded:**
 
 - **`config['app_secret']`** — continues to exist for TOTP secret derivation, restore-staging signature tokens, and other non-backup uses. Unchanged from today.
-- **`config['backup_vault_key']`** — NEW. Used ONLY to encrypt stored passphrases at rest. Different rotation lifecycle from `app_secret`. Auto-generated on first destination setup if not present.
+- **`backup_vault_key`** — NEW. Used ONLY to encrypt stored passphrases at rest. Different rotation lifecycle from `app_secret`. Auto-generated on first destination setup if not present. **Storage location: see §4.1 below.**
+- **`config['bootstrap_key']`** — NEW (v3.26.0). Small root key in `config.php` whose only job is to wrap/unwrap `backup_vault_key` at rest in the DB. Auto-generated on upgrade if absent.
 - Two-layer encryption for `Stored` mode: `vault_key` → wraps tenant-stored passphrase → which encrypts backup file. v4.0.0's per-tenant HKDF sits on top of `vault_key`, NOT `app_secret`.
 
-**Single-tenant pre-v4 case:** `backup_vault_key` is just an additional config.php entry. Operator manages it. No tenant scoping yet.
+### 4.1. `backup_vault_key` storage — DB-resident, UI-managed (corrected 2026-05-06)
 
-**v4.0.0 case:** super-admin manages `backup_vault_key` server-side. Tenant admins choose per-destination encryption mode but never see the vault key itself; the server derives the tenant's key from the master + tenant_id and uses that to wrap their stored passphrases.
+**Decision history.** The design conversation that produced §4 settled on "master vault key lives in the DB, surfaced in admin UI" — both for operator ergonomics and to fit cleanly under the v4.0.0 multi-tenancy story. **That decision was not written into this document at the time**, so the v3.24.0 implementation followed the under-specified text in §4 and stored `backup_vault_key` as a `config.php` entry. v3.26.0 (issue #1098) closes this gap.
+
+**Storage:**
+
+- `backup_vault_key` lives in the `settings` table with `tenant_id IS NULL` for v3.x. The `tenant_id` column has been on `settings` since v3.13.0 (#711), so this is unblocked structurally.
+- Marked sensitive in the settings registry — redacted in the settings UI/API; raw bytes only fetched server-side at encrypt/decrypt time.
+- The value stored in the row is **wrapped with `config['bootstrap_key']`**, not the raw key. A DB dump alone is not enough to decrypt stored-mode archives.
+
+**Bootstrap root.** `config['bootstrap_key']` is the only encryption-related thing remaining in `config.php`. Three-layer story:
+
+1. `config['bootstrap_key']` → unwraps the DB-resident `backup_vault_key`
+2. `backup_vault_key` → (v4.0.0) HKDF-derives `tenant_vault` per tenant
+3. `tenant_vault` (or `backup_vault_key` directly in v3.x) → wraps the destination's stored passphrase → which encrypts the backup file
+
+**UI surface.** Backup and Restore → Destinations page gets a new section above the destination list: key fingerprint (first 8 hex chars of SHA-256 over the wrapped value), key age, "archives encrypted with this key" count, rotation control. The raw key is never displayed; rotation is the only operator interaction. Rotation preserves old keys (in `settings` history rows or a dedicated `backup_vault_keys` table — TBD during implementation) so existing archives stay decryptable.
+
+**Single-tenant pre-v4 case:** the operator never sees the key value, only the fingerprint and the rotation control. v3.26.0 ships a migration that moves any existing `config['backup_vault_key']` into the wrapped DB row and deprecates the config entry with a banner.
+
+**v4.0.0 case:** super-admin still manages the master `backup_vault_key` server-side (in the global `tenant_id IS NULL` settings row). Tenant admins choose per-destination encryption mode but never see the vault key itself; the server derives the tenant's key from the master + tenant_id and uses that to wrap their stored passphrases.
 
 **Open sub-question (deferred to implementation memo):** Argon2id parameters (memory cost, time cost, parallelism). Default proposal: `memory=64MiB, time=3, parallelism=1` (OWASP minimum for password hashing 2024). Tunable per install if memory-limited.
 
@@ -439,7 +458,7 @@ Captured from Sean's note + Claude's audit. Each entry is a candidate issue but 
 |---|---|---|
 | D1 | Rewrite `docs/backups.md` end-to-end as the unified `Backup & Restore` reference. Retire scattered references to "Database backup" vs "Remote backup" as separate features. | v3.21.0 (alongside unified surface) |
 | D2 | New `docs/restore.md` covering both Logical and Database restore paths, manual upload flow, cross-version policy (same-or-newer, forward-migrate older), and CLI restore steps for MySQL/PostgreSQL Database backups. | v3.21.0 |
-| D3 | Update `docs/configuration.md` — remove `backup.*` keys that move into the DB; document the new `backup_vault_key` requirement and its lifecycle (separate from `app_secret`). | v3.22.0 |
+| D3 | Update `docs/configuration.md` — remove `backup.*` keys that move into the DB; document the new `backup_vault_key` requirement and its lifecycle (separate from `app_secret`). **v3.26.0 follow-up (#1098):** rewrite to remove `backup_vault_key` from `config.php` examples (now lives in `settings`); document the new `config['bootstrap_key']` and its rotation lifecycle. | v3.22.0 + v3.26.0 |
 | D4 | Encryption section in `docs/backups.md` — document the three modes (Stored / Transitory / Unencrypted), the `IPAMBKP3` passphrase format, KDF (Argon2id) parameters, and the operator-vs-tenant key-storage model. | v3.22.0 |
 | D5 | New `docs/internal/data-dictionary.md` regeneration after `backup_runs` table lands and the legacy two tables retire. | v3.22.0 |
 | D6 | Marketing site `front-page.php` backup feature card rewrite — current copy (AES-256-CTR + HMAC-SHA256 streaming) is accurate for v3.19.x but will mislead once `IPAMBKP3` ships. | v3.22.0 release |
@@ -506,7 +525,7 @@ All seven architectural concerns are now settled. References point to the §-num
 |---|---|---|
 | A1 | Two backup tables (`backup_history`, `backup_log`) — collapse or keep separate? | **RESOLVED** §A1 — collapse to one new `backup_runs` table; one-time migration. *Sean: "no need to pollute the schema. Keep it clean."* |
 | A2 | One destination = one schedule, OR many? | **RESOLVED** §3b — strictly one-to-one. Multi-cadence operators create multi-destination. |
-| A3 | `app_secret` for backup encryption — keep, retire, or split? | **RESOLVED** §4 — split. New `backup_vault_key` separate from `app_secret`; per-tenant HKDF in v4.0.0 derives from vault_key, not app_secret. Three encryption modes (Stored / Transitory / Unencrypted). |
+| A3 | `app_secret` for backup encryption — keep, retire, or split? | **RESOLVED** §4 + §4.1 — split. New `backup_vault_key` separate from `app_secret`; per-tenant HKDF in v4.0.0 derives from vault_key, not app_secret. Three encryption modes (Stored / Transitory / Unencrypted). **Storage location resolved in §4.1 (corrected 2026-05-06):** `backup_vault_key` lives in the `settings` table wrapped with a new `config['bootstrap_key']`, surfaced on the Destinations page. v3.24.0 shipped with the key in `config.php`; #1098 (v3.26.0) migrates it to DB+UI. |
 | A4 | Dump + restore engine — PDO or CLI tools? | **RESOLVED** §5a/5b/5c — Database backup keeps shell-out (`mysqldump`/`pg_dump` host prereqs). Logical backup is PDO-only. Both formats ship; Logical is primary, Database is escape hatch. MySQL-PDO + PG-PDO parked as future work. |
 | A5 | Cron task ordering — backup vs scanner priority? | **RESOLVED** — backup task moves AHEAD of scanner. Scanner becomes lowest-priority cron task with a per-tick time budget. *Sean: "scanner at lowest priority. Investigate scanner speedup (parallelism, configurable timeout) in the future."* See A5 below for detail. |
 | A6 | Notifications scope — per-schedule, global, both? | **RESOLVED** §2.4 — global-only initial ship; per-schedule override parked for revisit. Dedicated `Notifications` tab. |
@@ -838,6 +857,7 @@ Each milestone is now ≤16 items, single-theme. Less context-switching mid-rele
 | ~~Cross-engine restore~~ | ~~Func~~ | ~~sqlite-dump → mysql-target, etc.~~ | — | **MOVED → v3.23.0** | — | Resolved 2026-05-03 by IPAMBKL1 engine-agnostic format (no engine-bound types in wire format → no type-mapping work). #861 closed-as-resolved. |
 | ~~T5~~ | ~~Test~~ | ~~Cross-engine restore tests~~ | — | **MOVED → v3.23.0** | — | Folded into #1042's 3×3 cross-engine matrix. |
 | F-LEGACY-RM | Func | Retire `run_db_backup_if_due` and remove the 6 `backup.*` settings keys + Settings → Data & Maintenance → Backup group | #1059 | v3.26 | P0 | Final cutover for the legacy v3.7 single-destination filesystem-only runner. Depends on #1058 (v3.23.0 deprecation + migration helper). Last backup-focus release before v4.0.0 — appropriate place for the hard removal so v4.0.0 ships clean of both backup paths. |
+| F-VAULT-RELOC | Func | Move `backup_vault_key` from `config.php` → DB `settings` (wrapped with new `config['bootstrap_key']`); add Destinations-page UI for fingerprint / age / rotation; deprecation banner if config entry remains | #1098 | v3.26 | P0 | Closes the §4.1 design gap. v3.24.0 shipped the key in `config.php` following the under-specified original §4 text; this is the corrective migration. Anchor for the v4.0.0 three-layer key story (`bootstrap_key` → `backup_vault_key` → per-tenant HKDF). |
 | ~~F20~~ | ~~Func~~ | ~~Backup type selector `Database` vs `Data`~~ | — | **DROPPED** | — | Resolved 2026-04-29: superseded by §2.1.1 two-type model |
 
 ### v4.0.0 — multi-tenancy (frozen scope; 25 issues already filed)
@@ -995,6 +1015,7 @@ All §C items filed as GitHub issues against their suggested milestones. **76 is
 
 **v3.24.0** (10 issues, #836-845):
 - F16 IPAMBKP3 + backup_vault_key → #836
+- F-VAULT-RELOC backup_vault_key → DB+UI → #1098 (v3.26.0)
 - F13 manual upload+restore → #837
 - Crypto audit cluster (B-P1-13/35/40, B-P2-5/46) → #838
 - T6 IPAMBKP3 tamper tests → #839
