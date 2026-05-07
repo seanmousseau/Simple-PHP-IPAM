@@ -246,8 +246,18 @@ function ipam_migrations(): array
         // 1.9: ensure audit_log exists — it was only in schema.sql, not a migration,
         // so a botched demo reset that dropped it would leave it permanently missing.
         // Using CREATE TABLE IF NOT EXISTS makes this safe to run on any existing install.
-        // 1.12: add indexes on audit_log + normalize audit action names
+        // 1.12: add indexes on audit_log + normalize audit action names.
+        //
+        // CR #1100: SQLite-only legacy closure. MySQL/Postgres start from
+        // schema.{driver}.sql with idx_audit_log_action / created_at
+        // already present, AND those installs never had the legacy
+        // 'api_key.*' audit action vocabulary that this closure
+        // normalises. The ESCAPE '\' clause in particular is parsed
+        // differently across engines (MySQL's NO_BACKSLASH_ESCAPES mode
+        // interaction). Gate to SQLite.
         '1.12' => function(PDO $db) {
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             // Indexes for audit_log queries
             $db->exec("CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action)");
             $db->exec("CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at)");
@@ -419,8 +429,14 @@ function ipam_migrations(): array
             }
         },
 
-        // 2.0.0-alert-state: email utilization alert dedup state
+        // 2.0.0-alert-state: email utilization alert dedup state.
+        //
+        // CR #1100: SQLite-only legacy closure (uses sqlite_master).
+        // MySQL/Postgres start from schema.{driver}.sql with the
+        // alert_state table already present.
         '2.0.0-alert-state' => function(PDO $db): void {
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
                 ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
                 'name'

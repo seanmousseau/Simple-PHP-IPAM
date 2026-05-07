@@ -163,7 +163,10 @@ final class MysqlSmokeTest extends TestCase
         // don't replay them.
         // Bumped to 54 in v3.23.0 (#825): added 3.23.0-notify-overrides.
         // Bumped to 55 in v3.25.0 (#846 et al.): added 3.25.0-backup-destination-evolution.
-        $this->assertSame(55, (int)$row['c']);
+        // Bumped to 58 in v3.26.0 (#1059, #1098, #882): added the trio
+        // 3.26.0-login-attempts-action / 3.26.0-retire-legacy-backup /
+        // 3.26.0-vault-key-to-settings.
+        $this->assertSame(58, (int)$row['c']);
     }
 
     public function testBootstrapAdminUserInserted(): void
