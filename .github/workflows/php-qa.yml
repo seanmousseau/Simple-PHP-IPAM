@@ -17,6 +17,8 @@ name: PHP QA
 on:
   pull_request:
     branches: [dev, main]
+  push:
+    branches: [dev, main]
 
 # Cancel in-progress runs for the same ref when a new commit lands. Saves
 # minutes on busy PRs without hiding the latest result.

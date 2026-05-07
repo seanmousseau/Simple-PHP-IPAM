@@ -21,6 +21,13 @@ on:
       - 'testing/playwright/**'
       - 'testing/scripts/**'
       - '.github/workflows/playwright.yml'
+  push:
+    branches: [main, dev]
+    paths:
+      - 'Simple-PHP-IPAM/**'
+      - 'testing/playwright/**'
+      - 'testing/scripts/**'
+      - '.github/workflows/playwright.yml'
 
 concurrency:
   group: playwright-${{ github.ref }}
