@@ -422,12 +422,20 @@ function ipam_backup_run_for_destination(
     );
 
     // v3.25.0 #856 cancel poll: cancel between dump+encrypt and upload.
-    if (ipam_backup_should_cancel($db, $logId)) {
-        ipam_backup_mark_canceled($db, $logId, 'before-upload');
+    // v3.26.0 #859: ipam_backup_cancel_reason() also fires on
+    // backup_destinations.is_active=0 — i.e. an admin disabled the
+    // destination while this backup was in flight. The audit detail
+    // carries the discriminator so an investigator can tell operator-
+    // cancel from destination-disabled.
+    $cancelReason = ipam_backup_cancel_reason($db, $logId);
+    if ($cancelReason !== '') {
+        ipam_backup_mark_canceled($db, $logId, 'before-upload reason=' . $cancelReason);
         audit($db, 'backup.cancel', 'destination', $destId,
-              'run_id=' . $logId . ' phase=before-upload');
+              'run_id=' . $logId . ' phase=before-upload reason=' . $cancelReason);
         @unlink($tmpFile); // nosemgrep: php.lang.security.unlink-use.unlink-use -- tempnam-generated
-        throw new RuntimeException('ipam_backup: canceled by operator before upload');
+        throw new RuntimeException(
+            'ipam_backup: canceled before upload (reason=' . $cancelReason . ')'
+        );
     }
 
     try {
@@ -439,10 +447,12 @@ function ipam_backup_run_for_destination(
         // If a cancel was requested mid-upload, prefer the canceled
         // status over a generic 'failed' so audit and the History row
         // surface the operator action.
-        if (ipam_backup_should_cancel($db, $logId)) {
-            ipam_backup_mark_canceled($db, $logId, 'mid-upload');
+        $midCancelReason = ipam_backup_cancel_reason($db, $logId);
+        if ($midCancelReason !== '') {
+            ipam_backup_mark_canceled($db, $logId, 'mid-upload reason=' . $midCancelReason);
             audit($db, 'backup.cancel', 'destination', $destId,
-                  'run_id=' . $logId . ' phase=mid-upload error=' . substr($e->getMessage(), 0, 80));
+                  'run_id=' . $logId . ' phase=mid-upload reason=' . $midCancelReason
+                  . ' error=' . substr($e->getMessage(), 0, 80));
         } else {
             ipam_backup_update_log_failure($db, $logId, $e->getMessage());
             audit($db, 'backup.failed', 'destination', $destId,
@@ -1016,16 +1026,56 @@ function ipam_backup_insert_log(
  * upload. The corresponding cleanup happens in
  * ipam_backup_handle_cancel().
  */
-function ipam_backup_should_cancel(PDO $db, int $runId): bool
+/**
+ * Return the cancel discriminator for an in-flight backup run, or '' if
+ * the run should continue:
+ *
+ *   'cancel_requested'    — operator clicked Cancel in the UI; backup_runs.cancel_requested=1
+ *   'destination_disabled' — admin flipped backup_destinations.is_active=0 mid-run (#859)
+ *   ''                    — no cancel signal active
+ *
+ * The two-signal model lets the orchestrator emit a distinct audit detail
+ * for each path so an incident response can tell "the operator pressed
+ * Cancel" from "an admin disabled the destination while a run was active".
+ *
+ * Tolerates a missing destination row (LEFT JOIN), missing schema columns
+ * (is_active or cancel_requested absent on a partial fixture), and any
+ * other PDO failure — all return '' so the cancel poll never fabricates
+ * a cancel signal from an infrastructure error.
+ */
+function ipam_backup_cancel_reason(PDO $db, int $runId): string
 {
     try {
-        $stmt = $db->prepare("SELECT cancel_requested FROM backup_runs WHERE id = :id");
+        $stmt = $db->prepare(
+            "SELECT br.cancel_requested, bd.is_active AS dest_active
+               FROM backup_runs br
+               LEFT JOIN backup_destinations bd ON bd.id = br.destination_id
+              WHERE br.id = :id"
+        );
         $stmt->execute([':id' => $runId]);
-        $v = $stmt->fetchColumn();
-        return $v !== false && (int) $v === 1;
+        $row = $stmt->fetch();
+        if (!is_array($row)) return '';
+        $cancelRaw = $row['cancel_requested'] ?? 0;
+        if (is_numeric($cancelRaw) && (int) $cancelRaw === 1) {
+            return 'cancel_requested';
+        }
+        // dest_active=NULL means no destination row joined (missing FK or
+        // pre-migration schema with no is_active column). Treat NULL as
+        // "still live" so a destination-row glitch does not abort an
+        // in-flight backup.
+        $destActiveRaw = $row['dest_active'] ?? null;
+        if ($destActiveRaw !== null && is_numeric($destActiveRaw) && (int) $destActiveRaw === 0) {
+            return 'destination_disabled';
+        }
+        return '';
     } catch (Throwable) {
-        return false;
+        return '';
     }
+}
+
+function ipam_backup_should_cancel(PDO $db, int $runId): bool
+{
+    return ipam_backup_cancel_reason($db, $runId) !== '';
 }
 
 /**
