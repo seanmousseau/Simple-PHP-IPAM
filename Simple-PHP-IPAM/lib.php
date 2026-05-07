@@ -9122,13 +9122,28 @@ function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $confi
         require_once __DIR__ . '/version.php';
         $u = current_user();
 
-        // Find active webhooks subscribed to this event
-        $eventLike = '%"' . $event . '"%';
+        // Find active webhooks subscribed to this event. `events` is a JSON
+        // array of strings written by webhooks.php. Use engine-native JSON
+        // containment where available (MySQL JSON_CONTAINS, Postgres @>) and
+        // fall back to a quote-anchored LIKE on SQLite, which lacks a
+        // guaranteed json1 build. The quote anchors prevent substring
+        // confusion between e.g. 'subnet.create' and 'subnet.create.bulk'.
+        $driver = ipam_dialect()->driver_name();
+        if ($driver === 'mysql') {
+            $sqlFrag = 'JSON_CONTAINS(events, :ev)';
+            $bindEv  = (string)json_encode($event);
+        } elseif ($driver === 'pgsql') {
+            $sqlFrag = '(events::jsonb) @> :ev::jsonb';
+            $bindEv  = (string)json_encode($event);
+        } else {
+            $sqlFrag = 'events LIKE :ev';
+            $bindEv  = '%"' . $event . '"%';
+        }
         $hooks = $db->prepare(
             "SELECT id, url, secret FROM webhooks
-             WHERE is_active = 1 AND events LIKE :ev"
+             WHERE is_active = 1 AND $sqlFrag"
         );
-        $hooks->execute([':ev' => $eventLike]);
+        $hooks->execute([':ev' => $bindEv]);
         $rows = $hooks->fetchAll();
         if (!$rows) {
             return;
