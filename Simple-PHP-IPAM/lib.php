@@ -1014,26 +1014,55 @@ function login_user(int $uid, string $username, string $role, ?PDO $db = null): 
 
 /* ---------------- Login rate limiting ---------------- */
 
-function login_rate_limited(PDO $db, string $ip, int $maxAttempts, int $windowSeconds): bool
+/**
+ * Generic per-action, per-IP rate limiter (#882). Counts rows in
+ * login_attempts whose action matches and whose attempted_at is within the
+ * sliding window. The legacy login_*-named helpers below remain as
+ * action='login' wrappers so existing callers and tests are unaffected.
+ */
+function auth_rate_limited(PDO $db, string $action, string $ip, int $maxAttempts, int $windowSeconds): bool
 {
     $cutoff = date('Y-m-d H:i:s', time() - $windowSeconds);
-    $st = $db->prepare("SELECT COUNT(*) AS c FROM login_attempts WHERE ip = :ip AND attempted_at >= :cutoff");
-    $st->execute([':ip' => $ip, ':cutoff' => $cutoff]);
+    $st = $db->prepare(
+        "SELECT COUNT(*) AS c FROM login_attempts
+          WHERE action = :a AND ip = :ip AND attempted_at >= :cutoff"
+    );
+    $st->execute([':a' => $action, ':ip' => $ip, ':cutoff' => $cutoff]);
     /** @var array<string, mixed>|false $countRow */
     $countRow = $st->fetch();
     return (is_array($countRow) ? to_int($countRow['c']) : 0) >= $maxAttempts;
 }
 
+function record_auth_failure(PDO $db, string $action, string $ip, string $username = ''): void
+{
+    $db->prepare(
+        "INSERT INTO login_attempts (ip, username, action) VALUES (:ip, :username, :a)"
+    )->execute([
+        ':ip'       => $ip,
+        ':username' => $username !== '' ? $username : null,
+        ':a'        => $action,
+    ]);
+}
+
+function clear_auth_failures(PDO $db, string $action, string $ip): void
+{
+    $db->prepare("DELETE FROM login_attempts WHERE action = :a AND ip = :ip")
+       ->execute([':a' => $action, ':ip' => $ip]);
+}
+
+function login_rate_limited(PDO $db, string $ip, int $maxAttempts, int $windowSeconds): bool
+{
+    return auth_rate_limited($db, 'login', $ip, $maxAttempts, $windowSeconds);
+}
+
 function record_login_failure(PDO $db, string $ip, string $username = ''): void
 {
-    $db->prepare("INSERT INTO login_attempts (ip, username) VALUES (:ip, :username)")
-       ->execute([':ip' => $ip, ':username' => $username !== '' ? $username : null]);
+    record_auth_failure($db, 'login', $ip, $username);
 }
 
 function clear_login_failures(PDO $db, string $ip): void
 {
-    $db->prepare("DELETE FROM login_attempts WHERE ip = :ip")
-       ->execute([':ip' => $ip]);
+    clear_auth_failures($db, 'login', $ip);
 }
 
 function account_locked_out(PDO $db, string $username, int $maxAttempts, int $windowSeconds): bool

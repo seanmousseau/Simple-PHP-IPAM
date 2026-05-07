@@ -83,6 +83,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
     && $action !== 'switch_to_passkey') {
     csrf_require();
 
+    // #882: per-IP throttle alongside the per-session 5-attempt counter at
+    // line 109. The session counter alone does not protect against an
+    // attacker who churns sessions; the IP throttle does.
+    $rlIp = client_ip();
+    if (auth_rate_limited($db, 'email_otp', $rlIp, 20, 600)) {
+        http_response_code(429);
+        header('Retry-After: 60');
+        $error = 'Too many verification attempts from this address. Please wait and try again.';
+        require __DIR__ . '/views/email_otp_verify.php';
+        exit;
+    }
+
     $submittedCode = trim(to_str($_POST['otp_code'] ?? ''));
 
     if ($submittedCode === '') {
@@ -97,6 +109,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
         header('Location: ' . ipam_post_login_redirect_consume());
         exit;
     } else {
+        // #882: every wrong-code POST counts toward the per-IP throttle.
+        record_auth_failure($db, 'email_otp', $rlIp, $username);
         // Refresh attempts count after ipam_email_otp_verify() incremented it
         $attSt = $db->prepare("SELECT email_otp_attempts FROM users WHERE id = :id");
         $attSt->execute([':id' => $uid]);

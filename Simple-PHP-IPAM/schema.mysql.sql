@@ -320,9 +320,11 @@ CREATE TABLE IF NOT EXISTS login_attempts (
   id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   ip           VARCHAR(45) NOT NULL,
   username     VARCHAR(191) COLLATE utf8mb4_bin DEFAULT NULL,
+  action       VARCHAR(32) NOT NULL DEFAULT 'login',
   attempted_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   KEY idx_login_attempts_ip_time (ip, attempted_at),
-  KEY idx_login_attempts_username_time (username, attempted_at)
+  KEY idx_login_attempts_username_time (username, attempted_at),
+  KEY idx_login_attempts_action_ip_time (action, ip, attempted_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- ---------------------------------------------------------------------------

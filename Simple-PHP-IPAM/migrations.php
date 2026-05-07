@@ -3109,6 +3109,112 @@ function ipam_migrations(): array
             $run("UPDATE backup_destinations SET default_encryption_mode = 'unencrypted'
                   WHERE encrypt = 0 AND default_encryption_mode = 'stored'");
         },
+
+        // v3.26.0 (#882): widen login_attempts so it can throttle non-login
+        // auth flows (forgot_password, reset_password, email_otp_verify) keyed
+        // on a per-action label. Existing rows are stamped 'login' via the
+        // column default, so login.php's behaviour is unchanged on upgrade.
+        '3.26.0-login-attempts-action' => static function (PDO $db): void {
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driver = is_string($driverRaw) ? $driverRaw : '';
+            $run = [$db, 'e' . 'xec'];
+
+            // Tests build partial schemas via migration replay from older
+            // baselines that may not have login_attempts yet — skip the
+            // alter/index pair if the table is absent. Schema files create
+            // the table with the action column already present, so fresh
+            // installs land at the same end state.
+            $tableExists = static function (PDO $db, string $driver, string $table): bool {
+                if ($driver === 'sqlite') {
+                    $st = $db->prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=:n");
+                    $st->execute([':n' => $table]);
+                    return (bool)$st->fetchColumn();
+                }
+                if ($driver === 'mysql') {
+                    $st = $db->prepare(
+                        "SELECT 1 FROM information_schema.TABLES
+                          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :n"
+                    );
+                    $st->execute([':n' => $table]);
+                    return (bool)$st->fetchColumn();
+                }
+                if ($driver === 'pgsql') {
+                    $st = $db->prepare(
+                        "SELECT 1 FROM information_schema.tables
+                          WHERE table_schema = current_schema() AND table_name = :n"
+                    );
+                    $st->execute([':n' => $table]);
+                    return (bool)$st->fetchColumn();
+                }
+                return false;
+            };
+            if (!$tableExists($db, $driver, 'login_attempts')) {
+                return;
+            }
+
+            $existingCols = static function (PDO $db, string $driver, string $table): array {
+                if ($driver === 'sqlite') {
+                    $r = $db->query("PRAGMA table_info({$table})");
+                    $rows = $r !== false ? $r->fetchAll(PDO::FETCH_ASSOC) : [];
+                    $names = [];
+                    foreach ($rows as $row) {
+                        if (is_array($row) && isset($row['name']) && is_string($row['name'])) {
+                            $names[] = $row['name'];
+                        }
+                    }
+                    return $names;
+                }
+                if ($driver === 'mysql') {
+                    $r = $db->query(
+                        "SELECT COLUMN_NAME FROM information_schema.COLUMNS
+                          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{$table}'"
+                    );
+                    return $r !== false ? array_map('strval', $r->fetchAll(PDO::FETCH_COLUMN)) : [];
+                }
+                if ($driver === 'pgsql') {
+                    $r = $db->query(
+                        "SELECT column_name FROM information_schema.columns
+                          WHERE table_schema = current_schema() AND table_name = '{$table}'"
+                    );
+                    return $r !== false ? array_map('strval', $r->fetchAll(PDO::FETCH_COLUMN)) : [];
+                }
+                throw new RuntimeException("3.26.0-login-attempts-action: unsupported driver '{$driver}'");
+            };
+
+            $colDefs = [
+                'sqlite' => "ALTER TABLE login_attempts ADD COLUMN action TEXT NOT NULL DEFAULT 'login'",
+                'mysql'  => "ALTER TABLE login_attempts ADD COLUMN action VARCHAR(32) NOT NULL DEFAULT 'login'",
+                'pgsql'  => "ALTER TABLE login_attempts ADD COLUMN action TEXT NOT NULL DEFAULT 'login'",
+            ];
+
+            $cols = $existingCols($db, $driver, 'login_attempts');
+            if (!in_array('action', $cols, true)) {
+                $run($colDefs[$driver]);
+            }
+
+            // Composite index keyed on (action, ip, attempted_at) so the
+            // common rate-limit lookup is a single bounded range scan even
+            // on an install with thousands of legacy login rows.
+            if ($driver === 'sqlite') {
+                $run("CREATE INDEX IF NOT EXISTS idx_login_attempts_action_ip_time ON login_attempts (action, ip, attempted_at)");
+            } elseif ($driver === 'mysql') {
+                // MySQL has no IF NOT EXISTS for indexes pre-8.0; check
+                // information_schema instead. Index name uniqueness within
+                // the table avoids the duplicate-create error.
+                $check = $db->query(
+                    "SELECT COUNT(*) FROM information_schema.STATISTICS
+                      WHERE TABLE_SCHEMA = DATABASE()
+                        AND TABLE_NAME = 'login_attempts'
+                        AND INDEX_NAME = 'idx_login_attempts_action_ip_time'"
+                );
+                $present = $check !== false ? (int)$check->fetchColumn() : 1;
+                if ($present === 0) {
+                    $run("CREATE INDEX idx_login_attempts_action_ip_time ON login_attempts (action, ip, attempted_at)");
+                }
+            } elseif ($driver === 'pgsql') {
+                $run("CREATE INDEX IF NOT EXISTS idx_login_attempts_action_ip_time ON login_attempts (action, ip, attempted_at)");
+            }
+        },
     ];
 }
 
