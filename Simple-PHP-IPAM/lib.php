@@ -1141,6 +1141,39 @@ function flash_get(): ?array
     return ['msg' => $msg, 'type' => $type];
 }
 
+/**
+ * Allowed audit-action prefixes (categories).
+ * Shared between audit.php (UI filter) and api.php (/audit endpoint).
+ */
+const AUDIT_FILTER_PREFIXES = [
+    'address', 'aggregate', 'alert', 'apikey', 'audit', 'auth', 'backup',
+    'config', 'contact', 'custom_field', 'db', 'device', 'device_interface',
+    'dhcp_pool', 'export', 'import', 'mail', 'pd_pool', 'restore', 'scan',
+    'setting', 'settings', 'site', 'subnet', 'tag', 'user', 'vlan', 'vrf',
+    'webhook',
+];
+
+/**
+ * Validate an audit-prefix filter string. Returns the prefix if it matches the
+ * allowlist, or '' if not. Use for ?prefix=foo style filters.
+ */
+function audit_filter_validate_prefix(string $raw): string
+{
+    $p = trim($raw);
+    return ($p !== '' && in_array($p, AUDIT_FILTER_PREFIXES, true)) ? $p : '';
+}
+
+/**
+ * Validate an exact audit-action filter string. Returns the action if it
+ * matches the <prefix>.<verb> regex, or '' if not. Use for ?action=auth.login
+ * style filters; no SQL-injection surface beyond bind.
+ */
+function audit_filter_validate_action(string $raw): string
+{
+    $a = trim($raw);
+    return ($a !== '' && preg_match('/^[a-z_]+\.[a-z_]+$/', $a)) ? $a : '';
+}
+
 function audit(PDO $db, string $action, string $entityType, ?int $entityId, string $details = ''): void
 {
     $u = current_user();

@@ -1450,8 +1450,15 @@ function api_audit_log(PDO $db): never
     $where  = [];
     $params = [];
 
-    if (isset($_GET['action'])) {
-        $where[] = 'action LIKE :act'; $params[':act'] = '%' . like_escape(trim(to_str($_GET['action']))) . '%';
+    $filterPrefix = audit_filter_validate_prefix(to_str($_GET['prefix'] ?? ''));
+    if ($filterPrefix !== '') {
+        $where[] = 'action LIKE :pfx';
+        $params[':pfx'] = $filterPrefix . '.%';
+    }
+    $filterAction = audit_filter_validate_action(to_str($_GET['action'] ?? ''));
+    if ($filterAction !== '') {
+        $where[] = 'action = :act';
+        $params[':act'] = $filterAction;
     }
     $rawFrom = trim(to_str($_GET['from'] ?? ''));
     if ($rawFrom !== '') {

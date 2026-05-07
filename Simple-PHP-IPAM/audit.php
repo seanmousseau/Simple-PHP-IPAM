@@ -28,26 +28,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// --- Valid action prefixes (categories) ---
-const AUDIT_PREFIXES = [
-    'address', 'aggregate', 'alert', 'apikey', 'audit', 'auth', 'backup',
-    'config', 'contact', 'custom_field', 'db', 'device', 'device_interface',
-    'dhcp_pool', 'export', 'import', 'mail', 'pd_pool', 'restore', 'scan',
-    'setting', 'settings', 'site', 'subnet', 'tag', 'user', 'vlan', 'vrf',
-    'webhook',
-];
-
-$filterPrefix = trim(to_str($_GET['prefix'] ?? ''));
-if ($filterPrefix !== '' && !in_array($filterPrefix, AUDIT_PREFIXES, true)) {
-    $filterPrefix = '';
-}
+// --- Valid action prefixes (categories) — shared with api.php via lib.php ---
+$filterPrefix = audit_filter_validate_prefix(to_str($_GET['prefix'] ?? ''));
 
 // --- Exact action filter (e.g. ?action=auth.login from login-history links) ---
-$filterAction = trim(to_str($_GET['action'] ?? ''));
-// Validate: must be non-empty and match <prefix>.<verb> pattern (no injection surface)
-if ($filterAction !== '' && !preg_match('/^[a-z_]+\.[a-z_]+$/', $filterAction)) {
-    $filterAction = '';
-}
+$filterAction = audit_filter_validate_action(to_str($_GET['action'] ?? ''));
 
 // --- User ID filter (e.g. ?user_id=3 from users.php login-history link) ---
 $filterUserId = to_int($_GET['user_id'] ?? 0);
@@ -217,7 +202,7 @@ page_header('Audit Log');
     <label class="m-0 label-inline">Category:
       <select name="prefix" data-auto-submit>
         <option value=""<?= $filterPrefix === '' ? ' selected' : '' ?>>All</option>
-        <?php foreach (AUDIT_PREFIXES as $pfx): ?>
+        <?php foreach (AUDIT_FILTER_PREFIXES as $pfx): ?>
           <option value="<?= e($pfx) ?>"<?= $filterPrefix === $pfx ? ' selected' : '' ?>><?= e($pfx) ?></option>
         <?php endforeach; ?>
       </select>
