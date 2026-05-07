@@ -9219,6 +9219,8 @@ function page_header(string $title, array $opts = []): void
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
+    // Expose CSRF token for fetch-based POSTs from app.js (e.g. set_theme.php).
+    echo "<meta name='ipam-csrf' content='" . e(csrf_token()) . "'>";
     echo "<script defer src='assets/app.js?v={$jsV}'></script>";
     $pageAttr = isset($opts['page']) && $opts['page'] !== ''
         ? " data-page='" . e(to_str($opts['page'])) . "'"

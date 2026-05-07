@@ -29,10 +29,12 @@
       document.documentElement.setAttribute("data-theme", t);
       localStorage.setItem(key, t);
     }
+    var csrfMeta = document.querySelector("meta[name='ipam-csrf']");
+    var csrfTok = csrfMeta ? csrfMeta.getAttribute("content") || "" : "";
     fetch("set_theme.php", {
       method: "POST",
       headers: {"Content-Type": "application/x-www-form-urlencoded"},
-      body: "theme=" + encodeURIComponent(t)
+      body: "theme=" + encodeURIComponent(t) + "&csrf=" + encodeURIComponent(csrfTok)
     }).catch(function() {});
   }
 

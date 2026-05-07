@@ -17,6 +17,8 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit;
 }
 
+csrf_require();
+
 $theme = strtolower(trim(to_str($_POST['theme'] ?? '')));
 if (!in_array($theme, ['light', 'dark', 'auto'], true)) {
     http_response_code(400);
