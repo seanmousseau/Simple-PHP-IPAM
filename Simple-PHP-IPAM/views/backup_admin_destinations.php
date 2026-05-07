@@ -32,14 +32,28 @@ $_isAdmin     = ($_currentUser['role'] ?? '') === 'admin';
     <h2>Encryption key (Stored mode)</h2>
 
     <?php if ($vaultStatus['present']): ?>
-      <p class="muted">
-        Fingerprint
-        <code data-test="vault-fingerprint"><?= e((string)$vaultStatus['fingerprint']) ?></code>
-        &middot; Source
-        <code><?= e($vaultStatus['source']) ?></code>
-        <?php if ($vaultStatus['created_at'] !== null): ?>
-          &middot; Updated <code><?= e($vaultStatus['created_at']) ?></code>
-        <?php endif; ?>
+      <div class="vault-status" style="display:flex;flex-wrap:wrap;align-items:center;gap:.75rem;margin:.25rem 0 .75rem">
+        <p class="muted" style="margin:0;flex:1 1 auto;min-width:18rem">
+          Fingerprint
+          <code data-test="vault-fingerprint"><?= e((string)$vaultStatus['fingerprint']) ?></code>
+          &middot; Source
+          <code><?= e($vaultStatus['source']) ?></code>
+          <?php if ($vaultStatus['created_at'] !== null): ?>
+            &middot; Updated <code><?= e($vaultStatus['created_at']) ?></code>
+          <?php endif; ?>
+        </p>
+        <form method="post" action="backup_admin.php?tab=destinations" style="margin:0">
+          <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+          <input type="hidden" name="action" value="vault_reveal">
+          <button type="submit" data-test="vault-reveal-submit">
+            Reveal vault key
+          </button>
+        </form>
+      </div>
+      <p class="muted" style="font-size:.85em;margin:.25rem 0 1rem">
+        You will be prompted to re-authenticate before the raw key is revealed.
+        The reveal is rate-limited and audit-logged
+        (<code>backup.vault_key.revealed</code>).
       </p>
     <?php else: ?>
       <p class="muted">
@@ -60,22 +74,6 @@ $_isAdmin     = ($_currentUser['role'] ?? '') === 'admin';
     <?php endif; ?>
 
     <?php if ($vaultStatus['present']): ?>
-      <details>
-        <summary>Reveal current vault key</summary>
-        <p class="muted" style="font-size:.9em">
-          You will be prompted to re-authenticate before the raw key is revealed.
-          The reveal is rate-limited and audit-logged
-          (<code>backup.vault_key.revealed</code>).
-        </p>
-        <form method="post" action="backup_admin.php?tab=destinations" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
-          <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
-          <input type="hidden" name="action" value="vault_reveal">
-          <button type="submit" class="button-secondary" data-test="vault-reveal-submit">
-            Reveal vault key
-          </button>
-        </form>
-      </details>
-
       <details style="margin-top:.5rem">
         <summary>Replace vault key</summary>
         <?php if ($vaultStatus['has_encrypted_runs']): ?>
