@@ -850,6 +850,9 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.21.0-backup-runs'),
   ('3.21.0-schedule-unique'),
   ('3.23.0-notify-overrides'),
-  ('3.25.0-backup-destination-evolution');
+  ('3.25.0-backup-destination-evolution'),
+  ('3.26.0-login-attempts-action'),
+  ('3.26.0-retire-legacy-backup'),
+  ('3.26.0-vault-key-to-settings');
 
 SET FOREIGN_KEY_CHECKS = 1;

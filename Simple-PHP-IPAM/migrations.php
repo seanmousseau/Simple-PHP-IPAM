@@ -48,6 +48,11 @@ function ipam_migrations(): array
 
         // 0.7: address history + search indexes
         '0.7' => function(PDO $db) {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-era closure. MySQL/Postgres start from
+            // schema.{driver}.sql with this state already present.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $db->exec("
                 CREATE TABLE IF NOT EXISTS address_history (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -181,6 +186,11 @@ function ipam_migrations(): array
 
         // 0.11: login rate-limiting + REST API keys
         '0.11' => function(PDO $db) {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-era closure. MySQL/Postgres start from
+            // schema.{driver}.sql with this state already present.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $db->exec("
                 CREATE TABLE IF NOT EXISTS login_attempts (
                     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -368,6 +378,11 @@ function ipam_migrations(): array
 
         // 2.0.0-tags: tags on subnets and addresses
         '2.0.0-tags' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-era closure. MySQL/Postgres start from
+            // schema.{driver}.sql with this state already present.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
                 ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
                 'name'
@@ -670,6 +685,11 @@ function ipam_migrations(): array
 
         // 2.4.0-vlan-ranges: 802.1Q VLAN ID range model
         '2.4.0-vlan-ranges' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-era closure. MySQL/Postgres start from
+            // schema.{driver}.sql with this state already present.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
                 ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
                 'name'
@@ -693,6 +713,11 @@ function ipam_migrations(): array
 
         // 2.4.0-aggregates: supernet/aggregate tracking
         '2.4.0-aggregates' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-era closure. MySQL/Postgres start from
+            // schema.{driver}.sql with this state already present.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
                 ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
                 'name'
@@ -719,6 +744,11 @@ function ipam_migrations(): array
 
         // 2.4.0-pd-pools: IPv6 prefix delegation (RFC 3633)
         '2.4.0-pd-pools' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-era closure. MySQL/Postgres start from
+            // schema.{driver}.sql with this state already present.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
                 ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
                 'name'

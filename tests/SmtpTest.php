@@ -89,6 +89,14 @@ class SmtpTest extends TestCase
         $this->assertArrayHasKey('success', $result);
         $this->assertArrayHasKey('error', $result);
         $this->assertArrayHasKey('transport', $result);
+        // CR #1100: tighten the type contract so a regression that
+        // changes ipam_send_mail() to return a non-bool success or a
+        // non-string-or-null error fails immediately at the boundary
+        // instead of silently flowing into callers that branch on
+        // truthiness.
+        $this->assertIsBool($result['success']);
+        $this->assertTrue($result['error'] === null || is_string($result['error']));
+        $this->assertIsString($result['transport']);
     }
 
     // -----------------------------------------------------------------------
