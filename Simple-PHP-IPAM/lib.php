@@ -9170,7 +9170,7 @@ function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $confi
                  VALUES (:wid, :ev, :pl, :sig, 1, :now)"
             );
             $ins->execute([':wid' => $hook['id'], ':ev' => $event, ':pl' => $payload, ':sig' => $sig, ':now' => $now]);
-            $delId = (int)$db->lastInsertId();
+            $delId = ipam_last_insert_id($db, 'webhook_deliveries');
 
             // Attempt synchronous delivery
             $result = ipam_webhook_deliver($hook, $event, $payload, $sig);
