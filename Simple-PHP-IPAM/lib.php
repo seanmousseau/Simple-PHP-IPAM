@@ -825,8 +825,14 @@ function csrf_require(): void
     $sent = $_POST['csrf'] ?? null;
     $real = csrf_token();
     if (!is_string($sent) || !hash_equals($real, $sent)) {
+        // Hard 403 — never a redirect. PHP's `header('Location: ...')`
+        // silently clobbers the response code to 302, which obscures the
+        // CSRF failure and lets API/XHR clients silently follow the
+        // redirect to login.php and re-submit. The set_theme.php B1
+        // CSRF spec (#879) caught this regression.
         http_response_code(403);
-        header('Location: login.php');
+        header('Content-Type: text/plain; charset=utf-8');
+        echo "CSRF token missing or invalid.\n";
         exit;
     }
 }
