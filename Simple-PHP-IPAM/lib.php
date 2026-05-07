@@ -7481,6 +7481,15 @@ function auto_reserve_subnet_ips(PDO $db, int $subnetId, string $cidr, ?string $
     $p = parse_cidr($cidr);
     if (!$p) return;
 
+    // Wrap the (up to) three INSERT + audit pairs in a transaction so a failure
+    // partway through doesn't leave the subnet half-reserved (e.g. network +
+    // broadcast committed, gateway audit dies, original v3.25.0 behaviour left
+    // a row without its audit trail). Honour an outer transaction if one is
+    // already open — callers like subnet create/update wrap their own.
+    $owns = !$db->inTransaction();
+    if ($owns) $db->beginTransaction();
+
+    try {
     // #379/#410: bind ip_bin via ipam_bind_binary() (PARAM_LOB) so the stored
     // affinity is BLOB on SQLite and bytes round-trip safely on MySQL/Postgres.
     // The scalar params still come through bindValue so we can mix the two
@@ -7537,6 +7546,11 @@ function auto_reserve_subnet_ips(PDO $db, int $subnetId, string $cidr, ?string $
                 audit($db, 'address.create', 'address', $newId, "auto-reserve gateway {$gwNorm['ip']} in subnet $subnetId");
             }
         }
+    }
+        if ($owns) $db->commit();
+    } catch (\Throwable $e) {
+        if ($owns && $db->inTransaction()) $db->rollBack();
+        throw $e;
     }
 }
 
