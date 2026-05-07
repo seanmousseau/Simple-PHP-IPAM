@@ -2024,6 +2024,34 @@ function ipam_migrations(): array
         // so each tenant can override any global setting while global rows sit at
         // tenant_id IS NULL. SQLite requires a full table rebuild; MySQL and
         // PostgreSQL use ALTER TABLE.
+        //
+        // ─── Cross-engine UQ divergence — read before changing this migration ───
+        // SQLite and PostgreSQL use TWO partial unique indexes:
+        //   - uq_settings_global  ON settings (key)            WHERE tenant_id IS NULL
+        //   - uq_settings_tenant  ON settings (tenant_id, key) WHERE tenant_id IS NOT NULL
+        // The partial indexes correctly enforce "one row per global key" because
+        // both engines treat each NULL as distinct in COMPOSITE UNIQUE constraints
+        // (SQL standard). Without the partial index for the global rows, two
+        // INSERTs of the same key with tenant_id=NULL would both succeed.
+        //
+        // MySQL does NOT support predicate partial indexes, so it uses a single
+        // composite UNIQUE(tenant_id, key). For tenant-scoped rows this is
+        // sufficient (tenant_id is non-NULL there), but for global rows the
+        // composite UQ does NOT prevent duplicates because MySQL also follows
+        // the SQL-standard NULL-distinctness rule. The runtime fix is in
+        // ipam_setting_set() at lib.php — it acquires a MySQL advisory lock
+        // (GET_LOCK / RELEASE_LOCK) keyed on the tenant+key digest BEFORE
+        // doing the SELECT→INSERT pair, so two concurrent writers cannot
+        // both observe "row absent" and both insert. Lock name format:
+        //   ipam_setting:<md5(key . ':' . (tenantId ?? '__GLOBAL__'))>
+        //
+        // SchemaParityTest explicitly whitelists this divergence (see the
+        // `if ($table === 'settings') continue;` skips around the partial-
+        // index extractor and the unique_constraints comparison block).
+        // If you change the partial-index shape here, update both the
+        // GET_LOCK lock name and the SchemaParityTest whitelist comments.
+        // E1 (#884) cross-reference complete.
+        // ─────────────────────────────────────────────────────────────────────────
         '3.13.0-settings-cascade' => static function (PDO $db): void {
             $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
 

@@ -2564,6 +2564,13 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
     // duplicate global rows. GET_LOCK blocks until the lock is free (or the
     // 5 s timeout elapses). RELEASE_LOCK runs unconditionally in the finally
     // block so the lock is freed even when an exception is thrown.
+    //
+    // Cross-references — read together if you change any of the three:
+    //   - migrations.php :: 3.13.0-settings-cascade (cross-engine UQ shape)
+    //   - tests/SchemaParityTest.php (whitelist of the divergence)
+    //   - this lock (the runtime fix MySQL needs to match the partial-index
+    //     semantics SQLite/PG get for free)
+    // E1 (#884) cross-reference complete.
     $mysqlLockName = null;
     if ($d->driver_name() === 'mysql') {
         // MySQL GET_LOCK names are capped at 64 bytes and silently truncate
