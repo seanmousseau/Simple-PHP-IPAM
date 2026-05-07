@@ -462,11 +462,20 @@ class S3Client implements BackupClientInterface
         if ($code === 416 && $resumeOffset > 0 && $contentRange === $resumeOffset) {
             // Trim the streamed 416 error body that landed in the sidecar
             // by truncating back to the known object size before declaring
-            // complete.
+            // complete. Both fopen and ftruncate must succeed — otherwise
+            // the appended error body would still be in the sidecar and
+            // returning 'complete' would silently finalize a corrupt file.
+            // (CR #1096 round 5 finding 2026-05-07.)
             $fp = @fopen($sidecarPath, 'r+');
-            if ($fp !== false) {
-                @ftruncate($fp, $resumeOffset);
-                fclose($fp);
+            if ($fp === false) {
+                @unlink($sidecarPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- locally-derived path
+                throw new RuntimeException('S3Client::download: cannot open sidecar to truncate after 416-EOF');
+            }
+            $truncOk = @ftruncate($fp, $resumeOffset);
+            fclose($fp);
+            if (!$truncOk) {
+                @unlink($sidecarPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- locally-derived path
+                throw new RuntimeException('S3Client::download: ftruncate failed after 416-EOF');
             }
             return 'complete';
         }
