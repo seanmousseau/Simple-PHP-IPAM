@@ -4463,6 +4463,42 @@ function ipam_backup_vault_key_get_raw(): ?string
 {
     /** @var array<string,mixed> $config */
     global $config;
+
+    // v3.26.0 (#1098): DB-resident wrapped envelope is the primary store.
+    // Falls back to the legacy config field for one release for downgrade
+    // safety. Both reads are guarded so a partial install (settings table
+    // absent, lib/vault.php not loaded) returns null rather than throwing.
+    $envelope = '';
+    if (function_exists('ipam_setting')) {
+        try {
+            $envRaw = ipam_setting('backup_vault_key', '');
+            $envelope = is_string($envRaw) ? $envRaw : '';
+        } catch (\Throwable) {
+            $envelope = '';
+        }
+    }
+    if ($envelope !== '' && function_exists('ipam_vault_unwrap') && function_exists('ipam_bootstrap_key')) {
+        try {
+            $raw = ipam_vault_unwrap($envelope, ipam_bootstrap_key());
+            if (strlen($raw) === BACKUP_VAULT_KEY_LEN) {
+                if (isset($config['backup_vault_key']) && $config['backup_vault_key'] !== '') {
+                    error_log(
+                        'backup_vault_key present in BOTH config.php and the settings table; '
+                        . 'using the DB row. Remove the config.php field once you have confirmed '
+                        . 'backups continue to round-trip.'
+                    );
+                }
+                return $raw;
+            }
+        } catch (\Throwable $e) {
+            // Surface to error_log but fall through to the legacy config
+            // path — an admin who has just rotated config.php to clear
+            // the legacy field but still has a stale envelope would
+            // otherwise be locked out of every existing backup.
+            error_log('backup_vault_key DB unwrap failed: ' . $e->getMessage());
+        }
+    }
+
     $b64 = $config['backup_vault_key'] ?? null;
     if (!is_string($b64) || $b64 === '') {
         return null;

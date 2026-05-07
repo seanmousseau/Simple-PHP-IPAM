@@ -82,8 +82,21 @@ backup.retention_pruned             backup.wal_checkpoint_failed
 backup.connection_test_failed       backup.schedule_overdue       backup.encryption_change
 backup.cancel                       backup.protect                backup.unprotect
 backup.set_default_destination      backup.verify_bulk
+backup.vault_key.revealed           backup.vault_key.set
+backup.vault_key.replaced           backup.vault_key.sudo_failed
+backup.vault_key.reveal_failed      backup.vault_key.reveal_rate_limited
 backup_run.bulk_delete              backup_run.purge
 ```
+
+`backup.vault_key.revealed` (`entity_type=vault`, `entity_id=null`) — emitted by the destinations admin's reveal-key handler (v3.26.0 #1098) after a successful sudo-mode password re-prompt. `$details` carries `user=<username> fingerprint=<8 hex>`. The raw key never appears in the audit row; the fingerprint lets a forensic investigation confirm which key was revealed without storing the secret in the audit log.
+
+`backup.vault_key.set` / `backup.vault_key.replaced` (`entity_type=vault`) — emitted when an admin sets the first vault key, or replaces an existing one (v3.26.0 #1098). `$details` carries `user=<username> mode=<generate|paste> fingerprint=<8 hex>`. Replace is gated on `SELECT 1 FROM backup_runs WHERE encryption_mode != 'unencrypted'` returning empty so a key swap cannot orphan existing archives.
+
+`backup.vault_key.sudo_failed` (`entity_type=vault`) — emitted when any vault-key admin action (reveal/set/replace) is refused because the supplied password did not `password_verify()` against the current admin's hash (v3.26.0 #1098). `$details` carries `action=<vault_*> user=<username>`. Reveal additionally records a `record_auth_failure()` row so the per-IP rate-limit applies the same back-pressure as a failed login.
+
+`backup.vault_key.reveal_failed` (`entity_type=vault`) — emitted when reveal succeeded the sudo-prompt but no vault key is configured (v3.26.0 #1098). `$details` carries `user=<username> reason=<no_key>`. Distinct from `sudo_failed` so an incident response can tell "wrong password" from "key gone".
+
+`backup.vault_key.reveal_rate_limited` (`entity_type=vault`) — emitted when reveal is refused because the per-IP cap (5 attempts / 15 minutes) has been hit (v3.26.0 #1098). `$details` carries `ip=<client_ip> user=<username>`.
 
 `backup_run.bulk_delete` (`entity_type=backup_run`) — emitted once per row deleted via the History tab's bulk-select UI (v3.22.0 #1052). One audit entry per row keeps forensics aligned with the per-row `backup_run.delete` / `backup_run.delete_failed` vocabulary; `$details` carries `actor=bulk` so bulk deletions are distinguishable from single-row drawer deletes.
 
