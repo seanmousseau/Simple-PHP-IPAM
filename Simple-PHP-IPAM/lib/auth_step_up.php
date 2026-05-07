@@ -423,7 +423,7 @@ function ipam_sudo_oidc_reauth_redirect_url(string $returnPath): string
     $_SESSION['sudo_oidc_reauth_state']  = $state;
     $_SESSION['sudo_oidc_reauth_return'] = $safe;
 
-    return '/oidc/start.php?prompt=login&sudo=' . rawurlencode($state);
+    return 'oidc_login.php?prompt=login&sudo=' . rawurlencode($state);
 }
 
 /**
