@@ -2392,7 +2392,30 @@ function ipam_setting(string $key, mixed $default = null, ?int $tenantId = null)
                 return $decoded;
             }
         }
+    } catch (\PDOException $e) {
+        // Differentiate "schema not migrated yet" (silent fallback to config)
+        // from a real DB error (log + rethrow so the caller sees the failure
+        // instead of getting a stale fallback value). PDO surfaces "missing
+        // table/column" with SQLSTATE 42S02 / 42703, plus a per-engine
+        // human-readable message that we also pattern-match for resilience
+        // against driver quirks where SQLSTATE may not be set.
+        $sqlstate = $e->getCode();
+        $msg      = $e->getMessage();
+        $isMissingSchema =
+            $sqlstate === '42S02' || $sqlstate === '42703' ||
+            stripos($msg, 'no such table') !== false ||
+            stripos($msg, 'no such column') !== false ||
+            stripos($msg, 'undefined table') !== false ||
+            stripos($msg, 'undefined column') !== false;
+        if (!$isMissingSchema) {
+            error_log("ipam_setting: read failed for key {$key}: {$msg}");
+            throw $e;
+        }
+        // Pre-migration fallback path — silently fall through.
     } catch (\Throwable $e) {
+        // Non-PDO failure (e.g. cache helper bug). Log and fall through to the
+        // config back-compat path; do not rethrow because callers that read
+        // settings during bootstrap cannot meaningfully recover.
         error_log("ipam_setting: read failed for key {$key}: " . $e->getMessage());
     }
 
