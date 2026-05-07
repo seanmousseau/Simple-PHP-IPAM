@@ -183,7 +183,7 @@ function ipam_sudo_verify(\PDO $db, int $userId, array $proof, string $clientIp 
 
     $method = to_str($proof['method'] ?? '');
 
-    $st = $db->prepare("SELECT username, password_hash, totp_secret, totp_enabled, oidc_sub FROM users WHERE id = :id AND is_active = 1");
+    $st = $db->prepare("SELECT username, password_hash, totp_secret_enc, totp_enabled, oidc_sub FROM users WHERE id = :id AND is_active = 1");
     $st->execute([':id' => $userId]);
     $row = $st->fetch();
     if (!is_array($row)) {
@@ -202,12 +202,19 @@ function ipam_sudo_verify(\PDO $db, int $userId, array $proof, string $clientIp 
     } else {
         switch ($method) {
             case 'totp':
-                $code   = (string) preg_replace('/\D/', '', to_str($proof['code'] ?? ''));
-                $secret = to_str($row['totp_secret'] ?? '');
+                // The TOTP secret is stored encrypted at rest (totp_secret_enc)
+                // and decrypted with $config['app_secret']. Same shape as
+                // totp_verify.php:128 — keep these two call sites in sync.
+                $code      = (string) preg_replace('/\D/', '', to_str($proof['code'] ?? ''));
+                $cfg       = $GLOBALS['config'] ?? null;
+                $appSecret = is_array($cfg) ? to_str($cfg['app_secret'] ?? '') : '';
+                $plain     = ($appSecret !== '')
+                    ? ipam_totp_decrypt_secret(to_str($row['totp_secret_enc'] ?? ''), $appSecret)
+                    : '';
                 $ok = ($code !== ''
-                    && $secret !== ''
+                    && $plain !== ''
                     && to_int($row['totp_enabled'] ?? 0) === 1
-                    && ipam_totp_verify($secret, $code));
+                    && ipam_totp_verify($plain, $code));
                 if (!$ok) $reason = 'totp_invalid';
                 break;
 
