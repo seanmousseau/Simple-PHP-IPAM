@@ -1135,6 +1135,16 @@ function ip_in_any_cidr(string $ip, array $cidrs): bool
             continue;
         }
         [$net, $prefixStr] = explode('/', $cidr, 2);
+        $net = trim($net);
+        $prefixStr = trim($prefixStr);
+        // CR #1100: reject non-numeric prefixes before casting. Without
+        // this guard, a typo like "10.0.0.0/abc" would cast to /0 and
+        // ip_in_any_cidr() would match every IPv4 address — turning a
+        // proxy_trust_cidrs typo into a "trust everyone" XFF spoofing
+        // foothold. ctype_digit() is strict (no whitespace, no signs).
+        if ($prefixStr === '' || !ctype_digit($prefixStr)) {
+            continue;
+        }
         $netBin = @inet_pton($net);
         if ($netBin === false || strlen($netBin) !== strlen($ipBin)) {
             continue;
@@ -1233,9 +1243,10 @@ function flash_get(): ?array
  */
 const AUDIT_FILTER_PREFIXES = [
     'address', 'aggregate', 'alert', 'apikey', 'audit', 'auth', 'backup',
-    'config', 'contact', 'custom_field', 'db', 'device', 'device_interface',
-    'dhcp_pool', 'export', 'import', 'mail', 'pd_pool', 'restore', 'scan',
-    'setting', 'settings', 'site', 'subnet', 'tag', 'user', 'vlan', 'vrf',
+    'backup_run', 'config', 'contact', 'custom_field', 'db', 'destination',
+    'device', 'device_interface', 'dhcp_pool', 'export', 'import', 'mail',
+    'mfa', 'pd_pool', 'remote_backup', 'restore', 'scan', 'setting',
+    'settings', 'site', 'subnet', 'tag', 'user', 'vault', 'vlan', 'vrf',
     'webhook',
 ];
 
@@ -1257,7 +1268,11 @@ function audit_filter_validate_prefix(string $raw): string
 function audit_filter_validate_action(string $raw): string
 {
     $a = trim($raw);
-    return ($a !== '' && preg_match('/^[a-z_]+\.[a-z_]+$/', $a)) ? $a : '';
+    // CR #1100: allow multi-segment actions like 'mfa.otp.fail' or
+    // 'backup.vault_key.revealed'. The previous single-dot regex
+    // rejected every audit row this codebase emits with two-dot
+    // hierarchies, so ?action=<that> filters could never match.
+    return ($a !== '' && preg_match('/^[a-z_]+(?:\.[a-z_]+)+$/', $a)) ? $a : '';
 }
 
 /**
@@ -4497,38 +4512,58 @@ function ipam_backup_vault_key_get_raw(): ?string
     /** @var array<string,mixed> $config */
     global $config;
 
-    // v3.26.0 (#1098): DB-resident wrapped envelope is the primary store.
-    // Falls back to the legacy config field for one release for downgrade
-    // safety. Both reads are guarded so a partial install (settings table
-    // absent, lib/vault.php not loaded) returns null rather than throwing.
+    // v3.26.0 (#1098 + CR #1100): DB-resident wrapped envelope is the
+    // primary store. Falls back to the legacy config field for one
+    // release for downgrade safety, but ONLY when the DB read or unwrap
+    // shows the envelope is genuinely absent or malformed — never on a
+    // transient PDO failure or a real unwrap error. A blanket Throwable
+    // catch would let a flapping settings query silently switch
+    // runtime key selection back to a stale config value, producing
+    // backups that stop round-tripping once the DB path recovers.
+    //
+    // - ipam_setting() schema-missing: caught internally and returns
+    //   the registry default ('' here). We treat empty-string as
+    //   "DB has no row, fall back to config" — this is the legitimate
+    //   pre-migration upgrade window.
+    // - ipam_setting() throwing: an unexpected condition (e.g. the
+    //   helper itself isn't loaded). Treated as "no DB row" so we
+    //   don't crash the decrypt path; the legacy fallback applies.
+    // - ipam_vault_unwrap() returning a wrong-length plaintext: bail
+    //   to legacy. The wrap function never produces a wrong length, so
+    //   this would imply ciphertext truncation — surface via error_log.
+    // - ipam_vault_unwrap() throwing RuntimeException with the explicit
+    //   "authentication failed" message: the envelope is malformed or
+    //   the bootstrap_key changed. Surface and bail to legacy (the
+    //   operator may have a saved key in config.php to recover with).
+    // - Any OTHER throw (PDO transient errors propagated through
+    //   ipam_setting bubbling up as Throwable, sodium extension
+    //   missing, etc.): rethrow so the caller surfaces a real failure
+    //   instead of silently using stale config.
     $envelope = '';
     if (function_exists('ipam_setting')) {
-        try {
-            $envRaw = ipam_setting('backup_vault_key', '');
-            $envelope = is_string($envRaw) ? $envRaw : '';
-        } catch (\Throwable) {
-            $envelope = '';
-        }
+        $envRaw = ipam_setting('backup_vault_key', '');
+        $envelope = is_string($envRaw) ? $envRaw : '';
     }
     if ($envelope !== '' && function_exists('ipam_vault_unwrap') && function_exists('ipam_bootstrap_key')) {
         try {
             $raw = ipam_vault_unwrap($envelope, ipam_bootstrap_key());
-            if (strlen($raw) === BACKUP_VAULT_KEY_LEN) {
-                if (isset($config['backup_vault_key']) && $config['backup_vault_key'] !== '') {
-                    error_log(
-                        'backup_vault_key present in BOTH config.php and the settings table; '
-                        . 'using the DB row. Remove the config.php field once you have confirmed '
-                        . 'backups continue to round-trip.'
-                    );
-                }
-                return $raw;
-            }
-        } catch (\Throwable $e) {
-            // Surface to error_log but fall through to the legacy config
-            // path — an admin who has just rotated config.php to clear
-            // the legacy field but still has a stale envelope would
-            // otherwise be locked out of every existing backup.
+        } catch (\RuntimeException $e) {
+            // RuntimeException is the documented unwrap failure mode
+            // (bad envelope / wrong bootstrap key / tampered cipher).
+            // Surface and fall through so a saved config-side key can
+            // still recover existing backups.
             error_log('backup_vault_key DB unwrap failed: ' . $e->getMessage());
+            $raw = '';
+        }
+        if ($raw !== '' && strlen($raw) === BACKUP_VAULT_KEY_LEN) {
+            if (isset($config['backup_vault_key']) && $config['backup_vault_key'] !== '') {
+                error_log(
+                    'backup_vault_key present in BOTH config.php and the settings table; '
+                    . 'using the DB row. Remove the config.php field once you have confirmed '
+                    . 'backups continue to round-trip.'
+                );
+            }
+            return $raw;
         }
     }
 

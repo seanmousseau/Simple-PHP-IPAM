@@ -465,25 +465,42 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
 
         // After the vault_reveal branch's :never redirect, action is one of
         // {'vault_set', 'vault_replace'}. Gate each action on its own
-        // precondition: vault_set refuses when a key already exists,
-        // vault_replace refuses when encrypted runs would be orphaned.
-        // Both actions ALSO refuse when encrypted runs exist and no key
-        // is currently configured (CR #1100 review): a vault_set in that
-        // state would mint a fresh key and permanently strand the older
-        // archives whose key is gone. The operator must purge encrypted
-        // history first.
+        // precondition gates (CR #1100):
+        //   vault_set with key present       → refuse (use Replace)
+        //   vault_set + generate, encrypted  → refuse (would orphan archives
+        //                                      under a fresh key)
+        //   vault_set + paste, encrypted     → ALLOW (operator is restoring
+        //                                      a lost-but-known key from
+        //                                      their password manager;
+        //                                      they accept the risk if
+        //                                      the pasted value is wrong,
+        //                                      since unwrap-on-restore
+        //                                      will fail loudly in that
+        //                                      case rather than silently
+        //                                      destroy data)
+        //   vault_replace + anything, enc    → refuse (replacing IS the
+        //                                      orphaning operation)
+        $mode = to_str($_POST['vault_mode'] ?? 'generate');
         $status = ipam_vault_key_status($db);
         if ($action === 'vault_set' && $status['present']) {
             return 'A vault key is already configured. Use Replace to change it.';
         }
         if ($status['has_encrypted_runs']) {
-            return 'Cannot ' . ($action === 'vault_set' ? 'set' : 'replace')
-                 . ' the vault key while encrypted backups exist '
-                 . '(any change would orphan them). Purge encrypted backup '
-                 . 'history first.';
+            // Only vault_set + paste is permitted when encrypted runs
+            // exist (operator restoring a known key). Both vault_replace
+            // and vault_set + generate would orphan archives.
+            $isRestoreFromPaste = ($action === 'vault_set' && $mode === 'paste');
+            if (!$isRestoreFromPaste) {
+                return 'Cannot ' . ($action === 'vault_set' ? 'generate a new' : 'replace the')
+                     . ' vault key while encrypted backups exist '
+                     . '(any orphaned key would strand them). '
+                     . ($action === 'vault_set'
+                        ? 'Paste the original key from your password manager '
+                        . 'to recover, or purge encrypted backup history first.'
+                        : 'Purge encrypted backup history first.');
+            }
         }
 
-        $mode = to_str($_POST['vault_mode'] ?? 'generate');
         $rawKey = '';
         if ($mode === 'paste') {
             $pasted = trim(to_str($_POST['vault_key_b64'] ?? ''));

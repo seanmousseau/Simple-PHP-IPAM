@@ -39,10 +39,21 @@ final class MigrationFreshInstallMultiDriverTest extends TestCase
     {
         $dsn = getenv($envKey);
         if ($dsn === false || $dsn === '') {
+            // CR #1100: only fail-loud in CI when this is the matching
+            // matrix slot — i.e. the mysql test on the mysql job, the
+            // pgsql test on the pgsql job. The sqlite/mariadb jobs run
+            // PHPUnit too but don't wire IPAM_MYSQL_DSN / IPAM_PGSQL_DSN,
+            // and silently skipping there is correct (they're exercising
+            // a different driver). Without this gating, the SQLite job
+            // would fail every PHPUnit run for a missing DSN it was
+            // never expected to provide.
             $isCi = (getenv('CI') === 'true' || getenv('CI') === '1');
+            $driverForKey = strtolower(str_replace(['IPAM_', '_DSN'], '', $envKey));
+            $isMatchingSlot = (getenv('IPAM_DB_DRIVER') === $driverForKey);
             $msg  = "$envKey not set — required for multi-driver fresh-install coverage (#885)";
-            if ($isCi) {
-                $this->fail($msg . '. CI=true is meant to wire this DSN; refusing to silently skip.');
+            if ($isCi && $isMatchingSlot) {
+                $this->fail($msg . '. CI=true and IPAM_DB_DRIVER=' . $driverForKey
+                    . ' is meant to wire this DSN; refusing to silently skip.');
             }
             $this->markTestSkipped($msg . ' (set the env var to run locally).');
         }
