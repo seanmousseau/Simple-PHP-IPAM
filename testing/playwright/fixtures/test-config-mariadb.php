@@ -67,6 +67,11 @@ return [
         'secret_key'  => '',
     ],
     'app_secret'           => 'playwright-test-app-secret-for-totp',
+    // v3.26.0 (#1098) — bootstrap_key for the vault wrap/unwrap layer.
+    // Production hardening blocks Apache writes to config.php so the
+    // auto-gen path can't run; pre-set the key matches the production
+    // install pattern.
+    'bootstrap_key'        => 'QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=',
     'oidc'                 => [
         'enabled'        => false,
         'display_name'   => 'SSO',

@@ -21,7 +21,7 @@
  */
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import {
-  login, logout, fetchPost, getCsrf, appUrl,
+  login, logout, fetchPost, appUrl,
   ADMIN_USER, ADMIN_PASS,
   newAuthContext,
 } from '../fixtures/ipam';
@@ -38,20 +38,25 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
 
   // Ensure a vault key exists by hitting the Set form. The bootstrap
   // seed ships an empty backup_vault_key DB row plus an empty config
-  // field on a fresh sqlite container, so the panel renders Set on
-  // first load. If a prior test already set one we fall through.
+  // field on a fresh container, so the panel renders Set on first
+  // load. If a prior test already set one we fall through. Verifying
+  // success by re-rendering the page and looking for the fingerprint
+  // is more robust than asserting on the POST response status — fetch
+  // redirect handling differs by browser engine and a transient 5xx
+  // from Apache during cold start could spurious-fail the assertion
+  // even when the underlying write succeeded.
   await page.goto(DESTINATIONS_TAB);
   const setSubmit = page.locator('[data-test="vault-set-submit"]');
   if (await setSubmit.count() > 0) {
-    const csrf = await getCsrf(page);
-    const r = await fetchPost(page, DESTINATIONS_TAB, {
+    await fetchPost(page, DESTINATIONS_TAB, {
       action:         'vault_set',
       vault_mode:     'generate',
       admin_password: ADMIN_PASS,
-      csrf,
     });
-    expect(r.ok || r.status === 302).toBeTruthy();
+    await page.goto(DESTINATIONS_TAB);
   }
+  // Either the prior test already set one, or the POST above just did.
+  await expect(page.locator('[data-test="vault-fingerprint"]')).toBeVisible({ timeout: 10_000 });
 });
 
 test.afterAll(async () => {

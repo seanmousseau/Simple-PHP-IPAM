@@ -25,6 +25,8 @@ page_header('Backup Destinations');
       'flashTestOk'      => $state['flashTestOk'],
       'flashTestMsg'     => $state['flashTestMsg'],
       'flashTestLatency' => $state['flashTestLatency'],
+      'vaultStatus'      => $state['vaultStatus'],
+      'revealedKey'      => $state['revealedKey'],
   ]);
   ?>
 </main>
