@@ -94,8 +94,18 @@ if ($data === null) {
         $r2 = $db->query("SELECT COUNT(*) AS c, COALESCE(SUM(size_bytes),0) AS s FROM backup_runs WHERE status='success'")?->fetch();
         if ($r2) { $backupCount = to_int($r2['c']); $storageUsed = to_int($r2['s']); }
     } catch (Throwable) {}
-    $backupDir   = backup_dir($config);
-    $diskFree    = @disk_free_space($backupDir);
+    // v3.26.0 (#1059): legacy single-directory disk_free + retention reads
+    // are gone with the backup.* keys. The unified surface has per-destination
+    // paths (backup_destinations.config), so we expose an active-destination
+    // count instead and let backup_admin.php surface per-destination details.
+    $destinationsActive = 0;
+    try {
+        $stmt = $db->query("SELECT COUNT(*) AS c FROM backup_destinations WHERE is_active = 1");
+        if ($stmt !== false) {
+            $row = $stmt->fetch();
+            if (is_array($row)) { $destinationsActive = to_int($row['c'] ?? 0); }
+        }
+    } catch (Throwable) {}
     $backupToolMissing = false;
     if ($driver === 'mysql') {
         $backupToolMissing = (trim((string)shell_exec('which mysqldump 2>/dev/null')) === '');
@@ -103,14 +113,12 @@ if ($data === null) {
         $backupToolMissing = (trim((string)shell_exec('which pg_dump 2>/dev/null')) === '');
     }
     $data['backup'] = [
-        'enabled'      => (bool)ipam_setting('backup.enabled'),
-        'last_at'      => $lastBackup,
-        'last_status'  => $lastStatus,
-        'count'        => $backupCount,
-        'storage_used' => $storageUsed,
-        'disk_free'    => $diskFree !== false ? (int)$diskFree : -1,
-        'retention'    => max(1, to_int(ipam_setting('backup.retention'))),
-        'tool_missing' => $backupToolMissing,
+        'destinations_active' => $destinationsActive,
+        'last_at'             => $lastBackup,
+        'last_status'         => $lastStatus,
+        'count'               => $backupCount,
+        'storage_used'        => $storageUsed,
+        'tool_missing'        => $backupToolMissing,
     ];
 
     // --- Scanning ---

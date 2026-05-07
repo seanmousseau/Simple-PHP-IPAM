@@ -1450,14 +1450,33 @@ function api_audit_log(PDO $db): never
     $where  = [];
     $params = [];
 
-    if (isset($_GET['action'])) {
-        $where[] = 'action LIKE :act'; $params[':act'] = '%' . like_escape(trim(to_str($_GET['action']))) . '%';
+    $filterPrefix = audit_filter_validate_prefix(to_str($_GET['prefix'] ?? ''));
+    if ($filterPrefix !== '') {
+        $where[] = 'action LIKE :pfx';
+        $params[':pfx'] = $filterPrefix . '.%';
     }
-    if (isset($_GET['from'])) {
-        $where[] = 'created_at >= :from_dt'; $params[':from_dt'] = trim(to_str($_GET['from']));
+    $filterAction = audit_filter_validate_action(to_str($_GET['action'] ?? ''));
+    if ($filterAction !== '') {
+        $where[] = 'action = :act';
+        $params[':act'] = $filterAction;
     }
-    if (isset($_GET['to'])) {
-        $where[] = 'created_at <= :to_dt'; $params[':to_dt'] = trim(to_str($_GET['to']));
+    $rawFrom = trim(to_str($_GET['from'] ?? ''));
+    if ($rawFrom !== '') {
+        $ts = strtotime($rawFrom);
+        if ($ts === false) {
+            api_error(400, 'Invalid from date.');
+        }
+        $where[] = 'created_at >= :from_dt';
+        $params[':from_dt'] = date('Y-m-d', $ts);
+    }
+    $rawTo = trim(to_str($_GET['to'] ?? ''));
+    if ($rawTo !== '') {
+        $ts = strtotime($rawTo);
+        if ($ts === false) {
+            api_error(400, 'Invalid to date.');
+        }
+        $where[] = 'created_at <= :to_dt';
+        $params[':to_dt'] = date('Y-m-d', $ts) . ' 23:59:59';
     }
 
     $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';

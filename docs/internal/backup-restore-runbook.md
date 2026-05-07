@@ -263,10 +263,13 @@ Then confirm `cron.php` is actually firing — see [`next_run_at` stuck in the p
    ls -la data/last_cron.txt 2>/dev/null          # if you have the lazy-housekeeping marker
    ```
 
-2. **`backup.enabled = false`** in settings — `cron.php` short-circuits.
+2. **No active row in `backup_destinations` + `backup_schedules`** — the unified scheduler iterates only active rows, so an install with every destination or schedule disabled looks idle. (The legacy `backup.enabled` toggle was retired in v3.26.0 #1059.)
 
    ```sql
-   SELECT key, value FROM settings WHERE key = 'backup.enabled';
+   SELECT bd.id, bd.name, bd.is_active AS dest_active,
+          bs.frequency, bs.is_active AS sched_active
+     FROM backup_destinations bd
+     LEFT JOIN backup_schedules bs ON bs.destination_id = bd.id;
    ```
 
 3. **A failed run left the destination in a state where the next attempt also fails synchronously**, masking the schedule. Read the most recent `backup_runs` row for that destination — usually `error_message` tells you the underlying cause.

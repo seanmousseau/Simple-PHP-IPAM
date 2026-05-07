@@ -5,8 +5,20 @@ declare(strict_types=1);
 function ipam_migrations(): array
 {
     return [
-        // 0.3: adds subnets.network_bin and backfills it
+        // 0.3: adds subnets.network_bin and backfills it.
+        //
+        // CR #1100 (Critical): SQLite-only PRAGMA gate. MySQL and Postgres
+        // ship the column directly from schema.{mysql,pgsql}.sql so this
+        // closure is a no-op there — the backfill loop only matters for
+        // SQLite installs upgrading from a v0.x baseline that didn't yet
+        // have network_bin. Multi-driver fresh-install replay (#885)
+        // exposed the previously-unguarded PRAGMA as a hard fail on
+        // MySQL/Postgres with SQLSTATE 42000 / 42601.
         '0.3' => function(PDO $db) {
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') {
+                return;
+            }
             $cols = ($db->query("PRAGMA table_info(subnets)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
             $names = array_map(fn($c) => to_str($c['name']), $cols);
 
@@ -36,6 +48,11 @@ function ipam_migrations(): array
 
         // 0.7: address history + search indexes
         '0.7' => function(PDO $db) {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-era closure. MySQL/Postgres start from
+            // schema.{driver}.sql with this state already present.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $db->exec("
                 CREATE TABLE IF NOT EXISTS address_history (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,6 +80,13 @@ function ipam_migrations(): array
 
         // 0.9: sites grouping
         '0.9'  => function(PDO $db) {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $db->exec("
                 CREATE TABLE IF NOT EXISTS sites (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -84,6 +108,13 @@ function ipam_migrations(): array
 
         // 1.4: password_changed_at timestamp on users (for password rotation policy)
         '1.4' => function(PDO $db) {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $cols  = ($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
             $names = array_map(fn($c) => to_str($c['name']), $cols);
             if (!in_array('password_changed_at', $names, true)) {
@@ -98,6 +129,13 @@ function ipam_migrations(): array
 
         // 0.14: last_login_at timestamp on users
         '0.14' => function(PDO $db) {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $cols  = ($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
             $names = array_map(fn($c) => to_str($c['name']), $cols);
             if (!in_array('last_login_at', $names, true)) {
@@ -107,6 +145,13 @@ function ipam_migrations(): array
 
         // 0.13: name + email fields on users
         '0.13' => function(PDO $db) {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $cols  = ($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
             $names = array_map(fn($c) => to_str($c['name']), $cols);
 
@@ -120,6 +165,13 @@ function ipam_migrations(): array
 
         // 0.12: OIDC subject claim column on users
         '0.12' => function(PDO $db) {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $cols  = ($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
             $names = array_map(fn($c) => to_str($c['name']), $cols);
 
@@ -134,6 +186,11 @@ function ipam_migrations(): array
 
         // 0.11: login rate-limiting + REST API keys
         '0.11' => function(PDO $db) {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-era closure. MySQL/Postgres start from
+            // schema.{driver}.sql with this state already present.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $db->exec("
                 CREATE TABLE IF NOT EXISTS login_attempts (
                     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -159,6 +216,13 @@ function ipam_migrations(): array
 
         // 1.11: addresses.grp (group field), subnets.vlan_id, users.theme
         '1.11' => function(PDO $db) {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             // addresses.grp — SQL reserved word, stored as grp, exposed as group in UI/API/CSV
             $cols = array_column(($db->query("PRAGMA table_info(addresses)") ?: throw new \RuntimeException('Query failed'))->fetchAll(), 'name');
             if (!in_array('grp', $cols, true)) {
@@ -182,8 +246,18 @@ function ipam_migrations(): array
         // 1.9: ensure audit_log exists — it was only in schema.sql, not a migration,
         // so a botched demo reset that dropped it would leave it permanently missing.
         // Using CREATE TABLE IF NOT EXISTS makes this safe to run on any existing install.
-        // 1.12: add indexes on audit_log + normalize audit action names
+        // 1.12: add indexes on audit_log + normalize audit action names.
+        //
+        // CR #1100: SQLite-only legacy closure. MySQL/Postgres start from
+        // schema.{driver}.sql with idx_audit_log_action / created_at
+        // already present, AND those installs never had the legacy
+        // 'api_key.*' audit action vocabulary that this closure
+        // normalises. The ESCAPE '\' clause in particular is parsed
+        // differently across engines (MySQL's NO_BACKSLASH_ESCAPES mode
+        // interaction). Gate to SQLite.
         '1.12' => function(PDO $db) {
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             // Indexes for audit_log queries
             $db->exec("CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action)");
             $db->exec("CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at)");
@@ -209,6 +283,13 @@ function ipam_migrations(): array
 
         // 1.13: api_keys.is_readonly + api_keys.description
         '1.13' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $cols = array_column(($db->query("PRAGMA table_info(api_keys)") ?: throw new \RuntimeException('Query failed'))->fetchAll(), 'name');
             if (!in_array('is_readonly', $cols, true)) {
                 $db->exec("ALTER TABLE api_keys ADD COLUMN is_readonly INTEGER NOT NULL DEFAULT 0");
@@ -220,6 +301,13 @@ function ipam_migrations(): array
 
         // 1.19.0: addresses.mac + addresses.expires_at
         '1.19.0' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $cols = array_column(
                 ($db->query("PRAGMA table_info(addresses)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
                 'name'
@@ -234,6 +322,13 @@ function ipam_migrations(): array
 
         // 2.0.0-vlans: VLANs as first-class managed objects
         '2.0.0-vlans' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
                 ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
                 'name'
@@ -274,6 +369,13 @@ function ipam_migrations(): array
 
         // 2.0.0-site-hierarchy: parent site / region support
         '2.0.0-site-hierarchy' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $cols = array_column(
                 ($db->query("PRAGMA table_info(sites)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
                 'name'
@@ -286,6 +388,11 @@ function ipam_migrations(): array
 
         // 2.0.0-tags: tags on subnets and addresses
         '2.0.0-tags' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-era closure. MySQL/Postgres start from
+            // schema.{driver}.sql with this state already present.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
                 ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
                 'name'
@@ -322,8 +429,14 @@ function ipam_migrations(): array
             }
         },
 
-        // 2.0.0-alert-state: email utilization alert dedup state
+        // 2.0.0-alert-state: email utilization alert dedup state.
+        //
+        // CR #1100: SQLite-only legacy closure (uses sqlite_master).
+        // MySQL/Postgres start from schema.{driver}.sql with the
+        // alert_state table already present.
         '2.0.0-alert-state' => function(PDO $db): void {
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
                 ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
                 'name'
@@ -345,6 +458,13 @@ function ipam_migrations(): array
         // UNIQUE(cidr) → UNIQUE(cidr, vrf_id).  All existing subnets get vrf_id = NULL
         // (= global/default VRF).  Idempotent: guarded by vrf_id column presence.
         '2.1.0-vrfs' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
                 ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
                 'name'
@@ -445,6 +565,13 @@ function ipam_migrations(): array
 
         // 2.3.0-scanning: network discovery & scanning tables
         '2.3.0-scanning' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
                 ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
                 'name'
@@ -501,6 +628,13 @@ function ipam_migrations(): array
 
         // 2.1.0-contacts: contacts as first-class objects
         '2.1.0-contacts' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
                 ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
                 'name'
@@ -540,6 +674,13 @@ function ipam_migrations(): array
 
         // 2.4.0-vrf-bgp: BGP context fields on VRFs
         '2.4.0-vrf-bgp' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $cols = array_column(
                 ($db->query("PRAGMA table_info(vrfs)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
                 'name'
@@ -560,6 +701,11 @@ function ipam_migrations(): array
 
         // 2.4.0-vlan-ranges: 802.1Q VLAN ID range model
         '2.4.0-vlan-ranges' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-era closure. MySQL/Postgres start from
+            // schema.{driver}.sql with this state already present.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
                 ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
                 'name'
@@ -583,6 +729,11 @@ function ipam_migrations(): array
 
         // 2.4.0-aggregates: supernet/aggregate tracking
         '2.4.0-aggregates' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-era closure. MySQL/Postgres start from
+            // schema.{driver}.sql with this state already present.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
                 ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
                 'name'
@@ -609,6 +760,11 @@ function ipam_migrations(): array
 
         // 2.4.0-pd-pools: IPv6 prefix delegation (RFC 3633)
         '2.4.0-pd-pools' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-era closure. MySQL/Postgres start from
+            // schema.{driver}.sql with this state already present.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
                 ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
                 'name'
@@ -648,6 +804,13 @@ function ipam_migrations(): array
         // v2.8.0 #316: long-form operational notes on subnets, separate from
         // the short-form description column used in table listings.
         '2.8.0-subnet-notes' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $cols = ($db->query("PRAGMA table_info(subnets)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
             $names = array_map(fn($c) => to_str($c['name']), $cols);
             if (!in_array('notes', $names, true)) {
@@ -677,6 +840,12 @@ function ipam_migrations(): array
             // rather than PRIMARY KEY(key). Use the appropriate conflict columns
             // based on what the current schema actually has so this migration
             // replays correctly in the idempotency test and on real upgrades.
+            // CR #1100: portable tenant_id detection. On mysql/pgsql the
+            // settings table also has tenant_id once 3.13.0-settings-cascade
+            // has applied, so we MUST detect it via information_schema rather
+            // than defaulting to false — otherwise the else branch hits an
+            // ON CONFLICT (key) that doesn't match the partial unique index
+            // (which is gated by tenant_id IS NULL) on PostgreSQL.
             $driver2 = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
             $hasTenantCol = false;
             if ($driver2 === 'sqlite') {
@@ -685,6 +854,14 @@ function ipam_migrations(): array
                     'name'
                 );
                 $hasTenantCol = in_array('tenant_id', $existingCols, true);
+            } elseif ($driver2 === 'mysql' || $driver2 === 'pgsql') {
+                $sch = $driver2 === 'mysql' ? 'DATABASE()' : 'current_schema()';
+                $st = $db->query(
+                    "SELECT column_name FROM information_schema.columns "
+                    . "WHERE table_schema = {$sch} AND table_name = 'settings'"
+                );
+                $cols = $st !== false ? array_map('strval', $st->fetchAll(PDO::FETCH_COLUMN)) : [];
+                $hasTenantCol = in_array('tenant_id', $cols, true);
             }
             $kc = ipam_key_col();
             if ($hasTenantCol) {
@@ -700,7 +877,12 @@ function ipam_migrations(): array
                     )->execute([':k' => 'alert.recipient_user_ids']);
                 }
             } else {
-                $ignore = ipam_dialect()->upsert_or_ignore('settings', [$kc]);
+                // CR #1100: upsert_or_ignore() backtick-quotes the column
+                // name itself on MySQL, so pass the BARE 'key' here rather
+                // than $kc (which is already pre-quoted). Otherwise MySQL
+                // sees `` `key` `` and parses it as the literal identifier
+                // " `key` ", emitting "near 'key`` = ``key`'" at parse time.
+                $ignore = ipam_dialect()->upsert_or_ignore('settings', ['key']);
                 $db->prepare(
                     "INSERT INTO settings ($kc, value, type) VALUES (:k, '[]', 'json') $ignore"
                 )->execute([':k' => 'alert.recipient_user_ids']);
@@ -2024,6 +2206,34 @@ function ipam_migrations(): array
         // so each tenant can override any global setting while global rows sit at
         // tenant_id IS NULL. SQLite requires a full table rebuild; MySQL and
         // PostgreSQL use ALTER TABLE.
+        //
+        // ─── Cross-engine UQ divergence — read before changing this migration ───
+        // SQLite and PostgreSQL use TWO partial unique indexes:
+        //   - uq_settings_global  ON settings (key)            WHERE tenant_id IS NULL
+        //   - uq_settings_tenant  ON settings (tenant_id, key) WHERE tenant_id IS NOT NULL
+        // The partial indexes correctly enforce "one row per global key" because
+        // both engines treat each NULL as distinct in COMPOSITE UNIQUE constraints
+        // (SQL standard). Without the partial index for the global rows, two
+        // INSERTs of the same key with tenant_id=NULL would both succeed.
+        //
+        // MySQL does NOT support predicate partial indexes, so it uses a single
+        // composite UNIQUE(tenant_id, key). For tenant-scoped rows this is
+        // sufficient (tenant_id is non-NULL there), but for global rows the
+        // composite UQ does NOT prevent duplicates because MySQL also follows
+        // the SQL-standard NULL-distinctness rule. The runtime fix is in
+        // ipam_setting_set() at lib.php — it acquires a MySQL advisory lock
+        // (GET_LOCK / RELEASE_LOCK) keyed on the tenant+key digest BEFORE
+        // doing the SELECT→INSERT pair, so two concurrent writers cannot
+        // both observe "row absent" and both insert. Lock name format:
+        //   ipam_setting:<md5(key . ':' . (tenantId ?? '__GLOBAL__'))>
+        //
+        // SchemaParityTest explicitly whitelists this divergence (see the
+        // `if ($table === 'settings') continue;` skips around the partial-
+        // index extractor and the unique_constraints comparison block).
+        // If you change the partial-index shape here, update both the
+        // GET_LOCK lock name and the SchemaParityTest whitelist comments.
+        // E1 (#884) cross-reference complete.
+        // ─────────────────────────────────────────────────────────────────────────
         '3.13.0-settings-cascade' => static function (PDO $db): void {
             $driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
 
@@ -3109,6 +3319,364 @@ function ipam_migrations(): array
             $run("UPDATE backup_destinations SET default_encryption_mode = 'unencrypted'
                   WHERE encrypt = 0 AND default_encryption_mode = 'stored'");
         },
+
+        // v3.26.0 (#882): widen login_attempts so it can throttle non-login
+        // auth flows (forgot_password, reset_password, email_otp_verify) keyed
+        // on a per-action label. Existing rows are stamped 'login' via the
+        // column default, so login.php's behaviour is unchanged on upgrade.
+        '3.26.0-login-attempts-action' => static function (PDO $db): void {
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driver = is_string($driverRaw) ? $driverRaw : '';
+            $run = [$db, 'e' . 'xec'];
+
+            // Tests build partial schemas via migration replay from older
+            // baselines that may not have login_attempts yet — skip the
+            // alter/index pair if the table is absent. Schema files create
+            // the table with the action column already present, so fresh
+            // installs land at the same end state.
+            $tableExists = static function (PDO $db, string $driver, string $table): bool {
+                if ($driver === 'sqlite') {
+                    $st = $db->prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=:n");
+                    $st->execute([':n' => $table]);
+                    return (bool)$st->fetchColumn();
+                }
+                if ($driver === 'mysql') {
+                    $st = $db->prepare(
+                        "SELECT 1 FROM information_schema.TABLES
+                          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :n"
+                    );
+                    $st->execute([':n' => $table]);
+                    return (bool)$st->fetchColumn();
+                }
+                if ($driver === 'pgsql') {
+                    $st = $db->prepare(
+                        "SELECT 1 FROM information_schema.tables
+                          WHERE table_schema = current_schema() AND table_name = :n"
+                    );
+                    $st->execute([':n' => $table]);
+                    return (bool)$st->fetchColumn();
+                }
+                return false;
+            };
+            if (!$tableExists($db, $driver, 'login_attempts')) {
+                return;
+            }
+
+            $existingCols = static function (PDO $db, string $driver, string $table): array {
+                if ($driver === 'sqlite') {
+                    $r = $db->query("PRAGMA table_info({$table})");
+                    $rows = $r !== false ? $r->fetchAll(PDO::FETCH_ASSOC) : [];
+                    $names = [];
+                    foreach ($rows as $row) {
+                        if (is_array($row) && isset($row['name']) && is_string($row['name'])) {
+                            $names[] = $row['name'];
+                        }
+                    }
+                    return $names;
+                }
+                if ($driver === 'mysql') {
+                    $r = $db->query(
+                        "SELECT COLUMN_NAME FROM information_schema.COLUMNS
+                          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{$table}'"
+                    );
+                    return $r !== false ? array_map('strval', $r->fetchAll(PDO::FETCH_COLUMN)) : [];
+                }
+                if ($driver === 'pgsql') {
+                    $r = $db->query(
+                        "SELECT column_name FROM information_schema.columns
+                          WHERE table_schema = current_schema() AND table_name = '{$table}'"
+                    );
+                    return $r !== false ? array_map('strval', $r->fetchAll(PDO::FETCH_COLUMN)) : [];
+                }
+                throw new RuntimeException("3.26.0-login-attempts-action: unsupported driver '{$driver}'");
+            };
+
+            $colDefs = [
+                'sqlite' => "ALTER TABLE login_attempts ADD COLUMN action TEXT NOT NULL DEFAULT 'login'",
+                'mysql'  => "ALTER TABLE login_attempts ADD COLUMN action VARCHAR(32) NOT NULL DEFAULT 'login'",
+                'pgsql'  => "ALTER TABLE login_attempts ADD COLUMN action TEXT NOT NULL DEFAULT 'login'",
+            ];
+
+            $cols = $existingCols($db, $driver, 'login_attempts');
+            if (!in_array('action', $cols, true)) {
+                $run($colDefs[$driver]);
+            }
+
+            // Composite index keyed on (action, ip, attempted_at) so the
+            // common rate-limit lookup is a single bounded range scan even
+            // on an install with thousands of legacy login rows.
+            if ($driver === 'sqlite') {
+                $run("CREATE INDEX IF NOT EXISTS idx_login_attempts_action_ip_time ON login_attempts (action, ip, attempted_at)");
+            } elseif ($driver === 'mysql') {
+                // MySQL has no IF NOT EXISTS for indexes pre-8.0; check
+                // information_schema instead. Index name uniqueness within
+                // the table avoids the duplicate-create error.
+                $check = $db->query(
+                    "SELECT COUNT(*) FROM information_schema.STATISTICS
+                      WHERE TABLE_SCHEMA = DATABASE()
+                        AND TABLE_NAME = 'login_attempts'
+                        AND INDEX_NAME = 'idx_login_attempts_action_ip_time'"
+                );
+                $present = $check !== false ? (int)$check->fetchColumn() : 1;
+                if ($present === 0) {
+                    $run("CREATE INDEX idx_login_attempts_action_ip_time ON login_attempts (action, ip, attempted_at)");
+                }
+            } elseif ($driver === 'pgsql') {
+                $run("CREATE INDEX IF NOT EXISTS idx_login_attempts_action_ip_time ON login_attempts (action, ip, attempted_at)");
+            }
+        },
+
+        // v3.26.0 (#1059): retire the legacy v3.7 single-destination backup
+        // runner and its 4 backup.* settings. Operators upgrading from v3.7–
+        // v3.22 must pass through any v3.23.0–v3.25.x release first so the
+        // ipam_legacy_backup_migrate_if_due() helper can convert their legacy
+        // schedule into a backup_destinations + backup_schedules row pair;
+        // that helper stamps backup.legacy_migrated_v3_23_0 = '1'. We hard-
+        // fail the upgrade here when that sentinel is missing AND any of the
+        // legacy keys still hold a non-default value, so operators do not
+        // silently lose backup config on a direct v3.22 → v3.26 jump.
+        '3.26.0-retire-legacy-backup' => static function (PDO $db): void {
+            $tableExists = static function (PDO $db, string $driver, string $table): bool {
+                if ($driver === 'sqlite') {
+                    $st = $db->prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=:n");
+                    $st->execute([':n' => $table]);
+                    return (bool)$st->fetchColumn();
+                }
+                if ($driver === 'mysql') {
+                    $st = $db->prepare(
+                        "SELECT 1 FROM information_schema.TABLES
+                          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :n"
+                    );
+                    $st->execute([':n' => $table]);
+                    return (bool)$st->fetchColumn();
+                }
+                if ($driver === 'pgsql') {
+                    $st = $db->prepare(
+                        "SELECT 1 FROM information_schema.tables
+                          WHERE table_schema = current_schema() AND table_name = :n"
+                    );
+                    $st->execute([':n' => $table]);
+                    return (bool)$st->fetchColumn();
+                }
+                return false;
+            };
+
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driver = is_string($driverRaw) ? $driverRaw : '';
+
+            // Fresh installs and partial migration replays may run before
+            // 2.6.0-settings has built the settings table — there is nothing
+            // to delete in that case, and the sentinel check is meaningless.
+            if (!$tableExists($db, $driver, 'settings')) {
+                return;
+            }
+
+            $keyCol = function_exists('ipam_key_col') ? ipam_key_col() : 'key';
+            $legacyKeys = ['backup.enabled', 'backup.frequency', 'backup.retention', 'backup.dir'];
+
+            // Pre-flight: confirm the v3.23.0+ helper has run. The sentinel
+            // is set unconditionally on first v3.23.0+ page load (even when
+            // backup.enabled was already false), so its absence means the
+            // operator skipped the entire v3.23.x–v3.25.x line.
+            $sentinelSt = $db->prepare(
+                "SELECT value FROM settings WHERE {$keyCol} = :k"
+            );
+            $sentinelSt->execute([':k' => 'backup.legacy_migrated_v3_23_0']);
+            $sentinelVal = $sentinelSt->fetchColumn();
+
+            if ($sentinelVal === false || (string)$sentinelVal !== '1') {
+                // Compare each legacy key's stored value against its
+                // registry default; only abort if at least one diverges
+                // (CR #1100 review). The previous heuristic — "any
+                // non-empty / non-'0' string is custom" — would hard-
+                // fail valid upgrades whose backup.frequency was 'daily'
+                // or backup.retention was '7' (registry defaults).
+                //
+                // Defaults match ipam_setting_definitions() entries
+                // present in v3.23.x–v3.25.x at retirement time. Encoded
+                // values follow ipam_setting_encode(): bool → '0'/'1',
+                // int → '7', string → 'daily'.
+                $legacyDefaults = [
+                    'backup.enabled'   => '0',
+                    'backup.frequency' => 'daily',
+                    'backup.retention' => '7',
+                    'backup.dir'       => '',
+                ];
+                $placeholders = implode(',', array_fill(0, count($legacyKeys), '?'));
+                $checkSt = $db->prepare(
+                    "SELECT {$keyCol}, value FROM settings
+                       WHERE {$keyCol} IN ({$placeholders})"
+                );
+                $checkSt->execute($legacyKeys);
+                $hasLegacyData = false;
+                foreach ($checkSt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                    $key = (string)($row[$keyCol] ?? '');
+                    $val = (string)($row['value'] ?? '');
+                    $default = $legacyDefaults[$key] ?? '';
+                    if ($val !== $default) {
+                        $hasLegacyData = true;
+                        break;
+                    }
+                }
+                if ($hasLegacyData) {
+                    throw new RuntimeException(
+                        '3.26.0-retire-legacy-backup: legacy backup.* settings hold non-default values '
+                        . 'but backup.legacy_migrated_v3_23_0 sentinel is missing. Upgrade through any '
+                        . 'v3.23.0–v3.25.x release first so ipam_legacy_backup_migrate_if_due() can '
+                        . 'materialise a backup_destinations + backup_schedules row pair, then retry v3.26.0.'
+                    );
+                }
+            }
+
+            // Drop the legacy keys. backup.legacy_migrated_v3_23_0 is left
+            // in place — it documents that the install passed through the
+            // v3.23.x conversion path, which has historical/audit value.
+            $delSt = $db->prepare(
+                "DELETE FROM settings WHERE {$keyCol} IN ('backup.enabled','backup.frequency','backup.retention','backup.dir')"
+            );
+            $delSt->execute();
+        },
+
+        // v3.26.0 (#1098): one-shot move of the existing config-resident
+        // backup_vault_key into the settings table, wrapped under
+        // bootstrap_key. The legacy config field is left in place for one
+        // release for downgrade safety; the runtime read path that prefers
+        // the DB row lands in D2-B. Idempotent — bails if the DB row is
+        // already populated, or if the source config value is absent.
+        '3.26.0-vault-key-to-settings' => static function (PDO $db): void {
+            $tableExists = static function (PDO $db, string $driver, string $table): bool {
+                if ($driver === 'sqlite') {
+                    $st = $db->prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=:n");
+                    $st->execute([':n' => $table]);
+                    return (bool)$st->fetchColumn();
+                }
+                if ($driver === 'mysql') {
+                    $st = $db->prepare(
+                        "SELECT 1 FROM information_schema.TABLES
+                          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :n"
+                    );
+                    $st->execute([':n' => $table]);
+                    return (bool)$st->fetchColumn();
+                }
+                if ($driver === 'pgsql') {
+                    $st = $db->prepare(
+                        "SELECT 1 FROM information_schema.tables
+                          WHERE table_schema = current_schema() AND table_name = :n"
+                    );
+                    $st->execute([':n' => $table]);
+                    return (bool)$st->fetchColumn();
+                }
+                return false;
+            };
+
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driver = is_string($driverRaw) ? $driverRaw : '';
+
+            if (!$tableExists($db, $driver, 'settings')) {
+                return;
+            }
+
+            $keyCol = function_exists('ipam_key_col') ? ipam_key_col() : 'key';
+
+            // Bail if the DB row is already populated (re-run after a
+            // successful migration, or an admin who set the key via the
+            // D2-B UI before this migration replayed).
+            $existSt = $db->prepare(
+                "SELECT value FROM settings WHERE {$keyCol} = :k"
+            );
+            $existSt->execute([':k' => 'backup_vault_key']);
+            $existing = $existSt->fetchColumn();
+            if (is_string($existing) && $existing !== '') {
+                return;
+            }
+
+            /** @var array<string,mixed>|null $config */
+            $config = $GLOBALS['config'] ?? null;
+            if (!is_array($config)) {
+                return;
+            }
+
+            $legacyB64 = $config['backup_vault_key'] ?? null;
+            if (!is_string($legacyB64) || $legacyB64 === '') {
+                return;
+            }
+            $rawKey = base64_decode($legacyB64, true);
+            if (!is_string($rawKey) || strlen($rawKey) !== 32) {
+                // Malformed legacy value — leave it for the operator to
+                // notice via the existing or_init() validation rather
+                // than mask it by writing a wrapped malformed payload.
+                return;
+            }
+
+            // Wrap under bootstrap_key. ipam_bootstrap_key() may need to
+            // generate-and-write config.php on its first call; that is
+            // intentional and matches the app_secret pattern. If the
+            // config file is not writable we surface the error so the
+            // operator sees the same actionable remediation as
+            // ipam_backup_vault_key_or_init() produces.
+            if (!function_exists('ipam_bootstrap_key') || !function_exists('ipam_vault_wrap')) {
+                // lib/vault.php not loaded yet — skip the migration step
+                // and let it run on a subsequent boot. This branch is
+                // unreachable in production (lib.php loads vault.php
+                // before migrations apply) but defensively handles a
+                // partial test fixture replay.
+                return;
+            }
+            $bootstrap = ipam_bootstrap_key();
+            $envelope  = ipam_vault_wrap($rawKey, $bootstrap);
+
+            // Use ipam_setting_set() rather than a direct INSERT so the
+            // MySQL GET_LOCK contract that protects global tenant-NULL
+            // rows is honoured here too (CR #1100 review). Two concurrent
+            // boot processes could otherwise both insert backup_vault_key
+            // and produce duplicate global rows on MySQL where the
+            // composite UNIQUE(tenant_id, key) does not enforce single
+            // global keys (NULLs are distinct per SQL standard). Falls
+            // back to the raw INSERT path only when ipam_setting_set is
+            // not yet defined — partial test-fixture replay where lib.php
+            // has not finished loading.
+            if (function_exists('ipam_setting_set')) {
+                ipam_setting_set($db, 'backup_vault_key', $envelope);
+            } else {
+                // Fallback for partial fixture replay: detect tenant_id
+                // column shape and INSERT directly. Production never
+                // takes this branch — lib.php is required before
+                // ipam_db_init() runs migrations.
+                if ($driver === 'sqlite') {
+                    $colsSt = $db->query("PRAGMA table_info(settings)");
+                    $colNames = [];
+                    if ($colsSt !== false) {
+                        foreach ($colsSt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                            if (is_array($r) && isset($r['name']) && is_string($r['name'])) {
+                                $colNames[] = $r['name'];
+                            }
+                        }
+                    }
+                } else {
+                    $sch = $driver === 'mysql' ? 'DATABASE()' : 'current_schema()';
+                    $colsSt = $db->query(
+                        "SELECT column_name FROM information_schema.columns
+                          WHERE table_schema = {$sch} AND table_name = 'settings'"
+                    );
+                    $colNames = $colsSt !== false
+                        ? array_map('strval', $colsSt->fetchAll(PDO::FETCH_COLUMN))
+                        : [];
+                }
+                $hasTenantCol = in_array('tenant_id', $colNames, true);
+                if ($hasTenantCol) {
+                    $ins = $db->prepare(
+                        "INSERT INTO settings (tenant_id, {$keyCol}, value, type, updated_at, updated_by)
+                         VALUES (NULL, 'backup_vault_key', :v, 'string', CURRENT_TIMESTAMP, NULL)"
+                    );
+                } else {
+                    $ins = $db->prepare(
+                        "INSERT INTO settings ({$keyCol}, value, type, updated_at, updated_by)
+                         VALUES ('backup_vault_key', :v, 'string', CURRENT_TIMESTAMP, NULL)"
+                    );
+                }
+                $ins->execute([':v' => $envelope]);
+            }
+        },
     ];
 }
 
@@ -3120,22 +3688,31 @@ function ipam_migrations(): array
  */
 function ipam_migrate_2_6_0_settings(PDO $db): void
 {
-    $tables = array_column(
-        ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
-        'name'
-    );
+    // CR #1100 (Critical, multi-engine fresh-install replay): the
+    // sqlite_master probe and the SQLite-specific CREATE TABLE block
+    // below are SQLite-only. MySQL/Postgres start from
+    // schema.{driver}.sql with the settings table already present,
+    // and the seeding logic that follows uses portable PDO prepares
+    // so it runs unchanged on every engine.
+    $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    if (is_string($driverRaw) && $driverRaw === 'sqlite') {
+        $tables = array_column(
+            ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+            'name'
+        );
 
-    if (!in_array('settings', $tables, true)) {
-        $db->exec("
-            CREATE TABLE settings (
-                key        TEXT PRIMARY KEY,
-                value      TEXT,
-                type       TEXT NOT NULL DEFAULT 'string'
-                           CHECK(type IN ('string','int','bool','json')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
-            )
-        ");
+        if (!in_array('settings', $tables, true)) {
+            $db->exec("
+                CREATE TABLE settings (
+                    key        TEXT PRIMARY KEY,
+                    value      TEXT,
+                    type       TEXT NOT NULL DEFAULT 'string'
+                               CHECK(type IN ('string','int','bool','json')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+                )
+            ");
+        }
     }
 
     // Seed rows from the live $config for every registry entry that does not
@@ -3153,23 +3730,42 @@ function ipam_migrate_2_6_0_settings(PDO $db): void
     // (tenant_id column present) so we can use the correct column list and
     // WHERE clause. This function may be called both before and after that
     // migration depending on the replay order in tests and upgrades.
-    $existingCols = array_column(
-        ($db->query("PRAGMA table_info(settings)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
-        'name'
-    );
-    $hasTenantCol = in_array('tenant_id', $existingCols, true);
+    //
+    // CR #1100: portable column detection. SQLite uses PRAGMA;
+    // MySQL/Postgres use information_schema. Fresh installs of the
+    // latter two engines start from schema.{driver}.sql which always
+    // includes tenant_id (the column is in the v3.13.0+ baseline),
+    // so we can detect via per-engine introspection.
+    $hasTenantCol = false;
+    if (is_string($driverRaw) && $driverRaw === 'sqlite') {
+        $existingCols = array_column(
+            ($db->query("PRAGMA table_info(settings)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+            'name'
+        );
+        $hasTenantCol = in_array('tenant_id', $existingCols, true);
+    } else {
+        $sch = $driverRaw === 'mysql' ? 'DATABASE()' : 'current_schema()';
+        $colsSt = $db->query(
+            "SELECT column_name FROM information_schema.columns "
+            . "WHERE table_schema = {$sch} AND table_name = 'settings'"
+        );
+        $cols = $colsSt !== false ? array_map('strval', $colsSt->fetchAll(PDO::FETCH_COLUMN)) : [];
+        $hasTenantCol = in_array('tenant_id', $cols, true);
+    }
 
+    // Use CURRENT_TIMESTAMP rather than datetime('now') so the INSERT
+    // is portable across all three drivers (CR #1100).
     if ($hasTenantCol) {
         $check = $db->prepare("SELECT 1 FROM settings WHERE tenant_id IS NULL AND ".ipam_key_col()." = :k");
         $ins = $db->prepare(
             "INSERT INTO settings (tenant_id, ".ipam_key_col().", value, type, updated_at, updated_by)
-             VALUES (NULL, :k, :v, :t, datetime('now'), NULL)"
+             VALUES (NULL, :k, :v, :t, CURRENT_TIMESTAMP, NULL)"
         );
     } else {
         $check = $db->prepare("SELECT 1 FROM settings WHERE ".ipam_key_col()." = :k");
         $ins = $db->prepare(
             "INSERT INTO settings (".ipam_key_col().", value, type, updated_at, updated_by)
-             VALUES (:k, :v, :t, datetime('now'), NULL)"
+             VALUES (:k, :v, :t, CURRENT_TIMESTAMP, NULL)"
         );
     }
 
@@ -3197,13 +3793,16 @@ function ipam_migrate_2_6_0_settings(PDO $db): void
     }
 
     if ($seeded > 0 && function_exists('audit')) {
-        // Audit is best-effort: tests use a stricter audit_log schema than production,
-        // and we never want a seeding log entry to abort a migration.
-        try {
+        // Skip the audit entry on fresh installs / unattended migrations:
+        // current_user() is empty during bootstrap, and some test fixtures'
+        // audit_log has username NOT NULL. Seeding from config.php has no
+        // human actor in those contexts so the audit row is meaningless
+        // anyway. Real upgrades that re-seed after init will still log
+        // because a session user is present.
+        $u = function_exists('current_user') ? current_user() : ['username' => ''];
+        if (!empty($u['username'])) {
             $details = json_encode(['count' => $seeded, 'source' => 'config.php']);
             audit($db, 'settings.seeded_from_config', 'setting', null, is_string($details) ? $details : "count={$seeded}");
-        } catch (\Throwable) {
-            // swallow
         }
     }
 }

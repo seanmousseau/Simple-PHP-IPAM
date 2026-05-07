@@ -2,7 +2,9 @@ name: Playwright
 
 # Containerized Playwright harness for Simple PHP IPAM.
 #
-# Runs on PRs targeting dev/main and on manual dispatch. Four-engine matrix
+# Runs on PRs targeting dev/main and on manual dispatch only — push
+# triggers were removed in v3.26.0 to keep CI minutes scoped to PR
+# review cycles. Four-engine matrix
 # (sqlite, mysql, mariadb, pgsql) exercises the full ~400-test suite against
 # real service containers inside Dockerized Apache+PHP.
 #

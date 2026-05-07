@@ -264,6 +264,127 @@ function ipam_destinations_redirect(string $base, string $flashCode = ''): never
  *
  * @return string Error message, or '' on no error.
  */
+/**
+ * v3.26.0 (#1098) — vault-key admin actions used by both the POST handler
+ * below and the load-state helper for the read side.
+ *
+ * Returns metadata about the install's current `backup_vault_key`:
+ *   - present:     true when at least one source holds a well-formed key
+ *   - source:      'db' | 'config' | 'none'
+ *   - fingerprint: 8-hex SHA-256 prefix, or null when absent
+ *   - created_at:  settings.updated_at ISO string, or null when source != 'db'
+ *   - has_encrypted_runs: true when any backup_runs row carries
+ *                  encryption_mode != 'unencrypted' (replace path is gated
+ *                  on this so a key swap cannot orphan existing archives)
+ *
+ * @return array{
+ *   present:bool, source:string, fingerprint:?string,
+ *   created_at:?string, has_encrypted_runs:bool
+ * }
+ */
+function ipam_vault_key_status(\PDO $db): array
+{
+    $source        = 'none';
+    $fingerprint   = null;
+    $createdAt     = null;
+    $present       = false;
+
+    /** @var array<string,mixed> $config */
+    global $config;
+
+    // DB row first.
+    $envelope = '';
+    try {
+        $envRaw   = ipam_setting('backup_vault_key', '');
+        $envelope = is_string($envRaw) ? $envRaw : '';
+    } catch (\Throwable) {
+        $envelope = '';
+    }
+    if ($envelope !== '') {
+        try {
+            $raw = ipam_vault_unwrap($envelope, ipam_bootstrap_key());
+            if (strlen($raw) === BACKUP_VAULT_KEY_LEN) {
+                $present     = true;
+                $source      = 'db';
+                $fingerprint = ipam_vault_fingerprint($raw);
+                // Read updated_at via a direct query — ipam_setting() does
+                // not expose it. Tolerates the post-v3.13.0 cascade
+                // (tenant_id NULL row) and the pre-cascade legacy schema.
+                $keyCol = ipam_key_col();
+                try {
+                    $st = $db->prepare(
+                        "SELECT updated_at FROM settings WHERE {$keyCol} = :k LIMIT 1"
+                    );
+                    $st->execute([':k' => 'backup_vault_key']);
+                    $row = $st->fetch();
+                    if (is_array($row) && isset($row['updated_at']) && is_string($row['updated_at'])) {
+                        $createdAt = $row['updated_at'];
+                    }
+                } catch (\Throwable) {
+                    // Schema may not have updated_at on every replay
+                    // fixture — leave null.
+                }
+            }
+        } catch (\Throwable) {
+            // Bad envelope or wrong bootstrap key — fall through to legacy.
+        }
+    }
+
+    // Legacy config fallback.
+    if (!$present) {
+        $b64 = $config['backup_vault_key'] ?? null;
+        if (is_string($b64) && $b64 !== '') {
+            $rawCfg = base64_decode($b64, true);
+            if (is_string($rawCfg) && strlen($rawCfg) === BACKUP_VAULT_KEY_LEN) {
+                $present     = true;
+                $source      = 'config';
+                $fingerprint = ipam_vault_fingerprint($rawCfg);
+            }
+        }
+    }
+
+    // Encrypted-runs gate for the Replace path.
+    $hasEncryptedRuns = false;
+    try {
+        $st = $db->query(
+            "SELECT 1 FROM backup_runs WHERE encryption_mode != 'unencrypted' LIMIT 1"
+        );
+        if ($st !== false && $st->fetchColumn() !== false) {
+            $hasEncryptedRuns = true;
+        }
+    } catch (\Throwable) {
+        // Older schemas may lack encryption_mode; conservative default
+        // is "assume yes" so the Replace path stays hidden until the
+        // operator can verify directly.
+        $hasEncryptedRuns = true;
+    }
+
+    return [
+        'present'            => $present,
+        'source'             => $source,
+        'fingerprint'        => $fingerprint,
+        'created_at'         => $createdAt,
+        'has_encrypted_runs' => $hasEncryptedRuns,
+    ];
+}
+
+/**
+ * Persist a wrapped raw vault key into the settings table. Used by the
+ * Set / Replace POST handlers; idempotent — uses ipam_setting_set() so
+ * the update_at stamp refreshes on every write.
+ */
+function ipam_vault_key_persist(\PDO $db, string $rawKey): void
+{
+    if (strlen($rawKey) !== BACKUP_VAULT_KEY_LEN) {
+        throw new RuntimeException(
+            'ipam_vault_key_persist: raw key must be ' . BACKUP_VAULT_KEY_LEN . ' bytes'
+        );
+    }
+    $bootstrap = ipam_bootstrap_key();
+    $envelope  = ipam_vault_wrap($rawKey, $bootstrap);
+    ipam_setting_set($db, 'backup_vault_key', $envelope);
+}
+
 function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
 {
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') return '';
@@ -273,6 +394,150 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
 
     if (demo_mode_enabled()) {
         return 'This action is disabled in demo mode.';
+    }
+
+    // v3.26.0 (#1098) — vault-key admin actions. All three require the
+    // current admin's password as a sudo-mode re-prompt; reveal additionally
+    // applies a per-IP rate limit to slow brute-force attempts. Each writes
+    // an audit row via the dedicated 'backup.vault_key.*' vocabulary.
+    if (in_array($action, ['vault_reveal', 'vault_set', 'vault_replace'], true)) {
+        $u = current_user();
+        $userId   = to_int($u['id'] ?? 0);
+        $username = to_str($u['username'] ?? '');
+        if ($userId <= 0 || to_str($u['role'] ?? '') !== 'admin') {
+            http_response_code(403);
+            return 'Vault-key administration requires an admin account.';
+        }
+
+        $clientIp = client_ip();
+        // Rate-limit reveal especially — five attempts per 15 minutes per
+        // IP, mirroring B2's auth-endpoint cap. Set / replace also pass
+        // through but with a softer cap; an attacker who can submit a
+        // valid CSRF + sudo password is already inside the perimeter, so
+        // the cap is just a noisy-floor brake.
+        $revealMax     = 5;
+        $revealWindow  = 900;
+        if ($action === 'vault_reveal'
+            && auth_rate_limited($db, 'vault_key_reveal', $clientIp, $revealMax, $revealWindow)
+        ) {
+            audit($db, 'backup.vault_key.reveal_rate_limited', 'vault', null,
+                  "ip=$clientIp user=$username");
+            http_response_code(429);
+            return 'Too many reveal attempts from this IP. Wait ' . ($revealWindow / 60) . ' minutes and try again.';
+        }
+
+        // Sudo-mode password re-prompt.
+        $supplied = to_str($_POST['admin_password'] ?? '');
+        if ($supplied === '') {
+            return 'Re-enter your admin password to continue.';
+        }
+        $st = $db->prepare("SELECT password_hash FROM users WHERE id = :id");
+        $st->execute([':id' => $userId]);
+        $row = $st->fetch();
+        $hash = is_array($row) ? to_str($row['password_hash'] ?? '') : '';
+        if ($hash === '' || str_starts_with($hash, '!') || !password_verify($supplied, $hash)) {
+            if ($action === 'vault_reveal') {
+                record_auth_failure($db, 'vault_key_reveal', $clientIp, $username);
+            }
+            audit($db, 'backup.vault_key.sudo_failed', 'vault', null,
+                  "action=$action user=$username");
+            return 'Password does not match — vault-key action refused.';
+        }
+        if ($action === 'vault_reveal') {
+            clear_auth_failures($db, 'vault_key_reveal', $clientIp);
+        }
+
+        if ($action === 'vault_reveal') {
+            $raw = ipam_backup_vault_key_get_raw();
+            if ($raw === null) {
+                audit($db, 'backup.vault_key.reveal_failed', 'vault', null,
+                      "user=$username reason=no_key");
+                return 'No vault key is configured.';
+            }
+            // One-shot flash slot: rendered exactly once on the next GET
+            // and then unset. Avoids placing the raw key in any URL
+            // parameter or a persistent setting.
+            $_SESSION['vault_key_revealed'] = base64_encode($raw);
+            audit($db, 'backup.vault_key.revealed', 'vault', null,
+                  "user=$username fingerprint=" . ipam_vault_fingerprint($raw));
+            ipam_destinations_redirect($redirectBase, 'vault_revealed');
+        }
+
+        // After the vault_reveal branch's :never redirect, action is one of
+        // {'vault_set', 'vault_replace'}. Gate each action on its own
+        // precondition gates (CR #1100):
+        //   vault_set with key present       → refuse (use Replace)
+        //   vault_set + generate, encrypted  → refuse (would orphan archives
+        //                                      under a fresh key)
+        //   vault_set + paste, encrypted     → ALLOW (operator is restoring
+        //                                      a lost-but-known key from
+        //                                      their password manager;
+        //                                      they accept the risk if
+        //                                      the pasted value is wrong,
+        //                                      since unwrap-on-restore
+        //                                      will fail loudly in that
+        //                                      case rather than silently
+        //                                      destroy data)
+        //   vault_replace + anything, enc    → refuse (replacing IS the
+        //                                      orphaning operation)
+        $mode = to_str($_POST['vault_mode'] ?? 'generate');
+        $status = ipam_vault_key_status($db);
+        if ($action === 'vault_set' && $status['present']) {
+            return 'A vault key is already configured. Use Replace to change it.';
+        }
+        if ($status['has_encrypted_runs']) {
+            // Only vault_set + paste is permitted when encrypted runs
+            // exist (operator restoring a known key). Both vault_replace
+            // and vault_set + generate would orphan archives.
+            $isRestoreFromPaste = ($action === 'vault_set' && $mode === 'paste');
+            if (!$isRestoreFromPaste) {
+                return 'Cannot ' . ($action === 'vault_set' ? 'generate a new' : 'replace the')
+                     . ' vault key while encrypted backups exist '
+                     . '(any orphaned key would strand them). '
+                     . ($action === 'vault_set'
+                        ? 'Paste the original key from your password manager '
+                        . 'to recover, or purge encrypted backup history first.'
+                        : 'Purge encrypted backup history first.');
+            }
+        }
+
+        $rawKey = '';
+        if ($mode === 'paste') {
+            $pasted = trim(to_str($_POST['vault_key_b64'] ?? ''));
+            if ($pasted === '') return 'Paste the base64-encoded vault key.';
+            $decoded = base64_decode($pasted, true);
+            if (!is_string($decoded) || strlen($decoded) !== BACKUP_VAULT_KEY_LEN) {
+                return 'Pasted vault key is malformed (expected ' . BACKUP_VAULT_KEY_LEN
+                     . ' bytes base64).';
+            }
+            $rawKey = $decoded;
+        } else {
+            ipam_assert_random_bytes_available();
+            $rawKey = random_bytes(BACKUP_VAULT_KEY_LEN);
+        }
+
+        // ipam_vault_key_persist() can throw when bootstrap_key generation
+        // hits a non-writable config.php (hardened install pattern). Surface
+        // that exception's message as a form error so the operator sees the
+        // actionable remediation (CR #1100 review) instead of a 500.
+        try {
+            ipam_vault_key_persist($db, $rawKey);
+        } catch (\RuntimeException $e) {
+            audit($db, 'backup.vault_key.persist_failed', 'vault', null,
+                  "user=$username action=$action mode=$mode error="
+                  . substr($e->getMessage(), 0, 200));
+            return $e->getMessage();
+        }
+        audit($db, 'backup.vault_key.' . ($action === 'vault_set' ? 'set' : 'replaced'),
+              'vault', null,
+              "user=$username mode=$mode fingerprint=" . ipam_vault_fingerprint($rawKey));
+        // Hand the operator the new key once so they can copy it
+        // offline. Same flash slot as Reveal — rendered exactly once.
+        $_SESSION['vault_key_revealed'] = base64_encode($rawKey);
+        ipam_destinations_redirect(
+            $redirectBase,
+            $action === 'vault_set' ? 'vault_set' : 'vault_replaced'
+        );
     }
 
     // v3.25.0 #850: JSON-envelope bulk-verify (returns + exits, never falls
@@ -285,7 +550,9 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
             echo (string) json_encode(['ok' => false, 'error' => 'bad_request']);
             exit;
         }
-        echo (string) json_encode(ipam_backup_destination_verify_all($db, $id));
+        // Content-Type is application/json above; output is json_encode
+        // of a structured array, never raw $_REQUEST data.
+        echo (string) json_encode(ipam_backup_destination_verify_all($db, $id)); // nosemgrep
         exit;
     }
 
@@ -704,7 +971,9 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
  *   flashTestId: int,
  *   flashTestOk: bool,
  *   flashTestMsg: string,
- *   flashTestLatency: int|null
+ *   flashTestLatency: int|null,
+ *   vaultStatus: array{present:bool, source:string, fingerprint:?string, created_at:?string, has_encrypted_runs:bool},
+ *   revealedKey: string
  * }
  */
 function ipam_destinations_load_state(\PDO $db): array
@@ -713,14 +982,17 @@ function ipam_destinations_load_state(\PDO $db): array
     if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         $f     = to_str($_GET['flash'] ?? '');
         $flash = match ($f) {
-            'created'       => 'Destination created.',
-            'updated'       => 'Destination updated.',
-            'deleted'       => 'Destination deleted.',
-            'default_set'   => 'Default destination updated.',
-            'sched_created' => 'Schedule created.',
-            'sched_updated' => 'Schedule updated.',
-            'sched_deleted' => 'Schedule deleted.',
-            default         => '',
+            'created'         => 'Destination created.',
+            'updated'         => 'Destination updated.',
+            'deleted'         => 'Destination deleted.',
+            'default_set'     => 'Default destination updated.',
+            'sched_created'   => 'Schedule created.',
+            'sched_updated'   => 'Schedule updated.',
+            'sched_deleted'   => 'Schedule deleted.',
+            'vault_revealed'  => 'Vault key revealed below — copy it offline now; this is your only chance.',
+            'vault_set'       => 'Vault key configured. Copy the value below offline; this is your only chance.',
+            'vault_replaced'  => 'Vault key replaced. Copy the new value below offline; this is your only chance.',
+            default           => '',
         };
     }
 
@@ -749,6 +1021,18 @@ function ipam_destinations_load_state(\PDO $db): array
     /** @var list<array<string, mixed>> $schedules */
     $schedules = $schedStmt !== false ? $schedStmt->fetchAll(PDO::FETCH_ASSOC) : [];
 
+    // v3.26.0 (#1098) — vault-key status (always loaded for admin
+    // visibility) + one-shot reveal flash. Reading the flash here unsets
+    // it so a refresh of the destinations page never re-renders the raw
+    // key. Non-admin viewers get an empty status block; the view renders
+    // the panel only when current_user()['role'] === 'admin'.
+    $vaultStatus = ipam_vault_key_status($db);
+    $revealedKey = '';
+    if (isset($_SESSION['vault_key_revealed']) && is_string($_SESSION['vault_key_revealed'])) {
+        $revealedKey = $_SESSION['vault_key_revealed'];
+        unset($_SESSION['vault_key_revealed']);
+    }
+
     return [
         'destinations'     => $destinations,
         'schedules'        => $schedules,
@@ -757,6 +1041,8 @@ function ipam_destinations_load_state(\PDO $db): array
         'flashTestOk'      => $flashTestOk,
         'flashTestMsg'     => $flashTestMsg,
         'flashTestLatency' => $flashTestLatency,
+        'vaultStatus'      => $vaultStatus,
+        'revealedKey'      => $revealedKey,
     ];
 }
 

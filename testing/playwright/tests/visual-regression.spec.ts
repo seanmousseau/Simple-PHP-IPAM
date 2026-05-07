@@ -32,13 +32,16 @@ interface VRPage {
 // restore coverage with a mutation-isolated capture path. Until then,
 // dashboard rendering changes are a manual smoke-test item during release prep.
 //
-// `subnets` and `search` excluded as of v3.23.0 (#1073): both pages render
-// consistently +200–470 px taller on the PostgreSQL driver than on
-// SQLite/MySQL with no ascertained source change in `subnets.php` /
-// `search.php` since v3.21.0. Per #1073's explicit triage option (c),
-// removing them from the VR set matches the dashboard's "exclude until the
-// root cause is bisected" pattern. Bisection is tracked as a follow-up;
-// when fixed, restore the entries below and the corresponding baselines.
+// `subnets` and `search` re-added in v3.26.0 (#1091) after bisecting the
+// 200–470 px PostgreSQL drift reported in #1073. Root-cause investigation
+// in v3.26.0 D3 found the rendered HTML byte-identical (modulo CSRF +
+// timestamps) and the api.php?resource=subnet_stats payload byte-identical
+// across drivers, so the historical drift no longer reproduces. The most
+// likely root cause was a transient JS-fill timing race between the
+// page-load `networkidle` waiter and the async subnet-stats fetch, which
+// has since become deterministic enough on both drivers to pass the
+// 1%-pixel threshold. If drift returns, restore the exclusion comment
+// here and file a fresh issue with the new diff.
 //
 // Backup & Restore tabs (#1040, v3.21.0):
 //   - Notifications + Restore (Step 1) are captured below — both are
@@ -49,6 +52,8 @@ interface VRPage {
 //     mutation-isolation work lands.
 const PAGES: VRPage[] = [
   { name: 'addresses', path: 'addresses.php' },
+  { name: 'subnets',   path: 'subnets.php' },
+  { name: 'search',    path: 'search.php' },
   { name: 'login', path: 'login.php', skipAuth: true },
   { name: 'backup-admin-notifications', path: 'backup_admin.php?tab=notifications' },
   { name: 'backup-admin-restore', path: 'backup_admin.php?tab=restore' },

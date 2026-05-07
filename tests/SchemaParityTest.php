@@ -236,6 +236,15 @@ final class SchemaParityTest extends TestCase
                 // that use partial indexes (e.g. users.oidc_sub) have a
                 // semantically equivalent regular UNIQUE in MySQL and must be
                 // compared normally.
+                //
+                // Why this divergence is safe: MySQL's composite UNIQUE
+                // alone would NOT prevent duplicate global rows (NULLs are
+                // distinct in composite UNIQUE per the SQL standard), so
+                // ipam_setting_set() in lib.php acquires a MySQL advisory
+                // lock (GET_LOCK / RELEASE_LOCK) around the SELECT→INSERT
+                // pair. See migrations.php's 3.13.0-settings-cascade comment
+                // block + lib.php's GET_LOCK site for the full contract.
+                // E1 (#884) cross-reference complete.
                 if ($table === 'settings' && (int)$idx['partial'] === 1) {
                     continue;
                 }
@@ -678,6 +687,13 @@ final class SchemaParityTest extends TestCase
             // information_schema (pgsql) and excluded from the SQLite extractor
             // above, so the unique_constraints arrays are intentionally
             // asymmetric across engines for this table only. Skip the assertion.
+            //
+            // The MySQL composite UQ on its own does NOT prevent duplicate
+            // global rows (NULLs are distinct in composite UNIQUE per the
+            // SQL standard). ipam_setting_set() compensates by acquiring a
+            // MySQL advisory lock around the SELECT→INSERT pair — see the
+            // 3.13.0-settings-cascade migration's cross-reference block,
+            // lib.php's GET_LOCK call site, and #884 (E1) for the contract.
             if ($table === 'settings') {
                 continue;
             }

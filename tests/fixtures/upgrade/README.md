@@ -5,7 +5,9 @@ to verify that `apply_migrations()` can upgrade old installs without data loss.
 
 The `testV221RegressionShape()` test constructs its fixture in-memory (no file needed)
 and is the primary regression guard for the v2.2.1 data-loss bug. The file-based
-fixtures below are optional and are skipped automatically if missing.
+fixtures below are **committed and required** as of v3.26.0 (#868) — `UpgradeReplayTest`
+hard-fails if any are missing. Regenerate them per the procedure below if a future
+schema change invalidates them; do not delete them silently.
 
 ---
 

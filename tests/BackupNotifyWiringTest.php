@@ -46,20 +46,9 @@ final class BackupNotifyWiringTest extends TestCase
         );
     }
 
-    public function testRunDbBackupIfDueCallsNotifyOnFailureAndSuccess(): void
-    {
-        $body = $this->functionSource('run_db_backup_if_due');
-        $this->assertStringContainsString(
-            "ipam_backup_notify(\$db, \$legacyDest, 'failure'",
-            $body,
-            'failure-path notify dispatch missing in run_db_backup_if_due'
-        );
-        $this->assertStringContainsString(
-            "ipam_backup_notify(\$db, \$legacyDest, 'success'",
-            $body,
-            'success-path notify dispatch missing in run_db_backup_if_due'
-        );
-    }
+    // v3.26.0 (#1059): the legacy v3.7 run_db_backup_if_due() runner was
+    // retired. Notify wiring on the unified surface remains covered by
+    // testIpamBackupRunForDestinationCallsNotifyOnFailureAndSuccess() above.
 
     public function testNotifyDispatchDoesNotPropagateExceptions(): void
     {
@@ -67,7 +56,7 @@ final class BackupNotifyWiringTest extends TestCase
         // failure (bad mail config, transient SMTP error, etc.) does not
         // mask the real outcome of the backup or surface to operators as a
         // "backup failed" when in fact the backup succeeded but the email
-        // bounced. Both call sites use the same idiom; spot-check both.
+        // bounced.
         $destBody = $this->functionSource('ipam_backup_run_for_destination');
         $this->assertMatchesRegularExpression(
             "/try\\s*\\{\\s*ipam_backup_notify\\(/",
@@ -78,13 +67,6 @@ final class BackupNotifyWiringTest extends TestCase
             "[backup] notify dispatch failed",
             $destBody,
             'notify catch block must error_log a diagnostic'
-        );
-
-        $legacyBody = $this->functionSource('run_db_backup_if_due');
-        $this->assertMatchesRegularExpression(
-            "/try\\s*\\{\\s*ipam_backup_notify\\(/",
-            $legacyBody,
-            'notify dispatch must be wrapped in try{} in run_db_backup_if_due'
         );
     }
 }

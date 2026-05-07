@@ -320,9 +320,11 @@ CREATE TABLE IF NOT EXISTS login_attempts (
   id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   ip           VARCHAR(45) NOT NULL,
   username     VARCHAR(191) COLLATE utf8mb4_bin DEFAULT NULL,
+  action       VARCHAR(32) NOT NULL DEFAULT 'login',
   attempted_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   KEY idx_login_attempts_ip_time (ip, attempted_at),
-  KEY idx_login_attempts_username_time (username, attempted_at)
+  KEY idx_login_attempts_username_time (username, attempted_at),
+  KEY idx_login_attempts_action_ip_time (action, ip, attempted_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- ---------------------------------------------------------------------------
@@ -848,6 +850,9 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.21.0-backup-runs'),
   ('3.21.0-schedule-unique'),
   ('3.23.0-notify-overrides'),
-  ('3.25.0-backup-destination-evolution');
+  ('3.25.0-backup-destination-evolution'),
+  ('3.26.0-login-attempts-action'),
+  ('3.26.0-retire-legacy-backup'),
+  ('3.26.0-vault-key-to-settings');
 
 SET FOREIGN_KEY_CHECKS = 1;

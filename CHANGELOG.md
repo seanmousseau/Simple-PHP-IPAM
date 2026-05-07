@@ -6,6 +6,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.26.0] - 2026-05-07
+
+Backup-overhaul closeout + code-quality sweep. Two breaking-change footnotes (legacy backup runner retired, vault-key relocated to DB) plus a sweep of P0/P1 security and correctness fixes that landed earlier in the cycle. The 26-issue scope across tracks A–E is documented in `docs/superpowers/plans/2026-05-06-v3.26.0.md`.
+
+### Removed
+
+- **Legacy v3.7 single-destination backup runner retired (#1059).** The `run_db_backup_if_due()` runner, the four legacy settings keys (`backup.enabled`, `backup.frequency`, `backup.retention`, `backup.dir`), and the `backup.php` CLI entry point are removed. Backups are driven entirely by the unified `backup_destinations` + `backup_schedules` surface from now on, with `cron.php` as the sole scheduler entry point. `db_tools.php`'s in-page "Automatic Backups" card + Backup History table moved to `backup_admin.php`. **Operators upgrading from a pre-v3.23 install must pass through v3.23.0–v3.25.x first** so `ipam_legacy_backup_migrate_if_due()` can materialise their legacy schedule into a unified destination + schedule pair; the new `3.26.0-retire-legacy-backup` migration enforces this with a hard-fail sentinel check. See `docs/upgrading.md` → v3.26.0 for the full operator runbook.
+
+### Added
+
+- **DB-resident `backup_vault_key` (#1098).** The 32-byte vault key that protects IPAMBKP3-encrypted archives moved out of `config.php` and into a wrapped envelope in the `settings` table. New `bootstrap_key` config field (auto-generated on first use, mirrors `app_secret` lifecycle) wraps the vault key via libsodium `crypto_secretbox`; the raw key never lives in the database. New admin panel on `backup_admin.php?tab=destinations` shows the 8-hex fingerprint, source label, and updated timestamp; reveal-key requires sudo-mode password re-prompt + per-IP rate limit (5/15min) and emits `backup.vault_key.revealed`. Set / Replace forms gate on first-time setup vs. encrypted-runs absence. Six new audit actions documented in `docs/internal/audit-actions.md`. v3.26.0 explicitly ships **without rotation** — replacing the key with encrypted backups in history would orphan them; the Replace form is hidden until the operator purges encrypted runs.
+- **Destination-disabled-mid-backup signal (#859).** `ipam_backup_cancel_reason()` now returns `cancel_requested` (operator clicked Cancel) or `destination_disabled` (admin flipped `is_active=0`) so the orchestrator's audit detail discriminates the two. Both signals reach the same "mark canceled, audit, cleanup tmpfile" choreography.
+- **Memory-bounded streaming property test (#860).** Asserts `ipam_backup_logical_dump` peak memory delta stays under 64 MB regardless of row count; nightly CI workflows can crank `IPAM_LARGE_DB_TEST_BYTES=1073741824` for a 1 GB synthetic round-trip.
+- **Retention dry-run/apply round-trip property test (#1044).** Pins the contract that the UI's "what would be deleted" preview matches what the apply pass actually deletes — exact-set equality across protected-row exclusion, below-capacity no-op, and above-capacity prune cases.
+- **Visual regression coverage restored on `/subnets` and `/search` (#1091).** The 200–470 px PostgreSQL drift reported in #1073 no longer reproduces; HTML and `api.php?resource=subnet_stats` JSON are byte-identical across SQLite, MySQL, and PostgreSQL.
+
+### Security
+
+- **CSRF on `set_theme.php` (#879).** Hard 403 on token-validation failure (no Location-redirect leak surface).
+- **Rate-limit on auth endpoints (#882).** `forgot_password.php`, `reset_password.php`, and `email_otp_verify.php` now share `login.php`'s per-IP brute-force cap via the new `auth_rate_limited()` helper. New schema column `login_attempts.action` discriminates the limiter scope.
+- **SSRF gaps closed in `ipam_validate_webhook_url()` (#872).** Block-list expanded to cover IPv4-mapped IPv6, link-local, and metadata-service ranges; resolution probes the actual hostname rather than the literal URL host.
+- **Email-OTP attempt-count race (#874).** Counter increment now happens inside the same transaction as the verify check, so two parallel POSTs cannot both land below the cap.
+- **Tags `colour` CSS injection defence (#869).** Tag colour is rendered through a CSS custom property indirection rather than inlined into the `style` attribute; an injected `;` breaks out of nothing.
+- **`client_ip()` walks XFF right-to-left with a trusted-proxy CIDR list (#876).** Each hop is admitted only if it appears in `proxy_trust_cidrs`; the first untrusted hop wins. Closes the spoof vector where a remote client sets a forged `X-Forwarded-For` header.
+
+### Changed
+
+- **Audit-log filter normalises date params (#880).** `from`/`to` accept `YYYY-MM-DD` and ISO-8601 timestamps interchangeably; previously only the latter parsed correctly.
+- **Audit-log action-prefix filter unified (#881).** `audit.php` and `api.php` now use the same prefix-match semantics; previously the API was strict-equality only.
+- **Webhook delivery uses `ipam_last_insert_id()` (#870).** Cross-engine wrapper replaces the SQLite-specific `lastInsertId()` call that returned `'0'` on PostgreSQL.
+- **Webhook event matching uses engine-native JSON containment (#871).** SQLite uses `json_extract`, MySQL uses `JSON_CONTAINS`, PostgreSQL uses `@>`. Previously matched on a regex over the serialised JSON, which broke on whitespace or key-order variance.
+- **`ipam_setting()` differentiates schema-missing from real PDO errors (#873).** A genuinely failing query no longer silently returns the registry default; only `42S22 / 42703 / 'no such column'` are swallowed.
+- **MySQL `GET_LOCK` name hashed to a 32-char digest (#875).** MySQL silently truncates lock names beyond 64 bytes; long settings keys sharing a prefix could collide. The composed name is now `ipam_setting:<md5(key:scope)>`.
+- **`audit()` and `ipam_send_mail()` failures are surfaced (#877).** Previously caught and silently dropped; now logged to `error_log` with context so a misconfigured SMTP setup or a corrupted `audit_log` table is visible to operators.
+- **`auto_reserve_subnet_ips()` wrapped in a transaction (#878).** A partial failure mid-loop no longer leaves the subnet half-reserved.
+- **Settings UQ divergence cross-referenced (#884).** Comment block in `migrations.php` (`3.13.0-settings-cascade`), `lib.php` (`ipam_setting_set` GET_LOCK call), and `tests/SchemaParityTest.php` whitelist now point at each other so a maintainer changing one sees the contract.
+
+### Fixed
+
+- **`audit.php` admin gate ordering (#883).** The role check now runs before any database read; previously a non-admin's POST could trigger a settings query before the 403.
+- **CI triggers correctly on push to `dev`/`main` (#866).** `php-qa.yml` and `playwright.yml` workflows updated.
+- **UpgradeReplay fixtures hard-fail on missing files (#868).** Previously skipped silently if a fixture path was wrong, masking a real coverage gap.
+- **OIDC verify + JWK unit test scaffold (#867).** New `OidcVerifyTest` covers token-signature validation in isolation.
+- **Multi-driver fresh-install migration parity (#885).** Asserts the same end state across SQLite, MySQL, and PostgreSQL.
+
+### CI / Tests
+
+- **`tests/VaultTest.php`** (12 cases) — wrap/unwrap round-trip, tamper-detection, length validation, fingerprint stability.
+- **`tests/BackupCancelReasonTest.php`** (7 cases) — cancel-discriminator under all signal combinations.
+- **`tests/BackupRetentionDryRunTest.php`** (4 cases) — round-trip property test for retention dry-run/apply.
+- **`tests/BackupStreamingMemoryTest.php`** (1 case + nightly env-var crank) — streaming memory property.
+- **`testing/playwright/tests/vault-key-admin.spec.ts`** (5 tests) — sudo gate, rate limit, one-shot flash, replace gating.
+
+[3.26.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.25.0...v3.26.0
+
 ## [3.25.0] - 2026-05-06
 
 The operator-facing finale of the backup-overhaul stream. **Surfaces the v3.23.0 `IPAMBKL1` engine-agnostic backend via a new picker UI** (Logical default, Database under Advanced), **rehomes retention from per-schedule to per-destination**, and ships the U-series UX polish: dashboard backup card, health-page connectivity section, encryption-format icons in History, type-name-to-confirm on destination delete, skeleton loaders, cancel-in-flight on Run-now, S3 range-resume, and a Verify-all bulk action. Plus per-tab notification overrides and one orphan UX fix (subnet description in the addresses-page dropdown).

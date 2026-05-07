@@ -5,6 +5,7 @@ require_once __DIR__ . '/lib/BackupClientInterface.php';
 require_once __DIR__ . '/lib/S3Client.php';
 require_once __DIR__ . '/lib/SftpClient.php';
 require_once __DIR__ . '/lib/LocalBackupClient.php';
+require_once __DIR__ . '/lib/vault.php';
 require_once __DIR__ . '/lib/backup.php';
 
 /**
@@ -825,8 +826,14 @@ function csrf_require(): void
     $sent = $_POST['csrf'] ?? null;
     $real = csrf_token();
     if (!is_string($sent) || !hash_equals($real, $sent)) {
+        // Hard 403 — never a redirect. PHP's `header('Location: ...')`
+        // silently clobbers the response code to 302, which obscures the
+        // CSRF failure and lets API/XHR clients silently follow the
+        // redirect to login.php and re-submit. The set_theme.php B1
+        // CSRF spec (#879) caught this regression.
         http_response_code(403);
-        header('Location: login.php');
+        header('Content-Type: text/plain; charset=utf-8');
+        echo "CSRF token missing or invalid.\n";
         exit;
     }
 }
@@ -1014,26 +1021,55 @@ function login_user(int $uid, string $username, string $role, ?PDO $db = null): 
 
 /* ---------------- Login rate limiting ---------------- */
 
-function login_rate_limited(PDO $db, string $ip, int $maxAttempts, int $windowSeconds): bool
+/**
+ * Generic per-action, per-IP rate limiter (#882). Counts rows in
+ * login_attempts whose action matches and whose attempted_at is within the
+ * sliding window. The legacy login_*-named helpers below remain as
+ * action='login' wrappers so existing callers and tests are unaffected.
+ */
+function auth_rate_limited(PDO $db, string $action, string $ip, int $maxAttempts, int $windowSeconds): bool
 {
     $cutoff = date('Y-m-d H:i:s', time() - $windowSeconds);
-    $st = $db->prepare("SELECT COUNT(*) AS c FROM login_attempts WHERE ip = :ip AND attempted_at >= :cutoff");
-    $st->execute([':ip' => $ip, ':cutoff' => $cutoff]);
+    $st = $db->prepare(
+        "SELECT COUNT(*) AS c FROM login_attempts
+          WHERE action = :a AND ip = :ip AND attempted_at >= :cutoff"
+    );
+    $st->execute([':a' => $action, ':ip' => $ip, ':cutoff' => $cutoff]);
     /** @var array<string, mixed>|false $countRow */
     $countRow = $st->fetch();
     return (is_array($countRow) ? to_int($countRow['c']) : 0) >= $maxAttempts;
 }
 
+function record_auth_failure(PDO $db, string $action, string $ip, string $username = ''): void
+{
+    $db->prepare(
+        "INSERT INTO login_attempts (ip, username, action) VALUES (:ip, :username, :a)"
+    )->execute([
+        ':ip'       => $ip,
+        ':username' => $username !== '' ? $username : null,
+        ':a'        => $action,
+    ]);
+}
+
+function clear_auth_failures(PDO $db, string $action, string $ip): void
+{
+    $db->prepare("DELETE FROM login_attempts WHERE action = :a AND ip = :ip")
+       ->execute([':a' => $action, ':ip' => $ip]);
+}
+
+function login_rate_limited(PDO $db, string $ip, int $maxAttempts, int $windowSeconds): bool
+{
+    return auth_rate_limited($db, 'login', $ip, $maxAttempts, $windowSeconds);
+}
+
 function record_login_failure(PDO $db, string $ip, string $username = ''): void
 {
-    $db->prepare("INSERT INTO login_attempts (ip, username) VALUES (:ip, :username)")
-       ->execute([':ip' => $ip, ':username' => $username !== '' ? $username : null]);
+    record_auth_failure($db, 'login', $ip, $username);
 }
 
 function clear_login_failures(PDO $db, string $ip): void
 {
-    $db->prepare("DELETE FROM login_attempts WHERE ip = :ip")
-       ->execute([':ip' => $ip]);
+    clear_auth_failures($db, 'login', $ip);
 }
 
 function account_locked_out(PDO $db, string $username, int $maxAttempts, int $windowSeconds): bool
@@ -1081,18 +1117,107 @@ function logout_user(): void
 
 /* ---------------- Audit ---------------- */
 
+/**
+ * True if $ip falls inside any of the supplied CIDR blocks. Accepts both
+ * IPv4 and IPv6 strings and CIDRs; returns false on parse error.
+ *
+ * @param list<string> $cidrs
+ */
+function ip_in_any_cidr(string $ip, array $cidrs): bool
+{
+    $ipBin = @inet_pton($ip);
+    if ($ipBin === false) {
+        return false;
+    }
+    foreach ($cidrs as $cidr) {
+        $cidr = trim($cidr);
+        if ($cidr === '' || strpos($cidr, '/') === false) {
+            continue;
+        }
+        [$net, $prefixStr] = explode('/', $cidr, 2);
+        $net = trim($net);
+        $prefixStr = trim($prefixStr);
+        // CR #1100: reject non-numeric prefixes before casting. Without
+        // this guard, a typo like "10.0.0.0/abc" would cast to /0 and
+        // ip_in_any_cidr() would match every IPv4 address — turning a
+        // proxy_trust_cidrs typo into a "trust everyone" XFF spoofing
+        // foothold. ctype_digit() is strict (no whitespace, no signs).
+        if ($prefixStr === '' || !ctype_digit($prefixStr)) {
+            continue;
+        }
+        $netBin = @inet_pton($net);
+        if ($netBin === false || strlen($netBin) !== strlen($ipBin)) {
+            continue;
+        }
+        $prefix = (int)$prefixStr;
+        $bits   = strlen($ipBin) * 8;
+        if ($prefix < 0 || $prefix > $bits) {
+            continue;
+        }
+        $masked   = apply_prefix_mask($ipBin, $prefix);
+        $netMaskd = apply_prefix_mask($netBin, $prefix);
+        if ($masked === $netMaskd) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function client_ip(): string
 {
-    /** @var IpamConfig $gConf */
-    $gConf = $GLOBALS['config'];
-    if (!empty($gConf['proxy_trust']) && !empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
-        $parts     = array_map('trim', explode(',', to_str($_SERVER['HTTP_X_FORWARDED_FOR'])));
+    $remote = to_str($_SERVER['REMOTE_ADDR'] ?? '127.0.0.1');
+
+    // New (v3.26.0+) preferred path: trust X-Forwarded-For only when the
+    // direct REMOTE_ADDR is one of the operator-listed proxy CIDRs, then walk
+    // the chain right-to-left and return the first untrusted hop. This is the
+    // OWASP-recommended pattern (see docs/configuration.md → proxy_trust_cidrs).
+    $cidrsRaw  = to_str(ipam_setting('security.proxy_trust_cidrs', ''));
+    $cidrs     = array_values(array_filter(array_map('trim', preg_split('/[\r\n,]+/', $cidrsRaw) ?: [])));
+    $xffHeader = to_str($_SERVER['HTTP_X_FORWARDED_FOR'] ?? '');
+
+    if (!empty($cidrs)) {
+        if (!ip_in_any_cidr($remote, $cidrs)) {
+            return $remote;
+        }
+        if ($xffHeader === '') {
+            return $remote;
+        }
+        $hops      = array_reverse(array_map('trim', explode(',', $xffHeader)));
+        $candidate = $remote;
+        foreach ($hops as $hop) {
+            if (filter_var($hop, FILTER_VALIDATE_IP) === false) {
+                return $candidate;
+            }
+            if (ip_in_any_cidr($hop, $cidrs)) {
+                $candidate = $hop;
+                continue;
+            }
+            return $hop;
+        }
+        return $candidate;
+    }
+
+    // Legacy back-compat: the old boolean `proxy_trust` flag in config.php
+    // unconditionally trusted the leftmost X-Forwarded-For value. That is
+    // unsafe (the leftmost hop is whatever the original client sent and is
+    // freely spoofable) but operators relying on it must not break silently
+    // on upgrade. Emit a one-shot deprecation log per request and keep the
+    // old behaviour. Operators should migrate to security.proxy_trust_cidrs.
+    /** @var IpamConfig|null $gConf */
+    $gConf = $GLOBALS['config'] ?? null;
+    if ($gConf !== null && !empty($gConf['proxy_trust']) && $xffHeader !== '') {
+        static $warned = false;
+        if (!$warned) {
+            error_log('client_ip: legacy `proxy_trust` config flag is deprecated; configure security.proxy_trust_cidrs instead (#876).');
+            $warned = true;
+        }
+        $parts     = array_map('trim', explode(',', $xffHeader));
         $candidate = $parts[0];
         if (filter_var($candidate, FILTER_VALIDATE_IP) !== false) {
             return $candidate;
         }
     }
-    return to_str($_SERVER['REMOTE_ADDR'] ?? '127.0.0.1');
+    return $remote;
 }
 
 function flash_set(string $message, string $type = 'success'): void
@@ -1112,21 +1237,87 @@ function flash_get(): ?array
     return ['msg' => $msg, 'type' => $type];
 }
 
-function audit(PDO $db, string $action, string $entityType, ?int $entityId, string $details = ''): void
+/**
+ * Allowed audit-action prefixes (categories).
+ * Shared between audit.php (UI filter) and api.php (/audit endpoint).
+ */
+const AUDIT_FILTER_PREFIXES = [
+    'address', 'aggregate', 'alert', 'apikey', 'audit', 'auth', 'backup',
+    'backup_run', 'config', 'contact', 'custom_field', 'db', 'destination',
+    'device', 'device_interface', 'dhcp_pool', 'export', 'import', 'mail',
+    'mfa', 'pd_pool', 'remote_backup', 'restore', 'scan', 'setting',
+    'settings', 'site', 'subnet', 'tag', 'user', 'vault', 'vlan', 'vrf',
+    'webhook',
+];
+
+/**
+ * Validate an audit-prefix filter string. Returns the prefix if it matches the
+ * allowlist, or '' if not. Use for ?prefix=foo style filters.
+ */
+function audit_filter_validate_prefix(string $raw): string
+{
+    $p = trim($raw);
+    return ($p !== '' && in_array($p, AUDIT_FILTER_PREFIXES, true)) ? $p : '';
+}
+
+/**
+ * Validate an exact audit-action filter string. Returns the action if it
+ * matches the <prefix>.<verb> regex, or '' if not. Use for ?action=auth.login
+ * style filters; no SQL-injection surface beyond bind.
+ */
+function audit_filter_validate_action(string $raw): string
+{
+    $a = trim($raw);
+    // CR #1100: allow multi-segment actions like 'mfa.otp.fail' or
+    // 'backup.vault_key.revealed'. The previous single-dot regex
+    // rejected every audit row this codebase emits with two-dot
+    // hierarchies, so ?action=<that> filters could never match.
+    return ($a !== '' && preg_match('/^[a-z_]+(?:\.[a-z_]+)+$/', $a)) ? $a : '';
+}
+
+/**
+ * Append a row to audit_log. Returns true on success, false on PDO failure
+ * (with the failure logged via error_log). Callers that need to surface
+ * audit failures (e.g. cron jobs) should check the return value; user-facing
+ * pages can continue to ignore it. Pre-v3.26.0 this function was `void` and
+ * would let exceptions propagate up the page, sometimes bubbling past the
+ * page layout and rendering a blank screen.
+ *
+ * v3.26.0 (#1100 CR review): when invoked inside an active transaction,
+ * a PDO failure RETHROWS rather than silently returning false. Callers
+ * like ipam_setting_set() and auto_reserve_subnet_ips() rely on the
+ * audit row landing atomically with the persisted state change; if the
+ * audit insert fails, the surrounding transaction must roll back so
+ * we don't commit state without its corresponding audit entry. Outside
+ * an active transaction (most user-facing pages and cron tasks) the
+ * legacy false-return behaviour is preserved.
+ */
+function audit(PDO $db, string $action, string $entityType, ?int $entityId, string $details = ''): bool
 {
     $u = current_user();
-    $st = $db->prepare("INSERT INTO audit_log (user_id, username, action, entity_type, entity_id, ip, user_agent, details)
-                        VALUES (:uid,:un,:ac,:et,:eid,:ip,:ua,:dt)");
-    $st->execute([
-        ':uid' => $u['id'] ?: null,
-        ':un'  => $u['username'] ?: null,
-        ':ac'  => $action,
-        ':et'  => $entityType,
-        ':eid' => $entityId,
-        ':ip'  => client_ip() ?: null,
-        ':ua'  => to_str($_SERVER['HTTP_USER_AGENT'] ?? ''),
-        ':dt'  => $details,
-    ]);
+    try {
+        $st = $db->prepare("INSERT INTO audit_log (user_id, username, action, entity_type, entity_id, ip, user_agent, details)
+                            VALUES (:uid,:un,:ac,:et,:eid,:ip,:ua,:dt)");
+        $st->execute([
+            ':uid' => $u['id'] ?: null,
+            ':un'  => $u['username'] ?: null,
+            ':ac'  => $action,
+            ':et'  => $entityType,
+            ':eid' => $entityId,
+            ':ip'  => client_ip() ?: null,
+            ':ua'  => to_str($_SERVER['HTTP_USER_AGENT'] ?? ''),
+            ':dt'  => $details,
+        ]);
+        return true;
+    } catch (\PDOException $e) {
+        error_log("audit failed: action={$action} entity={$entityType} id="
+            . ($entityId === null ? 'NULL' : (string)$entityId)
+            . ' err=' . $e->getMessage());
+        if ($db->inTransaction()) {
+            throw $e;
+        }
+        return false;
+    }
 }
 
 function audit_export(PDO $db, string $what, string $details = ''): void
@@ -1235,6 +1426,16 @@ function ipam_setting_definitions(): array
             'sensitive'   => false,
             'config_key'  => 'account_lockout_seconds',
             'min'         => 1,
+        ],
+        'security.proxy_trust_cidrs' => [
+            'label'       => 'Trusted reverse-proxy CIDRs',
+            'description' => 'One CIDR per line. When the direct client (REMOTE_ADDR) matches any of these, X-Forwarded-For is walked right-to-left and the first untrusted hop is logged as the real client. Leave empty to ignore X-Forwarded-For entirely (the safe default for non-proxied installs). Replaces the legacy proxy_trust boolean — see docs/configuration.md.',
+            'type'        => 'string',
+            'group'       => 'security',
+            'default'     => '',
+            'sensitive'   => false,
+            'config_key'  => null,
+            'multiline'   => true,
         ],
 
         // --- Alerting ---
@@ -1620,44 +1821,10 @@ function ipam_setting_definitions(): array
         ],
 
         // --- Backup ---
-        'backup.enabled' => [
-            'label'       => 'Automatic backups',
-            'description' => 'Write database backups to disk on page load when the interval has elapsed.',
-            'type'        => 'bool',
-            'group'       => 'backup',
-            'default'     => false,
-            'sensitive'   => false,
-            'config_key'  => ['backup', 'enabled'],
-        ],
-        'backup.frequency' => [
-            'label'       => 'Backup frequency',
-            'description' => 'How often to create automatic backups.',
-            'type'        => 'string',
-            'group'       => 'backup',
-            'default'     => 'daily',
-            'sensitive'   => false,
-            'config_key'  => ['backup', 'frequency'],
-            'options'     => ['daily' => 'Daily', 'weekly' => 'Weekly'],
-        ],
-        'backup.retention' => [
-            'label'       => 'Backup retention count',
-            'description' => 'Number of most-recent backups to keep. Older backups are deleted.',
-            'type'        => 'int',
-            'group'       => 'backup',
-            'default'     => 7,
-            'sensitive'   => false,
-            'config_key'  => ['backup', 'retention'],
-            'min'         => 1,
-        ],
-        'backup.dir' => [
-            'label'       => 'Backup directory',
-            'description' => 'Path to store backups. Empty = data/backups/ relative to the app root.',
-            'type'        => 'string',
-            'group'       => 'backup',
-            'default'     => '',
-            'sensitive'   => false,
-            'config_key'  => ['backup', 'dir'],
-        ],
+        // v3.26.0 (#1059): the 4 legacy v3.7 keys (backup.enabled,
+        // backup.frequency, backup.retention, backup.dir) were retired with
+        // the run_db_backup_if_due() runner. Backups are now driven by the
+        // unified backup_destinations + backup_schedules surface.
         // v3.24.0 — manual upload-restore (#837). Effective cap is the
         // smallest of: this setting, php upload_max_filesize, post_max_size.
         // Increasing this above PHP's runtime limits has no effect; the
@@ -1670,6 +1837,21 @@ function ipam_setting_definitions(): array
             'default'     => 2048,
             'min'         => 1,
             'sensitive'   => false,
+        ],
+        // v3.26.0 (#1098) — backup_vault_key wrapped envelope. The runtime
+        // read path is added in v3.26.0 D2-B; this registry entry ships
+        // alongside the data migration in D2-A so the column is present
+        // in fresh installs from the day v3.26.0 is released. The value
+        // is an "IPAMWK1." envelope produced by ipam_vault_wrap() — the
+        // raw 32-byte vault key never lives in this row.
+        'backup_vault_key' => [
+            'label'       => 'Backup vault key (wrapped, internal)',
+            'description' => 'Internal — the IPAMBKP3 vault key, wrapped under the bootstrap_key from config.php. Never displayed; managed via the Destinations admin panel.',
+            'type'        => 'string',
+            'group'       => 'backup',
+            'default'     => '',
+            'sensitive'   => true,
+            'hidden'      => true,
         ],
         // --- Notifications (v3.22.0 §2.4) ---
         // Per-event toggles split scheduled-vs-manual on the success/failure
@@ -1813,15 +1995,14 @@ function ipam_setting_definitions(): array
             'sensitive'   => false,
             'hidden'      => true,
         ],
-        // Internal — sentinel stamped by ipam_legacy_backup_migrate_if_due()
-        // (#1058) once the legacy backup.* config has been materialised into
-        // a unified Local destination + schedule (or once the helper has
-        // confirmed there's nothing to migrate). Gates run_db_backup_if_due()
-        // in init.php so the legacy v3.7 runner doesn't fire after the
-        // unified path has taken over.
+        // Internal — sentinel stamped on every v3.23.0–v3.25.x page load by
+        // the ipam_legacy_backup_migrate_if_due() helper (now retired in
+        // v3.26.0 #1059). The sentinel is kept in the registry so the
+        // 3.26.0-retire-legacy-backup migration can verify operators passed
+        // through that conversion path before dropping the 4 legacy keys.
         'backup.legacy_migrated_v3_23_0' => [
             'label'       => 'Legacy backup migration sentinel (internal)',
-            'description' => 'Internal — set to true once the legacy backup.* config has been migrated to a unified destination + schedule, or skipped because legacy backups were never enabled. Not user-editable.',
+            'description' => 'Internal — set to true on any v3.23.0–v3.25.x page load (the conversion helper is retired in v3.26.0 #1059). The 3.26.0-retire-legacy-backup migration verifies this sentinel before dropping legacy backup.* keys. Not user-editable.',
             'type'        => 'bool',
             'group'       => 'backup',
             'default'     => false,
@@ -2330,7 +2511,36 @@ function ipam_setting(string $key, mixed $default = null, ?int $tenantId = null)
                 return $decoded;
             }
         }
+    } catch (\PDOException $e) {
+        // Differentiate "schema not migrated yet" (silent fallback to config)
+        // from a real DB error (log + rethrow so the caller sees the failure
+        // instead of getting a stale fallback value). PDO surfaces "missing
+        // table/column" with SQLSTATE 42S02 / 42703, plus a per-engine
+        // human-readable message that we also pattern-match for resilience
+        // against driver quirks where SQLSTATE may not be set.
+        $sqlstate = $e->getCode();
+        $msg      = $e->getMessage();
+        $isMissingSchema =
+            $sqlstate === '42S02' || $sqlstate === '42703' ||
+            // MySQL/MariaDB report 'Unknown column' under SQLSTATE 42S22
+            // (CR #1100 review). Pre-migration installs missing tenant_id
+            // would otherwise rethrow during bootstrap instead of taking
+            // the documented config/default fallback.
+            $sqlstate === '42S22' ||
+            stripos($msg, 'no such table') !== false ||
+            stripos($msg, 'no such column') !== false ||
+            stripos($msg, 'undefined table') !== false ||
+            stripos($msg, 'undefined column') !== false ||
+            stripos($msg, 'unknown column') !== false;
+        if (!$isMissingSchema) {
+            error_log("ipam_setting: read failed for key {$key}: {$msg}");
+            throw $e;
+        }
+        // Pre-migration fallback path — silently fall through.
     } catch (\Throwable $e) {
+        // Non-PDO failure (e.g. cache helper bug). Log and fall through to the
+        // config back-compat path; do not rethrow because callers that read
+        // settings during bootstrap cannot meaningfully recover.
         error_log("ipam_setting: read failed for key {$key}: " . $e->getMessage());
     }
 
@@ -2387,9 +2597,20 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
     // duplicate global rows. GET_LOCK blocks until the lock is free (or the
     // 5 s timeout elapses). RELEASE_LOCK runs unconditionally in the finally
     // block so the lock is freed even when an exception is thrown.
+    //
+    // Cross-references — read together if you change any of the three:
+    //   - migrations.php :: 3.13.0-settings-cascade (cross-engine UQ shape)
+    //   - tests/SchemaParityTest.php (whitelist of the divergence)
+    //   - this lock (the runtime fix MySQL needs to match the partial-index
+    //     semantics SQLite/PG get for free)
+    // E1 (#884) cross-reference complete.
     $mysqlLockName = null;
     if ($d->driver_name() === 'mysql') {
-        $mysqlLockName = 'settings:' . $key . ':' . ($tenantId === null ? '__GLOBAL__' : (string)$tenantId);
+        // MySQL GET_LOCK names are capped at 64 bytes and silently truncate
+        // beyond that — two long keys sharing a 50+ char prefix would both
+        // hash to the same lock and deadlock-ish. Hash the composed name to
+        // a fixed 32-char digest so length is bounded regardless of key.
+        $mysqlLockName = 'ipam_setting:' . md5($key . ':' . ($tenantId === null ? '__GLOBAL__' : (string)$tenantId));
         $db->prepare("SELECT GET_LOCK(:n, 5)")->execute([':n' => $mysqlLockName]);
     }
 
@@ -2464,7 +2685,15 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
             $db->commit();
         }
     } catch (\Throwable $ex) {
-        if ($ownTx && $db->inTransaction()) $db->rollBack();
+        // Best-effort rollback. PHPStan 2.1.54 narrows
+        // PDO::inTransaction() to always-false in this catch path
+        // (incorrectly — a throw in the SELECT/UPDATE/INSERT block
+        // before commit() leaves the transaction open). Wrap rollBack()
+        // in its own try/catch so a "no active transaction" PDOException
+        // does not mask the original exception we're propagating.
+        if ($ownTx) {
+            try { $db->rollBack(); } catch (\Throwable) {}
+        }
         throw $ex;
     } finally {
         if ($mysqlLockName !== null) {
@@ -3168,12 +3397,6 @@ function ipam_validate_config(array $config): array
             $warnings[] = "{$label} is {$val}; minimum is {$min}.";
         }
     }
-    if ((bool)ipam_setting('backup.enabled')) {
-        $retention = to_int(ipam_setting('backup.retention'));
-        if ($retention < 1) {
-            $warnings[] = "backup.retention is {$retention}; minimum is 1.";
-        }
-    }
     foreach ($warnings as $w) {
         error_log("Simple PHP IPAM config warning: {$w}");
     }
@@ -3503,8 +3726,14 @@ function ipam_send_mail(string $to, string $subject, string $bodyText, string $b
     // Native mail() fallback
     $safeSubject = preg_replace('/[\r\n]/', '', $subject) ?? '';
     $safeTo      = preg_replace('/[\r\n]/', '', $to) ?? '';
+    error_clear_last();
     $ok = @mail($safeTo, $safeSubject, $bodyText); // nosemgrep
-    return ['success' => (bool) $ok, 'error' => null, 'transport' => 'mail'];
+    if (!$ok) {
+        $last = error_get_last();
+        $err  = $last !== null ? $last['message'] : 'mail() returned false';
+        return ['success' => false, 'error' => $err, 'transport' => 'mail'];
+    }
+    return ['success' => true, 'error' => null, 'transport' => 'mail'];
 }
 
 /** @param IpamConfig $config */
@@ -3802,504 +4031,6 @@ function ipam_legacy_retention_prune_by_mtime(string $glob, int $retention): voi
 }
 
 
-/**
- * v3.23.0 #1058 — one-shot legacy → unified migration helper.
- *
- * If `backup.enabled = true` is set on first v3.23.0 page load, create a
- * backup_destinations row of type='local' from `backup.dir` plus a
- * backup_schedules row from `backup.frequency` and `backup.retention`.
- * Marks the install as migrated by setting the
- * `backup.legacy_migrated_v3_23_0` sentinel so subsequent invocations are
- * no-ops. The legacy `backup.*` keys are NOT cleared — they remain readable
- * for one release as a fallback, then drop in v3.26.0.
- *
- * Called from init.php on every page load. The cost when not due is one
- * setting fetch (cached per-request) plus one short-circuit return.
- *
- * Idempotent: re-running after the sentinel is set, or with a destination
- * already present for the legacy directory, is a no-op.
- *
- * Transaction caveat: this helper opens its own transaction iff there is
- * none active. Callers MUST NOT invoke it inside an outer transaction —
- * any rollback from a failed schedule INSERT would unwind the outer
- * caller's work alongside the partial migration. init.php is the only
- * intended entry point and runs at top-level page bootstrap (no outer tx).
- */
-function ipam_legacy_backup_migrate_if_due(PDO $db): void
-{
-    if ((bool) ipam_setting('backup.legacy_migrated_v3_23_0')) {
-        return;
-    }
-    if (!(bool) ipam_setting('backup.enabled')) {
-        // Migration only runs when legacy backups were actually in use.
-        // Stamp the sentinel anyway so installs that never enabled legacy
-        // backups don't pay the lookup cost on every page load.
-        try {
-            ipam_setting_set($db, 'backup.legacy_migrated_v3_23_0', true);
-        } catch (\Throwable $e) {
-            error_log('[backup] legacy migration sentinel failed: ' . $e->getMessage());
-        }
-        return;
-    }
-
-    try {
-        $ownTx = !$db->inTransaction();
-        if ($ownTx) {
-            $db->beginTransaction();
-        }
-
-        // Canonicalise the legacy directory the same way backup_dir() does
-        // so a relative `backup.dir` setting (e.g. "data/backups") resolves
-        // to the absolute path the legacy runner uses. Otherwise the
-        // unified runner would target a sibling directory and operators
-        // would lose access to existing on-disk backups.
-        $dir = trim(to_str(ipam_setting('backup.dir')));
-        if ($dir === '') {
-            $dir = __DIR__ . '/data/backups';
-        } elseif (!str_starts_with($dir, '/')) {
-            $dir = __DIR__ . '/' . $dir;
-        }
-        // Resolve `..` segments without requiring the directory to exist
-        // (matches backup_dir()'s normalisation in lib.php #113).
-        $parts = [];
-        foreach (explode('/', $dir) as $segment) {
-            if ($segment === '..') { array_pop($parts); }
-            elseif ($segment !== '' && $segment !== '.') { $parts[] = $segment; }
-        }
-        $dir = '/' . implode('/', $parts);
-        $configJson = json_encode(['path' => $dir]);
-        if (!is_string($configJson)) $configJson = '{}';
-
-        // Reuse an existing local destination if one already points at the
-        // legacy directory — covers two cases: (a) a prior migration run
-        // failed before stamping the sentinel, leaving the destination row
-        // committed; (b) an admin already created the matching destination
-        // by hand. Inserting again would duplicate rows and produce two
-        // schedules pointing at the same target.
-        // Only adopt ACTIVE matching destinations — an admin who has
-        // explicitly disabled the destination should not have the legacy
-        // migration silently re-enable backups against it (CR feedback
-        // PR #1092). If the only match is inactive, fall through to the
-        // INSERT branch and the operator will see a fresh active row.
-        $findDest = $db->prepare(
-            "SELECT id FROM backup_destinations
-              WHERE type = 'local' AND config = :cfg AND is_active = 1
-              LIMIT 1"
-        );
-        $findDest->execute([':cfg' => $configJson]);
-        $existingDest = $findDest->fetch(PDO::FETCH_ASSOC);
-        if (is_array($existingDest)) {
-            $destId = to_int($existingDest['id'] ?? 0);
-        } else {
-            $name = 'Legacy local backups';
-            $ins = $db->prepare(
-                "INSERT INTO backup_destinations (name, type, config, encrypt, is_active)
-                 VALUES (:n, 'local', :cfg, 0, 1)"
-            );
-            $ins->execute([':n' => $name, ':cfg' => $configJson]);
-            $destId = ipam_last_insert_id($db, 'backup_destinations');
-        }
-
-        // Same idempotency guard for the schedule — if one already exists
-        // for this destination, skip insert. backup_schedules has UNIQUE
-        // KEY uq_backup_schedules_destination as of v3.21.0 so a second
-        // INSERT would throw; check explicitly so the audit message is
-        // clear instead of a SQL error.
-        $findSched = $db->prepare("SELECT id FROM backup_schedules WHERE destination_id = :d LIMIT 1");
-        $findSched->execute([':d' => $destId]);
-        if ($findSched->fetchColumn() !== false) {
-            // Schedule already exists — stamp sentinel and return.
-            ipam_setting_set($db, 'backup.legacy_migrated_v3_23_0', true);
-            if ($ownTx && $db->inTransaction()) {
-                $db->commit();
-            }
-            return;
-        }
-
-        $legacyFreq = strtolower(trim(to_str(ipam_setting('backup.frequency'))));
-        $legacyRet  = max(1, to_int(ipam_setting('backup.retention')));
-        $freq = $legacyFreq === 'weekly' ? 'weekly' : 'daily';
-        $rd   = $freq === 'daily'  ? $legacyRet : 7;
-        $rw   = $freq === 'weekly' ? $legacyRet : 0;
-        $dow  = $freq === 'weekly' ? 0 : null;  // Sunday for weekly
-
-        $sched = $db->prepare(
-            "INSERT INTO backup_schedules
-                (destination_id, frequency, time_of_day, day_of_week,
-                 retention_daily, retention_weekly, is_active)
-             VALUES (:d, :f, '02:00', :dow, :rd, :rw, 1)"
-        );
-        $sched->bindValue(':d',   $destId, PDO::PARAM_INT);
-        $sched->bindValue(':f',   $freq, PDO::PARAM_STR);
-        $sched->bindValue(':dow', $dow, $dow === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
-        $sched->bindValue(':rd',  $rd, PDO::PARAM_INT);
-        $sched->bindValue(':rw',  $rw, PDO::PARAM_INT);
-        $sched->execute();
-
-        ipam_setting_set($db, 'backup.legacy_migrated_v3_23_0', true);
-
-        try {
-            audit($db, 'backup.legacy_migrated', 'destination', $destId,
-                  "freq=$freq retention=$legacyRet dir=" . substr($dir, 0, 200));
-        } catch (\Throwable) {
-            // best-effort
-        }
-
-        if ($ownTx && $db->inTransaction()) {
-            $db->commit();
-        }
-    } catch (\Throwable $e) {
-        if ($db->inTransaction()) $db->rollBack();
-        // Lazy-housekeeping pattern: never crash the page on a best-effort
-        // background task. Operator can re-trigger by clearing the sentinel.
-        error_log('[backup] legacy migration failed: ' . $e->getMessage());
-    }
-}
-
-/** @param IpamConfig $config */
-function backup_dir(array $config): string
-{
-    $d = trim(to_str(ipam_setting('backup.dir')));
-    if ($d === '') {
-        return __DIR__ . '/data/backups';
-    }
-    // Make relative paths relative to the app directory
-    if (!str_starts_with($d, '/')) {
-        $d = __DIR__ . '/' . $d;
-    }
-    // Canonicalize: resolve .. segments without requiring the directory to exist (#113)
-    $parts = [];
-    foreach (explode('/', $d) as $segment) {
-        if ($segment === '..') { array_pop($parts); }
-        elseif ($segment !== '' && $segment !== '.') { $parts[] = $segment; }
-    }
-    return '/' . implode('/', $parts);
-}
-
-function backup_state_path(): string
-{
-    return __DIR__ . '/data/backup-state.json';
-}
-
-/** @param IpamConfig $config */
-function backup_interval_seconds(array $config): int
-{
-    $freq = strtolower(trim(to_str(ipam_setting('backup.frequency'))));
-    return match ($freq) {
-        'weekly' => 604800,
-        default  => 86400,  // 'daily'
-    };
-}
-
-/**
- * @phpstan-impure
- * @param IpamConfig $config
- */
-function backup_is_due(array $config): bool
-{
-    if (!(bool)ipam_setting('backup.enabled')) return false;
-
-    $path = backup_state_path();
-    if (!is_file($path)) return true;
-
-    $d = @json_decode((string)file_get_contents($path), true);
-    if (!is_array($d) || !isset($d['last_backup'])) return true;
-
-    return (time() - to_int($d['last_backup'])) >= backup_interval_seconds($config);
-}
-
-/**
- * Record a CLI-runner backup run to backup_runs (#799 §A1). Best-effort:
- * swallows all errors so a missing table (fresh install before migration
- * runs) never blocks the backup. Always uses backup_type='database',
- * encryption_mode='unencrypted', triggered_by='cli', destination_id=NULL —
- * the legacy v3.7 CLI runner path produced unencrypted local-disk dumps
- * with no remote destination linkage.
- */
-function backup_runs_insert_cli(
-    PDO $db,
-    string $filename,
-    int $sizeBytes,
-    string $checksum,
-    string $startedAt,
-    string $completedAt,
-    string $status,
-    string $error = ''
-): void {
-    try {
-        $db->prepare(
-            "INSERT INTO backup_runs " .
-            "(destination_id, schedule_id, backup_type, encryption_mode, triggered_by, status, " .
-            " filename, size_bytes, checksum, source_version, is_protected, error_message, started_at, completed_at) " .
-            "VALUES (NULL, NULL, 'database', 'unencrypted', 'cli', :st, :fn, :sz, :ck, :sv, 0, :err, :sa, :ca)"
-        )->execute([
-            ':st'  => $status,
-            ':fn'  => $filename,
-            ':sz'  => $sizeBytes,
-            ':ck'  => $checksum,
-            ':sv'  => IPAM_VERSION,
-            ':err' => $error,
-            ':sa'  => $startedAt,
-            ':ca'  => $completedAt,
-        ]);
-        // CR feedback PR #1054: emit an audit entry so scheduled / CLI backups
-        // are visible in the central audit trail like every other significant
-        // operational action. Best-effort: never block the backup run on the
-        // audit insert failing.
-        audit(
-            $db,
-            $status === 'success' ? 'backup.run' : 'backup.run_failed',
-            'backup_run',
-            null,
-            'triggered_by=cli filename=' . $filename . ' status=' . $status
-        );
-    } catch (Throwable) {
-        // best-effort
-    }
-}
-
-/**
- * Run a database backup if one is due.
- *
- * - SQLite: WAL checkpoint + file copy.
- * - MySQL:  mysqldump via proc_open (password via env var, never on command line).
- * - Postgres: pg_dump via proc_open (password via PGPASSWORD env var).
- *
- * All engines record to backup_runs with SHA-256 for integrity verification.
- * Returns true if a backup was written, false otherwise.
- */
-/** @param IpamConfig $config */
-function run_db_backup_if_due(PDO $db, array $config): bool
-{
-    if (!backup_is_due($config)) return false;
-
-    $lockPath = __DIR__ . '/data/backup.lock';
-    $lock = @fopen($lockPath, 'c');
-    if (!$lock) return false;
-
-    if (!@flock($lock, LOCK_EX | LOCK_NB)) {
-        @fclose($lock);
-        return false;
-    }
-
-    $wrote = false;
-    try {
-        if (!backup_is_due($config)) return false;
-
-        $driver    = ipam_dialect()->driver_name();
-        $ts        = date('Y-m-d-His');
-        $startedAt = date('Y-m-d H:i:s');
-        $retention = max(1, to_int(ipam_setting('backup.retention')));
-
-        /** @var IpamConfig $gConf */
-        $gConf = $GLOBALS['config'];
-
-        // Synthetic destination for ipam_backup_notify(): the legacy v3.7 path
-        // has no row in backup_destinations, so the notifier just gets a
-        // human-readable name to put in the subject line.
-        $legacyDest = ['name' => 'local backup (' . $driver . ')', 'triggered_by' => 'scheduled'];
-
-        // Centralised "abort with notification + history row" helper. Earlier
-        // versions of this function bailed out of pre-condition failures
-        // (mkdir, missing DB file) silently — operators got no email and no
-        // history-table row, so they could miss days of failed backups before
-        // an audit caught it (#791 follow-up).
-        $abortWith = static function (string $reason, string $filename = '') use ($db, $legacyDest, $startedAt): bool {
-            backup_runs_insert_cli(
-                $db, $filename, 0, '',
-                $startedAt, date('Y-m-d H:i:s'),
-                'failed', $reason
-            );
-            try { ipam_backup_notify($db, $legacyDest, 'failure', $reason); }
-            catch (Throwable $ne) { error_log('[backup] notify dispatch failed: ' . $ne->getMessage()); }
-            return false;
-        };
-
-        $dir = backup_dir($config);
-        if (!is_dir($dir)) {
-            if (!@mkdir($dir, 0700, true)) {
-                return $abortWith('Failed to create backup directory: ' . $dir);
-            }
-            // Deny direct web access to backup files.
-            @file_put_contents($dir . '/.htaccess',
-                "<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n" .
-                "<IfModule !mod_authz_core.c>\n    Deny from all\n</IfModule>\n");
-        }
-
-        if ($driver === 'sqlite') {
-            $dbPath = $gConf['db_path'] !== '' ? $gConf['db_path'] : (__DIR__ . '/data/ipam.sqlite');
-            if (!is_file($dbPath)) {
-                return $abortWith('SQLite database file not found: ' . $dbPath);
-            }
-
-            // WAL checkpoint is a best-effort flush before the file copy; if it
-            // fails we surface the error via audit + error_log but DO NOT abort.
-            // A checkpoint failure means the copy may include unflushed WAL pages
-            // (worst case the WAL file accompanies the .sqlite copy on next backup),
-            // not corruption — so this is logged as a warning, not a hard error.
-            try {
-                $db->exec("PRAGMA wal_checkpoint(FULL)");
-            } catch (Throwable $e) {
-                audit($db, 'backup.wal_checkpoint_failed', 'system', null,
-                    'context=backup error=' . substr($e->getMessage(), 0, 200));
-                error_log("[backup] wal_checkpoint failed at backup: " . $e->getMessage());
-            }
-
-            $dest = $dir . '/ipam-' . $ts . '.sqlite';
-            if (!@copy($dbPath, $dest)) {
-                backup_runs_insert_cli($db, basename($dest), 0, '',
-                    $startedAt, date('Y-m-d H:i:s'), 'failed', 'copy() failed');
-                try { ipam_backup_notify($db, $legacyDest, 'failure', 'copy() failed for ' . basename($dest)); }
-                catch (Throwable $ne) { error_log('[backup] notify dispatch failed: ' . $ne->getMessage()); }
-                return false;
-            }
-            @chmod($dest, 0600);
-
-            $sha256 = hash_file('sha256', $dest) ?: '';
-            $size   = (int)(@filesize($dest) ?: 0);
-            backup_runs_insert_cli($db, basename($dest), $size, $sha256,
-                $startedAt, date('Y-m-d H:i:s'), 'success');
-
-            // Prune old SQLite backups by mtime (#828).
-            ipam_legacy_retention_prune_by_mtime($dir . '/ipam-*.sqlite', $retention);
-            $wrote = true;
-
-        } elseif ($driver === 'mysql') {
-            $dsn    = to_str($gConf['db_dsn'] ?? '');
-            $host   = preg_match('/host=([^;]+)/i', $dsn, $m) ? $m[1] : '127.0.0.1';
-            $port   = preg_match('/port=([^;]+)/i', $dsn, $m) ? $m[1] : '3306';
-            $dbName = preg_match('/dbname=([^;]+)/i', $dsn, $m) ? $m[1] : 'ipam';
-            $user   = to_str($gConf['db_user'] ?? 'root');
-            $pass   = to_str($gConf['db_pass'] ?? '');
-            $dest   = $dir . '/ipam-' . $ts . '.sql';
-
-            // Resolve setting before tempnam so an ipam_setting() throw
-            // doesn't leak a 0600 password file (PR #1080 CR round 2).
-            $verifySsl = (bool) ipam_setting('backup.dump_ssl_verify');
-            // Route the password through a 0600 --defaults-extra-file so it
-            // never appears in /proc/<pid>/environ or `ps eww` output (#820).
-            // The file MUST be unlinked on every exit path below.
-            $credFile = ipam_backup_write_mysql_defaults_file($pass);
-            // --defaults-extra-file MUST be the first mysqldump argument.
-            // v3.23.0 #1081: --no-login-paths emitted when the client
-            // supports it (MariaDB 11.4+ / Oracle MySQL 8.x). Older clients
-            // reject the flag and the dump fails immediately, so we probe.
-            // v3.22.2: SSL verify flag is flavor-aware. See
-            // ipam_mysql_ssl_verify_args() in lib/backup.php for the full
-            // MariaDB-vs-Oracle-MySQL dialect rationale.
-            $cmd = ['mysqldump', '--defaults-extra-file=' . $credFile];
-            if (ipam_mysql_client_supports_no_login_paths('mysqldump')) {
-                $cmd[] = '--no-login-paths';
-            }
-            foreach (ipam_mysql_ssl_verify_args($verifySsl) as $sslArg) {
-                $cmd[] = $sslArg;
-            }
-            $cmd[] = '--single-transaction';
-            $cmd[] = '--routines';
-            $cmd[] = '-h';
-            $cmd[] = $host;
-            $cmd[] = '-P';
-            $cmd[] = $port;
-            $cmd[] = '-u';
-            $cmd[] = $user;
-            $cmd[] = $dbName;
-            $env = getenv() ?: [];
-            // Strip any inherited DB password env vars so a parent shell
-            // already exporting these can't leak the secret to the child
-            // even though we route the real cred via --defaults-extra-file
-            // (#820 PR #1074 CR).
-            unset($env['MYSQL_PWD'], $env['PGPASSWORD']);
-            $dumpErr = '';
-            try {
-                $ret = backup_run_dump($cmd, $env, $dest, 120, $dumpErr);
-            } finally {
-                @unlink($credFile); // nosemgrep: php.lang.security.unlink-use.unlink-use
-            }
-            if (!$ret) {
-                $why = $dumpErr !== '' ? 'mysqldump failed: ' . $dumpErr : 'mysqldump failed';
-                $whyTrunc = strlen($why) > 500 ? substr($why, 0, 497) . '...' : $why;
-                backup_runs_insert_cli($db, basename($dest), 0, '',
-                    $startedAt, date('Y-m-d H:i:s'), 'failed', $whyTrunc);
-                try { ipam_backup_notify($db, $legacyDest, 'failure', $whyTrunc . ' (' . basename($dest) . ')'); }
-                catch (Throwable $ne) { error_log('[backup] notify dispatch failed: ' . $ne->getMessage()); }
-                return false;
-            }
-
-            $sha256 = hash_file('sha256', $dest) ?: '';
-            $size   = (int)(@filesize($dest) ?: 0);
-            backup_runs_insert_cli($db, basename($dest), $size, $sha256,
-                $startedAt, date('Y-m-d H:i:s'), 'success');
-
-            // Prune old engine-native dumps by mtime (#828).
-            ipam_legacy_retention_prune_by_mtime($dir . '/ipam-*.sql', $retention);
-            $wrote = true;
-
-        } elseif ($driver === 'pgsql') {
-            $dsn    = to_str($gConf['db_dsn'] ?? '');
-            $host   = preg_match('/host=([^;]+)/i', $dsn, $m) ? $m[1] : '127.0.0.1';
-            $port   = preg_match('/port=([^;]+)/i', $dsn, $m) ? $m[1] : '5432';
-            $dbName = preg_match('/dbname=([^;]+)/i', $dsn, $m) ? $m[1] : 'ipam';
-            $user   = to_str($gConf['db_user'] ?? 'postgres');
-            $pass   = to_str($gConf['db_pass'] ?? '');
-            $dest   = $dir . '/ipam-' . $ts . '.sql';
-
-            // Route the password through a 0600 PGPASSFILE so it never appears
-            // in /proc/<pid>/environ or `ps eww` (#820). PGPASSFILE itself is
-            // an env var carrying a *path*, not the secret — this is libpq's
-            // documented pattern for non-interactive scripts. The file MUST be
-            // unlinked on every exit path below.
-            $credFile = ipam_backup_write_pgpass_file($pass);
-            $cmd = ['pg_dump', '-h', $host, '-p', $port, '-U', $user, $dbName];
-            $env = getenv() ?: [];
-            // Strip any inherited DB password env vars before merging in
-            // PGPASSFILE so the parent shell can't leak a secret into
-            // the child (#820 PR #1074 CR).
-            unset($env['MYSQL_PWD'], $env['PGPASSWORD']);
-            $env['PGPASSFILE'] = $credFile;
-            $dumpErr = '';
-            try {
-                $ret = backup_run_dump($cmd, $env, $dest, 120, $dumpErr);
-            } finally {
-                @unlink($credFile); // nosemgrep: php.lang.security.unlink-use.unlink-use
-            }
-            if (!$ret) {
-                $why = $dumpErr !== '' ? 'pg_dump failed: ' . $dumpErr : 'pg_dump failed';
-                $whyTrunc = strlen($why) > 500 ? substr($why, 0, 497) . '...' : $why;
-                backup_runs_insert_cli($db, basename($dest), 0, '',
-                    $startedAt, date('Y-m-d H:i:s'), 'failed', $whyTrunc);
-                try { ipam_backup_notify($db, $legacyDest, 'failure', $whyTrunc . ' (' . basename($dest) . ')'); }
-                catch (Throwable $ne) { error_log('[backup] notify dispatch failed: ' . $ne->getMessage()); }
-                return false;
-            }
-
-            $sha256 = hash_file('sha256', $dest) ?: '';
-            $size   = (int)(@filesize($dest) ?: 0);
-            backup_runs_insert_cli($db, basename($dest), $size, $sha256,
-                $startedAt, date('Y-m-d H:i:s'), 'success');
-
-            // Prune old engine-native dumps by mtime (#828).
-            ipam_legacy_retention_prune_by_mtime($dir . '/ipam-*.sql', $retention);
-            $wrote = true;
-        }
-
-        if ($wrote) {
-            $state = ['last_backup' => time(), 'last_file' => basename($dest ?? '')];
-            @file_put_contents(backup_state_path(), json_encode($state));
-            @chmod(backup_state_path(), 0600);
-            try {
-                ipam_backup_notify($db, $legacyDest, 'success',
-                    'file=' . basename($dest) . ' driver=' . $driver);
-            } catch (Throwable $ne) {
-                error_log('[backup] notify dispatch failed: ' . $ne->getMessage());
-            }
-        }
-    } finally {
-        @flock($lock, LOCK_UN);
-        @fclose($lock);
-    }
-
-    return $wrote;
-}
 
 /**
  * Write a MySQL [client] defaults-extra-file containing the password and return
@@ -4312,6 +4043,7 @@ function run_db_backup_if_due(PDO $db, array $config): bool
  * The file's `[client]` section is consumed by mysql/mysqldump when passed as
  * the FIRST argument (must come before all other CLI args).
  */
+
 function ipam_backup_write_mysql_defaults_file(string $pass): string
 {
     $path = tempnam(sys_get_temp_dir(), 'ipam_dbcred_');
@@ -4360,16 +4092,6 @@ function ipam_backup_write_pgpass_file(string $pass): string
     return $path;
 }
 
-/**
- * Run a dump command (mysqldump / pg_dump) writing stdout to $destPath.
- * Uses array-form proc_open so no shell injection is possible.
- * Credentials are passed via a 0600 temp file referenced from $cmd
- * (`--defaults-extra-file`) or $env (`PGPASSFILE`), never via env-borne secrets
- * or CLI args (#820).
- *
- * @param list<string> $cmd
- * @param array<string,string> $env
- */
 /**
  * @param list<string>            $cmd
  * @param array<string,string>    $env
@@ -4484,36 +4206,17 @@ function backup_run_dump(array $cmd, array $env, string $destPath, int $timeoutS
     return true;
 }
 
-/**
- * Return info about the current backup state for display in the admin panel.
- *
- * @param IpamConfig $config
- * @return array{last_backup: int|null, last_file: string|null, count: int, dir: string}
- */
-function backup_info(array $config): array
-{
-    $dir   = backup_dir($config);
-    $state = backup_state_path();
-    $last  = null;
-    $file  = null;
+// v3.26.0 (#1059): the legacy v3.7 backup runner and its helpers were
+// removed:
+//   ipam_legacy_backup_migrate_if_due()  — init-time conversion helper
+//   backup_dir() / backup_state_path()    — single-directory accessors
+//   backup_interval_seconds() / backup_is_due() — schedule readers
+//   backup_runs_insert_cli()              — CLI-runner row inserter
+//   run_db_backup_if_due()                — SQLite/MySQL/Postgres runner
+//   backup_info()                         — admin-page status accessor
+// Backups are now driven by ipam_backup_run_destination() (further below)
+// iterating every active row in backup_destinations + backup_schedules.
 
-    if (is_file($state)) {
-        $d = @json_decode((string)file_get_contents($state), true);
-        if (is_array($d)) {
-            $last = isset($d['last_backup']) ? to_int($d['last_backup']) : null;
-            $file = isset($d['last_file'])   ? to_str($d['last_file']) : null;
-        }
-    }
-
-    $files = is_dir($dir) ? (glob($dir . '/ipam-*.sqlite') ?: []) : [];
-
-    return [
-        'last_backup' => $last,
-        'last_file'   => $file,
-        'count'       => count($files),
-        'dir'         => $dir,
-    ];
-}
 
 // ── Backup encryption constants (Phase 2 / #694) ────────────────────────────
 const BACKUP_MAGIC   = 'IPAMBKP1';  // 8-byte magic + version tag
@@ -4808,6 +4511,62 @@ function ipam_backup_vault_key_get_raw(): ?string
 {
     /** @var array<string,mixed> $config */
     global $config;
+
+    // v3.26.0 (#1098 + CR #1100): DB-resident wrapped envelope is the
+    // primary store. Falls back to the legacy config field for one
+    // release for downgrade safety, but ONLY when the DB read or unwrap
+    // shows the envelope is genuinely absent or malformed — never on a
+    // transient PDO failure or a real unwrap error. A blanket Throwable
+    // catch would let a flapping settings query silently switch
+    // runtime key selection back to a stale config value, producing
+    // backups that stop round-tripping once the DB path recovers.
+    //
+    // - ipam_setting() schema-missing: caught internally and returns
+    //   the registry default ('' here). We treat empty-string as
+    //   "DB has no row, fall back to config" — this is the legitimate
+    //   pre-migration upgrade window.
+    // - ipam_setting() throwing: an unexpected condition (e.g. the
+    //   helper itself isn't loaded). Treated as "no DB row" so we
+    //   don't crash the decrypt path; the legacy fallback applies.
+    // - ipam_vault_unwrap() returning a wrong-length plaintext: bail
+    //   to legacy. The wrap function never produces a wrong length, so
+    //   this would imply ciphertext truncation — surface via error_log.
+    // - ipam_vault_unwrap() throwing RuntimeException with the explicit
+    //   "authentication failed" message: the envelope is malformed or
+    //   the bootstrap_key changed. Surface and bail to legacy (the
+    //   operator may have a saved key in config.php to recover with).
+    // - Any OTHER throw (PDO transient errors propagated through
+    //   ipam_setting bubbling up as Throwable, sodium extension
+    //   missing, etc.): rethrow so the caller surfaces a real failure
+    //   instead of silently using stale config.
+    $envelope = '';
+    if (function_exists('ipam_setting')) {
+        $envRaw = ipam_setting('backup_vault_key', '');
+        $envelope = is_string($envRaw) ? $envRaw : '';
+    }
+    if ($envelope !== '' && function_exists('ipam_vault_unwrap') && function_exists('ipam_bootstrap_key')) {
+        try {
+            $raw = ipam_vault_unwrap($envelope, ipam_bootstrap_key());
+        } catch (\RuntimeException $e) {
+            // RuntimeException is the documented unwrap failure mode
+            // (bad envelope / wrong bootstrap key / tampered cipher).
+            // Surface and fall through so a saved config-side key can
+            // still recover existing backups.
+            error_log('backup_vault_key DB unwrap failed: ' . $e->getMessage());
+            $raw = '';
+        }
+        if ($raw !== '' && strlen($raw) === BACKUP_VAULT_KEY_LEN) {
+            if (isset($config['backup_vault_key']) && $config['backup_vault_key'] !== '') {
+                error_log(
+                    'backup_vault_key present in BOTH config.php and the settings table; '
+                    . 'using the DB row. Remove the config.php field once you have confirmed '
+                    . 'backups continue to round-trip.'
+                );
+            }
+            return $raw;
+        }
+    }
+
     $b64 = $config['backup_vault_key'] ?? null;
     if (!is_string($b64) || $b64 === '') {
         return null;
@@ -7281,6 +7040,15 @@ function auto_reserve_subnet_ips(PDO $db, int $subnetId, string $cidr, ?string $
     $p = parse_cidr($cidr);
     if (!$p) return;
 
+    // Wrap the (up to) three INSERT + audit pairs in a transaction so a failure
+    // partway through doesn't leave the subnet half-reserved (e.g. network +
+    // broadcast committed, gateway audit dies, original v3.25.0 behaviour left
+    // a row without its audit trail). Honour an outer transaction if one is
+    // already open — callers like subnet create/update wrap their own.
+    $owns = !$db->inTransaction();
+    if ($owns) $db->beginTransaction();
+
+    try {
     // #379/#410: bind ip_bin via ipam_bind_binary() (PARAM_LOB) so the stored
     // affinity is BLOB on SQLite and bytes round-trip safely on MySQL/Postgres.
     // The scalar params still come through bindValue so we can mix the two
@@ -7337,6 +7105,16 @@ function auto_reserve_subnet_ips(PDO $db, int $subnetId, string $cidr, ?string $
                 audit($db, 'address.create', 'address', $newId, "auto-reserve gateway {$gwNorm['ip']} in subnet $subnetId");
             }
         }
+    }
+        if ($owns) $db->commit();
+    } catch (\Throwable $e) {
+        // Same PHPStan 2.1.54 narrowing as ipam_setting_set above:
+        // wrap rollBack() in try/catch so a "no active transaction"
+        // PDOException does not mask the original exception.
+        if ($owns) {
+            try { $db->rollBack(); } catch (\Throwable) {}
+        }
+        throw $e;
     }
 }
 
@@ -7482,9 +7260,21 @@ function render_tag_badges(PDO $db, string $type, int $id): string
     if (!$tags) return '';
     $out = '';
     foreach ($tags as $tag) {
-        $bg   = e($tag['colour']);
+        // #869 + CR #1100: defence in depth against tag.colour CSS
+        // injection. e() only HTML-escapes — it does not enforce CSS
+        // syntax — so we ALSO validate the value as a strict #RRGGBB
+        // hex literal at render time. Anything else falls back to the
+        // muted default colour. The custom-property indirection
+        // (--tag-bg) is a second layer: even a payload that leaks past
+        // this validation cannot append a second CSS declaration
+        // because CSS variables refuse ';' and '}' in their values.
+        $colourRaw = to_str($tag['colour']);
+        $colour = preg_match('/^#[0-9A-Fa-f]{6}$/', $colourRaw) === 1
+            ? $colourRaw
+            : '#6c757d';
+        $bg   = e($colour);
         $name = e($tag['name']);
-        $out .= "<span class='tag-badge' style='background:$bg'>$name</span>";
+        $out .= "<span class='tag-badge' style='--tag-bg:$bg'>$name</span>";
     }
     return $out;
 }
@@ -8927,17 +8717,64 @@ function ipam_validate_webhook_url(string $url, array $config = []): bool
         return true;
     }
 
-    // Block RFC-1918, loopback, link-local, and IPv6 ULA/loopback.
-    // ALL resolved addresses must be public (blocks DNS rebinding).
-    $privateRanges = [
-        ['10.0.0.0',   8],  ['172.16.0.0', 12], ['192.168.0.0', 16],
-        ['127.0.0.0',  8],  ['169.254.0.0', 16], ['::1',         128],
-        ['fc00::',    7],   ['fe80::',      10],
+    // Block RFC-1918, loopback, link-local, IPv6 ULA/loopback, "this network"
+    // (#872 — 0.0.0.0/8), CGNAT (100.64.0.0/10), multicast (224.0.0.0/4 and
+    // ff00::/8), the IPv6 unspecified address (::/128), and the IPv4-mapped
+    // IPv6 prefix (::ffff:0:0/96 — defence in depth alongside the explicit
+    // unwrap below). ALL resolved addresses must be public (blocks DNS
+    // rebinding).
+    $privateRangesV4 = [
+        ['0.0.0.0',     8],   // "this network" — covers 0.0.0.0 itself
+        ['10.0.0.0',    8],
+        ['100.64.0.0', 10],   // CGNAT (RFC 6598)
+        ['127.0.0.0',   8],
+        ['169.254.0.0',16],
+        ['172.16.0.0', 12],
+        ['192.168.0.0',16],
+        ['224.0.0.0',   4],   // multicast + reserved (224.0.0.0–255.255.255.255)
+    ];
+    $privateRangesV6 = [
+        ['::',         128],  // unspecified
+        ['::1',        128],  // loopback
+        ['::ffff:0:0', 96],   // IPv4-mapped IPv6 (defence in depth)
+        ['64:ff9b::',  96],   // NAT64 well-known (RFC 6052)
+        ['fc00::',      7],   // ULA
+        ['fe80::',     10],   // link-local
+        ['ff00::',      8],   // multicast
     ];
     foreach ($ips as $ip) {
-        foreach ($privateRanges as [$net, $prefix]) {
-            if (ip_in_cidr($ip, $net, $prefix)) {
-                return false;
+        $bin = @inet_pton($ip);
+        if ($bin === false) {
+            // Resolver returned something that doesn't parse — treat as
+            // unresolvable (i.e. unsafe) rather than silently passing it.
+            return false;
+        }
+        // If we resolved an IPv4-mapped IPv6 address (::ffff:a.b.c.d), test
+        // both the v6 prefix list AND the unwrapped IPv4 against the v4
+        // list. Otherwise an attacker controlling DNS could route 127.0.0.1
+        // past the v4 check by encoding it as ::ffff:127.0.0.1.
+        if (strlen($bin) === 16) {
+            $prefix = "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff";
+            if (str_starts_with($bin, $prefix)) {
+                $v4 = inet_ntop(substr($bin, 12));
+                if (is_string($v4)) {
+                    foreach ($privateRangesV4 as [$net, $p]) {
+                        if (ip_in_cidr($v4, $net, $p)) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            foreach ($privateRangesV6 as [$net, $p]) {
+                if (ip_in_cidr($ip, $net, $p)) {
+                    return false;
+                }
+            }
+        } else {
+            foreach ($privateRangesV4 as [$net, $p]) {
+                if (ip_in_cidr($ip, $net, $p)) {
+                    return false;
+                }
             }
         }
     }
@@ -9006,13 +8843,28 @@ function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $confi
         require_once __DIR__ . '/version.php';
         $u = current_user();
 
-        // Find active webhooks subscribed to this event
-        $eventLike = '%"' . $event . '"%';
+        // Find active webhooks subscribed to this event. `events` is a JSON
+        // array of strings written by webhooks.php. Use engine-native JSON
+        // containment where available (MySQL JSON_CONTAINS, Postgres @>) and
+        // fall back to a quote-anchored LIKE on SQLite, which lacks a
+        // guaranteed json1 build. The quote anchors prevent substring
+        // confusion between e.g. 'subnet.create' and 'subnet.create.bulk'.
+        $driver = ipam_dialect()->driver_name();
+        if ($driver === 'mysql') {
+            $sqlFrag = 'JSON_CONTAINS(events, :ev)';
+            $bindEv  = (string)json_encode($event);
+        } elseif ($driver === 'pgsql') {
+            $sqlFrag = '(events::jsonb) @> :ev::jsonb';
+            $bindEv  = (string)json_encode($event);
+        } else {
+            $sqlFrag = 'events LIKE :ev';
+            $bindEv  = '%"' . $event . '"%';
+        }
         $hooks = $db->prepare(
             "SELECT id, url, secret FROM webhooks
-             WHERE is_active = 1 AND events LIKE :ev"
+             WHERE is_active = 1 AND $sqlFrag"
         );
-        $hooks->execute([':ev' => $eventLike]);
+        $hooks->execute([':ev' => $bindEv]);
         $rows = $hooks->fetchAll();
         if (!$rows) {
             return;
@@ -9054,7 +8906,7 @@ function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $confi
                  VALUES (:wid, :ev, :pl, :sig, 1, :now)"
             );
             $ins->execute([':wid' => $hook['id'], ':ev' => $event, ':pl' => $payload, ':sig' => $sig, ':now' => $now]);
-            $delId = (int)$db->lastInsertId();
+            $delId = ipam_last_insert_id($db, 'webhook_deliveries');
 
             // Attempt synchronous delivery
             $result = ipam_webhook_deliver($hook, $event, $payload, $sig);
@@ -9219,6 +9071,8 @@ function page_header(string $title, array $opts = []): void
     // Expose server-side theme via meta tag so app.js can seed localStorage (CSP-safe)
     $userTheme = to_str($_SESSION['user_theme'] ?? 'auto');
     echo "<meta name='ipam-server-theme' content='" . e($userTheme) . "'>";
+    // Expose CSRF token for fetch-based POSTs from app.js (e.g. set_theme.php).
+    echo "<meta name='ipam-csrf' content='" . e(csrf_token()) . "'>";
     echo "<script defer src='assets/app.js?v={$jsV}'></script>";
     $pageAttr = isset($opts['page']) && $opts['page'] !== ''
         ? " data-page='" . e(to_str($opts['page'])) . "'"
@@ -11312,14 +11166,30 @@ function ipam_email_otp_verify(PDO $db, int $userId, string $code): bool
     }
 
     if (!password_verify($code, $hash)) {
-        $newAttempts = $attempts + 1;
-        if ($newAttempts >= 5) {
+        // #874 + CR #1100: increment unconditionally and use the
+        // post-increment value via RETURNING (pgsql) or a follow-up
+        // SELECT (sqlite/mysql) so EVERY concurrent failed attempt is
+        // counted. The previous compare-and-swap version dropped
+        // increments when two requests raced from the same baseline:
+        // only one CAS won and the loser merely re-read the counter
+        // without recording its own failure, so an attacker could
+        // stretch the 5-strike lockout by firing N concurrent bad
+        // codes against a single OTP. UPDATE … SET col = col + 1
+        // is atomic at the row level on every supported engine.
+        $upd = $db->prepare(
+            "UPDATE users
+                SET email_otp_attempts = email_otp_attempts + 1
+              WHERE id = :id"
+        );
+        $upd->execute([':id' => $userId]);
+        $reSt = $db->prepare("SELECT email_otp_attempts FROM users WHERE id = :id");
+        $reSt->execute([':id' => $userId]);
+        $current = to_int($reSt->fetchColumn() ?: 0);
+        if ($current >= 5) {
             ipam_email_otp_clear($db, $userId);
             audit($db, 'mfa.otp.locked', 'user', $userId, 'OTP locked: max attempts exceeded');
         } else {
-            $db->prepare("UPDATE users SET email_otp_attempts = email_otp_attempts + 1 WHERE id = :id")
-               ->execute([':id' => $userId]);
-            audit($db, 'mfa.otp.fail', 'user', $userId, "attempt={$newAttempts}");
+            audit($db, 'mfa.otp.fail', 'user', $userId, "attempt={$current}");
         }
         return false;
     }

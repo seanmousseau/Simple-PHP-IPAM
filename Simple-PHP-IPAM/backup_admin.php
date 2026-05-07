@@ -281,6 +281,8 @@ page_header('Backup & Restore');
           'flashTestOk'      => $destState['flashTestOk'],
           'flashTestMsg'     => $destState['flashTestMsg'],
           'flashTestLatency' => $destState['flashTestLatency'],
+          'vaultStatus'      => $destState['vaultStatus'],
+          'revealedKey'      => $destState['revealedKey'],
       ]);
   ?>
   <?php elseif ($activeTab === 'history' && $histState !== null):

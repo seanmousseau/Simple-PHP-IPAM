@@ -13,13 +13,130 @@ declare(strict_types=1);
  * @var bool                              $flashTestOk
  * @var string                            $flashTestMsg
  * @var int|null                          $flashTestLatency
+ * @var array{present:bool, source:string, fingerprint:?string, created_at:?string, has_encrypted_runs:bool} $vaultStatus
+ * @var string                            $revealedKey
  */
+$_currentUser = function_exists('current_user') ? current_user() : ['role' => ''];
+$_isAdmin     = ($_currentUser['role'] ?? '') === 'admin';
 ?>
   <?php if ($err !== ''): ?>
     <div class="card danger"><?= e($err) ?></div>
   <?php endif; ?>
   <?php if ($flash !== ''): ?>
     <div class="card success"><?= e($flash) ?></div>
+  <?php endif; ?>
+
+  <?php if ($_isAdmin): ?>
+  <!-- v3.26.0 (#1098) — Encryption key (Stored mode) admin panel -->
+  <section class="card" data-test="vault-key-panel">
+    <h2>Encryption key (Stored mode)</h2>
+
+    <?php if ($vaultStatus['present']): ?>
+      <p class="muted">
+        Fingerprint
+        <code data-test="vault-fingerprint"><?= e((string)$vaultStatus['fingerprint']) ?></code>
+        &middot; Source
+        <code><?= e($vaultStatus['source']) ?></code>
+        <?php if ($vaultStatus['created_at'] !== null): ?>
+          &middot; Updated <code><?= e($vaultStatus['created_at']) ?></code>
+        <?php endif; ?>
+      </p>
+    <?php else: ?>
+      <p class="muted">
+        No vault key configured yet. Stored-mode encryption requires a vault key;
+        you can generate one below or paste an existing 32-byte base64-encoded value.
+      </p>
+    <?php endif; ?>
+
+    <?php if ($revealedKey !== ''): ?>
+      <div class="card warn" data-test="vault-revealed">
+        <h3 style="margin-top:0">Copy this key offline now &mdash; it will not be shown again</h3>
+        <pre style="user-select:all;word-break:break-all;padding:.75rem;background:var(--bg);border-radius:var(--radius-sm)"><code data-test="vault-revealed-key"><?= e($revealedKey) ?></code></pre>
+        <p class="muted" style="font-size:.85em">
+          Store this in a password manager or offline secure location.
+          Without it, archives encrypted in Stored mode cannot be restored if this server is lost.
+        </p>
+      </div>
+    <?php endif; ?>
+
+    <?php if ($vaultStatus['present']): ?>
+      <details>
+        <summary>Reveal current vault key</summary>
+        <p class="muted" style="font-size:.9em">
+          Re-enter your admin password to view the raw key. The reveal is rate-limited
+          and audit-logged (<code>backup.vault_key.revealed</code>).
+        </p>
+        <form method="post" action="backup_admin.php?tab=destinations" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+          <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+          <input type="hidden" name="action" value="vault_reveal">
+          <input type="password" name="admin_password" placeholder="Your admin password"
+                 required autocomplete="current-password" data-test="vault-reveal-password">
+          <button type="submit" class="button-secondary" data-test="vault-reveal-submit">
+            Reveal vault key
+          </button>
+        </form>
+      </details>
+
+      <details style="margin-top:.5rem">
+        <summary>Replace vault key</summary>
+        <?php if ($vaultStatus['has_encrypted_runs']): ?>
+          <p class="muted" data-test="vault-replace-blocked">
+            Replacement is unavailable while encrypted backup runs exist (a key swap
+            would orphan them). Purge encrypted runs from the History tab first.
+          </p>
+        <?php else: ?>
+          <p class="muted" style="font-size:.9em">
+            Generates or accepts a new 32-byte vault key. The new key replaces the
+            existing envelope; archives encrypted under the old key become unreadable.
+            v3.26.0 ships without rotation (would orphan existing encrypted archives),
+            so use this only after confirming no encrypted runs remain.
+          </p>
+          <form method="post" action="backup_admin.php?tab=destinations" style="display:flex;flex-direction:column;gap:.5rem">
+            <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+            <input type="hidden" name="action" value="vault_replace">
+            <label>
+              <input type="radio" name="vault_mode" value="generate" checked>
+              Generate a new random 32-byte key
+            </label>
+            <label>
+              <input type="radio" name="vault_mode" value="paste">
+              Paste an existing base64-encoded 32-byte key
+            </label>
+            <input type="text" name="vault_key_b64" placeholder="base64-encoded vault key (44 chars)"
+                   autocomplete="off" data-test="vault-paste-replace">
+            <input type="password" name="admin_password" placeholder="Your admin password" required autocomplete="current-password">
+            <div>
+              <button type="submit" class="button-danger" data-test="vault-replace-submit">
+                Replace vault key
+              </button>
+            </div>
+          </form>
+        <?php endif; ?>
+      </details>
+    <?php else: ?>
+      <details open>
+        <summary>Set vault key</summary>
+        <form method="post" action="backup_admin.php?tab=destinations" style="display:flex;flex-direction:column;gap:.5rem">
+          <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+          <input type="hidden" name="action" value="vault_set">
+          <label>
+            <input type="radio" name="vault_mode" value="generate" checked>
+            Generate a new random 32-byte key
+          </label>
+          <label>
+            <input type="radio" name="vault_mode" value="paste">
+            Paste an existing base64-encoded 32-byte key
+          </label>
+          <input type="text" name="vault_key_b64" placeholder="base64-encoded vault key (44 chars)"
+                 autocomplete="off" data-test="vault-paste-set">
+          <input type="password" name="admin_password" placeholder="Your admin password" required autocomplete="current-password">
+          <div>
+            <button type="submit" data-test="vault-set-submit">Set vault key</button>
+          </div>
+        </form>
+      </details>
+    <?php endif; ?>
+  </section>
   <?php endif; ?>
 
   <p class="muted">Configure where backups are sent. Each destination can have a schedule for automatic runs.</p>

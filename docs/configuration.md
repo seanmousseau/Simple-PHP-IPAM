@@ -35,10 +35,10 @@ The keys below are seeded into the `settings` table by the v2.6.0 migration and 
 | `security.account_lockout_seconds` | int | `900` | Account lockout window length. |
 | `api.rate_limit_window_seconds` | int | `60` | Sliding window size (seconds) for per-API-key rate limiting. Seeded from `config.php` `api.rate_limit_window_seconds` on first install. *(v3.6.0)* |
 | `api.rate_limit_requests` | int | `300` | Max requests per window per API key before HTTP 429. Seeded from `config.php` `api.rate_limit_requests` on first install. *(v3.6.0)* |
-| `backup.enabled` | bool | `false` | Enable scheduled database backups via `cron.php`. *(v3.7.0)* |
-| `backup.dir` | string | `''` | Directory where backup files are written. Empty = `data/backups/` relative to app root. Created automatically on first backup. *(v3.7.0)* |
-| `backup.retention` | int | `7` | Number of backup files to retain; oldest files beyond this count are deleted after each backup. *(v3.7.0)* |
-| `backup.frequency` | string | `daily` | How often to run automatic backups. Accepted values: `daily`, `weekly`. *(v3.7.0)* |
+| ~~`backup.enabled`~~ | — | — | **Removed in v3.26.0 (#1059).** Backups are now driven by the unified `backup_destinations` + `backup_schedules` tables; configure via `backup_admin.php`. |
+| ~~`backup.dir`~~ | — | — | **Removed in v3.26.0 (#1059).** Per-destination paths live in `backup_destinations.config`. |
+| ~~`backup.retention`~~ | — | — | **Removed in v3.26.0 (#1059).** Per-schedule retention lives on `backup_schedules`. |
+| ~~`backup.frequency`~~ | — | — | **Removed in v3.26.0 (#1059).** Per-schedule frequency lives on `backup_schedules`. |
 | `backup.notify_on_failure` | bool | `true` | Send an email to `alert_email` when a scheduled or manual backup run fails. *(v3.17.0)* |
 | `backup.notify_on_success` | bool | `false` | Send an email to `alert_email` when a scheduled or manual backup run succeeds. *(v3.17.0)* |
 | `housekeeping.audit_log_retention_days` | int | `0` | Days to keep audit log entries. Entries older than this are pruned during scheduled housekeeping. Set to `0` to never prune. *(v3.7.0)* |
@@ -230,6 +230,8 @@ When set, the redirect in `init.php` uses this value instead of `$_SERVER['HTTP_
 **Default:** `false`
 
 Set to `true` if the application is behind a reverse proxy that sets `X-Forwarded-Proto: https`. See [Behind a reverse proxy](#behind-a-reverse-proxy).
+
+> **Deprecated in v3.26.0** for client-IP attribution. The boolean form unconditionally trusted the leftmost `X-Forwarded-For` value, which is whatever the original (untrusted) client sent and is freely spoofable. It still works for back-compat in v3.26.0 (with a deprecation log entry per request) but will be removed in a future release. Use the new **Trusted reverse-proxy CIDRs** setting (`security.proxy_trust_cidrs`, configurable from the admin Settings page) instead. The CIDR list scopes XFF trust to direct connections from a known proxy and walks the chain right-to-left so spoofed leftmost hops cannot impersonate a real client. See [OWASP — Reverse proxy and X-Forwarded-For](https://owasp.org/www-community/Reverse-Proxy-and-X-Forwarded-For) for the rationale.
 
 ---
 
@@ -740,7 +742,7 @@ For a guaranteed reset at midnight (independent of web traffic), add a cron entr
 | Audit log pruning | `housekeeping.audit_log_retention_days` | No — skipped when value is `0` |
 | Address history pruning | `address_history_retention_days` | No — skipped when `retention_days=0` |
 | Subnet utilisation alerts | `alert.recipient_user_ids` (v2.8.0+; legacy `alert_email`) | No — skipped when no eligible recipients resolve |
-| Database backup | `backup.enabled`, `backup.frequency` | Yes — honours `backup.frequency` setting |
+| Database backup | `backup_schedules.frequency` (per-schedule) | Yes — each active schedule honours its own frequency |
 | Network scanning | Per-subnet `scan_schedules.interval_minutes` | Yes — each subnet's own interval |
 | Demo mode reset | `demo_mode.enabled` | Yes — at most once every 24 hours |
 

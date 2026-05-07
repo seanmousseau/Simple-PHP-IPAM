@@ -154,7 +154,7 @@ page_header('Tags');
       <?php foreach ($tags as $tag): ?>
         <tr>
           <td>
-            <span class="tag-badge" style="background: <?= e(to_str($tag['colour'])) ?>"><?= e(to_str($tag['name'])) ?></span>
+            <span class="tag-badge" style="--tag-bg: <?= e(to_str($tag['colour'])) ?>"><?= e(to_str($tag['name'])) ?></span>
           </td>
           <td><?= to_int($tag['subnet_count']) ?></td>
           <td><?= to_int($tag['address_count']) ?></td>

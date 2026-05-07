@@ -37,9 +37,22 @@ $pwPolicy = [
     'require_symbol'    => (bool)ipam_setting('password_policy.require_symbol', false),
 ];
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+$rlIp = client_ip();
+if ($_SERVER['REQUEST_METHOD'] === 'POST'
+    && auth_rate_limited($db, 'reset_password', $rlIp, 20, 3600)) {
+    // #882: per-IP throttle covers brute-force token-guessing loops. Cap
+    // (20 / hour) is well above legitimate retries while still capping
+    // attackers far below the entropy of a 64-hex-char token.
+    http_response_code(429);
+    header('Retry-After: 300');
+    $errors[] = 'Too many password reset attempts from this address. Please wait a few minutes and try again.';
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $new1 = to_str($_POST['new_password']  ?? '');
     $new2 = to_str($_POST['new_password2'] ?? '');
+
+    // Record the attempt unconditionally so the throttle covers token-guessing
+    // even when each individual attempt looks like a token-validity failure.
+    record_auth_failure($db, 'reset_password', $rlIp);
 
     if (!$tokenValid) {
         $errors[] = 'This reset link is invalid or has expired. Please request a new one.';

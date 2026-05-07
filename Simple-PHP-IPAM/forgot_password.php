@@ -10,7 +10,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 $sent  = false;
 $error = '';
 
+$rateLimited = false;
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // #882: per-IP throttle on the forgot-password endpoint, distinct from
+    // the login throttle so they cannot starve each other. Cap is generous
+    // (10 / hour) — the goal is to break enumeration loops, not to
+    // inconvenience users who legitimately mistype their address.
+    $rlIp = client_ip();
+    if (auth_rate_limited($db, 'forgot_password', $rlIp, 10, 3600)) {
+        http_response_code(429);
+        header('Retry-After: 600');
+        $error = 'Too many reset requests from this address. Please wait a few minutes and try again.';
+        $rateLimited = true;
+    }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$rateLimited) {
     $identifier = trim(to_str($_POST['identifier'] ?? ''));
 
     if ($identifier === '') {
@@ -42,6 +58,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // Always show the same confirmation to prevent user enumeration
         $sent = true;
     }
+
+    // Record the attempt regardless of identifier validity so the throttle
+    // applies to enumeration loops, not just successful sends.
+    record_auth_failure($db, 'forgot_password', $rlIp, $identifier !== '' ? $identifier : '');
 }
 
 $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';

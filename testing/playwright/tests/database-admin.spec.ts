@@ -44,15 +44,18 @@ test('nav has no separate "Backups" link', async () => {
   await expect(backupsLink).toHaveCount(0);
 });
 
-test('#backup-history section is present on db_tools.php', async () => {
+// v3.26.0 (#1059): the in-page Backup History section was removed from
+// db_tools.php and moved to backup_admin.php?tab=history. db_tools.php
+// now only carries the SQL export/import surface plus a redirect notice
+// pointing operators at the unified backup admin.
+test('db_tools.php links to the unified Backups admin', async () => {
   await page.goto('db_tools.php');
-  const section = page.locator('#backup-history');
-  await expect(section).toBeVisible();
-});
-
-test('#backup-history section contains "Backup History" heading text', async () => {
-  await page.goto('db_tools.php');
-  await expect(page.locator('#backup-history')).toContainText('Backup History');
+  // The page header sidebar nav, breadcrumb, and the inline notice all
+  // link to backup_admin.php; .first() is enough to confirm at least one
+  // visible link is present (the notice is what the operator-facing text
+  // points at).
+  const link = page.locator('a[href="backup_admin.php"]').first();
+  await expect(link).toBeVisible();
 });
 
 test('backups.php redirects to db_tools.php', async ({ browser }) => {

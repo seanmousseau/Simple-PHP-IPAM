@@ -1010,9 +1010,13 @@ body.drawer-ready .drawer-form-card{display:none}
 }
 
 /* ---- Tag badges ---- */
+/* #869: background fed via the --tag-bg custom property set on the inline
+   style so the tag.colour value can never close the declaration or smuggle
+   a second property. Falls back to var(--muted) if the variable is absent. */
 .tag-badge{
   display:inline-block;padding:var(--space-1) var(--space-4);border-radius:var(--radius-xl);
   font-size:var(--font-size-sm);font-weight:600;color:#fff;white-space:nowrap;
+  background:var(--tag-bg, var(--muted));
 }
 /* Darken text when badge is light-coloured (handled via inline style; default white) */
 .tag-picker{display:flex;flex-wrap:wrap;gap:var(--space-3);margin:var(--space-2) 0;}
