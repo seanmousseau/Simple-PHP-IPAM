@@ -7511,9 +7511,16 @@ function render_tag_badges(PDO $db, string $type, int $id): string
     if (!$tags) return '';
     $out = '';
     foreach ($tags as $tag) {
+        // #869: defence in depth against tag.colour CSS injection. Even
+        // though tag colours are validated as #RRGGBB on the write path,
+        // emit the value through a custom property (--tag-bg) rather than
+        // a full CSS declaration. CSS variables don't accept ';' or '}'
+        // in their values without breaking the property entirely, so a
+        // payload that ever leaks past write-side validation cannot
+        // append a second declaration or close the rule.
         $bg   = e($tag['colour']);
         $name = e($tag['name']);
-        $out .= "<span class='tag-badge' style='background:$bg'>$name</span>";
+        $out .= "<span class='tag-badge' style='--tag-bg:$bg'>$name</span>";
     }
     return $out;
 }
