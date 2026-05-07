@@ -2474,7 +2474,11 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
     // block so the lock is freed even when an exception is thrown.
     $mysqlLockName = null;
     if ($d->driver_name() === 'mysql') {
-        $mysqlLockName = 'settings:' . $key . ':' . ($tenantId === null ? '__GLOBAL__' : (string)$tenantId);
+        // MySQL GET_LOCK names are capped at 64 bytes and silently truncate
+        // beyond that — two long keys sharing a 50+ char prefix would both
+        // hash to the same lock and deadlock-ish. Hash the composed name to
+        // a fixed 32-char digest so length is bounded regardless of key.
+        $mysqlLockName = 'ipam_setting:' . md5($key . ':' . ($tenantId === null ? '__GLOBAL__' : (string)$tenantId));
         $db->prepare("SELECT GET_LOCK(:n, 5)")->execute([':n' => $mysqlLockName]);
     }
 
