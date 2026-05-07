@@ -1253,21 +1253,37 @@ function audit_filter_validate_action(string $raw): string
     return ($a !== '' && preg_match('/^[a-z_]+\.[a-z_]+$/', $a)) ? $a : '';
 }
 
-function audit(PDO $db, string $action, string $entityType, ?int $entityId, string $details = ''): void
+/**
+ * Append a row to audit_log. Returns true on success, false on PDO failure
+ * (with the failure logged via error_log). Callers that need to surface
+ * audit failures (e.g. cron jobs) should check the return value; user-facing
+ * pages can continue to ignore it. Pre-v3.26.0 this function was `void` and
+ * would let exceptions propagate up the page, sometimes bubbling past the
+ * page layout and rendering a blank screen.
+ */
+function audit(PDO $db, string $action, string $entityType, ?int $entityId, string $details = ''): bool
 {
     $u = current_user();
-    $st = $db->prepare("INSERT INTO audit_log (user_id, username, action, entity_type, entity_id, ip, user_agent, details)
-                        VALUES (:uid,:un,:ac,:et,:eid,:ip,:ua,:dt)");
-    $st->execute([
-        ':uid' => $u['id'] ?: null,
-        ':un'  => $u['username'] ?: null,
-        ':ac'  => $action,
-        ':et'  => $entityType,
-        ':eid' => $entityId,
-        ':ip'  => client_ip() ?: null,
-        ':ua'  => to_str($_SERVER['HTTP_USER_AGENT'] ?? ''),
-        ':dt'  => $details,
-    ]);
+    try {
+        $st = $db->prepare("INSERT INTO audit_log (user_id, username, action, entity_type, entity_id, ip, user_agent, details)
+                            VALUES (:uid,:un,:ac,:et,:eid,:ip,:ua,:dt)");
+        $st->execute([
+            ':uid' => $u['id'] ?: null,
+            ':un'  => $u['username'] ?: null,
+            ':ac'  => $action,
+            ':et'  => $entityType,
+            ':eid' => $entityId,
+            ':ip'  => client_ip() ?: null,
+            ':ua'  => to_str($_SERVER['HTTP_USER_AGENT'] ?? ''),
+            ':dt'  => $details,
+        ]);
+        return true;
+    } catch (\PDOException $e) {
+        error_log("audit failed: action={$action} entity={$entityType} id="
+            . ($entityId === null ? 'NULL' : (string)$entityId)
+            . ' err=' . $e->getMessage());
+        return false;
+    }
 }
 
 function audit_export(PDO $db, string $what, string $details = ''): void
@@ -3681,8 +3697,14 @@ function ipam_send_mail(string $to, string $subject, string $bodyText, string $b
     // Native mail() fallback
     $safeSubject = preg_replace('/[\r\n]/', '', $subject) ?? '';
     $safeTo      = preg_replace('/[\r\n]/', '', $to) ?? '';
+    error_clear_last();
     $ok = @mail($safeTo, $safeSubject, $bodyText); // nosemgrep
-    return ['success' => (bool) $ok, 'error' => null, 'transport' => 'mail'];
+    if (!$ok) {
+        $last = error_get_last();
+        $err  = $last !== null ? $last['message'] : 'mail() returned false';
+        return ['success' => false, 'error' => $err, 'transport' => 'mail'];
+    }
+    return ['success' => true, 'error' => null, 'transport' => 'mail'];
 }
 
 /** @param IpamConfig $config */

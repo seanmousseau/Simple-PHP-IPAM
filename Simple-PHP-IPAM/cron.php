@@ -149,9 +149,12 @@ try {
     if ($retentionDays > 0) {
         $pruned = prune_audit_log($db, $retentionDays);
         if ($pruned > 0) {
-            audit($db, 'audit.pruned', 'system', null,
+            $auditOk = audit($db, 'audit.pruned', 'system', null,
                 "Pruned {$pruned} audit log " . ($pruned === 1 ? 'entry' : 'entries')
                 . " older than {$retentionDays} days (scheduled).");
+            if (!$auditOk) {
+                error_log("cron prune_audit_log: audit() returned false — prune ran but audit row not written");
+            }
         }
         $emit(['task' => 'prune_audit_log', 'pruned' => $pruned, 'ts' => $now]);
     } else {
