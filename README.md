@@ -12,18 +12,16 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.25.0
+## What's new in v3.26.0
 
-The operator-facing finale of the backup-overhaul stream. **Surfaces the v3.23.0 `IPAMBKL1` engine-agnostic backend via a new picker UI**, **rehomes retention from per-schedule to per-destination**, and ships the U-series UX polish: dashboard backup card, health-page connectivity section, encryption-format icons in History, type-name-to-confirm on destination delete, skeleton loaders, cancel-in-flight on Run-now, S3 range-resume, and a Verify-all bulk action.
+Backup-overhaul closeout + code-quality sweep. Two breaking-change footnotes (legacy backup runner retired, vault-key relocated to DB) plus a sweep of P0/P1 security and correctness fixes that landed earlier in the cycle.
 
-- **Backup format picker on every destination (#1076 + #849).** Choose **Logical** (engine-agnostic `IPAMBKL1`, default) or **Database** (engine-native dump, escape hatch). The orchestrator dispatches on the chosen format at run time and the History tab's filter chip finally has both values to filter against.
-- **Retention rehome to destination level (#846).** Hourly/daily/weekly/monthly windows now live on `backup_destinations` so they describe "how much to keep at this storage location" rather than "how often we write to it." Existing per-schedule values backfill automatically.
-- **Default destination + protect / unprotect (#848 + #847).** "Set default" pre-fills Run-now and schedule-create. "★ protected" badge in the History list excludes a row from retention auto-prune.
-- **Opt-out encryption for trusted Local destinations (#851).** New `default_encryption_mode` per destination. Unencrypted is gated to Local only, server-side and in the UI.
-- **Cancel-in-flight on Run-now + S3 range-resume (#856 + #852).** Long S3 / SFTP uploads are now cancellable; the orchestrator polls between chunk boundaries. `S3Client::download()` resumes from a `<dest>.partial` sidecar via `Range: bytes=offset-` over up to 3 attempts.
-- **Verify-all bulk action (#850).** New "Verify all" button per destination downloads + re-hashes every successful `backup_runs` row with summary `{ok, total, success, failed, failures[]}`.
-- **Dashboard backup card (#853) + Health page destinations section (#854).** At-a-glance freshness on the Dashboard and per-destination connectivity status on the Health page.
-- **Per-tab notification recipients + delivery (#1078).** Backup notifications can target a different audience than the global alert infrastructure.
+- **Legacy v3.7 backup runner retired (#1059).** `run_db_backup_if_due()`, the four legacy `backup.*` settings keys, and the standalone `backup.php` CLI entry point are removed. Backups are driven entirely by the unified `backup_destinations` + `backup_schedules` surface; `cron.php` is the sole scheduler entry point. **Operators upgrading from a pre-v3.23 install must pass through v3.23.0–v3.25.x first** so the conversion helper can materialise their legacy schedule before the migration aborts.
+- **`backup_vault_key` relocated to DB (#1098).** The 32-byte vault key for IPAMBKP3-encrypted archives moved out of `config.php` into a wrapped envelope in `settings`. New `bootstrap_key` config field wraps via libsodium `crypto_secretbox`; the raw key never lives in the database. New admin panel on the Destinations tab shows fingerprint + source label, gates Reveal behind a sudo-mode password re-prompt with per-IP rate limit, and gates Replace on encrypted-runs absence so a key swap cannot orphan existing archives.
+- **Destination-disabled mid-backup (#859).** Disabling a destination while a backup is in flight now aborts the run with a distinct audit detail (`reason=destination_disabled`), the same "mark canceled, audit, cleanup tmpfile" choreography as an explicit operator-cancel.
+- **Security & correctness sweep (B/C tracks).** CSRF on `set_theme.php` (#879), per-IP rate-limit on forgot/reset/email-OTP-verify (#882), expanded SSRF block-list on webhook URL validation (#872), email-OTP attempt-count race fix (#874), tags `colour` CSS injection defence (#869), `client_ip()` walks XFF right-to-left with a trusted-proxy CIDR list (#876). Plus 10 correctness fixes across audit-log filtering, webhook delivery, JSON containment, MySQL `GET_LOCK` hashing, and transaction wrapping.
+- **VR coverage restored (#1091).** The 200–470 px PostgreSQL drift on `/subnets` and `/search` no longer reproduces; HTML and `subnet_stats` JSON are byte-identical across all three drivers.
+- **Streaming memory property test (#860).** Asserts logical-dump peak memory delta stays under 64 MB regardless of row count; nightly CI workflows can crank `IPAM_LARGE_DB_TEST_BYTES=1073741824` for a 1 GB synthetic round-trip.
 
 [Full changelog →](CHANGELOG.md)
 
