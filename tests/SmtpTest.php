@@ -67,11 +67,20 @@ class SmtpTest extends TestCase
         // smtp.enabled is not set → defaults to false → uses mail() path
         $result = ipam_send_mail('test@example.com', 'Subject', 'Body');
         $this->assertSame('mail', $result['transport']);
-        // We cannot assert 'success' because mail() depends on a real MTA.
-        // What we CAN assert is that the function returns the expected shape.
+        // We cannot assert 'success' because mail() depends on a real MTA;
+        // CI runners often lack sendmail. v3.26.0 #877 made ipam_send_mail()
+        // surface that failure via $result['error'] instead of swallowing
+        // it, so the assertion is "shape is correct" — the success/error
+        // pair is consistent (success=false ↔ error is non-null) regardless
+        // of the host's MTA state.
         $this->assertArrayHasKey('success', $result);
         $this->assertArrayHasKey('error', $result);
-        $this->assertNull($result['error']); // mail() fallback never sets error
+        if ($result['success'] === true) {
+            $this->assertNull($result['error']);
+        } else {
+            $this->assertNotNull($result['error']);
+            $this->assertNotSame('', (string)$result['error']);
+        }
     }
 
     public function testReturnShapeAlwaysPresent(): void

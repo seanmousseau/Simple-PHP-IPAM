@@ -5,8 +5,20 @@ declare(strict_types=1);
 function ipam_migrations(): array
 {
     return [
-        // 0.3: adds subnets.network_bin and backfills it
+        // 0.3: adds subnets.network_bin and backfills it.
+        //
+        // CR #1100 (Critical): SQLite-only PRAGMA gate. MySQL and Postgres
+        // ship the column directly from schema.{mysql,pgsql}.sql so this
+        // closure is a no-op there — the backfill loop only matters for
+        // SQLite installs upgrading from a v0.x baseline that didn't yet
+        // have network_bin. Multi-driver fresh-install replay (#885)
+        // exposed the previously-unguarded PRAGMA as a hard fail on
+        // MySQL/Postgres with SQLSTATE 42000 / 42601.
         '0.3' => function(PDO $db) {
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') {
+                return;
+            }
             $cols = ($db->query("PRAGMA table_info(subnets)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
             $names = array_map(fn($c) => to_str($c['name']), $cols);
 
@@ -63,6 +75,13 @@ function ipam_migrations(): array
 
         // 0.9: sites grouping
         '0.9'  => function(PDO $db) {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $db->exec("
                 CREATE TABLE IF NOT EXISTS sites (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -84,6 +103,13 @@ function ipam_migrations(): array
 
         // 1.4: password_changed_at timestamp on users (for password rotation policy)
         '1.4' => function(PDO $db) {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $cols  = ($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
             $names = array_map(fn($c) => to_str($c['name']), $cols);
             if (!in_array('password_changed_at', $names, true)) {
@@ -98,6 +124,13 @@ function ipam_migrations(): array
 
         // 0.14: last_login_at timestamp on users
         '0.14' => function(PDO $db) {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $cols  = ($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
             $names = array_map(fn($c) => to_str($c['name']), $cols);
             if (!in_array('last_login_at', $names, true)) {
@@ -107,6 +140,13 @@ function ipam_migrations(): array
 
         // 0.13: name + email fields on users
         '0.13' => function(PDO $db) {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $cols  = ($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
             $names = array_map(fn($c) => to_str($c['name']), $cols);
 
@@ -120,6 +160,13 @@ function ipam_migrations(): array
 
         // 0.12: OIDC subject claim column on users
         '0.12' => function(PDO $db) {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $cols  = ($db->query("PRAGMA table_info(users)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
             $names = array_map(fn($c) => to_str($c['name']), $cols);
 
@@ -159,6 +206,13 @@ function ipam_migrations(): array
 
         // 1.11: addresses.grp (group field), subnets.vlan_id, users.theme
         '1.11' => function(PDO $db) {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             // addresses.grp — SQL reserved word, stored as grp, exposed as group in UI/API/CSV
             $cols = array_column(($db->query("PRAGMA table_info(addresses)") ?: throw new \RuntimeException('Query failed'))->fetchAll(), 'name');
             if (!in_array('grp', $cols, true)) {
@@ -209,6 +263,13 @@ function ipam_migrations(): array
 
         // 1.13: api_keys.is_readonly + api_keys.description
         '1.13' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $cols = array_column(($db->query("PRAGMA table_info(api_keys)") ?: throw new \RuntimeException('Query failed'))->fetchAll(), 'name');
             if (!in_array('is_readonly', $cols, true)) {
                 $db->exec("ALTER TABLE api_keys ADD COLUMN is_readonly INTEGER NOT NULL DEFAULT 0");
@@ -220,6 +281,13 @@ function ipam_migrations(): array
 
         // 1.19.0: addresses.mac + addresses.expires_at
         '1.19.0' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $cols = array_column(
                 ($db->query("PRAGMA table_info(addresses)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
                 'name'
@@ -234,6 +302,13 @@ function ipam_migrations(): array
 
         // 2.0.0-vlans: VLANs as first-class managed objects
         '2.0.0-vlans' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
                 ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
                 'name'
@@ -274,6 +349,13 @@ function ipam_migrations(): array
 
         // 2.0.0-site-hierarchy: parent site / region support
         '2.0.0-site-hierarchy' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $cols = array_column(
                 ($db->query("PRAGMA table_info(sites)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
                 'name'
@@ -345,6 +427,13 @@ function ipam_migrations(): array
         // UNIQUE(cidr) → UNIQUE(cidr, vrf_id).  All existing subnets get vrf_id = NULL
         // (= global/default VRF).  Idempotent: guarded by vrf_id column presence.
         '2.1.0-vrfs' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
                 ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
                 'name'
@@ -445,6 +534,13 @@ function ipam_migrations(): array
 
         // 2.3.0-scanning: network discovery & scanning tables
         '2.3.0-scanning' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
                 ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
                 'name'
@@ -501,6 +597,13 @@ function ipam_migrations(): array
 
         // 2.1.0-contacts: contacts as first-class objects
         '2.1.0-contacts' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $tables = array_column(
                 ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
                 'name'
@@ -540,6 +643,13 @@ function ipam_migrations(): array
 
         // 2.4.0-vrf-bgp: BGP context fields on VRFs
         '2.4.0-vrf-bgp' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $cols = array_column(
                 ($db->query("PRAGMA table_info(vrfs)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
                 'name'
@@ -648,6 +758,13 @@ function ipam_migrations(): array
         // v2.8.0 #316: long-form operational notes on subnets, separate from
         // the short-form description column used in table listings.
         '2.8.0-subnet-notes' => function(PDO $db): void {
+            // CR #1100 (Critical, multi-engine fresh-install replay):
+            // legacy SQLite-only closure. MySQL/Postgres start from
+            // schema.{driver}.sql with the column already present, so
+            // running this PRAGMA-based backfill on those engines would
+            // crash with SQLSTATE 42000/42601 and contributes nothing.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            if (!is_string($driverRaw) || $driverRaw !== 'sqlite') return;
             $cols = ($db->query("PRAGMA table_info(subnets)") ?: throw new \RuntimeException('Query failed'))->fetchAll();
             $names = array_map(fn($c) => to_str($c['name']), $cols);
             if (!in_array('notes', $names, true)) {

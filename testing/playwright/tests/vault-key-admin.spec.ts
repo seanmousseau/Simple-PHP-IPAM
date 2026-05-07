@@ -36,21 +36,23 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
   page = await ctx.newPage();
   await login(page, ADMIN_USER, ADMIN_PASS);
 
-  // Ensure a vault key exists by hitting the Set form. The bootstrap
-  // seed ships an empty backup_vault_key DB row plus an empty config
-  // field on a fresh container, so the panel renders Set on first
-  // load. If a prior test already set one we fall through. Verifying
-  // success by re-rendering the page and looking for the fingerprint
-  // is more robust than asserting on the POST response status — fetch
-  // redirect handling differs by browser engine and a transient 5xx
-  // from Apache during cold start could spurious-fail the assertion
-  // even when the underlying write succeeded.
+  // Ensure a vault key exists by hitting the Set form. We use the
+  // PASTE mode rather than GENERATE so the test works even when prior
+  // tests in the same suite have created encrypted backup_runs rows
+  // — vault_set + generate refuses in that case (would orphan the
+  // archives), but vault_set + paste is allowed (operator restoring
+  // a known key from their password manager). Sequential Playwright
+  // workers + shared SQLite DB means earlier specs' state always
+  // bleeds in, so paste is the only mode that's reliably available.
   await page.goto(DESTINATIONS_TAB);
   const setSubmit = page.locator('[data-test="vault-set-submit"]');
   if (await setSubmit.count() > 0) {
+    // 32 'A' bytes = 0x41 × 32, base64 = "QUFBQUFB...". Deterministic
+    // for fingerprint reproducibility across the test's assertions.
     await fetchPost(page, DESTINATIONS_TAB, {
       action:         'vault_set',
-      vault_mode:     'generate',
+      vault_mode:     'paste',
+      vault_key_b64:  'QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=',
       admin_password: ADMIN_PASS,
     });
     await page.goto(DESTINATIONS_TAB);
