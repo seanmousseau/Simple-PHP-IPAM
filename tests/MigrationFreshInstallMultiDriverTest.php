@@ -60,6 +60,17 @@ final class MigrationFreshInstallMultiDriverTest extends TestCase
                 PDO::ATTR_EMULATE_PREPARES   => false,
             ]);
         } catch (PDOException $e) {
+            // CR #1100: skipping a connection failure means CI can go
+            // green without exercising the cross-driver fresh-install
+            // path that this test exists to guard. In CI the DSN was
+            // explicitly provided (the bootstrap-app + service-container
+            // fixtures wire it up); a connect failure there is a real
+            // regression. Fail loudly. Locally a missing service is
+            // fine to skip.
+            $isCi = getenv('CI') === 'true' || getenv('GITHUB_ACTIONS') === 'true';
+            if ($isCi) {
+                $this->fail("Cannot connect to $driver DSN in CI: " . $e->getMessage());
+            }
             $this->markTestSkipped("Cannot connect to $driver DSN: " . $e->getMessage());
         }
     }
@@ -92,6 +103,12 @@ final class MigrationFreshInstallMultiDriverTest extends TestCase
         // Pin the matching dialect for ipam_db_init.
         require_once dirname(__DIR__) . '/Simple-PHP-IPAM/dialects/MysqlDialect.php';
         require_once dirname(__DIR__) . '/Simple-PHP-IPAM/dialects/PgsqlDialect.php';
+        // CR #1100: capture the prior dialect (if any) so the finally
+        // block restores it instead of always unsetting. Otherwise a
+        // test that ran earlier and pinned its own dialect would lose
+        // that state and pollute downstream tests.
+        $hadDialect  = array_key_exists('ipam_dialect', $GLOBALS);
+        $prevDialect = $GLOBALS['ipam_dialect'] ?? null;
         $GLOBALS['ipam_dialect'] = $driver === 'mysql' ? new MysqlDialect() : new PgsqlDialect();
 
         // Restore globals so other tests aren't poisoned.
@@ -145,7 +162,11 @@ final class MigrationFreshInstallMultiDriverTest extends TestCase
         } finally {
             // Tidy up the test database so subsequent runs start clean.
             $this->dropAllTables($db, $driver);
-            unset($GLOBALS['ipam_dialect']);
+            if ($hadDialect) {
+                $GLOBALS['ipam_dialect'] = $prevDialect;
+            } else {
+                unset($GLOBALS['ipam_dialect']);
+            }
             if ($hadConfig) {
                 $GLOBALS['config'] = $prevConfig;
             } else {

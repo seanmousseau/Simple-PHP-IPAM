@@ -122,9 +122,31 @@ final class BackupStreamingMemoryTest extends TestCase
         return max(self::DEFAULT_ROW_COUNT, intdiv($bytes, self::APPROX_ROW_SIZE_BYTES));
     }
 
+    /** Tracks a temp DB file path so the test can clean it up. */
+    private ?string $tempDbPath = null;
+
+    /**
+     * Build a fresh DB with the full schema + migrations applied.
+     *
+     * For default (small) fixtures we use sqlite::memory: so the test
+     * runs in <1s. For large fixtures (IPAM_LARGE_DB_TEST_BYTES set)
+     * we MUST use a temp on-disk SQLite file so seeding doesn't
+     * pollute the very memory budget the test is supposed to measure
+     * (CR #1100 review). Otherwise a 1 GB nightly run would OOM
+     * during seeding and never reach the dump path.
+     */
     private function freshDb(): PDO
     {
-        $db = new PDO('sqlite::memory:');
+        $useTempFile = $this->resolveRowCount() > self::DEFAULT_ROW_COUNT;
+        if ($useTempFile) {
+            $this->tempDbPath = tempnam(sys_get_temp_dir(), 'ipam_d6_db_');
+            if ($this->tempDbPath === false) {
+                throw new RuntimeException('tempnam() for streaming test DB failed');
+            }
+            $db = new PDO('sqlite:' . $this->tempDbPath);
+        } else {
+            $db = new PDO('sqlite::memory:');
+        }
         $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         $schema = (string) file_get_contents(__DIR__ . '/../Simple-PHP-IPAM/schema.sql');
         $run = [$db, 'e' . 'xec'];
@@ -135,17 +157,33 @@ final class BackupStreamingMemoryTest extends TestCase
         return $db;
     }
 
+    protected function tearDown(): void
+    {
+        if ($this->tempDbPath !== null && is_file($this->tempDbPath)) {
+            @unlink($this->tempDbPath); // nosemgrep: php.lang.security.unlink-use.unlink-use
+            $this->tempDbPath = null;
+        }
+    }
+
     /**
      * Seed a single subnet plus N addresses pointing at it. Addresses
      * is the largest table in practice; bulking it up exercises the
      * row-by-row gzwrite loop the streaming claim covers.
+     *
+     * Binary IP columns are bound via ipam_bind_binary() per project
+     * convention so BLOB affinity is preserved across drivers (CR
+     * #1100 review). The wrapper is the one source-of-truth for
+     * PARAM_LOB binding on ip_bin / network_bin.
      */
     private function seedAddresses(PDO $db, int $rowCount): void
     {
-        $db->prepare(
+        $insSubnet = $db->prepare(
             "INSERT INTO subnets (cidr, ip_version, network, network_bin, prefix, description)
              VALUES ('10.0.0.0/8', 4, '10.0.0.0', :nb, 8, 'streaming test subnet')"
-        )->execute([':nb' => inet_pton('10.0.0.0')]);
+        );
+        $networkBin = inet_pton('10.0.0.0');
+        ipam_bind_binary($insSubnet, ':nb', $networkBin);
+        $insSubnet->execute();
         $subnetId = (int) $db->lastInsertId();
 
         $insAddr = $db->prepare(
@@ -163,13 +201,15 @@ final class BackupStreamingMemoryTest extends TestCase
                 $b = ($i >> 8)  & 0xFF;
                 $c = $i & 0xFF;
                 $ip = "10.{$a}.{$b}.{$c}";
-                $insAddr->execute([
-                    ':s'   => $subnetId,
-                    ':ip'  => $ip,
-                    ':ipb' => inet_pton($ip),
-                    ':hn'  => "host-{$i}.example.com",
-                    ':ow'  => "owner-{$i}",
-                ]);
+                $ipBin = inet_pton($ip);
+                $hn = "host-{$i}.example.com";
+                $ow = "owner-{$i}";
+                $insAddr->bindValue(':s',  $subnetId, PDO::PARAM_INT);
+                $insAddr->bindValue(':ip', $ip,       PDO::PARAM_STR);
+                ipam_bind_binary($insAddr, ':ipb', $ipBin);
+                $insAddr->bindValue(':hn', $hn,       PDO::PARAM_STR);
+                $insAddr->bindValue(':ow', $ow,       PDO::PARAM_STR);
+                $insAddr->execute();
             }
             $db->commit();
         } catch (\Throwable $e) {

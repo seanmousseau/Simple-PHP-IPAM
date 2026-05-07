@@ -3,7 +3,7 @@ name: PHP QA
 # ---------------------------------------------------------------------------
 # Tier 1 — fast per-commit CI (#411).
 #
-# Runs on every push to dev/main and every PR targeting dev or main. Target
+# Runs on every PR targeting dev or main. Target
 # wall clock: 5–8 minutes. Blocks merge.
 #
 # Engine matrix: SQLite (v2.9.0), MySQL (v2.10.0 #384), Postgres (v2.11.0
@@ -16,8 +16,6 @@ name: PHP QA
 
 on:
   pull_request:
-    branches: [dev, main]
-  push:
     branches: [dev, main]
 
 # Cancel in-progress runs for the same ref when a new commit lands. Saves

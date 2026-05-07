@@ -467,13 +467,20 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
         // {'vault_set', 'vault_replace'}. Gate each action on its own
         // precondition: vault_set refuses when a key already exists,
         // vault_replace refuses when encrypted runs would be orphaned.
+        // Both actions ALSO refuse when encrypted runs exist and no key
+        // is currently configured (CR #1100 review): a vault_set in that
+        // state would mint a fresh key and permanently strand the older
+        // archives whose key is gone. The operator must purge encrypted
+        // history first.
         $status = ipam_vault_key_status($db);
         if ($action === 'vault_set' && $status['present']) {
             return 'A vault key is already configured. Use Replace to change it.';
         }
-        if ($action === 'vault_replace' && $status['has_encrypted_runs']) {
-            return 'Cannot replace the vault key while encrypted backups exist '
-                 . '(replacement would orphan them). Purge encrypted backup history first.';
+        if ($status['has_encrypted_runs']) {
+            return 'Cannot ' . ($action === 'vault_set' ? 'set' : 'replace')
+                 . ' the vault key while encrypted backups exist '
+                 . '(any change would orphan them). Purge encrypted backup '
+                 . 'history first.';
         }
 
         $mode = to_str($_POST['vault_mode'] ?? 'generate');
@@ -492,7 +499,18 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
             $rawKey = random_bytes(BACKUP_VAULT_KEY_LEN);
         }
 
-        ipam_vault_key_persist($db, $rawKey);
+        // ipam_vault_key_persist() can throw when bootstrap_key generation
+        // hits a non-writable config.php (hardened install pattern). Surface
+        // that exception's message as a form error so the operator sees the
+        // actionable remediation (CR #1100 review) instead of a 500.
+        try {
+            ipam_vault_key_persist($db, $rawKey);
+        } catch (\RuntimeException $e) {
+            audit($db, 'backup.vault_key.persist_failed', 'vault', null,
+                  "user=$username action=$action mode=$mode error="
+                  . substr($e->getMessage(), 0, 200));
+            return $e->getMessage();
+        }
         audit($db, 'backup.vault_key.' . ($action === 'vault_set' ? 'set' : 'replaced'),
               'vault', null,
               "user=$username mode=$mode fingerprint=" . ipam_vault_fingerprint($rawKey));

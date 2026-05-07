@@ -1267,6 +1267,15 @@ function audit_filter_validate_action(string $raw): string
  * pages can continue to ignore it. Pre-v3.26.0 this function was `void` and
  * would let exceptions propagate up the page, sometimes bubbling past the
  * page layout and rendering a blank screen.
+ *
+ * v3.26.0 (#1100 CR review): when invoked inside an active transaction,
+ * a PDO failure RETHROWS rather than silently returning false. Callers
+ * like ipam_setting_set() and auto_reserve_subnet_ips() rely on the
+ * audit row landing atomically with the persisted state change; if the
+ * audit insert fails, the surrounding transaction must roll back so
+ * we don't commit state without its corresponding audit entry. Outside
+ * an active transaction (most user-facing pages and cron tasks) the
+ * legacy false-return behaviour is preserved.
  */
 function audit(PDO $db, string $action, string $entityType, ?int $entityId, string $details = ''): bool
 {
@@ -1289,6 +1298,9 @@ function audit(PDO $db, string $action, string $entityType, ?int $entityId, stri
         error_log("audit failed: action={$action} entity={$entityType} id="
             . ($entityId === null ? 'NULL' : (string)$entityId)
             . ' err=' . $e->getMessage());
+        if ($db->inTransaction()) {
+            throw $e;
+        }
         return false;
     }
 }
@@ -2495,10 +2507,16 @@ function ipam_setting(string $key, mixed $default = null, ?int $tenantId = null)
         $msg      = $e->getMessage();
         $isMissingSchema =
             $sqlstate === '42S02' || $sqlstate === '42703' ||
+            // MySQL/MariaDB report 'Unknown column' under SQLSTATE 42S22
+            // (CR #1100 review). Pre-migration installs missing tenant_id
+            // would otherwise rethrow during bootstrap instead of taking
+            // the documented config/default fallback.
+            $sqlstate === '42S22' ||
             stripos($msg, 'no such table') !== false ||
             stripos($msg, 'no such column') !== false ||
             stripos($msg, 'undefined table') !== false ||
-            stripos($msg, 'undefined column') !== false;
+            stripos($msg, 'undefined column') !== false ||
+            stripos($msg, 'unknown column') !== false;
         if (!$isMissingSchema) {
             error_log("ipam_setting: read failed for key {$key}: {$msg}");
             throw $e;
@@ -2652,7 +2670,15 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
             $db->commit();
         }
     } catch (\Throwable $ex) {
-        if ($ownTx && $db->inTransaction()) $db->rollBack();
+        // Best-effort rollback. PHPStan 2.1.54 narrows
+        // PDO::inTransaction() to always-false in this catch path
+        // (incorrectly — a throw in the SELECT/UPDATE/INSERT block
+        // before commit() leaves the transaction open). Wrap rollBack()
+        // in its own try/catch so a "no active transaction" PDOException
+        // does not mask the original exception we're propagating.
+        if ($ownTx) {
+            try { $db->rollBack(); } catch (\Throwable) {}
+        }
         throw $ex;
     } finally {
         if ($mysqlLockName !== null) {
@@ -7047,7 +7073,12 @@ function auto_reserve_subnet_ips(PDO $db, int $subnetId, string $cidr, ?string $
     }
         if ($owns) $db->commit();
     } catch (\Throwable $e) {
-        if ($owns && $db->inTransaction()) $db->rollBack();
+        // Same PHPStan 2.1.54 narrowing as ipam_setting_set above:
+        // wrap rollBack() in try/catch so a "no active transaction"
+        // PDOException does not mask the original exception.
+        if ($owns) {
+            try { $db->rollBack(); } catch (\Throwable) {}
+        }
         throw $e;
     }
 }
@@ -7194,14 +7225,19 @@ function render_tag_badges(PDO $db, string $type, int $id): string
     if (!$tags) return '';
     $out = '';
     foreach ($tags as $tag) {
-        // #869: defence in depth against tag.colour CSS injection. Even
-        // though tag colours are validated as #RRGGBB on the write path,
-        // emit the value through a custom property (--tag-bg) rather than
-        // a full CSS declaration. CSS variables don't accept ';' or '}'
-        // in their values without breaking the property entirely, so a
-        // payload that ever leaks past write-side validation cannot
-        // append a second declaration or close the rule.
-        $bg   = e($tag['colour']);
+        // #869 + CR #1100: defence in depth against tag.colour CSS
+        // injection. e() only HTML-escapes — it does not enforce CSS
+        // syntax — so we ALSO validate the value as a strict #RRGGBB
+        // hex literal at render time. Anything else falls back to the
+        // muted default colour. The custom-property indirection
+        // (--tag-bg) is a second layer: even a payload that leaks past
+        // this validation cannot append a second CSS declaration
+        // because CSS variables refuse ';' and '}' in their values.
+        $colourRaw = to_str($tag['colour']);
+        $colour = preg_match('/^#[0-9A-Fa-f]{6}$/', $colourRaw) === 1
+            ? $colourRaw
+            : '#6c757d';
+        $bg   = e($colour);
         $name = e($tag['name']);
         $out .= "<span class='tag-badge' style='--tag-bg:$bg'>$name</span>";
     }
@@ -11095,29 +11131,25 @@ function ipam_email_otp_verify(PDO $db, int $userId, string $code): bool
     }
 
     if (!password_verify($code, $hash)) {
-        // #874: atomic conditional UPDATE — increment only if the row's
-        // current counter still matches the value we read above. If a
-        // concurrent request bumped the counter first, the update affects
-        // zero rows and we re-fetch to decide whether the cap has been
-        // crossed. Without this guard two simultaneous failed verifies
-        // both pass the SELECT-side $attempts < 5 check, both increment
-        // independently from the same baseline (giving prev+1 not prev+2),
-        // and the 5-strike cap can be exceeded by N concurrent attempts.
+        // #874 + CR #1100: increment unconditionally and use the
+        // post-increment value via RETURNING (pgsql) or a follow-up
+        // SELECT (sqlite/mysql) so EVERY concurrent failed attempt is
+        // counted. The previous compare-and-swap version dropped
+        // increments when two requests raced from the same baseline:
+        // only one CAS won and the loser merely re-read the counter
+        // without recording its own failure, so an attacker could
+        // stretch the 5-strike lockout by firing N concurrent bad
+        // codes against a single OTP. UPDATE … SET col = col + 1
+        // is atomic at the row level on every supported engine.
         $upd = $db->prepare(
             "UPDATE users
                 SET email_otp_attempts = email_otp_attempts + 1
-              WHERE id = :id AND email_otp_attempts = :prev"
+              WHERE id = :id"
         );
-        $upd->execute([':id' => $userId, ':prev' => $attempts]);
-        if ($upd->rowCount() === 0) {
-            // Lost the race — re-fetch the post-increment value so the
-            // cap-cross branch below sees the true current count.
-            $reSt = $db->prepare("SELECT email_otp_attempts FROM users WHERE id = :id");
-            $reSt->execute([':id' => $userId]);
-            $current = to_int($reSt->fetchColumn() ?: 0);
-        } else {
-            $current = $attempts + 1;
-        }
+        $upd->execute([':id' => $userId]);
+        $reSt = $db->prepare("SELECT email_otp_attempts FROM users WHERE id = :id");
+        $reSt->execute([':id' => $userId]);
+        $current = to_int($reSt->fetchColumn() ?: 0);
         if ($current >= 5) {
             ipam_email_otp_clear($db, $userId);
             audit($db, 'mfa.otp.locked', 'user', $userId, 'OTP locked: max attempts exceeded');

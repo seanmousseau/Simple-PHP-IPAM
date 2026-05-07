@@ -3303,9 +3303,23 @@ function ipam_migrations(): array
             $sentinelVal = $sentinelSt->fetchColumn();
 
             if ($sentinelVal === false || (string)$sentinelVal !== '1') {
-                // Only abort if the operator actually has legacy state that
-                // would be silently dropped — a fresh install with no
-                // backup.* rows can proceed without complaint.
+                // Compare each legacy key's stored value against its
+                // registry default; only abort if at least one diverges
+                // (CR #1100 review). The previous heuristic — "any
+                // non-empty / non-'0' string is custom" — would hard-
+                // fail valid upgrades whose backup.frequency was 'daily'
+                // or backup.retention was '7' (registry defaults).
+                //
+                // Defaults match ipam_setting_definitions() entries
+                // present in v3.23.x–v3.25.x at retirement time. Encoded
+                // values follow ipam_setting_encode(): bool → '0'/'1',
+                // int → '7', string → 'daily'.
+                $legacyDefaults = [
+                    'backup.enabled'   => '0',
+                    'backup.frequency' => 'daily',
+                    'backup.retention' => '7',
+                    'backup.dir'       => '',
+                ];
                 $placeholders = implode(',', array_fill(0, count($legacyKeys), '?'));
                 $checkSt = $db->prepare(
                     "SELECT {$keyCol}, value FROM settings
@@ -3314,8 +3328,10 @@ function ipam_migrations(): array
                 $checkSt->execute($legacyKeys);
                 $hasLegacyData = false;
                 foreach ($checkSt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                    $key = (string)($row[$keyCol] ?? '');
                     $val = (string)($row['value'] ?? '');
-                    if ($val !== '' && $val !== '0' && $val !== 'false') {
+                    $default = $legacyDefaults[$key] ?? '';
+                    if ($val !== $default) {
                         $hasLegacyData = true;
                         break;
                     }
@@ -3427,47 +3443,57 @@ function ipam_migrations(): array
             $bootstrap = ipam_bootstrap_key();
             $envelope  = ipam_vault_wrap($rawKey, $bootstrap);
 
-            // Insert the wrapped envelope. Detect tenant_id column shape
-            // to match the active settings schema (post-v3.13.0 cascade
-            // installs use tenant_id; older replay fixtures may not).
-            if ($driver === 'sqlite') {
-                $colsSt = $db->query("PRAGMA table_info(settings)");
-                $colNames = [];
-                if ($colsSt !== false) {
-                    foreach ($colsSt->fetchAll(PDO::FETCH_ASSOC) as $r) {
-                        if (is_array($r) && isset($r['name']) && is_string($r['name'])) {
-                            $colNames[] = $r['name'];
+            // Use ipam_setting_set() rather than a direct INSERT so the
+            // MySQL GET_LOCK contract that protects global tenant-NULL
+            // rows is honoured here too (CR #1100 review). Two concurrent
+            // boot processes could otherwise both insert backup_vault_key
+            // and produce duplicate global rows on MySQL where the
+            // composite UNIQUE(tenant_id, key) does not enforce single
+            // global keys (NULLs are distinct per SQL standard). Falls
+            // back to the raw INSERT path only when ipam_setting_set is
+            // not yet defined — partial test-fixture replay where lib.php
+            // has not finished loading.
+            if (function_exists('ipam_setting_set')) {
+                ipam_setting_set($db, 'backup_vault_key', $envelope);
+            } else {
+                // Fallback for partial fixture replay: detect tenant_id
+                // column shape and INSERT directly. Production never
+                // takes this branch — lib.php is required before
+                // ipam_db_init() runs migrations.
+                if ($driver === 'sqlite') {
+                    $colsSt = $db->query("PRAGMA table_info(settings)");
+                    $colNames = [];
+                    if ($colsSt !== false) {
+                        foreach ($colsSt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                            if (is_array($r) && isset($r['name']) && is_string($r['name'])) {
+                                $colNames[] = $r['name'];
+                            }
                         }
                     }
+                } else {
+                    $sch = $driver === 'mysql' ? 'DATABASE()' : 'current_schema()';
+                    $colsSt = $db->query(
+                        "SELECT column_name FROM information_schema.columns
+                          WHERE table_schema = {$sch} AND table_name = 'settings'"
+                    );
+                    $colNames = $colsSt !== false
+                        ? array_map('strval', $colsSt->fetchAll(PDO::FETCH_COLUMN))
+                        : [];
                 }
-            } else {
-                $sch = $driver === 'mysql' ? 'DATABASE()' : 'current_schema()';
-                $colsSt = $db->query(
-                    "SELECT column_name FROM information_schema.columns
-                      WHERE table_schema = {$sch} AND table_name = 'settings'"
-                );
-                $colNames = $colsSt !== false
-                    ? array_map('strval', $colsSt->fetchAll(PDO::FETCH_COLUMN))
-                    : [];
+                $hasTenantCol = in_array('tenant_id', $colNames, true);
+                if ($hasTenantCol) {
+                    $ins = $db->prepare(
+                        "INSERT INTO settings (tenant_id, {$keyCol}, value, type, updated_at, updated_by)
+                         VALUES (NULL, 'backup_vault_key', :v, 'string', CURRENT_TIMESTAMP, NULL)"
+                    );
+                } else {
+                    $ins = $db->prepare(
+                        "INSERT INTO settings ({$keyCol}, value, type, updated_at, updated_by)
+                         VALUES ('backup_vault_key', :v, 'string', CURRENT_TIMESTAMP, NULL)"
+                    );
+                }
+                $ins->execute([':v' => $envelope]);
             }
-            $hasTenantCol = in_array('tenant_id', $colNames, true);
-
-            // CURRENT_TIMESTAMP works on all three drivers (SQLite reserves
-            // it as a function; MySQL accepts it as a keyword; pgsql treats
-            // it as the standard SQL constant). datetime('now') would fail
-            // on MySQL, where datetime() is not a function.
-            if ($hasTenantCol) {
-                $ins = $db->prepare(
-                    "INSERT INTO settings (tenant_id, {$keyCol}, value, type, updated_at, updated_by)
-                     VALUES (NULL, 'backup_vault_key', :v, 'string', CURRENT_TIMESTAMP, NULL)"
-                );
-            } else {
-                $ins = $db->prepare(
-                    "INSERT INTO settings ({$keyCol}, value, type, updated_at, updated_by)
-                     VALUES ('backup_vault_key', :v, 'string', CURRENT_TIMESTAMP, NULL)"
-                );
-            }
-            $ins->execute([':v' => $envelope]);
         },
     ];
 }
