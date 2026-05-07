@@ -195,19 +195,16 @@ try {
 }
 
 // ---------------------------------------------------------------------------
-// Task 5: Database backup
+// Task 5: Database backup — retired in v3.26.0 (#1059)
+//
+// The legacy v3.7 single-destination runner (run_db_backup_if_due) and its
+// 4 backup.* settings keys were retired. Backups are driven by the unified
+// schedule loop further down this file, which iterates every active row in
+// backup_schedules + backup_destinations. The emit below is kept for one
+// release as a tombstone so dashboards parsing the JSON stream see a clear
+// signal that the legacy task is gone (vs the task silently disappearing).
 // ---------------------------------------------------------------------------
-try {
-    $backupEnabled = (bool)ipam_setting('backup.enabled');
-    if ($backupEnabled) {
-        $ran = run_db_backup_if_due($db, $config);
-        $emit(['task' => 'db_backup', 'ran' => $ran, 'ts' => $now]);
-    } else {
-        $emit(['task' => 'db_backup', 'skipped' => true, 'reason' => 'backup.enabled=false', 'ts' => $now]);
-    }
-} catch (Throwable $e) {
-    $fail('db_backup', $e->getMessage());
-}
+$emit(['task' => 'db_backup', 'skipped' => true, 'reason' => 'retired_v3_26_0', 'ts' => $now]);
 
 // ---------------------------------------------------------------------------
 // Task 6: Backup stale-run reaper (v3.22.0 #815)

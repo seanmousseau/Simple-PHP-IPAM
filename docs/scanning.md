@@ -90,7 +90,7 @@ Example output:
 {"task":"prune_audit_log","skipped":true,"reason":"retention_days=0","ts":"..."}
 {"task":"prune_address_history","skipped":true,"reason":"retention_days=0","ts":"..."}
 {"task":"utilisation_alerts","skipped":true,"reason":"alert_email not configured","ts":"..."}
-{"task":"db_backup","skipped":true,"reason":"backup.enabled=false","ts":"..."}
+{"task":"db_backup","skipped":true,"reason":"retired_v3_26_0","ts":"..."}
 {"task":"scan","subnet_id":1,"cidr":"10.0.0.0\/24","method":"icmp","tcp_port":null,"scanned":254,"up":12,"down":242,"stale_marked":3,"elapsed_sec":8.4,"ts":"..."}
 {"task":"scan_summary","scanned_subnets":1,"total_hosts":254,"total_up":12,"total_down":242,"total_stale_marked":3,"ts":"..."}
 ```

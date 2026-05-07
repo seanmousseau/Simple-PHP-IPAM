@@ -65,15 +65,10 @@ class MysqlNoLoginPathsProbeTest extends TestCase
         );
     }
 
-    public function testLegacyMysqlPathCallsProbe(): void
-    {
-        $src = $this->fnSource('run_db_backup_if_due');
-        $this->assertStringContainsString(
-            "ipam_mysql_client_supports_no_login_paths('mysqldump')",
-            $src,
-            'legacy v3.7 mysql path must call the probe before adding the flag'
-        );
-    }
+    // v3.26.0 (#1059): the legacy v3.7 run_db_backup_if_due() runner was
+    // retired. The unified ipam_backup_native_cmd() builder above is now
+    // the single mysqldump entry point, so probe-call coverage there is
+    // sufficient.
 
     public function testRestorePhpCallsProbeForMysqlClient(): void
     {

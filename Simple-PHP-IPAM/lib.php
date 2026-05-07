@@ -1793,44 +1793,10 @@ function ipam_setting_definitions(): array
         ],
 
         // --- Backup ---
-        'backup.enabled' => [
-            'label'       => 'Automatic backups',
-            'description' => 'Write database backups to disk on page load when the interval has elapsed.',
-            'type'        => 'bool',
-            'group'       => 'backup',
-            'default'     => false,
-            'sensitive'   => false,
-            'config_key'  => ['backup', 'enabled'],
-        ],
-        'backup.frequency' => [
-            'label'       => 'Backup frequency',
-            'description' => 'How often to create automatic backups.',
-            'type'        => 'string',
-            'group'       => 'backup',
-            'default'     => 'daily',
-            'sensitive'   => false,
-            'config_key'  => ['backup', 'frequency'],
-            'options'     => ['daily' => 'Daily', 'weekly' => 'Weekly'],
-        ],
-        'backup.retention' => [
-            'label'       => 'Backup retention count',
-            'description' => 'Number of most-recent backups to keep. Older backups are deleted.',
-            'type'        => 'int',
-            'group'       => 'backup',
-            'default'     => 7,
-            'sensitive'   => false,
-            'config_key'  => ['backup', 'retention'],
-            'min'         => 1,
-        ],
-        'backup.dir' => [
-            'label'       => 'Backup directory',
-            'description' => 'Path to store backups. Empty = data/backups/ relative to the app root.',
-            'type'        => 'string',
-            'group'       => 'backup',
-            'default'     => '',
-            'sensitive'   => false,
-            'config_key'  => ['backup', 'dir'],
-        ],
+        // v3.26.0 (#1059): the 4 legacy v3.7 keys (backup.enabled,
+        // backup.frequency, backup.retention, backup.dir) were retired with
+        // the run_db_backup_if_due() runner. Backups are now driven by the
+        // unified backup_destinations + backup_schedules surface.
         // v3.24.0 — manual upload-restore (#837). Effective cap is the
         // smallest of: this setting, php upload_max_filesize, post_max_size.
         // Increasing this above PHP's runtime limits has no effect; the
@@ -1986,15 +1952,14 @@ function ipam_setting_definitions(): array
             'sensitive'   => false,
             'hidden'      => true,
         ],
-        // Internal — sentinel stamped by ipam_legacy_backup_migrate_if_due()
-        // (#1058) once the legacy backup.* config has been materialised into
-        // a unified Local destination + schedule (or once the helper has
-        // confirmed there's nothing to migrate). Gates run_db_backup_if_due()
-        // in init.php so the legacy v3.7 runner doesn't fire after the
-        // unified path has taken over.
+        // Internal — sentinel stamped on every v3.23.0–v3.25.x page load by
+        // the ipam_legacy_backup_migrate_if_due() helper (now retired in
+        // v3.26.0 #1059). The sentinel is kept in the registry so the
+        // 3.26.0-retire-legacy-backup migration can verify operators passed
+        // through that conversion path before dropping the 4 legacy keys.
         'backup.legacy_migrated_v3_23_0' => [
             'label'       => 'Legacy backup migration sentinel (internal)',
-            'description' => 'Internal — set to true once the legacy backup.* config has been migrated to a unified destination + schedule, or skipped because legacy backups were never enabled. Not user-editable.',
+            'description' => 'Internal — set to true on any v3.23.0–v3.25.x page load (the conversion helper is retired in v3.26.0 #1059). The 3.26.0-retire-legacy-backup migration verifies this sentinel before dropping legacy backup.* keys. Not user-editable.',
             'type'        => 'bool',
             'group'       => 'backup',
             'default'     => false,
@@ -3368,12 +3333,6 @@ function ipam_validate_config(array $config): array
             $warnings[] = "{$label} is {$val}; minimum is {$min}.";
         }
     }
-    if ((bool)ipam_setting('backup.enabled')) {
-        $retention = to_int(ipam_setting('backup.retention'));
-        if ($retention < 1) {
-            $warnings[] = "backup.retention is {$retention}; minimum is 1.";
-        }
-    }
     foreach ($warnings as $w) {
         error_log("Simple PHP IPAM config warning: {$w}");
     }
@@ -4008,504 +3967,6 @@ function ipam_legacy_retention_prune_by_mtime(string $glob, int $retention): voi
 }
 
 
-/**
- * v3.23.0 #1058 — one-shot legacy → unified migration helper.
- *
- * If `backup.enabled = true` is set on first v3.23.0 page load, create a
- * backup_destinations row of type='local' from `backup.dir` plus a
- * backup_schedules row from `backup.frequency` and `backup.retention`.
- * Marks the install as migrated by setting the
- * `backup.legacy_migrated_v3_23_0` sentinel so subsequent invocations are
- * no-ops. The legacy `backup.*` keys are NOT cleared — they remain readable
- * for one release as a fallback, then drop in v3.26.0.
- *
- * Called from init.php on every page load. The cost when not due is one
- * setting fetch (cached per-request) plus one short-circuit return.
- *
- * Idempotent: re-running after the sentinel is set, or with a destination
- * already present for the legacy directory, is a no-op.
- *
- * Transaction caveat: this helper opens its own transaction iff there is
- * none active. Callers MUST NOT invoke it inside an outer transaction —
- * any rollback from a failed schedule INSERT would unwind the outer
- * caller's work alongside the partial migration. init.php is the only
- * intended entry point and runs at top-level page bootstrap (no outer tx).
- */
-function ipam_legacy_backup_migrate_if_due(PDO $db): void
-{
-    if ((bool) ipam_setting('backup.legacy_migrated_v3_23_0')) {
-        return;
-    }
-    if (!(bool) ipam_setting('backup.enabled')) {
-        // Migration only runs when legacy backups were actually in use.
-        // Stamp the sentinel anyway so installs that never enabled legacy
-        // backups don't pay the lookup cost on every page load.
-        try {
-            ipam_setting_set($db, 'backup.legacy_migrated_v3_23_0', true);
-        } catch (\Throwable $e) {
-            error_log('[backup] legacy migration sentinel failed: ' . $e->getMessage());
-        }
-        return;
-    }
-
-    try {
-        $ownTx = !$db->inTransaction();
-        if ($ownTx) {
-            $db->beginTransaction();
-        }
-
-        // Canonicalise the legacy directory the same way backup_dir() does
-        // so a relative `backup.dir` setting (e.g. "data/backups") resolves
-        // to the absolute path the legacy runner uses. Otherwise the
-        // unified runner would target a sibling directory and operators
-        // would lose access to existing on-disk backups.
-        $dir = trim(to_str(ipam_setting('backup.dir')));
-        if ($dir === '') {
-            $dir = __DIR__ . '/data/backups';
-        } elseif (!str_starts_with($dir, '/')) {
-            $dir = __DIR__ . '/' . $dir;
-        }
-        // Resolve `..` segments without requiring the directory to exist
-        // (matches backup_dir()'s normalisation in lib.php #113).
-        $parts = [];
-        foreach (explode('/', $dir) as $segment) {
-            if ($segment === '..') { array_pop($parts); }
-            elseif ($segment !== '' && $segment !== '.') { $parts[] = $segment; }
-        }
-        $dir = '/' . implode('/', $parts);
-        $configJson = json_encode(['path' => $dir]);
-        if (!is_string($configJson)) $configJson = '{}';
-
-        // Reuse an existing local destination if one already points at the
-        // legacy directory — covers two cases: (a) a prior migration run
-        // failed before stamping the sentinel, leaving the destination row
-        // committed; (b) an admin already created the matching destination
-        // by hand. Inserting again would duplicate rows and produce two
-        // schedules pointing at the same target.
-        // Only adopt ACTIVE matching destinations — an admin who has
-        // explicitly disabled the destination should not have the legacy
-        // migration silently re-enable backups against it (CR feedback
-        // PR #1092). If the only match is inactive, fall through to the
-        // INSERT branch and the operator will see a fresh active row.
-        $findDest = $db->prepare(
-            "SELECT id FROM backup_destinations
-              WHERE type = 'local' AND config = :cfg AND is_active = 1
-              LIMIT 1"
-        );
-        $findDest->execute([':cfg' => $configJson]);
-        $existingDest = $findDest->fetch(PDO::FETCH_ASSOC);
-        if (is_array($existingDest)) {
-            $destId = to_int($existingDest['id'] ?? 0);
-        } else {
-            $name = 'Legacy local backups';
-            $ins = $db->prepare(
-                "INSERT INTO backup_destinations (name, type, config, encrypt, is_active)
-                 VALUES (:n, 'local', :cfg, 0, 1)"
-            );
-            $ins->execute([':n' => $name, ':cfg' => $configJson]);
-            $destId = ipam_last_insert_id($db, 'backup_destinations');
-        }
-
-        // Same idempotency guard for the schedule — if one already exists
-        // for this destination, skip insert. backup_schedules has UNIQUE
-        // KEY uq_backup_schedules_destination as of v3.21.0 so a second
-        // INSERT would throw; check explicitly so the audit message is
-        // clear instead of a SQL error.
-        $findSched = $db->prepare("SELECT id FROM backup_schedules WHERE destination_id = :d LIMIT 1");
-        $findSched->execute([':d' => $destId]);
-        if ($findSched->fetchColumn() !== false) {
-            // Schedule already exists — stamp sentinel and return.
-            ipam_setting_set($db, 'backup.legacy_migrated_v3_23_0', true);
-            if ($ownTx && $db->inTransaction()) {
-                $db->commit();
-            }
-            return;
-        }
-
-        $legacyFreq = strtolower(trim(to_str(ipam_setting('backup.frequency'))));
-        $legacyRet  = max(1, to_int(ipam_setting('backup.retention')));
-        $freq = $legacyFreq === 'weekly' ? 'weekly' : 'daily';
-        $rd   = $freq === 'daily'  ? $legacyRet : 7;
-        $rw   = $freq === 'weekly' ? $legacyRet : 0;
-        $dow  = $freq === 'weekly' ? 0 : null;  // Sunday for weekly
-
-        $sched = $db->prepare(
-            "INSERT INTO backup_schedules
-                (destination_id, frequency, time_of_day, day_of_week,
-                 retention_daily, retention_weekly, is_active)
-             VALUES (:d, :f, '02:00', :dow, :rd, :rw, 1)"
-        );
-        $sched->bindValue(':d',   $destId, PDO::PARAM_INT);
-        $sched->bindValue(':f',   $freq, PDO::PARAM_STR);
-        $sched->bindValue(':dow', $dow, $dow === null ? PDO::PARAM_NULL : PDO::PARAM_INT);
-        $sched->bindValue(':rd',  $rd, PDO::PARAM_INT);
-        $sched->bindValue(':rw',  $rw, PDO::PARAM_INT);
-        $sched->execute();
-
-        ipam_setting_set($db, 'backup.legacy_migrated_v3_23_0', true);
-
-        try {
-            audit($db, 'backup.legacy_migrated', 'destination', $destId,
-                  "freq=$freq retention=$legacyRet dir=" . substr($dir, 0, 200));
-        } catch (\Throwable) {
-            // best-effort
-        }
-
-        if ($ownTx && $db->inTransaction()) {
-            $db->commit();
-        }
-    } catch (\Throwable $e) {
-        if ($db->inTransaction()) $db->rollBack();
-        // Lazy-housekeeping pattern: never crash the page on a best-effort
-        // background task. Operator can re-trigger by clearing the sentinel.
-        error_log('[backup] legacy migration failed: ' . $e->getMessage());
-    }
-}
-
-/** @param IpamConfig $config */
-function backup_dir(array $config): string
-{
-    $d = trim(to_str(ipam_setting('backup.dir')));
-    if ($d === '') {
-        return __DIR__ . '/data/backups';
-    }
-    // Make relative paths relative to the app directory
-    if (!str_starts_with($d, '/')) {
-        $d = __DIR__ . '/' . $d;
-    }
-    // Canonicalize: resolve .. segments without requiring the directory to exist (#113)
-    $parts = [];
-    foreach (explode('/', $d) as $segment) {
-        if ($segment === '..') { array_pop($parts); }
-        elseif ($segment !== '' && $segment !== '.') { $parts[] = $segment; }
-    }
-    return '/' . implode('/', $parts);
-}
-
-function backup_state_path(): string
-{
-    return __DIR__ . '/data/backup-state.json';
-}
-
-/** @param IpamConfig $config */
-function backup_interval_seconds(array $config): int
-{
-    $freq = strtolower(trim(to_str(ipam_setting('backup.frequency'))));
-    return match ($freq) {
-        'weekly' => 604800,
-        default  => 86400,  // 'daily'
-    };
-}
-
-/**
- * @phpstan-impure
- * @param IpamConfig $config
- */
-function backup_is_due(array $config): bool
-{
-    if (!(bool)ipam_setting('backup.enabled')) return false;
-
-    $path = backup_state_path();
-    if (!is_file($path)) return true;
-
-    $d = @json_decode((string)file_get_contents($path), true);
-    if (!is_array($d) || !isset($d['last_backup'])) return true;
-
-    return (time() - to_int($d['last_backup'])) >= backup_interval_seconds($config);
-}
-
-/**
- * Record a CLI-runner backup run to backup_runs (#799 §A1). Best-effort:
- * swallows all errors so a missing table (fresh install before migration
- * runs) never blocks the backup. Always uses backup_type='database',
- * encryption_mode='unencrypted', triggered_by='cli', destination_id=NULL —
- * the legacy v3.7 CLI runner path produced unencrypted local-disk dumps
- * with no remote destination linkage.
- */
-function backup_runs_insert_cli(
-    PDO $db,
-    string $filename,
-    int $sizeBytes,
-    string $checksum,
-    string $startedAt,
-    string $completedAt,
-    string $status,
-    string $error = ''
-): void {
-    try {
-        $db->prepare(
-            "INSERT INTO backup_runs " .
-            "(destination_id, schedule_id, backup_type, encryption_mode, triggered_by, status, " .
-            " filename, size_bytes, checksum, source_version, is_protected, error_message, started_at, completed_at) " .
-            "VALUES (NULL, NULL, 'database', 'unencrypted', 'cli', :st, :fn, :sz, :ck, :sv, 0, :err, :sa, :ca)"
-        )->execute([
-            ':st'  => $status,
-            ':fn'  => $filename,
-            ':sz'  => $sizeBytes,
-            ':ck'  => $checksum,
-            ':sv'  => IPAM_VERSION,
-            ':err' => $error,
-            ':sa'  => $startedAt,
-            ':ca'  => $completedAt,
-        ]);
-        // CR feedback PR #1054: emit an audit entry so scheduled / CLI backups
-        // are visible in the central audit trail like every other significant
-        // operational action. Best-effort: never block the backup run on the
-        // audit insert failing.
-        audit(
-            $db,
-            $status === 'success' ? 'backup.run' : 'backup.run_failed',
-            'backup_run',
-            null,
-            'triggered_by=cli filename=' . $filename . ' status=' . $status
-        );
-    } catch (Throwable) {
-        // best-effort
-    }
-}
-
-/**
- * Run a database backup if one is due.
- *
- * - SQLite: WAL checkpoint + file copy.
- * - MySQL:  mysqldump via proc_open (password via env var, never on command line).
- * - Postgres: pg_dump via proc_open (password via PGPASSWORD env var).
- *
- * All engines record to backup_runs with SHA-256 for integrity verification.
- * Returns true if a backup was written, false otherwise.
- */
-/** @param IpamConfig $config */
-function run_db_backup_if_due(PDO $db, array $config): bool
-{
-    if (!backup_is_due($config)) return false;
-
-    $lockPath = __DIR__ . '/data/backup.lock';
-    $lock = @fopen($lockPath, 'c');
-    if (!$lock) return false;
-
-    if (!@flock($lock, LOCK_EX | LOCK_NB)) {
-        @fclose($lock);
-        return false;
-    }
-
-    $wrote = false;
-    try {
-        if (!backup_is_due($config)) return false;
-
-        $driver    = ipam_dialect()->driver_name();
-        $ts        = date('Y-m-d-His');
-        $startedAt = date('Y-m-d H:i:s');
-        $retention = max(1, to_int(ipam_setting('backup.retention')));
-
-        /** @var IpamConfig $gConf */
-        $gConf = $GLOBALS['config'];
-
-        // Synthetic destination for ipam_backup_notify(): the legacy v3.7 path
-        // has no row in backup_destinations, so the notifier just gets a
-        // human-readable name to put in the subject line.
-        $legacyDest = ['name' => 'local backup (' . $driver . ')', 'triggered_by' => 'scheduled'];
-
-        // Centralised "abort with notification + history row" helper. Earlier
-        // versions of this function bailed out of pre-condition failures
-        // (mkdir, missing DB file) silently — operators got no email and no
-        // history-table row, so they could miss days of failed backups before
-        // an audit caught it (#791 follow-up).
-        $abortWith = static function (string $reason, string $filename = '') use ($db, $legacyDest, $startedAt): bool {
-            backup_runs_insert_cli(
-                $db, $filename, 0, '',
-                $startedAt, date('Y-m-d H:i:s'),
-                'failed', $reason
-            );
-            try { ipam_backup_notify($db, $legacyDest, 'failure', $reason); }
-            catch (Throwable $ne) { error_log('[backup] notify dispatch failed: ' . $ne->getMessage()); }
-            return false;
-        };
-
-        $dir = backup_dir($config);
-        if (!is_dir($dir)) {
-            if (!@mkdir($dir, 0700, true)) {
-                return $abortWith('Failed to create backup directory: ' . $dir);
-            }
-            // Deny direct web access to backup files.
-            @file_put_contents($dir . '/.htaccess',
-                "<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n" .
-                "<IfModule !mod_authz_core.c>\n    Deny from all\n</IfModule>\n");
-        }
-
-        if ($driver === 'sqlite') {
-            $dbPath = $gConf['db_path'] !== '' ? $gConf['db_path'] : (__DIR__ . '/data/ipam.sqlite');
-            if (!is_file($dbPath)) {
-                return $abortWith('SQLite database file not found: ' . $dbPath);
-            }
-
-            // WAL checkpoint is a best-effort flush before the file copy; if it
-            // fails we surface the error via audit + error_log but DO NOT abort.
-            // A checkpoint failure means the copy may include unflushed WAL pages
-            // (worst case the WAL file accompanies the .sqlite copy on next backup),
-            // not corruption — so this is logged as a warning, not a hard error.
-            try {
-                $db->exec("PRAGMA wal_checkpoint(FULL)");
-            } catch (Throwable $e) {
-                audit($db, 'backup.wal_checkpoint_failed', 'system', null,
-                    'context=backup error=' . substr($e->getMessage(), 0, 200));
-                error_log("[backup] wal_checkpoint failed at backup: " . $e->getMessage());
-            }
-
-            $dest = $dir . '/ipam-' . $ts . '.sqlite';
-            if (!@copy($dbPath, $dest)) {
-                backup_runs_insert_cli($db, basename($dest), 0, '',
-                    $startedAt, date('Y-m-d H:i:s'), 'failed', 'copy() failed');
-                try { ipam_backup_notify($db, $legacyDest, 'failure', 'copy() failed for ' . basename($dest)); }
-                catch (Throwable $ne) { error_log('[backup] notify dispatch failed: ' . $ne->getMessage()); }
-                return false;
-            }
-            @chmod($dest, 0600);
-
-            $sha256 = hash_file('sha256', $dest) ?: '';
-            $size   = (int)(@filesize($dest) ?: 0);
-            backup_runs_insert_cli($db, basename($dest), $size, $sha256,
-                $startedAt, date('Y-m-d H:i:s'), 'success');
-
-            // Prune old SQLite backups by mtime (#828).
-            ipam_legacy_retention_prune_by_mtime($dir . '/ipam-*.sqlite', $retention);
-            $wrote = true;
-
-        } elseif ($driver === 'mysql') {
-            $dsn    = to_str($gConf['db_dsn'] ?? '');
-            $host   = preg_match('/host=([^;]+)/i', $dsn, $m) ? $m[1] : '127.0.0.1';
-            $port   = preg_match('/port=([^;]+)/i', $dsn, $m) ? $m[1] : '3306';
-            $dbName = preg_match('/dbname=([^;]+)/i', $dsn, $m) ? $m[1] : 'ipam';
-            $user   = to_str($gConf['db_user'] ?? 'root');
-            $pass   = to_str($gConf['db_pass'] ?? '');
-            $dest   = $dir . '/ipam-' . $ts . '.sql';
-
-            // Resolve setting before tempnam so an ipam_setting() throw
-            // doesn't leak a 0600 password file (PR #1080 CR round 2).
-            $verifySsl = (bool) ipam_setting('backup.dump_ssl_verify');
-            // Route the password through a 0600 --defaults-extra-file so it
-            // never appears in /proc/<pid>/environ or `ps eww` output (#820).
-            // The file MUST be unlinked on every exit path below.
-            $credFile = ipam_backup_write_mysql_defaults_file($pass);
-            // --defaults-extra-file MUST be the first mysqldump argument.
-            // v3.23.0 #1081: --no-login-paths emitted when the client
-            // supports it (MariaDB 11.4+ / Oracle MySQL 8.x). Older clients
-            // reject the flag and the dump fails immediately, so we probe.
-            // v3.22.2: SSL verify flag is flavor-aware. See
-            // ipam_mysql_ssl_verify_args() in lib/backup.php for the full
-            // MariaDB-vs-Oracle-MySQL dialect rationale.
-            $cmd = ['mysqldump', '--defaults-extra-file=' . $credFile];
-            if (ipam_mysql_client_supports_no_login_paths('mysqldump')) {
-                $cmd[] = '--no-login-paths';
-            }
-            foreach (ipam_mysql_ssl_verify_args($verifySsl) as $sslArg) {
-                $cmd[] = $sslArg;
-            }
-            $cmd[] = '--single-transaction';
-            $cmd[] = '--routines';
-            $cmd[] = '-h';
-            $cmd[] = $host;
-            $cmd[] = '-P';
-            $cmd[] = $port;
-            $cmd[] = '-u';
-            $cmd[] = $user;
-            $cmd[] = $dbName;
-            $env = getenv() ?: [];
-            // Strip any inherited DB password env vars so a parent shell
-            // already exporting these can't leak the secret to the child
-            // even though we route the real cred via --defaults-extra-file
-            // (#820 PR #1074 CR).
-            unset($env['MYSQL_PWD'], $env['PGPASSWORD']);
-            $dumpErr = '';
-            try {
-                $ret = backup_run_dump($cmd, $env, $dest, 120, $dumpErr);
-            } finally {
-                @unlink($credFile); // nosemgrep: php.lang.security.unlink-use.unlink-use
-            }
-            if (!$ret) {
-                $why = $dumpErr !== '' ? 'mysqldump failed: ' . $dumpErr : 'mysqldump failed';
-                $whyTrunc = strlen($why) > 500 ? substr($why, 0, 497) . '...' : $why;
-                backup_runs_insert_cli($db, basename($dest), 0, '',
-                    $startedAt, date('Y-m-d H:i:s'), 'failed', $whyTrunc);
-                try { ipam_backup_notify($db, $legacyDest, 'failure', $whyTrunc . ' (' . basename($dest) . ')'); }
-                catch (Throwable $ne) { error_log('[backup] notify dispatch failed: ' . $ne->getMessage()); }
-                return false;
-            }
-
-            $sha256 = hash_file('sha256', $dest) ?: '';
-            $size   = (int)(@filesize($dest) ?: 0);
-            backup_runs_insert_cli($db, basename($dest), $size, $sha256,
-                $startedAt, date('Y-m-d H:i:s'), 'success');
-
-            // Prune old engine-native dumps by mtime (#828).
-            ipam_legacy_retention_prune_by_mtime($dir . '/ipam-*.sql', $retention);
-            $wrote = true;
-
-        } elseif ($driver === 'pgsql') {
-            $dsn    = to_str($gConf['db_dsn'] ?? '');
-            $host   = preg_match('/host=([^;]+)/i', $dsn, $m) ? $m[1] : '127.0.0.1';
-            $port   = preg_match('/port=([^;]+)/i', $dsn, $m) ? $m[1] : '5432';
-            $dbName = preg_match('/dbname=([^;]+)/i', $dsn, $m) ? $m[1] : 'ipam';
-            $user   = to_str($gConf['db_user'] ?? 'postgres');
-            $pass   = to_str($gConf['db_pass'] ?? '');
-            $dest   = $dir . '/ipam-' . $ts . '.sql';
-
-            // Route the password through a 0600 PGPASSFILE so it never appears
-            // in /proc/<pid>/environ or `ps eww` (#820). PGPASSFILE itself is
-            // an env var carrying a *path*, not the secret — this is libpq's
-            // documented pattern for non-interactive scripts. The file MUST be
-            // unlinked on every exit path below.
-            $credFile = ipam_backup_write_pgpass_file($pass);
-            $cmd = ['pg_dump', '-h', $host, '-p', $port, '-U', $user, $dbName];
-            $env = getenv() ?: [];
-            // Strip any inherited DB password env vars before merging in
-            // PGPASSFILE so the parent shell can't leak a secret into
-            // the child (#820 PR #1074 CR).
-            unset($env['MYSQL_PWD'], $env['PGPASSWORD']);
-            $env['PGPASSFILE'] = $credFile;
-            $dumpErr = '';
-            try {
-                $ret = backup_run_dump($cmd, $env, $dest, 120, $dumpErr);
-            } finally {
-                @unlink($credFile); // nosemgrep: php.lang.security.unlink-use.unlink-use
-            }
-            if (!$ret) {
-                $why = $dumpErr !== '' ? 'pg_dump failed: ' . $dumpErr : 'pg_dump failed';
-                $whyTrunc = strlen($why) > 500 ? substr($why, 0, 497) . '...' : $why;
-                backup_runs_insert_cli($db, basename($dest), 0, '',
-                    $startedAt, date('Y-m-d H:i:s'), 'failed', $whyTrunc);
-                try { ipam_backup_notify($db, $legacyDest, 'failure', $whyTrunc . ' (' . basename($dest) . ')'); }
-                catch (Throwable $ne) { error_log('[backup] notify dispatch failed: ' . $ne->getMessage()); }
-                return false;
-            }
-
-            $sha256 = hash_file('sha256', $dest) ?: '';
-            $size   = (int)(@filesize($dest) ?: 0);
-            backup_runs_insert_cli($db, basename($dest), $size, $sha256,
-                $startedAt, date('Y-m-d H:i:s'), 'success');
-
-            // Prune old engine-native dumps by mtime (#828).
-            ipam_legacy_retention_prune_by_mtime($dir . '/ipam-*.sql', $retention);
-            $wrote = true;
-        }
-
-        if ($wrote) {
-            $state = ['last_backup' => time(), 'last_file' => basename($dest ?? '')];
-            @file_put_contents(backup_state_path(), json_encode($state));
-            @chmod(backup_state_path(), 0600);
-            try {
-                ipam_backup_notify($db, $legacyDest, 'success',
-                    'file=' . basename($dest) . ' driver=' . $driver);
-            } catch (Throwable $ne) {
-                error_log('[backup] notify dispatch failed: ' . $ne->getMessage());
-            }
-        }
-    } finally {
-        @flock($lock, LOCK_UN);
-        @fclose($lock);
-    }
-
-    return $wrote;
-}
 
 /**
  * Write a MySQL [client] defaults-extra-file containing the password and return
@@ -4518,6 +3979,7 @@ function run_db_backup_if_due(PDO $db, array $config): bool
  * The file's `[client]` section is consumed by mysql/mysqldump when passed as
  * the FIRST argument (must come before all other CLI args).
  */
+
 function ipam_backup_write_mysql_defaults_file(string $pass): string
 {
     $path = tempnam(sys_get_temp_dir(), 'ipam_dbcred_');
@@ -4566,16 +4028,6 @@ function ipam_backup_write_pgpass_file(string $pass): string
     return $path;
 }
 
-/**
- * Run a dump command (mysqldump / pg_dump) writing stdout to $destPath.
- * Uses array-form proc_open so no shell injection is possible.
- * Credentials are passed via a 0600 temp file referenced from $cmd
- * (`--defaults-extra-file`) or $env (`PGPASSFILE`), never via env-borne secrets
- * or CLI args (#820).
- *
- * @param list<string> $cmd
- * @param array<string,string> $env
- */
 /**
  * @param list<string>            $cmd
  * @param array<string,string>    $env
@@ -4690,36 +4142,17 @@ function backup_run_dump(array $cmd, array $env, string $destPath, int $timeoutS
     return true;
 }
 
-/**
- * Return info about the current backup state for display in the admin panel.
- *
- * @param IpamConfig $config
- * @return array{last_backup: int|null, last_file: string|null, count: int, dir: string}
- */
-function backup_info(array $config): array
-{
-    $dir   = backup_dir($config);
-    $state = backup_state_path();
-    $last  = null;
-    $file  = null;
+// v3.26.0 (#1059): the legacy v3.7 backup runner and its helpers were
+// removed:
+//   ipam_legacy_backup_migrate_if_due()  — init-time conversion helper
+//   backup_dir() / backup_state_path()    — single-directory accessors
+//   backup_interval_seconds() / backup_is_due() — schedule readers
+//   backup_runs_insert_cli()              — CLI-runner row inserter
+//   run_db_backup_if_due()                — SQLite/MySQL/Postgres runner
+//   backup_info()                         — admin-page status accessor
+// Backups are now driven by ipam_backup_run_destination() (further below)
+// iterating every active row in backup_destinations + backup_schedules.
 
-    if (is_file($state)) {
-        $d = @json_decode((string)file_get_contents($state), true);
-        if (is_array($d)) {
-            $last = isset($d['last_backup']) ? to_int($d['last_backup']) : null;
-            $file = isset($d['last_file'])   ? to_str($d['last_file']) : null;
-        }
-    }
-
-    $files = is_dir($dir) ? (glob($dir . '/ipam-*.sqlite') ?: []) : [];
-
-    return [
-        'last_backup' => $last,
-        'last_file'   => $file,
-        'count'       => count($files),
-        'dir'         => $dir,
-    ];
-}
 
 // ── Backup encryption constants (Phase 2 / #694) ────────────────────────────
 const BACKUP_MAGIC   = 'IPAMBKP1';  // 8-byte magic + version tag

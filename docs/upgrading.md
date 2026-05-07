@@ -116,6 +116,18 @@ The backup is left in place after a successful upgrade. You can remove it manual
 
 ## Version-specific upgrade notes
 
+### v3.26.0
+
+**⚠️ Upgrade-path prerequisite: must pass through v3.23.0–v3.25.x first.** v3.26.0 retires the legacy v3.7 single-destination backup runner (`run_db_backup_if_due()`) and deletes the four legacy settings keys (`backup.enabled`, `backup.frequency`, `backup.retention`, `backup.dir`) along with the `backup.php` CLI entry point. The conversion that materialised those legacy keys into the unified `backup_destinations` + `backup_schedules` rows lived in `ipam_legacy_backup_migrate_if_due()`, which ran on every page load between v3.23.0 and v3.25.x. The v3.26.0 migration `3.26.0-retire-legacy-backup` enforces this with a hard-fail check: if the `backup.legacy_migrated_v3_23_0` sentinel is missing AND any legacy `backup.*` key still holds a non-default value, the migration aborts with a remediation message. Operators on a pre-v3.23 install must:
+
+1. Apply v3.23.0, v3.24.0, or any v3.25.x release first; load any web page once so the conversion helper runs.
+2. Confirm the resulting destinations + schedule on **Admin → Backups** look right.
+3. Then upgrade to v3.26.0.
+
+**Removed CLI entry point.** `php backup.php` (or `php backup.php --force`) is gone. The unified `cron.php` scheduler iterates every active row in `backup_destinations` + `backup_schedules` directly. Operator wrapper scripts that invoked `backup.php` should be updated to call `php cron.php` instead — `cron.php` runs every backup task plus housekeeping in one pass.
+
+**db_tools.php scope shrink.** The "Automatic Backups" card, "Run Backup Now" button, and the in-page Backup History table moved entirely to **Admin → Backups** (`backup_admin.php`). The Database Tools page is now the SQL export / import + status surface only.
+
 ### v3.25.0
 
 Operator-facing finale of the backup overhaul. **One schema migration** (`3.25.0-backup-destination-evolution`) adds new columns to `backup_destinations` (`retention_hourly|daily|weekly|monthly`, `is_default`, `default_backup_type`, `default_encryption_mode`) and `backup_runs` (`cancel_requested`). Existing per-schedule retention values backfill into the destination on upgrade; per-schedule retention columns are preserved through this release for downgrade safety and will be dropped in a later release. **No new runtime dependencies.** Standard upgrade: `bash upgrade.sh --yes <docroot>`.

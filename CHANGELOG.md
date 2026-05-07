@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [Unreleased] - 3.26.0
+
+### Removed
+
+- **Legacy v3.7 single-destination backup runner retired (#1059).** The `run_db_backup_if_due()` runner, the four legacy settings keys (`backup.enabled`, `backup.frequency`, `backup.retention`, `backup.dir`), and the `backup.php` CLI entry point are removed. Backups are driven entirely by the unified `backup_destinations` + `backup_schedules` surface from now on, with `cron.php` as the sole scheduler entry point. `db_tools.php`'s in-page "Automatic Backups" card + Backup History table moved to `backup_admin.php`. **Operators upgrading from a pre-v3.23 install must pass through v3.23.0–v3.25.x first** so `ipam_legacy_backup_migrate_if_due()` can materialise their legacy schedule into a unified destination + schedule pair; the new `3.26.0-retire-legacy-backup` migration enforces this with a hard-fail sentinel check. See `docs/upgrading.md` → v3.26.0 for the full operator runbook.
+
 ## [3.25.0] - 2026-05-06
 
 The operator-facing finale of the backup-overhaul stream. **Surfaces the v3.23.0 `IPAMBKL1` engine-agnostic backend via a new picker UI** (Logical default, Database under Advanced), **rehomes retention from per-schedule to per-destination**, and ships the U-series UX polish: dashboard backup card, health-page connectivity section, encryption-format icons in History, type-name-to-confirm on destination delete, skeleton loaders, cancel-in-flight on Run-now, S3 range-resume, and a Verify-all bulk action. Plus per-tab notification overrides and one orphan UX fix (subnet description in the addresses-page dropdown).

@@ -3215,6 +3215,101 @@ function ipam_migrations(): array
                 $run("CREATE INDEX IF NOT EXISTS idx_login_attempts_action_ip_time ON login_attempts (action, ip, attempted_at)");
             }
         },
+
+        // v3.26.0 (#1059): retire the legacy v3.7 single-destination backup
+        // runner and its 4 backup.* settings. Operators upgrading from v3.7–
+        // v3.22 must pass through any v3.23.0–v3.25.x release first so the
+        // ipam_legacy_backup_migrate_if_due() helper can convert their legacy
+        // schedule into a backup_destinations + backup_schedules row pair;
+        // that helper stamps backup.legacy_migrated_v3_23_0 = '1'. We hard-
+        // fail the upgrade here when that sentinel is missing AND any of the
+        // legacy keys still hold a non-default value, so operators do not
+        // silently lose backup config on a direct v3.22 → v3.26 jump.
+        '3.26.0-retire-legacy-backup' => static function (PDO $db): void {
+            $tableExists = static function (PDO $db, string $driver, string $table): bool {
+                if ($driver === 'sqlite') {
+                    $st = $db->prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=:n");
+                    $st->execute([':n' => $table]);
+                    return (bool)$st->fetchColumn();
+                }
+                if ($driver === 'mysql') {
+                    $st = $db->prepare(
+                        "SELECT 1 FROM information_schema.TABLES
+                          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :n"
+                    );
+                    $st->execute([':n' => $table]);
+                    return (bool)$st->fetchColumn();
+                }
+                if ($driver === 'pgsql') {
+                    $st = $db->prepare(
+                        "SELECT 1 FROM information_schema.tables
+                          WHERE table_schema = current_schema() AND table_name = :n"
+                    );
+                    $st->execute([':n' => $table]);
+                    return (bool)$st->fetchColumn();
+                }
+                return false;
+            };
+
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driver = is_string($driverRaw) ? $driverRaw : '';
+
+            // Fresh installs and partial migration replays may run before
+            // 2.6.0-settings has built the settings table — there is nothing
+            // to delete in that case, and the sentinel check is meaningless.
+            if (!$tableExists($db, $driver, 'settings')) {
+                return;
+            }
+
+            $keyCol = function_exists('ipam_key_col') ? ipam_key_col() : 'key';
+            $legacyKeys = ['backup.enabled', 'backup.frequency', 'backup.retention', 'backup.dir'];
+
+            // Pre-flight: confirm the v3.23.0+ helper has run. The sentinel
+            // is set unconditionally on first v3.23.0+ page load (even when
+            // backup.enabled was already false), so its absence means the
+            // operator skipped the entire v3.23.x–v3.25.x line.
+            $sentinelSt = $db->prepare(
+                "SELECT value FROM settings WHERE {$keyCol} = :k"
+            );
+            $sentinelSt->execute([':k' => 'backup.legacy_migrated_v3_23_0']);
+            $sentinelVal = $sentinelSt->fetchColumn();
+
+            if ($sentinelVal === false || (string)$sentinelVal !== '1') {
+                // Only abort if the operator actually has legacy state that
+                // would be silently dropped — a fresh install with no
+                // backup.* rows can proceed without complaint.
+                $placeholders = implode(',', array_fill(0, count($legacyKeys), '?'));
+                $checkSt = $db->prepare(
+                    "SELECT {$keyCol}, value FROM settings
+                       WHERE {$keyCol} IN ({$placeholders})"
+                );
+                $checkSt->execute($legacyKeys);
+                $hasLegacyData = false;
+                foreach ($checkSt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                    $val = (string)($row['value'] ?? '');
+                    if ($val !== '' && $val !== '0' && $val !== 'false') {
+                        $hasLegacyData = true;
+                        break;
+                    }
+                }
+                if ($hasLegacyData) {
+                    throw new RuntimeException(
+                        '3.26.0-retire-legacy-backup: legacy backup.* settings hold non-default values '
+                        . 'but backup.legacy_migrated_v3_23_0 sentinel is missing. Upgrade through any '
+                        . 'v3.23.0–v3.25.x release first so ipam_legacy_backup_migrate_if_due() can '
+                        . 'materialise a backup_destinations + backup_schedules row pair, then retry v3.26.0.'
+                    );
+                }
+            }
+
+            // Drop the legacy keys. backup.legacy_migrated_v3_23_0 is left
+            // in place — it documents that the install passed through the
+            // v3.23.x conversion path, which has historical/audit value.
+            $delSt = $db->prepare(
+                "DELETE FROM settings WHERE {$keyCol} IN ('backup.enabled','backup.frequency','backup.retention','backup.dir')"
+            );
+            $delSt->execute();
+        },
     ];
 }
 
