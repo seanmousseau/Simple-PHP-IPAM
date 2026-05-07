@@ -108,12 +108,21 @@ function ipam_sudo_grant(string $method): void
  *
  * Method strings: 'totp' | 'email_otp' | 'webauthn' | 'password' | 'oidc_reauth'
  *
+ * @param array{
+ *   allow_totp:bool,
+ *   allow_email_otp:bool,
+ *   allow_webauthn:bool,
+ *   allow_provider_reauth:bool,
+ *   ttl_seconds:int
+ * }|null $policyOverride  Pass a proposed policy to evaluate availability under
+ *                         a hypothetical save (used by the lock-out precondition).
+ *                         Null reads the live policy via ipam_sudo_policy().
  * @return list<string>
  */
-function ipam_sudo_available_methods(\PDO $db, int $userId): array
+function ipam_sudo_available_methods(\PDO $db, int $userId, ?array $policyOverride = null): array
 {
     if ($userId <= 0) return [];
-    $policy    = ipam_sudo_policy();
+    $policy    = $policyOverride ?? ipam_sudo_policy();
     $available = [];
 
     $enrolledMfa = ipam_user_available_mfa_methods($db, $userId);
@@ -495,4 +504,92 @@ function ipam_sudo_dispatch_email_otp_send(\PDO $db, int $userId): bool
     if ($userId <= 0) return false;
     $code = ipam_email_otp_generate($db, $userId);
     return ipam_email_otp_send($db, $userId, $code);
+}
+
+/**
+ * Convenience wrapper for handlers: returns true if the session already
+ * has an unexpired sudo grant OR the current POST contains a valid step-up
+ * proof. On a successful proof the grant is minted as a side effect via
+ * ipam_sudo_verify(). Returns false when the caller should render the
+ * step-up prompt.
+ */
+function ipam_sudo_require(\PDO $db, int $userId): bool
+{
+    if (ipam_sudo_active()) return true;
+    $proof = ipam_sudo_proof_from_post();
+    if ($proof === null) return false;
+    return ipam_sudo_verify($db, $userId, $proof);
+}
+
+/**
+ * Compose a proposed step-up policy by overlaying a pending settings save
+ * (keyed by the registry's full setting names) on top of the live policy.
+ * Keys not present in $overrides keep their current value. Returned shape
+ * matches ipam_sudo_policy().
+ *
+ * @param array<string, mixed> $overrides
+ * @return array{
+ *   allow_totp:bool,
+ *   allow_email_otp:bool,
+ *   allow_webauthn:bool,
+ *   allow_provider_reauth:bool,
+ *   ttl_seconds:int
+ * }
+ */
+function ipam_sudo_proposed_policy_from_overrides(array $overrides): array
+{
+    $p = ipam_sudo_policy();
+    $boolMap = [
+        'auth.step_up.allow_totp'            => 'allow_totp',
+        'auth.step_up.allow_email_otp'       => 'allow_email_otp',
+        'auth.step_up.allow_webauthn'        => 'allow_webauthn',
+        'auth.step_up.allow_provider_reauth' => 'allow_provider_reauth',
+    ];
+    foreach ($boolMap as $regKey => $short) {
+        if (array_key_exists($regKey, $overrides)) {
+            $p[$short] = (bool) $overrides[$regKey];
+        }
+    }
+    if (array_key_exists('auth.step_up.ttl_seconds', $overrides)) {
+        $ttl = to_int($overrides['auth.step_up.ttl_seconds']);
+        if (in_array($ttl, IPAM_SUDO_TTL_ALLOWED, true)) {
+            $p['ttl_seconds'] = $ttl;
+        }
+    }
+    return $p;
+}
+
+/**
+ * Lock-out precondition for a proposed step-up policy save. Iterates every
+ * active admin and returns the username of the first one who would have NO
+ * available step-up methods under the proposed policy. Returns '' when every
+ * active admin can still satisfy the gate via at least one method.
+ *
+ * The same shape as the last-active-admin guard in users.php — refuses to
+ * let the operator save a configuration that would lock the system out of
+ * its own sensitive admin actions.
+ *
+ * @param array{
+ *   allow_totp:bool,
+ *   allow_email_otp:bool,
+ *   allow_webauthn:bool,
+ *   allow_provider_reauth:bool,
+ *   ttl_seconds:int
+ * } $proposed
+ */
+function ipam_sudo_policy_lockout_check(\PDO $db, array $proposed): string
+{
+    $st = $db->query("SELECT id, username FROM users WHERE is_active = 1 AND role = 'admin'");
+    if ($st === false) return '';
+    $rows = $st->fetchAll();
+    foreach ($rows as $row) {
+        if (!is_array($row)) continue;
+        $uid      = to_int($row['id'] ?? 0);
+        $username = to_str($row['username'] ?? '');
+        if ($uid <= 0) continue;
+        if (ipam_sudo_available_methods($db, $uid, $proposed) === []) {
+            return $username !== '' ? $username : ('user#' . $uid);
+        }
+    }
+    return '';
 }
