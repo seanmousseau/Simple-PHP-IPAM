@@ -1761,6 +1761,34 @@ function ipam_setting_definitions(): array
             'default'     => true,
             'sensitive'   => false,
         ],
+        // v3.25.0 #1078: per-tab override knobs so backup notifications
+        // can target a different audience than the global alert
+        // infrastructure. Empty / 'inherit' values fall back to the
+        // global alert.recipient_user_ids + mail.transport settings.
+        'backup.notify_recipient_user_ids' => [
+            'label'       => 'Backup-specific recipient user IDs',
+            'description' => 'Override list of user IDs (JSON array) to receive backup notifications. Empty = inherit alert.recipient_user_ids.',
+            'type'        => 'json',
+            'group'       => 'backup',
+            'default'     => [],
+            'sensitive'   => false,
+        ],
+        'backup.notify_recipient_email_extra' => [
+            'label'       => 'Extra backup notification recipients',
+            'description' => 'Additional comma-separated email addresses (no user account required). Combined with the recipient list.',
+            'type'        => 'string',
+            'group'       => 'backup',
+            'default'     => '',
+            'sensitive'   => false,
+        ],
+        'backup.notify_delivery_method' => [
+            'label'       => 'Backup notification delivery method',
+            'description' => "'inherit' uses the global mail transport (current behaviour). 'smtp' explicitly forces SMTP delivery for backup notifications regardless of the global default.",
+            'type'        => 'string',
+            'group'       => 'backup',
+            'default'     => 'inherit',
+            'sensitive'   => false,
+        ],
         // Internal — JSON map { destId: { last_ok_at, last_failed_at,
         // last_alerted_at, status } } maintained by cron Task 6c. Hidden
         // from the settings UI (group/label not surfaced) but stored in
@@ -3319,8 +3347,50 @@ function prune_address_history(PDO $db, int $retentionDays): int
 function ipam_resolve_alert_recipients(PDO $db): array
 {
     $ids = ipam_setting('alert.recipient_user_ids', []);
-    if (!is_array($ids) || $ids === []) return [];
-    $intIds = array_values(array_unique(array_map(fn($v) => (int)to_str($v), $ids)));
+    return ipam_resolve_recipients_for_user_ids($db, is_array($ids) ? $ids : []);
+}
+
+/**
+ * v3.25.0 #1078: backup-specific recipient resolution. If the
+ * `backup.notify_recipient_user_ids` override is set (non-empty array),
+ * resolve against that list; otherwise fall back to the global alert
+ * recipients. Combine with any extra free-form addresses from
+ * `backup.notify_recipient_email_extra` (CSV, no user account required).
+ *
+ * @return list<string>
+ */
+function ipam_resolve_backup_notify_recipients(PDO $db): array
+{
+    $override = ipam_setting('backup.notify_recipient_user_ids', []);
+    $useOverride = is_array($override) && $override !== [];
+    $emails = $useOverride
+        ? ipam_resolve_recipients_for_user_ids($db, $override)
+        : ipam_resolve_alert_recipients($db);
+
+    $extraRaw = ipam_setting('backup.notify_recipient_email_extra', '');
+    if (is_string($extraRaw) && trim($extraRaw) !== '') {
+        foreach (explode(',', $extraRaw) as $e) {
+            $e = trim($e);
+            if ($e !== '' && filter_var($e, FILTER_VALIDATE_EMAIL) !== false) {
+                $emails[] = $e;
+            }
+        }
+    }
+    return array_values(array_unique($emails));
+}
+
+/**
+ * Resolve a list of user IDs to email addresses. Skips inactive users and
+ * users without an email. Accepts a mixed array (JSON-decoded settings
+ * value) and coerces each entry to int; non-positive entries are dropped.
+ *
+ * @param  array<int|string, mixed> $rawIds
+ * @return list<string>
+ */
+function ipam_resolve_recipients_for_user_ids(PDO $db, array $rawIds): array
+{
+    if ($rawIds === []) return [];
+    $intIds = array_values(array_unique(array_map(fn($v) => (int)to_str($v), $rawIds)));
     $intIds = array_values(array_filter($intIds, fn($i) => $i > 0));
     if ($intIds === []) return [];
 
@@ -3348,9 +3418,14 @@ function ipam_resolve_alert_recipients(PDO $db): array
  *
  * @return array{success: bool, error: ?string, transport: string}
  */
-function ipam_send_mail(string $to, string $subject, string $bodyText, string $bodyHtml = ''): array
+function ipam_send_mail(string $to, string $subject, string $bodyText, string $bodyHtml = '', ?string $transportOverride = null): array
 {
-    $smtpEnabled = (bool) ipam_setting('smtp.enabled');
+    // v3.25.0 #1078: optional transport override lets the backup notify
+    // dispatcher force SMTP regardless of the global smtp.enabled setting.
+    // Accepted values: 'smtp' (force SMTP) or null (use global).
+    $smtpEnabled = $transportOverride === 'smtp'
+        ? true
+        : (bool) ipam_setting('smtp.enabled');
 
     if ($smtpEnabled) {
         if (!class_exists('PHPMailer\PHPMailer\PHPMailer')) {
@@ -5920,39 +5995,96 @@ function ipam_gfs_select_for_deletion(array $backups, array $config): array
  */
 function ipam_retention_compute_deletions(PDO $db, int $destinationId): array
 {
-    // ── 1. Fetch destination info — required to validate the ID ──────────────
-    $destStmt = $db->prepare("SELECT id FROM backup_destinations WHERE id = :id");
-    $destStmt->execute([':id' => $destinationId]);
-    if (!is_array($destStmt->fetch())) {
-        throw new \InvalidArgumentException("backup_destinations row not found: id={$destinationId}");
+    // ── 1. Fetch destination retention — v3.25.0 #846 retention rehome ──────
+    // Pre-v3.25.0 retention lived on backup_schedules. v3.25.0 moved it to
+    // backup_destinations so it describes "how much to keep at this storage
+    // location" rather than "how often we write to it" (per
+    // backup_overhaul.md §3 AGREED). The migration backfilled values from
+    // any per-schedule rows; the schedule columns remain in place for one
+    // release cycle for downgrade safety but are no longer the source of
+    // truth.
+    //
+    // Read from backup_destinations first; fall back to the per-schedule
+    // row only if the destination columns are missing (pre-migration
+    // upgrade window).
+    // Probe whether the v3.25.0 retention columns are present. Pre-migration
+    // upgrade windows and minimal-schema unit-test fixtures lack them; the
+    // destination read falls back to the legacy schedule read in that case.
+    $destRow = null;
+    try {
+        $destStmt = $db->prepare(
+            "SELECT id, retention_hourly, retention_daily, retention_weekly, retention_monthly
+               FROM backup_destinations WHERE id = :id"
+        );
+        $destStmt->execute([':id' => $destinationId]);
+        $destRow = $destStmt->fetch();
+    } catch (\PDOException $e) {
+        // Only swallow undefined-column errors — other PDO failures
+        // (deadlock, connection drop, etc.) must propagate so retention
+        // doesn't silently fall back to legacy/default values and prune
+        // too aggressively. SQLSTATE 42S22 (mysql) and 42703 (pgsql) are
+        // "undefined column"; SQLite reports HY000 with the textual
+        // 'no such column' fragment in errorInfo[2].
+        $sqlstate = (string) ($e->errorInfo[0] ?? '');
+        $msg      = (string) ($e->errorInfo[2] ?? '');
+        $missingColumn =
+            $sqlstate === '42S22'
+            || $sqlstate === '42703'
+            || ($sqlstate === 'HY000' && str_contains($msg, 'no such column'));
+        if (!$missingColumn) {
+            throw $e;
+        }
+        $destRow = null;
     }
 
-    // ── 2. Fetch GFS config from backup_schedules (sane defaults if no schedule) ─
-    $schedStmt = $db->prepare(
-        "SELECT retention_hourly, retention_daily, retention_weekly, retention_monthly
-         FROM backup_schedules
-         WHERE destination_id = :did AND is_active = 1
-         LIMIT 1"
-    );
-    $schedStmt->execute([':did' => $destinationId]);
-    $sched = $schedStmt->fetch();
+    if ($destRow === null || $destRow === false) {
+        // Either columns missing or row missing — distinguish by an
+        // existence-only probe so we still throw on bad ID.
+        $existsStmt = $db->prepare("SELECT id FROM backup_destinations WHERE id = :id");
+        $existsStmt->execute([':id' => $destinationId]);
+        if (!is_array($existsStmt->fetch())) {
+            throw new \InvalidArgumentException("backup_destinations row not found: id={$destinationId}");
+        }
+    }
 
-    if (is_array($sched)) {
+    if (is_array($destRow) && array_key_exists('retention_hourly', $destRow)) {
         $gfsConfig = [
-            'keep_hourly'  => to_int($sched['retention_hourly']),
-            'keep_daily'   => to_int($sched['retention_daily']),
-            'keep_weekly'  => to_int($sched['retention_weekly']),
-            'keep_monthly' => to_int($sched['retention_monthly']),
+            'keep_hourly'  => to_int($destRow['retention_hourly']),
+            'keep_daily'   => to_int($destRow['retention_daily']),
+            'keep_weekly'  => to_int($destRow['retention_weekly']),
+            'keep_monthly' => to_int($destRow['retention_monthly']),
         ];
     } else {
-        // No schedule: use conservative defaults so unscheduled destinations are
-        // still protected from unbounded log growth.
-        $gfsConfig = [
-            'keep_hourly'  => 0,
-            'keep_daily'   => 7,
-            'keep_weekly'  => 4,
-            'keep_monthly' => 3,
-        ];
+        // Pre-migration: aggregate retention across any active schedules
+        // pointing at this destination using MAX() — same most-generous
+        // semantics the migration backfill uses (CR #1096 major finding).
+        // LIMIT 1 would silently bias to whichever row PDO returned first
+        // and could prune more aggressively than intended.
+        $schedStmt = $db->prepare(
+            "SELECT MAX(retention_hourly)  AS h,
+                    MAX(retention_daily)   AS d,
+                    MAX(retention_weekly)  AS w,
+                    MAX(retention_monthly) AS m
+             FROM backup_schedules
+             WHERE destination_id = :did AND is_active = 1"
+        );
+        $schedStmt->execute([':did' => $destinationId]);
+        $sched = $schedStmt->fetch();
+        if (is_array($sched) && $sched['h'] !== null) {
+            $gfsConfig = [
+                'keep_hourly'  => to_int($sched['h']),
+                'keep_daily'   => to_int($sched['d']),
+                'keep_weekly'  => to_int($sched['w']),
+                'keep_monthly' => to_int($sched['m']),
+            ];
+        } else {
+            $gfsConfig = [
+                'keep_hourly'  => 0,
+                'keep_daily'   => 7,
+                'keep_weekly'  => 4,
+                'keep_monthly' => 3,
+            ];
+        }
     }
 
     // ── 3. Fetch successful backup_runs rows for this destination ────────────
@@ -6446,15 +6578,17 @@ function ipam_backup_notify_dispatch(PDO $db, string $event, array $context): vo
     };
     if (!$shouldSend) return;
 
-    // Recipients via the same multi-user picker as every other alert.
-    $recipients = ipam_resolve_alert_recipients($db);
+    // Recipients: v3.25.0 #1078 backup-specific override takes precedence
+    // over the global alert recipients. Empty override falls through to the
+    // legacy alert.recipient_user_ids + alert.email path.
+    $recipients = ipam_resolve_backup_notify_recipients($db);
     if ($recipients === []) {
         $legacy = trim(to_str(ipam_setting('alert.email')));
         if ($legacy !== '') $recipients = [$legacy];
     }
-    // Per-schedule recipient override: applies to both scheduled-flow events
-    // (the only ones with a schedule_id in scope). For other events the
-    // resolver receives null and short-circuits to globals.
+    // Per-schedule recipient override (v3.23.0 #825): applies on top of the
+    // backup-tab override for scheduled-flow events. Manual / system events
+    // skip this layer because there's no schedule_id in scope.
     $applyRecipientOverride = $event === 'failure_scheduled' || $event === 'success_scheduled';
     if ($applyRecipientOverride) {
         $recipients = ipam_backup_notify_resolve_recipients($db, $scheduleId, $recipients);
@@ -6522,10 +6656,27 @@ function ipam_backup_notify_dispatch(PDO $db, string $event, array $context): vo
     };
     if ($subject === '') return;
 
+    // v3.25.0 #1078: read the backup-tab delivery method override.
+    // 'smtp' forces SMTP regardless of the global mail.transport / smtp.enabled
+    // settings; 'inherit' keeps the legacy behaviour. Future values
+    // ('webhook', 'slack', 'pushover') will dispatch through different
+    // helpers — for now only the inherit/smtp axis is wired.
+    $deliveryMethod = is_string(ipam_setting('backup.notify_delivery_method'))
+        ? (string) ipam_setting('backup.notify_delivery_method')
+        : 'inherit';
+    $transportOverride = $deliveryMethod === 'smtp' ? 'smtp' : null;
+
     foreach ($recipients as $to) {
         try {
             if (function_exists('ipam_send_mail')) {
-                ipam_send_mail($to, $subject, $body);
+                $sendResult = ipam_send_mail($to, $subject, $body, '', $transportOverride);
+                // ipam_send_mail returns success=false on transport failure
+                // without throwing — surface that here so the new
+                // forced-SMTP override doesn't fail silently.
+                if (!$sendResult['success']) {
+                    $err = is_string($sendResult['error']) ? $sendResult['error'] : 'unknown error';
+                    error_log('[backup] notify failed for ' . $to . ': ' . $err);
+                }
             } else {
                 @mail($to, $subject, $body);
             }

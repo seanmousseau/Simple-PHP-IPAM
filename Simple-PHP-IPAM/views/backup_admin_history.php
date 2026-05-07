@@ -175,7 +175,7 @@ $anyFilterActive = $filterDest > 0
       <p class="muted">No backup runs found.</p>
     <?php else: ?>
       <table class="data-table">
-        <thead><tr><th>Started</th><th>Destination</th><th>Trigger</th><th>Type</th><th>Status</th><th>Filename</th><th>Size</th><th>Duration</th><th>Checksum</th></tr></thead>
+        <thead><tr><th>Started</th><th>Destination</th><th>Trigger</th><th>Type</th><th>Encryption</th><th>Status</th><th>Filename</th><th>Size</th><th>Duration</th><th>Checksum</th><th>Actions</th></tr></thead>
         <tbody>
         <?php foreach ($rows as $r):
           $started   = to_str($r['started_at']);
@@ -189,9 +189,39 @@ $anyFilterActive = $filterDest > 0
           $statusClass = 'badge-' . $statusVal;
           $cs          = to_str($r['checksum'] ?? '');
           $csShort     = $cs !== '' ? (substr($cs, 0, 12) . '…') : '—';
+          // v3.25.0 #847: protected badge.
+          $isProtected = to_int($r['is_protected'] ?? 0) === 1;
+          // v3.25.0 #857: encryption-format badge derived from encryption_mode
+          // + source_version. IPAMBKP3 was introduced in v3.24.0; older
+          // backups taken with encrypt=1 are IPAMBKP1/2 depending on when.
+          $encMode = to_str($r['encryption_mode'] ?? 'stored');
+          $sourceVer = to_str($r['source_version'] ?? '0.0.0');
+          if ($encMode === 'unencrypted') {
+              $encLabel = 'Plaintext';
+              $encClass = 'badge-warn';
+              $encTip   = 'Plaintext payload (Local destination opt-out). No re-encryption available.';
+          } elseif ($encMode === 'transitory') {
+              $encLabel = 'Per-passphrase';
+              $encClass = 'badge-success';
+              $encTip   = 'IPAMBKP3 transitory mode (manual passphrase). Restore requires the original passphrase.';
+          } else {
+              // Heuristic: IPAMBKP3 from v3.24.0 onwards; before that, IPAMBKP1/2.
+              $verPad = ipam_normalise_version($sourceVer);
+              if (function_exists('version_compare') && version_compare($verPad, '3.24.0', '>=')) {
+                  $encLabel = 'v3';
+                  $encTip   = 'IPAMBKP3 stored-key encryption.';
+              } elseif (version_compare($verPad, '3.17.0', '>=')) {
+                  $encLabel = 'v2';
+                  $encTip   = 'IPAMBKP2 encryption (pre-v3.24). Re-encrypt by re-running the backup on this install.';
+              } else {
+                  $encLabel = 'v1';
+                  $encTip   = 'IPAMBKP1 legacy encryption.';
+              }
+              $encClass = 'badge-success';
+          }
         ?>
           <?php $runId = to_int($r['id']); ?>
-          <tr class="history-row"
+          <tr class="history-row<?= $isProtected ? ' row-protected' : '' ?>"
               tabindex="0"
               data-run-id="<?= $runId ?>"
               data-drawer-url="backup_run_detail.php?id=<?= $runId ?>"
@@ -202,11 +232,28 @@ $anyFilterActive = $filterDest > 0
             <td><?= e(to_str($r['triggered_by'])) ?></td>
             <?php $btType = to_str($r['backup_type'] ?? ''); ?>
             <td><span class="badge badge-backup"><?= e($btType !== '' ? ucfirst($btType) : 'Backup') ?></span></td>
-            <td><span class="badge <?= e($statusClass) ?>"><?= e($statusVal) ?></span></td>
+            <td><span class="badge <?= e($encClass) ?>" title="<?= e($encTip) ?>"><?= e($encLabel) ?></span></td>
+            <td>
+              <span class="badge <?= e($statusClass) ?>"><?= e($statusVal) ?></span>
+              <?php if ($isProtected): ?>
+                <span class="badge badge-protected" title="Protected from retention auto-prune">★ protected</span>
+              <?php endif; ?>
+            </td>
             <td><?= e(to_str($r['filename'] ?? '—')) ?></td>
             <td><?= $r['size_bytes'] !== null ? number_format(to_int($r['size_bytes'])) : '—' ?></td>
             <td><?= e($duration) ?></td>
             <td title="<?= e($cs) ?>"><?= e($csShort) ?></td>
+            <td class="actions" onclick="event.stopPropagation()">
+              <form method="post" style="display:inline" data-no-drawer>
+                <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                <input type="hidden" name="action" value="<?= $isProtected ? 'unprotect_run' : 'protect_run' ?>">
+                <input type="hidden" name="id" value="<?= $runId ?>">
+                <button class="action-pill button-secondary" type="submit"
+                        title="<?= $isProtected ? 'Allow retention to prune this row' : 'Exclude this row from retention auto-prune' ?>">
+                  <?= $isProtected ? 'Unprotect' : 'Protect' ?>
+                </button>
+              </form>
+            </td>
           </tr>
         <?php endforeach; ?>
         </tbody>

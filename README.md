@@ -12,15 +12,18 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.24.0
+## What's new in v3.25.0
 
-The encryption-format release. New on-disk backup format **`IPAMBKP3`** with three modes (stored / transitory / unencrypted), a new server-side secret `backup_vault_key` separate from `app_secret`, and a manual upload-and-restore wizard step. Plus a long-running PostgreSQL `tuple concurrently updated` intermittent finally tracked down and fixed.
+The operator-facing finale of the backup-overhaul stream. **Surfaces the v3.23.0 `IPAMBKL1` engine-agnostic backend via a new picker UI**, **rehomes retention from per-schedule to per-destination**, and ships the U-series UX polish: dashboard backup card, health-page connectivity section, encryption-format icons in History, type-name-to-confirm on destination delete, skeleton loaders, cancel-in-flight on Run-now, S3 range-resume, and a Verify-all bulk action.
 
-- **`IPAMBKP3` three-mode encryption (#836).** **Stored** mode wraps backups with a server-managed `backup_vault_key` (HKDF over a separate-from-`app_secret` 32-byte secret, auto-generated on first encrypted backup). **Transitory** mode uses Argon2id (RFC 9106 v1.3, defaults `t=3 / m=64 MiB / p=1`) over an operator-typed passphrase the server never persists &mdash; for one-off backups only the operator can decrypt. **`IPAMBKU1`** is an integrity-only wrapper (magic + SHA-256) for trusted-local destinations. Single-pass streaming AES-256-CTR + HMAC-SHA256, atomic tempfile-then-rename on decrypt. Existing IPAMBKP1 / IPAMBKP2 archives remain restorable &mdash; no operator action required.
-- **Manual upload-and-restore wizard step (#837).** New "Upload a backup file" affordance on the Restore tab for one-off restores of an archive that did not originate from a configured destination (e-mailed in, pulled by another tool, exported from a different IPAM install). For IPAMBKP3 transitory archives the wizard prompts for the passphrase between upload and dry-run. Admin-tunable `backup_max_upload_size_mb` setting (default 2 GiB) caps the upload.
-- **Standalone decrypt CLI: `tools/decrypt-backup.php` (#1043).** Decrypts an IPAMBKP1/2/3 or IPAMBKU1 archive without a running install &mdash; useful when the originating IPAM install is gone but you still hold the credential. Auto-detects format from magic bytes; reads passphrase from `IPAM_BACKUP_PASSPHRASE` env to keep secrets out of `argv`.
-- **PostgreSQL `tuple concurrently updated` race fixed.** `ensure_audit_log_table()` previously emitted `CREATE OR REPLACE TRIGGER` on every request, racing on the system catalog under bursty PHP-FPM load (concurrent page + sub-resource requests). Now probes for the table first and only runs DDL when self-heal is genuinely needed. Same root cause as #1091's deferred bisection &mdash; both classes of pgsql intermittent resolved.
-- **Crypto audit cluster (#838).** `random_bytes()` availability assert at every encrypt entry point, HMAC purpose-string audit across every dialect call site, constant-time double-HMAC compare for IPAMBKP3 verify, IPAMBKP1 GCM IV-reuse note in upgrade docs, and tag/IV docblock clarifications.
+- **Backup format picker on every destination (#1076 + #849).** Choose **Logical** (engine-agnostic `IPAMBKL1`, default) or **Database** (engine-native dump, escape hatch). The orchestrator dispatches on the chosen format at run time and the History tab's filter chip finally has both values to filter against.
+- **Retention rehome to destination level (#846).** Hourly/daily/weekly/monthly windows now live on `backup_destinations` so they describe "how much to keep at this storage location" rather than "how often we write to it." Existing per-schedule values backfill automatically.
+- **Default destination + protect / unprotect (#848 + #847).** "Set default" pre-fills Run-now and schedule-create. "★ protected" badge in the History list excludes a row from retention auto-prune.
+- **Opt-out encryption for trusted Local destinations (#851).** New `default_encryption_mode` per destination. Unencrypted is gated to Local only, server-side and in the UI.
+- **Cancel-in-flight on Run-now + S3 range-resume (#856 + #852).** Long S3 / SFTP uploads are now cancellable; the orchestrator polls between chunk boundaries. `S3Client::download()` resumes from a `<dest>.partial` sidecar via `Range: bytes=offset-` over up to 3 attempts.
+- **Verify-all bulk action (#850).** New "Verify all" button per destination downloads + re-hashes every successful `backup_runs` row with summary `{ok, total, success, failed, failures[]}`.
+- **Dashboard backup card (#853) + Health page destinations section (#854).** At-a-glance freshness on the Dashboard and per-destination connectivity status on the Health page.
+- **Per-tab notification recipients + delivery (#1078).** Backup notifications can target a different audience than the global alert infrastructure.
 
 [Full changelog →](CHANGELOG.md)
 

@@ -812,22 +812,22 @@ Each milestone is now ≤16 items, single-theme. Less context-switching mid-rele
 
 | ID | Type | Title | Cur | Sugg | Pri | Notes |
 |---|---|---|---|---|---|---|
-| F15 | Func | Retention re-homed at destination level | — | v3.25 | P1 | §3 AGREED |
-| F14 | Func | "Protect this backup" flag on rows | — | v3.25 | P1 | §3 |
-| F10 | Func | Default destination selector | — | v3.25 | P2 | §2.3 |
-| F19 | Func | Wire `ipam_backup_run()` to dispatch on `backup_type` (logical → v3.23.0 IPAMBKL1 backend; database → existing shell-out) | — | v3.25 | P1 | #849. **Not the dump engine** — that shipped in v3.23.0 (F18/#824). This issue is the wire-up between picker UI choice and existing backend. Per 2026-05-03 reconciliation. |
-| F19a | Func | **Destination + Run-now Logical/Database picker UI** | — | v3.25 | **P1** | #1076. Operator-facing entry point for the v3.23.0 IPAMBKL1 backend. Pairs with F19. |
-| F24 | Func | "Verify all backups" bulk action | — | v3.25 | P2 | New |
-| F25 | Func | Opt-out encryption for trusted local | — | v3.25 | P2 | New |
-| F34 | Func | Range-request resume in S3Client::download | — | v3.25 | P2 | Audit #28 |
-| U3 | UI | Dashboard backup feature card | — | v3.25 | P2 | last-run / next-run / size |
-| U4 | UI | Health page per-destination status | — | v3.25 | P2 | New |
-| U6 | UI | Skeleton loading on remote-listings | — | v3.25 | P2 | UX checklist |
-| U8 | UI | Cancel-in-flight on Run-now | — | v3.25 | P2 | New |
-| U9 | UI | Encryption-format icon in History | — | v3.25 | P2 | v1/v2/v3 visibility |
-| U10 | UI | Type-name-to-confirm on destination delete | — | v3.25 | P2 | Pattern extension |
-| T8 | Test | Destination-disabled mid-backup | — | v3.25 | P2 | Graceful failure |
-| T9 | Test | Large-DB streaming test (>1GB) | — | v3.25 | P2 | Memory bounds |
+| ~~F15~~ | ~~Func~~ | ~~Retention re-homed at destination level~~ | — | **v3.25 SHIPPED 2026-05-06 (#846)** | — | §3 AGREED |
+| ~~F14~~ | ~~Func~~ | ~~"Protect this backup" flag on rows~~ | — | **v3.25 SHIPPED 2026-05-06 (#847)** | — | §3 |
+| ~~F10~~ | ~~Func~~ | ~~Default destination selector~~ | — | **v3.25 SHIPPED 2026-05-06 (#848)** | — | §2.3 |
+| ~~F19~~ | ~~Func~~ | ~~Wire `ipam_backup_run()` to dispatch on `backup_type`~~ | — | **v3.25 SHIPPED 2026-05-06 (#849)** | — | Reconciled 2026-05-03; UI wire-up only. |
+| ~~F19a~~ | ~~Func~~ | ~~Destination + Run-now Logical/Database picker UI~~ | — | **v3.25 SHIPPED 2026-05-06 (#1076)** | — | Operator-facing entry point. |
+| ~~F24~~ | ~~Func~~ | ~~"Verify all backups" bulk action~~ | — | **v3.25 SHIPPED 2026-05-06 (#850)** | — | New |
+| ~~F25~~ | ~~Func~~ | ~~Opt-out encryption for trusted local~~ | — | **v3.25 SHIPPED 2026-05-06 (#851)** | — | New |
+| ~~F34~~ | ~~Func~~ | ~~Range-request resume in S3Client::download~~ | — | **v3.25 SHIPPED 2026-05-06 (#852)** | — | Audit #28 |
+| ~~U3~~ | ~~UI~~ | ~~Dashboard backup feature card~~ | — | **v3.25 SHIPPED 2026-05-06 (#853)** | — | last-run / next-run / size |
+| ~~U4~~ | ~~UI~~ | ~~Health page per-destination status~~ | — | **v3.25 SHIPPED 2026-05-06 (#854)** | — | New |
+| ~~U6~~ | ~~UI~~ | ~~Skeleton loading on remote-listings~~ | — | **v3.25 SHIPPED 2026-05-06 (#855)** | — | UX checklist; toggle helper + CSS, page-level wiring is opt-in. |
+| ~~U8~~ | ~~UI~~ | ~~Cancel-in-flight on Run-now~~ | — | **v3.25 SHIPPED 2026-05-06 (#856)** | — | New |
+| ~~U9~~ | ~~UI~~ | ~~Encryption-format icon in History~~ | — | **v3.25 SHIPPED 2026-05-06 (#857)** | — | v1/v2/v3 visibility |
+| ~~U10~~ | ~~UI~~ | ~~Type-name-to-confirm on destination delete~~ | — | **v3.25 SHIPPED 2026-05-06 (#858)** | — | Pattern extension |
+| T8 | Test | Destination-disabled mid-backup | — | v3.25.x | P2 | Deferred to v3.25.1 — see #859. |
+| T9 | Test | Large-DB streaming test (>1GB) | — | v3.25.x | P2 | Deferred to v3.25.1 — see #860. |
 
 **v3.25.0 total: ~16 items.** Theme is "surface the v3.23.0 backend + retention rehome + UI polish." F19 is no longer the dump engine — it's the dispatch wire-up; F19a (#1076) is the picker UI; F18 (#824) shipped the underlying IPAMBKL1 backend in v3.23.0. Polish-heavy; can absorb minor cuts if it slips.
 

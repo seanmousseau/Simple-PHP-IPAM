@@ -18,7 +18,6 @@ $destType = to_str($dest['type']);
     <input type="text" value="<?= e(strtoupper($destType)) ?>" disabled readonly>
     <small class="muted">Type is locked. Delete and recreate to change.</small>
   </label>
-  <label class="checkbox"><input type="checkbox" name="encrypt" <?= to_int($dest['encrypt']) === 1 ? 'checked' : '' ?>> Encrypt with AES-256-GCM (recommended)</label>
   <?php $cfg = $config; ?>
   <fieldset>
     <legend><?= e(strtoupper($destType)) ?> connection</legend>
@@ -37,6 +36,22 @@ $destType = to_str($dest['type']);
     require $partial;
     ?>
   </fieldset>
+  <?php
+    // v3.25.0 #1076 #851 #846 #848: shared picker fields prefilled from the
+    // destination row. The legacy `encrypt` checkbox is replaced by the
+    // encryption-mode radio group (#851).
+    $picker = [
+        'type'                    => $destType,
+        'default_backup_type'     => $dest['default_backup_type']     ?? null,
+        'default_encryption_mode' => $dest['default_encryption_mode'] ?? null,
+        'retention_hourly'        => $dest['retention_hourly']        ?? null,
+        'retention_daily'         => $dest['retention_daily']         ?? null,
+        'retention_weekly'        => $dest['retention_weekly']        ?? null,
+        'retention_monthly'       => $dest['retention_monthly']       ?? null,
+        'is_default'              => $dest['is_default']              ?? 0,
+    ];
+    require __DIR__ . '/_destination_picker_fields.php';
+  ?>
   <div class="drawer-actions">
     <button type="submit" class="action-pill">Save changes</button>
   </div>

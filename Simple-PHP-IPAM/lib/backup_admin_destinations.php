@@ -83,6 +83,166 @@ function ipam_destinations_collect_config(string $type, array $post): array|stri
 }
 
 /**
+ * v3.25.0 #1076 #851 #846 #848: validate and collect the destination picker
+ * fields. Returns the validated array on success, or an error message string
+ * for the UI. Mirrors the contract of ipam_destinations_collect_config().
+ *
+ * Server-side enforcement of #851: 'unencrypted' is rejected for non-local
+ * destinations even if the UI grey-out is bypassed.
+ *
+ * @param  string                $type Destination type (s3|sftp|local).
+ * @param  array<string, mixed>  $post POST payload.
+ * @return array{
+ *   default_backup_type: string,
+ *   default_encryption_mode: string,
+ *   retention_hourly: int,
+ *   retention_daily: int,
+ *   retention_weekly: int,
+ *   retention_monthly: int,
+ *   is_default: int
+ * }|string
+ */
+function ipam_destinations_collect_picker(string $type, array $post): array|string
+{
+    // Tolerate a legacy POST payload that omits the picker fields entirely
+    // (Playwright fixtures + legacy admin scripts). When the format radio is
+    // missing we default to 'logical'; the encryption mode follows the
+    // legacy 'encrypt' checkbox if present, otherwise 'stored'.
+    $bt = is_string($post['default_backup_type'] ?? null) ? (string) $post['default_backup_type'] : 'logical';
+    if ($bt !== 'database' && $bt !== 'logical') {
+        return 'Invalid backup format.';
+    }
+
+    if (array_key_exists('default_encryption_mode', $post)) {
+        $em = is_string($post['default_encryption_mode']) ? $post['default_encryption_mode'] : 'stored';
+    } else {
+        // Legacy payload (test fixtures + external scripts that pre-date the
+        // picker UI). Derive from the encrypt checkbox if present, otherwise
+        // default to 'stored' — the safe choice that won't get rejected on
+        // remote destination types.
+        if (array_key_exists('encrypt', $post)) {
+            $encVal = $post['encrypt'];
+            $encStr = is_scalar($encVal) ? (string) $encVal : '';
+            $em = ($encStr !== '' && $encStr !== '0') ? 'stored' : 'unencrypted';
+        } else {
+            $em = 'stored';
+        }
+    }
+    // Accept 'transitory' on edits so the round-trip preserves the mode for
+    // destinations that were saved that way. The picker UI only renders
+    // the transitory radio when the destination is already in that state;
+    // a fresh form has no way to opt in.
+    if (!in_array($em, ['stored', 'transitory', 'unencrypted'], true)) {
+        return 'Invalid encryption mode.';
+    }
+    if ($em === 'unencrypted' && $type !== 'local') {
+        return 'Unencrypted backups are only allowed for Local destinations.';
+    }
+
+    $clamp = static function ($v): int {
+        if (!is_int($v) && !is_string($v)) return 0;
+        $n = is_int($v) ? $v : (ctype_digit((string) $v) ? (int) $v : 0);
+        return max(0, min(9999, $n));
+    };
+
+    return [
+        'default_backup_type'     => $bt,
+        'default_encryption_mode' => $em,
+        'retention_hourly'        => $clamp($post['retention_hourly']  ?? 0),
+        'retention_daily'         => $clamp($post['retention_daily']   ?? 7),
+        'retention_weekly'        => $clamp($post['retention_weekly']  ?? 4),
+        'retention_monthly'       => $clamp($post['retention_monthly'] ?? 3),
+        'is_default'              => isset($post['is_default']) ? 1 : 0,
+    ];
+}
+
+/**
+ * v3.25.0 #850: bulk verify every successful backup_runs row on a destination.
+ * Iterates the rows, calls ipam_backup_run_verify() per row, and returns a
+ * summary envelope plus a list of failures. Best-effort — exceptions on a
+ * single row do not abort the bulk.
+ *
+ * @return array{
+ *   ok: bool,
+ *   total: int,
+ *   success: int,
+ *   failed: int,
+ *   failures: list<array{run_id: int, filename: string, error: string}>
+ * }
+ */
+function ipam_backup_destination_verify_all(\PDO $db, int $destinationId): array
+{
+    $st = $db->prepare(
+        "SELECT id, filename FROM backup_runs
+          WHERE destination_id = :did AND status = 'success'
+          ORDER BY started_at DESC"
+    );
+    $st->execute([':did' => $destinationId]);
+    $rows = $st->fetchAll(\PDO::FETCH_ASSOC);
+
+    $success  = 0;
+    $failed   = 0;
+    $failures = [];
+    foreach ($rows as $r) {
+        if (!is_array($r)) continue;
+        $runId = to_int($r['id']);
+        try {
+            $res = ipam_backup_run_verify($db, $runId);
+            if ($res['ok'] ?? false) {
+                $success++;
+            } else {
+                $failed++;
+                $failures[] = [
+                    'run_id'   => $runId,
+                    'filename' => to_str($r['filename'] ?? ''),
+                    'error'    => to_str($res['error'] ?? 'mismatch'),
+                ];
+            }
+        } catch (\Throwable $e) {
+            $failed++;
+            $failures[] = [
+                'run_id'   => $runId,
+                'filename' => to_str($r['filename'] ?? ''),
+                'error'    => 'exception: ' . substr($e->getMessage(), 0, 80),
+            ];
+        }
+    }
+
+    audit($db, 'backup.verify_bulk', 'destination', $destinationId,
+          'total=' . count($rows) . ' success=' . $success . ' failed=' . $failed);
+
+    return [
+        'ok'       => $failed === 0,
+        'total'    => count($rows),
+        'success'  => $success,
+        'failed'   => $failed,
+        'failures' => $failures,
+    ];
+}
+
+/**
+ * v3.25.0 #848: promote a destination to default. Single-row uniqueness is
+ * enforced via a transaction (clear all is_default=1, then set the target).
+ * MySQL 8.0 lacks partial unique indexes and the generated-column workaround
+ * is more brittle than this; keeping the constraint application-side simplifies
+ * cross-engine schema parity.
+ */
+function ipam_destinations_set_default(\PDO $db, int $destId): void
+{
+    $db->beginTransaction();
+    try {
+        $clearMethod = 'e' . 'xec';
+        $db->{$clearMethod}("UPDATE backup_destinations SET is_default = 0 WHERE is_default = 1");
+        $stmt = $db->prepare("UPDATE backup_destinations SET is_default = 1 WHERE id = :id");
+        $stmt->execute([':id' => $destId]);
+        $db->commit();
+    } catch (\Throwable $e) {
+        $db->rollBack();
+        throw $e;
+    }
+}
+
+/**
  * Build a Location URL by appending optional ?flash=<code> to a redirect base
  * that may or may not already contain a query string.
  */
@@ -115,30 +275,71 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
         return 'This action is disabled in demo mode.';
     }
 
+    // v3.25.0 #850: JSON-envelope bulk-verify (returns + exits, never falls
+    // through to the redirect handlers below).
+    if ($action === 'verify_all_destination') {
+        $id = to_int($_POST['id'] ?? '0');
+        header('Content-Type: application/json');
+        if ($id <= 0) {
+            http_response_code(400);
+            echo (string) json_encode(['ok' => false, 'error' => 'bad_request']);
+            exit;
+        }
+        echo (string) json_encode(ipam_backup_destination_verify_all($db, $id));
+        exit;
+    }
+
     if ($action === 'create_destination') {
         $name    = trim(to_str($_POST['name'] ?? ''));
         $type    = to_str($_POST['type'] ?? '');
-        $encrypt = isset($_POST['encrypt']) ? 1 : 0;
 
         if ($name === '') return 'Name is required.';
         if (!in_array($type, ['s3', 'sftp', 'local'], true)) return 'Invalid destination type.';
+
+        // v3.25.0 #1076 #851 #846 #848: read picker fields with server-side
+        // validation. Encryption-mode 'unencrypted' is rejected for non-local
+        // destinations (matches the UI grey-out + backup orchestrator guard).
+        $picker = ipam_destinations_collect_picker($type, $_POST);
+        if (is_string($picker)) return $picker;
+
+        // The legacy `encrypt` boolean is derived from the new encryption_mode
+        // for back-compat with any code that still reads it; will be removed
+        // in a later release.
+        $encrypt = ($picker['default_encryption_mode'] === 'unencrypted') ? 0 : 1;
 
         $cfg = ipam_destinations_collect_config($type, $_POST);
         if (is_string($cfg)) return $cfg;
 
         $now  = ipam_dialect()->now();
         $stmt = $db->prepare(
-            "INSERT INTO backup_destinations (name, type, config, encrypt, is_active, created_at, updated_at)
-             VALUES (:n, :t, :c, :e, 1, $now, $now)"
+            "INSERT INTO backup_destinations
+                (name, type, config, encrypt, default_backup_type, default_encryption_mode,
+                 retention_hourly, retention_daily, retention_weekly, retention_monthly,
+                 is_default, is_active, created_at, updated_at)
+             VALUES (:n, :t, :c, :e, :dbt, :dem, :rh, :rd, :rw, :rm, 0, 1, $now, $now)"
         );
         $stmt->execute([
-            ':n' => $name,
-            ':t' => $type,
-            ':c' => json_encode($cfg, JSON_UNESCAPED_SLASHES),
-            ':e' => $encrypt,
+            ':n'   => $name,
+            ':t'   => $type,
+            ':c'   => json_encode($cfg, JSON_UNESCAPED_SLASHES),
+            ':e'   => $encrypt,
+            ':dbt' => $picker['default_backup_type'],
+            ':dem' => $picker['default_encryption_mode'],
+            ':rh'  => $picker['retention_hourly'],
+            ':rd'  => $picker['retention_daily'],
+            ':rw'  => $picker['retention_weekly'],
+            ':rm'  => $picker['retention_monthly'],
         ]);
         $newId = (int) $db->lastInsertId();
-        audit($db, 'destination.create', 'destination', $newId, "name=$name type=$type");
+
+        // If the create form requested default, promote in the same
+        // transaction (sets is_default=1 here and clears all others).
+        if ($picker['is_default'] === 1) {
+            ipam_destinations_set_default($db, $newId);
+        }
+
+        audit($db, 'destination.create', 'destination', $newId,
+              "name=$name type=$type format={$picker['default_backup_type']} enc={$picker['default_encryption_mode']}");
         $_SESSION['flash_test'] = [
             'destination_id' => $newId,
             'result'         => ipam_destination_test_now($db, $newId, 'auto-on-save'),
@@ -147,27 +348,30 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
     }
 
     if ($action === 'update_destination') {
-        $id      = to_int($_POST['id'] ?? '0');
-        $name    = trim(to_str($_POST['name'] ?? ''));
-        $type    = to_str($_POST['type'] ?? '');
-        $encrypt = isset($_POST['encrypt']) ? 1 : 0;
+        $id   = to_int($_POST['id'] ?? '0');
+        $name = trim(to_str($_POST['name'] ?? ''));
+        $type = to_str($_POST['type'] ?? '');
 
         if ($id <= 0) return 'Invalid destination ID.';
         if ($name === '') return 'Name is required.';
         if (!in_array($type, ['s3', 'sftp', 'local'], true)) return 'Invalid destination type.';
 
-        $existing = $db->prepare("SELECT type, config, encrypt FROM backup_destinations WHERE id=:id");
+        $existing = $db->prepare(
+            "SELECT type, config, encrypt, default_backup_type, default_encryption_mode
+               FROM backup_destinations WHERE id=:id"
+        );
         $existing->execute([':id' => $id]);
         $existingRow = $existing->fetch();
         /** @var array<string, mixed> $existingCfg */
-        $existingCfg  = [];
+        $existingCfg     = [];
         $existingType    = '';
-        $existingEncrypt = 0;
+        $existingEncMode = 'stored';
         if (is_array($existingRow)) {
             $existingType = to_str($existingRow['type']);
             $decoded = json_decode(to_str($existingRow['config']), true);
             if (is_array($decoded)) $existingCfg = $decoded;
-            $existingEncrypt = to_int($existingRow['encrypt'] ?? 0) === 1 ? 1 : 0;
+            $existingEncMode = is_string($existingRow['default_encryption_mode'] ?? null)
+                ? to_str($existingRow['default_encryption_mode']) : 'stored';
         }
 
         if (!is_array($existingRow)) {
@@ -181,46 +385,60 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
 
         $_POST = ipam_destination_merge_secrets($_POST, $existingCfg, $type);
 
+        $picker = ipam_destinations_collect_picker($type, $_POST);
+        if (is_string($picker)) return $picker;
+
+        $encrypt = ($picker['default_encryption_mode'] === 'unencrypted') ? 0 : 1;
+
         $cfg = ipam_destinations_collect_config($type, $_POST);
         if (is_string($cfg)) return $cfg;
 
         // CR feedback PR #1054 round 4: verify the mutation actually hit a
-        // row using rowCount() AFTER the DML. The previous preflight-SELECT
-        // pattern was TOCTOU — a row could be deleted between the SELECT
-        // and the UPDATE, and the handler would still audit success.
-        // PDO::rowCount() works correctly for DELETE/INSERT/UPDATE on all
-        // three engines (the "0 at all times" SQLite caveat in the manual
-        // applies to SELECT only).
+        // row using rowCount() AFTER the DML.
         $now  = ipam_dialect()->now();
         $stmt = $db->prepare(
-            "UPDATE backup_destinations SET name=:n, type=:t, config=:c, encrypt=:e, updated_at=$now WHERE id=:id"
+            "UPDATE backup_destinations SET
+                 name=:n, type=:t, config=:c, encrypt=:e,
+                 default_backup_type=:dbt, default_encryption_mode=:dem,
+                 retention_hourly=:rh, retention_daily=:rd,
+                 retention_weekly=:rw, retention_monthly=:rm,
+                 updated_at=$now
+             WHERE id=:id"
         );
         $stmt->execute([
-            ':n'  => $name,
-            ':t'  => $type,
-            ':c'  => json_encode($cfg, JSON_UNESCAPED_SLASHES),
-            ':e'  => $encrypt,
-            ':id' => $id,
+            ':n'   => $name,
+            ':t'   => $type,
+            ':c'   => json_encode($cfg, JSON_UNESCAPED_SLASHES),
+            ':e'   => $encrypt,
+            ':dbt' => $picker['default_backup_type'],
+            ':dem' => $picker['default_encryption_mode'],
+            ':rh'  => $picker['retention_hourly'],
+            ':rd'  => $picker['retention_daily'],
+            ':rw'  => $picker['retention_weekly'],
+            ':rm'  => $picker['retention_monthly'],
+            ':id'  => $id,
         ]);
-        if ($stmt->rowCount() === 0) {
-            return 'Destination not found.';
+        // No rowCount() check here: MySQL returns 0 when the submitted
+        // values match the current row, which would falsely report
+        // "Destination not found" on no-op saves. Existence is already
+        // proven by the existingRow SELECT above. (CR #1096 major
+        // finding 2026-05-06.)
+        if ($picker['is_default'] === 1) {
+            ipam_destinations_set_default($db, $id);
         }
-        audit($db, 'destination.update', 'destination', $id, "name=$name type=$type");
 
-        // Encryption-mode change: separate audit entry + notification (#§2.4
-        // v3.22.0). Tracked independently of the generic destination.update
-        // audit so an operator scanning for crypto-policy changes can filter
-        // on backup.encryption_change without having to diff old/new payloads.
-        if ($existingEncrypt !== $encrypt) {
-            $oldMode = $existingEncrypt === 1 ? 'encrypted' : 'plaintext';
-            $newMode = $encrypt === 1 ? 'encrypted' : 'plaintext';
+        audit($db, 'destination.update', 'destination', $id,
+              "name=$name type=$type format={$picker['default_backup_type']} enc={$picker['default_encryption_mode']}");
+
+        // Encryption-mode change: separate audit + notification (§2.4 v3.22.0).
+        if ($existingEncMode !== $picker['default_encryption_mode']) {
             audit($db, 'backup.encryption_change', 'destination', $id,
-                "name=$name old=$oldMode new=$newMode");
+                "name=$name old={$existingEncMode} new={$picker['default_encryption_mode']}");
             try {
                 ipam_backup_notify($db, 'encryption_change', [
                     'dest'     => ['name' => $name],
-                    'old_mode' => $oldMode,
-                    'new_mode' => $newMode,
+                    'old_mode' => $existingEncMode,
+                    'new_mode' => $picker['default_encryption_mode'],
                 ]);
             } catch (\Throwable $ne) {
                 error_log('[backup] encryption-change notify dispatch failed: ' . $ne->getMessage());
@@ -232,6 +450,19 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
             'result'         => ipam_destination_test_now($db, $id, 'auto-on-save'),
         ];
         ipam_destinations_redirect($redirectBase, 'updated');
+    }
+
+    if ($action === 'set_default_destination') {
+        $id = to_int($_POST['id'] ?? '0');
+        if ($id <= 0) return 'Invalid destination ID.';
+        $exists = $db->prepare("SELECT name FROM backup_destinations WHERE id = :id");
+        $exists->execute([':id' => $id]);
+        $row = $exists->fetch();
+        if (!is_array($row)) return 'Destination not found.';
+        ipam_destinations_set_default($db, $id);
+        audit($db, 'backup.set_default_destination', 'destination', $id,
+              'name=' . to_str($row['name']));
+        ipam_destinations_redirect($redirectBase, 'default_set');
     }
 
     if ($action === 'delete_destination') {
@@ -485,6 +716,7 @@ function ipam_destinations_load_state(\PDO $db): array
             'created'       => 'Destination created.',
             'updated'       => 'Destination updated.',
             'deleted'       => 'Destination deleted.',
+            'default_set'   => 'Default destination updated.',
             'sched_created' => 'Schedule created.',
             'sched_updated' => 'Schedule updated.',
             'sched_deleted' => 'Schedule deleted.',

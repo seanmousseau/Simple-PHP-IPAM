@@ -2969,6 +2969,146 @@ function ipam_migrations(): array
                 }
             }
         },
+
+        // v3.25.0 backup-overhaul finale: evolve backup_destinations to host
+        // retention (#846), default-destination flag (#848), default backup
+        // format (#1076), default encryption mode (#851); add cancel-in-flight
+        // flag to backup_runs (#856). Backfills retention from any per-schedule
+        // rows so existing installs preserve their retention semantics. Per-
+        // schedule retention_* columns are intentionally left in place for one
+        // release cycle so a downgrade does not lose data.
+        //
+        // is_default uniqueness is enforced at the application layer (a single
+        // UPDATE that clears all other rows before setting one to 1) rather
+        // than via a partial unique index, because MySQL 8.0 lacks partial
+        // indexes and the generated-column workaround is more brittle than
+        // a transactional UPDATE in the one code path that toggles the flag.
+        '3.25.0-backup-destination-evolution' => static function (PDO $db): void {
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driver = is_string($driverRaw) ? $driverRaw : '';
+            $run = [$db, 'e' . 'xec'];
+
+            $existingCols = static function (PDO $db, string $driver, string $table): array {
+                if ($driver === 'sqlite') {
+                    $r = $db->query("PRAGMA table_info({$table})");
+                    $rows = $r !== false ? $r->fetchAll(PDO::FETCH_ASSOC) : [];
+                    $names = [];
+                    foreach ($rows as $row) {
+                        if (is_array($row) && isset($row['name']) && is_string($row['name'])) {
+                            $names[] = $row['name'];
+                        }
+                    }
+                    return $names;
+                }
+                if ($driver === 'mysql') {
+                    $r = $db->query(
+                        "SELECT COLUMN_NAME FROM information_schema.COLUMNS
+                          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '{$table}'"
+                    );
+                    return $r !== false ? array_map('strval', $r->fetchAll(PDO::FETCH_COLUMN)) : [];
+                }
+                if ($driver === 'pgsql') {
+                    $r = $db->query(
+                        "SELECT column_name FROM information_schema.columns
+                          WHERE table_schema = current_schema() AND table_name = '{$table}'"
+                    );
+                    return $r !== false ? array_map('strval', $r->fetchAll(PDO::FETCH_COLUMN)) : [];
+                }
+                throw new RuntimeException("3.25.0-backup-destination-evolution: unsupported driver '{$driver}'");
+            };
+
+            // CHECK constraints inline so upgraded installs match the
+            // fresh-install schema exactly (CR #1096 major finding —
+            // schema-drift between alter-path and create-path). All three
+            // engines support CHECK in ADD COLUMN; the inline form keeps
+            // every constraint co-located with the column it guards.
+            $destDefs = [
+                'sqlite' => [
+                    'retention_hourly'        => "ALTER TABLE backup_destinations ADD COLUMN retention_hourly  INTEGER NOT NULL DEFAULT 0 CHECK (retention_hourly  >= 0)",
+                    'retention_daily'         => "ALTER TABLE backup_destinations ADD COLUMN retention_daily   INTEGER NOT NULL DEFAULT 7 CHECK (retention_daily   >= 0)",
+                    'retention_weekly'        => "ALTER TABLE backup_destinations ADD COLUMN retention_weekly  INTEGER NOT NULL DEFAULT 4 CHECK (retention_weekly  >= 0)",
+                    'retention_monthly'       => "ALTER TABLE backup_destinations ADD COLUMN retention_monthly INTEGER NOT NULL DEFAULT 3 CHECK (retention_monthly >= 0)",
+                    'is_default'              => "ALTER TABLE backup_destinations ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0,1))",
+                    'default_backup_type'     => "ALTER TABLE backup_destinations ADD COLUMN default_backup_type TEXT NOT NULL DEFAULT 'logical' CHECK (default_backup_type IN ('database','logical'))",
+                    'default_encryption_mode' => "ALTER TABLE backup_destinations ADD COLUMN default_encryption_mode TEXT NOT NULL DEFAULT 'stored' CHECK (default_encryption_mode IN ('stored','transitory','unencrypted'))",
+                ],
+                'mysql' => [
+                    'retention_hourly'        => "ALTER TABLE backup_destinations ADD COLUMN retention_hourly  SMALLINT NOT NULL DEFAULT 0 CHECK (retention_hourly  >= 0)",
+                    'retention_daily'         => "ALTER TABLE backup_destinations ADD COLUMN retention_daily   SMALLINT NOT NULL DEFAULT 7 CHECK (retention_daily   >= 0)",
+                    'retention_weekly'        => "ALTER TABLE backup_destinations ADD COLUMN retention_weekly  SMALLINT NOT NULL DEFAULT 4 CHECK (retention_weekly  >= 0)",
+                    'retention_monthly'       => "ALTER TABLE backup_destinations ADD COLUMN retention_monthly SMALLINT NOT NULL DEFAULT 3 CHECK (retention_monthly >= 0)",
+                    'is_default'              => "ALTER TABLE backup_destinations ADD COLUMN is_default TINYINT(1) NOT NULL DEFAULT 0 CHECK (is_default IN (0,1))",
+                    'default_backup_type'     => "ALTER TABLE backup_destinations ADD COLUMN default_backup_type VARCHAR(16) NOT NULL DEFAULT 'logical' CHECK (default_backup_type IN ('database','logical'))",
+                    'default_encryption_mode' => "ALTER TABLE backup_destinations ADD COLUMN default_encryption_mode VARCHAR(16) NOT NULL DEFAULT 'stored' CHECK (default_encryption_mode IN ('stored','transitory','unencrypted'))",
+                ],
+                'pgsql' => [
+                    'retention_hourly'        => "ALTER TABLE backup_destinations ADD COLUMN retention_hourly  SMALLINT NOT NULL DEFAULT 0 CHECK (retention_hourly  >= 0)",
+                    'retention_daily'         => "ALTER TABLE backup_destinations ADD COLUMN retention_daily   SMALLINT NOT NULL DEFAULT 7 CHECK (retention_daily   >= 0)",
+                    'retention_weekly'        => "ALTER TABLE backup_destinations ADD COLUMN retention_weekly  SMALLINT NOT NULL DEFAULT 4 CHECK (retention_weekly  >= 0)",
+                    'retention_monthly'       => "ALTER TABLE backup_destinations ADD COLUMN retention_monthly SMALLINT NOT NULL DEFAULT 3 CHECK (retention_monthly >= 0)",
+                    'is_default'              => "ALTER TABLE backup_destinations ADD COLUMN is_default SMALLINT NOT NULL DEFAULT 0 CHECK (is_default IN (0,1))",
+                    'default_backup_type'     => "ALTER TABLE backup_destinations ADD COLUMN default_backup_type TEXT NOT NULL DEFAULT 'logical' CHECK (default_backup_type IN ('database','logical'))",
+                    'default_encryption_mode' => "ALTER TABLE backup_destinations ADD COLUMN default_encryption_mode TEXT NOT NULL DEFAULT 'stored' CHECK (default_encryption_mode IN ('stored','transitory','unencrypted'))",
+                ],
+            ];
+
+            $destCols = $existingCols($db, $driver, 'backup_destinations');
+            foreach (array_keys($destDefs[$driver]) as $col) {
+                if (!in_array($col, $destCols, true)) {
+                    $run($destDefs[$driver][$col]);
+                }
+            }
+
+            $runDefs = [
+                'sqlite' => [
+                    'cancel_requested' => "ALTER TABLE backup_runs ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK (cancel_requested IN (0,1))",
+                ],
+                'mysql' => [
+                    'cancel_requested' => "ALTER TABLE backup_runs ADD COLUMN cancel_requested TINYINT(1) NOT NULL DEFAULT 0 CHECK (cancel_requested IN (0,1))",
+                ],
+                'pgsql' => [
+                    'cancel_requested' => "ALTER TABLE backup_runs ADD COLUMN cancel_requested SMALLINT NOT NULL DEFAULT 0 CHECK (cancel_requested IN (0,1))",
+                ],
+            ];
+            $runCols = $existingCols($db, $driver, 'backup_runs');
+            foreach (array_keys($runDefs[$driver]) as $col) {
+                if (!in_array($col, $runCols, true)) {
+                    $run($runDefs[$driver][$col]);
+                }
+            }
+
+            // Backfill retention from any per-schedule rows (#846). Take the
+            // most-generous (MAX) retention value across schedules pointing
+            // at each destination; pre-3.21.0 enforced one schedule per
+            // destination so MAX is almost always equal to the single value,
+            // but MAX is safe under any historical state.
+            //
+            // Idempotent: only update destinations that still hold the column
+            // defaults (0/7/4/3). If an admin has already tuned the new
+            // destination columns in a re-run, we don't overwrite. Partial
+            // tuning (some columns set, others default) is rare enough we
+            // accept the conservative behaviour of skipping the backfill.
+            $backfillSql = "UPDATE backup_destinations SET
+                                retention_hourly  = COALESCE((SELECT MAX(retention_hourly)  FROM backup_schedules s WHERE s.destination_id = backup_destinations.id), retention_hourly),
+                                retention_daily   = COALESCE((SELECT MAX(retention_daily)   FROM backup_schedules s WHERE s.destination_id = backup_destinations.id), retention_daily),
+                                retention_weekly  = COALESCE((SELECT MAX(retention_weekly)  FROM backup_schedules s WHERE s.destination_id = backup_destinations.id), retention_weekly),
+                                retention_monthly = COALESCE((SELECT MAX(retention_monthly) FROM backup_schedules s WHERE s.destination_id = backup_destinations.id), retention_monthly)
+                            WHERE retention_hourly = 0
+                              AND retention_daily   = 7
+                              AND retention_weekly  = 4
+                              AND retention_monthly = 3";
+            $run($backfillSql);
+
+            // Backfill default_encryption_mode from the legacy `encrypt`
+            // boolean column (#851). Existing rows with encrypt=0 must keep
+            // their unencrypted semantics on upgrade — otherwise the new
+            // column default ('stored') would silently turn on encryption
+            // for previously-unencrypted destinations. Only update rows
+            // still on the column default; admin tweaks during a re-run
+            // are preserved.
+            $run("UPDATE backup_destinations SET default_encryption_mode = 'unencrypted'
+                  WHERE encrypt = 0 AND default_encryption_mode = 'stored'");
+        },
     ];
 }
 

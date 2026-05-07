@@ -30,8 +30,12 @@ async function ensureTestDestination(page: Page): Promise<void> {
   const createForm = page.locator('form.destination-form:not(.destination-edit-form)');
   await createForm.locator('input[name="name"]').fill(TEST_DEST_NAME);
   await createForm.locator('select[name="type"]').selectOption('local');
-  const enc = createForm.locator('input[name="encrypt"]');
-  if (await enc.isChecked()) await enc.uncheck();
+  // v3.25.0 #851: encrypt checkbox replaced by encryption-mode radio.
+  // For Local destinations, "Unencrypted" is enabled and selectable.
+  const uncRadio = createForm.locator('input[name="default_encryption_mode"][value="unencrypted"]');
+  if (await uncRadio.count() > 0) {
+    await uncRadio.check();
+  }
   await createForm.locator('input[name="local_path"]').fill(TEST_DEST_PATH);
   await createForm.locator('button[type="submit"]').click();
   await page.waitForLoadState('networkidle');

@@ -379,5 +379,98 @@ ipam_render('dashboard_kpi_card', ['label' => 'Crit Alerts', 'value' => $kpis['a
 </div>
 <?php endif; ?>
 
+<?php
+/* v3.25.0 #853: dashboard backup card. One quick-glance card at the bottom
+ * of the dashboard showing the freshness of the install's backups so an
+ * operator never has to navigate to Backup & Restore just to confirm
+ * "yes, backups ran." Falls back to an empty-state CTA when no
+ * destinations are configured. */
+if (current_user()['role'] === 'admin'):
+    try {
+        $bdc = $db->query("SELECT COUNT(*) AS n FROM backup_destinations WHERE is_active = 1");
+        $bdcRow = $bdc !== false ? $bdc->fetch() : false;
+        $bdCount = is_array($bdcRow) ? to_int($bdcRow['n']) : 0;
+    } catch (\Throwable) {
+        $bdCount = 0;
+    }
+?>
+<div class="card" data-widget="backups" style="margin-top:1.25rem">
+  <div class="card-header"><h2><?= icon('archive-box') ?> Backups</h2></div>
+  <?php if ($bdCount === 0): ?>
+    <p class="muted">No backup destinations configured yet.</p>
+    <a href="backup_admin.php?tab=destinations" class="action-pill">Configure backups</a>
+  <?php else:
+    $lastRunStmt = $db->query(
+        "SELECT r.started_at, r.status, r.size_bytes, r.error_message,
+                r.destination_id, r.is_protected, r.encryption_mode,
+                d.name AS dest_name
+         FROM backup_runs r
+         LEFT JOIN backup_destinations d ON d.id = r.destination_id
+         ORDER BY r.started_at DESC LIMIT 1"
+    );
+    $lastRun = $lastRunStmt !== false ? $lastRunStmt->fetch() : false;
+
+    $nextRunStmt = $db->query(
+        "SELECT next_run_at, destination_id FROM backup_schedules
+         WHERE is_active = 1 AND next_run_at IS NOT NULL
+         ORDER BY next_run_at ASC LIMIT 1"
+    );
+    $nextRun = $nextRunStmt !== false ? $nextRunStmt->fetch() : false;
+
+    $totalsStmt = $db->query(
+        "SELECT COUNT(*) AS n, COALESCE(SUM(size_bytes), 0) AS total
+         FROM backup_runs WHERE status = 'success'"
+    );
+    $totalsRow = $totalsStmt !== false ? $totalsStmt->fetch() : false;
+    $totalCount = is_array($totalsRow) ? to_int($totalsRow['n']) : 0;
+    $totalBytes = is_array($totalsRow) ? to_int($totalsRow['total']) : 0;
+
+    $sizeFmt = static function (int $bytes): string {
+        $u = ['B','KB','MB','GB','TB'];
+        $i = 0;
+        $f = (float) $bytes;
+        while ($f >= 1024 && $i < count($u) - 1) { $f /= 1024; $i++; }
+        return number_format($f, $i === 0 ? 0 : 1) . ' ' . $u[$i];
+    };
+  ?>
+    <div class="kpi-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem">
+      <div>
+        <div class="muted" style="font-size:.85rem">Last run</div>
+        <?php if (is_array($lastRun)):
+            $lrStatus = to_str($lastRun['status']);
+            $lrClass  = 'badge-' . $lrStatus;
+        ?>
+          <div><a href="backup_admin.php?tab=history" style="color:inherit"><?= e(to_str($lastRun['started_at'])) ?></a></div>
+          <div><span class="badge <?= e($lrClass) ?>"><?= e($lrStatus) ?></span> · <?= e(to_str($lastRun['dest_name'] ?? '?')) ?></div>
+          <?php if ($lrStatus === 'failed' && to_str($lastRun['error_message'] ?? '') !== ''): ?>
+            <div class="muted" style="font-size:.8rem;margin-top:.25rem"><?= e(substr(to_str($lastRun['error_message']), 0, 80)) ?>…</div>
+          <?php endif; ?>
+        <?php else: ?>
+          <div class="muted">No backups yet</div>
+        <?php endif; ?>
+      </div>
+      <div>
+        <div class="muted" style="font-size:.85rem">Next scheduled</div>
+        <?php if (is_array($nextRun)): ?>
+          <div><?= e(to_str($nextRun['next_run_at'])) ?></div>
+        <?php else: ?>
+          <div class="muted">No active schedule</div>
+        <?php endif; ?>
+      </div>
+      <div>
+        <div class="muted" style="font-size:.85rem">Total stored</div>
+        <div><?= number_format($totalCount) ?> runs</div>
+        <div><?= e($sizeFmt($totalBytes)) ?></div>
+      </div>
+      <div>
+        <div class="muted" style="font-size:.85rem">Destinations</div>
+        <div><?= number_format($bdCount) ?> active</div>
+        <a href="backup_admin.php?tab=destinations" class="action-pill button-secondary" style="margin-top:.4rem">Manage</a>
+      </div>
+    </div>
+  <?php endif; ?>
+</div>
+<?php endif; ?>
+
 <script src="assets/vendor/uplot.min.js"></script>
 <?php page_footer();

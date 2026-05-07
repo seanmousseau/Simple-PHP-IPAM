@@ -3088,10 +3088,103 @@ function IpamVirtualTable(containerId, rows, rowHeight, renderRow) {
 (function () {
     document.querySelectorAll('form[data-confirm-delete]').forEach(function (form) {
         form.addEventListener('submit', function (ev) {
+            // v3.25.0 #858: when the form also has data-confirm-typename, gate
+            // delete behind typing the destination name. Belt-and-suspenders
+            // alongside the simpler window.confirm() prompt for any form that
+            // doesn't opt into the type-to-confirm pattern.
+            var typeName = form.getAttribute('data-confirm-typename');
+            if (typeName) {
+                var typed = window.prompt(
+                    'Type "' + typeName + '" to confirm delete:',
+                    ''
+                );
+                if (typed !== typeName) {
+                    ev.preventDefault();
+                    if (typed !== null) {
+                        window.alert('Name did not match. Delete canceled.');
+                    }
+                    return;
+                }
+                // Name matched — fall through (no second confirm needed).
+                return;
+            }
             var name = form.getAttribute('data-confirm-delete') || 'this file';
             if (!window.confirm('Delete ' + name + ' from the remote destination?')) {
                 ev.preventDefault();
             }
         });
     });
+})();
+
+/* === v3.25.0 #850 destinations Verify-all bulk action ===
+ * Buttons rendered with data-verify-all="<id>" + data-destination-name=
+ * trigger a JSON POST to backup_admin.php?tab=destinations with
+ * action=verify_all_destination. Result envelope is summarised inline next
+ * to the button. */
+(function () {
+    document.querySelectorAll('button[data-verify-all]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var destId = btn.getAttribute('data-verify-all');
+            var name   = btn.getAttribute('data-destination-name') || ('destination ' + destId);
+            if (!window.confirm('Verify every backup on ' + name + '? This downloads each artifact and re-hashes it; long-running on large destinations.')) {
+                return;
+            }
+            btn.disabled = true;
+            var originalLabel = btn.textContent;
+            btn.textContent = 'Verifying…';
+            var token = (document.querySelector('input[name="csrf"]') || {}).value || '';
+            var body  = new URLSearchParams();
+            body.append('csrf', token);
+            body.append('action', 'verify_all_destination');
+            body.append('id', String(destId));
+            fetch('backup_admin.php?tab=destinations', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Accept': 'application/json' },
+                body: body
+            }).then(function (r) {
+                return r.json().then(function (j) { return { ok: r.ok, body: j }; });
+            }).then(function (resp) {
+                var j = resp.body || {};
+                var msg;
+                if (j.ok) {
+                    msg = '✓ ' + j.success + '/' + j.total + ' verified';
+                } else {
+                    msg = '✗ ' + (j.failed || 0) + '/' + (j.total || 0) + ' failed';
+                    if (j.failures && j.failures.length) {
+                        msg += ' (first: run #' + j.failures[0].run_id + ' — ' + j.failures[0].error + ')';
+                    }
+                }
+                window.alert(msg);
+            }).catch(function (e) {
+                window.alert('Verify-all error: ' + (e && e.message ? e.message : e));
+            }).finally(function () {
+                btn.disabled = false;
+                btn.textContent = originalLabel;
+            });
+        });
+    });
+})();
+
+/* === v3.25.0 #855 skeleton-toggle helper ===
+ * Pages opt in by setting `data-skeleton="loading"` on a container that
+ * holds skeleton placeholder rows; once the real content is ready the
+ * container's `data-skeleton` attribute is set to `ready`. CSS handles
+ * the visual swap. This file just exposes a window-level helper for
+ * page scripts to call.
+ */
+(function () {
+    if (window.ipamSkeleton) return;
+    window.ipamSkeleton = {
+        loading: function (selector) {
+            document.querySelectorAll(selector).forEach(function (el) {
+                el.setAttribute('data-skeleton', 'loading');
+            });
+        },
+        ready: function (selector) {
+            document.querySelectorAll(selector).forEach(function (el) {
+                el.setAttribute('data-skeleton', 'ready');
+            });
+        }
+    };
 })();
