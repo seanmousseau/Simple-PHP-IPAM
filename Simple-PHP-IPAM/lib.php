@@ -11390,14 +11390,34 @@ function ipam_email_otp_verify(PDO $db, int $userId, string $code): bool
     }
 
     if (!password_verify($code, $hash)) {
-        $newAttempts = $attempts + 1;
-        if ($newAttempts >= 5) {
+        // #874: atomic conditional UPDATE — increment only if the row's
+        // current counter still matches the value we read above. If a
+        // concurrent request bumped the counter first, the update affects
+        // zero rows and we re-fetch to decide whether the cap has been
+        // crossed. Without this guard two simultaneous failed verifies
+        // both pass the SELECT-side $attempts < 5 check, both increment
+        // independently from the same baseline (giving prev+1 not prev+2),
+        // and the 5-strike cap can be exceeded by N concurrent attempts.
+        $upd = $db->prepare(
+            "UPDATE users
+                SET email_otp_attempts = email_otp_attempts + 1
+              WHERE id = :id AND email_otp_attempts = :prev"
+        );
+        $upd->execute([':id' => $userId, ':prev' => $attempts]);
+        if ($upd->rowCount() === 0) {
+            // Lost the race — re-fetch the post-increment value so the
+            // cap-cross branch below sees the true current count.
+            $reSt = $db->prepare("SELECT email_otp_attempts FROM users WHERE id = :id");
+            $reSt->execute([':id' => $userId]);
+            $current = to_int($reSt->fetchColumn() ?: 0);
+        } else {
+            $current = $attempts + 1;
+        }
+        if ($current >= 5) {
             ipam_email_otp_clear($db, $userId);
             audit($db, 'mfa.otp.locked', 'user', $userId, 'OTP locked: max attempts exceeded');
         } else {
-            $db->prepare("UPDATE users SET email_otp_attempts = email_otp_attempts + 1 WHERE id = :id")
-               ->execute([':id' => $userId]);
-            audit($db, 'mfa.otp.fail', 'user', $userId, "attempt={$newAttempts}");
+            audit($db, 'mfa.otp.fail', 'user', $userId, "attempt={$current}");
         }
         return false;
     }
