@@ -1110,18 +1110,97 @@ function logout_user(): void
 
 /* ---------------- Audit ---------------- */
 
+/**
+ * True if $ip falls inside any of the supplied CIDR blocks. Accepts both
+ * IPv4 and IPv6 strings and CIDRs; returns false on parse error.
+ *
+ * @param list<string> $cidrs
+ */
+function ip_in_any_cidr(string $ip, array $cidrs): bool
+{
+    $ipBin = @inet_pton($ip);
+    if ($ipBin === false) {
+        return false;
+    }
+    foreach ($cidrs as $cidr) {
+        $cidr = trim($cidr);
+        if ($cidr === '' || strpos($cidr, '/') === false) {
+            continue;
+        }
+        [$net, $prefixStr] = explode('/', $cidr, 2);
+        $netBin = @inet_pton($net);
+        if ($netBin === false || strlen($netBin) !== strlen($ipBin)) {
+            continue;
+        }
+        $prefix = (int)$prefixStr;
+        $bits   = strlen($ipBin) * 8;
+        if ($prefix < 0 || $prefix > $bits) {
+            continue;
+        }
+        $masked   = apply_prefix_mask($ipBin, $prefix);
+        $netMaskd = apply_prefix_mask($netBin, $prefix);
+        if ($masked === $netMaskd) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function client_ip(): string
 {
+    $remote = to_str($_SERVER['REMOTE_ADDR'] ?? '127.0.0.1');
+
+    // New (v3.26.0+) preferred path: trust X-Forwarded-For only when the
+    // direct REMOTE_ADDR is one of the operator-listed proxy CIDRs, then walk
+    // the chain right-to-left and return the first untrusted hop. This is the
+    // OWASP-recommended pattern (see docs/configuration.md → proxy_trust_cidrs).
+    $cidrsRaw  = to_str(ipam_setting('security.proxy_trust_cidrs', ''));
+    $cidrs     = array_values(array_filter(array_map('trim', preg_split('/[\r\n,]+/', $cidrsRaw) ?: [])));
+    $xffHeader = to_str($_SERVER['HTTP_X_FORWARDED_FOR'] ?? '');
+
+    if (!empty($cidrs)) {
+        if (!ip_in_any_cidr($remote, $cidrs)) {
+            return $remote;
+        }
+        if ($xffHeader === '') {
+            return $remote;
+        }
+        $hops      = array_reverse(array_map('trim', explode(',', $xffHeader)));
+        $candidate = $remote;
+        foreach ($hops as $hop) {
+            if (filter_var($hop, FILTER_VALIDATE_IP) === false) {
+                return $candidate;
+            }
+            if (ip_in_any_cidr($hop, $cidrs)) {
+                $candidate = $hop;
+                continue;
+            }
+            return $hop;
+        }
+        return $candidate;
+    }
+
+    // Legacy back-compat: the old boolean `proxy_trust` flag in config.php
+    // unconditionally trusted the leftmost X-Forwarded-For value. That is
+    // unsafe (the leftmost hop is whatever the original client sent and is
+    // freely spoofable) but operators relying on it must not break silently
+    // on upgrade. Emit a one-shot deprecation log per request and keep the
+    // old behaviour. Operators should migrate to security.proxy_trust_cidrs.
     /** @var IpamConfig $gConf */
     $gConf = $GLOBALS['config'];
-    if (!empty($gConf['proxy_trust']) && !empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
-        $parts     = array_map('trim', explode(',', to_str($_SERVER['HTTP_X_FORWARDED_FOR'])));
+    if (!empty($gConf['proxy_trust']) && $xffHeader !== '') {
+        static $warned = false;
+        if (!$warned) {
+            error_log('client_ip: legacy `proxy_trust` config flag is deprecated; configure security.proxy_trust_cidrs instead (#876).');
+            $warned = true;
+        }
+        $parts     = array_map('trim', explode(',', $xffHeader));
         $candidate = $parts[0];
         if (filter_var($candidate, FILTER_VALIDATE_IP) !== false) {
             return $candidate;
         }
     }
-    return to_str($_SERVER['REMOTE_ADDR'] ?? '127.0.0.1');
+    return $remote;
 }
 
 function flash_set(string $message, string $type = 'success'): void
@@ -1297,6 +1376,16 @@ function ipam_setting_definitions(): array
             'sensitive'   => false,
             'config_key'  => 'account_lockout_seconds',
             'min'         => 1,
+        ],
+        'security.proxy_trust_cidrs' => [
+            'label'       => 'Trusted reverse-proxy CIDRs',
+            'description' => 'One CIDR per line. When the direct client (REMOTE_ADDR) matches any of these, X-Forwarded-For is walked right-to-left and the first untrusted hop is logged as the real client. Leave empty to ignore X-Forwarded-For entirely (the safe default for non-proxied installs). Replaces the legacy proxy_trust boolean — see docs/configuration.md.',
+            'type'        => 'string',
+            'group'       => 'security',
+            'default'     => '',
+            'sensitive'   => false,
+            'config_key'  => null,
+            'multiline'   => true,
         ],
 
         // --- Alerting ---

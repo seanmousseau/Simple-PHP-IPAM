@@ -231,6 +231,8 @@ When set, the redirect in `init.php` uses this value instead of `$_SERVER['HTTP_
 
 Set to `true` if the application is behind a reverse proxy that sets `X-Forwarded-Proto: https`. See [Behind a reverse proxy](#behind-a-reverse-proxy).
 
+> **Deprecated in v3.26.0** for client-IP attribution. The boolean form unconditionally trusted the leftmost `X-Forwarded-For` value, which is whatever the original (untrusted) client sent and is freely spoofable. It still works for back-compat in v3.26.0 (with a deprecation log entry per request) but will be removed in a future release. Use the new **Trusted reverse-proxy CIDRs** setting (`security.proxy_trust_cidrs`, configurable from the admin Settings page) instead. The CIDR list scopes XFF trust to direct connections from a known proxy and walks the chain right-to-left so spoofed leftmost hops cannot impersonate a real client. See [OWASP — Reverse proxy and X-Forwarded-For](https://owasp.org/www-community/Reverse-Proxy-and-X-Forwarded-For) for the rationale.
+
 ---
 
 ### `bootstrap_admin`
