@@ -3669,22 +3669,31 @@ function ipam_migrations(): array
  */
 function ipam_migrate_2_6_0_settings(PDO $db): void
 {
-    $tables = array_column(
-        ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
-        'name'
-    );
+    // CR #1100 (Critical, multi-engine fresh-install replay): the
+    // sqlite_master probe and the SQLite-specific CREATE TABLE block
+    // below are SQLite-only. MySQL/Postgres start from
+    // schema.{driver}.sql with the settings table already present,
+    // and the seeding logic that follows uses portable PDO prepares
+    // so it runs unchanged on every engine.
+    $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    if (is_string($driverRaw) && $driverRaw === 'sqlite') {
+        $tables = array_column(
+            ($db->query("SELECT name FROM sqlite_master WHERE type='table'") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+            'name'
+        );
 
-    if (!in_array('settings', $tables, true)) {
-        $db->exec("
-            CREATE TABLE settings (
-                key        TEXT PRIMARY KEY,
-                value      TEXT,
-                type       TEXT NOT NULL DEFAULT 'string'
-                           CHECK(type IN ('string','int','bool','json')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
-            )
-        ");
+        if (!in_array('settings', $tables, true)) {
+            $db->exec("
+                CREATE TABLE settings (
+                    key        TEXT PRIMARY KEY,
+                    value      TEXT,
+                    type       TEXT NOT NULL DEFAULT 'string'
+                               CHECK(type IN ('string','int','bool','json')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+                )
+            ");
+        }
     }
 
     // Seed rows from the live $config for every registry entry that does not
@@ -3702,23 +3711,42 @@ function ipam_migrate_2_6_0_settings(PDO $db): void
     // (tenant_id column present) so we can use the correct column list and
     // WHERE clause. This function may be called both before and after that
     // migration depending on the replay order in tests and upgrades.
-    $existingCols = array_column(
-        ($db->query("PRAGMA table_info(settings)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
-        'name'
-    );
-    $hasTenantCol = in_array('tenant_id', $existingCols, true);
+    //
+    // CR #1100: portable column detection. SQLite uses PRAGMA;
+    // MySQL/Postgres use information_schema. Fresh installs of the
+    // latter two engines start from schema.{driver}.sql which always
+    // includes tenant_id (the column is in the v3.13.0+ baseline),
+    // so we can detect via per-engine introspection.
+    $hasTenantCol = false;
+    if (is_string($driverRaw) && $driverRaw === 'sqlite') {
+        $existingCols = array_column(
+            ($db->query("PRAGMA table_info(settings)") ?: throw new \RuntimeException('Query failed'))->fetchAll(),
+            'name'
+        );
+        $hasTenantCol = in_array('tenant_id', $existingCols, true);
+    } else {
+        $sch = $driverRaw === 'mysql' ? 'DATABASE()' : 'current_schema()';
+        $colsSt = $db->query(
+            "SELECT column_name FROM information_schema.columns "
+            . "WHERE table_schema = {$sch} AND table_name = 'settings'"
+        );
+        $cols = $colsSt !== false ? array_map('strval', $colsSt->fetchAll(PDO::FETCH_COLUMN)) : [];
+        $hasTenantCol = in_array('tenant_id', $cols, true);
+    }
 
+    // Use CURRENT_TIMESTAMP rather than datetime('now') so the INSERT
+    // is portable across all three drivers (CR #1100).
     if ($hasTenantCol) {
         $check = $db->prepare("SELECT 1 FROM settings WHERE tenant_id IS NULL AND ".ipam_key_col()." = :k");
         $ins = $db->prepare(
             "INSERT INTO settings (tenant_id, ".ipam_key_col().", value, type, updated_at, updated_by)
-             VALUES (NULL, :k, :v, :t, datetime('now'), NULL)"
+             VALUES (NULL, :k, :v, :t, CURRENT_TIMESTAMP, NULL)"
         );
     } else {
         $check = $db->prepare("SELECT 1 FROM settings WHERE ".ipam_key_col()." = :k");
         $ins = $db->prepare(
             "INSERT INTO settings (".ipam_key_col().", value, type, updated_at, updated_by)
-             VALUES (:k, :v, :t, datetime('now'), NULL)"
+             VALUES (:k, :v, :t, CURRENT_TIMESTAMP, NULL)"
         );
     }
 
