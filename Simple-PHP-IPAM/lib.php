@@ -1186,9 +1186,9 @@ function client_ip(): string
     // freely spoofable) but operators relying on it must not break silently
     // on upgrade. Emit a one-shot deprecation log per request and keep the
     // old behaviour. Operators should migrate to security.proxy_trust_cidrs.
-    /** @var IpamConfig $gConf */
-    $gConf = $GLOBALS['config'];
-    if (!empty($gConf['proxy_trust']) && $xffHeader !== '') {
+    /** @var IpamConfig|null $gConf */
+    $gConf = $GLOBALS['config'] ?? null;
+    if ($gConf !== null && !empty($gConf['proxy_trust']) && $xffHeader !== '') {
         static $warned = false;
         if (!$warned) {
             error_log('client_ip: legacy `proxy_trust` config flag is deprecated; configure security.proxy_trust_cidrs instead (#876).');

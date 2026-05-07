@@ -3303,13 +3303,16 @@ function ipam_migrate_2_6_0_settings(PDO $db): void
     }
 
     if ($seeded > 0 && function_exists('audit')) {
-        // Audit is best-effort: tests use a stricter audit_log schema than production,
-        // and we never want a seeding log entry to abort a migration.
-        try {
+        // Skip the audit entry on fresh installs / unattended migrations:
+        // current_user() is empty during bootstrap, and some test fixtures'
+        // audit_log has username NOT NULL. Seeding from config.php has no
+        // human actor in those contexts so the audit row is meaningless
+        // anyway. Real upgrades that re-seed after init will still log
+        // because a session user is present.
+        $u = function_exists('current_user') ? current_user() : ['username' => ''];
+        if (!empty($u['username'])) {
             $details = json_encode(['count' => $seeded, 'source' => 'config.php']);
             audit($db, 'settings.seeded_from_config', 'setting', null, is_string($details) ? $details : "count={$seeded}");
-        } catch (\Throwable) {
-            // swallow
         }
     }
 }
