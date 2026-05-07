@@ -63,14 +63,13 @@ $_isAdmin     = ($_currentUser['role'] ?? '') === 'admin';
       <details>
         <summary>Reveal current vault key</summary>
         <p class="muted" style="font-size:.9em">
-          Re-enter your admin password to view the raw key. The reveal is rate-limited
-          and audit-logged (<code>backup.vault_key.revealed</code>).
+          You will be prompted to re-authenticate before the raw key is revealed.
+          The reveal is rate-limited and audit-logged
+          (<code>backup.vault_key.revealed</code>).
         </p>
         <form method="post" action="backup_admin.php?tab=destinations" style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
           <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
           <input type="hidden" name="action" value="vault_reveal">
-          <input type="password" name="admin_password" placeholder="Your admin password"
-                 required autocomplete="current-password" data-test="vault-reveal-password">
           <button type="submit" class="button-secondary" data-test="vault-reveal-submit">
             Reveal vault key
           </button>
@@ -104,7 +103,6 @@ $_isAdmin     = ($_currentUser['role'] ?? '') === 'admin';
             </label>
             <input type="text" name="vault_key_b64" placeholder="base64-encoded vault key (44 chars)"
                    autocomplete="off" data-test="vault-paste-replace">
-            <input type="password" name="admin_password" placeholder="Your admin password" required autocomplete="current-password">
             <div>
               <button type="submit" class="button-danger" data-test="vault-replace-submit">
                 Replace vault key
@@ -129,7 +127,6 @@ $_isAdmin     = ($_currentUser['role'] ?? '') === 'admin';
           </label>
           <input type="text" name="vault_key_b64" placeholder="base64-encoded vault key (44 chars)"
                  autocomplete="off" data-test="vault-paste-set">
-          <input type="password" name="admin_password" placeholder="Your admin password" required autocomplete="current-password">
           <div>
             <button type="submit" data-test="vault-set-submit">Set vault key</button>
           </div>
