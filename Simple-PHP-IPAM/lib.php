@@ -5,6 +5,7 @@ require_once __DIR__ . '/lib/BackupClientInterface.php';
 require_once __DIR__ . '/lib/S3Client.php';
 require_once __DIR__ . '/lib/SftpClient.php';
 require_once __DIR__ . '/lib/LocalBackupClient.php';
+require_once __DIR__ . '/lib/vault.php';
 require_once __DIR__ . '/lib/backup.php';
 
 /**
@@ -1809,6 +1810,21 @@ function ipam_setting_definitions(): array
             'default'     => 2048,
             'min'         => 1,
             'sensitive'   => false,
+        ],
+        // v3.26.0 (#1098) — backup_vault_key wrapped envelope. The runtime
+        // read path is added in v3.26.0 D2-B; this registry entry ships
+        // alongside the data migration in D2-A so the column is present
+        // in fresh installs from the day v3.26.0 is released. The value
+        // is an "IPAMWK1." envelope produced by ipam_vault_wrap() — the
+        // raw 32-byte vault key never lives in this row.
+        'backup_vault_key' => [
+            'label'       => 'Backup vault key (wrapped, internal)',
+            'description' => 'Internal — the IPAMBKP3 vault key, wrapped under the bootstrap_key from config.php. Never displayed; managed via the Destinations admin panel.',
+            'type'        => 'string',
+            'group'       => 'backup',
+            'default'     => '',
+            'sensitive'   => true,
+            'hidden'      => true,
         ],
         // --- Notifications (v3.22.0 §2.4) ---
         // Per-event toggles split scheduled-vs-manual on the success/failure

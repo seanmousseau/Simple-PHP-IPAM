@@ -3310,6 +3310,137 @@ function ipam_migrations(): array
             );
             $delSt->execute();
         },
+
+        // v3.26.0 (#1098): one-shot move of the existing config-resident
+        // backup_vault_key into the settings table, wrapped under
+        // bootstrap_key. The legacy config field is left in place for one
+        // release for downgrade safety; the runtime read path that prefers
+        // the DB row lands in D2-B. Idempotent — bails if the DB row is
+        // already populated, or if the source config value is absent.
+        '3.26.0-vault-key-to-settings' => static function (PDO $db): void {
+            $tableExists = static function (PDO $db, string $driver, string $table): bool {
+                if ($driver === 'sqlite') {
+                    $st = $db->prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=:n");
+                    $st->execute([':n' => $table]);
+                    return (bool)$st->fetchColumn();
+                }
+                if ($driver === 'mysql') {
+                    $st = $db->prepare(
+                        "SELECT 1 FROM information_schema.TABLES
+                          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :n"
+                    );
+                    $st->execute([':n' => $table]);
+                    return (bool)$st->fetchColumn();
+                }
+                if ($driver === 'pgsql') {
+                    $st = $db->prepare(
+                        "SELECT 1 FROM information_schema.tables
+                          WHERE table_schema = current_schema() AND table_name = :n"
+                    );
+                    $st->execute([':n' => $table]);
+                    return (bool)$st->fetchColumn();
+                }
+                return false;
+            };
+
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driver = is_string($driverRaw) ? $driverRaw : '';
+
+            if (!$tableExists($db, $driver, 'settings')) {
+                return;
+            }
+
+            $keyCol = function_exists('ipam_key_col') ? ipam_key_col() : 'key';
+
+            // Bail if the DB row is already populated (re-run after a
+            // successful migration, or an admin who set the key via the
+            // D2-B UI before this migration replayed).
+            $existSt = $db->prepare(
+                "SELECT value FROM settings WHERE {$keyCol} = :k"
+            );
+            $existSt->execute([':k' => 'backup_vault_key']);
+            $existing = $existSt->fetchColumn();
+            if (is_string($existing) && $existing !== '') {
+                return;
+            }
+
+            /** @var array<string,mixed>|null $config */
+            $config = $GLOBALS['config'] ?? null;
+            if (!is_array($config)) {
+                return;
+            }
+
+            $legacyB64 = $config['backup_vault_key'] ?? null;
+            if (!is_string($legacyB64) || $legacyB64 === '') {
+                return;
+            }
+            $rawKey = base64_decode($legacyB64, true);
+            if (!is_string($rawKey) || strlen($rawKey) !== 32) {
+                // Malformed legacy value — leave it for the operator to
+                // notice via the existing or_init() validation rather
+                // than mask it by writing a wrapped malformed payload.
+                return;
+            }
+
+            // Wrap under bootstrap_key. ipam_bootstrap_key() may need to
+            // generate-and-write config.php on its first call; that is
+            // intentional and matches the app_secret pattern. If the
+            // config file is not writable we surface the error so the
+            // operator sees the same actionable remediation as
+            // ipam_backup_vault_key_or_init() produces.
+            if (!function_exists('ipam_bootstrap_key') || !function_exists('ipam_vault_wrap')) {
+                // lib/vault.php not loaded yet — skip the migration step
+                // and let it run on a subsequent boot. This branch is
+                // unreachable in production (lib.php loads vault.php
+                // before migrations apply) but defensively handles a
+                // partial test fixture replay.
+                return;
+            }
+            $bootstrap = ipam_bootstrap_key();
+            $envelope  = ipam_vault_wrap($rawKey, $bootstrap);
+
+            // Insert the wrapped envelope. Detect tenant_id column shape
+            // to match the active settings schema (post-v3.13.0 cascade
+            // installs use tenant_id; older replay fixtures may not).
+            if ($driver === 'sqlite') {
+                $colsSt = $db->query("PRAGMA table_info(settings)");
+                $colNames = [];
+                if ($colsSt !== false) {
+                    foreach ($colsSt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                        if (is_array($r) && isset($r['name']) && is_string($r['name'])) {
+                            $colNames[] = $r['name'];
+                        }
+                    }
+                }
+            } else {
+                $sch = $driver === 'mysql' ? 'DATABASE()' : 'current_schema()';
+                $colsSt = $db->query(
+                    "SELECT column_name FROM information_schema.columns
+                      WHERE table_schema = {$sch} AND table_name = 'settings'"
+                );
+                $colNames = $colsSt !== false
+                    ? array_map('strval', $colsSt->fetchAll(PDO::FETCH_COLUMN))
+                    : [];
+            }
+            $hasTenantCol = in_array('tenant_id', $colNames, true);
+
+            // CURRENT_TIMESTAMP works on all three drivers (SQLite reserves
+            // it as a function; MySQL accepts it as a keyword; pgsql treats
+            // it as the standard SQL constant). datetime('now') would fail
+            // on MySQL, where datetime() is not a function.
+            if ($hasTenantCol) {
+                $ins = $db->prepare(
+                    "INSERT INTO settings (tenant_id, {$keyCol}, value, type, updated_at, updated_by)
+                     VALUES (NULL, 'backup_vault_key', :v, 'string', CURRENT_TIMESTAMP, NULL)"
+                );
+            } else {
+                $ins = $db->prepare(
+                    "INSERT INTO settings ({$keyCol}, value, type, updated_at, updated_by)
+                     VALUES ('backup_vault_key', :v, 'string', CURRENT_TIMESTAMP, NULL)"
+                );
+            }
+            $ins->execute([':v' => $envelope]);
+        },
     ];
 }
 
