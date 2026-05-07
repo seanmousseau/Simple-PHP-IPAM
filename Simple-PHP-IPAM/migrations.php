@@ -3677,6 +3677,55 @@ function ipam_migrations(): array
                 $ins->execute([':v' => $envelope]);
             }
         },
+
+        // v3.27.0 #1108: seed step-up authentication policy rows. Defaults
+        // are permissive (any enrolled MFA method satisfies, plus provider
+        // re-auth fallback, 5-minute cache) so the v3.26.0 → v3.27.0
+        // upgrade is behaviour-preserving for password-MFA admins and
+        // bug-fixing for OIDC-only admins. See
+        // docs/superpowers/plans/2026-05-07-v3.27.0.md §6.
+        '3.27.0-step-up-policy-settings' => static function (PDO $db): void {
+            if (!function_exists('ipam_setting_definitions')) {
+                return;
+            }
+            $definitions = ipam_setting_definitions();
+            $kc = ipam_key_col();
+
+            $stepUpKeys = [
+                'auth.step_up.allow_totp',
+                'auth.step_up.allow_email_otp',
+                'auth.step_up.allow_webauthn',
+                'auth.step_up.allow_provider_reauth',
+                'auth.step_up.ttl_seconds',
+            ];
+
+            foreach ($stepUpKeys as $key) {
+                if (!isset($definitions[$key])) {
+                    continue;
+                }
+                $def     = $definitions[$key];
+                $type    = to_str($def['type']);
+                $encoded = ipam_setting_encode($def['default'], $type);
+
+                $ex = $db->prepare("SELECT 1 FROM settings WHERE tenant_id IS NULL AND {$kc} = :k");
+                $ex->execute([':k' => $key]);
+                if ($ex->fetch()) {
+                    continue;
+                }
+
+                try {
+                    $st = $db->prepare(
+                        "INSERT INTO settings (tenant_id, {$kc}, value, type) VALUES (NULL, :k, :v, :t)"
+                    );
+                    $st->execute([':k' => $key, ':v' => $encoded, ':t' => $type]);
+                } catch (\PDOException $e) {
+                    if (str_contains($e->getMessage(), 'UNIQUE') || str_contains($e->getMessage(), 'Duplicate')) {
+                        continue;
+                    }
+                    throw $e;
+                }
+            }
+        },
     ];
 }
 

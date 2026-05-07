@@ -2124,6 +2124,61 @@ function ipam_setting_definitions(): array
             'config_key'  => null,
         ],
 
+        // --- Step-up authentication (sudo-mode for sensitive admin actions) ---
+        // v3.27.0 #1108: install-wide policy controlling which credential
+        // proofs satisfy ipam_sudo_verify(). Decoupled from login provider
+        // so OIDC/LDAP/SAML users can manage sensitive resources (vault key,
+        // sensitive settings, DB import, API key creation, MFA disable)
+        // without depending on a local password. See
+        // docs/superpowers/plans/2026-05-07-v3.27.0.md.
+        'auth.step_up.allow_totp' => [
+            'label'       => 'Accept TOTP for step-up',
+            'type'        => 'bool',
+            'default'     => true,
+            'group'       => 'security',
+            'description' => 'Allow a fresh TOTP code to satisfy the step-up gate for sensitive admin actions. Has no effect for users who have not enrolled TOTP.',
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
+        'auth.step_up.allow_email_otp' => [
+            'label'       => 'Accept Email OTP for step-up',
+            'type'        => 'bool',
+            'default'     => true,
+            'group'       => 'security',
+            'description' => 'Allow a fresh Email OTP code to satisfy the step-up gate. Slightly weaker than TOTP/passkey because compromise of the email account leaks it; disable if your threat model includes inbox compromise.',
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
+        'auth.step_up.allow_webauthn' => [
+            'label'       => 'Accept WebAuthn passkey for step-up',
+            'type'        => 'bool',
+            'default'     => true,
+            'group'       => 'security',
+            'description' => 'Allow a fresh WebAuthn (passkey) assertion to satisfy the step-up gate. Strongest method; requires the user to have a registered passkey.',
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
+        'auth.step_up.allow_provider_reauth' => [
+            'label'       => 'Accept provider re-authentication for step-up',
+            'type'        => 'bool',
+            'default'     => true,
+            'group'       => 'security',
+            'description' => 'Fall back to the user\'s primary login credential (local password, OIDC prompt=login, or other provider re-auth) when no MFA method is available. Disable to force MFA enrollment for any sensitive action.',
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
+        'auth.step_up.ttl_seconds' => [
+            'label'       => 'Step-up cache duration (seconds)',
+            'type'        => 'int',
+            'default'     => 300,
+            'group'       => 'security',
+            'description' => 'How long a successful step-up grant remains valid before the user is re-prompted on the next sensitive action. Allowed values: 0 (re-prompt every action), 60, 300, 900, 1800, 3600. Defaults to 300 (5 minutes).',
+            'sensitive'   => false,
+            'config_key'  => null,
+            'min'         => 0,
+            'max'         => 3600,
+        ],
+
         // --- Password policy ---
         'password_policy.min_length' => [
             'label'       => 'Minimum password length',
