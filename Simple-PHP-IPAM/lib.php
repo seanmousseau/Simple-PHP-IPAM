@@ -8956,17 +8956,64 @@ function ipam_validate_webhook_url(string $url, array $config = []): bool
         return true;
     }
 
-    // Block RFC-1918, loopback, link-local, and IPv6 ULA/loopback.
-    // ALL resolved addresses must be public (blocks DNS rebinding).
-    $privateRanges = [
-        ['10.0.0.0',   8],  ['172.16.0.0', 12], ['192.168.0.0', 16],
-        ['127.0.0.0',  8],  ['169.254.0.0', 16], ['::1',         128],
-        ['fc00::',    7],   ['fe80::',      10],
+    // Block RFC-1918, loopback, link-local, IPv6 ULA/loopback, "this network"
+    // (#872 — 0.0.0.0/8), CGNAT (100.64.0.0/10), multicast (224.0.0.0/4 and
+    // ff00::/8), the IPv6 unspecified address (::/128), and the IPv4-mapped
+    // IPv6 prefix (::ffff:0:0/96 — defence in depth alongside the explicit
+    // unwrap below). ALL resolved addresses must be public (blocks DNS
+    // rebinding).
+    $privateRangesV4 = [
+        ['0.0.0.0',     8],   // "this network" — covers 0.0.0.0 itself
+        ['10.0.0.0',    8],
+        ['100.64.0.0', 10],   // CGNAT (RFC 6598)
+        ['127.0.0.0',   8],
+        ['169.254.0.0',16],
+        ['172.16.0.0', 12],
+        ['192.168.0.0',16],
+        ['224.0.0.0',   4],   // multicast + reserved (224.0.0.0–255.255.255.255)
+    ];
+    $privateRangesV6 = [
+        ['::',         128],  // unspecified
+        ['::1',        128],  // loopback
+        ['::ffff:0:0', 96],   // IPv4-mapped IPv6 (defence in depth)
+        ['64:ff9b::',  96],   // NAT64 well-known (RFC 6052)
+        ['fc00::',      7],   // ULA
+        ['fe80::',     10],   // link-local
+        ['ff00::',      8],   // multicast
     ];
     foreach ($ips as $ip) {
-        foreach ($privateRanges as [$net, $prefix]) {
-            if (ip_in_cidr($ip, $net, $prefix)) {
-                return false;
+        $bin = @inet_pton($ip);
+        if ($bin === false) {
+            // Resolver returned something that doesn't parse — treat as
+            // unresolvable (i.e. unsafe) rather than silently passing it.
+            return false;
+        }
+        // If we resolved an IPv4-mapped IPv6 address (::ffff:a.b.c.d), test
+        // both the v6 prefix list AND the unwrapped IPv4 against the v4
+        // list. Otherwise an attacker controlling DNS could route 127.0.0.1
+        // past the v4 check by encoding it as ::ffff:127.0.0.1.
+        if (strlen($bin) === 16) {
+            $prefix = "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff";
+            if (str_starts_with($bin, $prefix)) {
+                $v4 = inet_ntop(substr($bin, 12));
+                if (is_string($v4)) {
+                    foreach ($privateRangesV4 as [$net, $p]) {
+                        if (ip_in_cidr($v4, $net, $p)) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            foreach ($privateRangesV6 as [$net, $p]) {
+                if (ip_in_cidr($ip, $net, $p)) {
+                    return false;
+                }
+            }
+        } else {
+            foreach ($privateRangesV4 as [$net, $p]) {
+                if (ip_in_cidr($ip, $net, $p)) {
+                    return false;
+                }
             }
         }
     }
