@@ -328,18 +328,24 @@ class UpgradeReplayTest extends TestCase
     public function testFixtureV118Empty(): void
     {
         $f = __DIR__ . '/fixtures/upgrade/v1.18-empty.sqlite';
-        if (!is_file($f)) {
-            $this->markTestSkipped('Fixture not found: ' . $f . ' — see README.md');
-        }
+        $this->assertFileExists(
+            $f,
+            'UpgradeReplay fixture missing: ' . $f
+            . ' — generate per tests/fixtures/upgrade/README.md or commit fixtures.'
+            . ' Silent skip retired in v3.26.0 (#868).'
+        );
         $this->assertUpgradeSafe($f, 0, 0);
     }
 
     public function testFixtureV119WithData(): void
     {
         $f = __DIR__ . '/fixtures/upgrade/v1.19-with-data.sqlite';
-        if (!is_file($f)) {
-            $this->markTestSkipped('Fixture not found: ' . $f . ' — see README.md');
-        }
+        $this->assertFileExists(
+            $f,
+            'UpgradeReplay fixture missing: ' . $f
+            . ' — generate per tests/fixtures/upgrade/README.md or commit fixtures.'
+            . ' Silent skip retired in v3.26.0 (#868).'
+        );
         // Fixture has ~50 subnets and ~500 addresses — no loss expected
         $this->assertUpgradeSafe($f, 50, 500);
     }
@@ -347,9 +353,12 @@ class UpgradeReplayTest extends TestCase
     public function testFixtureV25Large(): void
     {
         $f = __DIR__ . '/fixtures/upgrade/v2.5-large.sqlite';
-        if (!is_file($f)) {
-            $this->markTestSkipped('Fixture not found: ' . $f . ' — see README.md');
-        }
+        $this->assertFileExists(
+            $f,
+            'UpgradeReplay fixture missing: ' . $f
+            . ' — generate per tests/fixtures/upgrade/README.md or commit fixtures.'
+            . ' Silent skip retired in v3.26.0 (#868).'
+        );
         // Fixture has ~5000 addresses — specifically test throughput
         $this->assertUpgradeSafe($f, 0, 5000);
     }
