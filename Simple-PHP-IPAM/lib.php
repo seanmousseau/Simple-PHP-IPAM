@@ -7,6 +7,7 @@ require_once __DIR__ . '/lib/SftpClient.php';
 require_once __DIR__ . '/lib/LocalBackupClient.php';
 require_once __DIR__ . '/lib/vault.php';
 require_once __DIR__ . '/lib/backup.php';
+require_once __DIR__ . '/lib/auth_step_up.php';
 
 /**
  * Returns the active SQL dialect (#378). ipam_db() bootstraps this once per
