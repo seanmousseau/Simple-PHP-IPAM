@@ -70,6 +70,10 @@ try {
     $existingId = (int)($check->fetchColumn() ?: 0);
 
     if ($existingId === 0) {
+        // Note: each named placeholder appears exactly once because the
+        // mysql PDO driver rejects placeholder reuse with HY093. We bind
+        // username/name to distinct names even though they hold the same
+        // value.
         $ins = $db->prepare(
             "INSERT INTO users (username, password_hash, role, is_active,
                                 oidc_sub, totp_enabled, totp_secret_enc,
@@ -78,10 +82,11 @@ try {
              VALUES (:u, :h, 'admin', 1,
                      :sub, :te, :ts,
                      0, NULL, NULL,
-                     :u, '')"
+                     :n, '')"
         );
         $ins->execute([
             ':u'   => $username,
+            ':n'   => $username,
             ':h'   => $disabledHash,
             ':sub' => $oidcSub,
             ':te'  => $totpEnabled,

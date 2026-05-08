@@ -51,21 +51,26 @@ function cookieDomain(): string {
 test.describe('Step-up — OIDC-only admin (#1098 regression)', () => {
     test('OIDC-only admin with TOTP can reveal vault via TOTP step-up', async ({ browser }) => {
         await seedOidcOnlyAdmin(OIDC_TOTP_USER, 'with-totp');
-        const session = await mintTestSession(OIDC_TOTP_USER);
 
         const ctx = await browser.newContext({
             httpCredentials: HTTP_CREDENTIALS,
             ignoreHTTPSErrors: true,
         });
-        await ctx.addCookies([{
-            name: session.cookieName,
-            value: session.sid,
-            domain: cookieDomain(),
-            path: '/',
-            httpOnly: true,
-            secure: true,
-            sameSite: 'Strict',
-        }]);
+
+        async function attachSession(): Promise<void> {
+            const s = await mintTestSession(OIDC_TOTP_USER);
+            await ctx.addCookies([{
+                name: s.cookieName,
+                value: s.sid,
+                domain: cookieDomain(),
+                path: '/',
+                httpOnly: true,
+                secure: true,
+                sameSite: 'Strict',
+            }]);
+        }
+
+        await attachSession();
         const page = await ctx.newPage();
 
         // Confirm the minted session is accepted: dashboard should render
@@ -73,10 +78,10 @@ test.describe('Step-up — OIDC-only admin (#1098 regression)', () => {
         await page.goto(appUrl('dashboard.php'));
         await expect(page).not.toHaveURL(/login\.php/);
 
-        // Open the vault reveal prompt. If the install has no key yet, set
-        // one via vault_set first so we have something to reveal — the OIDC
-        // user has admin role and TOTP available, so both flows are
-        // satisfiable for them.
+        // Ensure a vault key exists. If we have to set one, the vault_set
+        // POST mints a sudo grant that would short-circuit the reveal prompt
+        // we want to exercise next, so re-mint the session to drop any warm
+        // grant before the regression-target reveal step.
         await page.goto(appUrl('backup_admin.php?tab=destinations'));
         if (await page.locator('[data-test="vault-fingerprint"]').count() === 0) {
             await page.locator('[data-test="vault-set-submit"]').click();
@@ -85,6 +90,8 @@ test.describe('Step-up — OIDC-only admin (#1098 regression)', () => {
             if (await m1.count()) await m1.selectOption('totp');
             await page.locator('input[name="_sudo_code"]').fill(totpCode(TFA_SECRET));
             await page.locator('#step-up-form button[type=submit]').click();
+            // Re-mint to drop the warm grant.
+            await attachSession();
         }
 
         // Now exercise reveal under default policy via TOTP proof. This is

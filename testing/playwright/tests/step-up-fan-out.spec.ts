@@ -35,6 +35,7 @@ import {
     ADMIN_PASS,
     appUrl,
     fetchPost,
+    IS_SQLITE,
 } from '../fixtures/ipam';
 
 // Any registry key with sensitive=true works here — settings_reveal returns
@@ -75,6 +76,11 @@ test.describe('Step-up gate fan-out (#1114)', () => {
     });
 
     test('db_tools import renders the step-up prompt without a grant', async ({ page }) => {
+        // SQL export/import is intentionally sqlite-only (the import path
+        // hardcodes sqlite-specific SQL). On mysql/pgsql the handler exits
+        // early with the "unsupported on this driver" message before reaching
+        // the sudo gate, so this assertion is only meaningful on sqlite.
+        test.skip(!IS_SQLITE, 'db_tools import is sqlite-only');
         await page.goto(appUrl('db_tools.php'));
         // db_tools needs a file field for the real handler, but the sudo gate
         // runs before file validation so a bare action=import POST is enough
