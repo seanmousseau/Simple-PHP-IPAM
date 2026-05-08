@@ -104,7 +104,11 @@ try {
             ':te'  => $totpEnabled,
             ':ts'  => $totpSecretEnc,
         ]);
-        $uid = (int)$db->lastInsertId();
+        // Cross-engine: PDO::lastInsertId() returns "0" on PostgreSQL when
+        // the sequence name is not supplied. ipam_last_insert_id() resolves
+        // the right sequence per dialect. CR PR #1117 #7. Mirrors the
+        // production seed in oidc_callback.php.
+        $uid = to_int(ipam_last_insert_id($db, 'users'));
     } else {
         $upd = $db->prepare(
             "UPDATE users

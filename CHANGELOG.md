@@ -31,6 +31,14 @@ Step-up authentication. Sensitive admin actions (vault-key reveal/set/replace, A
 - **Existing Playwright specs updated to handle the step-up gate.** Specs that exercise sudo-class actions (vault, api_keys, settings reveal, db_tools, change_password) now mint a sudo grant via the new `warmSudoGrant()` fixture before the action; `warmSudoGrant()` fail-louds if the proof is rejected so CI failures surface immediately instead of timing out 15s later on a misleading downstream assertion.
 - **`step-up-vault-flow` + `step-up-oidc-only` Playwright specs purge encrypted `backup_runs` in `beforeEach`.** The CR #1100 "encrypted backups exist" guard was blocking these specs' `vault_set + generate` path because earlier specs in the suite (backup-integration etc.) leave encrypted runs behind. New CLI helper `Simple-PHP-IPAM/testing/scripts/purge_encrypted_backup_runs.php` resets the precondition.
 
+### Deprecated
+
+- **`backup.vault_key.sudo_failed` audit alias.** The unified `auth.sudo_failed` row covers every sudo-class action's verification failure; the vault-specific alias is retained for one release as a SIEM-query bridge and will be removed in v3.28.0. Existing log searches that filter on `backup.vault_key.sudo_failed` should migrate to combining `auth.sudo_failed` with the corresponding `backup.vault_key.*` audit row that follows on a refused vault action — see `docs/internal/audit-actions.md` for the migration guidance.
+
+### Removed
+
+- None.
+
 ### Security
 
 - **Sensitive admin actions are no longer satisfied by a stale login session alone.** Every sudo-class action now requires either a fresh proof or a session sudo grant minted within the policy TTL. Reduces the blast radius of a stolen session cookie: the attacker still cannot reveal the vault key, mint an API key, import a SQL dump, change a password, or disable an MFA factor without the user's second factor.

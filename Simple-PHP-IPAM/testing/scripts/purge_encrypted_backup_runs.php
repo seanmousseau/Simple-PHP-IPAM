@@ -17,6 +17,17 @@ if (PHP_SAPI !== 'cli') {
     exit(1);
 }
 
+// CR PR #1117 #6: defence-in-depth. CLI-only is already a strong barrier in
+// the deployed shape (the script lives under the webroot's testing/scripts
+// directory, which Apache serves with a 403 .htaccess in production), but a
+// stray `php testing/scripts/purge_encrypted_backup_runs.php` from a host
+// shell against a real config would silently delete production backup
+// metadata. Require an explicit env opt-in for destructive test helpers.
+if (getenv('IPAM_ALLOW_DESTRUCTIVE_TEST_HELPERS') !== '1') {
+    fwrite(STDERR, "Refusing to run: set IPAM_ALLOW_DESTRUCTIVE_TEST_HELPERS=1 for test runs.\n");
+    exit(1);
+}
+
 $configPath = __DIR__ . '/../../config.php';
 if (!file_exists($configPath)) $configPath = '/var/www/html/config.php';
 $config = require $configPath;

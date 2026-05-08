@@ -269,14 +269,36 @@
           revealUrl = "settings_reveal.php";
         }
         btn.disabled = true;
+        // v3.27.0 (#1113): settings_reveal returns 401 + JSON
+        // {error:'step_up_required'} when the session has no fresh sudo
+        // grant. Navigate to step_up.php with a return-to so the user
+        // re-authenticates inline and lands back here. Any other error
+        // surfaces in the eye's aria-label as before.
         fetch(revealUrl, { method: "POST", body: body, credentials: "include" })
           .then(function(r) {
-            if (!r.ok) throw new Error("HTTP " + r.status);
-            return r.json();
+            return r.json().then(function(data) { return { ok: r.ok, status: r.status, data: data }; },
+                                 function() { return { ok: r.ok, status: r.status, data: null }; });
           })
-          .then(function(data) {
-            if (typeof data.value === "string") {
-              input.value = data.value;
+          .then(function(resp) {
+            if (resp.status === 401 && resp.data && resp.data.error === "step_up_required") {
+              // Build a return-to that points back at this exact settings tab so
+              // the user lands where they started after the proof. Any anchor
+              // that pinned them to a specific group is preserved.
+              var returnTo;
+              try {
+                var here = new URL(window.location.href);
+                here.username = ""; here.password = "";
+                returnTo = here.pathname + here.search + here.hash;
+              } catch (_) {
+                returnTo = "settings.php";
+              }
+              var stepUpUrl = "step_up.php?return_to=" + encodeURIComponent(returnTo);
+              window.location.assign(stepUpUrl);
+              return;
+            }
+            if (!resp.ok) throw new Error("HTTP " + resp.status);
+            if (resp.data && typeof resp.data.value === "string") {
+              input.value = resp.data.value;
               input.dataset.pwRevealedFromStored = "1";
             }
             pwToggleApply(btn, input, true);

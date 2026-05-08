@@ -598,8 +598,28 @@ export async function purgeEncryptedBackupRuns(): Promise<void> {
     const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
     const { execFileSync } = await import('child_process');
     execFileSync('docker', [
-        'exec', '--user', 'www-data', container,
+        'exec', '--user', 'www-data',
+        '-e', 'IPAM_ALLOW_DESTRUCTIVE_TEST_HELPERS=1',
+        container,
         'php', '/var/www/html/testing/scripts/purge_encrypted_backup_runs.php',
+    ], { stdio: 'pipe' });
+}
+
+/**
+ * Delete the install-global `backup_vault_key` row from settings, returning
+ * the install to the "no vault key configured" state. Used by
+ * step-up-vault-flow.spec.ts in afterEach: a test that mints a key as part
+ * of its setup must clean it up so subsequent specs see the same starting
+ * state. CR PR #1117 #8.
+ */
+export async function clearVaultKey(): Promise<void> {
+    const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
+    const { execFileSync } = await import('child_process');
+    execFileSync('docker', [
+        'exec', '--user', 'www-data',
+        '-e', 'IPAM_ALLOW_DESTRUCTIVE_TEST_HELPERS=1',
+        container,
+        'php', '/var/www/html/testing/scripts/clear_vault_key.php',
     ], { stdio: 'pipe' });
 }
 

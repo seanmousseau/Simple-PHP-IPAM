@@ -119,7 +119,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
         page_header('Confirm your identity');
         $stepUpUserId       = $userId;
         $stepUpFormAction   = 'db_tools.php';
-        $stepUpHiddenFields = [];
+        // Carry action=import so the proof submission re-enters the same
+        // branch (line 104) and ipam_sudo_require() actually mints the
+        // grant. Without it the resumed POST has no `action`, the entire
+        // import branch is skipped, the proof goes unverified, and the
+        // user then has no warm grant when they re-upload the SQL file.
+        // CR PR #1117 #4. The browser still won't re-attach <input
+        // type="file"> through a redirect; the user re-selects the file
+        // on the page they land on after the proof succeeds, and the
+        // warm grant carries that second submit through.
+        $stepUpHiddenFields = ['action' => 'import'];
         $stepUpDescription  = 'Re-authenticate to import a SQL dump. This will overwrite every row in the database. After verifying, return to Database Tools and re-select your SQL file.';
         $stepUpReturnPath   = 'db_tools.php';
         $stepUpError        = isset($_POST['_sudo_method']) ? 'Verification failed. Import refused.' : '';

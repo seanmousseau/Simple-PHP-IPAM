@@ -447,7 +447,13 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
 
             page_header('Confirm your identity');
             $stepUpUserId       = $userId;
-            $stepUpFormAction   = 'backup_admin.php?tab=destinations';
+            // CR PR #1117 #5: route the prompt back to the SAME page the user
+            // triggered the action from. $redirectBase is the URL the caller
+            // (backup_admin.php OR the legacy destinations.php) registered
+            // when it invoked the handler; hardcoding backup_admin.php would
+            // bounce destinations.php callers onto the new surface and break
+            // the resumed action.
+            $stepUpFormAction   = $redirectBase;
             $stepUpHiddenFields = ['action' => $action];
             if ($action === 'vault_set' || $action === 'vault_replace') {
                 $stepUpHiddenFields['vault_mode']    = to_str($_POST['vault_mode']    ?? 'generate');
@@ -458,7 +464,7 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
                 : ($action === 'vault_set'
                     ? 'Re-authenticate to set the backup vault key.'
                     : 'Re-authenticate to replace the backup vault key.');
-            $stepUpReturnPath  = 'backup_admin.php?tab=destinations';
+            $stepUpReturnPath  = $redirectBase;
             $stepUpError       = isset($_POST['_sudo_method']) ? 'Verification failed. Vault-key action refused.' : '';
             include __DIR__ . '/../views/_step_up_prompt.php';
             page_footer();

@@ -29,6 +29,7 @@ import {
     ADMIN_PASS,
     appUrl,
     purgeEncryptedBackupRuns,
+    clearVaultKey,
 } from '../fixtures/ipam';
 
 const VAULT_PAGE = 'backup_admin.php?tab=destinations';
@@ -60,7 +61,22 @@ test.describe('Vault key — step-up flow (#1110, #1111)', () => {
         await login(page, ADMIN_USER, ADMIN_PASS);
     });
 
-    test.afterEach(async ({ page }) => {
+    test.afterEach(async ({ page }, testInfo) => {
+        // CR PR #1117 #8: each test in this spec may mint an install-global
+        // vault key during setup. Clear it so the next spec sees the same
+        // pre-set starting state ("no fingerprint, click Set"). Without this
+        // the suite becomes order-dependent on the shared SQLite DB. We do
+        // it for every test (cheap, idempotent) regardless of which branch
+        // ran inside the test body.
+        await clearVaultKey().catch((err: unknown) => {
+            // Don't mask the underlying test failure with a teardown error,
+            // but do attach it to the test report so a teardown regression
+            // surfaces on a green run.
+            testInfo.attach('clearVaultKey-error.txt', {
+                body: String(err),
+                contentType: 'text/plain',
+            }).catch(() => undefined);
+        });
         await logout(page).catch(() => undefined);
     });
 
@@ -103,15 +119,17 @@ test.describe('Vault key — step-up flow (#1110, #1111)', () => {
             expect(keyFromSet.length).toBeGreaterThanOrEqual(43); // base64(32 bytes) ≈ 44 chars
         }
 
-        // Reload to clear the one-shot flash; raw key must NOT persist across
-        // the GET that follows the POST.
+        // CR PR #1117 #9: after vault_set the session has a warm sudo grant
+        // for ttl_seconds (default 900s under the policy). If we click
+        // Reveal in the same session, ipam_sudo_require() short-circuits
+        // and the prompt never renders — the test would silently stop
+        // covering the re-auth path. Cycle the session so the reveal is a
+        // genuine fresh sudo action regardless of the warm-grant state.
+        await logout(page);
+        await login(page, ADMIN_USER, ADMIN_PASS);
         await page.goto(appUrl(VAULT_PAGE));
         await expect(page.locator('[data-test="vault-revealed-key"]')).toHaveCount(0);
 
-        // Click Reveal. Even though we passed step-up moments ago for vault_set,
-        // the spec re-prompts here to exercise the gate cleanly: we've
-        // re-logged in via beforeEach AFTER vault_set, so any warm grant is
-        // gone. The reveal is a fresh sudo action.
         await page.locator('[data-test="vault-reveal-submit"]').click();
         await passStepUpWithPassword(page);
 
