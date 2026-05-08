@@ -15,6 +15,21 @@ auth.mfa_method_switch  auth.mfa_preferred_set
 auth.totp_login         auth.email_otp_login    auth.passkey_challenge
 ```
 
+## Step-up auth (v3.27.0)
+
+```text
+auth.sudo_passed        auth.sudo_failed        auth.sudo_rate_limited
+auth.step_up_policy.updated
+```
+
+`auth.sudo_passed` (`entity_type=auth`, `entity_id=null`) — emitted by `ipam_sudo_verify()` when a fresh proof satisfies the install's step-up policy (v3.27.0 #1107). `$details` carries `method=<m> ip=<ip>` where `<m>` is one of `totp|email_otp|webauthn|password|oidc_reauth`. Cached-grant short-circuits do **not** emit a row — the audit only fires when an actual proof is verified.
+
+`auth.sudo_failed` (`entity_type=auth`) — emitted by `ipam_sudo_verify()` when a proof is rejected (v3.27.0 #1107). `$details` carries `method=<m> ip=<ip> reason=<r>` where `<r>` is a stable code (e.g. `totp_invalid`, `email_otp_invalid`, `webauthn_no_challenge`, `password_invalid`, `method_unavailable`, `disabled_password_hash`). Increments the `sudo` rate-limit bucket via `record_auth_failure()` so back-pressure matches a failed login.
+
+`auth.sudo_rate_limited` (`entity_type=auth`) — emitted when the `sudo` bucket cap is hit (v3.27.0 #1107). `$details` carries `ip=<ip>`. Once recorded, subsequent proofs from the same IP are refused for the cap window without further audit rows.
+
+`auth.step_up_policy.updated` (`entity_type=auth`) — emitted by `settings.php` after a step-up policy save commits (v3.27.0 #1108). `$details` carries `methods=<csv> ttl=<sec> by=<u>` where `<csv>` is the comma-separated list of allowed methods after the save and `<u>` is the saving admin's username. Saving the policy is itself a sudo action, so `auth.sudo_passed` typically appears immediately before this row.
+
 ## Core entities
 
 ```text
@@ -92,7 +107,7 @@ backup_run.bulk_delete              backup_run.purge
 
 `backup.vault_key.set` / `backup.vault_key.replaced` (`entity_type=vault`) — emitted when an admin sets the first vault key, or replaces an existing one (v3.26.0 #1098). `$details` carries `user=<username> mode=<generate|paste> fingerprint=<8 hex>`. Replace is gated on `SELECT 1 FROM backup_runs WHERE encryption_mode != 'unencrypted'` returning empty so a key swap cannot orphan existing archives.
 
-`backup.vault_key.sudo_failed` (`entity_type=vault`) — emitted when any vault-key admin action (reveal/set/replace) is refused because the supplied password did not `password_verify()` against the current admin's hash (v3.26.0 #1098). `$details` carries `action=<vault_*> user=<username>`. Reveal additionally records a `record_auth_failure()` row so the per-IP rate-limit applies the same back-pressure as a failed login.
+`backup.vault_key.sudo_failed` (`entity_type=vault`) — **DEPRECATED in v3.27.0; removed in v3.28.0.** Originally emitted when a vault-key admin action's local-password sudo prompt was refused (v3.26.0 #1098). v3.27.0 migrates the vault-key gate to the unified `ipam_sudo_verify()` helper, which emits `auth.sudo_failed` instead. The legacy action is retained as a parallel emit for one release so existing log queries don't break; new dashboards should query `auth.sudo_failed` with `details LIKE '%method=password%'`. Drop the alias when the v3.28.0 cleanup ticket lands.
 
 `backup.vault_key.reveal_failed` (`entity_type=vault`) — emitted when reveal succeeded the sudo-prompt but no vault key is configured (v3.26.0 #1098). `$details` carries `user=<username> reason=<no_key>`. Distinct from `sudo_failed` so an incident response can tell "wrong password" from "key gone".
 
