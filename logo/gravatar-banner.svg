@@ -1,5 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 288" width="1280" height="288" role="img" aria-label="Simple PHP IPAM — lightweight self-hosted IP address management">
-  <!-- Gravatar profile header (1280x288). No mark — avatar already carries it. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 288" width="1280" height="288" role="img" aria-label="Simple PHP IPAM — self-hosted IP address management">
+  <!-- Gravatar profile header (1280x288). Avatar overlaps the left ~40%, so all -->
+  <!-- copy is anchored in the right ~60%; decorative network art lives on the left. -->
 
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
@@ -8,14 +9,14 @@
       <stop offset="100%" stop-color="#0A1220"/>
     </linearGradient>
 
-    <radialGradient id="glowR" cx="0.88" cy="0.5" r="0.55">
+    <radialGradient id="glowR" cx="0.78" cy="0.5" r="0.55">
       <stop offset="0%"  stop-color="#22C55E" stop-opacity="0.20"/>
       <stop offset="55%" stop-color="#22C55E" stop-opacity="0.05"/>
       <stop offset="100%" stop-color="#22C55E" stop-opacity="0"/>
     </radialGradient>
 
-    <radialGradient id="glowL" cx="0.05" cy="0.5" r="0.45">
-      <stop offset="0%"  stop-color="#0EA5E9" stop-opacity="0.10"/>
+    <radialGradient id="glowL" cx="0.20" cy="0.55" r="0.45">
+      <stop offset="0%"  stop-color="#0EA5E9" stop-opacity="0.12"/>
       <stop offset="100%" stop-color="#0EA5E9" stop-opacity="0"/>
     </radialGradient>
 
@@ -24,81 +25,90 @@
     </pattern>
   </defs>
 
-  <!-- Background layers -->
+  <!-- Background -->
   <rect width="1280" height="288" fill="url(#bg)"/>
   <rect width="1280" height="288" fill="url(#grid)" opacity="0.55"/>
   <rect width="1280" height="288" fill="url(#glowL)"/>
   <rect width="1280" height="288" fill="url(#glowR)"/>
 
-  <!-- Decorative network topology, subtle -->
-  <g stroke="#22C55E" stroke-opacity="0.18" stroke-width="1.25" stroke-linecap="round" fill="none">
-    <line x1="60"   y1="60"  x2="180" y2="120"/>
-    <line x1="180"  y1="120" x2="120" y2="220"/>
-    <line x1="180"  y1="120" x2="300" y2="80"/>
-    <line x1="300"  y1="80"  x2="420" y2="140"/>
-    <line x1="1080" y1="70"  x2="1200" y2="140"/>
-    <line x1="1200" y1="140" x2="1140" y2="230"/>
-    <line x1="1080" y1="70"  x2="980"  y2="120"/>
-    <line x1="980"  y1="120" x2="900"  y2="60"/>
+  <!-- Decorative network topology, weighted left (avatar will sit on top) -->
+  <g stroke="#22C55E" stroke-opacity="0.30" stroke-width="1.4" stroke-linecap="round" fill="none">
+    <line x1="40"  y1="60"  x2="160" y2="120"/>
+    <line x1="160" y1="120" x2="100" y2="220"/>
+    <line x1="160" y1="120" x2="280" y2="80"/>
+    <line x1="280" y1="80"  x2="380" y2="160"/>
+    <line x1="380" y1="160" x2="260" y2="240"/>
+    <line x1="380" y1="160" x2="460" y2="100"/>
+    <line x1="460" y1="100" x2="430" y2="220"/>
   </g>
-  <g fill="#22C55E" fill-opacity="0.32">
-    <circle cx="60"   cy="60"  r="3"/>
-    <circle cx="180"  cy="120" r="4"/>
-    <circle cx="120"  cy="220" r="3"/>
-    <circle cx="300"  cy="80"  r="3"/>
-    <circle cx="420"  cy="140" r="3"/>
-    <circle cx="1080" cy="70"  r="3"/>
-    <circle cx="1200" cy="140" r="4"/>
-    <circle cx="1140" cy="230" r="3"/>
-    <circle cx="980"  cy="120" r="3"/>
-    <circle cx="900"  cy="60"  r="3"/>
+  <g fill="#22C55E" fill-opacity="0.45">
+    <circle cx="40"  cy="60"  r="3"/>
+    <circle cx="160" cy="120" r="4.5"/>
+    <circle cx="100" cy="220" r="3"/>
+    <circle cx="280" cy="80"  r="3"/>
+    <circle cx="380" cy="160" r="4.5"/>
+    <circle cx="260" cy="240" r="3"/>
+    <circle cx="460" cy="100" r="3"/>
+    <circle cx="430" cy="220" r="3"/>
   </g>
 
-  <!-- Top CIDR ticker, faint -->
+  <!-- Faint right-side network flecks for visual balance -->
+  <g stroke="#22C55E" stroke-opacity="0.14" stroke-width="1" stroke-linecap="round" fill="none">
+    <line x1="1100" y1="50"  x2="1200" y2="120"/>
+    <line x1="1200" y1="120" x2="1140" y2="220"/>
+  </g>
+  <g fill="#22C55E" fill-opacity="0.22">
+    <circle cx="1100" cy="50"  r="2.5"/>
+    <circle cx="1200" cy="120" r="3"/>
+    <circle cx="1140" cy="220" r="2.5"/>
+  </g>
+
+  <!-- Top CIDR ticker, full-width but very faint -->
   <g font-family="'Fira Code','JetBrains Mono','Menlo','Monaco','Consolas',monospace"
-     font-size="12" fill="#22C55E" fill-opacity="0.22">
-    <text x="40"   y="30">10.0.0.0/8</text>
-    <text x="180"  y="30">172.16.0.0/12</text>
-    <text x="350"  y="30">192.168.0.0/16</text>
-    <text x="540"  y="30">100.64.0.0/10</text>
-    <text x="700"  y="30">2001:db8::/32</text>
-    <text x="850"  y="30">fe80::/10</text>
-    <text x="970"  y="30">::1/128</text>
-    <text x="1080" y="30">198.18.0.0/15</text>
+     font-size="12" fill="#22C55E" fill-opacity="0.18">
+    <text x="40"   y="26">10.0.0.0/8</text>
+    <text x="180"  y="26">172.16.0.0/12</text>
+    <text x="350"  y="26">192.168.0.0/16</text>
+    <text x="540"  y="26">100.64.0.0/10</text>
+    <text x="700"  y="26">2001:db8::/32</text>
+    <text x="850"  y="26">fe80::/10</text>
+    <text x="970"  y="26">::1/128</text>
+    <text x="1080" y="26">198.18.0.0/15</text>
   </g>
 
-  <!-- Bottom feature ticker, faint -->
-  <g font-family="'Fira Code','JetBrains Mono','Menlo','Monaco','Consolas',monospace"
-     font-size="12" fill="#22C55E" fill-opacity="0.20">
-    <text x="60"  y="268">subnet · vrf · vlan · site · tag</text>
-    <text x="380" y="268">PHP 8.2+ · SQLite · MySQL · PostgreSQL</text>
-    <text x="820" y="268">no npm · no build step · just rsync</text>
-  </g>
-
-  <!-- Centred type lockup -->
+  <!-- Hero copy, anchored in the right safe area (centered around x=870) -->
   <g text-anchor="middle">
-    <!-- Wordmark -->
-    <text x="640" y="148"
-          font-family="'Fira Code','JetBrains Mono','Menlo','Monaco','Consolas',monospace"
-          font-size="64" font-weight="500" letter-spacing="-1">
-      <tspan fill="#F8FAFC">Simple</tspan><tspan fill="#22C55E">PHP</tspan><tspan fill="#F8FAFC">IPAM</tspan>
+    <!-- Hero tagline -->
+    <text x="870" y="138"
+          font-family="'Inter','SF Pro Display','Helvetica Neue','Arial',sans-serif"
+          font-size="36" font-weight="600" fill="#F8FAFC" letter-spacing="-0.5">
+      Self-hosted IP address management.
     </text>
 
-    <!-- Tagline -->
-    <text x="640" y="188"
-          font-family="'Inter','SF Pro Text','Helvetica Neue','Arial',sans-serif"
-          font-size="20" font-weight="400" fill="#94A3B8" letter-spacing="0.4">
-      Lightweight, self-hosted IP address management.
+    <!-- Stack line -->
+    <text x="870" y="178"
+          font-family="'Fira Code','JetBrains Mono','Menlo','Monaco','Consolas',monospace"
+          font-size="17" font-weight="400" fill="#94A3B8" letter-spacing="0.4">
+      PHP 8.2+ · SQLite · MySQL · PostgreSQL
     </text>
 
     <!-- URL chip -->
-    <g transform="translate(518, 206)">
-      <rect x="0" y="0" width="244" height="32" rx="8" fill="#22C55E" fill-opacity="0.10" stroke="#22C55E" stroke-opacity="0.4" stroke-width="1"/>
-      <text x="122" y="22"
+    <g transform="translate(748, 200)">
+      <rect x="0" y="0" width="244" height="34" rx="8"
+            fill="#22C55E" fill-opacity="0.10"
+            stroke="#22C55E" stroke-opacity="0.45" stroke-width="1"/>
+      <text x="122" y="23"
             font-family="'Fira Code','JetBrains Mono','Menlo','Monaco','Consolas',monospace"
-            font-size="15" font-weight="500" fill="#22C55E">
+            font-size="16" font-weight="500" fill="#22C55E">
         simplephpipam.com
       </text>
     </g>
+  </g>
+
+  <!-- Bottom feature ticker, faint, right-weighted -->
+  <g font-family="'Fira Code','JetBrains Mono','Menlo','Monaco','Consolas',monospace"
+     font-size="12" fill="#22C55E" fill-opacity="0.18">
+    <text x="540"  y="268">no npm · no build step · just rsync</text>
+    <text x="900"  y="268">subnet · vrf · vlan · site · tag</text>
   </g>
 </svg>
