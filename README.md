@@ -12,16 +12,15 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.26.0
+## What's new in v3.27.0
 
-Backup-overhaul closeout + code-quality sweep. Two breaking-change footnotes (legacy backup runner retired, vault-key relocated to DB) plus a sweep of P0/P1 security and correctness fixes that landed earlier in the cycle.
+Step-up authentication. Sensitive admin actions are now gated by a unified `ipam_sudo_verify()` helper that accepts any of the user's enrolled MFA methods (TOTP, Email OTP, WebAuthn passkey, account password, OIDC re-auth) per install policy — replacing the v3.26.0 hardcoded password re-prompt that locked OIDC-only deployments out of vault-key administration (#1098).
 
-- **Legacy v3.7 backup runner retired (#1059).** `run_db_backup_if_due()`, the four legacy `backup.*` settings keys, and the standalone `backup.php` CLI entry point are removed. Backups are driven entirely by the unified `backup_destinations` + `backup_schedules` surface; `cron.php` is the sole scheduler entry point. **Operators upgrading from a pre-v3.23 install must pass through v3.23.0–v3.25.x first** so the conversion helper can materialise their legacy schedule before the migration aborts.
-- **`backup_vault_key` relocated to DB (#1098).** The 32-byte vault key for IPAMBKP3-encrypted archives moved out of `config.php` into a wrapped envelope in `settings`. New `bootstrap_key` config field wraps via libsodium `crypto_secretbox`; the raw key never lives in the database. New admin panel on the Destinations tab shows fingerprint + source label, gates Reveal behind a sudo-mode password re-prompt with per-IP rate limit, and gates Replace on encrypted-runs absence so a key swap cannot orphan existing archives.
-- **Destination-disabled mid-backup (#859).** Disabling a destination while a backup is in flight now aborts the run with a distinct audit detail (`reason=destination_disabled`), the same "mark canceled, audit, cleanup tmpfile" choreography as an explicit operator-cancel.
-- **Security & correctness sweep (B/C tracks).** CSRF on `set_theme.php` (#879), per-IP rate-limit on forgot/reset/email-OTP-verify (#882), expanded SSRF block-list on webhook URL validation (#872), email-OTP attempt-count race fix (#874), tags `colour` CSS injection defence (#869), `client_ip()` walks XFF right-to-left with a trusted-proxy CIDR list (#876). Plus 10 correctness fixes across audit-log filtering, webhook delivery, JSON containment, MySQL `GET_LOCK` hashing, and transaction wrapping.
-- **VR coverage restored (#1091).** The 200–470 px PostgreSQL drift on `/subnets` and `/search` no longer reproduces; HTML and `subnet_stats` JSON are byte-identical across all three drivers.
-- **Streaming memory property test (#860).** Asserts logical-dump peak memory delta stays under 64 MB regardless of row count; nightly CI workflows can crank `IPAM_LARGE_DB_TEST_BYTES=1073741824` for a 1 GB synthetic round-trip.
+- **`ipam_sudo_verify()` step-up helper + session sudo grant (#1107).** Centralised step-up proof verification across all sensitive admin actions. Optional grant TTL caches a successful re-auth so a single proof satisfies a fan-out of sensitive actions within the configured window. Per-IP rate-limit (5 failures / 15 min). Stable-reason audit on every failure (`auth.sudo_failed reason=…`); successes audit `auth.sudo_passed`.
+- **Step-up policy admin card + registry (#1108, #1109).** New group on `Settings → Authentication` exposes four allow-flags (TOTP, Email OTP, WebAuthn, provider re-auth) and a six-value TTL dropdown (0/60s/5m/15m/30m/1h). Lock-out precondition guard refuses any save that would strand every active admin under their current enrollments.
+- **Vault, API keys, settings reveal, DB import/export, password change, MFA disable migrated to the unified gate (#1110, #1112, #1113).** **Closes the OIDC-only admin lockout (#1098):** an admin whose `password_hash` is `!disabled` (provisioned by OIDC, no local password) can now satisfy the gate via TOTP, passkey, or provider re-auth instead of being permanently refused.
+- **`Reveal vault key` promoted out of `<details>` to a primary, always-visible button (#1111).** The most-common admin action is no longer hidden behind an extra click.
+- **Step-up auth subsystem reference (#1115).** New `docs/internal/step-up-auth.md` documents the helper contract, policy keys, session keys/TTL, invalidation triggers, prompt UX, and the recipe for adding a new sudo-class admin handler.
 
 [Full changelog →](CHANGELOG.md)
 
