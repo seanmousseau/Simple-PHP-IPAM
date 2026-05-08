@@ -9,7 +9,7 @@
  */
 
 import { test, expect } from '@playwright/test';
-import { login, logout, ADMIN_USER, ADMIN_PASS, appUrl, fetchPost, injectTestOtp, resetEmailOtpEnrollment, ensureEmailOtpEnrolled, setSmtpMailhog } from '../fixtures/ipam';
+import { login, logout, ADMIN_USER, ADMIN_PASS, appUrl, fetchPost, injectTestOtp, resetEmailOtpEnrollment, ensureEmailOtpEnrolled, setSmtpMailhog, passStepUpIfPresent } from '../fixtures/ipam';
 
 const EMAIL_OTP_USER = 'email_otp_test_user';
 const EMAIL_OTP_PASS = 'Password1!';
@@ -120,10 +120,13 @@ test.describe('Email OTP enrollment', () => {
         const code = await injectTestOtp(EMAIL_OTP_USER, '111222');
         await page.locator('#email-otp input[name=otp_code]').fill(code);
         await page.locator('#email-otp button[type=submit]').first().click();
-        // Now disable — fill required password field, accept confirm dialog, then submit
-        await page.locator('#email-otp input[name=current_password]').fill(EMAIL_OTP_PASS);
+        // v3.27.0 (#1107): disable_email_otp is gated behind ipam_sudo_verify().
+        // The previous inline `current_password` field on the disable form is
+        // gone — clicking Disable now lands on the shared step-up prompt;
+        // submit password proof to complete.
         page.once('dialog', d => d.accept());
         await page.locator('#email-otp button.button-danger').click();
+        await passStepUpIfPresent(page, EMAIL_OTP_PASS);
         await expect(page.locator('#email-otp')).not.toContainText(/active/i);
         await logout(page);
     });

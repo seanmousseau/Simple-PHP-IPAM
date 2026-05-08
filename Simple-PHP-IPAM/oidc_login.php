@@ -3,8 +3,17 @@ declare(strict_types=1);
 require __DIR__ . '/init.php';
 /** @var IpamConfig $config */
 
-if (is_logged_in())      { header('Location: dashboard.php'); exit; }
-if (!oidc_enabled($config)) { header('Location: login.php');     exit; }
+// v3.27.0 (#1113) — sudo step-up re-auth flow. ipam_sudo_oidc_reauth_redirect_url()
+// stashes a sudo_oidc_reauth_state in the session and bounces the user here
+// with ?prompt=login&sudo=<state>. We MUST NOT short-circuit a logged-in user
+// to dashboard.php in that case — the whole point of the round-trip is to
+// re-prove identity at the IdP and come back with a fresh sudo grant.
+$sudoReauthRequested = (to_str($_GET['prompt'] ?? '') === 'login')
+    && (to_str($_GET['sudo']   ?? '') !== '')
+    && (to_str($_GET['sudo']   ?? '') === to_str($_SESSION['sudo_oidc_reauth_state'] ?? ''));
+
+if (!$sudoReauthRequested && is_logged_in()) { header('Location: dashboard.php'); exit; }
+if (!oidc_enabled($config))                  { header('Location: login.php');     exit; }
 
 try {
     $discovery = oidc_discovery($config);
@@ -33,6 +42,12 @@ $params = [
     'code_challenge'        => $pkce['challenge'],
     'code_challenge_method' => 'S256',
 ];
+if ($sudoReauthRequested) {
+    // Force the IdP to re-prompt for credentials even if the SSO session is
+    // still valid — without prompt=login many IdPs would silently re-issue a
+    // token off an existing session, defeating the step-up. Plan §3.1 step 3.
+    $params['prompt'] = 'login';
+}
 
 header('Location: ' . to_str($discovery['authorization_endpoint']) . '?' . http_build_query($params));
 exit;

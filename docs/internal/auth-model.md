@@ -132,6 +132,18 @@ The `audit-actions.md` doc has the full action vocabulary.
 
 ---
 
+## Step-up auth (v3.27.0)
+
+A second authentication moment that runs *after* login, every time the operator reaches a sensitive admin action (vault key reveal, sensitive setting reveal, DB import, API key creation, MFA disable, step-up policy save). It is decoupled from how the user originally logged in so OIDC-only admins — who have no local password and no login MFA — can still pass it.
+
+The helper `ipam_sudo_verify()` accepts any of TOTP / Email OTP / WebAuthn / provider re-auth, gated by the install-wide `auth.step_up.*` policy. Successful proofs mint a session-scoped grant valid for `auth.step_up.ttl_seconds` so back-to-back sensitive actions don't re-prompt within the window.
+
+Read **`docs/internal/step-up-auth.md`** before adding a new sensitive action or modifying `Simple-PHP-IPAM/lib/auth_step_up.php`. That doc covers the helper contract, session keys, TTL, invalidation triggers, prompt UX, and the recipe for adding a new sudo-class call site.
+
+The audit vocabulary (`auth.sudo_passed`, `auth.sudo_failed`, `auth.sudo_rate_limited`, `auth.step_up_policy.updated`) is documented in `audit-actions.md`.
+
+---
+
 ## Session configuration
 
 Configured in `init.php` before `session_start()`:

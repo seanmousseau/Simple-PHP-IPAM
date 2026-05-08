@@ -396,10 +396,14 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
         return 'This action is disabled in demo mode.';
     }
 
-    // v3.26.0 (#1098) — vault-key admin actions. All three require the
-    // current admin's password as a sudo-mode re-prompt; reveal additionally
-    // applies a per-IP rate limit to slow brute-force attempts. Each writes
-    // an audit row via the dedicated 'backup.vault_key.*' vocabulary.
+    // v3.27.0 (#1110) — vault-key admin actions, gated by the install-wide
+    // step-up policy via ipam_sudo_verify(). Replaces the v3.26.0 hardcoded
+    // password re-prompt that locked OIDC-only deployments out of vault-key
+    // management (#1098 origin bug). The vault-specific per-IP reveal rate
+    // limit is retained on top of the helper's generic 'sudo' bucket — the
+    // helper rate-limits proofs across all sudo-class actions, but reveal
+    // additionally needs a noisy-floor brake on its own bucket so a flood
+    // of reveal attempts cannot mask itself among other sudo activity.
     if (in_array($action, ['vault_reveal', 'vault_set', 'vault_replace'], true)) {
         $u = current_user();
         $userId   = to_int($u['id'] ?? 0);
@@ -409,14 +413,9 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
             return 'Vault-key administration requires an admin account.';
         }
 
-        $clientIp = client_ip();
-        // Rate-limit reveal especially — five attempts per 15 minutes per
-        // IP, mirroring B2's auth-endpoint cap. Set / replace also pass
-        // through but with a softer cap; an attacker who can submit a
-        // valid CSRF + sudo password is already inside the perimeter, so
-        // the cap is just a noisy-floor brake.
-        $revealMax     = 5;
-        $revealWindow  = 900;
+        $clientIp     = client_ip();
+        $revealMax    = 5;
+        $revealWindow = 900;
         if ($action === 'vault_reveal'
             && auth_rate_limited($db, 'vault_key_reveal', $clientIp, $revealMax, $revealWindow)
         ) {
@@ -426,22 +425,44 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
             return 'Too many reveal attempts from this IP. Wait ' . ($revealWindow / 60) . ' minutes and try again.';
         }
 
-        // Sudo-mode password re-prompt.
-        $supplied = to_str($_POST['admin_password'] ?? '');
-        if ($supplied === '') {
-            return 'Re-enter your admin password to continue.';
-        }
-        $st = $db->prepare("SELECT password_hash FROM users WHERE id = :id");
-        $st->execute([':id' => $userId]);
-        $row = $st->fetch();
-        $hash = is_array($row) ? to_str($row['password_hash'] ?? '') : '';
-        if ($hash === '' || str_starts_with($hash, '!') || !password_verify($supplied, $hash)) {
-            if ($action === 'vault_reveal') {
-                record_auth_failure($db, 'vault_key_reveal', $clientIp, $username);
+        // Step-up gate. ipam_sudo_require() is true if the session already
+        // has a fresh sudo grant OR if the current POST carries a valid
+        // step-up proof (built by views/_step_up_prompt.php). On a missed
+        // grant we render the prompt as a full page and exit — the form
+        // POSTs back here with the proof attached and the same hidden
+        // fields so the original action resumes after verification.
+        if (!ipam_sudo_require($db, $userId)) {
+            // Deprecated audit alias — retained one release so existing
+            // SIEM queries on backup.vault_key.sudo_failed still fire.
+            // ipam_sudo_verify() already wrote auth.sudo_failed when a
+            // proof was submitted; this row is the bridge for legacy
+            // log-search filters. Removed in v3.28.0 per plan §3.6.
+            if (isset($_POST['_sudo_method'])) {
+                audit($db, 'backup.vault_key.sudo_failed', 'vault', null,
+                      "action=$action user=$username");
+                if ($action === 'vault_reveal') {
+                    record_auth_failure($db, 'vault_key_reveal', $clientIp, $username);
+                }
             }
-            audit($db, 'backup.vault_key.sudo_failed', 'vault', null,
-                  "action=$action user=$username");
-            return 'Password does not match — vault-key action refused.';
+
+            page_header('Confirm your identity');
+            $stepUpUserId       = $userId;
+            $stepUpFormAction   = 'backup_admin.php?tab=destinations';
+            $stepUpHiddenFields = ['action' => $action];
+            if ($action === 'vault_set' || $action === 'vault_replace') {
+                $stepUpHiddenFields['vault_mode']    = to_str($_POST['vault_mode']    ?? 'generate');
+                $stepUpHiddenFields['vault_key_b64'] = to_str($_POST['vault_key_b64'] ?? '');
+            }
+            $stepUpDescription = $action === 'vault_reveal'
+                ? 'Re-authenticate to reveal the raw backup vault key. The reveal is rate-limited and audit-logged.'
+                : ($action === 'vault_set'
+                    ? 'Re-authenticate to set the backup vault key.'
+                    : 'Re-authenticate to replace the backup vault key.');
+            $stepUpReturnPath  = 'backup_admin.php?tab=destinations';
+            $stepUpError       = isset($_POST['_sudo_method']) ? 'Verification failed. Vault-key action refused.' : '';
+            include __DIR__ . '/../views/_step_up_prompt.php';
+            page_footer();
+            exit;
         }
         if ($action === 'vault_reveal') {
             clear_auth_failures($db, 'vault_key_reveal', $clientIp);

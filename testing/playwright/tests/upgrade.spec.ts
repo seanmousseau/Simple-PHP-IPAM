@@ -19,7 +19,7 @@
  */
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import {
-  login as loginAs, fetchPost, fetchPostForm, appUrl,
+  login as loginAs, fetchPost, fetchPostForm, appUrl, warmSudoGrant,
   ADMIN_USER, ADMIN_PASS,
   newAuthContext, IS_SQLITE,
 } from '../fixtures/ipam';
@@ -261,6 +261,11 @@ test.describe('Upgrade path: pre-v2.0.0 → current version (#305)', () => {
     originalSql = r.body;
     expect(originalSql.length, 'saved current DB export').toBeGreaterThan(100);
 
+    // v3.27.0 (#1107): db_tools import is gated behind ipam_sudo_verify().
+    // Pre-warm a sudo grant so the import POST reaches the import handler
+    // instead of the step-up prompt.
+    await warmSudoGrant(page);
+
     // Import the pre-v2 SQL (replaces the DB with the old schema).
     await page.goto('db_tools.php');
     const importResult = await fetchPostForm(
@@ -291,6 +296,14 @@ test.describe('Upgrade path: pre-v2.0.0 → current version (#305)', () => {
         // If intermediate tests failed, the session state may be unknown — log out and back in.
         await page.goto('logout.php').catch(() => null);
         await loginAs(page, UPGRADE_ADMIN_USER, UPGRADE_ADMIN_PASS);
+        // Re-warm the sudo grant before the restore. CRITICAL: pass the
+        // upgrade-test-admin password explicitly — warmSudoGrant defaults
+        // to ADMIN_PASS ('demo'), which is wrong for the user we're
+        // logged in as here. Failing the warm-up means the restore POST
+        // hits the step-up gate, the DB stays in pre-v2 state, and every
+        // subsequent spec's login as `demo` fails because demo doesn't
+        // exist in the pre-v2 schema. (CodeRabbit round 2, #1116.)
+        await warmSudoGrant(page, UPGRADE_ADMIN_PASS);
         await page.goto('db_tools.php');
         await fetchPostForm(
           page, appUrl('db_tools.php'),

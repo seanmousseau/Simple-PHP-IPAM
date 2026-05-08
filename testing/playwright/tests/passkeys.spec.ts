@@ -11,7 +11,7 @@
  */
 
 import { test, expect, Page } from '@playwright/test';
-import { login, logout, ADMIN_USER, ADMIN_PASS, fetchPost } from '../fixtures/ipam';
+import { login, logout, ADMIN_USER, ADMIN_PASS, fetchPost, passStepUpIfPresent } from '../fixtures/ipam';
 
 // Chrome rejects IP addresses as WebAuthn RP IDs. Route passkey tests through
 // localhost so the browser origin matches the server's 'localhost' rpId.
@@ -229,9 +229,13 @@ test.describe('Passkeys', () => {
         await page.locator('#btn-add-passkey').click();
         await expect(page.locator('#passkeys')).toContainText('Deletable Passkey', { timeout: 30_000 });
 
-        await page.locator('#passkeys input[name=current_password]').last().fill(PASSKEY_PASS);
+        // v3.27.0 (#1107): passkey_delete is gated behind ipam_sudo_verify().
+        // The previous inline `current_password` field was removed — clicking
+        // Remove now lands on the shared step-up prompt; submit password
+        // proof to complete the delete.
         page.once('dialog', d => d.accept());
         await page.locator('#passkeys button[type=submit]').last().click();
+        await passStepUpIfPresent(page, PASSKEY_PASS);
         await expect(page.locator('#passkeys')).not.toContainText('Deletable Passkey', { timeout: 15_000 });
         await logout(page);
 

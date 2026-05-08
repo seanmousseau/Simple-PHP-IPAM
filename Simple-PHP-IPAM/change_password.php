@@ -77,28 +77,30 @@ if (isset($_GET['verify_email'])) {
     exit;
 }
 
-// 2FA: disable TOTP
+// 2FA: disable TOTP. v3.27.0 (#1112) — gated by ipam_sudo_require() instead
+// of the legacy current_password verify so OIDC-only users can disable TOTP
+// via TOTP/Email OTP/passkey/OIDC re-auth under the install policy.
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 'disable_totp') {
     csrf_require();
-    $disableStmt = $db->prepare("SELECT password_hash FROM users WHERE id = :id");
-    $disableStmt->execute([':id' => $cur['id']]);
-    /** @var array<string, mixed>|false $disableRow */
-    $disableRow    = $disableStmt->fetch();
-    $disablePwHash = $disableRow ? to_str($disableRow['password_hash']) : '';
-    $isSsoOnlyDisable = str_starts_with($disablePwHash, '!');
-    if (!$isSsoOnlyDisable) {
-        $confirmPw = to_str($_POST['current_password'] ?? '');
-        if ($confirmPw === '' || !password_verify($confirmPw, $disablePwHash)) {
-            flash_set('Current password is incorrect. 2FA was not disabled.', 'danger');
-            header('Location: change_password.php');
-            exit;
-        }
+    if (!ipam_sudo_require($db, to_int($cur['id']))) {
+        page_header('Confirm your identity');
+        $stepUpUserId       = to_int($cur['id']);
+        $stepUpFormAction   = 'change_password.php';
+        $stepUpHiddenFields = ['action' => 'disable_totp'];
+        $stepUpDescription  = 'Re-authenticate to disable TOTP two-factor authentication.';
+        $stepUpReturnPath   = 'change_password.php';
+        $stepUpError        = isset($_POST['_sudo_method']) ? 'Verification failed. TOTP was not disabled.' : '';
+        include __DIR__ . '/views/_step_up_prompt.php';
+        page_footer();
+        exit;
     }
     $db->prepare("UPDATE users SET totp_enabled=0, totp_secret_enc=NULL WHERE id=:id")
        ->execute([':id' => $cur['id']]);
     $db->prepare("DELETE FROM totp_backup_codes WHERE user_id=:uid")
        ->execute([':uid' => $cur['id']]);
     audit($db, 'auth.totp_disable', 'user', to_int($cur['id']), 'self');
+    // MFA enrollment change invalidates any cached sudo grant (plan §3.5).
+    ipam_sudo_invalidate();
     flash_set('Two-factor authentication disabled.');
     header('Location: change_password.php');
     exit;
@@ -145,6 +147,10 @@ if (!$isSsoOnly && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $db->prepare("UPDATE users SET password_hash = :h, password_changed_at = " . ipam_dialect()->now() . " WHERE id = :id")
                ->execute([':h' => $hash, ':id' => $cur['id']]);
             session_regenerate_id(true);
+            // Password change invalidates any cached sudo grant — the
+            // credential the grant might have been minted from is no
+            // longer the current credential (plan §3.5).
+            ipam_sudo_invalidate();
             // Reset the absolute lifetime clock so the new session gets a fresh window.
             // Only set it when the feature is enabled (lifetime > 0).
             $absLifetimeMin = to_int($config['session']['absolute_lifetime_minutes'] ?? 480);
@@ -287,51 +293,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 
     exit;
 }
 
-// --- Email OTP: disable ---
+// --- Email OTP: disable. v3.27.0 (#1112) — gated by ipam_sudo_require(). ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 'email_otp_disable') {
     csrf_require();
-    $eoDisableStmt = $db->prepare("SELECT password_hash FROM users WHERE id = :id");
-    $eoDisableStmt->execute([':id' => $cur['id']]);
-    /** @var array<string, mixed>|false $eoDisableRow */
-    $eoDisableRow    = $eoDisableStmt->fetch();
-    $eoDisablePwHash = $eoDisableRow ? to_str($eoDisableRow['password_hash']) : '';
-    if (!str_starts_with($eoDisablePwHash, '!')) {
-        $eoConfirmPw = to_str($_POST['current_password'] ?? '');
-        if ($eoConfirmPw === '' || !password_verify($eoConfirmPw, $eoDisablePwHash)) {
-            flash_set('Current password is incorrect. Email OTP was not disabled.', 'danger');
-            header('Location: change_password.php#email-otp');
-            exit;
-        }
+    if (!ipam_sudo_require($db, to_int($cur['id']))) {
+        page_header('Confirm your identity');
+        $stepUpUserId       = to_int($cur['id']);
+        $stepUpFormAction   = 'change_password.php';
+        $stepUpHiddenFields = ['action' => 'email_otp_disable'];
+        $stepUpDescription  = 'Re-authenticate to disable Email OTP two-factor authentication.';
+        $stepUpReturnPath   = 'change_password.php#email-otp';
+        $stepUpError        = isset($_POST['_sudo_method']) ? 'Verification failed. Email OTP was not disabled.' : '';
+        include __DIR__ . '/views/_step_up_prompt.php';
+        page_footer();
+        exit;
     }
     $db->prepare("UPDATE users SET email_otp_enabled = 0 WHERE id = :id")
        ->execute([':id' => to_int($cur['id'])]);
     ipam_email_otp_clear($db, to_int($cur['id']));
     unset($_SESSION['email_otp_enrolling']);
     audit($db, 'user.email_otp_disable', 'user', to_int($cur['id']), 'Email OTP 2FA disabled');
+    // MFA enrollment change invalidates any cached sudo grant (plan §3.5).
+    ipam_sudo_invalidate();
     flash_set('Email OTP disabled.');
     header('Location: change_password.php#email-otp');
     exit;
 }
 
-// --- Passkeys: delete ---
+// --- Passkeys: delete. v3.27.0 (#1112) — gated by ipam_sudo_require(). ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 'passkey_delete') {
     csrf_require();
-    $pkDelStmt = $db->prepare("SELECT password_hash FROM users WHERE id = :id");
-    $pkDelStmt->execute([':id' => $cur['id']]);
-    /** @var array<string, mixed>|false $pkDelRow */
-    $pkDelRow   = $pkDelStmt->fetch();
-    $pkDelHash  = $pkDelRow ? to_str($pkDelRow['password_hash']) : '';
-    if (!str_starts_with($pkDelHash, '!')) {
-        $pkDelPw = to_str($_POST['current_password'] ?? '');
-        if ($pkDelPw === '' || !password_verify($pkDelPw, $pkDelHash)) {
-            flash_set('Current password is incorrect. Passkey was not removed.', 'danger');
-            header('Location: change_password.php#passkeys');
-            exit;
-        }
-    }
     $credId = to_int($_POST['credential_id'] ?? 0);
+    if (!ipam_sudo_require($db, to_int($cur['id']))) {
+        page_header('Confirm your identity');
+        $stepUpUserId       = to_int($cur['id']);
+        $stepUpFormAction   = 'change_password.php';
+        $stepUpHiddenFields = ['action' => 'passkey_delete', 'credential_id' => (string) $credId];
+        $stepUpDescription  = 'Re-authenticate to remove this passkey.';
+        $stepUpReturnPath   = 'change_password.php#passkeys';
+        $stepUpError        = isset($_POST['_sudo_method']) ? 'Verification failed. Passkey was not removed.' : '';
+        include __DIR__ . '/views/_step_up_prompt.php';
+        page_footer();
+        exit;
+    }
     if ($credId > 0 && ipam_passkey_delete($db, $credId, to_int($cur['id']))) {
         audit($db, 'user.passkey_delete', 'user', to_int($cur['id']), "credential_id={$credId}");
+        // MFA enrollment change invalidates any cached sudo grant (plan §3.5).
+        ipam_sudo_invalidate();
     }
     header('Location: change_password.php#passkeys');
     exit;
@@ -525,13 +533,8 @@ $mfaMethodLabels = [
           <form method="post" action="change_password.php#totp" class="mfa-method-row__form">
             <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
             <input type="hidden" name="action" value="disable_totp">
-            <?php if (!$isSsoOnly): ?>
-              <label class="mfa-method-row__pwlabel">Current password
-                <input type="password" name="current_password" autocomplete="current-password" required>
-              </label>
-            <?php endif; ?>
             <button type="submit" class="action-pill button-danger"
-              onclick="return confirm('Disable authenticator app 2FA? You will no longer need a code to log in.')">
+              onclick="return confirm('Disable authenticator app 2FA? You will be prompted to re-authenticate before the change is applied.')">
               Disable
             </button>
           </form>
@@ -574,13 +577,8 @@ $mfaMethodLabels = [
           <form method="post" action="change_password.php#email-otp" class="mfa-method-row__form">
             <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
             <input type="hidden" name="action" value="email_otp_disable">
-            <?php if (!$isSsoOnly): ?>
-              <label class="mfa-method-row__pwlabel">Current password
-                <input type="password" name="current_password" autocomplete="current-password" required>
-              </label>
-            <?php endif; ?>
             <button type="submit" class="action-pill button-danger"
-              onclick="return confirm('Disable Email OTP? You will no longer receive a code by email at login.')">
+              onclick="return confirm('Disable Email OTP? You will be prompted to re-authenticate before the change is applied.')">
               Disable
             </button>
           </form>
@@ -666,10 +664,6 @@ $mfaMethodLabels = [
                 <input type="hidden" name="csrf"          value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action"        value="passkey_delete">
                 <input type="hidden" name="credential_id" value="<?= e((string)to_int($pk['id'])) ?>">
-                <?php if (!$isSsoOnly): ?>
-                  <input type="password" name="current_password" placeholder="Current password"
-                         autocomplete="current-password" required class="mfa-passkey-list__pw">
-                <?php endif ?>
                 <button type="submit" class="action-pill button-danger"
                         aria-label="Remove passkey <?= e(to_str($pk['name'])) ?>">
                   <?= icon('trash') ?> Remove

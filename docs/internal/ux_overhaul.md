@@ -1,9 +1,9 @@
 # UX Overhaul — Simple-PHP-IPAM (non-backup)
 
-**Status:** APPROVED 2026-04-30 — milestone allocation locked, 82 finding-issues + 5 test-update umbrellas filed across v3.31.0–v3.35.0 (87 issues total).
+**Status:** APPROVED 2026-04-30 — milestone allocation locked, 82 finding-issues + 5 test-update umbrellas filed across v3.32.0–v3.36.0 (87 issues total).
 **Scope:** Top-to-bottom UI/UX review of the application **excluding** backup/restore, which has its own dedicated overhaul at `docs/internal/backup_overhaul.md` (5-tab unified surface, restore wizard, drawer pattern, U1–U10 backlog).
 **Goal:** Tighten the GUI before v4.0.0 multi-tenancy work begins. All findings here must be addressed before v4.0.0.
-**Single source of truth:** This document. Every issue filed against any milestone v3.31.0–v3.x must reference a finding ID in this file.
+**Single source of truth:** This document. Every issue filed against any milestone v3.32.0–v3.x must reference a finding ID in this file.
 
 This doc mirrors the style of `backup_overhaul.md` and `code_quality_review.md`:
 - §1 methodology · §2 verdict · §3–§6 findings by area · §7 cross-cutting · §8 effort · §9 recommended milestone allocation · §10 decision log.
@@ -291,25 +291,25 @@ Live-app walkthrough on the dev test instance (https://dev-direct.seanmousseau.c
 
 ## 9. Recommended milestone allocation (DRAFT — pending approval)
 
-User reserved **v3.31.0 onward** for this overhaul. All work must land before **v4.0.0**. Code-quality milestones (v3.26.0–v3.30.0) and backup-overhaul milestones (v3.20.0–v3.26.0) coexist.
+User reserved **v3.32.0 onward** for this overhaul. All work must land before **v4.0.0**. Code-quality milestones (v3.26.0–v3.31.0) and backup-overhaul milestones (v3.20.0–v3.26.0) coexist.
 
 | Milestone | Theme | Items | Effort |
 |---|---|---|---|
-| **v3.31.0** (NEW) | **Design system foundation** — type scale, badge primitive, color-not-only-signal, dark-mode brand link, mobile font-size | C1, C2, C3, C4, C5 (visual), C6, C7, C9, C10, S6, S9, A20 | ~5–7 d |
-| **v3.32.0** (NEW) | **Sidebar + nav consolidation** — group admin into 5 sections, command palette discoverability, theme toggle, sidebar collapse, post-timeout deep-link | S2, S8, S10, S11, S12, S13, S14 | ~4–6 d |
-| **v3.33.0** (NEW) | **Data-heavy pages overhaul (subnets + addresses)** — pagination/virtualization, drawer-edit, action consolidation, status-as-badge, URL-state filters, bulk-action bar | L1, L2, L3, L4, L5, L8, L9, L10, L11, L13, L14, L15, L16, C11 | ~10–14 d |
-| **v3.34.0** (NEW) | **Search + audit + dashboard polish** — instant search, pretty-printed audit, relative time, pagination consistency, KPI cards clickable, recent-activity rendering | L17, L18, L19, L20, L21, L22, L23, L24, L25, L26, L27, L28, L29, D1, D2, D4, D5, D7, D8, D9, D10, C29 | ~6–8 d |
-| **v3.35.0** (NEW) | **Admin pages standardization + import wizard + a11y sweep + mobile + auth polish** — drawer-CRUD across 12 admin pages, empty states, settings save UX, import-CSV stepper, drag-drop, mobile responsive sweep, a11y sweep, login UX (S1/S3-S5/S7), auth-flow rate-limit feedback, all remaining P2/P3 | A1–A31, S1, S3, S4, S5, S7, S15, C8, C12, C13, C14, C15, C16, C17, C18, C19, C20, C21, C22, C23, C24, C26, C27, C28, C30, C31, all P3 from prior milestones not landed | ~10–14 d |
+| **v3.32.0** (NEW) | **Design system foundation** — type scale, badge primitive, color-not-only-signal, dark-mode brand link, mobile font-size | C1, C2, C3, C4, C5 (visual), C6, C7, C9, C10, S6, S9, A20 | ~5–7 d |
+| **v3.33.0** (NEW) | **Sidebar + nav consolidation** — group admin into 5 sections, command palette discoverability, theme toggle, sidebar collapse, post-timeout deep-link | S2, S8, S10, S11, S12, S13, S14 | ~4–6 d |
+| **v3.34.0** (NEW) | **Data-heavy pages overhaul (subnets + addresses)** — pagination/virtualization, drawer-edit, action consolidation, status-as-badge, URL-state filters, bulk-action bar | L1, L2, L3, L4, L5, L8, L9, L10, L11, L13, L14, L15, L16, C11 | ~10–14 d |
+| **v3.35.0** (NEW) | **Search + audit + dashboard polish** — instant search, pretty-printed audit, relative time, pagination consistency, KPI cards clickable, recent-activity rendering | L17, L18, L19, L20, L21, L22, L23, L24, L25, L26, L27, L28, L29, D1, D2, D4, D5, D7, D8, D9, D10, C29 | ~6–8 d |
+| **v3.36.0** (NEW) | **Admin pages standardization + import wizard + a11y sweep + mobile + auth polish** — drawer-CRUD across 12 admin pages, empty states, settings save UX, import-CSV stepper, drag-drop, mobile responsive sweep, a11y sweep, login UX (S1/S3-S5/S7), auth-flow rate-limit feedback, all remaining P2/P3 | A1–A31, S1, S3, S4, S5, S7, S15, C8, C12, C13, C14, C15, C16, C17, C18, C19, C20, C21, C22, C23, C24, C26, C27, C28, C30, C31, all P3 from prior milestones not landed | ~10–14 d |
 
 Total: **~35–49 engineer-days across 5 new milestones**, all before v4.0.0.
 
 ### 9.1 Why this split (rationale)
 
-- **v3.31.0 is the foundation.** Type scale + badge primitive + color-not-only-signal are leverage that every later milestone benefits from. Doing this *first* makes v3.32–v3.35 cheaper.
-- **v3.32.0 is the nav consolidation.** Once admin links are grouped into 5 sections, v4.0.0 can add tenant switcher / super-admin without further bloat.
-- **v3.33.0 is the highest-impact UX win.** Subnets and addresses pages are where operators spend 80% of their time; pagination + drawer + URL-state is the difference between "barely usable at scale" and "feels modern."
-- **v3.34.0 is the polish for the second-most-used surfaces.** Search and audit are where operators investigate; dashboard is the daily welcome. Land after the data-heavy pages so the patterns are reusable.
-- **v3.35.0 is the cleanup pass.** Admin pages, mobile sweep, a11y sweep, auth polish, all remaining P2/P3. Lands clean for v4.0.0.
+- **v3.32.0 is the foundation.** Type scale + badge primitive + color-not-only-signal are leverage that every later milestone benefits from. Doing this *first* makes v3.32–v3.35 cheaper.
+- **v3.33.0 is the nav consolidation.** Once admin links are grouped into 5 sections, v4.0.0 can add tenant switcher / super-admin without further bloat.
+- **v3.34.0 is the highest-impact UX win.** Subnets and addresses pages are where operators spend 80% of their time; pagination + drawer + URL-state is the difference between "barely usable at scale" and "feels modern."
+- **v3.35.0 is the polish for the second-most-used surfaces.** Search and audit are where operators investigate; dashboard is the daily welcome. Land after the data-heavy pages so the patterns are reusable.
+- **v3.36.0 is the cleanup pass.** Admin pages, mobile sweep, a11y sweep, auth polish, all remaining P2/P3. Lands clean for v4.0.0.
 
 ### 9.2 Approval + filing record (2026-04-30)
 
@@ -317,11 +317,11 @@ User approved the 5-milestone split as proposed (no items downgraded or promoted
 
 | Milestone | UX-overhaul issues filed | Notes |
 |---|---:|---|
-| v3.31.0 | 10 | Design-system foundation |
-| v3.32.0 | 7 | Sidebar + nav consolidation |
-| v3.33.0 | 13 | Subnets + addresses overhaul |
-| v3.34.0 | 18 | Search + audit + dashboard polish |
-| v3.35.0 | 34 | Admin standardization + import wizard + a11y + mobile + auth polish |
+| v3.32.0 | 10 | Design-system foundation |
+| v3.33.0 | 7 | Sidebar + nav consolidation |
+| v3.34.0 | 13 | Subnets + addresses overhaul |
+| v3.35.0 | 18 | Search + audit + dashboard polish |
+| v3.36.0 | 34 | Admin standardization + import wizard + a11y + mobile + auth polish |
 | **Total** | **82** | All tagged with the `ux-overhaul` label. |
 
 All issues cite their finding ID(s) (S1–S15, D1–D10, L1–L31, A1–A31, C1–C32) and link back to this document. Adjacent findings were merged into single issues where the work is one commit (e.g. C4+C17+D5+L4+L10+A20 — color-only state communication; L19+L27+A9 — relative time; A3+A4+A5+A6 — settings copy sweep). Total finding coverage is preserved.
@@ -331,7 +331,7 @@ All issues cite their finding ID(s) (S1–S15, D1–D10, L1–L31, A1–A31, C1�
 | Existing milestone | Interaction |
 |---|---|
 | v3.20.0–v3.26.0 (backup-overhaul) | **Excluded from this doc.** Drawer pattern from `backup_overhaul.md` §2 is the *reference* for §6.C admin standardization (A12) — extend it, don't replace. |
-| v3.26.0–v3.30.0 (code-quality) | Several findings here align with code-quality work: D13 ↔ C5 (Open Props), D4 ↔ app.js modularization is the technical layer of S10/S12/A12, B8 ↔ L2 (addresses/subnets controller split is the *data-flow* prerequisite for the *visual* drawer rebuild here). Schedule accordingly. |
+| v3.26.0–v3.31.0 (code-quality) | Several findings here align with code-quality work: D13 ↔ C5 (Open Props), D4 ↔ app.js modularization is the technical layer of S10/S12/A12, B8 ↔ L2 (addresses/subnets controller split is the *data-flow* prerequisite for the *visual* drawer rebuild here). Schedule accordingly. |
 | v4.0.0 (multi-tenancy) | S6 (brand link consumes `branding.site_name`), S8 (sidebar adds tenant switcher cleanly into a grouped IA), L25 (Client IP visibility gated by super-admin/tenant-admin), all benefit from this overhaul landing first. |
 
 ---
@@ -344,8 +344,9 @@ All issues cite their finding ID(s) (S1–S15, D1–D10, L1–L31, A1–A31, C1�
 | 2026-04-30 | All findings must close before v4.0.0 | User directive — tighten the GUI before multi-tenancy. |
 | 2026-04-30 | This file is single source of truth — issues must reference finding IDs (S/D/L/A/C prefixes) | Mirrors `backup_overhaul.md` and `code_quality_review.md` discipline. |
 | 2026-04-30 | 5-milestone split approved as proposed | User accepted the rationale in §9.1. |
-| 2026-04-30 | 82 finding-issues filed under `ux-overhaul` label across v3.31.0–v3.35.0 | See §9.2 for per-milestone counts. Adjacent findings merged into single issues where the work is one commit. |
+| 2026-04-30 | 82 finding-issues filed under `ux-overhaul` label across v3.32.0–v3.36.0 | See §9.2 for per-milestone counts. Adjacent findings merged into single issues where the work is one commit. |
 | 2026-04-30 | 5 test-update umbrella issues added (one per UX milestone) — #1035–#1039 | Existing Playwright + PHPUnit + VR + a11y suites need to stay in lockstep with UI changes; test umbrellas are the canonical tracker for that. See §12. |
+| 2026-05-07 | All UX milestones bumped one slot (v3.31→v3.32, …, v3.35→v3.36). New v3.27.0 inserted for step-up auth feature, which cascaded existing v3.27–v3.35 milestones up one slot. | Origin: v3.26.0 #1098 follow-up — OIDC-only environments cannot manage backup vault key. Plan: `docs/superpowers/plans/2026-05-07-v3.27.0.md`. UX scope, ordering, and test-umbrella mapping unchanged; only milestone titles shifted. |
 
 (Further decisions to be added as triage and implementation proceed.)
 
@@ -357,11 +358,11 @@ Every UX milestone in §9 has a corresponding **test-update umbrella issue** so 
 
 | Milestone | Test umbrella | Highlights |
 |---|---|---|
-| v3.31.0 | `tests: rebaseline VR + add a11y tests for design-system foundation (v3.31.0)` (#1035) | Full VR rebaseline (type scale, badge primitive, color signalling); add axe-core pass; CSS-token validator that font-sizes outside the scale fail CI; dark-mode brand-link regression guard. |
-| v3.32.0 | `tests: update nav specs + add command palette / theme toggle / drawer trap tests (v3.32.0)` (#1036) | Rewrite nav specs for grouped sidebar; add command-palette / theme-toggle / sidebar-collapse tests; add deep-link return after session timeout. |
-| v3.33.0 | `tests: rewrite subnets/addresses specs + drawer + virtual scroll + bulk-action tests (v3.33.0)` (#1037) | **Largest test impact.** Rewrite subnets + addresses specs for paginated/virtualized DOM; add drawer-pattern tests (open/close/Esc/focus-trap); URL-state filters round-trip; mobile stacked-card mode; perf assertion that subnets page renders <1,000 interactive elements (vs. 3,727 today). |
-| v3.34.0 | `tests: search debounce + audit pretty-print + dashboard interactivity tests (v3.34.0)` (#1038) | Debounced search; relative-time helper with frozen clock; audit pretty-print + Client IP role gating; KPI clickable; recent-activity rendering; jump-to-page pagination. |
-| v3.35.0 | `tests: drawer-CRUD admin matrix + import wizard + a11y axe sweep + mobile sweep + auth tests (v3.35.0)` (#1039) | Parameterize a single admin-CRUD matrix across all 12 admin pages (replaces per-page specs); import-CSV stepper / drag-drop / size validation; full-app axe-core a11y sweep; mobile-viewport sweep (settings, touch targets, drawer); auth UX tests (show-password, rate-limit feedback). |
+| v3.32.0 | `tests: rebaseline VR + add a11y tests for design-system foundation (v3.32.0)` (#1035) | Full VR rebaseline (type scale, badge primitive, color signalling); add axe-core pass; CSS-token validator that font-sizes outside the scale fail CI; dark-mode brand-link regression guard. |
+| v3.33.0 | `tests: update nav specs + add command palette / theme toggle / drawer trap tests (v3.33.0)` (#1036) | Rewrite nav specs for grouped sidebar; add command-palette / theme-toggle / sidebar-collapse tests; add deep-link return after session timeout. |
+| v3.34.0 | `tests: rewrite subnets/addresses specs + drawer + virtual scroll + bulk-action tests (v3.34.0)` (#1037) | **Largest test impact.** Rewrite subnets + addresses specs for paginated/virtualized DOM; add drawer-pattern tests (open/close/Esc/focus-trap); URL-state filters round-trip; mobile stacked-card mode; perf assertion that subnets page renders <1,000 interactive elements (vs. 3,727 today). |
+| v3.35.0 | `tests: search debounce + audit pretty-print + dashboard interactivity tests (v3.35.0)` (#1038) | Debounced search; relative-time helper with frozen clock; audit pretty-print + Client IP role gating; KPI clickable; recent-activity rendering; jump-to-page pagination. |
+| v3.36.0 | `tests: drawer-CRUD admin matrix + import wizard + a11y axe sweep + mobile sweep + auth tests (v3.36.0)` (#1039) | Parameterize a single admin-CRUD matrix across all 12 admin pages (replaces per-page specs); import-CSV stepper / drag-drop / size validation; full-app axe-core a11y sweep; mobile-viewport sweep (settings, touch targets, drawer); auth UX tests (show-password, rate-limit feedback). |
 
 **Cross-cutting test policy** (applies to every milestone):
 - Each PR closing a finding must update or add the matching test in the same commit. PR template prompt: *"Tests updated/added for finding ID(s)?"*

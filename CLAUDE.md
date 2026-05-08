@@ -83,6 +83,7 @@ Operational procedures live alongside the code, one Read away. CLAUDE.md is poli
 | `docs/internal/incident-response.md` | Production regression playbook. Detect → triage → hotfix → post-mortem; when to hotfix vs defer; promotion to lessons-learned |
 | `docs/internal/adding-an-api-endpoint.md` | Extending `api.php`. Handler shape, dispatch wiring, OpenAPI spec update, readonly-key enforcement, integration test |
 | `docs/internal/auth-model.md` | Auth helpers, OIDC implementation details, MFA (TOTP/Email OTP/WebAuthn), claim mapping, session config. Read when touching login/MFA code |
+| `docs/internal/step-up-auth.md` | Step-up auth subsystem (v3.27.0) — `ipam_sudo_verify()` contract, policy keys, session keys/TTL, invalidation triggers, prompt UX, "how to add a new sensitive action" recipe. Read when adding or migrating a sudo-class admin handler |
 | `docs/internal/audit-actions.md` | Full vocabulary of `audit()` action strings. Update when adding a new action |
 | `docs/internal/scanner.md` | Scanner subsystem reference — tables, helpers, security patterns. Read when touching scan/probe/ARP code |
 | `docs/internal/runtime-dependency-policy.md` | Full policy text behind the `vendor/` whitelist. The whitelist + summary stays in CLAUDE.md; rationale lives here |

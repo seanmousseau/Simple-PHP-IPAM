@@ -7,6 +7,7 @@ require_once __DIR__ . '/lib/SftpClient.php';
 require_once __DIR__ . '/lib/LocalBackupClient.php';
 require_once __DIR__ . '/lib/vault.php';
 require_once __DIR__ . '/lib/backup.php';
+require_once __DIR__ . '/lib/auth_step_up.php';
 
 /**
  * Returns the active SQL dialect (#378). ipam_db() bootstraps this once per
@@ -2124,6 +2125,71 @@ function ipam_setting_definitions(): array
             'config_key'  => null,
         ],
 
+        // --- Step-up authentication (sudo-mode for sensitive admin actions) ---
+        // v3.27.0 #1108: install-wide policy controlling which credential
+        // proofs satisfy ipam_sudo_verify(). Decoupled from login provider
+        // so OIDC/LDAP/SAML users can manage sensitive resources (vault key,
+        // sensitive settings, DB import, API key creation, MFA disable)
+        // without depending on a local password. See
+        // docs/superpowers/plans/2026-05-07-v3.27.0.md.
+        'auth.step_up.allow_totp' => [
+            'label'       => 'Accept TOTP for step-up',
+            'type'        => 'bool',
+            'default'     => true,
+            'group'       => 'step_up',
+            'description' => 'Allow a fresh TOTP code to satisfy the step-up gate for sensitive admin actions. Has no effect for users who have not enrolled TOTP.',
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
+        'auth.step_up.allow_email_otp' => [
+            'label'       => 'Accept Email OTP for step-up',
+            'type'        => 'bool',
+            'default'     => true,
+            'group'       => 'step_up',
+            'description' => 'Allow a fresh Email OTP code to satisfy the step-up gate. Slightly weaker than TOTP/passkey because compromise of the email account leaks it; disable if your threat model includes inbox compromise.',
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
+        'auth.step_up.allow_webauthn' => [
+            'label'       => 'Accept WebAuthn passkey for step-up',
+            'type'        => 'bool',
+            'default'     => true,
+            'group'       => 'step_up',
+            'description' => 'Allow a fresh WebAuthn (passkey) assertion to satisfy the step-up gate. Strongest method; requires the user to have a registered passkey.',
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
+        'auth.step_up.allow_provider_reauth' => [
+            'label'       => 'Accept provider re-authentication for step-up',
+            'type'        => 'bool',
+            'default'     => true,
+            'group'       => 'step_up',
+            'description' => 'Fall back to the user\'s primary login credential (local password, OIDC prompt=login, or other provider re-auth) when no MFA method is available. Disable to force MFA enrollment for any sensitive action.',
+            'sensitive'   => false,
+            'config_key'  => null,
+        ],
+        'auth.step_up.ttl_seconds' => [
+            'label'       => 'Step-up cache duration',
+            // Stored as a string of seconds so the UI can render a discrete
+            // dropdown via the registry options mechanism (only string-typed
+            // fields render <select> in views/settings_group_form.php).
+            // ipam_sudo_policy() coerces with to_int() before use.
+            'type'        => 'string',
+            'default'     => '300',
+            'group'       => 'step_up',
+            'description' => 'How long a successful step-up grant remains valid before the user is re-prompted on the next sensitive action.',
+            'sensitive'   => false,
+            'config_key'  => null,
+            'options'     => [
+                '0'    => 'Re-prompt every action',
+                '60'   => '1 minute',
+                '300'  => '5 minutes',
+                '900'  => '15 minutes',
+                '1800' => '30 minutes',
+                '3600' => '1 hour',
+            ],
+        ],
+
         // --- Password policy ---
         'password_policy.min_length' => [
             'label'       => 'Minimum password length',
@@ -2358,6 +2424,7 @@ function ipam_setting_groups(): array
     return [
         'branding'             => ['label' => 'Branding',             'description' => 'Display name and timezone shown across the UI.'],
         'security'             => ['label' => 'Security',             'description' => 'Session lifetime and login lockout policy.'],
+        'step_up'              => ['label' => 'Step-up authentication', 'description' => 'Re-authentication policy for sensitive admin actions (vault key, sensitive setting reveal, DB import, API key creation, MFA disable). Decoupled from the login provider so OIDC users can manage these without a local password.'],
         'mfa'                  => ['label' => 'Multi-Factor Authentication', 'description' => 'Available 2FA methods and enforcement policy.'],
         'password_policy'      => ['label' => 'Password policy',      'description' => 'Complexity requirements and rotation for local passwords.'],
         'alert'                => ['label' => 'Alerting',             'description' => 'Subnet utilization email alerts.'],

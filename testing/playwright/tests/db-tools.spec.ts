@@ -6,7 +6,7 @@ import { test, expect, type Browser, type BrowserContext, type Page } from '@pla
 import {
   login, fetchPost, fetchPostForm, deleteSubnet, appUrl,
   ADMIN_USER, ADMIN_PASS, TEST_CIDR1,
-  newAuthContext, IS_SQLITE,
+  newAuthContext, IS_SQLITE, warmSudoGrant,
 } from '../fixtures/ipam';
 
 // v2.10.0 #433 / v2.11.0 #388: SQL export/import via ipam_db_dump_stream()
@@ -92,17 +92,16 @@ test('db export contains updated_at triggers', async () => {
   expect(exportedSql).toContain('addresses_updated_at');
 });
 
-test('db import rejects missing confirmation', async () => {
-  await page.goto('db_tools.php');
-  const r = await fetchPostForm(page, appUrl('db_tools.php'),
-    { action: 'import' },
-    { name: 'sql_file', content: '-- dummy', filename: 'dummy.sql', type: 'application/sql' },
-  );
-  expect(r.body.toLowerCase()).toContain('confirmation');
-});
+// v3.27.0 (#1107) replaced the v3.26.0 typed-`confirmed` checkbox gate with
+// the unified ipam_sudo_verify() step-up flow. The "rejects missing
+// confirmation" test that previously lived here is obsolete — there is no
+// `confirmation` field to be missing anymore. Without-sudo coverage has
+// moved to step-up-fan-out.spec.ts ("db_tools import renders the step-up
+// prompt without a grant").
 
 test('db import round-trip succeeds and data survives', async () => {
   if (!exportedSql) { test.skip(); return; }
+  await warmSudoGrant(page);
   await page.goto('db_tools.php');
   const r = await fetchPostForm(page, appUrl('db_tools.php'),
     { action: 'import', confirmed: '1' },

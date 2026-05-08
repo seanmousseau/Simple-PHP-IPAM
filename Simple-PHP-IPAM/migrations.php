@@ -3677,6 +3677,51 @@ function ipam_migrations(): array
                 $ins->execute([':v' => $envelope]);
             }
         },
+
+        // v3.27.0 #1108: seed step-up authentication policy rows. Defaults
+        // are permissive (any enrolled MFA method satisfies, plus provider
+        // re-auth fallback, 5-minute cache) so the v3.26.0 → v3.27.0
+        // upgrade is behaviour-preserving for password-MFA admins and
+        // bug-fixing for OIDC-only admins. See
+        // docs/superpowers/plans/2026-05-07-v3.27.0.md §6.
+        '3.27.0-step-up-policy-settings' => static function (PDO $db): void {
+            $kc = ipam_key_col();
+
+            // Hardcoded v3.27.0 defaults — DO NOT reference
+            // ipam_setting_definitions() here. Migrations must replay
+            // deterministically: a fresh install in 2030 running the v3.27.0
+            // migration must seed the v3.27.0 defaults, not whatever the
+            // registry has drifted to in the meantime. (CodeRabbit #1116.)
+            $seed = [
+                ['auth.step_up.allow_totp',            'bool',   true],
+                ['auth.step_up.allow_email_otp',       'bool',   true],
+                ['auth.step_up.allow_webauthn',        'bool',   true],
+                ['auth.step_up.allow_provider_reauth', 'bool',   true],
+                ['auth.step_up.ttl_seconds',           'string', '300'],
+            ];
+
+            foreach ($seed as [$key, $type, $default]) {
+                $encoded = ipam_setting_encode($default, $type);
+
+                $ex = $db->prepare("SELECT 1 FROM settings WHERE tenant_id IS NULL AND {$kc} = :k");
+                $ex->execute([':k' => $key]);
+                if ($ex->fetch()) {
+                    continue;
+                }
+
+                try {
+                    $st = $db->prepare(
+                        "INSERT INTO settings (tenant_id, {$kc}, value, type) VALUES (NULL, :k, :v, :t)"
+                    );
+                    $st->execute([':k' => $key, ':v' => $encoded, ':t' => $type]);
+                } catch (\PDOException $e) {
+                    if (str_contains($e->getMessage(), 'UNIQUE') || str_contains($e->getMessage(), 'Duplicate')) {
+                        continue;
+                    }
+                    throw $e;
+                }
+            }
+        },
     ];
 }
 
