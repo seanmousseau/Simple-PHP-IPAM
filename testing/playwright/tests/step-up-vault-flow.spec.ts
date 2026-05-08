@@ -28,6 +28,7 @@ import {
     ADMIN_USER,
     ADMIN_PASS,
     appUrl,
+    purgeEncryptedBackupRuns,
 } from '../fixtures/ipam';
 
 const VAULT_PAGE = 'backup_admin.php?tab=destinations';
@@ -48,6 +49,11 @@ async function passStepUpWithPassword(page: import('@playwright/test').Page) {
 
 test.describe('Vault key — step-up flow (#1110, #1111)', () => {
     test.beforeEach(async ({ page }) => {
+        // Earlier specs (backup-integration etc.) leave encrypted backup_runs
+        // behind, which would block the vault_set + generate path here with
+        // the CR #1100 "encrypted backups exist" guard. Purge them so this
+        // spec's preconditions match what it was written against.
+        await purgeEncryptedBackupRuns();
         // Cycle the session so any warm sudo grant from another spec is gone.
         await login(page, ADMIN_USER, ADMIN_PASS);
         await page.goto(appUrl('logout.php'));

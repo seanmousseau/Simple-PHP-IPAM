@@ -586,6 +586,23 @@ export async function setTestSetting(key: string, value: string): Promise<void> 
     ], { stdio: 'pipe' });
 }
 
+/**
+ * Delete every `backup_runs` row whose `encryption_mode != 'unencrypted'`.
+ * Used by step-up-vault-flow + step-up-oidc-only specs to clear encrypted
+ * runs that earlier specs (backup-integration etc.) leave behind, so the
+ * `vault_set + generate` path is not blocked by the CR #1100 guard
+ * (lib/backup_admin_destinations.php — "Cannot generate a new vault key
+ * while encrypted backups exist").
+ */
+export async function purgeEncryptedBackupRuns(): Promise<void> {
+    const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
+    const { execFileSync } = await import('child_process');
+    execFileSync('docker', [
+        'exec', '--user', 'www-data', container,
+        'php', '/var/www/html/testing/scripts/purge_encrypted_backup_runs.php',
+    ], { stdio: 'pipe' });
+}
+
 export async function setSmtpMailhog(): Promise<void> {
     const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
     const { execFileSync } = await import('child_process');

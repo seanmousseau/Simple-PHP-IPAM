@@ -32,6 +32,7 @@ import {
     mintTestSession,
     setTestSetting,
     appUrl,
+    purgeEncryptedBackupRuns,
 } from '../fixtures/ipam';
 
 const OIDC_TOTP_USER  = 'pw-oidc-only-totp';
@@ -50,6 +51,11 @@ function cookieDomain(): string {
 
 test.describe('Step-up — OIDC-only admin (#1098 regression)', () => {
     test('OIDC-only admin with TOTP can reveal vault via TOTP step-up', async ({ browser }) => {
+        // Earlier specs (backup-integration etc.) leave encrypted backup_runs
+        // behind, which would block vault_set + generate with the CR #1100
+        // "encrypted backups exist" guard before this spec ever reaches the
+        // step-up gate it is meant to exercise.
+        await purgeEncryptedBackupRuns();
         await seedOidcOnlyAdmin(OIDC_TOTP_USER, 'with-totp');
 
         const ctx = await browser.newContext({
