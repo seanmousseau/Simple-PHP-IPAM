@@ -34,4 +34,6 @@ website/
 *.png
 # Allow Playwright visual regression baselines
 !testing/playwright/tests/**/*.png
+# Allow brand assets shipped in logo/
+!logo/*.png
 .worktrees/
