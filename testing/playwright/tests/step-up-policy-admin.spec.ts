@@ -97,11 +97,16 @@ test.describe('Settings — step-up authentication policy (#1109)', () => {
             }
         }
 
-        // Move TTL away from its current value so the save is observably
-        // distinguishable from a no-op.
+        // Capture the original TTL OUTSIDE the try block so the finally
+        // can always restore it, even if any assertion below throws
+        // mid-test (CodeRabbit round 3 #1116). The test mutates a shared
+        // DB setting; an unhandled failure must not leak a tightened TTL
+        // into subsequent specs.
         const ttl = page.locator(`select[name="${TTL_FIELD}"]`);
         const before = await ttl.inputValue();
         const next = before === '900' ? '1800' : '900';
+
+        try {
         await ttl.selectOption(next);
 
         await page.locator('#group-step_up button[type=submit]').click();
@@ -128,12 +133,15 @@ test.describe('Settings — step-up authentication policy (#1109)', () => {
         // exact match on the action column.
         await page.goto(appUrl('audit.php?action=auth.step_up_policy.updated'));
         await expect(page.locator('table tbody tr').first()).toBeVisible();
-
-        // Restore the original TTL to leave the DB in its starting state.
-        // The sudo grant from the first save is still warm (TTL is the new
-        // value, ≥ 900s), so this second save short-circuits the prompt.
-        await page.goto(appUrl('settings.php?tab=authentication#group-step_up'));
-        await page.locator(`select[name="${TTL_FIELD}"]`).selectOption(before);
-        await page.locator('#group-step_up button[type=submit]').click();
+        } finally {
+            // Restore the original TTL to leave the DB in its starting state.
+            // The sudo grant from the first save is still warm (TTL is the new
+            // value, ≥ 900s), so this second save short-circuits the prompt.
+            // Wrapped in finally so a mid-test failure doesn't leak a
+            // tightened TTL into subsequent specs (CodeRabbit round 3 #1116).
+            await page.goto(appUrl('settings.php?tab=authentication#group-step_up')).catch(() => undefined);
+            await page.locator(`select[name="${TTL_FIELD}"]`).selectOption(before).catch(() => undefined);
+            await page.locator('#group-step_up button[type=submit]').click().catch(() => undefined);
+        }
     });
 });

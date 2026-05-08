@@ -472,8 +472,12 @@ function ipam_sudo_oidc_reauth_redirect_url(string $returnPath): string
 
     // Same validation as ipam_post_login_redirect_stash() — must be a
     // server-relative path that cannot escape the install. Falls back to
-    // /destinations.php (the most common sudo entry point) on bad input.
-    $safe = '/destinations.php';
+    // an install-relative `destinations.php` (no leading slash) so the
+    // redirect stays inside the app on installs served under a path
+    // prefix like /claude/ipam/ — a leading-slash fallback would jump
+    // out of the app to /destinations.php on the host root. (CodeRabbit
+    // round 3 #1116.)
+    $safe = 'destinations.php';
     if ($returnPath !== ''
         && $returnPath[0] === '/'
         && !str_starts_with($returnPath, '//')
@@ -502,7 +506,10 @@ function ipam_sudo_oidc_reauth_redirect_url(string $returnPath): string
 function ipam_sudo_oidc_reauth_complete(\PDO $db, int $userId, string $clientIp = ''): string
 {
     if ($clientIp === '') $clientIp = client_ip();
-    $return = to_str($_SESSION['sudo_oidc_reauth_return'] ?? '/destinations.php');
+    // Install-relative fallback so installs served under a path prefix
+    // (e.g. /claude/ipam/) don't redirect out of the app on a missing
+    // session key. (CodeRabbit round 3 #1116.)
+    $return = to_str($_SESSION['sudo_oidc_reauth_return'] ?? 'destinations.php');
     unset($_SESSION['sudo_oidc_reauth_state'], $_SESSION['sudo_oidc_reauth_return']);
 
     ipam_sudo_grant('oidc_reauth');

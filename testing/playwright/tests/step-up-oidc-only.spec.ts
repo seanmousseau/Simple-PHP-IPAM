@@ -90,6 +90,16 @@ test.describe('Step-up — OIDC-only admin (#1098 regression)', () => {
             if (await m1.count()) await m1.selectOption('totp');
             await page.locator('input[name="_sudo_code"]').fill(totpCode(TFA_SECRET));
             await page.locator('[data-step-up-section="totp"] button[type=submit]').click();
+            // CR round-3 #1116: explicitly assert the vault was set before
+            // moving on. If the TOTP proof was silently rejected (clock
+            // skew, rate-limit, etc.) the prompt re-renders with an error,
+            // the vault key isn't created, and the next click for
+            // `vault-reveal-submit` times out with a misleading error.
+            // Fail here with a clear message instead.
+            await expect(
+                page.locator('[data-test="vault-revealed-key"], [data-test="vault-fingerprint"]').first(),
+                'vault_set + TOTP step-up did not produce a vault key',
+            ).toBeVisible({ timeout: 15_000 });
             // Re-mint to drop the warm grant.
             await attachSession();
         }

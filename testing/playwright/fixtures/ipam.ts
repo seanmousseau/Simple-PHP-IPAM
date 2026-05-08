@@ -483,7 +483,21 @@ export async function warmSudoGrant(page: Page, password: string = ADMIN_PASS): 
     await page.locator('button[name="action"][value="create"], button:has-text("Generate key")')
         .first()
         .click();
-    await passStepUpIfPresent(page, password);
+    const passed = await passStepUpIfPresent(page, password);
+    // CR round-3 #1116: callers (vault_set, db_tools import, restore paths)
+    // assume sudo is warm after this returns. If the proof was rejected
+    // (rate-limit, wrong password, missing method) passStepUpIfPresent
+    // returns false. Fail loudly here so the caller doesn't sail past a
+    // silent rejection and emit cryptic downstream timeouts.
+    const stillPrompting = await page.locator('[data-step-up-prompt]').count();
+    if (!passed || stillPrompting > 0) {
+        throw new Error(
+            `warmSudoGrant: step-up prompt was not cleared (passed=${passed}, ` +
+            `prompt_remaining=${stillPrompting}). Likely a rejected proof or ` +
+            `sudo rate-limit. Check session state, mfa.* settings, and the ` +
+            `auth.sudo_failed audit row.`,
+        );
+    }
     // Best-effort cleanup of the warm-up key. Failures here don't break the test.
     await page.goto(appUrl('api_keys.php')).catch(() => undefined);
     const row = page.locator('tr', { hasText: keyName });
