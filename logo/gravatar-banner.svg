@@ -76,40 +76,34 @@
     <text x="1080" y="26">198.18.0.0/15</text>
   </g>
 
-  <!-- Hero copy, narrow column centered at x=820. Mobile-safe column derived  -->
-  <!-- empirically: avatar covers up to ~source-x=640, right edge crops at      -->
-  <!-- ~source-x=994. Centering at 820 puts a 350-wide column inside both, and  -->
-  <!-- still sits well right of the desktop avatar (which ends at ~x=520).      -->
+  <!-- Hero copy, narrow column centered at x=780. Empirical mobile-safe       -->
+  <!-- column (avatar overlay + viewport right-crop): source x=640..925, only  -->
+  <!-- 285px wide. Drops the SELF-HOSTED qualifier (overlapped the QR chip on  -->
+  <!-- mobile and duplicated the bio) and shortens the stack line so every    -->
+  <!-- element fits inside both the mobile safe zone and the desktop layout.  -->
   <g text-anchor="middle">
-    <!-- Qualifier -->
-    <text x="820" y="92"
-          font-family="'Inter','SF Pro Display','Helvetica Neue','Arial',sans-serif"
-          font-size="22" font-weight="500" fill="#94A3B8" letter-spacing="2.4">
-      SELF-HOSTED
-    </text>
-
     <!-- Hero word -->
-    <text x="820" y="172"
+    <text x="780" y="148"
           font-family="'Inter','SF Pro Display','Helvetica Neue','Arial',sans-serif"
-          font-size="78" font-weight="800" fill="#F8FAFC" letter-spacing="-2">
+          font-size="84" font-weight="800" fill="#F8FAFC" letter-spacing="-2">
       IPAM<tspan fill="#22C55E">.</tspan>
     </text>
 
     <!-- Stack line -->
-    <text x="820" y="208"
+    <text x="780" y="186"
           font-family="'Fira Code','JetBrains Mono','Menlo','Monaco','Consolas',monospace"
-          font-size="14" font-weight="400" fill="#94A3B8" letter-spacing="0.3">
-      PHP 8.2+ · SQLite · MySQL · PostgreSQL
+          font-size="13" font-weight="400" fill="#94A3B8" letter-spacing="0.3">
+      PHP · SQLite · MySQL · Postgres
     </text>
 
     <!-- URL chip -->
-    <g transform="translate(698, 224)">
-      <rect x="0" y="0" width="244" height="32" rx="8"
+    <g transform="translate(666, 206)">
+      <rect x="0" y="0" width="228" height="32" rx="8"
             fill="#22C55E" fill-opacity="0.10"
             stroke="#22C55E" stroke-opacity="0.45" stroke-width="1"/>
-      <text x="122" y="22"
+      <text x="114" y="22"
             font-family="'Fira Code','JetBrains Mono','Menlo','Monaco','Consolas',monospace"
-            font-size="15" font-weight="500" fill="#22C55E">
+            font-size="14" font-weight="500" fill="#22C55E">
         simplephpipam.com
       </text>
     </g>
