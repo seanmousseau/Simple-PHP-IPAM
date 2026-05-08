@@ -19,7 +19,7 @@
  */
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import {
-  login as loginAs, fetchPost, fetchPostForm, appUrl,
+  login as loginAs, fetchPost, fetchPostForm, appUrl, warmSudoGrant,
   ADMIN_USER, ADMIN_PASS,
   newAuthContext, IS_SQLITE,
 } from '../fixtures/ipam';
@@ -260,6 +260,11 @@ test.describe('Upgrade path: pre-v2.0.0 → current version (#305)', () => {
     const r = await fetchPost(page, appUrl('db_tools.php'), { action: 'export' });
     originalSql = r.body;
     expect(originalSql.length, 'saved current DB export').toBeGreaterThan(100);
+
+    // v3.27.0 (#1107): db_tools import is gated behind ipam_sudo_verify().
+    // Pre-warm a sudo grant so the import POST reaches the import handler
+    // instead of the step-up prompt.
+    await warmSudoGrant(page);
 
     // Import the pre-v2 SQL (replaces the DB with the old schema).
     await page.goto('db_tools.php');
