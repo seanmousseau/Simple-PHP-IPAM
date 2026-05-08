@@ -416,6 +416,77 @@ export async function ensureEmailOtpEnrolled(username: string): Promise<void> {
 }
 
 /**
+ * Pass a step-up authentication prompt if it's currently rendered on the page.
+ *
+ * v3.27.0 (#1107) gated several admin actions behind ipam_sudo_verify(): vault
+ * key set/reveal/replace, settings_reveal, db_tools import, api_keys create,
+ * disable_totp / disable_email_otp / passkey_delete in change_password.php.
+ * Existing specs that exercise those handlers now land on the shared step-up
+ * prompt (`views/_step_up_prompt.php`) before the original action runs.
+ *
+ * Call this immediately after submitting the form for a gated action. If the
+ * prompt isn't there (no gate, or grant already warm), it's a no-op. If the
+ * prompt is there, it submits the password proof using the supplied (or
+ * default ADMIN_PASS) credentials and waits for the next page.
+ *
+ * Returns true if a prompt was passed, false if no prompt was visible.
+ */
+export async function passStepUpIfPresent(
+    page: Page,
+    password: string = ADMIN_PASS,
+): Promise<boolean> {
+    const prompt = page.locator('[data-step-up-prompt]');
+    if (await prompt.count() === 0) return false;
+    if (!(await prompt.first().isVisible().catch(() => false))) return false;
+
+    const methodSel = page.locator('select[name="_sudo_method"]');
+    if (await methodSel.count()) {
+        await methodSel.selectOption('password').catch(() => undefined);
+    }
+    await page.locator('input[name="_sudo_password"]').fill(password);
+    await Promise.all([
+        page.waitForLoadState('domcontentloaded'),
+        page.locator('#step-up-form button[type=submit]').click(),
+    ]);
+    return true;
+}
+
+/**
+ * Pre-warm a sudo grant on the current session by completing one step-up
+ * round-trip. Useful in `beforeEach` for specs that hit multiple gated
+ * handlers in sequence — under default policy (TTL=300s) the warm grant
+ * satisfies all subsequent sensitive actions in the same test.
+ *
+ * Implementation note: we use the api_keys create gate as the warm-up driver
+ * because it leaves no destructive side effect (we deactivate+delete the key
+ * we created). The grant lives on the session, not on the action.
+ */
+export async function warmSudoGrant(page: Page, password: string = ADMIN_PASS): Promise<void> {
+    const keyName = `pw-warm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    await page.goto(appUrl('api_keys.php'));
+    await page.locator('input[name="name"]').fill(keyName);
+    await page.locator('button[name="action"][value="create"], button:has-text("Generate key")')
+        .first()
+        .click();
+    await passStepUpIfPresent(page, password);
+    // Best-effort cleanup of the warm-up key. Failures here don't break the test.
+    await page.goto(appUrl('api_keys.php')).catch(() => undefined);
+    const row = page.locator('tr', { hasText: keyName });
+    const deactivate = row.locator('button[name="action"][value="deactivate"]');
+    if (await deactivate.count().catch(() => 0)) {
+        await deactivate.first().click().catch(() => undefined);
+        await page.waitForLoadState('networkidle').catch(() => undefined);
+    }
+    const deleteBtn = page.locator('tr', { hasText: keyName })
+        .locator('button[name="action"][value="delete"]');
+    if (await deleteBtn.count().catch(() => 0)) {
+        page.once('dialog', (d) => d.accept());
+        await deleteBtn.first().click().catch(() => undefined);
+        await page.waitForLoadState('networkidle').catch(() => undefined);
+    }
+}
+
+/**
  * Seed (or refresh) an OIDC-only admin (oidc_sub set, password_hash='!disabled')
  * for v3.27.0 step-up regression tests. Returns the user's numeric id.
  *

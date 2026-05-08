@@ -9,6 +9,7 @@ import {
   login, fetchPost, fetchGet, appUrl,
   ADMIN_USER, ADMIN_PASS,
   newAuthContext,
+  passStepUpIfPresent,
 } from '../fixtures/ipam';
 
 let ctx: BrowserContext;
@@ -60,6 +61,10 @@ test('api key: create and one-time display', async () => {
     page.waitForURL(url => url.pathname.includes('api_keys.php'), { timeout: 10_000 }),
     createForm.locator('button[type=submit]').click(),
   ]);
+  // v3.27.0 (#1107): api_keys create is gated behind ipam_sudo_verify().
+  // If the step-up prompt rendered, pass it with the admin password to
+  // continue to the one-time key display.
+  await passStepUpIfPresent(page);
   // Wait for the one-time key display element specifically
   await page.waitForSelector('code.key-display', { timeout: 10_000 });
   const keyText = await page.locator('code.key-display').innerText();

@@ -16,7 +16,7 @@ import { test, expect, type Browser, type BrowserContext, type Page } from '@pla
 import {
   login, fetchPost, fetchPostForm, appUrl,
   ADMIN_USER, ADMIN_PASS,
-  newAuthContext, IS_SQLITE,
+  newAuthContext, IS_SQLITE, warmSudoGrant,
 } from '../fixtures/ipam';
 
 // v2.10.0 #433 / v2.11.0 #388: db_tools.php SQL import/export uses
@@ -87,6 +87,12 @@ test.describe('Large database import/export (#306)', () => {
     ctx  = await newAuthContext(browser);
     page = await ctx.newPage();
     await login(page, ADMIN_USER, ADMIN_PASS);
+
+    // v3.27.0 (#1107): db_tools import is gated behind ipam_sudo_verify().
+    // Pre-warm a sudo grant once for the whole suite so each fetchPostForm
+    // hits the import handler instead of the step-up prompt. The default
+    // TTL (300s) covers the suite runtime.
+    await warmSudoGrant(page);
 
     await page.goto('db_tools.php');
     const r = await fetchPost(page, appUrl('db_tools.php'), { action: 'export' });
