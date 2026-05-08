@@ -76,33 +76,34 @@
     <text x="1080" y="26">198.18.0.0/15</text>
   </g>
 
-  <!-- Hero copy, narrow column centered at x=720 to survive both the desktop -->
-  <!-- avatar overlay (covers up to ~x=520) AND the mobile right-edge crop      -->
-  <!-- (visible window ends ~x=900). Effective safe column: x=520..x=900.       -->
+  <!-- Hero copy, narrow column centered at x=820. Mobile-safe column derived  -->
+  <!-- empirically: avatar covers up to ~source-x=640, right edge crops at      -->
+  <!-- ~source-x=994. Centering at 820 puts a 350-wide column inside both, and  -->
+  <!-- still sits well right of the desktop avatar (which ends at ~x=520).      -->
   <g text-anchor="middle">
     <!-- Qualifier -->
-    <text x="720" y="92"
+    <text x="820" y="92"
           font-family="'Inter','SF Pro Display','Helvetica Neue','Arial',sans-serif"
           font-size="22" font-weight="500" fill="#94A3B8" letter-spacing="2.4">
       SELF-HOSTED
     </text>
 
     <!-- Hero word -->
-    <text x="720" y="172"
+    <text x="820" y="172"
           font-family="'Inter','SF Pro Display','Helvetica Neue','Arial',sans-serif"
           font-size="78" font-weight="800" fill="#F8FAFC" letter-spacing="-2">
       IPAM<tspan fill="#22C55E">.</tspan>
     </text>
 
     <!-- Stack line -->
-    <text x="720" y="208"
+    <text x="820" y="208"
           font-family="'Fira Code','JetBrains Mono','Menlo','Monaco','Consolas',monospace"
           font-size="14" font-weight="400" fill="#94A3B8" letter-spacing="0.3">
       PHP 8.2+ · SQLite · MySQL · PostgreSQL
     </text>
 
     <!-- URL chip -->
-    <g transform="translate(598, 224)">
+    <g transform="translate(698, 224)">
       <rect x="0" y="0" width="244" height="32" rx="8"
             fill="#22C55E" fill-opacity="0.10"
             stroke="#22C55E" stroke-opacity="0.45" stroke-width="1"/>
