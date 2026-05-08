@@ -79,10 +79,10 @@
   <!-- Hero copy, anchored in the right safe area (centered around x=870) -->
   <g text-anchor="middle">
     <!-- Hero tagline -->
-    <text x="870" y="138"
+    <text x="870" y="142"
           font-family="'Inter','SF Pro Display','Helvetica Neue','Arial',sans-serif"
-          font-size="36" font-weight="600" fill="#F8FAFC" letter-spacing="-0.5">
-      Self-hosted IP address management.
+          font-size="52" font-weight="700" fill="#F8FAFC" letter-spacing="-1">
+      Self-hosted IPAM.
     </text>
 
     <!-- Stack line -->
