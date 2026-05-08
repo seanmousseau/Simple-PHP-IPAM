@@ -296,11 +296,14 @@ test.describe('Upgrade path: pre-v2.0.0 → current version (#305)', () => {
         // If intermediate tests failed, the session state may be unknown — log out and back in.
         await page.goto('logout.php').catch(() => null);
         await loginAs(page, UPGRADE_ADMIN_USER, UPGRADE_ADMIN_PASS);
-        // Re-warm the sudo grant before the restore: the beforeAll grant
-        // is long expired by the time afterAll runs (CodeRabbit round 2,
-        // #1116), and the new login dropped any session-bound grant
-        // anyway.
-        await warmSudoGrant(page);
+        // Re-warm the sudo grant before the restore. CRITICAL: pass the
+        // upgrade-test-admin password explicitly — warmSudoGrant defaults
+        // to ADMIN_PASS ('demo'), which is wrong for the user we're
+        // logged in as here. Failing the warm-up means the restore POST
+        // hits the step-up gate, the DB stays in pre-v2 state, and every
+        // subsequent spec's login as `demo` fails because demo doesn't
+        // exist in the pre-v2 schema. (CodeRabbit round 2, #1116.)
+        await warmSudoGrant(page, UPGRADE_ADMIN_PASS);
         await page.goto('db_tools.php');
         await fetchPostForm(
           page, appUrl('db_tools.php'),
