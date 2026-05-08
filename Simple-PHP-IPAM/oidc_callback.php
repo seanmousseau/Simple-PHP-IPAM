@@ -4,8 +4,13 @@ require __DIR__ . '/init.php';
 /** @var \PDO $db */
 /** @var IpamConfig $config */
 
-if (is_logged_in())         { header('Location: dashboard.php'); exit; }
-if (!oidc_enabled($config)) { header('Location: login.php');     exit; }
+// v3.27.0 (#1113) — bypass the "already logged in" redirect when this
+// callback is the return leg of a sudo step-up reauth flow (the user IS
+// logged in; that's the whole point of the round-trip).
+$sudoReauthInFlight = isset($_SESSION['sudo_oidc_reauth_state'])
+    && to_str($_SESSION['sudo_oidc_reauth_state']) !== '';
+if (!$sudoReauthInFlight && is_logged_in()) { header('Location: dashboard.php'); exit; }
+if (!oidc_enabled($config))                 { header('Location: login.php');     exit; }
 
 /**
  * Redirect to login with a generic error message.
@@ -195,6 +200,27 @@ if (!$user) {
 
 if (to_int($user['is_active']) !== 1) {
     oidc_fail($db, 'user account is inactive: ' . to_str($user['username']));
+}
+
+// v3.27.0 (#1113) — sudo step-up reauth completion. If the session was in
+// the middle of a sudo OIDC reauth flow AND the IdP returned a sub matching
+// the currently-logged-in user, mint a sudo grant and redirect to the
+// stashed safe return path instead of running the normal login. The match
+// is on user id (the existing session's user, looked up from oidc_sub above)
+// so a malicious user cannot acquire a grant by signing in to a different
+// IdP account during another user's session.
+if ($sudoReauthInFlight && is_logged_in()) {
+    $current = current_user();
+    $currentId = to_int($current['id'] ?? 0);
+    if ($currentId > 0 && $currentId === to_int($user['id'])) {
+        $return = ipam_sudo_oidc_reauth_complete($db, $currentId);
+        header('Location: ' . $return);
+        exit;
+    }
+    // Sub mismatch — clear the in-flight state so it cannot be replayed,
+    // and fall through to the normal login flow (which will rebind the
+    // session to whichever account the IdP authenticated).
+    unset($_SESSION['sudo_oidc_reauth_state'], $_SESSION['sudo_oidc_reauth_return']);
 }
 
 // ---- All checks passed — log in ----

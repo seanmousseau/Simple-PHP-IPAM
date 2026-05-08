@@ -44,7 +44,7 @@ $tabs = [
     'authentication' => [
         'label'       => 'Authentication',
         'description' => 'Sessions, password policy, MFA, OIDC, and login protection.',
-        'groups'      => ['security', 'password_policy', 'mfa', 'oidc', 'login_protection', 'recaptcha_enterprise'],
+        'groups'      => ['security', 'step_up', 'password_policy', 'mfa', 'oidc', 'login_protection', 'recaptcha_enterprise'],
     ],
     'notifications' => [
         'label'       => 'Notifications',
@@ -112,9 +112,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $newValue = ($rawVal === '1' || $rawVal === 'true' || $rawVal === 'on');
         $current  = ipam_setting($postedKey);
 
+        // Step-up policy save: lock-out precondition + sudo gate + audit +
+        // grant invalidation. Self-protection per plan §3.4. Same shape as
+        // the group path below; lives here too because the toggle UI POSTs
+        // single-key bool flips through this path.
+        if (($def['group'] ?? '') === 'step_up' && (bool)$current !== $newValue) {
+            $proposed = ipam_sudo_proposed_policy_from_overrides([$postedKey => $newValue]);
+            $offender = ipam_sudo_policy_lockout_check($db, $proposed);
+            if ($offender !== '') {
+                flash_set("Cannot save: admin '{$offender}' would have no available step-up method under the proposed policy. Enable at least one method that admin can satisfy.", 'danger');
+                header('Location: settings.php?tab=authentication#group-step_up');
+                exit;
+            }
+            if (!ipam_sudo_require($db, to_int($userId ?? 0))) {
+                page_header('Confirm your identity');
+                $stepUpUserId       = to_int($userId ?? 0);
+                $stepUpFormAction   = 'settings.php';
+                $stepUpHiddenFields = ['key' => $postedKey, 'value' => $newValue ? '1' : '0'];
+                $stepUpDescription  = 'Saving the step-up authentication policy is itself a sudo action under the current policy.';
+                $stepUpReturnPath   = 'settings.php?tab=authentication#group-step_up';
+                $stepUpError        = isset($_POST['_sudo_method']) ? 'Verification failed. Please try again.' : '';
+                include __DIR__ . '/views/_step_up_prompt.php';
+                page_footer();
+                exit;
+            }
+        }
+
         if ((bool)$current !== $newValue) {
             try {
                 ipam_setting_set($db, $postedKey, $newValue, $userId);
+                if (($def['group'] ?? '') === 'step_up') {
+                    $proposed = ipam_sudo_proposed_policy_from_overrides([$postedKey => $newValue]);
+                    $methods  = [];
+                    if ($proposed['allow_totp'])            $methods[] = 'totp';
+                    if ($proposed['allow_email_otp'])       $methods[] = 'email_otp';
+                    if ($proposed['allow_webauthn'])        $methods[] = 'webauthn';
+                    if ($proposed['allow_provider_reauth']) $methods[] = 'provider_reauth';
+                    $detail = 'methods=' . implode(',', $methods)
+                            . ' ttl=' . $proposed['ttl_seconds']
+                            . ' by=' . to_str($user['username'] ?? '');
+                    audit($db, 'auth.step_up_policy.updated', 'auth', null, $detail);
+                    ipam_sudo_invalidate();
+                }
             } catch (\Throwable $e) {
                 error_log('settings.php per-key save failed: ' . $e->getMessage());
                 flash_set('Save failed. Please try again.', 'danger');
@@ -234,6 +273,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pending[$key] = $newValue;
     }
 
+    // Step-up policy save: lock-out precondition + sudo gate. Plan §3.3 + §3.4.
+    // The audit + invalidate side-effects fire after the commit below.
+    $stepUpPolicySave = ($postedGroup === 'step_up' && !$fieldErrors && $pending !== []);
+    if ($stepUpPolicySave) {
+        $proposed = ipam_sudo_proposed_policy_from_overrides($pending);
+        $offender = ipam_sudo_policy_lockout_check($db, $proposed);
+        if ($offender !== '') {
+            $fieldErrors['_group'] = "Cannot save: admin '{$offender}' would have no available step-up method under the proposed policy. Enable at least one method that admin can satisfy.";
+        } elseif (!ipam_sudo_require($db, to_int($userId ?? 0))) {
+            page_header('Confirm your identity');
+            $stepUpUserId       = to_int($userId ?? 0);
+            $stepUpFormAction   = 'settings.php';
+            $stepUpHiddenFields = ['group' => 'step_up'];
+            // Re-emit only the policy field POSTs so the form re-submits the
+            // same edits with the step-up proof attached.
+            $boolFields = ['k_auth__step_up__allow_totp', 'k_auth__step_up__allow_email_otp', 'k_auth__step_up__allow_webauthn', 'k_auth__step_up__allow_provider_reauth'];
+            foreach ($boolFields as $boolField) {
+                if (isset($_POST[$boolField])) $stepUpHiddenFields[$boolField] = '1';
+            }
+            if (isset($_POST['k_auth__step_up__ttl_seconds'])) {
+                $stepUpHiddenFields['k_auth__step_up__ttl_seconds'] = to_str($_POST['k_auth__step_up__ttl_seconds']);
+            }
+            $stepUpDescription = 'Saving the step-up authentication policy is itself a sudo action under the current policy.';
+            $stepUpReturnPath  = 'settings.php?tab=authentication#group-step_up';
+            $stepUpError       = isset($_POST['_sudo_method']) ? 'Verification failed. Please try again.' : '';
+            include __DIR__ . '/views/_step_up_prompt.php';
+            page_footer();
+            exit;
+        }
+    }
+
     $changed = 0;
     if (!$fieldErrors && $pending) {
         $db->beginTransaction();
@@ -243,6 +313,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $changed++;
             }
             $db->commit();
+            if ($stepUpPolicySave) {
+                $detail = 'methods='
+                    . implode(',', array_filter([
+                        $proposed['allow_totp']            ? 'totp'            : null,
+                        $proposed['allow_email_otp']       ? 'email_otp'       : null,
+                        $proposed['allow_webauthn']        ? 'webauthn'        : null,
+                        $proposed['allow_provider_reauth'] ? 'provider_reauth' : null,
+                    ]))
+                    . ' ttl=' . $proposed['ttl_seconds']
+                    . ' by=' . to_str($user['username'] ?? '');
+                audit($db, 'auth.step_up_policy.updated', 'auth', null, $detail);
+                ipam_sudo_invalidate();
+            }
         } catch (\Throwable $e) {
             if ($db->inTransaction()) $db->rollBack();
             error_log('settings.php save failed: ' . $e->getMessage());

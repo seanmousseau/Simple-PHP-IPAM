@@ -6,6 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.27.0] - 2026-05-08
+
+Step-up authentication. Sensitive admin actions (vault-key reveal/set/replace, API-key creation, settings-reveal, DB import/export, password change, MFA disable, step-up policy save) are now gated by a unified `ipam_sudo_verify()` helper that accepts any of the user's enrolled MFA methods (TOTP, Email OTP, WebAuthn passkey, account password, OIDC re-auth) per install policy — replacing the v3.26.0 hardcoded password re-prompt that locked OIDC-only deployments out of vault-key administration (#1098). Optional sudo-grant TTL caches a successful re-auth for the configured window so a single proof satisfies a fan-out of sensitive actions within that window. Admin-tunable policy card (`Settings → Authentication`) lets operators choose which methods to allow and the TTL.
+
+### Added
+
+- **`ipam_sudo_verify()` step-up helper + session sudo grant (#1107).** New `Simple-PHP-IPAM/lib/auth_step_up.php` centralises step-up proof verification across all sensitive admin actions. Supports `totp`, `email_otp`, `webauthn`, `password`, and `oidc_reauth` methods. On success mints a session grant (`sudo_until_ts` if TTL > 0, `sudo_once` otherwise) so sensitive handlers can call `ipam_sudo_require()` without re-prompting until the grant expires or is consumed. Hard-floors per-IP at 5 sudo failures per 15 minutes (`auth.sudo_rate_limited` audit). Failures audit `auth.sudo_failed` with a stable reason code (`password_invalid`, `totp_invalid`, `method_unavailable`, …); successes audit `auth.sudo_passed`. Shared step-up prompt partial at `Simple-PHP-IPAM/views/_step_up_prompt.php` renders the strongest enrolled method first (passkey > totp > email_otp > password > oidc_reauth) with an inline JS toggle when multiple methods are available.
+- **Step-up authentication policy registry + migration (#1108).** Five new admin-tunable settings under `auth.step_up.*` (`allow_totp`, `allow_email_otp`, `allow_webauthn`, `allow_provider_reauth`, `ttl_seconds`). The TTL dropdown ships six discrete values: 0 (re-prompt every action), 60s, 5min, 15min, 30min, 1h. Migration `3.27.0-step-up-policy` registers defaults; existing installs get `allow_*=true` and `ttl_seconds=900` (15 min) on first boot.
+- **Step-up policy admin card (#1109).** New group on `settings.php?tab=authentication#group-step_up` exposes the four allow-flags + TTL with a lock-out precondition guard: a save that would strand every active admin (no method satisfies any active admin's enrollment) is refused server-side before the sudo gate runs. The save itself is a sudo action and writes an `auth.step_up_policy.updated` audit row.
+- **Step-up auth subsystem reference (#1115).** New `docs/internal/step-up-auth.md` documents the `ipam_sudo_verify()` contract, policy keys, session keys/TTL, invalidation triggers, prompt UX, and the recipe for migrating a new sudo-class admin handler. Read this before adding or migrating a sensitive action.
+- **PHPUnit + Playwright coverage for step-up auth (#1114).** New `tests/SudoVerifyTest.php`, `tests/StepUpPolicyTest.php`, `tests/StepUpPolicyMigrationTest.php` cover every verify branch (rate-limit, method-unavailable, TOTP/email-OTP/password/webauthn/oidc, grant TTL slide-forward, idempotent migration). Four new Playwright specs (`step-up-policy-admin`, `step-up-fan-out`, `step-up-vault-flow`, `step-up-oidc-only`) exercise the end-to-end gate, the OIDC-only-admin regression case (#1098), the lock-out guard, and the one-grant-satisfies-many-actions TTL contract. Specs are portable across SQLite, MySQL/MariaDB, and PostgreSQL.
+
+### Changed
+
+- **Vault-key actions (`vault_set` / `vault_replace` / `vault_reveal`) migrated to `ipam_sudo_verify()` (#1110).** Replaces the v3.26.0 inline `admin_password` field with the unified step-up gate. The vault-specific per-IP reveal rate limit (5/15min) is retained on top of the helper's generic `sudo` bucket. **Closes the OIDC-only admin lockout (#1098):** an admin whose `password_hash` is `!disabled` (provisioned by OIDC, no local password) can now satisfy the gate via TOTP, passkey, or provider re-auth instead of being permanently refused.
+- **`Reveal vault key` promoted out of `<details>` to a primary, always-visible button (#1111).** The v3.26.0 collapsed-disclosure UI hid the most-common admin action behind an extra click and made the action discoverable only after operators went looking for it. Now rendered inline next to the fingerprint with a one-line audit-log/rate-limit explainer.
+- **`change_password.php` sudo actions migrated to `ipam_sudo_verify()` (#1112).** Disable-TOTP, disable-Email-OTP, and remove-passkey now go through the unified step-up gate. Replaces the v3.26.x bespoke password-only prompts with the policy-aware helper so an OIDC-only admin can drop a stale TOTP enrollment via TOTP itself or provider re-auth.
+- **`settings_reveal.php`, `db_tools.php` import/export, `api_keys.php` create migrated to `ipam_sudo_verify()` + OIDC sudo re-auth wired (#1113).** `settings_reveal.php` now returns `401 step_up_required` JSON to ungated XHR callers (caller bounces to a step-up prompt and replays). The OIDC re-auth method completes via `oidc_login.php?prompt=login`; the callback handler calls `ipam_sudo_grant('oidc_reauth')` after a successful re-authentication.
+- **Step-up TOTP branch reads encrypted secret + decrypts via `app_secret` (#1107 follow-up).** The TOTP verify path was previously reading a non-existent `totp_secret` column; now decrypts `totp_secret_enc` with `ipam_totp_decrypt_secret()` to match the login-time TOTP path.
+
+### Fixed
+
+- **Existing Playwright specs updated to handle the step-up gate.** Specs that exercise sudo-class actions (vault, api_keys, settings reveal, db_tools, change_password) now mint a sudo grant via the new `warmSudoGrant()` fixture before the action; `warmSudoGrant()` fail-louds if the proof is rejected so CI failures surface immediately instead of timing out 15s later on a misleading downstream assertion.
+- **`step-up-vault-flow` + `step-up-oidc-only` Playwright specs purge encrypted `backup_runs` in `beforeEach`.** The CR #1100 "encrypted backups exist" guard was blocking these specs' `vault_set + generate` path because earlier specs in the suite (backup-integration etc.) leave encrypted runs behind. New CLI helper `Simple-PHP-IPAM/testing/scripts/purge_encrypted_backup_runs.php` resets the precondition.
+
+### Deprecated
+
+- **`backup.vault_key.sudo_failed` audit alias.** The unified `auth.sudo_failed` row covers every sudo-class action's verification failure; the vault-specific alias is retained for one release as a SIEM-query bridge and will be removed in v3.28.0. Existing log searches that filter on `backup.vault_key.sudo_failed` should migrate to combining `auth.sudo_failed` with the corresponding `backup.vault_key.*` audit row that follows on a refused vault action — see `docs/internal/audit-actions.md` for the migration guidance.
+
+### Removed
+
+- None.
+
+### Security
+
+- **Sensitive admin actions are no longer satisfied by a stale login session alone.** Every sudo-class action now requires either a fresh proof or a session sudo grant minted within the policy TTL. Reduces the blast radius of a stolen session cookie: the attacker still cannot reveal the vault key, mint an API key, import a SQL dump, change a password, or disable an MFA factor without the user's second factor.
+- **Step-up failures rate-limited per IP (5/15min).** `auth.sudo_rate_limited` audit row fires before the proof is even checked once the bucket is full.
+
+[3.27.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.26.0...v3.27.0
+
 ## [3.26.0] - 2026-05-07
 
 Backup-overhaul closeout + code-quality sweep. Two breaking-change footnotes (legacy backup runner retired, vault-key relocated to DB) plus a sweep of P0/P1 security and correctness fixes that landed earlier in the cycle. The 26-issue scope across tracks A–E is documented in `docs/superpowers/plans/2026-05-06-v3.26.0.md`.

@@ -25,8 +25,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($name === '') {
             $formError = 'Key name is required.';
         } else {
+            // v3.27.0 (#1113) — gate API-key creation behind ipam_sudo_require().
+            // Same one-shot raw-token reveal shape as vault_set: the response
+            // body contains the raw secret. Render the prompt with the original
+            // form fields stashed as hidden inputs so the create resumes after
+            // verification.
             $desc       = trim(to_str($_POST['description'] ?? ''));
             $isReadonly = isset($_POST['is_readonly']) ? 1 : 0;
+            $userId     = to_int($u['id'] ?? 0);
+            if (!ipam_sudo_require($db, $userId)) {
+                page_header('Confirm your identity');
+                $stepUpUserId       = $userId;
+                $stepUpFormAction   = 'api_keys.php';
+                $stepUpHiddenFields = ['action' => 'create', 'name' => $name, 'description' => $desc];
+                if ($isReadonly === 1) $stepUpHiddenFields['is_readonly'] = '1';
+                $stepUpDescription  = 'Re-authenticate to create an API key. The raw token is shown exactly once after creation.';
+                $stepUpReturnPath   = 'api_keys.php';
+                $stepUpError        = isset($_POST['_sudo_method']) ? 'Verification failed. API key was not created.' : '';
+                include __DIR__ . '/views/_step_up_prompt.php';
+                page_footer();
+                exit;
+            }
             // Generate a 32-byte random key, encode as hex (64 chars)
             $rawKey  = bin2hex(random_bytes(32));
             $keyHash = hash('sha256', $rawKey);

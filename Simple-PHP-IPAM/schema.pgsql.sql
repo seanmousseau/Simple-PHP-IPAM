@@ -862,5 +862,6 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.25.0-backup-destination-evolution'),
   ('3.26.0-login-attempts-action'),
   ('3.26.0-retire-legacy-backup'),
-  ('3.26.0-vault-key-to-settings')
+  ('3.26.0-vault-key-to-settings'),
+  ('3.27.0-step-up-policy-settings')
 ON CONFLICT (version) DO NOTHING;

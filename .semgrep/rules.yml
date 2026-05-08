@@ -185,6 +185,11 @@ rules:
       - pattern: parse_url(...)
       - pattern: "\"...\""
       - pattern: "'...'"
+      # Project-specific local-path validator. Rejects schemes, hosts,
+      # user/pass components, protocol-relative URLs, traversal, control
+      # characters, backslashes, and oversize strings, then falls back to
+      # a literal default. Defined in Simple-PHP-IPAM/step_up.php.
+      - pattern: ipam_step_up_validate_return_to(...)
     pattern-sinks:
       - pattern: 'header("Location: " . $SINK)'
       - pattern: "header('Location: ' . $SINK)"

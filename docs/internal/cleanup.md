@@ -36,7 +36,7 @@ If an item is large (>30 lines diff) or touches multiple files, file it as a GH 
 
 | Issue | Milestone | Item | Status |
 |---|---|---|---|
-| #1062 | v3.32.0 | phpmd `unusedcode` cleanup — 5 items in `lib.php`, `lib/backup.php`, `lib/backup_admin_destinations.php` | open |
+| #1062 | v3.33.0 | phpmd `unusedcode` cleanup — 5 items in `lib.php`, `lib/backup.php`, `lib/backup_admin_destinations.php` | open |
 
 ## Completed
 

@@ -415,6 +415,214 @@ export async function ensureEmailOtpEnrolled(username: string): Promise<void> {
     ], { stdio: 'pipe' });
 }
 
+/**
+ * Pass a step-up authentication prompt if it's currently rendered on the page.
+ *
+ * v3.27.0 (#1107) gated several admin actions behind ipam_sudo_verify(): vault
+ * key set/reveal/replace, settings_reveal, db_tools import, api_keys create,
+ * disable_totp / disable_email_otp / passkey_delete in change_password.php.
+ * Existing specs that exercise those handlers now land on the shared step-up
+ * prompt (`views/_step_up_prompt.php`) before the original action runs.
+ *
+ * Call this immediately after submitting the form for a gated action. If the
+ * prompt isn't there (no gate, or grant already warm), it's a no-op. If the
+ * prompt is there, it submits the password proof using the supplied (or
+ * default ADMIN_PASS) credentials and waits for the next page.
+ *
+ * Returns true if a prompt was passed, false if no prompt was visible.
+ */
+export async function passStepUpIfPresent(
+    page: Page,
+    password: string = ADMIN_PASS,
+): Promise<boolean> {
+    const prompt = page.locator('[data-step-up-prompt]');
+    if (await prompt.count() === 0) return false;
+    if (!(await prompt.first().isVisible().catch(() => false))) return false;
+
+    const methodSel = page.locator('select[name="_sudo_method"]');
+    if (await methodSel.count()) {
+        await methodSel.selectOption('password').catch(() => undefined);
+    }
+    await page.locator('input[name="_sudo_password"]').fill(password);
+    // The shared prompt partial renders ALL available method sections on the
+    // same page and toggles visibility via `hidden`, so a bare
+    // `#step-up-form button[type=submit]` selector matches multiple buttons
+    // (TOTP / Email-OTP send / Email-OTP verify / Password) and trips
+    // Playwright's strict-mode violation on multi-method users. Scope the
+    // click to the password section we just populated.
+    await Promise.all([
+        page.waitForLoadState('domcontentloaded'),
+        page.locator('[data-step-up-section="password"] button[type=submit]').click(),
+    ]);
+    // Verify the prompt actually cleared. If the proof was rejected the
+    // partial re-renders on the same URL with a 'danger' error banner; we
+    // surface that to the caller as `false` rather than silently returning
+    // `true` while the action upstream wasn't actually authorised. (CodeRabbit
+    // round 2, #1116.)
+    const stillPrompting = await page.locator('[data-step-up-prompt]').count();
+    if (stillPrompting > 0) {
+        return false;
+    }
+    return true;
+}
+
+/**
+ * Pre-warm a sudo grant on the current session by completing one step-up
+ * round-trip. Useful in `beforeEach` for specs that hit multiple gated
+ * handlers in sequence — under default policy (TTL=300s) the warm grant
+ * satisfies all subsequent sensitive actions in the same test.
+ *
+ * Implementation note: we use the api_keys create gate as the warm-up driver
+ * because it leaves no destructive side effect (we deactivate+delete the key
+ * we created). The grant lives on the session, not on the action.
+ */
+export async function warmSudoGrant(page: Page, password: string = ADMIN_PASS): Promise<void> {
+    const keyName = `pw-warm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    await page.goto(appUrl('api_keys.php'));
+    await page.locator('input[name="name"]').fill(keyName);
+    await page.locator('button[name="action"][value="create"], button:has-text("Generate key")')
+        .first()
+        .click();
+    const passed = await passStepUpIfPresent(page, password);
+    // CR round-3 #1116: callers (vault_set, db_tools import, restore paths)
+    // assume sudo is warm after this returns. If the proof was rejected
+    // (rate-limit, wrong password, missing method) passStepUpIfPresent
+    // returns false. Fail loudly here so the caller doesn't sail past a
+    // silent rejection and emit cryptic downstream timeouts.
+    const stillPrompting = await page.locator('[data-step-up-prompt]').count();
+    if (!passed || stillPrompting > 0) {
+        throw new Error(
+            `warmSudoGrant: step-up prompt was not cleared (passed=${passed}, ` +
+            `prompt_remaining=${stillPrompting}). Likely a rejected proof or ` +
+            `sudo rate-limit. Check session state, mfa.* settings, and the ` +
+            `auth.sudo_failed audit row.`,
+        );
+    }
+    // Best-effort cleanup of the warm-up key. Failures here don't break the test.
+    await page.goto(appUrl('api_keys.php')).catch(() => undefined);
+    const row = page.locator('tr', { hasText: keyName });
+    const deactivate = row.locator('button[name="action"][value="deactivate"]');
+    if (await deactivate.count().catch(() => 0)) {
+        await deactivate.first().click().catch(() => undefined);
+        await page.waitForLoadState('networkidle').catch(() => undefined);
+    }
+    const deleteBtn = page.locator('tr', { hasText: keyName })
+        .locator('button[name="action"][value="delete"]');
+    if (await deleteBtn.count().catch(() => 0)) {
+        page.once('dialog', (d) => d.accept());
+        await deleteBtn.first().click().catch(() => undefined);
+        await page.waitForLoadState('networkidle').catch(() => undefined);
+    }
+}
+
+/**
+ * Seed (or refresh) an OIDC-only admin (oidc_sub set, password_hash='!disabled')
+ * for v3.27.0 step-up regression tests. Returns the user's numeric id.
+ *
+ * mode = 'with-totp' enrols the user in TOTP using the JBSWY3DPEHPK3PXP test
+ * vector and flips mfa.totp_enabled on globally; 'no-mfa' explicitly clears
+ * any MFA enrollment so the user has no method available under default policy
+ * minus provider re-auth.
+ */
+export async function seedOidcOnlyAdmin(
+    username: string,
+    mode: 'with-totp' | 'no-mfa' | 'deactivate',
+): Promise<number> {
+    const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
+    const { execFileSync } = await import('child_process');
+    const flag = mode === 'with-totp' ? '--with-totp'
+               : mode === 'deactivate' ? '--deactivate'
+               : '--no-mfa';
+    const out = execFileSync('docker', [
+        'exec', '--user', 'www-data', container,
+        'php', '/var/www/html/testing/scripts/seed_oidc_only_admin.php',
+        username, flag,
+    ], { encoding: 'utf-8' });
+    // --deactivate prints "deactivated\n"; the seed paths print the uid.
+    if (mode === 'deactivate') return 0;
+    return parseInt(out.trim(), 10);
+}
+
+/**
+ * Mint a logged-in PHP session for the given user and return both the
+ * session-cookie name (which is install-dir-derived in init.php) and the
+ * session id. Used by step-up-oidc-only.spec.ts to drive a session as an
+ * OIDC-only admin without round-tripping through an OIDC IdP.
+ *
+ * The caller sets the cookie on the browser context via context.addCookies().
+ */
+export async function mintTestSession(username: string): Promise<{ cookieName: string; sid: string }> {
+    const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
+    const { execFileSync } = await import('child_process');
+    const out = execFileSync('docker', [
+        'exec', '--user', 'www-data', container,
+        'php', '/var/www/html/testing/scripts/mint_test_session.php',
+        username,
+    ], { encoding: 'utf-8' });
+    const lines: Record<string, string> = {};
+    for (const line of out.split('\n')) {
+        const m = line.match(/^([^=]+)=(.*)$/);
+        if (m) lines[m[1]] = m[2];
+    }
+    if (!lines.cookie_name || !lines.sid) {
+        throw new Error(`mintTestSession: malformed output: ${out}`);
+    }
+    return { cookieName: lines.cookie_name, sid: lines.sid };
+}
+
+/**
+ * Write a single allow-listed setting value (currently auth.step_up.*) directly
+ * via ipam_setting_set(), bypassing the UI's lock-out guard. Used by
+ * step-up-oidc-only.spec.ts to force the install into a stranded state the UI
+ * would normally refuse to commit.
+ */
+export async function setTestSetting(key: string, value: string): Promise<void> {
+    const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
+    const { execFileSync } = await import('child_process');
+    execFileSync('docker', [
+        'exec', '--user', 'www-data', container,
+        'php', '/var/www/html/testing/scripts/set_test_setting.php',
+        key, value,
+    ], { stdio: 'pipe' });
+}
+
+/**
+ * Delete every `backup_runs` row whose `encryption_mode != 'unencrypted'`.
+ * Used by step-up-vault-flow + step-up-oidc-only specs to clear encrypted
+ * runs that earlier specs (backup-integration etc.) leave behind, so the
+ * `vault_set + generate` path is not blocked by the CR #1100 guard
+ * (lib/backup_admin_destinations.php — "Cannot generate a new vault key
+ * while encrypted backups exist").
+ */
+export async function purgeEncryptedBackupRuns(): Promise<void> {
+    const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
+    const { execFileSync } = await import('child_process');
+    execFileSync('docker', [
+        'exec', '--user', 'www-data',
+        '-e', 'IPAM_ALLOW_DESTRUCTIVE_TEST_HELPERS=1',
+        container,
+        'php', '/var/www/html/testing/scripts/purge_encrypted_backup_runs.php',
+    ], { stdio: 'pipe' });
+}
+
+/**
+ * Delete the install-global `backup_vault_key` row from settings, returning
+ * the install to the "no vault key configured" state. Used by
+ * step-up-vault-flow.spec.ts in afterEach: a test that mints a key as part
+ * of its setup must clean it up so subsequent specs see the same starting
+ * state. CR PR #1117 #8.
+ */
+export async function clearVaultKey(): Promise<void> {
+    const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
+    const { execFileSync } = await import('child_process');
+    execFileSync('docker', [
+        'exec', '--user', 'www-data',
+        '-e', 'IPAM_ALLOW_DESTRUCTIVE_TEST_HELPERS=1',
+        container,
+        'php', '/var/www/html/testing/scripts/clear_vault_key.php',
+    ], { stdio: 'pipe' });
+}
+
 export async function setSmtpMailhog(): Promise<void> {
     const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
     const { execFileSync } = await import('child_process');

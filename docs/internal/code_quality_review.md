@@ -1,6 +1,6 @@
 # Code Quality Review — Simple-PHP-IPAM (non-backup)
 
-**Status:** APPROVED 2026-04-29 — milestone allocation locked, 87 issues filed across v3.26.0–v3.30.0.
+**Status:** APPROVED 2026-04-29 — milestone allocation locked, 87 issues filed across v3.26.0–v3.31.0.
 **Scope:** Top-to-bottom code-quality audit of the codebase **excluding** backup/restore, which has its own dedicated review at `docs/internal/backup_overhaul.md` §B (98 findings, mapped to v3.20–v3.26).
 **Goal:** All findings here must be addressed before **v4.0.0**.
 **Single source of truth:** This document. Every issue filed against any milestone v3.26.0–v3.x must reference a finding ID in this file. Decisions made during triage are recorded inline (see §6).
@@ -260,20 +260,20 @@ The user has reserved **v3.26.0** as the entry point and authorized creating add
 | Milestone | Theme | Items | Effort |
 |---|---|---|---|
 | **v3.26.0** | **Code quality: P0 + critical security/correctness P1s** — fix what's quietly wrong today | D1, D2, D3, A1, A2, A3, A4, A5, A8, A9, A10, A21, A22, A30, B1, B2, B3, B4, B11, C1, C4 (verify) | ~5–7 days |
-| **v3.27.0 (NEW)** | **Test coverage + CI hardening** — close the OIDC/MFA/webhook test gap; CI rigor | D4 (partial), D6, D7, D8, D9, D10, D11, plus all "Test coverage gaps" rows from §6 (OIDC unit tests, WebAuthn server fixtures, recaptcha, webhook sig, alert fan-out, audit triggers, site hierarchy, DHCP reservation, API-spec drift, custom-fields types, CSV row-errors), A28, D12 (api-spec drift), D17, D18 | ~7–10 days |
-| **v3.28.0 (NEW)** | **`lib.php` decomposition + page-handler refactor** — break the 9.4k-line monolith and the worst pages | A11, A12, A14, A15, A16, A23, A24, A25, A27, A33, B7, B8, B9, B11 (re-order), C-side: extract `ipam_table_exists()` (C8) | ~10–14 days |
-| **v3.29.0 (NEW)** | **`api.php` + `import_csv.php` refactor + migrations cleanup** — kill the disaster-grade files; tighten migrations | B5, B6, B10, B13 (import_csv split), C2, C3 (note: backup-side already in v3.21–v3.23, here we capture the *policy* — split-one-table-per-migration), C5, C6 (Dialect leakage), C7, C9, C10, C11, C12, A6, A13, A17, A18, A19, A29, A32 | ~8–12 days |
-| **v3.30.0 (NEW)** | **Frontend modularization + remaining P2/P3 polish** | D4 (full), D5, D13, D14, D15, D16, D19, D20, D21, all A.P3, B.P3, C.P3 nits, A20, A26, A31 | ~5–7 days |
+| **v3.28.0 (NEW)** | **Test coverage + CI hardening** — close the OIDC/MFA/webhook test gap; CI rigor | D4 (partial), D6, D7, D8, D9, D10, D11, plus all "Test coverage gaps" rows from §6 (OIDC unit tests, WebAuthn server fixtures, recaptcha, webhook sig, alert fan-out, audit triggers, site hierarchy, DHCP reservation, API-spec drift, custom-fields types, CSV row-errors), A28, D12 (api-spec drift), D17, D18 | ~7–10 days |
+| **v3.29.0 (NEW)** | **`lib.php` decomposition + page-handler refactor** — break the 9.4k-line monolith and the worst pages | A11, A12, A14, A15, A16, A23, A24, A25, A27, A33, B7, B8, B9, B11 (re-order), C-side: extract `ipam_table_exists()` (C8) | ~10–14 days |
+| **v3.30.0 (NEW)** | **`api.php` + `import_csv.php` refactor + migrations cleanup** — kill the disaster-grade files; tighten migrations | B5, B6, B10, B13 (import_csv split), C2, C3 (note: backup-side already in v3.21–v3.23, here we capture the *policy* — split-one-table-per-migration), C5, C6 (Dialect leakage), C7, C9, C10, C11, C12, A6, A13, A17, A18, A19, A29, A32 | ~8–12 days |
+| **v3.31.0 (NEW)** | **Frontend modularization + remaining P2/P3 polish** | D4 (full), D5, D13, D14, D15, D16, D19, D20, D21, all A.P3, B.P3, C.P3 nits, A20, A26, A31 | ~5–7 days |
 
 Total: **~35–50 engineer-days across 5 milestones (v3.26.0 + 4 new)** — tracks the §8 estimate.
 
 ### 9.1 Why this split (rationale)
 
 - **v3.26.0 is "stop the bleeding."** P0s + the highest-risk P1s (webhook lastInsertId on Postgres, SSRF gaps, set_theme CSRF, settings silent fallback, OTP race, raceless XFF). Smallest milestone, lands fast.
-- **v3.27.0 is "trust the tests."** Every other milestone in this plan is a refactor — a refactor without test coverage of OIDC/MFA/webhooks/alerts is high-risk. We invest in the test surface first.
-- **v3.28.0 is "split the monolith."** lib.php into 12 sub-files + extract god-functions + the worst single-page offenders (addresses, subnets, change_password). Once this lands every subsequent change is smaller-blast-radius.
-- **v3.29.0 is "kill the worst files."** api.php (3k lines) and import_csv.php (1.1k lines) are the two disaster-grade files. Cleanup migrations.php at the same time since the three-arm dispatch refactor is the same shape of work.
-- **v3.30.0 is "polish."** Frontend modularization, all remaining P2/P3, doc updates. Lands clean for v4.0.0.
+- **v3.28.0 is "trust the tests."** Every other milestone in this plan is a refactor — a refactor without test coverage of OIDC/MFA/webhooks/alerts is high-risk. We invest in the test surface first.
+- **v3.29.0 is "split the monolith."** lib.php into 12 sub-files + extract god-functions + the worst single-page offenders (addresses, subnets, change_password). Once this lands every subsequent change is smaller-blast-radius.
+- **v3.30.0 is "kill the worst files."** api.php (3k lines) and import_csv.php (1.1k lines) are the two disaster-grade files. Cleanup migrations.php at the same time since the three-arm dispatch refactor is the same shape of work.
+- **v3.31.0 is "polish."** Frontend modularization, all remaining P2/P3, doc updates. Lands clean for v4.0.0.
 
 ### 9.2 Approval + filing record (2026-04-29)
 
@@ -282,10 +282,10 @@ User approved the 5-milestone split as proposed. Issues filed:
 | Milestone | Code-quality issues filed | Notes |
 |---|---:|---|
 | v3.26.0 | 20 | P0s + critical security/correctness P1s (coexists with pre-existing backup parking-lot items) |
-| v3.27.0 | 21 | New milestone — test coverage + CI hardening |
-| v3.28.0 | 15 | New milestone — `lib.php` decomposition + worst page splits |
-| v3.29.0 | 17 | New milestone — `api.php` + `import_csv` + migrations cleanup |
-| v3.30.0 | 14 | New milestone — frontend modularization + remaining P2/P3 |
+| v3.28.0 | 21 | New milestone — test coverage + CI hardening |
+| v3.29.0 | 15 | New milestone — `lib.php` decomposition + worst page splits |
+| v3.30.0 | 17 | New milestone — `api.php` + `import_csv` + migrations cleanup |
+| v3.31.0 | 14 | New milestone — frontend modularization + remaining P2/P3 |
 | **Total** | **87** | All tagged with the `code-quality` label. |
 
 All issues cite their finding ID(s) (A1–A42, B1–B34, C1–C18, D1–D21) and link back to this document. Some adjacent findings were merged into single issues (e.g. A21+A22, A17+A18, A19+A32, B14–B24 umbrella, A.P3 / B.P3 / C.P3 nit umbrellas) — total finding coverage is preserved; total issue count is lower than total finding count.
@@ -299,8 +299,9 @@ All issues cite their finding ID(s) (A1–A42, B1–B34, C1–C18, D1–D21) and
 | 2026-04-29 | Audit scope explicitly excludes backup/restore code | `backup_overhaul.md` §B already catalogues 98 backup findings mapped to v3.20–v3.26; deduplication. |
 | 2026-04-29 | All findings must close before v4.0.0 | User directive — don't carry quality debt into the multi-tenancy major. |
 | 2026-04-29 | This file is single source of truth — issues must reference finding IDs | Mirror `backup_overhaul.md` discipline. |
-| 2026-04-29 | 5-milestone split approved as proposed; 4 new milestones created (v3.27.0–v3.30.0) | User accepted the rationale in §9.1. |
-| 2026-04-29 | 87 issues filed under `code-quality` label across v3.26.0–v3.30.0 | See §9.2 for per-milestone counts. Adjacent findings merged into single issues where the work is one commit. |
+| 2026-04-29 | 5-milestone split approved as proposed; 4 new milestones created (v3.28.0–v3.31.0) | User accepted the rationale in §9.1. |
+| 2026-04-29 | 87 issues filed under `code-quality` label across v3.26.0–v3.31.0 | See §9.2 for per-milestone counts. Adjacent findings merged into single issues where the work is one commit. |
+| 2026-05-07 | All code-quality milestones bumped one slot (v3.27→v3.28, …, v3.30→v3.31). New v3.27.0 inserted for step-up auth feature. | Origin: v3.26.0 #1098 follow-up — OIDC-only environments cannot manage backup vault key. Plan: `docs/superpowers/plans/2026-05-07-v3.27.0.md`. Code-quality scope and ordering unchanged; only milestone titles shifted. |
 
 (Further decisions to be added as triage proceeds.)
 
@@ -313,10 +314,10 @@ Test work is non-optional alongside refactors — a refactor without test covera
 | Milestone | Test umbrella | Highlights |
 |---|---|---|
 | v3.26.0 | covered inline (D1, D2, D3 are themselves test/CI work) | CI workflow trigger, OIDC unit-test scaffolding, UpgradeReplay fixtures. |
-| v3.27.0 | **the test-coverage milestone itself** (21 issues filed) | OIDC, WebAuthn, recaptcha, webhook sig, alerts, audit triggers, hierarchy, DHCP, API spec, custom fields, CSV row errors, baseline triage, MigrationTest split, etc. |
-| v3.28.0 | `tests: behavioral parity for lib.php decomposition + page-handler refactors` (#1045) | lib.php API-surface snapshot; settings registry diff-test; page-handler Playwright stability; \`ipam_table_exists\` helper. |
-| v3.29.0 | `tests: api.php / import_csv / migrations refactor stability` (#1046) | API integration suite stability; OpenAPI drift; import_csv state-machine unit tests; MigrationTest split convergence; Dialect::increment_or_insert across 3 engines; out-of-order migration version-key rename. |
-| v3.30.0 | `tests: app.js module-loading + frontend regression + P3 cleanup verification` (#1047) | app.js module load order; CSP regression guard; prefers-reduced-motion; CSS reconciliation; icons.svg dead-symbol audit. |
+| v3.28.0 | **the test-coverage milestone itself** (21 issues filed) | OIDC, WebAuthn, recaptcha, webhook sig, alerts, audit triggers, hierarchy, DHCP, API spec, custom fields, CSV row errors, baseline triage, MigrationTest split, etc. |
+| v3.29.0 | `tests: behavioral parity for lib.php decomposition + page-handler refactors` (#1045) | lib.php API-surface snapshot; settings registry diff-test; page-handler Playwright stability; \`ipam_table_exists\` helper. |
+| v3.30.0 | `tests: api.php / import_csv / migrations refactor stability` (#1046) | API integration suite stability; OpenAPI drift; import_csv state-machine unit tests; MigrationTest split convergence; Dialect::increment_or_insert across 3 engines; out-of-order migration version-key rename. |
+| v3.31.0 | `tests: app.js module-loading + frontend regression + P3 cleanup verification` (#1047) | app.js module load order; CSP regression guard; prefers-reduced-motion; CSS reconciliation; icons.svg dead-symbol audit. |
 
 **Cross-cutting policy:**
 - Each PR closing a code-quality finding must update or add the matching test in the same commit.

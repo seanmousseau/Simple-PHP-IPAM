@@ -52,6 +52,22 @@ if (!isset($defs[$key]) || empty($defs[$key]['sensitive'])) {
     exit;
 }
 
+// v3.27.0 (#1113) — gate the reveal behind ipam_sudo_require(). Same blast
+// radius as a vault-key reveal: the response body is the raw secret. Returns
+// HTTP 401 with a stable error code so the JS toggle handler can detect the
+// gate miss and route the user through a step-up flow before retrying.
+$cur    = current_user();
+$userId = to_int($cur['id'] ?? 0);
+if (!ipam_sudo_require($db, $userId)) {
+    http_response_code(401);
+    echo json_encode([
+        'error'             => 'step_up_required',
+        'message'           => 'Re-authenticate to reveal this setting.',
+        'step_up_return_to' => 'settings.php',
+    ]);
+    exit;
+}
+
 $value = ipam_setting($key);
 if (!is_string($value)) $value = '';
 

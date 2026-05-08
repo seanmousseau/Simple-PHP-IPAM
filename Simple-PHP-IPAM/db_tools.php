@@ -104,13 +104,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
 } elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'import') {
     csrf_require();
 
-    $confirmed = !empty($_POST['confirmed']);
+    // v3.27.0 (#1113) — gate the import behind ipam_sudo_require(). Replaces
+    // the v3.26.0 bare 'confirmed' checkbox per plan §4 row 6: a typed
+    // confirmation alone is not strong enough authorisation for an action
+    // that wipes and replaces every row in the database. If the gate is not
+    // satisfied, render the step-up prompt as a full page and exit. The
+    // uploaded file does not round-trip through the prompt (browsers will
+    // not re-attach <input type="file"> after a redirect), so the prompt
+    // explicitly tells the operator to return to this page and re-pick the
+    // SQL file after authenticating.
+    $cur    = current_user();
+    $userId = to_int($cur['id'] ?? 0);
+    if (!ipam_sudo_require($db, $userId)) {
+        page_header('Confirm your identity');
+        $stepUpUserId       = $userId;
+        $stepUpFormAction   = 'db_tools.php';
+        // Carry action=import so the proof submission re-enters the same
+        // branch (line 104) and ipam_sudo_require() actually mints the
+        // grant. Without it the resumed POST has no `action`, the entire
+        // import branch is skipped, the proof goes unverified, and the
+        // user then has no warm grant when they re-upload the SQL file.
+        // CR PR #1117 #4. The browser still won't re-attach <input
+        // type="file"> through a redirect; the user re-selects the file
+        // on the page they land on after the proof succeeds, and the
+        // warm grant carries that second submit through.
+        $stepUpHiddenFields = ['action' => 'import'];
+        $stepUpDescription  = 'Re-authenticate to import a SQL dump. This will overwrite every row in the database. After verifying, return to Database Tools and re-select your SQL file.';
+        $stepUpReturnPath   = 'db_tools.php';
+        $stepUpError        = isset($_POST['_sudo_method']) ? 'Verification failed. Import refused.' : '';
+        include __DIR__ . '/views/_step_up_prompt.php';
+        page_footer();
+        exit;
+    }
+
     $uploadRaw = $_FILES['sql_file'] ?? null;
     $upload    = is_array($uploadRaw) ? $uploadRaw : null;
 
-    if (!$confirmed) {
-        $err = 'You must check the confirmation box before importing.';
-    } elseif ($upload === null || to_int($upload['error']) !== UPLOAD_ERR_OK) {
+    if ($upload === null || to_int($upload['error']) !== UPLOAD_ERR_OK) {
         $errCode = $upload !== null ? to_int($upload['error']) : UPLOAD_ERR_NO_FILE;
         $err = match ($errCode) {
             UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE => 'Uploaded file exceeds the allowed size limit.',
@@ -339,10 +369,11 @@ render_security_banner('db_tools', 'Database import will overwrite all existing 
         <label>SQL file (.sql)
           <input type='file' name='sql_file' accept='.sql,text/plain' required>
         </label>
-        <label class='d-flex align-center gap-8 cursor-pointer'>
-          <input type='checkbox' name='confirmed' value='1' required>
-          I understand this will overwrite all existing data
-        </label>
+        <p class='muted fs-09'>
+          You will be prompted to re-authenticate before the import runs.
+          The import wipes every existing row and replaces it with the
+          uploaded dump &mdash; a pre-import backup is created automatically.
+        </p>
         <div>
           <button type='submit' class='button-danger'<?= $sqlDumpSupported ? '' : ' disabled' ?>><?= icon('upload') ?> Import &amp; Replace</button>
         </div>
