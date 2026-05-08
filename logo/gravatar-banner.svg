@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 500" width="1500" height="500" role="img" aria-label="Simple PHP IPAM — lightweight self-hosted IP address management">
+  <!-- Gravatar profile banner. 3:1 aspect, safe-area aware (~250px top crop on mobile). -->
+
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"  stop-color="#0F172A"/>
+      <stop offset="55%" stop-color="#111A2E"/>
+      <stop offset="100%" stop-color="#0A1220"/>
+    </linearGradient>
+
+    <radialGradient id="glow" cx="0.78" cy="0.5" r="0.55">
+      <stop offset="0%"  stop-color="#22C55E" stop-opacity="0.18"/>
+      <stop offset="55%" stop-color="#22C55E" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#22C55E" stop-opacity="0"/>
+    </radialGradient>
+
+    <pattern id="grid" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1E293B" stroke-width="1"/>
+    </pattern>
+
+    <!-- Reusable network mark -->
+    <g id="mark">
+      <rect width="100" height="100" rx="18" fill="#0F172A" stroke="#22C55E" stroke-width="2" stroke-opacity="0.35"/>
+      <line x1="32" y1="50" x2="70" y2="26" stroke="#22C55E" stroke-width="6" stroke-linecap="round"/>
+      <line x1="32" y1="50" x2="70" y2="74" stroke="#22C55E" stroke-width="6" stroke-linecap="round"/>
+      <line x1="70" y1="26" x2="70" y2="74" stroke="#22C55E" stroke-width="6" stroke-linecap="round"/>
+      <circle cx="32" cy="50" r="11" fill="#22C55E"/>
+      <circle cx="70" cy="26" r="8" fill="#22C55E"/>
+      <circle cx="70" cy="74" r="8" fill="#22C55E"/>
+    </g>
+  </defs>
+
+  <!-- Background layers -->
+  <rect width="1500" height="500" fill="url(#bg)"/>
+  <rect width="1500" height="500" fill="url(#grid)" opacity="0.6"/>
+  <rect width="1500" height="500" fill="url(#glow)"/>
+
+  <!-- Decorative CIDR / subnet ticker, faint, top -->
+  <g font-family="'Fira Code','JetBrains Mono','Menlo','Monaco','Consolas',monospace"
+     font-size="14" fill="#22C55E" fill-opacity="0.22">
+    <text x="40"   y="48">10.0.0.0/8</text>
+    <text x="200"  y="48">172.16.0.0/12</text>
+    <text x="400"  y="48">192.168.0.0/16</text>
+    <text x="610"  y="48">100.64.0.0/10</text>
+    <text x="800"  y="48">2001:db8::/32</text>
+    <text x="990"  y="48">fe80::/10</text>
+    <text x="1130" y="48">::1/128</text>
+    <text x="1260" y="48">198.18.0.0/15</text>
+  </g>
+
+  <!-- Decorative CIDR ticker, bottom -->
+  <g font-family="'Fira Code','JetBrains Mono','Menlo','Monaco','Consolas',monospace"
+     font-size="14" fill="#22C55E" fill-opacity="0.18">
+    <text x="60"   y="476">subnet · vrf · vlan · site · tag</text>
+    <text x="380"  y="476">PHP 8.2+ · SQLite · MySQL · PostgreSQL</text>
+    <text x="900"  y="476">no npm · no build step · just rsync</text>
+  </g>
+
+  <!-- Centred lockup: mark + wordmark + tagline. Kept inside ~250px safe band. -->
+  <g transform="translate(330, 168)">
+    <!-- Mark, scaled 1.6x -->
+    <g transform="scale(1.6)">
+      <use href="#mark"/>
+    </g>
+
+    <!-- Wordmark -->
+    <text x="200" y="105"
+          font-family="'Fira Code','JetBrains Mono','Menlo','Monaco','Consolas',monospace"
+          font-size="76" font-weight="500" letter-spacing="-1">
+      <tspan fill="#F8FAFC">Simple</tspan><tspan fill="#22C55E">PHP</tspan><tspan fill="#F8FAFC">IPAM</tspan>
+    </text>
+
+    <!-- Tagline -->
+    <text x="202" y="158"
+          font-family="'Inter','SF Pro Text','Helvetica Neue','Arial',sans-serif"
+          font-size="22" font-weight="400" fill="#94A3B8" letter-spacing="0.3">
+      Lightweight, self-hosted IP address management.
+    </text>
+
+    <!-- URL chip -->
+    <g transform="translate(202, 184)">
+      <rect x="0" y="0" width="244" height="34" rx="8" fill="#22C55E" fill-opacity="0.10" stroke="#22C55E" stroke-opacity="0.4" stroke-width="1"/>
+      <text x="14" y="23"
+            font-family="'Fira Code','JetBrains Mono','Menlo','Monaco','Consolas',monospace"
+            font-size="16" font-weight="500" fill="#22C55E">
+        simplephpipam.com
+      </text>
+    </g>
+  </g>
+</svg>
