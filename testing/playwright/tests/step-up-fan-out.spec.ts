@@ -102,53 +102,60 @@ test.describe('Step-up gate fan-out (#1114)', () => {
     });
 
     test('one grant satisfies the gate fan-out within TTL', async ({ page }) => {
-        // Mint a grant by completing the api_keys round-trip end-to-end.
-        await page.goto(appUrl('api_keys.php'));
         const keyName = `pw-fanout-grant-${Date.now()}`;
-        await page.locator('input[name="name"]').fill(keyName);
-        await page.locator('button[name="action"][value="create"], button:has-text("Generate key")').first().click();
 
-        // The first submit should land on the step-up prompt (single available
-        // method → method is carried as a hidden input).
-        await expect(page.locator('[data-step-up-prompt]')).toBeVisible();
-        const methodSel = page.locator('select[name="_sudo_method"]');
-        if (await methodSel.count()) {
-            await methodSel.selectOption('password');
-        }
-        await page.locator('input[name="_sudo_password"]').fill(ADMIN_PASS);
-        await page.locator('#step-up-form button[type=submit]').click();
+        try {
+            // Mint a grant by completing the api_keys round-trip end-to-end.
+            await page.goto(appUrl('api_keys.php'));
+            await page.locator('input[name="name"]').fill(keyName);
+            await page.locator('button[name="action"][value="create"], button:has-text("Generate key")').first().click();
 
-        // After the grant lands, the api_keys handler runs the create branch
-        // and shows the raw token once. Confirm we're past the prompt.
-        await expect(page.locator('[data-step-up-prompt]')).toHaveCount(0);
+            // The first submit should land on the step-up prompt (single
+            // available method → method is carried as a hidden input).
+            await expect(page.locator('[data-step-up-prompt]')).toBeVisible();
+            const methodSel = page.locator('select[name="_sudo_method"]');
+            if (await methodSel.count()) {
+                await methodSel.selectOption('password');
+            }
+            await page.locator('input[name="_sudo_password"]').fill(ADMIN_PASS);
+            await page.locator('#step-up-form button[type=submit]').click();
 
-        // With the grant warm, settings_reveal must now return 200 + a JSON
-        // body of the {value: ...} shape — proving the same grant satisfies
-        // a second, unrelated sudo-gated endpoint within the install TTL.
-        const res = await fetchPost(page, appUrl('settings_reveal.php'), {
-            key: SENSITIVE_KEY,
-        });
-        expect(res.status).toBe(200);
-        const body = JSON.parse(res.body);
-        expect(body).toHaveProperty('value');
-        expect(body).not.toHaveProperty('error');
+            // After the grant lands, the api_keys handler runs the create
+            // branch and shows the raw token once. Confirm we're past the
+            // prompt.
+            await expect(page.locator('[data-step-up-prompt]')).toHaveCount(0);
 
-        // Cleanup: deactivate then delete the API key we created so the test
-        // is idempotent across reruns. The grant is still warm so neither
-        // action re-prompts (they aren't gated anyway — only `create` is).
-        await page.goto(appUrl('api_keys.php'));
-        const row = page.locator('tr', { hasText: keyName });
-        const deactivate = row.locator('button[name="action"][value="deactivate"]');
-        if (await deactivate.count()) {
-            await deactivate.first().click();
-            await page.waitForLoadState('networkidle');
-        }
-        const deleteBtn = page.locator('tr', { hasText: keyName })
-            .locator('button[name="action"][value="delete"]');
-        if (await deleteBtn.count()) {
-            page.once('dialog', (d) => d.accept());
-            await deleteBtn.first().click();
-            await page.waitForLoadState('networkidle');
+            // With the grant warm, settings_reveal must now return 200 + a
+            // JSON body of the {value: ...} shape — proving the same grant
+            // satisfies a second, unrelated sudo-gated endpoint within the
+            // install TTL.
+            const res = await fetchPost(page, appUrl('settings_reveal.php'), {
+                key: SENSITIVE_KEY,
+            });
+            expect(res.status).toBe(200);
+            const body = JSON.parse(res.body);
+            expect(body).toHaveProperty('value');
+            expect(body).not.toHaveProperty('error');
+        } finally {
+            // Always clean up the API key we created so DB state cannot leak
+            // to subsequent sequential tests, even if any assertion above
+            // threw. The grant is still warm at this point so neither action
+            // re-prompts (they aren't gated anyway — only `create` is).
+            // (CodeRabbit #1116.)
+            await page.goto(appUrl('api_keys.php')).catch(() => undefined);
+            const row = page.locator('tr', { hasText: keyName });
+            const deactivate = row.locator('button[name="action"][value="deactivate"]');
+            if (await deactivate.count().catch(() => 0)) {
+                await deactivate.first().click().catch(() => undefined);
+                await page.waitForLoadState('networkidle').catch(() => undefined);
+            }
+            const deleteBtn = page.locator('tr', { hasText: keyName })
+                .locator('button[name="action"][value="delete"]');
+            if (await deleteBtn.count().catch(() => 0)) {
+                page.once('dialog', (d) => d.accept());
+                await deleteBtn.first().click().catch(() => undefined);
+                await page.waitForLoadState('networkidle').catch(() => undefined);
+            }
         }
     });
 });

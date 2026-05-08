@@ -42,7 +42,11 @@ final class SudoVerifyTest extends TestCase
                 tenant_id  INTEGER,
                 key        TEXT NOT NULL,
                 value      TEXT,
-                type       TEXT NOT NULL DEFAULT 'string',
+                -- CHECK matches production schema.sql so the in-memory table
+                -- enforces the same allowed type vocabulary (CodeRabbit
+                -- #1116).
+                type       TEXT NOT NULL DEFAULT 'string'
+                           CHECK (type IN ('string', 'int', 'bool', 'json')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         ");

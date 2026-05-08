@@ -82,12 +82,16 @@ $sid = bin2hex(random_bytes(16));
 
 session_id($sid);
 session_save_path($savePath);
-@session_start([
+$started = session_start([
     'use_cookies'      => 0,
     'use_only_cookies' => 0,
     'cache_limiter'    => '',
     'use_strict_mode'  => 0,
 ]);
+if ($started === false || session_status() !== PHP_SESSION_ACTIVE) {
+    fwrite(STDERR, "session_start() failed (status={" . session_status() . "}, save_path={$savePath})\n");
+    exit(8);
+}
 
 $_SESSION = [];
 $_SESSION['uid']         = $uid;

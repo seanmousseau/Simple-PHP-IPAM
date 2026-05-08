@@ -68,10 +68,29 @@ function ipam_sudo_policy(): array
     ];
 }
 
-/** True iff the current session has an unexpired sudo grant. */
+/**
+ * True iff the current session has an unexpired sudo grant.
+ *
+ * Two grant shapes:
+ *   - timed grant — `sudo_until_ts` is a future unix timestamp.
+ *   - one-shot grant — `sudo_once` is true; consumed by ipam_sudo_consume_once()
+ *     which the calling handler invokes after the gated action completes.
+ *     Used for the `ttl_seconds=0` ("re-prompt every action") policy.
+ */
 function ipam_sudo_active(): bool
 {
+    if (!empty($_SESSION['sudo_once'])) return true;
     return to_int($_SESSION['sudo_until_ts'] ?? 0) > time();
+}
+
+/**
+ * Consume a one-shot sudo grant. No-op for timed grants. Sensitive handlers
+ * call this immediately after the gated action runs successfully so the next
+ * sensitive action re-prompts.
+ */
+function ipam_sudo_consume_once(): void
+{
+    unset($_SESSION['sudo_once']);
 }
 
 /**
@@ -82,23 +101,44 @@ function ipam_sudo_invalidate(): void
 {
     unset(
         $_SESSION['sudo_until_ts'],
+        $_SESSION['sudo_once'],
         $_SESSION['sudo_method'],
         $_SESSION['sudo_webauthn_challenge'],
-        $_SESSION['sudo_webauthn_challenge_issued_at']
+        $_SESSION['sudo_webauthn_challenge_issued_at'],
+        // In-flight OIDC re-auth state must die with the grant: any nonce or
+        // return-path waiting on a callback could otherwise complete a
+        // step-up after a logout / password-change / role-downgrade /
+        // policy-tightening event invalidated the session. (CodeRabbit
+        // #1116.)
+        $_SESSION['sudo_oidc_reauth_state'],
+        $_SESSION['sudo_oidc_reauth_return']
     );
 }
 
 /**
- * Issue a fresh sudo grant scoped to the current policy TTL. ttl=0 means
- * "re-prompt every action" — set the grant to expire on the very next
- * request by giving it a one-second window. The action we just authorised
- * can complete; the next sensitive action will re-prompt.
+ * Issue a fresh sudo grant scoped to the current policy TTL.
+ *
+ * Two shapes:
+ *   - ttl > 0 → timed grant via `sudo_until_ts = time() + ttl`. Subsequent
+ *     sensitive actions short-circuit until the timestamp passes.
+ *   - ttl = 0 → "re-prompt every action" via a one-shot `sudo_once` flag.
+ *     The action we just authorised can complete (sensitive handlers call
+ *     ipam_sudo_consume_once() after the action runs); the next sensitive
+ *     action re-prompts. Avoids the previous time()+1 window which could
+ *     be reused for any number of sensitive actions within the same second
+ *     (CodeRabbit #1116).
  */
 function ipam_sudo_grant(string $method): void
 {
     $ttl = ipam_sudo_policy()['ttl_seconds'];
-    $_SESSION['sudo_until_ts'] = ($ttl > 0) ? (time() + $ttl) : (time() + 1);
-    $_SESSION['sudo_method']   = $method;
+    if ($ttl > 0) {
+        $_SESSION['sudo_until_ts'] = time() + $ttl;
+        unset($_SESSION['sudo_once']);
+    } else {
+        $_SESSION['sudo_once'] = true;
+        unset($_SESSION['sudo_until_ts']);
+    }
+    $_SESSION['sudo_method'] = $method;
 }
 
 /**

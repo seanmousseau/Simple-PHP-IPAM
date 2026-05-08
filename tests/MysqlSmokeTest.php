@@ -166,7 +166,9 @@ final class MysqlSmokeTest extends TestCase
         // Bumped to 58 in v3.26.0 (#1059, #1098, #882): added the trio
         // 3.26.0-login-attempts-action / 3.26.0-retire-legacy-backup /
         // 3.26.0-vault-key-to-settings.
-        $this->assertSame(58, (int)$row['c']);
+        // Bumped to 59 in v3.27.0 (#1108): added 3.27.0-step-up-policy
+        // (seeds five auth.step_up.* policy rows on fresh installs).
+        $this->assertSame(59, (int)$row['c']);
     }
 
     public function testBootstrapAdminUserInserted(): void

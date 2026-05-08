@@ -60,9 +60,24 @@ $db = ipam_db($config);
 $defs = ipam_setting_definitions();
 $type = is_string($defs[$key]['type'] ?? null) ? $defs[$key]['type'] : 'string';
 
+// Validate input strictly so a typo (e.g. "ture") doesn't silently coerce to
+// false / 0 and produce a confusing test environment. (CodeRabbit #1116.)
 $value = match ($type) {
-    'bool'   => in_array(strtolower($rawValue), ['1', 'true', 'on', 'yes'], true),
-    'int'    => to_int($rawValue),
+    'bool'   => match (strtolower($rawValue)) {
+        '1', 'true', 'on', 'yes'  => true,
+        '0', 'false', 'off', 'no' => false,
+        default => (function () use ($rawValue) {
+            fwrite(STDERR, "Invalid bool literal '{$rawValue}'. Expected one of: 1/0, true/false, on/off, yes/no.\n");
+            exit(4);
+        })(),
+    },
+    'int'    => (function () use ($rawValue) {
+        if (!preg_match('/^-?\d+$/', $rawValue)) {
+            fwrite(STDERR, "Invalid int literal '{$rawValue}'. Expected an integer (no decimals or trailing characters).\n");
+            exit(5);
+        }
+        return (int)$rawValue;
+    })(),
     default  => $rawValue,
 };
 

@@ -3685,27 +3685,23 @@ function ipam_migrations(): array
         // bug-fixing for OIDC-only admins. See
         // docs/superpowers/plans/2026-05-07-v3.27.0.md §6.
         '3.27.0-step-up-policy-settings' => static function (PDO $db): void {
-            if (!function_exists('ipam_setting_definitions')) {
-                return;
-            }
-            $definitions = ipam_setting_definitions();
             $kc = ipam_key_col();
 
-            $stepUpKeys = [
-                'auth.step_up.allow_totp',
-                'auth.step_up.allow_email_otp',
-                'auth.step_up.allow_webauthn',
-                'auth.step_up.allow_provider_reauth',
-                'auth.step_up.ttl_seconds',
+            // Hardcoded v3.27.0 defaults — DO NOT reference
+            // ipam_setting_definitions() here. Migrations must replay
+            // deterministically: a fresh install in 2030 running the v3.27.0
+            // migration must seed the v3.27.0 defaults, not whatever the
+            // registry has drifted to in the meantime. (CodeRabbit #1116.)
+            $seed = [
+                ['auth.step_up.allow_totp',            'bool',   true],
+                ['auth.step_up.allow_email_otp',       'bool',   true],
+                ['auth.step_up.allow_webauthn',        'bool',   true],
+                ['auth.step_up.allow_provider_reauth', 'bool',   true],
+                ['auth.step_up.ttl_seconds',           'string', '300'],
             ];
 
-            foreach ($stepUpKeys as $key) {
-                if (!isset($definitions[$key])) {
-                    continue;
-                }
-                $def     = $definitions[$key];
-                $type    = to_str($def['type']);
-                $encoded = ipam_setting_encode($def['default'], $type);
+            foreach ($seed as [$key, $type, $default]) {
+                $encoded = ipam_setting_encode($default, $type);
 
                 $ex = $db->prepare("SELECT 1 FROM settings WHERE tenant_id IS NULL AND {$kc} = :k");
                 $ex->execute([':k' => $key]);
