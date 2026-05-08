@@ -118,7 +118,7 @@ test.describe('Settings — step-up authentication policy (#1109)', () => {
             await methodSel.selectOption('password');
         }
         await page.locator('input[name="_sudo_password"]').fill(ADMIN_PASS);
-        await page.locator('#step-up-form button[type=submit]').click();
+        await page.locator('[data-step-up-section="password"] button[type=submit]').click();
 
         // Reload and confirm the new TTL persisted.
         await page.goto(appUrl('settings.php?tab=authentication#group-step_up'));

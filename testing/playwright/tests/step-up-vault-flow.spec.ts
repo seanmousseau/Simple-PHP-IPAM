@@ -43,7 +43,7 @@ async function passStepUpWithPassword(page: import('@playwright/test').Page) {
         await methodSel.selectOption('password');
     }
     await page.locator('input[name="_sudo_password"]').fill(ADMIN_PASS);
-    await page.locator('#step-up-form button[type=submit]').click();
+    await page.locator('[data-step-up-section="password"] button[type=submit]').click();
 }
 
 test.describe('Vault key — step-up flow (#1110, #1111)', () => {

@@ -89,10 +89,9 @@ test.describe('Large database import/export (#306)', () => {
     await login(page, ADMIN_USER, ADMIN_PASS);
 
     // v3.27.0 (#1107): db_tools import is gated behind ipam_sudo_verify().
-    // Pre-warm a sudo grant once for the whole suite so each fetchPostForm
-    // hits the import handler instead of the step-up prompt. The default
-    // TTL (300s) covers the suite runtime.
-    await warmSudoGrant(page);
+    // Each import call site below pre-warms its own sudo grant immediately
+    // before the POST so a long-running suite (TTL=300s default) can never
+    // outrun a stale grant.
 
     await page.goto('db_tools.php');
     const r = await fetchPost(page, appUrl('db_tools.php'), { action: 'export' });
@@ -104,6 +103,9 @@ test.describe('Large database import/export (#306)', () => {
     // Always restore the original DB so subsequent specs are unaffected.
     try {
       if (originalSql && page) {
+        // Re-warm before restore — the original beforeAll grant is likely
+        // expired by now (CodeRabbit round 2, #1116).
+        await warmSudoGrant(page);
         await page.goto('db_tools.php');
         await fetchPostForm(
           page, appUrl('db_tools.php'),
@@ -122,6 +124,7 @@ test.describe('Large database import/export (#306)', () => {
     test.setTimeout(90_000);
     const augmentedSql = originalSql + '\n' + buildLargeInsertSql();
 
+    await warmSudoGrant(page);
     await page.goto('db_tools.php');
     const r = await fetchPostForm(
       page, appUrl('db_tools.php'),
@@ -202,6 +205,7 @@ test.describe('Large database import/export (#306)', () => {
     test.setTimeout(90_000);
     if (!largeExportSql) { test.skip(); return; }
 
+    await warmSudoGrant(page);
     await page.goto('db_tools.php');
     const r = await fetchPostForm(
       page, appUrl('db_tools.php'),

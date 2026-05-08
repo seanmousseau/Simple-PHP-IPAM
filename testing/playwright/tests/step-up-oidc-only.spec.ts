@@ -89,7 +89,7 @@ test.describe('Step-up — OIDC-only admin (#1098 regression)', () => {
             const m1 = page.locator('select[name="_sudo_method"]');
             if (await m1.count()) await m1.selectOption('totp');
             await page.locator('input[name="_sudo_code"]').fill(totpCode(TFA_SECRET));
-            await page.locator('#step-up-form button[type=submit]').click();
+            await page.locator('[data-step-up-section="totp"] button[type=submit]').click();
             // Re-mint to drop the warm grant.
             await attachSession();
         }
@@ -104,7 +104,7 @@ test.describe('Step-up — OIDC-only admin (#1098 regression)', () => {
         const methodSel = page.locator('select[name="_sudo_method"]');
         if (await methodSel.count()) await methodSel.selectOption('totp');
         await page.locator('input[name="_sudo_code"]').fill(totpCode(TFA_SECRET));
-        await page.locator('#step-up-form button[type=submit]').click();
+        await page.locator('[data-step-up-section="totp"] button[type=submit]').click();
 
         // The raw vault key flashes exactly once.
         await expect(page.locator('[data-test="vault-revealed-key"]')).toBeVisible();
@@ -120,6 +120,11 @@ test.describe('Step-up — OIDC-only admin (#1098 regression)', () => {
         // false would strand every admin and break later specs.
         await setTestSetting('auth.step_up.allow_provider_reauth', 'false');
 
+        // The OIDC-only-no-MFA admin we just seeded would itself strand the
+        // lockout check on the next spec that saves the step-up policy
+        // (default policy can't satisfy them on installs without OIDC
+        // configured — like the test container). Deactivate them in
+        // `finally` so they no longer appear in the active-admins query.
         try {
             const session = await mintTestSession(OIDC_NO_MFA_USER);
             const ctx = await browser.newContext({
@@ -164,6 +169,10 @@ test.describe('Step-up — OIDC-only admin (#1098 regression)', () => {
         } finally {
             // Always restore so subsequent specs/runs aren't stranded.
             await setTestSetting('auth.step_up.allow_provider_reauth', 'true');
+            // Deactivate the seeded OIDC-only-no-MFA admin so the lockout
+            // check on later policy saves doesn't see them as a stranded
+            // active admin.
+            await seedOidcOnlyAdmin(OIDC_NO_MFA_USER, 'deactivate').catch(() => undefined);
         }
     });
 });

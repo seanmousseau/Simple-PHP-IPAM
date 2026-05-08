@@ -118,7 +118,7 @@ test.describe('Step-up gate fan-out (#1114)', () => {
                 await methodSel.selectOption('password');
             }
             await page.locator('input[name="_sudo_password"]').fill(ADMIN_PASS);
-            await page.locator('#step-up-form button[type=submit]').click();
+            await page.locator('[data-step-up-section="password"] button[type=submit]').click();
 
             // After the grant lands, the api_keys handler runs the create
             // branch and shows the raw token once. Confirm we're past the

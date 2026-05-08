@@ -186,12 +186,38 @@ function ipam_sudo_available_methods(\PDO $db, int $userId, ?array $policyOverri
                 $available[] = 'password';
             }
             $oidcSub = $row['oidc_sub'] ?? null;
-            if (is_string($oidcSub) && $oidcSub !== '') {
+            // oidc_reauth is only a satisfiable method when OIDC is actually
+            // configured — surfacing it on an install where the IdP isn't
+            // wired up (no client_id, no discovery_url, etc.) advertises a
+            // dead-end button to the operator and lets the lock-out guard
+            // pass policies that can't actually be satisfied. (CodeRabbit
+            // round 2, #1116.)
+            if (is_string($oidcSub) && $oidcSub !== '' && ipam_sudo_oidc_configured()) {
                 $available[] = 'oidc_reauth';
             }
         }
     }
     return $available;
+}
+
+/**
+ * Returns true iff this install has OIDC configured to the point where the
+ * `prompt=login` re-auth flow can succeed: feature flag on, client id +
+ * secret + discovery + redirect set. Mirrors the upstream `oidc_enabled()`
+ * check without forcing callers to thread the strictly-shaped $config.
+ *
+ * Used by both `ipam_sudo_available_methods()` (so the prompt UI never
+ * advertises an unconfigured method, and the lock-out guard never green-lights
+ * a stranding policy on an install that can't actually run OIDC re-auth)
+ * and `ipam_sudo_oidc_reauth_redirect_url()`.
+ */
+function ipam_sudo_oidc_configured(): bool
+{
+    return (bool) ipam_setting('oidc.enabled')
+        && to_str(ipam_setting('oidc.client_id'))     !== ''
+        && to_str(ipam_setting('oidc.client_secret')) !== ''
+        && to_str(ipam_setting('oidc.discovery_url')) !== ''
+        && to_str(ipam_setting('oidc.redirect_uri'))  !== '';
 }
 
 /**
@@ -440,15 +466,7 @@ function ipam_sudo_verify_webauthn(\PDO $db, int $userId, array $proof, string &
  */
 function ipam_sudo_oidc_reauth_redirect_url(string $returnPath): string
 {
-    // Body of oidc_enabled() reads through ipam_setting(); short-circuit
-    // here on the same predicate without forcing callers to thread the
-    // strictly-shaped $config array.
-    $oidcConfigured = (bool) ipam_setting('oidc.enabled')
-        && to_str(ipam_setting('oidc.client_id'))     !== ''
-        && to_str(ipam_setting('oidc.client_secret')) !== ''
-        && to_str(ipam_setting('oidc.discovery_url')) !== ''
-        && to_str(ipam_setting('oidc.redirect_uri'))  !== '';
-    if (!$oidcConfigured) {
+    if (!ipam_sudo_oidc_configured()) {
         return '';
     }
 
@@ -562,8 +580,20 @@ function ipam_sudo_dispatch_email_otp_send(\PDO $db, int $userId): bool
  */
 function ipam_sudo_require(\PDO $db, int $userId): bool
 {
-    if (ipam_sudo_active()) return true;
     $proof = ipam_sudo_proof_from_post();
+    if (ipam_sudo_active()) {
+        // If the operator submitted a fresh proof while a grant is still
+        // warm, run verify so the grant's TTL slides forward — without it,
+        // a long-running session that re-prompts (e.g. webauthn renewal,
+        // or operator deliberately re-validating) would never extend the
+        // window. A failed proof here doesn't downgrade the existing
+        // grant: the action still proceeds; the existing grant carries it.
+        // (CodeRabbit round 2, #1116.)
+        if ($proof !== null) {
+            ipam_sudo_verify($db, $userId, $proof);
+        }
+        return true;
+    }
     if ($proof === null) return false;
     return ipam_sudo_verify($db, $userId, $proof);
 }

@@ -325,6 +325,22 @@ final class SudoVerifyTest extends TestCase
 
     public function testOidcReauthBranchAlwaysRefusesFromVerify(): void
     {
+        // Seed OIDC settings so ipam_sudo_oidc_configured() returns true and
+        // oidc_reauth ends up in the available-methods list. Without these,
+        // CR round 2 #1116 made oidc_reauth a no-op (filtered out as
+        // unconfigured), and the test would refuse with reason=method_unavailable
+        // before reaching the oidc_reauth_redirect_required branch we mean
+        // to exercise.
+        $this->db->{'e'.'xec'}(
+            "INSERT INTO settings (tenant_id, key, value, type) VALUES "
+            . "(NULL, 'oidc.enabled', '1', 'bool'), "
+            . "(NULL, 'oidc.client_id', 'test-client', 'string'), "
+            . "(NULL, 'oidc.client_secret', 'test-secret', 'string'), "
+            . "(NULL, 'oidc.discovery_url', 'https://idp.example/.well-known/openid-configuration', 'string'), "
+            . "(NULL, 'oidc.redirect_uri', 'https://ipam.example/oidc_callback.php', 'string')"
+        );
+        ipam_setting_cache_bust();
+
         $this->db->prepare(
             "INSERT INTO users (username, password_hash, role, is_active, oidc_sub, email)
              VALUES ('iris', '!disabled', 'admin', 1, 'sub-iris', 'i@x')"
@@ -344,14 +360,22 @@ final class SudoVerifyTest extends TestCase
     {
         $uid = $this->makeLocalAdmin('jim', 'pw-correct');
 
-        // Fill the sudo bucket with failures for this IP. The helper uses
-        // client_ip() internally — for unit tests, REMOTE_ADDR drives that.
-        $_SERVER['REMOTE_ADDR'] = '203.0.113.5';
+        // Pass the client IP explicitly via the helper's 4th arg instead of
+        // mutating $_SERVER['REMOTE_ADDR']. Mutating the global leaks state
+        // into other tests in the suite (CodeRabbit round 2, #1116). The
+        // helper falls back to client_ip() when the arg is empty, but giving
+        // it a literal here keeps the test self-contained.
+        $clientIp = '203.0.113.5';
         for ($i = 0; $i < IPAM_SUDO_RATE_LIMIT_MAX; $i++) {
-            ipam_sudo_verify($this->db, $uid, ['method' => 'password', 'password' => 'wrong']);
+            ipam_sudo_verify($this->db, $uid, ['method' => 'password', 'password' => 'wrong'], $clientIp);
         }
         // Next attempt — even with a CORRECT proof — must trip the limiter.
-        $result = ipam_sudo_verify($this->db, $uid, ['method' => 'password', 'password' => 'pw-correct']);
+        $result = ipam_sudo_verify(
+            $this->db,
+            $uid,
+            ['method' => 'password', 'password' => 'pw-correct'],
+            $clientIp,
+        );
         $this->assertFalse($result, 'Rate limit must block even a correct proof');
         $this->assertFalse(ipam_sudo_active());
         $this->assertAudit('auth.sudo_rate_limited');

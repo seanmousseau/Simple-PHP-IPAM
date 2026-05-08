@@ -32,8 +32,8 @@ if (PHP_SAPI !== 'cli') {
 
 $username = $argv[1] ?? '';
 $mode     = $argv[2] ?? '--no-mfa';
-if ($username === '' || !in_array($mode, ['--with-totp', '--no-mfa'], true)) {
-    fwrite(STDERR, "Usage: seed_oidc_only_admin.php <username> [--with-totp|--no-mfa]\n");
+if ($username === '' || !in_array($mode, ['--with-totp', '--no-mfa', '--deactivate'], true)) {
+    fwrite(STDERR, "Usage: seed_oidc_only_admin.php <username> [--with-totp|--no-mfa|--deactivate]\n");
     exit(2);
 }
 
@@ -63,6 +63,18 @@ $totpEnabled    = $mode === '--with-totp' ? 1 : 0;
 $totpSecretEnc  = $mode === '--with-totp'
     ? ipam_totp_encrypt_secret('JBSWY3DPEHPK3PXP', $appSecret)
     : null;
+
+// --deactivate short-circuit. Used by Playwright `finally` blocks so the
+// transient OIDC-only test admin doesn't linger as is_active=1 in the DB
+// and then strand the lockout check on later specs that save the step-up
+// policy. (The default policy can't satisfy a no-MFA OIDC-only admin on
+// installs where OIDC isn't actually configured — like the test container.)
+if ($mode === '--deactivate') {
+    $db->prepare("UPDATE users SET is_active = 0 WHERE username = :u")
+       ->execute([':u' => $username]);
+    echo "deactivated\n";
+    exit(0);
+}
 
 try {
     $check = $db->prepare("SELECT id FROM users WHERE username = :u LIMIT 1");

@@ -444,10 +444,25 @@ export async function passStepUpIfPresent(
         await methodSel.selectOption('password').catch(() => undefined);
     }
     await page.locator('input[name="_sudo_password"]').fill(password);
+    // The shared prompt partial renders ALL available method sections on the
+    // same page and toggles visibility via `hidden`, so a bare
+    // `#step-up-form button[type=submit]` selector matches multiple buttons
+    // (TOTP / Email-OTP send / Email-OTP verify / Password) and trips
+    // Playwright's strict-mode violation on multi-method users. Scope the
+    // click to the password section we just populated.
     await Promise.all([
         page.waitForLoadState('domcontentloaded'),
-        page.locator('#step-up-form button[type=submit]').click(),
+        page.locator('[data-step-up-section="password"] button[type=submit]').click(),
     ]);
+    // Verify the prompt actually cleared. If the proof was rejected the
+    // partial re-renders on the same URL with a 'danger' error banner; we
+    // surface that to the caller as `false` rather than silently returning
+    // `true` while the action upstream wasn't actually authorised. (CodeRabbit
+    // round 2, #1116.)
+    const stillPrompting = await page.locator('[data-step-up-prompt]').count();
+    if (stillPrompting > 0) {
+        return false;
+    }
     return true;
 }
 
@@ -497,15 +512,20 @@ export async function warmSudoGrant(page: Page, password: string = ADMIN_PASS): 
  */
 export async function seedOidcOnlyAdmin(
     username: string,
-    mode: 'with-totp' | 'no-mfa',
+    mode: 'with-totp' | 'no-mfa' | 'deactivate',
 ): Promise<number> {
     const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
     const { execFileSync } = await import('child_process');
+    const flag = mode === 'with-totp' ? '--with-totp'
+               : mode === 'deactivate' ? '--deactivate'
+               : '--no-mfa';
     const out = execFileSync('docker', [
         'exec', '--user', 'www-data', container,
         'php', '/var/www/html/testing/scripts/seed_oidc_only_admin.php',
-        username, mode === 'with-totp' ? '--with-totp' : '--no-mfa',
+        username, flag,
     ], { encoding: 'utf-8' });
+    // --deactivate prints "deactivated\n"; the seed paths print the uid.
+    if (mode === 'deactivate') return 0;
     return parseInt(out.trim(), 10);
 }
 

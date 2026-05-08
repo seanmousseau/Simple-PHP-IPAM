@@ -296,6 +296,11 @@ test.describe('Upgrade path: pre-v2.0.0 → current version (#305)', () => {
         // If intermediate tests failed, the session state may be unknown — log out and back in.
         await page.goto('logout.php').catch(() => null);
         await loginAs(page, UPGRADE_ADMIN_USER, UPGRADE_ADMIN_PASS);
+        // Re-warm the sudo grant before the restore: the beforeAll grant
+        // is long expired by the time afterAll runs (CodeRabbit round 2,
+        // #1116), and the new login dropped any session-bound grant
+        // anyway.
+        await warmSudoGrant(page);
         await page.goto('db_tools.php');
         await fetchPostForm(
           page, appUrl('db_tools.php'),

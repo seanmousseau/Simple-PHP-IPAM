@@ -140,6 +140,25 @@ final class StepUpPolicyTest extends TestCase
             'TTL outside the discrete-options whitelist must be ignored, not silently persisted');
     }
 
+    /**
+     * Seed enough OIDC settings that ipam_sudo_oidc_configured() returns true.
+     * Without this the v3.27.0 CR-round-2 #1116 oidc_reauth gating filters
+     * the method out of the available list and OIDC-only admins look
+     * stranded to the lock-out check.
+     */
+    private function seedOidcConfigured(): void
+    {
+        $this->db->{'e'.'xec'}(
+            "INSERT INTO settings (tenant_id, key, value, type) VALUES "
+            . "(NULL, 'oidc.enabled', '1', 'bool'), "
+            . "(NULL, 'oidc.client_id', 'test-client', 'string'), "
+            . "(NULL, 'oidc.client_secret', 'test-secret', 'string'), "
+            . "(NULL, 'oidc.discovery_url', 'https://idp.example/.well-known/openid-configuration', 'string'), "
+            . "(NULL, 'oidc.redirect_uri', 'https://ipam.example/oidc_callback.php', 'string')"
+        );
+        ipam_setting_cache_bust();
+    }
+
     private function makeAdmin(string $username, ?string $password, ?string $oidcSub): void
     {
         $hash = $password !== null ? password_hash($password, PASSWORD_DEFAULT) : '!disabled';
@@ -156,6 +175,7 @@ final class StepUpPolicyTest extends TestCase
 
     public function testLockoutGuardAcceptsValidPolicyWhenAllAdminsCanPassSomeMethod(): void
     {
+        $this->seedOidcConfigured();
         $this->makeAdmin('admin1', 'pw1', null);
         $this->makeAdmin('admin2', null, 'oidc-sub-2');
 
