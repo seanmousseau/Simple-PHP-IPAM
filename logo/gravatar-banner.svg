@@ -76,39 +76,42 @@
     <text x="1080" y="26">198.18.0.0/15</text>
   </g>
 
-  <!-- Hero copy, anchored in the right safe area (centered around x=870) -->
+  <!-- Hero copy, narrow column centered at x=720 to survive both the desktop -->
+  <!-- avatar overlay (covers up to ~x=520) AND the mobile right-edge crop      -->
+  <!-- (visible window ends ~x=900). Effective safe column: x=520..x=900.       -->
   <g text-anchor="middle">
-    <!-- Hero tagline -->
-    <text x="870" y="142"
+    <!-- Qualifier -->
+    <text x="720" y="92"
           font-family="'Inter','SF Pro Display','Helvetica Neue','Arial',sans-serif"
-          font-size="52" font-weight="700" fill="#F8FAFC" letter-spacing="-1">
-      Self-hosted IPAM.
+          font-size="22" font-weight="500" fill="#94A3B8" letter-spacing="2.4">
+      SELF-HOSTED
+    </text>
+
+    <!-- Hero word -->
+    <text x="720" y="172"
+          font-family="'Inter','SF Pro Display','Helvetica Neue','Arial',sans-serif"
+          font-size="78" font-weight="800" fill="#F8FAFC" letter-spacing="-2">
+      IPAM<tspan fill="#22C55E">.</tspan>
     </text>
 
     <!-- Stack line -->
-    <text x="870" y="178"
+    <text x="720" y="208"
           font-family="'Fira Code','JetBrains Mono','Menlo','Monaco','Consolas',monospace"
-          font-size="17" font-weight="400" fill="#94A3B8" letter-spacing="0.4">
+          font-size="14" font-weight="400" fill="#94A3B8" letter-spacing="0.3">
       PHP 8.2+ · SQLite · MySQL · PostgreSQL
     </text>
 
     <!-- URL chip -->
-    <g transform="translate(748, 200)">
-      <rect x="0" y="0" width="244" height="34" rx="8"
+    <g transform="translate(598, 224)">
+      <rect x="0" y="0" width="244" height="32" rx="8"
             fill="#22C55E" fill-opacity="0.10"
             stroke="#22C55E" stroke-opacity="0.45" stroke-width="1"/>
-      <text x="122" y="23"
+      <text x="122" y="22"
             font-family="'Fira Code','JetBrains Mono','Menlo','Monaco','Consolas',monospace"
-            font-size="16" font-weight="500" fill="#22C55E">
+            font-size="15" font-weight="500" fill="#22C55E">
         simplephpipam.com
       </text>
     </g>
   </g>
 
-  <!-- Bottom feature ticker, faint, right-weighted -->
-  <g font-family="'Fira Code','JetBrains Mono','Menlo','Monaco','Consolas',monospace"
-     font-size="12" fill="#22C55E" fill-opacity="0.18">
-    <text x="540"  y="268">no npm · no build step · just rsync</text>
-    <text x="900"  y="268">subnet · vrf · vlan · site · tag</text>
-  </g>
 </svg>
