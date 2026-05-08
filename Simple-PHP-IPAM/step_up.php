@@ -56,6 +56,11 @@ $returnTarget = ipam_step_up_validate_return_to($returnRaw, 'settings.php');
 // If a grant is already warm (or the POST carries a valid proof), bounce
 // straight back to the originating page so the user can retry their action.
 if (ipam_sudo_require($db, $userId)) {
+    // $returnTarget was sanitised by ipam_step_up_validate_return_to()
+    // above (rejects schemes, hosts, traversal, CRLF, backslashes, and
+    // oversize strings, falling back to 'settings.php'). The function is
+    // registered as a sanitizer for the ipam-open-redirect semgrep rule
+    // in .semgrep/rules.yml.
     header('Location: ' . $returnTarget);
     exit;
 }
