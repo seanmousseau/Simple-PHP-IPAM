@@ -415,6 +415,72 @@ export async function ensureEmailOtpEnrolled(username: string): Promise<void> {
     ], { stdio: 'pipe' });
 }
 
+/**
+ * Seed (or refresh) an OIDC-only admin (oidc_sub set, password_hash='!disabled')
+ * for v3.27.0 step-up regression tests. Returns the user's numeric id.
+ *
+ * mode = 'with-totp' enrols the user in TOTP using the JBSWY3DPEHPK3PXP test
+ * vector and flips mfa.totp_enabled on globally; 'no-mfa' explicitly clears
+ * any MFA enrollment so the user has no method available under default policy
+ * minus provider re-auth.
+ */
+export async function seedOidcOnlyAdmin(
+    username: string,
+    mode: 'with-totp' | 'no-mfa',
+): Promise<number> {
+    const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
+    const { execFileSync } = await import('child_process');
+    const out = execFileSync('docker', [
+        'exec', '--user', 'www-data', container,
+        'php', '/var/www/html/testing/scripts/seed_oidc_only_admin.php',
+        username, mode === 'with-totp' ? '--with-totp' : '--no-mfa',
+    ], { encoding: 'utf-8' });
+    return parseInt(out.trim(), 10);
+}
+
+/**
+ * Mint a logged-in PHP session for the given user and return both the
+ * session-cookie name (which is install-dir-derived in init.php) and the
+ * session id. Used by step-up-oidc-only.spec.ts to drive a session as an
+ * OIDC-only admin without round-tripping through an OIDC IdP.
+ *
+ * The caller sets the cookie on the browser context via context.addCookies().
+ */
+export async function mintTestSession(username: string): Promise<{ cookieName: string; sid: string }> {
+    const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
+    const { execFileSync } = await import('child_process');
+    const out = execFileSync('docker', [
+        'exec', '--user', 'www-data', container,
+        'php', '/var/www/html/testing/scripts/mint_test_session.php',
+        username,
+    ], { encoding: 'utf-8' });
+    const lines: Record<string, string> = {};
+    for (const line of out.split('\n')) {
+        const m = line.match(/^([^=]+)=(.*)$/);
+        if (m) lines[m[1]] = m[2];
+    }
+    if (!lines.cookie_name || !lines.sid) {
+        throw new Error(`mintTestSession: malformed output: ${out}`);
+    }
+    return { cookieName: lines.cookie_name, sid: lines.sid };
+}
+
+/**
+ * Write a single allow-listed setting value (currently auth.step_up.*) directly
+ * via ipam_setting_set(), bypassing the UI's lock-out guard. Used by
+ * step-up-oidc-only.spec.ts to force the install into a stranded state the UI
+ * would normally refuse to commit.
+ */
+export async function setTestSetting(key: string, value: string): Promise<void> {
+    const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
+    const { execFileSync } = await import('child_process');
+    execFileSync('docker', [
+        'exec', '--user', 'www-data', container,
+        'php', '/var/www/html/testing/scripts/set_test_setting.php',
+        key, value,
+    ], { stdio: 'pipe' });
+}
+
 export async function setSmtpMailhog(): Promise<void> {
     const container = process.env.DOCKER_CONTAINER ?? 'ipam-pw-test';
     const { execFileSync } = await import('child_process');

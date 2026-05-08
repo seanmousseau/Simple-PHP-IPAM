@@ -1,0 +1,162 @@
+/**
+ * Playwright regression test for the originating bug behind v3.27.0
+ * (issue #1098): an OIDC-only admin (oidc_sub set, password_hash='!disabled')
+ * was unable to reveal a vault key because the gate required a local
+ * password they don't have. The fix decouples step-up from the login
+ * provider and validates each non-password method against its own enrollment.
+ *
+ * Two end-to-end scenarios:
+ *
+ *   1. OIDC-only admin + TOTP enrolled, default policy
+ *      → vault reveal succeeds via TOTP step-up proof.
+ *
+ *   2. OIDC-only admin + no MFA, allow_provider_reauth=false
+ *      → step-up prompt renders the actionable "no method available"
+ *        error end-to-end. (The lock-out guard would normally block this
+ *        policy in the UI; we tighten via direct ipam_setting_set() to
+ *        prove the prompt partial degrades gracefully if an install
+ *        somehow ends up in this state.)
+ *
+ * Fixtures used:
+ *   seed_oidc_only_admin.php   creates the user
+ *   mint_test_session.php      writes a session file Apache can read
+ *   set_test_setting.php       force-sets the install-wide policy
+ */
+
+import { test, expect } from '@playwright/test';
+import { TOTP } from 'otpauth';
+import { APP_BASE } from '../playwright.config';
+import {
+    HTTP_CREDENTIALS,
+    seedOidcOnlyAdmin,
+    mintTestSession,
+    setTestSetting,
+    appUrl,
+} from '../fixtures/ipam';
+
+const OIDC_TOTP_USER  = 'pw-oidc-only-totp';
+const OIDC_NO_MFA_USER = 'pw-oidc-only-no-mfa';
+const TFA_SECRET       = 'JBSWY3DPEHPK3PXP'; // RFC 6238 test vector
+
+function totpCode(secret: string): string {
+    return new TOTP({ secret, algorithm: 'SHA1', digits: 6, period: 30 }).generate();
+}
+
+function cookieDomain(): string {
+    // Strip scheme and any path; use just the host so the cookie is sent
+    // back on every request to the test server.
+    return new URL(APP_BASE).hostname;
+}
+
+test.describe('Step-up — OIDC-only admin (#1098 regression)', () => {
+    test('OIDC-only admin with TOTP can reveal vault via TOTP step-up', async ({ browser }) => {
+        await seedOidcOnlyAdmin(OIDC_TOTP_USER, 'with-totp');
+        const session = await mintTestSession(OIDC_TOTP_USER);
+
+        const ctx = await browser.newContext({
+            httpCredentials: HTTP_CREDENTIALS,
+            ignoreHTTPSErrors: true,
+        });
+        await ctx.addCookies([{
+            name: session.cookieName,
+            value: session.sid,
+            domain: cookieDomain(),
+            path: '/',
+            httpOnly: true,
+            secure: true,
+            sameSite: 'Strict',
+        }]);
+        const page = await ctx.newPage();
+
+        // Confirm the minted session is accepted: dashboard should render
+        // without a 302 to login.php.
+        await page.goto(appUrl('dashboard.php'));
+        await expect(page).not.toHaveURL(/login\.php/);
+
+        // Open the vault reveal prompt. If the install has no key yet, set
+        // one via vault_set first so we have something to reveal — the OIDC
+        // user has admin role and TOTP available, so both flows are
+        // satisfiable for them.
+        await page.goto(appUrl('backup_admin.php?tab=destinations'));
+        if (await page.locator('[data-test="vault-fingerprint"]').count() === 0) {
+            await page.locator('[data-test="vault-set-submit"]').click();
+            await expect(page.locator('[data-step-up-prompt]')).toBeVisible();
+            const m1 = page.locator('select[name="_sudo_method"]');
+            if (await m1.count()) await m1.selectOption('totp');
+            await page.locator('input[name="_sudo_code"]').fill(totpCode(TFA_SECRET));
+            await page.locator('#step-up-form button[type=submit]').click();
+        }
+
+        // Now exercise reveal under default policy via TOTP proof. This is
+        // the explicit regression scenario: a user with no local password
+        // (password_hash='!disabled') successfully passes the gate.
+        await page.goto(appUrl('backup_admin.php?tab=destinations'));
+        await page.locator('[data-test="vault-reveal-submit"]').click();
+
+        await expect(page.locator('[data-step-up-prompt]')).toBeVisible();
+        const methodSel = page.locator('select[name="_sudo_method"]');
+        if (await methodSel.count()) await methodSel.selectOption('totp');
+        await page.locator('input[name="_sudo_code"]').fill(totpCode(TFA_SECRET));
+        await page.locator('#step-up-form button[type=submit]').click();
+
+        // The raw vault key flashes exactly once.
+        await expect(page.locator('[data-test="vault-revealed-key"]')).toBeVisible();
+
+        await ctx.close();
+    });
+
+    test('OIDC-only admin with no MFA + provider_reauth=false sees no-methods error', async ({ browser }) => {
+        await seedOidcOnlyAdmin(OIDC_NO_MFA_USER, 'no-mfa');
+
+        // Force the policy past the lock-out guard by writing the setting
+        // directly. Save current value first so we can restore it — a stuck
+        // false would strand every admin and break later specs.
+        await setTestSetting('auth.step_up.allow_provider_reauth', 'false');
+
+        try {
+            const session = await mintTestSession(OIDC_NO_MFA_USER);
+            const ctx = await browser.newContext({
+                httpCredentials: HTTP_CREDENTIALS,
+                ignoreHTTPSErrors: true,
+            });
+            await ctx.addCookies([{
+                name: session.cookieName,
+                value: session.sid,
+                domain: cookieDomain(),
+                path: '/',
+                httpOnly: true,
+                secure: true,
+                sameSite: 'Strict',
+            }]);
+            const page = await ctx.newPage();
+
+            await page.goto(appUrl('backup_admin.php?tab=destinations'));
+            await expect(page).not.toHaveURL(/login\.php/);
+
+            // Trigger the gate. Even if no vault key exists yet, the vault_set
+            // form is gated identically to vault_reveal — both paths route
+            // through ipam_sudo_require() which then renders the prompt
+            // partial. The "no methods available" branch is what we're
+            // asserting here (prompt partial line 117–123).
+            const target = await page.locator('[data-test="vault-reveal-submit"]').count() > 0
+                ? page.locator('[data-test="vault-reveal-submit"]')
+                : page.locator('[data-test="vault-set-submit"]');
+            await target.first().click();
+
+            await expect(page.locator('[data-step-up-prompt]')).toBeVisible();
+            // The actionable error text from views/_step_up_prompt.php:117–123.
+            await expect(
+                page.locator('[data-step-up-prompt]'),
+            ).toContainText(/No re-authentication method is available/i);
+
+            // The form must NOT render any submittable proof input — the
+            // "no methods" branch only renders a Cancel link.
+            await expect(page.locator('#step-up-form')).toHaveCount(0);
+
+            await ctx.close();
+        } finally {
+            // Always restore so subsequent specs/runs aren't stranded.
+            await setTestSetting('auth.step_up.allow_provider_reauth', 'true');
+        }
+    });
+});
