@@ -344,10 +344,27 @@ function ipam_vault_key_status(\PDO $db): array
     }
 
     // Encrypted-runs gate for the Replace path.
+    //
+    // Bug W (Pass A 2026-05-08, v3.27.1): the gate must distinguish
+    // IPAMBKP3 (vault-key-protected, would be orphaned by a key change)
+    // from IPAMBKP2 (app_secret-protected, INDEPENDENT of vault_key).
+    // Pre-fix the gate fired on every encryption_mode != 'unencrypted'
+    // row, blocking vault_set Generate on installs whose only encrypted
+    // archives were legacy IPAMBKP2 — which generating a new vault key
+    // cannot orphan because they don't use the vault key in the first
+    // place.
+    //
+    // Filename-suffix is the discriminator. v3.27.1+ orchestrator emits
+    // IPAMBKP3 archives with `.ipambkp3` suffix; IPAMBKP2 fallback emits
+    // `.enc`; pre-existing rows are all `.enc` or `.sql.gz`. The
+    // suffix-based filter cleanly separates the two without a migration.
     $hasEncryptedRuns = false;
     try {
         $st = $db->query(
-            "SELECT 1 FROM backup_runs WHERE encryption_mode != 'unencrypted' LIMIT 1"
+            "SELECT 1 FROM backup_runs "
+            . "WHERE encryption_mode != 'unencrypted' "
+            . "  AND filename LIKE '%.ipambkp3' "
+            . "LIMIT 1"
         );
         if ($st !== false && $st->fetchColumn() !== false) {
             $hasEncryptedRuns = true;
