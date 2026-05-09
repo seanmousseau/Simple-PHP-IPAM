@@ -36,6 +36,7 @@ website/
 !testing/playwright/tests/**/*.png
 # Allow brand assets shipped in logo/
 !logo/*.png
+!releases/*/regression-evidence/**/*.png
 .worktrees/
 
 # Pass-X regression-evidence DB snapshots: commit *.sqlite.gz only
