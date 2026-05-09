@@ -44,11 +44,19 @@ test.describe('Email OTP enrollment', () => {
         // from prior specs; without disabling those globals, login routes to
         // totp_verify.php or passkey_verify.php instead of dashboard, and the
         // goto change_password.php that follows bounces back to login.
-        // Pre-#756 the legacy `group=mfa` POST cascade-wiped these sibling
-        // bools as a side effect; per-key POST is explicit instead.
-        await fetchPost(page, appUrl('settings.php'), { key: 'mfa.email_otp_enabled', value: '1' });
-        await fetchPost(page, appUrl('settings.php'), { key: 'mfa.totp_enabled',      value: '0' });
-        await fetchPost(page, appUrl('settings.php'), { key: 'mfa.passkeys_enabled',  value: '0' });
+        // v3.27.2 (#1121): per-key save path was removed. Use the group form
+        // and explicitly include every bool field in the group — with the
+        // hidden value="0" shim that real browsers render, every bool is
+        // always in POST. Programmatic POSTs that omit a bool would be
+        // treated as unchecked = 0, silently flipping it (the original #756
+        // bug). Pass all three bools explicitly with their target values.
+        await fetchPost(page, appUrl('settings.php'), {
+            group: 'mfa',
+            k_mfa__totp_enabled:      '0',
+            k_mfa__email_otp_enabled: '1',
+            k_mfa__passkeys_enabled:  '0',
+            k_mfa__require:           '0',
+        });
         await logout(page);
     });
 
@@ -57,12 +65,17 @@ test.describe('Email OTP enrollment', () => {
         await logout(page).catch(() => undefined);
         // Restore: disable email_otp; re-enable totp (the v3.x default and
         // #747's gate so totp.spec.ts running after this file finds TOTP
-        // dispatch enabled). Don't touch passkeys — leave at whatever value
-        // earlier specs set.
+        // dispatch enabled). Pass passkeys at its current expected value (0)
+        // — group save requires all bool fields explicitly per #1121.
         await login(page, ADMIN_USER, ADMIN_PASS);
         await page.goto(appUrl('settings.php'));
-        await fetchPost(page, appUrl('settings.php'), { key: 'mfa.email_otp_enabled', value: '0' });
-        await fetchPost(page, appUrl('settings.php'), { key: 'mfa.totp_enabled',      value: '1' });
+        await fetchPost(page, appUrl('settings.php'), {
+            group: 'mfa',
+            k_mfa__totp_enabled:      '1',
+            k_mfa__email_otp_enabled: '0',
+            k_mfa__passkeys_enabled:  '0',
+            k_mfa__require:           '0',
+        });
         await logout(page);
     });
 
@@ -113,7 +126,14 @@ test.describe('Email OTP enrollment', () => {
 
     test('disable button removes Email OTP enrollment', async ({ page }) => {
         test.skip(!isMailhogEnabled(), 'requires IPAM_TEST_MAILHOG=1 (SMTP delivery)');
-        // First enroll
+        // v3.27.2 (#1122): the MFA-disable strand guard counts the user's
+        // local password as an available method when the install policy
+        // allows provider_reauth (default: true). EMAIL_OTP_USER has a real
+        // password (Password1!), so disabling Email OTP doesn't strand —
+        // password remains as the fallback. The dedicated strand-refusal
+        // test below exercises a user whose password gate is unavailable.
+
+        // Enroll Email OTP
         await login(page, EMAIL_OTP_USER, EMAIL_OTP_PASS);
         await page.goto(appUrl('change_password.php'));
         await page.locator('#email-otp button[type=submit]').first().click();
@@ -130,6 +150,17 @@ test.describe('Email OTP enrollment', () => {
         await expect(page.locator('#email-otp')).not.toContainText(/active/i);
         await logout(page);
     });
+
+    // #1122 strand-refusal end-to-end coverage was attempted here but
+    // requires either disabling auth.step_up.allow_provider_reauth (which
+    // triggers a step-up gate on the policy save itself, chicken-and-egg)
+    // or removing the user's password (loses login). Both add fixture
+    // complexity that exceeds v3.27.2's hotfix scope. The strand-guard
+    // contract is already enforced by tests/MfaDisableLockoutGuardTest.php
+    // (5 unit cases over the helper + 1 source-level wiring assertion that
+    // all 3 disable handlers in change_password.php call the helper). A
+    // dedicated Playwright case is tracked for v3.28.0's test-tooling
+    // baseline (#1042).
 });
 
 // ── Mid-login challenge ───────────────────────────────────────────────────────
@@ -146,9 +177,14 @@ test.describe('Email OTP login challenge', () => {
         // routes specifically to email_otp_verify.php (not totp_verify.php
         // or passkey_verify.php). See enrollment beforeEach for the full
         // explanation of why per-key POST needs explicit sibling disable.
-        await fetchPost(page, appUrl('settings.php'), { key: 'mfa.email_otp_enabled', value: '1' });
-        await fetchPost(page, appUrl('settings.php'), { key: 'mfa.totp_enabled',      value: '0' });
-        await fetchPost(page, appUrl('settings.php'), { key: 'mfa.passkeys_enabled',  value: '0' });
+        // v3.27.2 (#1121): group form, all bools explicit. See first beforeEach.
+        await fetchPost(page, appUrl('settings.php'), {
+            group: 'mfa',
+            k_mfa__totp_enabled:      '0',
+            k_mfa__email_otp_enabled: '1',
+            k_mfa__passkeys_enabled:  '0',
+            k_mfa__require:           '0',
+        });
         await logout(page);
     });
 
@@ -157,9 +193,14 @@ test.describe('Email OTP login challenge', () => {
         await login(page, ADMIN_USER, ADMIN_PASS);
         await page.goto(appUrl('settings.php'));
         // Restore: disable email_otp; re-enable totp (the v3.x default and
-        // #747's gate). Don't touch passkeys.
-        await fetchPost(page, appUrl('settings.php'), { key: 'mfa.email_otp_enabled', value: '0' });
-        await fetchPost(page, appUrl('settings.php'), { key: 'mfa.totp_enabled',      value: '1' });
+        // #747's gate). v3.27.2 (#1121) group form, all bools explicit.
+        await fetchPost(page, appUrl('settings.php'), {
+            group: 'mfa',
+            k_mfa__totp_enabled:      '1',
+            k_mfa__email_otp_enabled: '0',
+            k_mfa__passkeys_enabled:  '0',
+            k_mfa__require:           '0',
+        });
         await logout(page);
     });
 
@@ -221,8 +262,15 @@ test.describe('Email OTP admin controls', () => {
         await page.goto(appUrl('settings.php'));
         // Admin tests don't log in as EMAIL_OTP_USER so the sibling-disable
         // dance isn't strictly required, but apply the same pattern for
-        // consistency with the other beforeEach blocks in this file.
-        await fetchPost(page, appUrl('settings.php'), { key: 'mfa.email_otp_enabled', value: '1' });
+        // consistency with the other beforeEach blocks in this file. v3.27.2
+        // (#1121) group form requires all bool fields explicit.
+        await fetchPost(page, appUrl('settings.php'), {
+            group: 'mfa',
+            k_mfa__totp_enabled:      '1',
+            k_mfa__email_otp_enabled: '1',
+            k_mfa__passkeys_enabled:  '0',
+            k_mfa__require:           '0',
+        });
         await logout(page);
     });
 
@@ -230,10 +278,14 @@ test.describe('Email OTP admin controls', () => {
         await logout(page).catch(() => undefined);
         await login(page, ADMIN_USER, ADMIN_PASS);
         await page.goto(appUrl('settings.php'));
-        // Per-key save (#756): disable Email OTP without cascading to siblings.
+        // v3.27.2 (#1121): group form, all bools explicit. Restore totp ON
+        // (default), email_otp OFF.
         await fetchPost(page, appUrl('settings.php'), {
-            key: 'mfa.email_otp_enabled',
-            value: '0',
+            group: 'mfa',
+            k_mfa__totp_enabled:      '1',
+            k_mfa__email_otp_enabled: '0',
+            k_mfa__passkeys_enabled:  '0',
+            k_mfa__require:           '0',
         });
         await logout(page);
     });

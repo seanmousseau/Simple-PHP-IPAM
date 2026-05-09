@@ -162,42 +162,155 @@ function ipam_sudo_grant(string $method): void
 function ipam_sudo_available_methods(\PDO $db, int $userId, ?array $policyOverride = null): array
 {
     if ($userId <= 0) return [];
-    $policy    = $policyOverride ?? ipam_sudo_policy();
-    $available = [];
+    $policy = $policyOverride ?? ipam_sudo_policy();
 
     $enrolledMfa = ipam_user_available_mfa_methods($db, $userId);
 
-    if ($policy['allow_totp'] && in_array('totp', $enrolledMfa, true)) {
-        $available[] = 'totp';
-    }
-    if ($policy['allow_email_otp'] && in_array('email_otp', $enrolledMfa, true)) {
-        $available[] = 'email_otp';
-    }
-    if ($policy['allow_webauthn'] && in_array('passkey', $enrolledMfa, true)) {
-        $available[] = 'webauthn';
-    }
+    $row = null;
     if ($policy['allow_provider_reauth']) {
         $st = $db->prepare("SELECT password_hash, oidc_sub FROM users WHERE id = :id AND is_active = 1");
         $st->execute([':id' => $userId]);
-        $row = $st->fetch();
-        if (is_array($row)) {
-            $hash = to_str($row['password_hash'] ?? '');
-            if ($hash !== '' && !str_starts_with($hash, '!')) {
-                $available[] = 'password';
-            }
-            $oidcSub = $row['oidc_sub'] ?? null;
-            // oidc_reauth is only a satisfiable method when OIDC is actually
-            // configured — surfacing it on an install where the IdP isn't
-            // wired up (no client_id, no discovery_url, etc.) advertises a
-            // dead-end button to the operator and lets the lock-out guard
-            // pass policies that can't actually be satisfied. (CodeRabbit
-            // round 2, #1116.)
-            if (is_string($oidcSub) && $oidcSub !== '' && ipam_sudo_oidc_configured()) {
-                $available[] = 'oidc_reauth';
-            }
+        $r = $st->fetch();
+        if (is_array($r)) $row = $r;
+    }
+
+    return ipam_sudo_evaluate_available_methods(
+        $policy,
+        in_array('totp', $enrolledMfa, true),
+        in_array('email_otp', $enrolledMfa, true),
+        in_array('passkey', $enrolledMfa, true),
+        is_array($row) ? to_str($row['password_hash'] ?? '') : '',
+        is_array($row) && is_string($row['oidc_sub'] ?? null) ? to_str($row['oidc_sub']) : ''
+    );
+}
+
+/**
+ * Pure availability evaluator — single source of truth for the policy +
+ * enrollment matrix used by both ipam_sudo_available_methods() (live) and
+ * ipam_sudo_would_strand_user_after_disable() (simulated post-disable).
+ *
+ * Extracting this matters: pre-extraction the two call sites duplicated
+ * the matrix and could drift, which would let the lock-out guard approve
+ * a disable that the real sudo gate cannot satisfy — putting the v3.27.2
+ * #1122 lockout regression back on the table. (CodeRabbit, PR #1125.)
+ *
+ * @param array<string,mixed> $policy   Same shape as ipam_sudo_policy()
+ * @param bool   $totpEnrolled
+ * @param bool   $emailOtpEnrolled
+ * @param bool   $passkeyEnrolled        true iff user has >=1 passkey
+ * @param string $passwordHash           empty or '!'-prefixed sentinel = no password
+ * @param string $oidcSub                empty = not OIDC-linked
+ * @return list<string>
+ */
+function ipam_sudo_evaluate_available_methods(
+    array $policy,
+    bool $totpEnrolled,
+    bool $emailOtpEnrolled,
+    bool $passkeyEnrolled,
+    string $passwordHash,
+    string $oidcSub
+): array {
+    $totpGlobal     = (bool)to_int(ipam_setting('mfa.totp_enabled', true));
+    $emailOtpGlobal = (bool)to_int(ipam_setting('mfa.email_otp_enabled', false));
+    $passkeysGlobal = (bool)to_int(ipam_setting('mfa.passkeys_enabled', false));
+
+    $available = [];
+    if ($policy['allow_totp'] && $totpGlobal && $totpEnrolled) {
+        $available[] = 'totp';
+    }
+    if ($policy['allow_email_otp'] && $emailOtpGlobal && $emailOtpEnrolled) {
+        $available[] = 'email_otp';
+    }
+    if ($policy['allow_webauthn'] && $passkeysGlobal && $passkeyEnrolled) {
+        $available[] = 'webauthn';
+    }
+    if ($policy['allow_provider_reauth']) {
+        if ($passwordHash !== '' && !str_starts_with($passwordHash, '!')) {
+            $available[] = 'password';
+        }
+        // oidc_reauth is only satisfiable when OIDC is actually configured —
+        // surfacing it on an install where the IdP isn't wired up advertises a
+        // dead-end button and lets the lock-out guard pass policies that can't
+        // be satisfied (CodeRabbit round 2, #1116).
+        if ($oidcSub !== '' && ipam_sudo_oidc_configured()) {
+            $available[] = 'oidc_reauth';
         }
     }
     return $available;
+}
+
+/**
+ * Bug Y / #1122 (v3.27.2): pre-condition guard for MFA-disable handlers.
+ * Returns true iff disabling the named method on this user would leave
+ * the user with zero satisfiable step-up methods under the install
+ * (or supplied) policy.
+ *
+ * Used at the top of each disable handler in change_password.php to
+ * refuse the action and surface a clear error before mutating any user
+ * state. The "policy override" parameter mirrors the existing
+ * ipam_sudo_available_methods() shape so the lock-out check is testable
+ * with synthetic policies without round-tripping through ipam_setting().
+ *
+ * Disable types:
+ *   'totp'      — user is about to flip totp_enabled = 0
+ *   'email_otp' — user is about to flip email_otp_enabled = 0
+ *   'passkey'   — user is about to delete one passkey credential. Strand
+ *                 only if this is the user's LAST passkey AND no other
+ *                 method remains. Multi-passkey users are never stranded
+ *                 by deleting one of several credentials.
+ *
+ * Implementation: rather than mutating the DB, simulate the post-disable
+ * snapshot by replaying ipam_sudo_available_methods()'s logic against an
+ * adjusted enrollment view.
+ *
+ * @param array<string,mixed>|null $policyOverride policy as documented on ipam_sudo_available_methods()
+ */
+function ipam_sudo_would_strand_user_after_disable(\PDO $db, int $userId, string $disabling, ?array $policyOverride = null): bool
+{
+    if ($userId <= 0) return true;
+    $policy = $policyOverride ?? ipam_sudo_policy();
+
+    // Read current enrollment + linkage in one shot.
+    $st = $db->prepare("SELECT password_hash, oidc_sub, totp_enabled, email_otp_enabled FROM users WHERE id = :id AND is_active = 1");
+    $st->execute([':id' => $userId]);
+    /** @var array<string,mixed>|false $row */
+    $row = $st->fetch();
+    if (!is_array($row)) return true;
+
+    $totpEnrolled     = to_int($row['totp_enabled'] ?? 0) === 1;
+    $emailOtpEnrolled = to_int($row['email_otp_enabled'] ?? 0) === 1;
+    $passkeyCount     = ipam_passkey_count($db, $userId);
+
+    // Apply the proposed disable. For 'passkey' the strand surface is the
+    // *last* credential — we model the post-delete count, not a binary flip.
+    switch ($disabling) {
+        case 'totp':
+            $totpEnrolled = false;
+            break;
+        case 'email_otp':
+            $emailOtpEnrolled = false;
+            break;
+        case 'passkey':
+            $passkeyCount = max(0, $passkeyCount - 1);
+            break;
+        default:
+            // Unknown disable target — be safe and refuse rather than green-light.
+            return true;
+    }
+
+    // Re-use the shared evaluator so the live-availability and strand-check
+    // matrices cannot drift (CodeRabbit, PR #1125 review).
+    $oidcSubRaw = $row['oidc_sub'] ?? null;
+    $available  = ipam_sudo_evaluate_available_methods(
+        $policy,
+        $totpEnrolled,
+        $emailOtpEnrolled,
+        $passkeyCount > 0,
+        to_str($row['password_hash'] ?? ''),
+        is_string($oidcSubRaw) ? $oidcSubRaw : ''
+    );
+
+    return $available === [];
 }
 
 /**

@@ -43,14 +43,18 @@ test.describe('Settings — password policy', () => {
 
     test('admin can toggle require_uppercase', async ({ page }) => {
         await page.goto(appUrl('settings.php?tab=authentication#group-password_policy'));
-        const checkbox = page.locator('input[name="k_password_policy__require_uppercase"]');
+        // v3.27.2 (#1121): every bool checkbox is preceded by a hidden
+        // value="0" shim sharing the same `name` attribute (so unchecked
+        // submits explicitly). Locators must filter on type=checkbox to
+        // avoid strict-mode violations on the duplicated name.
+        const checkbox = page.locator('input[type="checkbox"][name="k_password_policy__require_uppercase"]');
         const wasChecked = await checkbox.isChecked();
         if (!wasChecked) { await checkbox.check(); }
         await page.locator('#group-password_policy button[type=submit]').click();
         await page.goto(appUrl('settings.php?tab=authentication#group-password_policy'));
-        await expect(page.locator('input[name="k_password_policy__require_uppercase"]')).toBeChecked();
+        await expect(page.locator('input[type="checkbox"][name="k_password_policy__require_uppercase"]')).toBeChecked();
         // Restore
-        await page.locator('input[name="k_password_policy__require_uppercase"]').uncheck();
+        await page.locator('input[type="checkbox"][name="k_password_policy__require_uppercase"]').uncheck();
         await page.locator('#group-password_policy button[type=submit]').click();
     });
 });

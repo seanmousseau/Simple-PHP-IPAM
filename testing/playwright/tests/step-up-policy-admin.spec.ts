@@ -49,7 +49,7 @@ test.describe('Settings — step-up authentication policy (#1109)', () => {
         await expect(page.locator('#group-step_up')).toBeVisible();
 
         for (const name of ALLOW_FLAGS) {
-            await expect(page.locator(`input[name="${name}"]`)).toBeVisible();
+            await expect(page.locator(`input[type="checkbox"][name="${name}"]`)).toBeVisible();
         }
 
         const ttl = page.locator(`select[name="${TTL_FIELD}"]`);
@@ -70,7 +70,7 @@ test.describe('Settings — step-up authentication policy (#1109)', () => {
         // and just flip the rendered DOM state — the group save below picks up
         // the unchecked state from the form serialisation.
         for (const name of ALLOW_FLAGS) {
-            await page.locator(`input[name="${name}"]`).evaluate(
+            await page.locator(`input[type="checkbox"][name="${name}"]`).evaluate(
                 (el) => { (el as HTMLInputElement).checked = false; },
             );
         }
@@ -91,7 +91,7 @@ test.describe('Settings — step-up authentication policy (#1109)', () => {
         // sequential and we share the SQLite DB; no other test commits a save
         // for this group before this one, but be defensive).
         for (const name of ALLOW_FLAGS) {
-            const cb = page.locator(`input[name="${name}"]`);
+            const cb = page.locator(`input[type="checkbox"][name="${name}"]`);
             if (!(await cb.isChecked())) {
                 await cb.check();
             }
