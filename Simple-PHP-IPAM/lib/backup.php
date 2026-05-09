@@ -336,75 +336,123 @@ function ipam_backup_run_for_destination(
         );
     }
 
-    $dest = ipam_backup_dest_load($db, $destId);
-    // Thread triggered_by into the destination row so ipam_backup_notify()
-    // can pick the right scheduled-vs-manual notification setting (v3.22.0).
-    $dest['triggered_by'] = $triggeredBy;
-    // Thread schedule_id so the dispatcher can resolve per-schedule
-    // notify-overrides (v3.23.0 #825). Null on manual runs — the resolver
-    // treats null as "use global", which is the correct semantics.
-    $dest['schedule_id']  = $scheduleId;
-    $client = ipam_backup_dest_client($dest);
+    // O3+O4 (Pass A 2026-05-08, v3.27.1): wrap the pre-INSERT region in a
+    // try/catch so any throw between dest_load and the encrypt-resolve
+    // produces a visible failure trace (backup_runs row + audit row)
+    // rather than silently disappearing. Before this fix the orchestrator
+    // INSERTed the backup_runs row only AFTER dump+encrypt — every
+    // pre-INSERT failure (missing key, missing path, dump error, etc.)
+    // produced zero forensic trace.
+    //
+    // On throw we INSERT a synthetic backup_runs row tagged with
+    // triggered_by + schedule_id, status='failed', a recognisable
+    // synthetic filename `(preflight-failed-<8hex>)`, and the truncated
+    // exception message in error_message. Then audit
+    // `backup.preflight_failed` and re-throw so the caller's failure
+    // path (cron $fail, UI error display) still runs.
+    $tmpSql     = null;
+    $dumpExt    = '.sql.gz';
+    $backupType = 'database';
+    $encMode    = 'stored';
+    try {
+        $dest = ipam_backup_dest_load($db, $destId);
+        $dest['triggered_by'] = $triggeredBy;
+        $dest['schedule_id']  = $scheduleId;
+        $client = ipam_backup_dest_client($dest);
 
-    // v3.25.0 #1076 #849 #851: resolve backup format and encryption mode
-    // from the destination's per-destination defaults. Both columns were
-    // added by the 3.25.0-backup-destination-evolution migration with
-    // sensible defaults ('logical' / 'stored'); pre-existing rows
-    // backfill from the legacy `encrypt` flag during migration.
-    $backupType = is_string($dest['default_backup_type'] ?? null)
-        ? (string) $dest['default_backup_type']
-        : 'database';
-    if ($backupType !== 'database' && $backupType !== 'logical') {
-        $backupType = 'database';
-    }
-
-    $encMode = is_string($dest['default_encryption_mode'] ?? null)
-        ? (string) $dest['default_encryption_mode']
-        : 'stored';
-    if (!in_array($encMode, ['stored', 'transitory', 'unencrypted'], true)) {
-        $encMode = 'stored';
-    }
-    // Server-side guard: 'unencrypted' is only allowed for Local
-    // destinations (#851). Remote destinations always force 'stored'
-    // even if the column is somehow set to 'unencrypted' — UI grey-out
-    // is belt; this is suspenders.
-    $destType = is_string($dest['type'] ?? null) ? (string) $dest['type'] : '';
-    if ($encMode === 'unencrypted' && $destType !== 'local') {
-        $encMode = 'stored';
-    }
-
-    // Dispatch on backup_type (#849). Logical → IPAMBKL1 engine-agnostic
-    // dump (v3.23.0 #824). Database → existing per-engine SQL dump.
-    if ($backupType === 'logical') {
-        $tmpSqlFh = tempnam(sys_get_temp_dir(), 'ipam-backup-logical-');
-        if ($tmpSqlFh === false) {
-            throw new RuntimeException('ipam_backup: cannot create temp file for logical dump');
+        // v3.25.0 #1076 #849 #851: resolve backup format and encryption mode
+        // from the destination's per-destination defaults.
+        $backupType = is_string($dest['default_backup_type'] ?? null)
+            ? (string) $dest['default_backup_type']
+            : 'database';
+        if ($backupType !== 'database' && $backupType !== 'logical') {
+            $backupType = 'database';
         }
+
+        $encMode = is_string($dest['default_encryption_mode'] ?? null)
+            ? (string) $dest['default_encryption_mode']
+            : 'stored';
+        if (!in_array($encMode, ['stored', 'transitory', 'unencrypted'], true)) {
+            $encMode = 'stored';
+        }
+        // Server-side guard: 'unencrypted' is only allowed for Local
+        // destinations (#851). Remote destinations always force 'stored'.
+        $destType = is_string($dest['type'] ?? null) ? (string) $dest['type'] : '';
+        if ($encMode === 'unencrypted' && $destType !== 'local') {
+            $encMode = 'stored';
+        }
+
+        // Dispatch on backup_type (#849).
+        if ($backupType === 'logical') {
+            $tmpSqlFh = tempnam(sys_get_temp_dir(), 'ipam-backup-logical-');
+            if ($tmpSqlFh === false) {
+                throw new RuntimeException('ipam_backup: cannot create temp file for logical dump');
+            }
+            try {
+                ipam_backup_logical_dump($db, $tmpSqlFh);
+            } catch (Throwable $e) {
+                @unlink($tmpSqlFh); // nosemgrep: php.lang.security.unlink-use.unlink-use -- tempnam-generated
+                throw $e;
+            }
+            $tmpSql = $tmpSqlFh;
+            $dumpExt = '.ipambkl1.gz';
+        } else {
+            $tmpSql = ipam_backup_dump_to_tmp($db);
+            $dumpExt = '.sql.gz';
+        }
+
+        // Encrypt-write-path dispatch (v3.27.1 fix). vault_key first,
+        // app_secret legacy fallback, throw if neither.
+        $appSecret = is_string($config['app_secret'] ?? null) ? $config['app_secret'] : '';
+        $vaultKey  = ipam_backup_vault_key_get_raw();
+        $encResult = ipam_backup_resolve_encrypt_to_tmp($tmpSql, $encMode, $vaultKey, $appSecret, $dumpExt);
+        $tmpFile   = $encResult['tmpFile'];
+        $extension = $encResult['extension'];
+        // resolve_encrypt_to_tmp consumed $tmpSql when it produced a new
+        // encrypted output; mark consumed so the catch path doesn't try
+        // to re-unlink it.
+        if ($tmpFile !== $tmpSql) {
+            $tmpSql = null;
+        }
+    } catch (Throwable $preflightError) {
+        // Clean up any tmp dump that was produced but not encrypted.
+        if (is_string($tmpSql) && is_file($tmpSql)) {
+            @unlink($tmpSql); // nosemgrep: php.lang.security.unlink-use.unlink-use -- tempnam-generated
+        }
+
+        // Synthetic filename so History UI can distinguish preflight from
+        // real uploads at a glance. The 8-hex suffix prevents collisions
+        // when two preflight failures happen in the same second.
+        $syntheticName = '(preflight-failed-' . bin2hex(random_bytes(4)) . ')';
         try {
-            ipam_backup_logical_dump($db, $tmpSqlFh);
-        } catch (Throwable $e) {
-            @unlink($tmpSqlFh); // nosemgrep: php.lang.security.unlink-use.unlink-use -- tempnam-generated
-            throw $e;
-        }
-        $tmpSql = $tmpSqlFh;
-        $dumpExt = '.ipambkl1.gz';
-    } else {
-        $tmpSql = ipam_backup_dump_to_tmp($db);
-        $dumpExt = '.sql.gz';
-    }
+            $logId = ipam_backup_insert_log(
+                $db,
+                $destId,
+                $triggeredBy,
+                'failed',
+                $syntheticName,
+                $scheduleId,
+                $backupType,
+                $encMode
+            );
+            $errMsg = substr($preflightError->getMessage(), 0, 1024);
+            $upd = $db->prepare("UPDATE backup_runs SET error_message = :em WHERE id = :id");
+            $upd->execute([':em' => $errMsg, ':id' => $logId]);
 
-    $appSecret = is_string($config['app_secret'] ?? null) ? $config['app_secret'] : '';
-    if ($encMode !== 'unencrypted') {
-        if ($appSecret === '') {
-            @unlink($tmpSql); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmpSql is tempnam()-generated, no user input
-            throw new RuntimeException('ipam_backup: encryption requested but app_secret is empty');
+            audit($db, 'backup.preflight_failed', 'destination', $destId,
+                  'run_id=' . $logId
+                  . ' triggered_by=' . $triggeredBy
+                  . ($scheduleId !== null ? ' schedule_id=' . $scheduleId : '')
+                  . ' error=' . substr($preflightError->getMessage(), 0, 200));
+        } catch (Throwable $audErr) {
+            // If the failed-row INSERT or audit also fails (e.g. DB is
+            // gone), don't mask the original cause — log to SAPI error
+            // log so the SAPI log captures something even when stderr
+            // is /dev/null'd, and re-throw the ORIGINAL exception.
+            error_log('[backup] preflight_failed insert/audit failed: ' . $audErr->getMessage());
         }
-        $tmpFile = ipam_backup_encrypt_to_tmp($tmpSql, $appSecret);
-        @unlink($tmpSql); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmpSql is tempnam()-generated, no user input
-        $extension = '.enc';
-    } else {
-        $tmpFile = $tmpSql;
-        $extension = $dumpExt;
+
+        throw $preflightError;
     }
 
     // Random 8-hex-char suffix prevents filename collisions when two
@@ -941,6 +989,82 @@ function ipam_backup_encrypt_to_tmp(string $srcPath, string $appSecret): string
         throw $e;
     }
     return $tmp;
+}
+
+/**
+ * Encrypt $srcPath with the install's backup vault key (IPAMBKP3 stored
+ * mode) into a fresh tempnam. Returns the new tmp path; caller is
+ * responsible for unlinking. v3.27.1 — wraps backup_encrypt_stream_v3
+ * with the same tempnam/throw-pattern as ipam_backup_encrypt_to_tmp so
+ * ipam_backup_resolve_encrypt_to_tmp can pick a codec without caring
+ * about file plumbing.
+ */
+function ipam_backup_encrypt_v3_stored_to_tmp(string $srcPath, string $vaultKey): string
+{
+    $tmp = tempnam(sys_get_temp_dir(), 'ipambkE3_');
+    if ($tmp === false) {
+        throw new RuntimeException('ipam_backup: tempnam failed');
+    }
+    try {
+        backup_encrypt_stream_v3($srcPath, $tmp, BACKUP_V3_MODE_STORED, null, $vaultKey);
+    } catch (Throwable $e) {
+        @unlink($tmp); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $tmp is tempnam()-generated, no user input
+        throw $e;
+    }
+    return $tmp;
+}
+
+/**
+ * Decide which encryption codec to apply to a freshly-produced dump and
+ * return both the resulting tmp file path and the operator-facing
+ * filename suffix. v3.27.1 — extracted from `ipam_backup_run_for_destination`
+ * so the encrypt-decision is one testable site (Bug from Pass A 2026-05-08:
+ * the orchestrator's encrypt block was never wired to read the vault key
+ * shipped in v3.26.0; on every install with no `app_secret`, encrypted
+ * scheduled backups silently failed).
+ *
+ * Resolution order, mirroring the restore-side dispatcher
+ * (`lib/backup.php:1241-1264`):
+ *   1. encMode == 'unencrypted' → pass-through.
+ *   2. backup_vault_key configured → IPAMBKP3 stored, suffix `.ipambkp3`.
+ *   3. app_secret configured → IPAMBKP2 (legacy), suffix `.enc`.
+ *   4. neither → throw with actionable error message.
+ *
+ * On encryption-path entry, the source $srcPath is unlinked after the
+ * codec produces the encrypted output. On the throw path it is also
+ * unlinked so the orchestrator never leaks plaintext under sys_get_temp_dir().
+ *
+ * @return array{tmpFile:string,extension:string}
+ */
+function ipam_backup_resolve_encrypt_to_tmp(
+    string $srcPath,
+    string $encMode,
+    ?string $vaultKey,
+    string $appSecret,
+    string $dumpExt
+): array {
+    if ($encMode === 'unencrypted') {
+        return ['tmpFile' => $srcPath, 'extension' => $dumpExt];
+    }
+
+    if ($vaultKey !== null) {
+        $tmpFile = ipam_backup_encrypt_v3_stored_to_tmp($srcPath, $vaultKey);
+        @unlink($srcPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $srcPath is tempnam()-generated by caller
+        return ['tmpFile' => $tmpFile, 'extension' => '.ipambkp3'];
+    }
+
+    if ($appSecret !== '') {
+        $tmpFile = ipam_backup_encrypt_to_tmp($srcPath, $appSecret);
+        @unlink($srcPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $srcPath is tempnam()-generated by caller
+        return ['tmpFile' => $tmpFile, 'extension' => '.enc'];
+    }
+
+    @unlink($srcPath); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $srcPath is tempnam()-generated by caller
+    throw new RuntimeException(
+        'ipam_backup: encryption requested but neither backup_vault_key '
+        . 'nor app_secret is configured. Set up the backup vault key in '
+        . 'Backups → Destinations, or restore app_secret in config.php.'
+    );
 }
 
 /**
@@ -1630,6 +1754,20 @@ function ipam_restore_verify_signed(array $config, string $stagedPath, string $s
  */
 function ipam_restore_dry_run(PDO $db, string $stagedPath): array
 {
+    // Bug S (Pass A 2026-05-08) — magic-byte dispatch must happen BEFORE
+    // the SQL splitter touches the file. The apply path at
+    // ipam_restore_apply() already does this; dry-run was missed when
+    // IPAMBKL1 landed in v3.23.0. Without this sniff the dry-run path
+    // pipes JSON-shaped IPAMBKL1 content through ipam_restore_split_sql_statements,
+    // which interprets the JSON's `"`/`$tag$` tokens as SQL identifier
+    // openers and dollar-quote openers and throws an "unterminated …"
+    // error at EOF — making every IPAMBKL1 archive un-restorable from
+    // the wizard's Step 2 dry-run preview.
+    $magic = ipam_restore_sniff_magic($stagedPath);
+    if ($magic === 'IPAMBKL1') {
+        return ipam_restore_logical_dry_run($db, $stagedPath);
+    }
+
     $driverAttr = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
     $driver = is_string($driverAttr) ? $driverAttr : '';
     if ($driver !== 'sqlite') {
@@ -2399,6 +2537,90 @@ function ipam_backup_detect_overdue_schedules(PDO $db, ?int $nowTs = null): arra
         $alertedIds[] = $schedId;
     }
 
+    // O5 (Pass A 2026-05-08, v3.27.1): second pass — flag schedules whose
+    // most-recent backup_runs row is `status='failed'` regardless of
+    // next_run_at. The original logic missed the "every fire fails"
+    // pattern entirely because finalize_schedule_run advances last_run_at
+    // AND next_run_at on every tick (success or fail), so a schedule
+    // failing every fire kept its next_run_at fresh and never crossed
+    // the grace window. Without O5 the encrypt-write-path bug stayed
+    // invisible to the very alert designed to catch "schedule isn't
+    // running" cases.
+    //
+    // For each schedule joined to its most-recent run, "failed last run"
+    // means: latest run by started_at has status='failed', and there is
+    // NO success row newer than that failure. The query below returns
+    // each schedule's last run; we filter status in PHP.
+    $lastRunStmt = $db->query("
+        SELECT br.schedule_id, br.status, br.started_at
+        FROM backup_runs br
+        INNER JOIN (
+            SELECT schedule_id, MAX(started_at) AS max_started
+            FROM backup_runs
+            WHERE schedule_id IS NOT NULL
+            GROUP BY schedule_id
+        ) latest
+        ON latest.schedule_id = br.schedule_id
+        AND latest.max_started = br.started_at
+        WHERE br.schedule_id IS NOT NULL
+    ");
+    /** @var list<array<string, mixed>> $lastRunRows */
+    $lastRunRows = $lastRunStmt !== false ? $lastRunStmt->fetchAll(PDO::FETCH_ASSOC) : [];
+
+    foreach ($lastRunRows as $lr) {
+        $schedId = to_int($lr['schedule_id'] ?? 0);
+        if ($schedId <= 0) continue;
+        if (!isset($aliveSchedKeys[(string) $schedId])) continue;
+        $status = to_str($lr['status'] ?? '');
+        if ($status !== 'failed') continue;
+
+        // Already alerted in the next_run_at-based pass? Skip.
+        if (in_array($schedId, $alertedIds, true)) continue;
+
+        $overdueCount++;
+        // For the failed-last-run path, key the cooldown on the
+        // started_at timestamp of the failure rather than next_run_at.
+        // A new failure (= new started_at) re-alerts; repeated alerts
+        // for the same failure row are suppressed.
+        $startedAt = to_str($lr['started_at'] ?? '');
+        $key = (string) $schedId;
+        $prev = $overdueState[$key] ?? [];
+        $alertedFor = is_string($prev['alerted_for'] ?? null) ? $prev['alerted_for'] : '';
+        if ($alertedFor === 'failed_run_at:' . $startedAt) {
+            continue; // already alerted for this exact failure
+        }
+
+        // Look up destination name for the audit/notify payload.
+        $destNameStmt = $db->prepare(
+            "SELECT d.name FROM backup_schedules s "
+            . "JOIN backup_destinations d ON d.id = s.destination_id "
+            . "WHERE s.id = :id"
+        );
+        $destNameStmt->execute([':id' => $schedId]);
+        $destName = to_str((string) $destNameStmt->fetchColumn());
+
+        audit($db, 'backup.schedule_overdue', 'schedule', $schedId,
+              "destination=$destName cause=last_run_failed last_failed_at=$startedAt");
+        if ($notifyEnabled) {
+            try {
+                ipam_backup_notify($db, 'schedule_overdue', [
+                    'schedule_id'      => $schedId,
+                    'destination_name' => $destName,
+                    'expected_at'      => $startedAt,
+                    'overdue_minutes'  => 0,
+                    'cause'            => 'last_run_failed',
+                ]);
+            } catch (Throwable $ne) {
+                error_log('[backup] schedule-overdue (O5) notify dispatch failed: ' . $ne->getMessage());
+            }
+        }
+        $overdueState[$key] = [
+            'alerted_for'     => 'failed_run_at:' . $startedAt,
+            'last_alerted_at' => date('c', $nowTs),
+        ];
+        $alertedIds[] = $schedId;
+    }
+
     foreach (array_keys($overdueState) as $k) {
         if (!isset($aliveSchedKeys[$k])) unset($overdueState[$k]);
     }
@@ -3084,6 +3306,163 @@ function ipam_logical_open_fk_bracket(PDO $db): callable
         };
     }
     return function (): void {};
+}
+
+/**
+ * Logical-format dry-run preview (Bug S, v3.27.1).
+ *
+ * Mirror of ipam_restore_dry_run() for IPAMBKL1 archives. The SQL-format
+ * dry-run streams .sql.gz through the SQL splitter; that path cannot be
+ * fed JSON-shaped IPAMBKL1 content (the splitter interprets `"` and
+ * `$tag$` tokens by SQL semantics and throws unterminated-state errors
+ * at EOF).
+ *
+ * This helper walks the IPAMBKL1 file:
+ *   - verifies magic and header
+ *   - counts rows per table from the body
+ *   - re-computes SHA-256 over the body and verifies it matches the
+ *     footer's `checksum_sha256` (catches truncation / tampering before
+ *     the wizard's Step 3 apply commits to a transaction)
+ *   - reports any schema_version delta as a warning
+ *
+ * Return shape matches the SQL dry-run for caller compatibility:
+ * `{tables, schema_diff, total_statements, warnings}`. `total_statements`
+ * carries the row count for logical archives (the field is the operator-
+ * facing "how much will be replayed" number).
+ *
+ * @return array{
+ *   tables: list<array{name:string,current_rows:int,backup_rows:int,delta:int}>,
+ *   schema_diff: list<string>,
+ *   total_statements: int,
+ *   warnings: list<string>,
+ * }
+ */
+function ipam_restore_logical_dry_run(PDO $db, string $inputPath): array
+{
+    if (!is_file($inputPath)) {
+        throw new RuntimeException('ipam_restore_logical_dry_run: input file not found: ' . $inputPath);
+    }
+    $gz = gzopen($inputPath, 'rb');
+    if ($gz === false) {
+        throw new RuntimeException('ipam_restore_logical_dry_run: cannot open input for reading: ' . $inputPath);
+    }
+
+    $warnings = [];
+    $rowsByTable = [];   // [tableName => count]
+    $totalRows   = 0;
+    $hashCtx     = hash_init('sha256');
+    $footer      = null;
+
+    try {
+        $magic = rtrim((string) gzgets($gz), "\n");
+        if ($magic !== 'IPAMBKL1') {
+            throw new RuntimeException('ipam_restore_logical_dry_run: unrecognised magic: ' . var_export($magic, true));
+        }
+
+        $headerLine = (string) gzgets($gz);
+        $header = json_decode($headerLine, true);
+        if (!is_array($header) || ($header['header'] ?? false) !== true) {
+            throw new RuntimeException('ipam_restore_logical_dry_run: missing or malformed header line');
+        }
+
+        $rawSchemaVersion = $header['schema_version'] ?? 0;
+        $sourceSchemaVersion = is_numeric($rawSchemaVersion) ? (int) $rawSchemaVersion : 0;
+
+        // Target schema_version may be unavailable (empty DB, missing
+        // schema_migrations table). Treat that as "skip the version compare"
+        // rather than fail the dry-run — operator wants to see WHAT would be
+        // restored, even when the target is fresh.
+        $targetSchemaVersion = null;
+        try {
+            $targetSchemaVersion = ipam_logical_schema_version($db);
+        } catch (Throwable) {
+            $warnings[] = 'Could not read target schema_version (schema_migrations table missing). Apply will refuse on a fresh target until init runs.';
+        }
+        if ($targetSchemaVersion !== null) {
+            if ($sourceSchemaVersion > $targetSchemaVersion) {
+                $warnings[] = "Backup schema_version $sourceSchemaVersion is newer than this install's $targetSchemaVersion. Apply will refuse — upgrade first.";
+            } elseif ($sourceSchemaVersion < $targetSchemaVersion) {
+                $warnings[] = "Backup schema_version $sourceSchemaVersion is older than this install's $targetSchemaVersion. Apply will succeed; rows from tables added after the backup remain empty.";
+            }
+        }
+
+        // Body — JSONL, one row per line, plus an optional footer line.
+        // Hash matches what ipam_restore_logical_apply hashes (#824 spec):
+        // every row line (excluding the footer line) contributes to the
+        // SHA-256 checksum that the writer recorded in the footer.
+        while (!gzeof($gz)) {
+            $line = gzgets($gz);
+            if ($line === false || $line === '') break;
+            $trim = rtrim($line, "\n");
+            if ($trim === '') continue;
+
+            $obj = json_decode($trim, true);
+            if (!is_array($obj)) {
+                throw new RuntimeException('ipam_restore_logical_dry_run: malformed body line');
+            }
+
+            if (($obj['footer'] ?? false) === true) {
+                $footer = $obj;
+                break;
+            }
+
+            $table = $obj['table'] ?? null;
+            if (!is_string($table)) {
+                throw new RuntimeException('ipam_restore_logical_dry_run: malformed row line (missing table)');
+            }
+            $rowsByTable[$table] = ($rowsByTable[$table] ?? 0) + 1;
+            $totalRows++;
+
+            // Match writer's checksum domain: every body row line as written.
+            hash_update($hashCtx, $trim . "\n");
+        }
+
+        if (!is_array($footer)) {
+            throw new RuntimeException('ipam_restore_logical_dry_run: archive missing footer — backup may be truncated');
+        }
+
+        $expectedHash = $footer['checksum_sha256'] ?? null;
+        $actualHash = hash_final($hashCtx);
+        if (is_string($expectedHash) && hash_equals($expectedHash, $actualHash) !== true) {
+            $warnings[] = 'Body checksum does not match footer — apply will refuse to proceed (corruption or tampering).';
+        }
+
+        $expectedTotal = $footer['total_rows'] ?? null;
+        if (is_numeric($expectedTotal) && (int) $expectedTotal !== $totalRows) {
+            $warnings[] = "Body row count ($totalRows) disagrees with footer total_rows ($expectedTotal).";
+        }
+    } finally {
+        gzclose($gz);
+    }
+
+    // Build the per-table summary the wizard renders. current_rows comes
+    // from the live DB; backup_rows from what we just counted.
+    $tables = [];
+    foreach ($rowsByTable as $name => $backupRows) {
+        $current = 0;
+        try {
+            $stmt = $db->query('SELECT COUNT(*) FROM ' . ipam_logical_q($db, $name));
+            if ($stmt !== false) {
+                $val = $stmt->fetchColumn();
+                if (is_numeric($val)) $current = (int) $val;
+            }
+        } catch (Throwable) {
+            // Table doesn't exist on target — treated as current=0.
+        }
+        $tables[] = [
+            'name'          => $name,
+            'current_rows'  => $current,
+            'backup_rows'   => $backupRows,
+            'delta'         => $backupRows - $current,
+        ];
+    }
+
+    return [
+        'tables'           => $tables,
+        'schema_diff'      => [],
+        'total_statements' => $totalRows,
+        'warnings'         => $warnings,
+    ];
 }
 
 /**

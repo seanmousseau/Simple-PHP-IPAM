@@ -136,6 +136,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 page_footer();
                 exit;
             }
+            ipam_sudo_consume_once();  // Bug X (Pass A 2026-05-08, v3.27.1): consume sudo_once for TTL=0 policy.
+
         }
 
         if ((bool)$current !== $newValue) {
@@ -302,6 +304,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             page_footer();
             exit;
         }
+        ipam_sudo_consume_once();  // Bug X (Pass A 2026-05-08, v3.27.1): consume sudo_once for TTL=0 policy.
+
     }
 
     $changed = 0;

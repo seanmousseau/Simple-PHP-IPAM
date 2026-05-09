@@ -119,16 +119,23 @@ The check covers two distinct scenarios that the regression tests pin down:
 
 ### Sudo grant invalidation
 
-`$_SESSION['sudo_until_ts']` is unconditionally cleared on any of:
+`$_SESSION['sudo_until_ts']` is cleared on any of:
 
-- logout
-- session regeneration after password change
-- role downgrade (admin → readonly)
-- `oidc_sub` change on the user row
-- MFA enrollment change (TOTP enroll/disable, passkey add/delete, email OTP enroll/disable)
-- step-up policy update (the policy save handler calls `ipam_sudo_invalidate()` after a successful commit)
+| Event | Wired since | Site |
+|---|---|---|
+| logout | v3.27.0 | `logout.php` (implicit via `logout_user()` clearing `$_SESSION`) |
+| session regeneration after password change | v3.27.0 | `change_password.php:153` |
+| step-up policy update | v3.27.0 | `settings.php:155, 327` |
+| TOTP disable | v3.27.0 | `change_password.php:103` |
+| Email OTP disable | v3.27.0 | `change_password.php:317` |
+| passkey delete | v3.27.0 | `change_password.php:342` |
+| **TOTP enroll** | **v3.27.1 (Bug T)** | `totp_enroll.php:75` |
+| **Email OTP enroll** | **v3.27.1 (Bug T)** | `change_password.php:280` |
+| **passkey add (register)** | **v3.27.1 (Bug T)** | `passkey_register.php:160` |
 
-If you add a new state change that affects what an operator can prove, call `ipam_sudo_invalidate()` so the warm grant doesn't outlive the change.
+**Cross-user invalidation events are documented limitations** — `ipam_sudo_invalidate()` clears `$_SESSION` on the CURRENT request only, so an admin acting on another user's row (`users.php` `set_role`, `link_oidc`, `unlink_oidc`) cannot reach into the affected user's session to clear it. The contract for these events requires a session-marker mechanism (e.g. `users.sudo_invalidate_after` timestamp consulted by `ipam_sudo_active()`), which is tracked for v3.28.0. Current v3.27.1 code paths in `users.php` carry `// Bug T … KNOWN LIMITATION` markers at the relevant audit sites.
+
+If you add a new state change that affects what an operator can prove, call `ipam_sudo_invalidate()` from the same handler so the warm grant doesn't outlive the change. The `tests/SudoInvalidateWiringTest.php` suite asserts every wired self-action handler calls `ipam_sudo_invalidate()`; a new handler that mutates auth state without it will fail the test.
 
 ---
 

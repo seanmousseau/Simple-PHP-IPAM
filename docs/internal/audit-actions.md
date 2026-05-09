@@ -97,6 +97,7 @@ backup.retention_pruned             backup.wal_checkpoint_failed
 backup.connection_test_failed       backup.schedule_overdue       backup.encryption_change
 backup.cancel                       backup.protect                backup.unprotect
 backup.set_default_destination      backup.verify_bulk
+backup.preflight_failed             cron.task_failed
 backup.vault_key.revealed           backup.vault_key.set
 backup.vault_key.replaced           backup.vault_key.sudo_failed
 backup.vault_key.reveal_failed      backup.vault_key.reveal_rate_limited
@@ -120,6 +121,10 @@ To preserve vault-specific filtering after the v3.28.0 removal, correlate `auth.
 `backup_run.bulk_delete` (`entity_type=backup_run`) — emitted once per row deleted via the History tab's bulk-select UI (v3.22.0 #1052). One audit entry per row keeps forensics aligned with the per-row `backup_run.delete` / `backup_run.delete_failed` vocabulary; `$details` carries `actor=bulk` so bulk deletions are distinguishable from single-row drawer deletes.
 
 `backup_run.purge` (`entity_type=system`, `entity_id=null`) — emitted once per cron tick that actually deletes rows during the time-based `backup_runs` purge (v3.22.0 #1053). Driven by `backup_runs.retention_days` and `backup_runs.prune_batch_size`; skips rows with `status='running'` (reaper's job) and `is_protected=1` (operator keep). One audit entry per call (not per row) — purge volume can be large and per-row entries would drown the audit log; `$details` carries `deleted=N retention_days=R batch_size=B`. No row is emitted on a no-op tick.
+
+`backup.preflight_failed` (`entity_type=destination`) — emitted by `ipam_backup_run_for_destination()` when the orchestrator throws BEFORE the upload-phase try/catch is entered (v3.27.1, Pass A 2026-05-08 observability fix O3+O4). Covers every pre-INSERT failure mode: missing destination, missing keys (vault and app_secret both empty), dump failure, encrypt-codec failure, etc. The corresponding `backup_runs` row is INSERTed with `status='failed'`, a synthetic `filename='(preflight-failed-<8hex>)'`, and the truncated exception in `error_message`. `$details` carries `run_id=<id> triggered_by=<manual|schedule|...> [schedule_id=<id>] error=<truncated>`. Distinct from `backup.failed` (upload-phase failure with a real `remote=<filename>`) so an investigator can tell "never produced an archive" from "produced and lost on upload".
+
+`cron.task_failed` (`entity_type=system`, `entity_id=null`) — emitted by `cron.php`'s `$fail()` closure when any task block throws (v3.27.1, Pass A 2026-05-08 observability fix O1). The closure also writes to STDERR (preserved for hosts that capture cron output) and to PHP's `error_log()` (which lands in the SAPI log file regardless of stderr redirection). `$details` carries `task=<task_name> error=<truncated>`. Audit failure inside the closure does NOT block the cron run — wrapped in try/catch so an audit-side problem can't escalate to a missed cron tick.
 
 `backup.skipped_concurrent` (`entity_type=destination`) — orchestrator refused to start because a non-stale `running` row already exists for the destination (v3.22.0 #815).
 
