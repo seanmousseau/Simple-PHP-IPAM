@@ -22,6 +22,11 @@ final class MfaDisableLockoutGuardTest extends TestCase
 {
     private function freshDb(): PDO
     {
+        // ipam_setting()'s static cache is process-wide; ipam_setting()
+        // reads $GLOBALS['db'] (not a parameter). Both must be reset per
+        // test so settings written this iteration are actually visible.
+        ipam_setting_cache_bust(null);
+
         $db = new PDO('sqlite::memory:');
         $db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         $schema = (string) file_get_contents(__DIR__ . '/../Simple-PHP-IPAM/schema.sql');
@@ -29,6 +34,14 @@ final class MfaDisableLockoutGuardTest extends TestCase
         $db->exec('PRAGMA foreign_keys = ON');
         ensure_migrations_table($db);
         apply_migrations($db);
+        $GLOBALS['db'] = $db;
+        // Helper mirrors ipam_sudo_available_methods() which gates on the
+        // install-level mfa.*_enabled flags. Defaults: totp=true,
+        // email_otp=false, passkeys=false. Enable all three so the strand
+        // verdict reflects user enrollment alone, not install policy.
+        ipam_setting_set($db, 'mfa.totp_enabled', true);
+        ipam_setting_set($db, 'mfa.email_otp_enabled', true);
+        ipam_setting_set($db, 'mfa.passkeys_enabled', true);
         return $db;
     }
 

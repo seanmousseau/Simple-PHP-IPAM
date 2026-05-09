@@ -82,6 +82,15 @@ if (isset($_GET['verify_email'])) {
 // via TOTP/Email OTP/passkey/OIDC re-auth under the install policy.
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 'disable_totp') {
     csrf_require();
+    // Bug Y / #1122 (v3.27.2): refuse if disabling TOTP would leave the
+    // user with no satisfiable step-up method under the install policy.
+    // Pre-fix the user could disable their only enrolled method and be
+    // stranded for any future sudo-class action.
+    if (ipam_sudo_would_strand_user_after_disable($db, to_int($cur['id']), 'totp')) {
+        flash_set('Cannot disable TOTP: it is your only available step-up method. Enroll another method first.', 'danger');
+        header('Location: change_password.php');
+        exit;
+    }
     if (!ipam_sudo_require($db, to_int($cur['id']))) {
         page_header('Confirm your identity');
         $stepUpUserId       = to_int($cur['id']);
@@ -302,6 +311,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 
 // --- Email OTP: disable. v3.27.0 (#1112) — gated by ipam_sudo_require(). ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 'email_otp_disable') {
     csrf_require();
+    // Bug Y / #1122 (v3.27.2): see disable_totp comment above.
+    if (ipam_sudo_would_strand_user_after_disable($db, to_int($cur['id']), 'email_otp')) {
+        flash_set('Cannot disable Email OTP: it is your only available step-up method. Enroll another method first.', 'danger');
+        header('Location: change_password.php#email-otp');
+        exit;
+    }
     if (!ipam_sudo_require($db, to_int($cur['id']))) {
         page_header('Confirm your identity');
         $stepUpUserId       = to_int($cur['id']);
@@ -332,6 +347,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 'passkey_delete') {
     csrf_require();
     $credId = to_int($_POST['credential_id'] ?? 0);
+    // Bug Y / #1122 (v3.27.2): refuse if removing the LAST passkey would
+    // leave the user with no satisfiable step-up method. Multi-passkey
+    // users are unaffected (the helper only strands when count drops to 0
+    // and no other method remains).
+    if (ipam_sudo_would_strand_user_after_disable($db, to_int($cur['id']), 'passkey')) {
+        flash_set('Cannot remove this passkey: it is your only available step-up method. Enroll another method first.', 'danger');
+        header('Location: change_password.php#passkeys');
+        exit;
+    }
     if (!ipam_sudo_require($db, to_int($cur['id']))) {
         page_header('Confirm your identity');
         $stepUpUserId       = to_int($cur['id']);
