@@ -276,6 +276,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 
         unset($_SESSION['email_otp_enrolling']);
         unset($_SESSION['mfa_enrollment_required']);
         audit($db, 'user.email_otp_enable', 'user', to_int($cur['id']), 'Email OTP 2FA enrolled');
+        // Bug T (Pass A 2026-05-08, v3.27.1): MFA enrollment change is a
+        // documented sudo-grant invalidation event. A grant minted before
+        // the new factor was enrolled must not outlive that change.
+        ipam_sudo_invalidate();
         flash_set('Email OTP enabled successfully.');
     } else {
         // Check if the verifier cleared OTP state due to too many attempts (attempts >= 5
