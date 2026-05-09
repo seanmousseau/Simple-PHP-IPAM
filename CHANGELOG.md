@@ -10,7 +10,7 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
 Pass-A regression hotfix. Cuts a backlog of seven bugs surfaced during a manual regression sweep on 2026-05-08 that traced a production silent-failure incident on `ipam.seanmousseau.com` to a cluster of half-finished work in v3.21–v3.27. The honest framing: features were added at one site without propagation to adjacent sites in the same architectural surface — most visibly the IPAMBKP3 codec (v3.24.0) and `backup_vault_key` infrastructure (v3.26.0) that the orchestrator's encrypt write path was never wired to use. Every install whose `app_secret` was empty (the documented v3.26.0+ post-migration state) had encrypted scheduled backups silently failing, with five compounding observability gaps making the failures invisible in audit log, History UI, and stderr-redirected cron.
 
-This patch ships seven fixes paired with the regression tests that would have caught each. Disaster recovery is restored. Sudo-class actions via OIDC re-auth work. The `sudo_once` TTL=0 policy now actually enforces "re-prompt every action" instead of behaving as a session-long warm grant. See `docs/internal/lessons-learned.md` §8 for the architectural pattern that produced these and the mandatory pre-PR checklist that aims to prevent recurrence; see `docs/internal/2026-05-08_Path_Forward.md` for the broader recovery plan including v3.27.2 follow-ups, the v3.28.0 test-tooling baseline release, and the deferred multi-tenancy decision.
+This patch ships seven fixes paired with the regression tests that would have caught each. Disaster recovery is restored. Sudo-class actions via OIDC re-auth work. The `sudo_once` TTL=0 policy now actually enforces "re-prompt every action" instead of behaving as a session-long warm grant. See `docs/internal/lessons-learned.md` §8 for the architectural pattern that produced these and the mandatory pre-PR checklist that aims to prevent recurrence; see `docs/internal/2026-05-08_Path_Forward.md` for the broader recovery plan including v3.27.2 follow-ups (#1123), the v3.28.0 test-tooling baseline release, and the deferred multi-tenancy decision.
 
 ### Fixed
 
@@ -25,9 +25,9 @@ This patch ships seven fixes paired with the regression tests that would have ca
 ### Acknowledged limitations carried forward
 
 - **Cross-user sudo-grant invalidation** (`users.php` role downgrade, `oidc_sub` link/unlink) — documented in code with `// Bug T … KNOWN LIMITATION` markers. Tracked for v3.28.0.
-- **OIDC auto-provisioner writes a real bcrypt password hash** instead of the `!disabled` sentinel the OIDC-only-admin lockout-protection model expects. Bug U from Pass A; deferred to v3.27.2 per `2026-05-08-v3.27.1-hotfix.md` §9.5.
-- **Settings page boolean-toggle vs group-form path separation** can wipe unsaved string-field input. Bug V from Pass A; deferred to v3.27.2.
-- **MFA-disable lockout precondition guard** — disabling the only enrolled step-up method strands the user. Bug Y from Pass A; deferred to v3.27.2 per Path Forward §1 step 2.
+- **OIDC auto-provisioner writes a real bcrypt password hash** instead of the `!disabled` sentinel the OIDC-only-admin lockout-protection model expects. Bug U from Pass A; deferred to v3.27.2 (#1120) per `2026-05-08-v3.27.1-hotfix.md` §9.5.
+- **Settings page boolean-toggle vs group-form path separation** can wipe unsaved string-field input. Bug V from Pass A; deferred to v3.27.2 (#1121).
+- **MFA-disable lockout precondition guard** — disabling the only enrolled step-up method strands the user. Bug Y from Pass A; deferred to v3.27.2 (#1122) per Path Forward §1 step 2.
 
 ### Process
 
