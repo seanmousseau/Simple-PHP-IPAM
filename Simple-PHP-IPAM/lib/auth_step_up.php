@@ -470,22 +470,40 @@ function ipam_sudo_oidc_reauth_redirect_url(string $returnPath): string
         return '';
     }
 
-    // Same validation as ipam_post_login_redirect_stash() — must be a
-    // server-relative path that cannot escape the install. Falls back to
-    // an install-relative `destinations.php` (no leading slash) so the
-    // redirect stays inside the app on installs served under a path
-    // prefix like /claude/ipam/ — a leading-slash fallback would jump
-    // out of the app to /destinations.php on the host root. (CodeRabbit
-    // round 3 #1116.)
+    // Bug Z (Pass A 2026-05-08, v3.27.1): pre-fix this validator required
+    // `$returnPath[0] === '/'` (absolute path) and fell back to a
+    // hardcoded 'destinations.php' on every relative input. Every sudo
+    // handler in the codebase passes a relative path (api_keys.php,
+    // change_password.php, settings.php?tab=..., backup_admin.php?tab=...),
+    // so EVERY sudo-class action via OIDC re-auth dropped its original
+    // POST and bounced operators to destinations.php instead of the
+    // page they came from. The mirror validator at step_up.php:30-49
+    // (ipam_step_up_validate_return_to) accepts relative paths cleanly
+    // — this block now mirrors its logic.
+    //
+    // Acceptance: any non-empty path string that is not (a) protocol-
+    // relative (`//evil.com/...`), (b) absolute URL (`http://`, `https://`,
+    // `javascript:`, etc.), (c) parent-traversal (`..`), (d) backslash-
+    // bearing (browsers normalise `\` to `/`, real bypass vector),
+    // (e) CR/LF/tab-bearing (header injection), or (f) oversize (>1024).
     $safe = 'destinations.php';
     if ($returnPath !== ''
-        && $returnPath[0] === '/'
-        && !str_starts_with($returnPath, '//')
-        && !preg_match('/[\r\n]/', $returnPath)
-        && !str_contains($returnPath, '..')
+        && strlen($returnPath) <= 1024
+        && !preg_match('/[\r\n\t]/', $returnPath)
         && !str_contains($returnPath, '\\')
-        && strlen($returnPath) <= 1024) {
-        $safe = $returnPath;
+        && !str_contains($returnPath, '..')
+        && !str_starts_with($returnPath, '//')
+    ) {
+        // parse_url returns false for malformed input — treat as unsafe.
+        $parts = parse_url($returnPath);
+        if (is_array($parts)
+            && !isset($parts['scheme'])
+            && !isset($parts['host'])
+            && !isset($parts['user'])
+            && !isset($parts['pass'])
+        ) {
+            $safe = $returnPath;
+        }
     }
 
     $state = bin2hex(random_bytes(16));
