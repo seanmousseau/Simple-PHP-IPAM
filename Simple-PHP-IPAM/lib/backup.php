@@ -336,76 +336,124 @@ function ipam_backup_run_for_destination(
         );
     }
 
-    $dest = ipam_backup_dest_load($db, $destId);
-    // Thread triggered_by into the destination row so ipam_backup_notify()
-    // can pick the right scheduled-vs-manual notification setting (v3.22.0).
-    $dest['triggered_by'] = $triggeredBy;
-    // Thread schedule_id so the dispatcher can resolve per-schedule
-    // notify-overrides (v3.23.0 #825). Null on manual runs — the resolver
-    // treats null as "use global", which is the correct semantics.
-    $dest['schedule_id']  = $scheduleId;
-    $client = ipam_backup_dest_client($dest);
+    // O3+O4 (Pass A 2026-05-08, v3.27.1): wrap the pre-INSERT region in a
+    // try/catch so any throw between dest_load and the encrypt-resolve
+    // produces a visible failure trace (backup_runs row + audit row)
+    // rather than silently disappearing. Before this fix the orchestrator
+    // INSERTed the backup_runs row only AFTER dump+encrypt — every
+    // pre-INSERT failure (missing key, missing path, dump error, etc.)
+    // produced zero forensic trace.
+    //
+    // On throw we INSERT a synthetic backup_runs row tagged with
+    // triggered_by + schedule_id, status='failed', a recognisable
+    // synthetic filename `(preflight-failed-<8hex>)`, and the truncated
+    // exception message in error_message. Then audit
+    // `backup.preflight_failed` and re-throw so the caller's failure
+    // path (cron $fail, UI error display) still runs.
+    $tmpSql     = null;
+    $dumpExt    = '.sql.gz';
+    $backupType = 'database';
+    $encMode    = 'stored';
+    try {
+        $dest = ipam_backup_dest_load($db, $destId);
+        $dest['triggered_by'] = $triggeredBy;
+        $dest['schedule_id']  = $scheduleId;
+        $client = ipam_backup_dest_client($dest);
 
-    // v3.25.0 #1076 #849 #851: resolve backup format and encryption mode
-    // from the destination's per-destination defaults. Both columns were
-    // added by the 3.25.0-backup-destination-evolution migration with
-    // sensible defaults ('logical' / 'stored'); pre-existing rows
-    // backfill from the legacy `encrypt` flag during migration.
-    $backupType = is_string($dest['default_backup_type'] ?? null)
-        ? (string) $dest['default_backup_type']
-        : 'database';
-    if ($backupType !== 'database' && $backupType !== 'logical') {
-        $backupType = 'database';
-    }
-
-    $encMode = is_string($dest['default_encryption_mode'] ?? null)
-        ? (string) $dest['default_encryption_mode']
-        : 'stored';
-    if (!in_array($encMode, ['stored', 'transitory', 'unencrypted'], true)) {
-        $encMode = 'stored';
-    }
-    // Server-side guard: 'unencrypted' is only allowed for Local
-    // destinations (#851). Remote destinations always force 'stored'
-    // even if the column is somehow set to 'unencrypted' — UI grey-out
-    // is belt; this is suspenders.
-    $destType = is_string($dest['type'] ?? null) ? (string) $dest['type'] : '';
-    if ($encMode === 'unencrypted' && $destType !== 'local') {
-        $encMode = 'stored';
-    }
-
-    // Dispatch on backup_type (#849). Logical → IPAMBKL1 engine-agnostic
-    // dump (v3.23.0 #824). Database → existing per-engine SQL dump.
-    if ($backupType === 'logical') {
-        $tmpSqlFh = tempnam(sys_get_temp_dir(), 'ipam-backup-logical-');
-        if ($tmpSqlFh === false) {
-            throw new RuntimeException('ipam_backup: cannot create temp file for logical dump');
+        // v3.25.0 #1076 #849 #851: resolve backup format and encryption mode
+        // from the destination's per-destination defaults.
+        $backupType = is_string($dest['default_backup_type'] ?? null)
+            ? (string) $dest['default_backup_type']
+            : 'database';
+        if ($backupType !== 'database' && $backupType !== 'logical') {
+            $backupType = 'database';
         }
+
+        $encMode = is_string($dest['default_encryption_mode'] ?? null)
+            ? (string) $dest['default_encryption_mode']
+            : 'stored';
+        if (!in_array($encMode, ['stored', 'transitory', 'unencrypted'], true)) {
+            $encMode = 'stored';
+        }
+        // Server-side guard: 'unencrypted' is only allowed for Local
+        // destinations (#851). Remote destinations always force 'stored'.
+        $destType = is_string($dest['type'] ?? null) ? (string) $dest['type'] : '';
+        if ($encMode === 'unencrypted' && $destType !== 'local') {
+            $encMode = 'stored';
+        }
+
+        // Dispatch on backup_type (#849).
+        if ($backupType === 'logical') {
+            $tmpSqlFh = tempnam(sys_get_temp_dir(), 'ipam-backup-logical-');
+            if ($tmpSqlFh === false) {
+                throw new RuntimeException('ipam_backup: cannot create temp file for logical dump');
+            }
+            try {
+                ipam_backup_logical_dump($db, $tmpSqlFh);
+            } catch (Throwable $e) {
+                @unlink($tmpSqlFh); // nosemgrep: php.lang.security.unlink-use.unlink-use -- tempnam-generated
+                throw $e;
+            }
+            $tmpSql = $tmpSqlFh;
+            $dumpExt = '.ipambkl1.gz';
+        } else {
+            $tmpSql = ipam_backup_dump_to_tmp($db);
+            $dumpExt = '.sql.gz';
+        }
+
+        // Encrypt-write-path dispatch (v3.27.1 fix). vault_key first,
+        // app_secret legacy fallback, throw if neither.
+        $appSecret = is_string($config['app_secret'] ?? null) ? $config['app_secret'] : '';
+        $vaultKey  = ipam_backup_vault_key_get_raw();
+        $encResult = ipam_backup_resolve_encrypt_to_tmp($tmpSql, $encMode, $vaultKey, $appSecret, $dumpExt);
+        $tmpFile   = $encResult['tmpFile'];
+        $extension = $encResult['extension'];
+        // resolve_encrypt_to_tmp consumed $tmpSql when it produced a new
+        // encrypted output; mark consumed so the catch path doesn't try
+        // to re-unlink it.
+        if ($tmpFile !== $tmpSql) {
+            $tmpSql = null;
+        }
+    } catch (Throwable $preflightError) {
+        // Clean up any tmp dump that was produced but not encrypted.
+        if (is_string($tmpSql) && is_file($tmpSql)) {
+            @unlink($tmpSql); // nosemgrep: php.lang.security.unlink-use.unlink-use -- tempnam-generated
+        }
+
+        // Synthetic filename so History UI can distinguish preflight from
+        // real uploads at a glance. The 8-hex suffix prevents collisions
+        // when two preflight failures happen in the same second.
+        $syntheticName = '(preflight-failed-' . bin2hex(random_bytes(4)) . ')';
         try {
-            ipam_backup_logical_dump($db, $tmpSqlFh);
-        } catch (Throwable $e) {
-            @unlink($tmpSqlFh); // nosemgrep: php.lang.security.unlink-use.unlink-use -- tempnam-generated
-            throw $e;
-        }
-        $tmpSql = $tmpSqlFh;
-        $dumpExt = '.ipambkl1.gz';
-    } else {
-        $tmpSql = ipam_backup_dump_to_tmp($db);
-        $dumpExt = '.sql.gz';
-    }
+            $logId = ipam_backup_insert_log(
+                $db,
+                $destId,
+                $triggeredBy,
+                'failed',
+                $syntheticName,
+                $scheduleId,
+                $backupType,
+                $encMode
+            );
+            $errMsg = substr($preflightError->getMessage(), 0, 1024);
+            $upd = $db->prepare("UPDATE backup_runs SET error_message = :em WHERE id = :id");
+            $upd->execute([':em' => $errMsg, ':id' => $logId]);
 
-    // Encrypt-write-path dispatch. v3.27.1 fix (Bug from Pass A 2026-05-08):
-    // the previous block read $config['app_secret'] only and threw "app_secret
-    // is empty" on every install that had migrated to vault_key per v3.26.0
-    // guidance. The new helper picks vault_key first (IPAMBKP3, .ipambkp3
-    // suffix), falls back to app_secret (IPAMBKP2, .enc suffix), and only
-    // throws when neither is configured — with an actionable error message
-    // pointing the operator at the vault-key setup UI. Mirrors the restore
-    // dispatcher's two-tier lookup at lib/backup.php:1241-1264.
-    $appSecret = is_string($config['app_secret'] ?? null) ? $config['app_secret'] : '';
-    $vaultKey  = ipam_backup_vault_key_get_raw();
-    $encResult = ipam_backup_resolve_encrypt_to_tmp($tmpSql, $encMode, $vaultKey, $appSecret, $dumpExt);
-    $tmpFile   = $encResult['tmpFile'];
-    $extension = $encResult['extension'];
+            audit($db, 'backup.preflight_failed', 'destination', $destId,
+                  'run_id=' . $logId
+                  . ' triggered_by=' . $triggeredBy
+                  . ($scheduleId !== null ? ' schedule_id=' . $scheduleId : '')
+                  . ' error=' . substr($preflightError->getMessage(), 0, 200));
+        } catch (Throwable $audErr) {
+            // If the failed-row INSERT or audit also fails (e.g. DB is
+            // gone), don't mask the original cause — log to SAPI error
+            // log so the SAPI log captures something even when stderr
+            // is /dev/null'd, and re-throw the ORIGINAL exception.
+            error_log('[backup] preflight_failed insert/audit failed: ' . $audErr->getMessage());
+        }
+
+        throw $preflightError;
+    }
 
     // Random 8-hex-char suffix prevents filename collisions when two
     // runs land in the same second (e.g. manual + scheduled overlap).
@@ -2484,6 +2532,90 @@ function ipam_backup_detect_overdue_schedules(PDO $db, ?int $nowTs = null): arra
         }
         $overdueState[$key] = [
             'alerted_for'     => $nextRunAt,
+            'last_alerted_at' => date('c', $nowTs),
+        ];
+        $alertedIds[] = $schedId;
+    }
+
+    // O5 (Pass A 2026-05-08, v3.27.1): second pass — flag schedules whose
+    // most-recent backup_runs row is `status='failed'` regardless of
+    // next_run_at. The original logic missed the "every fire fails"
+    // pattern entirely because finalize_schedule_run advances last_run_at
+    // AND next_run_at on every tick (success or fail), so a schedule
+    // failing every fire kept its next_run_at fresh and never crossed
+    // the grace window. Without O5 the encrypt-write-path bug stayed
+    // invisible to the very alert designed to catch "schedule isn't
+    // running" cases.
+    //
+    // For each schedule joined to its most-recent run, "failed last run"
+    // means: latest run by started_at has status='failed', and there is
+    // NO success row newer than that failure. The query below returns
+    // each schedule's last run; we filter status in PHP.
+    $lastRunStmt = $db->query("
+        SELECT br.schedule_id, br.status, br.started_at
+        FROM backup_runs br
+        INNER JOIN (
+            SELECT schedule_id, MAX(started_at) AS max_started
+            FROM backup_runs
+            WHERE schedule_id IS NOT NULL
+            GROUP BY schedule_id
+        ) latest
+        ON latest.schedule_id = br.schedule_id
+        AND latest.max_started = br.started_at
+        WHERE br.schedule_id IS NOT NULL
+    ");
+    /** @var list<array<string, mixed>> $lastRunRows */
+    $lastRunRows = $lastRunStmt !== false ? $lastRunStmt->fetchAll(PDO::FETCH_ASSOC) : [];
+
+    foreach ($lastRunRows as $lr) {
+        $schedId = to_int($lr['schedule_id'] ?? 0);
+        if ($schedId <= 0) continue;
+        if (!isset($aliveSchedKeys[(string) $schedId])) continue;
+        $status = to_str($lr['status'] ?? '');
+        if ($status !== 'failed') continue;
+
+        // Already alerted in the next_run_at-based pass? Skip.
+        if (in_array($schedId, $alertedIds, true)) continue;
+
+        $overdueCount++;
+        // For the failed-last-run path, key the cooldown on the
+        // started_at timestamp of the failure rather than next_run_at.
+        // A new failure (= new started_at) re-alerts; repeated alerts
+        // for the same failure row are suppressed.
+        $startedAt = to_str($lr['started_at'] ?? '');
+        $key = (string) $schedId;
+        $prev = $overdueState[$key] ?? [];
+        $alertedFor = is_string($prev['alerted_for'] ?? null) ? $prev['alerted_for'] : '';
+        if ($alertedFor === 'failed_run_at:' . $startedAt) {
+            continue; // already alerted for this exact failure
+        }
+
+        // Look up destination name for the audit/notify payload.
+        $destNameStmt = $db->prepare(
+            "SELECT d.name FROM backup_schedules s "
+            . "JOIN backup_destinations d ON d.id = s.destination_id "
+            . "WHERE s.id = :id"
+        );
+        $destNameStmt->execute([':id' => $schedId]);
+        $destName = to_str((string) $destNameStmt->fetchColumn());
+
+        audit($db, 'backup.schedule_overdue', 'schedule', $schedId,
+              "destination=$destName cause=last_run_failed last_failed_at=$startedAt");
+        if ($notifyEnabled) {
+            try {
+                ipam_backup_notify($db, 'schedule_overdue', [
+                    'schedule_id'      => $schedId,
+                    'destination_name' => $destName,
+                    'expected_at'      => $startedAt,
+                    'overdue_minutes'  => 0,
+                    'cause'            => 'last_run_failed',
+                ]);
+            } catch (Throwable $ne) {
+                error_log('[backup] schedule-overdue (O5) notify dispatch failed: ' . $ne->getMessage());
+            }
+        }
+        $overdueState[$key] = [
+            'alerted_for'     => 'failed_run_at:' . $startedAt,
             'last_alerted_at' => date('c', $nowTs),
         ];
         $alertedIds[] = $schedId;

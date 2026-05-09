@@ -115,10 +115,32 @@ $emit = function (array $data): void {
     echo json_encode($data, JSON_UNESCAPED_SLASHES) . "\n";
 };
 
-/** Log an error to stderr and flag the run as failed. */
-$fail = function (string $task, string $msg) use (&$exitCode): void {
+/**
+ * O1 (Pass A 2026-05-08, v3.27.1): record a cron-task failure across THREE
+ * channels so it survives every common ops surface. stderr alone was the
+ * legacy behaviour and disappeared on prod's `> /dev/null 2>&1` cron entry,
+ * letting the encrypt-write-path bug fail silently for two weeks.
+ *
+ *   1. STDERR — for hosts that capture cron output (preserved).
+ *   2. error_log() — lands in the PHP/SAPI error log file regardless of
+ *      whether stderr is redirected. Catches the prod-style blackhole.
+ *   3. audit_log row (`cron.task_failed`) — operator-facing forensic
+ *      record visible in the Audit page; does not depend on file paths
+ *      or shell wiring.
+ *
+ * Audit failure does not block the cron run; it logs and continues.
+ */
+$fail = function (string $task, string $msg) use (&$exitCode, $db): void {
     $exitCode = 1;
     fwrite(STDERR, "[$task] ERROR: $msg\n");
+    error_log("[ipam-cron] $task ERROR: $msg");
+    try {
+        audit($db, 'cron.task_failed', 'system', null,
+              'task=' . $task . ' error=' . substr($msg, 0, 400));
+    } catch (Throwable $audErr) {
+        // Audit failure must not block the cron run. error_log only.
+        error_log('[ipam-cron] audit insert failed: ' . $audErr->getMessage());
+    }
 };
 
 // ---------------------------------------------------------------------------
