@@ -111,21 +111,26 @@ final class SettingsToggleConsistencyTest extends TestCase
         );
     }
 
-    public function testPerKeySaveHandlerIsRemoved(): void
+    public function testPerKeyHandlerIsNotWiredFromUi(): void
     {
-        // The per-key path was added in #756 to bypass the silent-sibling
-        // cascade. With the shim in place, the cascade is closed — and the
-        // per-key path is unreachable from the UI, so it becomes dead code.
-        // Removing it keeps the controller flow single-pathed.
-        $this->assertStringNotContainsString(
-            "Per-key save (#756)",
+        // v3.27.2 stopgap: the server-side per-key save handler stays alive
+        // as a temporary fixture path for the Playwright suite (#1126). The
+        // UI is fully de-wired (no shadow form, no auto-submit JS, no
+        // setting-toggle-form/target — checked by other tests in this
+        // file). What this test prevents is the UI accidentally being
+        // re-wired: the comment marker "Do NOT re-wire from the UI" must
+        // remain in the controller as a load-bearing reminder for future
+        // refactors.
+        $this->assertStringContainsString(
+            'Do NOT re-wire from the UI',
             $this->settingsPhp,
-            "#1121: per-key save handler must be removed from settings.php"
+            "#1121: the stopgap-rationale comment must remain in settings.php so a future refactor doesn't accidentally re-wire the UI"
         );
+        // Inverse: the UI-side wirings stay gone.
         $this->assertStringNotContainsString(
-            "Per-key save currently only supports boolean toggles.",
-            $this->settingsPhp,
-            "#1121: per-key save error string must be removed (handler gone)"
+            'class="setting-toggle-form"',
+            $this->groupForm,
+            "#1121: UI shadow toggle form must stay removed (testShadowToggleFormIsRemoved enforces this — assert here too as a near-by sanity check)"
         );
     }
 

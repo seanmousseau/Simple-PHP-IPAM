@@ -86,13 +86,93 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $user   = current_user();
     $userId = to_int($user['id'] ?? 0) ?: null;
 
-    // #1121 (v3.27.2): the per-key save path (#756) was removed in favour of
-    // page-wide UX consistency — every field, including bool checkboxes,
-    // stages locally and is committed by "Save Group". The original #756
-    // bug (legacy group form's silent-sibling cascade when a checkbox is
-    // unchecked) is now closed by a hidden value="0" shim rendered before
-    // each checkbox in views/settings_group_form.php; the bool branch below
-    // reads the explicit value rather than presence (`=== '1'`).
+    // #1121 (v3.27.2): the UI no longer drives the per-key save — the shadow
+    // form, the data-setting-toggle-target attribute, and the auto-submit JS
+    // are all gone. Bool changes stage in the group form like every other
+    // field, and "Save Group" commits atomically (closing the operator-
+    // facing wipe-unsaved-input bug).
+    //
+    // The server-side per-key handler below stays alive as a TEMPORARY
+    // STOPGAP for the Playwright test suite (and any future programmatic
+    // /admin POSTers) that still POSTs key/value. Tracked for v3.28.0
+    // cleanup — see #1126. Removing this without first migrating the test
+    // fixtures will fail every spec that calls fetchPost(settings.php,
+    // {key, value}). Do NOT re-wire from the UI.
+    $postedKey = to_str($_POST['key'] ?? '');
+    if ($postedKey !== '') {
+        if (!isset($definitions[$postedKey]) || !empty($definitions[$postedKey]['deprecated'])) {
+            flash_set('Unknown or deprecated setting.', 'danger');
+            header('Location: settings.php');
+            exit;
+        }
+        $def = $definitions[$postedKey];
+        $type = to_str($def['type'] ?? 'string');
+        if ($type !== 'bool') {
+            flash_set('Per-key save currently only supports boolean toggles.', 'danger');
+            header('Location: settings.php');
+            exit;
+        }
+        $rawVal   = to_str($_POST['value'] ?? '0');
+        $newValue = ($rawVal === '1' || $rawVal === 'true' || $rawVal === 'on');
+        $current  = ipam_setting($postedKey);
+
+        // Step-up policy save: lock-out precondition + sudo gate + audit +
+        // grant invalidation (mirror of the group path below).
+        if (($def['group'] ?? '') === 'step_up' && (bool)$current !== $newValue) {
+            $proposed = ipam_sudo_proposed_policy_from_overrides([$postedKey => $newValue]);
+            $offender = ipam_sudo_policy_lockout_check($db, $proposed);
+            if ($offender !== '') {
+                flash_set("Cannot save: admin '{$offender}' would have no available step-up method under the proposed policy. Enable at least one method that admin can satisfy.", 'danger');
+                header('Location: settings.php?tab=authentication#group-step_up');
+                exit;
+            }
+            if (!ipam_sudo_require($db, to_int($userId ?? 0))) {
+                page_header('Confirm your identity');
+                $stepUpUserId       = to_int($userId ?? 0);
+                $stepUpFormAction   = 'settings.php';
+                $stepUpHiddenFields = ['key' => $postedKey, 'value' => $newValue ? '1' : '0'];
+                $stepUpDescription  = 'Saving the step-up authentication policy is itself a sudo action under the current policy.';
+                $stepUpReturnPath   = 'settings.php?tab=authentication#group-step_up';
+                $stepUpError        = isset($_POST['_sudo_method']) ? 'Verification failed. Please try again.' : '';
+                include __DIR__ . '/views/_step_up_prompt.php';
+                page_footer();
+                exit;
+            }
+            ipam_sudo_consume_once();
+        }
+
+        if ((bool)$current !== $newValue) {
+            try {
+                ipam_setting_set($db, $postedKey, $newValue, $userId);
+                if (($def['group'] ?? '') === 'step_up') {
+                    $proposed = ipam_sudo_proposed_policy_from_overrides([$postedKey => $newValue]);
+                    $methods  = [];
+                    if ($proposed['allow_totp'])            $methods[] = 'totp';
+                    if ($proposed['allow_email_otp'])       $methods[] = 'email_otp';
+                    if ($proposed['allow_webauthn'])        $methods[] = 'webauthn';
+                    if ($proposed['allow_provider_reauth']) $methods[] = 'provider_reauth';
+                    $detail = 'methods=' . implode(',', $methods)
+                            . ' ttl=' . $proposed['ttl_seconds']
+                            . ' by=' . to_str($user['username'] ?? '');
+                    audit($db, 'auth.step_up_policy.updated', 'auth', null, $detail);
+                    ipam_sudo_invalidate();
+                }
+            } catch (\Throwable $e) {
+                error_log('settings.php per-key save failed: ' . $e->getMessage());
+                flash_set('Save failed. Please try again.', 'danger');
+                header('Location: settings.php');
+                exit;
+            }
+        }
+
+        $owningGroup = to_str($def['group'] ?? '');
+        $owningTab   = $groupToTab[$owningGroup] ?? 'general';
+        $label       = to_str($def['label'] ?? $postedKey);
+        flash_set("Updated {$label}.");
+        header('Location: settings.php?tab=' . rawurlencode($owningTab) . '#group-' . rawurlencode($owningGroup));
+        exit;
+    }
+
     $postedGroup = to_str($_POST['group'] ?? '');
     if ($postedGroup === '' || !isset($groups[$postedGroup])) {
         flash_set('Unknown settings group.', 'danger');
