@@ -45,29 +45,30 @@ try {
 }
 
 if ($as === 'staged') {
-    // Generate signature BEFORE auditing or returning JSON — sign() can throw
-    // on empty app_secret, and we'd rather fail noisily without an audit row
-    // claiming the download succeeded.
-    try {
-        $signature = ipam_restore_sign($config, $staged['path'], [
-            'filename' => $staged['filename'],
+    // #1127 (v3.27.3): server-side session stash replaces the legacy
+    // HMAC-signed token. The path/meta are kept in $_SESSION so the
+    // apply step can read them without trusting the client to round-trip
+    // a signed reference. Removes the hard `app_secret` dependency that
+    // blocked restore on every install that took the v3.26.0 vault-key
+    // relocation path. The path is still returned in the JSON for UI
+    // display purposes ("Staged: /tmp/foo.gz"), but the apply step does
+    // NOT read it from the client — it consumes the session slot.
+    require_once __DIR__ . '/lib/restore_wizard.php';
+    ipam_restore_wizard_stage_pending(
+        RESTORE_WIZARD_PHASE_STAGED,
+        $staged['path'],
+        [
+            'filename'       => $staged['filename'],
             'destination_id' => $destId,
-            'size' => $staged['size'],
-        ]);
-    } catch (Throwable $e) {
-        error_log('[download_remote_backup] sign failed: ' . $e->getMessage());
-        http_response_code(500);
-        header('Content-Type: text/plain');
-        echo "500 Cannot sign staged token (see server log for details)\n";
-        exit;
-    }
+            'size'           => $staged['size'],
+        ]
+    );
     audit($db, 'remote_backup.download', 'destination', $destId, "name=$name as=staged");
     header('Content-Type: application/json');
     // nosemgrep: php.lang.security.xss.echoed-request -- Content-Type is application/json; json_encode provides structural escaping; no HTML rendering
     echo json_encode([
         'ok'        => true,
-        'path'      => $staged['path'],
-        'signature' => $signature,
+        'path'      => $staged['path'],   // display only — apply reads from session
         'size'      => $staged['size'],
         'filename'  => $staged['filename'],
         'encrypted' => $staged['encrypted'],

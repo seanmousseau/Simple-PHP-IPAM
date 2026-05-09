@@ -25,35 +25,177 @@ const RESTORE_WIZARD_RATE_LIMIT_WINDOW_SECONDS = 300;
 const RESTORE_WIZARD_RATE_LIMIT_MAX_ATTEMPTS = 5;
 
 /**
- * @param array<string,mixed>                                  $config
+ * Restore-wizard pending-action TTL. After this many seconds the staged
+ * slot expires and the operator must restart from Step 1. Mirrors the
+ * legacy HMAC token's effective lifetime (the staged file in data/tmp/
+ * gets purged by the housekeeping cron after a similar window).
+ */
+const RESTORE_WIZARD_PENDING_TTL_SECONDS = 600;
+
+/**
+ * Sentinel returned by ipam_restore_wizard_sign() in session-state mode.
+ * Carried in the form's staged_sig hidden field for backwards compat with
+ * existing views; the apply-side ipam_restore_wizard_verify() ignores it
+ * entirely and reads from $_SESSION instead. Any non-empty value works
+ * here — the value just needs to be truthy so existing form-rendering
+ * code that tests `if ($stagedSig)` continues to render the wizard.
+ */
+const RESTORE_WIZARD_SESSION_SENTINEL = 'session-stashed';
+
+/**
+ * Stash a pending wizard action in the session. Replaces the legacy
+ * HMAC-token mechanism (#1127, v3.27.3): the session is the trust
+ * boundary for the single-user, single-tab wizard flow, so a
+ * cryptographic token was unnecessary and forced a hard `app_secret`
+ * dependency on every install — the entire restore-from-remote path was
+ * blocked on installs that took the documented v3.26.0 vault-key
+ * relocation (app_secret optional / blank).
+ *
+ * Three guarantees the legacy HMAC provided are preserved by this
+ * mechanism:
+ *
+ *   - **Phase progression** (no apply-without-dryrun) is checked by
+ *     ipam_restore_wizard_consume_pending() comparing the requested
+ *     phase against $_SESSION['_pending_restore']['phase'].
+ *   - **Path authenticity** is automatic — the path is server-side
+ *     state, never client-supplied. The user's form carries action
+ *     verbs only.
+ *   - **No replay** — consume is single-use (clears the slot on
+ *     successful return) and slots expire after
+ *     RESTORE_WIZARD_PENDING_TTL_SECONDS.
+ *
+ * @param array{filename?:string,destination_id?:int,size?:int} $meta
+ */
+function ipam_restore_wizard_stage_pending(string $phase, string $stagedPath, array $meta): void
+{
+    if ($phase !== RESTORE_WIZARD_PHASE_STAGED && $phase !== RESTORE_WIZARD_PHASE_DRYRUN_OK) {
+        throw new InvalidArgumentException("ipam_restore_wizard_stage_pending: unknown phase '$phase'");
+    }
+    $_SESSION['_pending_restore'] = [
+        'path'    => $stagedPath,
+        'meta'    => $meta,
+        'phase'   => $phase,
+        'expires' => time() + RESTORE_WIZARD_PENDING_TTL_SECONDS,
+    ];
+}
+
+/**
+ * Consume the pending wizard slot iff its phase matches $expectedPhase
+ * and it hasn't expired.
+ *
+ * Behaviour:
+ *   - phase matches + fresh:    returns the slot AND clears it (single-use).
+ *   - phase mismatch:           returns null AND leaves the slot intact
+ *                               (so a correctly-phased subsequent call
+ *                               can succeed; mismatch is a routing
+ *                               error, not a security violation).
+ *   - expired:                  returns null AND clears the slot (no
+ *                               recovery; operator must restart).
+ *   - no slot:                  returns null.
+ *
+ * The intentional asymmetry between "phase mismatch leaves intact" and
+ * "expired clears" matters: phase-mismatch is the wizard's flow-control
+ * primitive (e.g. apply step looking for `dryrun_passed` will see a
+ * `staged` slot and refuse, but the slot stays valid for the dry-run
+ * step that should actually run next). Expiry is terminal.
+ *
+ * @return ?array{path:string,meta:array<string,mixed>,phase:string}
+ */
+function ipam_restore_wizard_consume_pending(string $expectedPhase): ?array
+{
+    $pending = $_SESSION['_pending_restore'] ?? null;
+    if (!is_array($pending)) {
+        return null;
+    }
+    $expires = is_int($pending['expires'] ?? null) ? $pending['expires'] : 0;
+    if ($expires < time()) {
+        unset($_SESSION['_pending_restore']);
+        return null;
+    }
+    $phase = is_string($pending['phase'] ?? null) ? $pending['phase'] : '';
+    if ($phase !== $expectedPhase) {
+        return null;  // phase mismatch — leave slot intact for the right caller
+    }
+    unset($_SESSION['_pending_restore']);
+    return [
+        'path'  => is_string($pending['path'] ?? null) ? $pending['path'] : '',
+        'meta'  => is_array($pending['meta'] ?? null) ? $pending['meta'] : [],
+        'phase' => $phase,
+    ];
+}
+
+/**
+ * Advance the pending slot from one phase to another (e.g. after dry-run
+ * succeeds, advance from `staged` to `dryrun_passed`). Path and meta
+ * survive untouched. The expiry clock is RESET so a long dry-run doesn't
+ * eat into the apply-step window.
+ *
+ * Returns true on success, false when there's no slot or it's expired
+ * (caller should refuse the next step).
+ */
+function ipam_restore_wizard_advance_phase(string $newPhase): bool
+{
+    if ($newPhase !== RESTORE_WIZARD_PHASE_STAGED && $newPhase !== RESTORE_WIZARD_PHASE_DRYRUN_OK) {
+        throw new InvalidArgumentException("ipam_restore_wizard_advance_phase: unknown phase '$newPhase'");
+    }
+    $pending = $_SESSION['_pending_restore'] ?? null;
+    if (!is_array($pending)) {
+        return false;
+    }
+    $expires = is_int($pending['expires'] ?? null) ? $pending['expires'] : 0;
+    if ($expires < time()) {
+        unset($_SESSION['_pending_restore']);
+        return false;
+    }
+    $pending['phase']   = $newPhase;
+    $pending['expires'] = time() + RESTORE_WIZARD_PENDING_TTL_SECONDS;
+    $_SESSION['_pending_restore'] = $pending;
+    return true;
+}
+
+/**
+ * Legacy sign/verify API — preserved for call-site compatibility but
+ * routes through the session-state mechanism above. The $config /
+ * $signature parameters are now ignored; the path/meta/phase live in
+ * $_SESSION.
+ *
+ * Why this shape vs. deleting the legacy API entirely:
+ *   - 6 call sites in lib/backup_admin_restore.php would need coordinated
+ *     edits to the views/backup_admin_restore.php form template too
+ *     (drop the staged_sig hidden field, drop the path round-trip).
+ *   - The view changes are larger surface than the controller changes
+ *     and harder to reason about in isolation.
+ *   - This shim preserves the in-place call sites + view template while
+ *     removing the app_secret dependency. Net code change is small.
+ *   - The full call-site cleanup (delete shim, drop hidden fields from
+ *     view) is queued for v3.27.5 alongside the broader restore-page
+ *     redesign (#1136), where the views get reworked anyway.
+ *
+ * @param array<string,mixed>                                  $config IGNORED
  * @param array{filename?:string,destination_id?:int,size?:int} $meta
  */
 function ipam_restore_wizard_sign(array $config, string $phase, string $stagedPath, array $meta): string
 {
-    if ($phase !== RESTORE_WIZARD_PHASE_STAGED && $phase !== RESTORE_WIZARD_PHASE_DRYRUN_OK) {
-        throw new InvalidArgumentException("ipam_restore_wizard_sign: unknown phase '$phase'");
-    }
-    $appSecret = is_string($config['app_secret'] ?? null) ? $config['app_secret'] : '';
-    if ($appSecret === '') {
-        throw new RuntimeException('ipam_restore_wizard: cannot sign without app_secret');
-    }
-    $key = ipam_hkdf_sha256($appSecret, 'ipam-v4:restore-wizard', 32);
-    $message = "phase=" . $phase
-        . "\0path=" . $stagedPath
-        . "\0filename=" . (isset($meta['filename']) ? (string) $meta['filename'] : '')
-        . "\0destination_id=" . (isset($meta['destination_id']) ? (string) (int) $meta['destination_id'] : '')
-        . "\0size=" . (isset($meta['size']) ? (string) (int) $meta['size'] : '');
-    return hash_hmac('sha256', $message, $key);
+    unset($config); // explicit drop — reads $_SESSION instead
+    ipam_restore_wizard_stage_pending($phase, $stagedPath, $meta);
+    return RESTORE_WIZARD_SESSION_SENTINEL;
 }
 
 /**
- * Verify a wizard token. Returns the canonicalised staged path on success
- * or null on any of: wrong app_secret, tampered fields, mismatched phase
- * (i.e. caller expected dryrun_passed but token only authorises staged
- * — step-skip blocked), or staged path now resolving outside data/tmp/.
+ * Legacy verify shim — consumes from $_SESSION instead of HMAC-checking
+ * a token. The $stagedPath and $signature parameters are read from the
+ * client form but the trusted source is the session slot stored at
+ * sign() time. Returns the session-stored path (canonicalised) on a
+ * successful phase match, null on phase-mismatch / expiry / no-slot.
  *
- * @param array<string,mixed>                                  $config
- * @param array{filename?:string,destination_id?:int,size?:int} $meta
+ * Why we ignore $stagedPath from the caller: in the legacy mechanism
+ * the path was carried client-side and HMAC-protected. With session
+ * state the path is server-side; trusting the form's staged_path would
+ * re-introduce the path-confusion threat the HMAC was originally
+ * defending against.
+ *
+ * @param array<string,mixed>                                  $config IGNORED
+ * @param array{filename?:string,destination_id?:int,size?:int} $meta IGNORED
  */
 function ipam_restore_wizard_verify(
     array $config,
@@ -62,15 +204,12 @@ function ipam_restore_wizard_verify(
     string $signature,
     array $meta
 ): ?string {
-    try {
-        $expected = ipam_restore_wizard_sign($config, $expectedPhase, $stagedPath, $meta);
-    } catch (Throwable) {
+    unset($config, $stagedPath, $signature, $meta); // explicit drop — reads $_SESSION
+    $consumed = ipam_restore_wizard_consume_pending($expectedPhase);
+    if ($consumed === null) {
         return null;
     }
-    if (!hash_equals($expected, $signature)) {
-        return null;
-    }
-    return ipam_restore_canonicalize_staged($stagedPath);
+    return ipam_restore_canonicalize_staged($consumed['path']);
 }
 
 /**
