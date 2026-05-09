@@ -1630,6 +1630,20 @@ function ipam_restore_verify_signed(array $config, string $stagedPath, string $s
  */
 function ipam_restore_dry_run(PDO $db, string $stagedPath): array
 {
+    // Bug S (Pass A 2026-05-08) — magic-byte dispatch must happen BEFORE
+    // the SQL splitter touches the file. The apply path at
+    // ipam_restore_apply() already does this; dry-run was missed when
+    // IPAMBKL1 landed in v3.23.0. Without this sniff the dry-run path
+    // pipes JSON-shaped IPAMBKL1 content through ipam_restore_split_sql_statements,
+    // which interprets the JSON's `"`/`$tag$` tokens as SQL identifier
+    // openers and dollar-quote openers and throws an "unterminated …"
+    // error at EOF — making every IPAMBKL1 archive un-restorable from
+    // the wizard's Step 2 dry-run preview.
+    $magic = ipam_restore_sniff_magic($stagedPath);
+    if ($magic === 'IPAMBKL1') {
+        return ipam_restore_logical_dry_run($db, $stagedPath);
+    }
+
     $driverAttr = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
     $driver = is_string($driverAttr) ? $driverAttr : '';
     if ($driver !== 'sqlite') {
@@ -3084,6 +3098,163 @@ function ipam_logical_open_fk_bracket(PDO $db): callable
         };
     }
     return function (): void {};
+}
+
+/**
+ * Logical-format dry-run preview (Bug S, v3.27.1).
+ *
+ * Mirror of ipam_restore_dry_run() for IPAMBKL1 archives. The SQL-format
+ * dry-run streams .sql.gz through the SQL splitter; that path cannot be
+ * fed JSON-shaped IPAMBKL1 content (the splitter interprets `"` and
+ * `$tag$` tokens by SQL semantics and throws unterminated-state errors
+ * at EOF).
+ *
+ * This helper walks the IPAMBKL1 file:
+ *   - verifies magic and header
+ *   - counts rows per table from the body
+ *   - re-computes SHA-256 over the body and verifies it matches the
+ *     footer's `checksum_sha256` (catches truncation / tampering before
+ *     the wizard's Step 3 apply commits to a transaction)
+ *   - reports any schema_version delta as a warning
+ *
+ * Return shape matches the SQL dry-run for caller compatibility:
+ * `{tables, schema_diff, total_statements, warnings}`. `total_statements`
+ * carries the row count for logical archives (the field is the operator-
+ * facing "how much will be replayed" number).
+ *
+ * @return array{
+ *   tables: list<array{name:string,current_rows:int,backup_rows:int,delta:int}>,
+ *   schema_diff: list<string>,
+ *   total_statements: int,
+ *   warnings: list<string>,
+ * }
+ */
+function ipam_restore_logical_dry_run(PDO $db, string $inputPath): array
+{
+    if (!is_file($inputPath)) {
+        throw new RuntimeException('ipam_restore_logical_dry_run: input file not found: ' . $inputPath);
+    }
+    $gz = gzopen($inputPath, 'rb');
+    if ($gz === false) {
+        throw new RuntimeException('ipam_restore_logical_dry_run: cannot open input for reading: ' . $inputPath);
+    }
+
+    $warnings = [];
+    $rowsByTable = [];   // [tableName => count]
+    $totalRows   = 0;
+    $hashCtx     = hash_init('sha256');
+    $footer      = null;
+
+    try {
+        $magic = rtrim((string) gzgets($gz), "\n");
+        if ($magic !== 'IPAMBKL1') {
+            throw new RuntimeException('ipam_restore_logical_dry_run: unrecognised magic: ' . var_export($magic, true));
+        }
+
+        $headerLine = (string) gzgets($gz);
+        $header = json_decode($headerLine, true);
+        if (!is_array($header) || ($header['header'] ?? false) !== true) {
+            throw new RuntimeException('ipam_restore_logical_dry_run: missing or malformed header line');
+        }
+
+        $rawSchemaVersion = $header['schema_version'] ?? 0;
+        $sourceSchemaVersion = is_numeric($rawSchemaVersion) ? (int) $rawSchemaVersion : 0;
+
+        // Target schema_version may be unavailable (empty DB, missing
+        // schema_migrations table). Treat that as "skip the version compare"
+        // rather than fail the dry-run — operator wants to see WHAT would be
+        // restored, even when the target is fresh.
+        $targetSchemaVersion = null;
+        try {
+            $targetSchemaVersion = ipam_logical_schema_version($db);
+        } catch (Throwable) {
+            $warnings[] = 'Could not read target schema_version (schema_migrations table missing). Apply will refuse on a fresh target until init runs.';
+        }
+        if ($targetSchemaVersion !== null) {
+            if ($sourceSchemaVersion > $targetSchemaVersion) {
+                $warnings[] = "Backup schema_version $sourceSchemaVersion is newer than this install's $targetSchemaVersion. Apply will refuse — upgrade first.";
+            } elseif ($sourceSchemaVersion < $targetSchemaVersion) {
+                $warnings[] = "Backup schema_version $sourceSchemaVersion is older than this install's $targetSchemaVersion. Apply will succeed; rows from tables added after the backup remain empty.";
+            }
+        }
+
+        // Body — JSONL, one row per line, plus an optional footer line.
+        // Hash matches what ipam_restore_logical_apply hashes (#824 spec):
+        // every row line (excluding the footer line) contributes to the
+        // SHA-256 checksum that the writer recorded in the footer.
+        while (!gzeof($gz)) {
+            $line = gzgets($gz);
+            if ($line === false || $line === '') break;
+            $trim = rtrim($line, "\n");
+            if ($trim === '') continue;
+
+            $obj = json_decode($trim, true);
+            if (!is_array($obj)) {
+                throw new RuntimeException('ipam_restore_logical_dry_run: malformed body line');
+            }
+
+            if (($obj['footer'] ?? false) === true) {
+                $footer = $obj;
+                break;
+            }
+
+            $table = $obj['table'] ?? null;
+            if (!is_string($table)) {
+                throw new RuntimeException('ipam_restore_logical_dry_run: malformed row line (missing table)');
+            }
+            $rowsByTable[$table] = ($rowsByTable[$table] ?? 0) + 1;
+            $totalRows++;
+
+            // Match writer's checksum domain: every body row line as written.
+            hash_update($hashCtx, $trim . "\n");
+        }
+
+        if (!is_array($footer)) {
+            throw new RuntimeException('ipam_restore_logical_dry_run: archive missing footer — backup may be truncated');
+        }
+
+        $expectedHash = $footer['checksum_sha256'] ?? null;
+        $actualHash = hash_final($hashCtx);
+        if (is_string($expectedHash) && hash_equals($expectedHash, $actualHash) !== true) {
+            $warnings[] = 'Body checksum does not match footer — apply will refuse to proceed (corruption or tampering).';
+        }
+
+        $expectedTotal = $footer['total_rows'] ?? null;
+        if (is_numeric($expectedTotal) && (int) $expectedTotal !== $totalRows) {
+            $warnings[] = "Body row count ($totalRows) disagrees with footer total_rows ($expectedTotal).";
+        }
+    } finally {
+        gzclose($gz);
+    }
+
+    // Build the per-table summary the wizard renders. current_rows comes
+    // from the live DB; backup_rows from what we just counted.
+    $tables = [];
+    foreach ($rowsByTable as $name => $backupRows) {
+        $current = 0;
+        try {
+            $stmt = $db->query('SELECT COUNT(*) FROM ' . ipam_logical_q($db, $name));
+            if ($stmt !== false) {
+                $val = $stmt->fetchColumn();
+                if (is_numeric($val)) $current = (int) $val;
+            }
+        } catch (Throwable) {
+            // Table doesn't exist on target — treated as current=0.
+        }
+        $tables[] = [
+            'name'          => $name,
+            'current_rows'  => $current,
+            'backup_rows'   => $backupRows,
+            'delta'         => $backupRows - $current,
+        ];
+    }
+
+    return [
+        'tables'           => $tables,
+        'schema_diff'      => [],
+        'total_statements' => $totalRows,
+        'warnings'         => $warnings,
+    ];
 }
 
 /**

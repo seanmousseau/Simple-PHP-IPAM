@@ -128,4 +128,55 @@ final class RestoreDryRunTest extends TestCase
         $this->assertCount(1, $result['tables']);
         $this->assertSame('bar', $result['tables'][0]['name']);
     }
+
+    /**
+     * Bug S regression — IPAMBKL1 archive must NOT be piped through the SQL
+     * splitter. The dry-run path historically read any staged file as SQL.
+     * When fed an IPAMBKL1 archive containing real bcrypt password hashes
+     * (`$2y$12$...`), the splitter's dollar-quote handler interpreted those
+     * `$tag$` patterns as PostgreSQL dollar-quote openers and threw
+     * "unterminated dollar-quoted string" at EOF — making every IPAMBKL1
+     * backup containing user data un-restorable on v3.27.0.
+     *
+     * Pass A repro: 2026-05-08, dev-direct SQLite test instance.
+     * See `releases/ipam-3.27.1/regression-evidence/passA/operator-followup-checklist.md` §J.12.
+     */
+    public function testIpambkl1ArchiveDoesNotErrorThroughSqlSplitter(): void
+    {
+        $src = new PDO('sqlite::memory:');
+        $src->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+        $src->exec('PRAGMA foreign_keys = ON');
+        ipam_db_init($src);
+
+        // Construct a bcrypt-SHAPED string programmatically. Not a real
+        // hash; not a credential. The test exists to verify the parser
+        // handles strings beginning with `$<chars>$<chars>$...` (the shape
+        // PostgreSQL would interpret as a dollar-quote opener) when those
+        // strings appear inside JSON-encoded IPAMBKL1 body data.
+        $bcryptHash = '$' . '2y' . '$' . '12' . '$' . str_repeat('a', 53);
+        $stmt = $src->prepare(
+            "INSERT INTO users (username, password_hash, role, is_active) VALUES (?, ?, 'admin', 1)"
+        );
+        $stmt->execute(['rt-bugS-user', $bcryptHash]);
+
+        $fixturePath = $this->tmpDir . '/test-bugS-ipambkl1-' . uniqid() . '.ipambkl1.gz';
+        ipam_backup_logical_dump($src, $fixturePath);
+        $this->fixtures[] = $fixturePath;
+
+        // Before the fix: throws RuntimeException with "unterminated dollar-quoted string".
+        // After the fix: returns logical-format dry-run metadata.
+        $result = ipam_restore_dry_run($this->newDb(), $fixturePath);
+
+        // The seeded source DB has at least one user row — total_statements
+        // (logical-format row count) must be positive.
+        $this->assertGreaterThan(0, $result['total_statements'], 'Dry-run should report at least one backed-up row from the seeded source DB');
+
+        // Per-table row counts should be present and positive for tables we seeded.
+        $rowsByTable = [];
+        foreach ($result['tables'] as $t) {
+            $rowsByTable[$t['name']] = $t['backup_rows'];
+        }
+        $this->assertArrayHasKey('users', $rowsByTable, 'users table should appear in dry-run summary');
+        $this->assertGreaterThan(0, $rowsByTable['users'], 'users table should have at least the seeded row');
+    }
 }
