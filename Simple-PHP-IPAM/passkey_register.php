@@ -158,6 +158,10 @@ if ($action === 'complete') {
     $newId = (int)$db->lastInsertId();
 
     audit($db, 'mfa.passkey.register', 'user', $userId, "name={$credentialName}");
+    // Bug T (Pass A 2026-05-08, v3.27.1): MFA enrollment change is a
+    // documented sudo-grant invalidation event. A grant minted before
+    // the new passkey was registered must not outlive that change.
+    ipam_sudo_invalidate();
 
     echo json_encode(['ok' => true, 'id' => $newId, 'name' => htmlspecialchars($credentialName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8')]);
     exit;

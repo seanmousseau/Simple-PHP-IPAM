@@ -120,6 +120,47 @@ See **`marketing-site.md`** — that doc is the source of truth. Summary only:
 
 ---
 
+## Cron wrapper script (per-target requirement, v3.27.1+)
+
+Observability gap O2 from Pass A 2026-05-08: `cron.php` emits failures to STDERR; if the cron entry redirects `> /dev/null 2>&1`, every failure disappears. The encrypt-write-path bug failed silently for two weeks because of this exact gap.
+
+**Every deploy target's cron wrapper must redirect to a log file**, not `/dev/null`. The recommended shape:
+
+```bash
+#!/bin/bash
+# /root/scripts/ipam-cron.sh — invoked by /etc/crontab every 15 min
+runuser --user nobody -- /usr/local/lsws/lsphp85/bin/php \
+    /usr/local/lsws/vhosts/ipam.seanmousseau.com/html/cron.php \
+    >> /var/log/ipam-cron.log 2>&1
+```
+
+Plus a `logrotate` config at `/etc/logrotate.d/ipam-cron`:
+
+```
+/var/log/ipam-cron.log {
+    weekly
+    rotate 8
+    compress
+    missingok
+    notifempty
+    create 0640 root adm
+}
+```
+
+v3.27.1's other observability fixes (O1 `cron.php $fail()` → audit + error_log; O3 orchestrator preflight failed-row INSERT; O4 `backup.preflight_failed` audit verb; O5 overdue detector reads last-run status) cover the visibility gap from inside the application. **The cron wrapper redirect is the host-side belt-and-suspenders** — the application can write to error_log and audit_log even when STDERR is `/dev/null`'d, but operators reading the wrapper script for the first time should see logging by default.
+
+**Verify after deploy:**
+
+```bash
+ssh root@192.168.80.23 'tail -f /var/log/ipam-cron.log' &
+# wait for next */15 cron tick
+# expect to see JSON lines like {"task":"tmp_cleanup",...}
+```
+
+If `/var/log/ipam-cron.log` is missing or empty after 30 min, the wrapper script needs the redirect added.
+
+---
+
 ## Recurring footguns
 
 | Footgun | Symptom | Fix |

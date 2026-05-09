@@ -74,6 +74,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $enc   = ipam_totp_encrypt_secret($secret, $appSecret);
                 $db->prepare("UPDATE users SET totp_secret_enc=:enc, totp_enabled=1 WHERE id=:id")
                    ->execute([':enc' => $enc, ':id' => $cur['id']]);
+                // Bug T (Pass A 2026-05-08, v3.27.1): MFA enrollment change
+                // is a documented sudo-grant invalidation event. A grant
+                // minted before the new factor was enrolled must not
+                // outlive that change.
+                ipam_sudo_invalidate();
                 $codes = ipam_totp_generate_backup_codes(8);
                 ipam_totp_save_backup_codes($db, to_int($cur['id']), $codes);
                 $_SESSION['totp_new_backup_codes'] = $codes;

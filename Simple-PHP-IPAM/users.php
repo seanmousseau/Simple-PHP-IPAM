@@ -143,6 +143,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $db->prepare("UPDATE users SET role = :r WHERE id = :id")
                    ->execute([':r' => $role, ':id' => $id]);
                 audit($db, 'user.set_role', 'user', $id, "role=$role");
+                // Bug T (Pass A 2026-05-08, v3.27.1) — KNOWN LIMITATION:
+                // step-up-auth.md lists role-downgrade as a sudo-grant
+                // invalidation event. We cannot fully honour that contract
+                // here: ipam_sudo_invalidate() clears $_SESSION on the
+                // CURRENT request only, but the demoted user is necessarily
+                // a DIFFERENT user (the self-protection guard above blocks
+                // self-demotion). Cross-user session invalidation requires
+                // a per-user session-marker mechanism (e.g. a
+                // users.sudo_invalidate_after timestamp consulted by
+                // ipam_sudo_active()) which is out of scope for this hotfix.
+                // Tracked for v3.28.0. The same limitation applies to
+                // link_oidc/unlink_oidc admin actions below.
                 $msg = 'Role updated.';
             }
         }

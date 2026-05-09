@@ -67,6 +67,8 @@ if (!ipam_sudo_require($db, $userId)) {
     ]);
     exit;
 }
+ipam_sudo_consume_once();  // Bug X (Pass A 2026-05-08, v3.27.1): consume sudo_once for TTL=0 policy.
+
 
 $value = ipam_setting($key);
 if (!is_string($value)) $value = '';

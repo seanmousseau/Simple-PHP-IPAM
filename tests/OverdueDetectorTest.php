@@ -112,6 +112,18 @@ class OverdueDetectorTest extends TestCase
                 role      TEXT NOT NULL DEFAULT 'admin'
             )
         ");
+        $this->db->exec(
+            "CREATE TABLE backup_runs ("
+            . "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            . "destination_id INTEGER, "
+            . "schedule_id INTEGER, "
+            . "triggered_by TEXT NOT NULL DEFAULT 'manual', "
+            . "status TEXT NOT NULL DEFAULT 'running', "
+            . "started_at TEXT NOT NULL DEFAULT (datetime('now')), "
+            . "completed_at TEXT, "
+            . "filename TEXT, "
+            . "error_message TEXT)"
+        );
 
         $GLOBALS['db']     = $this->db;
         $GLOBALS['config'] = [];
@@ -351,5 +363,73 @@ class OverdueDetectorTest extends TestCase
         $state = json_decode($stateRaw, true);
         $this->assertIsArray($state);
         $this->assertArrayHasKey((string) $schedId, $state);
+    }
+
+    /**
+     * O5 (Pass A 2026-05-08, v3.27.1) — schedule whose most recent run is
+     * `status='failed'` must be flagged overdue regardless of next_run_at.
+     *
+     * Pre-fix bug: `ipam_backup_finalize_schedule_run()` advances last_run_at
+     * AND next_run_at on every cron tick, success or fail. So a schedule that
+     * fires a hundred times and fails every single time still LOOKS healthy
+     * to the detector (next_run_at is always recent). The whole point of the
+     * overdue alert is to catch "every fire is broken" silently — that
+     * required treating last-run STATUS as part of the overdue signal.
+     */
+    public function testScheduleWithRecentFailedRunIsOverdueRegardlessOfNextRunAt(): void
+    {
+        $now = 1_750_000_000;
+        $this->setOverdueGrace(60);
+        $destId = $this->seedDestination();
+        // next_run_at is in the FUTURE — well within the grace window. Pre-O5
+        // detector would not flag this schedule. Post-O5: failed last run
+        // wins.
+        $schedId = $this->seedSchedule($destId, -30, $now);  // 30 min from now (future)
+
+        // Seed a recent failed run — what cron Task 7 would produce after
+        // the encrypt-write-path fix lands and an operator misconfigures
+        // their vault key (or any other preflight failure).
+        $startedAt = gmdate('Y-m-d H:i:s', $now - 300); // 5 min ago
+        $this->db->prepare(
+            "INSERT INTO backup_runs (destination_id, schedule_id, triggered_by, status, started_at, filename, error_message) "
+            . "VALUES (:d, :s, 'schedule', 'failed', :ts, '(preflight-failed-deadbeef)', 'rt-test-error')"
+        )->execute([':d' => $destId, ':s' => $schedId, ':ts' => $startedAt]);
+
+        $result = ipam_backup_detect_overdue_schedules($this->db, $now);
+
+        $this->assertSame(1, $result['overdue'], 'failed-last-run schedule must count as overdue');
+        $this->assertSame([$schedId], $result['alerted']);
+        $this->assertGreaterThanOrEqual(
+            1,
+            $this->overdueAuditCount(),
+            'audit row must fire for failed-last-run-detected overdue (O5 contract)'
+        );
+    }
+
+    /**
+     * O5 follow-up — a schedule with a successful run after its last failure
+     * must NOT be flagged overdue. Confirms we don't false-positive on every
+     * schedule that has ever had a failure in its history.
+     */
+    public function testScheduleWithFailedThenSuccessRunIsNotOverdue(): void
+    {
+        $now = 1_750_000_000;
+        $this->setOverdueGrace(60);
+        $destId = $this->seedDestination();
+        $schedId = $this->seedSchedule($destId, -30, $now);  // 30 min from now (future)
+
+        // Older failed run, then a more recent success.
+        $this->db->prepare(
+            "INSERT INTO backup_runs (destination_id, schedule_id, triggered_by, status, started_at, filename) "
+            . "VALUES (:d, :s, 'schedule', 'failed', :ts, '(preflight-failed-old)')"
+        )->execute([':d' => $destId, ':s' => $schedId, ':ts' => gmdate('Y-m-d H:i:s', $now - 7200)]); // 2h ago
+        $this->db->prepare(
+            "INSERT INTO backup_runs (destination_id, schedule_id, triggered_by, status, started_at, filename) "
+            . "VALUES (:d, :s, 'schedule', 'success', :ts, 'good-backup.ipambkp3')"
+        )->execute([':d' => $destId, ':s' => $schedId, ':ts' => gmdate('Y-m-d H:i:s', $now - 600)]); // 10 min ago
+
+        $result = ipam_backup_detect_overdue_schedules($this->db, $now);
+
+        $this->assertSame(0, $result['overdue'], 'recent success after older failure must clear overdue status');
     }
 }
