@@ -37,3 +37,6 @@ website/
 # Allow brand assets shipped in logo/
 !logo/*.png
 .worktrees/
+
+# Pass-X regression-evidence DB snapshots: commit *.sqlite.gz only
+releases/*/regression-evidence/*/db-snapshots/*.sqlite
