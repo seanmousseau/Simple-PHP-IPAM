@@ -43,7 +43,11 @@ final class IpRateLimitAuditTest extends TestCase
 
         $rows = $this->db->query("SELECT action, ip, details FROM audit_log WHERE action = 'auth.ip_rate_limited' ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC);
         $this->assertCount(1, $rows, '#1134: first fire must emit one audit row');
-        $this->assertSame($ip, $rows[0]['ip']);
+        // The `ip` column reflects client_ip() at audit() time. The
+        // operator-relevant IP (the one being rate-limited) lives in
+        // `details` so it's discoverable via grep regardless of the
+        // remote-host substitution.
+        $this->assertStringContainsString('ip=' . $ip, $rows[0]['details']);
         $this->assertStringContainsString('attempts=5', $rows[0]['details']);
         $this->assertStringContainsString('unlock_at=', $rows[0]['details']);
         $this->assertStringContainsString('action=login', $rows[0]['details']);
@@ -75,11 +79,14 @@ final class IpRateLimitAuditTest extends TestCase
     {
         ipam_audit_ip_rate_limited($this->db, 'login', '192.0.2.1', 5, time() + 600);
         ipam_audit_ip_rate_limited($this->db, 'login', '192.0.2.2', 5, time() + 600);
-        ipam_audit_ip_rate_limited($this->db, 'login', '192.0.2.1', 6, time() + 600);
+        ipam_audit_ip_rate_limited($this->db, 'login', '192.0.2.1', 6, time() + 600);  // dampened (same IP, same window)
 
-        $rows = $this->db->query("SELECT ip FROM audit_log WHERE action = 'auth.ip_rate_limited' ORDER BY ip")->fetchAll(PDO::FETCH_ASSOC);
+        $rows = $this->db->query("SELECT details FROM audit_log WHERE action = 'auth.ip_rate_limited' ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
         $this->assertCount(2, $rows, '#1134: per-IP dampener — distinct IPs must each get a fresh audit row');
-        $this->assertSame(['192.0.2.1', '192.0.2.2'], array_column($rows, 'ip'));
+        // The IPs are in the details substring (audit_log.ip column reflects
+        // client_ip() which is constant per-process in test).
+        $this->assertStringContainsString('ip=192.0.2.1', $rows[0]['details']);
+        $this->assertStringContainsString('ip=192.0.2.2', $rows[1]['details']);
     }
 
     public function testErrorMessageIsIpSpecific(): void

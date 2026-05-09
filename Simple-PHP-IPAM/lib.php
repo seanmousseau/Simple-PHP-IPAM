@@ -1063,6 +1063,57 @@ function login_rate_limited(PDO $db, string $ip, int $maxAttempts, int $windowSe
     return auth_rate_limited($db, 'login', $ip, $maxAttempts, $windowSeconds);
 }
 
+/**
+ * Emit a once-per-window 'auth.ip_rate_limited' audit row (#1134, v3.27.3).
+ *
+ * Pre-fix: login.php audited 'auth.login_blocked' on every refused
+ * attempt within the rate-limit window — flooding the log with up to
+ * one row per attempted login over the lockout window. Operators
+ * filtering audit_log by username also missed these rows entirely
+ * (entity_id NULL, username column NULL).
+ *
+ * Post-fix contract:
+ *   - Look back $windowSeconds for any prior 'auth.ip_rate_limited' row
+ *     for this (action, ip). If found, this is a continuation of the
+ *     same window — don't re-emit.
+ *   - Otherwise emit a single row with details=
+ *     "action=$action attempts=$attempts unlock_at=$ISO8601" so the
+ *     operator can find it via grep on either the IP column OR the
+ *     details substring.
+ *
+ * The dampener is per-IP per-action, keyed off prior audit_log rows
+ * (no separate state table). Cheap; relies on the audit_log triggers
+ * staying append-only (which they are).
+ */
+function ipam_audit_ip_rate_limited(PDO $db, string $action, string $ip, int $attempts, int $unlockAt): void
+{
+    // Dampener: skip emission iff a prior row for this (action, ip) is
+    // still inside its own lockout window. The window boundary is
+    // encoded as `unlock_at=<ISO>` in details, so the active-window
+    // test is "previous unlock_at > now". We don't use audit_log.ip for
+    // the match — audit() populates that from client_ip(), which is
+    // the rate-limited IP in production (login.php passes the same
+    // source) but differs in CLI tests. The details substring is the
+    // operator-grep target anyway.
+    $st = $db->prepare(
+        "SELECT details FROM audit_log
+          WHERE action = 'auth.ip_rate_limited'
+            AND details LIKE :detailsLike
+          ORDER BY id DESC LIMIT 1"
+    );
+    $st->execute([':detailsLike' => '%action=' . $action . '%ip=' . $ip . '%']);
+    $prev = (string) ($st->fetchColumn() ?: '');
+    if ($prev !== '' && preg_match('/unlock_at=([0-9T:\-Z]+)/', $prev, $m)) {
+        $prevUnlock = strtotime($m[1]);
+        if ($prevUnlock !== false && $prevUnlock > time()) {
+            return; // dampened — previous lockout window still active
+        }
+    }
+    $unlockIso = gmdate('Y-m-d\TH:i:s\Z', $unlockAt);
+    audit($db, 'auth.ip_rate_limited', 'auth', null,
+          "action=$action attempts=$attempts unlock_at=$unlockIso ip=$ip");
+}
+
 function record_login_failure(PDO $db, string $ip, string $username = ''): void
 {
     record_auth_failure($db, 'login', $ip, $username);

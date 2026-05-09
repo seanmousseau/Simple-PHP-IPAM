@@ -67,8 +67,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if (demo_mode_enabled()) {
         // Demo mode: only demo/demo is accepted; rate limiting still applies (#115)
+        // Demo-mode IP rate-limit (#1134 unchanged here — demo mode is
+        // a niche surface; the real fix is in the production branch below).
         if (login_rate_limited($db, $ip, $maxAttempts, $lockoutSeconds)) {
-            $error = 'Too many failed login attempts. Please try again later.';
+            $error = 'Too many failed login attempts from this network. Please try again later.';
         } elseif ($username === 'demo' && $password === 'demo') {
             $st = $db->prepare("SELECT id, username, role FROM users WHERE username = 'demo' AND is_active = 1");
             $st->execute();
@@ -91,8 +93,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         purge_old_login_attempts($db, $lockoutSeconds * 2);
 
         if (!$isRecovery && login_rate_limited($db, $ip, $maxAttempts, $lockoutSeconds)) {
-            $error = 'Too many failed login attempts. Please try again later.';
-            audit($db, 'auth.login_blocked', 'user', null, 'ip=' . $ip);
+            // #1134 (v3.27.3): IP-specific message + once-per-window
+            // 'auth.ip_rate_limited' audit row. Pre-fix, the message was
+            // generic and 'auth.login_blocked' fired on every refused
+            // attempt within the window — operators searching audit_log
+            // by username missed the rows entirely (entity_id NULL).
+            $unlockAt = time() + $lockoutSeconds;
+            $error = 'Too many failed login attempts from this network. Please try again in '
+                   . max(1, (int) ceil($lockoutSeconds / 60)) . ' minutes.';
+            ipam_audit_ip_rate_limited($db, 'login', $ip, $maxAttempts, $unlockAt);
         } elseif (!$isRecovery && $username !== '' && account_locked_out($db, $username, $acctMaxAttempts, $acctLockoutSecs)) {
             $error = 'This account is temporarily locked due to too many failed attempts.';
             audit($db, 'auth.account_locked', 'user', null, '');
