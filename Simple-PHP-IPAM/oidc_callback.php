@@ -155,8 +155,15 @@ if (!$user && $autoLink) {
         $newUsername = $claimPrefUsername !== '' ? $claimPrefUsername
             : ($emailLocalPart !== '' ? $emailLocalPart : ($subSanitised !== '' ? $subSanitised : 'oidcuser'));
 
-        // Set an unusable password hash so the account cannot be used with local auth
-        $unusableHash = password_hash(bin2hex(random_bytes(32)), PASSWORD_DEFAULT);
+        // Bug U / #1120 (v3.27.2): use the canonical '!disabled' sentinel
+        // documented in demo_seed.php and seeded for readonly-user /
+        // netops-user in lib.php. password_verify() returns false for any
+        // input against this string (it is not a valid bcrypt hash), and
+        // any future lockout-protection guard that checks for the sentinel
+        // will correctly recognise auto-provisioned accounts as OIDC-only.
+        // The pre-fix random-bcrypt hash worked functionally (unknown
+        // password) but mixed conventions in the auth model.
+        $unusableHash = '!disabled';
 
         $ins = $db->prepare(
             "INSERT INTO users (username, password_hash, role, is_active, oidc_sub, name, email)

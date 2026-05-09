@@ -86,14 +86,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $user   = current_user();
     $userId = to_int($user['id'] ?? 0) ?: null;
 
-    // Per-key save (#756): single-setting update path. Distinct from the
-    // group-POST path below — the legacy group form treats every absent
-    // boolean as false, which silently flips siblings when an admin only
-    // intended to flip one toggle. The per-key path bypasses that cascade
-    // entirely. Currently bool-only (matches the toggle UI use case);
-    // string/int/json fields still flow through group save for batch
-    // validation UI. Activated by presence of POST['key']; if absent,
-    // falls through to group save.
+    // #1121 (v3.27.2): the UI no longer drives the per-key save — the shadow
+    // form, the data-setting-toggle-target attribute, and the auto-submit JS
+    // are all gone. Bool changes stage in the group form like every other
+    // field, and "Save Group" commits atomically (closing the operator-
+    // facing wipe-unsaved-input bug).
+    //
+    // The server-side per-key handler below stays alive as a TEMPORARY
+    // STOPGAP for the Playwright test suite (and any future programmatic
+    // /admin POSTers) that still POSTs key/value. Tracked for v3.28.0
+    // cleanup — see #1126. Removing this without first migrating the test
+    // fixtures will fail every spec that calls fetchPost(settings.php,
+    // {key, value}). Do NOT re-wire from the UI.
     $postedKey = to_str($_POST['key'] ?? '');
     if ($postedKey !== '') {
         if (!isset($definitions[$postedKey]) || !empty($definitions[$postedKey]['deprecated'])) {
@@ -113,9 +117,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $current  = ipam_setting($postedKey);
 
         // Step-up policy save: lock-out precondition + sudo gate + audit +
-        // grant invalidation. Self-protection per plan §3.4. Same shape as
-        // the group path below; lives here too because the toggle UI POSTs
-        // single-key bool flips through this path.
+        // grant invalidation (mirror of the group path below).
         if (($def['group'] ?? '') === 'step_up' && (bool)$current !== $newValue) {
             $proposed = ipam_sudo_proposed_policy_from_overrides([$postedKey => $newValue]);
             $offender = ipam_sudo_policy_lockout_check($db, $proposed);
@@ -136,8 +138,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 page_footer();
                 exit;
             }
-            ipam_sudo_consume_once();  // Bug X (Pass A 2026-05-08, v3.27.1): consume sudo_once for TTL=0 policy.
-
+            ipam_sudo_consume_once();
         }
 
         if ((bool)$current !== $newValue) {
@@ -202,7 +203,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if ($type === 'bool') {
-            $formOverrides[$key] = isset($_POST[$fieldName]) ? '1' : '0';
+            // #1121: read value, not presence. The hidden shim emits '0' for
+            // unchecked, the checkbox emits '1' for checked. With shim,
+            // `isset()` would always be true — making "unchecked" indistinguishable
+            // from "checked".
+            $formOverrides[$key] = (to_str($_POST[$fieldName] ?? '0') === '1') ? '1' : '0';
         } elseif ($sensitive) {
             $formOverrides[$key] = '';
         } else {
@@ -217,7 +222,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if ($type === 'bool') {
-            $newValue = isset($_POST[$fieldName]);
+            // #1121: see formOverrides note above — value, not presence.
+            $newValue = (to_str($_POST[$fieldName] ?? '0') === '1');
         } elseif ($type === 'int') {
             $raw = trim(to_str($_POST[$fieldName] ?? ''));
             if ($raw !== '' && !preg_match('/^-?\d+$/', $raw)) {
@@ -289,10 +295,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stepUpFormAction   = 'settings.php';
             $stepUpHiddenFields = ['group' => 'step_up'];
             // Re-emit only the policy field POSTs so the form re-submits the
-            // same edits with the step-up proof attached.
+            // same edits with the step-up proof attached. #1121: with the
+            // hidden value="0" shim, every bool field is always present;
+            // re-emit the actual submitted value (0 or 1) rather than just
+            // its presence.
             $boolFields = ['k_auth__step_up__allow_totp', 'k_auth__step_up__allow_email_otp', 'k_auth__step_up__allow_webauthn', 'k_auth__step_up__allow_provider_reauth'];
             foreach ($boolFields as $boolField) {
-                if (isset($_POST[$boolField])) $stepUpHiddenFields[$boolField] = '1';
+                $stepUpHiddenFields[$boolField] = (to_str($_POST[$boolField] ?? '0') === '1') ? '1' : '0';
             }
             if (isset($_POST['k_auth__step_up__ttl_seconds'])) {
                 $stepUpHiddenFields['k_auth__step_up__ttl_seconds'] = to_str($_POST['k_auth__step_up__ttl_seconds']);

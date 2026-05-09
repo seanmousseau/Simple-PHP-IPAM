@@ -63,28 +63,6 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
   </div>
   <?php endif; unset($_globalCfg, $_appSecret); ?>
 
-  <?php
-  // Per-toggle save (#756): each boolean gets a hidden shadow <form> rendered
-  // OUTSIDE the group form (forms cannot nest). app.js auto-submits the shadow
-  // form on checkbox change with {key, value} for the per-key settings.php
-  // path. The bool checkbox itself stays inside the group form with its
-  // legacy `name="k_..."` attribute, so the group "Save" button continues to
-  // function and existing tests keep finding the input by its established
-  // selector. Net effect: clicking a bool flips just that bool (no sibling
-  // cascade); clicking "Save Group" still fires the legacy group POST.
-  /** @var array<string, array<string, mixed>> $boolDefs */
-  $boolDefs = array_filter($groupDefs, fn($d) => ($d['type'] ?? 'string') === 'bool' && empty($d['deprecated']));
-  foreach ($boolDefs as $bk => $bdef):
-      $bFieldName = 'k_' . str_replace('.', '__', $bk);
-  ?>
-  <form method="post" action="settings.php" class="setting-toggle-form"
-        id="toggle-<?= e($bFieldName) ?>" data-setting-toggle="<?= e($bk) ?>">
-    <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
-    <input type="hidden" name="key"  value="<?= e($bk) ?>">
-    <!-- value=... appended by app.js based on the bound checkbox state -->
-  </form>
-  <?php endforeach; ?>
-
   <form method="post" action="settings.php">
     <input type="hidden" name="csrf"  value="<?= e(csrf_token()) ?>">
     <input type="hidden" name="group" value="<?= e($groupKey) ?>">
@@ -120,8 +98,14 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
               $boolChecked = $shown !== null ? $shown === '1' : (bool)$current;
           ?>
             <label for="<?= e($inputId) ?>" class="setting-head setting-head--bool">
-              <input type="checkbox" id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>" value="1"<?= $boolChecked ? ' checked' : '' ?>
-                     data-setting-toggle-target="<?= e($key) ?>">
+              <?php /* #1121: hidden shim emits value="0" so unchecked submits
+                   an explicit value (not just absence). Same name as the
+                   checkbox; if the box is checked, the checkbox's value="1"
+                   wins by being the latest field with that name in form
+                   submission order. Closes the #756 silent-sibling cascade
+                   without requiring per-key auto-save. */ ?>
+              <input type="hidden" name="<?= e($fieldName) ?>" value="0">
+              <input type="checkbox" id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>" value="1"<?= $boolChecked ? ' checked' : '' ?>>
               <strong><?= e($label) ?></strong>
               <?= $badgeHtml ?>
             </label>

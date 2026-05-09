@@ -2861,10 +2861,39 @@ function ipam_logical_table_order(PDO $db): array
  * The naming convention is a stable cross-engine signal — and the
  * conformance tests (#1042) catch any column that defies it.
  *
+ * Per-table overrides (`$table.$column` map) carry the cases where a
+ * shipped table predates or otherwise violates the suffix convention. Add
+ * sparingly: the override is a maintenance liability, not a feature.
+ *
  * @return 'binary'|'timestamp'|'scalar'
  */
-function ipam_logical_column_kind(string $columnName): string
+function ipam_logical_column_kind(string $columnName, ?string $tableName = null): string
 {
+    // Per-table overrides (#1124). Each entry exists because a shipped
+    // table has a binary column that does not end in `_bin`. The IPAMBKL1
+    // writer's pre-#1124 silent-drop on json_encode failure made these
+    // invisible until reproduction surfaced #1124 on v3.27.1's deployed
+    // sqlite test instance — a backup with passkeys enrolled produced an
+    // off-by-N row count and a checksum mismatch. The override map ties
+    // the fix to specific columns; the `?` parameter keeps callers that
+    // don't have table context (eg. external tooling) backward compatible.
+    static $overrides = [
+        // WebAuthn credentials store raw binary in two columns. Schema
+        // declares `credential_id` BLOB and `public_key` TEXT, but TEXT
+        // here carries the COSE-encoded key (binary, often non-UTF-8).
+        // Renaming the columns to `_bin` would be a schema migration on
+        // a security-sensitive table; the override is the lower-risk
+        // fix and exists for that reason.
+        'webauthn_credentials.credential_id' => 'binary',
+        'webauthn_credentials.public_key'    => 'binary',
+    ];
+    if ($tableName !== null) {
+        $key = $tableName . '.' . $columnName;
+        if (isset($overrides[$key])) {
+            return $overrides[$key];
+        }
+    }
+
     if (str_ends_with($columnName, '_bin')) {
         return 'binary';
     }
@@ -2889,11 +2918,11 @@ function ipam_logical_column_kind(string $columnName): string
  * @param array<string,mixed> $row
  * @return array<string,mixed>
  */
-function ipam_logical_encode_row(array $row): array
+function ipam_logical_encode_row(array $row, ?string $tableName = null): array
 {
     $out = [];
     foreach ($row as $col => $val) {
-        $kind = ipam_logical_column_kind($col);
+        $kind = ipam_logical_column_kind($col, $tableName);
         $out[$col] = ipam_logical_encode_value(
             $val,
             $kind === 'binary',
@@ -3054,11 +3083,30 @@ function ipam_backup_logical_dump(PDO $db, string $outputPath, ?int $tenantId = 
         // Body — rows in topo-sorted table order.
         foreach ($tableOrder as $table) {
             foreach (ipam_logical_iterate_table($db, $table) as $row) {
-                $encoded = ipam_logical_encode_row($row);
-                $line    = (string) json_encode(
-                    ['table' => $table, 'row' => $encoded],
+                $encoded = ipam_logical_encode_row($row, $table);
+                $envelope = ['table' => $table, 'row' => $encoded];
+                $line = json_encode(
+                    $envelope,
                     JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
                 );
+                // #1124: pre-fix `(string) json_encode(...)` silently became
+                // "" on non-UTF-8 input, producing a blank body line that
+                // the reader skipped while the writer still incremented
+                // $totalRows and hashed "\n". Result: off-by-N row count and
+                // a checksum mismatch that gated apply. The throw turns
+                // "silent data loss" into "loud, attributed failure" so any
+                // future column-kind override gap surfaces at write time
+                // instead of at restore time.
+                if ($line === false) {
+                    $rawPk = $row['id'] ?? null;
+                    $sourcePk = (is_int($rawPk) || is_string($rawPk)) ? (string) $rawPk : '?';
+                    throw new RuntimeException(
+                        'ipam_backup_logical_dump: json_encode failed for table=' . $table
+                        . ' row id=' . $sourcePk
+                        . ' — likely a non-UTF-8 binary column missing from ipam_logical_column_kind() override map'
+                        . ' (json_last_error=' . json_last_error() . ': ' . json_last_error_msg() . ')'
+                    );
+                }
                 $payload = $line . "\n";
                 hash_update($hashCtx, $payload);
                 $write($gz, $payload, 'body row in table ' . $table);
@@ -3757,7 +3805,7 @@ function ipam_logical_replay_row(
     foreach ($cols as $c) {
         $val = $decoded[$c];
         $param = ':' . $c;
-        $kind  = ipam_logical_column_kind((string) $c);
+        $kind  = ipam_logical_column_kind((string) $c, $table);
         if ($kind === 'binary' && is_string($val)) {
             ipam_bind_binary($stmt, $param, $val);
         } elseif ($kind === 'timestamp' && $driver === 'mysql' && is_string($val)) {

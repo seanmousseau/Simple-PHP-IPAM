@@ -12,15 +12,14 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.27.0
+## What's new in v3.27.2
 
-Step-up authentication. Sensitive admin actions are now gated by a unified `ipam_sudo_verify()` helper that accepts any of the user's enrolled MFA methods (TOTP, Email OTP, WebAuthn passkey, account password, OIDC re-auth) per install policy — replacing the v3.26.0 hardcoded password re-prompt that locked OIDC-only deployments out of vault-key administration (#1098).
+Hotfix on top of the v3.27.1 Pass-A regression release. Round-trip verification of the deployed v3.27.1 sqlite test instance surfaced a P0 disaster-recovery defect — the IPAMBKL1 logical-format writer silently dropped `webauthn_credentials` rows on any install with a passkey enrolled, blocking apply via the v3.26.0 footer guard. v3.27.2 closes that plus three behavioural items from the v3.27.1 acknowledged-limitations list.
 
-- **`ipam_sudo_verify()` step-up helper + session sudo grant (#1107).** Centralised step-up proof verification across all sensitive admin actions. Optional grant TTL caches a successful re-auth so a single proof satisfies a fan-out of sensitive actions within the configured window. Per-IP rate-limit (5 failures / 15 min). Stable-reason audit on every failure (`auth.sudo_failed reason=…`); successes audit `auth.sudo_passed`.
-- **Step-up policy admin card + registry (#1108, #1109).** New group on `Settings → Authentication` exposes four allow-flags (TOTP, Email OTP, WebAuthn, provider re-auth) and a six-value TTL dropdown (0/60s/5m/15m/30m/1h). Lock-out precondition guard refuses any save that would strand every active admin under their current enrollments.
-- **Vault, API keys, settings reveal, DB import/export, password change, MFA disable migrated to the unified gate (#1110, #1112, #1113).** **Closes the OIDC-only admin lockout (#1098):** an admin whose `password_hash` is `!disabled` (provisioned by OIDC, no local password) can now satisfy the gate via TOTP, passkey, or provider re-auth instead of being permanently refused.
-- **`Reveal vault key` promoted out of `<details>` to a primary, always-visible button (#1111).** The most-common admin action is no longer hidden behind an extra click.
-- **Step-up auth subsystem reference (#1115).** New `docs/internal/step-up-auth.md` documents the helper contract, policy keys, session keys/TTL, invalidation triggers, prompt UX, and the recipe for adding a new sudo-class admin handler.
+- **IPAMBKL1 logical-format dump no longer silently drops `webauthn_credentials` rows (#1124).** Two binary columns (`credential_id`, `public_key`) violated the `_bin` suffix convention the column-kind classifier relied on, and the writer's `(string) json_encode(...)` cast silently swallowed the failure. Fix: per-table override map + writer-throw guard on `json_encode === false`. New `tests/IPAMBKL1FullSchemaConformanceTest.php` mechanically enforces the schema covenant going forward.
+- **OIDC auto-provisioner stores `'!disabled'` sentinel (#1120).** Auto-provisioned OIDC users now get the canonical sentinel in `password_hash` instead of a random bcrypt hash, unifying the auth model.
+- **Settings page UX consistency (#1121).** Bool checkboxes no longer auto-save on change; every field — bool, string, int, json — stages locally in the group form and "Save" commits atomically. Closes the original `#756` silent-sibling cascade with a hidden `value="0"` shim instead of a per-key save path.
+- **MFA-disable lockout precondition guard (#1122).** New `ipam_sudo_would_strand_user_after_disable()` helper wired into the three disable handlers (TOTP, Email OTP, passkey delete). Refuses any disable that would leave the user with no satisfiable step-up method under the install policy.
 
 [Full changelog →](CHANGELOG.md)
 
