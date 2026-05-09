@@ -151,10 +151,20 @@ final class IPAMBKL1FullSchemaConformanceTest extends TestCase
                 $st->bindValue($param, (string) $val);
             }
         }
+        // CodeRabbit, PR #1125: do not silently skip on insert pre-condition
+        // failure. A future schema change adding a NOT NULL or FK requirement
+        // that safeDefault()/ensureFkAnchorsForTable() doesn't cover would
+        // quietly remove that column from supposed full-schema coverage.
+        // Fail hard with the offending column and PDOException context so
+        // the maintainer must update the test fixture or extend the explicit
+        // allowlist below before the column re-enters coverage.
         try {
             $st->execute();
         } catch (PDOException $e) {
-            $this->markTestSkipped("$table.$column insert pre-condition failed: " . $e->getMessage());
+            $this->fail(
+                "$table.$column: insert pre-condition failed (extend safeDefault() / ensureFkAnchorsForTable() to cover this column's schema requirements). " .
+                "PDOException: " . $e->getMessage()
+            );
         }
 
         $fixture = tempnam(sys_get_temp_dir(), 'ipambkl1_conf_');
@@ -199,21 +209,22 @@ final class IPAMBKL1FullSchemaConformanceTest extends TestCase
     {
         $db = $this->freshDb();
         $db->exec("INSERT INTO users (username, password_hash, role, is_active) VALUES ('throw-test', '!disabled', 'admin', 1)");
-        $db->exec("INSERT INTO audit_log (action, entity_type, entity_id, user_id, username, details, ip, user_agent) " .
-                  "VALUES ('synthetic.binary', 'test', 1, 1, 'throw-test', '', '127.0.0.1', 'curl/8')");
-        // Bypass the trigger by using INSERT OR REPLACE through low-level write —
-        // audit_log details is normally UTF-8 but the TEXT column accepts any bytes
-        // from a raw INSERT.
+        // Insert a row whose `details` column carries non-UTF-8 binary. We
+        // pin the row's primary key explicitly so the test can assert that
+        // the writer-throw exception names it — protecting the row-level-
+        // context contract against silent regressions (CodeRabbit, PR #1125).
         $bin = "\x00\x01\xff\xfe" . str_repeat("\xc3\x28", 16);
-        $st = $db->prepare("INSERT INTO audit_log (action, entity_type, entity_id, user_id, username, details, ip, user_agent) VALUES (?,?,?,?,?,?,?,?)");
-        $st->bindValue(1, 'synthetic.binary');
-        $st->bindValue(2, 'test');
-        $st->bindValue(3, 1, PDO::PARAM_INT);
+        $offendingPk = 4242;
+        $st = $db->prepare("INSERT INTO audit_log (id, action, entity_type, entity_id, user_id, username, details, ip, user_agent) VALUES (?,?,?,?,?,?,?,?,?)");
+        $st->bindValue(1, $offendingPk, PDO::PARAM_INT);
+        $st->bindValue(2, 'synthetic.binary');
+        $st->bindValue(3, 'test');
         $st->bindValue(4, 1, PDO::PARAM_INT);
-        $st->bindValue(5, 'throw-test');
-        $st->bindValue(6, $bin, PDO::PARAM_LOB);
-        $st->bindValue(7, '127.0.0.1');
-        $st->bindValue(8, 'curl/8');
+        $st->bindValue(5, 1, PDO::PARAM_INT);
+        $st->bindValue(6, 'throw-test');
+        $st->bindValue(7, $bin, PDO::PARAM_LOB);
+        $st->bindValue(8, '127.0.0.1');
+        $st->bindValue(9, 'curl/8');
         $st->execute();
 
         $fixture = tempnam(sys_get_temp_dir(), 'ipambkl1_throw_');
@@ -222,11 +233,14 @@ final class IPAMBKL1FullSchemaConformanceTest extends TestCase
             ipam_backup_logical_dump($db, $fixture);
             $this->fail('Writer must throw on json_encode failure for unclassified binary TEXT column');
         } catch (\RuntimeException $e) {
-            $this->assertStringContainsString('json_encode failed', $e->getMessage(),
+            $msg = $e->getMessage();
+            $this->assertStringContainsString('json_encode failed', $msg,
                 'Writer-throw must name the json_encode failure mode so operators can attribute it');
-            $this->assertStringContainsString('audit_log', $e->getMessage(),
+            $this->assertStringContainsString('audit_log', $msg,
                 'Writer-throw must name the offending table');
-            $this->assertStringContainsString('override map', $e->getMessage(),
+            $this->assertStringContainsString((string) $offendingPk, $msg,
+                'Writer-throw must include the offending row PK so operators can locate the row in the live DB');
+            $this->assertStringContainsString('override map', $msg,
                 'Writer-throw must point operators at the remediation (override map)');
         }
     }
