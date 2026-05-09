@@ -487,6 +487,8 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
             page_footer();
             exit;
         }
+        ipam_sudo_consume_once();  // Bug X (Pass A 2026-05-08, v3.27.1): consume sudo_once for TTL=0 policy.
+
         if ($action === 'vault_reveal') {
             clear_auth_failures($db, 'vault_key_reveal', $clientIp);
         }

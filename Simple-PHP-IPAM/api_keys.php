@@ -46,6 +46,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 page_footer();
                 exit;
             }
+            ipam_sudo_consume_once();  // Bug X (Pass A 2026-05-08, v3.27.1): consume sudo_once for TTL=0 policy.
+
             // Generate a 32-byte random key, encode as hex (64 chars)
             $rawKey  = bin2hex(random_bytes(32));
             $keyHash = hash('sha256', $rawKey);

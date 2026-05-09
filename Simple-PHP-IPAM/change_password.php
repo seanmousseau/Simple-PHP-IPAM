@@ -94,6 +94,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 
         page_footer();
         exit;
     }
+    ipam_sudo_consume_once();  // Bug X (Pass A 2026-05-08, v3.27.1): consume sudo_once for TTL=0 policy.
+
     $db->prepare("UPDATE users SET totp_enabled=0, totp_secret_enc=NULL WHERE id=:id")
        ->execute([':id' => $cur['id']]);
     $db->prepare("DELETE FROM totp_backup_codes WHERE user_id=:uid")
@@ -308,6 +310,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 
         page_footer();
         exit;
     }
+    ipam_sudo_consume_once();  // Bug X (Pass A 2026-05-08, v3.27.1): consume sudo_once for TTL=0 policy.
+
     $db->prepare("UPDATE users SET email_otp_enabled = 0 WHERE id = :id")
        ->execute([':id' => to_int($cur['id'])]);
     ipam_email_otp_clear($db, to_int($cur['id']));
@@ -336,6 +340,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && to_str($_POST['action'] ?? '') === 
         page_footer();
         exit;
     }
+    ipam_sudo_consume_once();  // Bug X (Pass A 2026-05-08, v3.27.1): consume sudo_once for TTL=0 policy.
+
     if ($credId > 0 && ipam_passkey_delete($db, $credId, to_int($cur['id']))) {
         audit($db, 'user.passkey_delete', 'user', to_int($cur['id']), "credential_id={$credId}");
         // MFA enrollment change invalidates any cached sudo grant (plan §3.5).
