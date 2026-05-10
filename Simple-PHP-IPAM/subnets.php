@@ -124,6 +124,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'auto_reserve' => $doAutoReserve ? '1' : '0',
                     'gateway'      => $gateway ?? '',
                     'contacts'     => json_encode($pendingContacts),
+                    // #1138: carry tag selections through the overlap-confirm
+                    // round-trip so the user's tag picks aren't lost when
+                    // they confirm the overlap.
+                    'tag_ids'      => $ipam_parse_subnet_tag_ids($tagIdsKnown),
                 ];
             } else {
                 try {
@@ -279,6 +283,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'dhcp_domain_name' => $dhcpDomainName, 'dhcp_lease_default' => $dhcpLeaseDefault,
                     'dhcp_lease_max' => $dhcpLeaseMax, 'dhcp_next_server' => $dhcpNextServer,
                     'dhcp_boot_filename' => $dhcpBootFilename,
+                    // #1138: carry tag picks + the present-marker through
+                    // overlap confirmation so tag attach/detach state isn't
+                    // lost on the confirm round-trip.
+                    'tag_ids'         => !empty($_POST['tag_ids_present']) ? $ipam_parse_subnet_tag_ids($tagIdsKnown) : null,
+                    'tag_ids_present' => !empty($_POST['tag_ids_present']) ? 1 : 0,
                 ];
             } else {
                 $dupChk = $db->prepare("SELECT id FROM subnets WHERE cidr = :cidr AND " . ipam_dialect()->null_safe_eq("vrf_id", ":vrf") . " AND id != :self");
@@ -710,6 +719,26 @@ ipam_skeleton_flush();
           endforeach;
         endif;
       endif; ?>
+      <?php // #1138: replay tag picks through overlap-confirm. For 'create',
+            // tag_ids is unconditionally a list (possibly empty); for 'update',
+            // we only emit tag_ids[] + tag_ids_present if the user's submission
+            // had the present-marker (preserves "no tag UI rendered" semantics). ?>
+      <?php if (isset($pendingData['tag_ids']) && is_array($pendingData['tag_ids'])): ?>
+        <?php if ($pendingAction === 'update'): ?>
+          <?php if (!empty($pendingData['tag_ids_present'])): ?>
+            <input type="hidden" name="tag_ids_present" value="1">
+            <input type="hidden" name="tag_ids[]" value="">
+            <?php foreach ($pendingData['tag_ids'] as $_tid): ?>
+              <input type="hidden" name="tag_ids[]" value="<?= to_int($_tid) ?>">
+            <?php endforeach; ?>
+          <?php endif; ?>
+        <?php else: ?>
+          <input type="hidden" name="tag_ids[]" value="">
+          <?php foreach ($pendingData['tag_ids'] as $_tid): ?>
+            <input type="hidden" name="tag_ids[]" value="<?= to_int($_tid) ?>">
+          <?php endforeach; ?>
+        <?php endif; ?>
+      <?php endif; ?>
       <button type="submit">Save anyway</button>
       <a class="action-pill" href="subnets.php">Cancel</a>
     </form>

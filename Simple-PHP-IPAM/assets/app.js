@@ -299,6 +299,13 @@
           })
           .finally(function() {
             btn.disabled = false;
+            // #1140: clear the replay guard once the fetch resolves (success
+            // or fail). Pre-fix the flag stayed true after a successful
+            // auto-replay, so a later step-up flow on the same page would
+            // skip stashing — the second OIDC round-trip would then drop
+            // back without an auto-resume, re-creating the bug for the
+            // second action. CR follow-up on PR #1144.
+            window.__ipamPwReplayInProgress = false;
           });
         return;
       }

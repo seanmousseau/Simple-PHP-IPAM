@@ -185,7 +185,7 @@ Migrations live in `migrations.php` as an associative array of version string �
 
 **When adding a new version:** add the migration closure, bump `version.php`, update `CHANGELOG.md` (keepachangelog format).
 
-> **Current shipped version: v3.27.4.** `Creating new data tables in post-v4.0.0 releases` is **forward-looking** (applies to any migration whose version sorts after v4.0.0, including v4.0.x patches) — ignore it for all current v3.x work. `Modifying the schema (multi-engine, from v2.9.0 onward)` and `Runtime dependencies` are **currently active** rules (apply to v2.9.0+ including the current v3.26.0).
+> **Current shipped version: v3.27.4.** `Creating new data tables in post-v4.0.0 releases` is **forward-looking** (applies to any migration whose version sorts after v4.0.0, including v4.0.x patches) — ignore it for all current v3.x work. `Modifying the schema (multi-engine, from v2.9.0 onward)` and `Runtime dependencies` are **currently active** rules (apply to v2.9.0+ including the current v3.27.4).
 
 ### Multi-tenancy (v4.0.0 — forward-looking)
 
