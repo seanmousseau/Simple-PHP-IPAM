@@ -98,9 +98,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // generic and 'auth.login_blocked' fired on every refused
             // attempt within the window — operators searching audit_log
             // by username missed the rows entirely (entity_id NULL).
-            $unlockAt = time() + $lockoutSeconds;
+            // CR PR #1141: derive unlock_at from the OLDEST still-counted
+            // failure rather than `time() + $lockoutSeconds`. The latter
+            // overstates the wait under steady traffic and could keep
+            // the dampener suppressing past the real unlock point — a
+            // genuine later lockout would never get its own audit row.
+            $unlockAt        = auth_rate_limit_unlock_at($db, 'login', $ip, $lockoutSeconds);
+            $remainingSecs   = max(1, $unlockAt - time());
+            $remainingMin    = max(1, (int) ceil($remainingSecs / 60));
             $error = 'Too many failed login attempts from this network. Please try again in '
-                   . max(1, (int) ceil($lockoutSeconds / 60)) . ' minutes.';
+                   . $remainingMin . ' minute' . ($remainingMin === 1 ? '' : 's') . '.';
             ipam_audit_ip_rate_limited($db, 'login', $ip, $maxAttempts, $unlockAt);
         } elseif (!$isRecovery && $username !== '' && account_locked_out($db, $username, $acctMaxAttempts, $acctLockoutSecs)) {
             $error = 'This account is temporarily locked due to too many failed attempts.';

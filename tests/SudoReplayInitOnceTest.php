@@ -25,10 +25,12 @@ final class SudoReplayInitOnceTest extends TestCase
     public function testSudoReplayDoesNotRequireStepUpPagePhp(): void
     {
         $src = (string) file_get_contents(__DIR__ . '/../Simple-PHP-IPAM/sudo_replay.php');
+        // CR PR #1141: cover include/include_once too — those would cause
+        // the same double-init fatal as require/require_once.
         $this->assertDoesNotMatchRegularExpression(
-            '/require(_once)?\s+__DIR__\s*\.\s*[\'"]\/step_up\.php[\'"]/',
+            '/(?:require|include)(?:_once)?\s+__DIR__\s*\.\s*[\'"]\/step_up\.php[\'"]/',
             $src,
-            '#1131: sudo_replay.php must not require step_up.php (page entry point) — '
+            '#1131: sudo_replay.php must not require/include step_up.php (page entry point) — '
           . 'use lib/auth_step_up.php for shared helpers instead, or init.php loads twice.'
         );
     }

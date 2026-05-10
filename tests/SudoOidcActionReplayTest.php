@@ -103,4 +103,29 @@ final class SudoOidcActionReplayTest extends TestCase
         $this->assertSame('/second', $consumed['target'], '#1131: second stash must overwrite first');
         $this->assertSame(['action' => 'a2'], $consumed['fields']);
     }
+
+    /**
+     * CR PR #1141 regression: views/_step_up_prompt.php must filter
+     * `csrf` and `_sudo_*` keys out of the replay stash before passing
+     * to ipam_sudo_oidc_stash_pending(). If a caller forwards the
+     * original POST wholesale, a stale `csrf` would land in the
+     * replayed POST alongside the fresh one sudo_replay.php injects;
+     * PHP would then read the LATER (stale) value and the replay's
+     * CSRF check would fail. `_sudo_*` proof tokens would similarly
+     * mint a second-grant-of-stale-state.
+     */
+    public function testReplayStashFiltersReservedKeys(): void
+    {
+        $src = (string) file_get_contents(__DIR__ . '/../Simple-PHP-IPAM/views/_step_up_prompt.php');
+        $this->assertMatchesRegularExpression(
+            '/\$key\s*===\s*[\'"]csrf[\'"]/',
+            $src,
+            '#1141: _step_up_prompt.php must skip the `csrf` key when building the replay stash'
+        );
+        $this->assertMatchesRegularExpression(
+            '/str_starts_with\s*\(\s*\$key\s*,\s*[\'"]_sudo_[\'"]/',
+            $src,
+            '#1141: _step_up_prompt.php must skip `_sudo_*` keys when building the replay stash'
+        );
+    }
 }

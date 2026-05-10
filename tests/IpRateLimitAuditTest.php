@@ -89,6 +89,25 @@ final class IpRateLimitAuditTest extends TestCase
         $this->assertStringContainsString('ip=192.0.2.2', $rows[1]['details']);
     }
 
+    public function testIpPrefixCollisionDoesNotDampenDistinctIps(): void
+    {
+        // CR PR #1141 regression: pre-fix, the dampener LIKE pattern
+        // `'%action=login%ip=192.0.2.1%'` matched ip=192.0.2.10 too,
+        // because the trailing `%` made the IP a prefix match. Distinct
+        // IPs that share a prefix must each get their own audit row.
+        ipam_audit_ip_rate_limited($this->db, 'login', '192.0.2.1',  5, time() + 600);
+        ipam_audit_ip_rate_limited($this->db, 'login', '192.0.2.10', 5, time() + 600);
+        ipam_audit_ip_rate_limited($this->db, 'login', '192.0.2.100', 5, time() + 600);
+
+        $rows = $this->db->query(
+            "SELECT details FROM audit_log WHERE action = 'auth.ip_rate_limited' ORDER BY id"
+        )->fetchAll(PDO::FETCH_ASSOC);
+        $this->assertCount(3, $rows, '#1134/CR1141: ip-prefix collision must not suppress distinct lockouts');
+        $this->assertStringContainsString('ip=192.0.2.1',    $rows[0]['details']);
+        $this->assertStringContainsString('ip=192.0.2.10',   $rows[1]['details']);
+        $this->assertStringContainsString('ip=192.0.2.100',  $rows[2]['details']);
+    }
+
     public function testErrorMessageIsIpSpecific(): void
     {
         // Source-level: login.php's IP-rate-limit branch must produce a
@@ -96,9 +115,13 @@ final class IpRateLimitAuditTest extends TestCase
         // operator/user can distinguish from the generic wrong-password
         // and account-level lockout messages.
         $login = (string) file_get_contents(__DIR__ . '/../Simple-PHP-IPAM/login.php');
-        $idx = strpos($login, 'login_rate_limited');
+        // CR PR #1141: anchor on the call to ipam_audit_ip_rate_limited
+        // — that's the production branch we care about, and the slice
+        // around it covers the user-facing error message regardless of
+        // how many leading comments accompany the rate-limit branch.
+        $idx = strpos($login, 'ipam_audit_ip_rate_limited');
         $this->assertNotFalse($idx);
-        $branch = substr($login, $idx, 600);
+        $branch = substr($login, max(0, $idx - 800), 1200);
 
         $this->assertMatchesRegularExpression(
             '/network|this IP|from this/i',

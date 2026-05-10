@@ -32,10 +32,29 @@ use PHPUnit\Framework\TestCase;
  */
 final class RestoreWizardSessionStateTest extends TestCase
 {
+    /** @var bool */
+    private bool $hadConfig = false;
+    /** @var mixed */
+    private mixed $originalConfig = null;
+
     protected function setUp(): void
     {
         // Fresh session between tests.
         $_SESSION = [];
+
+        // CR PR #1141: snapshot $GLOBALS['config'] so tests that mutate
+        // it (e.g. testNoAppSecretRequired) can't poison later cases.
+        $this->hadConfig      = array_key_exists('config', $GLOBALS);
+        $this->originalConfig = $GLOBALS['config'] ?? null;
+    }
+
+    protected function tearDown(): void
+    {
+        if ($this->hadConfig) {
+            $GLOBALS['config'] = $this->originalConfig;
+        } else {
+            unset($GLOBALS['config']);
+        }
     }
 
     public function testStashAndConsumeRoundTrip(): void
@@ -43,9 +62,10 @@ final class RestoreWizardSessionStateTest extends TestCase
         $path = '/var/data/tmp/ipam-restore-staged-abc123.ipambkl1.gz';
         $meta = ['filename' => 'ipam-backup-2026-05-09.ipambkl1.gz', 'destination_id' => 5, 'size' => 7831288];
 
-        ipam_restore_wizard_stage_pending(RESTORE_WIZARD_PHASE_STAGED, $path, $meta);
+        $id = ipam_restore_wizard_stage_pending(RESTORE_WIZARD_PHASE_STAGED, $path, $meta);
+        $this->assertNotEmpty($id, 'stash must return an opaque per-wizard ID');
 
-        $consumed = ipam_restore_wizard_consume_pending(RESTORE_WIZARD_PHASE_STAGED);
+        $consumed = ipam_restore_wizard_consume_pending($id, RESTORE_WIZARD_PHASE_STAGED);
         $this->assertNotNull($consumed, '#1127: stash + consume must round-trip cleanly');
         $this->assertSame($path, $consumed['path']);
         $this->assertSame($meta, $consumed['meta']);
@@ -54,9 +74,9 @@ final class RestoreWizardSessionStateTest extends TestCase
 
     public function testConsumeIsSingleUse(): void
     {
-        ipam_restore_wizard_stage_pending(RESTORE_WIZARD_PHASE_STAGED, '/x', []);
-        $first  = ipam_restore_wizard_consume_pending(RESTORE_WIZARD_PHASE_STAGED);
-        $second = ipam_restore_wizard_consume_pending(RESTORE_WIZARD_PHASE_STAGED);
+        $id = ipam_restore_wizard_stage_pending(RESTORE_WIZARD_PHASE_STAGED, '/x', []);
+        $first  = ipam_restore_wizard_consume_pending($id, RESTORE_WIZARD_PHASE_STAGED);
+        $second = ipam_restore_wizard_consume_pending($id, RESTORE_WIZARD_PHASE_STAGED);
 
         $this->assertNotNull($first, 'first consume returns the stashed entry');
         $this->assertNull($second, '#1127: second consume must return null (replay defence)');
@@ -67,30 +87,35 @@ final class RestoreWizardSessionStateTest extends TestCase
         // User staged a file (phase=staged) but tries to consume as if they
         // had already passed dry-run. The wizard MUST refuse — same guarantee
         // the HMAC phase-locking provided pre-refactor.
-        ipam_restore_wizard_stage_pending(RESTORE_WIZARD_PHASE_STAGED, '/x', []);
+        $id = ipam_restore_wizard_stage_pending(RESTORE_WIZARD_PHASE_STAGED, '/x', []);
 
-        $consumed = ipam_restore_wizard_consume_pending(RESTORE_WIZARD_PHASE_DRYRUN_OK);
+        $consumed = ipam_restore_wizard_consume_pending($id, RESTORE_WIZARD_PHASE_DRYRUN_OK);
         $this->assertNull($consumed, '#1127: consuming a `staged` slot expecting `dryrun_passed` must refuse — phase-skip prevention');
 
         // The slot must remain intact for a correctly-phased subsequent call.
-        $correctlyPhased = ipam_restore_wizard_consume_pending(RESTORE_WIZARD_PHASE_STAGED);
+        $correctlyPhased = ipam_restore_wizard_consume_pending($id, RESTORE_WIZARD_PHASE_STAGED);
         $this->assertNotNull($correctlyPhased, 'wrong-phase consume must not destroy the slot');
     }
 
     public function testExpiredSlotRefuses(): void
     {
-        // Manually shape a session entry with a past expiry to simulate
-        // a stale slot. Real fix uses time() + 600 at stash time.
-        $_SESSION['_pending_restore'] = [
-            'path'    => '/y',
-            'meta'    => [],
-            'phase'   => RESTORE_WIZARD_PHASE_STAGED,
-            'expires' => time() - 1,
+        // Manually shape a per-id session entry with a past expiry to
+        // simulate a stale slot. Real fix uses time() + 600 at stash time.
+        $id = 'fakeid';
+        $_SESSION['_pending_restores'] = [
+            $id => [
+                'path'    => '/y',
+                'meta'    => [],
+                'phase'   => RESTORE_WIZARD_PHASE_STAGED,
+                'expires' => time() - 1,
+            ],
         ];
 
-        $consumed = ipam_restore_wizard_consume_pending(RESTORE_WIZARD_PHASE_STAGED);
+        $consumed = ipam_restore_wizard_consume_pending($id, RESTORE_WIZARD_PHASE_STAGED);
         $this->assertNull($consumed, '#1127: expired slot must refuse and not return stale data');
-        $this->assertArrayNotHasKey('_pending_restore', $_SESSION,
+        $slots = $_SESSION['_pending_restores'] ?? [];
+        $this->assertIsArray($slots);
+        $this->assertArrayNotHasKey($id, $slots,
             '#1127: expired slot must be unset on consume so it cannot be re-attempted');
     }
 
@@ -102,11 +127,11 @@ final class RestoreWizardSessionStateTest extends TestCase
         $path = '/var/data/tmp/ipam-restore-staged-xyz.ipambkl1.gz';
         $meta = ['filename' => 'f.gz', 'destination_id' => 1, 'size' => 100];
 
-        ipam_restore_wizard_stage_pending(RESTORE_WIZARD_PHASE_STAGED, $path, $meta);
-        $advanced = ipam_restore_wizard_advance_phase(RESTORE_WIZARD_PHASE_DRYRUN_OK);
+        $id = ipam_restore_wizard_stage_pending(RESTORE_WIZARD_PHASE_STAGED, $path, $meta);
+        $advanced = ipam_restore_wizard_advance_phase($id, RESTORE_WIZARD_PHASE_DRYRUN_OK);
         $this->assertTrue($advanced, '#1127: phase advance from `staged` to `dryrun_passed` must succeed when slot is fresh');
 
-        $consumed = ipam_restore_wizard_consume_pending(RESTORE_WIZARD_PHASE_DRYRUN_OK);
+        $consumed = ipam_restore_wizard_consume_pending($id, RESTORE_WIZARD_PHASE_DRYRUN_OK);
         $this->assertNotNull($consumed, 'after advance, dryrun_passed consume must succeed');
         $this->assertSame($path, $consumed['path']);
         $this->assertSame($meta, $consumed['meta']);
@@ -119,8 +144,50 @@ final class RestoreWizardSessionStateTest extends TestCase
         // must not depend on $config at all.
         $GLOBALS['config'] = ['app_secret' => ''];
 
-        ipam_restore_wizard_stage_pending(RESTORE_WIZARD_PHASE_STAGED, '/no-app-secret-needed', ['filename' => 'a.gz']);
-        $consumed = ipam_restore_wizard_consume_pending(RESTORE_WIZARD_PHASE_STAGED);
+        $id = ipam_restore_wizard_stage_pending(RESTORE_WIZARD_PHASE_STAGED, '/no-app-secret-needed', ['filename' => 'a.gz']);
+        $consumed = ipam_restore_wizard_consume_pending($id, RESTORE_WIZARD_PHASE_STAGED);
         $this->assertNotNull($consumed, '#1127: stash+consume must work with empty app_secret — the entire point of the refactor');
+    }
+
+    /**
+     * CR PR #1141 regression: pre-fix, a single `_pending_restore` slot
+     * meant a second concurrent wizard (admin opens 2 restore tabs)
+     * clobbered the first. Per-id stash gives every wizard its own slot.
+     */
+    public function testConcurrentTabsDoNotClobberEachOther(): void
+    {
+        $idA = ipam_restore_wizard_stage_pending(
+            RESTORE_WIZARD_PHASE_STAGED,
+            '/var/data/tmp/archive-A.ipambkl1.gz',
+            ['filename' => 'A.gz', 'destination_id' => 1, 'size' => 100]
+        );
+        $idB = ipam_restore_wizard_stage_pending(
+            RESTORE_WIZARD_PHASE_STAGED,
+            '/var/data/tmp/archive-B.ipambkl1.gz',
+            ['filename' => 'B.gz', 'destination_id' => 2, 'size' => 200]
+        );
+
+        $this->assertNotSame($idA, $idB, 'each stash must produce a distinct opaque ID');
+
+        $consumedB = ipam_restore_wizard_consume_pending($idB, RESTORE_WIZARD_PHASE_STAGED);
+        $this->assertNotNull($consumedB);
+        $this->assertSame('/var/data/tmp/archive-B.ipambkl1.gz', $consumedB['path']);
+
+        $consumedA = ipam_restore_wizard_consume_pending($idA, RESTORE_WIZARD_PHASE_STAGED);
+        $this->assertNotNull($consumedA, '#1141: tab A slot must survive tab B consuming its own slot');
+        $this->assertSame('/var/data/tmp/archive-A.ipambkl1.gz', $consumedA['path']);
+    }
+
+    public function testUnknownIdReturnsNull(): void
+    {
+        $real = ipam_restore_wizard_stage_pending(RESTORE_WIZARD_PHASE_STAGED, '/x', []);
+        $this->assertNull(
+            ipam_restore_wizard_consume_pending('not-a-real-id', RESTORE_WIZARD_PHASE_STAGED),
+            '#1141: looking up an unknown ID must not consume the real slot'
+        );
+        $this->assertNotNull(
+            ipam_restore_wizard_consume_pending($real, RESTORE_WIZARD_PHASE_STAGED),
+            '#1141: real ID still consumes its slot after a bogus-id lookup'
+        );
     }
 }

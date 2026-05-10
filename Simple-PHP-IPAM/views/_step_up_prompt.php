@@ -111,12 +111,24 @@ $stepUpOidcReauthUrl = in_array('oidc_reauth', $stepUpAvailable, true)
 if ($stepUpOidcReauthUrl !== '') {
     // Hidden-field values can be int/float/bool per the view's docblock —
     // coerce to string for the form-replay POST.
+    //
+    // CR PR #1141: filter out reserved keys (`csrf`, `_sudo_*`) so they
+    // can't override the values sudo_replay.php injects. If any caller
+    // ever forwards the original POST wholesale, a stale `csrf` would
+    // produce duplicate hidden inputs and PHP would read the later
+    // (stale) value, breaking the replay's CSRF check. The `_sudo_*`
+    // family carries proof tokens — replaying them would mean the
+    // sudo grant is "minted twice" with stale state.
     $stashFields = [];
     foreach ($stepUpHiddenFields as $k => $v) {
+        $key = (string) $k;
+        if ($key === 'csrf' || str_starts_with($key, '_sudo_')) {
+            continue;
+        }
         // bool/float/int/string per the view's docblock — coerce to string
         // for the form-replay POST. PHP coerces bool to '1'/'' which is the
         // exact pattern checkbox-shim values use, so this matches semantics.
-        $stashFields[$k] = (string) $v;
+        $stashFields[$key] = (string) $v;
     }
     ipam_sudo_oidc_stash_pending([
         'target' => $stepUpFormAction,

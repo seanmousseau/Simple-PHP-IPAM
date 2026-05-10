@@ -53,8 +53,13 @@ if ($as === 'staged') {
     // relocation path. The path is still returned in the JSON for UI
     // display purposes ("Staged: /tmp/foo.gz"), but the apply step does
     // NOT read it from the client — it consumes the session slot.
+    // CR PR #1141: capture the per-wizard opaque ID so any consumer of
+    // this JSON (today: none in the bundled UI, but a curl-driven
+    // automation may exist) can thread it into the backup_admin_restore
+    // form's `staged_sig` field. The wizard's session slot is keyed by
+    // this ID so concurrent restore tabs don't clobber each other.
     require_once __DIR__ . '/lib/restore_wizard.php';
-    ipam_restore_wizard_stage_pending(
+    $stagedSig = ipam_restore_wizard_stage_pending(
         RESTORE_WIZARD_PHASE_STAGED,
         $staged['path'],
         [
@@ -67,11 +72,12 @@ if ($as === 'staged') {
     header('Content-Type: application/json');
     // nosemgrep: php.lang.security.xss.echoed-request -- Content-Type is application/json; json_encode provides structural escaping; no HTML rendering
     echo json_encode([
-        'ok'        => true,
-        'path'      => $staged['path'],   // display only — apply reads from session
-        'size'      => $staged['size'],
-        'filename'  => $staged['filename'],
-        'encrypted' => $staged['encrypted'],
+        'ok'         => true,
+        'path'       => $staged['path'],   // display only — apply reads from session
+        'staged_sig' => $stagedSig,        // round-trip via wizard form's hidden field
+        'size'       => $staged['size'],
+        'filename'   => $staged['filename'],
+        'encrypted'  => $staged['encrypted'],
     ]);
     // Note: $staged['path'] persists in data/tmp/ for the apply step.
     // Phase 13's restore_web.php cleans it up after dry-run/apply.

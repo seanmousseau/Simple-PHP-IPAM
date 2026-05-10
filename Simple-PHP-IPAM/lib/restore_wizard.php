@@ -33,16 +33,6 @@ const RESTORE_WIZARD_RATE_LIMIT_MAX_ATTEMPTS = 5;
 const RESTORE_WIZARD_PENDING_TTL_SECONDS = 600;
 
 /**
- * Sentinel returned by ipam_restore_wizard_sign() in session-state mode.
- * Carried in the form's staged_sig hidden field for backwards compat with
- * existing views; the apply-side ipam_restore_wizard_verify() ignores it
- * entirely and reads from $_SESSION instead. Any non-empty value works
- * here — the value just needs to be truthy so existing form-rendering
- * code that tests `if ($stagedSig)` continues to render the wizard.
- */
-const RESTORE_WIZARD_SESSION_SENTINEL = 'session-stashed';
-
-/**
  * Stash a pending wizard action in the session. Replaces the legacy
  * HMAC-token mechanism (#1127, v3.27.3): the session is the trust
  * boundary for the single-user, single-tab wizard flow, so a
@@ -51,37 +41,80 @@ const RESTORE_WIZARD_SESSION_SENTINEL = 'session-stashed';
  * blocked on installs that took the documented v3.26.0 vault-key
  * relocation (app_secret optional / blank).
  *
- * Three guarantees the legacy HMAC provided are preserved by this
- * mechanism:
+ * Returns an opaque per-wizard ID; callers carry it through the form
+ * (in the `staged_sig` hidden field) and pass it back to consume /
+ * advance. Multiple concurrent wizards (admin opens 2 restore tabs)
+ * each get their own slot — no cross-tab clobbering. (CR PR #1141.)
+ *
+ * Three guarantees the legacy HMAC provided are preserved here:
  *
  *   - **Phase progression** (no apply-without-dryrun) is checked by
  *     ipam_restore_wizard_consume_pending() comparing the requested
- *     phase against $_SESSION['_pending_restore']['phase'].
+ *     phase against $_SESSION['_pending_restores'][$id]['phase'].
  *   - **Path authenticity** is automatic — the path is server-side
- *     state, never client-supplied. The user's form carries action
- *     verbs only.
+ *     state, never client-supplied. The user's form carries opaque IDs
+ *     and action verbs only.
  *   - **No replay** — consume is single-use (clears the slot on
  *     successful return) and slots expire after
  *     RESTORE_WIZARD_PENDING_TTL_SECONDS.
  *
  * @param array{filename?:string,destination_id?:int,size?:int} $meta
+ * @return string opaque per-wizard ID (32 hex chars from random_bytes(16))
  */
-function ipam_restore_wizard_stage_pending(string $phase, string $stagedPath, array $meta): void
+function ipam_restore_wizard_stage_pending(string $phase, string $stagedPath, array $meta): string
 {
     if ($phase !== RESTORE_WIZARD_PHASE_STAGED && $phase !== RESTORE_WIZARD_PHASE_DRYRUN_OK) {
         throw new InvalidArgumentException("ipam_restore_wizard_stage_pending: unknown phase '$phase'");
     }
-    $_SESSION['_pending_restore'] = [
+    $id = bin2hex(random_bytes(16));
+    if (!isset($_SESSION['_pending_restores']) || !is_array($_SESSION['_pending_restores'])) {
+        $_SESSION['_pending_restores'] = [];
+    }
+    /** @var array<string, mixed> $slots */
+    $slots = $_SESSION['_pending_restores'];
+    // Opportunistic GC: drop expired siblings so the dict can't grow
+    // unbounded if the operator opens many tabs without finishing.
+    $now = time();
+    foreach ($slots as $k => $entry) {
+        $entryExp = is_array($entry) && is_int($entry['expires'] ?? null) ? $entry['expires'] : 0;
+        if (!is_array($entry) || $entryExp < $now) {
+            unset($slots[$k]);
+        }
+    }
+    $slots[$id] = [
         'path'    => $stagedPath,
         'meta'    => $meta,
         'phase'   => $phase,
-        'expires' => time() + RESTORE_WIZARD_PENDING_TTL_SECONDS,
+        'expires' => $now + RESTORE_WIZARD_PENDING_TTL_SECONDS,
     ];
+    $_SESSION['_pending_restores'] = $slots;
+    return $id;
 }
 
 /**
- * Consume the pending wizard slot iff its phase matches $expectedPhase
- * and it hasn't expired.
+ * Internal helper: load + type-narrow the pending-restores dict from
+ * $_SESSION. Returns an empty array when the key is missing or has the
+ * wrong shape. Keeps PHPStan happy about offset access on $_SESSION
+ * (which is `mixed` per the language).
+ *
+ * @return array<string, array<string, mixed>>
+ */
+function ipam_restore_wizard_load_slots(): array
+{
+    $raw = $_SESSION['_pending_restores'] ?? null;
+    if (!is_array($raw)) return [];
+    $out = [];
+    foreach ($raw as $k => $v) {
+        if (is_string($k) && is_array($v)) {
+            $out[$k] = $v;
+        }
+    }
+    return $out;
+}
+
+/**
+ * Consume the pending wizard slot keyed by $id iff its phase matches
+ * $expectedPhase and it hasn't expired.
  *
  * Behaviour:
  *   - phase matches + fresh:    returns the slot AND clears it (single-use).
@@ -91,7 +124,7 @@ function ipam_restore_wizard_stage_pending(string $phase, string $stagedPath, ar
  *                               error, not a security violation).
  *   - expired:                  returns null AND clears the slot (no
  *                               recovery; operator must restart).
- *   - no slot:                  returns null.
+ *   - no slot for $id:          returns null.
  *
  * The intentional asymmetry between "phase mismatch leaves intact" and
  * "expired clears" matters: phase-mismatch is the wizard's flow-control
@@ -101,22 +134,24 @@ function ipam_restore_wizard_stage_pending(string $phase, string $stagedPath, ar
  *
  * @return ?array{path:string,meta:array<string,mixed>,phase:string}
  */
-function ipam_restore_wizard_consume_pending(string $expectedPhase): ?array
+function ipam_restore_wizard_consume_pending(string $id, string $expectedPhase): ?array
 {
-    $pending = $_SESSION['_pending_restore'] ?? null;
-    if (!is_array($pending)) {
-        return null;
-    }
+    if ($id === '') return null;
+    $slots = ipam_restore_wizard_load_slots();
+    if (!isset($slots[$id])) return null;
+    $pending = $slots[$id];
     $expires = is_int($pending['expires'] ?? null) ? $pending['expires'] : 0;
     if ($expires < time()) {
-        unset($_SESSION['_pending_restore']);
+        unset($slots[$id]);
+        $_SESSION['_pending_restores'] = $slots;
         return null;
     }
     $phase = is_string($pending['phase'] ?? null) ? $pending['phase'] : '';
     if ($phase !== $expectedPhase) {
         return null;  // phase mismatch — leave slot intact for the right caller
     }
-    unset($_SESSION['_pending_restore']);
+    unset($slots[$id]);
+    $_SESSION['_pending_restores'] = $slots;
     return [
         'path'  => is_string($pending['path'] ?? null) ? $pending['path'] : '',
         'meta'  => is_array($pending['meta'] ?? null) ? $pending['meta'] : [],
@@ -125,31 +160,33 @@ function ipam_restore_wizard_consume_pending(string $expectedPhase): ?array
 }
 
 /**
- * Advance the pending slot from one phase to another (e.g. after dry-run
- * succeeds, advance from `staged` to `dryrun_passed`). Path and meta
- * survive untouched. The expiry clock is RESET so a long dry-run doesn't
- * eat into the apply-step window.
+ * Advance the pending slot keyed by $id from one phase to another
+ * (e.g. after dry-run succeeds, advance from `staged` to `dryrun_passed`).
+ * Path and meta survive untouched. The expiry clock is RESET so a long
+ * dry-run doesn't eat into the apply-step window.
  *
  * Returns true on success, false when there's no slot or it's expired
  * (caller should refuse the next step).
  */
-function ipam_restore_wizard_advance_phase(string $newPhase): bool
+function ipam_restore_wizard_advance_phase(string $id, string $newPhase): bool
 {
     if ($newPhase !== RESTORE_WIZARD_PHASE_STAGED && $newPhase !== RESTORE_WIZARD_PHASE_DRYRUN_OK) {
         throw new InvalidArgumentException("ipam_restore_wizard_advance_phase: unknown phase '$newPhase'");
     }
-    $pending = $_SESSION['_pending_restore'] ?? null;
-    if (!is_array($pending)) {
-        return false;
-    }
+    if ($id === '') return false;
+    $slots = ipam_restore_wizard_load_slots();
+    if (!isset($slots[$id])) return false;
+    $pending = $slots[$id];
     $expires = is_int($pending['expires'] ?? null) ? $pending['expires'] : 0;
     if ($expires < time()) {
-        unset($_SESSION['_pending_restore']);
+        unset($slots[$id]);
+        $_SESSION['_pending_restores'] = $slots;
         return false;
     }
     $pending['phase']   = $newPhase;
     $pending['expires'] = time() + RESTORE_WIZARD_PENDING_TTL_SECONDS;
-    $_SESSION['_pending_restore'] = $pending;
+    $slots[$id] = $pending;
+    $_SESSION['_pending_restores'] = $slots;
     return true;
 }
 
@@ -177,8 +214,10 @@ function ipam_restore_wizard_advance_phase(string $newPhase): bool
 function ipam_restore_wizard_sign(array $config, string $phase, string $stagedPath, array $meta): string
 {
     unset($config); // explicit drop — reads $_SESSION instead
-    ipam_restore_wizard_stage_pending($phase, $stagedPath, $meta);
-    return RESTORE_WIZARD_SESSION_SENTINEL;
+    // CR PR #1141: return the per-wizard opaque ID so concurrent tabs
+    // don't clobber each other's slot. The form carries this in
+    // staged_sig; verify() looks it up by ID.
+    return ipam_restore_wizard_stage_pending($phase, $stagedPath, $meta);
 }
 
 /**
@@ -204,8 +243,12 @@ function ipam_restore_wizard_verify(
     string $signature,
     array $meta
 ): ?string {
-    unset($config, $stagedPath, $signature, $meta); // explicit drop — reads $_SESSION
-    $consumed = ipam_restore_wizard_consume_pending($expectedPhase);
+    // CR PR #1141: $signature is now the per-wizard opaque ID (returned
+    // by sign() and round-tripped through the form's staged_sig field).
+    // We still ignore $config / $stagedPath / $meta — the path lives in
+    // the session slot keyed by $signature.
+    unset($config, $stagedPath, $meta); // explicit drop — reads $_SESSION
+    $consumed = ipam_restore_wizard_consume_pending($signature, $expectedPhase);
     if ($consumed === null) {
         return null;
     }

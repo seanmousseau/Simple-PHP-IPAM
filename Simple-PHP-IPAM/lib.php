@@ -1064,6 +1064,45 @@ function login_rate_limited(PDO $db, string $ip, int $maxAttempts, int $windowSe
 }
 
 /**
+ * Real lockout-expiry timestamp for a rolling-window IP rate limit.
+ *
+ * The window is "max N failures in the past $windowSeconds." The unlock
+ * moment is when the OLDEST currently-counted failure ages out — at that
+ * point the window has only N-1 failures and a fresh attempt is allowed.
+ * Returns time() + $windowSeconds as a sane fallback when no attempts
+ * are recorded (caller is asking for a future window without any
+ * existing data — shouldn't happen for actively-rate-limited IPs).
+ *
+ * Introduced for CR PR #1141: pre-fix, login.php sent
+ * `time() + $lockoutSeconds` to ipam_audit_ip_rate_limited(), which
+ * overstated the wait under steady traffic and could keep the dampener
+ * suppressing past the real unlock point.
+ */
+function auth_rate_limit_unlock_at(PDO $db, string $action, string $ip, int $windowSeconds): int
+{
+    $cutoff = date('Y-m-d H:i:s', time() - $windowSeconds);
+    $st = $db->prepare(
+        "SELECT MIN(attempted_at) AS oldest FROM login_attempts
+          WHERE action = :a AND ip = :ip AND attempted_at >= :cutoff"
+    );
+    $st->execute([':a' => $action, ':ip' => $ip, ':cutoff' => $cutoff]);
+    /** @var array<string, mixed>|false $row */
+    $row = $st->fetch();
+    if (!is_array($row) || empty($row['oldest'])) {
+        return time() + $windowSeconds;
+    }
+    $oldest = to_str($row['oldest']);
+    if ($oldest === '') {
+        return time() + $windowSeconds;
+    }
+    $oldestTs = strtotime($oldest);
+    if ($oldestTs === false) {
+        return time() + $windowSeconds;
+    }
+    return $oldestTs + $windowSeconds;
+}
+
+/**
  * Emit a once-per-window 'auth.ip_rate_limited' audit row (#1134, v3.27.3).
  *
  * Pre-fix: login.php audited 'auth.login_blocked' on every refused
@@ -1095,13 +1134,29 @@ function ipam_audit_ip_rate_limited(PDO $db, string $action, string $ip, int $at
     // the rate-limited IP in production (login.php passes the same
     // source) but differs in CLI tests. The details substring is the
     // operator-grep target anyway.
+    //
+    // CR PR #1141: anchor the LIKE pattern to the EXACT (action, ip)
+    // token positions — pre-fix `'%action=login%ip=192.0.2.1%'` would
+    // suppress the dampener for ip=192.0.2.10 because the trailing `%`
+    // makes 192.0.2.1 a prefix match. The details format is fixed
+    // (`action=A attempts=N unlock_at=ISO ip=I`) so anchoring on the
+    // surrounding literal tokens gives exact (action, ip) match. We
+    // escape any LIKE-meta chars in $action/$ip with `!` (project-wide
+    // convention — see lib.php's like_escape()/v2.10.0 #384; backslash
+    // escape breaks MySQL string parsing).
+    $likeEscape = static fn(string $v): string =>
+        str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $v);
     $st = $db->prepare(
         "SELECT details FROM audit_log
           WHERE action = 'auth.ip_rate_limited'
-            AND details LIKE :detailsLike
+            AND details LIKE :detailsLike ESCAPE '!'
           ORDER BY id DESC LIMIT 1"
     );
-    $st->execute([':detailsLike' => '%action=' . $action . '%ip=' . $ip . '%']);
+    $st->execute([
+        ':detailsLike' =>
+            'action=' . $likeEscape($action)
+          . ' attempts=% unlock_at=% ip=' . $likeEscape($ip),
+    ]);
     $prev = (string) ($st->fetchColumn() ?: '');
     if ($prev !== '' && preg_match('/unlock_at=([0-9T:\-Z]+)/', $prev, $m)) {
         $prevUnlock = strtotime($m[1]);
