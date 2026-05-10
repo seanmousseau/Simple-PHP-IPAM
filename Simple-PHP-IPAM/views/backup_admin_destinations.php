@@ -39,7 +39,7 @@ $_isAdmin     = ($_currentUser['role'] ?? '') === 'admin';
           &middot; Source
           <code><?= e($vaultStatus['source']) ?></code>
           <?php if ($vaultStatus['created_at'] !== null): ?>
-            &middot; Updated <code><?= e($vaultStatus['created_at']) ?></code>
+            &middot; Updated <code><?= e(ipam_format_datetime($vaultStatus['created_at'])) ?></code>
           <?php endif; ?>
         </p>
         <form method="post" action="backup_admin.php?tab=destinations" style="margin:0">

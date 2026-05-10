@@ -58,9 +58,9 @@ $anyFilterActive = $filterDest > 0
       <?php foreach ($stats as $s): ?>
         <tr>
           <td><?= e(to_str($s['dest_name'])) ?></td>
-          <td><?= e(to_str($s['last_success'] ?? '—')) ?></td>
+          <td><?= e(ipam_format_datetime(to_str($s['last_success'] ?? '')) ?: '—') ?></td>
           <td><?= number_format(to_int($s['total_bytes'])) ?> bytes</td>
-          <td><?= e(to_str($s['next_run'] ?? '—')) ?></td>
+          <td><?= e(ipam_format_datetime(to_str($s['next_run'] ?? '')) ?: '—') ?></td>
         </tr>
       <?php endforeach; ?>
       </tbody>
@@ -227,7 +227,7 @@ $anyFilterActive = $filterDest > 0
               data-drawer-url="backup_run_detail.php?id=<?= $runId ?>"
               data-drawer-title="Run #<?= $runId ?>"
               aria-label="Open details for run <?= $runId ?>">
-            <td><?= e($started) ?></td>
+            <td><?= e(ipam_format_datetime($started)) ?></td>
             <td><?= e(to_str($r['dest_name'] ?? 'unknown')) ?></td>
             <td><?= e(to_str($r['triggered_by'])) ?></td>
             <?php $btType = to_str($r['backup_type'] ?? ''); ?>

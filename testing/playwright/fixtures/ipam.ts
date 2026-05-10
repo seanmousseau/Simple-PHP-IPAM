@@ -487,10 +487,19 @@ export async function warmSudoGrant(page: Page, password: string = ADMIN_PASS): 
     // CR round-3 #1116: callers (vault_set, db_tools import, restore paths)
     // assume sudo is warm after this returns. If the proof was rejected
     // (rate-limit, wrong password, missing method) passStepUpIfPresent
-    // returns false. Fail loudly here so the caller doesn't sail past a
-    // silent rejection and emit cryptic downstream timeouts.
+    // re-renders the prompt; we detect that via stillPrompting > 0 and
+    // fail loudly so the caller doesn't sail past a silent rejection.
+    //
+    // v3.27.4 #1133 follow-up: passed=false alone is NOT a rejection — it
+    // also covers the "no prompt visible" path, which fires when a prior
+    // warm grant from earlier in the same describe-block is still inside
+    // its TTL (default 300 s). large-db.spec.ts exercises this when its
+    // afterAll runs less than 5 minutes after beforeAll. Treating that as
+    // failure was a real bug — the warm grant downstream callers depend
+    // on is already in place. Throw only on the actual rejected-proof
+    // signal: stillPrompting > 0.
     const stillPrompting = await page.locator('[data-step-up-prompt]').count();
-    if (!passed || stillPrompting > 0) {
+    if (stillPrompting > 0) {
         throw new Error(
             `warmSudoGrant: step-up prompt was not cleared (passed=${passed}, ` +
             `prompt_remaining=${stillPrompting}). Likely a rejected proof or ` +
