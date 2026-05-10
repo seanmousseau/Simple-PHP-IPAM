@@ -249,3 +249,17 @@ All OIDC errors are written to PHP's error log. The login page shows only a gene
 | "No local user found for sub=..." | `auto_provision` is false and no account has been linked to this `sub` |
 | ID token expired | Large clock skew between your server and the IdP — sync server time via NTP |
 | Redirect URI mismatch error from IdP | `redirect_uri` in `config.php` must exactly match the value registered with the IdP |
+
+### Password-manager autofill on the OIDC settings tab
+
+Through v3.27.x, the OIDC config inputs on `settings.php?tab=authentication#group-oidc` may be autofilled by browser password managers (most notably LastPass) with credentials saved for your IPAM hostname. The fields look like a credential form to the manager's heuristic — sibling text + password inputs in the same `<form>` — and stored hints (`autocomplete=off`, `data-1p-ignore`, `data-lpignore`, `data-bwignore`) are ignored when the heuristic match is strong enough (see #1137).
+
+**Risk:** an admin who clicks Save without noticing the autofill can overwrite a working OIDC config with the wrong values and lock themselves out of SSO.
+
+**Workaround for v3.27.x:** add your IPAM hostname to your password manager's Never-URLs / blocked-sites list before editing OIDC config:
+
+- **LastPass** — Account Settings → URL Rules → Never URLs → add `https://<your-ipam-host>/`
+- **1Password** — Settings → Autofill → Sites with autofill disabled → add `<your-ipam-host>`
+- **Bitwarden** — Account Settings → Display → Don't show this URL → add `<your-ipam-host>`
+
+**Permanent fix:** v3.28.0 moves OIDC configuration to its own dedicated admin page (`settings_oidc.php`) outside the shared settings group form, with per-field save via fetch. The new page won't trigger PM credential-form heuristics. Tracked at #1137.
