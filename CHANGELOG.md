@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.27.5] - 2026-05-10
+
+Same-day micro-hotfix off `main`. v3.27.4 shipped `autocomplete="off"` on settings text/select/number inputs to suppress password-manager autofill on the OIDC config screen (#1137); confirmed live on testing + prod that the major PMs (1Password, LastPass, Bitwarden) ignored it. `autocomplete="off"` is honored by the browser's native autofill but PMs override it by design.
+
+### Fixed
+
+- **Password managers no longer autofill OIDC settings inputs** (#1137 reopened). Added `data-1p-ignore="true"` (1Password), `data-lpignore="true"` (LastPass), and `data-bwignore="true"` (Bitwarden) per-PM opt-out attributes alongside the existing `autocomplete="off"` on every text / number / select / sensitive input rendered by `views/settings_group_form.php`. Same attributes on the `<form>` tag itself so PMs that match per-form structure also opt out. The `autocomplete="new-password"` hint on sensitive fields stays — it's the canonical browser-side "this is a credential field but do NOT autofill" signal.
+
+### Known limitations
+
+- v3.27.5 was sliced out of the planned v3.27.5 restore-page redesign milestone (#1135 progress indicator, #1136 enumerate destinations + drop the "advanced" requirement) so the PM regression could ship same-day. Restore-page redesign moves to v3.27.6.
+
+[3.27.5]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.4...v3.27.5
+
 ## [3.27.4] - 2026-05-10
 
 Settings UX polish hotfix off `main`. Five P2 fixes plus one small functional gap surfaced during the v3.27.2 wide-regression operator pass and depth review. No schema change, no migration. Each fix is minimally scoped.
