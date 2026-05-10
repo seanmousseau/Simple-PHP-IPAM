@@ -94,6 +94,49 @@ $stepUpOidcReauthUrl = in_array('oidc_reauth', $stepUpAvailable, true)
     ? ipam_sudo_oidc_reauth_redirect_url($stepUpReturnPath)
     : '';
 
+// #1131 (v3.27.3): if OIDC re-auth is on the menu, stash the pending
+// action context now so it can be replayed after the OIDC roundtrip.
+// Pre-fix the original POST body was lost when the browser navigated
+// to Authentik and back via GET — vault_reveal etc. silently failed
+// to execute and the operator had to re-click. Stash captures the
+// hidden form fields ($stepUpHiddenFields, set by every caller of
+// this view to carry action + handler-specific data) so sudo_replay.php
+// can auto-POST them back to $stepUpFormAction after sudo passes.
+//
+// Stash is best-effort: if the user picks a non-OIDC method (password
+// / TOTP / passkey / Email OTP), the in-line form-resubmit pattern
+// already replays the action — the stash sits unused until expiry
+// and is harmless. The stash overwrites any prior pending slot, which
+// is the correct behaviour for an abandoned-and-restarted flow.
+if ($stepUpOidcReauthUrl !== '') {
+    // Hidden-field values can be int/float/bool per the view's docblock —
+    // coerce to string for the form-replay POST.
+    //
+    // CR PR #1141: filter out reserved keys (`csrf`, `_sudo_*`) so they
+    // can't override the values sudo_replay.php injects. If any caller
+    // ever forwards the original POST wholesale, a stale `csrf` would
+    // produce duplicate hidden inputs and PHP would read the later
+    // (stale) value, breaking the replay's CSRF check. The `_sudo_*`
+    // family carries proof tokens — replaying them would mean the
+    // sudo grant is "minted twice" with stale state.
+    $stashFields = [];
+    foreach ($stepUpHiddenFields as $k => $v) {
+        $key = (string) $k;
+        if ($key === 'csrf' || str_starts_with($key, '_sudo_')) {
+            continue;
+        }
+        // bool/float/int/string per the view's docblock — coerce to string
+        // for the form-replay POST. PHP coerces bool to '1'/'' which is the
+        // exact pattern checkbox-shim values use, so this matches semantics.
+        $stashFields[$key] = (string) $v;
+    }
+    ipam_sudo_oidc_stash_pending([
+        'target' => $stepUpFormAction,
+        'fields' => $stashFields,
+        'csrf'   => csrf_token(),
+    ]);
+}
+
 $stepUpMethodLabels = [
     'webauthn'    => 'Passkey / security key',
     'totp'        => 'Authenticator app code',

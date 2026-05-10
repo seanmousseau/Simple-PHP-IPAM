@@ -28,6 +28,11 @@ final class RestoreWizardStateTest extends TestCase
 
     protected function setUp(): void
     {
+        // #1127 (v3.27.3): wizard now uses $_SESSION['_pending_restore']
+        // for cross-step state. Reset between tests so a stash from a
+        // prior case doesn't leak.
+        $_SESSION = [];
+
         $this->config = ['app_secret' => str_repeat('k', 64)];
         // Build a real staged file under data/tmp/ so the canonicalise
         // guard resolves to the same path. ipam_restore_canonicalize_staged
@@ -97,8 +102,15 @@ final class RestoreWizardStateTest extends TestCase
         $this->assertNull($verified, 'apply must reject a phase=staged token');
     }
 
-    public function testTamperedFilenameRejected(): void
+    public function testFormPostedFilenameIgnoredOnVerify(): void
     {
+        // #1127 (v3.27.3) note — the legacy version of this test asserted
+        // that HMAC-tampering with `meta.filename` between sign and verify
+        // caused verify to return null. Under the session-state refactor,
+        // meta is server-side state stashed at sign time; the form-posted
+        // meta passed to verify is ignored entirely. The equivalent
+        // guarantee is preserved: an attacker cannot influence which
+        // staged file gets restored by tampering with form fields.
         $meta = ['filename' => 'foo.sql.gz', 'destination_id' => 7, 'size' => 1234];
         $sig = ipam_restore_wizard_sign($this->config, RESTORE_WIZARD_PHASE_STAGED, $this->stagedPath, $meta);
         $verified = ipam_restore_wizard_verify(
@@ -106,29 +118,53 @@ final class RestoreWizardStateTest extends TestCase
             RESTORE_WIZARD_PHASE_STAGED,
             $this->stagedPath,
             $sig,
+            // Tampered meta — must NOT change which staged file wins.
             ['filename' => 'evil.sql.gz', 'destination_id' => 7, 'size' => 1234]
         );
-        $this->assertNull($verified);
+        $this->assertNotNull($verified, 'session-state verify uses session meta, not form meta');
+        $this->assertSame(realpath($this->stagedPath), $verified,
+            'verify returns the canonical session-stashed path, NOT influenced by form meta');
     }
 
-    public function testWrongAppSecretRejected(): void
+    public function testAppSecretIgnoredOnVerify(): void
     {
+        // #1127 (v3.27.3) note — the legacy version asserted that a
+        // verify call with a different app_secret rejected. Under the
+        // session-state refactor, app_secret isn't part of the trust
+        // boundary at all; the session is. The equivalent guarantee is
+        // that a NEW session (e.g. a different user / different browser)
+        // cannot consume a slot stashed by ANOTHER session — that's
+        // enforced by PHP session isolation, not by us. This test now
+        // asserts the inverse: same session, different app_secret in
+        // $config still works (the wizard is session-scoped).
         $meta = ['filename' => 'foo.sql.gz', 'destination_id' => 7, 'size' => 1234];
         $sig = ipam_restore_wizard_sign($this->config, RESTORE_WIZARD_PHASE_STAGED, $this->stagedPath, $meta);
         $verified = ipam_restore_wizard_verify(
-            ['app_secret' => str_repeat('z', 64)],
+            ['app_secret' => str_repeat('z', 64)],   // different config — must not matter
             RESTORE_WIZARD_PHASE_STAGED,
             $this->stagedPath,
             $sig,
             $meta
         );
-        $this->assertNull($verified);
+        $this->assertNotNull($verified, 'session-state verify ignores app_secret entirely');
     }
 
-    public function testMissingAppSecretThrowsOnSign(): void
+    public function testMissingAppSecretDoesNotThrowOnSign(): void
     {
-        $this->expectException(RuntimeException::class);
-        ipam_restore_wizard_sign(['app_secret' => ''], RESTORE_WIZARD_PHASE_STAGED, $this->stagedPath, []);
+        // #1127 (v3.27.3): the entire point of the refactor. Pre-fix
+        // installs that took the v3.26.0 vault-key relocation path and
+        // had `app_secret = ''` could not stage any restore — sign threw.
+        // Post-fix: stash works regardless of app_secret state.
+        $sig = ipam_restore_wizard_sign(['app_secret' => ''], RESTORE_WIZARD_PHASE_STAGED, $this->stagedPath, []);
+        $this->assertNotEmpty($sig, '#1127: sign must succeed without app_secret — restore-from-remote unblocks on v3.26.0+ installs');
+        $verified = ipam_restore_wizard_verify(
+            ['app_secret' => ''],
+            RESTORE_WIZARD_PHASE_STAGED,
+            $this->stagedPath,
+            $sig,
+            []
+        );
+        $this->assertNotNull($verified, '#1127: round-trip must work end-to-end without app_secret');
     }
 
     public function testUnknownPhaseRejectedOnSign(): void

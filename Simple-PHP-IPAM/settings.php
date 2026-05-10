@@ -370,6 +370,13 @@ $activeTab = to_str($_GET['tab'] ?? '');
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !empty($postedGroup) && isset($groupToTab[$postedGroup])) {
     $activeTab = $groupToTab[$postedGroup];
 }
+// #1129 — capture an unknown ?tab= so the General-tab fallback can show
+// an inline banner. Empty/missing tab is the normal landing case and is
+// not flagged. The bad slug echoes back via e() at render time.
+$unknownTab = '';
+if ($activeTab !== '' && !isset($tabs[$activeTab])) {
+    $unknownTab = $activeTab;
+}
 if (!isset($tabs[$activeTab])) {
     $activeTab = 'general';
 }
@@ -401,6 +408,13 @@ page_header('Settings');
 <?php endif; unset($flash); ?>
 <?php if (!empty($fieldErrors['_group'])): ?>
   <p class="danger"><?= e($fieldErrors['_group']) ?></p>
+<?php endif; ?>
+
+<?php // #1129 — explain the General-tab fallback when ?tab= was unknown. ?>
+<?php if ($unknownTab !== ''): ?>
+  <p class="warning">
+    The requested settings tab <code><?= e($unknownTab) ?></code> no longer exists; showing General.
+  </p>
 <?php endif; ?>
 
 <?php /** @var list<string> $_staleKeys */ $_staleKeys = $GLOBALS['config_stale_keys'] ?? []; if ($_staleKeys): ?>
