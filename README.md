@@ -12,16 +12,11 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.27.4
+## What's new in v3.27.5
 
-Settings UX polish hotfix on top of v3.27.3. Five P2 fixes plus one functional gap (subnet tag UI) surfaced during the v3.27.2 wide-regression operator pass — no migration, no structural change.
+Same-day micro-hotfix on top of v3.27.4. The v3.27.4 fix for #1137 added `autocomplete="off"` to OIDC settings inputs to stop password-manager autofill — but `autocomplete="off"` is only honored by the browser's native autofill; 1Password / LastPass / Bitwarden ignore it by design and continued autofilling on testing and prod.
 
-- **Wheel scroll no longer hijacks focused number inputs in settings (#1133).** HTML5 `<input type="number">` consumed the mouse wheel when focused, so an operator who typed `login_max_attempts=20`, kept the field focused, and scrolled the page would silently watch the field count down to its `min`. Fixed by blurring the active number input on wheel and `preventDefault`ing the native step.
-- **Step-up policy lockout-guard now shows an inline "changes NOT saved" banner (#1132).** When the precondition guard refuses a save, the form re-renders with the operator's selections preserved so they can fix and resubmit — but pre-fix the only signal was a page-top flash that scrolled out of view. New per-group banner inside the affected card makes refusal obvious.
-- **OIDC settings inputs no longer trip password-manager autofill (#1137).** Added `autocomplete="off"` to the OIDC `client_id`, `discovery_url`, `redirect_uri`, etc. fields so 1Password / LastPass / Bitwarden stop heuristically autofilling stored credentials over them.
-- **Backup history + vault timestamps render in user TZ (#1139).** Three display sites in the backup admin UI rendered raw UTC instead of routing through `ipam_format_datetime()`. DB storage stays UTC; only the display flips to operator-tz with a TZ-abbrev suffix.
-- **XHR sudo-gated reveals auto-replay after OIDC step-up (#1140).** Eye-toggle reveals on sensitive settings used to silently drop after the Authentik round-trip (operator had to click again). New one-shot `sessionStorage` replay marker auto-clicks the matching button on return so the secret reveals on the first click. Same UX trap as #1131 but for XHR.
-- **Subnet add + edit forms now expose the tag picker (#1138, WR-04).** The schema and REST API have supported subnet tags since v2.x; the UI never did. Vanilla `<select multiple>` added to both the create form and the inline edit drawer, pre-populated from a new `data-tag-ids` attribute.
+- **Password managers no longer autofill OIDC settings inputs (#1137).** Added `data-1p-ignore="true"`, `data-lpignore="true"`, and `data-bwignore="true"` to every settings input (text, number, select, sensitive) plus the form itself so the major PMs see an explicit per-manager opt-out alongside the existing browser-side hint.
 
 [Full changelog →](CHANGELOG.md)
 

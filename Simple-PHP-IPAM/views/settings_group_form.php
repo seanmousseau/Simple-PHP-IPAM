@@ -77,7 +77,8 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
   </div>
   <?php endif; unset($_globalCfg, $_appSecret); ?>
 
-  <form method="post" action="settings.php">
+  <form method="post" action="settings.php" autocomplete="off"
+        data-1p-ignore="true" data-lpignore="true" data-bwignore="true">
     <input type="hidden" name="csrf"  value="<?= e(csrf_token()) ?>">
     <input type="hidden" name="group" value="<?= e($groupKey) ?>">
 
@@ -134,7 +135,8 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
             ?>
               <input type="number" id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>"
                      value="<?= e($shown !== null ? $shown : (string)to_int($current)) ?>"<?= $minAttr . $maxAttr ?>
-                     step="1" inputmode="numeric" class="mw-240" autocomplete="off">
+                     step="1" inputmode="numeric" class="mw-240" autocomplete="off"
+                     data-1p-ignore="true" data-lpignore="true" data-bwignore="true">
             <?php elseif ($key === 'alert.recipient_user_ids'):
                 $allUsers = $db->query(
                     "SELECT id, username, name, email FROM users
@@ -196,7 +198,8 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
               <span class="pw-wrap">
                 <input type="password" id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>"
                        value="" placeholder="<?= $isSet ? '••••••••' : '' ?>"
-                       class="w-full pw-input" autocomplete="new-password">
+                       class="w-full pw-input" autocomplete="new-password"
+                       data-1p-ignore="true" data-lpignore="true" data-bwignore="true">
                 <button type="button" class="pw-toggle"
                         data-pw-toggle-for="<?= e($inputId) ?>"
                         <?php if ($isSet): ?>data-pw-reveal-key="<?= e($key) ?>" data-pw-reveal-csrf="<?= e(csrf_token()) ?>"<?php endif; ?>
@@ -210,7 +213,8 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
                 $selected       = $shown !== null ? $shown : (is_scalar($current) ? (string)$current : '');
                 $selectedValid  = array_key_exists($selected, $options);
             ?>
-              <select id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>" class="w-full" autocomplete="off">
+              <select id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>" class="w-full" autocomplete="off"
+                      data-1p-ignore="true" data-lpignore="true" data-bwignore="true">
                 <?php if (!$selectedValid): ?>
                   <option value="<?= e($selected) ?>" selected>⚠ invalid: <?= e($selected) ?></option>
                 <?php endif; ?>
@@ -221,7 +225,8 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
             <?php else: ?>
               <input type="text" id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>"
                      value="<?= e($shown !== null ? $shown : (is_scalar($current) ? (string)$current : '')) ?>"
-                     class="w-full" autocomplete="off">
+                     class="w-full" autocomplete="off"
+                     data-1p-ignore="true" data-lpignore="true" data-bwignore="true">
             <?php endif; ?>
           <?php endif; // bool vs other ?>
           <?php if ($help): ?><div class="muted"><?= e($help) ?></div><?php endif; ?>
