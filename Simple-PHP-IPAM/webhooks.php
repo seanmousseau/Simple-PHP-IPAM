@@ -61,7 +61,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             echo json_encode(['ok' => false, 'error' => 'JSON encode failed.']);
             exit;
         }
-        $sig    = ipam_webhook_sign($payload, to_str($row['secret']));
+        // v3.27.7 (F-S3-01): decrypt before signing. The plaintext only lives
+        // in this local scope for the duration of the test-fire HTTP call.
+        $secretPlain = ipam_webhook_decrypt_secret(to_str($row['secret']), to_str($config['app_secret'] ?? ''));
+        $sig    = ipam_webhook_sign($payload, $secretPlain);
         $result = ipam_webhook_deliver($row, 'test.ping', $payload, $sig);
         audit($db, 'webhook.test_fire', 'webhook', $id, "url=" . to_str($row['url']));
         echo json_encode([
@@ -95,8 +98,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif (count($events) === 0) {
             $err = 'At least one event must be selected.';
         } else {
+            // v3.27.7 (F-S3-01): encrypt at rest. Plain $secret is held in
+            // memory long enough to sign the next test/delivery, then dropped.
+            $secretEnc = ipam_webhook_encrypt_secret($secret, to_str($config['app_secret'] ?? ''));
             $st = $db->prepare("INSERT INTO webhooks (name, url, secret, events) VALUES (:n,:u,:s,:ev)");
-            $st->execute([':n' => $name, ':u' => $url, ':s' => $secret, ':ev' => json_encode($events)]);
+            $st->execute([':n' => $name, ':u' => $url, ':s' => $secretEnc, ':ev' => json_encode($events)]);
             $newId = ipam_last_insert_id($db, 'webhooks');
             audit($db, 'webhook.create', 'webhook', $newId, "name=$name url=$url");
             flash_set("Webhook \"$name\" created.");
@@ -129,8 +135,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif (count($events) === 0) {
             $err = 'At least one event must be selected.';
         } else {
+            // v3.27.7 (F-S3-01): encrypt at rest.
+            $secretEnc = ipam_webhook_encrypt_secret($secret, to_str($config['app_secret'] ?? ''));
             $st = $db->prepare("UPDATE webhooks SET name=:n, url=:u, secret=:s, events=:ev WHERE id=:id");
-            $st->execute([':n' => $name, ':u' => $url, ':s' => $secret, ':ev' => json_encode($events), ':id' => $id]);
+            $st->execute([':n' => $name, ':u' => $url, ':s' => $secretEnc, ':ev' => json_encode($events), ':id' => $id]);
             audit($db, 'webhook.update', 'webhook', $id, "name=$name url=$url");
             flash_set("Webhook updated.");
             header('Location: webhooks.php');
@@ -426,8 +434,7 @@ function wh_status_badge(mixed $status): string
             >Test</button>
 
             <form method='post' style='display:inline'
-              data-wh-name='<?= e(to_str($wh['name'])) ?>'
-              onsubmit="return confirm('Delete webhook ' + this.dataset.whName + '? This will also delete all delivery history.')">
+              data-confirm='Delete webhook <?= e(to_str($wh['name'])) ?>? This will also delete all delivery history.'>
               <input type='hidden' name='csrf' value='<?= e(csrf_token()) ?>'>
               <input type='hidden' name='action' value='delete'>
               <input type='hidden' name='id' value='<?= to_int($wh['id']) ?>'>

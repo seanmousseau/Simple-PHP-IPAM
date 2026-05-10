@@ -8982,6 +8982,85 @@ function ipam_webhook_sign(string $payload, string $secret): string
 }
 
 /**
+ * v3.27.7 (F-S3-01): encrypt a webhook signing secret for at-rest storage.
+ *
+ * Pre-v3.27.7, webhooks.secret was stored as plaintext. A DB dump (legitimate
+ * backup, replication snapshot, db_tools export) leaked every outbound webhook
+ * URL and its HMAC signing key, enabling forged deliveries. Mirrors the TOTP
+ * envelope shape (ipam_totp_encrypt_secret) — AES-256-GCM with 12-byte IV +
+ * 16-byte tag, '$2W$' prefix to namespace from TOTP's '$2$'.
+ *
+ * Key derived via SHA-256 of app_secret (same derivation as TOTP). Webhook
+ * signing is HMAC-SHA256 (not AES), so the encrypted secret is only ever
+ * unwrapped in memory at delivery time and re-encrypted on any save.
+ *
+ * @param string $secret  Plaintext HMAC signing secret. Empty string returns
+ *                        empty (unsigned webhook).
+ * @param string $key     app_secret string from config.php.
+ * @return string         '$2W$' + base64(iv || tag || ciphertext), or empty.
+ */
+function ipam_webhook_encrypt_secret(string $secret, string $key): string
+{
+    if ($key === '') {
+        throw new \RuntimeException('Webhook secret encryption requires a non-empty app_secret');
+    }
+    if ($secret === '') {
+        // Empty signing secret means the webhook is unsigned. Store empty
+        // verbatim so the reader can distinguish "no secret" from "encrypted
+        // blob that fails to decrypt".
+        return '';
+    }
+    $iv  = random_bytes(12);
+    $tag = '';
+    $enc = openssl_encrypt($secret, 'aes-256-gcm', hash('sha256', $key, true), OPENSSL_RAW_DATA, $iv, $tag, '', 16);
+    if ($enc === false) {
+        throw new \RuntimeException('Webhook secret encryption failed');
+    }
+    return '$2W$' . base64_encode($iv . $tag . $enc);
+}
+
+/**
+ * v3.27.7: decrypt a webhook signing secret previously written by
+ * ipam_webhook_encrypt_secret(). Returns empty string on decrypt failure so
+ * callers signing an HMAC always get a usable string (the HMAC will fail
+ * receiver-side verification, surfacing the misconfig there).
+ *
+ * Accepts both encrypted ('$2W$...') and plaintext values; the plaintext
+ * branch exists because the 3.27.7-webhook-secret-encrypt migration is
+ * defensive — an install upgrading from pre-v3.27.7 with existing rows must
+ * keep delivering until the migration completes. (All deployed targets at
+ * v3.27.6 had webhooks count = 0 so the migration is no-op in practice, but
+ * the branch keeps the code safe for any future install restoring an older
+ * backup and then upgrading.)
+ */
+function ipam_webhook_decrypt_secret(string $stored, string $key): string
+{
+    if ($stored === '') {
+        return '';
+    }
+    if (!str_starts_with($stored, '$2W$')) {
+        // Legacy plaintext row — return as-is so the existing webhook keeps
+        // signing correctly until the migration encrypts it.
+        return $stored;
+    }
+    if ($key === '') {
+        throw new \RuntimeException('Webhook secret decryption requires a non-empty app_secret');
+    }
+    $raw = base64_decode(substr($stored, 4), true);
+    if ($raw === false || strlen($raw) < 29) {
+        return '';
+    }
+    $iv      = substr($raw, 0, 12);
+    $tag     = substr($raw, 12, 16);
+    $payload = substr($raw, 28);
+    $decrypted = openssl_decrypt($payload, 'aes-256-gcm', hash('sha256', $key, true), OPENSSL_RAW_DATA, $iv, $tag);
+    if ($decrypted === false) {
+        return '';
+    }
+    return $decrypted;
+}
+
+/**
  * Attempt a single HTTP delivery of a webhook payload via ext-curl.
  * Returns ['status' => int|null, 'body' => string, 'error' => string|null].
  *
@@ -9089,7 +9168,11 @@ function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $confi
                 ]);
                 continue;
             }
-            $sig = ipam_webhook_sign($payload, (string)$hook['secret']);
+            // v3.27.7 (F-S3-01): decrypt the stored secret before signing.
+            // The plaintext only lives in this local scope long enough to
+            // compute the HMAC for this single dispatch.
+            $secretPlain = ipam_webhook_decrypt_secret((string)$hook['secret'], to_str($config['app_secret'] ?? ''));
+            $sig = ipam_webhook_sign($payload, $secretPlain);
 
             // Insert pending delivery row
             $ins = $db->prepare(

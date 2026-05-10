@@ -171,7 +171,7 @@ page_header('Audit Log');
     </div>
     <?php endif; ?>
     <?php if ($retentionPanel['days'] > 0): ?>
-    <form method="post" action="audit.php" class="m-0" onsubmit="return confirm('Prune audit log entries older than <?= e((string)$retentionPanel['days']) ?> days?')">
+    <form method="post" action="audit.php" class="m-0" data-confirm="Prune audit log entries older than <?= e((string)$retentionPanel['days']) ?> days?">
       <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
       <input type="hidden" name="action" value="prune_now">
       <button type="submit" class="button-secondary"><?= icon('trash') ?> Prune now</button>

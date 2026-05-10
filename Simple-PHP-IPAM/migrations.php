@@ -3722,6 +3722,74 @@ function ipam_migrations(): array
                 }
             }
         },
+
+        // v3.27.7 (F-S3-01) — encrypt any existing plaintext webhook signing
+        // secrets at rest. Pre-v3.27.7 stored webhooks.secret as plaintext;
+        // a DB dump exposed every outbound webhook URL + its HMAC key.
+        //
+        // All deployed targets at v3.27.6 had webhooks count = 0 (verified
+        // 2026-05-10 across the 4 testing instances + demo + prod), so this
+        // migration is no-op in practice. The body is kept for defensive
+        // correctness: any future install restoring an older backup before
+        // upgrading will land here with plaintext rows and they get
+        // encrypted in-place. Rows whose value already starts with '$2W$'
+        // (the envelope prefix used by ipam_webhook_encrypt_secret) are
+        // skipped so re-running is idempotent.
+        //
+        // Requires $config['app_secret'] to be set. The check at the top
+        // throws an actionable RuntimeException if it isn't — the operator
+        // can resolve by setting app_secret in config.php and re-running
+        // upgrade.sh. Same precondition shape as the TOTP encrypt path.
+        '3.27.7-webhook-secret-encrypt' => static function (PDO $db) {
+            // Probe whether the webhooks table exists at all. Fresh installs
+            // create it via the 1.10.0 migration that ran earlier in the
+            // same upgrade pass; older installs that never enabled webhooks
+            // may not have it. Skip silently if absent.
+            try {
+                $probe = $db->query("SELECT secret FROM webhooks LIMIT 1");
+                if ($probe === false) return;
+            } catch (\Throwable $e) {
+                // Table doesn't exist on this install yet — fresh schemas
+                // pick up the column via the table's own create migration.
+                return;
+            }
+
+            $rows = $db->query("SELECT id, secret FROM webhooks");
+            if ($rows === false) return;
+
+            $appSecret = '';
+            global $config;
+            if (is_array($config) && isset($config['app_secret']) && is_string($config['app_secret'])) {
+                $appSecret = $config['app_secret'];
+            }
+
+            $upd = $db->prepare("UPDATE webhooks SET secret = :s WHERE id = :id");
+            $reencrypted = 0;
+            foreach ($rows->fetchAll() as $row) {
+                $stored = is_string($row['secret'] ?? null) ? $row['secret'] : '';
+                if ($stored === '' || str_starts_with($stored, '$2W$')) {
+                    continue;
+                }
+                if ($appSecret === '') {
+                    throw new \RuntimeException(
+                        '3.27.7-webhook-secret-encrypt: webhook secrets need encryption but ' .
+                        '$config[\'app_secret\'] is empty. Set app_secret in config.php and ' .
+                        're-run upgrade.sh to complete the migration.'
+                    );
+                }
+                $upd->execute([
+                    ':s'  => ipam_webhook_encrypt_secret($stored, $appSecret),
+                    ':id' => to_int($row['id']),
+                ]);
+                $reencrypted++;
+            }
+
+            if ($reencrypted > 0 && function_exists('audit')) {
+                $details = json_encode(['count' => $reencrypted]);
+                audit($db, 'migration.applied', 'migration', null,
+                    is_string($details) ? '3.27.7-webhook-secret-encrypt ' . $details : '3.27.7-webhook-secret-encrypt');
+            }
+        },
     ];
 }
 

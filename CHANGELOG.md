@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.27.7] - 2026-05-10
+
+Operator-reported regression hotfix off `main`. v3.27.6 was supposed to close the v3.27.x cluster; live verification surfaced two issues that warrant their own patch:
+
+1. **Inline event handlers (`onchange=`, `onclick=`, `onsubmit=`) are CSP-blocked.** The `Content-Security-Policy` header set by `page_header()` in `lib.php` uses `script-src 'self'` without `script-src-attr 'unsafe-inline'`. Modern browsers enforcing CSP3 silently drop every inline event handler. Symptom Sean caught: the Restore-tab destination picker dropdown does nothing when changed — `onchange="this.form.submit()"` never fires, so the URL stays at `?tab=restore` and no backups enumerate. Hidden additional impact: five destructive-action confirm dialogs (TOTP disable, Email-OTP disable, passkey delete, audit-log prune, webhook delete) were silently submitting forms without showing the "are you sure?" prompt. This is a security-UX regression, not just a convenience issue.
+
+2. **Webhook signing secrets stored plaintext at rest** (Pass C finding F-S3-01). The v3.24–v3.27 vault key relocation work missed `webhooks.secret`. Database dumps (backup files, replication snapshots, `db_tools` exports) expose every outbound webhook URL and its signing secret, enabling forged deliveries. Comparable secrets (TOTP, OIDC client_secret, SMTP password) were migrated to encrypted-at-rest in earlier versions. Webhooks were the outlier; this release closes the gap. All deployed targets (4 testing instances + demo + prod) have `webhooks` count = 0 at v3.27.6, so the migration is structural-only (add `secret_enc`, drop `secret`) with no row-rewrite step.
+
+### Fixed
+
+- **Inline event handlers converted to data-attribute + delegated handlers** so the strict CSP no longer blocks them. The "data-confirm" handler already in `assets/app.js` (line 367) is reused for the seven confirm() call sites; one new "data-submit-on-change" handler is added for the destination picker. Touches `views/backup_admin_restore.php`, `views/backup_admin_history.php`, `audit.php`, `change_password.php`, `users.php`, `webhooks.php`. CSP itself stays strict; only the inline-handler pattern is removed.
+
+### Security
+
+- **Webhook signing secrets encrypted at rest** (F-S3-01). Schema change: `webhooks.secret` → `webhooks.secret_enc` (BLOB, encrypted with the v3.27 vault key, HKDF-derived with `purpose="webhook-secret"`). Writer (`webhooks.php`) and reader (`lib.php` delivery dispatch) updated to round-trip through the encrypt/decrypt helpers. Schema parity maintained across `schema.sql`, `schema.mysql.sql`, `schema.pgsql.sql`. Round-trip test covering the encrypt → decrypt → HMAC-verify cycle.
+
+### Process
+
+- Pass C regression evidence at `releases/ipam-3.27.6/regression-evidence/passC/` (landed on `dev` 043c716). v3.27.7 closes the one **High**-severity Pass C finding (F-S3-01) and the operator-reported CSP regression that Pass C did not catch (different bug class — Pass C was a static security audit, not a runtime browser regression sweep).
+
+[3.27.7]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.6...v3.27.7
+
 ## [3.27.6] - 2026-05-10
 
 Final patch in the v3.27.x cluster. Three operator-impact UX fixes anchored on the restore page plus one regression catch from same-day verification testing. No schema change, no migration. After this release ships the project pauses for v3.28.0+ planning.
