@@ -85,6 +85,16 @@ Pattern: *when you make a regex stricter, add a test asserting the strings that 
 
 **Rule for v3.28.0+ PRs (enforced by code review):** any commit message containing "tighten", "stricter", "reject", "validate" must touch a negative-regression test file. Honor-system at first; promote to a CI grep check in v3.29.0.
 
+### 2.2.1 Known test flakes / footguns to resolve in v3.28.0
+
+Specific failures the suite trips over today that v3.28.0 should fix at the source, not paper over in the test wrapper:
+
+| Symptom | Where | Root cause | v3.28.0 fix |
+|---|---|---|---|
+| `RestoreDryRunTest::testIpambkl1ArchiveDoesNotErrorThroughSqlSplitter` fails with `SQLSTATE[HY000]: General error: 1 no such table: subnets` on a fresh `new PDO('sqlite::memory:')` that then calls `ipam_db_init()` | `tests/RestoreDryRunTest.php:149` | `ipam_db_init()` checks the on-disk `.db_initialized` sentinel before running migrations. The sentinel survives between phpunit invocations (and was set by an earlier app boot), so on an *in-memory* PDO the migrations get skipped — the disk sentinel is present, the in-memory schema is empty, the test sees no `subnets` table. Surfaced every Pass A / B / C / local-gate cycle so far. **Documented workaround today:** `rm Simple-PHP-IPAM/data/.db_initialized Simple-PHP-IPAM/data/ipam.sqlite` before `vendor/bin/phpunit` — that's a workaround, not a fix. | Either (a) `ipam_db_init()` accepts a `$force=true` parameter so tests can opt out of the sentinel skip-path; or (b) the sentinel becomes per-PDO (keyed on a connection identity) instead of a single on-disk file; or (c) `tests/bootstrap.php` invalidates the sentinel up front. Option (a) is the smallest blast radius and lands as part of v3.28.0's "round-trip test infrastructure" deliverable since round-trip tests will hit this same path. |
+
+When v3.28.0 lands the fix, the row gets a `Fixed in v3.28.0` annotation but stays in the table as a regression-prevention reference — the worked example of "test suite trips over production code path that's correct in production but wrong in the test environment."
+
 ### 2.3 Contract-doc-vs-code linter
 
 Concrete script: `tools/contract-doc-lint.php`. Run in CI alongside phpcs/phpstan/phpunit. Emits one line per drift, non-zero exit if any.
