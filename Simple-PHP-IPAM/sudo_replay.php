@@ -52,7 +52,7 @@ page_header('Resuming…');
     <h2>Resuming your action</h2>
     <p class="muted">Identity verified — completing the action you started before re-authentication.</p>
 
-    <form method="post" action="<?= e($safeTarget) ?>" id="sudo-replay-form">
+    <form method="post" action="<?= e($safeTarget) ?>" id="sudo-replay-form" data-auto-submit>
         <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
         <?php foreach ($pending['fields'] as $name => $value): ?>
             <input type="hidden" name="<?= e($name) ?>" value="<?= e($value) ?>">
@@ -64,16 +64,6 @@ page_header('Resuming…');
             <button type="submit" class="action-pill">Continue →</button>
         </noscript>
     </form>
-
-    <script>
-        // Auto-submit — the user shouldn't see this page for more than a
-        // few hundred milliseconds. If JS is disabled the noscript form
-        // above gives them a manual button.
-        (function() {
-            var f = document.getElementById('sudo-replay-form');
-            if (f) f.submit();
-        })();
-    </script>
 </div>
 <?php
 page_footer();
