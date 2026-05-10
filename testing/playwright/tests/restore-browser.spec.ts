@@ -12,7 +12,9 @@
  *   2. Browse table renders columns (filename, size, encryption, type, checksum, actions).
  *   3. Empty-state message points operator at the Backup tab.
  *   4. Restore button on a row stages the backup (lands in Step 2 of the wizard).
- *   5. Advanced filename fallback `<details>` is preserved.
+ *   5. v3.27.6 #1136: removed Advanced-fallback test — the legacy free-text
+ *      "stage by filename" UI was deleted; the per-row Restore button in
+ *      the enumerated backup table is now the sole stage path.
  *
  * Required fixture state:
  *   - 'ci-local' destination seeded with at least one backup. The backup
@@ -66,8 +68,10 @@ test.describe('Restore tab — destination-driven backup browser (#1077)', () =>
         await expect(page.locator('select[name="dest"]')).toBeVisible();
         // No browse table when no destination is selected.
         await expect(page.locator('table.data-table')).toHaveCount(0);
-        // Advanced disclosure (free-text fallback) still present.
-        await expect(page.locator('details summary', { hasText: /Advanced/i })).toBeVisible();
+        // v3.27.6 #1136: the upload-from-workstation card is now a peer to
+        // the destination picker (no <details> wrapper, no Advanced
+        // disclosure). Confirm the upload affordance is visible at landing.
+        await expect(page.locator('input[type="file"][name="restore_upload"]')).toBeVisible();
     });
 
     test('destination picker form has method=get + onchange auto-submit', async () => {
@@ -135,15 +139,11 @@ test.describe('Restore tab — destination-driven backup browser (#1077)', () =>
             .toBeVisible({ timeout: 15_000 });
     });
 
-    test('Advanced fallback exposes the legacy free-text filename form', async () => {
-        await gotoRestore(page);
-        // The disclosure is closed by default; the input is in the DOM but
-        // not visible until expanded.
-        const summary = page.locator('details summary', { hasText: /Advanced/i });
-        await summary.click();
-        const advForm = page.locator('details form:has(input[name="step"][value="stage"])');
-        await expect(advForm.locator('input[name="name"]')).toBeVisible();
-        await expect(advForm.locator('select[name="destination_id"]')).toBeVisible();
-        await expect(advForm.locator('button[type="submit"]')).toBeVisible();
-    });
+    // v3.27.6 #1136 removed the "Advanced — stage by filename" <details>
+    // entirely (it was a workaround for the missing enumeration UI before
+    // #1077 landed and is redundant now). The matching legacy-form test
+    // that lived here was deleted with the UI; the per-row Restore button
+    // in the destination-driven backup browser is now the sole stage path,
+    // and `tests/restore-browser.spec.ts:click-row-Restore` above already
+    // covers it end-to-end.
 });
