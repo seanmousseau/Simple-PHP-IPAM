@@ -1078,20 +1078,41 @@ function login_rate_limited(PDO $db, string $ip, int $maxAttempts, int $windowSe
  * overstated the wait under steady traffic and could keep the dampener
  * suppressing past the real unlock point.
  */
-function auth_rate_limit_unlock_at(PDO $db, string $action, string $ip, int $windowSeconds): int
+function auth_rate_limit_unlock_at(PDO $db, string $action, string $ip, int $maxAttempts, int $windowSeconds): int
 {
     $cutoff = date('Y-m-d H:i:s', time() - $windowSeconds);
-    $st = $db->prepare(
-        "SELECT MIN(attempted_at) AS oldest FROM login_attempts
+    // CR PR #1141 round 2: locate the THRESHOLD-CROSSING failure (the
+    // Nth-from-newest in the window). Pre-fix used MIN() of all
+    // in-window failures, which is only correct when exactly N failures
+    // exist. With more than N, expiring the absolute oldest still
+    // leaves the IP blocked — `unlock_at` was reported too early and
+    // the dampener could roll over before the real unlock point.
+    $countSt = $db->prepare(
+        "SELECT COUNT(*) FROM login_attempts
           WHERE action = :a AND ip = :ip AND attempted_at >= :cutoff"
     );
-    $st->execute([':a' => $action, ':ip' => $ip, ':cutoff' => $cutoff]);
-    /** @var array<string, mixed>|false $row */
-    $row = $st->fetch();
-    if (!is_array($row) || empty($row['oldest'])) {
+    $countSt->execute([':a' => $action, ':ip' => $ip, ':cutoff' => $cutoff]);
+    $count = to_int($countSt->fetchColumn());
+    if ($count === 0) {
         return time() + $windowSeconds;
     }
-    $oldest = to_str($row['oldest']);
+    // OFFSET = count - maxAttempts; e.g. with N=5 max and 7 in-window
+    // failures, the threshold-crossing row is at OFFSET 2 (skipping the
+    // 2 oldest that are about to age out before the lockout actually
+    // lifts). With exactly N in-window failures, OFFSET = 0 == oldest.
+    $offset = max(0, $count - $maxAttempts);
+    $st = $db->prepare(
+        "SELECT attempted_at FROM login_attempts
+          WHERE action = :a AND ip = :ip AND attempted_at >= :cutoff
+          ORDER BY attempted_at ASC
+          LIMIT 1 OFFSET :offset"
+    );
+    $st->bindValue(':a',      $action,  PDO::PARAM_STR);
+    $st->bindValue(':ip',     $ip,      PDO::PARAM_STR);
+    $st->bindValue(':cutoff', $cutoff,  PDO::PARAM_STR);
+    $st->bindValue(':offset', $offset,  PDO::PARAM_INT);
+    $st->execute();
+    $oldest = to_str($st->fetchColumn());
     if ($oldest === '') {
         return time() + $windowSeconds;
     }

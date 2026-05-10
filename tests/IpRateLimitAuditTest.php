@@ -30,7 +30,12 @@ final class IpRateLimitAuditTest extends TestCase
     {
         $this->db = new PDO('sqlite::memory:');
         $this->db->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-        $this->db->exec((string) file_get_contents(__DIR__ . '/../Simple-PHP-IPAM/schema.sql'));
+        // CR PR #1141 round 2: assert the schema read succeeded so a
+        // missing/unreadable schema.sql fails fast with a clear message
+        // instead of producing misleading downstream SQL errors.
+        $schema = file_get_contents(__DIR__ . '/../Simple-PHP-IPAM/schema.sql');
+        $this->assertNotFalse($schema, 'schema.sql must be readable in test setup');
+        $this->db->exec($schema);
         $this->db->exec('PRAGMA foreign_keys = ON');
         ensure_migrations_table($this->db);
         apply_migrations($this->db);

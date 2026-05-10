@@ -103,7 +103,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // overstates the wait under steady traffic and could keep
             // the dampener suppressing past the real unlock point — a
             // genuine later lockout would never get its own audit row.
-            $unlockAt        = auth_rate_limit_unlock_at($db, 'login', $ip, $lockoutSeconds);
+            $unlockAt        = auth_rate_limit_unlock_at($db, 'login', $ip, $maxAttempts, $lockoutSeconds);
             $remainingSecs   = max(1, $unlockAt - time());
             $remainingMin    = max(1, (int) ceil($remainingSecs / 60));
             $error = 'Too many failed login attempts from this network. Please try again in '

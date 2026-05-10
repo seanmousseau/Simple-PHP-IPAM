@@ -170,13 +170,28 @@ function ipam_restore_wizard_consume_pending(string $id, string $expectedPhase):
  */
 function ipam_restore_wizard_advance_phase(string $id, string $newPhase): bool
 {
-    if ($newPhase !== RESTORE_WIZARD_PHASE_STAGED && $newPhase !== RESTORE_WIZARD_PHASE_DRYRUN_OK) {
-        throw new InvalidArgumentException("ipam_restore_wizard_advance_phase: unknown phase '$newPhase'");
+    // CR PR #1141 round 2: enforce the only legal transition —
+    // staged → dryrun_passed. The wizard never needs to "advance" from
+    // dryrun_passed back to staged or stay at the current phase via
+    // this helper; admitting either would let a fresh `staged` slot be
+    // promoted to `dryrun_passed` without ever running the dry-run,
+    // weakening the phase-lock guarantee this helper owns.
+    if ($newPhase !== RESTORE_WIZARD_PHASE_DRYRUN_OK) {
+        throw new InvalidArgumentException(
+            "ipam_restore_wizard_advance_phase: only staged→dryrun_passed is supported, got '$newPhase'"
+        );
     }
     if ($id === '') return false;
     $slots = ipam_restore_wizard_load_slots();
     if (!isset($slots[$id])) return false;
     $pending = $slots[$id];
+    // Refuse the transition if the slot isn't currently `staged` —
+    // re-promoting a `dryrun_passed` slot or moving from a foreign
+    // phase would skip the dry-run gate.
+    $currentPhase = is_string($pending['phase'] ?? null) ? $pending['phase'] : '';
+    if ($currentPhase !== RESTORE_WIZARD_PHASE_STAGED) {
+        return false;
+    }
     $expires = is_int($pending['expires'] ?? null) ? $pending['expires'] : 0;
     if ($expires < time()) {
         unset($slots[$id]);

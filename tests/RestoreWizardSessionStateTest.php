@@ -178,6 +178,31 @@ final class RestoreWizardSessionStateTest extends TestCase
         $this->assertSame('/var/data/tmp/archive-A.ipambkl1.gz', $consumedA['path']);
     }
 
+    /**
+     * CR PR #1141 round 2: advance_phase must enforce that the slot is
+     * currently `staged` AND the target is `dryrun_passed`. Anything
+     * else would let a fresh `staged` slot skip the dry-run gate.
+     */
+    public function testAdvancePhaseRejectsNonStagedSource(): void
+    {
+        $id = ipam_restore_wizard_stage_pending(RESTORE_WIZARD_PHASE_STAGED, '/x', []);
+        $this->assertTrue(ipam_restore_wizard_advance_phase($id, RESTORE_WIZARD_PHASE_DRYRUN_OK));
+        // Slot is now dryrun_passed. A second advance to dryrun_passed
+        // must refuse — re-promoting weakens the phase-lock invariant.
+        $this->assertFalse(
+            ipam_restore_wizard_advance_phase($id, RESTORE_WIZARD_PHASE_DRYRUN_OK),
+            '#1141: advance_phase must refuse when the slot is not currently `staged`'
+        );
+    }
+
+    public function testAdvancePhaseRejectsBackwardsTransition(): void
+    {
+        $id = ipam_restore_wizard_stage_pending(RESTORE_WIZARD_PHASE_STAGED, '/x', []);
+        $this->expectException(InvalidArgumentException::class);
+        // staged is not a valid TARGET — only dryrun_passed is.
+        ipam_restore_wizard_advance_phase($id, RESTORE_WIZARD_PHASE_STAGED);
+    }
+
     public function testUnknownIdReturnsNull(): void
     {
         $real = ipam_restore_wizard_stage_pending(RESTORE_WIZARD_PHASE_STAGED, '/x', []);

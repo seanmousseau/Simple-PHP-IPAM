@@ -74,6 +74,11 @@ if ($as === 'staged') {
     echo json_encode([
         'ok'         => true,
         'path'       => $staged['path'],   // display only — apply reads from session
+        // CR PR #1141 round 2: emit both keys. `signature` is the
+        // pre-v3.27.3 contract; `staged_sig` is the v3.27.3+ canonical
+        // name. Existing automation that read `signature` keeps working
+        // through the patch release window.
+        'signature'  => $stagedSig,        // backward-compatible alias
         'staged_sig' => $stagedSig,        // round-trip via wizard form's hidden field
         'size'       => $staged['size'],
         'filename'   => $staged['filename'],
