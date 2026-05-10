@@ -120,7 +120,7 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
             ?>
               <input type="number" id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>"
                      value="<?= e($shown !== null ? $shown : (string)to_int($current)) ?>"<?= $minAttr . $maxAttr ?>
-                     class="mw-240" autocomplete="off">
+                     step="1" inputmode="numeric" class="mw-240" autocomplete="off">
             <?php elseif ($key === 'alert.recipient_user_ids'):
                 $allUsers = $db->query(
                     "SELECT id, username, name, email FROM users

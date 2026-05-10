@@ -442,6 +442,24 @@
       el.addEventListener("input", function() { el.setCustomValidity(""); });
     });
 
+    // --- #1133: stop wheel from hijacking focused number inputs ---
+    // HTML5 <input type="number"> hijacks the mouse wheel when focused —
+    // every wheel tick increments/decrements the value. Operators typed a
+    // value into a settings field, kept it focused, then scrolled the page;
+    // the field silently counted down (clamped at min), so the saved value
+    // bore no relation to what they typed. We preventDefault on the wheel
+    // event before the browser applies its native step, then blur the input
+    // so the next wheel tick scrolls the page normally. Spinner buttons and
+    // arrow-key adjustment stay intact (they don't go through wheel events).
+    // Listener must be non-passive so preventDefault has effect.
+    document.addEventListener("wheel", function(e) {
+      var t = e.target;
+      if (t && t.tagName === "INPUT" && t.type === "number" && document.activeElement === t) {
+        e.preventDefault();
+        t.blur();
+      }
+    }, { passive: false });
+
     // --- Sidebar hamburger toggle (#512) ---
     (function () {
       var sidebar = document.getElementById("sidebar");
