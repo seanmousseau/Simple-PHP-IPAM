@@ -1279,6 +1279,18 @@
           contactPicker.dispatchEvent(new CustomEvent("reinit"));
         }
 
+        // #1138: pre-select tags on edit-drawer open from data-tag-ids JSON.
+        var tagSelect = document.getElementById("subnet-edit-tag-ids");
+        if (tagSelect) {
+          var selectedTagIds = [];
+          try { selectedTagIds = JSON.parse(d.tagIds || "[]"); } catch (ex) {}
+          var selectedSet = {};
+          for (var ti = 0; ti < selectedTagIds.length; ti++) selectedSet[String(selectedTagIds[ti])] = true;
+          Array.prototype.forEach.call(tagSelect.options, function(opt) {
+            opt.selected = !!selectedSet[opt.value];
+          });
+        }
+
         // Fill custom field inputs from data-custom-fields JSON
         var cfContainer = document.getElementById("subnet-edit-cf-inputs");
         if (cfContainer) {

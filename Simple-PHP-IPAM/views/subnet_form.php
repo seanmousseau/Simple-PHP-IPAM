@@ -66,6 +66,32 @@ declare(strict_types=1);
     </div>
   </div>
   <?php endif; ?>
+  <?php // #1138: tag picker on subnet create form (WR-04). ?>
+  <?php if (!empty($tagList)): ?>
+  <div class="row mt-8">
+    <label>Tags <span class="muted font-xs">Cmd/Ctrl-click to toggle</span><br>
+      <input type="hidden" name="tag_ids[]" value="">
+      <select name="tag_ids[]" multiple size="<?= min(6, max(3, count($tagList))) ?>" class="w-full">
+        <?php foreach ($tagList as $t): ?>
+          <option value="<?= to_int($t['id']) ?>"><?= e(to_str($t['name'])) ?></option>
+        <?php endforeach; ?>
+      </select>
+    </label>
+  </div>
+  <?php endif; ?>
+  <?php // #1138: tag picker on subnet create form (WR-04). ?>
+  <?php if (!empty($tagList)): ?>
+  <div class="row mt-8">
+    <label>Tags <span class="muted font-xs">Cmd/Ctrl-click to toggle</span><br>
+      <input type="hidden" name="tag_ids[]" value="">
+      <select name="tag_ids[]" multiple size="<?= min(6, max(3, count($tagList))) ?>" class="w-full">
+        <?php foreach ($tagList as $t): ?>
+          <option value="<?= to_int($t['id']) ?>"><?= e(to_str($t['name'])) ?></option>
+        <?php endforeach; ?>
+      </select>
+    </label>
+  </div>
+  <?php endif; ?>
   <?php $autoReserveDefault = (bool)ipam_setting('display.auto_reserve_network_broadcast'); ?>
   <div class="row mt-8">
     <label class="row-inline">

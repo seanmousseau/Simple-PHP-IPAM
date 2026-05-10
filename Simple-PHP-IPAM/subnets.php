@@ -38,6 +38,27 @@ $_cSt = $db->query("SELECT id, name, email FROM contacts ORDER BY name");
 /** @var list<array<string, mixed>> $contactList */
 $contactList = $_cSt !== false ? $_cSt->fetchAll() : [];
 
+// #1138: tag picker on subnet add/edit drawer (WR-04). Loaded once for the
+// page so every row's edit button can render the same shared multi-select.
+$_tagSt = $db->query("SELECT id, name, colour FROM tags ORDER BY name");
+/** @var list<array<string, mixed>> $tagList */
+$tagList = $_tagSt !== false ? $_tagSt->fetchAll() : [];
+
+/** Sanitise POSTed tag_ids[] into a list of int IDs known to exist in tags. */
+$ipam_parse_subnet_tag_ids = function(array $known): array {
+    $known = array_map('intval', $known);
+    $rawIds = $_POST['tag_ids'] ?? [];
+    if (!is_array($rawIds)) return [];
+    $ids = [];
+    foreach ($rawIds as $v) {
+        $i = (int)to_str(is_scalar($v) ? $v : '');
+        if ($i > 0 && in_array($i, $known, true)) $ids[$i] = true;
+    }
+    return array_keys($ids);
+};
+/** @var list<int> $tagIdsKnown */
+$tagIdsKnown = array_map(fn($t) => to_int($t['id']), $tagList);
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = to_str($_POST['action'] ?? '');
 
@@ -133,6 +154,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if (!empty($_POST['contact_id_present'])) {
                         save_contacts_for_entity($db, 'subnet', $newSubnetId, parse_contact_assignments($_POST));
                     }
+                    // #1138: attach tags submitted from the create form/drawer.
+                    save_tags_for_entity($db, 'subnet', $newSubnetId, $ipam_parse_subnet_tag_ids($tagIdsKnown));
                     audit($db, 'subnet.create', 'subnet', $newSubnetId, $normalized);
                     ipam_webhook_dispatch($db, 'subnet.create', ['id' => $newSubnetId, 'cidr' => $normalized, 'description' => $desc], $config);
 
@@ -300,6 +323,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         }
                         if (!empty($_POST['contact_id_present'])) {
                             save_contacts_for_entity($db, 'subnet', $id, parse_contact_assignments($_POST));
+                        }
+                        // #1138: tag attach/detach. The drawer always emits
+                        // tag_ids_present=1 even when the operator clears
+                        // every tag, so an empty tag_ids[] correctly maps to
+                        // "remove all tags". Without the presence flag we
+                        // can't distinguish "no UI surface for tags" from
+                        // "user wants no tags" and would silently keep the
+                        // old set.
+                        if (!empty($_POST['tag_ids_present'])) {
+                            save_tags_for_entity($db, 'subnet', $id, $ipam_parse_subnet_tag_ids($tagIdsKnown));
                         }
                         $auditDetails = $normalized . ($alertsEnabled ? '' : ' alerts_disabled');
                         audit($db, 'subnet.update', 'subnet', $id, $auditDetails);
@@ -568,6 +601,7 @@ function render_subnet_node_local(PDO $db, array $tree, array $siteMap, array $s
            . " data-dhcp-next-server='" . e(to_str($row['dhcp_next_server'] ?? '')) . "'"
            . " data-dhcp-boot-filename='" . e(to_str($row['dhcp_boot_filename'] ?? '')) . "'"
            . " data-custom-fields='" . e(to_str($row['custom_fields'] ?? '{}')) . "'"
+           . " data-tag-ids='" . e(json_encode(array_map('intval', array_column(get_tags_for_entity($db, 'subnet', to_int($row['id'])), 'id'))) ?: '[]') . "'"
            . ">Edit</button>";
     }
     echo "<a class='action-pill' href='addresses.php?subnet_id=" . to_int($row['id']) . "'>View Addresses</a>";
@@ -688,6 +722,7 @@ ipam_skeleton_flush();
     'siteList'     => $siteList,
     'subnetCfDefs' => $subnetCfDefs,
     'contactList'  => $contactList,
+    'tagList'      => $tagList,
 ]) ?></div>
 
 <?php if ($showFilterStrip): ?>
@@ -837,6 +872,19 @@ ipam_skeleton_flush();
           <input name="dhcp_boot_filename" id="subnet-edit-dhcp-boot-filename" placeholder="e.g. pxelinux.0"></label>
       </div>
     </details>
+
+    <?php // #1138: tag picker on subnet edit drawer (WR-04). ?>
+    <?php if ($tagList): ?>
+    <label>Tags <span class="muted font-xs">Cmd/Ctrl-click to toggle</span><br>
+      <input type="hidden" name="tag_ids_present" value="1">
+      <input type="hidden" name="tag_ids[]" value="">
+      <select name="tag_ids[]" id="subnet-edit-tag-ids" multiple size="<?= min(6, max(3, count($tagList))) ?>" class="w-full">
+        <?php foreach ($tagList as $t): ?>
+          <option value="<?= to_int($t['id']) ?>"><?= e(to_str($t['name'])) ?></option>
+        <?php endforeach; ?>
+      </select>
+    </label>
+    <?php endif; ?>
     <?php if ($subnetCfDefs): ?>
     <div id="subnet-edit-cf-inputs">
       <?= render_custom_field_inputs($subnetCfDefs, []) ?>
