@@ -30,6 +30,20 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
     <div class="muted"><?= e(to_str($groupMeta['description'])) ?></div>
   <?php endif; ?>
 
+  <?php
+  // #1132: per-group inline banner. When the precondition guard or save
+  // path fails, $fieldErrors['_group:<key>'] holds the same message as the
+  // page-top flash. Surfacing it here — directly above the form fields the
+  // operator just edited — makes "your changes are NOT saved" obvious
+  // alongside the user's still-selected (invalid) inputs.
+  $_groupError = $fieldErrors['_group:' . $groupKey] ?? '';
+  if ($_groupError !== ''): ?>
+  <div class="danger settings-warning" role="alert">
+    <strong>Your changes are NOT saved.</strong>
+    <?= e($_groupError) ?>
+  </div>
+  <?php endif; unset($_groupError); ?>
+
   <?php if ($groupKey === 'backup'): ?>
   <div class="warning settings-warning" role="status">
     <strong>This section is deprecated and is scheduled for removal in v3.26.0.</strong>
@@ -120,7 +134,7 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
             ?>
               <input type="number" id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>"
                      value="<?= e($shown !== null ? $shown : (string)to_int($current)) ?>"<?= $minAttr . $maxAttr ?>
-                     class="mw-240">
+                     step="1" inputmode="numeric" class="mw-240" autocomplete="off">
             <?php elseif ($key === 'alert.recipient_user_ids'):
                 $allUsers = $db->query(
                     "SELECT id, username, name, email FROM users
@@ -196,7 +210,7 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
                 $selected       = $shown !== null ? $shown : (is_scalar($current) ? (string)$current : '');
                 $selectedValid  = array_key_exists($selected, $options);
             ?>
-              <select id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>" class="w-full">
+              <select id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>" class="w-full" autocomplete="off">
                 <?php if (!$selectedValid): ?>
                   <option value="<?= e($selected) ?>" selected>⚠ invalid: <?= e($selected) ?></option>
                 <?php endif; ?>
@@ -207,7 +221,7 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
             <?php else: ?>
               <input type="text" id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>"
                      value="<?= e($shown !== null ? $shown : (is_scalar($current) ? (string)$current : '')) ?>"
-                     class="w-full">
+                     class="w-full" autocomplete="off">
             <?php endif; ?>
           <?php endif; // bool vs other ?>
           <?php if ($help): ?><div class="muted"><?= e($help) ?></div><?php endif; ?>

@@ -288,7 +288,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $proposed = ipam_sudo_proposed_policy_from_overrides($pending);
         $offender = ipam_sudo_policy_lockout_check($db, $proposed);
         if ($offender !== '') {
-            $fieldErrors['_group'] = "Cannot save: admin '{$offender}' would have no available step-up method under the proposed policy. Enable at least one method that admin can satisfy.";
+            $msg = "Cannot save: admin '{$offender}' would have no available step-up method under the proposed policy. Enable at least one method that admin can satisfy.";
+            $fieldErrors['_group'] = $msg;
+            // #1132: scoped duplicate so the form card can render an inline
+            // "your changes are NOT saved" banner next to the toggles, instead
+            // of relying on the page-top flash that scrolls out of view.
+            $fieldErrors['_group:' . $postedGroup] = $msg;
         } elseif (!ipam_sudo_require($db, to_int($userId ?? 0))) {
             page_header('Confirm your identity');
             $stepUpUserId       = to_int($userId ?? 0);
@@ -343,6 +348,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($db->inTransaction()) $db->rollBack();
             error_log('settings.php save failed: ' . $e->getMessage());
             $fieldErrors['_group'] = 'Save failed. Please try again.';
+            $fieldErrors['_group:' . $postedGroup] = 'Save failed. Please try again.';
             $changed = 0;
         }
     }

@@ -266,6 +266,23 @@
               } catch (_) {
                 returnTo = "settings.php";
               }
+              // #1140: stash a one-shot XHR replay marker so the user
+              // doesn't have to click the eye a second time after the
+              // OIDC step-up round-trip. Cleared on click and on
+              // successful replay; expires after 120 s. Cross-tab safe
+              // (sessionStorage is per-tab) and single-use. CSRF is
+              // re-read from the page DOM at replay time (it rotates
+              // through the OIDC redirect chain), so we do NOT stash it.
+              if (!window.__ipamPwReplayInProgress) {
+                try {
+                  sessionStorage.setItem("ipam_xhr_replay_v1", JSON.stringify({
+                    type: "pw_reveal",
+                    inputId: input.id,
+                    revealKey: revealKey,
+                    ts: Date.now()
+                  }));
+                } catch (_) { /* storage may be full or blocked */ }
+              }
               var stepUpUrl = "step_up.php?return_to=" + encodeURIComponent(returnTo);
               window.location.assign(stepUpUrl);
               return;
@@ -282,12 +299,49 @@
           })
           .finally(function() {
             btn.disabled = false;
+            // #1140: clear the replay guard once the fetch resolves (success
+            // or fail). Pre-fix the flag stayed true after a successful
+            // auto-replay, so a later step-up flow on the same page would
+            // skip stashing — the second OIDC round-trip would then drop
+            // back without an auto-resume, re-creating the bug for the
+            // second action. CR follow-up on PR #1144.
+            window.__ipamPwReplayInProgress = false;
           });
         return;
       }
 
       pwToggleApply(btn, input, true);
     });
+    // #1140: consume the one-shot XHR replay marker if present. Set just
+    // before navigating to step_up.php from a 401 step_up_required; cleared
+    // here on the originating page's next load. Auto-clicks the matching
+    // pw-toggle button so the user sees the reveal complete instead of a
+    // silent drop. If the replay itself gets another 401 (e.g. user
+    // cancelled OIDC), __ipamPwReplayInProgress prevents a re-stash loop.
+    try {
+      var replayRaw = sessionStorage.getItem("ipam_xhr_replay_v1");
+      if (replayRaw) {
+        sessionStorage.removeItem("ipam_xhr_replay_v1");
+        var replay = JSON.parse(replayRaw);
+        if (replay && replay.type === "pw_reveal"
+            && typeof replay.inputId === "string"
+            && typeof replay.revealKey === "string"
+            && (Date.now() - (replay.ts || 0)) < 120000) {
+          var replayBtn = document.querySelector(
+            'button.pw-toggle[data-pw-toggle-for="' + CSS.escape(replay.inputId) + '"]'
+            + '[data-pw-reveal-key="' + CSS.escape(replay.revealKey) + '"]'
+          );
+          if (replayBtn) {
+            window.__ipamPwReplayInProgress = true;
+            // Defer to the next microtask so the rest of DOMContentLoaded
+            // wiring (including the click handler attached above) is in
+            // place before we synthesise the click.
+            setTimeout(function() { replayBtn.click(); }, 0);
+          }
+        }
+      }
+    } catch (_) { /* malformed JSON or storage blocked; non-fatal */ }
+
     // Per-browser opt-out: users whose password manager already provides a
     // visibility toggle can hide the IPAM eye buttons by setting
     // localStorage['ipam-pw-toggle-hidden'] = '1' from devtools.
@@ -441,6 +495,24 @@
       el.addEventListener("blur", function() { validateInput(el); });
       el.addEventListener("input", function() { el.setCustomValidity(""); });
     });
+
+    // --- #1133: stop wheel from hijacking focused number inputs ---
+    // HTML5 <input type="number"> hijacks the mouse wheel when focused —
+    // every wheel tick increments/decrements the value. Operators typed a
+    // value into a settings field, kept it focused, then scrolled the page;
+    // the field silently counted down (clamped at min), so the saved value
+    // bore no relation to what they typed. We preventDefault on the wheel
+    // event before the browser applies its native step, then blur the input
+    // so the next wheel tick scrolls the page normally. Spinner buttons and
+    // arrow-key adjustment stay intact (they don't go through wheel events).
+    // Listener must be non-passive so preventDefault has effect.
+    document.addEventListener("wheel", function(e) {
+      var t = e.target;
+      if (t && t.tagName === "INPUT" && t.type === "number" && document.activeElement === t) {
+        e.preventDefault();
+        t.blur();
+      }
+    }, { passive: false });
 
     // --- Sidebar hamburger toggle (#512) ---
     (function () {
@@ -1212,6 +1284,18 @@
           if (rowsDiv) rowsDiv.textContent = "";
           contactPicker.setAttribute("data-existing", JSON.stringify(existingContacts));
           contactPicker.dispatchEvent(new CustomEvent("reinit"));
+        }
+
+        // #1138: pre-select tags on edit-drawer open from data-tag-ids JSON.
+        var tagSelect = document.getElementById("subnet-edit-tag-ids");
+        if (tagSelect) {
+          var selectedTagIds = [];
+          try { selectedTagIds = JSON.parse(d.tagIds || "[]"); } catch (ex) {}
+          var selectedSet = {};
+          for (var ti = 0; ti < selectedTagIds.length; ti++) selectedSet[String(selectedTagIds[ti])] = true;
+          Array.prototype.forEach.call(tagSelect.options, function(opt) {
+            opt.selected = !!selectedSet[opt.value];
+          });
         }
 
         // Fill custom field inputs from data-custom-fields JSON
