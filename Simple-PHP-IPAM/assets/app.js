@@ -266,6 +266,23 @@
               } catch (_) {
                 returnTo = "settings.php";
               }
+              // #1140: stash a one-shot XHR replay marker so the user
+              // doesn't have to click the eye a second time after the
+              // OIDC step-up round-trip. Cleared on click and on
+              // successful replay; expires after 120 s. Cross-tab safe
+              // (sessionStorage is per-tab) and single-use. CSRF is
+              // re-read from the page DOM at replay time (it rotates
+              // through the OIDC redirect chain), so we do NOT stash it.
+              if (!window.__ipamPwReplayInProgress) {
+                try {
+                  sessionStorage.setItem("ipam_xhr_replay_v1", JSON.stringify({
+                    type: "pw_reveal",
+                    inputId: input.id,
+                    revealKey: revealKey,
+                    ts: Date.now()
+                  }));
+                } catch (_) { /* storage may be full or blocked */ }
+              }
               var stepUpUrl = "step_up.php?return_to=" + encodeURIComponent(returnTo);
               window.location.assign(stepUpUrl);
               return;
@@ -288,6 +305,36 @@
 
       pwToggleApply(btn, input, true);
     });
+    // #1140: consume the one-shot XHR replay marker if present. Set just
+    // before navigating to step_up.php from a 401 step_up_required; cleared
+    // here on the originating page's next load. Auto-clicks the matching
+    // pw-toggle button so the user sees the reveal complete instead of a
+    // silent drop. If the replay itself gets another 401 (e.g. user
+    // cancelled OIDC), __ipamPwReplayInProgress prevents a re-stash loop.
+    try {
+      var replayRaw = sessionStorage.getItem("ipam_xhr_replay_v1");
+      if (replayRaw) {
+        sessionStorage.removeItem("ipam_xhr_replay_v1");
+        var replay = JSON.parse(replayRaw);
+        if (replay && replay.type === "pw_reveal"
+            && typeof replay.inputId === "string"
+            && typeof replay.revealKey === "string"
+            && (Date.now() - (replay.ts || 0)) < 120000) {
+          var replayBtn = document.querySelector(
+            'button.pw-toggle[data-pw-toggle-for="' + CSS.escape(replay.inputId) + '"]'
+            + '[data-pw-reveal-key="' + CSS.escape(replay.revealKey) + '"]'
+          );
+          if (replayBtn) {
+            window.__ipamPwReplayInProgress = true;
+            // Defer to the next microtask so the rest of DOMContentLoaded
+            // wiring (including the click handler attached above) is in
+            // place before we synthesise the click.
+            setTimeout(function() { replayBtn.click(); }, 0);
+          }
+        }
+      }
+    } catch (_) { /* malformed JSON or storage blocked; non-fatal */ }
+
     // Per-browser opt-out: users whose password manager already provides a
     // visibility toggle can hide the IPAM eye buttons by setting
     // localStorage['ipam-pw-toggle-hidden'] = '1' from devtools.
