@@ -163,7 +163,8 @@ $groupLabel = to_str($groupMeta['label'] ?? $groupKey);
                 <input type="hidden" name="<?= e($fieldName) ?>__select[]" value="">
               <?php else: ?>
                 <input type="hidden" name="<?= e($fieldName) ?>__select[]" value="">
-                <select multiple size="6" id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>__select[]" class="w-full">
+                <select multiple size="6" id="<?= e($inputId) ?>" name="<?= e($fieldName) ?>__select[]" class="w-full"
+                        data-1p-ignore="true" data-lpignore="true" data-bwignore="true">
                   <?php foreach ($eligibleUsers as $u):
                       $uid   = to_int($u['id']);
                       $uname = to_str($u['username']);
