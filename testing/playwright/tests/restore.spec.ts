@@ -69,21 +69,38 @@ test.describe('Restore wizard', () => {
   test('step 1: select source UI is present', async ({ page }) => {
     await page.goto(appUrl('restore_web.php'));
     await expect(page.locator('h2').first()).toContainText('Step 1');
-    // v3.23.0 #1077: the legacy free-text Stage form moved under an
-    // Advanced disclosure; expand it before asserting the inputs are visible.
-    await page.locator('details summary', { hasText: /Advanced/i }).click();
-    await expect(page.locator('input[name="name"]')).toBeVisible();
-    await expect(page.locator('button:has-text("Stage backup")')).toBeVisible();
+    // v3.27.6 #1136: the destination picker and the upload-from-workstation
+    // form are now peer cards at the same level. No "Advanced" disclosure.
+    await expect(page.locator('select[name="dest"]')).toBeVisible();
+    await expect(page.locator('input[type="file"][name="restore_upload"]')).toBeVisible();
+    await expect(page.locator('button:has-text("Upload & stage")')).toBeVisible();
   });
 
   test('step 1: invalid filename surfaces an error', async ({ page }) => {
+    // v3.27.6 #1136: the free-text "stage by filename" UI was removed but
+    // the underlying step=stage POST handler is still alive (it's also
+    // what the destination picker's per-row Restore button uses). Drive
+    // it directly to verify the error path that legacy operators relied on.
     await ensureTestDestination(page);
     await page.goto(appUrl('restore_web.php'));
-    await page.locator('details summary', { hasText: /Advanced/i }).click();
-    await page.locator('details select[name="destination_id"]').selectOption({ label: `${TEST_DEST_NAME} (local)` });
-    await page.locator('details input[name="name"]').fill('does-not-exist.sql.gz');
-    await page.locator('details button:has-text("Stage backup")').click();
-    await expect(page.locator('.danger')).toContainText(/Stage failed|file not found/);
+    // Find the test destination's id by reading the dest picker options.
+    const destValue = await page.locator('select[name="dest"] option', { hasText: TEST_DEST_NAME })
+      .first()
+      .getAttribute('value');
+    expect(destValue).toBeTruthy();
+    // POST a step=stage with a name that won't exist on the destination.
+    const csrf = await page.locator('input[name="csrf"]').first().getAttribute('value');
+    const resp = await page.request.post(appUrl('restore_web.php'), {
+      form: {
+        csrf: csrf ?? '',
+        step: 'stage',
+        destination_id: destValue ?? '',
+        name: 'does-not-exist.sql.gz',
+      },
+    });
+    expect(resp.ok()).toBe(true);
+    const body = await resp.text();
+    expect(body).toMatch(/Stage failed|file not found/);
   });
 
   test('confirm-typing gate JS binds the real Step 3 controls', async ({ page }) => {
@@ -129,26 +146,35 @@ test.describe('Restore wizard', () => {
       // *inside the tab body* to disambiguate.
       const wizard = page.locator('.backup-admin-tab');
       await expect(wizard.locator('h2', { hasText: /Step 1/ })).toBeVisible();
-      // v3.23.0 #1077: the primary picker is the destination-driven browser
-      // (select[name="dest"]); the legacy free-text form moved under an
-      // Advanced disclosure. Open it to assert the inputs are still wired.
-      await wizard.locator('details summary', { hasText: /Advanced/i }).click();
-      await expect(wizard.locator('details select[name="destination_id"]')).toBeVisible();
-      await expect(wizard.locator('details input[name="name"]')).toBeVisible();
-      await expect(wizard.locator('details button', { hasText: 'Stage backup' })).toBeVisible();
+      // v3.27.6 #1136: destination picker (select[name="dest"]) and
+      // upload form (input[name="restore_upload"]) are peer cards with
+      // no <details> wrapper.
+      await expect(wizard.locator('select[name="dest"]')).toBeVisible();
+      await expect(wizard.locator('input[type="file"][name="restore_upload"]')).toBeVisible();
+      await expect(wizard.locator('button:has-text("Upload & stage")')).toBeVisible();
     });
 
     test('invalid filename surfaces an error on the unified surface', async ({ page }) => {
+      // v3.27.6 #1136: same as the legacy-surface test — the free-text
+      // "stage by filename" UI was removed, but the step=stage POST handler
+      // is still alive; drive it directly to verify the error path.
       await ensureTestDestination(page);
       await page.goto(appUrl('backup_admin.php?tab=restore'));
-      await page.locator('details summary', { hasText: /Advanced/i }).click();
-      await page.locator('details select[name="destination_id"]').selectOption({ label: `${TEST_DEST_NAME} (local)` });
-      await page.locator('details input[name="name"]').fill('does-not-exist.sql.gz');
-      await page.locator('details button:has-text("Stage backup")').click();
-      // The handler redirects back to the same tab with an error; assert
-      // we're still on the Restore tab and the .danger banner is shown.
-      await expect(page).toHaveURL(/tab=restore/);
-      await expect(page.locator('.danger').first()).toContainText(/Stage failed|file not found/);
+      const destValue = await page.locator('select[name="dest"] option', { hasText: TEST_DEST_NAME })
+        .first()
+        .getAttribute('value');
+      const csrf = await page.locator('input[name="csrf"]').first().getAttribute('value');
+      const resp = await page.request.post(appUrl('backup_admin.php?tab=restore'), {
+        form: {
+          csrf: csrf ?? '',
+          step: 'stage',
+          destination_id: destValue ?? '',
+          name: 'does-not-exist.sql.gz',
+        },
+      });
+      expect(resp.ok()).toBe(true);
+      const body = await resp.text();
+      expect(body).toMatch(/Stage failed|file not found/);
     });
 
     test('confirm-typing gate JS is loaded on the unified surface', async ({ page }) => {
