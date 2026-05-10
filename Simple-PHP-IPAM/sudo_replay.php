@@ -39,8 +39,9 @@ if ($pending === null) {
 }
 
 // Validate the target URL against the same rules step_up.php uses for
-// return_to. Reject schemes/hosts/traversal/CRLF/oversize.
-require_once __DIR__ . '/step_up.php';  // imports ipam_step_up_validate_return_to
+// return_to. ipam_step_up_validate_return_to() lives in lib/auth_step_up.php
+// (already loaded above) — do NOT require step_up.php here, that page
+// re-loads init.php and triggers "Cannot redeclare to_str()" fatals.
 $safeTarget = ipam_step_up_validate_return_to($pending['target'], 'dashboard.php');
 
 // Render an auto-submitting form. The browser POSTs back to the target

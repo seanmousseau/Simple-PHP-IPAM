@@ -27,26 +27,10 @@ require_once __DIR__ . '/lib/auth_step_up.php';
  * lead with a slash depending on install dir layout). Rejects schemes,
  * hosts, traversal, control characters, and oversize strings.
  */
-function ipam_step_up_validate_return_to(string $raw, string $default): string
-{
-    $uri = trim($raw);
-    if ($uri === '') return $default;
-    if (strlen($uri) > 1024) return $default;
-    if (preg_match('/[\r\n\t]/', $uri)) return $default;
-    if (str_contains($uri, '\\')) return $default;
-    if (str_contains($uri, '..')) return $default;
-    // Reject any URL that has a scheme or authority component. parse_url()
-    // returns false for malformed inputs; treat that as unsafe too.
-    $parts = parse_url($uri);
-    if (!is_array($parts)) return $default;
-    if (isset($parts['scheme']) || isset($parts['host']) || isset($parts['user']) || isset($parts['pass'])) {
-        return $default;
-    }
-    // Protocol-relative ("//evil.com/...") would parse without a scheme but
-    // with a host on browsers; double-slash leading is the marker.
-    if (str_starts_with($uri, '//')) return $default;
-    return $uri;
-}
+// ipam_step_up_validate_return_to() lives in lib/auth_step_up.php (#1131,
+// v3.27.3) so non-page entry points like sudo_replay.php can reuse it
+// without re-loading init.php and triggering "Cannot redeclare" fatals.
+require_once __DIR__ . '/lib/auth_step_up.php';
 
 $cur          = current_user();
 $userId       = to_int($cur['id'] ?? 0);

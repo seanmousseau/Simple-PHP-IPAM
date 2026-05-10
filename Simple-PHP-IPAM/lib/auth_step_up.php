@@ -897,3 +897,30 @@ function ipam_sudo_policy_lockout_check(\PDO $db, array $proposed): string
     }
     return '';
 }
+
+/**
+ * Validate a return_to / target URI submitted by step_up.php and
+ * sudo_replay.php (#1131, v3.27.3 — relocated from step_up.php).
+ *
+ * Stricter than ipam_post_login_redirect_stash() but accepts relative
+ * paths (the JS handler builds these from window.location.pathname which
+ * may or may not lead with a slash depending on install dir layout).
+ * Rejects schemes, hosts, traversal, control characters, and oversize
+ * strings.
+ */
+function ipam_step_up_validate_return_to(string $raw, string $default): string
+{
+    $uri = trim($raw);
+    if ($uri === '') return $default;
+    if (strlen($uri) > 1024) return $default;
+    if (preg_match('/[\r\n\t]/', $uri)) return $default;
+    if (str_contains($uri, '\\')) return $default;
+    if (str_contains($uri, '..')) return $default;
+    $parts = parse_url($uri);
+    if (!is_array($parts)) return $default;
+    if (isset($parts['scheme']) || isset($parts['host']) || isset($parts['user']) || isset($parts['pass'])) {
+        return $default;
+    }
+    if (str_starts_with($uri, '//')) return $default;
+    return $uri;
+}
