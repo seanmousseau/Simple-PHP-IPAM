@@ -12,15 +12,16 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.27.3
+## What's new in v3.27.4
 
-Quick-win patch on top of v3.27.2. Five low-risk fixes surfaced during the post-v3.27.2 cron-log audit and OIDC step-up regression sweep — no migration, no structural change, each fix paired with a failing test per Path Forward operating mode.
+Settings UX polish hotfix on top of v3.27.3. Five P2 fixes plus one functional gap (subnet tag UI) surfaced during the v3.27.2 wide-regression operator pass — no migration, no structural change.
 
-- **Restore wizard no longer requires `app_secret` (#1127).** The staged-restore handoff between `download_remote_backup.php` and `backup_admin_restore.php` was still HMAC-signing tokens with `app_secret`, even though v3.26.0 relocated that secret out of `config.php` and into the database-stored vault key. Installs that completed the vault migration silently lost the ability to restore from remote backups. Replaced the HMAC contract with a server-side session-state slot (`$_SESSION['_pending_restore']`, single-use, 10-min TTL, phase-locked stage→dryrun→apply).
-- **OIDC step-up reauth now replays the original action POST (#1131).** Sudo-class actions gated on OIDC reauth (vault_reveal, key rotation, etc.) lost their POST body during the Authentik round-trip — operator saw a silent "nothing happened" UX. Fix stashes the original form's hidden fields + CSRF + target into `$_SESSION['_sudo_oidc_pending']` and a new `sudo_replay.php` landing page auto-POSTs them back after reauth completes.
-- **IP-level rate-limit lockout is now visible in audit log + UX (#1134).** New `ipam_audit_ip_rate_limited` audit verb fires once per (action, ip) lockout window with attempts + unlock_at + ip in details, dampened against the previous row's stored `unlock_at`. Login error message now distinguishes IP-network lockouts from account-level lockouts.
-- **`curl_close()` deprecation noise removed from cron log (#1130).** PHP 8.5 deprecates `curl_close()` (no-op since 8.0). Removed all 7 call sites in `lib.php` and `lib/S3Client.php`. Source-scan test prevents regression.
-- **Settings page surfaces unknown `?tab=` slugs (#1129).** `?tab=bogus` previously fell back to the General tab silently; now a warning banner names the missing slug while preserving the URL.
+- **Wheel scroll no longer hijacks focused number inputs in settings (#1133).** HTML5 `<input type="number">` consumed the mouse wheel when focused, so an operator who typed `login_max_attempts=20`, kept the field focused, and scrolled the page would silently watch the field count down to its `min`. Fixed by blurring the active number input on wheel and `preventDefault`ing the native step.
+- **Step-up policy lockout-guard now shows an inline "changes NOT saved" banner (#1132).** When the precondition guard refuses a save, the form re-renders with the operator's selections preserved so they can fix and resubmit — but pre-fix the only signal was a page-top flash that scrolled out of view. New per-group banner inside the affected card makes refusal obvious.
+- **OIDC settings inputs no longer trip password-manager autofill (#1137).** Added `autocomplete="off"` to the OIDC `client_id`, `discovery_url`, `redirect_uri`, etc. fields so 1Password / LastPass / Bitwarden stop heuristically autofilling stored credentials over them.
+- **Backup history + vault timestamps render in user TZ (#1139).** Three display sites in the backup admin UI rendered raw UTC instead of routing through `ipam_format_datetime()`. DB storage stays UTC; only the display flips to operator-tz with a TZ-abbrev suffix.
+- **XHR sudo-gated reveals auto-replay after OIDC step-up (#1140).** Eye-toggle reveals on sensitive settings used to silently drop after the Authentik round-trip (operator had to click again). New one-shot `sessionStorage` replay marker auto-clicks the matching button on return so the secret reveals on the first click. Same UX trap as #1131 but for XHR.
+- **Subnet add + edit forms now expose the tag picker (#1138, WR-04).** The schema and REST API have supported subnet tags since v2.x; the UI never did. Vanilla `<select multiple>` added to both the create form and the inline edit drawer, pre-populated from a new `data-tag-ids` attribute.
 
 [Full changelog →](CHANGELOG.md)
 
