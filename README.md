@@ -12,11 +12,13 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.27.5
+## What's new in v3.27.6
 
-Same-day micro-hotfix on top of v3.27.4. The v3.27.4 fix for #1137 added `autocomplete="off"` to OIDC settings inputs to stop password-manager autofill — but `autocomplete="off"` is only honored by the browser's native autofill; 1Password / LastPass / Bitwarden ignore it by design and continued autofilling on testing and prod.
+Final patch in the v3.27.x cluster. Three operator-impact UX fixes on the restore page plus one regression catch from same-day verification testing.
 
-- **Password managers no longer autofill OIDC settings inputs (#1137).** Added `data-1p-ignore="true"`, `data-lpignore="true"`, and `data-bwignore="true"` to every settings input (text, number, select, sensitive) plus the form itself so the major PMs see an explicit per-manager opt-out alongside the existing browser-side hint.
+- **Restore-apply now shows a progress overlay (#1135).** Pre-fix, clicking Apply restore hung the page silently for 30+ seconds. Now an escalating spinner message keeps the operator informed: "Applying backup…" → "Still working…" → "Almost there…"
+- **Restore page: destination picker + upload are peer cards (#1136).** Dropped the "Advanced — stage by filename" disclosure (redundant since v3.23.0's destination browser). Promoted "Upload a backup from your computer" out of its `<details>` wrapper — both restore sources are now equal-weight options at the same visual level.
+- **XHR sudo replay marker now survives intermediate pages (#1146).** v3.27.4's #1140 replay-consume code in `assets/app.js` removed the marker unconditionally on every page load — including `step_up.php` itself. The marker was eaten on the first hop, re-creating the silent-drop UX trap. Fix only consumes when a matching `pw-toggle` button is actually on the page. New regression test covers the three cases.
 
 [Full changelog →](CHANGELOG.md)
 

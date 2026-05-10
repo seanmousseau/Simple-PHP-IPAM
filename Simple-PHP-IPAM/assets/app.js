@@ -318,10 +318,17 @@
     // pw-toggle button so the user sees the reveal complete instead of a
     // silent drop. If the replay itself gets another 401 (e.g. user
     // cancelled OIDC), __ipamPwReplayInProgress prevents a re-stash loop.
+    //
+    // #1146 (v3.27.6): only removeItem when we actually have a matching
+    // button to click. Pre-fix removeItem fired unconditionally on every
+    // page load that saw the marker — so step_up.php (which is a
+    // legitimate intermediate stop on the OIDC reauth journey, has no
+    // pw-toggle button, but DOES load app.js) ate the marker before the
+    // user got back to the originating settings.php. The 120 s TTL
+    // bounds any case where no page ever matches.
     try {
       var replayRaw = sessionStorage.getItem("ipam_xhr_replay_v1");
       if (replayRaw) {
-        sessionStorage.removeItem("ipam_xhr_replay_v1");
         var replay = JSON.parse(replayRaw);
         if (replay && replay.type === "pw_reveal"
             && typeof replay.inputId === "string"
@@ -332,12 +339,16 @@
             + '[data-pw-reveal-key="' + CSS.escape(replay.revealKey) + '"]'
           );
           if (replayBtn) {
+            sessionStorage.removeItem("ipam_xhr_replay_v1");
             window.__ipamPwReplayInProgress = true;
             // Defer to the next microtask so the rest of DOMContentLoaded
             // wiring (including the click handler attached above) is in
             // place before we synthesise the click.
             setTimeout(function() { replayBtn.click(); }, 0);
           }
+        } else {
+          // Malformed or expired marker — eat it so it can't fire later.
+          sessionStorage.removeItem("ipam_xhr_replay_v1");
         }
       }
     } catch (_) { /* malformed JSON or storage blocked; non-fatal */ }
@@ -658,6 +669,37 @@
         overlay.className = "spinner-overlay";
         overlay.innerHTML = '<div class="spinner"></div><div>Importing database, please wait\u2026</div>';
         document.body.appendChild(overlay);
+      });
+    }
+
+    // --- Restore-apply spinner overlay (#1135) ---
+    // ipam_restore_apply() is synchronous and can take 30+ seconds on a
+    // large dump; pre-fix the page just hung after the user clicked Apply.
+    // Mirror the import-form spinner pattern with an escalating message so
+    // the operator knows the page hasn't frozen on a long-running restore.
+    var restoreApplyForm = document.getElementById("restore-apply-form");
+    if (restoreApplyForm) {
+      restoreApplyForm.addEventListener("submit", function() {
+        var overlay = document.createElement("div");
+        overlay.className = "spinner-overlay";
+        var spinner = document.createElement("div");
+        spinner.className = "spinner";
+        var msg = document.createElement("div");
+        msg.id = "restore-apply-msg";
+        msg.textContent = "Applying backup\u2026 please don\u2019t close this window.";
+        overlay.appendChild(spinner);
+        overlay.appendChild(msg);
+        document.body.appendChild(overlay);
+        setTimeout(function() {
+          if (msg.parentNode) {
+            msg.textContent = "Still working\u2026 large restores can take 30+ seconds.";
+          }
+        }, 5000);
+        setTimeout(function() {
+          if (msg.parentNode) {
+            msg.textContent = "Almost there\u2026 finalizing rows. The page will redirect when complete.";
+          }
+        }, 20000);
       });
     }
 

@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.27.6] - 2026-05-10
+
+Final patch in the v3.27.x cluster. Three operator-impact UX fixes anchored on the restore page plus one regression catch from same-day verification testing. No schema change, no migration. After this release ships the project pauses for v3.28.0+ planning.
+
+### Fixed
+
+- **Restore-apply now shows a progress overlay** (#1135). Pre-fix, clicking "Apply restore" hung the page silently for 30+ seconds while `ipam_restore_apply()` ground through the staged dump. Operators saw a frozen browser. Added a spinner overlay (mirroring the existing import-form pattern in `assets/app.js`) with an escalating message: "Applying backup… please don't close this window." → "Still working… large restores can take 30+ seconds." → "Almost there… finalizing rows. Page will redirect when complete." Server-side untouched; the synchronous apply path stays as-is.
+- **XHR sudo replay marker now survives intermediate pages** (#1146). v3.27.4's #1140 replay-consume code in `assets/app.js` removed the `sessionStorage` marker unconditionally on every page load that saw it — including `step_up.php`, which loads `app.js` but has no matching `pw-toggle` button. Net effect: the marker was eaten on the first hop and gone by the time the user actually returned to the originating settings page → silent-drop UX trap returned. Fix moves `sessionStorage.removeItem(...)` inside the `if (replayBtn)` block so the marker is only consumed on the page where it can do its job. The 120 s TTL handles cleanup if no page ever matches. Regression test: `testing/playwright/tests/sudo-xhr-replay.spec.ts` covers the three relevant cases (survives no-button page, consumed on matching-button page, expired marker purged).
+
+### Changed
+
+- **Restore page: destination picker + upload are peer cards; "Advanced — stage by filename" is gone** (#1136). The destination-driven backup browser landed in v3.23.0 (#1077) and made the free-text "stage by filename" path redundant; that disclosure has been removed. The "Upload a backup from your computer" form is no longer buried inside a `<details>` either — it now sits as a peer `<section class="card">` directly under the destination-picker card so both restore sources read as equal-weight options at the same visual level. No server-side change; only the Step 1 rendering.
+
+### Process
+
+- **`set_test_setting.php` allow-list** gains `oidc.client_secret` so the new `sudo-xhr-replay.spec.ts` can seed a stub value to make `$isSet=true` and have `settings_group_form.php` render the `data-pw-reveal-key` attribute. The encryption / type handling goes through `ipam_setting_set()` so the stored value matches what the registry expects. Allow-list scope stays narrow.
+
+[3.27.6]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.5...v3.27.6
+
 ## [3.27.5] - 2026-05-10
 
 Same-day micro-hotfix off `main`. v3.27.4 shipped `autocomplete="off"` on settings text/select/number inputs to suppress password-manager autofill on the OIDC config screen (#1137); confirmed live on testing + prod that the major PMs (1Password, LastPass, Bitwarden) ignored it. `autocomplete="off"` is honored by the browser's native autofill but PMs override it by design.

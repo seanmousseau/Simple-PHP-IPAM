@@ -27,8 +27,9 @@ async function loginAsAdmin(page: Page): Promise<void> {
 }
 
 async function openUploadDetails(page: Page): Promise<void> {
+  // #1136 (v3.27.6): the upload form is now a peer <section class="card">
+  // sibling to the destination-picker card; no <details> wrapper to expand.
   await page.goto(appUrl('restore_web.php'));
-  await page.locator('details summary', { hasText: /Upload a backup file/i }).click();
 }
 
 test.describe('Restore wizard — manual upload (#837)', () => {
@@ -41,9 +42,10 @@ test.describe('Restore wizard — manual upload (#837)', () => {
     await expect(page.locator('input[type="file"][name="restore_upload"]')).toBeVisible();
     await expect(page.locator('button:has-text("Upload & stage")')).toBeVisible();
     // The accepted-formats note must reference the v3 magic family so
-    // operators know IPAMBKP3 archives are supported.
-    await expect(page.locator('details', { has: page.locator('input[name="restore_upload"]') }))
-      .toContainText(/IPAMBKP3/);
+    // operators know IPAMBKP3 archives are supported. Post-#1136 the upload
+    // form is a peer .card section (no <details> wrapper).
+    const uploadCard = page.locator('.card', { has: page.locator('input[name="restore_upload"]') });
+    await expect(uploadCard).toContainText(/IPAMBKP3/);
   });
 
   test('readonly user is forbidden from the restore page entirely', async ({ browser }) => {
