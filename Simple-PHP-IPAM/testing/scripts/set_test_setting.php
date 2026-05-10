@@ -39,6 +39,10 @@ $ALLOWED_KEYS = [
     'auth.step_up.allow_webauthn',
     'auth.step_up.allow_provider_reauth',
     'auth.step_up.ttl_seconds',
+    // #1146 (v3.27.6) sudo-xhr-replay.spec.ts seeds a stub OIDC client
+    // secret so the pw-toggle button renders; the value is opaque to
+    // the spec which only needs $isSet=true on the form-side render.
+    'oidc.client_secret',
 ];
 if (!in_array($key, $ALLOWED_KEYS, true)) {
     fwrite(STDERR, "Key '{$key}' is not in the allowed test-setting list.\n");
