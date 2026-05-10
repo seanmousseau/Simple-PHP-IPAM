@@ -11,9 +11,13 @@ declare(strict_types=1);
  * v3.23.0 #1077: Step 1 is now a destination-driven backup browser.
  * Selecting a destination from the picker reloads the page with ?dest=N
  * which the controller uses to call BackupClientInterface::listObjects()
- * and join with backup_runs. The free-text filename input is preserved
- * under an Advanced disclosure for the rare case where LIST is slow or
- * the operator already knows the name.
+ * and join with backup_runs.
+ *
+ * v3.27.6 #1136: dropped the "Advanced — stage by filename" disclosure
+ * (was a workaround for the missing enumeration UI before #1077 landed).
+ * The "Upload a backup from your computer" form is no longer hidden
+ * behind a <details>; it now sits as a peer card to the destination
+ * picker so both source paths are visible at the same level.
  *
  * @var string                                                                                                                              $err
  * @var string                                                                                                                              $phase
@@ -149,54 +153,34 @@ declare(strict_types=1);
         <?php endif; ?>
       <?php endif; ?>
 
-      <!-- Advanced fallback: free-text filename entry. Useful when LIST is
-           slow (huge S3 buckets) or the operator knows the exact name. -->
-      <details style="margin-top:1.25rem;">
-        <summary>Advanced &mdash; stage by filename</summary>
-        <form method="post" style="margin-top:.75rem;">
-          <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
-          <input type="hidden" name="step" value="stage">
-          <label>Destination
-            <select name="destination_id" required>
-              <option value="">&#x2014; Select &#x2014;</option>
-              <?php foreach ($destinations as $d): ?>
-                <?php $dId = to_int($d['id']); ?>
-                <option value="<?= $dId ?>" <?= $browseDestId === $dId ? 'selected' : '' ?>>
-                  <?= e(to_str($d['name'])) ?> (<?= e(to_str($d['type'])) ?>)
-                </option>
-              <?php endforeach; ?>
-            </select>
-          </label>
-          <label>Filename
-            <input type="text" name="name" required maxlength="200"
-                   placeholder="ipam-backup-20260428-123456.enc">
-          </label>
-          <button type="submit" class="action-pill">Stage backup</button>
-        </form>
-      </details>
+    </section>
 
-      <!-- v3.24.0 #837 — manual upload-and-restore. For one-off restores
-           of a backup an operator already has on their workstation
-           (e-mail attachment, downloaded from another tool, exported
-           from a different IPAM install, etc). Distinct from "stage by
-           filename" because it does not require the file to live on a
-           configured destination. -->
-      <details style="margin-top:1.25rem;">
-        <summary>Upload a backup file from your computer</summary>
-        <form method="post" enctype="multipart/form-data" style="margin-top:.75rem;">
-          <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
-          <input type="hidden" name="step" value="upload">
-          <label>Backup file
-            <input type="file" name="restore_upload" required>
-          </label>
-          <p class="muted" style="font-size:.85rem;margin:.25rem 0 .75rem;">
-            Accepts IPAMBKP1 / IPAMBKP2 / IPAMBKP3 (encrypted) or IPAMBKL1 / SQL (plain) archives.
-            Maximum size depends on <code>backup_max_upload_size_mb</code> and PHP's <code>upload_max_filesize</code>.
-            For passphrase-encrypted backups (IPAMBKP3 transitory), the next step asks for the passphrase.
-          </p>
-          <button type="submit" class="action-pill">Upload &amp; stage</button>
-        </form>
-      </details>
+    <!-- #1136 (v3.27.6) — Upload-from-workstation is a peer source for
+         a one-off restore (file the operator has locally: e-mail,
+         exported from another IPAM install, etc.). Pre-fix it was
+         buried inside an "Advanced" <details> sibling to a free-text
+         "stage by filename" hack; the picker above is now the only
+         way to restore from a configured destination, and upload is
+         promoted to a visible sibling card at the same level. -->
+    <section class="card">
+      <h2>Or upload a backup from your computer</h2>
+      <p class="muted">
+        For backups that aren&rsquo;t in a configured destination &mdash; e&#x2011;mail attachment,
+        exported from another IPAM install, recovered from disk, etc.
+      </p>
+      <form method="post" enctype="multipart/form-data" style="margin-top:.75rem;">
+        <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+        <input type="hidden" name="step" value="upload">
+        <label>Backup file
+          <input type="file" name="restore_upload" required>
+        </label>
+        <p class="muted" style="font-size:.85rem;margin:.25rem 0 .75rem;">
+          Accepts IPAMBKP1 / IPAMBKP2 / IPAMBKP3 (encrypted) or IPAMBKL1 / SQL (plain) archives.
+          Maximum size depends on <code>backup_max_upload_size_mb</code> and PHP&rsquo;s <code>upload_max_filesize</code>.
+          For passphrase-encrypted backups (IPAMBKP3 transitory), the next step asks for the passphrase.
+        </p>
+        <button type="submit" class="action-pill">Upload &amp; stage</button>
+      </form>
     </section>
   <?php elseif ($phase === 'needs_passphrase'): ?>
     <!-- v3.24.0 #837 — IPAMBKP3 transitory archive landed via upload but
