@@ -172,7 +172,6 @@ class S3Client implements BackupClientInterface
             $body = (string) curl_exec($ch);
             $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         } finally {
-            curl_close($ch);
             fclose($fh);
         }
 
@@ -371,7 +370,6 @@ class S3Client implements BackupClientInterface
                 $code = $statusCode;
             }
         } finally {
-            curl_close($ch);
             fclose($fh);
         }
 
@@ -556,7 +554,6 @@ class S3Client implements BackupClientInterface
                 $body = (string) curl_exec($ch);
                 $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
             } finally {
-                curl_close($ch);
             }
 
             if ($code !== 200) {
@@ -646,7 +643,6 @@ class S3Client implements BackupClientInterface
             curl_exec($ch);
             $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
         } finally {
-            curl_close($ch);
         }
 
         if ($code === 204) {
@@ -712,7 +708,6 @@ class S3Client implements BackupClientInterface
             $code    = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
             $curlErr = curl_error($ch);
         } finally {
-            curl_close($ch);
         }
         $latency = (int) round((microtime(true) - $start) * 1000);
 

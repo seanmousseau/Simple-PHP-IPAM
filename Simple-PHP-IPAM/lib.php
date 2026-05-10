@@ -8921,7 +8921,6 @@ function ipam_webhook_deliver(array $webhook, string $eventType, string $payload
     }
     $url = to_str($webhook['url']);
     if ($url === '') {
-        curl_close($ch);
         return ['status' => null, 'body' => '', 'error' => 'empty webhook URL'];
     }
     curl_setopt($ch, CURLOPT_URL,            $url);
@@ -8942,7 +8941,6 @@ function ipam_webhook_deliver(array $webhook, string $eventType, string $payload
     $body   = (string)curl_exec($ch);
     $status = curl_getinfo($ch, CURLINFO_HTTP_CODE) ?: null;
     $err    = curl_errno($ch) ? curl_error($ch) : null;
-    curl_close($ch);
     // Truncate response body to 2KB for storage
     return ['status' => $status ?: null, 'body' => substr($body, 0, 2048), 'error' => $err];
 }
