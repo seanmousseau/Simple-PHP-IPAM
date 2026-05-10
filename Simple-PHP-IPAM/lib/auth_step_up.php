@@ -650,7 +650,96 @@ function ipam_sudo_oidc_reauth_complete(\PDO $db, int $userId, string $clientIp 
     audit($db, 'auth.sudo_passed', 'auth', null, "method=oidc_reauth ip=$clientIp user=$username");
     clear_auth_failures($db, 'sudo', $clientIp);
 
+    // #1131 (v3.27.3): if a pending action was stashed before the OIDC
+    // round-trip, route the user through sudo_replay.php which auto-
+    // POSTs the original fields back to the original target. Without
+    // this, the user lands on the return URL via plain GET and the
+    // original POST body that triggered the gate is gone — so
+    // vault_reveal etc. silently fail to execute and the operator
+    // has to click the action again. Replay is single-use and consumes
+    // the slot inside sudo_replay.php; if no slot exists, that page
+    // falls back to a plain redirect to the return URL (current
+    // behaviour for callers that don't stash).
+    if (isset($_SESSION['_sudo_oidc_pending'])) {
+        return 'sudo_replay.php';
+    }
+
     return $return;
+}
+
+/**
+ * Sudo-OIDC pending-action TTL. Same 10-min window as the restore-wizard
+ * stash — long enough to complete an Authentik flow, short enough that
+ * an abandoned re-auth can't replay hours later.
+ */
+const SUDO_OIDC_PENDING_TTL_SECONDS = 600;
+
+/**
+ * Stash a pending sudo-class action so it can be replayed after the
+ * OIDC re-auth round-trip. Replaces the pre-fix gap where the original
+ * POST body was lost when the browser navigated to Authentik and back.
+ *
+ * Three guarantees:
+ *   - Stash + consume round-trip across the OIDC navigate-away-and-back.
+ *   - Single-use: consume() clears the slot.
+ *   - Expiry: SUDO_OIDC_PENDING_TTL_SECONDS, terminal.
+ *
+ * @param array{target:string,fields:array<string,string>,csrf:string} $context
+ *        target — relative URL to POST back to (e.g. 'backup_admin.php?tab=destinations')
+ *        fields — hidden form fields to re-POST (must include 'action' for the handler)
+ *        csrf   — CSRF token to validate at replay time
+ */
+function ipam_sudo_oidc_stash_pending(array $context): void
+{
+    // Param shape is documented in the docblock; trust caller for the
+    // typed fields (target/fields/csrf) and add the expiry timestamp.
+    $_SESSION['_sudo_oidc_pending'] = [
+        'target'  => $context['target'],
+        'fields'  => $context['fields'],
+        'csrf'    => $context['csrf'],
+        'expires' => time() + SUDO_OIDC_PENDING_TTL_SECONDS,
+    ];
+}
+
+/**
+ * Consume the pending sudo-OIDC slot. Returns the context if fresh,
+ * null otherwise (no slot OR expired). Single-use — the slot is
+ * cleared on the success path. Expired slots are also cleared so they
+ * can't be re-attempted.
+ *
+ * @return ?array{target:string,fields:array<string,string>,csrf:string}
+ */
+function ipam_sudo_oidc_consume_pending(): ?array
+{
+    $pending = $_SESSION['_sudo_oidc_pending'] ?? null;
+    if (!is_array($pending)) {
+        return null;
+    }
+    $expires = is_int($pending['expires'] ?? null) ? $pending['expires'] : 0;
+    if ($expires < time()) {
+        unset($_SESSION['_sudo_oidc_pending']);
+        return null;
+    }
+    unset($_SESSION['_sudo_oidc_pending']);
+
+    // Narrow the session payload to the typed return shape. Defensive
+    // because $_SESSION is mixed at runtime — anything could be in there
+    // from a prior version, hand-tampered cookies, etc. Drop any
+    // non-string fields entry.
+    $fieldsRaw = $pending['fields'] ?? [];
+    $fields = [];
+    if (is_array($fieldsRaw)) {
+        foreach ($fieldsRaw as $k => $v) {
+            if (is_string($k) && is_string($v)) {
+                $fields[$k] = $v;
+            }
+        }
+    }
+    return [
+        'target' => is_string($pending['target'] ?? null) ? $pending['target'] : '',
+        'fields' => $fields,
+        'csrf'   => is_string($pending['csrf'] ?? null) ? $pending['csrf'] : '',
+    ];
 }
 
 /**
@@ -807,4 +896,31 @@ function ipam_sudo_policy_lockout_check(\PDO $db, array $proposed): string
         }
     }
     return '';
+}
+
+/**
+ * Validate a return_to / target URI submitted by step_up.php and
+ * sudo_replay.php (#1131, v3.27.3 — relocated from step_up.php).
+ *
+ * Stricter than ipam_post_login_redirect_stash() but accepts relative
+ * paths (the JS handler builds these from window.location.pathname which
+ * may or may not lead with a slash depending on install dir layout).
+ * Rejects schemes, hosts, traversal, control characters, and oversize
+ * strings.
+ */
+function ipam_step_up_validate_return_to(string $raw, string $default): string
+{
+    $uri = trim($raw);
+    if ($uri === '') return $default;
+    if (strlen($uri) > 1024) return $default;
+    if (preg_match('/[\r\n\t]/', $uri)) return $default;
+    if (str_contains($uri, '\\')) return $default;
+    if (str_contains($uri, '..')) return $default;
+    $parts = parse_url($uri);
+    if (!is_array($parts)) return $default;
+    if (isset($parts['scheme']) || isset($parts['host']) || isset($parts['user']) || isset($parts['pass'])) {
+        return $default;
+    }
+    if (str_starts_with($uri, '//')) return $default;
+    return $uri;
 }

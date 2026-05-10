@@ -5,6 +5,9 @@ Simple-PHP-IPAM/data/ipam.sqlite-shm
 Simple-PHP-IPAM/data/.db_initialized
 Simple-PHP-IPAM/data/tmp/
 Simple-PHP-IPAM/data/backups/
+Simple-PHP-IPAM/data/sessions/
+Simple-PHP-IPAM/data/*.bak
+Simple-PHP-IPAM/config.php.bak*
 
 # Composer / dev tools
 vendor/

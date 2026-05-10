@@ -12,14 +12,15 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.27.2
+## What's new in v3.27.3
 
-Hotfix on top of the v3.27.1 Pass-A regression release. Round-trip verification of the deployed v3.27.1 sqlite test instance surfaced a P0 disaster-recovery defect — the IPAMBKL1 logical-format writer silently dropped `webauthn_credentials` rows on any install with a passkey enrolled, blocking apply via the v3.26.0 footer guard. v3.27.2 closes that plus three behavioural items from the v3.27.1 acknowledged-limitations list.
+Quick-win patch on top of v3.27.2. Five low-risk fixes surfaced during the post-v3.27.2 cron-log audit and OIDC step-up regression sweep — no migration, no structural change, each fix paired with a failing test per Path Forward operating mode.
 
-- **IPAMBKL1 logical-format dump no longer silently drops `webauthn_credentials` rows (#1124).** Two binary columns (`credential_id`, `public_key`) violated the `_bin` suffix convention the column-kind classifier relied on, and the writer's `(string) json_encode(...)` cast silently swallowed the failure. Fix: per-table override map + writer-throw guard on `json_encode === false`. New `tests/IPAMBKL1FullSchemaConformanceTest.php` mechanically enforces the schema covenant going forward.
-- **OIDC auto-provisioner stores `'!disabled'` sentinel (#1120).** Auto-provisioned OIDC users now get the canonical sentinel in `password_hash` instead of a random bcrypt hash, unifying the auth model.
-- **Settings page UX consistency (#1121).** Bool checkboxes no longer auto-save on change; every field — bool, string, int, json — stages locally in the group form and "Save" commits atomically. Closes the original `#756` silent-sibling cascade with a hidden `value="0"` shim instead of a per-key save path.
-- **MFA-disable lockout precondition guard (#1122).** New `ipam_sudo_would_strand_user_after_disable()` helper wired into the three disable handlers (TOTP, Email OTP, passkey delete). Refuses any disable that would leave the user with no satisfiable step-up method under the install policy.
+- **Restore wizard no longer requires `app_secret` (#1127).** The staged-restore handoff between `download_remote_backup.php` and `backup_admin_restore.php` was still HMAC-signing tokens with `app_secret`, even though v3.26.0 relocated that secret out of `config.php` and into the database-stored vault key. Installs that completed the vault migration silently lost the ability to restore from remote backups. Replaced the HMAC contract with a server-side session-state slot (`$_SESSION['_pending_restore']`, single-use, 10-min TTL, phase-locked stage→dryrun→apply).
+- **OIDC step-up reauth now replays the original action POST (#1131).** Sudo-class actions gated on OIDC reauth (vault_reveal, key rotation, etc.) lost their POST body during the Authentik round-trip — operator saw a silent "nothing happened" UX. Fix stashes the original form's hidden fields + CSRF + target into `$_SESSION['_sudo_oidc_pending']` and a new `sudo_replay.php` landing page auto-POSTs them back after reauth completes.
+- **IP-level rate-limit lockout is now visible in audit log + UX (#1134).** New `ipam_audit_ip_rate_limited` audit verb fires once per (action, ip) lockout window with attempts + unlock_at + ip in details, dampened against the previous row's stored `unlock_at`. Login error message now distinguishes IP-network lockouts from account-level lockouts.
+- **`curl_close()` deprecation noise removed from cron log (#1130).** PHP 8.5 deprecates `curl_close()` (no-op since 8.0). Removed all 7 call sites in `lib.php` and `lib/S3Client.php`. Source-scan test prevents regression.
+- **Settings page surfaces unknown `?tab=` slugs (#1129).** `?tab=bogus` previously fell back to the General tab silently; now a warning banner names the missing slug while preserving the URL.
 
 [Full changelog →](CHANGELOG.md)
 
