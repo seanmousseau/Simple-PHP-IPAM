@@ -672,6 +672,37 @@
       });
     }
 
+    // --- Restore-apply spinner overlay (#1135) ---
+    // ipam_restore_apply() is synchronous and can take 30+ seconds on a
+    // large dump; pre-fix the page just hung after the user clicked Apply.
+    // Mirror the import-form spinner pattern with an escalating message so
+    // the operator knows the page hasn't frozen on a long-running restore.
+    var restoreApplyForm = document.getElementById("restore-apply-form");
+    if (restoreApplyForm) {
+      restoreApplyForm.addEventListener("submit", function() {
+        var overlay = document.createElement("div");
+        overlay.className = "spinner-overlay";
+        var spinner = document.createElement("div");
+        spinner.className = "spinner";
+        var msg = document.createElement("div");
+        msg.id = "restore-apply-msg";
+        msg.textContent = "Applying backup\u2026 please don\u2019t close this window.";
+        overlay.appendChild(spinner);
+        overlay.appendChild(msg);
+        document.body.appendChild(overlay);
+        setTimeout(function() {
+          if (msg.parentNode) {
+            msg.textContent = "Still working\u2026 large restores can take 30+ seconds.";
+          }
+        }, 5000);
+        setTimeout(function() {
+          if (msg.parentNode) {
+            msg.textContent = "Almost there\u2026 finalizing rows. The page will redirect when complete.";
+          }
+        }, 20000);
+      });
+    }
+
     // --- Contact typeahead (data-contact-typeahead) ---
     document.querySelectorAll("[data-contact-typeahead]").forEach(function(input) {
       var hiddenInput = input.parentElement.querySelector("input[name=owner_contact_id]");
