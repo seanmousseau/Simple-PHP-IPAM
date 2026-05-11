@@ -29,7 +29,7 @@ declare(strict_types=1);
  * @var array{tables:list<mixed>, schema_diff:list<mixed>, total_statements:int, warnings:list<mixed>}|null                                 $dryRunResult
  * @var list<array<string, mixed>>                                                                                                          $destinations
  * @var int                                                                                                                                 $browseDestId
- * @var list<array{name:string,size:int,last_modified:string,is_encrypted:bool,backup_type:string,checksum:string,run_id:int}>             $browseEntries
+ * @var list<array{name:string,size:int,last_modified:string,is_encrypted:bool,encryption_mode:string,backup_type:string,checksum:string,run_id:int,is_orphan:bool}> $browseEntries
  * @var string                                                                                                                              $browseError
  * @var string                                                                                                                              $browseDegradedDb
  */
@@ -92,14 +92,25 @@ declare(strict_types=1);
                   $checksumShort = $checksum !== '' ? substr($checksum, 0, 12) . '&hellip;' : '&mdash;';
               ?>
                 <tr>
-                  <td><code><?= e($row['name']) ?></code></td>
+                  <td>
+                    <code><?= e($row['name']) ?></code>
+                    <?php if ($row['is_orphan']): ?>
+                      <span class="badge muted" title="This file exists in the destination but has no backup_runs row. Encryption and Type below are inferred from the filename, not the database.">no DB record</span>
+                    <?php endif; ?>
+                  </td>
                   <td><?= e(number_format($row['size'])) ?></td>
                   <td><?= e($row['last_modified']) ?></td>
                   <td>
-                    <?php if ($row['is_encrypted']): ?>
-                      <span class="badge badge-success" title="Encrypted with app_secret-derived AES-256-GCM key">IPAMBKP1+</span>
-                    <?php else: ?>
+                    <?php if ($row['encryption_mode'] === 'stored'): ?>
+                      <span class="badge badge-success" title="Encrypted with the vault key derived from app_secret + backup_vault_key (stored mode)">Encrypted &middot; stored</span>
+                    <?php elseif ($row['encryption_mode'] === 'transitory'): ?>
+                      <span class="badge badge-success" title="Encrypted with an operator-supplied passphrase (transitory mode) — passphrase required to restore">Encrypted &middot; transitory</span>
+                    <?php elseif ($row['encryption_mode'] === 'unencrypted'): ?>
                       <span class="badge">plaintext</span>
+                    <?php elseif ($row['is_encrypted']): ?>
+                      <span class="badge badge-success" title="Filename ends with .enc — no backup_runs row to confirm the mode">Encrypted &middot; inferred</span>
+                    <?php else: ?>
+                      <span class="badge" title="Filename has no .enc suffix — no backup_runs row to confirm">plaintext &middot; inferred</span>
                     <?php endif; ?>
                   </td>
                   <td>
@@ -122,7 +133,11 @@ declare(strict_types=1);
                     </form>
 
                     <?php if ($row['run_id'] > 0): ?>
-                      <a class="action-pill" href="backup_run_detail.php?id=<?= $row['run_id'] ?>">Verify / Delete</a>
+                      <button type="button" class="action-pill"
+                              data-drawer-url="backup_run_detail.php?id=<?= $row['run_id'] ?>"
+                              data-drawer-title="Run #<?= $row['run_id'] ?>">
+                        Verify / Delete
+                      </button>
                     <?php endif; ?>
 
                     <!-- Restore — pre-fills the existing stage form -->

@@ -276,10 +276,20 @@ function ipam_destinations_redirect(string $base, string $flashCode = ''): never
  *   - has_encrypted_runs: true when any backup_runs row carries
  *                  encryption_mode != 'unencrypted' (replace path is gated
  *                  on this so a key swap cannot orphan existing archives)
+ *   - state:       three-state vault report (v3.27.8 Bug E) —
+ *                  'absent' / 'present' / 'unreadable'. Mirrors the
+ *                  `present` bool for absent/present, and adds the
+ *                  unreadable signal callers need to distinguish "envelope
+ *                  exists but unwrap failed (bootstrap_key rotated)" from
+ *                  "no envelope at all". Config-source keys always read
+ *                  cleanly so they remain 'present' here.
+ *   - error_message: human-readable unwrap-failure message when
+ *                  state==='unreadable', else null.
  *
  * @return array{
  *   present:bool, source:string, fingerprint:?string,
- *   created_at:?string, has_encrypted_runs:bool
+ *   created_at:?string, has_encrypted_runs:bool,
+ *   state:'absent'|'present'|'unreadable', error_message:?string
  * }
  */
 function ipam_vault_key_status(\PDO $db): array
@@ -292,24 +302,25 @@ function ipam_vault_key_status(\PDO $db): array
     /** @var array<string,mixed> $config */
     global $config;
 
-    // DB row first.
-    $envelope = '';
-    try {
+    // v3.27.8 Bug E: single source of truth for the three-state report.
+    // The DB-envelope branch below mirrors `state`; the legacy config
+    // fallback below can flip a state='absent' result to present.
+    $vaultStatus = ipam_vault_status();
+    $state        = $vaultStatus['state'];
+    $errorMessage = $vaultStatus['error_message'];
+
+    if ($state === 'present') {
+        // Re-unwrap to read the raw bytes for the fingerprint. Cheap
+        // (libsodium secretbox) and avoids leaking the plaintext out of
+        // ipam_vault_status()'s narrow contract.
         $envRaw   = ipam_setting('backup_vault_key', '');
         $envelope = is_string($envRaw) ? $envRaw : '';
-    } catch (\Throwable) {
-        $envelope = '';
-    }
-    if ($envelope !== '') {
         try {
             $raw = ipam_vault_unwrap($envelope, ipam_bootstrap_key());
             if (strlen($raw) === BACKUP_VAULT_KEY_LEN) {
                 $present     = true;
                 $source      = 'db';
                 $fingerprint = ipam_vault_fingerprint($raw);
-                // Read updated_at via a direct query — ipam_setting() does
-                // not expose it. Tolerates the post-v3.13.0 cascade
-                // (tenant_id NULL row) and the pre-cascade legacy schema.
                 $keyCol = ipam_key_col();
                 try {
                     $st = $db->prepare(
@@ -326,7 +337,10 @@ function ipam_vault_key_status(\PDO $db): array
                 }
             }
         } catch (\Throwable) {
-            // Bad envelope or wrong bootstrap key — fall through to legacy.
+            // Race window: state==='present' said unwrap succeeded but the
+            // re-unwrap here failed. Treat as unreadable.
+            $state        = 'unreadable';
+            $errorMessage = $errorMessage ?? 'vault key unwrap failed during fingerprint read';
         }
     }
 
@@ -382,6 +396,8 @@ function ipam_vault_key_status(\PDO $db): array
         'fingerprint'        => $fingerprint,
         'created_at'         => $createdAt,
         'has_encrypted_runs' => $hasEncryptedRuns,
+        'state'              => $state,
+        'error_message'      => $errorMessage,
     ];
 }
 
@@ -1062,6 +1078,47 @@ function ipam_destinations_load_state(\PDO $db): array
     $destStmt = $db->query("SELECT * FROM backup_destinations ORDER BY name");
     /** @var list<array<string, mixed>> $destinations */
     $destinations = $destStmt !== false ? $destStmt->fetchAll(PDO::FETCH_ASSOC) : [];
+
+    // v3.27.8 (#1172, PR 5/5): annotate each destination with its most
+    // recent backup_run if that run was 'failed', so the view can render
+    // a danger badge with the truncated error_message on the destination
+    // card. Operators get an at-a-glance signal on the Destinations admin
+    // page instead of having to switch to the History tab to discover a
+    // destination has been failing. The subquery picks the highest-id
+    // (newest) row per destination_id, which matches AUTOINCREMENT order
+    // and is portable across SQLite / MySQL / Postgres without window
+    // functions or driver-specific syntax.
+    $latestStmt = $db->query(
+        "SELECT br.destination_id, br.status, br.error_message, "
+        . "br.filename, br.started_at "
+        . "FROM backup_runs br "
+        . "WHERE br.destination_id IS NOT NULL "
+        . "AND br.id IN ("
+        . "  SELECT MAX(id) FROM backup_runs "
+        . "  WHERE destination_id IS NOT NULL GROUP BY destination_id"
+        . ")"
+    );
+    /** @var list<array<string,mixed>> $latestRuns */
+    $latestRuns = $latestStmt !== false ? $latestStmt->fetchAll(PDO::FETCH_ASSOC) : [];
+    /** @var array<int,array{error_message:string,filename:string,started_at:string}> $failedByDestId */
+    $failedByDestId = [];
+    foreach ($latestRuns as $row) {
+        if (($row['status'] ?? '') !== 'failed') continue;
+        $did = to_int($row['destination_id'] ?? 0);
+        if ($did <= 0) continue;
+        $failedByDestId[$did] = [
+            'error_message' => to_str($row['error_message'] ?? ''),
+            'filename'      => to_str($row['filename'] ?? ''),
+            'started_at'    => to_str($row['started_at'] ?? ''),
+        ];
+    }
+    foreach ($destinations as &$d) {
+        $did = to_int($d['id'] ?? 0);
+        if ($did > 0 && isset($failedByDestId[$did])) {
+            $d['last_failure'] = $failedByDestId[$did];
+        }
+    }
+    unset($d);
 
     $schedStmt = $db->query("SELECT * FROM backup_schedules ORDER BY destination_id, id");
     /** @var list<array<string, mixed>> $schedules */

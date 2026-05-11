@@ -98,6 +98,7 @@ backup.connection_test_failed       backup.schedule_overdue       backup.encrypt
 backup.cancel                       backup.protect                backup.unprotect
 backup.set_default_destination      backup.verify_bulk
 backup.preflight_failed             cron.task_failed
+backup.run_recorded
 backup.vault_key.revealed           backup.vault_key.set
 backup.vault_key.replaced           backup.vault_key.sudo_failed
 backup.vault_key.reveal_failed      backup.vault_key.reveal_rate_limited
@@ -145,6 +146,8 @@ To preserve vault-specific filtering after the v3.28.0 removal, correlate `auth.
 `backup.set_default_destination` (`entity_type=destination`) — emitted by the `set_default_destination` action handler in `lib/backup_admin_destinations.php` (v3.25.0 #848). `$details` carries `name=<destname>`. Setting a row to default clears every other row's `is_default` flag in the same transaction (single-row uniqueness enforced application-side; see `ipam_destinations_set_default()`).
 
 `backup.verify_bulk` (`entity_type=destination`) — emitted by the destination tab's "Verify all" bulk action (v3.25.0 #850). `$details` carries `total=N success=N failed=N` summary; per-row verify outcomes are emitted as the existing `backup_run.verify` audit so the bulk action does not double-log.
+
+`backup.run_recorded` (`entity_type=destination`) — emitted by `ipam_backup_run_for_destination()` immediately after the `backup_runs` INSERT succeeds (v3.27.8 #1171, Bug D diagnostic). Pair with the existing `backup.run` (emitted at the end of a successful run) to detect orchestrator-side orphans: a `backup.run` row without a matching `backup.run_recorded` row for the same `filename` indicates the INSERT path was bypassed. Note that `audit_log` is wiped by a DB restore, so this diagnostic only survives restore-induced orphans when audit_log is captured out-of-band (filesystem/logical backup of the audit table itself). `$details` carries `run_id=<id> filename=<remote_name> triggered_by=<manual|schedule|cli> [schedule_id=<id>]`. The companion `db.restore` audit verb is now also emitted by the IPAMBKL1 logical-restore path (previously emitted only by the SQL-text path), so a logical restore leaves a visible footprint that lets a post-mortem distinguish "file present, no row → restore-induced" from "file present, no row → orchestrator bug".
 
 ---
 

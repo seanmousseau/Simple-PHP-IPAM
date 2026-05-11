@@ -303,7 +303,7 @@ function ipam_backup_admin_restore_handle(\PDO $db, array $config): array
             // status). Limited to runs against this destination so a same-
             // named file on another destination doesn't shadow.
             $runsStmt = $db->prepare(
-                "SELECT id, filename, checksum, backup_type, status
+                "SELECT id, filename, checksum, backup_type, encryption_mode, status
                    FROM backup_runs
                   WHERE destination_id = :d AND filename IS NOT NULL"
             );
@@ -317,28 +317,8 @@ function ipam_backup_admin_restore_handle(\PDO $db, array $config): array
             }
 
             foreach ($objects as $obj) {
-                $name = $obj['name'];
-                $run  = $runIndex[$name] ?? null;
-                // Default to 'unknown' rather than 'database' for objects
-                // with no backup_runs row. An IPAMBKL1 file copied into the
-                // destination, or one whose history was pruned, has no
-                // record here — defaulting to 'database' would let the
-                // degraded-restore gate disable Restore on mysql/pgsql
-                // installs missing the native CLI even though the file
-                // is actually a Logical-format dump that doesn't need it.
-                // The dispatcher in ipam_restore_apply() sniffs the magic
-                // bytes at stage time so the safe default is "I don't
-                // know yet, let staging decide".
-                $type = is_array($run) && is_string($run['backup_type'] ?? null) ? $run['backup_type'] : 'unknown';
-                $browseEntries[] = [
-                    'name'         => $name,
-                    'size'         => $obj['size'],
-                    'last_modified' => $obj['last_modified'],
-                    'is_encrypted' => str_ends_with($name, '.enc'),
-                    'backup_type'  => $type,
-                    'checksum'     => is_array($run) && is_string($run['checksum'] ?? null) ? $run['checksum'] : '',
-                    'run_id'       => is_array($run) ? to_int($run['id'] ?? 0) : 0,
-                ];
+                $run = $runIndex[$obj['name']] ?? null;
+                $browseEntries[] = ipam_restore_browse_entry_derive($obj, $run);
             }
         } catch (Throwable $e) {
             $browseError = 'Could not list backups for this destination: ' . $e->getMessage();
@@ -360,6 +340,70 @@ function ipam_backup_admin_restore_handle(\PDO $db, array $config): array
         'browseEntries'  => $browseEntries,
         'browseError'    => $browseError,
         'browseDegradedDb' => $degraded,
+    ];
+}
+
+/**
+ * v3.27.8 (Bug B+C) — derive a single Restore-tab browse-entry row from
+ * a destination object + its optional backup_runs row.
+ *
+ * Pure function (no DB, no I/O) so the badge ground-truth rules are
+ * unit-testable. Rules:
+ *
+ *   • When a backup_runs row exists, its `encryption_mode` and
+ *     `backup_type` win unconditionally — filename suffix is ignored.
+ *     This is the fix for #v3.27.8-B+C: pre-fix, a file ending in `.enc`
+ *     was always badged "encrypted" even if the recorded run was
+ *     `encryption_mode='unencrypted'` (and vice versa).
+ *   • When no run row is present (orphan object — listObjects() saw it
+ *     but no `backup_runs` row exists for that destination_id+filename),
+ *     `is_orphan=true` is set so the UI can surface a "no DB record"
+ *     marker. `is_encrypted` falls back to the `.enc` filename heuristic;
+ *     `encryption_mode` and `backup_type` are reported as `'unknown'`
+ *     rather than guessed from suffix so downstream UI can render a
+ *     distinct "Unknown" badge and the dispatcher in ipam_restore_apply()
+ *     keeps responsibility for magic-byte sniffing at stage time.
+ *
+ * @param array{name:string,size:int,last_modified:string} $obj
+ * @param array<string,mixed>|null $run
+ * @return array{
+ *   name:string,size:int,last_modified:string,
+ *   is_encrypted:bool,encryption_mode:string,backup_type:string,
+ *   checksum:string,run_id:int,is_orphan:bool
+ * }
+ */
+function ipam_restore_browse_entry_derive(array $obj, ?array $run): array
+{
+    if ($run !== null) {
+        $mode = is_string($run['encryption_mode'] ?? null)
+            ? (string)$run['encryption_mode']
+            : 'unencrypted';
+        $type = is_string($run['backup_type'] ?? null)
+            ? (string)$run['backup_type']
+            : 'unknown';
+        return [
+            'name'           => $obj['name'],
+            'size'           => $obj['size'],
+            'last_modified'  => $obj['last_modified'],
+            'is_encrypted'   => $mode !== 'unencrypted',
+            'encryption_mode' => $mode,
+            'backup_type'    => $type,
+            'checksum'       => is_string($run['checksum'] ?? null) ? (string)$run['checksum'] : '',
+            'run_id'         => to_int($run['id'] ?? 0),
+            'is_orphan'      => false,
+        ];
+    }
+
+    return [
+        'name'            => $obj['name'],
+        'size'            => $obj['size'],
+        'last_modified'   => $obj['last_modified'],
+        'is_encrypted'    => str_ends_with($obj['name'], '.enc'),
+        'encryption_mode' => 'unknown',
+        'backup_type'     => 'unknown',
+        'checksum'        => '',
+        'run_id'          => 0,
+        'is_orphan'       => true,
     ];
 }
 
