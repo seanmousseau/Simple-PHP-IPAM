@@ -1079,6 +1079,47 @@ function ipam_destinations_load_state(\PDO $db): array
     /** @var list<array<string, mixed>> $destinations */
     $destinations = $destStmt !== false ? $destStmt->fetchAll(PDO::FETCH_ASSOC) : [];
 
+    // v3.27.8 (#1172, PR 5/5): annotate each destination with its most
+    // recent backup_run if that run was 'failed', so the view can render
+    // a danger badge with the truncated error_message on the destination
+    // card. Operators get an at-a-glance signal on the Destinations admin
+    // page instead of having to switch to the History tab to discover a
+    // destination has been failing. The subquery picks the highest-id
+    // (newest) row per destination_id, which matches AUTOINCREMENT order
+    // and is portable across SQLite / MySQL / Postgres without window
+    // functions or driver-specific syntax.
+    $latestStmt = $db->query(
+        "SELECT br.destination_id, br.status, br.error_message, "
+        . "br.filename, br.started_at "
+        . "FROM backup_runs br "
+        . "WHERE br.destination_id IS NOT NULL "
+        . "AND br.id IN ("
+        . "  SELECT MAX(id) FROM backup_runs "
+        . "  WHERE destination_id IS NOT NULL GROUP BY destination_id"
+        . ")"
+    );
+    /** @var list<array<string,mixed>> $latestRuns */
+    $latestRuns = $latestStmt !== false ? $latestStmt->fetchAll(PDO::FETCH_ASSOC) : [];
+    /** @var array<int,array{error_message:string,filename:string,started_at:string}> $failedByDestId */
+    $failedByDestId = [];
+    foreach ($latestRuns as $row) {
+        if (($row['status'] ?? '') !== 'failed') continue;
+        $did = to_int($row['destination_id'] ?? 0);
+        if ($did <= 0) continue;
+        $failedByDestId[$did] = [
+            'error_message' => to_str($row['error_message'] ?? ''),
+            'filename'      => to_str($row['filename'] ?? ''),
+            'started_at'    => to_str($row['started_at'] ?? ''),
+        ];
+    }
+    foreach ($destinations as &$d) {
+        $did = to_int($d['id'] ?? 0);
+        if ($did > 0 && isset($failedByDestId[$did])) {
+            $d['last_failure'] = $failedByDestId[$did];
+        }
+    }
+    unset($d);
+
     $schedStmt = $db->query("SELECT * FROM backup_schedules ORDER BY destination_id, id");
     /** @var list<array<string, mixed>> $schedules */
     $schedules = $schedStmt !== false ? $schedStmt->fetchAll(PDO::FETCH_ASSOC) : [];

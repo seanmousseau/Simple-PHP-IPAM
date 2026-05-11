@@ -194,6 +194,23 @@ $_isAdmin     = ($_currentUser['role'] ?? '') === 'admin';
                 <?php if ($destIsDefault): ?>
                   <span class="badge badge-default" title="Default destination">★ default</span>
                 <?php endif; ?>
+                <?php
+                // v3.27.8 (#1172, PR 5/5): surface the most-recent failed
+                // run's reason on the destination card so operators see
+                // ongoing failures without leaving the Destinations tab.
+                // Controller sets $d['last_failure'] only when the newest
+                // backup_runs row for this destination has status='failed'.
+                $lastFailure = is_array($d['last_failure'] ?? null) ? $d['last_failure'] : null;
+                if ($lastFailure !== null):
+                    $errMsg   = to_str($lastFailure['error_message'] ?? '');
+                    $started  = to_str($lastFailure['started_at'] ?? '');
+                    $hover    = $errMsg !== ''
+                        ? $errMsg . ($started !== '' ? "\n(started " . $started . ')' : '')
+                        : ($started !== '' ? 'Failed run started ' . $started : 'Most recent run failed');
+                ?>
+                  <br>
+                  <span class="badge badge-failed" title="<?= e($hover) ?>">⚠ last run failed</span>
+                <?php endif; ?>
               </td>
               <td><span class="badge badge-type-<?= e($destType) ?>"><?= e(strtoupper($destType)) ?></span></td>
               <td><span class="badge badge-format-<?= e($destBType) ?>"><?= $destBType === 'logical' ? 'Logical' : 'Database' ?></span></td>
