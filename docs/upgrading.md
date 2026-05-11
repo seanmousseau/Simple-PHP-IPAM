@@ -116,6 +116,12 @@ The backup is left in place after a successful upgrade. You can remove it manual
 
 ## Version-specific upgrade notes
 
+### v3.27.8
+
+Backup/restore stabilization hotfix. No schema change, no migration. Drop-in upgrade from v3.27.x — no operator action required for the upgrade itself.
+
+**One operator-facing change worth knowing:** the Destinations tab now shows a three-state vault-status badge (absent / present / **unreadable**). The `unreadable` state means the encrypted vault-key envelope exists in the database but cannot be unwrapped — typically because the `bootstrap_key` (in `config.php`) has changed since the envelope was written, or because the envelope was written by a different installation. If your Destinations tab now shows a red **"Vault envelope exists but is unreadable"** banner that you didn't see in v3.27.7, see [Vault recovery (unreadable envelope)](#vault-recovery) below.
+
 ### v3.26.0
 
 **⚠️ Upgrade-path prerequisite: must pass through v3.23.0–v3.25.x first.** v3.26.0 retires the legacy v3.7 single-destination backup runner (`run_db_backup_if_due()`) and deletes the four legacy settings keys (`backup.enabled`, `backup.frequency`, `backup.retention`, `backup.dir`) along with the `backup.php` CLI entry point. The conversion that materialised those legacy keys into the unified `backup_destinations` + `backup_schedules` rows lived in `ipam_legacy_backup_migrate_if_due()`, which ran on every page load between v3.23.0 and v3.25.x. The v3.26.0 migration `3.26.0-retire-legacy-backup` enforces this with a hard-fail check: if the `backup.legacy_migrated_v3_23_0` sentinel is missing AND any legacy `backup.*` key still holds a non-default value, the migration aborts with a remediation message. Operators on a pre-v3.23 install must:
@@ -697,3 +703,31 @@ php tmp_cleanup.php
 ```
 
 Deletes uploaded CSV files and import plan files in `data/tmp/` that are older than `tmp_cleanup_ttl_seconds` (default: 24 hours). This also runs automatically as part of lazy housekeeping on normal site traffic — a cron job is not required.
+
+---
+
+## Vault recovery
+
+If the Destinations tab shows a red **"Vault envelope exists but is unreadable"** banner, the `backup_vault_key` envelope stored in the database cannot be decrypted by the running install's `bootstrap_key`. This is a one-way situation — by design, the envelope cannot be recovered without the original bootstrap key. New backups will fail (or in v3.27.x+, hard-fail with a `(preflight-failed-…)` row and a `backup.preflight_failed` audit) until the envelope is replaced.
+
+**Common causes:**
+
+- `bootstrap_key` in `config.php` was rotated, regenerated, or different between the host that wrote the envelope and the host now reading it.
+- The DB was restored from another install's backup that carries that install's envelope.
+- A misconfigured load-balanced setup where two app instances run with different `bootstrap_key` values.
+
+**Recovery options:**
+
+1. **Restore the original `bootstrap_key`** (preferred — keeps existing encrypted archives readable).
+   1. Locate the original value (offline backup of `config.php`, deploy artefact, password manager).
+   2. Paste it into `config.php` → `$config['bootstrap_key'] = '...';`.
+   3. Reload the Destinations tab. The banner clears and the badge returns to **present**.
+
+2. **Discard the envelope and write a new one** (only when the original key is truly lost). **This makes every existing `backup_vault_key`-encrypted archive (`.ipambkp3`) unrecoverable** — they remain encrypted under the old key. Only proceed if you have other recovery paths for the data those archives protected.
+   1. Go to **Admin → Backups → Destinations** → **Set new vault key**. The new key is generated server-side and wrapped under the current `bootstrap_key`.
+   2. Future backups encrypt under the new key. Past `.ipambkp3` archives remain unreadable.
+   3. Consider keeping the old archives offline for forensic completeness even though they cannot be decrypted by the running install.
+
+**Why this can happen silently after a DB restore:** restoring a database dump from one install on top of another install copies the encrypted envelope but does **not** copy `bootstrap_key` (which lives in `config.php`, not the DB — by design). If the destination install's `bootstrap_key` differs from the source's, the envelope is structurally valid but cryptographically unreadable. This is the case the v3.27.8 banner exists to surface.
+
+**Why the orchestrator is now hard-failing instead of writing plaintext:** as of v3.27.1, `ipam_backup_resolve_encrypt_to_tmp()` throws when encryption is requested but no usable key is available. The orchestrator's preflight catch records a `backup_runs` row with `status='failed'`, a synthetic `(preflight-failed-<8hex>)` filename, the truncated exception in `error_message`, and a `backup.preflight_failed` audit entry — then re-throws so the calling cron task fails visibly. **No plaintext fallback exists.** If you need backups to continue running before recovery, switch the destination's `encryption_mode` to `unencrypted` (only allowed for `local` destination type per the v3.25.0 server-side guard) or restore the original `bootstrap_key`.
