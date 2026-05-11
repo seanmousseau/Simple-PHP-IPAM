@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.27.8] - 2026-05-11
+
+Backup/restore stabilization hotfix off `main`. Five narrowly-scoped PRs closing the four operator-visible bugs surfaced during the v3.27.7 verification pass plus one UX gap surfaced during their investigation. No schema change, no migration. Theme: "Stop the silent failures. Make the Restore tab tell the truth about every archive."
+
+### Fixed
+
+- **Restore-tab Verify/Delete now opens the styled drawer** (#1168, Bug A). The History tab's per-row Verify/Delete button uses the `data-drawer-url` drawer-pattern; the Restore tab was using a plain `<a href>` that loaded `backup_run_detail.php` as a full unstyled page (the file is a drawer-partial — no `page_header()` wrapper). Converted to the same drawer pattern as the History tab. `views/backup_admin_restore.php:125`.
+- **Restore-tab "Encryption" and "Type" columns now reflect `backup_runs` ground truth, not filename suffix** (#1169, Bugs B + C). The controller was deriving `is_encrypted` from `str_ends_with($name, '.enc')` and `backup_type` from filename suffix, both ignoring the database values written by the orchestrator. Now joins each enumerated remote file against `backup_runs` on `(destination_id, filename)`; DB values take precedence when present. Orphan files (present in the destination listObjects but with no `backup_runs` row) fall back to the filename heuristic and render a clear "no DB record" warning badge so operators see the badges are inferences, not facts. Test coverage: `tests/RestoreFilenameBadgeTest.php`.
+- **Destinations tab "Stored key" badge now reports three-state vault status** (#1170, Bug E). Previously the Stored-key chip read the envelope existence flag directly while the "No vault key" card called `ipam_vault_unwrap()` and treated any throw as "no envelope" — operators saw a contradictory pair of statuses when the vault envelope existed but the bootstrap key had rotated since the envelope was written. New `ipam_vault_status()` returns `{state: 'absent'|'present'|'unreadable', envelope_present, error_message}`; an `unreadable` state renders a red diagnostic banner with a link to `docs/upgrading.md §v3.27.8` describing the manual recovery procedure. Test coverage: `tests/VaultStatusTest.php`.
+- **Destination card now surfaces the most recent failed run's reason** (#1172). Previously operators had to leave the Destinations tab and scroll the History tab to discover a destination's scheduled backups were failing. `ipam_destinations_load_state()` now joins each destination with its newest `backup_runs` row (by max id per destination_id — portable across SQLite/MySQL/Postgres without window functions); when that row has `status='failed'`, the destination card renders a `badge-failed` chip with the truncated `error_message` in the title attribute. Test coverage: `tests/DestinationFailureBadgeTest.php`.
+
+### Investigated
+
+- **Apparent orphan S3 file with no `backup_runs` row** (#1171, Bug D). Root cause confirmed structurally: DB restore to an earlier point wipes `backup_runs` metadata while the remote file persists on the destination (S3/Wasabi is not rolled back by a DB-only restore). Not an orchestrator bug. The evidence chain on the sqlite testing instance showed three `backup.run` audit rows at `2026-05-11 02:00:26–02:00:46 UTC` with zero matching `backup_runs` rows; destinations `4` and `5` visible in those audit rows had been replaced by destinations `6` and `7` by `02:15:02 UTC`, with `db.restore_stage` and `db.restore_dryrun` audit verbs firing at `02:09:41–02:09:48` against the same filenames. The IPAMBKL1 logical-restore path emitted no `db.restore` audit row, which is why the restore had to be inferred from destination-id drift rather than read directly. Two diagnostics added so a future *genuine* orchestrator orphan is distinguishable from a restore-induced one:
+  - **New audit verb `backup.run_recorded`** emitted at the moment the orchestrator's `backup_runs` INSERT succeeds. Pair with the existing `backup.run` (emitted at end of run) to detect orchestrator-side orphans. Note: `audit_log` is also wiped by a DB restore, so this diagnostic only survives restore-induced orphans when audit_log is captured out-of-band (filesystem/logical backup of the audit_log table itself).
+  - **Existing `db.restore` audit verb now also emitted on the IPAMBKL1 logical-restore early-return path** (previously emitted only by the SQL-text apply path). Logical restores now leave a visible footprint.
+- **Plan's "drop silent plaintext fallback (Security)" goal was already shipped in v3.27.1.** `ipam_backup_resolve_encrypt_to_tmp()` has a four-branch resolver that hard-throws when encryption is requested but neither vault key nor `app_secret` is available; the orchestrator's preflight catch converts that throw into a `(preflight-failed-<8hex>)` row with `status='failed'` plus a `backup.preflight_failed` audit. There is no plaintext-fallback code path in v3.27.7+. No code change in v3.27.8 — the planned PR was reframed to the destination-card UX change above instead.
+
+### Process
+
+- Five-PR linear hotfix series off `main` per `docs/internal/hotfix-release.md` (no `dev` integration window). Each PR passed the full local gate + 15-check CI matrix before merge.
+- `docs/internal/audit-actions.md` updated in the same PR as the new `backup.run_recorded` verb, per the contract-doc rule.
+- Visual-regression baselines on the `backup-admin-restore` page refreshed in PR 4 to absorb PR 2 and PR 3 UI changes that landed on `main` without baseline refresh.
+
 ## [3.27.7] - 2026-05-10
 
 Operator-reported regression hotfix off `main`. v3.27.6 was supposed to close the v3.27.x cluster; live verification surfaced two issues that warrant their own patch:
@@ -1705,6 +1729,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.27.8]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.7...v3.27.8
 [3.27.7]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.6...v3.27.7
 [3.27.6]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.5...v3.27.6
 [3.27.5]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.4...v3.27.5
