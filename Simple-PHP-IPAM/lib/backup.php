@@ -469,6 +469,22 @@ function ipam_backup_run_for_destination(
         $encMode
     );
 
+    // v3.27.8 (#1171, Bug D investigation): emit an audit row at the
+    // moment the backup_runs INSERT succeeds. Bug D surfaced as "remote
+    // file present, no backup_runs row" — confirmed structurally caused
+    // by DB restore wiping the metadata row while the remote file
+    // persists. A future *genuine* orchestrator orphan (insert failed,
+    // upload still happened somehow) would now show 'backup.run' without
+    // a paired 'backup.run_recorded' for the same filename, in any
+    // audit_log snapshot taken via filesystem backup of the audit table
+    // (e.g. logical backup of audit_log itself). Survives the DB-restore
+    // scenario only when audit_log is captured out-of-band.
+    audit($db, 'backup.run_recorded', 'destination', $destId,
+          'run_id=' . $logId
+          . ' filename=' . $remoteName
+          . ' triggered_by=' . $triggeredBy
+          . ($scheduleId !== null ? ' schedule_id=' . $scheduleId : ''));
+
     // v3.25.0 #856 cancel poll: cancel between dump+encrypt and upload.
     // v3.26.0 #859: ipam_backup_cancel_reason() also fires on
     // backup_destinations.is_active=0 — i.e. an admin disabled the
@@ -1883,6 +1899,27 @@ function ipam_restore_apply(PDO $db, string $stagedPath, string $realFilename = 
     $magic = ipam_restore_sniff_magic($stagedPath);
     if ($magic === 'IPAMBKL1') {
         $logicalMeta = ipam_restore_logical_apply($db, $stagedPath);
+        // v3.27.8 (#1171, Bug D investigation): the SQL-text path below
+        // emits 'db.restore' on success; the IPAMBKL1 early-return path
+        // previously did not, leaving logical restores invisible in the
+        // audit log. The new row carries format=logical so post-mortems
+        // can distinguish path-A from path-B without grepping into
+        // details.
+        $filename = $realFilename !== '' ? $realFilename : basename($stagedPath);
+        try {
+            audit(
+                $db,
+                'db.restore',
+                'system',
+                null,
+                'file=' . $filename
+                    . ' format=logical'
+                    . ' rows=' . $logicalMeta['total_rows']
+                    . ' size=' . (filesize($stagedPath) ?: 0)
+            );
+        } catch (Throwable $e) {
+            error_log('[restore] audit failed: ' . $e->getMessage());
+        }
         return [
             'format'           => 'logical',
             'tables_restored'  => 0, // not tracked in logical path; see logical meta
