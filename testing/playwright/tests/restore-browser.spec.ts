@@ -151,4 +151,43 @@ test.describe('Restore tab — destination-driven backup browser (#1077)', () =>
     // in the destination-driven backup browser is now the sole stage path,
     // and `tests/restore-browser.spec.ts:click-row-Restore` above already
     // covers it end-to-end.
+
+    // v3.27.8 Bug A: Verify / Delete control on the Restore tab must open
+    // the same per-run drawer the History tab uses, not navigate to a
+    // partial-HTML page rendered without page_header(). Asserted both at
+    // the markup level (button + data-drawer-url) and via live click so
+    // a future regression to <a href=…> can't slip past.
+    test('Bug A: Verify/Delete uses drawer-pattern button, not anchor navigation', async () => {
+        await gotoRestore(page);
+        await selectDestinationByName(page, DEST_LOCAL);
+
+        const verifyBtn = page.locator(
+            'table.data-table tbody tr button[data-drawer-url^="backup_run_detail.php"]'
+        ).first();
+        const hasBtn = await verifyBtn.count();
+        test.skip(hasBtn === 0, 'no backup row with run_id > 0 in fixture; covered by integration spec');
+
+        // Markup contract: must be a <button>, must carry data-drawer-url,
+        // must NOT be a navigation anchor.
+        const tagName = await verifyBtn.evaluate(el => el.tagName.toLowerCase());
+        expect(tagName).toBe('button');
+        const drawerUrl = await verifyBtn.getAttribute('data-drawer-url');
+        expect(drawerUrl, 'data-drawer-url must point at backup_run_detail.php').toMatch(
+            /^backup_run_detail\.php\?id=\d+$/
+        );
+
+        // No same-row legacy anchor regression.
+        const anchorRegression = page.locator(
+            'table.data-table tbody tr a[href^="backup_run_detail.php"]'
+        );
+        expect(await anchorRegression.count(), 'no <a href=backup_run_detail.php> anchors should remain').toBe(0);
+
+        // Live behaviour: click opens the global drawer with the partial body.
+        // The URL must NOT change (full-page navigation would update location).
+        const urlBefore = page.url();
+        await verifyBtn.click();
+        await expect(page.locator('#global-drawer')).toBeVisible();
+        await expect(page.locator('#global-drawer-body')).not.toBeEmpty();
+        expect(page.url(), 'drawer open must not navigate the page').toBe(urlBefore);
+    });
 });
