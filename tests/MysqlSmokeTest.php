@@ -168,7 +168,12 @@ final class MysqlSmokeTest extends TestCase
         // 3.26.0-vault-key-to-settings.
         // Bumped to 59 in v3.27.0 (#1108): added 3.27.0-step-up-policy
         // (seeds five auth.step_up.* policy rows on fresh installs).
-        $this->assertSame(59, (int)$row['c']);
+        // Bumped to 60 in v3.27.7 (F-S3-01): added 3.27.7-webhook-secret-
+        // encrypt to the pre-seed list. Runtime migration is a defensive
+        // re-encrypt-existing-rows pass; fresh installs have webhooks
+        // count=0 so it would no-op anyway, and pre-seeding keeps the
+        // smoke-test gate honest + IPAMBKL1 schema_version parity intact.
+        $this->assertSame(60, (int)$row['c']);
     }
 
     public function testBootstrapAdminUserInserted(): void

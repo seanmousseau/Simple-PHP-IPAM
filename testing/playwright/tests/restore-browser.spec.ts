@@ -74,15 +74,20 @@ test.describe('Restore tab — destination-driven backup browser (#1077)', () =>
         await expect(page.locator('input[type="file"][name="restore_upload"]')).toBeVisible();
     });
 
-    test('destination picker form has method=get + onchange auto-submit', async () => {
+    test('destination picker form has method=get + data-submit-on-change auto-submit', async () => {
         // Affordance contract: selecting an option reloads the page with
-        // ?dest=N. Asserted at the markup level rather than via live click
-        // because Playwright's selectOption races with onchange handlers
-        // on form-auto-submit selects (the actual <select>; the integration
-        // tests below use direct goto to a ?dest=N URL for determinism).
+        // ?dest=N. v3.27.7: the inline `onchange="this.form.submit()"`
+        // pattern was replaced with a `data-submit-on-change` attribute +
+        // delegated handler in assets/app.js because the strict CSP
+        // (`script-src 'self'` with no script-src-attr) blocks inline
+        // event handlers under CSP3 enforcement. Asserted at the markup
+        // level rather than via live click because Playwright's
+        // selectOption races with auto-submit handlers (the actual
+        // <select>; the integration tests below use direct goto to a
+        // ?dest=N URL for determinism).
         await gotoRestore(page);
         const sel = page.locator('select[name="dest"]');
-        await expect(sel).toHaveAttribute('onchange', /this\.form\.submit/);
+        await expect(sel).toHaveAttribute('data-submit-on-change', '');
         const form = sel.locator('xpath=ancestor::form');
         await expect(form).toHaveAttribute('method', /get/i);
         await expect(form).toHaveAttribute('action', /backup_admin\.php/);

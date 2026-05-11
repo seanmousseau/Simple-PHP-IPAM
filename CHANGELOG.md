@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.27.7] - 2026-05-10
+
+Operator-reported regression hotfix off `main`. v3.27.6 was supposed to close the v3.27.x cluster; live verification surfaced two issues that warrant their own patch:
+
+1. **Inline event handlers (`onchange=`, `onclick=`, `onsubmit=`) are CSP-blocked.** The `Content-Security-Policy` header set by `page_header()` in `lib.php` uses `script-src 'self'` without `script-src-attr 'unsafe-inline'`. Modern browsers enforcing CSP3 silently drop every inline event handler. Symptom Sean caught: the Restore-tab destination picker dropdown does nothing when changed — `onchange="this.form.submit()"` never fires, so the URL stays at `?tab=restore` and no backups enumerate. Hidden additional impact: five destructive-action confirm dialogs (TOTP disable, Email-OTP disable, passkey delete, audit-log prune, webhook delete) were silently submitting forms without showing the "are you sure?" prompt. This is a security-UX regression, not just a convenience issue.
+
+2. **Webhook signing secrets stored plaintext at rest** (Pass C finding F-S3-01). The v3.24–v3.27 vault key relocation work missed `webhooks.secret`. Database dumps (backup files, replication snapshots, `db_tools` exports) expose every outbound webhook URL and its signing secret, enabling forged deliveries. Comparable secrets (TOTP, OIDC client_secret, SMTP password) were migrated to encrypted-at-rest in earlier versions. Webhooks were the outlier; this release closes the gap. **The schema is unchanged** — the column stays named `secret`, but the stored *format* changes from plaintext to an AES-256-GCM envelope (`$2W$` prefix, mirroring v3.6.0 TOTP's `$2$`). A defensive migration `3.27.7-webhook-secret-encrypt` re-encrypts any existing plaintext rows in place; all deployed targets (4 testing instances + demo + prod) have `webhooks` count = 0 at v3.27.6, so the migration is a no-op in practice.
+
+### Fixed
+
+- **Inline event handlers converted to data-attribute + delegated handlers** so the strict CSP no longer blocks them. The "data-confirm" handler already in `assets/app.js` (line 367) is reused for the seven confirm() call sites; one new "data-submit-on-change" handler is added for the destination picker. Touches `views/backup_admin_restore.php`, `views/backup_admin_history.php`, `audit.php`, `change_password.php`, `users.php`, `webhooks.php`. CSP itself stays strict; only the inline-handler pattern is removed.
+
+### Security
+
+- **Webhook signing secrets encrypted at rest** (F-S3-01). No schema change — column stays named `secret`, stored format becomes a `$2W$`-prefixed AES-256-GCM envelope (12-byte IV + 16-byte tag, key derived via SHA-256 of `app_secret`, mirroring the v3.6.0 TOTP envelope). Writer (`webhooks.php`) and 4 reader call sites (1 in `webhooks.php` test-fire, 3 in `lib.php` dispatch loop) round-trip through new `ipam_webhook_encrypt_secret()` / `ipam_webhook_decrypt_secret()` helpers. Defensive in-place re-encryption migration `3.27.7-webhook-secret-encrypt` added (no-op on the 0-row baseline; only fires if a legacy install with existing plaintext rows is upgraded). Pre-seeded in `schema.mysql.sql` + `schema.pgsql.sql` so fresh installs land at migration count 60. Round-trip + edge-case tests at `tests/WebhookSecretEncryptionTest.php` (12 cases: ASCII / Unicode / binary plaintext, random-IV non-determinism, empty-secret passthrough, legacy plaintext flow-through, wrong-key + tampered-ciphertext both return `null`, empty-key throws on envelope decrypt + on encrypt, plaintext-passthrough with empty key still works, minimum envelope byte-length pinned).
+
+### Process
+
+- Pass C regression evidence at `releases/ipam-3.27.6/regression-evidence/passC/` (landed on `dev` 043c716). v3.27.7 closes the one **High**-severity Pass C finding (F-S3-01) and the operator-reported CSP regression that Pass C did not catch (different bug class — Pass C was a static security audit, not a runtime browser regression sweep).
+
 ## [3.27.6] - 2026-05-10
 
 Final patch in the v3.27.x cluster. Three operator-impact UX fixes anchored on the restore page plus one regression catch from same-day verification testing. No schema change, no migration. After this release ships the project pauses for v3.28.0+ planning.
@@ -23,8 +43,6 @@ Final patch in the v3.27.x cluster. Three operator-impact UX fixes anchored on t
 
 - **`set_test_setting.php` allow-list** gains `oidc.client_secret` so the new `sudo-xhr-replay.spec.ts` can seed a stub value to make `$isSet=true` and have `settings_group_form.php` render the `data-pw-reveal-key` attribute. The encryption / type handling goes through `ipam_setting_set()` so the stored value matches what the registry expects. Allow-list scope stays narrow.
 
-[3.27.6]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.5...v3.27.6
-
 ## [3.27.5] - 2026-05-10
 
 Same-day micro-hotfix off `main`. v3.27.4 shipped `autocomplete="off"` on settings text/select/number inputs to suppress password-manager autofill on the OIDC config screen (#1137); confirmed live on testing + prod that the major PMs (1Password, LastPass, Bitwarden) ignored it. `autocomplete="off"` is honored by the browser's native autofill but PMs override it by design.
@@ -36,8 +54,6 @@ Same-day micro-hotfix off `main`. v3.27.4 shipped `autocomplete="off"` on settin
 ### Known limitations
 
 - v3.27.5 was sliced out of the planned v3.27.5 restore-page redesign milestone (#1135 progress indicator, #1136 enumerate destinations + drop the "advanced" requirement) so the PM regression could ship same-day. Restore-page redesign moves to v3.27.6.
-
-[3.27.5]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.4...v3.27.5
 
 ## [3.27.4] - 2026-05-10
 
@@ -56,8 +72,6 @@ Settings UX polish hotfix off `main`. Five P2 fixes plus one small functional ga
 
 - **Atomic `auth.ip_rate_limited` dampener** (#1143) — TOCTOU window between read-then-insert under brute-force traffic can emit duplicate audit rows at lockout boundaries. Closing it cleanly requires either a new `auth_dampener_state` table (multi-engine schema parity work) or per-engine advisory locking — both baseline-class scope, deferred to v3.28.0. Severity is LOW (log noise only; no auth bypass — `login_rate_limited()` is unaffected).
 
-[3.27.4]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.3...v3.27.4
-
 ## [3.27.3] - 2026-05-09
 
 Quick-win patch off `main`. Five low-risk fixes surfaced during the v3.27.2 cron-log audit and OIDC step-up regression sweep. Nothing structural; nothing requiring a migration. Each fix paired with an in-process failing test per Path Forward operating mode.
@@ -73,8 +87,6 @@ Quick-win patch off `main`. Five low-risk fixes surfaced during the v3.27.2 cron
 ### Closed without code change
 
 - **#1128 (api.php docblock advertises X-API-Key)** closed as already-fixed. Repo grep finds zero `X-API-Key` references; `api.php` docblock, `docs/api.md`, `assets/api-spec.yaml`, and the in-code error message all consistently say `Authorization: Bearer <key>`. The bug as filed does not exist in the current tree.
-
-[3.27.3]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.2...v3.27.3
 
 ## [3.27.2] - 2026-05-09
 
@@ -93,8 +105,6 @@ Approach: this hotfix follows the locked Path Forward operating mode — TDD-fir
 
 - **Path Forward operating mode (`docs/internal/2026-05-08_Path_Forward.md`) followed end-to-end.** Each of the four bugs is anchored by a failing test committed before the fix; the helper-introducing fixes carry their own conformance/wiring tests committed alongside. No unilateral scope changes during execution; every design-multi-option moment was paused for explicit confirmation.
 - **Schema covenant mechanically enforced.** `tests/IPAMBKL1FullSchemaConformanceTest.php` asserts every BLOB-declared column round-trips arbitrary binary cleanly, every TEXT-declared column on the explicit `textColumnsHoldingBinary()` allow-list likewise round-trips, AND any future unclassified binary write to a TEXT column triggers an operator-actionable `RuntimeException` rather than a silent drop. Adding a new TEXT-declared binary column without updating both the override map and the test allow-list is now mechanically prevented.
-
-[3.27.2]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.1...v3.27.2
 
 ## [3.27.1] - 2026-05-09
 
@@ -123,8 +133,6 @@ This patch ships seven fixes paired with the regression tests that would have ca
 
 - **Path Forward doc landed** at `docs/internal/2026-05-08_Path_Forward.md` — binding development-discipline doc for everything after this hotfix, covering the 9-step recovery plan, the multi-tenancy deferral with door-open rules for v3.28.0+ design, the architecture-decision review backlog, and a list of specific operating-mode commitments.
 - **Lessons-learned §8** is new: "Architectural pattern: feature added at one site, propagation to adjacent sites missed." Maps every Pass A bug to the same architectural shape, lists 7 spot-the-pattern questions, ships a mandatory pre-PR checklist, and names the 3 missing test classes (round-trip, contract enforcement, negative regression) the v3.28.0 test-tooling baseline release will close.
-
-[3.27.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.0...v3.27.1
 
 ## [3.27.0] - 2026-05-08
 
@@ -163,8 +171,6 @@ Step-up authentication. Sensitive admin actions (vault-key reveal/set/replace, A
 
 - **Sensitive admin actions are no longer satisfied by a stale login session alone.** Every sudo-class action now requires either a fresh proof or a session sudo grant minted within the policy TTL. Reduces the blast radius of a stolen session cookie: the attacker still cannot reveal the vault key, mint an API key, import a SQL dump, change a password, or disable an MFA factor without the user's second factor.
 - **Step-up failures rate-limited per IP (5/15min).** `auth.sudo_rate_limited` audit row fires before the proof is even checked once the bucket is full.
-
-[3.27.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.26.0...v3.27.0
 
 ## [3.26.0] - 2026-05-07
 
@@ -218,8 +224,6 @@ Backup-overhaul closeout + code-quality sweep. Two breaking-change footnotes (le
 - **`tests/BackupRetentionDryRunTest.php`** (4 cases) — round-trip property test for retention dry-run/apply.
 - **`tests/BackupStreamingMemoryTest.php`** (1 case + nightly env-var crank) — streaming memory property.
 - **`testing/playwright/tests/vault-key-admin.spec.ts`** (5 tests) — sudo gate, rate limit, one-shot flash, replace gating.
-
-[3.26.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.25.0...v3.26.0
 
 ## [3.25.0] - 2026-05-06
 
@@ -1701,6 +1705,15 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.27.7]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.6...v3.27.7
+[3.27.6]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.5...v3.27.6
+[3.27.5]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.4...v3.27.5
+[3.27.4]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.3...v3.27.4
+[3.27.3]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.2...v3.27.3
+[3.27.2]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.1...v3.27.2
+[3.27.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.0...v3.27.1
+[3.27.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.26.0...v3.27.0
+[3.26.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.25.0...v3.26.0
 [3.25.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.24.0...v3.25.0
 [3.24.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.23.0...v3.24.0
 [3.23.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.22.3...v3.23.0

@@ -45,7 +45,7 @@ declare(strict_types=1);
       <form method="get" action="backup_admin.php">
         <input type="hidden" name="tab" value="restore">
         <label>Destination
-          <select name="dest" onchange="this.form.submit()">
+          <select name="dest" data-submit-on-change>
             <option value="">&#x2014; Select &#x2014;</option>
             <?php foreach ($destinations as $d): ?>
               <?php $dId = to_int($d['id']); ?>

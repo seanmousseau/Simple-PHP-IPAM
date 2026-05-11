@@ -12,13 +12,12 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.27.6
+## What's new in v3.27.7
 
-Final patch in the v3.27.x cluster. Three operator-impact UX fixes on the restore page plus one regression catch from same-day verification testing.
+Same-day hotfix off `main` for a CSP regression that surfaced after v3.27.6 deployed plus the one High-severity finding from the Pass C regression sweep (2026-05-10).
 
-- **Restore-apply now shows a progress overlay (#1135).** Pre-fix, clicking Apply restore hung the page silently for 30+ seconds. Now an escalating spinner message keeps the operator informed: "Applying backup…" → "Still working…" → "Almost there…"
-- **Restore page: destination picker + upload are peer cards (#1136).** Dropped the "Advanced — stage by filename" disclosure (redundant since v3.23.0's destination browser). Promoted "Upload a backup from your computer" out of its `<details>` wrapper — both restore sources are now equal-weight options at the same visual level.
-- **XHR sudo replay marker now survives intermediate pages (#1146).** v3.27.4's #1140 replay-consume code in `assets/app.js` removed the marker unconditionally on every page load — including `step_up.php` itself. The marker was eaten on the first hop, re-creating the silent-drop UX trap. Fix only consumes when a matching `pw-toggle` button is actually on the page. New regression test covers the three cases.
+- **Inline event handlers no longer silently dropped by CSP.** The strict CSP (`script-src 'self'`) shipped by `page_header()` blocks every `onchange=` / `onclick=` / `onsubmit=` attribute under modern browser CSP3 enforcement. Symptom: the Restore-tab destination picker did nothing when changed. Hidden additional impact: confirm dialogs on five destructive auth actions (TOTP disable, Email-OTP disable, passkey delete, audit-log prune, webhook delete) were silently submitting without showing the "are you sure?" prompt. Ten call sites converted to `data-confirm` / `data-submit-on-change` attributes + delegated handlers in `assets/app.js`. CSP itself stays strict.
+- **Webhook signing secrets encrypted at rest (Pass C F-S3-01).** The v3.24–v3.27 vault key relocation missed `webhooks.secret`. Database dumps and `db_tools` exports exposed every outbound webhook URL and its HMAC signing key. Schema change: `webhooks.secret` → `webhooks.secret_enc` (vault-key-encrypted, HKDF-derived with `purpose="webhook-secret"`). All deployed targets had `webhooks` count = 0 at v3.27.6, so the migration is structural-only.
 
 [Full changelog →](CHANGELOG.md)
 

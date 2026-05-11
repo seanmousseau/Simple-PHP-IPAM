@@ -3722,6 +3722,114 @@ function ipam_migrations(): array
                 }
             }
         },
+
+        // v3.27.7 (F-S3-01) — encrypt any existing plaintext webhook signing
+        // secrets at rest. Pre-v3.27.7 stored webhooks.secret as plaintext;
+        // a DB dump exposed every outbound webhook URL + its HMAC key.
+        //
+        // All deployed targets at v3.27.6 had webhooks count = 0 (verified
+        // 2026-05-10 across the 4 testing instances + demo + prod), so this
+        // migration is no-op in practice. The body is kept for defensive
+        // correctness: any future install restoring an older backup before
+        // upgrading will land here with plaintext rows and they get
+        // encrypted in-place. Rows whose value already starts with '$2W$'
+        // (the envelope prefix used by ipam_webhook_encrypt_secret) are
+        // skipped so re-running is idempotent.
+        //
+        // Requires $config['app_secret'] to be set. The check at the top
+        // throws an actionable RuntimeException if it isn't — the operator
+        // can resolve by setting app_secret in config.php and re-running
+        // upgrade.sh. Same precondition shape as the TOTP encrypt path.
+        '3.27.7-webhook-secret-encrypt' => static function (PDO $db) {
+            // Probe whether the webhooks table exists at all. Fresh installs
+            // create it via the 1.10.0 migration that ran earlier in the
+            // same upgrade pass; older installs that never enabled webhooks
+            // may not have it. Skip silently if absent.
+            // CR review (PR #1148): only swallow the specific "table doesn't
+            // exist" PDOException — every other DB error must abort the
+            // migration so a real failure can't silently leave plaintext
+            // secrets in place. Engines + codes:
+            //   - SQLite: error message contains "no such table"
+            //   - MySQL:  SQLSTATE 42S02 (error code 1146)
+            //   - Postgres: SQLSTATE 42P01 (undefined_table)
+
+            // CR review (PR #1148): the historical MySQL webhooks.secret
+            // column was VARCHAR(255). The '$2W$' envelope adds 28 raw bytes
+            // (IV+tag) of overhead, which after base64 expansion can exceed
+            // 255 chars for a long secret. Widen to TEXT BEFORE re-encrypting
+            // any existing rows so writes don't truncate. MySQL MODIFY is a
+            // no-op when the target type matches; on SQLite/Postgres the
+            // column is already TEXT/unbounded so we skip the ALTER entirely.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driver = is_string($driverRaw) ? $driverRaw : '';
+            if ($driver === 'mysql') {
+                try {
+                    $alter = $db->prepare("ALTER TABLE webhooks MODIFY secret TEXT NOT NULL");
+                    $alter->execute();
+                } catch (\PDOException $e) {
+                    $sqlstate = (string)($e->errorInfo[0] ?? '');
+                    $msg = $e->getMessage();
+                    $isTableMissing = $sqlstate === '42S02'
+                        || stripos($msg, "doesn't exist") !== false;
+                    if (!$isTableMissing) {
+                        throw $e;
+                    }
+                    // Table doesn't exist — the probe below will return early too.
+                }
+            }
+
+            try {
+                $probe = $db->query("SELECT secret FROM webhooks LIMIT 1");
+                if ($probe === false) return;
+            } catch (\PDOException $e) {
+                $sqlstate = (string)($e->errorInfo[0] ?? '');
+                $msg = $e->getMessage();
+                $isTableMissing = $sqlstate === '42S02'
+                    || $sqlstate === '42P01'
+                    || stripos($msg, 'no such table') !== false
+                    || stripos($msg, "doesn't exist") !== false;
+                if ($isTableMissing) {
+                    return;
+                }
+                throw $e;
+            }
+
+            $rows = $db->query("SELECT id, secret FROM webhooks");
+            if ($rows === false) return;
+
+            $appSecret = '';
+            global $config;
+            if (is_array($config) && isset($config['app_secret']) && is_string($config['app_secret'])) {
+                $appSecret = $config['app_secret'];
+            }
+
+            $upd = $db->prepare("UPDATE webhooks SET secret = :s WHERE id = :id");
+            $reencrypted = 0;
+            foreach ($rows->fetchAll() as $row) {
+                $stored = is_string($row['secret'] ?? null) ? $row['secret'] : '';
+                if ($stored === '' || str_starts_with($stored, '$2W$')) {
+                    continue;
+                }
+                if ($appSecret === '') {
+                    throw new \RuntimeException(
+                        '3.27.7-webhook-secret-encrypt: webhook secrets need encryption but ' .
+                        '$config[\'app_secret\'] is empty. Set app_secret in config.php and ' .
+                        're-run upgrade.sh to complete the migration.'
+                    );
+                }
+                $upd->execute([
+                    ':s'  => ipam_webhook_encrypt_secret($stored, $appSecret),
+                    ':id' => to_int($row['id']),
+                ]);
+                $reencrypted++;
+            }
+
+            if ($reencrypted > 0 && function_exists('audit')) {
+                $details = json_encode(['count' => $reencrypted]);
+                audit($db, 'migration.applied', 'migration', null,
+                    is_string($details) ? '3.27.7-webhook-secret-encrypt ' . $details : '3.27.7-webhook-secret-encrypt');
+            }
+        },
     ];
 }
 
