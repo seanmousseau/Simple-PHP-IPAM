@@ -397,11 +397,18 @@
     // v3.27.7: replaces inline `onclick="event.stopPropagation()"`. Used on
     // the backup history row's actions cell so that clicking inside the cell
     // does not trigger the row-level click handler.
+    //
+    // CR review (PR #1148): register in the capture phase + use
+    // stopImmediatePropagation so we beat the document-level drawer-opener
+    // delegate (around line 2214) that runs in bubble phase. Plain
+    // stopPropagation in bubble phase doesn't block sibling document
+    // listeners — capture-phase + immediate is the only combo that does.
     document.addEventListener("click", function(e) {
-      if (e.target.closest("[data-stop-propagation]")) {
-        e.stopPropagation();
-      }
-    });
+      var stopper = e.target && e.target.closest ? e.target.closest("[data-stop-propagation]") : null;
+      if (!stopper) return;
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+    }, true);
 
     // --- Loading state on POST form submit (#507) ---
     document.addEventListener("submit", function(e) {

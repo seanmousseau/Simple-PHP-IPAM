@@ -3745,13 +3745,27 @@ function ipam_migrations(): array
             // create it via the 1.10.0 migration that ran earlier in the
             // same upgrade pass; older installs that never enabled webhooks
             // may not have it. Skip silently if absent.
+            // CR review (PR #1148): only swallow the specific "table doesn't
+            // exist" PDOException — every other DB error must abort the
+            // migration so a real failure can't silently leave plaintext
+            // secrets in place. Engines + codes:
+            //   - SQLite: error message contains "no such table"
+            //   - MySQL:  SQLSTATE 42S02 (error code 1146)
+            //   - Postgres: SQLSTATE 42P01 (undefined_table)
             try {
                 $probe = $db->query("SELECT secret FROM webhooks LIMIT 1");
                 if ($probe === false) return;
-            } catch (\Throwable $e) {
-                // Table doesn't exist on this install yet — fresh schemas
-                // pick up the column via the table's own create migration.
-                return;
+            } catch (\PDOException $e) {
+                $sqlstate = (string)($e->errorInfo[0] ?? '');
+                $msg = $e->getMessage();
+                $isTableMissing = $sqlstate === '42S02'
+                    || $sqlstate === '42P01'
+                    || stripos($msg, 'no such table') !== false
+                    || stripos($msg, "doesn't exist") !== false;
+                if ($isTableMissing) {
+                    return;
+                }
+                throw $e;
             }
 
             $rows = $db->query("SELECT id, secret FROM webhooks");

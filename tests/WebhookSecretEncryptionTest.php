@@ -91,16 +91,18 @@ class WebhookSecretEncryptionTest extends TestCase
         $this->assertSame($legacy, ipam_webhook_decrypt_secret($legacy, $this->appSecret()));
     }
 
-    public function testWrongAppSecretReturnsEmpty(): void
+    public function testWrongAppSecretReturnsNull(): void
     {
         $enc = ipam_webhook_encrypt_secret('shh', $this->appSecret());
-        // Wrong app_secret — GCM tag verification fails. Reader returns
-        // empty so the HMAC will fail receiver-side, surfacing the
-        // misconfig without throwing into the dispatch loop.
-        $this->assertSame('', ipam_webhook_decrypt_secret($enc, $this->otherAppSecret()));
+        // Wrong app_secret — GCM tag verification fails. CR review
+        // (PR #1148): reader returns null (not empty) so the dispatch
+        // caller can distinguish "decrypt failure" from "intentionally
+        // empty secret" and record a delivery failure rather than sign
+        // with an empty key.
+        $this->assertNull(ipam_webhook_decrypt_secret($enc, $this->otherAppSecret()));
     }
 
-    public function testTamperedCiphertextFailsAuth(): void
+    public function testTamperedCiphertextReturnsNull(): void
     {
         $enc = ipam_webhook_encrypt_secret('shh', $this->appSecret());
         // Flip a byte in the middle of the b64 payload (the body, not the prefix).
@@ -109,7 +111,7 @@ class WebhookSecretEncryptionTest extends TestCase
             // If we happened to overwrite with the same char, flip another.
             $tampered = substr_replace($enc, 'Y', 21, 1);
         }
-        $this->assertSame('', ipam_webhook_decrypt_secret($tampered, $this->appSecret()));
+        $this->assertNull(ipam_webhook_decrypt_secret($tampered, $this->appSecret()));
     }
 
     public function testEncryptWithEmptyKeyThrows(): void

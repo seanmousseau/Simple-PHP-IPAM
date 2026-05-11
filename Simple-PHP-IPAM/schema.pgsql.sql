@@ -863,5 +863,6 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.26.0-login-attempts-action'),
   ('3.26.0-retire-legacy-backup'),
   ('3.26.0-vault-key-to-settings'),
-  ('3.27.0-step-up-policy-settings')
+  ('3.27.0-step-up-policy-settings'),
+  ('3.27.7-webhook-secret-encrypt')
 ON CONFLICT (version) DO NOTHING;

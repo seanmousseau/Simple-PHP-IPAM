@@ -9033,7 +9033,25 @@ function ipam_webhook_encrypt_secret(string $secret, string $key): string
  * the branch keeps the code safe for any future install restoring an older
  * backup and then upgrading.)
  */
-function ipam_webhook_decrypt_secret(string $stored, string $key): string
+/**
+ * Return contract (CR review PR #1148):
+ *   - '' (empty string)        — stored row was empty (intentionally unsigned)
+ *                                 OR a legacy plaintext row that just happened
+ *                                 to be empty. Caller may sign with empty key.
+ *   - string (non-empty)       — successful decrypt (or legacy plaintext pass-
+ *                                 through). Caller signs with this secret.
+ *   - null                     — decrypt FAILURE: malformed envelope, wrong
+ *                                 app_secret, or GCM tag mismatch. Caller
+ *                                 MUST treat this as a delivery failure
+ *                                 (persist an error row, do NOT sign with an
+ *                                 empty key — that would silently produce a
+ *                                 verifiably-wrong HMAC at the receiver).
+ *   - throws \RuntimeException — caller passed an empty $key but the stored
+ *                                 value is a real '$2W$' envelope. This is a
+ *                                 config-time misconfig (app_secret missing);
+ *                                 surface it to the operator.
+ */
+function ipam_webhook_decrypt_secret(string $stored, string $key): ?string
 {
     if ($stored === '') {
         return '';
@@ -9048,14 +9066,14 @@ function ipam_webhook_decrypt_secret(string $stored, string $key): string
     }
     $raw = base64_decode(substr($stored, 4), true);
     if ($raw === false || strlen($raw) < 29) {
-        return '';
+        return null;
     }
     $iv      = substr($raw, 0, 12);
     $tag     = substr($raw, 12, 16);
     $payload = substr($raw, 28);
     $decrypted = openssl_decrypt($payload, 'aes-256-gcm', hash('sha256', $key, true), OPENSSL_RAW_DATA, $iv, $tag);
     if ($decrypted === false) {
-        return '';
+        return null;
     }
     return $decrypted;
 }
@@ -9170,8 +9188,24 @@ function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $confi
             }
             // v3.27.7 (F-S3-01): decrypt the stored secret before signing.
             // The plaintext only lives in this local scope long enough to
-            // compute the HMAC for this single dispatch.
+            // compute the HMAC for this single dispatch. CR review (PR #1148):
+            // null means decrypt failure (wrong app_secret, tampered envelope);
+            // do NOT sign with empty key — record an attempt=3 error row and
+            // skip dispatch so the receiver doesn't see a wrong HMAC.
             $secretPlain = ipam_webhook_decrypt_secret((string)$hook['secret'], to_str($config['app_secret'] ?? ''));
+            if ($secretPlain === null) {
+                $db->prepare(
+                    "INSERT INTO webhook_deliveries
+                        (webhook_id, event_type, payload, signature, attempt, error, created_at)
+                     VALUES (:wid, :ev, :pl, :sig, 3, :err, :now)"
+                )->execute([
+                    ':wid' => $hook['id'], ':ev' => $event,
+                    ':pl'  => $payload,    ':sig' => '',
+                    ':err' => 'Secret decryption failed (wrong app_secret or tampered ciphertext)',
+                    ':now' => $now,
+                ]);
+                continue;
+            }
             $sig = ipam_webhook_sign($payload, $secretPlain);
 
             // Insert pending delivery row

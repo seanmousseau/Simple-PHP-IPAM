@@ -63,7 +63,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         // v3.27.7 (F-S3-01): decrypt before signing. The plaintext only lives
         // in this local scope for the duration of the test-fire HTTP call.
-        $secretPlain = ipam_webhook_decrypt_secret(to_str($row['secret']), to_str($config['app_secret'] ?? ''));
+        // CR review (PR #1148): pre-check app_secret so a misconfigured install
+        // surfaces a JSON validation error rather than a 500 from the helper.
+        $appSecret = to_str($config['app_secret'] ?? '');
+        $stored    = to_str($row['secret']);
+        if ($appSecret === '' && str_starts_with($stored, '$2W$')) {
+            echo json_encode(['ok' => false, 'error' => 'app_secret is not configured in config.php — webhook signing secrets cannot be decrypted.']);
+            exit;
+        }
+        $secretPlain = ipam_webhook_decrypt_secret($stored, $appSecret);
+        if ($secretPlain === null) {
+            echo json_encode(['ok' => false, 'error' => 'Webhook secret decryption failed (wrong app_secret or tampered ciphertext).']);
+            exit;
+        }
         $sig    = ipam_webhook_sign($payload, $secretPlain);
         $result = ipam_webhook_deliver($row, 'test.ping', $payload, $sig);
         audit($db, 'webhook.test_fire', 'webhook', $id, "url=" . to_str($row['url']));
@@ -97,6 +109,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $err = 'Secret is required.';
         } elseif (count($events) === 0) {
             $err = 'At least one event must be selected.';
+        } elseif (to_str($config['app_secret'] ?? '') === '') {
+            // CR review (PR #1148): pre-check app_secret so a misconfigured
+            // install surfaces a validation error rather than a 500 from the
+            // helper. Same shape as the test-fire and edit paths.
+            $err = 'app_secret is not configured in config.php — webhook signing secrets cannot be encrypted at rest.';
         } else {
             // v3.27.7 (F-S3-01): encrypt at rest. Plain $secret is held in
             // memory long enough to sign the next test/delivery, then dropped.
@@ -134,6 +151,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $err = 'Secret is required.';
         } elseif (count($events) === 0) {
             $err = 'At least one event must be selected.';
+        } elseif (to_str($config['app_secret'] ?? '') === '') {
+            // CR review (PR #1148): pre-check app_secret.
+            $err = 'app_secret is not configured in config.php — webhook signing secrets cannot be encrypted at rest.';
         } else {
             // v3.27.7 (F-S3-01): encrypt at rest.
             $secretEnc = ipam_webhook_encrypt_secret($secret, to_str($config['app_secret'] ?? ''));
