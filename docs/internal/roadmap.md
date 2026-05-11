@@ -1,50 +1,65 @@
 # Roadmap — Simple-PHP-IPAM
 
-> **What this is.** The single consolidated view of *what's planned, in what order, and why* for every release after the current shipped version. Synthesizes `code_quality_review.md`, `ux_overhaul.md`, `backup_overhaul.md`, `v4-release-stream.md`, `i18n-design.md`, `2026-05-08_Path_Forward.md`, `cleanup.md`, `lessons-learned.md`, and `test-improvements.md` into one place — plus the live state of GitHub milestones.
+> **What this is.** The single consolidated view of *what's planned, in what order, and why* for every release after the current shipped version. Synthesizes `code_quality_review.md`, `ux_overhaul.md`, `backup_overhaul.md`, `v4-release-stream.md`, `i18n-design.md`, `2026-05-08_Path_Forward.md`, `cleanup.md`, `lessons-learned.md`, `test-improvements.md`, the Pass C findings, and the 2026-05-10 security review into one place — plus the live state of GitHub milestones.
 >
-> **What this isn't.** Not a commitment to dates. Not a substitute for the source docs (each section here links back to its authoritative source for full context, finding IDs, and rationale). Not a multi-tenancy plan — that's deferred (see §6.4 and `v4-tenancy-design.md`).
+> **What this isn't.** Not a commitment to dates. Not a substitute for the source docs (each section here links back). Not a multi-tenancy plan — that's deferred (see §8.4 and `v4-tenancy-design.md`).
 >
-> **How to use it.** Start here when prioritizing a release, juggling milestones, deciding what slips, or onboarding to the project's longer arcs. Drill into the source doc when you need the per-finding detail. Refresh this doc when a milestone closes or a stream gets re-chunked.
+> **How to use it.** This doc is the authoritative *suggested ordering* reference — GitHub milestones are now theme-named, not version-named, from v3.30.0 onward (the **2026-05-11 reshape**). When deciding what ships next, this doc maps theme → suggested version slot. Drill into the source doc when you need per-finding detail. Update this doc whenever a stream gets re-chunked, a milestone is renamed, or scope flips.
 >
-> **Current shipped: v3.27.6** (released 2026-05-10 — closes the v3.27.x cluster). **Pass C complete** (2026-05-10). Last refreshed: 2026-05-10 evening.
+> **Current shipped: v3.27.7** (released 2026-05-10). **Pass C complete** (2026-05-10). **Security review complete** (2026-05-10). **Roadmap reshape: 2026-05-11.** Last refreshed: 2026-05-11.
 
 ---
 
 ## 1. TL;DR — current state
 
-| Stream | Span | Status | Anchor |
+**The 2026-05-11 reshape (this doc):** the previous roadmap front-loaded everything pre-v4.0.0 (3 refactor + 5 UX minors stacked before v4.0.0). With "land before v4.0.0" lifted by Sean's call:
+- **v3.28.0 identity flipped** from "pure test tooling" → **DR + security stabilization** (consolidates old §3.7 v3.27.8 architectural fix + old §4.5 step-up bundle + old §4.6 legacy writer retirement + 7 new security-review findings + 8 Pass C findings).
+- **Test infrastructure moved to v3.29.0** (what was old v3.28.0 content — 28 issues re-milestoned).
+- **UX overhaul straddles v4.0.0** — foundation/nav/data-heavy before, polish/cleanup after, schedule by readiness.
+- **Milestones #56–#63 renamed theme-only** (no version numbers) so reshuffling later is cheap. This doc holds the suggested ordering.
+
+| Stream | Suggested slot | Milestone | Status |
 |---|---|---|---|
-| **v3.27.x quick-win patches** | v3.27.4 → .7 | ✅ **all shipped (2026-05-10)** — cluster closed | §3 |
-| **Pass C regression sweep** | one-time | ✅ **complete (2026-05-10)** — 15 findings triaged | §3.5 + `releases/ipam-3.27.6/regression-evidence/passC/PASS-C-SUMMARY.md` |
-| **v3.27.8 — backup/restore bug fixes** | one hotfix | **scoped (2026-05-10 chat)** — 4 bugs from post-deploy CDP diagnosis + drop silent plaintext fallback | §3.7 |
-| **Test-tooling baseline** | v3.28.0 | scoped — see `test-improvements.md` | §4 |
-| **Step-up coverage sweep** | v3.28.x or v3.29.0 | **decision pending** — Pass C bundle (F-S3-02 / F-S5-01 / F-S7-01) | §4.5 |
-| **Legacy backup writer retirement** | v3.28.x | **scoped (2026-05-10 chat)** — disable `app_secret` backup encryption mode + Deprecation banner; reader stays | §4.6 + `decrypt-tool-test-plan.md` |
-| **Backup architecture cold break** | v4.0.0 | **scoped (2026-05-10 chat)** — logical-only writer + reader, IPAMBKP3-only, `upgrade.sh` blocks on legacy `backup_runs` rows with `--accept-legacy-backup-loss` override | §6.x + `decrypt-tool-test-plan.md` |
-| **Code-quality refactor** | v3.29.0 → v3.31.0 | 87 issues filed, all open | `code_quality_review.md` §9 |
-| **UX overhaul** | v3.32.0 → v3.36.0 | 82 issues filed, all open | `ux_overhaul.md` §9 |
-| **Backup overhaul** | v3.21–v3.27 | mostly shipped; 1 doc-debt item left | `backup_overhaul.md` §10 |
-| **v4.x enterprise auth + i18n** | v4.0.0 → v4.11.0 | 11 milestones placeholdered (one tracking issue each) | `v4-release-stream.md` §3 |
-| **Multi-tenancy** | indefinite | DEFERRED pending sustainability/licensing model | `v4-tenancy-design.md` |
+| **v3.27.x quick-win patches** | shipped | — | ✅ closed (v3.27.4–v3.27.7) |
+| **Pass C regression sweep** | one-time | — | ✅ complete (2026-05-10), 15 findings triaged |
+| **Security review (semgrep + code-reviewer)** | one-time | — | ✅ complete (2026-05-10), 38 semgrep WARNINGs + 12 code-reviewer findings (0C/0H/4M/4L/4N) |
+| **v3.27.8 — backup/restore bug hotfix** | next | (TBD) | scoped (§3.7) — bugs A/B/C/D/E + drop silent plaintext fallback |
+| **v3.28.0 — DR + security stabilization** | v3.28.0 | `v3.28.0 — DR + security stabilization` (#55, 12 open) | scoped (§4) |
+| **v3.28.1 — DR + security overflow** | v3.28.1 | `v3.28.1 — DR + security overflow` (#81, 8 open) | scoped (§4.1), pre-committed carve |
+| **Architecture-decision sprint** | between v3.28.0 ship and v3.29.0 kickoff | — (decision docs under `docs/internal/architecture-decisions/`) | scoped (§10.1) — 6 decisions gating refactor wave 1 |
+| **v3.29.0 — Test infrastructure** | v3.29.0 | `v3.29.0 — Test infrastructure` (#80, 30 open) | scoped (§5) |
+| **Refactor stream** | v3.30.0–v3.32.0 | #56 / #57 / #58 (theme-named) | 50 open across 3 milestones (§6) |
+| **UX overhaul — straddles v4.0.0** | v3.33.0+ (pre-v4) and post-v4.0.0 | #59 / #60 / #61 / #62 / #63 | 95 open across 5 milestones (§7) |
+| **v4.0.0 — i18n phase 1 + backup cold break** | when ready (decoupled from UX/refactor finish) | v4.0.0 (#19) | scoped (§8 + §8.7) |
+| **v4.x enterprise auth + i18n** | post-v4.0.0 | v4.1.0–v4.11.0 | placeholdered (§8) |
+| **Multi-tenancy** | indefinite | Multi-tenancy (deferred) (#64) | DEFERRED |
 
 **Shape of the next year (without dates):**
 
 ```
-v3.27.4/.5/.6 (shipped) ── Pass C (done) ── [decision: v3.27.7 hotfix? or hold?]
+v3.27.7 (shipped) ── v3.27.8 (hotfix: backup bugs + drop silent fallback)
+                          │
+                          └── v3.28.0 (DR + security stabilization)
+                                  │   • legacy writer retirement
+                                  │   • Pass C step-up bundle + scanner items
+                                  │   • Security mediums (S-003/S-006/S-008) + lows
+                                  │
+                                  └── v3.29.0 (test infrastructure)
+                                          │   • round-trip tests + contract-doc linter
+                                          │   • decrypt-tool Pass 2 PHPUnit + CI
+                                          │   • unit-test coverage backfill
+                                          │
+                                          └── v3.30.0–v3.32.0 (refactor stream — lib.php / api.php / frontend)
                                                   │
-                                                  └── v3.28.0 (TEST INFRASTRUCTURE — Path Forward step 5)
-                                                         │
-                                                         ├── v3.28.1 — step-up coverage sweep + Pass C code-side findings
-                                                         │       │
-                                                         │       └── v3.29.0 → v3.31.0 (code-quality refactor)
-                                                         │              │
-                                                         │              └── v3.32.0 → v3.36.0 (UX overhaul)
-                                                         │                     │
-                                                         │                     └── ARCHITECTURE REVIEW gate (Path Forward step 8)
-                                                         │                            │
-                                                         │                            └── v4.0.0 (i18n phase 1) → … → v4.11.0
-                                                         │
-                                                         └── (any stream can pause for hotfixes off main)
+                                                  ├── v3.33.0–v3.34.0 (UX foundation + nav + data-heavy)
+                                                  │           │
+                                                  │           └── v4.0.0 (i18n phase 1 + BACKUP COLD BREAK)
+                                                  │                   │
+                                                  │                   ├── v4.1.0 (i18n extraction)
+                                                  │                   ├── v4.2.0 (OIDC engine swap)
+                                                  │                   └── UX polish + UX cleanup interleaved with v4.3+ (RBAC / SAML / LDAP / OAuth / SCIM / fr-CA)
+                                                  │
+                                                  └── (any stream can pause for hotfixes off main)
 ```
 
 ---
@@ -80,61 +95,23 @@ The architectural decisions that produced the v3.21–v3.27 bug cluster were mad
 
 ---
 
-## 3. v3.27.x quick-win patch stream — ✅ CLOSED
+## 3. v3.27.x quick-win patch stream — ✅ CLOSED + v3.27.8 hotfix queued
 
 Off-`main` hotfix releases for narrow fixes that should ship before the next minor. Branches off `main`, merges back, then `dev ← main` (`hotfix-release.md`).
 
-**Cluster status (2026-05-10):** **all four patches shipped** — v3.27.4, v3.27.5, v3.27.6 close the cluster Sean set out to do off Pass A. v3.27.6 is the current shipped baseline. **Pass C ran against v3.27.6** (§3.5).
+**Cluster status (2026-05-11):** v3.27.4 → v3.27.7 all shipped. v3.27.8 hotfix queued for immediate next slot.
 
-### v3.27.4 — Settings UX polish patch (milestone #78, 7 issues)
+### v3.27.4 — Settings UX polish patch (shipped 2026-05-10)
+Bundled the settings-UX P2s + wheel-scroll regression + lockout banner.
 
-**Theme:** "Operator UX polish — the rough edges that aren't bugs but aren't right."
+### v3.27.5 — Password-manager autocomplete attributes (shipped 2026-05-10)
+Same-day hotfix off v3.27.4. Added `data-1p-ignore` / `data-lpignore` / `data-bwignore` to OIDC and SMTP password fields.
 
-| Issue | Title | Source |
-|---|---|---|
-| #1133 | Lockout-guard refusal doesn't revert form state to last-saved config | wide-regression P2 |
-| #1134 | Numeric input clamps to 1 on direct entry | wide-regression P2 |
-| #1140 | XHR sudo-gated actions need auto-replay after OIDC step-up (UX trap under TTL=0) | v3.27.3 smoke |
-| #1143 | `auth.ip_rate_limited` dampener TOCTOU — log noise only, atomic state row | v3.27.3 CR review |
-| WR-04 | Tag-attach UI absent on subnet edit form | wide-regression deferred |
-| TBD | OIDC settings need autocomplete hints for password manager autofill | wide-regression |
-| TBD | Backup log displays UTC instead of user TZ | wide-regression |
+### v3.27.6 — Restore-page redesign + #1146 XHR sudo replay regression (shipped 2026-05-10)
+Restore page architecture redesign + apply-spinner overlay (#1135) + `step_up.php` replay marker fix.
 
-**Status:** ✅ shipped 2026-05-10. Bundled the settings-UX P2s + the wheel-scroll regression + lockout banner.
-
-### v3.27.5 — Password-manager autocomplete attributes (off-roadmap hotfix)
-
-**Theme:** "LastPass kept autofilling the OIDC client secret after .4."
-
-Same-day hotfix off v3.27.4. Added `data-1p-ignore`, `data-lpignore`, `data-bwignore` to OIDC and SMTP password fields. Sqlite-only Playwright pass.
-
-**Status:** ✅ shipped 2026-05-10. #1137 architectural fix (dedicated `/settings/oidc` page) deferred to v3.28.0+.
-
-### v3.27.6 — Restore-page redesign + #1146 XHR sudo replay regression (milestone closed)
-
-**Theme:** "Restore is the operator's worst day; make it not feel that way." Plus the regression fix Sean caught during manual CDP testing of v3.27.5.
-
-**Scope (shipped):**
-- Restore page architecture: dropped the `<details>` "Advanced" disclosure; promoted upload form to peer `<section class="card">`. Select destination → enumerate backups → click restore, with upload as an obvious alternative. (`backup_admin_restore.php`)
-- Restore-apply spinner overlay (#1135) with escalating progress messaging at 5s and 20s.
-- #1146 XHR sudo replay marker premature consumption on `step_up.php` — moved `sessionStorage.removeItem` inside the `if (replayBtn)` guard.
-- Regression spec `testing/playwright/tests/sudo-xhr-replay.spec.ts` (3 cases: marker survives no-button page, consumed on matching-button page, expired purged).
-
-**Status:** ✅ shipped 2026-05-10. **Final v3.27.x release.** Closes the cluster.
-
-### v3.27.7 — Pass C hotfix (shipped 2026-05-10)
-
-**Theme:** "F-S3-01 — webhook signing secret stored plaintext at rest is a v3.24–v3.27 vault-relocation miss; ship now or hold?" → Option C taken. Shipped same day.
-
-**Scope (shipped):**
-- Webhook signing secret encrypted at rest via `$2W$` AES-GCM envelope (mirrors v3.6.0 TOTP). No schema rename — column stays `webhooks.secret`, only stored format changes. Migration defensively re-encrypts any existing plaintext rows; all deployed targets had 0 webhooks so the migration was no-op in practice.
-- CSP-blocked inline-handler regression: 10 sites converted to `data-confirm` / `data-submit-on-change` / `data-stop-propagation` delegated handlers in `assets/app.js`. Operator-reported via the Restore-tab destination picker dropdown silently doing nothing on prod.
-- MySQL `webhooks.secret` widened to TEXT (envelope overflows VARCHAR(255)).
-- 14/14 CI checks green, 13/13 CR threads resolved across 4 review rounds.
-
-**Final state:** tag `v3.27.7`, merge `576660a`, bundle SHA `92f01cbe…`. Deployed to all 7 targets (demo, prod, 4 testing, marketing). `demo_gate.php` cache-buster gap caught post-deploy + hot-patched + source fix on dev (`f969d37`) — closed but not bumped.
-
----
+### v3.27.7 — Pass C F-S3-01 webhook crypto + CSP inline-handler fix (shipped 2026-05-10)
+Webhook signing secret encrypted at rest (`$2W$` AES-GCM envelope, mirrors v3.6.0 TOTP). 10 inline event handlers converted to `data-*` delegated handlers. 14/14 CI green, 13/13 CR threads resolved across 4 review rounds. Deployed to all 7 targets (tag `v3.27.7`, merge `576660a`, bundle SHA `92f01cbe…`).
 
 ### v3.27.8 — Backup/restore bug cluster (PROPOSED 2026-05-10 chat)
 
@@ -146,238 +123,224 @@ Origin: post-v3.27.7-deploy CDP session with Sean against the SQLite test instan
 
 | # | Bug | Root cause | Fix |
 |---|---|---|---|
-| A | Restore tab → Verify/Delete → unstyled `backup_run_detail.php` page | The endpoint is a drawer-partial by design (`Returns the drawer body HTML for the matching backup_runs row`). History tab uses `data-drawer-url`; Restore tab uses `<a href>` → loads the partial as a full page with no `page_header()`. | Convert `views/backup_admin_restore.php:125` from `<a href>` to drawer-pattern button matching History tab line 227. |
-| B | Restore-tab "Encryption" badge mislabels backups in both directions | `lib/backup_admin_restore.php` controller sets `'is_encrypted' => str_ends_with($name, '.enc')`. Filename-suffix-only ignores DB ground truth. `.enc` files with `encryption_mode='unencrypted'` get "IPAMBKP1+" (encrypted-looking); `.ipambkp3` files with `encryption_mode='stored'` get "plaintext". | Controller joins `backup_runs.encryption_mode` + `backup_runs.backup_type` for matched filenames; falls back to filename heuristic only for orphan files (no run row). |
-| C | Restore-tab "Type" column also filename-suffix-based | Same controller. | Same fix as B — use joined DB columns. |
-| D | Backup wrote artifact to S3 but no `backup_runs` row created | Discovered during the CDP session: test instance's S3 bucket had 9 files, `backup_runs` had 11 rows for that destination → 2 rows correctly retention-pruned, **1 file in S3 had no matching DB row** (`…84a8caaf.enc` from 2026-05-11 02:00:45). Orchestrator wrote the file but the INSERT either failed silently or never ran. Same shape as Pass A's silent-failure cluster but in a different write path. | Investigation required: error_log scan, audit_log check around that timestamp, instrumentation of the orchestrator's post-upload DB write. Fix landing in v3.27.8 only if root cause is small; otherwise carve into v3.28.0 with a flag. |
-| E | Destinations tab "Stored key" badge contradicts "No vault key configured" card | `ipam_setting('backup_vault_key')` returns a 104-byte `IPAMWK1.…` envelope, but `ipam_vault_unwrap()` throws "authentication failed" because the bootstrap key has rotated since the envelope was written. `$vaultStatus['present']` falls through to false despite the envelope existing. | Detect the unwrap failure and surface it explicitly: "Vault envelope exists but is unreadable — bootstrap key has changed. Recover the original bootstrap, or replace the vault key (will orphan any encrypted backups in `stored` mode)." |
+| A | Restore tab → Verify/Delete → unstyled `backup_run_detail.php` page | Drawer-partial endpoint loaded as full page. History tab uses `data-drawer-url`; Restore tab uses `<a href>`. | Convert `views/backup_admin_restore.php:125` from `<a href>` to drawer-pattern button matching History tab line 227. |
+| B | Restore-tab "Encryption" badge mislabels in both directions | `lib/backup_admin_restore.php` controller sets `is_encrypted` from filename suffix only, ignoring DB ground truth. | Join `backup_runs.encryption_mode` + `backup_runs.backup_type`; fall back to filename heuristic only for orphan files. |
+| C | Restore-tab "Type" column also filename-suffix-based | Same controller. | Same fix as B. |
+| D | Backup wrote artifact to S3 but no `backup_runs` row created | S3 bucket had 9 files; `backup_runs` had 11 rows for that destination (2 correctly retention-pruned, **1 file with no DB row**). Orchestrator wrote file but INSERT either failed silently or never ran. | Investigation required: error_log scan, audit_log check, instrumentation of post-upload DB write. Fix in v3.27.8 only if root cause is small; otherwise carve into v3.28.0 with a flag. |
+| E | Destinations tab "Stored key" badge contradicts "No vault key configured" card | `ipam_setting('backup_vault_key')` returns a 104-byte `IPAMWK1.…` envelope; `ipam_vault_unwrap()` throws because bootstrap key rotated. `$vaultStatus['present']` falls through to false despite envelope existing. | Detect unwrap failure explicitly: "Vault envelope exists but unreadable — bootstrap key has changed." |
 
-**Plus the architectural fix:**
+**Plus the architectural fix in v3.27.8:**
 
-- **Drop the silent plaintext fallback.** When a destination is configured for `encryption_mode='stored'` and the vault key is missing or unreadable, the orchestrator currently silently writes plaintext to a `.enc`-suffixed file. v3.27.8 makes this a hard preflight failure with `backup.preflight_failed` audit + visible `backup_runs.status='failed'` row. No more silent regression to plaintext.
+- **Drop the silent plaintext fallback.** When a destination is configured for `encryption_mode='stored'` and the vault key is missing or unreadable, the orchestrator currently silently writes plaintext to a `.enc`-suffixed file. v3.27.8 makes this a hard preflight failure with `backup.preflight_failed` audit + visible `backup_runs.status='failed'` row.
 
-**Status:** **scoped, not yet started.** This patch is the predecessor to v3.28.x's bigger writer-retirement work.
+**Note:** the *formal* legacy writer retirement (deprecate `app_secret` mode entirely, add banners, write `docs/upgrading.md` §4.0) moved to v3.28.0 (§4) per the 2026-05-11 reshape. v3.27.8 just stops the silent regression to plaintext for current `stored`-mode destinations.
+
+**Status:** **scoped, not yet started.** Predecessor to v3.28.0's bigger DR+security work.
 
 ---
 
 ## 3.5 Pass C — completed 2026-05-10
 
-**What:** Path-Forward §step 4 manual regression sweep across the v3.21–v3.27 surfaces Pass A/B did NOT exercise (scanner async cron, webhook delivery, DHCP, tag CASCADE, notification dispatch, api.php sudo bypass, custom fields, reports/exports).
-
-**Driver:** Claude-driven, risk-first, SQLite-only sweep against the v3.27.6 test instance. Approved by Sean 2026-05-10.
+**What:** Path-Forward §step 4 manual regression sweep across the v3.21–v3.27 surfaces Pass A/B did NOT exercise.
 
 **Result:** 15 findings across 8 surfaces.
 
 | Severity | Count | Headlines |
 |---|---|---|
-| High | 1 | F-S3-01 — webhook signing secrets stored plaintext at rest (missed during v3.24–v3.27 vault key relocation) |
-| Important | 5 | Scanner observability + contract drift — F-S2-01 (IPv6 sync guard), F-S2-02 (`scan.schedule_create` doc-but-no-emitter), F-S2-03 (`scan.stale_update` emit-but-no-doc + raw INSERT), F-S2-04 (cron scan path has no audit row at all), F-S2-05 (`ipam_mark_stale_addresses` defensive clamp) |
-| Medium | 5 | Step-up coverage bundle (F-S3-02 webhooks / F-S5-01 notify recipients / F-S7-01 custom field defs); F-S5-02 write-side race on state JSON blobs (pairs with #1143); F-S6-01 Kea/dhcpd FQDN regex parity |
-| Low / Note / Forward-looking | 4 | F-S6-03 PD pruning, F-S5-03 "test alert" path, N-S7-02 per-field audit diff, F-S6-02 VRF filter (RBAC stream) |
+| High | 1 | F-S3-01 — webhook signing secrets stored plaintext at rest (shipped in v3.27.7) |
+| Important | 5 | Scanner observability + contract drift — F-S2-01 / F-S2-02 / F-S2-03 / F-S2-04 / F-S2-05 |
+| Medium | 5 | Step-up coverage bundle (F-S3-02 / F-S5-01 / F-S7-01); F-S5-02 atomic JSON state; F-S6-01 Kea/dhcpd FQDN parity |
+| Low / Note / Forward-looking | 4 | F-S6-03 PD pruning, F-S5-03 test-alert path, N-S7-02 per-field audit diff, F-S6-02 VRF filter |
 
-**Two surfaces fully clean:** Surface 1 (api.php — `grep -c ipam_sudo_ api.php` → 0 by design, API keys are stateless and sudo is session-scoped) and Surface 4 (tag CASCADE — both chains empirically verified through the app's `ipam_db()` with PRAGMA fk=1).
+**Two surfaces fully clean:** Surface 1 (api.php — sudo not applicable to stateless API keys) and Surface 4 (tag CASCADE — empirically verified).
 
-**One subagent false-positive caught at verification** (Surface 8: Explore agent claimed `export_dns.php:14` missing `require_login()`; actual file has `require_login()` at line 16 — off-by-2 miscount). Captured as a methodology note in the summary; same class of risk as Pass A "subagent claims test pass without naming the test file."
+**Slotting:** F-S3-01 shipped in v3.27.7. F-S3-02 / F-S5-01 / F-S7-01 / F-S5-02 / F-S2-01 / F-S2-04 / F-S2-05 / F-S6-01 → **v3.28.0** as new GH issues (#1156–#1163 filed 2026-05-11). F-S2-02 / F-S2-03 (audit-vocab doc drift) → v3.29.0 as part of contract-doc linter work.
 
-**Full evidence:** `releases/ipam-3.27.6/regression-evidence/passC/` (plan, baseline, gzipped DB snapshot, 8 surface files, summary).
-
-## 3.6 The three options Pass C surfaced for v3.28.0 scope
-
-Pass C delivered a triaged list, not a release commitment. The decision Sean needs to make next (per Path Forward §2 decision-review gate):
-
-| Option | Description | Trade-off |
-|---|---|---|
-| **A** — Hold all Pass C findings | Keep v3.28.0 pure test-tooling per the path forward. Pass C findings slot into v3.28.1+ via a new "Pass C cleanup" milestone. | Cleanest discipline. Webhook secret plaintext ages two months. |
-| **B** — Carve a small security thread into v3.28.0 | F-S3-01 + step-up sweep + F-S5-02 ride along with test tooling. ≤1 week extra. | Middle path. Risks scope creep on a "pure" release. |
-| **C** — v3.27.7 hotfix + v3.28.0 as planned + v3.28.1 sweep | Off-`main` hotfix for F-S3-01 only; v3.28.0 stays clean; bundle the rest in v3.28.1. | Most defense-in-depth-rich; multiplies release count. |
-
-**My (Claude's) recommendation:** **C.** F-S3-01 is the highest-severity item from Pass C and was *already* in the v3.27 cluster's vault-relocation theme — finishing the job off `main` keeps the path forward's discipline intact (v3.28.0 stays pure test-tooling) without leaving the at-rest leak hanging. v3.28.1 then bundles the step-up sweep + the atomic-dampener pair (#1143 + F-S5-02), giving each thread one focused release.
-
-**Sean decides.**
+**Full evidence:** `releases/ipam-3.27.6/regression-evidence/passC/`.
 
 ---
 
-## 4. v3.28.0 — Test infrastructure (Path Forward step 5)
+## 3.6 Security review — completed 2026-05-10
 
-> **Operational plan: `docs/internal/test-improvements.md`.** Read that doc before scoping any v3.28.0 issue. The section below is the release-level summary; the operational doc has the fixture inventory, contract-linter spec, round-trip test taxonomy, and the four open questions for Sean to answer before scope-lock.
+**What:** Semgrep MCP scan + `pr-review-toolkit:code-reviewer` agent against v3.27.7 codebase.
 
-**No new features in v3.28.0.** This is the explicit response to the v3.21–v3.27 bug cluster: Pass A regression on 2026-05-08 surfaced 12 distinct bugs that passing CI + passing CodeRabbit + passing 3-driver Playwright did not catch. The pattern is documented exhaustively in `lessons-learned.md` §8.
+**Semgrep:** 38 WARNINGs across 3 rule families (`taint-unsafe-echo-tag` 26, `tainted-filename` 6, `unlink-use` 6), concentrated in legacy CSV/search/import code. Triage: scheduled for refactor wave 2 (#57 — `api.php + import_csv + migrations`) where the underlying code is being rewritten anyway. Direct GH-issue filing skipped to avoid duplicate work — these surface as part of the refactor scope.
+
+**Code-reviewer:** 12 findings, **0 Critical / 0 High / 4 Medium / 4 Low / 4 Note**. v3.27.7 work specifically (webhook crypto, vault envelope, restore-token HKDF, SSRF guard) reviewed cleanly — no Pass-A-class footguns introduced.
+
+**Slotting (filed as new GH issues 2026-05-11):**
+
+| ID | Severity | Slot | Issue |
+|---|---|---|---|
+| S-003 (gzip-bomb restore DoS) | Medium | v3.28.0 | #1149 |
+| S-006 (`ipam_webhook_dispatch` silent swallow) | Medium | v3.28.0 | #1150 |
+| S-008 (readonly API skips `is_active`) | Medium | v3.28.0 | #1151 |
+| S-001 (test-fire audit details) | Low | v3.28.0 | #1152 |
+| S-002 (`audit_log` LIKE pattern) | Low | v3.28.0 | #1153 |
+| S-004 (`move_uploaded_file` mode) | Low | v3.28.0 | #1154 |
+| S-007 (retry-path verification test) | Low | v3.28.0 | #1155 |
+| S-005 / S-009 / S-010 / S-011 / S-012 | Note | Not filed; absorbed into v3.29.0 test-infra (S-012 decrypt-tool argv) and v4.2 OIDC engine swap (S-009 raw exception) per source doc recommendations |
+
+**Full evidence:** `releases/2026-05-10_security-review/` (`semgrep-summary.md`, `semgrep-raw.json`, `code-reviewer-findings.md`).
+
+---
+
+## 4. v3.28.0 — DR + security stabilization (#55, 12 open)
+
+> **Identity flip (2026-05-11 reshape):** old v3.28.0 was "pure test tooling." Test tooling moved to v3.29.0 (§5).
+>
+> **Carve (2026-05-11, after gap-analysis review):** 8 low-friction items split out to a new v3.28.1 milestone (#81) so v3.28.0 stays shippable. See §4.1.
+
+**Theme:** "Finish the cluster. Stop silent failures. Ship the security mediums. Retire the legacy backup writer."
+
+**Scope (locked, 12 issues):**
+
+| Bucket | Items | Issues |
+|---|---|---|
+| **Legacy backup writer retirement** | Disable orchestrator's `app_secret` write path; preflight failure with clear message; reader stays intact; banner on Backup/Restore tabs; `docs/upgrading.md` §4.0 migration path; decrypt-tool prominent placement; CHANGELOG explicit Deprecated + Removed entries. **Hard gate: cannot merge until #1165 decrypt-tool Pass 1 is 100% green.** | #1164 (epic) |
+| **Decrypt-tool Pass 1 manual execution** | 7 fixtures × 8 cases + 8 cross-cutting = 64 datapoints per `decrypt-tool-test-plan.md`. Output: `releases/2026-05-11_decrypt-tool-pass1/results.md`. Merge gate on #1164. | #1165 |
+| **Pass C step-up coverage sweep** | Sudo-gate webhook + notify_recipients/SMTP + custom field def CRUD (one policy-registry expansion for all 3) | #1156, #1157, #1158 |
+| **Atomic-state JSON pairing** | F-S5-02 destination_health/schedule_overdue_state + #1143 auth.ip_rate_limited dampener (same TOCTOU shape, land together) | #1159, #1143 |
+| **Security-review Mediums** | S-003 gzip-bomb decompressed cap; S-006 webhook silent swallow → `error_log`; S-008 readonly API `is_active` check | #1149, #1150, #1151 |
+| **CSP regression guard** | CI assertion that no inline `on*` handlers slip back in | #906 |
+| **OIDC autocomplete hints** | v3.27.5 follow-up architectural fix | #1137 |
+
+**Pre-PR checklist (per Operating Mode §2)** applies in full. Every helper has ≥1 caller, every contract has ≥1 round-trip test, every sentinel has a positive-shape test.
+
+**Out of scope:** test-infrastructure deliverables (round-trip taxonomy, contract-doc linter, fixture-bypass sweep) — those live in v3.29.0. Low-friction Pass C / security-review items — see v3.28.1 below.
+
+### 4.1 v3.28.1 — DR + security overflow (#81, 8 open)
+
+**Theme:** "The low-friction tail of Pass C + security-review Lows that didn't need to gate v3.28.0."
+
+| Bucket | Items | Issues |
+|---|---|---|
+| **Pass C scanner observability** | F-S2-01 IPv6 sync-scan rejection; F-S2-04 cron `scan.run` audit row; F-S2-05 `ipam_mark_stale_addresses` clamp; F-S6-01 Kea/dhcpd FQDN regex parity | #1160, #1161, #1162, #1163 |
+| **Security-review Lows** | S-001 audit-details hygiene (test-fire URL); S-002 audit LIKE pattern; S-004 backup file-mode; S-007 retry-path verification test | #1152, #1153, #1154, #1155 |
+
+**Effort estimate:** ~1–2d total. Ships right after v3.28.0 — same theme, smaller surface, no architectural changes.
+
+**Post-v3.28.0 hotfix budget:** the 1–2 week window after v3.28.0 deploy is reserved for incident response on the legacy-writer-retirement migration. v3.28.1 ships only after that window closes clean.
+
+---
+
+## 5. v3.29.0 — Test infrastructure (#80, 30 open)
+
+> **Slot-bumped (2026-05-11 reshape):** what was old v3.28.0 milestone #55 content. 28 issues re-milestoned to new milestone #80.
+
+> **Operational plan: `docs/internal/test-improvements.md`.**
+
+**No new features in v3.29.0.** This is the explicit response to the v3.21–v3.27 bug cluster: passing CI + passing CodeRabbit + passing 3-driver Playwright did not catch the 12 distinct bugs Pass A surfaced.
 
 **Three deliverables (Path Forward §1.5):**
 
-1. **Inventory of test fixtures that bypass the path under test**, with parallel-spec backfills for each. `warmSudoGrant()` is the worked example (it minted sudo grants directly, hiding Bug X / Bug Z / Bug T from every step-up spec). Sweep for siblings.
-2. **Three missing test classes wired into CI:**
-   - **Round-trip tests** for every persistence path (encrypt → restore → byte-compare; dump → restore → row-equality; setting write → setting read → equality)
-   - **Contract enforcement tests** — every helper has ≥1 caller in app code; every audit verb in `audit-actions.md` has ≥1 `audit()` call; every documented invalidation event has its handler call site
-   - **Negative regression tests** — when a CR or security review tightens a validator/guard, a paired test pins existing valid use cases
-3. **Contract-doc-vs-code linter** — CI script that grep-asserts contract docs (`step-up-auth.md`, `audit-actions.md`, `runtime-dependency-policy.md`) match actual code. Catches drift like Bug T (6 of 11 documented invalidation events had no caller).
+1. **Inventory of test fixtures that bypass the path under test**, with parallel-spec backfills. `warmSudoGrant()` is the worked example.
+2. **Three missing test classes wired into CI:** round-trip tests (encrypt → restore → byte-compare); contract enforcement tests (every helper has ≥1 caller; every audit verb has ≥1 `audit()` call); negative regression tests (CR/security-tightened guards get paired tests pinning valid use cases).
+3. **Contract-doc-vs-code linter** — CI script that grep-asserts contract docs match code. Catches drift like Bug T (6 of 11 documented invalidation events had no caller).
 
-**GitHub state:** milestone #55, 29 open issues. Closes findings A28, D4-partial, D6–D18 from `code_quality_review.md` plus the test-coverage gaps from §6.D and the Path Forward step 5 deliverables.
+**Plus (added 2026-05-11 gap-analysis pass):**
+- **Decrypt-tool Pass 2 automation** — green-path + wrong-cred + tampered + truncated cases per `decrypt-tool-test-plan.md` become PHPUnit; remaining cases become a CI shell script. Pass 1 manual execution (#1165) gates this work.
+- **S-012 decrypt-tool argv passphrase hardening** (env-var only, refuse argv).
+- **F-S2-02 / F-S2-03 audit-vocab doc drift** — fixed as part of contract-doc linter coming online green on day one.
+- **Semgrep WARNING sweep (#1166)** — close 38 legacy XSS/SSRF/path-traversal WARNINGs (~1d work, mostly `e()` wraps + one realpath guard). Establishes "main has zero semgrep WARNINGs" CI baseline.
+- **Composer dep refresh + CVE recheck (#1167)** — bump pinned versions of phpmailer / twofactorauth / webauthn / phpseclib; run `composer audit`. Cadence question (every 3 minors?) decided at scope-lock.
 
-**Why pure test infrastructure as a release:** unusual but the right signal. The next feature release starts from a stronger baseline.
-
-**Pass C dependency:** F-S2-02 and F-S2-03 (audit-actions doc drift on `scan.schedule_create` / `scan.stale_update`) need to be resolved so the v3.28.0 contract-doc linter is green on day one. Either ship the doc fixes inside v3.28.0 (lightweight code/doc change) or ship the linter with an explicit allowlist that empties by v3.28.1. Decision belongs in `test-improvements.md` §8 question 1.
-
----
-
-## 4.5 v3.28.1 (proposed) — Pass C code-side cleanup + step-up coverage sweep
-
-**Theme:** "Close out the Pass C code-side findings + the step-up bundle, now that v3.28.0 has the testing harness for it."
-
-**Scope candidate (pending §3.6 decision on Option A/B/C):**
-
-| Finding | Effort |
-|---|---|
-| F-S3-02 — webhook create/edit/delete sudo-gated | 1d |
-| F-S5-01 — `backup.notify_recipients` + SMTP setting save sudo-gated | 1d |
-| F-S7-01 — custom field def create/update/delete sudo-gated | 1d |
-| F-S5-02 — write-side race on `destination_health` / `schedule_overdue_state` JSON (paired with #1143) | 2–3d |
-| F-S2-01 — IPv6 sync-scan rejection | 0.5d |
-| F-S2-04 — cron scan emits `scan.run` audit row | 0.5d |
-| F-S2-05 — `ipam_mark_stale_addresses` threshold clamp | 0.5d |
-| F-S6-01 — Kea JSON FQDN regex parity | 0.5d |
-
-Step-up bundle (F-S3-02 / F-S5-01 / F-S7-01) is the headline — three sudo-gating gaps with the same shape. Land together so the policy registry expands once, not three times.
-
-**Status:** depends on Option A/B/C decision from §3.6. If Option C, this slot is reserved; if Option B, items get absorbed into v3.28.0; if Option A, all of this slides to v3.29.0+.
+**Open questions in `test-improvements.md` §8** to be answered at scope-lock.
 
 ---
 
-## 4.6 Legacy backup writer retirement (v3.28.x — PROPOSED 2026-05-10 chat)
+## 6. Refactor stream (v3.30.0 → v3.32.0)
 
-**Theme:** "Get users off `app_secret` backup encryption before v4.0.0's cold break, while the in-app reader can still decrypt their old archives."
+Three milestones, theme-named. Closes 50 of the 87 `code_quality_review.md` findings (the other 37 already shipped through v3.26.0 + are absorbed into v3.29.0 test backfill).
 
-**Architectural decision (2026-05-10 chat):** the existing 3-way encryption-mode design (`unencrypted` / `app_secret` / `stored`) is the source of most of the disaster-recovery bugs in v3.21–v3.27. The path forward is **two modes** (`unencrypted` / `stored`) with the legacy `app_secret` path retired in stages.
+| Suggested slot | Milestone | Theme | Issues | Closes findings |
+|---|---|---|---|---|
+| v3.30.0 | **Refactor wave 1 — lib.php decomposition** (#56) | `lib.php` (~9000 lines) split into focused modules + page-handler refactor | 19 (incl. orphan bugs U/V/Y #1120/#1121/#1122) | A11, A12, A14–A16, A23–A25, A27, A33, B7–B9, B11(re-order), C8 |
+| v3.31.0 | **Refactor wave 2 — api.php + import_csv + migrations** (#57) | `api.php` decomposition; `import_csv` rewrite (also addresses the 38 semgrep WARNINGs from §3.6); migration helpers | 18 | A6, A13, A17–A19, A29, A32, B5, B6, B10, B13, C2, C3-policy, C5–C7, C9–C12 |
+| v3.32.0 | **Refactor wave 3 — frontend modularization** (#58) | `assets/app.js` module split + P2/P3 polish | 16 | A20, A26, A31, A.P3, B.P3, C.P3, D4-full, D5, D13–D21 |
 
-**v3.28.x scope (writer-only retirement):**
+**Per-milestone test umbrellas:** #1045 (wave 1), #1046 (wave 2), #1047 (wave 3). Each refactor PR must update or add the matching test in the same commit.
 
-- Destination save handler rejects `encryption_mode='app_secret'` on new destinations + on edits to existing destinations that don't already have that mode. **Existing destinations configured for `app_secret` mode can still RUN backups in this release** — that's what makes it a 3-stream change with a soft landing.
-- Wait — re-read. Actually the cleaner cut: **disable the orchestrator's `app_secret` write path entirely.** Destinations configured for `app_secret` get a preflight failure on every backup run with a clear message: "This destination's encryption mode is no longer supported. Either switch to `stored` (vault key required) or `unencrypted`. Existing encrypted backups remain restorable from the Restore tab. See docs/upgrading.md."
-- Reader stays intact — all of IPAMBKP1 / IPAMBKP2 / IPAMBKP3 / IPAMBKU1 / bare `.sql.gz` / bare `.ipambkl1.gz` continue to restore inside IPAM.
-- Persistent warning banner on every Backup/Restore tab: "v4.0.0 will remove legacy backup support entirely. Plan to restore + re-back-up any legacy `.enc` archives you need to keep before upgrading. See docs/upgrading.md §4.0."
-- New `docs/upgrading.md` section covering the v3.x → v4.x migration path.
-- Standalone decrypt tool (`tools/decrypt-backup.php`) gets a thorough manual test per `docs/internal/decrypt-tool-test-plan.md` Pass 1.
-- **CHANGELOG framing:** explicit "Deprecated → Removed in same release" in the Deprecated + Removed categories, per the conversation Sean and I had. Semver wrinkle is acknowledged but acceptable for an install base this size.
-
-**Why this slot, not v3.28.0:** v3.28.0 is locked to test tooling per the path forward. The legacy writer retirement is a behavior change in the app's actual code; it belongs in its own release. Could be v3.28.1 if the gap from v3.28.0 is short, or v3.29.0 if we want more separation.
-
-**Status:** **scoped, slot TBD.** Decrypt-tool test plan exists; everything else is code-level work to be planned via subagents when scheduled.
+**Architecture-review dependency (§10):** the `lib.php size` candidate decision must land before wave 1 starts.
 
 ---
 
-## 5. v3.29.0 → v3.36.0 — Refactor + UX overhaul streams
+## 7. UX overhaul stream — straddles v4.0.0
 
-Two parallel streams that both close before v4.0.0 by user directive (`ux_overhaul.md` §10, `code_quality_review.md` §10).
+> **2026-05-11 reshape:** the 5 UX milestones no longer have to fit before v4.0.0. Foundation + nav + data-heavy ship pre-v4 (v3.33.0 → v3.35.0); polish + cleanup ship post-v4 interleaved with v4.x enterprise auth + i18n releases. **v4.0.0 ships when i18n phase 1 + backup cold break are ready — not gated on UX completion.**
 
-### 5.1 Code-quality refactor stream (v3.29.0 → v3.31.0)
+Audit scope **explicitly excludes** backup/restore UX — that's `backup_overhaul.md` territory.
 
-Closes 67 of the 87 `code_quality_review.md` findings (the other 20 already shipped in v3.26.0; v3.28.0 covers the test-coverage subset above).
+| Suggested slot | Milestone | Theme | Issues | Effort |
+|---|---|---|---|---|
+| v3.33.0 (pre-v4) | **UX foundation — design system** (#59) | Type scale, badge primitive, color-not-only-signal, dark-mode brand-link, mobile font sizing | 12 | ~3–5d |
+| v3.34.0 (pre-v4) | **UX nav — sidebar + command palette + theme** (#60) | Group 22 admin links into 5 sections, command palette, theme toggle, sidebar collapse, post-timeout deep-link return | 11 | ~3–5d |
+| v3.35.0 (pre-v4) | **UX data-heavy — subnets/addresses** (#61) | Pagination/virtualization (subnets renders 3,727 elements today), drawer-edit, action consolidation, status-as-badge, URL-state filters, bulk-action bar, columns persistence | 14 | ~10–14d |
+| post-v4 interleave | **UX polish — search + audit + dashboard** (#62) | Instant search, pretty-printed audit, relative time, KPI clickable, recent-activity rendering | 20 | ~6–8d |
+| post-v4 interleave | **UX cleanup — admin + a11y + mobile + auth** (#63) | Drawer-CRUD across 12 admin pages, empty states, settings save UX, import-CSV stepper, mobile responsive sweep, a11y sweep, login UX | 38 | ~10–14d |
 
-| Release | Theme | Issues | Closes findings |
-|---|---|---|---|
-| **v3.29.0** (#56) | `lib.php` decomposition + page-handler refactor | 16 | A11, A12, A14–A16, A23–A25, A27, A33, B7–B9, B11(re-order), C8 |
-| **v3.30.0** (#57) | `api.php` + `import_csv` refactor + migrations cleanup | 18 | A6, A13, A17–A19, A29, A32, B5, B6, B10, B13, C2, C3-policy, C5–C7, C9–C12 |
-| **v3.31.0** (#58) | Frontend modularization + P2/P3 polish | 16 | A20, A26, A31, A.P3 (A34–A42), B.P3 (B25–B34), C.P3 (C16–C18), D4-full, D5, D13–D21 |
+**Why this split:**
+- Foundation + nav + data-heavy are the highest-impact UX wins; ship before v4.0.0 so the i18n extraction sweep in v4.1.0 runs against the new UI shape rather than the legacy one.
+- Polish + cleanup are lower per-issue impact but larger surface area; OK to interleave with enterprise-auth releases.
 
-**Per-milestone test umbrellas:** #1045 (v3.29.0), #1046 (v3.30.0), #1047 (v3.31.0). Each refactor PR must update or add the matching test in the same commit; umbrella stays open until all refactor issues in its milestone close.
-
-**Source:** `code_quality_review.md` §9.
-
-### 5.2 UX overhaul stream (v3.32.0 → v3.36.0)
-
-Closes the 82 `ux_overhaul.md` findings. Audit scope **explicitly excludes** backup/restore UX — that's `backup_overhaul.md` §2 + §7 territory.
-
-| Release | Theme | Issues | Effort |
-|---|---|---|---|
-| **v3.32.0** (#59) | Design-system foundation — type scale, badge primitive, color-not-only-signal, dark-mode brand-link, mobile font sizing | 12 | ~3–5d |
-| **v3.33.0** (#60) | Sidebar + nav consolidation — group 22 admin links into 5 sections, command palette, theme toggle UX, sidebar collapse, post-timeout deep-link return | 11 | ~3–5d |
-| **v3.34.0** (#61) | Data-heavy pages overhaul — pagination/virtualization (subnets renders 3,727 elements / 103k-px page today), drawer-edit, action consolidation, status-as-badge, URL-state filters, bulk-action bar, columns persistence | 14 | ~10–14d |
-| **v3.35.0** (#62) | Search + audit + dashboard polish — instant search, pretty-printed audit (resolve `user#N`, `auth.passkey_challenge`), relative time, KPI clickable, recent-activity rendering | 20 | ~6–8d |
-| **v3.36.0** (#63) | Admin pages standardization + import wizard + a11y sweep + mobile + auth polish — drawer-CRUD across 12 admin pages, empty states, settings save UX, import-CSV stepper + drag-drop, mobile responsive sweep, a11y sweep, login UX | 38 | ~10–14d |
-
-Total ~35–49 engineer-days across 5 milestones, all before v4.0.0.
-
-**Why this split** (`ux_overhaul.md` §9.1):
-- v3.32.0 is the foundation — type scale + badge primitive + color-not-only-signal are leverage that every later milestone benefits from.
-- v3.33.0 is the nav consolidation — once admin links are grouped into 5 sections, v4.0.0 can add tenant switcher / super-admin without further bloat.
-- v3.34.0 is the highest-impact UX win — subnets/addresses are where operators spend 80% of their time.
-- v3.35.0 is the polish for the second-most-used surfaces — search + audit + dashboard.
-- v3.36.0 is the cleanup pass — admin pages, mobile, a11y, auth, all remaining P2/P3.
-
-**Per-milestone test umbrellas:** #1035 (v3.32.0), #1036 (v3.33.0), #1037 (v3.34.0 — largest test impact), #1038 (v3.35.0), #1039 (v3.36.0).
+**Per-milestone test umbrellas:** #1035, #1036, #1037, #1038, #1039.
 
 **Source:** `ux_overhaul.md` §9.
 
-### 5.3 Cross-stream interaction
-
-| Cross-stream concern | Handling |
-|---|---|
-| Code-quality `B8` ↔ UX `L2` (addresses/subnets controller split is the data-flow prerequisite for the visual drawer rebuild) | Code-quality stream lands first; UX builds on top |
-| Open Props (`C5`) ↔ design-system (`D13`) | Same work; resolved when v3.31.0's frontend modularization completes |
-| Drawer pattern (UX `A12`) | Reference is `backup_overhaul.md` §2's existing drawer (already shipped) — extend, don't replace |
-
 ---
 
-## 6. v4.x stream — enterprise auth + global reach
+## 8. v4.x stream — enterprise auth + global reach
 
-Forward-looking design, not a commitment. Captured in `v4-release-stream.md`. **Multi-tenancy is explicitly NOT in v4.x** — see §6.4 below.
+Forward-looking design. Captured in `v4-release-stream.md`. **Multi-tenancy is explicitly NOT in v4.x** — see §8.4.
 
-### 6.1 Theme
+### 8.1 Theme
+Enterprise authentication (SAML / LDAP / OAuth / SCIM) + global reach (i18n / l10n) + RBAC / groups / per-subnet ACL. 11 placeholder milestones.
 
-Enterprise authentication (SAML / LDAP / OAuth / SCIM) + global reach (i18n / l10n) + the RBAC/groups/per-subnet ACL story that enterprise users need. v4.x has 11 placeholder releases tracking 11 features that don't fit comfortably in 1–2 minors.
+### 8.2 Sequencing (locked 2026-05-07; **v4.0.0 wall removed 2026-05-11**)
 
-### 6.2 Sequencing (locked 2026-05-07)
+| Milestone | Theme | Tracking issue |
+|---|---|---|
+| **v4.0.0** (#19) | i18n infrastructure (phase 1) + **backup cold break** (§8.7) | #1064 |
+| **v4.1.0** (#29) | i18n extraction sweep (phase 2) | #1063 |
+| **v4.2.0** (#65) | OIDC engine swap — retire hand-rolled JWT/JWK, adopt firebase/php-jwt ^6.0 **+ S-009 raw-exception fix + #1137 OIDC settings page rewire** | #417 |
+| **v4.3.0** (#66) | RBAC foundation: `groups` + `user_groups` join tables | #334 |
+| **v4.4.0** (#67) | Editable RBAC engine — replace hard-coded `admin`/`readonly` with permission-target gates | #456 |
+| **v4.5.0** (#68) | Per-subnet ACLs — resource-level ACLs complementing v4.4 RBAC | #333 |
+| **v4.6.0** (#69) | i18n phase 3: first non-English catalog (fr-CA) | #1066 |
+| **v4.7.0** (#70) | SAML 2.0 SSO (SP role) via onelogin/php-saml ^4.0 | #1065 |
+| **v4.8.0** (#71) | LDAP / Active Directory via symfony/ldap ^7.0 wrapping ext-ldap | #1069 |
+| **v4.9.0** (#72) | Generic OAuth 2.0 via league/oauth2-client ^2.7 | #1070 |
+| **v4.10.0** (#73) | SCIM 2.0 provisioning — Okta/Azure AD lifecycle | #1068 |
+| **v4.11.0** (#74) | i18n phase 4: crowdsourcing via Weblate (drop by default unless community translation interest emerges) | #1071 |
 
-| Milestone | Theme | Tracking issue | Source |
-|---|---|---|---|
-| **v4.0.0** (#19) | i18n infrastructure (phase 1) — gettext-based catalog, `__()`/`_n()` helpers, per-user locale cascade, language picker **+ backup cold break** (see §6.7) | #1064 | `i18n-design.md` + `decrypt-tool-test-plan.md` |
-| **v4.1.0** (#29) | i18n extraction sweep (phase 2) — mechanical wrap-every-user-facing-string PR | #1063 | `i18n-design.md` |
-| **v4.2.0** (#65) | OIDC engine swap — retire hand-rolled JWT/JWK, adopt firebase/php-jwt ^6.0 | #417 | `v4-release-stream.md` |
-| **v4.3.0** (#66) | RBAC foundation: `groups` + `user_groups` join tables | #334 | `v4-release-stream.md` |
-| **v4.4.0** (#67) | Editable RBAC engine — replace hard-coded `admin`/`readonly` with permission-target gates | #456 | `v4-release-stream.md` |
-| **v4.5.0** (#68) | Per-subnet ACLs — resource-level ACLs complementing v4.4 RBAC | #333 | `v4-release-stream.md` |
-| **v4.6.0** (#69) | i18n phase 3: first non-English catalog (fr-CA), validates translator workflow | #1066 | `i18n-design.md` |
-| **v4.7.0** (#70) | SAML 2.0 SSO (SP role) via onelogin/php-saml ^4.0 — first major enterprise-auth integration | #1065 | `v4-release-stream.md` |
-| **v4.8.0** (#71) | LDAP / Active Directory via symfony/ldap ^7.0 wrapping ext-ldap | #1069 | `v4-release-stream.md` |
-| **v4.9.0** (#72) | Generic OAuth 2.0 (GitHub/GitLab/Bitbucket/custom) via league/oauth2-client ^2.7 | #1070 | `v4-release-stream.md` |
-| **v4.10.0** (#73) | SCIM 2.0 provisioning — Okta/Azure AD lifecycle | #1068 | `v4-release-stream.md` |
-| **v4.11.0** (#74) | i18n phase 4: crowdsourcing via self-hosted Weblate (subject to mid-stream sustainability checkpoint — drop if no community translation interest) | #1071 | `i18n-design.md` |
-
-### 6.3 Hard sequencing constraints
-
+### 8.3 Hard sequencing constraints
 - **v4.1 must follow v4.0** (extraction needs the helpers).
 - **v4.4 must follow v4.3** (RBAC engine needs the groups foundation).
 - **v4.5 must follow v4.4** (per-subnet ACLs need RBAC).
 - **v4.7 should follow v4.2** (SAML reuses JWT primitives).
 - **v4.6/v4.11 follow v4.0+v4.1** (translation needs catalog infrastructure).
 
-**Soft constraint:** interleave i18n with auth releases so visible internationalization progress accompanies enterprise-feature ramp (avoids "12 releases of plumbing").
+**Soft constraint:** interleave i18n with auth releases so visible internationalization progress accompanies enterprise-feature ramp. Also interleave UX polish/cleanup (§7) into the v4.x slots — both add visible operator value.
 
-### 6.4 What's NOT in v4.x
+### 8.4 What's NOT in v4.x
 
 | Item | Why not | Where it lives |
 |---|---|---|
-| **Multi-tenancy** | DEFERRED INDEFINITELY (locked 2026-05-08). Sean investigating licensing implications (likely paid add-on under different license). All tenancy-coupled tickets parked under milestone #64. | `v4-tenancy-design.md`, milestone #64 |
-| **Plugin / extension framework** | Out of scope; lessons-learned says no premature abstractions | — |
+| **Multi-tenancy** | DEFERRED INDEFINITELY (locked 2026-05-08). Sean investigating licensing implications. | `v4-tenancy-design.md`, milestone #64 |
+| **Plugin / extension framework** | Out of scope; no premature abstractions | — |
 | **WebUI for backup keys** | Already shipped in v3.26.0 | — |
 
-### 6.5 Architecture-with-multi-tenancy-in-view rule (Path Forward §4)
+### 8.5 Architecture-with-multi-tenancy-in-view rule
+Per Path Forward §4. Every v3.28.0+ design decision must keep an eventual multi-tenancy view: new data tables consider `tenant_id` from the start; settings reads go through `ipam_setting()`; per-tenant key derivation (HKDF from `app_secret`) remains the model.
 
-Even though multi-tenancy is deferred, every v3.28.0+ design decision must keep an eventual multi-tenancy view:
+### 8.6 Sustainability checkpoint
+Per `v4-release-stream.md` §10: stop or shorten the v4.x stream if no enterprise customer requests SAML/LDAP/SCIM by v4.5/v4.6, OR if maintainer burnout signals. Drop v4.11 (Weblate) by default unless community translation interest materializes.
 
-- New data tables should consider `tenant_id` from the start (even if `NULL`-only in v3.x). Adding it later is harder than carrying it forward.
-- Settings reads should continue going through `ipam_setting()` (the cascade-aware accessor). Direct `SELECT FROM settings` reads create future migration debt.
-- Per-tenant key derivation (HKDF from `app_secret`) remains the model, even though the tenant_id parameter is unused in v3.x.
-
-### 6.6 Sustainability checkpoint
-
-Per `v4-release-stream.md` §10: stop or shorten the v4.x stream if (1) no enterprise customer has actually requested SAML/LDAP/SCIM by v4.5/v4.6, OR (2) maintainer burnout signals. Drop v4.11 (Weblate) by default unless community translation interest has materialized.
-
-### 6.7 Backup architecture cold break (v4.0.0 — PROPOSED 2026-05-10 chat)
+### 8.7 Backup architecture cold break (v4.0.0)
 
 **Theme:** "Eliminate the backup-system tech debt that's been weighing the project down across v3.21–v3.27."
 
-Bundled into v4.0.0's i18n release because v4.0.0 is the next major version slot and major-version is the right vehicle for breaking changes. The two scopes are independent (one touches the backup code, one touches the rendering layer) so they don't conflict.
+Bundled into v4.0.0's i18n release because major-version is the right vehicle for breaking changes. The two scopes are independent (one touches backup code, one touches rendering layer).
 
 **Scope:**
 
@@ -400,79 +363,91 @@ SELECT count(*) FROM backup_runs
 ```
 
 - If `> 0`: abort upgrade with 3-option message (restore on v3.x first / decrypt offline with the tool / acknowledge data loss with `--accept-legacy-backup-loss`).
-- The flag writes a `settings.legacy_backup_loss_acknowledged_at` marker + an audit row so a future post-mortem has an answer.
-- Block based on `backup_runs` rows, not destination listObjects. Faster, offline-safe. Separate `tools/scan-legacy-files.php` is available for the paranoid operator who wants to scan their destinations directly.
+- The flag writes a `settings.legacy_backup_loss_acknowledged_at` marker + an audit row.
+- Block based on `backup_runs` rows, not destination listObjects. Faster, offline-safe.
 
-**Migration documentation (must land in v3.28.x, before v4.0.0):**
-
+**Migration documentation (must land in v3.28.0):**
 - `docs/upgrading.md` §4.0 — explicit two-step migration: install v3.x, restore needed backups, upgrade
-- Walkthrough for the standalone decrypt tool on the marketing-site docs page — *recovering a legacy backup when the original install no longer exists*
-- `tools/decrypt-backup.php` gets prominent placement in the v4.0.0 release tarball + release notes headline
+- Walkthrough for the standalone decrypt tool on the marketing-site docs page
+- `tools/decrypt-backup.php` gets prominent placement in v4.0.0 release tarball + release notes
 
-**Testing prerequisite:** `docs/internal/decrypt-tool-test-plan.md` Pass 1 (manual, 7 fixtures × 8 cases + 8 cross-cutting) must be 100% green before the v4.0.0 writer-retirement PR opens. Pass 2 (PHPUnit + CI shell) follows in v3.28.x or v3.29.x. Failing test = blocker, no exceptions.
-
-**Why this works for a small install base:** the source-tree complexity savings are significant (collapse 3 encryption modes → 2, 2 backup types → 1, retire ~half the orchestrator and codec code), and the cost is a well-defined two-step upgrade for the long tail. The standalone decrypt tool already exists and already supports every variant — it's our load-bearing escape hatch.
+**Testing prerequisite:** `docs/internal/decrypt-tool-test-plan.md` Pass 1 (manual, 7 fixtures × 8 cases + 8 cross-cutting) must be 100% green before the v4.0.0 writer-retirement PR opens. Pass 2 (PHPUnit + CI shell) ships in v3.29.0.
 
 ---
 
-## 7. Backup overhaul — closing out
+## 9. Backup overhaul — closing out
 
-`backup_overhaul.md` was the design-and-tracking doc for the multi-release backup epic. Most of the work has shipped across v3.21–v3.27. **The doc retires when its §10 milestones are all complete and its running lists empty** — currently at:
+`backup_overhaul.md` was the design-and-tracking doc for the multi-release backup epic. Most work shipped across v3.21–v3.27.
 
 | Bucket | Status |
 |---|---|
 | §6 Functionality (F1–F25) | F18, F19, F22 still open (F22 is v4.0.0 tenant policy — parked under multi-tenancy deferral); rest shipped. |
 | §7 UI (U1–U10) | All shipped or absorbed into UX overhaul stream. |
-| §8 Testing (T1–T10) | Cross-engine round-trip + MinIO/LocalStack + SFTP integration tests are the remaining gap; covered by v3.28.0 round-trip-test deliverable. |
+| §8 Testing (T1–T10) | Cross-engine round-trip + MinIO/LocalStack + SFTP integration tests are the remaining gap; **covered by v3.29.0** (was v3.28.0 before reshape). |
 | §8a Documentation (D1–D12) | D7 (tenancy doc) parked under multi-tenancy deferral; D12 (retire `backup_overhaul.md` itself) lands in v4.0.0 release cleanup. |
 
-**Single most expensive lesson from this stream:** `lessons-learned.md` §8 — "feature added at one site, propagation to adjacent sites missed." Every Pass A bug was a variant of that pattern (encrypt-write-path, Bug X, Bug Y, Bug Z, Bug T, Bug U, Bug V, Bug W, Bug S, the five observability gaps). The mandatory pre-PR checklist in §2 above is the institutional response.
+**Single most expensive lesson from this stream:** `lessons-learned.md` §8 — "feature added at one site, propagation to adjacent sites missed." The mandatory pre-PR checklist in §2 is the institutional response.
 
 ---
 
-## 8. Architecture review backlog (Path Forward step 8)
+## 10. Architecture review backlog
 
-**Not "rewrite the app" — "look at each candidate honestly and decide."** Each candidate gets a separate decision document under `docs/internal/architecture-decisions/` (TBD path) with options + tradeoffs + recommendation + Sean's stamp. **No architectural decision in this list gets implemented unilaterally by Claude.**
+**Not "rewrite the app" — "look at each candidate honestly and decide."** Each candidate gets a separate decision document under `docs/internal/architecture-decisions/` with options + tradeoffs + recommendation + Sean's stamp. **No architectural decision in this list gets implemented unilaterally by Claude.**
 
-Initial candidates (open for revision):
+| Candidate | Why it's on the list | Gate |
+|---|---|---|
+| **`lib.php` size** (~9000 lines, all functions in one namespace) | Module separation overdue; refactor wave 1 (v3.30.0) is the first surface. | Decision before refactor wave 1 starts. |
+| **Per-key vs group-form bifurcation in `settings.php`** | Bug V's root cause. | Decision before refactor wave 1. |
+| **`backup.php` orchestrator/codec/dispatcher separation** | Enabled the encrypt-write-path bug. | Decision before backup cold break (v4.0.0). |
+| **`$config` global as the only config conduit** | Hides the dependency graph. | Decision before refactor wave 2 (v3.31.0). |
+| **Settings table type system** | bool/int/string/json is impoverished; sensitive flag bolted on. | Decision before refactor wave 1. |
+| **Memory MCP discipline as the only cross-session continuity** | Useful but didn't prevent today's bugs (no observations linking v3.24 codec → v3.26 storage → v3.27 step-up). | Decision in v3.28.0→v3.29.0 sprint. |
+| **Contract-doc-as-source-of-truth model** | When `step-up-auth.md` says X and code does Y, X "wins" by convention — drift produces bugs. v3.29.0 contract-doc linter is the first response. | Decided 2026-05-11: code-first, lint docs against code. |
 
-| Candidate | Why it's on the list |
-|---|---|
-| **`lib.php` size** (~9000 lines, all functions in one namespace) | Module separation overdue; UX overhaul + code-quality refactor will surface every site that imports from it. Decision before v3.29.0. |
-| **Per-key vs group-form bifurcation in `settings.php`** | Bug V's root cause. Pick one path. |
-| **`backup.php` orchestrator/codec/dispatcher separation** | The abstraction layers that enabled the encrypt-write-path bug. Examine whether they help or hurt. |
-| **`$config` global as the only config conduit** | Hides the dependency graph; "where does this setting come from?" is hard to answer in code. |
-| **Settings table type system** | bool/int/string/json is impoverished; sensitive flag is bolted on. v3.27.x patches keep tripping over the 6-value TTL allowlist + silent coercion. |
-| **Memory MCP discipline as the only cross-session continuity** | Useful but didn't prevent today's bugs because we didn't write observations linking v3.24 codec → v3.26 storage → v3.27 step-up. |
-| **Contract-doc-as-source-of-truth model** | When `step-up-auth.md` says X and code does Y, X "wins" by convention — the drift produces bugs. Either lint docs as authoritative, or generate docs from code. v3.28.0 contract-doc linter is the first response. |
+### 10.1 Architecture-decision sprint (between v3.28.0 and v3.29.0)
 
-**Cadence:** one decision doc per architecture session. After each is locked, the resulting work becomes a milestone-or-issue with a normal scope-lock conversation.
+**Locked 2026-05-11.** A focused window between v3.28.0 ship and v3.29.0 kickoff dedicated to clearing the gating decisions for refactor wave 1.
 
----
+**Six decisions in order:**
 
-## 9. Pre-ticket cleanup backlog
+1. **Settings table type system** — small surface, informs the next two
+2. **Per-key vs group-form bifurcation in `settings.php`** — Bug V root cause
+3. **`$config` global as the only config conduit** — pairs with #1 and #2
+4. **`lib.php` size + module shape** — the big one, refactor wave 1's blueprint
+5. **`backup.php` orchestrator/codec/dispatcher separation** — also gates v4.0.0 cold break
+6. **Memory MCP discipline as the only cross-session continuity** — process decision, not code
 
-`cleanup.md` is the canonical pre-ticket holding pattern for low-risk code-health items spotted during other work. Triage rule: low risk + not blocking + verifiable mechanically + not a refactor. When ≥3 items accumulate in a category, batch into a GH issue.
+**Output per decision:** one doc under `docs/internal/architecture-decisions/<NNN>-<slug>.md` with options + tradeoffs + recommendation + Sean's stamp + the resulting work (GH issues or scope changes).
 
-**Currently active:** Canadian English standardization across code/comments/UI/docs (deferred to a dedicated localization release stream — possibly v4.6 alongside fr-CA catalog, or its own minor).
+**Cadence:** one session per decision. ~6 sessions before v3.29.0 work begins. Worth the queue time — refactor wave 1 without these decisions is the kind of unilateral architectural call that produced the v3.21–v3.27 bug cluster.
 
-**Currently tracked in a GH issue:** #1062 (phpmd `unusedcode` cleanup, 5 items, scheduled for v3.33.0).
-
----
-
-## 10. Stream-juggling protocol
-
-When a milestone gets reshuffled, update **here first** so the canonical view is correct, then update the source doc(s) and GitHub.
-
-**Slot-bumping pattern** (from 2026-05-07 v3.27.0 insertion): when a new minor is inserted, every later milestone in the same stream bumps one slot. Source-doc decision logs (`code_quality_review.md` §10, `ux_overhaul.md` §10) record the bump; their per-finding milestone references stay valid because the *theme* moved with the milestone, not the *finding*.
-
-**Hotfix pattern** (`hotfix-release.md`): branch off `main`, merge back, then `dev ← main`. Hotfix scope must NOT pull in dev-stream work — that's how feature drift becomes hotfix risk. v3.27.3 is the worked example.
-
-**Deferral pattern** (multi-tenancy 2026-05-08): when an entire stream is parked, retitle the milestone (`v4.0.0` → `Multi-tenancy (deferred)`), keep the issues, and cross-reference from this doc + the source design doc.
+**Note on contract-doc-vs-code model (#7 in table above):** decided 2026-05-11 — code-first, lint docs against code (the v3.29.0 contract-doc linter is the enforcement). No standalone decision doc needed.
 
 ---
 
-## 11. Cross-references
+## 11. Pre-ticket cleanup backlog
+
+`cleanup.md` is the canonical pre-ticket holding pattern for low-risk code-health items.
+
+**Currently active:** Canadian English standardization across code/comments/UI/docs (deferred to a dedicated localization stream — possibly v4.6 alongside fr-CA catalog, or its own minor).
+
+**Currently tracked in a GH issue:** #1062 (phpmd `unusedcode` cleanup, 5 items, slot TBD with refactor wave 3 or post-v4 UX cleanup).
+
+---
+
+## 12. Stream-juggling protocol
+
+When a milestone gets reshuffled, **update this doc first** so the canonical view is correct, then update source doc(s) and GitHub.
+
+**Theme-naming pattern (2026-05-11 reshape):** milestones from v3.30.0 onward have theme-only titles (no `vX.Y.Z`). The version slot for each theme lives in this doc's §6 and §7 tables. When ordering changes, update those tables — milestones stay put.
+
+**Hotfix pattern** (`hotfix-release.md`): branch off `main`, merge back, then `dev ← main`. Hotfix scope must NOT pull in dev-stream work. v3.27.7 is the most recent worked example.
+
+**Deferral pattern** (multi-tenancy 2026-05-08): when an entire stream is parked, retitle the milestone, keep the issues, cross-reference from this doc + the source design doc.
+
+---
+
+## 13. Cross-references
 
 This doc is a pointer index. Source docs hold per-finding detail and the binding decisions:
 
@@ -480,8 +455,11 @@ This doc is a pointer index. Source docs hold per-finding detail and the binding
 |---|---|
 | Operating mode + Path Forward commitments | `2026-05-08_Path_Forward.md` |
 | Cross-release lessons (curated) | `lessons-learned.md` |
-| **v3.28.0 operational plan (test tooling)** | `test-improvements.md` |
+| **v3.29.0 operational plan (test tooling)** | `test-improvements.md` |
 | **Pass C findings + triage** | `releases/ipam-3.27.6/regression-evidence/passC/PASS-C-SUMMARY.md` |
+| **Security review (2026-05-10) outputs** | `releases/2026-05-10_security-review/semgrep-summary.md` + `code-reviewer-findings.md` |
+| **Decrypt-tool test plan (Pass 1 / Pass 2)** | `decrypt-tool-test-plan.md` |
+| **Session plan continuity** | `2026-05-11_session-plan.md` |
 | Code-quality refactor stream (87 findings) | `code_quality_review.md` |
 | UX overhaul stream (82 findings) | `ux_overhaul.md` |
 | Backup overhaul (mostly shipped) | `backup_overhaul.md` |
