@@ -9172,6 +9172,20 @@ function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $confi
             return;
         }
 
+        // CR review (PR #1148): on every terminal-failure `continue` below
+        // (SSRF blocked, decrypt throw, decrypt null), update the parent
+        // webhook's last_delivery_at + clear last_delivery_status so the row
+        // doesn't continue to advertise an old success after a local failure.
+        // Matches the shape used at the successful-delivery path below
+        // (lib.php :: $wUpd) where status is the integer HTTP code on a real
+        // attempt — NULL here means "we never got far enough to make an
+        // HTTP request."
+        $touchLastDelivery = $db->prepare(
+            "UPDATE webhooks
+             SET last_delivery_at = :now, last_delivery_status = NULL
+             WHERE id = :id"
+        );
+
         foreach ($rows as $hook) {
             $now = gmdate('Y-m-d H:i:s');
             if (!ipam_validate_webhook_url((string)$hook['url'], $config)) {
@@ -9186,6 +9200,7 @@ function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $confi
                     ':err' => 'URL blocked: failed SSRF validation',
                     ':now' => $now,
                 ]);
+                $touchLastDelivery->execute([':id' => $hook['id'], ':now' => $now]);
                 continue;
             }
             // v3.27.7 (F-S3-01): decrypt the stored secret before signing.
@@ -9226,6 +9241,7 @@ function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $confi
                     ':err' => 'Webhook secret decrypt threw: ' . $e->getMessage(),
                     ':now' => $now,
                 ]);
+                $touchLastDelivery->execute([':id' => $hook['id'], ':now' => $now]);
                 continue;
             }
             if ($secretPlain === null) {
@@ -9239,6 +9255,7 @@ function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $confi
                     ':err' => 'Secret decryption failed (wrong app_secret or tampered ciphertext)',
                     ':now' => $now,
                 ]);
+                $touchLastDelivery->execute([':id' => $hook['id'], ':now' => $now]);
                 continue;
             }
             $sig = ipam_webhook_sign($payload, $secretPlain);
