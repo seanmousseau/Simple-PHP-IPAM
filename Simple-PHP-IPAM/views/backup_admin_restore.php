@@ -122,7 +122,11 @@ declare(strict_types=1);
                     </form>
 
                     <?php if ($row['run_id'] > 0): ?>
-                      <a class="action-pill" href="backup_run_detail.php?id=<?= $row['run_id'] ?>">Verify / Delete</a>
+                      <button type="button" class="action-pill"
+                              data-drawer-url="backup_run_detail.php?id=<?= $row['run_id'] ?>"
+                              data-drawer-title="Run #<?= $row['run_id'] ?>">
+                        Verify / Delete
+                      </button>
                     <?php endif; ?>
 
                     <!-- Restore — pre-fills the existing stage form -->
