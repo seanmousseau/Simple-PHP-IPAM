@@ -13,7 +13,7 @@ declare(strict_types=1);
  * @var bool                              $flashTestOk
  * @var string                            $flashTestMsg
  * @var int|null                          $flashTestLatency
- * @var array{present:bool, source:string, fingerprint:?string, created_at:?string, has_encrypted_runs:bool} $vaultStatus
+ * @var array{present:bool, source:string, fingerprint:?string, created_at:?string, has_encrypted_runs:bool, state:'absent'|'present'|'unreadable', error_message:?string} $vaultStatus
  * @var string                            $revealedKey
  */
 $_currentUser = function_exists('current_user') ? current_user() : ['role' => ''];
@@ -30,6 +30,31 @@ $_isAdmin     = ($_currentUser['role'] ?? '') === 'admin';
   <!-- v3.26.0 (#1098) — Encryption key (Stored mode) admin panel -->
   <section class="card" data-test="vault-key-panel">
     <h2>Encryption key (Stored mode)</h2>
+
+    <?php if ($vaultStatus['state'] === 'unreadable'): ?>
+      <div class="card danger" data-test="vault-unreadable-banner" style="margin:.25rem 0 .75rem">
+        <strong>Vault key envelope is unreadable.</strong>
+        <p style="margin:.25rem 0 0">
+          A <code>backup_vault_key</code> envelope is recorded in the database, but it can't
+          be unwrapped with this install's current <code>bootstrap_key</code>. The most
+          common cause is a rotated <code>bootstrap_key</code> in <code>config.php</code>
+          since the envelope was written. Stored-mode encryption is non-functional until
+          this is resolved: new IPAMBKP3 runs will fail their preflight check, and existing
+          IPAMBKP3 archives encrypted under this vault key cannot be restored on this host.
+        </p>
+        <?php if ($vaultStatus['error_message'] !== null): ?>
+          <p class="muted" style="margin:.25rem 0 0;font-size:.85em">
+            Helper reported: <code><?= e($vaultStatus['error_message']) ?></code>
+          </p>
+        <?php endif; ?>
+        <p style="margin:.5rem 0 0;font-size:.9em">
+          Recovery is operator-driven and goes through <code>config.php</code> directly
+          — see <a href="docs/upgrading.md#vault-recovery"><code>docs/upgrading.md</code> §vault-recovery</a>.
+          This release deliberately does not offer an in-app "Replace vault key" action
+          while the envelope is unreadable.
+        </p>
+      </div>
+    <?php endif; ?>
 
     <?php if ($vaultStatus['present']): ?>
       <div class="vault-status" style="display:flex;flex-wrap:wrap;align-items:center;gap:.75rem;margin:.25rem 0 .75rem">

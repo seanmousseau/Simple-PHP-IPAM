@@ -276,10 +276,20 @@ function ipam_destinations_redirect(string $base, string $flashCode = ''): never
  *   - has_encrypted_runs: true when any backup_runs row carries
  *                  encryption_mode != 'unencrypted' (replace path is gated
  *                  on this so a key swap cannot orphan existing archives)
+ *   - state:       three-state vault report (v3.27.8 Bug E) —
+ *                  'absent' / 'present' / 'unreadable'. Mirrors the
+ *                  `present` bool for absent/present, and adds the
+ *                  unreadable signal callers need to distinguish "envelope
+ *                  exists but unwrap failed (bootstrap_key rotated)" from
+ *                  "no envelope at all". Config-source keys always read
+ *                  cleanly so they remain 'present' here.
+ *   - error_message: human-readable unwrap-failure message when
+ *                  state==='unreadable', else null.
  *
  * @return array{
  *   present:bool, source:string, fingerprint:?string,
- *   created_at:?string, has_encrypted_runs:bool
+ *   created_at:?string, has_encrypted_runs:bool,
+ *   state:'absent'|'present'|'unreadable', error_message:?string
  * }
  */
 function ipam_vault_key_status(\PDO $db): array
@@ -292,24 +302,25 @@ function ipam_vault_key_status(\PDO $db): array
     /** @var array<string,mixed> $config */
     global $config;
 
-    // DB row first.
-    $envelope = '';
-    try {
+    // v3.27.8 Bug E: single source of truth for the three-state report.
+    // The DB-envelope branch below mirrors `state`; the legacy config
+    // fallback below can flip a state='absent' result to present.
+    $vaultStatus = ipam_vault_status();
+    $state        = $vaultStatus['state'];
+    $errorMessage = $vaultStatus['error_message'];
+
+    if ($state === 'present') {
+        // Re-unwrap to read the raw bytes for the fingerprint. Cheap
+        // (libsodium secretbox) and avoids leaking the plaintext out of
+        // ipam_vault_status()'s narrow contract.
         $envRaw   = ipam_setting('backup_vault_key', '');
         $envelope = is_string($envRaw) ? $envRaw : '';
-    } catch (\Throwable) {
-        $envelope = '';
-    }
-    if ($envelope !== '') {
         try {
             $raw = ipam_vault_unwrap($envelope, ipam_bootstrap_key());
             if (strlen($raw) === BACKUP_VAULT_KEY_LEN) {
                 $present     = true;
                 $source      = 'db';
                 $fingerprint = ipam_vault_fingerprint($raw);
-                // Read updated_at via a direct query — ipam_setting() does
-                // not expose it. Tolerates the post-v3.13.0 cascade
-                // (tenant_id NULL row) and the pre-cascade legacy schema.
                 $keyCol = ipam_key_col();
                 try {
                     $st = $db->prepare(
@@ -326,7 +337,10 @@ function ipam_vault_key_status(\PDO $db): array
                 }
             }
         } catch (\Throwable) {
-            // Bad envelope or wrong bootstrap key — fall through to legacy.
+            // Race window: state==='present' said unwrap succeeded but the
+            // re-unwrap here failed. Treat as unreadable.
+            $state        = 'unreadable';
+            $errorMessage = $errorMessage ?? 'vault key unwrap failed during fingerprint read';
         }
     }
 
@@ -382,6 +396,8 @@ function ipam_vault_key_status(\PDO $db): array
         'fingerprint'        => $fingerprint,
         'created_at'         => $createdAt,
         'has_encrypted_runs' => $hasEncryptedRuns,
+        'state'              => $state,
+        'error_message'      => $errorMessage,
     ];
 }
 
