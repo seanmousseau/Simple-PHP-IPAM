@@ -9001,14 +9001,16 @@ function ipam_webhook_sign(string $payload, string $secret): string
  */
 function ipam_webhook_encrypt_secret(string $secret, string $key): string
 {
-    if ($key === '') {
-        throw new \RuntimeException('Webhook secret encryption requires a non-empty app_secret');
-    }
     if ($secret === '') {
         // Empty signing secret means the webhook is unsigned. Store empty
         // verbatim so the reader can distinguish "no secret" from "encrypted
-        // blob that fails to decrypt".
+        // blob that fails to decrypt". CR review (PR #1148): this fast path
+        // runs BEFORE the $key check so save/migration of an intentionally-
+        // unsigned webhook works on installs without app_secret configured.
         return '';
+    }
+    if ($key === '') {
+        throw new \RuntimeException('Webhook secret encryption requires a non-empty app_secret');
     }
     $iv  = random_bytes(12);
     $tag = '';
@@ -9189,10 +9191,34 @@ function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $confi
             // v3.27.7 (F-S3-01): decrypt the stored secret before signing.
             // The plaintext only lives in this local scope long enough to
             // compute the HMAC for this single dispatch. CR review (PR #1148):
-            // null means decrypt failure (wrong app_secret, tampered envelope);
-            // do NOT sign with empty key — record an attempt=3 error row and
-            // skip dispatch so the receiver doesn't see a wrong HMAC.
-            $secretPlain = ipam_webhook_decrypt_secret((string)$hook['secret'], to_str($config['app_secret'] ?? ''));
+            //   - null means decrypt failure (wrong app_secret, tampered
+            //     envelope); do NOT sign with empty key — record an attempt=3
+            //     error row and skip dispatch so the receiver doesn't see a
+            //     wrong HMAC.
+            //   - The helper *throws* RuntimeException when $key is empty and
+            //     the stored value is a real '$2W$' envelope. That throw is a
+            //     per-webhook config issue (one row references an envelope but
+            //     this install has no app_secret) — it must NOT kill the whole
+            //     dispatch batch. Wrap in try/catch + record-and-continue per
+            //     PR #1148 CR.
+            try {
+                $secretPlain = ipam_webhook_decrypt_secret(
+                    (string)$hook['secret'],
+                    to_str($config['app_secret'] ?? '')
+                );
+            } catch (\RuntimeException $e) {
+                $db->prepare(
+                    "INSERT INTO webhook_deliveries
+                        (webhook_id, event_type, payload, signature, attempt, error, created_at)
+                     VALUES (:wid, :ev, :pl, :sig, 3, :err, :now)"
+                )->execute([
+                    ':wid' => $hook['id'], ':ev' => $event,
+                    ':pl'  => $payload,    ':sig' => '',
+                    ':err' => 'Webhook secret decrypt threw: ' . $e->getMessage(),
+                    ':now' => $now,
+                ]);
+                continue;
+            }
             if ($secretPlain === null) {
                 $db->prepare(
                     "INSERT INTO webhook_deliveries

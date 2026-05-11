@@ -3752,6 +3752,32 @@ function ipam_migrations(): array
             //   - SQLite: error message contains "no such table"
             //   - MySQL:  SQLSTATE 42S02 (error code 1146)
             //   - Postgres: SQLSTATE 42P01 (undefined_table)
+
+            // CR review (PR #1148): the historical MySQL webhooks.secret
+            // column was VARCHAR(255). The '$2W$' envelope adds 28 raw bytes
+            // (IV+tag) of overhead, which after base64 expansion can exceed
+            // 255 chars for a long secret. Widen to TEXT BEFORE re-encrypting
+            // any existing rows so writes don't truncate. MySQL MODIFY is a
+            // no-op when the target type matches; on SQLite/Postgres the
+            // column is already TEXT/unbounded so we skip the ALTER entirely.
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driver = is_string($driverRaw) ? $driverRaw : '';
+            if ($driver === 'mysql') {
+                try {
+                    $alter = $db->prepare("ALTER TABLE webhooks MODIFY secret TEXT NOT NULL");
+                    $alter->execute();
+                } catch (\PDOException $e) {
+                    $sqlstate = (string)($e->errorInfo[0] ?? '');
+                    $msg = $e->getMessage();
+                    $isTableMissing = $sqlstate === '42S02'
+                        || stripos($msg, "doesn't exist") !== false;
+                    if (!$isTableMissing) {
+                        throw $e;
+                    }
+                    // Table doesn't exist — the probe below will return early too.
+                }
+            }
+
             try {
                 $probe = $db->query("SELECT secret FROM webhooks LIMIT 1");
                 if ($probe === false) return;

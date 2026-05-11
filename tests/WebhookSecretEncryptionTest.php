@@ -16,9 +16,9 @@ use PHPUnit\Framework\TestCase;
  *   - Legacy plaintext (pre-v3.27.7 rows that the migration would not yet
  *     have rewritten) must continue to flow through the reader as-is so
  *     the existing webhook keeps signing correctly.
- *   - A different app_secret must fail decrypt (returns empty) — proves
+ *   - A different app_secret must fail decrypt (returns null) — proves
  *     the GCM tag is bound to the key.
- *   - Tampered ciphertext must fail decrypt (returns empty) — proves the
+ *   - Tampered ciphertext must fail decrypt (returns null) — proves the
  *     GCM tag is checked.
  *   - Empty app_secret must throw on encrypt + on decrypt of a real
  *     envelope (plaintext passthrough is fine to keep working).
