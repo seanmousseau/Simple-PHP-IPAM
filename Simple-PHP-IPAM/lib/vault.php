@@ -195,3 +195,63 @@ function ipam_vault_fingerprint(string $rawKey): string
 {
     return substr(hash('sha256', $rawKey), 0, 8);
 }
+
+/**
+ * v3.27.8 (Bug E) — three-state report on the install's vault-key envelope.
+ *
+ * Pre-fix the rest of the codebase asked a single binary question
+ * ("does ipam_setting('backup_vault_key') unwrap cleanly?") and treated
+ * any failure mode as "no envelope". That meant the "No vault key
+ * configured yet" card on the Destinations tab silently lit up whenever
+ * the bootstrap_key had drifted from the one used to write the envelope,
+ * even though the operator HAD set a key — the system just couldn't
+ * read it. The contradiction surfaced as "no key" banner above a
+ * destinations table still showing per-row 'Stored key' badges.
+ *
+ * This helper distinguishes the three real states so callers can render
+ * a diagnostic banner for `unreadable` without touching the present /
+ * absent paths.
+ *
+ *   - absent     → no envelope row in `settings`
+ *   - present    → envelope row + unwrap succeeds with current bootstrap_key
+ *   - unreadable → envelope row exists but unwrap fails. Error message is
+ *                  the unwrap exception text (already operator-safe — see
+ *                  ipam_vault_unwrap()'s contract: never echoes envelope
+ *                  bytes or partial plaintext).
+ *
+ * v3.27.8 deliberately ships no in-band "Replace vault key" affordance
+ * for the unreadable state — recovery is documented in
+ * docs/upgrading.md §vault-recovery and goes through `config.php`
+ * directly. Adding an in-app overwrite while the operator can't prove
+ * key custody is a wider design decision than this hotfix scopes.
+ *
+ * @return array{state:'absent'|'present'|'unreadable', envelope_present:bool, error_message:?string}
+ */
+function ipam_vault_status(): array
+{
+    $envelope = '';
+    try {
+        $raw = ipam_setting('backup_vault_key', '');
+        $envelope = is_string($raw) ? $raw : '';
+    } catch (\Throwable) {
+        $envelope = '';
+    }
+
+    if ($envelope === '') {
+        return ['state' => 'absent', 'envelope_present' => false, 'error_message' => null];
+    }
+
+    try {
+        ipam_vault_unwrap($envelope, ipam_bootstrap_key());
+        return ['state' => 'present', 'envelope_present' => true, 'error_message' => null];
+    } catch (\Throwable $e) {
+        // Surface the helper's own message — it's intentionally
+        // operator-facing and never echoes envelope/plaintext bytes.
+        error_log('[ipam_vault_status] unreadable envelope: ' . $e->getMessage());
+        return [
+            'state'            => 'unreadable',
+            'envelope_present' => true,
+            'error_message'    => $e->getMessage(),
+        ];
+    }
+}
