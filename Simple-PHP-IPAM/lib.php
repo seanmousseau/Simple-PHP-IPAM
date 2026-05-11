@@ -9201,10 +9201,19 @@ function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $confi
             //     this install has no app_secret) — it must NOT kill the whole
             //     dispatch batch. Wrap in try/catch + record-and-continue per
             //     PR #1148 CR.
+            // CR review (PR #1148): the function signature defaults
+            // $config to [] for older 3-arg call sites. Fall back to the
+            // global bootstrap config (set by init.php) so app_secret is
+            // available — it's a config.php-only key, never in the
+            // settings table, per CLAUDE.md.
+            $appSecret = to_str($config['app_secret']
+                ?? (is_array($GLOBALS['config'] ?? null)
+                    ? ($GLOBALS['config']['app_secret'] ?? '')
+                    : ''));
             try {
                 $secretPlain = ipam_webhook_decrypt_secret(
                     (string)$hook['secret'],
-                    to_str($config['app_secret'] ?? '')
+                    $appSecret
                 );
             } catch (\RuntimeException $e) {
                 $db->prepare(

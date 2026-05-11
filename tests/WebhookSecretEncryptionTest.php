@@ -105,12 +105,15 @@ class WebhookSecretEncryptionTest extends TestCase
     public function testTamperedCiphertextReturnsNull(): void
     {
         $enc = ipam_webhook_encrypt_secret('shh', $this->appSecret());
-        // Flip a byte in the middle of the b64 payload (the body, not the prefix).
-        $tampered = substr_replace($enc, 'X', 20, 1);
-        if ($tampered === $enc) {
-            // If we happened to overwrite with the same char, flip another.
-            $tampered = substr_replace($enc, 'Y', 21, 1);
-        }
+        // Flip a byte in the middle of the b64 payload (the body, not the
+        // prefix). CR review (PR #1148): pick the replacement char based on
+        // what's currently at the position, so the result is GUARANTEED to
+        // differ from the source — no possibility of a flaky test where the
+        // existing char already matched our static replacement.
+        $current = $enc[20];
+        $replacement = ($current === 'X') ? 'Y' : 'X';
+        $tampered = substr_replace($enc, $replacement, 20, 1);
+        $this->assertNotSame($enc, $tampered, 'tamper position 20 must change the byte');
         $this->assertNull(ipam_webhook_decrypt_secret($tampered, $this->appSecret()));
     }
 
