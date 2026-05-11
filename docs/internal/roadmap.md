@@ -14,11 +14,13 @@
 
 | Stream | Span | Status | Anchor |
 |---|---|---|---|
-| **v3.27.x quick-win patches** | v3.27.4, .5, .6 | ✅ **all shipped (2026-05-10)** — cluster closed | §3 |
+| **v3.27.x quick-win patches** | v3.27.4 → .7 | ✅ **all shipped (2026-05-10)** — cluster closed | §3 |
 | **Pass C regression sweep** | one-time | ✅ **complete (2026-05-10)** — 15 findings triaged | §3.5 + `releases/ipam-3.27.6/regression-evidence/passC/PASS-C-SUMMARY.md` |
-| **v3.27.7 hotfix (proposed)** | one release | **decision pending** — Pass C surfaced 1 High (webhook secret plaintext at rest) | §3.6 |
+| **v3.27.8 — backup/restore bug fixes** | one hotfix | **scoped (2026-05-10 chat)** — 4 bugs from post-deploy CDP diagnosis + drop silent plaintext fallback | §3.7 |
 | **Test-tooling baseline** | v3.28.0 | scoped — see `test-improvements.md` | §4 |
-| **Step-up coverage sweep (new)** | v3.28.1 or v3.29.0 | **decision pending** — Pass C bundle (F-S3-02 / F-S5-01 / F-S7-01) | §4.5 |
+| **Step-up coverage sweep** | v3.28.x or v3.29.0 | **decision pending** — Pass C bundle (F-S3-02 / F-S5-01 / F-S7-01) | §4.5 |
+| **Legacy backup writer retirement** | v3.28.x | **scoped (2026-05-10 chat)** — disable `app_secret` backup encryption mode + Deprecation banner; reader stays | §4.6 + `decrypt-tool-test-plan.md` |
+| **Backup architecture cold break** | v4.0.0 | **scoped (2026-05-10 chat)** — logical-only writer + reader, IPAMBKP3-only, `upgrade.sh` blocks on legacy `backup_runs` rows with `--accept-legacy-backup-loss` override | §6.x + `decrypt-tool-test-plan.md` |
 | **Code-quality refactor** | v3.29.0 → v3.31.0 | 87 issues filed, all open | `code_quality_review.md` §9 |
 | **UX overhaul** | v3.32.0 → v3.36.0 | 82 issues filed, all open | `ux_overhaul.md` §9 |
 | **Backup overhaul** | v3.21–v3.27 | mostly shipped; 1 doc-debt item left | `backup_overhaul.md` §10 |
@@ -120,16 +122,41 @@ Same-day hotfix off v3.27.4. Added `data-1p-ignore`, `data-lpignore`, `data-bwig
 
 **Status:** ✅ shipped 2026-05-10. **Final v3.27.x release.** Closes the cluster.
 
-### v3.27.7 — Pass C hotfix (PROPOSED — pending decision)
+### v3.27.7 — Pass C hotfix (shipped 2026-05-10)
 
-**Theme:** "F-S3-01 — webhook signing secret stored plaintext at rest is a v3.24–v3.27 vault-relocation miss; ship now or hold?"
+**Theme:** "F-S3-01 — webhook signing secret stored plaintext at rest is a v3.24–v3.27 vault-relocation miss; ship now or hold?" → Option C taken. Shipped same day.
 
-**Scope (if approved):**
-- Migrate `webhooks.secret` → `webhooks.secret_enc` using vault key with `purpose="webhook-secret"` (HKDF-derived, matching v3.27 vault key model).
-- One-shot upgrade migration encrypts existing rows; drops plaintext column.
-- Round-trip test (which then becomes a v3.28.0 fixture).
+**Scope (shipped):**
+- Webhook signing secret encrypted at rest via `$2W$` AES-GCM envelope (mirrors v3.6.0 TOTP). No schema rename — column stays `webhooks.secret`, only stored format changes. Migration defensively re-encrypts any existing plaintext rows; all deployed targets had 0 webhooks so the migration was no-op in practice.
+- CSP-blocked inline-handler regression: 10 sites converted to `data-confirm` / `data-submit-on-change` / `data-stop-propagation` delegated handlers in `assets/app.js`. Operator-reported via the Restore-tab destination picker dropdown silently doing nothing on prod.
+- MySQL `webhooks.secret` widened to TEXT (envelope overflows VARCHAR(255)).
+- 14/14 CI checks green, 13/13 CR threads resolved across 4 review rounds.
 
-**Status:** **decision pending.** See §3.6 for the three options Sean has to choose between (hold for v3.28.x / hotfix now / bundle in v3.28.0 carve-out). Trade-off captured in `releases/ipam-3.27.6/regression-evidence/passC/PASS-C-SUMMARY.md` §"Recommended v3.28.0 scope adjustment".
+**Final state:** tag `v3.27.7`, merge `576660a`, bundle SHA `92f01cbe…`. Deployed to all 7 targets (demo, prod, 4 testing, marketing). `demo_gate.php` cache-buster gap caught post-deploy + hot-patched + source fix on dev (`f969d37`) — closed but not bumped.
+
+---
+
+### v3.27.8 — Backup/restore bug cluster (PROPOSED 2026-05-10 chat)
+
+**Theme:** "v3.27.7 deploy revealed backup architecture is in worse shape than v3.27.x patches suggested. Stabilize disaster recovery before any further v3.28+ work."
+
+Origin: post-v3.27.7-deploy CDP session with Sean against the SQLite test instance surfaced four distinct bugs + a silent-failure pattern that needs to land in a focused hotfix.
+
+**Scope (locked):**
+
+| # | Bug | Root cause | Fix |
+|---|---|---|---|
+| A | Restore tab → Verify/Delete → unstyled `backup_run_detail.php` page | The endpoint is a drawer-partial by design (`Returns the drawer body HTML for the matching backup_runs row`). History tab uses `data-drawer-url`; Restore tab uses `<a href>` → loads the partial as a full page with no `page_header()`. | Convert `views/backup_admin_restore.php:125` from `<a href>` to drawer-pattern button matching History tab line 227. |
+| B | Restore-tab "Encryption" badge mislabels backups in both directions | `lib/backup_admin_restore.php` controller sets `'is_encrypted' => str_ends_with($name, '.enc')`. Filename-suffix-only ignores DB ground truth. `.enc` files with `encryption_mode='unencrypted'` get "IPAMBKP1+" (encrypted-looking); `.ipambkp3` files with `encryption_mode='stored'` get "plaintext". | Controller joins `backup_runs.encryption_mode` + `backup_runs.backup_type` for matched filenames; falls back to filename heuristic only for orphan files (no run row). |
+| C | Restore-tab "Type" column also filename-suffix-based | Same controller. | Same fix as B — use joined DB columns. |
+| D | Backup wrote artifact to S3 but no `backup_runs` row created | Discovered during the CDP session: test instance's S3 bucket had 9 files, `backup_runs` had 11 rows for that destination → 2 rows correctly retention-pruned, **1 file in S3 had no matching DB row** (`…84a8caaf.enc` from 2026-05-11 02:00:45). Orchestrator wrote the file but the INSERT either failed silently or never ran. Same shape as Pass A's silent-failure cluster but in a different write path. | Investigation required: error_log scan, audit_log check around that timestamp, instrumentation of the orchestrator's post-upload DB write. Fix landing in v3.27.8 only if root cause is small; otherwise carve into v3.28.0 with a flag. |
+| E | Destinations tab "Stored key" badge contradicts "No vault key configured" card | `ipam_setting('backup_vault_key')` returns a 104-byte `IPAMWK1.…` envelope, but `ipam_vault_unwrap()` throws "authentication failed" because the bootstrap key has rotated since the envelope was written. `$vaultStatus['present']` falls through to false despite the envelope existing. | Detect the unwrap failure and surface it explicitly: "Vault envelope exists but is unreadable — bootstrap key has changed. Recover the original bootstrap, or replace the vault key (will orphan any encrypted backups in `stored` mode)." |
+
+**Plus the architectural fix:**
+
+- **Drop the silent plaintext fallback.** When a destination is configured for `encryption_mode='stored'` and the vault key is missing or unreadable, the orchestrator currently silently writes plaintext to a `.enc`-suffixed file. v3.27.8 makes this a hard preflight failure with `backup.preflight_failed` audit + visible `backup_runs.status='failed'` row. No more silent regression to plaintext.
+
+**Status:** **scoped, not yet started.** This patch is the predecessor to v3.28.x's bigger writer-retirement work.
 
 ---
 
@@ -216,6 +243,28 @@ Step-up bundle (F-S3-02 / F-S5-01 / F-S7-01) is the headline — three sudo-gati
 
 ---
 
+## 4.6 Legacy backup writer retirement (v3.28.x — PROPOSED 2026-05-10 chat)
+
+**Theme:** "Get users off `app_secret` backup encryption before v4.0.0's cold break, while the in-app reader can still decrypt their old archives."
+
+**Architectural decision (2026-05-10 chat):** the existing 3-way encryption-mode design (`unencrypted` / `app_secret` / `stored`) is the source of most of the disaster-recovery bugs in v3.21–v3.27. The path forward is **two modes** (`unencrypted` / `stored`) with the legacy `app_secret` path retired in stages.
+
+**v3.28.x scope (writer-only retirement):**
+
+- Destination save handler rejects `encryption_mode='app_secret'` on new destinations + on edits to existing destinations that don't already have that mode. **Existing destinations configured for `app_secret` mode can still RUN backups in this release** — that's what makes it a 3-stream change with a soft landing.
+- Wait — re-read. Actually the cleaner cut: **disable the orchestrator's `app_secret` write path entirely.** Destinations configured for `app_secret` get a preflight failure on every backup run with a clear message: "This destination's encryption mode is no longer supported. Either switch to `stored` (vault key required) or `unencrypted`. Existing encrypted backups remain restorable from the Restore tab. See docs/upgrading.md."
+- Reader stays intact — all of IPAMBKP1 / IPAMBKP2 / IPAMBKP3 / IPAMBKU1 / bare `.sql.gz` / bare `.ipambkl1.gz` continue to restore inside IPAM.
+- Persistent warning banner on every Backup/Restore tab: "v4.0.0 will remove legacy backup support entirely. Plan to restore + re-back-up any legacy `.enc` archives you need to keep before upgrading. See docs/upgrading.md §4.0."
+- New `docs/upgrading.md` section covering the v3.x → v4.x migration path.
+- Standalone decrypt tool (`tools/decrypt-backup.php`) gets a thorough manual test per `docs/internal/decrypt-tool-test-plan.md` Pass 1.
+- **CHANGELOG framing:** explicit "Deprecated → Removed in same release" in the Deprecated + Removed categories, per the conversation Sean and I had. Semver wrinkle is acknowledged but acceptable for an install base this size.
+
+**Why this slot, not v3.28.0:** v3.28.0 is locked to test tooling per the path forward. The legacy writer retirement is a behavior change in the app's actual code; it belongs in its own release. Could be v3.28.1 if the gap from v3.28.0 is short, or v3.29.0 if we want more separation.
+
+**Status:** **scoped, slot TBD.** Decrypt-tool test plan exists; everything else is code-level work to be planned via subagents when scheduled.
+
+---
+
 ## 5. v3.29.0 → v3.36.0 — Refactor + UX overhaul streams
 
 Two parallel streams that both close before v4.0.0 by user directive (`ux_overhaul.md` §10, `code_quality_review.md` §10).
@@ -281,7 +330,7 @@ Enterprise authentication (SAML / LDAP / OAuth / SCIM) + global reach (i18n / l1
 
 | Milestone | Theme | Tracking issue | Source |
 |---|---|---|---|
-| **v4.0.0** (#19) | i18n infrastructure (phase 1) — gettext-based catalog, `__()`/`_n()` helpers, per-user locale cascade, language picker | #1064 | `i18n-design.md` |
+| **v4.0.0** (#19) | i18n infrastructure (phase 1) — gettext-based catalog, `__()`/`_n()` helpers, per-user locale cascade, language picker **+ backup cold break** (see §6.7) | #1064 | `i18n-design.md` + `decrypt-tool-test-plan.md` |
 | **v4.1.0** (#29) | i18n extraction sweep (phase 2) — mechanical wrap-every-user-facing-string PR | #1063 | `i18n-design.md` |
 | **v4.2.0** (#65) | OIDC engine swap — retire hand-rolled JWT/JWK, adopt firebase/php-jwt ^6.0 | #417 | `v4-release-stream.md` |
 | **v4.3.0** (#66) | RBAC foundation: `groups` + `user_groups` join tables | #334 | `v4-release-stream.md` |
@@ -323,6 +372,46 @@ Even though multi-tenancy is deferred, every v3.28.0+ design decision must keep 
 ### 6.6 Sustainability checkpoint
 
 Per `v4-release-stream.md` §10: stop or shorten the v4.x stream if (1) no enterprise customer has actually requested SAML/LDAP/SCIM by v4.5/v4.6, OR (2) maintainer burnout signals. Drop v4.11 (Weblate) by default unless community translation interest has materialized.
+
+### 6.7 Backup architecture cold break (v4.0.0 — PROPOSED 2026-05-10 chat)
+
+**Theme:** "Eliminate the backup-system tech debt that's been weighing the project down across v3.21–v3.27."
+
+Bundled into v4.0.0's i18n release because v4.0.0 is the next major version slot and major-version is the right vehicle for breaking changes. The two scopes are independent (one touches the backup code, one touches the rendering layer) so they don't conflict.
+
+**Scope:**
+
+| What goes away | What stays / takes over |
+|---|---|
+| IPAMBKP1 + IPAMBKP2 codecs (writer + reader) | IPAMBKP3 (writer + reader) |
+| SQLite-binary backup type (writer + reader) | IPAMBKL1 logical backup (writer + reader) |
+| `.sql.gz` bare reader path | IPAMBKL1 inside IPAMBKP3 envelope, or unencrypted IPAMBKL1 |
+| `encryption_mode='app_secret'` | `unencrypted` / `stored` only |
+| `backup_type='database'` | `backup_type='logical'` only |
+| In-app restore for legacy `.enc` files | `tools/decrypt-backup.php` standalone tool — Pass 1+2 verified |
+
+**Upgrade gate (`upgrade.sh`):**
+
+```sql
+SELECT count(*) FROM backup_runs
+ WHERE encryption_mode != 'unencrypted'
+   AND filename NOT LIKE '%.ipambkp3'
+   AND status IN ('success', 'retention_pruned');
+```
+
+- If `> 0`: abort upgrade with 3-option message (restore on v3.x first / decrypt offline with the tool / acknowledge data loss with `--accept-legacy-backup-loss`).
+- The flag writes a `settings.legacy_backup_loss_acknowledged_at` marker + an audit row so a future post-mortem has an answer.
+- Block based on `backup_runs` rows, not destination listObjects. Faster, offline-safe. Separate `tools/scan-legacy-files.php` is available for the paranoid operator who wants to scan their destinations directly.
+
+**Migration documentation (must land in v3.28.x, before v4.0.0):**
+
+- `docs/upgrading.md` §4.0 — explicit two-step migration: install v3.x, restore needed backups, upgrade
+- Walkthrough for the standalone decrypt tool on the marketing-site docs page — *recovering a legacy backup when the original install no longer exists*
+- `tools/decrypt-backup.php` gets prominent placement in the v4.0.0 release tarball + release notes headline
+
+**Testing prerequisite:** `docs/internal/decrypt-tool-test-plan.md` Pass 1 (manual, 7 fixtures × 8 cases + 8 cross-cutting) must be 100% green before the v4.0.0 writer-retirement PR opens. Pass 2 (PHPUnit + CI shell) follows in v3.28.x or v3.29.x. Failing test = blocker, no exceptions.
+
+**Why this works for a small install base:** the source-tree complexity savings are significant (collapse 3 encryption modes → 2, 2 backup types → 1, retire ~half the orchestrator and codec code), and the cost is a well-defined two-step upgrade for the long tail. The standalone decrypt tool already exists and already supports every variant — it's our load-bearing escape hatch.
 
 ---
 
