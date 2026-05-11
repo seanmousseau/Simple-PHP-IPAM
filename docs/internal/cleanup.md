@@ -31,6 +31,7 @@ If an item is large (>30 lines diff) or touches multiple files, file it as a GH 
 | Added | Item | Where | Category | Notes |
 |---|---|---|---|---|
 | 2026-05-01 | Canadian English standardization across code, comments, UI strings, docs | Repo-wide | Localization | Deferred to a dedicated localization release stream (no version assigned). Maintainer is in Canada. Today the codebase is mixed British/American (e.g. `colour`, `normalise` British; `Authorization Code` American as it's a spec proper noun). When the localization stream is spun up, audit + sweep in one PR per surface (code, UI, docs) to keep diffs reviewable. Until then, keep CR spelling nits flagged as deliberate-not-applied with a one-line reason — see PR #1061 round 2 |
+| 2026-05-10 | Missing `[3.3.0]` link entry in `CHANGELOG.md` bottom block | `CHANGELOG.md` | Doc drift | Discovered during the v3.27.7 link-block migration (PR #1148, commit c742765). Every other release from v0.10 through v3.27.7 has a corresponding `[X.Y.Z]: …compare/...` entry in the bottom reference block; v3.3.0 has the `## [3.3.0]` section header but no link. Pre-existing gap, not caused by the migration. Single-line addition `[3.3.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.2.0...v3.3.0` (verify the predecessor against `git tag` first). Trivially low-risk; batch with any other future CHANGELOG hygiene before opening an issue |
 
 ## Tracked (in a GH issue)
 
