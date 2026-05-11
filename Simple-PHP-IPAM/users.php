@@ -491,36 +491,36 @@ page_header('Users');
             <?php endif; ?>
 
             <?php if (to_int($u['totp_enabled'] ?? 0) === 1 && to_int($u['id']) !== $self['id']): ?>
-            <form method="post" action="users.php" class="row gap-6">
+            <form method="post" action="users.php" class="row gap-6"
+                  data-confirm="Reset 2FA for <?= e(to_str($u['username'])) ?>?">
               <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
               <input type="hidden" name="action" value="reset_totp">
               <input type="hidden" name="id"     value="<?= to_int($u['id']) ?>">
-              <button type="submit" class="action-pill"
-                onclick="return confirm('Reset 2FA for <?= e(to_str($u['username'])) ?>?')">
+              <button type="submit" class="action-pill">
                 Reset 2FA
               </button>
             </form>
             <?php endif; ?>
 
             <?php if (to_int($u['email_otp_enabled'] ?? 0) === 1 && to_int($u['id']) !== $self['id']): ?>
-            <form method="post" action="users.php" class="row gap-6">
+            <form method="post" action="users.php" class="row gap-6"
+                  data-confirm="Reset Email OTP for <?= e(to_str($u['username'])) ?>?">
               <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
               <input type="hidden" name="action" value="email_otp_reset">
               <input type="hidden" name="id"     value="<?= to_int($u['id']) ?>">
-              <button type="submit" class="action-pill"
-                onclick="return confirm('Reset Email OTP for <?= e(to_str($u['username'])) ?>?')">
+              <button type="submit" class="action-pill">
                 Reset Email OTP
               </button>
             </form>
             <?php endif; ?>
 
             <?php if (($pkCounts[to_int($u['id'])] ?? 0) > 0 && to_int($u['id']) !== $self['id']): ?>
-            <form method="post" action="users.php" class="row gap-6">
+            <form method="post" action="users.php" class="row gap-6"
+                  data-confirm="Delete ALL passkeys for <?= e(to_str($u['username'])) ?>?">
               <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
               <input type="hidden" name="action" value="passkey_reset">
               <input type="hidden" name="id"     value="<?= to_int($u['id']) ?>">
-              <button type="submit" class="action-pill button-danger"
-                onclick="return confirm('Delete ALL passkeys for <?= e(to_str($u['username'])) ?>?')">
+              <button type="submit" class="action-pill button-danger">
                 <?= icon('key') ?> Reset Passkeys
               </button>
             </form>

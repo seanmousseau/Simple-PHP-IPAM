@@ -564,11 +564,11 @@ $mfaMethodLabels = [
       <?php endif; ?>
       <div class="mfa-method-row__actions">
         <?php if ($totpUserEnabled): ?>
-          <form method="post" action="change_password.php#totp" class="mfa-method-row__form">
+          <form method="post" action="change_password.php#totp" class="mfa-method-row__form"
+                data-confirm="Disable authenticator app 2FA? You will be prompted to re-authenticate before the change is applied.">
             <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
             <input type="hidden" name="action" value="disable_totp">
-            <button type="submit" class="action-pill button-danger"
-              onclick="return confirm('Disable authenticator app 2FA? You will be prompted to re-authenticate before the change is applied.')">
+            <button type="submit" class="action-pill button-danger">
               Disable
             </button>
           </form>
@@ -608,11 +608,11 @@ $mfaMethodLabels = [
       <?php endif; ?>
       <div class="mfa-method-row__actions">
         <?php if ($emailOtpUserEnabled): ?>
-          <form method="post" action="change_password.php#email-otp" class="mfa-method-row__form">
+          <form method="post" action="change_password.php#email-otp" class="mfa-method-row__form"
+                data-confirm="Disable Email OTP? You will be prompted to re-authenticate before the change is applied.">
             <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
             <input type="hidden" name="action" value="email_otp_disable">
-            <button type="submit" class="action-pill button-danger"
-              onclick="return confirm('Disable Email OTP? You will be prompted to re-authenticate before the change is applied.')">
+            <button type="submit" class="action-pill button-danger">
               Disable
             </button>
           </form>
@@ -694,7 +694,7 @@ $mfaMethodLabels = [
                 </span>
               </span>
               <form method="post" action="change_password.php#passkeys" class="mfa-passkey-list__form"
-                    onsubmit="return confirm('Remove this passkey?')">
+                    data-confirm="Remove this passkey?">
                 <input type="hidden" name="csrf"          value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action"        value="passkey_delete">
                 <input type="hidden" name="credential_id" value="<?= e((string)to_int($pk['id'])) ?>">

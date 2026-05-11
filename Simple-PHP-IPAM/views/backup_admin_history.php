@@ -243,7 +243,7 @@ $anyFilterActive = $filterDest > 0
             <td><?= $r['size_bytes'] !== null ? number_format(to_int($r['size_bytes'])) : '—' ?></td>
             <td><?= e($duration) ?></td>
             <td title="<?= e($cs) ?>"><?= e($csShort) ?></td>
-            <td class="actions" onclick="event.stopPropagation()">
+            <td class="actions" data-stop-propagation>
               <form method="post" style="display:inline" data-no-drawer>
                 <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="action" value="<?= $isProtected ? 'unprotect_run' : 'protect_run' ?>">

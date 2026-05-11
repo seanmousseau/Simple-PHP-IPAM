@@ -371,6 +371,45 @@
       }
     });
 
+    // --- Confirm dialogs on buttons/inputs (data-confirm on submitter) ---
+    // v3.27.7: replaces inline `onclick="return confirm(...)"` attributes
+    // that the strict CSP (script-src 'self' without script-src-attr) blocked.
+    document.addEventListener("click", function(e) {
+      var t = e.target.closest("[data-confirm-click]");
+      if (!t) return;
+      if (!confirm(t.dataset.confirmClick)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    });
+
+    // --- Auto-submit a form when a select changes (data-submit-on-change) ---
+    // v3.27.7: replaces inline `onchange="this.form.submit()"` on the Restore
+    // tab destination picker (and any future similar control). CSP3 blocks
+    // inline event handlers under our script-src 'self' policy.
+    document.querySelectorAll("[data-submit-on-change]").forEach(function(el) {
+      el.addEventListener("change", function() {
+        if (el.form) el.form.submit();
+      });
+    });
+
+    // --- Click-event stop-propagation (data-stop-propagation) ---
+    // v3.27.7: replaces inline `onclick="event.stopPropagation()"`. Used on
+    // the backup history row's actions cell so that clicking inside the cell
+    // does not trigger the row-level click handler.
+    //
+    // CR review (PR #1148): register in the capture phase + use
+    // stopImmediatePropagation so we beat the document-level drawer-opener
+    // delegate (around line 2214) that runs in bubble phase. Plain
+    // stopPropagation in bubble phase doesn't block sibling document
+    // listeners — capture-phase + immediate is the only combo that does.
+    document.addEventListener("click", function(e) {
+      var stopper = e.target && e.target.closest ? e.target.closest("[data-stop-propagation]") : null;
+      if (!stopper) return;
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+    }, true);
+
     // --- Loading state on POST form submit (#507) ---
     document.addEventListener("submit", function(e) {
       if (e.defaultPrevented) return;

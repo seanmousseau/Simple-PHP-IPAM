@@ -562,7 +562,12 @@ CREATE TABLE IF NOT EXISTS webhooks (
   id                    BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
   name                  VARCHAR(255) NOT NULL,
   url                   TEXT NOT NULL,
-  secret                VARCHAR(255) NOT NULL,
+  -- v3.27.7 (F-S3-01): widened from VARCHAR(255) to TEXT to fit the AES-GCM
+  -- envelope ('$2W$' + base64(IV[12]+tag[16]+ciphertext[N])). For a 255-char
+  -- secret the envelope is ~384 chars; widening to TEXT avoids any future
+  -- truncation regardless of secret length. SQLite + Postgres were already
+  -- TEXT; only MySQL needed the change.
+  secret                TEXT NOT NULL,
   events                TEXT NOT NULL,
   is_active             TINYINT(1) NOT NULL DEFAULT 1,
   created_at            DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
@@ -854,6 +859,7 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.26.0-login-attempts-action'),
   ('3.26.0-retire-legacy-backup'),
   ('3.26.0-vault-key-to-settings'),
-  ('3.27.0-step-up-policy-settings');
+  ('3.27.0-step-up-policy-settings'),
+  ('3.27.7-webhook-secret-encrypt');
 
 SET FOREIGN_KEY_CHECKS = 1;
