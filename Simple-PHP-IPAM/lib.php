@@ -9304,8 +9304,11 @@ function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $confi
             );
             $wUpd->execute([':st' => $result['status'], ':id' => $hook['id'], ':now' => gmdate('Y-m-d H:i:s')]);
         }
-    } catch (\Throwable) {
-        // Dispatch must never surface to the user
+    } catch (\Throwable $e) {
+        // Dispatch must never surface to the user, but a swallowed throwable
+        // here masks PDO/JSON failures and future regressions. Leave an
+        // operator-recoverable signal in the server log (Pass C F-S6/S-006).
+        error_log('[webhook_dispatch] ' . $e->getMessage());
     }
 }
 
