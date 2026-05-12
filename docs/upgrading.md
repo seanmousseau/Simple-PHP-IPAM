@@ -116,6 +116,21 @@ The backup is left in place after a successful upgrade. You can remove it manual
 
 ## Version-specific upgrade notes
 
+### v3.27.9
+
+Single-bug hotfix plus a small Restore-tab UX change. No schema change, no migration. Drop-in upgrade from v3.27.x — no operator action required for the upgrade itself.
+
+**Bug fixed:** prior versions (v3.26.0 through v3.27.8) showed a dashboard / settings banner reading **"config.php cleanup needed — N non-bootstrap key(s) found … Remove them manually: `bootstrap_key`"**. That advice was wrong. `bootstrap_key` is auto-generated into `config.php` by the application and is **required at runtime** to unwrap the `backup_vault_key` envelope stored in the database; removing it breaks decryption of every IPAMBKP3 stored-mode backup on the install. v3.27.9 stops flagging it. No action needed if you never acted on the banner.
+
+**If you already removed `bootstrap_key` from `config.php`:**
+
+1. **Best — restore the original value.** Check `config.php.bak` / `config.php.bak-v3upgrade` or any pre-removal backup for the line `'bootstrap_key' => '...'` and paste it back into `config.php` (top-level array key, alongside `app_secret`). The vault then unwraps cleanly and nothing further is needed.
+2. **If the original value is gone — re-key the vault.** Visit **Admin → Backups → Destinations**. The vault-status badge will read **unreadable** (envelope exists, can't be unwrapped — see [Vault recovery (unreadable envelope)](#vault-recovery)). Follow the recovery procedure to generate a fresh `backup_vault_key`. **Backups encrypted under the old key are no longer decryptable** — download/restore anything you still need from an older `app_secret`-keyed archive first, or accept the loss of those stored-mode archives.
+
+Either way, on the next page load the application will silently regenerate a `bootstrap_key` in `config.php` if one is missing — option 2 just makes the new key match a freshly-generated envelope instead of the orphaned old one.
+
+**One UX change:** the Restore tab's destination-browse list now sorts backups newest-first by default (previously the order depended on the destination type).
+
 ### v3.27.8
 
 Backup/restore stabilization hotfix. No schema change, no migration. Drop-in upgrade from v3.27.x — no operator action required for the upgrade itself.

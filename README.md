@@ -12,14 +12,12 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.27.8
+## What's new in v3.27.9
 
-Backup/restore stabilization hotfix off `main` (2026-05-11). Five narrowly-scoped PRs closing the four operator-visible bugs surfaced during v3.27.7 verification plus one UX gap surfaced during the investigation. No schema change, no migration.
+Single-bug hotfix off `main` (2026-05-11) plus one small Restore-tab UX tweak. No schema change, no migration.
 
-- **Restore tab now tells the truth about every archive.** Verify/Delete opens the styled drawer (was rendering as an unstyled full page). "Encryption" and "Type" columns reflect `backup_runs` database state instead of guessing from filename suffix. Orphan files — present on the destination but with no DB row — are clearly labelled.
-- **Destinations tab vault-status badge has three states** — absent / present / unreadable — so an envelope that exists but cannot be unwrapped (bootstrap key rotated since write) surfaces a red diagnostic banner with a link to `docs/upgrading.md §v3.27.8` instead of contradicting itself.
-- **Destination card surfaces the most recent failed run's reason.** Operators see failing destinations at a glance without leaving the Destinations tab.
-- **Backup orchestration diagnostics.** New `backup.run_recorded` audit verb at the post-INSERT step; the existing `db.restore` verb now also fires on the IPAMBKL1 logical-restore path (previously SQL-text path only). Lets future investigations distinguish a genuine orchestrator orphan from a restore-induced one.
+- **`config.php` cleanup banner no longer tells you to delete `bootstrap_key`.** That key is auto-generated into `config.php` and is required at runtime to decrypt your stored-mode backups — the banner was wrong to flag it, and removing it broke backup decryption. If you already acted on the old banner, see `docs/upgrading.md §v3.27.9` for recovery.
+- **Restore tab lists backups newest-first by default.** The most recent backup is almost always the one you want; the order no longer depends on the destination type.
 
 [Full changelog →](CHANGELOG.md)
 

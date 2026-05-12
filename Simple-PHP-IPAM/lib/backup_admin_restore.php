@@ -320,6 +320,12 @@ function ipam_backup_admin_restore_handle(\PDO $db, array $config): array
                 $run = $runIndex[$obj['name']] ?? null;
                 $browseEntries[] = ipam_restore_browse_entry_derive($obj, $run);
             }
+            // Newest-first is the natural default for a restore picker — the
+            // most recent backup is almost always the one an operator wants.
+            // Sort here so the order is consistent regardless of destination
+            // type (the per-client listObjects() implementations don't all
+            // sort the same way: LocalBackupClient does, S3/SFTP don't).
+            $browseEntries = ipam_restore_browse_sort_newest_first($browseEntries);
         } catch (Throwable $e) {
             $browseError = 'Could not list backups for this destination: ' . $e->getMessage();
         }
@@ -341,6 +347,36 @@ function ipam_backup_admin_restore_handle(\PDO $db, array $config): array
         'browseError'    => $browseError,
         'browseDegradedDb' => $degraded,
     ];
+}
+
+/**
+ * v3.27.9 — sort restore-tab browse entries newest-first by `last_modified`.
+ *
+ * Pure (no DB, no I/O) so it's unit-testable. `last_modified` strings are
+ * not uniformly formatted across BackupClient implementations (Local/SFTP
+ * emit `Y-m-d\TH:i:s\Z`, S3 stringifies a DateTime as `Y-m-d H:i:s`), so we
+ * parse with strtotime() rather than string-compare. Unparseable values sort
+ * to the end (treated as timestamp 0). `name` (ascending) is the tie-breaker
+ * for equal timestamps so the order is fully deterministic.
+ *
+ * @param list<array<string,mixed>> $entries
+ * @return list<array<string,mixed>>
+ */
+function ipam_restore_browse_sort_newest_first(array $entries): array
+{
+    usort($entries, static function (array $a, array $b): int {
+        $la = $a['last_modified'] ?? null;
+        $lb = $b['last_modified'] ?? null;
+        $ta = is_string($la) ? (strtotime($la) ?: 0) : 0;
+        $tb = is_string($lb) ? (strtotime($lb) ?: 0) : 0;
+        if ($ta !== $tb) {
+            return $tb <=> $ta;
+        }
+        $na = is_string($a['name'] ?? null) ? $a['name'] : '';
+        $nb = is_string($b['name'] ?? null) ? $b['name'] : '';
+        return strcmp($na, $nb);
+    });
+    return $entries;
 }
 
 /**

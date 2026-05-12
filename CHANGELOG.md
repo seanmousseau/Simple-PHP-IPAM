@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.27.9] - 2026-05-11
+
+Single-bug hotfix off `main` plus one small Restore-tab UX tweak. No schema change, no migration.
+
+### Fixed
+
+- **`config.php` cleanup banner no longer flags `bootstrap_key`** (Bug). `ipam_config_stale_keys()` builds the dashboard / settings "config.php cleanup needed — remove these keys manually" banner from a hardcoded whitelist of keys the app still reads. `bootstrap_key` — the vault-wrapping key auto-generated into `config.php` since v3.26.0 (#1098), required at runtime by `ipam_bootstrap_key()` to unwrap the `backup_vault_key` envelope stored in the `settings` table — was missing from that whitelist. Every install upgraded past v3.26.0 nagged the admin to delete it, and any admin who complied lost the ability to read their backup encryption key (every IPAMBKP3 stored-mode backup became undecryptable until the key was restored or the vault re-keyed). Added `bootstrap_key` to the whitelist in `lib.php`. Test coverage: `tests/ConfigStaleKeysTest.php`. **If you already removed `bootstrap_key`: see `docs/upgrading.md §v3.27.9`.**
+
+### Changed
+
+- **Restore tab now lists enumerated backups newest-first by default** (UX). When browsing a destination's contents on the Restore tab, the backup picker previously rendered files in whatever order the destination client's `listObjects()` returned them (`LocalBackupClient` already sorted newest-first; the S3 and SFTP clients did not). The most recent backup is almost always the one an operator wants to restore, so the controller now sorts the browse list newest-first uniformly via `ipam_restore_browse_sort_newest_first()` in `lib/backup_admin_restore.php` regardless of destination type. Test coverage: `tests/RestoreBrowseSortTest.php`.
+
 ## [3.27.8] - 2026-05-11
 
 Backup/restore stabilization hotfix off `main`. Five narrowly-scoped PRs closing the four operator-visible bugs surfaced during the v3.27.7 verification pass plus one UX gap surfaced during their investigation. No schema change, no migration. Theme: "Stop the silent failures. Make the Restore tab tell the truth about every archive."
@@ -1729,6 +1741,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.27.9]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.8...v3.27.9
 [3.27.8]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.7...v3.27.8
 [3.27.7]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.6...v3.27.7
 [3.27.6]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.5...v3.27.6
