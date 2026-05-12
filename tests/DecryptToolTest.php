@@ -70,9 +70,18 @@ class DecryptToolTest extends TestCase
         return [$code, $stdout, $stderr];
     }
 
-    public function testHelpFlagExitsTwo(): void
+    public function testHelpFlagExitsZeroWithUsageOnStdout(): void
     {
-        [$code, , $stderr] = $this->runTool(['--help']);
+        // v3.28.0 (#1165): --help is a success path — usage to STDOUT, exit 0.
+        [$code, $stdout, $stderr] = $this->runTool(['--help']);
+        $this->assertSame(0, $code);
+        $this->assertStringContainsString('usage:', $stdout);
+        $this->assertSame('', $stderr);
+    }
+
+    public function testNoArgsExitsTwoWithUsage(): void
+    {
+        [$code, , $stderr] = $this->runTool([]);
         $this->assertSame(2, $code);
         $this->assertStringContainsString('usage:', $stderr);
     }
@@ -226,5 +235,138 @@ class DecryptToolTest extends TestCase
         ]);
         $this->assertSame(2, $code);
         $this->assertStringContainsString('--vault-key', $stderr);
+    }
+
+    // ── v3.28.0 (#1165) hardening regression tests ───────────────────────
+
+    /** Micro-fixture: encrypt a known ~50-byte plaintext under app_secret (IPAMBKP2). */
+    private function microV2(string $appSecret): string
+    {
+        $src = $this->tmpDir . '/micro-src-' . bin2hex(random_bytes(3)) . '.bin';
+        $enc = $this->tmpDir . '/micro-' . bin2hex(random_bytes(3)) . '.enc';
+        file_put_contents($src, str_repeat('AB', 25)); // 50 bytes
+        backup_encrypt_stream($src, $enc, $appSecret);
+        return $enc;
+    }
+
+    public function testStdoutOutputStreamsPlaintext(): void
+    {
+        $secret = bin2hex(random_bytes(16));
+        $enc    = $this->microV2($secret);
+        [$code, $stdout, $stderr] = $this->runTool(['--in', $enc, '--out', '-', '--app-secret', $secret]);
+        $this->assertSame(0, $code, "stderr: $stderr");
+        $this->assertSame(str_repeat('AB', 25), $stdout);
+        // No summary line should pollute stdout when -- the stream IS the output.
+        $this->assertStringNotContainsString('decrypted', $stdout);
+    }
+
+    public function testOutputCollisionRefusedWithoutForce(): void
+    {
+        $secret = bin2hex(random_bytes(16));
+        $enc    = $this->microV2($secret);
+        $dst    = $this->tmpDir . '/exists.bin';
+        file_put_contents($dst, 'pre-existing bytes');
+
+        [$code, , $stderr] = $this->runTool(['--in', $enc, '--out', $dst, '--app-secret', $secret]);
+        $this->assertSame(2, $code);
+        $this->assertStringContainsString('--force', $stderr);
+        // Untouched.
+        $this->assertSame('pre-existing bytes', file_get_contents($dst));
+
+        // ...and --force overwrites.
+        [$code2] = $this->runTool(['--in', $enc, '--out', $dst, '--force', '--app-secret', $secret]);
+        $this->assertSame(0, $code2);
+        $this->assertSame(str_repeat('AB', 25), file_get_contents($dst));
+    }
+
+    public function testConflictingCredentialsExitsTwo(): void
+    {
+        $secret = bin2hex(random_bytes(16));
+        $enc    = $this->microV2($secret);
+        [$code, , $stderr] = $this->runTool([
+            '--in', $enc, '--out', $this->tmpDir . '/d.bin',
+            '--app-secret', $secret,
+            '--vault-key', base64_encode(random_bytes(BACKUP_VAULT_KEY_LEN)),
+        ]);
+        $this->assertSame(2, $code);
+        $this->assertStringContainsString('at most one', $stderr);
+    }
+
+    public function testWrongCredentialTypeOnStoredArchiveExitsTwo(): void
+    {
+        // IPAMBKP3 stored archive but operator passes --app-secret.
+        $src = $this->tmpDir . '/s.bin';
+        $enc = $this->tmpDir . '/s.bkp3';
+        file_put_contents($src, 'abcdef');
+        backup_encrypt_stream_v3($src, $enc, BACKUP_V3_MODE_STORED, null, random_bytes(BACKUP_VAULT_KEY_LEN));
+
+        [$code, , $stderr] = $this->runTool(['--in', $enc, '--out', $this->tmpDir . '/d.bin', '--app-secret', bin2hex(random_bytes(16))]);
+        $this->assertSame(2, $code);
+        $this->assertStringContainsString('different format', $stderr);
+        $this->assertFileDoesNotExist($this->tmpDir . '/d.bin');
+    }
+
+    public function testBareGzipPassthrough(): void
+    {
+        $plain = str_repeat('SQLite-ish bytes ', 10);
+        $gz    = gzencode($plain, 9);
+        $this->assertIsString($gz);
+        $in  = $this->tmpDir . '/bare.sql.gz';
+        $out = $this->tmpDir . '/bare.out';
+        file_put_contents($in, $gz);
+
+        [$code, $stdout, $stderr] = $this->runTool(['--in', $in, '--out', $out]);
+        $this->assertSame(0, $code, "stderr: $stderr");
+        $this->assertSame($gz, file_get_contents($out)); // verbatim copy
+        $this->assertStringContainsString('decrypted', $stdout);
+    }
+
+    public function testCredentialSuppliedToNoCredArchiveExitsTwo(): void
+    {
+        $src = $this->tmpDir . '/u.bin';
+        $enc = $this->tmpDir . '/u.bku1';
+        file_put_contents($src, 'no-cred wrapper');
+        backup_unencrypted_wrap_stream($src, $enc);
+
+        [$code, , $stderr] = $this->runTool(['--in', $enc, '--out', $this->tmpDir . '/d.bin', '--app-secret', bin2hex(random_bytes(16))]);
+        $this->assertSame(2, $code);
+        $this->assertStringContainsString('no credential', $stderr);
+    }
+
+    public function testEmptyInputFileExitsTwo(): void
+    {
+        $in = $this->tmpDir . '/empty.bin';
+        file_put_contents($in, '');
+        [$code, , $stderr] = $this->runTool(['--in', $in, '--out', $this->tmpDir . '/d.bin', '--app-secret', 'x']);
+        $this->assertSame(2, $code);
+        $this->assertStringContainsString('empty', $stderr);
+    }
+
+    public function testTamperedV2ArchiveLeavesNoPartialOutput(): void
+    {
+        $secret = bin2hex(random_bytes(16));
+        $enc    = $this->microV2($secret);
+        $bytes  = file_get_contents($enc);
+        $this->assertIsString($bytes);
+        // flip a byte in the ciphertext region (past the magic+salt+iv header).
+        $pos = intdiv(strlen($bytes), 2);
+        $bytes[$pos] = chr(ord($bytes[$pos]) ^ 0xFF);
+        $tampered = $this->tmpDir . '/tampered.enc';
+        file_put_contents($tampered, $bytes);
+
+        $out = $this->tmpDir . '/should-not-exist.bin';
+        [$code, , $stderr] = $this->runTool(['--in', $tampered, '--out', $out, '--app-secret', $secret]);
+        $this->assertSame(3, $code);
+        $this->assertStringContainsString('decrypt failed', $stderr);
+        $this->assertFileDoesNotExist($out);
+    }
+
+    public function testUnrecognisedMagicExitsTwo(): void
+    {
+        $in = $this->tmpDir . '/garbage.bin';
+        file_put_contents($in, "\x00\x01\x02NOT-A-BACKUP\xff\xfe");
+        [$code, , $stderr] = $this->runTool(['--in', $in, '--out', $this->tmpDir . '/d.bin']);
+        $this->assertSame(2, $code);
+        $this->assertStringContainsString('unrecognised', $stderr);
     }
 }
