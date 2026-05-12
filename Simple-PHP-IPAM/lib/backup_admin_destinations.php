@@ -492,6 +492,15 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
             if ($action === 'vault_set' || $action === 'vault_replace') {
                 $stepUpHiddenFields['vault_mode']    = to_str($_POST['vault_mode']    ?? 'generate');
                 $stepUpHiddenFields['vault_key_b64'] = to_str($_POST['vault_key_b64'] ?? '');
+                // v3.28.0: round-trip the orphan-acknowledgement so a
+                // generate/replace the operator already confirmed survives
+                // the step-up round-trip — including the OIDC re-auth bounce
+                // (the prompt partial stashes $stepUpHiddenFields into the
+                // OIDC-pending slot). Without this the resumed POST loses
+                // the ack and the orphan gate refuses again.
+                if (to_str($_POST['confirm_orphan_backups'] ?? '') === '1') {
+                    $stepUpHiddenFields['confirm_orphan_backups'] = '1';
+                }
             }
             $stepUpDescription = $action === 'vault_reveal'
                 ? 'Re-authenticate to reveal the raw backup vault key. The reveal is rate-limited and audit-logged.'
