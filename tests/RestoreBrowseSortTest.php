@@ -31,12 +31,25 @@ class RestoreBrowseSortTest extends TestCase
     public function testUnparseableTimestampsSortToEnd(): void
     {
         $entries = [
-            ['name' => 'bad',  'last_modified' => 'not-a-date'],
+            ['name' => 'zbad', 'last_modified' => 'not-a-date'],
             ['name' => 'good', 'last_modified' => '2026-05-10T12:00:00Z'],
-            ['name' => 'missing'], // no last_modified key at all
+            ['name' => 'amiss'], // no last_modified key at all
         ];
         $sorted = ipam_restore_browse_sort_newest_first($entries);
-        $this->assertSame('good', $sorted[0]['name']);
+        // Parseable entry first; the two timestamp-0 entries follow, ordered
+        // by the `name` tie-breaker (amiss < zbad).
+        $this->assertSame(['good', 'amiss', 'zbad'], array_column($sorted, 'name'));
+    }
+
+    public function testEqualTimestampsBreakTieByName(): void
+    {
+        $entries = [
+            ['name' => 'charlie', 'last_modified' => '2026-05-10T12:00:00Z'],
+            ['name' => 'alpha',   'last_modified' => '2026-05-10T12:00:00Z'],
+            ['name' => 'bravo',   'last_modified' => '2026-05-10T12:00:00Z'],
+        ];
+        $sorted = ipam_restore_browse_sort_newest_first($entries);
+        $this->assertSame(['alpha', 'bravo', 'charlie'], array_column($sorted, 'name'));
     }
 
     public function testEmptyListIsUnchanged(): void

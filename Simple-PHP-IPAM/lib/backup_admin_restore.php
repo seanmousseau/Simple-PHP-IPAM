@@ -356,7 +356,8 @@ function ipam_backup_admin_restore_handle(\PDO $db, array $config): array
  * not uniformly formatted across BackupClient implementations (Local/SFTP
  * emit `Y-m-d\TH:i:s\Z`, S3 stringifies a DateTime as `Y-m-d H:i:s`), so we
  * parse with strtotime() rather than string-compare. Unparseable values sort
- * to the end (treated as timestamp 0).
+ * to the end (treated as timestamp 0). `name` (ascending) is the tie-breaker
+ * for equal timestamps so the order is fully deterministic.
  *
  * @param list<array<string,mixed>> $entries
  * @return list<array<string,mixed>>
@@ -368,7 +369,12 @@ function ipam_restore_browse_sort_newest_first(array $entries): array
         $lb = $b['last_modified'] ?? null;
         $ta = is_string($la) ? (strtotime($la) ?: 0) : 0;
         $tb = is_string($lb) ? (strtotime($lb) ?: 0) : 0;
-        return $tb <=> $ta;
+        if ($ta !== $tb) {
+            return $tb <=> $ta;
+        }
+        $na = is_string($a['name'] ?? null) ? $a['name'] : '';
+        $nb = is_string($b['name'] ?? null) ? $b['name'] : '';
+        return strcmp($na, $nb);
     });
     return $entries;
 }
