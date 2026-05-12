@@ -27,7 +27,7 @@ declare(strict_types=1);
  *                           IPAM_BACKUP_PASSPHRASE env if --passphrase
  *                           is omitted; never echoed)
  *   IPAMBKU1             →  no credential (integrity only)
- *   bare gzip / IPAMBKL1 / SQL text → no credential (verbatim copy)
+ *   bare gzip / IPAMBKL1 / SQL text / raw SQLite file → no credential (verbatim copy)
  *
  * Output:
  *   --out <path>   write decrypted plaintext to <path> (refuses to
@@ -77,7 +77,7 @@ function dbu_usage(int $code = 2): never
 usage: php tools/decrypt-backup.php --in <path> --out <path|-> [credentials] [--force]
 
   --in <path>           Input archive (IPAMBKP1/2/3, IPAMBKU1, or a bare
-                        gzip / IPAMBKL1 / SQL file).
+                        gzip / IPAMBKL1 / SQL / raw SQLite file).
   --out <path>          Output path for decrypted plaintext. Use "-" for STDOUT.
   --force               Allow --out to overwrite an existing non-empty file.
   --app-secret <hex>    Required for IPAMBKP1 / IPAMBKP2 archives.
@@ -202,7 +202,12 @@ $sfh = @fopen($inPath, 'rb');
 if ($sfh === false) {
     dbu_die("cannot open input file: $inPath", 3);
 }
-$head = (string) fread($sfh, 9);
+// 16 bytes: enough for the 8-byte IPAMBKP1/2/3 / IPAMBKU1 magic plus the
+// IPAMBKP3 mode byte at offset 8, gzip's 2-byte magic, and the 16-byte
+// "SQLite format 3\0" header of a bare SQLite file (a raw `L0` legacy local
+// backup). A 9-byte read truncated the SQLite header, so such files used to
+// be rejected as "unrecognised" rather than passed through verbatim.
+$head = (string) fread($sfh, 16);
 fclose($sfh);
 
 if ($head === '') {

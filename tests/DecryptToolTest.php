@@ -369,4 +369,22 @@ class DecryptToolTest extends TestCase
         $this->assertSame(2, $code);
         $this->assertStringContainsString('unrecognised', $stderr);
     }
+
+    public function testBareSqliteFileCopiedVerbatim(): void
+    {
+        // A raw SQLite file (the legacy "local backup" format — matrix ID L0).
+        // The tool detects "no envelope" from the 16-byte magic window
+        // ("SQLite format 3\0") and copies it through verbatim, exit 0, no
+        // credential. Regression guard for the 9→16-byte sniff-window fix:
+        // a 9-byte read truncated the 16-byte SQLite header and the file was
+        // rejected as "unrecognised".
+        $src = $this->tmpDir . '/legacy.sqlite';
+        $dec = $this->tmpDir . '/copy.bin';
+        file_put_contents($src, "SQLite format 3\x00" . str_repeat("\x00", 8192) . 'tail-' . bin2hex(random_bytes(8)));
+        [$code, $stdout, $stderr] = $this->runTool(['--in', $src, '--out', $dec]);
+        $this->assertSame(0, $code, "stderr: $stderr");
+        $this->assertFileExists($dec);
+        $this->assertSame(file_get_contents($src), file_get_contents($dec), 'bare SQLite file must be copied byte-for-byte');
+        $this->assertStringContainsString('decrypted', $stdout);
+    }
 }

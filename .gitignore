@@ -44,3 +44,11 @@ website/
 
 # Pass-X regression-evidence DB snapshots: commit *.sqlite.gz only
 releases/*/regression-evidence/*/db-snapshots/*.sqlite
+
+# Backup format library (real, large-DB archives — one per backup format —
+# used as a regression-test safety net for tools/decrypt-backup.php and the
+# Restore wizard). Generated locally via tests/fixtures/backup-library/generate.php;
+# the binary archives + the MANIFEST (which records the fixture credentials) stay
+# local. The generator + README are tracked so the library is reproducible.
+tests/fixtures/backup-library/archives/
+tests/fixtures/backup-library/MANIFEST.md
