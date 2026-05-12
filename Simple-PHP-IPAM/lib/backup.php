@@ -1803,14 +1803,17 @@ function ipam_restore_dry_run(PDO $db, string $stagedPath): array
     $warnings = [];
 
     $chunks = ipam_restore_read_staged_sql($stagedPath);
-    foreach (ipam_restore_split_sql_statements($chunks) as $stmt) {
-        $trim = ltrim($stmt);
-        if ($trim === '' || str_starts_with($trim, '--')) continue;
+    foreach (ipam_restore_split_sql_statements($chunks) as $rawStmt) {
+        // Same normalisation the apply path uses: strips leading `-- comment`
+        // lines (so a comment-prefixed CREATE TABLE is still recognised) and
+        // drops the dump's own transaction control / PRAGMAs.
+        $stmt = ipam_restore_normalize_replay_statement($rawStmt);
+        if ($stmt === null) continue;
 
-        if (preg_match('/^INSERT INTO ["`]?([A-Za-z_][A-Za-z0-9_]*)["`]?/', $trim, $m)) {
+        if (preg_match('/^INSERT INTO ["`]?([A-Za-z_][A-Za-z0-9_]*)["`]?/i', $stmt, $m)) {
             $t = $m[1];
             $tableInsertCounts[$t] = ($tableInsertCounts[$t] ?? 0) + 1;
-        } elseif (preg_match('/^CREATE TABLE\s+(?:IF NOT EXISTS\s+)?["`]?([A-Za-z_][A-Za-z0-9_]*)["`]?/i', $trim, $m)) {
+        } elseif (preg_match('/^CREATE TABLE\s+(?:IF NOT EXISTS\s+)?["`]?([A-Za-z_][A-Za-z0-9_]*)["`]?/i', $stmt, $m)) {
             $createdTables[$m[1]] = true;
         }
     }
@@ -1891,6 +1894,52 @@ function ipam_restore_sniff_magic(string $stagedPath): string
 }
 
 /**
+ * Normalise a statement yielded by ipam_restore_split_sql_statements() for
+ * replay against the live PDO connection (the Database-format / .sql.gz path).
+ *
+ * The SQL-text splitter yields each statement together with any `--` comment
+ * lines that immediately precede it — ipam_db_dump_stream() (and `sqlite3
+ * .dump`) emit `-- Table: foo\nCREATE TABLE ...;` as one contiguous chunk —
+ * and it yields the dump's own transaction-control and `PRAGMA` statements as
+ * ordinary statements. ipam_restore_apply() owns the transaction and the
+ * `PRAGMA foreign_keys` toggle itself, so those must not be re-executed:
+ * `BEGIN TRANSACTION` inside the wrapper's already-open transaction is a hard
+ * error ("cannot start a transaction within a transaction"). That, plus the
+ * old whole-chunk `str_starts_with(ltrim(...), '--')` skip silently dropping
+ * every comment-prefixed `CREATE TABLE`, is why a `database`-type SQLite
+ * restore never actually worked through the wizard before v3.28.0.
+ *
+ * Returns the executable statement with leading comment lines stripped, or
+ * null if the chunk is purely a comment / blank, a transaction-control
+ * statement (BEGIN/COMMIT/END/ROLLBACK, with optional TRANSACTION/WORK and
+ * the SQLite BEGIN qualifiers), or a bare PRAGMA. Comments *inside* a
+ * statement (e.g. inside a string literal) are left untouched — only leading
+ * comment lines are removed.
+ */
+function ipam_restore_normalize_replay_statement(string $stmt): ?string
+{
+    // Strip any run of leading `--` line comments (and the blank/whitespace
+    // around them). [^\n]* stops at the newline; (?:\n|$) also matches a
+    // trailing comment with no final newline. preg_replace returns null only
+    // on a malformed pattern, which this is not — guard for static analysis.
+    $stripped = preg_replace('/^(?:\s*--[^\n]*(?:\n|$))+/', '', $stmt);
+    $s = trim($stripped ?? $stmt);
+    if ($s === '') {
+        return null;
+    }
+    // The caller drives the transaction — drop the dump's own BEGIN/COMMIT/etc.
+    if (preg_match('/^(?:BEGIN|COMMIT|END|ROLLBACK)\b(?:\s+(?:TRANSACTION|WORK|IMMEDIATE|DEFERRED|EXCLUSIVE))?\s*;?\s*$/i', $s)) {
+        return null;
+    }
+    // The caller drives `PRAGMA foreign_keys`; ipam_db_dump_stream() and
+    // `sqlite3 .dump` emit no other PRAGMAs, so dropping all of them is safe.
+    if (preg_match('/^PRAGMA\b/i', $s)) {
+        return null;
+    }
+    return $s;
+}
+
+/**
  * Apply a staged backup to the database. Wraps in a transaction;
  * on any failure rolls back and throws.
  *
@@ -1954,15 +2003,33 @@ function ipam_restore_apply(PDO $db, string $stagedPath, string $realFilename = 
     $db->exec('PRAGMA foreign_keys = OFF');
     $db->beginTransaction();
     try {
+        // A Database-format dump (ipam_db_dump_stream() / `sqlite3 .dump`)
+        // ships the schema as `CREATE TABLE` statements with no `DROP`, so
+        // replaying it onto a live install — which always has the schema from
+        // init.php — collided ("table X already exists"). A restore is a full
+        // replace: drop every user table first (FK enforcement is already off
+        // above, so this does not cascade child rows), then let the dump
+        // recreate schema + data. The dump includes `schema_migrations`;
+        // apply_migrations() below brings an older backup forward.
+        $existing = $db->query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'");
+        $userTables = ($existing !== false) ? $existing->fetchAll(PDO::FETCH_COLUMN) : [];
+        foreach ($userTables as $tbl) {
+            if (!is_string($tbl)) continue;
+            $db->exec('DROP TABLE IF EXISTS "' . str_replace('"', '""', $tbl) . '"');
+        }
+
         // Stream chunks → splitter → exec. Bounded memory regardless of
         // dump size — the splitter GCs its buffer after each yielded
-        // statement (#829, v3.23.0).
+        // statement (#829, v3.23.0). The dump's own transaction control,
+        // PRAGMAs, and leading `-- comment` lines are filtered here (see
+        // ipam_restore_normalize_replay_statement).
         $chunks = ipam_restore_read_staged_sql($stagedPath);
-        foreach (ipam_restore_split_sql_statements($chunks) as $stmt) {
-            if ($stmt === '' || str_starts_with(ltrim($stmt), '--')) continue;
+        foreach (ipam_restore_split_sql_statements($chunks) as $rawStmt) {
+            $stmt = ipam_restore_normalize_replay_statement($rawStmt);
+            if ($stmt === null) continue;
             $db->exec($stmt);
             $statements++;
-            if (preg_match('/^INSERT INTO ["`]?([A-Za-z_][A-Za-z0-9_]*)["`]?/', ltrim($stmt), $m)) {
+            if (preg_match('/^INSERT INTO ["`]?([A-Za-z_][A-Za-z0-9_]*)["`]?/i', $stmt, $m)) {
                 $tablesSeen[$m[1]] = true;
             }
         }
