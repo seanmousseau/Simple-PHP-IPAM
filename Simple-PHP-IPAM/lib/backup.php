@@ -2493,6 +2493,116 @@ function ipam_restore_split_sql_statements(iterable $chunks): \Generator
     }
 }
 
+// =========================================================================
+// backup_state — per-(scope, key) cooldown state for backup notifications
+// (v3.28.0 #1159)
+//
+// Replaces the whole-blob read-modify-write of the
+// backup.destination_health / backup.schedule_overdue_state JSON settings.
+// Two concurrent writers (cron tick + UI action) used to serialize the
+// entire map, so one clobbered the other's update of an unrelated entry
+// (Pass C F-S5-02). One row per (scope, key) lets each writer touch only
+// its own entry; same-key races degrade to harmless last-writer-wins.
+//
+// scope: 'destination_health' (k = destination id) | 'schedule_overdue'
+//        (k = schedule id). payload = arbitrary JSON-encodable assoc array.
+// =========================================================================
+
+/**
+ * Fetch one backup_state entry, decoded. Returns [] when absent or unparsable.
+ *
+ * @return array<string, mixed>
+ */
+function ipam_backup_state_get(PDO $db, string $scope, string $k): array
+{
+    $st = $db->prepare("SELECT payload_json FROM backup_state WHERE scope = :s AND k = :k");
+    $st->execute([':s' => $scope, ':k' => $k]);
+    $raw = $st->fetchColumn();
+    if (!is_string($raw) || $raw === '') return [];
+    $decoded = json_decode($raw, true);
+    return is_array($decoded) ? $decoded : [];
+}
+
+/**
+ * Fetch every backup_state entry for a scope as a map of k => decoded payload.
+ *
+ * @return array<string, array<string, mixed>>
+ */
+function ipam_backup_state_get_all(PDO $db, string $scope): array
+{
+    $st = $db->prepare("SELECT k, payload_json FROM backup_state WHERE scope = :s");
+    $st->execute([':s' => $scope]);
+    $out = [];
+    /** @var array<string, mixed> $row */
+    foreach ($st->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $k   = to_str($row['k'] ?? '');
+        $raw = is_string($row['payload_json'] ?? null) ? $row['payload_json'] : '';
+        $decoded = $raw !== '' ? json_decode($raw, true) : null;
+        $out[$k] = is_array($decoded) ? $decoded : [];
+    }
+    return $out;
+}
+
+/**
+ * Atomic upsert of a single backup_state row. SELECT-then-UPDATE-or-INSERT;
+ * a concurrent INSERT loser swallows the UNIQUE violation and re-applies its
+ * UPDATE (last-writer-wins on the same key — the bug being fixed was losing
+ * *unrelated* keys, not racing on one). updated_at is set from the dialect's
+ * "now" expression on UPDATE and from the column default on INSERT.
+ *
+ * @param array<string, mixed> $payload
+ */
+function ipam_backup_state_put(PDO $db, string $scope, string $k, array $payload): void
+{
+    $enc = json_encode($payload, JSON_UNESCAPED_SLASHES);
+    if (!is_string($enc)) return;
+
+    $nowExpr = ipam_dialect()->now();
+    $applyUpdate = static function () use ($db, $scope, $k, $enc, $nowExpr): int {
+        $st = $db->prepare(
+            "UPDATE backup_state SET payload_json = :p, updated_at = {$nowExpr} WHERE scope = :s AND k = :k"
+        );
+        $st->execute([':p' => $enc, ':s' => $scope, ':k' => $k]);
+        return $st->rowCount();
+    };
+
+    $exists = $db->prepare("SELECT 1 FROM backup_state WHERE scope = :s AND k = :k");
+    $exists->execute([':s' => $scope, ':k' => $k]);
+    if ($exists->fetchColumn() !== false) {
+        $applyUpdate();
+        return;
+    }
+    try {
+        $db->prepare("INSERT INTO backup_state (scope, k, payload_json) VALUES (:s, :k, :p)")
+           ->execute([':s' => $scope, ':k' => $k, ':p' => $enc]);
+    } catch (\PDOException $e) {
+        $sqlstate = (string) ($e->errorInfo[0] ?? '');
+        $isUniqueViolation = $sqlstate === '23000' || $sqlstate === '23505'
+            || stripos($e->getMessage(), 'unique') !== false
+            || stripos($e->getMessage(), 'duplicate') !== false;
+        if (!$isUniqueViolation) throw $e;
+        $applyUpdate(); // concurrent insert won — last writer wins
+    }
+}
+
+/**
+ * Drop backup_state rows for a scope whose key is not in $liveKeys, keeping
+ * the table from growing unbounded as destinations / schedules come and go.
+ * An empty $liveKeys clears the whole scope.
+ *
+ * @param list<string> $liveKeys
+ */
+function ipam_backup_state_prune(PDO $db, string $scope, array $liveKeys): void
+{
+    if ($liveKeys === []) {
+        $db->prepare("DELETE FROM backup_state WHERE scope = :s")->execute([':s' => $scope]);
+        return;
+    }
+    $placeholders = implode(',', array_fill(0, count($liveKeys), '?'));
+    $st = $db->prepare("DELETE FROM backup_state WHERE scope = ? AND k NOT IN ({$placeholders})");
+    $st->execute(array_merge([$scope], $liveKeys));
+}
+
 /**
  * Schedule-overdue detector (cron Task 6d, v3.22.0 §2.4).
  *
@@ -2506,8 +2616,9 @@ function ipam_restore_split_sql_statements(iterable $chunks): \Generator
  * Per-schedule cooldown is keyed by the `next_run_at` value at the time the
  * alert fires: once a schedule has been alerted for a given expected_at, no
  * further alert is emitted until the schedule successfully fires (which moves
- * `next_run_at` forward) and goes overdue again. State persists in the JSON
- * setting `backup.schedule_overdue_state`.
+ * `next_run_at` forward) and goes overdue again. State persists in the
+ * `backup_state` table (scope `schedule_overdue`, one atomic row per
+ * schedule id — v3.28.0 #1159; was a JSON setting before that).
  *
  * The function isolates the cron logic so it can be unit-tested without
  * spinning up the cron pipeline. Behaviour matches the inline version that
@@ -2527,10 +2638,13 @@ function ipam_backup_detect_overdue_schedules(PDO $db, ?int $nowTs = null): arra
     $graceMinutes  = to_int(ipam_setting('backup.notify_overdue_grace_minutes'));
     if ($graceMinutes < 5) $graceMinutes = 5;
 
-    $stateRaw = to_str(ipam_setting('backup.schedule_overdue_state', '{}'));
-    $stateDecoded = json_decode($stateRaw, true);
+    // #1159: per-schedule cooldown lives in backup_state (scope
+    // 'schedule_overdue'), one row per schedule id. We load the whole
+    // scope once for the in-loop "already alerted?" reads, then write each
+    // mutated entry back atomically via ipam_backup_state_put() so a
+    // concurrent cron tick / UI action can't clobber an unrelated entry.
     /** @var array<string, array<string, mixed>> $overdueState */
-    $overdueState = is_array($stateDecoded) ? $stateDecoded : [];
+    $overdueState = ipam_backup_state_get_all($db, 'schedule_overdue');
 
     $stmt = $db->query("
         SELECT s.id AS schedule_id, s.destination_id, s.next_run_at,
@@ -2591,6 +2705,7 @@ function ipam_backup_detect_overdue_schedules(PDO $db, ?int $nowTs = null): arra
             'alerted_for'     => $nextRunAt,
             'last_alerted_at' => date('c', $nowTs),
         ];
+        ipam_backup_state_put($db, 'schedule_overdue', $key, $overdueState[$key]);
         $alertedIds[] = $schedId;
     }
 
@@ -2675,17 +2790,12 @@ function ipam_backup_detect_overdue_schedules(PDO $db, ?int $nowTs = null): arra
             'alerted_for'     => 'failed_run_at:' . $startedAt,
             'last_alerted_at' => date('c', $nowTs),
         ];
+        ipam_backup_state_put($db, 'schedule_overdue', $key, $overdueState[$key]);
         $alertedIds[] = $schedId;
     }
 
-    foreach (array_keys($overdueState) as $k) {
-        if (!isset($aliveSchedKeys[$k])) unset($overdueState[$k]);
-    }
-
-    $encoded = json_encode($overdueState, JSON_UNESCAPED_SLASHES);
-    if (is_string($encoded)) {
-        ipam_setting_set($db, 'backup.schedule_overdue_state', $encoded);
-    }
+    // Drop cooldown rows for schedules that no longer exist or are inactive.
+    ipam_backup_state_prune($db, 'schedule_overdue', array_map('strval', array_keys($aliveSchedKeys)));
 
     return [
         'overdue'       => $overdueCount,
@@ -2823,8 +2933,9 @@ function ipam_logical_table_order(PDO $db): array
     //
     //   Layer 0 (no incoming FKs from any other table):
     //     schema_migrations users tags contacts vrfs webhooks api_keys
-    //     login_attempts rate_limit_buckets aggregates custom_field_defs
-    //     audit_log address_history backup_destinations
+    //     login_attempts rate_limit_buckets rate_limit_dampener aggregates
+    //     custom_field_defs audit_log address_history backup_destinations
+    //     backup_state
     //
     //   Layer 1 (depend only on layer 0):
     //     sites (self-ref, two-pass)
@@ -2863,11 +2974,13 @@ function ipam_logical_table_order(PDO $db): array
         'api_keys',
         'login_attempts',
         'rate_limit_buckets',
+        'rate_limit_dampener',
         'aggregates',
         'custom_field_defs',
         'audit_log',
         'address_history',
         'backup_destinations',
+        'backup_state',
         // -- Layer 1 — sites is self-referential (two-pass replay) ---------
         'sites',
         // -- Layer 2 — site/vlan/vrf-rooted -------------------------------
@@ -2943,6 +3056,11 @@ function ipam_logical_column_kind(string $columnName, ?string $tableName = null)
         // fix and exists for that reason.
         'webauthn_credentials.credential_id' => 'binary',
         'webauthn_credentials.public_key'    => 'binary',
+        // rate_limit_dampener.unlock_at (v3.28.0 #1143) is a Unix epoch
+        // INTEGER, not an ISO timestamp string — the `_at` suffix
+        // predates that distinction. Pass it through as a scalar so the
+        // codec doesn't try to normalise an int as a timestamp.
+        'rate_limit_dampener.unlock_at'      => 'scalar',
     ];
     if ($tableName !== null) {
         $key = $tableName . '.' . $columnName;

@@ -56,6 +56,8 @@ Reference for every table, column, foreign key, and uniqueness constraint in the
 - [`backup_destinations`](#backup_destinations)
 - [`backup_schedules`](#backup_schedules)
 - [`backup_runs`](#backup_runs)
+- [`rate_limit_dampener`](#rate_limit_dampener)
+- [`backup_state`](#backup_state)
 
 ## `users`
 
@@ -774,4 +776,21 @@ Reference for every table, column, foreign key, and uniqueness constraint in the
 
 - `schedule_id` → `backup_schedules.id` ON DELETE SET NULL
 - `destination_id` → `backup_destinations.id` ON DELETE SET NULL
+
+## `rate_limit_dampener`
+
+| Column | SQLite | MySQL | PostgreSQL | Null | Default | Notes |
+|---|---|---|---|---|---|---|
+| `action` | `TEXT` | `VARCHAR(32)` | `VARCHAR(32)` | NO |  |  |
+| `ip` | `TEXT` | `VARCHAR(45)` | `TEXT` | NO |  |  |
+| `unlock_at` | `INTEGER` | `BIGINT` | `BIGINT` | NO |  |  |
+
+## `backup_state`
+
+| Column | SQLite | MySQL | PostgreSQL | Null | Default | Notes |
+|---|---|---|---|---|---|---|
+| `scope` | `TEXT` | `VARCHAR(32)` | `VARCHAR(32)` | NO |  |  |
+| `k` | `TEXT` | `VARCHAR(64)` | `VARCHAR(64)` | NO |  |  |
+| `payload_json` | `TEXT` | `TEXT` | `TEXT` | NO | `'{}'` |  |
+| `updated_at` | `TEXT` | `DATETIME` | `TIMESTAMP` | NO | `datetime('now')` |  |
 

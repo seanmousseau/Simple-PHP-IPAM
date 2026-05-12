@@ -792,6 +792,34 @@ CREATE TABLE IF NOT EXISTS backup_runs (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ---------------------------------------------------------------------------
+-- rate_limit_dampener (v3.28.0 #1143) -- atomic "one auth.ip_rate_limited
+-- audit row per (action, ip) lockout window" gate; replaces the prior
+-- audit_log scan that had a read-then-insert TOCTOU. unlock_at is a Unix
+-- epoch (seconds); a row is "active" while unlock_at > now.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS rate_limit_dampener (
+  action    VARCHAR(32) NOT NULL,
+  ip        VARCHAR(45) NOT NULL,
+  unlock_at BIGINT      NOT NULL,
+  PRIMARY KEY (action, ip)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- ---------------------------------------------------------------------------
+-- backup_state (v3.28.0 #1159) -- per-(scope, k) rows for backup notification
+-- cooldown state (scope 'destination_health' keyed by destination id,
+-- 'schedule_overdue' keyed by schedule id). Replaces the whole-blob
+-- read-modify-write of the backup.destination_health /
+-- backup.schedule_overdue_state JSON settings (Pass C F-S5-02).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS backup_state (
+  scope        VARCHAR(32) NOT NULL,
+  k            VARCHAR(64) NOT NULL,
+  payload_json TEXT        NOT NULL,
+  updated_at   DATETIME    NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  PRIMARY KEY (scope, k)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- ---------------------------------------------------------------------------
 -- Pre-seed schema_migrations with every historical version so apply_migrations
 -- is a no-op on fresh MySQL installs. New migrations added in v2.10.0+ must
 -- be idempotent and safe to run on MySQL, since they WILL execute here.
@@ -860,6 +888,7 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.26.0-retire-legacy-backup'),
   ('3.26.0-vault-key-to-settings'),
   ('3.27.0-step-up-policy-settings'),
-  ('3.27.7-webhook-secret-encrypt');
+  ('3.27.7-webhook-secret-encrypt'),
+  ('3.28.0-state-tables');
 
 SET FOREIGN_KEY_CHECKS = 1;

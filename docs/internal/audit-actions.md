@@ -10,10 +10,13 @@ Call signature: `audit(PDO $db, string $action, string $entityType, ?int $entity
 
 ```text
 auth.login              auth.login_failed       auth.login_blocked
+auth.ip_rate_limited
 auth.oidc_login         auth.oidc_provision     auth.oidc_link       auth.oidc_failed
 auth.mfa_method_switch  auth.mfa_preferred_set
 auth.totp_login         auth.email_otp_login    auth.passkey_challenge
 ```
+
+`auth.ip_rate_limited` (`entity_type=auth`, `entity_id=null`) — emitted **once per (action, ip) lockout window** by `ipam_audit_ip_rate_limited()` when an auth endpoint refuses a request because the per-IP rate limit is in effect (v3.27.3 #1134). `$details` carries `action=<a> attempts=<n> unlock_at=<ISO-8601-Z> ip=<ip>` — grep on either the `audit_log.ip` column or the `ip=` substring. The "once per window" guarantee is backed by the `rate_limit_dampener` table (`PRIMARY KEY (action, ip)`, `unlock_at` = Unix epoch); the caller claims the window atomically (UPDATE an expired row, else INSERT, treating a UNIQUE violation as "already dampened"), so concurrent brute-force requests can't double-emit (v3.28.0 #1143 — was an `audit_log` scan with a read-then-insert TOCTOU before that). Housekeeping prunes expired `rate_limit_dampener` rows alongside `login_attempts`.
 
 ## Step-up auth (v3.27.0)
 

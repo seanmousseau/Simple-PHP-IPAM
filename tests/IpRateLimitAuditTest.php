@@ -113,6 +113,38 @@ final class IpRateLimitAuditTest extends TestCase
         $this->assertStringContainsString('ip=192.0.2.100',  $rows[2]['details']);
     }
 
+    public function testDampenerStateRowTracksWindow(): void
+    {
+        // #1143: the once-per-window guarantee is now backed by the
+        // rate_limit_dampener table (PRIMARY KEY (action, ip)) instead of an
+        // audit_log scan. A single process can't truly race; this asserts the
+        // contract the atomic UPDATE-then-INSERT-if-zero enforces — exactly
+        // one tracking row per (action, ip), carrying the active window's
+        // unlock_at, untouched while the window is still active and updated
+        // in place once it expires.
+        $unlockA = time() + 600;
+        ipam_audit_ip_rate_limited($this->db, 'login', '198.51.100.4', 5, $unlockA);
+        ipam_audit_ip_rate_limited($this->db, 'login', '198.51.100.4', 6, $unlockA + 999); // dampened
+
+        $rows = $this->db->query(
+            "SELECT action, ip, unlock_at FROM rate_limit_dampener WHERE ip = '198.51.100.4'"
+        )->fetchAll(PDO::FETCH_ASSOC);
+        $this->assertCount(1, $rows, '#1143: exactly one dampener row per (action, ip)');
+        $this->assertSame('login', $rows[0]['action']);
+        $this->assertSame($unlockA, (int) $rows[0]['unlock_at'], 'active window must not be overwritten');
+
+        // Expire the stored window, then a fresh fire claims a new one in place.
+        $this->db->prepare("UPDATE rate_limit_dampener SET unlock_at = :u WHERE ip = :ip")
+            ->execute([':u' => time() - 1, ':ip' => '198.51.100.4']);
+        $unlockB = time() + 900;
+        ipam_audit_ip_rate_limited($this->db, 'login', '198.51.100.4', 5, $unlockB);
+        $rows = $this->db->query(
+            "SELECT unlock_at FROM rate_limit_dampener WHERE ip = '198.51.100.4'"
+        )->fetchAll(PDO::FETCH_ASSOC);
+        $this->assertCount(1, $rows);
+        $this->assertSame($unlockB, (int) $rows[0]['unlock_at'], 'expired window updated in place');
+    }
+
     public function testErrorMessageIsIpSpecific(): void
     {
         // Source-level: login.php's IP-rate-limit branch must produce a

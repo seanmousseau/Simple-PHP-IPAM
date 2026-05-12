@@ -794,6 +794,34 @@ CREATE INDEX IF NOT EXISTS idx_backup_runs_started     ON backup_runs(started_at
 CREATE INDEX IF NOT EXISTS idx_backup_runs_protected   ON backup_runs(is_protected) WHERE is_protected = 1;
 
 -- ---------------------------------------------------------------------------
+-- rate_limit_dampener (v3.28.0 #1143) -- atomic "one auth.ip_rate_limited
+-- audit row per (action, ip) lockout window" gate; replaces the prior
+-- audit_log scan that had a read-then-insert TOCTOU. unlock_at is a Unix
+-- epoch (seconds); a row is "active" while unlock_at > now.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS rate_limit_dampener (
+  action    VARCHAR(32) NOT NULL,
+  ip        TEXT        NOT NULL,
+  unlock_at BIGINT      NOT NULL,
+  PRIMARY KEY (action, ip)
+);
+
+-- ---------------------------------------------------------------------------
+-- backup_state (v3.28.0 #1159) -- per-(scope, k) rows for backup notification
+-- cooldown state (scope 'destination_health' keyed by destination id,
+-- 'schedule_overdue' keyed by schedule id). Replaces the whole-blob
+-- read-modify-write of the backup.destination_health /
+-- backup.schedule_overdue_state JSON settings (Pass C F-S5-02).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS backup_state (
+  scope        VARCHAR(32) NOT NULL,
+  k            VARCHAR(64) NOT NULL,
+  payload_json TEXT        NOT NULL DEFAULT '{}',
+  updated_at   TIMESTAMP   NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
+  PRIMARY KEY (scope, k)
+);
+
+-- ---------------------------------------------------------------------------
 -- Pre-seed schema_migrations with every historical version so apply_migrations
 -- is a no-op on fresh Postgres installs. New migrations added in v2.11.0+
 -- must be idempotent and safe to run on Postgres, since they WILL execute
@@ -864,5 +892,6 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.26.0-retire-legacy-backup'),
   ('3.26.0-vault-key-to-settings'),
   ('3.27.0-step-up-policy-settings'),
-  ('3.27.7-webhook-secret-encrypt')
+  ('3.27.7-webhook-secret-encrypt'),
+  ('3.28.0-state-tables')
 ON CONFLICT (version) DO NOTHING;

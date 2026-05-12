@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.28.0] - 2026-05-12
+
+DR + security stabilization release. Concurrency hardening on two racy state writes (a TOCTOU in the per-IP rate-limit audit dampener and a lost-update on the backup-notification cooldown blobs) plus the surgical security fixes carried over from the v3.27.x verification passes. One schema migration — `3.28.0-state-tables` — adds two state tables, `rate_limit_dampener` and `backup_state`.
+
+### Changed
+
+- **OIDC settings inputs carry explicit `autocomplete` hints** (#1137). The OIDC client-secret field and related inputs were tripping browser password managers into offering to save/fill them; added per-field `autocomplete` hints so the OIDC config form behaves like configuration, not credentials.
+
+### Fixed
+
+- **`ipam_db_init()` SQLite fast path guarded by a real schema probe** (#1175). The early-return "DB already initialised" fast path keyed off a sentinel value alone; a DB with the sentinel set but tables missing (e.g. an interrupted bootstrap) skipped `apply_migrations()` and surfaced as `no such table: subnets` downstream — including in `RestoreDryRunTest`. The fast path now probes for a real table before short-circuiting; the full PHPUnit suite is error-free again.
+- **Backup notification cooldown state moved out of JSON settings into the `backup_state` table** (#1159). The per-destination connection-health cooldown (cron Task 6c) and the per-schedule overdue cooldown (`ipam_backup_detect_overdue_schedules()`) were each a single JSON blob in `settings` (`backup.destination_health` / `backup.schedule_overdue_state`). A concurrent cron tick and UI action both read the whole blob, mutated one entry, and wrote the whole blob back, so one clobbered the other's update of an unrelated entry (Pass C F-S5-02). They now live in `backup_state` (`PRIMARY KEY (scope, k)`), one atomic row per destination / schedule, written via an UPDATE-or-INSERT helper that touches only its own row; the migration backfills from the old settings, which are retained for one release as a vestigial fallback. The Health page's per-destination connectivity section — which had been reading the old setting with mismatched key names and always showed "never tested" — now reads `backup_state` and reports real status. Test coverage: `tests/StateTablesMigrationTest.php`, extended `tests/OverdueDetectorTest.php`.
+
+### Security
+
+- **Per-IP rate-limit audit dampener is now atomic** (#1143). `ipam_audit_ip_rate_limited()` enforced "emit at most one `auth.ip_rate_limited` audit row per (action, ip) lockout window" by SELECTing the most recent prior dampener row out of `audit_log` and only INSERTing a new one if no active window was found — a read-then-insert TOCTOU that let two concurrent brute-force requests both miss the prior row and both emit, flooding the audit log. The window is now tracked in the new `rate_limit_dampener` table (`PRIMARY KEY (action, ip)`); the caller claims it with an UPDATE-an-expired-row-else-INSERT (treating a UNIQUE violation as "already dampened"), so concurrent requests can't double-emit regardless of timing. Housekeeping prunes expired rows alongside `login_attempts`. Test coverage: extended `tests/IpRateLimitAuditTest.php`.
+- **Restore upload caps decompressed size on staging (gzip-bomb DoS)** (#1149). `ipam_restore_read_staged_sql()` enforced the configured limit on the *compressed* `.sql.gz` upload but decompressed it without bound, so a small gzip bomb could exhaust `data/tmp/` and take down the app, cron, and scanner. Decompression is now capped (10× the compressed-size limit, hard ceiling) and aborts with a clear error past it.
+- **Session-fallback API path re-checks `users.is_active`** (#1151). When an API request authenticated via the browser-session fallback (rather than an API key), the readonly/admin gate was satisfied without re-confirming the session user is still active. A disabled-but-not-logged-out admin could keep using the API; the session-fallback path now re-checks `is_active` on every request.
+- **Webhook dispatch outer catch logs instead of silently swallowing** (#1150). `ipam_webhook_dispatch()`'s outermost `catch` discarded the exception with no trace, so a systemic dispatch failure (bad config, exhausted resources) was invisible. It now `error_log()`s the failure before returning.
+
 ## [3.27.9] - 2026-05-11
 
 Single-bug hotfix off `main` plus one small Restore-tab UX tweak. No schema change, no migration.
@@ -1741,6 +1761,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.28.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.9...v3.28.0
 [3.27.9]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.8...v3.27.9
 [3.27.8]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.7...v3.27.8
 [3.27.7]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.6...v3.27.7

@@ -674,3 +674,28 @@ CREATE INDEX IF NOT EXISTS idx_backup_runs_destination ON backup_runs(destinatio
 CREATE INDEX IF NOT EXISTS idx_backup_runs_schedule    ON backup_runs(schedule_id);
 CREATE INDEX IF NOT EXISTS idx_backup_runs_started     ON backup_runs(started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_backup_runs_protected   ON backup_runs(is_protected) WHERE is_protected = 1;
+
+-- v3.28.0 #1143: atomic "one auth.ip_rate_limited audit row per (action, ip)
+-- lockout window" gate. Replaces the prior implementation that SELECTed the
+-- most recent prior dampener row out of audit_log and only INSERTed a new one
+-- if none was still active -- a read-then-insert TOCTOU under brute force.
+-- unlock_at is a Unix epoch (seconds); a row is "active" while unlock_at > now.
+CREATE TABLE IF NOT EXISTS rate_limit_dampener (
+  action    TEXT    NOT NULL,
+  ip        TEXT    NOT NULL,
+  unlock_at INTEGER NOT NULL,
+  PRIMARY KEY (action, ip)
+);
+
+-- v3.28.0 #1159: per-(scope, key) rows for backup notification cooldown state.
+-- scope is 'destination_health' (k = destination id) or 'schedule_overdue'
+-- (k = schedule id). Replaces the whole-blob read-modify-write of the
+-- backup.destination_health / backup.schedule_overdue_state JSON settings,
+-- which lost updates under concurrent cron + UI writes (Pass C F-S5-02).
+CREATE TABLE IF NOT EXISTS backup_state (
+  scope        TEXT NOT NULL,
+  k            TEXT NOT NULL,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (scope, k)
+);
