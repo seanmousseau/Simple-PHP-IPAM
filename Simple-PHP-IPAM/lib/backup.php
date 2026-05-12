@@ -2037,6 +2037,18 @@ function ipam_restore_read_staged_sql(string $stagedPath): \Generator
     }
 
     if (str_ends_with($real, '.sql.gz')) {
+        // S-003 (#1149): a gzip bomb passes the compressed-upload cap
+        // (backup_max_upload_size_mb) and only blows up on decompression —
+        // a few-KB blob expanding to GB exhausts data/tmp/ and takes the
+        // app + cron + scanner down with it. Cap the decompressed stream.
+        // Headroom scales with the upload (legit SQL dumps compress ~5–10×,
+        // so 10× the on-disk size is generous) with a 64 MiB floor for tiny
+        // uploads. A gzip bomb is a few KB compressed, so the cap stays at
+        // the floor and it never gets near GB scale; a real large-install
+        // dump uploaded compressed at, say, 50 MiB gets a ~500 MiB cap.
+        $compressedBytes = (int) (@filesize($real) ?: 0);
+        $maxDecompressed = max(10 * $compressedBytes, 64 * 1024 * 1024);
+
         $fh = @gzopen($real, 'rb');
         if ($fh === false) {
             throw new RuntimeException('ipam_restore: gzopen failed');
@@ -2046,10 +2058,18 @@ function ipam_restore_read_staged_sql(string $stagedPath): \Generator
             // to the next \n, whichever is smaller; lines in IPAM dumps are
             // typically < 1KB (one INSERT per line). After the loop, gzeof
             // distinguishes clean end-of-file from corruption (truncation).
+            $decompressed = 0;
             while (true) {
                 $line = gzgets($fh, 65536);
                 if ($line === false) {
                     break;
+                }
+                $decompressed += strlen($line);
+                if ($decompressed > $maxDecompressed) {
+                    throw new RuntimeException(
+                        'ipam_restore: refusing to stage — decompressed size exceeds the cap ' .
+                        '(' . $maxDecompressed . ' bytes); the upload may be a gzip bomb.'
+                    );
                 }
                 yield $line;
             }
