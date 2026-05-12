@@ -3024,6 +3024,12 @@ function ipam_config_stale_keys(array $config): array
         // config.php (not the DB) for the same reason as app_secret: a key
         // stored inside the data it protects defeats the security model.
         'backup_vault_key',
+        // v3.26.0 (#1098) — the vault bootstrap_key. Auto-generated into
+        // config.php by ipam_bootstrap_key() and required at runtime to
+        // unwrap the backup_vault_key envelope stored in the settings table.
+        // Must never be flagged stale: removing it breaks every IPAMBKP3
+        // stored-mode backup on the install. See lib/vault.php.
+        'bootstrap_key',
     ];
     $stale = [];
     foreach (array_keys($config) as $key) {
