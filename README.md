@@ -12,12 +12,15 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.27.9
+## What's new in v3.28.0
 
-Single-bug hotfix off `main` (2026-05-11) plus one small Restore-tab UX tweak. No schema change, no migration.
+DR + security stabilization release. One schema migration (runs automatically) and one behavior change worth knowing about — the legacy `app_secret`-based backup-encryption *write* path was removed.
 
-- **`config.php` cleanup banner no longer tells you to delete `bootstrap_key`.** That key is auto-generated into `config.php` and is required at runtime to decrypt your stored-mode backups — the banner was wrong to flag it, and removing it broke backup decryption. If you already acted on the old banner, see `docs/upgrading.md §v3.27.9` for recovery.
-- **Restore tab lists backups newest-first by default.** The most recent backup is almost always the one you want; the order no longer depends on the destination type.
+- **Concurrency hardening.** The per-IP rate-limit audit dampener (#1143) and the backup-notification cooldown state (#1159) were racy — a TOCTOU on the dampener and a lost-update on JSON cooldown blobs. Both now use small dedicated tables with atomic single-row writes (`rate_limit_dampener`, `backup_state`). The Health page's per-destination connectivity readout, which had been silently broken, now reports real status.
+- **Step-up coverage sweep.** Webhook create/edit/delete (#1156), SMTP / backup-notification-recipient settings (#1157), and custom field definition changes (#1158) now require a fresh step-up proof under your `auth.step_up.*` policy.
+- **Surgical security fixes** carried over from the v3.27.x verification passes: restore upload now caps decompressed size against gzip bombs (#1149), the session-fallback API path re-checks `users.is_active` (#1151), webhook dispatch failures are logged instead of swallowed (#1150), and `ipam_db_init()` won't skip migrations on a half-bootstrapped DB (#1175).
+- **`app_secret` backup encryption is being retired** (#1164/#1165). Encrypted scheduled backups now require a backup vault key (Stored mode) or a passphrase (Transitory mode); an `app_secret`-only install fails preflight with an actionable message. The in-app reader for legacy `app_secret`-encrypted archives is retained through the whole v3.x line — **v4.0.0 removes it (cold break)**, with `tools/decrypt-backup.php` as the long-term escape hatch. See `docs/upgrading.md §v3.28.0` for the migration path. The Backups → Destinations and Restore tabs carry a retirement banner.
+- **CSP regression guard in CI** (#906) — fails the build if any page introduces an inline `<script>`/`<style>` block that the app's Content-Security-Policy would silently break.
 
 [Full changelog →](CHANGELOG.md)
 
