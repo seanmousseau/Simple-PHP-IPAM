@@ -35,7 +35,6 @@ If an item is large (>30 lines diff) or touches multiple files, file it as a GH 
 | 2026-05-11 | S-005 — `recaptcha_action` config value flows to UI via `data-recaptcha-action` without echo escape audit | `auth.php` / login surface | Style drift / security-Note | From `releases/2026-05-10_security-review/code-reviewer-findings.md` S-005 (Note). Admin-controlled value reaches a DOM data-attribute. Realistic exposure is zero (admin already controls reCAPTCHA action) but worth an `e()` audit when login surface is next touched (likely v3.36-era UX cleanup). Opportunistic fix |
 | 2026-05-11 | S-010 — `ipam_restore_degraded_database_unsupported` runs a child process via the shell | `lib/backup.php` | Style drift / security-Note | From security-review S-010 (Note, marked N/A). Helper for a deliberately-unsupported path. Tracked here so the inevitable future refactor doesn't reintroduce shell metacharacter handling without re-checking |
 | 2026-05-11 | S-011 — Webhook signing secret transiently in `_POST` flows through `to_str` + `trim` without length cap | `webhooks.php` | Style drift / security-Note | From security-review S-011 (Note). Cap not load-bearing (DB column already enforces limit at write time) but consistent with the rest of the input-validation policy. Add when webhooks page is next touched |
-| 2026-05-11 | `demo_gate.php` favicon + `open-props.min.css` `?v=` cache-busters are hardcoded and lag the release version when a release doesn't touch CSS/JS | `Simple-PHP-IPAM/demo_gate.php:72-75` | Style drift | The `app.css`/`app.js` busters on lines 81-82 are `IPAM_VERSION`-derived and always current; lines 72-75 hardcode `?v=X.Y.Z` for the favicon variants and `open-props.min.css`. After v3.27.9 (CSS untouched) they read `?v=3.27.8`. Harmless (those assets rarely change) but inconsistent. Fix: derive them from `IPAM_VERSION` like 81-82, or bump them every release regardless of whether CSS changed. Do opportunistically next time `demo_gate.php` is edited |
 
 ## Tracked (in a GH issue)
 
@@ -47,8 +46,7 @@ If an item is large (>30 lines diff) or touches multiple files, file it as a GH 
 
 | Closed in | Item |
 |---|---|
-
-*(empty)*
+| dev (post-v3.27.9) | `demo_gate.php` favicon + `open-props.min.css` `?v=` cache-busters were hardcoded literals that had to be bumped by hand each release and drifted when a release didn't touch CSS. Now derived from `IPAM_VERSION` like `page_header()` (+ `filemtime()` for `app.css`/`app.js`). Stale "bump `demo_gate.php:74-75`" instructions removed from CLAUDE.md, `release-workflow.md`, `hotfix-release.md`. |
 
 ---
 

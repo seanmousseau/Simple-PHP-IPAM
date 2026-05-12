@@ -39,7 +39,7 @@ If the fix is large, multi-week, or has dependencies on other in-flight work, do
    - `docs/upgrading.md` — add a `### vX.Y.Z` section under "Version-specific upgrade notes" if there's anything operators must do.
    - `docs/<area>.md` — only the file(s) genuinely affected by the fix.
 
-4. **Bump `version.php`** to `X.Y.Z` and the asset cache-buster `?v=X.Y.Z` in `lib.php` `page_header()` + `demo_gate.php:74-75` if any CSS/JS changed.
+4. **Bump `version.php`** to `X.Y.Z`. No separate asset-cache-buster step — `page_header()` and `demo_gate.php` derive `?v=` from `IPAM_VERSION` + the asset's `filemtime()` automatically.
 
 5. **Build the bundle** (same as regular release Phase 2 step 14):
    ```bash
