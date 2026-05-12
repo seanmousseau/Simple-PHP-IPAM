@@ -5,22 +5,30 @@ declare(strict_types=1);
  * generate.php -- regenerate the backup-format fixture library.
  *
  * Produces one real, large-DB backup archive per format Simple-PHP-IPAM has
- * ever produced (L0 legacy .sqlite, B-SQL .sql.gz, B-L1 .ipambkl1.gz,
- * P1 IPAMBKP1, P2 IPAMBKP2, P3-S IPAMBKP3 stored, P3-T IPAMBKP3 transitory,
- * U1 IPAMBKU1) plus a MANIFEST.md indexing them.
+ * ever produced (L0 legacy .sqlite [SQLite only], B-SQL .sql.gz, B-L1
+ * .ipambkl1.gz, P1 IPAMBKP1, P2 IPAMBKP2, P3-S IPAMBKP3 stored, P3-T IPAMBKP3
+ * transitory, U1 IPAMBKU1) plus a per-engine MANIFEST.md indexing them.
  *
- * Run INSIDE a dockerized, BULK-SEEDED app instance (bootstrap-app.sh sqlite +
- * testing/scripts/seed-large-db.php). The container doesn't mount the repo-root
- * tests/ dir, so this writes to a container-local path and the caller docker-cp's
- * it back out:
+ * Engine-aware: detects the live PDO driver (sqlite|mysql|pgsql) and emits
+ * under <OUT>/archives/<driver>/ so all three engines coexist in the fixture
+ * library. The L0 raw-SQLite-file archive (VACUUM INTO) is SQLite-only — there
+ * is no "legacy local backup" equivalent on MySQL/Postgres; it is skipped on
+ * those drivers (noted in their MANIFEST). The B-SQL `.sql.gz` is mysqldump |
+ * gzip on MySQL and pg_dump | gzip on Postgres (those clients ship in the
+ * Dockerfile.apache image as default-mysql-client / postgresql-client).
+ *
+ * Run INSIDE a dockerized, BULK-SEEDED app instance (bootstrap-app.sh
+ * sqlite|mysql|pgsql + testing/scripts/seed-large-db.php). The container
+ * doesn't mount the repo-root tests/ dir, so this writes to a container-local
+ * path and the caller docker-cp's it back out:
  *
  *   docker cp tests/fixtures/backup-library/generate.php ipam-pw-test:/tmp/generate-backup-library.php
  *   docker exec -e BACKUP_LIBRARY_OUT=/tmp/backup-library ipam-pw-test php /tmp/generate-backup-library.php
- *   docker cp ipam-pw-test:/tmp/backup-library/archives  tests/fixtures/backup-library/archives
- *   docker cp ipam-pw-test:/tmp/backup-library/MANIFEST.md tests/fixtures/backup-library/MANIFEST.md
+ *   docker cp ipam-pw-test:/tmp/backup-library/archives/<driver> tests/fixtures/backup-library/archives/<driver>
  *
- * Output: <OUT>/archives/<stamp>.* and <OUT>/MANIFEST.md, where
- * OUT = getenv('BACKUP_LIBRARY_OUT') ?: '/tmp/backup-library'.
+ * Output: <OUT>/archives/<driver>/<stamp>.* and <OUT>/archives/<driver>/MANIFEST.md,
+ * where OUT = getenv('BACKUP_LIBRARY_OUT') ?: '/tmp/backup-library' and
+ * <driver> is the active PDO driver name (sqlite|mysql|pgsql).
  *
  * Deterministic fixture credentials (throwaway -- never used by any real
  * install; mirrored in ~/.claude/dev-secrets.env under IPAM_BACKUP_LIBRARY_*):
@@ -38,9 +46,13 @@ $vaultKeyRaw = str_repeat("\xBE", 32);                  // 32 raw bytes
 $vaultKeyB64 = base64_encode($vaultKeyRaw);
 $passphrase  = 'ipam-backup-library-v1-passphrase';
 
-// -- Output layout ----------------------------------------------------------
+// -- Engine detection + output layout ---------------------------------------
+$driverAttr = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+$driver = is_string($driverAttr) ? $driverAttr : 'unknown';
+echo "Driver: $driver\n";
+
 $outRoot = getenv('BACKUP_LIBRARY_OUT') ?: '/tmp/backup-library';
-$archDir = $outRoot . '/archives';
+$archDir = $outRoot . '/archives/' . $driver;
 if (!is_dir($archDir) && !mkdir($archDir, 0700, true) && !is_dir($archDir)) {
     fwrite(STDERR, "cannot create $archDir\n");
     exit(1);
@@ -90,15 +102,17 @@ $magic8 = static function (string $path): string {
 };
 
 // -- L0: legacy local SQLite backup (consistent copy of the live DB) -------
-echo "L0  legacy .sqlite ...\n";
-$l0 = $A('.sqlite');
-if (is_file($l0)) {
-    // nosemgrep -- fixed path
-    @unlink($l0);
-}
-$vacuumOk = false;
-$driver = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+// SQLite-only: VACUUM INTO is a SQLite feature, and there is no "legacy local
+// backup" equivalent on MySQL/Postgres (the in-app local-backup path always
+// shelled out to mysqldump/pg_dump on those engines -> that's the B-SQL row).
 if ($driver === 'sqlite') {
+    echo "L0  legacy .sqlite ...\n";
+    $l0 = $A('.sqlite');
+    if (is_file($l0)) {
+        // nosemgrep -- fixed path
+        @unlink($l0);
+    }
+    $vacuumOk = false;
     try {
         $db->query('PRAGMA wal_checkpoint(TRUNCATE)');
         // VACUUM INTO with a quoted literal path (SQLite 3.27+).
@@ -114,27 +128,36 @@ if ($driver === 'sqlite') {
             $vacuumOk = is_file($l0) && filesize($l0) > 0;
         }
     }
+    if (!is_file($l0) || filesize($l0) === 0) {
+        fwrite(STDERR, "FATAL: could not produce L0 .sqlite copy\n");
+        $cleanup();
+        exit(1);
+    }
+    $records[] = [$l0, 'L0 -- legacy local SQLite backup (raw DB file, copied verbatim; no magic/compression/encryption)' . ($vacuumOk ? '' : ' [file-copy fallback]'),
+        '(none)',
+        'php Simple-PHP-IPAM/tools/decrypt-backup.php --in ' . basename($l0) . ' --out copy.sqlite --force   # decrypt-backup.php recognises the "SQLite format 3\\0" magic -> "no envelope" -> verbatim byte-for-byte copy, exit 0. Then `sqlite3 copy.sqlite`.',
+        'SQLite database file ("SQLite format 3\\0" magic; verbatim copy via decrypt-backup.php, exit 0; open with `sqlite3`)'];
+} else {
+    echo "L0  legacy .sqlite ... SKIPPED (driver=$driver; raw-SQLite-file backup is SQLite-only)\n";
 }
-if (!is_file($l0) || filesize($l0) === 0) {
-    fwrite(STDERR, "FATAL: could not produce L0 .sqlite copy\n");
-    $cleanup();
-    exit(1);
-}
-$records[] = [$l0, 'L0 -- legacy local SQLite backup (raw DB file, copied verbatim; no magic/compression/encryption)' . ($vacuumOk ? '' : ' [file-copy fallback]'),
-    '(none)',
-    'open directly with `sqlite3 ' . basename($l0) . '`   # NOTE: decrypt-backup.php only sniffs 9 bytes and does NOT recognise the 16-byte "SQLite format 3\\0" magic -> exits 2 on this file. The L0 fixture is here as a real legacy artefact; the in-app restore wizard never read it either.',
-    'SQLite database file ("SQLite format 3\\0" magic; open with `sqlite3`)'];
 
 // -- B-SQL: bare .sql.gz dump ----------------------------------------------
+// SQLite -> ipam_db_dump_stream | gzip. MySQL -> `mysqldump | gzip`.
+// Postgres -> `pg_dump | gzip`. (mysqldump/pg_dump ship in Dockerfile.apache.)
 echo "B-SQL  .sql.gz ...\n";
 $sqlGzTmp = ipam_backup_dump_to_tmp($db);  // returns a .sql.gz temp path
 $tmpFiles[] = $sqlGzTmp;
 $bsql = $A('.sql.gz');
 copy($sqlGzTmp, $bsql);
-$records[] = [$bsql, 'B-SQL -- bare SQL dump (`database` type, unencrypted): gzip stream over engine SQL `.dump`',
+$bsqlHead = match ($driver) {
+    'mysql'  => 'gzip; `gunzip -c | head` -> "-- MySQL dump" / "-- MariaDB dump" (mysqldump banner)',
+    'pgsql'  => 'gzip; `gunzip -c | head` -> "-- PostgreSQL database dump" (pg_dump banner)',
+    default  => 'gzip; `gunzip -c | head` -> "-- Simple PHP IPAM database dump" / PRAGMA ...',
+};
+$records[] = [$bsql, 'B-SQL -- bare SQL dump (`database` type, unencrypted): gzip stream over engine SQL dump (' . ($driver === 'sqlite' ? 'ipam_db_dump_stream()' : ($driver === 'mysql' ? 'mysqldump' : 'pg_dump')) . ')',
     '(none)',
     'php Simple-PHP-IPAM/tools/decrypt-backup.php --in ' . basename($bsql) . ' --out copy.sql.gz --force   # bare: verbatim copy; then `gunzip -c copy.sql.gz` -> SQL text',
-    'gzip; `gunzip -c | head` -> "-- Simple PHP IPAM database dump" / PRAGMA ...'];
+    $bsqlHead];
 
 // -- B-L1: bare gzipped IPAMBKL1 logical dump ------------------------------
 echo "B-L1  .ipambkl1.gz ...\n";
@@ -218,14 +241,17 @@ $records[] = [$u1, 'U1 -- IPAMBKU1 (unencrypted integrity wrapper: magic + SHA-2
     'php Simple-PHP-IPAM/tools/decrypt-backup.php --in ' . basename($u1) . ' --out plain.ipambkl1.gz --force   # then `gunzip -c plain.ipambkl1.gz | head -c 9` -> "IPAMBKL1\\n"',
     'IPAMBKU1 magic; unwrapped inner = a B-L1 `.ipambkl1.gz`'];
 
-// -- Write MANIFEST.md ------------------------------------------------------
-echo "Writing MANIFEST.md ...\n";
+// -- Write per-engine MANIFEST.md -------------------------------------------
+echo "Writing $driver/MANIFEST.md ...\n";
 $m = [];
-$m[] = '# Backup format library -- MANIFEST';
+$m[] = '# Backup format library -- MANIFEST (`' . $driver . '` engine)';
 $m[] = '';
-$m[] = '> Generated ' . gmdate('Y-m-d H:i:s') . ' UTC by `tests/fixtures/backup-library/generate.php`.';
-$m[] = '> One real, large-DB backup archive per format Simple-PHP-IPAM has ever produced.';
+$m[] = '> Generated ' . gmdate('Y-m-d H:i:s') . ' UTC by `tests/fixtures/backup-library/generate.php` against the **' . $driver . '** engine.';
+$m[] = '> One real, large-DB backup archive per format Simple-PHP-IPAM produces on this engine.';
 $m[] = '> Source DB at generation: subnets=' . $nSub . ', addresses=' . $nAddr . '. Format catalogue: `docs/internal/backup-formats-matrix.md`.';
+if ($driver !== 'sqlite') {
+    $m[] = '> **L0 (`.sqlite`) is intentionally absent on this engine** — the raw-SQLite-file backup is SQLite-only; the in-app local-backup path on MySQL/Postgres always produced a `mysqldump`/`pg_dump` SQL stream, which is the B-SQL `.sql.gz` row below.';
+}
 $m[] = '';
 $m[] = '## Fixture credentials (deterministic -- throwaway, never used by any real install)';
 $m[] = '';
@@ -251,9 +277,13 @@ $m[] = '## Notes';
 $m[] = '';
 $m[] = '- For the `*.enc` (P1/P2) and `*.ipambkp3` (P3-S/P3-T) and `*.ipambku1` archives, `decrypt-backup.php` writes the *decrypted plaintext* to `--out`; that plaintext is itself a gzip stream (the `.sql.gz` for P1/P2, the `.ipambkl1.gz` for P3-S/P3-T/U1). Run `gunzip -c` on the output to see the SQL / NDJSON.';
 $m[] = '- For the bare `.sql.gz` / `.ipambkl1.gz` archives, `decrypt-backup.php` detects "no envelope" and copies the bytes verbatim (it does **not** gunzip). Exit 0.';
-$m[] = '- **Gap:** `decrypt-backup.php` reads only the first 9 bytes, so it does NOT match the 16-byte `SQLite format 3\\0` magic — the L0 `.sqlite` archive exits 2 ("unrecognised archive") through the tool. That matches reality (the in-app restore wizard never had a "restore from local .sqlite backup" path either); open the L0 file directly with `sqlite3`. (`docs/internal/backup-formats-matrix.md`\'s cheat sheet currently implies the tool copies bare `.sqlite` verbatim — it does not, given the 9-byte sniff window.)';
+if ($driver === 'sqlite') {
+    $m[] = '- The L0 `.sqlite` archive is a raw SQLite database file. `decrypt-backup.php` recognises the `SQLite format 3\\0` magic, treats it as "no envelope", and copies it verbatim (byte-for-byte, exit 0) — it does **not** try to interpret it. Open the copied file directly with `sqlite3`.';
+} else {
+    $m[] = '- No L0 `.sqlite` archive on this engine (see header). The `.sql.gz` here is a real `' . ($driver === 'mysql' ? 'mysqldump' : 'pg_dump') . '` dump piped through gzip, produced by `ipam_backup_dump_to_tmp()`; `gunzip -c | head` shows the engine\'s native SQL dump header.';
+}
 $m[] = '- Negative check: running a `*.enc` with the wrong `--app-secret` exits 3 (decrypt failure) and writes no partial output.';
-file_put_contents($outRoot . '/MANIFEST.md', implode("\n", $m) . "\n");
+file_put_contents($archDir . '/MANIFEST.md', implode("\n", $m) . "\n");
 
 $cleanup();
 
@@ -265,5 +295,5 @@ $total = 0;
 foreach (glob($archDir . '/*') ?: [] as $f) {
     $total += (int) filesize($f);
 }
-echo "Total library size: " . number_format($total) . " B (" . round($total / 1048576, 1) . " MiB)\n";
-echo "MANIFEST: $outRoot/MANIFEST.md\n";
+echo "Total $driver library size: " . number_format($total) . " B (" . round($total / 1048576, 1) . " MiB)\n";
+echo "MANIFEST: $archDir/MANIFEST.md\n";

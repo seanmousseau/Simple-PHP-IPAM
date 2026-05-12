@@ -4,12 +4,19 @@ declare(strict_types=1);
 /**
  * seed-large-db.php — bulk-populate the live IPAM database for backup-format
  * FIXTURE GENERATION only. NOT a real seed: it inserts large volumes of
- * synthetic data so that data/ipam.sqlite grows to >= ~30 MB, which makes the
+ * synthetic data so the live DB grows to tens-of-MB of data, which makes the
  * resulting backup archives (in tests/fixtures/backup-library/) realistically
  * sized (multi-MB) rather than toy fixtures.
  *
+ * Engine-portable: works on the SQLite, MySQL and PostgreSQL drivers. Uses only
+ * prepared statements + ipam_last_insert_id() (Postgres needs the sequence
+ * name); SQLite-only PRAGMAs are best-effort and silently skipped elsewhere.
+ * The synthetic data is generated so that NO UNIQUE constraint ever collides on
+ * a fresh DB (deterministic CIDRs / VLAN ids / per-subnet host dedup), so we
+ * never poison a Postgres transaction with a failed statement.
+ *
  * Usage (inside a dockerized app instance -- e.g. `bootstrap-app.sh sqlite`):
- *   docker exec ipam-pw-test php /tmp/seed-large-db.php
+ *   docker exec ipam-pw-test php -d memory_limit=1024M /tmp/seed-large-db.php
  *
  * Idempotent-ish: if it detects it has already run (subnets row count above a
  * threshold), it bails without inserting again.
@@ -23,21 +30,24 @@ require '/var/www/html/init.php';
 
 $started = microtime(true);
 
+$driverAttr = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+$driver = is_string($driverAttr) ? $driverAttr : 'unknown';
+
 // -- Already seeded? --------------------------------------------------------
 $existingSubnets = (int) $db->query('SELECT COUNT(*) FROM subnets')->fetchColumn();
 if ($existingSubnets > 2000) {
-    $dbFile = '/var/www/html/data/ipam.sqlite';
-    $sz = is_file($dbFile) ? filesize($dbFile) : 0;
-    echo "Already seeded (subnets=$existingSubnets, ipam.sqlite=" . number_format((int) $sz) . " bytes). Nothing to do.\n";
+    echo "Already seeded (driver=$driver, subnets=$existingSubnets). Nothing to do.\n";
     exit(0);
 }
 
-// Speed pragmas (best-effort; ignore failures on non-sqlite).
-try {
-    $db->query('PRAGMA synchronous = OFF');
-    $db->query('PRAGMA journal_mode = MEMORY');
-} catch (Throwable $e) {
-    // non-sqlite or restricted -- fine
+// Speed pragmas (SQLite-only; best-effort).
+if ($driver === 'sqlite') {
+    try {
+        $db->query('PRAGMA synchronous = OFF');
+        $db->query('PRAGMA journal_mode = MEMORY');
+    } catch (Throwable $e) {
+        // restricted -- fine
+    }
 }
 
 $ts_ago = static function (int $daysMax): string {
@@ -53,31 +63,29 @@ $insSite = $db->prepare('INSERT INTO sites (name, description) VALUES (:n, :d)')
 $siteIds = [];
 for ($i = 1; $i <= 40; $i++) {
     $insSite->execute([':n' => "Site-$i DC " . bin2hex(random_bytes(2)), ':d' => "Synthetic site $i for backup fixtures"]);
-    $siteIds[] = (int) $db->lastInsertId();
+    $siteIds[] = ipam_last_insert_id($db, 'sites');
 }
 
 $insVrf = $db->prepare('INSERT INTO vrfs (name, description, rd) VALUES (:n, :d, :rd)');
 $vrfIds = [null]; // include the global (NULL) VRF
 for ($i = 1; $i <= 25; $i++) {
     $insVrf->execute([':n' => "vrf-$i-" . bin2hex(random_bytes(2)), ':d' => "Synthetic VRF $i", ':rd' => "65000:$i"]);
-    $vrfIds[] = (int) $db->lastInsertId();
+    $vrfIds[] = ipam_last_insert_id($db, 'vrfs');
 }
 
 $insVlan = $db->prepare('INSERT INTO vlans (vlan_id, name, description, site_id) VALUES (:v, :n, :d, :s)');
 $vlanIds = [];
+// vlan_id is unique per row here (i .. i+499 all distinct, well under 4094) and
+// each pairs with one site, so UNIQUE(vlan_id, site_id) never collides.
 for ($i = 1; $i <= 500; $i++) {
     $vid = ($i % 4094) + 1;
-    try {
-        $insVlan->execute([
-            ':v' => $vid,
-            ':n' => "vlan-$vid-" . bin2hex(random_bytes(2)),
-            ':d' => "Synthetic VLAN $i",
-            ':s' => $siteIds[array_rand($siteIds)],
-        ]);
-        $vlanIds[] = (int) $db->lastInsertId();
-    } catch (PDOException $e) {
-        // UNIQUE(vlan_id, site_id) collision -- skip
-    }
+    $insVlan->execute([
+        ':v' => $vid,
+        ':n' => "vlan-$vid-" . bin2hex(random_bytes(2)),
+        ':d' => "Synthetic VLAN $i",
+        ':s' => $siteIds[array_rand($siteIds)],
+    ]);
+    $vlanIds[] = ipam_last_insert_id($db, 'vlans');
 }
 
 $insContact = $db->prepare('INSERT INTO contacts (name, email, phone, org, note) VALUES (:n, :e, :p, :o, :nt)');
@@ -90,7 +98,7 @@ for ($i = 1; $i <= 2000; $i++) {
         ':o'  => "Org " . random_int(1, 50),
         ':nt' => str_repeat("contact note blob ", random_int(1, 8)),
     ]);
-    $contactIds[] = (int) $db->lastInsertId();
+    $contactIds[] = ipam_last_insert_id($db, 'contacts');
 }
 $db->commit();
 echo "  sites=" . count($siteIds) . " vrfs=" . (count($vrfIds) - 1) . " vlans=" . count($vlanIds) . " contacts=" . count($contactIds) . "\n";
@@ -107,22 +115,28 @@ $db->beginTransaction();
 $batch = 0;
 $targetSubnets = 6000;
 for ($i = 0; $i < $targetSubnets; $i++) {
+    // Deterministic, globally-unique CIDRs so UNIQUE(cidr, vrf_id) never
+    // collides regardless of which (random) vrf_id each subnet lands in --
+    // important on Postgres where a failed INSERT poisons the open transaction.
     if ($i < 5400) {
-        $a = 10;
-        $b = intdiv($i, 256) % 256;
-        $c = $i % 256;
-        $net = "$a.$b.$c.0";
+        // 10.{0..20}.{0..255}.0/24  (i 0..5399 -> distinct (b,c))
+        $b = intdiv($i, 256);          // 0..20
+        $c = $i % 256;                  // 0..255
+        $net = "10.$b.$c.0";
         $cidr = "$net/24";
         $prefix = 24;
         $ver = 4;
     } elseif ($i < 5800) {
-        $b = 16 + (($i - 5400) % 16);
-        $c = ($i - 5400) % 256;
+        // 172.{16..17}.{0..255}.0/24  (i-5400 = 0..399 -> distinct (b,c))
+        $idx = $i - 5400;               // 0..399
+        $b = 16 + intdiv($idx, 256);    // 16 or 17
+        $c = $idx % 256;                // 0..255
         $net = "172.$b.$c.0";
         $cidr = "$net/24";
         $prefix = 24;
         $ver = 4;
     } else {
+        // 2001:db8:{0..199 in hex}::/64
         $seg = dechex(($i - 5800) & 0xffff);
         $net = "2001:db8:$seg::";
         $cidr = "$net/64";
@@ -153,13 +167,9 @@ for ($i = 0; $i < $targetSubnets; $i++) {
     } else {
         $stmt->bindValue(':vrf', $vrf, PDO::PARAM_INT);
     }
-    try {
-        $stmt->execute();
-        $sid = (int) $db->lastInsertId();
-        $subnetMeta[$sid] = [$netBin, $prefix, $ver];
-    } catch (PDOException $e) {
-        continue; // UNIQUE(cidr, vrf_id) collision
-    }
+    $stmt->execute();
+    $sid = ipam_last_insert_id($db, 'subnets');
+    $subnetMeta[$sid] = [$netBin, $prefix, $ver];
     if (++$batch >= 1000) {
         $db->commit();
         $db->beginTransaction();
@@ -226,12 +236,10 @@ foreach ($ipv4Subnets as [$sid, $netBin]) {
         } else {
             $stmt->bindValue(':exp', $exp, PDO::PARAM_STR);
         }
-        try {
-            $stmt->execute();
-            $addrCount++;
-        } catch (PDOException $e) {
-            continue; // UNIQUE(subnet_id, ip)
-        }
+        // $used[] guarantees a distinct host within this subnet, and each
+        // subnet is processed once, so UNIQUE(subnet_id, ip) never collides.
+        $stmt->execute();
+        $addrCount++;
         if (++$batch >= 5000) {
             $db->commit();
             $db->beginTransaction();
@@ -315,20 +323,46 @@ foreach ($addrIdSample as $r) {
 }
 $db->commit();
 
-// -- Finalise: checkpoint WAL so the .sqlite file reflects everything --------
-try {
-    $db->query('PRAGMA wal_checkpoint(TRUNCATE)');
-} catch (Throwable $e) {
-    // non-sqlite -- fine
+// -- Finalise --------------------------------------------------------------
+if ($driver === 'sqlite') {
+    // Checkpoint WAL so the .sqlite file reflects everything.
+    try {
+        $db->query('PRAGMA wal_checkpoint(TRUNCATE)');
+    } catch (Throwable $e) {
+        // fine
+    }
 }
 
-$dbFile = '/var/www/html/data/ipam.sqlite';
-clearstatcache();
-$sz = is_file($dbFile) ? filesize($dbFile) : 0;
 $secs = round(microtime(true) - $started, 1);
-echo "\nDone in {$secs}s.\n";
+echo "\nDone in {$secs}s (driver=$driver).\n";
 echo "  subnets=" . count($subnetMeta) . " addresses=$addrCount audit_log~25000 address_history~" . count($addrIdSample) . "+\n";
-echo "  data/ipam.sqlite = " . number_format((int) $sz) . " bytes (" . round($sz / 1048576, 1) . " MB)\n";
-if ($sz < 25 * 1048576) {
-    echo "  WARNING: DB is under ~25 MB -- consider raising the target counts in this script.\n";
+
+// Report on-disk size where we can measure it cheaply per engine.
+if ($driver === 'sqlite') {
+    $dbFile = '/var/www/html/data/ipam.sqlite';
+    clearstatcache();
+    $sz = is_file($dbFile) ? filesize($dbFile) : 0;
+    echo "  data/ipam.sqlite = " . number_format((int) $sz) . " bytes (" . round($sz / 1048576, 1) . " MB)\n";
+    if ($sz < 25 * 1048576) {
+        echo "  WARNING: DB is under ~25 MB -- consider raising the target counts in this script.\n";
+    }
+} elseif ($driver === 'mysql') {
+    try {
+        $row = $db->query(
+            "SELECT COALESCE(SUM(data_length + index_length), 0) AS bytes
+               FROM information_schema.tables WHERE table_schema = DATABASE()"
+        )->fetch();
+        $sz = is_array($row) ? (int) ($row['bytes'] ?? 0) : 0;
+        echo "  MySQL schema size ~ " . number_format($sz) . " bytes (" . round($sz / 1048576, 1) . " MB)\n";
+    } catch (Throwable $e) {
+        echo "  (could not measure MySQL schema size: " . $e->getMessage() . ")\n";
+    }
+} elseif ($driver === 'pgsql') {
+    try {
+        $row = $db->query('SELECT pg_database_size(current_database()) AS bytes')->fetch();
+        $sz = is_array($row) ? (int) ($row['bytes'] ?? 0) : 0;
+        echo "  Postgres database size ~ " . number_format($sz) . " bytes (" . round($sz / 1048576, 1) . " MB)\n";
+    } catch (Throwable $e) {
+        echo "  (could not measure Postgres database size: " . $e->getMessage() . ")\n";
+    }
 }
