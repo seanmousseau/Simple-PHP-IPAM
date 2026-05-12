@@ -24,6 +24,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $action = '';
     }
 
+    // v3.28.0 (#1156) — sudo-gate webhook create/edit/delete. A webhook posts
+    // entity-change events to an arbitrary URL with an HMAC-signed body, so
+    // creating, retargeting, or removing one is a credential/exfil-class
+    // change. Gate BEFORE input validation; round-trip the raw POST so the
+    // action resumes after verification. (toggle/gen_secret/test_fire/retry
+    // are intentionally not gated.)
+    if (in_array($action, ['create', 'edit', 'delete'], true)) {
+        $sudoUid = to_int((current_user()['id']) ?? 0);
+        if (!ipam_sudo_require($db, $sudoUid)) {
+            page_header('Confirm your identity');
+            $stepUpUserId       = $sudoUid;
+            $stepUpFormAction   = 'webhooks.php';
+            $stepUpHiddenFields = ['action' => $action];
+            foreach ($_POST as $pk => $pv) {
+                $pkS = (string) $pk;
+                if ($pkS === 'csrf' || $pkS === 'action' || str_starts_with($pkS, '_sudo_')) continue;
+                if (is_scalar($pv)) {
+                    $stepUpHiddenFields[$pkS] = (string) $pv;
+                } elseif (is_array($pv)) {
+                    foreach ($pv as $i => $v) {
+                        if (is_scalar($v)) $stepUpHiddenFields[$pkS . '[' . (string) $i . ']'] = (string) $v;
+                    }
+                }
+            }
+            $stepUpDescription  = $action === 'create'
+                ? 'Re-authenticate to create a webhook. Webhooks post entity-change events to an arbitrary URL with an HMAC-signed body.'
+                : ($action === 'edit'
+                    ? 'Re-authenticate to edit a webhook. Changing its target URL or signing secret affects where signed entity-change events are delivered.'
+                    : 'Re-authenticate to delete a webhook. This also removes all of its delivery history.');
+            $stepUpReturnPath   = 'webhooks.php';
+            $stepUpError        = isset($_POST['_sudo_method']) ? 'Verification failed. The webhook was not changed.' : '';
+            include __DIR__ . '/views/_step_up_prompt.php';
+            page_footer();
+            exit;
+        }
+        ipam_sudo_consume_once();
+    }
+
     // Generate secret (AJAX)
     if ($action === 'gen_secret') {
         header('Content-Type: application/json');

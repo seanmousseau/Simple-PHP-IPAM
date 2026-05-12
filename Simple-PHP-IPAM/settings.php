@@ -322,6 +322,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     }
 
+    // v3.28.0 (#1157) — sudo-gate the SMTP setting save (smtp.* keys) and the
+    // backup notification recipient save (backup.notify_recipient_*). Changing
+    // the SMTP relay or who receives backup-status mail is a credential / data
+    // exfiltration-class change. Mirrors the step-up policy block above; runs
+    // only when the policy-save gate did not already fire.
+    $sensitiveSettingSave = (!$stepUpPolicySave && !$fieldErrors && $pending !== []
+        && (bool) array_filter(
+            array_keys($pending),
+            static fn(string $k): bool => str_starts_with($k, 'smtp.') || str_starts_with($k, 'backup.notify_recipient_')
+        ));
+    if ($sensitiveSettingSave && !ipam_sudo_require($db, to_int($userId ?? 0))) {
+        page_header('Confirm your identity');
+        $stepUpUserId       = to_int($userId ?? 0);
+        $stepUpFormAction   = 'settings.php';
+        $stepUpHiddenFields = ['group' => $postedGroup];
+        foreach ($_POST as $pk => $pv) {
+            $pkS = (string) $pk;
+            if ($pkS === 'csrf' || $pkS === 'group' || str_starts_with($pkS, '_sudo_')) continue;
+            if (is_scalar($pv)) {
+                $stepUpHiddenFields[$pkS] = (string) $pv;
+            } elseif (is_array($pv)) {
+                foreach ($pv as $i => $v) {
+                    if (is_scalar($v)) $stepUpHiddenFields[$pkS . '[' . (string) $i . ']'] = (string) $v;
+                }
+            }
+        }
+        $stepUpDescription = 'Re-authenticate to change SMTP delivery or backup-notification recipient settings.';
+        $stepUpReturnPath  = 'settings.php';
+        $stepUpError       = isset($_POST['_sudo_method']) ? 'Verification failed. Settings were not changed.' : '';
+        include __DIR__ . '/views/_step_up_prompt.php';
+        page_footer();
+        exit;
+    }
+    if ($sensitiveSettingSave) {
+        ipam_sudo_consume_once();
+    }
+
     $changed = 0;
     if (!$fieldErrors && $pending) {
         $db->beginTransaction();

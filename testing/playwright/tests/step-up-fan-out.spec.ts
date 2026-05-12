@@ -101,6 +101,52 @@ test.describe('Step-up gate fan-out (#1114)', () => {
         expect(res.body).toContain('data-step-up-prompt');
     });
 
+    test('webhooks create renders the step-up prompt without a grant (#1156)', async ({ page }) => {
+        await page.goto(appUrl('webhooks.php'));
+        const res = await fetchPost(page, appUrl('webhooks.php'), {
+            action: 'create',
+            name: 'fanout-prompt-only',
+        });
+        expect(res.status).toBe(200);
+        expect(res.body).toContain('data-step-up-prompt');
+    });
+
+    test('custom_fields create renders the step-up prompt without a grant (#1158)', async ({ page }) => {
+        await page.goto(appUrl('custom_fields.php'));
+        const res = await fetchPost(page, appUrl('custom_fields.php'), {
+            action: 'create',
+            entity_type: 'subnet',
+            key: 'fanout_prompt_only',
+            label: 'Fanout prompt only',
+            type: 'text',
+        });
+        expect(res.status).toBe(200);
+        expect(res.body).toContain('data-step-up-prompt');
+    });
+
+    test('settings.php SMTP save renders the step-up prompt without a grant (#1157)', async ({ page }) => {
+        await page.goto(appUrl('settings.php'));
+        // Submit a changed smtp.host via the group-save handler. Field-name
+        // convention is `k_<key>` with dots → `__` (settings.php:190). The
+        // group save iterates every smtp.* definition, so we also have to
+        // pass valid values for the constrained fields (`smtp.port` has
+        // min=1/max=65535, `smtp.encryption` is a fixed option set) — posting
+        // them at their defaults means they don't enter $pending, leaving only
+        // the changed smtp.host, which trips the sensitive-setting gate before
+        // any DB write. A field-validation error would short-circuit the gate
+        // (it requires !$fieldErrors), so passing these is required, not just
+        // belt-and-suspenders.
+        const res = await fetchPost(page, appUrl('settings.php'), {
+            group: 'smtp',
+            k_smtp__host: `relay-fanout-${Date.now()}.invalid`,
+            k_smtp__port: '587',                  // int, min=1
+            k_smtp__encryption: 'starttls',       // fixed option set
+            k_smtp__timeout_seconds: '10',        // int, min=1
+        });
+        expect(res.status).toBe(200);
+        expect(res.body).toContain('data-step-up-prompt');
+    });
+
     test('one grant satisfies the gate fan-out within TTL', async ({ page }) => {
         const keyName = `pw-fanout-grant-${Date.now()}`;
 

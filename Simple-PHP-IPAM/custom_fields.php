@@ -29,6 +29,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $action = '';
     }
 
+    // v3.28.0 (#1158) — sudo-gate custom field definition create/update/delete.
+    // A field definition mutates the shape of every subnet/address edit form
+    // and (for delete) drops a column's worth of metadata. Gate BEFORE input
+    // validation; round-trip the raw POST so the action resumes after
+    // verification.
+    if (in_array($action, ['create', 'update', 'delete'], true)) {
+        $sudoUid = to_int((current_user()['id']) ?? 0);
+        if (!ipam_sudo_require($db, $sudoUid)) {
+            page_header('Confirm your identity');
+            $stepUpUserId       = $sudoUid;
+            $stepUpFormAction   = 'custom_fields.php';
+            $stepUpHiddenFields = ['action' => $action];
+            foreach ($_POST as $pk => $pv) {
+                $pkS = (string) $pk;
+                if ($pkS === 'csrf' || $pkS === 'action' || str_starts_with($pkS, '_sudo_')) continue;
+                if (is_scalar($pv)) {
+                    $stepUpHiddenFields[$pkS] = (string) $pv;
+                } elseif (is_array($pv)) {
+                    foreach ($pv as $i => $v) {
+                        if (is_scalar($v)) $stepUpHiddenFields[$pkS . '[' . (string) $i . ']'] = (string) $v;
+                    }
+                }
+            }
+            $stepUpDescription  = $action === 'create'
+                ? 'Re-authenticate to create a custom field definition. It changes the shape of every subnet or address edit form.'
+                : ($action === 'update'
+                    ? 'Re-authenticate to update a custom field definition.'
+                    : 'Re-authenticate to delete a custom field definition.');
+            $stepUpReturnPath   = 'custom_fields.php';
+            $stepUpError        = isset($_POST['_sudo_method']) ? 'Verification failed. The custom field definition was not changed.' : '';
+            include __DIR__ . '/views/_step_up_prompt.php';
+            page_footer();
+            exit;
+        }
+        ipam_sudo_consume_once();
+    }
+
     if ($action === 'create') {
         $entityType = to_str($_POST['entity_type'] ?? '');
         $key        = trim(to_str($_POST['key']         ?? ''));

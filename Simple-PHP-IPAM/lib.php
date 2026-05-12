@@ -2585,7 +2585,7 @@ function ipam_setting_groups(): array
     return [
         'branding'             => ['label' => 'Branding',             'description' => 'Display name and timezone shown across the UI.'],
         'security'             => ['label' => 'Security',             'description' => 'Session lifetime and login lockout policy.'],
-        'step_up'              => ['label' => 'Step-up authentication', 'description' => 'Re-authentication policy for sensitive admin actions (vault key, sensitive setting reveal, DB import, API key creation, MFA disable). Decoupled from the login provider so OIDC users can manage these without a local password.'],
+        'step_up'              => ['label' => 'Step-up authentication', 'description' => 'Re-authentication policy for sensitive admin actions (vault key, sensitive setting reveal, DB import, API key creation, MFA disable, webhook create/edit/delete, SMTP and backup-notification-recipient settings, custom field definition changes). Decoupled from the login provider so OIDC users can manage these without a local password.'],
         'mfa'                  => ['label' => 'Multi-Factor Authentication', 'description' => 'Available 2FA methods and enforcement policy.'],
         'password_policy'      => ['label' => 'Password policy',      'description' => 'Complexity requirements and rotation for local passwords.'],
         'alert'                => ['label' => 'Alerting',             'description' => 'Subnet utilization email alerts.'],

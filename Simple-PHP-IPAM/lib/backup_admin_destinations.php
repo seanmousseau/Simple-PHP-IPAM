@@ -465,17 +465,18 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
         // POSTs back here with the proof attached and the same hidden
         // fields so the original action resumes after verification.
         if (!ipam_sudo_require($db, $userId)) {
-            // Deprecated audit alias — retained one release so existing
-            // SIEM queries on backup.vault_key.sudo_failed still fire.
-            // ipam_sudo_verify() already wrote auth.sudo_failed when a
-            // proof was submitted; this row is the bridge for legacy
-            // log-search filters. Removed in v3.28.0 per plan §3.6.
-            if (isset($_POST['_sudo_method'])) {
-                audit($db, 'backup.vault_key.sudo_failed', 'vault', null,
-                      "action=$action user=$username");
-                if ($action === 'vault_reveal') {
-                    record_auth_failure($db, 'vault_key_reveal', $clientIp, $username);
-                }
+            // v3.28.0 (plan §3.6): the deprecated `backup.vault_key.sudo_failed`
+            // audit alias was removed here. ipam_sudo_verify() already writes
+            // `auth.sudo_failed` when a proof is submitted; SIEM queries that
+            // need to isolate vault-reveal failures should correlate
+            // `auth.sudo_failed` rows with the adjacent `backup.vault_key.*`
+            // rows on the same IP/user instead of relying on the alias.
+            // The vault-reveal-specific per-IP rate-limit hit below is NOT an
+            // alias — it brakes the dedicated `vault_key_reveal` bucket so a
+            // reveal flood cannot mask itself among other sudo activity — so it
+            // stays, just guarded on the same submitted-proof condition.
+            if ($action === 'vault_reveal' && isset($_POST['_sudo_method'])) {
+                record_auth_failure($db, 'vault_key_reveal', $clientIp, $username);
             }
 
             page_header('Confirm your identity');

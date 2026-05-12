@@ -7,7 +7,7 @@ import {
   login, fetchGet, fetchPost, appUrl,
   ADMIN_USER, ADMIN_PASS,
   RO_USER, RO_PASS,
-  newAuthContext, ensureRoUser,
+  newAuthContext, ensureRoUser, warmSudoGrant,
 } from '../fixtures/ipam';
 
 const CF_KEY_TEXT     = 'pw_cf_text';
@@ -27,6 +27,12 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
   await login(page, ADMIN_USER, ADMIN_PASS);
 
   await ensureRoUser(page);
+
+  // v3.28.0 (#1158): custom field def create/update/delete is sudo-gated.
+  // Warm a sudo grant once for the whole suite (shared page/context, default
+  // TTL=300s) so the form-driven CRUD tests and the fetchPost cleanup helpers
+  // below don't each land on the step-up prompt.
+  await warmSudoGrant(page);
 
   // Clean up stale test custom field defs from previous failed runs
   await page.goto('custom_fields.php');
