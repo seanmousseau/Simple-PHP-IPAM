@@ -548,19 +548,33 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
         if ($action === 'vault_set' && $status['present']) {
             return 'A vault key is already configured. Use Replace to change it.';
         }
+        // Whether the operator has explicitly acknowledged that this
+        // generate/replace will orphan existing encrypted archives.
+        // v3.28.0: replaces the old hard block — "purge your backup
+        // history" is not a realistic ask for a production install
+        // that's lost its vault key, and #1164 made the legacy
+        // app_secret write path moot, so an install with only
+        // app_secret-era encrypted runs (which the new key wouldn't
+        // affect anyway, but the encryption_mode column can't tell them
+        // apart) needs an escape hatch. The UI renders a checkbox
+        // (`confirm_orphan_backups=1`) next to the submit when this gate
+        // applies; ticking it is the conscious "yes, strand them" choice.
+        $ackOrphanBackups = to_str($_POST['confirm_orphan_backups'] ?? '') === '1';
         if ($status['has_encrypted_runs']) {
-            // Only vault_set + paste is permitted when encrypted runs
-            // exist (operator restoring a known key). Both vault_replace
-            // and vault_set + generate would orphan archives.
+            // vault_set + paste is unconditionally permitted (operator
+            // restoring a known-good key — a wrong paste fails loudly on
+            // restore, not silently). A generate/replace that would
+            // orphan archives is refused unless explicitly acknowledged.
             $isRestoreFromPaste = ($action === 'vault_set' && $mode === 'paste');
-            if (!$isRestoreFromPaste) {
-                return 'Cannot ' . ($action === 'vault_set' ? 'generate a new' : 'replace the')
-                     . ' vault key while encrypted backups exist '
-                     . '(any orphaned key would strand them). '
-                     . ($action === 'vault_set'
-                        ? 'Paste the original key from your password manager '
-                        . 'to recover, or purge encrypted backup history first.'
-                        : 'Purge encrypted backup history first.');
+            $wouldOrphan        = !$isRestoreFromPaste;
+            if ($wouldOrphan && !$ackOrphanBackups) {
+                return 'Cannot ' . ($action === 'vault_set' ? 'set a new' : 'replace the')
+                     . ' vault key while encrypted backups exist — archives encrypted '
+                     . 'under the ' . ($action === 'vault_set' ? 'old' : 'current') . ' key '
+                     . 'cannot be decrypted with the new one, so they would be permanently '
+                     . 'stranded. To recover instead, paste the original key. To proceed '
+                     . 'anyway and accept that those archives become unreadable, tick the '
+                     . '"I understand …" acknowledgement below and resubmit.';
             }
         }
 
@@ -591,9 +605,11 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
                   . substr($e->getMessage(), 0, 200));
             return $e->getMessage();
         }
+        $orphanedAck = ($status['has_encrypted_runs'] && !($action === 'vault_set' && $mode === 'paste') && $ackOrphanBackups);
         audit($db, 'backup.vault_key.' . ($action === 'vault_set' ? 'set' : 'replaced'),
               'vault', null,
-              "user=$username mode=$mode fingerprint=" . ipam_vault_fingerprint($rawKey));
+              "user=$username mode=$mode fingerprint=" . ipam_vault_fingerprint($rawKey)
+              . ($orphanedAck ? ' confirm_orphan=1' : ''));
         // Hand the operator the new key once so they can copy it
         // offline. Same flash slot as Reveal — rendered exactly once.
         $_SESSION['vault_key_revealed'] = base64_encode($rawKey);

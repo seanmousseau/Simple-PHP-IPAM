@@ -108,4 +108,63 @@ final class HasEncryptedRunsGateTest extends TestCase
         $status = ipam_vault_key_status($this->db);
         $this->assertFalse($status['has_encrypted_runs']);
     }
+
+    // -----------------------------------------------------------------------
+    // v3.28.0 — confirm_orphan_backups acknowledgement: the vault-key
+    // set/replace handler refuses a generate/replace while .ipambkp3 runs
+    // exist UNLESS the operator explicitly acknowledges the orphaning. The
+    // old behaviour was a hard block whose only escape was "purge your
+    // backup history" — not realistic for a production install that lost
+    // its vault key. Only the *refuse* legs return a string we can assert
+    // on (the acknowledged-success leg ends in ipam_destinations_redirect()
+    // which exits — that's the Playwright vault-key flow's job).
+    // -----------------------------------------------------------------------
+
+    private function postSession(): void
+    {
+        $GLOBALS['db'] = $this->db;
+        $_SESSION = [
+            'uid' => 1, 'username' => 'admin', 'role' => 'admin',
+            'last_activity' => time(),
+            'sudo_until_ts' => time() + 300, // warm grant → skip the step-up prompt
+        ];
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $_POST = ['csrf' => csrf_token()];
+    }
+
+    public function testVaultSetGenerateRefusedWithoutAckWhenIpambkp3RunsExist(): void
+    {
+        $this->seedRun('stored', 'ipam-backup-20260509-014032-deadbeef.ipambkp3');
+        $this->postSession();
+        $_POST += ['action' => 'vault_set', 'vault_mode' => 'generate'];
+        $err = ipam_destinations_handle_post($this->db, 'backup_admin.php?tab=destinations');
+        $this->assertStringContainsStringIgnoringCase('encrypted backups exist', $err);
+        $this->assertStringContainsStringIgnoringCase('acknowledg', $err, 'refusal must point at the acknowledgement');
+        $this->assertFalse(ipam_vault_key_status($this->db)['present'], 'no key should have been persisted');
+        $_SESSION = []; $_POST = [];
+    }
+
+    public function testVaultReplaceRefusedWithoutAckWhenIpambkp3RunsExist(): void
+    {
+        $this->seedRun('stored', 'ipam-backup-20260509-014032-deadbeef.ipambkp3');
+        $this->postSession();
+        $_POST += ['action' => 'vault_replace', 'vault_mode' => 'generate'];
+        $err = ipam_destinations_handle_post($this->db, 'backup_admin.php?tab=destinations');
+        $this->assertStringContainsStringIgnoringCase('encrypted backups exist', $err);
+        $this->assertStringContainsStringIgnoringCase('acknowledg', $err);
+        $_SESSION = []; $_POST = [];
+    }
+
+    public function testVaultSetPasteBypassesOrphanGateWithoutAck(): void
+    {
+        $this->seedRun('stored', 'ipam-backup-20260509-014032-deadbeef.ipambkp3');
+        $this->postSession();
+        // Empty paste → must reach the paste-validation error (proving the
+        // orphan gate let it through) rather than the orphan refusal.
+        $_POST += ['action' => 'vault_set', 'vault_mode' => 'paste', 'vault_key_b64' => ''];
+        $err = ipam_destinations_handle_post($this->db, 'backup_admin.php?tab=destinations');
+        $this->assertStringNotContainsStringIgnoringCase('encrypted backups exist', $err);
+        $this->assertStringContainsStringIgnoringCase('paste', $err);
+        $_SESSION = []; $_POST = [];
+    }
 }
