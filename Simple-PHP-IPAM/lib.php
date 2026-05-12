@@ -486,11 +486,33 @@ function ipam_db_init(PDO $db): void
     global $config;
     $driver = ipam_dialect()->driver_name();
 
-    // SQLite-only fast path: skip bootstrap checks if the sentinel file is
-    // at least as new as the SQLite DB file. MySQL has no local file to
-    // stat, so this optimisation does not apply there — the MySQL path
-    // runs the full check on every bootstrap (overhead is one SELECT).
-    if ($driver === 'sqlite') {
+    // Probe for the users table on THIS handle. A lightweight SELECT with a
+    // caught "table not found" — works on every engine without needing
+    // sqlite_master / information_schema branching.
+    $hasUsers = false;
+    try {
+        $probe = $db->query("SELECT 1 FROM users LIMIT 1");
+        if ($probe !== false) {
+            $probe->closeCursor();
+            $hasUsers = true;
+        }
+    } catch (PDOException) {
+        $hasUsers = false;
+    }
+
+    // SQLite-only fast path: when the handle already has the schema AND the
+    // sentinel file is at least as new as the SQLite DB file, skip the
+    // per-bootstrap probe/migration churn. MySQL has no local file to stat,
+    // so this optimisation does not apply there.
+    //
+    // The $hasUsers guard is load-bearing: it keeps a sqlite::memory: handle
+    // (which does NOT correspond to the on-disk db_path the sentinel stats —
+    // e.g. unit tests that call ipam_db_init() directly) from wrongly taking
+    // the fast path and running apply_migrations() against an empty in-memory
+    // database. Migrations assume the schema.sql baseline already exists, so
+    // a fresh handle MUST fall through to the schema-creation branch below.
+    // (#1175 — RestoreDryRunTest::testIpambkl1ArchiveDoesNotErrorThroughSqlSplitter.)
+    if ($driver === 'sqlite' && $hasUsers) {
         // Honour a deployment's configured db_path so the sentinel check
         // stats the real database file, not the default one. The sentinel
         // itself lives next to the DB file so custom paths stay
@@ -510,20 +532,6 @@ function ipam_db_init(PDO $db): void
                 return;
             }
         }
-    }
-
-    // Probe for the users table. Try a lightweight SELECT and catch the
-    // "table not found" error — works on every engine without needing
-    // sqlite_master / information_schema branching.
-    $hasUsers = false;
-    try {
-        $probe = $db->query("SELECT 1 FROM users LIMIT 1");
-        if ($probe !== false) {
-            $probe->closeCursor();
-            $hasUsers = true;
-        }
-    } catch (PDOException) {
-        $hasUsers = false;
     }
 
     if (!$hasUsers) {
