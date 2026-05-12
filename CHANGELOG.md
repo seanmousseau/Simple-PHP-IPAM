@@ -8,7 +8,9 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
 ## [3.28.0] - 2026-05-12
 
-DR + security stabilization release. Concurrency hardening on two racy state writes (a TOCTOU in the per-IP rate-limit audit dampener and a lost-update on the backup-notification cooldown blobs) plus the surgical security fixes carried over from the v3.27.x verification passes. One schema migration — `3.28.0-state-tables` — adds two state tables, `rate_limit_dampener` and `backup_state`.
+DR + security stabilization release. Concurrency hardening on two racy state writes (a TOCTOU in the per-IP rate-limit audit dampener and a lost-update on the backup-notification cooldown blobs), the surgical security fixes carried over from the v3.27.x verification passes, the step-up coverage sweep, and the start of the legacy backup-encryption retirement. One schema migration — `3.28.0-state-tables` — adds two state tables, `rate_limit_dampener` and `backup_state`.
+
+> **Note on the semver bump:** this MINOR release removes a code path — the `app_secret`-derived backup-encryption *write* path (see Removed below). That's a deliberate, telegraphed step toward the v4.0.0 cold break: the *reader* for legacy `app_secret`-encrypted archives is retained through the entire v3.x line, and the standalone `tools/decrypt-backup.php` recovery tool covers v4.0.0 and beyond. No config-format change, no removed feature, no data loss on upgrade. Full migration path: `docs/upgrading.md` § v3.28.0.
 
 ### Added
 
@@ -18,8 +20,13 @@ DR + security stabilization release. Concurrency hardening on two racy state wri
 
 - **OIDC settings inputs carry explicit `autocomplete` hints** (#1137). The OIDC client-secret field and related inputs were tripping browser password managers into offering to save/fill them; added per-field `autocomplete` hints so the OIDC config form behaves like configuration, not credentials.
 
+### Deprecated
+
+- **`app_secret`-based backup encryption (#1164).** Encrypting backups with the `config.php` `app_secret` value is deprecated. The *write* path is removed now (see Removed); the in-app *reader* for legacy `app_secret`-encrypted archives (IPAMBKP1 / IPAMBKP2) and bare SQLite/`.sql.gz` dumps is **retained through the v3.x line and removed in v4.0.0 (cold break)**. From v4.0.0, `tools/decrypt-backup.php` is the only in-product way to recover plaintext from a pre-v4 legacy archive. The Backups → Destinations and Backups → Restore tabs now carry a persistent retirement banner. Migration path (re-key under the backup vault key, or keep the `app_secret` + decrypt tool as an escape hatch): `docs/upgrading.md` § v3.28.0. Decrypt-tool conformance evidence: `releases/ipam-3.28.0/decrypt-pass1-results.md` (#1165).
+
 ### Removed
 
+- **`app_secret` backup-encryption write path** (#1164). The backup orchestrator no longer falls back to encrypting scheduled backups with `app_secret` when no backup vault key is configured — it now fails preflight with an actionable message (a `status=failed` run with a synthetic `(preflight-failed-…)` name + a `backup.preflight_failed` audit) pointing at the vault key (Stored mode) or a passphrase export (Transitory mode). Installs that already configured the backup vault key (the recommended path since v3.26.0) are unaffected. The standalone `tools/decrypt-backup.php` recovery tool was hardened in passing during the #1165 conformance run — `--help` exits 0 with per-format examples, `--out -` streams to stdout, `--force` is required to overwrite an existing output file, conflicting credentials are rejected up front, a wrong-credential-type or unrecognised archive exits 2 with a clear message, and bare `.sql.gz` / `.ipambkl1.gz` / SQL-text archives pass through verbatim.
 - **`backup.vault_key.sudo_failed` audit alias removed.** v3.27.0 migrated the vault-key sudo gate to the unified `ipam_sudo_verify()` helper (which emits `auth.sudo_failed`) and retained the legacy `backup.vault_key.sudo_failed` row as a parallel emit for one release so existing log queries wouldn't break. That release window is over; the alias is gone. SIEM rules that need vault-specific filtering should correlate `auth.sudo_failed` with the adjacent `backup.vault_key.*` row on the same IP/user — see `docs/internal/audit-actions.md`. The vault-reveal-specific per-IP rate-limit hit is unaffected.
 
 ### Fixed

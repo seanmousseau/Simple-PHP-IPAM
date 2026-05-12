@@ -26,6 +26,9 @@ $_isAdmin     = ($_currentUser['role'] ?? '') === 'admin';
     <div class="card success"><?= e($flash) ?></div>
   <?php endif; ?>
 
+  <?php /* v3.28.0 #1164 — app_secret backup-encryption retirement notice (Destinations + Restore tabs). */ ?>
+  <?php include __DIR__ . '/_app_secret_retirement_banner.php'; ?>
+
   <?php if ($_isAdmin): ?>
   <!-- v3.26.0 (#1098) — Encryption key (Stored mode) admin panel -->
   <section class="card" data-test="vault-key-panel">
