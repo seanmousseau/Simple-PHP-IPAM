@@ -107,7 +107,18 @@ if ($rawKey === '') {
         ini_set('session.use_only_cookies', '1');
         @session_start();
         if (!empty($_SESSION['uid'])) {
-            $sessionApiKey = ['id' => 0, 'name' => 'session', 'is_readonly' => '1'];
+            // #1151 (Pass C S-008): a disabled admin holding a stolen session
+            // cookie must not keep read access to the session-fallback
+            // endpoints for the rest of the session lifetime. Re-check
+            // users.is_active here — not just at login — before minting the
+            // synthetic readonly key. A 0/missing row falls through to 401.
+            $uid      = to_int($_SESSION['uid']);
+            $actSt    = $db->prepare("SELECT is_active FROM users WHERE id = :uid");
+            $actSt->execute([':uid' => $uid]);
+            $isActive = $actSt->fetchColumn();
+            if ($isActive !== false && to_int($isActive) === 1) {
+                $sessionApiKey = ['id' => 0, 'name' => 'session', 'is_readonly' => '1'];
+            }
         }
     }
 }
