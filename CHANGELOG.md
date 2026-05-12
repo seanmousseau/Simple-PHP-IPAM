@@ -10,6 +10,10 @@ as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
 DR + security stabilization release. Concurrency hardening on two racy state writes (a TOCTOU in the per-IP rate-limit audit dampener and a lost-update on the backup-notification cooldown blobs) plus the surgical security fixes carried over from the v3.27.x verification passes. One schema migration — `3.28.0-state-tables` — adds two state tables, `rate_limit_dampener` and `backup_state`.
 
+### Added
+
+- **CSP regression guard in CI** (#906). A new Playwright spec (`csp-no-inline.spec.ts`) crawls the authenticated page roster plus the login page and fails the build if any served HTML contains an inline `<script>` (without `src=`) or a `<style>` block — both of which silently break under the app's `script-src 'self'` / `style-src 'self'` Content-Security-Policy in production. Guards against re-introducing the v3.27.7-class regression where inline page JS quietly stopped running. (No app change; all audited pages were already clean.)
+
 ### Changed
 
 - **OIDC settings inputs carry explicit `autocomplete` hints** (#1137). The OIDC client-secret field and related inputs were tripping browser password managers into offering to save/fill them; added per-field `autocomplete` hints so the OIDC config form behaves like configuration, not credentials.
