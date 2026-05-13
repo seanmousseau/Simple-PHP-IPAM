@@ -48,6 +48,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
             }
+            // Never echo the webhook signing secret back into the step-up HTML
+            // (CodeRabbit, #1179). Dropped here → not re-submitted after
+            // verification → `create` errors "secret required" (re-generate),
+            // `edit` keeps the existing secret. See ipam_step_up_redact_secrets().
+            $stepUpHiddenFields = ipam_step_up_redact_secrets($stepUpHiddenFields);
             $stepUpDescription  = $action === 'create'
                 ? 'Re-authenticate to create a webhook. Webhooks post entity-change events to an arbitrary URL with an HMAC-signed body.'
                 : ($action === 'edit'

@@ -306,12 +306,36 @@ $finalTmp = $toStdout
     ? (sys_get_temp_dir() . '/ipam-decrypt-' . bin2hex(random_bytes(6)))
     : $outPath;
 
+// Did the operator-named --out path already exist before this run? If so we
+// must not clobber it on a failure path (--force only authorises a *success*
+// overwrite). For the stdout case $finalTmp is a fresh private temp we own.
+$outPreExisted = (!$toStdout) && is_file($outPath);
+
+// Paths this run created; @unlink()'d on any failure path before dbu_die().
+/** @var list<string> $cleanupOnFailure */
+$cleanupOnFailure = [];
+if ($toStdout) {
+    $cleanupOnFailure[] = $finalTmp;
+}
+$dbuCleanup = static function () use (&$cleanupOnFailure): void {
+    foreach ($cleanupOnFailure as $p) {
+        if ($p !== '' && is_file($p)) {
+            // nosemgrep -- tool-generated output/temp paths created this run, no user input drives the value
+            @unlink($p);
+        }
+    }
+};
+
 // ── Dispatch ─────────────────────────────────────────────────────────────
 try {
     if ($family === 'bare') {
         // Verbatim copy with no decode. Stream so a huge plain archive does
         // not blow memory; write to a sibling temp then rename for atomicity.
         $copyTmp = $finalTmp . '.copying.' . bin2hex(random_bytes(4));
+        $cleanupOnFailure[] = $copyTmp;
+        if (!$toStdout && !$outPreExisted) {
+            $cleanupOnFailure[] = $finalTmp;
+        }
         $in  = @fopen($inPath, 'rb');
         $out = @fopen($copyTmp, 'wb');
         if ($in === false || $out === false) {
@@ -346,6 +370,12 @@ try {
             throw new RuntimeException('rename of verbatim copy failed');
         }
     } else {
+        // backup_decrypt_to_path() writes (and may rename over) $finalTmp.
+        // If it throws partway, clean up the partial output unless the
+        // operator-named --out path already existed before this run.
+        if (!$toStdout && !$outPreExisted) {
+            $cleanupOnFailure[] = $finalTmp;
+        }
         backup_decrypt_to_path(
             $inPath,
             $finalTmp,
@@ -355,11 +385,13 @@ try {
         );
     }
 } catch (IpamBackupKeyRequiredException $e) {
+    $dbuCleanup();
     if ($e->mode === BACKUP_V3_MODE_TRANSITORY) {
         dbu_die('archive is IPAMBKP3 transitory — supply --passphrase or set $IPAM_BACKUP_PASSPHRASE', 3);
     }
     dbu_die('archive is IPAMBKP3 stored — supply --vault-key', 3);
 } catch (Throwable $e) {
+    $dbuCleanup();
     dbu_die('decrypt failed: ' . $e->getMessage(), 3);
 }
 

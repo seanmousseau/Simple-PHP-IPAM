@@ -577,6 +577,11 @@ function ipam_destinations_handle_post(\PDO $db, string $redirectBase): string
             $isRestoreFromPaste = ($action === 'vault_set' && $mode === 'paste');
             $wouldOrphan        = !$isRestoreFromPaste;
             if ($wouldOrphan && !$ackOrphanBackups) {
+                // Significant (step-up-gated) vault-key admin action that was
+                // refused — audit it for parity with the other refusal paths
+                // (reveal_rate_limited / reveal_failed / persist_failed).
+                audit($db, 'backup.vault_key.orphan_refused', 'vault', null,
+                    'action=' . $action . ' mode=' . $mode . ' has_encrypted_runs=1 confirm_orphan=0');
                 return 'Cannot ' . ($action === 'vault_set' ? 'set a new' : 'replace the')
                      . ' vault key while encrypted backups exist — archives encrypted '
                      . 'under the ' . ($action === 'vault_set' ? 'old' : 'current') . ' key '

@@ -103,7 +103,7 @@ backup.set_default_destination      backup.verify_bulk
 backup.preflight_failed             cron.task_failed
 backup.run_recorded
 backup.vault_key.revealed           backup.vault_key.set
-backup.vault_key.replaced
+backup.vault_key.replaced           backup.vault_key.orphan_refused
 backup.vault_key.reveal_failed      backup.vault_key.reveal_rate_limited
 backup_run.bulk_delete              backup_run.purge
 ```
@@ -111,6 +111,8 @@ backup_run.bulk_delete              backup_run.purge
 `backup.vault_key.revealed` (`entity_type=vault`, `entity_id=null`) — emitted by the destinations admin's reveal-key handler (v3.26.0 #1098) after a successful sudo-mode password re-prompt. `$details` carries `user=<username> fingerprint=<8 hex>`. The raw key never appears in the audit row; the fingerprint lets a forensic investigation confirm which key was revealed without storing the secret in the audit log.
 
 `backup.vault_key.set` / `backup.vault_key.replaced` (`entity_type=vault`) — emitted when an admin sets the first vault key, or replaces an existing one (v3.26.0 #1098). `$details` carries `user=<username> mode=<generate|paste> fingerprint=<8 hex>`, plus ` confirm_orphan=1` when the operator generated/replaced the key while vault-key-encrypted (`.ipambkp3`) backup runs existed and explicitly acknowledged that those archives become permanently unreadable (v3.28.0). A generate/replace that would orphan existing `.ipambkp3` archives is refused unless that acknowledgement (the `confirm_orphan_backups=1` POST field, ticked in the UI) is present — except `mode=paste`, which is always permitted (it recovers a known key rather than orphaning). The gate is scoped to `.ipambkp3` runs only (the v3.27.1 Bug-W fix): `app_secret`-protected IPAMBKP2 `.enc` archives don't depend on the vault key, so they never trip it.
+
+`backup.vault_key.orphan_refused` (`entity_type=vault`) — emitted when the generate/replace gate above refuses the action because it would orphan existing `.ipambkp3` archives and the `confirm_orphan_backups=1` acknowledgement was not present (v3.28.0). `$details` carries `action=<vault_set|vault_replace> mode=<generate|paste> has_encrypted_runs=1 confirm_orphan=0`. Recorded for parity with the other vault-key refusal paths (`reveal_rate_limited`, `reveal_failed`, `persist_failed`) so a forensic timeline shows the attempted-but-blocked key swap.
 
 `backup.vault_key.sudo_failed` — **REMOVED in v3.28.0** (was a deprecated alias introduced in v3.27.0). It originally fired when a vault-key admin action's local-password sudo prompt was refused (v3.26.0 #1098); v3.27.0 migrated the vault-key gate to the unified `ipam_sudo_verify()` helper — which already emits `auth.sudo_failed` — and kept this alias as a parallel emit for one release so existing log queries didn't break. The alias is now gone; do not query for it.
 

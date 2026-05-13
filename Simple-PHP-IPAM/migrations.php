@@ -3886,12 +3886,15 @@ function ipam_migrations(): array
                         unlock_at INTEGER NOT NULL,
                         PRIMARY KEY (action, ip)
                     )");
+                    // Supports prune_rate_limit_dampener()'s WHERE unlock_at < ?
+                    $db->exec("CREATE INDEX IF NOT EXISTS idx_rate_limit_dampener_unlock_at ON rate_limit_dampener(unlock_at)");
                 } elseif ($driver === 'mysql') {
                     $db->exec("CREATE TABLE rate_limit_dampener (
                         action    VARCHAR(32) NOT NULL,
                         ip        VARCHAR(45) NOT NULL,
                         unlock_at BIGINT      NOT NULL,
-                        PRIMARY KEY (action, ip)
+                        PRIMARY KEY (action, ip),
+                        KEY idx_rate_limit_dampener_unlock_at (unlock_at)
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
                 } else { // pgsql
                     $db->exec("CREATE TABLE rate_limit_dampener (
@@ -3900,6 +3903,8 @@ function ipam_migrations(): array
                         unlock_at BIGINT      NOT NULL,
                         PRIMARY KEY (action, ip)
                     )");
+                    // Supports prune_rate_limit_dampener()'s WHERE unlock_at < ?
+                    $db->exec("CREATE INDEX IF NOT EXISTS idx_rate_limit_dampener_unlock_at ON rate_limit_dampener(unlock_at)");
                 }
             }
 
@@ -3935,19 +3940,18 @@ function ipam_migrations(): array
             // -- 3. Backfill backup_state from the legacy JSON settings --
             // lib.php is loaded before migrations run, so ipam_setting()
             // is available; it returns the registry default ('{}') when a
-            // row is absent. Skip a scope that is already populated so a
-            // re-run after a partial migration doesn't double-insert.
+            // row is absent. Idempotency is per-(scope, k): a row is only
+            // inserted when it does not already exist, so a re-run after a
+            // partially-applied migration completes the backfill without
+            // double-inserting any row that was already copied.
             if ($tableExists('backup_state') && function_exists('ipam_setting')) {
-                $scopeCount = static function (string $scope) use ($db): int {
-                    $st = $db->prepare("SELECT COUNT(*) FROM backup_state WHERE scope = :s");
-                    $st->execute([':s' => $scope]);
-                    return (int) $st->fetchColumn();
-                };
+                $rowExists = $db->prepare(
+                    "SELECT 1 FROM backup_state WHERE scope = :s AND k = :k"
+                );
                 $ins = $db->prepare(
                     "INSERT INTO backup_state (scope, k, payload_json) VALUES (:s, :k, :p)"
                 );
-                $migrateScope = static function (string $settingKey, string $scope) use ($scopeCount, $ins): void {
-                    if ($scopeCount($scope) > 0) return;
+                $migrateScope = static function (string $settingKey, string $scope) use ($rowExists, $ins): void {
                     $raw = ipam_setting($settingKey, '{}');
                     $decoded = is_string($raw) ? json_decode($raw, true) : null;
                     if (!is_array($decoded)) return;
@@ -3955,6 +3959,8 @@ function ipam_migrations(): array
                         if (!is_array($payload)) continue;
                         $k = (string) $key;
                         if ($k === '' || strlen($k) > 64) continue;
+                        $rowExists->execute([':s' => $scope, ':k' => $k]);
+                        if ($rowExists->fetchColumn() !== false) continue;
                         $enc = json_encode($payload, JSON_UNESCAPED_SLASHES);
                         if (!is_string($enc)) continue;
                         $ins->execute([':s' => $scope, ':k' => $k, ':p' => $enc]);

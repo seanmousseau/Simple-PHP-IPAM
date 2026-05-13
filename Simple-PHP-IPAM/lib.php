@@ -1202,8 +1202,17 @@ function ipam_audit_ip_rate_limited(PDO $db, string $action, string $ip, int $at
     }
 
     $unlockIso = gmdate('Y-m-d\TH:i:s\Z', $unlockAt);
-    audit($db, 'auth.ip_rate_limited', 'auth', null,
+    $emitted = audit($db, 'auth.ip_rate_limited', 'auth', null,
           "action=$action attempts=$attempts unlock_at=$unlockIso ip=$ip");
+    if (!$emitted) {
+        // audit() returns false (not an exception) on write failure. We just
+        // claimed this (action, ip) window via the UPDATE/INSERT above, so the
+        // claim is the only thing standing between subsequent attempts and a
+        // (still missing) audit row. Roll the claim back so a later attempt in
+        // the same window can re-attempt the emit.
+        $db->prepare("DELETE FROM rate_limit_dampener WHERE action = :a AND ip = :ip")
+           ->execute([':a' => $action, ':ip' => $ip]);
+    }
 }
 
 /**

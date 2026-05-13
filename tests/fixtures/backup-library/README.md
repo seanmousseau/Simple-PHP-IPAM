@@ -55,7 +55,8 @@ Run the same flow once per engine. Substitute `$DRV` ∈ {`sqlite`, `mysql`, `pg
 bash testing/playwright/teardown-app.sh            # if something's already up
 bash testing/playwright/bootstrap-app.sh "$DRV"
 docker cp testing/scripts/seed-large-db.php ipam-pw-test:/tmp/seed-large-db.php
-docker exec ipam-pw-test php -d memory_limit=1024M /tmp/seed-large-db.php   # bulk-seed
+# seed-large-db.php is fail-closed: it refuses to run without IPAM_ALLOW_LARGE_SEED=1.
+docker exec -e IPAM_ALLOW_LARGE_SEED=1 ipam-pw-test php -d memory_limit=1024M /tmp/seed-large-db.php   # bulk-seed
 
 # 2. run the generator inside the container, emitting to /tmp/backup-library.
 #    It detects the driver and writes archives/<driver>/.

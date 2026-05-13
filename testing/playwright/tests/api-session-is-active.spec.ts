@@ -38,15 +38,19 @@ test.describe('API session-fallback respects users.is_active (#1151)', () => {
       return 0;
     }, RO_USER);
     expect(uid, 'should resolve the pw-readonly user id').toBeGreaterThan(0);
-    const dis = await fetchPost(page, appUrl('users.php'), { action: 'toggle_active', id: String(uid) });
-    expect(dis.ok, `toggle_active should succeed: ${dis.body}`).toBeTruthy();
 
-    // 4. Same readonly session cookie, account now inactive -> 401.
-    r = await roPage.request.get(appUrl('api.php?resource=contacts'));
-    expect(r.status(), 'disabled user must lose session-fallback access').toBe(401);
+    try {
+      const dis = await fetchPost(page, appUrl('users.php'), { action: 'toggle_active', id: String(uid) });
+      expect(dis.ok, `toggle_active should succeed: ${dis.body}`).toBeTruthy();
 
-    // 5. Cleanup: re-enable pw-readonly so the seed state is restored.
-    await fetchPost(page, appUrl('users.php'), { action: 'toggle_active', id: String(uid) });
-    await roContext.close();
+      // 4. Same readonly session cookie, account now inactive -> 401.
+      r = await roPage.request.get(appUrl('api.php?resource=contacts'));
+      expect(r.status(), 'disabled user must lose session-fallback access').toBe(401);
+    } finally {
+      // 5. Cleanup: re-enable pw-readonly so the seed state is restored even
+      //    if an assertion above failed (later specs depend on this user).
+      await fetchPost(page, appUrl('users.php'), { action: 'toggle_active', id: String(uid) });
+      await roContext.close();
+    }
   });
 });

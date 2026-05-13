@@ -801,7 +801,8 @@ CREATE TABLE IF NOT EXISTS rate_limit_dampener (
   action    VARCHAR(32) NOT NULL,
   ip        VARCHAR(45) NOT NULL,
   unlock_at BIGINT      NOT NULL,
-  PRIMARY KEY (action, ip)
+  PRIMARY KEY (action, ip),
+  KEY idx_rate_limit_dampener_unlock_at (unlock_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- ---------------------------------------------------------------------------

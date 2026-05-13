@@ -348,6 +348,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
         }
+        // Don't echo the SMTP relay password (k_smtp__password) back into the
+        // step-up HTML (CodeRabbit, #1179). Dropped → re-submit comes back
+        // blank → the `sensitive`-setting save path `continue`s on a blank
+        // value → the stored SMTP password is preserved. See
+        // ipam_step_up_redact_secrets().
+        $stepUpHiddenFields = ipam_step_up_redact_secrets($stepUpHiddenFields);
         $stepUpDescription = 'Re-authenticate to change SMTP delivery or backup-notification recipient settings.';
         $stepUpReturnPath  = 'settings.php';
         $stepUpError       = isset($_POST['_sudo_method']) ? 'Verification failed. Settings were not changed.' : '';

@@ -805,6 +805,7 @@ CREATE TABLE IF NOT EXISTS rate_limit_dampener (
   unlock_at BIGINT      NOT NULL,
   PRIMARY KEY (action, ip)
 );
+CREATE INDEX IF NOT EXISTS idx_rate_limit_dampener_unlock_at ON rate_limit_dampener(unlock_at);
 
 -- ---------------------------------------------------------------------------
 -- backup_state (v3.28.0 #1159) -- per-(scope, k) rows for backup notification

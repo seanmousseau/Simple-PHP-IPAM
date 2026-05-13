@@ -180,6 +180,58 @@ final class RestoreSqlApplyTest extends TestCase
         );
     }
 
+    public function testRefusesNonIpamDumpAndLeavesDbUntouched(): void
+    {
+        // A file that's valid SQL but not a full IPAM dump (no core CREATE
+        // TABLEs). With the drop-then-replay flow this would otherwise wipe
+        // the live schema and commit an almost-empty restore; the apply path
+        // must refuse BEFORE dropping anything.
+        $bogusSql = "-- looks like a dump but isn't\nCREATE TABLE notipam (id INTEGER);\nINSERT INTO notipam VALUES (1);\n";
+        $gz = gzencode($bogusSql);
+        if ($gz === false) {
+            $this->fail('gzencode failed in fixture setup');
+        }
+        $path = $this->tmpDir . '/test-restore-sqlapply-bogus-' . bin2hex(random_bytes(6)) . '.sql.gz';
+        file_put_contents($path, $gz);
+        $this->fixtures[] = $path;
+
+        $target = $this->freshDb();
+        $target->exec("INSERT INTO sites (name, description) VALUES ('keepme','must survive a refused restore')");
+        $before = (int) $target->query("SELECT COUNT(*) FROM sites")->fetchColumn();
+
+        try {
+            ipam_restore_apply($target, $path, 'bogus.sql.gz');
+            $this->fail('ipam_restore_apply() should have refused a non-IPAM dump');
+        } catch (\RuntimeException $e) {
+            $this->assertMatchesRegularExpression('/does not look like a full Simple PHP IPAM/', $e->getMessage());
+        }
+
+        // Nothing dropped, nothing replayed — the live schema + data survive.
+        $this->assertSame($before, (int) $target->query("SELECT COUNT(*) FROM sites")->fetchColumn());
+        $this->assertSame('keepme', (string) $target->query("SELECT name FROM sites WHERE name='keepme'")->fetchColumn());
+        $this->assertNotFalse($target->query("SELECT COUNT(*) FROM subnets")); // table still exists
+    }
+
+    /** @dataProvider createdTablesCases */
+    public function testSqltextCreatedTables(string $sql, array $expected): void
+    {
+        $gz = gzencode($sql);
+        $this->assertNotFalse($gz);
+        $path = $this->tmpDir . '/test-restore-sqlapply-ct-' . bin2hex(random_bytes(6)) . '.sql.gz';
+        file_put_contents($path, $gz);
+        $this->fixtures[] = $path;
+        $this->assertSame($expected, array_keys(ipam_restore_sqltext_created_tables($path)));
+    }
+
+    /** @return iterable<string,array{0:string,1:list<string>}> */
+    public static function createdTablesCases(): iterable
+    {
+        yield 'comment-prefixed + quoted'   => ["-- Table: Subnets\nCREATE TABLE \"Subnets\" (id INTEGER);\n", ['subnets']];
+        yield 'IF NOT EXISTS'               => ["CREATE TABLE IF NOT EXISTS users (id INTEGER);\n", ['users']];
+        yield 'multiple, header + pragmas'  => ["-- dump\nPRAGMA foreign_keys=OFF;\nBEGIN TRANSACTION;\nCREATE TABLE a (i INT);\nINSERT INTO a VALUES (1);\nCREATE TABLE b (i INT);\nCOMMIT;\n", ['a', 'b']];
+        yield 'no CREATE TABLE'             => ["-- just a note\nINSERT INTO whatever VALUES (1);\n", []];
+    }
+
     // ── ipam_restore_normalize_replay_statement() — pure unit cases ──────────
 
     /** @return iterable<string,array{0:string,1:?string}> */

@@ -1940,6 +1940,37 @@ function ipam_restore_normalize_replay_statement(string $stmt): ?string
 }
 
 /**
+ * First-pass scan of a staged Database-format dump: the set of table names
+ * that have a `CREATE TABLE`. Streams the file (bounded memory regardless of
+ * size; the splitter throws on truncation, surfaced to the caller). Used by
+ * ipam_restore_apply() to refuse a drop-then-replay restore of a file that
+ * isn't a full IPAM dump — a comment-only / header-only / truncated `.sql.gz`
+ * would otherwise drop the live schema and commit an almost-empty database
+ * instead of failing fast on "table already exists".
+ *
+ * @return array<string,true>  Lowercased table name => true.
+ */
+function ipam_restore_sqltext_created_tables(string $stagedPath): array
+{
+    $created = [];
+    $chunks = ipam_restore_read_staged_sql($stagedPath);
+    foreach (ipam_restore_split_sql_statements($chunks) as $rawStmt) {
+        $stmt = ipam_restore_normalize_replay_statement($rawStmt);
+        if ($stmt === null) {
+            continue;
+        }
+        if (preg_match('/^CREATE TABLE\s+(?:IF NOT EXISTS\s+)?["`]?([A-Za-z_][A-Za-z0-9_]*)["`]?/i', $stmt, $m)) {
+            $created[strtolower($m[1])] = true;
+        }
+    }
+    return $created;
+}
+
+/** Core tables present in every Simple PHP IPAM database since v1.0 — a dump
+ *  missing a `CREATE TABLE` for any of these is not a full IPAM backup. */
+const IPAM_RESTORE_CORE_TABLES = ['users', 'subnets', 'addresses', 'schema_migrations'];
+
+/**
  * Apply a staged backup to the database. Wraps in a transaction;
  * on any failure rolls back and throws.
  *
@@ -1997,6 +2028,27 @@ function ipam_restore_apply(PDO $db, string $stagedPath, string $realFilename = 
     $tablesSeen = [];
     $statements = 0;
 
+    // Refuse to drop the live schema for a file that isn't a full IPAM dump.
+    // The upload/staging path only checks the file *looks* like SQL, so a
+    // comment-only / header-only / truncated `.sql.gz` could otherwise reach
+    // the drop-then-replay flow below, wipe the database, and commit an
+    // almost-empty restore instead of failing fast on "table already exists".
+    // A real IPAM dump always creates the core tables. Run this BEFORE the
+    // transaction so a bad file leaves the database untouched. (A truncated
+    // dump trips the splitter's unterminated-state detection here and throws.)
+    $createdInDump = ipam_restore_sqltext_created_tables($stagedPath);
+    $missingCore = array_values(array_filter(
+        IPAM_RESTORE_CORE_TABLES,
+        static fn(string $t): bool => !isset($createdInDump[$t])
+    ));
+    if ($missingCore !== []) {
+        throw new RuntimeException(
+            'ipam_restore: refusing to apply — the staged file does not look like a full Simple PHP IPAM '
+            . 'database dump (no CREATE TABLE for: ' . implode(', ', $missingCore) . '). '
+            . 'The current database was not modified.'
+        );
+    }
+
     // SQLite ignores PRAGMA foreign_keys = OFF inside an active transaction.
     // Set it BEFORE beginTransaction(); restore (defensively) afterwards even
     // on the failure path so the connection is left in the expected state.
@@ -2009,8 +2061,9 @@ function ipam_restore_apply(PDO $db, string $stagedPath, string $realFilename = 
         // init.php — collided ("table X already exists"). A restore is a full
         // replace: drop every user table first (FK enforcement is already off
         // above, so this does not cascade child rows), then let the dump
-        // recreate schema + data. The dump includes `schema_migrations`;
-        // apply_migrations() below brings an older backup forward.
+        // recreate schema + data. The validation above guarantees the dump
+        // recreates at least the core tables; apply_migrations() below brings
+        // an older backup forward.
         $existing = $db->query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'");
         $userTables = ($existing !== false) ? $existing->fetchAll(PDO::FETCH_COLUMN) : [];
         foreach ($userTables as $tbl) {

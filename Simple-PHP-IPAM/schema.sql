@@ -686,6 +686,7 @@ CREATE TABLE IF NOT EXISTS rate_limit_dampener (
   unlock_at INTEGER NOT NULL,
   PRIMARY KEY (action, ip)
 );
+CREATE INDEX IF NOT EXISTS idx_rate_limit_dampener_unlock_at ON rate_limit_dampener(unlock_at);
 
 -- v3.28.0 #1159: per-(scope, key) rows for backup notification cooldown state.
 -- scope is 'destination_health' (k = destination id) or 'schedule_overdue'

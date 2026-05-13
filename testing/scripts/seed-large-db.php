@@ -25,6 +25,19 @@ declare(strict_types=1);
  * no proc_open / shell_exec; no dynamic SQL execution.
  */
 
+// Fail-closed safety gate: this script bulk-writes synthetic data into the
+// ACTIVE database. It is CLI-only and only runs when explicitly opted in via
+// IPAM_ALLOW_LARGE_SEED=1 so it can never be triggered from a webserver SAPI
+// or by an accidental invocation against a real install.
+if (PHP_SAPI !== 'cli') {
+    fwrite(STDERR, "seed-large-db.php is CLI-only.\n");
+    exit(2);
+}
+if (getenv('IPAM_ALLOW_LARGE_SEED') !== '1') {
+    fwrite(STDERR, "Refusing to run: set IPAM_ALLOW_LARGE_SEED=1 to confirm you want to bulk-seed this database.\n");
+    exit(2);
+}
+
 require '/var/www/html/init.php';
 /** @var PDO $db */
 
