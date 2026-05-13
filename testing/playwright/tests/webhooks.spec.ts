@@ -8,7 +8,7 @@
  * The afterAll restores the setting and cleans up the test webhook row.
  */
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
-import { login, appUrl, newAuthContext, passStepUpIfPresent, ADMIN_USER, ADMIN_PASS } from '../fixtures/ipam';
+import { login, appUrl, newAuthContext, passStepUpIfPresent, warmSudoGrant, ADMIN_USER, ADMIN_PASS } from '../fixtures/ipam';
 
 // ── Test data ──────────────────────────────────────────────────────────────────
 const WH_NAME   = 'pw-test-webhook';
@@ -52,6 +52,14 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
   ctx  = await newAuthContext(browser);
   page = await ctx.newPage();
   await login(page, ADMIN_USER, ADMIN_PASS);
+
+  // v3.28.0 (#1156 + #1179 CR): webhook create/edit/delete is sudo-gated, and
+  // the step-up round-trip now redacts the `secret` field (ipam_step_up_redact_secrets,
+  // CodeRabbit) so a resumed create POST has no secret and fails validation.
+  // Warm a sudo grant once for the suite so the gate doesn't fire and the
+  // create test's typed WH_SECRET survives. The proper fix (server-side stash
+  // so the secret round-trips safely) is tracked in #1181.
+  await warmSudoGrant(page);
 
   // Enable webhook.allow_private_ips so test_fire can reach 127.0.0.1.
   // Swallow any error so the rest of the suite still runs if settings.php

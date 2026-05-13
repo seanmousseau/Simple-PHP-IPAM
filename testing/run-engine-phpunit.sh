@@ -53,21 +53,30 @@ if php --ri pdo_mysql >/dev/null 2>&1; then
     -e MYSQL_ROOT_PASSWORD=rootpw -e MYSQL_DATABASE=ipam_localqa \
     mysql:8.0 >/dev/null
   echo -n "   waiting for mysql"
+  ready=0
   for _ in $(seq 1 40); do
     if docker exec ipam-localqa-mysql mysqladmin ping -h127.0.0.1 -uroot -prootpw --silent >/dev/null 2>&1; then
-      echo " — ready"; break
+      echo " — ready"; ready=1; break
     fi
     echo -n "."; sleep 2
   done
-  echo "== phpunit (MySQL) =="
-  ran_any=1
-  if ! IPAM_MYSQL_DSN='mysql:host=127.0.0.1;port=13306;dbname=ipam_localqa;charset=utf8mb4' \
-       IPAM_MYSQL_USER=root IPAM_MYSQL_PASS=rootpw \
-       vendor/bin/phpunit; then
-    echo "!! phpunit FAILED against MySQL" >&2
+  if [[ $ready -ne 1 ]]; then
+    echo; echo "!! mysql:8.0 (ipam-localqa-mysql) did not become ready in 80s — refusing to run phpunit against an unready endpoint" >&2
+    echo "   last 20 lines of docker logs:" >&2
+    docker logs --tail 20 ipam-localqa-mysql >&2 2>&1 || true
+    docker rm -f ipam-localqa-mysql >/dev/null 2>&1 || true
     fail=1
+  else
+    echo "== phpunit (MySQL) =="
+    ran_any=1
+    if ! IPAM_MYSQL_DSN='mysql:host=127.0.0.1;port=13306;dbname=ipam_localqa;charset=utf8mb4' \
+         IPAM_MYSQL_USER=root IPAM_MYSQL_PASS=rootpw \
+         vendor/bin/phpunit; then
+      echo "!! phpunit FAILED against MySQL" >&2
+      fail=1
+    fi
+    docker rm -f ipam-localqa-mysql >/dev/null 2>&1 || true
   fi
-  docker rm -f ipam-localqa-mysql >/dev/null 2>&1 || true
 else
   echo "!! pdo_mysql not loaded in this PHP — SKIPPING the MySQL phpunit gate."
   echo "!! CI WILL still run it. Install pdo_mysql (or trust CI) — do not treat green here as MySQL coverage."
@@ -82,21 +91,30 @@ if php --ri pdo_pgsql >/dev/null 2>&1; then
     -e POSTGRES_PASSWORD=rootpw -e POSTGRES_USER=postgres -e POSTGRES_DB=ipam_localqa \
     postgres:14-alpine >/dev/null
   echo -n "   waiting for postgres"
+  ready=0
   for _ in $(seq 1 40); do
     if docker exec ipam-localqa-pgsql pg_isready -U postgres -d ipam_localqa >/dev/null 2>&1; then
-      echo " — ready"; break
+      echo " — ready"; ready=1; break
     fi
     echo -n "."; sleep 2
   done
-  echo "== phpunit (PostgreSQL) =="
-  ran_any=1
-  if ! IPAM_PGSQL_DSN='pgsql:host=127.0.0.1;port=15432;dbname=ipam_localqa' \
-       IPAM_PGSQL_USER=postgres IPAM_PGSQL_PASS=rootpw \
-       vendor/bin/phpunit; then
-    echo "!! phpunit FAILED against PostgreSQL" >&2
+  if [[ $ready -ne 1 ]]; then
+    echo; echo "!! postgres:14-alpine (ipam-localqa-pgsql) did not become ready in 80s — refusing to run phpunit against an unready endpoint" >&2
+    echo "   last 20 lines of docker logs:" >&2
+    docker logs --tail 20 ipam-localqa-pgsql >&2 2>&1 || true
+    docker rm -f ipam-localqa-pgsql >/dev/null 2>&1 || true
     fail=1
+  else
+    echo "== phpunit (PostgreSQL) =="
+    ran_any=1
+    if ! IPAM_PGSQL_DSN='pgsql:host=127.0.0.1;port=15432;dbname=ipam_localqa' \
+         IPAM_PGSQL_USER=postgres IPAM_PGSQL_PASS=rootpw \
+         vendor/bin/phpunit; then
+      echo "!! phpunit FAILED against PostgreSQL" >&2
+      fail=1
+    fi
+    docker rm -f ipam-localqa-pgsql >/dev/null 2>&1 || true
   fi
-  docker rm -f ipam-localqa-pgsql >/dev/null 2>&1 || true
 else
   echo "!! pdo_pgsql not loaded in this PHP — SKIPPING the PostgreSQL phpunit gate."
   echo "!! CI WILL still run it. Install pdo_pgsql (or trust CI) — do not treat green here as PostgreSQL coverage."
