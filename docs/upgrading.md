@@ -116,6 +116,18 @@ The backup is left in place after a successful upgrade. You can remove it manual
 
 ## Version-specific upgrade notes
 
+### v3.28.1
+
+**Engine-native restore now wipes target schema before replay.** `restore.php`'s mysql and pgsql branches drop all user tables (mysql, BASE TABLE filtered) / drop the `public` schema (pgsql) before piping the dump in. This fixes a long-standing bug where restoring a `database`-type dump onto a populated install duplicated rows. Run as `--yes` confirmation as before — no new flag.
+
+> **Postgres extension caveat.** `DROP SCHEMA public CASCADE` removes any extensions installed into the `public` schema (e.g. `pgcrypto`, `pg_trgm`, `citext`, `uuid-ossp`). A `pg_dump` taken with defaults re-emits the `CREATE EXTENSION` statements and the restore puts them back. A `--data-only` dump (or any dump that omits extensions) will leave the restored DB without them. If you use Postgres extensions outside what the IPAM schema migrations create, dump with extensions included.
+>
+> **Mid-restore failure semantics.** A failed pipe between wipe and replay leaves the target DB empty. Recovery path is "re-run with a known-good dump" — restore.php does not snapshot the pre-wipe state on the mysql/pgsql paths (only the SQLite path makes a safety copy).
+
+**`restore.php` now honours `db_dsn`.** mysql/pgsql restores parse the PDO-style `db_dsn` connection string (host/port/dbname) the rest of the app already uses. Legacy installs that set discrete `db_host`/`db_port`/`db_name` keys continue to work. **Limitation:** restore.php cannot pipe `mysql`/`psql` through a Unix-domain socket; a `db_dsn` containing `unix_socket=...` aborts with a clear error pointing the operator at the discrete TCP keys. (#1177)
+
+**psql fail-fast.** `restore.php` invokes psql with `-v ON_ERROR_STOP=1` so a mid-restore error aborts cleanly instead of ploughing through subsequent statements onto a partially-populated DB. (#1177)
+
 ### v3.28.0
 
 DR + security stabilization release. One schema migration (`3.28.0-state-tables`, runs automatically — adds two small internal tables, no operator action) and one **behavior change** worth knowing about: the legacy `app_secret`-based backup-encryption *write* path was removed.
