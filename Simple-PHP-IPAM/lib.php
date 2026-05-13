@@ -9025,6 +9025,25 @@ function ipam_validate_webhook_url(string $url, array $config = []): bool
     return true;
 }
 
+/**
+ * Build the audit_log.details string for a webhook test-fire row.
+ *
+ * Records the webhook id and host only — never the full URL — so query
+ * strings carrying tokens/secrets and any XSS-shaped path or fragment
+ * never land in the audit details column. (#1152, S-001)
+ */
+function ipam_webhook_test_fire_audit_detail(int $id, string $url): string
+{
+    $host = parse_url($url, PHP_URL_HOST);
+    if (!is_string($host) || $host === '') {
+        $host = '(invalid)';
+    }
+    if (strlen($host) > 100) {
+        $host = substr($host, 0, 100);
+    }
+    return "id={$id} host={$host}";
+}
+
 /** Sign a webhook payload with HMAC-SHA256. */
 function ipam_webhook_sign(string $payload, string $secret): string
 {

@@ -121,7 +121,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         $sig    = ipam_webhook_sign($payload, $secretPlain);
         $result = ipam_webhook_deliver($row, 'test.ping', $payload, $sig);
-        audit($db, 'webhook.test_fire', 'webhook', $id, "url=" . to_str($row['url']));
+        audit($db, 'webhook.test_fire', 'webhook', $id, ipam_webhook_test_fire_audit_detail($id, to_str($row['url'])));
         echo json_encode([
             'ok'        => $result['status'] !== null && $result['status'] >= 200 && $result['status'] < 300,
             'status'    => $result['status'],
