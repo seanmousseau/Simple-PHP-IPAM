@@ -586,6 +586,23 @@ try {
 
             $updateLastRun->execute([':sid' => $subnetId]);
 
+            // #1161 (PASS-C F-S2-04): scheduled scans were previously invisible
+            // in the audit log. Mirror api_scan_run's format with a (cron) tag.
+            audit(
+                $db,
+                'scan.run',
+                'subnet',
+                $subnetId,
+                sprintf(
+                    'method=%s scanned=%d up=%d down=%d stale_marked=%d (cron)',
+                    $method,
+                    $stats['scanned'],
+                    $stats['up'],
+                    $stats['down'],
+                    $stats['stale_marked']
+                )
+            );
+
             $emit([
                 'task'         => 'scan',
                 'subnet_id'    => $subnetId,
