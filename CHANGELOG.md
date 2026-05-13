@@ -18,6 +18,7 @@ DR + security stabilization release. Concurrency hardening on two racy state wri
 
 ### Changed
 
+- **Backup documentation corrected and expanded.** `backups.md` gains a prominent **"Disaster recovery — back up your keys, not just your data"** section (what to save off-site — `config.php`, the exported vault key, the passphrase — and a "can I recover this archive?" table per format); the stale claim that `backup_vault_key` lives in `config.php` is fixed across `backups.md` / `configuration.md` (since v3.26.0 it's stored *wrapped* in the `settings` table under `bootstrap_key`, which lives in `config.php`); `configuration.md` documents `bootstrap_key` and the v3.28.0 "vault key is set via the UI, not auto-generated" behaviour; `restore.md` prerequisites and recovery scenarios now cover the `.ipambkp3` vault-key / passphrase cases, not just legacy `.enc`. The lingering "v3.21.x — Logical runner not yet shipped" framing in `backups.md` was also removed (Logical backups shipped in v3.23.0).
 - **OIDC settings inputs carry explicit `autocomplete` hints** (#1137). The OIDC client-secret field and related inputs were tripping browser password managers into offering to save/fill them; added per-field `autocomplete` hints so the OIDC config form behaves like configuration, not credentials.
 
 ### Deprecated

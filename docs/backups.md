@@ -17,6 +17,7 @@
   - [Local](#local)
 - [Schedules and GFS retention](#schedules-and-gfs-retention)
 - [Encryption](#encryption)
+- [Disaster recovery — back up your keys, not just your data](#disaster-recovery--back-up-your-keys-not-just-your-data)
 - [Cron integration](#cron-integration)
 - [Manual run](#manual-run)
 - [Notifications](#notifications)
@@ -30,28 +31,28 @@
 
 ## Overview
 
-Simple PHP IPAM ships with a destination-based backup system that writes encrypted, scheduled backups of the database to S3-compatible object storage, SFTP servers, or local paths. Backups are managed entirely from the admin UI; the legacy CLI still works for unattended cron jobs.
+Simple PHP IPAM ships with a destination-based backup system that writes scheduled (optionally encrypted) backups of the database to S3-compatible object storage, SFTP servers, or local paths. Backups are managed entirely from the admin UI; the legacy CLI still works for unattended cron jobs.
 
-> **What ships in v3.21.x:** Database backups (engine-native dumps), the unified Backup & Restore admin surface, the History tab with per-row detail drawer + filter chips, and the schema/UI scaffolding for the second backup type. **Logical-backup runner ships in v3.22.0** ([backup_overhaul §C](https://github.com/seanmousseau/Simple-PHP-IPAM/blob/main/docs/internal/backup_overhaul.md)). Until then, every scheduled or manual run produces a Database backup; the `Backup type` filter chip on the History tab will only ever match `Database` rows.
+Two backup types are available — pick per destination:
 
-Two backup types are documented here. Only Database is implemented in v3.21.x.
+| Type | What it captures | When to use |
+|---|---|---|
+| **Logical** (portable) | An engine-neutral representation of the IPAM data model (`IPAMBKL1` NDJSON, gzipped). Restorable across engines. Shipped in v3.23.0 (#824); **the default for new destinations**. | Migrating between SQLite / MySQL / PostgreSQL; long-term archival where the future restore engine is unknown; the recommended general-purpose choice. |
+| **Database** (engine-faithful) | A native dump of the underlying database — a SQL dump for SQLite (`ipam_db_dump_stream()` output), `mysqldump` for MySQL, `pg_dump` for PostgreSQL. | Fastest restore on the *same* engine. Note: a Database-format restore is engine-specific (a MySQL `.sql.gz` only restores into MySQL), and the SQLite Database-format restore path is a full *replace* of the live schema + data. |
 
-| Type | What it captures | Status | When to use |
-|---|---|---|---|
-| **Database** (engine-faithful) | A native dump of the underlying database — `.sqlite` for SQLite, `mysqldump` output for MySQL, `pg_dump` output for PostgreSQL. | **Shipped, v3.21.x default.** | Disaster recovery on the same engine. The fastest restore path. |
-| **Logical** (portable) | An engine-neutral SQL representation of the IPAM data model. Restorable across engines. | **v3.22.0** — runner not yet shipped; column + filter scaffolding only. | Migrating between SQLite, MySQL, and PostgreSQL. Long-term archival where the future restore engine is unknown. |
+Both types share the same destination, schedule, encryption, and retention infrastructure, and the `Backup type` filter chip on the History tab.
 
-> Both types share the same destination, schedule, encryption, and retention infrastructure. **In v3.21.x, every produced backup is a Database backup** — the type selector and Logical-backup-specific behaviour described below applies once v3.22.0 ships.
-
-**v3.24.0 introduces the IPAMBKP3 format.** Three encryption modes are available, each describing where the key comes from. TLS / SSH protect the wire path independent of mode.
+Encryption is configured per destination. **As of v3.24.0** the encrypted format is `IPAMBKP3`, with three modes — each describing where the key comes from. TLS / SSH protect the wire path independent of mode.
 
 | Mode | Key source | Recommended when |
 |---|---|---|
-| **Stored** | Server-managed `backup_vault_key` (separate from `app_secret`; auto-generated on first encrypted backup, lives in `config.php`). Used for every scheduled run by default. | Hands-free scheduled backups. Operator does not need to remember a passphrase. Restore reads the key from `config.php` automatically. |
-| **Transitory** | Operator-typed passphrase, never persisted. Server uses Argon2id (RFC 9106 v1.3) to derive the key with default parameters `t=3, m=64 MiB, p=1` (per-file random salt; parameters are header-embedded so future tuning is non-breaking). | Manual one-off encrypted backups whose passphrase exists only in the operator's head. Restoring requires re-typing the same passphrase. |
+| **Stored** | Server-managed `backup_vault_key` (separate from `app_secret`; set by an admin under **Admin → Backups → Destinations → "Set vault key"**, then stored *wrapped* in the `settings` table — see [`configuration.md` → backup_vault_key](configuration.md#backup_vault_key)). Used for every scheduled run by default. | Hands-free scheduled backups. Operator does not need to remember a passphrase. Restore unwraps the key automatically (needs `config.php`'s `bootstrap_key` + the DB). |
+| **Transitory** | Operator-typed passphrase, never persisted anywhere. Server uses Argon2id (RFC 9106 v1.3) to derive the key with default parameters `t=3, m=64 MiB, p=1` (per-file random salt; parameters are header-embedded so future tuning is non-breaking). | Manual one-off encrypted backups whose passphrase exists only in the operator's head. Restoring requires re-typing the same passphrase. |
 | **Unencrypted** | No key. Files use the IPAMBKU1 wrapper format (magic + SHA-256 + plaintext) — integrity is still checked on restore but the contents are readable. | Trusted local destinations on hosts with full-disk encryption, or test installs where confidentiality is irrelevant. |
 
-`backup_vault_key` is documented in [`configuration.md` → backup_vault_key](configuration.md#backup_vault_key). Existing IPAMBKP1 (v3.17–v3.18) and IPAMBKP2 (v3.19–v3.23) archives remain restorable on v3.24+ — no migration is required and no operator action is forced. See [On-disk format](#on-disk-format) for the byte layout.
+> **As of v3.28.0 the vault key is not auto-generated.** An encrypted scheduled backup with no `backup_vault_key` configured fails preflight with an actionable message — configure one (Stored mode) under Admin → Backups → Destinations, or take a passphrase-encrypted export (Transitory mode). The legacy `app_secret`-derived backup-encryption *write* path was removed in v3.28.0; the *reader* for legacy `app_secret`-encrypted archives (IPAMBKP1/IPAMBKP2) is retained through the v3.x line — see [upgrading.md § v3.28.0](upgrading.md#v3280) for the migration path.
+
+`backup_vault_key` is documented in [`configuration.md` → backup_vault_key](configuration.md#backup_vault_key). **Before you ever need a restore, read [Disaster recovery — back up your keys, not just your data](#disaster-recovery--back-up-your-keys-not-just-your-data) below.** Existing IPAMBKP1 (v3.17–v3.18) and IPAMBKP2 (v3.19–v3.23) archives remain restorable on v3.24+ — no migration is required and no operator action is forced. See [On-disk format](#on-disk-format) for the byte layout.
 
 ---
 
@@ -193,8 +194,8 @@ Encryption is configured per destination by selecting an [encryption mode](#over
 
 #### Prerequisites and key lifecycle
 
-- **Stored mode:** `backup_vault_key` is auto-generated on first use and written to `config.php`. See [`configuration.md` → backup_vault_key](configuration.md#backup_vault_key) for rotation and storage guidance.
-- **Transitory mode:** no server-side state. The operator types the passphrase on every backup AND every restore.
+- **Stored mode:** requires a `backup_vault_key`, configured by an admin under **Admin → Backups → Destinations → "Set vault key"**. It is stored *wrapped* in the `settings` table (libsodium `crypto_secretbox`, envelope `IPAMWK1.…`) under `bootstrap_key` (which lives in `config.php`, auto-generated on first use). It is **not** auto-generated as of v3.28.0 — an encrypted scheduled backup with no vault key configured fails preflight. See [`configuration.md` → backup_vault_key](configuration.md#backup_vault_key) for setup, rotation, and the full storage model, and [Disaster recovery](#disaster-recovery--back-up-your-keys-not-just-your-data) below for what to save off-site.
+- **Transitory mode:** no server-side state. The operator types the passphrase on every backup AND every restore. Lose the passphrase → the archive is unrecoverable.
 - **Argon2id parameters** are header-embedded, so future installs can tune `t`/`m` without breaking existing backups. Bounds: `t` in `[1, 16]`, `m` in `[8 KiB, 1 GiB]`, `p` is fixed at 1 (libsodium API constraint).
 
 ### Legacy formats (IPAMBKP1, IPAMBKP2)
@@ -209,6 +210,39 @@ Encryption is configured per destination by selecting an [encryption mode](#over
 - IPAMBKP3 transitory archives are unaffected by either rotation (the key was the operator's passphrase, not the server's secret).
 
 The full byte layout of every format is in [On-disk format](#on-disk-format). For offline decrypts (e.g. recovering an archive when the originating install is gone), `Simple-PHP-IPAM/tools/decrypt-backup.php` ships a CLI that takes the appropriate credential and produces plaintext without requiring a running install.
+
+---
+
+## Disaster recovery — back up your keys, not just your data
+
+A backup archive is only as recoverable as the key that decrypts it. **The application does not back up its own keys** — that's on you. If your only copy of the keys is the install you're trying to recover *from*, an encrypted archive is just noise. Treat this as part of your backup procedure, not an afterthought.
+
+### What you must save (and where)
+
+| Save this | Why | Where to keep it |
+|---|---|---|
+| **`config.php`** | Holds `app_secret` (decrypts legacy `app_secret`-encrypted `.enc` archives — IPAMBKP1/IPAMBKP2; also the TOTP/restore-staging key) **and** `bootstrap_key` (unwraps the DB-stored `backup_vault_key`). Lose or regenerate this file and every encrypted backup tied to it — and the stored-mode vault key — becomes unrecoverable. | Off-site, **separate from the backup archives** and from the database backup. Anyone holding both `config.php` *and* the archives has the plaintext. A password manager, secrets vault, or KMS entry is appropriate. |
+| **The backup vault key** (Stored mode / `.ipambkp3`) | Since v3.26.0 it lives in the **`settings` table, wrapped** under `bootstrap_key` — the database holds ciphertext only. In a *full-loss* scenario (server **and** database gone) you can only reconstruct it from a saved copy. Use **Admin → Backups → Destinations → "Reveal vault key"** (rate-limited, audit-logged) to export the base64 value. | Off-site, **separate from both the archives and `config.php`**. (Putting all three together collapses the layering back to a single point of compromise.) |
+| **The passphrase** (Transitory mode / passphrase `.ipambkp3`) | Never persisted anywhere — by design. The only copy is the one you typed. | Your password manager. There is no recovery if it's lost. |
+| *(nothing extra)* — **Unencrypted** archives (`.ipambkl1.gz`, `.ipambku1`, `.sql.gz`, legacy `.sqlite`) | No key required. Integrity is checked on restore (except bare `.sql.gz` / `.sqlite`, which have no integrity layer). | n/a — but anyone with the file has your data, so keep these on trusted storage. |
+
+### "Can I recover this archive?" — quick reference
+
+| Archive | Recoverable if you have… | Unrecoverable if… |
+|---|---|---|
+| `.enc` (IPAMBKP1 / IPAMBKP2) | `app_secret` (from `config.php`) | `app_secret` is lost or was rotated since the backup was taken |
+| `.ipambkp3` **stored** | a DB backup (the wrapped envelope) **+** `config.php` (`bootstrap_key`) — **or** the separately-saved raw vault key | none of those survive, **or** the vault key was rotated/replaced (the "Replace vault key" UI warns and requires an explicit acknowledgement when this would strand existing archives) |
+| `.ipambkp3` **transitory** | the passphrase you typed at export time | the passphrase is lost |
+| `.ipambkl1.gz` / `.ipambku1` / `.sql.gz` / `.sqlite` | nothing — they're unencrypted | (file corruption only; bare `.sql.gz` / `.sqlite` have no integrity check) |
+
+For an *offline* recovery — when the originating install is gone entirely — `Simple-PHP-IPAM/tools/decrypt-backup.php` takes the appropriate credential (`--app-secret`, `--vault-key`, or `--passphrase`) and produces plaintext without a running app or database. See [On-disk format](#on-disk-format) and `tools/decrypt-backup.php --help`.
+
+### Practical recommendations
+
+- **Unencrypted on a trusted destination is a legitimate choice** — and it removes the key-loss failure mode entirely. If your destination already protects confidentiality (full-disk encryption, restricted access, a private bucket), `unencrypted` (the v3.28.0 default for new destinations) keeps recovery dead simple. The `IPAMBKU1` wrapper still gives you an integrity check on restore.
+- **If you do encrypt, prefer Stored mode** *and* keep an exported copy of the vault key off-site, as above. Transitory/passphrase mode is for genuinely one-off exports, not your standing backup strategy.
+- **Test a restore.** A backup you've never restored is a hypothesis. Periodically take a backup, decrypt/restore it into a throwaway instance, and confirm the row counts. See [Restore from a backup](restore.md).
+- **`config.php` belongs in change control / your secrets store**, not only on the server. It's small, it changes rarely, and it's the linchpin of every encrypted-backup recovery path.
 
 ---
 

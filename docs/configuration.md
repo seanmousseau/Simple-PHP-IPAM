@@ -4,7 +4,7 @@
 
 Configuration lives in two places:
 
-1. **`config.php`** — bootstrap keys plus a small set of security-sensitive keys that must be available before the database is opened. Bootstrap keys: `db_driver`, `db_dsn`, `db_user`, `db_pass`, `session_name`, `force_https`. Security-sensitive keys added in v3.6.0: `app_secret` (TOTP encryption key), `session.absolute_lifetime_minutes`, `auth.lockout_after_failures`, `auth.lockout_duration_minutes`. See `config.php.example` for the full template. Edit by hand on the server.
+1. **`config.php`** — bootstrap keys plus a small set of security-sensitive keys that must be available before the database is opened. Bootstrap keys: `db_driver`, `db_dsn`, `db_user`, `db_pass`, `session_name`, `force_https`. Security-sensitive keys added in v3.6.0: `app_secret` (TOTP encryption key — also decrypts legacy `app_secret`-encrypted backups), `session.absolute_lifetime_minutes`, `auth.lockout_after_failures`, `auth.lockout_duration_minutes`. Plus `bootstrap_key` (auto-generated since v3.26.0; not in `config.php.example` — the app inserts it; wraps the backup vault key at rest in the DB — see [`backup_vault_key`](#backup_vault_key)). See `config.php.example` for the full template. Edit by hand on the server. **`config.php` is the single most important thing to back up** — it holds the keys without which encrypted backups (and the DB-stored vault key) cannot be decrypted; store it separately from your backup archives.
 2. **Database (`settings` table)** — everything else. Edited through the admin UI under **⚙ Admin → Settings**. Reads are cached per-request.
 
 When the app reads a setting it checks: `settings` table row → default from `ipam_setting_definitions()`. The admin page shows a source badge next to every setting — 🟢 Database or ⚪ Default.
@@ -271,42 +271,28 @@ php -r "echo bin2hex(random_bytes(32));"
 
 ### `backup_vault_key`
 
-*(introduced in v3.24.0)*
+*(introduced in v3.24.0; storage model changed in v3.26.0; not config-resident any more)*
 
-A 32-byte secret (base64-encoded) used to encrypt scheduled backups in **stored mode** — IPAMBKP3's default for destination-driven runs. Distinct from `app_secret`: `app_secret` protects DB-resident data (TOTP secrets, restore-staging tokens), `backup_vault_key` protects backup files at rest. Keeping them separate is a v4.0.0 multi-tenancy prerequisite (per-tenant keys will be HKDF-derived from `backup_vault_key`, not `app_secret`).
+The 32-byte secret used to encrypt scheduled backups in **stored mode** — IPAMBKP3's default for destination-driven runs. Distinct from `app_secret`: `app_secret` protects DB-resident data (TOTP secrets, restore-staging tokens), `backup_vault_key` protects backup files at rest. Keeping them separate is a v4.0.0 multi-tenancy prerequisite (per-tenant keys will be HKDF-derived from `backup_vault_key`, not `app_secret`).
+
+> **It is not a `config.php` key any more.** Through v3.25.x the value lived in `config.php` (auto-generated on first stored-mode backup). Since **v3.26.0** the vault key is stored in the **`settings` table, wrapped** with libsodium `crypto_secretbox` (envelope `IPAMWK1.…`) under a second key — `bootstrap_key` — that *does* live in `config.php` (auto-generated on first use, same lifecycle as `app_secret`, never written to the database). The DB row holds ciphertext only; the raw vault key is never persisted to the DB. Unwrapping it therefore needs **both** `bootstrap_key` (from `config.php`) **and** the wrapped envelope (from the DB) — a stolen DB dump alone yields ciphertext; a stolen `config.php` alone yields `bootstrap_key` but no envelope. A legacy plaintext `config.php['backup_vault_key']` is still *read* as a fallback (downgrade safety) when the DB envelope is genuinely absent or malformed, but new installs do not use it; remove it from `config.php` once you've confirmed backups still round-trip.
 
 #### Lifecycle
 
-- **Auto-generation.** On the first scheduled or stored-mode backup, if `backup_vault_key` is empty or absent, the application generates 32 random bytes and rewrites `config.php` in place to insert the new value. Operators may pre-seed it manually:
-
-  ```bash
-  php -r "echo base64_encode(random_bytes(32));"
-  ```
-
-  Then add to `config.php`:
-
-  ```php
-  'backup_vault_key' => 'your-base64-value-here',
-  ```
-
-- **Idempotent.** A populated, well-formed value (32 bytes after base64 decode) is reused. A populated but malformed value (wrong length, invalid base64) raises an error rather than silently regenerating — operators must clear or correct the value before retrying.
-- **Rotation.** Rotating `backup_vault_key` invalidates every existing IPAMBKP3 stored-mode backup. Files encrypted with the old key cannot be decrypted with the new one. Rotation procedure (manual until a CLI helper ships):
-
-  1. Decrypt all archives you still need with the current key (use `tools/decrypt-backup.php` for offline decrypts).
-  2. Replace the `backup_vault_key` value in `config.php`.
-  3. Take a fresh backup with the new key.
-
-- **Storage.** Treat `backup_vault_key` like a backup of the database itself — store it separately from the archives it encrypts. Putting both in the same off-site vault means a single compromise yields both the ciphertext AND the key.
+- **Setting it.** Configure the vault key under **Admin → Backups → Destinations → "Set vault key"** (paste a known-good base64 value, or have the app generate one). It is **not** auto-generated — v3.28.0 (#1164) removed the orchestrator's lazy auto-generation; an encrypted scheduled backup with no vault key configured **fails preflight** with an actionable message (configure the vault key for Stored mode, or use Transitory passphrase mode). To generate a value by hand: `php -r "echo base64_encode(random_bytes(32));"`.
+- **Replacing / rotating it.** Use **"Replace vault key"** on the same page. Rotating the vault key **invalidates every existing IPAMBKP3 stored-mode backup** — files encrypted with the old key cannot be decrypted with the new one. When such backups exist the UI requires an explicit *"I understand … will permanently strand the existing encrypted backups"* acknowledgement before replacing (v3.28.0). Pasting a *known-good* previously-used key is allowed unconditionally — that's recovery, not orphaning. Recommended rotation flow: decrypt any archives you still need with the current key first (`tools/decrypt-backup.php` for offline decrypts), then replace, then take a fresh backup.
+- **`bootstrap_key`.** Auto-generated into `config.php` on first use; if `config.php` is read-only the app surfaces an actionable error rather than regenerating each request. It is **not** in `config.php.example` — the app inserts it. Treat it as part of `config.php`: lose or regenerate it and the DB-stored vault key becomes unrecoverable (and so do any stored-mode backups).
+- **Storage / disaster recovery.** Use **"Reveal vault key"** (rate-limited, audit-logged) to export a copy and store it **separately from the backup archives and separately from `config.php`** — putting any two of {ciphertext, vault key, `bootstrap_key`} in the same place defeats the layering. In a *full-loss* scenario (server + database gone, only off-site backup files remain) a stored-mode `.ipambkp3` archive is recoverable only if you have **either** a DB backup (the wrapped envelope) **plus** `config.php` (the `bootstrap_key`), **or** the separately-saved raw vault key. With none of those, the archive cannot be decrypted. See [backups.md → Disaster recovery](backups.md#disaster-recovery--back-up-your-keys-not-just-your-data).
 
 #### Relationship to `app_secret`
 
-| Concern | `app_secret` | `backup_vault_key` |
-|---|---|---|
-| Scope | DB-resident secrets (TOTP, restore tokens) | Backup files at rest (IPAMBKP3 stored mode) |
-| Used by | `lib.php` TOTP cipher; `lib/restore_wizard.php` | `lib.php` IPAMBKP3 codec; manual upload-restore |
-| Rotation breaks | All TOTP enrollments | All stored-mode backups |
-| Auto-generated | No (operator sets before first 2FA enrollment) | Yes (lazy on first encrypted backup) |
-| Required for | TOTP, MFA, restore staging | Stored-mode IPAMBKP3 only (transitory and unencrypted modes don't need it) |
+| Concern | `app_secret` | `bootstrap_key` | `backup_vault_key` |
+|---|---|---|---|
+| Where it lives | `config.php` (operator-set) | `config.php` (auto-generated) | **`settings` table, wrapped under `bootstrap_key`** (legacy: `config.php`) |
+| Scope | DB-resident secrets (TOTP, restore-staging tokens); decrypts legacy `app_secret`-encrypted backups (IPAMBKP1/2) | Wraps `backup_vault_key` at rest in the DB | Backup files at rest (IPAMBKP3 stored mode) |
+| Auto-generated | No (operator sets before first 2FA enrollment) | Yes (lazy, on first use) | No (set via Admin → Backups → Destinations) |
+| Rotation breaks | All TOTP enrollments; legacy `.enc` (IPAMBKP1/2) archives | The DB-stored `backup_vault_key` (→ all stored-mode backups) | All stored-mode IPAMBKP3 backups |
+| Required for | TOTP/MFA, restore staging, reading legacy `.enc` archives | Reading the DB-stored `backup_vault_key` | Stored-mode IPAMBKP3 only (transitory and unencrypted modes don't need it) |
 
 ---
 
