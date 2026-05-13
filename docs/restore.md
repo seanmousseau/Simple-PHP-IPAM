@@ -80,7 +80,7 @@ If you must restore an older backup into a *new* install, the recommended path i
 - **The right key for the archive's format** — see [backups.md → Disaster recovery](backups.md#disaster-recovery--back-up-your-keys-not-just-your-data) for the full "can I recover this?" table:
   - **`.enc`** (legacy IPAMBKP1/IPAMBKP2): `app_secret` must be set in `config.php` and match the value in place when the backup was taken.
   - **`.ipambkp3` stored mode**: the `backup_vault_key` must be available — i.e. you're restoring on the same install (it unwraps the DB-stored key via `config.php`'s `bootstrap_key`), or you've pasted a previously-exported vault key into the install.
-  - **`.ipambkp3` transitory mode**: the wizard prompts for the passphrase used at export time.
+  - **`.ipambkp3` transitory mode**: the wizard prompts for the passphrase that was used when the archive was encrypted. (v3.28.0 has no in-app creator for this format; you'd only see one if it was produced by another tool or a future release — see [parked features](internal/parked-features.md#operator-passphrase-backup-creation-ipambkp3-transitory-write-path).)
   - **`.ipambkl1.gz` / `.ipambku1` / `.sql.gz` / `.sqlite`**: no key needed.
 - For MySQL or PostgreSQL Database backups: the engine-native CLI tool (`mysql` / `psql`) must be on the same host as the IPAM install.
 - For very large databases: enough free disk in `data/tmp/` to stage the file before applying.
