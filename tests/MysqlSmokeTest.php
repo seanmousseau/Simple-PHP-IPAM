@@ -173,7 +173,12 @@ final class MysqlSmokeTest extends TestCase
         // re-encrypt-existing-rows pass; fresh installs have webhooks
         // count=0 so it would no-op anyway, and pre-seeding keeps the
         // smoke-test gate honest + IPAMBKL1 schema_version parity intact.
-        $this->assertSame(60, (int)$row['c']);
+        // Bumped to 61 in v3.28.0 (#1143/#1159): added 3.28.0-state-tables
+        // to the pre-seed list (creates rate_limit_dampener + backup_state;
+        // the runtime migration is $tableExists-guarded so it's a no-op on
+        // a fresh install, but pre-seeding keeps the gate + schema_version
+        // parity honest).
+        $this->assertSame(61, (int)$row['c']);
     }
 
     public function testBootstrapAdminUserInserted(): void
