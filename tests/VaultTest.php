@@ -6,10 +6,10 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * Round-trip + tamper-detection coverage for the v3.26.0 (#1098) vault
- * helpers. The bootstrap_key auto-generation path is exercised indirectly
- * by ipam_backup_vault_key_or_init's existing tests; here we focus on the
- * new wrap/unwrap layer with an injected key so the test suite does not
- * need a writable config.php.
+ * helpers. The wrap/unwrap layer is exercised here with an injected
+ * bootstrap key so the test suite does not need a writable config.php.
+ * Auto-generation behaviour for bootstrap_key itself is covered indirectly
+ * by the integration suite during bootstrap.
  */
 final class VaultTest extends TestCase
 {

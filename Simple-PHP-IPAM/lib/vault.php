@@ -42,9 +42,10 @@ const IPAM_BOOTSTRAP_KEY_LEN     = 32; // SODIUM_CRYPTO_SECRETBOX_KEYBYTES
  * deterministically read the same value (mirrors backup_vault_key v3.7+
  * lifecycle).
  *
- * Behaviour matches ipam_backup_vault_key_or_init() so a hardened install
- * with a non-writable config.php surfaces an actionable error rather than
- * silently regenerating the key on every request.
+ * Mirrors the historical auto-gen lifecycle (the deleted-in-v3.28.1
+ * ipam_backup_vault_key_or_init helper, #1176): on a hardened install
+ * with a non-writable config.php this surfaces an actionable error
+ * rather than silently regenerating the key on every request.
  */
 function ipam_bootstrap_key(): string
 {
