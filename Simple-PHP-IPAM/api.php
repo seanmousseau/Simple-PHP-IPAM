@@ -2566,11 +2566,17 @@ function api_scan_run(PDO $db, array $apiKey): never
     if ($subnetId <= 0) api_error(400, 'subnet_id is required.');
 
     // Load subnet and enforce /28 (16 addresses) cap
-    $st = $db->prepare("SELECT id, cidr, prefix FROM subnets WHERE id = :id");
+    $st = $db->prepare("SELECT id, cidr, prefix, ip_version FROM subnets WHERE id = :id");
     $st->execute([':id' => $subnetId]);
     /** @var array<string, mixed>|false $subnet */
     $subnet = $st->fetch();
     if (!$subnet) api_error(404, 'Subnet not found.');
+
+    // #1160 (PASS-C F-S2-01): ipam_scan_subnet() is IPv4-only. An IPv6 /64 has
+    // prefix=64 which would pass the /28 cap below, so guard ip_version first.
+    if (to_int($subnet['ip_version']) !== 4) {
+        api_error(400, 'Synchronous scan is IPv4-only. Use the CLI scanner for IPv6 subnets: php scan_run.php --subnet-id=' . $subnetId);
+    }
 
     if (to_int($subnet['prefix']) < 28) {
         api_error(400, 'Synchronous scan is limited to /28 or smaller (16 IPs). Use the CLI scanner for larger subnets: php scan_run.php --subnet-id=' . $subnetId);
