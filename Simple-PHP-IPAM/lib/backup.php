@@ -2076,6 +2076,32 @@ function ipam_restore_apply(PDO $db, string $stagedPath, string $realFilename = 
 }
 
 /**
+ * Decompressed-size cap for a staged .sql.gz upload (gzip-bomb DoS defence, #1149).
+ *
+ * A gzip bomb is a few KB compressed and expands to GBs; a legitimate SQL
+ * dump expands far less, so we cap the decompressed stream and abort past it.
+ * The cap scales with the compressed upload (a tiny upload — including any
+ * realistic bomb — gets only the floor) plus an absolute ceiling so even the
+ * largest allowed compressed upload can't expand unboundedly.
+ *
+ * Headroom note: #1149 originally used 10× the compressed size, but a real
+ * large-DB Database-format dump expands ~15–20× (lots of `X'..'` binary-IP
+ * hex literals, which compress poorly, interleaved with very repetitive
+ * `INSERT` structure), so the 10× cap rejected realistically-sized uploads
+ * before the restore even started — found during the v3.28.0 backup-format
+ * library verification. The multiplier is now 25× (a 7.4 MiB compressed dump
+ * → ~124 MiB plaintext is well under a 185 MiB cap), the floor 64 MiB, the
+ * ceiling 4 GiB.
+ */
+function ipam_restore_max_decompressed_bytes(int $compressedBytes): int
+{
+    $byUpload = 25 * max($compressedBytes, 0);
+    $floor    = 64 * 1024 * 1024;
+    $ceiling  = 4 * 1024 * 1024 * 1024;
+    return (int) min(max($byUpload, $floor), $ceiling);
+}
+
+/**
  * Stream the staged backup file as line-aligned chunks.
  *
  * Yields chunks of plaintext SQL — typically one line per yield via
@@ -2112,14 +2138,10 @@ function ipam_restore_read_staged_sql(string $stagedPath): \Generator
         // S-003 (#1149): a gzip bomb passes the compressed-upload cap
         // (backup_max_upload_size_mb) and only blows up on decompression —
         // a few-KB blob expanding to GB exhausts data/tmp/ and takes the
-        // app + cron + scanner down with it. Cap the decompressed stream.
-        // Headroom scales with the upload (legit SQL dumps compress ~5–10×,
-        // so 10× the on-disk size is generous) with a 64 MiB floor for tiny
-        // uploads. A gzip bomb is a few KB compressed, so the cap stays at
-        // the floor and it never gets near GB scale; a real large-install
-        // dump uploaded compressed at, say, 50 MiB gets a ~500 MiB cap.
+        // app + cron + scanner down with it. Cap the decompressed stream —
+        // see ipam_restore_max_decompressed_bytes() for the headroom rationale.
         $compressedBytes = (int) (@filesize($real) ?: 0);
-        $maxDecompressed = max(10 * $compressedBytes, 64 * 1024 * 1024);
+        $maxDecompressed = ipam_restore_max_decompressed_bytes($compressedBytes);
 
         $fh = @gzopen($real, 'rb');
         if ($fh === false) {

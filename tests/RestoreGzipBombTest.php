@@ -73,4 +73,41 @@ class RestoreGzipBombTest extends TestCase
         $this->assertNotEmpty($lines);
         $this->assertStringContainsString('CREATE TABLE t', implode('', $lines));
     }
+
+    // ── ipam_restore_max_decompressed_bytes() — the cap calculation ──────────
+
+    private const MiB = 1024 * 1024;
+
+    public function testDecompressedCapFloorAppliesToSmallUploads(): void
+    {
+        $floor = 64 * self::MiB;
+        // A tiny upload — including any realistic gzip bomb (a few KB compressed) —
+        // gets only the floor, so it can never blow data/tmp/ to GB scale.
+        $this->assertSame($floor, ipam_restore_max_decompressed_bytes(0));
+        $this->assertSame($floor, ipam_restore_max_decompressed_bytes(4 * 1024));      // 4 KiB
+        $this->assertSame($floor, ipam_restore_max_decompressed_bytes(2 * self::MiB)); // 25× = 50 MiB < floor
+        $this->assertSame($floor, ipam_restore_max_decompressed_bytes(-5));            // defensive: negative → floor
+    }
+
+    public function testDecompressedCapScalesWithUploadAboveTheFloor(): void
+    {
+        // 4 MiB compressed → 100 MiB cap (25×). The old #1149 10× cap would have
+        // rejected a realistic ~15–20× dump here (40 MiB < a ~70 MiB plaintext);
+        // 25× accepts it.
+        $this->assertSame(100 * self::MiB, ipam_restore_max_decompressed_bytes(4 * self::MiB));
+        $this->assertSame(250 * self::MiB, ipam_restore_max_decompressed_bytes(10 * self::MiB));
+        // A realistically-sized Database-format dump: 7.4 MiB compressed → ~124 MiB
+        // plaintext (~17×) must be comfortably under the cap.
+        $cap = ipam_restore_max_decompressed_bytes((int) (7.4 * self::MiB));
+        $this->assertGreaterThan(124 * self::MiB, $cap);
+    }
+
+    public function testDecompressedCapHasAbsoluteCeiling(): void
+    {
+        $ceiling = 4 * 1024 * 1024 * 1024;
+        // 200 MiB compressed × 25 = 5 GiB → clamped to the 4 GiB ceiling so even
+        // the largest allowed compressed upload can't expand unboundedly.
+        $this->assertSame($ceiling, ipam_restore_max_decompressed_bytes(200 * self::MiB));
+        $this->assertSame($ceiling, ipam_restore_max_decompressed_bytes(1024 * self::MiB));
+    }
 }
