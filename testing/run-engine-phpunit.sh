@@ -25,7 +25,7 @@
 # Part of the Local gate — see docs/internal/test-suites.md § "Local gate".
 # ---------------------------------------------------------------------------
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || { echo "run-engine-phpunit.sh: cannot cd to repo root" >&2; exit 1; }
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "run-engine-phpunit.sh: docker not found — cannot run the MySQL/PgSQL phpunit gate." >&2
@@ -48,10 +48,13 @@ trap cleanup EXIT
 if php --ri pdo_mysql >/dev/null 2>&1; then
   echo "== spinning up mysql:8.0 (ipam-localqa-mysql, 127.0.0.1:13306) =="
   docker rm -f ipam-localqa-mysql >/dev/null 2>&1 || true
-  docker run -d --rm --name ipam-localqa-mysql \
-    -p 127.0.0.1:13306:3306 \
-    -e MYSQL_ROOT_PASSWORD=rootpw -e MYSQL_DATABASE=ipam_localqa \
-    mysql:8.0 >/dev/null
+  if ! docker run -d --rm --name ipam-localqa-mysql \
+       -p 127.0.0.1:13306:3306 \
+       -e MYSQL_ROOT_PASSWORD=rootpw -e MYSQL_DATABASE=ipam_localqa \
+       mysql:8.0 >/dev/null; then
+    echo "!! docker run failed for mysql:8.0 (ipam-localqa-mysql) — port 13306 already bound? image pull failed? Skipping the MySQL phpunit gate." >&2
+    fail=1
+  else
   echo -n "   waiting for mysql"
   ready=0
   for _ in $(seq 1 40); do
@@ -77,6 +80,7 @@ if php --ri pdo_mysql >/dev/null 2>&1; then
     fi
     docker rm -f ipam-localqa-mysql >/dev/null 2>&1 || true
   fi
+  fi
 else
   echo "!! pdo_mysql not loaded in this PHP — SKIPPING the MySQL phpunit gate."
   echo "!! CI WILL still run it. Install pdo_mysql (or trust CI) — do not treat green here as MySQL coverage."
@@ -86,10 +90,13 @@ fi
 if php --ri pdo_pgsql >/dev/null 2>&1; then
   echo "== spinning up postgres:14-alpine (ipam-localqa-pgsql, 127.0.0.1:15432) =="
   docker rm -f ipam-localqa-pgsql >/dev/null 2>&1 || true
-  docker run -d --rm --name ipam-localqa-pgsql \
-    -p 127.0.0.1:15432:5432 \
-    -e POSTGRES_PASSWORD=rootpw -e POSTGRES_USER=postgres -e POSTGRES_DB=ipam_localqa \
-    postgres:14-alpine >/dev/null
+  if ! docker run -d --rm --name ipam-localqa-pgsql \
+       -p 127.0.0.1:15432:5432 \
+       -e POSTGRES_PASSWORD=rootpw -e POSTGRES_USER=postgres -e POSTGRES_DB=ipam_localqa \
+       postgres:14-alpine >/dev/null; then
+    echo "!! docker run failed for postgres:14-alpine (ipam-localqa-pgsql) — port 15432 already bound? image pull failed? Skipping the PostgreSQL phpunit gate." >&2
+    fail=1
+  else
   echo -n "   waiting for postgres"
   ready=0
   for _ in $(seq 1 40); do
@@ -114,6 +121,7 @@ if php --ri pdo_pgsql >/dev/null 2>&1; then
       fail=1
     fi
     docker rm -f ipam-localqa-pgsql >/dev/null 2>&1 || true
+  fi
   fi
 else
   echo "!! pdo_pgsql not loaded in this PHP — SKIPPING the PostgreSQL phpunit gate."

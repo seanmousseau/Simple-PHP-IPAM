@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
-## [3.28.0] - 2026-05-12
+## [3.28.0] - 2026-05-13
 
 DR + security stabilization release. Concurrency hardening on two racy state writes (a TOCTOU in the per-IP rate-limit audit dampener and a lost-update on the backup-notification cooldown blobs), the surgical security fixes carried over from the v3.27.x verification passes, the step-up coverage sweep, and the start of the legacy backup-encryption retirement. One schema migration — `3.28.0-state-tables` — adds two state tables, `rate_limit_dampener` and `backup_state`.
 
