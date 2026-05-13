@@ -38,11 +38,14 @@ Memory-limit is non-negotiable — 128M default crashes the parallel workers.
 vendor/bin/phpcs
 ```
 
-### 4. PHPUnit
+### 4. PHPUnit — SQLite, then MySQL + PgSQL
 
 ```bash
-vendor/bin/phpunit
+vendor/bin/phpunit                    # SQLite
+bash testing/run-engine-phpunit.sh    # MySQL + PgSQL phpunit (throwaway containers)
 ```
+
+`vendor/bin/phpunit` alone only exercises SQLite. Engine-aware tests — chiefly `MysqlSmokeTest` / `PgsqlSmokeTest::testSchemaMigrationsPreseeded`, which asserts the `schema_migrations` pre-seed count — only run when a non-SQLite DSN is set, so a SQLite-only run can't catch a stale count (that's how the v3.28.0 PR's `php-qa.yml` mysql/mariadb/pgsql jobs went red). `run-engine-phpunit.sh` spins up `mysql:8.0` + `postgres:14` containers (the CI images), runs `vendor/bin/phpunit` against each, and tears them down. It skips an engine with a loud warning (not a hard fail) if the host PHP lacks `pdo_mysql` / `pdo_pgsql` — in that case you're trusting CI for that engine. If a check ran and failed, abort.
 
 ### 5. Semgrep
 

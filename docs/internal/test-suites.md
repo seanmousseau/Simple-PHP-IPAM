@@ -160,14 +160,17 @@ Starting in v2.5.2, the containerized Playwright harness runs automatically on e
 
 **Required every push — must ALL be green before `git push`:**
 
-**Step 1: Static analysis (fast, ~5s):**
+**Step 1: Static analysis + per-engine phpunit (fast, ~5s + ~1–2 min):**
 ```bash
 php -l Simple-PHP-IPAM/<file>.php   # each changed file
 vendor/bin/phpstan analyse --memory-limit=1G
 vendor/bin/phpcs
-vendor/bin/phpunit
+vendor/bin/phpunit                       # runs against SQLite
+bash testing/run-engine-phpunit.sh       # runs phpunit against MySQL + PostgreSQL too
 semgrep --config=.semgrep/rules.yml --error Simple-PHP-IPAM/
 ```
+
+> **`vendor/bin/phpunit` alone only tests SQLite.** Some tests are engine-aware and *only* run when a non-SQLite DSN is set — most notably `MysqlSmokeTest` / `PgsqlSmokeTest::testSchemaMigrationsPreseeded`, which asserts the `schema_migrations` pre-seed count in `schema.mysql.sql` / `schema.pgsql.sql`. SQLite has no schema-file pre-seed (fresh installs replay every migration), so a SQLite-only run can't catch a stale count — that's how the v3.28.0 PR's `php-qa.yml` (mysql/mariadb/pgsql) jobs went red on a `60 → 61` mismatch the local gate missed. `testing/run-engine-phpunit.sh` spins up throwaway `mysql:8.0` + `postgres:14` containers (the same images CI uses), points `vendor/bin/phpunit` at each via `IPAM_MYSQL_DSN` / `IPAM_PGSQL_DSN`, and tears them down — run it before every PR. (It skips an engine with a loud warning if the host PHP lacks `pdo_mysql` / `pdo_pgsql`; in that case you're trusting CI for that engine — install the extension or accept the gap, but don't treat the skip as coverage. Whenever you add or pre-seed a migration, you must also bump the count assertion in both smoke tests — see `docs/internal/adding-a-migration.md`.)
 
 **Step 2: Containerized test suite (required, ~2–10 min per driver):**
 

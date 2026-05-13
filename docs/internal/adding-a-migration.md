@@ -25,7 +25,7 @@ Any change that alters the runtime database structure on an existing install: ne
 
 3. **For table rebuilds (rare but high-risk) — read the SQLite footguns first.** `apply_migrations()` already disables FK enforcement (`PRAGMA foreign_keys = OFF`) outside the transaction; do not re-enable it inside. Never `DROP TABLE t_old` with FKs on, never rely on `legacy_alter_table` — both have caused production data loss. See CLAUDE.md "Schema migrations" → "Migration testing pitfalls" for the full list (4 distinct ways this has gone wrong before).
 
-4. **Update all three schema files.** Fresh installs go through `schema.sql` / `schema.mysql.sql` / `schema.pgsql.sql`, not the migration chain. They must stay structurally equivalent. CI's `SchemaParityTest` will fail the build on any divergence (table set, column set, type class, nullability, default kind, FK target, FK on-delete action). Type names normalise — `BLOB` / `VARBINARY(16)` / `BYTEA` all map to `"binary"` — so you don't need exact-string parity, just semantic.
+4. **Update all three schema files** *and* their `schema_migrations` pre-seed. Fresh installs go through `schema.sql` / `schema.mysql.sql` / `schema.pgsql.sql`, not the migration chain. They must stay structurally equivalent — CI's `SchemaParityTest` fails on any divergence (table set, column set, type class, nullability, default kind, FK target, FK on-delete action; type names normalise — `BLOB` / `VARBINARY(16)` / `BYTEA` all map to `"binary"` — so it's semantic, not exact-string). **`schema.mysql.sql` and `schema.pgsql.sql` also carry a pre-seeded `INSERT INTO schema_migrations (...)` list** so a fresh MySQL/Postgres install doesn't replay every historical migration; add your new version key to that list in both files. (`schema.sql` / SQLite has no pre-seed — fresh installs replay all migrations — so this only affects the two non-SQLite files.) **Then bump the hardcoded count assertion in `tests/MysqlSmokeTest.php` and `tests/PgsqlSmokeTest.php` (`testSchemaMigrationsPreseeded`) by 1** — those tests assert the pre-seed row count, only run when a non-SQLite DSN is set (so `vendor/bin/phpunit` against SQLite won't catch a stale value), and a missed bump is exactly what turns the `php-qa.yml` mysql/mariadb/pgsql jobs red on the PR. Run `bash testing/run-engine-phpunit.sh` locally to verify before pushing.
 
 5. **Regenerate the data dictionary.**
    ```bash
@@ -37,12 +37,13 @@ Any change that alters the runtime database structure on an existing install: ne
 
 7. **Run the local gate, then the 3-driver containerized harness:**
    ```bash
-   vendor/bin/phpunit                              # MigrationTest + SchemaParityTest
+   vendor/bin/phpunit                              # MigrationTest + SchemaParityTest + DataDictionaryDriftTest (SQLite)
+   bash testing/run-engine-phpunit.sh              # MySQL + PgSQL phpunit — incl. the *SmokeTest pre-seed-count gate
    bash testing/playwright/bootstrap-app.sh sqlite && bash testing/playwright/teardown-app.sh
    bash testing/playwright/bootstrap-app.sh mysql  && bash testing/playwright/teardown-app.sh
    bash testing/playwright/bootstrap-app.sh pgsql  && bash testing/playwright/teardown-app.sh
    ```
-   `bootstrap-app.sh` runs `migrate.php` against a fresh DB — if your migration is broken on any engine, it surfaces here before CI.
+   `bootstrap-app.sh` runs `migrate.php` against a fresh DB — if your migration is broken on any engine, it surfaces here before CI. `run-engine-phpunit.sh` catches the engine-only phpunit failures (the `schema_migrations` pre-seed count chief among them) that the SQLite-only `vendor/bin/phpunit` can't.
 
 8. **Bump `version.php`** and add the migration mention to the release `## [X.Y.Z]` entry in `CHANGELOG.md` under either `Added` (new tables/columns) or `Changed` (modified existing).
 
