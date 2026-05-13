@@ -6,7 +6,7 @@ use PHPUnit\Framework\TestCase;
 /**
  * Coverage for oidc_verify_id_token() and jwk_rsa_to_pem() — the only two
  * load-bearing primitives behind OIDC sign-in. Closes finding D2 from
- * code_quality_review.md (issue #867).
+ * archive/code_quality_review.md (issue #867).
  *
  * Keypairs are generated in setUpBeforeClass so there is no committed
  * private-key material in the repo. The test class itself is the spec for

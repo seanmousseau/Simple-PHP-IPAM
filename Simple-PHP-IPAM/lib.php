@@ -6002,7 +6002,7 @@ function ipam_retention_compute_deletions(PDO $db, int $destinationId): array
     // Pre-v3.25.0 retention lived on backup_schedules. v3.25.0 moved it to
     // backup_destinations so it describes "how much to keep at this storage
     // location" rather than "how often we write to it" (per
-    // backup_overhaul.md §3 AGREED). The migration backfilled values from
+    // archive/backup_overhaul.md §3 AGREED). The migration backfilled values from
     // any per-schedule rows; the schedule columns remain in place for one
     // release cycle for downgrade safety but are no longer the source of
     // truth.

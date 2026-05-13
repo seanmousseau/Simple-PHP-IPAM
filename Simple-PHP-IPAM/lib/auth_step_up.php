@@ -9,7 +9,7 @@ declare(strict_types=1);
  * vault key, sensitive settings, DB import, API key creation, and MFA
  * disable actions without depending on a local password. See
  * docs/superpowers/plans/2026-05-07-v3.27.0.md and
- * docs/internal/step-up-auth.md (proc doc).
+ * docs/internal/auth-model.md → "Step-up auth (v3.27.0)" section.
  *
  * Resolution order in {@see ipam_sudo_verify()}:
  *   1. Cached grant (refreshes TTL, no audit row).
