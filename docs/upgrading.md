@@ -116,6 +116,33 @@ The backup is left in place after a successful upgrade. You can remove it manual
 
 ## Version-specific upgrade notes
 
+### v3.28.0
+
+DR + security stabilization release. One schema migration (`3.28.0-state-tables`, runs automatically — adds two small internal tables, no operator action) and one **behavior change** worth knowing about: the legacy `app_secret`-based backup-encryption *write* path was removed.
+
+#### Migration off `app_secret` backup encryption (v4.0.0 cold-break preview)
+
+**What changed in v3.28.0:** the backup orchestrator no longer falls back to encrypting scheduled backups with the `app_secret` value in `config.php`. An encrypted backup now requires either:
+
+- a **backup vault key** — Stored mode, configured under **Admin → Backups → Destinations** (this has been the recommended path since v3.26.0; archives are IPAMBKP3 stored-mode), or
+- a **passphrase** — Transitory mode, supplied at the time of a manual export (archives are IPAMBKP3 transitory-mode).
+
+If an install still has only `app_secret` set and no vault key configured, encrypted backups will **fail preflight** with a message pointing at this section — they'll show up as `status=failed` runs in the History tab with a synthetic `(preflight-failed-…)` name plus a `backup.preflight_failed` audit row. **Fix:** configure the backup vault key (Destinations tab → "Encryption key (Stored mode)"). Or, if you don't need encrypted destination backups, set the destination's encryption mode to `unencrypted`.
+
+> **If a destination shows "Stored" encryption mode but you only ever used `app_secret`-style encryption:** that's the old-model carry-over. Pre-v3.24.0 a destination just had an `encrypt` on/off flag, and "on" meant "encrypt with `app_secret`". The v3.24.0/v3.25.0 redesign replaced that flag with the `stored | transitory | unencrypted` enum, and the migration had to map an old `encrypt=1` destination onto the only "encrypted" choice it has — `stored` (= backup-vault-key). That mapping silently changes *which key* is used. Combined with the now-fixed v3.27.x "config.php cleanup needed — remove `bootstrap_key`" banner (which, if you complied, orphaned any auto-generated vault key), some installs end up with an unreadable `backup_vault_key` envelope they never deliberately set. **What to do:** decide whether you actually want vault-key encryption for that destination. If yes — recover the original `bootstrap_key` (best; see [Vault recovery (unreadable envelope)](#vault-recovery)) or, if it's gone, clear the orphaned `backup_vault_key` setting and set a fresh one. If no — just change the destination's encryption mode to `unencrypted` on the Destinations tab. Either way, your `app_secret`-encrypted archives (IPAMBKP1/IPAMBKP2 `.enc`) are unaffected — they decrypt with `app_secret`, independent of the vault key. (As of v3.28.0 the orchestrator no longer auto-generates a vault key into `config.php` on first stored-mode backup — that path was removed; it now fails preflight with the message above instead.)
+
+**Reading legacy archives is unaffected in v3.28.0.** The in-app Restore wizard still decrypts every legacy format — IPAMBKP1, IPAMBKP2 (the two `app_secret`-encrypted formats), IPAMBKP3 (stored + transitory), IPAMBKU1, bare `.sql.gz`, bare `.ipambkl1.gz` — for the entire v3.x line. You do not lose access to old backups by upgrading to v3.28.0.
+
+**What v4.0.0 will do (cold break — plan ahead now):** v4.0.0 removes the in-app reader for IPAMBKP1 / IPAMBKP2 / SQLite-binary dumps / bare `.sql.gz`. After that upgrade, the Restore wizard accepts only IPAMBKL1-inside-IPAMBKP3 (or unencrypted IPAMBKL1). The only in-product way to recover plaintext from a pre-v4 legacy archive becomes the standalone CLI tool **`tools/decrypt-backup.php`** (ships in the release tarball; runs without a DB or webserver). So, before you reach v4.0.0:
+
+1. **Inventory your retained archives.** Any IPAMBKP1/IPAMBKP2 (`.enc`) archive you intend to keep restorable in-app needs to be migrated.
+2. **Migrate them, one of two ways:**
+   - **Re-encrypt under the vault key (recommended):** decrypt the legacy archive (in-app Restore → stage → or `tools/decrypt-backup.php --in old.enc --out plain.sqlite --app-secret <hex>`), then take a fresh backup to a Stored-mode destination so it's written as IPAMBKP3. Drop the old `.enc` copy once verified.
+   - **Or keep the escape hatch handy:** retain a copy of `app_secret` (the value from `config.php`) stored *separately* from the archive, plus a copy of `tools/decrypt-backup.php`. After v4.0.0 you'd run `php tools/decrypt-backup.php --in old.enc --out plain.sqlite --app-secret <hex>` to recover the plaintext, then re-import it.
+3. **Transitory (passphrase) archives** — same logic: the in-app reader keeps them through v3.x; for v4.0.0, either re-key them or keep the passphrase + the decrypt tool.
+
+`tools/decrypt-backup.php` auto-detects the archive format from its magic and takes exactly one credential (`--app-secret` for IPAMBKP1/2, `--vault-key` for IPAMBKP3 stored, `--passphrase` / `$IPAM_BACKUP_PASSPHRASE` for IPAMBKP3 transitory, none for IPAMBKU1 / bare archives). Run `php tools/decrypt-backup.php --help` for full usage. Its Pass-1 conformance run is recorded in `releases/ipam-3.28.0/decrypt-pass1-results.md`.
+
 ### v3.27.9
 
 Single-bug hotfix plus a small Restore-tab UX change. No schema change, no migration. Drop-in upgrade from v3.27.x — no operator action required for the upgrade itself.

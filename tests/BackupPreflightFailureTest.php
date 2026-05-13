@@ -125,4 +125,43 @@ final class BackupPreflightFailureTest extends TestCase
         $this->assertSame($destId, to_int($auditRow['entity_id'] ?? 0));
         $this->assertNotEmpty(to_str($auditRow['details'] ?? ''));
     }
+
+    /**
+     * v3.28.0 #1164: the `app_secret` legacy backup-encryption write path was
+     * removed. An install that still has `app_secret` set in config.php but
+     * no backup vault key must NOT silently fall back to producing an
+     * IPAMBKP2 archive — it fails preflight with a message that says the
+     * write path is gone and points at the vault key.
+     */
+    public function testPreflightStillFailsWhenOnlyAppSecretIsConfigured(): void
+    {
+        $destId = $this->fetchInt("SELECT id FROM backup_destinations WHERE name = 'rt-local-stored'");
+        $this->assertGreaterThan(0, $destId);
+
+        // Simulate the "upgraded past v3.26.0 but never relocated app_secret"
+        // state: app_secret present, no backup_vault_key configured.
+        $this->config['app_secret'] = str_repeat('a', 64);
+        $GLOBALS['config'] = $this->config;
+
+        $threw = false;
+        $msg = '';
+        try {
+            ipam_backup_run_for_destination($this->db, $this->config, $destId, 'manual', null);
+        } catch (\Throwable $e) {
+            $threw = true;
+            $msg = strtolower($e->getMessage());
+        }
+        $this->assertTrue($threw, '#1164: app_secret must no longer satisfy an encrypted backup');
+        $this->assertStringContainsString('vault', $msg);
+        $this->assertStringContainsString('removed', $msg);
+        $this->assertStringContainsString('v3.28.0', $msg);
+
+        // And it must surface the same way as any other preflight failure:
+        // a status=failed backup_runs row with the synthetic name + the
+        // backup.preflight_failed audit. No IPAMBKP2 archive was produced.
+        $run = $this->fetchAssoc("SELECT status, filename FROM backup_runs ORDER BY id DESC LIMIT 1");
+        $this->assertSame('failed', to_str($run['status'] ?? ''));
+        $this->assertStringStartsWith('(preflight-failed', to_str($run['filename'] ?? ''));
+        $this->assertSame(0, count(glob($this->stagingDir . '/*') ?: []), 'no archive file should be left in the staging dir');
+    }
 }

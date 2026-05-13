@@ -3830,6 +3830,146 @@ function ipam_migrations(): array
                     is_string($details) ? '3.27.7-webhook-secret-encrypt ' . $details : '3.27.7-webhook-secret-encrypt');
             }
         },
+
+        // v3.28.0 (#1143, #1159) — two small state tables that replace
+        // racy read-then-write patterns with atomic single-row writes.
+        //
+        //  - rate_limit_dampener (#1143): the "emit at most one
+        //    auth.ip_rate_limited audit row per (action, ip) lockout
+        //    window" guarantee used to be enforced by SELECTing the most
+        //    recent prior dampener row out of audit_log and only INSERTing
+        //    a new one if none was still active -- a textbook TOCTOU that
+        //    let two concurrent brute-force requests both miss the prior
+        //    row and both emit. The new table carries the window's
+        //    unlock_at keyed by (action, ip); ipam_audit_ip_rate_limited()
+        //    claims the window with an UPDATE-then-INSERT-if-zero and only
+        //    emits the audit row when it actually claimed it.
+        //
+        //  - backup_state (#1159): the per-destination connection-health
+        //    cooldown (cron Task 6c) and the per-schedule overdue cooldown
+        //    (ipam_backup_detect_overdue_schedules) used to live in the
+        //    JSON settings backup.destination_health /
+        //    backup.schedule_overdue_state. Each cron tick / UI action
+        //    read the whole blob, mutated one entry, and wrote the whole
+        //    blob back -- concurrent writers lost each other's updates
+        //    (Pass C F-S5-02). One row per (scope, key) lets every writer
+        //    touch only its own entry. The two legacy settings keys stay
+        //    defined in ipam_setting_definitions() for one release as a
+        //    vestigial read fallback but are no longer written.
+        //
+        // Fresh installs of every engine already have both tables from
+        // schema.{driver}.sql, so the CREATE branches are guarded by an
+        // existence probe and the backfill is skipped when a scope is
+        // already populated (idempotent re-run).
+        '3.28.0-state-tables' => static function (PDO $db): void {
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driver = is_string($driverRaw) ? $driverRaw : '';
+
+            $tableExists = static function (string $name) use ($db, $driver): bool {
+                if ($driver === 'sqlite') {
+                    $st = $db->prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=:n");
+                } elseif ($driver === 'mysql') {
+                    $st = $db->prepare("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = :n");
+                } else { // pgsql
+                    $st = $db->prepare("SELECT tablename FROM pg_tables WHERE schemaname = ANY(current_schemas(false)) AND tablename = :n");
+                }
+                $st->execute([':n' => $name]);
+                return (bool) $st->fetchColumn();
+            };
+
+            // -- 1. rate_limit_dampener (#1143) --------------------------
+            if (!$tableExists('rate_limit_dampener')) {
+                if ($driver === 'sqlite') {
+                    $db->exec("CREATE TABLE rate_limit_dampener (
+                        action    TEXT    NOT NULL,
+                        ip        TEXT    NOT NULL,
+                        unlock_at INTEGER NOT NULL,
+                        PRIMARY KEY (action, ip)
+                    )");
+                    // Supports prune_rate_limit_dampener()'s WHERE unlock_at < ?
+                    $db->exec("CREATE INDEX IF NOT EXISTS idx_rate_limit_dampener_unlock_at ON rate_limit_dampener(unlock_at)");
+                } elseif ($driver === 'mysql') {
+                    $db->exec("CREATE TABLE rate_limit_dampener (
+                        action    VARCHAR(32) NOT NULL,
+                        ip        VARCHAR(45) NOT NULL,
+                        unlock_at BIGINT      NOT NULL,
+                        PRIMARY KEY (action, ip),
+                        KEY idx_rate_limit_dampener_unlock_at (unlock_at)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+                } else { // pgsql
+                    $db->exec("CREATE TABLE rate_limit_dampener (
+                        action    VARCHAR(32) NOT NULL,
+                        ip        TEXT        NOT NULL,
+                        unlock_at BIGINT      NOT NULL,
+                        PRIMARY KEY (action, ip)
+                    )");
+                    // Supports prune_rate_limit_dampener()'s WHERE unlock_at < ?
+                    $db->exec("CREATE INDEX IF NOT EXISTS idx_rate_limit_dampener_unlock_at ON rate_limit_dampener(unlock_at)");
+                }
+            }
+
+            // -- 2. backup_state (#1159) ---------------------------------
+            if (!$tableExists('backup_state')) {
+                if ($driver === 'sqlite') {
+                    $db->exec("CREATE TABLE backup_state (
+                        scope        TEXT NOT NULL,
+                        k            TEXT NOT NULL,
+                        payload_json TEXT NOT NULL DEFAULT '{}',
+                        updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+                        PRIMARY KEY (scope, k)
+                    )");
+                } elseif ($driver === 'mysql') {
+                    $db->exec("CREATE TABLE backup_state (
+                        scope        VARCHAR(32) NOT NULL,
+                        k            VARCHAR(64) NOT NULL,
+                        payload_json TEXT        NOT NULL,
+                        updated_at   DATETIME    NOT NULL DEFAULT (UTC_TIMESTAMP()),
+                        PRIMARY KEY (scope, k)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+                } else { // pgsql
+                    $db->exec("CREATE TABLE backup_state (
+                        scope        VARCHAR(32) NOT NULL,
+                        k            VARCHAR(64) NOT NULL,
+                        payload_json TEXT        NOT NULL DEFAULT '{}',
+                        updated_at   TIMESTAMP   NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
+                        PRIMARY KEY (scope, k)
+                    )");
+                }
+            }
+
+            // -- 3. Backfill backup_state from the legacy JSON settings --
+            // lib.php is loaded before migrations run, so ipam_setting()
+            // is available; it returns the registry default ('{}') when a
+            // row is absent. Idempotency is per-(scope, k): a row is only
+            // inserted when it does not already exist, so a re-run after a
+            // partially-applied migration completes the backfill without
+            // double-inserting any row that was already copied.
+            if ($tableExists('backup_state') && function_exists('ipam_setting')) {
+                $rowExists = $db->prepare(
+                    "SELECT 1 FROM backup_state WHERE scope = :s AND k = :k"
+                );
+                $ins = $db->prepare(
+                    "INSERT INTO backup_state (scope, k, payload_json) VALUES (:s, :k, :p)"
+                );
+                $migrateScope = static function (string $settingKey, string $scope) use ($rowExists, $ins): void {
+                    $raw = ipam_setting($settingKey, '{}');
+                    $decoded = is_string($raw) ? json_decode($raw, true) : null;
+                    if (!is_array($decoded)) return;
+                    foreach ($decoded as $key => $payload) {
+                        if (!is_array($payload)) continue;
+                        $k = (string) $key;
+                        if ($k === '' || strlen($k) > 64) continue;
+                        $rowExists->execute([':s' => $scope, ':k' => $k]);
+                        if ($rowExists->fetchColumn() !== false) continue;
+                        $enc = json_encode($payload, JSON_UNESCAPED_SLASHES);
+                        if (!is_string($enc)) continue;
+                        $ins->execute([':s' => $scope, ':k' => $k, ':p' => $enc]);
+                    }
+                };
+                $migrateScope('backup.destination_health',     'destination_health');
+                $migrateScope('backup.schedule_overdue_state', 'schedule_overdue');
+            }
+        },
     ];
 }
 

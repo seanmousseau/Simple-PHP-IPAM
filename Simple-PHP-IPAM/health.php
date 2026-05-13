@@ -457,8 +457,9 @@ page_header('Health Dashboard');
  * read-out of every active destination's last test result so a quietly
  * broken S3/SFTP doesn't sit unnoticed for weeks. The section is admin-only
  * (the rest of health.php already gates by role); the data comes from the
- * backup.destination_health setting that cron Task 6c (#§2.4 v3.22.0)
- * maintains. */
+ * backup_state table (scope 'destination_health', one row per destination
+ * id) that cron Task 6c (#§2.4 v3.22.0) maintains -- v3.28.0 #1159 moved it
+ * out of the backup.destination_health JSON setting. */
 try {
     $bdStmt = $db->query(
         "SELECT id, name, type, is_default, is_active
@@ -470,34 +471,43 @@ try {
 } catch (\Throwable) {
     $bdRows = [];
 }
-$bdHealthRaw = function_exists('ipam_setting') ? ipam_setting('backup.destination_health') : '';
-$bdHealth    = is_string($bdHealthRaw) ? json_decode($bdHealthRaw, true) : [];
-if (!is_array($bdHealth)) {
+try {
+    $bdHealth = function_exists('ipam_backup_state_get_all')
+        ? ipam_backup_state_get_all($db, 'destination_health')
+        : [];
+} catch (\Throwable) {
     $bdHealth = [];
 }
 
+// v3.28.0 #1159: read the per-destination cooldown row maintained by cron
+// Task 6c. Entry shape: status ('ok'|'failing'|'unknown'), last_ok_at,
+// last_failed_at (ISO-8601 strings), last_alerted_at (int). (Pre-v3.28.0
+// this section read a JSON setting with mismatched key names and so always
+// showed "never tested" — fixed in passing as part of the migration.)
 $bdHealthy = 0;
 $bdUnhealthy = 0;
 $bdRowsRender = [];
 foreach ($bdRows as $r) {
     if (!is_array($r)) continue;
-    $rid  = to_int($r['id']);
-    $st   = is_array($bdHealth[$rid] ?? null) ? $bdHealth[$rid] : [];
-    $ok   = ($st['ok'] ?? null) === true;
-    $when = is_string($st['last_test_at'] ?? null) ? $st['last_test_at'] : '';
-    $msg  = is_string($st['message'] ?? null) ? $st['message'] : '';
-    if ($when === '') {
-        $level = 'warn';
-        $valHtml = '<span class="muted">never tested</span>';
-    } elseif ($ok) {
+    $rid      = to_int($r['id']);
+    $st       = is_array($bdHealth[(string) $rid] ?? null) ? $bdHealth[(string) $rid] : [];
+    $status   = is_string($st['status'] ?? null) ? $st['status'] : '';
+    $lastOk   = is_string($st['last_ok_at'] ?? null) ? $st['last_ok_at'] : '';
+    $lastFail = is_string($st['last_failed_at'] ?? null) ? $st['last_failed_at'] : '';
+    if ($status === 'ok') {
         $bdHealthy++;
-        $level = 'ok';
-        $valHtml = '<span class="badge badge-success">OK</span> ' . e($when);
-    } else {
+        $level   = 'ok';
+        $valHtml = '<span class="badge badge-success">OK</span> ' . e($lastOk);
+    } elseif ($status === 'failing') {
         $bdUnhealthy++;
-        $level = 'warn';
-        $valHtml = '<span class="badge badge-failed">Failed</span> ' . e($when);
-        if ($msg !== '') $valHtml .= ' &mdash; <span class="muted">' . e(substr($msg, 0, 80)) . '</span>';
+        $level   = 'warn';
+        $valHtml = '<span class="badge badge-failed">Failed</span> ' . e($lastFail);
+    } elseif ($status === 'unknown') {
+        $level   = 'warn';
+        $valHtml = '<span class="muted">last test errored</span>';
+    } else {
+        $level   = 'warn';
+        $valHtml = '<span class="muted">never tested</span>';
     }
     $bdRowsRender[] = [
         'label' => to_str($r['name']) . ' (' . strtoupper(to_str($r['type'])) . ')',

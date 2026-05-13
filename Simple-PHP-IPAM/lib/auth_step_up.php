@@ -94,6 +94,44 @@ function ipam_sudo_consume_once(): void
 }
 
 /**
+ * Strip secret-class field names from a step-up round-trip set.
+ *
+ * `views/_step_up_prompt.php` renders `$stepUpHiddenFields` as `<input
+ * type="hidden">` (and stashes them server-side for the OIDC bounce), so a
+ * credential left in there gets echoed back into the served HTML. A field
+ * removed here is simply not re-submitted after verification — handlers treat
+ * it as "not provided": a create errors ("secret required" → re-enter), an
+ * edit / sensitive-setting save keeps the existing value (the settings form
+ * already `continue`s on a blank `sensitive` field; a blank webhook `secret`
+ * on edit means "keep"). Field NAMES only — values are never inspected.
+ *
+ * Note (v3.28.0): the vault-key `vault_key_b64` paste field is intentionally
+ * NOT covered — its round-trip is load-bearing for the "paste a key → step-up
+ * → resume" flow, so it can't be dropped without the server-side-stash work.
+ * The proper fix (route the whole pending POST through the OIDC-style stash
+ * for the password path too, so nothing sensitive is ever rendered) is
+ * tracked for a later release.
+ *
+ * @param  array<string,scalar> $fields
+ * @return array<string,scalar>
+ */
+function ipam_step_up_redact_secrets(array $fields): array
+{
+    return array_filter(
+        $fields,
+        static function (string $k): bool {
+            // Drop names ending in (or equal to) secret/password/passphrase —
+            // matched on a `_` (or `__`, the settings-form delimiter) boundary
+            // or whole-string, so `secret`, `client_secret`, `k_smtp__password`
+            // go but `webhook_url`, `recipient_name` etc. stay. `csrf` and the
+            // `_sudo_*` proof family are already excluded by the call sites.
+            return !preg_match('/(?:^|_)(secret|password|passphrase)$/i', $k);
+        },
+        ARRAY_FILTER_USE_KEY
+    );
+}
+
+/**
  * Clear any cached sudo grant. Call from logout, password change, role
  * change, MFA enrollment change, oidc_sub change, and step-up policy save.
  */

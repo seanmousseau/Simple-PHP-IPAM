@@ -36,6 +36,9 @@ declare(strict_types=1);
 ?>
   <?php if ($err !== ''): ?><div class="card danger"><?= e($err) ?></div><?php endif; ?>
 
+  <?php /* v3.28.0 #1164 — app_secret backup-encryption retirement notice (Destinations + Restore tabs). */ ?>
+  <?php include __DIR__ . '/_app_secret_retirement_banner.php'; ?>
+
   <?php if ($phase === ''): ?>
     <section class="card">
       <h2>Step 1: choose a backup</h2>

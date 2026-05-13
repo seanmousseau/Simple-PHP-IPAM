@@ -21,7 +21,7 @@ This skill walks you through adding a migration to `Simple-PHP-IPAM/migrations.p
 
 3. **Write the closure** using the template below. Every `ALTER TABLE` must be guarded by a `PRAGMA table_info()` check so re-runs are no-ops. Use `Dialect` helpers (`$dialect->now()`, `$dialect->binary_type()`, `$dialect->upsert()`) for portable SQL across SQLite / MySQL / PostgreSQL.
 
-4. **Update all three schema files** (`schema.sql`, `schema.mysql.sql`, `schema.pgsql.sql`) so fresh installs match. CI's `SchemaParityTest` will fail on drift. Spawn the `multi-engine-schema-parity` subagent after editing to verify.
+4. **Update all three schema files** (`schema.sql`, `schema.mysql.sql`, `schema.pgsql.sql`) so fresh installs match. CI's `SchemaParityTest` will fail on drift. Spawn the `multi-engine-schema-parity` subagent after editing to verify. **Also add your new version key to the pre-seeded `INSERT INTO schema_migrations (...)` list in `schema.mysql.sql` AND `schema.pgsql.sql`** (SQLite has no pre-seed), then **bump the hardcoded count in `tests/MysqlSmokeTest.php` + `tests/PgsqlSmokeTest.php` (`testSchemaMigrationsPreseeded`) by 1** — those assertions only run when a non-SQLite DSN is set, so `vendor/bin/phpunit` against SQLite won't catch a stale value; a missed bump red-fails the `php-qa.yml` mysql/mariadb/pgsql jobs on the PR.
 
 5. **Spawn the `migration-reviewer` subagent** before commit. It checks the four footguns automatically.
 
@@ -31,7 +31,8 @@ This skill walks you through adding a migration to `Simple-PHP-IPAM/migrations.p
 
 8. **Run the local gate**:
    ```bash
-   vendor/bin/phpunit
+   vendor/bin/phpunit                              # SQLite
+   bash testing/run-engine-phpunit.sh              # MySQL + PgSQL phpunit (incl. the *SmokeTest pre-seed-count gate)
    bash testing/playwright/bootstrap-app.sh sqlite && bash testing/playwright/teardown-app.sh
    bash testing/playwright/bootstrap-app.sh mysql  && bash testing/playwright/teardown-app.sh
    bash testing/playwright/bootstrap-app.sh pgsql  && bash testing/playwright/teardown-app.sh

@@ -159,6 +159,85 @@ ssh root@192.168.80.23 'tail -f /var/log/ipam-cron.log' &
 
 If `/var/log/ipam-cron.log` is missing or empty after 30 min, the wrapper script needs the redirect added.
 
+### Implementation on testing host (`192.168.80.15`) — 2026-05-09
+
+The four testing instances share a single wrapper invoked every 15 min:
+
+- **Path:** `root@192.168.80.15:/opt/container_data/dev.seanmousseau.com/scripts/ipam-cron.sh`
+- **Schedule:** every 15 minutes (host crontab).
+- **Log:** `root@192.168.80.15:/var/log/ipam-cron.log` (host-side, not inside the container).
+- **Behaviour:** runs `cron.php` for each of the 4 testing instances in sequence — sqlite, mysql, mariadb, postgres — by `docker exec`ing the apache-php container as `www-data`. Each invocation prints a header line so the log is grep-able by instance.
+
+Current contents (post-2026-05-09 cleanup):
+
+```bash
+#!/bin/bash
+#
+# IPAM testing-instance cron driver. Exits non-zero on any instance failure
+# so the host crontab MAILTO alert (and any wrapping monitor) actually fires.
+# The v3.27.1 observability chain (audit row + error_log + STDERR) only
+# closes if the host-cron exit code propagates too.
+#
+set -uo pipefail
+
+CONTAINER="${IPAM_CONTAINER:-dev_seanmousseau_com-apache-php-1}"
+INSTANCES=(
+    "ipam:sqlite"
+    "ipam-mysql:mysql"
+    "ipam-maria:mariadb"
+    "ipam-postgres:postgres"
+)
+
+ts() { date '+%Y-%m-%d %H:%M:%S'; }
+
+echo
+echo "=== IPAM cron sweep starting at $(ts) ==="
+
+failed=()
+for entry in "${INSTANCES[@]}"; do
+    inst="${entry%%:*}"; label="${entry##*:}"
+    start=$(date +%s)
+    echo
+    echo "--- ${label} (${inst}) — $(ts) ---"
+    if docker exec "$CONTAINER" runuser --user www-data -- \
+            php "/var/www/html/testing/${inst}/cron.php"; then
+        echo "    ok ($(( $(date +%s) - start ))s)"
+    else
+        rc=$?
+        echo "    FAIL exit=${rc} ($(( $(date +%s) - start ))s)"
+        failed+=("${label}")
+    fi
+done
+
+echo
+if [ ${#failed[@]} -gt 0 ]; then
+    echo "=== IPAM cron sweep FAILED at $(ts): ${failed[*]} ==="
+    exit 1
+fi
+echo "=== IPAM cron sweep OK at $(ts) ==="
+exit 0
+```
+
+Design properties worth noting:
+
+- **`exit 1` on any instance failure.** Without this the host-cron MAILTO never fires and the v3.27.1 observability chain has a hole at the host-cron layer. (The application-side audit row + `error_log()` still fire, but the operator's per-tick alert path goes silent.)
+- **`set -uo pipefail` (without `-e`).** We deliberately do NOT exit on first failure — one engine being unhealthy shouldn't block the other three from running. Failures are collected into `failed[]` and reported at the end.
+- **Container name parameterised** via `${IPAM_CONTAINER:-…}` so a docker-compose project rename doesn't silently break the script.
+- **Per-instance timing** surfaces creeping slowness (e.g. the v3.27.1 scanner soft-budget is 60s; if an instance starts running 90s, you'll see it in the log before the budget actually fires).
+- **Wrapper doesn't redirect** — the host crontab line applies `>> /var/log/ipam-cron.log 2>&1`. Keeps the script reusable for ad-hoc invocations.
+
+**Tail it during a deploy verification:**
+
+```bash
+ssh root@192.168.80.15 'tail -f /var/log/ipam-cron.log'
+```
+
+Each tick produces ~4 instance blocks; on a healthy install you should see no `cron.task_failed` rows in any instance's audit log either.
+
+### Implementation on prod host (`192.168.80.23`)
+
+👤 **Operator follow-up.** The host crontab + wrapper for `demo.simplephpipam.com` and `ipam.seanmousseau.com` should match the shape above. Confirm both have the redirect to `/var/log/ipam-cron.log` (or equivalent) — the v3.27.1 silent-failure incident specifically blamed this gap on prod.
+
 ---
 
 ## Recurring footguns

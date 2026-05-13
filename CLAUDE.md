@@ -45,7 +45,7 @@ Web root is `Simple-PHP-IPAM/`. Bootstrap entry is `Simple-PHP-IPAM/init.php`. S
 
 ## Project overview
 
-> **Current shipped version: v3.27.9** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v4.0.0 describes future work — **do not apply it to current v3.x code**. Current-state rules are the ones that do not cite a future version.
+> **Current shipped version: v3.28.0** (see `Simple-PHP-IPAM/version.php`). This CLAUDE.md intentionally documents forward-looking policy for unreleased versions (v4.0.0+) so design intent survives across sessions. Any section or sentence that cites a version ≥ v4.0.0 describes future work — **do not apply it to current v3.x code**. Current-state rules are the ones that do not cite a future version.
 
 Simple PHP IPAM is a lightweight IPv4/IPv6 address management web application built with **PHP 8.2+ and SQLite**. It has **no npm build step** — all CSS and JavaScript are vanilla. Starting in v2.9.0, the application will ship a small, carefully curated set of Composer-managed runtime dependencies bundled into the release tarball, so end users still deploy by extracting the tarball with no build step. The web root is `Simple-PHP-IPAM/` (the subdirectory, not the repo root).
 
@@ -185,7 +185,7 @@ Migrations live in `migrations.php` as an associative array of version string �
 
 **When adding a new version:** add the migration closure, bump `version.php`, update `CHANGELOG.md` (keepachangelog format).
 
-> **Current shipped version: v3.27.9.** `Creating new data tables in post-v4.0.0 releases` is **forward-looking** (applies to any migration whose version sorts after v4.0.0, including v4.0.x patches) — ignore it for all current v3.x work. `Modifying the schema (multi-engine, from v2.9.0 onward)` and `Runtime dependencies` are **currently active** rules (apply to v2.9.0+ including the current v3.27.9).
+> **Current shipped version: v3.28.0.** `Creating new data tables in post-v4.0.0 releases` is **forward-looking** (applies to any migration whose version sorts after v4.0.0, including v4.0.x patches) — ignore it for all current v3.x work. `Modifying the schema (multi-engine, from v2.9.0 onward)` and `Runtime dependencies` are **currently active** rules (apply to v2.9.0+ including the current v3.28.0).
 
 ### Multi-tenancy (v4.0.0 — forward-looking)
 
@@ -296,7 +296,7 @@ Located in `assets/app.css`. Uses CSS custom properties for theming (light/dark/
 
 Key utility classes: `.muted`, `.danger`, `.success`, `.warning`, `.badge`, `.badge-update`, `.status-used`, `.status-reserved`, `.status-free`, `.util-bar`, `.util-bar-fill`, `.util-bar-fill--warn`, `.util-bar-fill--crit`, `.row`, `.card`, `.action-pill`, `.button-danger`, `.button-secondary`.
 
-Asset cache-buster: update `?v=X.Y.Z` in the `<link>` and `<script>` tags in `page_header()` **and** in `demo_gate.php` (lines 74–75) when changing CSS/JS. `demo_gate.php` has its own `<head>` block and does not call `page_header()`, so it must be updated separately.
+Asset cache-buster: **automatic, nothing to bump by hand.** Both `page_header()` (`lib.php`) and `demo_gate.php` (which has its own `<head>` and does not call `page_header()`) derive `?v=` the same way — `IPAM_VERSION` for static-ish assets (favicons, vendored `open-props.min.css`), and `IPAM_VERSION` + the asset's `filemtime()` for `app.css` / `app.js` so an in-version edit busts the cache without a version bump. Editing CSS/JS changes the mtime → buster changes; bumping `version.php` changes the rest. Do not reintroduce hardcoded `?v=X.Y.Z` literals — they drifted release-to-release before this was made dynamic (see `docs/internal/cleanup.md`).
 
 ### Nav structure (v3.8.0 sidebar)
 - **Desktop (≥1024px):** always-visible sidebar with SVG Heroicon nav links (Dashboard, Subnets, Addresses, Search, Audit, Admin section) and user block at the bottom (username + role badge → Theme, Account, Logout)
@@ -352,7 +352,7 @@ When implementing a new version:
    - Add a version comparison link at the bottom of the file
 4. Update `README.md` "What's new" section. **README only carries the single most recent release** — replace the existing `## What's new in vX.Y.Z` section in-place rather than appending. Older versions live in `CHANGELOG.md`. Do not let the README accumulate historical sections.
 5. Update relevant `docs/` files
-6. Bump asset cache-buster `?v=X.Y.Z` in `page_header()` **and** `demo_gate.php:74–75` if CSS/JS changed
+6. (No manual cache-buster step — `page_header()` and `demo_gate.php` derive `?v=` from `IPAM_VERSION` + asset `filemtime()` automatically; the `version.php` bump in step 2 is all that's needed)
 
 ### Static analysis & testing
 

@@ -12,7 +12,7 @@ import { test, expect, type Browser, type BrowserContext, type Page } from '@pla
 import {
   login, fetchPost, deleteSubnet, subnetIdFor, appUrl,
   ADMIN_USER, ADMIN_PASS,
-  newAuthContext,
+  newAuthContext, warmSudoGrant,
 } from '../fixtures/ipam';
 
 // ── Test data ──────────────────────────────────────────────────────────────────
@@ -85,6 +85,11 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
   ctx = await newAuthContext(browser);
   page = await ctx.newPage();
   await login(page, ADMIN_USER, ADMIN_PASS);
+
+  // v3.28.0 (#1158): custom field def create/delete is sudo-gated. Warm one
+  // grant for the whole suite (shared page/context, default TTL=300s) so the
+  // createCfDef/deleteCfDefsWithKeys helpers don't land on the step-up prompt.
+  await warmSudoGrant(page);
 
   // Remove stale defs + subnet from previous runs
   await deleteCfDefsWithKeys(page, [

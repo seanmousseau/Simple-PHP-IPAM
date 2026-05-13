@@ -29,7 +29,7 @@ Once everything that belongs in `vX.Y.Z` is on `dev`, do the following **in orde
 4. Update `testing/samples/large-db-sample/gen_large_db.php` and sample datasets if schema or data model changed.
 5. Update `testing/scripts/test_api.sh` if API endpoints were added or changed.
 6. Bump `Simple-PHP-IPAM/version.php` to `X.Y.Z`.
-7. Bump the asset cache-buster `?v=X.Y.Z` in `page_header()` (`lib.php`) **and** `demo_gate.php:74-75` if any CSS/JS changed.
+7. (No asset-cache-buster step — `page_header()` and `demo_gate.php` derive `?v=` from `IPAM_VERSION` + the asset's `filemtime()` automatically; the `version.php` bump in step 6 covers it. Do not reintroduce hardcoded `?v=X.Y.Z` literals.)
 8. Update `CHANGELOG.md` with the full `## [X.Y.Z] - YYYY-MM-DD` entry and add the comparison link at the bottom.
 9. Update `README.md` — replace the existing `## What's new in vA.B.C` block **in place** with a vX.Y.Z summary (README only ever carries the single latest release).
 9a. **Audit the new CHANGELOG section for unresolved deferral language.** Run:

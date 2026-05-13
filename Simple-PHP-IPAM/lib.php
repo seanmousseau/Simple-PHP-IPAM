@@ -486,11 +486,33 @@ function ipam_db_init(PDO $db): void
     global $config;
     $driver = ipam_dialect()->driver_name();
 
-    // SQLite-only fast path: skip bootstrap checks if the sentinel file is
-    // at least as new as the SQLite DB file. MySQL has no local file to
-    // stat, so this optimisation does not apply there — the MySQL path
-    // runs the full check on every bootstrap (overhead is one SELECT).
-    if ($driver === 'sqlite') {
+    // Probe for the users table on THIS handle. A lightweight SELECT with a
+    // caught "table not found" — works on every engine without needing
+    // sqlite_master / information_schema branching.
+    $hasUsers = false;
+    try {
+        $probe = $db->query("SELECT 1 FROM users LIMIT 1");
+        if ($probe !== false) {
+            $probe->closeCursor();
+            $hasUsers = true;
+        }
+    } catch (PDOException) {
+        $hasUsers = false;
+    }
+
+    // SQLite-only fast path: when the handle already has the schema AND the
+    // sentinel file is at least as new as the SQLite DB file, skip the
+    // per-bootstrap probe/migration churn. MySQL has no local file to stat,
+    // so this optimisation does not apply there.
+    //
+    // The $hasUsers guard is load-bearing: it keeps a sqlite::memory: handle
+    // (which does NOT correspond to the on-disk db_path the sentinel stats —
+    // e.g. unit tests that call ipam_db_init() directly) from wrongly taking
+    // the fast path and running apply_migrations() against an empty in-memory
+    // database. Migrations assume the schema.sql baseline already exists, so
+    // a fresh handle MUST fall through to the schema-creation branch below.
+    // (#1175 — RestoreDryRunTest::testIpambkl1ArchiveDoesNotErrorThroughSqlSplitter.)
+    if ($driver === 'sqlite' && $hasUsers) {
         // Honour a deployment's configured db_path so the sentinel check
         // stats the real database file, not the default one. The sentinel
         // itself lives next to the DB file so custom paths stay
@@ -510,20 +532,6 @@ function ipam_db_init(PDO $db): void
                 return;
             }
         }
-    }
-
-    // Probe for the users table. Try a lightweight SELECT and catch the
-    // "table not found" error — works on every engine without needing
-    // sqlite_master / information_schema branching.
-    $hasUsers = false;
-    try {
-        $probe = $db->query("SELECT 1 FROM users LIMIT 1");
-        if ($probe !== false) {
-            $probe->closeCursor();
-            $hasUsers = true;
-        }
-    } catch (PDOException) {
-        $hasUsers = false;
     }
 
     if (!$hasUsers) {
@@ -1124,70 +1132,101 @@ function auth_rate_limit_unlock_at(PDO $db, string $action, string $ip, int $max
 }
 
 /**
- * Emit a once-per-window 'auth.ip_rate_limited' audit row (#1134, v3.27.3).
+ * Emit a once-per-window 'auth.ip_rate_limited' audit row (#1134, v3.27.3;
+ * made atomic in v3.28.0 #1143).
  *
- * Pre-fix: login.php audited 'auth.login_blocked' on every refused
- * attempt within the rate-limit window — flooding the log with up to
- * one row per attempted login over the lockout window. Operators
- * filtering audit_log by username also missed these rows entirely
- * (entity_id NULL, username column NULL).
+ * Pre-fix (#1134): login.php audited 'auth.login_blocked' on every refused
+ * attempt within the rate-limit window — flooding the log with up to one
+ * row per attempted login over the lockout window. Operators filtering
+ * audit_log by username also missed these rows entirely (entity_id NULL,
+ * username column NULL).
  *
- * Post-fix contract:
- *   - Look back $windowSeconds for any prior 'auth.ip_rate_limited' row
- *     for this (action, ip). If found, this is a continuation of the
- *     same window — don't re-emit.
- *   - Otherwise emit a single row with details=
- *     "action=$action attempts=$attempts unlock_at=$ISO8601" so the
- *     operator can find it via grep on either the IP column OR the
- *     details substring.
+ * #1134 contract: emit a single row per (action, ip) lockout window with
+ * details = "action=$action attempts=$attempts unlock_at=$ISO8601 ip=$ip"
+ * so the operator can grep it on either the audit_log.ip column or the
+ * details substring; subsequent attempts inside the same window do not
+ * re-emit.
  *
- * The dampener is per-IP per-action, keyed off prior audit_log rows
- * (no separate state table). Cheap; relies on the audit_log triggers
- * staying append-only (which they are).
+ * #1143: the original dampener enforced "once per window" by SELECTing the
+ * most recent prior 'auth.ip_rate_limited' row out of audit_log and only
+ * INSERTing if no active window was found — a read-then-insert TOCTOU that
+ * let two concurrent brute-force requests both miss the prior row and both
+ * emit. The window is now tracked in the `rate_limit_dampener` table
+ * (PRIMARY KEY (action, ip), unlock_at = Unix epoch). The caller claims
+ * the window with an UPDATE that only fires on an expired row, falling
+ * back to an INSERT when no row exists at all; exactly one concurrent
+ * caller wins the INSERT (PK collision), so at most one audit row is
+ * emitted per window regardless of concurrency.
  */
 function ipam_audit_ip_rate_limited(PDO $db, string $action, string $ip, int $attempts, int $unlockAt): void
 {
-    // Dampener: skip emission iff a prior row for this (action, ip) is
-    // still inside its own lockout window. The window boundary is
-    // encoded as `unlock_at=<ISO>` in details, so the active-window
-    // test is "previous unlock_at > now". We don't use audit_log.ip for
-    // the match — audit() populates that from client_ip(), which is
-    // the rate-limited IP in production (login.php passes the same
-    // source) but differs in CLI tests. The details substring is the
-    // operator-grep target anyway.
-    //
-    // CR PR #1141: anchor the LIKE pattern to the EXACT (action, ip)
-    // token positions — pre-fix `'%action=login%ip=192.0.2.1%'` would
-    // suppress the dampener for ip=192.0.2.10 because the trailing `%`
-    // makes 192.0.2.1 a prefix match. The details format is fixed
-    // (`action=A attempts=N unlock_at=ISO ip=I`) so anchoring on the
-    // surrounding literal tokens gives exact (action, ip) match. We
-    // escape any LIKE-meta chars in $action/$ip with `!` (project-wide
-    // convention — see lib.php's like_escape()/v2.10.0 #384; backslash
-    // escape breaks MySQL string parsing).
-    $likeEscape = static fn(string $v): string =>
-        str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $v);
-    $st = $db->prepare(
-        "SELECT details FROM audit_log
-          WHERE action = 'auth.ip_rate_limited'
-            AND details LIKE :detailsLike ESCAPE '!'
-          ORDER BY id DESC LIMIT 1"
+    $now = time();
+
+    // Claim this (action, ip) lockout window atomically. A row is "active"
+    // while unlock_at > now; we may claim the window only when no active
+    // row exists. Step 1: UPDATE an expired row to the new window (fires
+    // exactly when a row exists AND it has expired). Step 2 (only if the
+    // UPDATE matched nothing): INSERT a fresh row — succeeds when no row
+    // exists, raises a UNIQUE violation when an active row already holds
+    // the window (or a concurrent caller just inserted one), which we
+    // treat as "already dampened".
+    $upd = $db->prepare(
+        "UPDATE rate_limit_dampener SET unlock_at = :u
+          WHERE action = :a AND ip = :ip AND unlock_at <= :now"
     );
-    $st->execute([
-        ':detailsLike' =>
-            'action=' . $likeEscape($action)
-          . ' attempts=% unlock_at=% ip=' . $likeEscape($ip),
-    ]);
-    $prev = (string) ($st->fetchColumn() ?: '');
-    if ($prev !== '' && preg_match('/unlock_at=([0-9T:\-Z]+)/', $prev, $m)) {
-        $prevUnlock = strtotime($m[1]);
-        if ($prevUnlock !== false && $prevUnlock > time()) {
-            return; // dampened — previous lockout window still active
+    $upd->execute([':u' => $unlockAt, ':a' => $action, ':ip' => $ip, ':now' => $now]);
+    $claimed = $upd->rowCount() > 0;
+
+    if (!$claimed) {
+        try {
+            $ins = $db->prepare(
+                "INSERT INTO rate_limit_dampener (action, ip, unlock_at) VALUES (:a, :ip, :u)"
+            );
+            $ins->execute([':a' => $action, ':ip' => $ip, ':u' => $unlockAt]);
+            $claimed = true;
+        } catch (\PDOException $e) {
+            $sqlstate = (string) ($e->errorInfo[0] ?? '');
+            $msg = $e->getMessage();
+            $isUniqueViolation = $sqlstate === '23000' || $sqlstate === '23505'
+                || stripos($msg, 'unique') !== false
+                || stripos($msg, 'duplicate') !== false;
+            if (!$isUniqueViolation) {
+                throw $e;
+            }
+            // Active row already holds the window — dampened.
         }
     }
+
+    if (!$claimed) {
+        return;
+    }
+
     $unlockIso = gmdate('Y-m-d\TH:i:s\Z', $unlockAt);
-    audit($db, 'auth.ip_rate_limited', 'auth', null,
+    $emitted = audit($db, 'auth.ip_rate_limited', 'auth', null,
           "action=$action attempts=$attempts unlock_at=$unlockIso ip=$ip");
+    if (!$emitted) {
+        // audit() returns false (not an exception) on write failure. We just
+        // claimed this (action, ip) window via the UPDATE/INSERT above, so the
+        // claim is the only thing standing between subsequent attempts and a
+        // (still missing) audit row. Roll the claim back so a later attempt in
+        // the same window can re-attempt the emit.
+        $db->prepare("DELETE FROM rate_limit_dampener WHERE action = :a AND ip = :ip")
+           ->execute([':a' => $action, ':ip' => $ip]);
+    }
+}
+
+/**
+ * Housekeeping: drop rate_limit_dampener rows whose lockout window expired
+ * more than $graceSeconds ago. The table is bounded by the number of
+ * distinct (action, ip) pairs that have ever been rate-limited; a sustained
+ * brute-force from many sources can grow it, so prune it during the lazy
+ * housekeeping sweep alongside purge_old_login_attempts().
+ */
+function prune_rate_limit_dampener(PDO $db, int $graceSeconds = 86400): void
+{
+    $cutoff = time() - max(0, $graceSeconds);
+    $db->prepare("DELETE FROM rate_limit_dampener WHERE unlock_at < :cutoff")
+       ->execute([':cutoff' => $cutoff]);
 }
 
 function record_login_failure(PDO $db, string $ip, string $username = ''): void
@@ -2099,24 +2138,28 @@ function ipam_setting_definitions(): array
             'default'     => 'inherit',
             'sensitive'   => false,
         ],
-        // Internal — JSON map { destId: { last_ok_at, last_failed_at,
-        // last_alerted_at, status } } maintained by cron Task 6c. Hidden
-        // from the settings UI (group/label not surfaced) but stored in
-        // settings to avoid a new schema migration.
+        // Deprecated v3.28.0 #1159 — the cron Task 6c destination health map
+        // now lives in the backup_state table (scope 'destination_health'),
+        // one atomic row per destination id. This registry entry is retained
+        // for one release as a vestigial fallback (the migration backfills
+        // backup_state from it) but is no longer read or written; remove in a
+        // future release. Hidden from the settings UI.
         'backup.destination_health' => [
-            'label'       => 'Destination health (internal)',
-            'description' => 'Internal — periodic destination health map maintained by cron. Not user-editable.',
+            'label'       => 'Destination health (internal, deprecated)',
+            'description' => 'Deprecated — superseded by the backup_state table in v3.28.0. Not user-editable.',
             'type'        => 'string',
             'group'       => 'backup',
             'default'     => '{}',
             'sensitive'   => false,
             'hidden'      => true,
         ],
-        // Internal — JSON map { schedId: { last_alerted_at } } maintained by
-        // cron Task 6d. Hidden from the settings UI.
+        // Deprecated v3.28.0 #1159 — the cron Task 6d schedule-overdue
+        // cooldown map now lives in the backup_state table (scope
+        // 'schedule_overdue'). Retained for one release as a vestigial
+        // backfill source; no longer read or written. Hidden from the UI.
         'backup.schedule_overdue_state' => [
-            'label'       => 'Schedule overdue state (internal)',
-            'description' => 'Internal — last-alerted timestamps per overdue schedule. Not user-editable.',
+            'label'       => 'Schedule overdue state (internal, deprecated)',
+            'description' => 'Deprecated — superseded by the backup_state table in v3.28.0. Not user-editable.',
             'type'        => 'string',
             'group'       => 'backup',
             'default'     => '{}',
@@ -2551,7 +2594,7 @@ function ipam_setting_groups(): array
     return [
         'branding'             => ['label' => 'Branding',             'description' => 'Display name and timezone shown across the UI.'],
         'security'             => ['label' => 'Security',             'description' => 'Session lifetime and login lockout policy.'],
-        'step_up'              => ['label' => 'Step-up authentication', 'description' => 'Re-authentication policy for sensitive admin actions (vault key, sensitive setting reveal, DB import, API key creation, MFA disable). Decoupled from the login provider so OIDC users can manage these without a local password.'],
+        'step_up'              => ['label' => 'Step-up authentication', 'description' => 'Re-authentication policy for sensitive admin actions (vault key, sensitive setting reveal, DB import, API key creation, MFA disable, webhook create/edit/delete, SMTP and backup-notification-recipient settings, custom field definition changes). Decoupled from the login provider so OIDC users can manage these without a local password.'],
         'mfa'                  => ['label' => 'Multi-Factor Authentication', 'description' => 'Available 2FA methods and enforcement policy.'],
         'password_policy'      => ['label' => 'Password policy',      'description' => 'Complexity requirements and rotation for local passwords.'],
         'alert'                => ['label' => 'Alerting',             'description' => 'Subnet utilization email alerts.'],
@@ -4106,6 +4149,7 @@ function run_housekeeping_if_due(array $config, ?PDO $db = null): void
             if ($histRetention > 0) {
                 prune_address_history($db, $histRetention);
             }
+            prune_rate_limit_dampener($db);
             capture_utilization_snapshot($db);
         }
 
@@ -9304,8 +9348,11 @@ function ipam_webhook_dispatch(PDO $db, string $event, array $data, array $confi
             );
             $wUpd->execute([':st' => $result['status'], ':id' => $hook['id'], ':now' => gmdate('Y-m-d H:i:s')]);
         }
-    } catch (\Throwable) {
-        // Dispatch must never surface to the user
+    } catch (\Throwable $e) {
+        // Dispatch must never surface to the user, but a swallowed throwable
+        // here masks PDO/JSON failures and future regressions. Leave an
+        // operator-recoverable signal in the server log (Pass C F-S6/S-006).
+        error_log('[webhook_dispatch] ' . $e->getMessage());
     }
 }
 

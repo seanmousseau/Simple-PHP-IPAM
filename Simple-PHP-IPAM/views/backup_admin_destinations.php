@@ -26,6 +26,9 @@ $_isAdmin     = ($_currentUser['role'] ?? '') === 'admin';
     <div class="card success"><?= e($flash) ?></div>
   <?php endif; ?>
 
+  <?php /* v3.28.0 #1164 — app_secret backup-encryption retirement notice (Destinations + Restore tabs). */ ?>
+  <?php include __DIR__ . '/_app_secret_retirement_banner.php'; ?>
+
   <?php if ($_isAdmin): ?>
   <!-- v3.26.0 (#1098) — Encryption key (Stored mode) admin panel -->
   <section class="card" data-test="vault-key-panel">
@@ -98,45 +101,74 @@ $_isAdmin     = ($_currentUser['role'] ?? '') === 'admin';
       </div>
     <?php endif; ?>
 
+    <?php
+      // v3.28.0: when encrypted backup runs exist, setting/replacing the
+      // vault key strands them (the new key can't decrypt archives made
+      // under the old one). Rather than a hard block — which left a
+      // production install that lost its vault key with no realistic way
+      // forward — the form now renders an explicit "I understand …"
+      // acknowledgement checkbox; the handler refuses unless it's ticked
+      // (or the operator is pasting a known-good key, which recovers
+      // rather than orphans). The ack POSTs `confirm_orphan_backups=1`.
+      $vkOrphanRisk = !empty($vaultStatus['has_encrypted_runs']);
+    ?>
     <?php if ($vaultStatus['present']): ?>
       <details style="margin-top:.5rem">
         <summary>Replace vault key</summary>
-        <?php if ($vaultStatus['has_encrypted_runs']): ?>
-          <p class="muted" data-test="vault-replace-blocked">
-            Replacement is unavailable while encrypted backup runs exist (a key swap
-            would orphan them). Purge encrypted runs from the History tab first.
+        <?php if ($vkOrphanRisk): ?>
+          <p class="muted" data-test="vault-replace-orphan-warning" style="font-size:.9em">
+            <strong>Encrypted backup runs exist.</strong> Replacing the vault key leaves
+            those archives <em>unreadable</em> — the new key cannot decrypt what was
+            encrypted under the current one. If you still have the current key, paste it
+            below to keep things working. To replace anyway and accept that the existing
+            encrypted archives become permanently unrecoverable, tick the acknowledgement.
           </p>
         <?php else: ?>
           <p class="muted" style="font-size:.9em">
             Generates or accepts a new 32-byte vault key. The new key replaces the
             existing envelope; archives encrypted under the old key become unreadable.
-            v3.26.0 ships without rotation (would orphan existing encrypted archives),
-            so use this only after confirming no encrypted runs remain.
+            Use this only after confirming no encrypted runs remain (or acknowledge the
+            orphaning explicitly when prompted).
           </p>
-          <form method="post" action="backup_admin.php?tab=destinations" style="display:flex;flex-direction:column;gap:.5rem">
-            <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
-            <input type="hidden" name="action" value="vault_replace">
-            <label>
-              <input type="radio" name="vault_mode" value="generate" checked>
-              Generate a new random 32-byte key
-            </label>
-            <label>
-              <input type="radio" name="vault_mode" value="paste">
-              Paste an existing base64-encoded 32-byte key
-            </label>
-            <input type="text" name="vault_key_b64" placeholder="base64-encoded vault key (44 chars)"
-                   autocomplete="off" data-test="vault-paste-replace">
-            <div>
-              <button type="submit" class="button-danger" data-test="vault-replace-submit">
-                Replace vault key
-              </button>
-            </div>
-          </form>
         <?php endif; ?>
+        <form method="post" action="backup_admin.php?tab=destinations" style="display:flex;flex-direction:column;gap:.5rem">
+          <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
+          <input type="hidden" name="action" value="vault_replace">
+          <label>
+            <input type="radio" name="vault_mode" value="generate" checked>
+            Generate a new random 32-byte key
+          </label>
+          <label>
+            <input type="radio" name="vault_mode" value="paste">
+            Paste an existing base64-encoded 32-byte key
+          </label>
+          <input type="text" name="vault_key_b64" placeholder="base64-encoded vault key (44 chars)"
+                 autocomplete="off" data-test="vault-paste-replace">
+          <?php if ($vkOrphanRisk): ?>
+            <label class="danger" data-test="vault-confirm-orphan-replace" style="font-size:.9em">
+              <input type="checkbox" name="confirm_orphan_backups" value="1">
+              I understand replacing the vault key will permanently strand the existing encrypted backups.
+            </label>
+          <?php endif; ?>
+          <div>
+            <button type="submit" class="button-danger" data-test="vault-replace-submit">
+              Replace vault key
+            </button>
+          </div>
+        </form>
       </details>
     <?php else: ?>
       <details open>
         <summary>Set vault key</summary>
+        <?php if ($vkOrphanRisk): ?>
+          <p class="muted" data-test="vault-set-orphan-warning" style="font-size:.9em">
+            <strong>Encrypted backup runs already exist.</strong> Generating a fresh key now
+            leaves those archives encrypted under whatever key produced them — the new key
+            won't decrypt them, so they'll be unreadable. If you have the original key, paste
+            it below to recover. To generate a new key anyway and accept that the existing
+            encrypted archives become permanently unrecoverable, tick the acknowledgement.
+          </p>
+        <?php endif; ?>
         <form method="post" action="backup_admin.php?tab=destinations" style="display:flex;flex-direction:column;gap:.5rem">
           <input type="hidden" name="csrf"   value="<?= e(csrf_token()) ?>">
           <input type="hidden" name="action" value="vault_set">
@@ -150,6 +182,12 @@ $_isAdmin     = ($_currentUser['role'] ?? '') === 'admin';
           </label>
           <input type="text" name="vault_key_b64" placeholder="base64-encoded vault key (44 chars)"
                  autocomplete="off" data-test="vault-paste-set">
+          <?php if ($vkOrphanRisk): ?>
+            <label class="danger" data-test="vault-confirm-orphan-set" style="font-size:.9em">
+              <input type="checkbox" name="confirm_orphan_backups" value="1">
+              I understand setting a new vault key will permanently strand the existing encrypted backups.
+            </label>
+          <?php endif; ?>
           <div>
             <button type="submit" data-test="vault-set-submit">Set vault key</button>
           </div>

@@ -8,7 +8,7 @@
  * The afterAll restores the setting and cleans up the test webhook row.
  */
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
-import { login, appUrl, newAuthContext, ADMIN_USER, ADMIN_PASS } from '../fixtures/ipam';
+import { login, appUrl, newAuthContext, passStepUpIfPresent, warmSudoGrant, ADMIN_USER, ADMIN_PASS } from '../fixtures/ipam';
 
 // ── Test data ──────────────────────────────────────────────────────────────────
 const WH_NAME   = 'pw-test-webhook';
@@ -53,6 +53,14 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
   page = await ctx.newPage();
   await login(page, ADMIN_USER, ADMIN_PASS);
 
+  // v3.28.0 (#1156 + #1179 CR): webhook create/edit/delete is sudo-gated, and
+  // the step-up round-trip now redacts the `secret` field (ipam_step_up_redact_secrets,
+  // CodeRabbit) so a resumed create POST has no secret and fails validation.
+  // Warm a sudo grant once for the suite so the gate doesn't fire and the
+  // create test's typed WH_SECRET survives. The proper fix (server-side stash
+  // so the secret round-trips safely) is tracked in #1181.
+  await warmSudoGrant(page);
+
   // Enable webhook.allow_private_ips so test_fire can reach 127.0.0.1.
   // Swallow any error so the rest of the suite still runs if settings.php
   // is missing or the setting key does not exist yet.
@@ -78,6 +86,8 @@ test.afterAll(async () => {
     for (let i = 0; i < count; i++) {
       page.once('dialog', d => d.accept());
       await deleteForms.first().locator('button[type="submit"]').click();
+      // v3.28.0 (#1156): webhook delete is sudo-gated; pass the prompt if shown.
+      await passStepUpIfPresent(page);
       await page.waitForURL(/webhooks\.php/, { timeout: 10_000 });
     }
   } catch { /* ignore */ }
@@ -135,8 +145,10 @@ test('create webhook via form', async () => {
     await firstEventCb.check();
   }
 
-  // Submit and wait for redirect back to webhooks.php
+  // Submit. v3.28.0 (#1156): webhook create is sudo-gated — the first submit
+  // lands on the step-up prompt; pass it, then the create resumes and redirects.
   await page.locator('#wh-form button[type="submit"]').click();
+  await passStepUpIfPresent(page);
   await page.waitForURL(/webhooks\.php(?!\?view=)/, { timeout: 15_000 });
 
   // New row should appear in the table
@@ -266,6 +278,8 @@ test('delete webhook', async () => {
   // Accept the confirm() dialog before it fires
   page.once('dialog', d => d.accept());
   await deleteForm.locator('button[type="submit"]').click();
+  // v3.28.0 (#1156): webhook delete is sudo-gated; pass the prompt if shown.
+  await passStepUpIfPresent(page);
   await page.waitForURL(/webhooks\.php(?!\?view=)/, { timeout: 10_000 });
 
   // Row must be gone

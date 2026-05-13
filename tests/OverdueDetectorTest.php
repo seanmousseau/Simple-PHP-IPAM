@@ -124,6 +124,16 @@ class OverdueDetectorTest extends TestCase
             . "filename TEXT, "
             . "error_message TEXT)"
         );
+        // v3.28.0 #1159: per-(scope, k) cooldown state.
+        $this->db->exec("
+            CREATE TABLE backup_state (
+                scope        TEXT NOT NULL,
+                k            TEXT NOT NULL,
+                payload_json TEXT NOT NULL DEFAULT '{}',
+                updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (scope, k)
+            )
+        ");
 
         $GLOBALS['db']     = $this->db;
         $GLOBALS['config'] = [];
@@ -249,12 +259,9 @@ class OverdueDetectorTest extends TestCase
         $this->assertIsString($audit['details']);
         $this->assertStringContainsString('overdue_minutes=', $audit['details']);
 
-        // Cooldown state recorded under the schedule id.
-        $stateRaw = to_str(ipam_setting('backup.schedule_overdue_state', '{}'));
-        $state = json_decode($stateRaw, true);
-        $this->assertIsArray($state);
+        // Cooldown state recorded under the schedule id (#1159: backup_state).
+        $state = ipam_backup_state_get_all($this->db, 'schedule_overdue');
         $this->assertArrayHasKey((string) $schedId, $state);
-        $this->assertIsArray($state[(string) $schedId]);
         $this->assertArrayHasKey('alerted_for', $state[(string) $schedId]);
     }
 
@@ -358,10 +365,7 @@ class OverdueDetectorTest extends TestCase
         // path is a no-op even when the toggle would otherwise be ON.
         // The contract here: detector executes its full state-machine
         // (audit + cooldown) without depending on the email path.
-        $stateRawMixed = ipam_setting('backup.schedule_overdue_state', '{}');
-        $stateRaw = is_string($stateRawMixed) ? $stateRawMixed : '{}';
-        $state = json_decode($stateRaw, true);
-        $this->assertIsArray($state);
+        $state = ipam_backup_state_get_all($this->db, 'schedule_overdue');
         $this->assertArrayHasKey((string) $schedId, $state);
     }
 

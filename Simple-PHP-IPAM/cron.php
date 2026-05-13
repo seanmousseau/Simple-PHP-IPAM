@@ -282,8 +282,9 @@ try {
 // Task 6c: Destination connection re-test (v3.22.0 §2.4 Notifications)
 //
 // Runs ipam_destination_test_now() against every active destination once per
-// cron tick. Per-destination state lives in the JSON setting
-// `backup.destination_health` keyed by destination id; the alert fires only
+// cron tick. Per-destination state lives in the backup_state table (scope
+// `destination_health`, one atomic row per destination id — v3.28.0 #1159,
+// was a JSON setting before that); the alert fires only
 // on a healthy → failing transition (delta-only). A 6h cooldown on
 // last_alerted_at prevents re-alerting on persistent failures every tick.
 // Recovery (failing → healthy) is tracked but does not emit an email.
@@ -294,10 +295,13 @@ try {
     $destStmt = $db->query("SELECT id, name FROM backup_destinations WHERE is_active = 1 ORDER BY id");
     $destRows = $destStmt !== false ? $destStmt->fetchAll(PDO::FETCH_ASSOC) : [];
 
-    $stateRaw = to_str(ipam_setting('backup.destination_health', '{}'));
-    $stateDecoded = json_decode($stateRaw, true);
+    // #1159: per-destination health/cooldown state lives in backup_state
+    // (scope 'destination_health'), one row per destination id. Load the
+    // whole scope once for the in-loop "previous status" reads, then write
+    // each mutated entry back atomically so a concurrent UI action can't
+    // clobber an unrelated destination's row.
     /** @var array<string, array<string, mixed>> $healthMap */
-    $healthMap = is_array($stateDecoded) ? $stateDecoded : [];
+    $healthMap = ipam_backup_state_get_all($db, 'destination_health');
 
     $cooldownSecs = 6 * 3600;
     $nowTs = time();
@@ -359,38 +363,34 @@ try {
                 }
             }
             $healthMap[$key] = $entry;
+            ipam_backup_state_put($db, 'destination_health', $key, $entry);
         } catch (Throwable $te) {
             // One bad destination must not abort the whole loop or block
-            // persistence of $healthMap for the destinations that did
-            // complete. Mark this entry as unknown so we don't mistake
-            // an iteration error for a healthy state on the next tick.
+            // persistence of the destinations that did complete. Mark this
+            // entry as unknown so we don't mistake an iteration error for a
+            // healthy state on the next tick.
             error_log('[backup] destination_health iteration failed for dest ' . $destId
                 . ' (' . $destName . '): ' . $te->getMessage());
             $errored++;
-            $healthMap[$key] = [
+            $entry = [
                 'last_ok_at'      => is_string($prev['last_ok_at'] ?? null) ? $prev['last_ok_at'] : null,
                 'last_failed_at'  => is_string($prev['last_failed_at'] ?? null) ? $prev['last_failed_at'] : null,
                 'last_alerted_at' => to_int($prev['last_alerted_at'] ?? 0),
                 'status'          => 'unknown',
             ];
+            $healthMap[$key] = $entry;
+            ipam_backup_state_put($db, 'destination_health', $key, $entry);
             continue;
         }
     }
 
-    // Drop entries for destinations that no longer exist or are inactive so
-    // the map doesn't grow unbounded.
+    // Drop rows for destinations that no longer exist or are inactive so the
+    // table doesn't grow unbounded.
     $aliveKeys = [];
     foreach ($destRows as $destRow) {
         $aliveKeys[(string) to_int($destRow['id'] ?? 0)] = true;
     }
-    foreach (array_keys($healthMap) as $k) {
-        if (!isset($aliveKeys[$k])) unset($healthMap[$k]);
-    }
-
-    $encoded = json_encode($healthMap, JSON_UNESCAPED_SLASHES);
-    if (is_string($encoded)) {
-        ipam_setting_set($db, 'backup.destination_health', $encoded);
-    }
+    ipam_backup_state_prune($db, 'destination_health', array_map('strval', array_keys($aliveKeys)));
 
     $emit([
         'task'           => 'destination_health',
@@ -408,8 +408,9 @@ try {
 //
 // Reads `backup.notify_overdue_grace_minutes` and computes a cutoff. Any
 // active schedule whose next_run_at is older than the cutoff is overdue.
-// Per-schedule cooldown lives in the JSON setting
-// `backup.schedule_overdue_state` keyed by schedule id; once an alert has
+// Per-schedule cooldown lives in the backup_state table (scope
+// `schedule_overdue`, one atomic row per schedule id — v3.28.0 #1159, was a
+// JSON setting before that); once an alert has
 // fired for a given (schedule_id, expected_at) pair, no further alerts are
 // sent until the schedule actually fires (advancing next_run_at) and goes
 // overdue again.

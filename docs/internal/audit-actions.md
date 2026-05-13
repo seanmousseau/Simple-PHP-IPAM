@@ -10,10 +10,13 @@ Call signature: `audit(PDO $db, string $action, string $entityType, ?int $entity
 
 ```text
 auth.login              auth.login_failed       auth.login_blocked
+auth.ip_rate_limited
 auth.oidc_login         auth.oidc_provision     auth.oidc_link       auth.oidc_failed
 auth.mfa_method_switch  auth.mfa_preferred_set
 auth.totp_login         auth.email_otp_login    auth.passkey_challenge
 ```
+
+`auth.ip_rate_limited` (`entity_type=auth`, `entity_id=null`) — emitted **once per (action, ip) lockout window** by `ipam_audit_ip_rate_limited()` when an auth endpoint refuses a request because the per-IP rate limit is in effect (v3.27.3 #1134). `$details` carries `action=<a> attempts=<n> unlock_at=<ISO-8601-Z> ip=<ip>` — grep on either the `audit_log.ip` column or the `ip=` substring. The "once per window" guarantee is backed by the `rate_limit_dampener` table (`PRIMARY KEY (action, ip)`, `unlock_at` = Unix epoch); the caller claims the window atomically (UPDATE an expired row, else INSERT, treating a UNIQUE violation as "already dampened"), so concurrent brute-force requests can't double-emit (v3.28.0 #1143 — was an `audit_log` scan with a read-then-insert TOCTOU before that). Housekeeping prunes expired `rate_limit_dampener` rows alongside `login_attempts`.
 
 ## Step-up auth (v3.27.0)
 
@@ -100,20 +103,22 @@ backup.set_default_destination      backup.verify_bulk
 backup.preflight_failed             cron.task_failed
 backup.run_recorded
 backup.vault_key.revealed           backup.vault_key.set
-backup.vault_key.replaced           backup.vault_key.sudo_failed
+backup.vault_key.replaced           backup.vault_key.orphan_refused
 backup.vault_key.reveal_failed      backup.vault_key.reveal_rate_limited
 backup_run.bulk_delete              backup_run.purge
 ```
 
 `backup.vault_key.revealed` (`entity_type=vault`, `entity_id=null`) — emitted by the destinations admin's reveal-key handler (v3.26.0 #1098) after a successful sudo-mode password re-prompt. `$details` carries `user=<username> fingerprint=<8 hex>`. The raw key never appears in the audit row; the fingerprint lets a forensic investigation confirm which key was revealed without storing the secret in the audit log.
 
-`backup.vault_key.set` / `backup.vault_key.replaced` (`entity_type=vault`) — emitted when an admin sets the first vault key, or replaces an existing one (v3.26.0 #1098). `$details` carries `user=<username> mode=<generate|paste> fingerprint=<8 hex>`. Replace is gated on `SELECT 1 FROM backup_runs WHERE encryption_mode != 'unencrypted'` returning empty so a key swap cannot orphan existing archives.
+`backup.vault_key.set` / `backup.vault_key.replaced` (`entity_type=vault`) — emitted when an admin sets the first vault key, or replaces an existing one (v3.26.0 #1098). `$details` carries `user=<username> mode=<generate|paste> fingerprint=<8 hex>`, plus ` confirm_orphan=1` when the operator generated/replaced the key while vault-key-encrypted (`.ipambkp3`) backup runs existed and explicitly acknowledged that those archives become permanently unreadable (v3.28.0). A generate/replace that would orphan existing `.ipambkp3` archives is refused unless that acknowledgement (the `confirm_orphan_backups=1` POST field, ticked in the UI) is present — except `mode=paste`, which is always permitted (it recovers a known key rather than orphaning). The gate is scoped to `.ipambkp3` runs only (the v3.27.1 Bug-W fix): `app_secret`-protected IPAMBKP2 `.enc` archives don't depend on the vault key, so they never trip it.
 
-`backup.vault_key.sudo_failed` (`entity_type=vault`) — **DEPRECATED in v3.27.0; removed in v3.28.0.** Originally emitted when a vault-key admin action's local-password sudo prompt was refused (v3.26.0 #1098). v3.27.0 migrates the vault-key gate to the unified `ipam_sudo_verify()` helper, which emits `auth.sudo_failed` instead. The legacy action is retained as a parallel emit for one release so existing log queries don't break.
+`backup.vault_key.orphan_refused` (`entity_type=vault`) — emitted when the generate/replace gate above refuses the action because it would orphan existing `.ipambkp3` archives and the `confirm_orphan_backups=1` acknowledgement was not present (v3.28.0). `$details` carries `action=<vault_set|vault_replace> mode=<generate|paste> has_encrypted_runs=1 confirm_orphan=0`. Recorded for parity with the other vault-key refusal paths (`reveal_rate_limited`, `reveal_failed`, `persist_failed`) so a forensic timeline shows the attempted-but-blocked key swap.
 
-**Migration note (CR PR #1117 #2):** `auth.sudo_failed` is shared across every sudo-class action (vault, api_keys create, settings_reveal, db_tools import, change_password disable_totp, etc.) and the verify method is whatever the user submitted under the install policy — TOTP, Email OTP, WebAuthn, password, or OIDC re-auth. A naive replacement filter like `auth.sudo_failed AND details LIKE '%method=password%'` is **not equivalent** to the deprecated alias: it catches unrelated password-method failures from non-vault actions and silently misses vault-key denials that used a non-password method.
+`backup.vault_key.sudo_failed` — **REMOVED in v3.28.0** (was a deprecated alias introduced in v3.27.0). It originally fired when a vault-key admin action's local-password sudo prompt was refused (v3.26.0 #1098); v3.27.0 migrated the vault-key gate to the unified `ipam_sudo_verify()` helper — which already emits `auth.sudo_failed` — and kept this alias as a parallel emit for one release so existing log queries didn't break. The alias is now gone; do not query for it.
 
-To preserve vault-specific filtering after the v3.28.0 removal, correlate `auth.sudo_failed` with the vault-action audit row that follows immediately on the same `(user_id, ip, request)`. The vault-key controller emits `backup.vault_key.<action>` (`set`, `replaced`, `revealed`, `reveal_failed`, `reveal_rate_limited`) after — or in place of — a sudo failure. A SIEM rule that joins `auth.sudo_failed` rows to a same-second-same-ip subsequent `backup.vault_key.*` row reproduces the alias's intent without false positives. If your dashboard cannot do that join, drop the alias-based filter and accept the broader `auth.sudo_failed` view; the per-IP rate-limit audit (`auth.sudo_rate_limited`) and the vault-specific reveal rate-limit audit (`backup.vault_key.reveal_rate_limited`) cover the noisy-floor case the alias was originally there for.
+**Filtering vault sudo failures now that the alias is gone:** `auth.sudo_failed` is shared across every sudo-class action (vault, api_keys create, settings_reveal, db_tools import, change_password disable_totp, webhooks create/edit/delete, settings.php SMTP/backup-notify save, custom_fields create/update/delete, etc.) and the verify method is whatever the user submitted under the install policy — TOTP, Email OTP, WebAuthn, password, or OIDC re-auth. A naive filter like `auth.sudo_failed AND details LIKE '%method=password%'` is **not** a substitute: it catches unrelated password-method failures from non-vault actions and silently misses vault-key denials that used a non-password method.
+
+To isolate vault-specific failures, correlate `auth.sudo_failed` with the vault-action audit row that follows immediately on the same `(user_id, ip, request)`. The vault-key controller emits `backup.vault_key.<action>` (`set`, `replaced`, `revealed`, `reveal_failed`, `reveal_rate_limited`) after — or in place of — a sudo failure. A SIEM rule that joins `auth.sudo_failed` rows to a same-second-same-ip subsequent `backup.vault_key.*` row reproduces the old alias's intent without false positives. If your dashboard cannot do that join, drop the alias-based filter and accept the broader `auth.sudo_failed` view; the per-IP rate-limit audit (`auth.sudo_rate_limited`) and the vault-specific reveal rate-limit audit (`backup.vault_key.reveal_rate_limited`) cover the noisy-floor case the alias was originally there for.
 
 `backup.vault_key.reveal_failed` (`entity_type=vault`) — emitted when reveal succeeded the sudo-prompt but no vault key is configured (v3.26.0 #1098). `$details` carries `user=<username> reason=<no_key>`. Distinct from `sudo_failed` so an incident response can tell "wrong password" from "key gone".
 

@@ -9,7 +9,7 @@ import { test, expect, type Browser, type BrowserContext, type Page } from '@pla
 import {
   login, fetchGet, fetchPost, fetchPostForm, deleteSubnet, subnetIdFor, appUrl,
   ADMIN_USER, ADMIN_PASS,
-  newAuthContext,
+  newAuthContext, warmSudoGrant,
 } from '../fixtures/ipam';
 
 const CF_CSV_CIDR    = '10.93.0.0/24';
@@ -93,6 +93,12 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
   ctx  = await newAuthContext(browser);
   page = await ctx.newPage();
   await login(page, ADMIN_USER, ADMIN_PASS);
+
+  // v3.28.0 (#1158): custom field def create/delete is sudo-gated. Warm one
+  // grant for the whole suite (shared page/context, default TTL=300s) so the
+  // fetchPost create/delete calls against custom_fields.php aren't bounced to
+  // the step-up prompt.
+  await warmSudoGrant(page);
 
   // Clean up any leftover state. Pre-create delete-by-KEY makes the test
   // self-healing against leaks from prior failed runs (e.g. scrape miss

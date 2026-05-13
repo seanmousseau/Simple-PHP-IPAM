@@ -62,6 +62,17 @@ header('Referrer-Policy: strict-origin-when-cross-origin');
 
 require_once __DIR__ . '/version.php';
 $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
+// Mirror page_header()'s cache-buster scheme exactly: $av = IPAM_VERSION is the
+// buster for static-ish assets (favicons, vendored open-props); app.css/app.js
+// additionally append their mtime so an in-version edit busts the cache without
+// an IPAM_VERSION bump. demo_gate.php has its own <head> and does NOT call
+// page_header(), so it derives these the same way rather than hardcoding —
+// hardcoded version strings here drifted release-to-release (see cleanup.md).
+$av       = e(IPAM_VERSION);
+$cssMtime = (int)@filemtime(__DIR__ . '/assets/app.css');
+$jsMtime  = (int)@filemtime(__DIR__ . '/assets/app.js');
+$cssV     = $av . ($cssMtime > 0 ? '.' . $cssMtime : '');
+$jsV      = $av . ($jsMtime  > 0 ? '.' . $jsMtime  : '');
 ?>
 <!doctype html>
 <html>
@@ -69,20 +80,12 @@ $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM'
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title><?= e($appName) ?> — Access Check</title>
-  <link rel="icon" type="image/webp" sizes="32x32" href="assets/favicon-32.webp?v=3.27.8">
-  <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png?v=3.27.8">
-  <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png?v=3.27.8">
-  <link rel="stylesheet" href="assets/vendor/open-props.min.css?v=3.27.8">
-  <?php
-  // Mirror the page_header() cache-buster: append asset mtime so in-version
-  // edits invalidate the browser cache without an IPAM_VERSION bump.
-  $cssMtime = (int)@filemtime(__DIR__ . '/assets/app.css');
-  $jsMtime  = (int)@filemtime(__DIR__ . '/assets/app.js');
-  $cssV     = IPAM_VERSION . ($cssMtime > 0 ? '.' . $cssMtime : '');
-  $jsV      = IPAM_VERSION . ($jsMtime  > 0 ? '.' . $jsMtime  : '');
-  ?>
-  <link rel="stylesheet" href="assets/app.css?v=<?= e($cssV) ?>">
-  <script defer src="assets/app.js?v=<?= e($jsV) ?>"></script>
+  <link rel="icon" type="image/webp" sizes="32x32" href="assets/favicon-32.webp?v=<?= $av ?>">
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png?v=<?= $av ?>">
+  <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png?v=<?= $av ?>">
+  <link rel="stylesheet" href="assets/vendor/open-props.min.css?v=<?= $av ?>">
+  <link rel="stylesheet" href="assets/app.css?v=<?= $cssV ?>">
+  <script defer src="assets/app.js?v=<?= $jsV ?>"></script>
 </head>
 <body>
 <div class="gate-wrap">

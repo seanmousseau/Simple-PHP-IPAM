@@ -21,8 +21,13 @@ declare(strict_types=1);
  *   IPAM_TEST_SFTP_DIR     (default /config/backups)
  *   IPAM_TEST_SFTP_KEYFILE (default /tmp/ipam_pw_sftp — mounted by bootstrap)
  *
- * Encryption is OFF on both rows so the spec can verify SHA-256 round-trips
- * without having to know app_secret. A separate spec exercises encrypted dumps.
+ * The `encrypt` column is 0 on all rows, but the orchestrator drives off
+ * `default_encryption_mode` (schema default `'stored'`), and remote
+ * destinations are force-`'stored'` regardless (#851). So the encrypted-
+ * backup specs (backup-integration, backup_run_now, backups admin Run-now)
+ * actually exercise the IPAMBKP3 stored-mode path — and since v3.28.0 #1164
+ * removed the `app_secret` write fallback, that requires a configured
+ * `backup_vault_key`. We seed one below so those specs work end-to-end.
  */
 
 if (PHP_SAPI !== 'cli') {
@@ -93,6 +98,26 @@ $rows = [
         ], static fn($v) => $v !== null),
     ],
 ];
+
+// v3.28.0 #1164: encrypted scheduled backups now require a backup vault key
+// (the legacy app_secret write fallback was removed). Seed one — wrapped
+// under this install's bootstrap_key — so the encrypted-backup specs can
+// run end-to-end. Idempotent; left in place if already present.
+if (function_exists('ipam_setting') && function_exists('ipam_vault_wrap') && function_exists('ipam_bootstrap_key') && defined('BACKUP_VAULT_KEY_LEN')) {
+    $existingVk = ipam_setting('backup_vault_key');
+    if (!is_string($existingVk) || $existingVk === '') {
+        try {
+            $rawVk = random_bytes(BACKUP_VAULT_KEY_LEN);
+            $env   = ipam_vault_wrap($rawVk, ipam_bootstrap_key());
+            ipam_setting_set($db, 'backup_vault_key', $env);
+            echo "seed-backup-destinations: seeded backup_vault_key\n";
+        } catch (Throwable $vkErr) {
+            fwrite(STDERR, "seed-backup-destinations: backup_vault_key seed failed — encrypted-backup specs may fail: {$vkErr->getMessage()}\n");
+        }
+    } else {
+        echo "seed-backup-destinations: backup_vault_key already present\n";
+    }
+}
 
 try {
     $db->beginTransaction();

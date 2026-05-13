@@ -76,8 +76,12 @@ If you must restore an older backup into a *new* install, the recommended path i
 ## Prerequisites
 
 - Admin role; readonly users cannot reach the wizard or POST handlers.
-- At least one [backup destination](backups.md#destinations) configured with accessible files.
-- For encrypted backups (`.enc` suffix), `app_secret` must be set in `config.php` and must match the key used at encryption time.
+- At least one [backup destination](backups.md#destinations) configured with accessible files (or a file you upload directly).
+- **The right key for the archive's format** — see [backups.md → Disaster recovery](backups.md#disaster-recovery--back-up-your-keys-not-just-your-data) for the full "can I recover this?" table:
+  - **`.enc`** (legacy IPAMBKP1/IPAMBKP2): `app_secret` must be set in `config.php` and match the value in place when the backup was taken.
+  - **`.ipambkp3` stored mode**: the `backup_vault_key` must be available — i.e. you're restoring on the same install (it unwraps the DB-stored key via `config.php`'s `bootstrap_key`), or you've pasted a previously-exported vault key into the install.
+  - **`.ipambkp3` transitory mode**: the wizard prompts for the passphrase used at export time.
+  - **`.ipambkl1.gz` / `.ipambku1` / `.sql.gz` / `.sqlite`**: no key needed.
 - For MySQL or PostgreSQL Database backups: the engine-native CLI tool (`mysql` / `psql`) must be on the same host as the IPAM install.
 - For very large databases: enough free disk in `data/tmp/` to stage the file before applying.
 
@@ -275,7 +279,15 @@ The Logical-backup restore column lists the v3.22.0 end-state. In v3.21.x the ru
 Cannot decrypt backup: app_secret is not set in config.php.
 ```
 
-Fix: add `app_secret` to `config.php` using the value that was in place when the backup was created. If you do not have the original key, the backup cannot be recovered.
+Fix: add `app_secret` to `config.php` using the value that was in place when the backup was created (legacy `.enc` / IPAMBKP1/IPAMBKP2 archives only). If you do not have the original key, the backup cannot be recovered. For an offline decrypt without a running install, use `tools/decrypt-backup.php --app-secret <hex>`.
+
+### Encrypted backup (`.ipambkp3` stored mode), vault key unavailable
+
+```
+Cannot decrypt backup: backup vault key not available for this archive.
+```
+
+The archive was encrypted with a `backup_vault_key` this install can't reproduce. Recover by either: (a) restoring on the original install (which still has `config.php`'s `bootstrap_key` + the DB-stored wrapped key); (b) pasting a previously-exported copy of that vault key into **Admin → Backups → Destinations → "Set vault key"**, then staging again; or (c) decrypting offline with `tools/decrypt-backup.php --vault-key <base64>`. If no copy of the vault key survives anywhere, the archive cannot be recovered — see [backups.md → Disaster recovery](backups.md#disaster-recovery--back-up-your-keys-not-just-your-data) for how to avoid this next time.
 
 ### Checksum mismatch at apply time
 
