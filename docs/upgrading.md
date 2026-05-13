@@ -125,7 +125,9 @@ DR + security stabilization release. One schema migration (`3.28.0-state-tables`
 **What changed in v3.28.0:** the backup orchestrator no longer falls back to encrypting scheduled backups with the `app_secret` value in `config.php`. An encrypted backup now requires either:
 
 - a **backup vault key** — Stored mode, configured under **Admin → Backups → Destinations** (this has been the recommended path since v3.26.0; archives are IPAMBKP3 stored-mode), or
-- a **passphrase** — Transitory mode, supplied at the time of a manual export (archives are IPAMBKP3 transitory-mode).
+- **unencrypted** (Local destinations only) — switch the destination's encryption mode under Admin → Backups → Destinations if you don't want destination-side encryption.
+
+  > **Transitory mode (passphrase-encrypted IPAMBKP3) is not a v3.28.0 alternative for satisfying preflight.** The Restore wizard accepts transitory archives produced elsewhere, but the orchestrator has no write path for them — see [`docs/internal/parked-features.md`](internal/parked-features.md#operator-passphrase-backup-creation-ipambkp3-transitory-write-path). Configure a vault key (Stored mode) or switch the destination to `unencrypted`.
 
 If an install still has only `app_secret` set and no vault key configured, encrypted backups will **fail preflight** with a message pointing at this section — they'll show up as `status=failed` runs in the History tab with a synthetic `(preflight-failed-…)` name plus a `backup.preflight_failed` audit row. **Fix:** configure the backup vault key (Destinations tab → "Encryption key (Stored mode)"). Or, if you don't need encrypted destination backups, set the destination's encryption mode to `unencrypted`.
 
