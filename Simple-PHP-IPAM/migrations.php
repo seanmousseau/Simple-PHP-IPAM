@@ -2711,7 +2711,7 @@ function ipam_migrations(): array
             }
         },
 
-        // v3.21.0 #799 (§A1 of backup_overhaul.md): collapse the legacy
+        // v3.21.0 #799 (§A1 of archive/backup_overhaul.md): collapse the legacy
         // backup_history (v3.7.0 CLI runner) and backup_log (v3.17.0
         // destination runner) tables into a single backup_runs table.
         //

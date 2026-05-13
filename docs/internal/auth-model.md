@@ -136,11 +136,158 @@ The `audit-actions.md` doc has the full action vocabulary.
 
 A second authentication moment that runs *after* login, every time the operator reaches a sensitive admin action (vault key reveal, sensitive setting reveal, DB import, API key creation, MFA disable, step-up policy save). It is decoupled from how the user originally logged in so OIDC-only admins — who have no local password and no login MFA — can still pass it.
 
-The helper `ipam_sudo_verify()` accepts any of TOTP / Email OTP / WebAuthn / provider re-auth, gated by the install-wide `auth.step_up.*` policy. Successful proofs mint a session-scoped grant valid for `auth.step_up.ttl_seconds` so back-to-back sensitive actions don't re-prompt within the window.
+### Login MFA vs step-up
 
-Read **`docs/internal/step-up-auth.md`** before adding a new sensitive action or modifying `Simple-PHP-IPAM/lib/auth_step_up.php`. That doc covers the helper contract, session keys, TTL, invalidation triggers, prompt UX, and the recipe for adding a new sudo-class call site.
+| Aspect | Login MFA | Step-up auth |
+|---|---|---|
+| When it runs | Once per session, at sign-in | Every time a sensitive action is taken (subject to TTL) |
+| What satisfies it | Whatever the user enrolled (TOTP / Email OTP / passkey) on top of password or OIDC | Any method allowed by the install policy that the user can satisfy: TOTP, Email OTP, WebAuthn, or provider re-auth |
+| Policy keys | `mfa.*` + per-user enrollment | `auth.step_up.*` (separate registry group) |
+| Failure mode | Refuse login | Refuse the sensitive action; user remains logged in |
 
-The audit vocabulary (`auth.sudo_passed`, `auth.sudo_failed`, `auth.sudo_rate_limited`, `auth.step_up_policy.updated`) is documented in `audit-actions.md`.
+Login MFA is bound to the login provider — an OIDC-only admin satisfies their primary login through the IdP and never enrols a TOTP for it. Step-up must keep working for that admin even though they have no local password and no login MFA. That's the bug the v3.27.0 gate fixes (#1098).
+
+### The helper contract
+
+```php
+require __DIR__ . '/lib/auth_step_up.php';
+ipam_sudo_verify(\PDO $db, int $userId, array $proof): bool
+```
+
+Implementation in `Simple-PHP-IPAM/lib/auth_step_up.php`. Resolution order (each step is checked against the install's `auth.step_up.*` policy and the user's enrollment):
+
+1. **Cached grant.** If `$_SESSION['sudo_until_ts']` is in the future, return true and refresh the TTL on use. No audit row, no rate-limit hit. The caller should treat this as a no-op success.
+2. **Strong MFA proof.** If the policy permits the supplied method *and* the user has the matching enrollment:
+   - `totp` → `ipam_totp_decrypt_secret(users.totp_secret_enc, app_secret)` then `ipam_totp_verify($secret, $code)`
+   - `email_otp` → existing `email_otp_*` verify path
+   - `webauthn` → `lbuchs/webauthn` assertion verify against the in-flight challenge issued at prompt-render time
+3. **Provider re-auth fallback.** If `auth.step_up.allow_provider_reauth=true`:
+   - Local-password user (real `password_hash`) → `password_verify($proof['password'], $hash)`. The sentinel `'!disabled'` hash is **never** accepted (regression-tested by `SudoVerifyTest::testLockedPasswordHashIsNeverAcceptedAsProof`).
+   - OIDC user → return false; caller redirects through `oidc_login.php?prompt=login&return_to=…` and the OIDC callback completes the gate. Future LDAP/SAML providers add their own branches at this layer.
+4. **Refusal.** If no permitted method satisfies the gate, return false. The caller renders the shared prompt partial which surfaces the actionable "no method available" message.
+
+On success the helper writes:
+
+| Session key | Meaning |
+|---|---|
+| `sudo_until_ts` | Unix timestamp at which the grant expires |
+| `sudo_method` | Method that satisfied the gate (audit detail; not consulted for trust) |
+
+On failure it emits an `auth.sudo_failed` audit row with method + IP + stable reason code (e.g. `totp_invalid`, `webauthn_no_challenge`, `method_unavailable`) and increments the `sudo` rate-limit bucket via `record_auth_failure()`. Hitting the cap emits `auth.sudo_rate_limited` and refuses subsequent proofs from the same IP for the cap window.
+
+### Calling pattern
+
+Every sensitive POST handler follows the same shape:
+
+```php
+require __DIR__ . '/lib/auth_step_up.php';
+
+if (!ipam_sudo_active()) {
+    $stepUpError = '';
+    $proof = ipam_sudo_proof_from_post();
+    if ($proof !== null) {
+        if (!ipam_sudo_verify($db, current_user()['id'], $proof)) {
+            $stepUpError = 'Verification failed. Please try again.';
+        }
+    }
+    if (!ipam_sudo_active()) {
+        page_header('Confirm your identity');
+        $stepUpUserId       = current_user()['id'];
+        $stepUpFormAction   = $_SERVER['REQUEST_URI'];
+        $stepUpHiddenFields = ['action' => 'vault_reveal']; // round-trip the original action + any context
+        include __DIR__ . '/views/_step_up_prompt.php';
+        page_footer();
+        exit;
+    }
+}
+
+// Past this line: the operator has a fresh sudo grant. Run the actual sensitive action.
+```
+
+`ipam_sudo_active()` is the cheap "do I have a warm grant?" check that sensitive handlers should call before doing any work. `ipam_sudo_proof_from_post()` extracts the `_sudo_*` fields the prompt partial submits and routes them to `ipam_sudo_verify()`.
+
+The shared prompt partial at `Simple-PHP-IPAM/views/_step_up_prompt.php` expects these vars:
+
+- `$db` — the open PDO handle
+- `$stepUpUserId` — current user id
+- `$stepUpFormAction` — URL to POST proof to (typically `$_SERVER['REQUEST_URI']`)
+- `$stepUpHiddenFields` — array of `name => value` hidden inputs to round-trip the original action and any context the handler needs to resume
+
+Optional vars (`$stepUpTitle`, `$stepUpDescription`, `$stepUpError`, `$stepUpReturnPath`) override the defaults if the calling page wants to customise the prompt copy.
+
+### Policy keys
+
+Five settings, all under the `step_up` registry group:
+
+| Key | Type | Default | Effect |
+|---|---|---|---|
+| `auth.step_up.allow_totp` | bool | `true` | TOTP code can satisfy the gate (if user is enrolled) |
+| `auth.step_up.allow_email_otp` | bool | `true` | Email OTP code can satisfy the gate (also requires `mfa.email_otp_enabled=true`) |
+| `auth.step_up.allow_webauthn` | bool | `true` | WebAuthn assertion can satisfy the gate (if user has a passkey) |
+| `auth.step_up.allow_provider_reauth` | bool | `true` | Local password verify or OIDC `prompt=login` |
+| `auth.step_up.ttl_seconds` | int | `300` | Grant lifetime; discrete options 0/60/300/900/1800/3600 |
+
+Values resolve through the standard `ipam_setting()` cascade so v3.x reads them globally and v4.0.0 will read them per-tenant first.
+
+#### Lock-out precondition
+
+Before persisting any policy save the handler runs `ipam_sudo_policy_lockout_check($db, $proposed)`. The check iterates every active admin and asks `ipam_sudo_available_methods($db, $uid, $proposed) === []` — if any active admin has zero satisfiable methods under the proposed policy, the save is refused with a specific error naming the offender. Same shape as the existing last-active-admin guard.
+
+The check covers two distinct scenarios that the regression tests pin down:
+
+- **OIDC-only admin** — has no `password_hash`, depends on either MFA enrollment or provider re-auth. Disabling provider re-auth without enrolling them in MFA strands them.
+- **Last admin with no MFA** — depends on provider re-auth. Disabling it strands them even if they're a normal local-password admin.
+
+### Sudo grant invalidation
+
+`$_SESSION['sudo_until_ts']` is cleared on any of:
+
+| Event | Wired since | Site |
+|---|---|---|
+| logout | v3.27.0 | `logout.php` (implicit via `logout_user()` clearing `$_SESSION`) |
+| session regeneration after password change | v3.27.0 | `change_password.php:153` |
+| step-up policy update | v3.27.0 | `settings.php:155, 327` |
+| TOTP disable | v3.27.0 | `change_password.php:103` |
+| Email OTP disable | v3.27.0 | `change_password.php:317` |
+| passkey delete | v3.27.0 | `change_password.php:342` |
+| **TOTP enroll** | **v3.27.1 (Bug T)** | `totp_enroll.php:75` |
+| **Email OTP enroll** | **v3.27.1 (Bug T)** | `change_password.php:280` |
+| **passkey add (register)** | **v3.27.1 (Bug T)** | `passkey_register.php:160` |
+
+**Cross-user invalidation events are a documented limitation.** `ipam_sudo_invalidate()` clears `$_SESSION` on the CURRENT request only, so an admin acting on another user's row (`users.php` `set_role`, `link_oidc`, `unlink_oidc`) cannot reach into the affected user's session to clear it. The contract for those events requires a session-marker mechanism (e.g. `users.sudo_invalidate_after` timestamp consulted by `ipam_sudo_active()`). Current code carries `// Bug T … KNOWN LIMITATION` markers at the relevant audit sites.
+
+If you add a new state change that affects what an operator can prove, call `ipam_sudo_invalidate()` from the same handler so the warm grant doesn't outlive the change. The `tests/SudoInvalidateWiringTest.php` suite asserts every wired self-action handler calls `ipam_sudo_invalidate()`; a new handler that mutates auth state without it will fail the test.
+
+### Prompt UX shapes
+
+The shared prompt at `views/_step_up_prompt.php` renders one of four shapes:
+
+1. **No method available.** Actionable error directing the user to enrol MFA or contact an admin. **No proof inputs**, only a Cancel link. Deliberate degradation, not a crash.
+2. **Single method available.** Method carried as a hidden `_sudo_method` input; render only that method's input field.
+3. **Multiple methods available.** Method dropdown defaults to the user's strongest enrolled method (passkey > totp > email_otp > password > oidc_reauth) narrowed by the policy. Switching the dropdown shows the corresponding method-specific section.
+4. **OIDC re-auth chosen.** Button redirects through `/oidc/start.php?prompt=login&return_to=…` and resumes the original action via the OIDC callback handler.
+
+The Reveal-vault-key control is a primary inline button next to the fingerprint, **not** buried inside a `<details>` disclosure (#1111). New sensitive affordances follow the same pattern — the gate is upstream of the action, the affordance should be discoverable.
+
+### Adding a new sudo-class action
+
+1. **Decide the action is sudo-class.** Catastrophic-or-irreversible reveals, write-overrides, credential mints: vault reveal, DB import, API key creation, MFA disable, sensitive setting reveal. Routine writes are **not** sudo-class — gate with CSRF + role check, not step-up.
+2. **Add the call site.** Top of the POST handler, before any side effect, follow the calling pattern above. Round-trip every input the handler needs to resume in `$stepUpHiddenFields`.
+3. **Define audit verbs.** Use the existing `auth.sudo_passed` / `auth.sudo_failed` rows for the gate; emit your own `<entity>.<verb>` audit on the side-effect path. Update `audit-actions.md`.
+4. **Update the `step_up` group description** in `lib.php` (the line listing the protected actions) so the admin card's helper text stays accurate.
+5. **Add tests at both layers.**
+   - PHPUnit: extend `tests/SudoVerifyTest.php` if the action exercises a previously untested helper branch.
+   - Playwright: add a row to `step-up-fan-out.spec.ts` (no-grant prompt-renders test) so future migrations don't regress the wiring.
+
+### Step-up future work
+
+- **LDAP / SAML provider re-auth.** The provider-reauth branch is single-IdP today (OIDC). When v4.x adds LDAP / SAML (per `v4-release-stream.md`), each provider gets its own branch in step 3 of the resolution order. The helper signature does not change.
+- **Per-tenant policy.** v4.0.0 resolves `auth.step_up.*` through the standard tenant-row → global-row → registry-default cascade (`v4-tenancy-design.md`). v3.27.0 already reads through that cascade with `tenant_id=NULL`.
+- **Deprecation of `backup.vault_key.sudo_failed`.** v3.27.0 emits both the new `auth.sudo_failed` and the legacy `backup.vault_key.sudo_failed` for vault-key reveal failures so existing log queries don't break. The legacy alias is removed in v3.28.0; track via the cleanup backlog.
+
+### Audit vocabulary
+
+`auth.sudo_passed`, `auth.sudo_failed`, `auth.sudo_rate_limited`, `auth.step_up_policy.updated` — see `audit-actions.md`.
 
 ---
 
@@ -161,9 +308,12 @@ Session idle timeout enforced by `require_login()` based on `security.session_id
 
 ## Cross-references
 
-- `CLAUDE.md` → "Authentication & authorisation" — the load-bearing rules (CSRF, self-protection, last-active-admin).
+- `security-model.md` — threat model, trust boundaries, the load-bearing auth rules (CSRF, self-protection, last-active-admin).
+- `Simple-PHP-IPAM/lib/auth_step_up.php` — step-up implementation.
+- `Simple-PHP-IPAM/views/_step_up_prompt.php` — shared prompt partial.
 - `adding-an-api-endpoint.md` — API auth (Bearer token, readonly key check).
 - `audit-actions.md` — full auth action vocabulary.
+- `adding-a-setting.md` — registry mechanics for the step-up policy keys.
 - `runtime-dependency-policy.md` — why TOTP/WebAuthn use libraries but OIDC doesn't.
 - `v4-tenancy-design.md` — per-tenant key derivation for v4.0.0.
 - `docs/oidc.md`, `docs/security.md` — user-facing documentation.

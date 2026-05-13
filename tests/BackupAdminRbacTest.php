@@ -11,7 +11,7 @@ use PHPUnit\Framework\TestCase;
  * Mirrors CliGuardTest's structural-lint approach. Pairs with the
  * Playwright backup-rbac.spec.ts which exercises actual HTTP responses.
  *
- * Source: #811 (T10 — backup_overhaul.md §8). Adding a new admin file
+ * Source: #811 (T10 — docs/internal/archive/backup_overhaul.md §8). Adding a new admin file
  * under the backup/restore surface without a role guard must fail this
  * test.
  */

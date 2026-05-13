@@ -1,6 +1,6 @@
 # Roadmap — Simple-PHP-IPAM
 
-> **What this is.** The single consolidated view of *what's planned, in what order, and why* for every release after the current shipped version. Synthesizes `code_quality_review.md`, `ux_overhaul.md`, `backup_overhaul.md`, `v4-release-stream.md`, `i18n-design.md`, `2026-05-08_Path_Forward.md`, `cleanup.md`, `lessons-learned.md`, `test-improvements.md`, the Pass C findings, and the 2026-05-10 security review into one place — plus the live state of GitHub milestones.
+> **What this is.** The single consolidated view of *what's planned, in what order, and why* for every release after the current shipped version. Synthesizes `archive/code_quality_review.md`, `archive/ux_overhaul.md`, `archive/backup_overhaul.md`, `v4-release-stream.md`, `i18n-design.md`, `archive/2026-05-08_Path_Forward.md`, `cleanup.md`, `lessons-learned.md`, `archive/test-improvements.md`, the Pass C findings, and the 2026-05-10 security review into one place — plus the live state of GitHub milestones.
 >
 > **What this isn't.** Not a commitment to dates. Not a substitute for the source docs (each section here links back). Not a multi-tenancy plan — that's deferred (see §8.4 and `v4-tenancy-design.md`).
 >
@@ -66,7 +66,7 @@ v3.27.7 (shipped) ── v3.27.8 (hotfix: backup bugs + drop silent fallback)
 
 ## 2. Operating mode (binding)
 
-The architectural decisions that produced the v3.21–v3.27 bug cluster were made unilaterally by Claude. **That stops.** Codified in `2026-05-08_Path_Forward.md` §2 and reinforced in `lessons-learned.md` §8.
+The architectural decisions that produced the v3.21–v3.27 bug cluster were made unilaterally by Claude. **That stops.** Codified in `archive/2026-05-08_Path_Forward.md` §2 and reinforced in `lessons-learned.md` §8.
 
 **Eight commitment classes Claude does NOT unilateralize anymore:**
 
@@ -198,7 +198,7 @@ Origin: post-v3.27.7-deploy CDP session with Sean against the SQLite test instan
 | Bucket | Items | Issues |
 |---|---|---|
 | **Legacy backup writer retirement** | Disable orchestrator's `app_secret` write path; preflight failure with clear message; reader stays intact; banner on Backup/Restore tabs; `docs/upgrading.md` §4.0 migration path; decrypt-tool prominent placement; CHANGELOG explicit Deprecated + Removed entries. **Hard gate: cannot merge until #1165 decrypt-tool Pass 1 is 100% green.** | #1164 (epic) |
-| **Decrypt-tool Pass 1 manual execution** | 7 fixtures × 8 cases + 8 cross-cutting = 64 datapoints per `decrypt-tool-test-plan.md`. Output: `releases/2026-05-11_decrypt-tool-pass1/results.md`. Merge gate on #1164. | #1165 |
+| **Decrypt-tool Pass 1 manual execution** | 7 fixtures × 8 cases + 8 cross-cutting = 64 datapoints per `archive/decrypt-tool-test-plan.md`. Output: `releases/2026-05-11_decrypt-tool-pass1/results.md`. Merge gate on #1164. | #1165 |
 | **Pass C step-up coverage sweep** | Sudo-gate webhook + notify_recipients/SMTP + custom field def CRUD (one policy-registry expansion for all 3) | #1156, #1157, #1158 |
 | **Atomic-state JSON pairing** | F-S5-02 destination_health/schedule_overdue_state + #1143 auth.ip_rate_limited dampener (same TOCTOU shape, land together) | #1159, #1143 |
 | **Security-review Mediums** | S-003 gzip-bomb decompressed cap; S-006 webhook silent swallow → `error_log`; S-008 readonly API `is_active` check | #1149, #1150, #1151 |
@@ -228,7 +228,7 @@ Origin: post-v3.27.7-deploy CDP session with Sean against the SQLite test instan
 
 > **Slot-bumped (2026-05-11 reshape):** what was old v3.28.0 milestone #55 content. 28 issues re-milestoned to new milestone #80.
 
-> **Operational plan: `docs/internal/test-improvements.md`.**
+> **Operational plan: `docs/internal/archive/test-improvements.md`.**
 
 **No new features in v3.29.0.** This is the explicit response to the v3.21–v3.27 bug cluster: passing CI + passing CodeRabbit + passing 3-driver Playwright did not catch the 12 distinct bugs Pass A surfaced.
 
@@ -239,19 +239,19 @@ Origin: post-v3.27.7-deploy CDP session with Sean against the SQLite test instan
 3. **Contract-doc-vs-code linter** — CI script that grep-asserts contract docs match code. Catches drift like Bug T (6 of 11 documented invalidation events had no caller).
 
 **Plus (added 2026-05-11 gap-analysis pass):**
-- **Decrypt-tool Pass 2 automation** — green-path + wrong-cred + tampered + truncated cases per `decrypt-tool-test-plan.md` become PHPUnit; remaining cases become a CI shell script. Pass 1 manual execution (#1165) gates this work.
+- **Decrypt-tool Pass 2 automation** — green-path + wrong-cred + tampered + truncated cases per `archive/decrypt-tool-test-plan.md` become PHPUnit; remaining cases become a CI shell script. Pass 1 manual execution (#1165) gates this work.
 - **S-012 decrypt-tool argv passphrase hardening** (env-var only, refuse argv).
 - **F-S2-02 / F-S2-03 audit-vocab doc drift** — fixed as part of contract-doc linter coming online green on day one.
 - **Semgrep WARNING sweep (#1166)** — close 38 legacy XSS/SSRF/path-traversal WARNINGs (~1d work, mostly `e()` wraps + one realpath guard). Establishes "main has zero semgrep WARNINGs" CI baseline.
 - **Composer dep refresh + CVE recheck (#1167)** — bump pinned versions of phpmailer / twofactorauth / webauthn / phpseclib; run `composer audit`. Cadence question (every 3 minors?) decided at scope-lock.
 
-**Open questions in `test-improvements.md` §8** to be answered at scope-lock.
+**Open questions in `archive/test-improvements.md` §8** to be answered at scope-lock.
 
 ---
 
 ## 6. Refactor stream (v3.30.0 → v3.32.0)
 
-Three milestones, theme-named. Closes 50 of the 87 `code_quality_review.md` findings (the other 37 already shipped through v3.26.0 + are absorbed into v3.29.0 test backfill).
+Three milestones, theme-named. Closes 50 of the 87 `archive/code_quality_review.md` findings (the other 37 already shipped through v3.26.0 + are absorbed into v3.29.0 test backfill).
 
 | Suggested slot | Milestone | Theme | Issues | Closes findings |
 |---|---|---|---|---|
@@ -269,7 +269,7 @@ Three milestones, theme-named. Closes 50 of the 87 `code_quality_review.md` find
 
 > **2026-05-11 reshape:** the 5 UX milestones no longer have to fit before v4.0.0. Foundation + nav + data-heavy ship pre-v4 (v3.33.0 → v3.35.0); polish + cleanup ship post-v4 interleaved with v4.x enterprise auth + i18n releases. **v4.0.0 ships when i18n phase 1 + backup cold break are ready — not gated on UX completion.**
 
-Audit scope **explicitly excludes** backup/restore UX — that's `backup_overhaul.md` territory.
+Audit scope **explicitly excludes** backup/restore UX — that's `archive/backup_overhaul.md` territory.
 
 | Suggested slot | Milestone | Theme | Issues | Effort |
 |---|---|---|---|---|
@@ -285,7 +285,7 @@ Audit scope **explicitly excludes** backup/restore UX — that's `backup_overhau
 
 **Per-milestone test umbrellas:** #1035, #1036, #1037, #1038, #1039.
 
-**Source:** `ux_overhaul.md` §9.
+**Source:** `archive/ux_overhaul.md` §9.
 
 ---
 
@@ -371,20 +371,20 @@ SELECT count(*) FROM backup_runs
 - Walkthrough for the standalone decrypt tool on the marketing-site docs page
 - `tools/decrypt-backup.php` gets prominent placement in v4.0.0 release tarball + release notes
 
-**Testing prerequisite:** `docs/internal/decrypt-tool-test-plan.md` Pass 1 (manual, 7 fixtures × 8 cases + 8 cross-cutting) must be 100% green before the v4.0.0 writer-retirement PR opens. Pass 2 (PHPUnit + CI shell) ships in v3.29.0.
+**Testing prerequisite:** `docs/internal/archive/decrypt-tool-test-plan.md` Pass 1 (manual, 7 fixtures × 8 cases + 8 cross-cutting) must be 100% green before the v4.0.0 writer-retirement PR opens. Pass 2 (PHPUnit + CI shell) ships in v3.29.0.
 
 ---
 
 ## 9. Backup overhaul — closing out
 
-`backup_overhaul.md` was the design-and-tracking doc for the multi-release backup epic. Most work shipped across v3.21–v3.27.
+`archive/backup_overhaul.md` was the design-and-tracking doc for the multi-release backup epic. Most work shipped across v3.21–v3.27.
 
 | Bucket | Status |
 |---|---|
 | §6 Functionality (F1–F25) | F18, F19, F22 still open (F22 is v4.0.0 tenant policy — parked under multi-tenancy deferral); rest shipped. |
 | §7 UI (U1–U10) | All shipped or absorbed into UX overhaul stream. |
 | §8 Testing (T1–T10) | Cross-engine round-trip + MinIO/LocalStack + SFTP integration tests are the remaining gap; **covered by v3.29.0** (was v3.28.0 before reshape). |
-| §8a Documentation (D1–D12) | D7 (tenancy doc) parked under multi-tenancy deferral; D12 (retire `backup_overhaul.md` itself) lands in v4.0.0 release cleanup. |
+| §8a Documentation (D1–D12) | D7 (tenancy doc) parked under multi-tenancy deferral; D12 (retire `archive/backup_overhaul.md` itself) lands in v4.0.0 release cleanup. |
 
 **Single most expensive lesson from this stream:** `lessons-learned.md` §8 — "feature added at one site, propagation to adjacent sites missed." The mandatory pre-PR checklist in §2 is the institutional response.
 
@@ -402,7 +402,7 @@ SELECT count(*) FROM backup_runs
 | **`$config` global as the only config conduit** | Hides the dependency graph. | Decision before refactor wave 2 (v3.31.0). |
 | **Settings table type system** | bool/int/string/json is impoverished; sensitive flag bolted on. | Decision before refactor wave 1. |
 | **Memory MCP discipline as the only cross-session continuity** | Useful but didn't prevent today's bugs (no observations linking v3.24 codec → v3.26 storage → v3.27 step-up). | Decision in v3.28.0→v3.29.0 sprint. |
-| **Contract-doc-as-source-of-truth model** | When `step-up-auth.md` says X and code does Y, X "wins" by convention — drift produces bugs. v3.29.0 contract-doc linter is the first response. | Decided 2026-05-11: code-first, lint docs against code. |
+| **Contract-doc-as-source-of-truth model** | When `auth-model.md` "Step-up auth" section says X and code does Y, X "wins" by convention — drift produces bugs. v3.29.0 contract-doc linter is the first response. | Decided 2026-05-11: code-first, lint docs against code. |
 
 ### 10.1 Architecture-decision sprint (between v3.28.0 and v3.29.0)
 
@@ -453,16 +453,16 @@ This doc is a pointer index. Source docs hold per-finding detail and the binding
 
 | Concern | Source |
 |---|---|
-| Operating mode + Path Forward commitments | `2026-05-08_Path_Forward.md` |
+| Operating mode + Path Forward commitments | `archive/2026-05-08_Path_Forward.md` |
 | Cross-release lessons (curated) | `lessons-learned.md` |
-| **v3.29.0 operational plan (test tooling)** | `test-improvements.md` |
+| **v3.29.0 operational plan (test tooling)** | `archive/test-improvements.md` |
 | **Pass C findings + triage** | `releases/ipam-3.27.6/regression-evidence/passC/PASS-C-SUMMARY.md` |
 | **Security review (2026-05-10) outputs** | `releases/2026-05-10_security-review/semgrep-summary.md` + `code-reviewer-findings.md` |
-| **Decrypt-tool test plan (Pass 1 / Pass 2)** | `decrypt-tool-test-plan.md` |
+| **Decrypt-tool test plan (Pass 1 / Pass 2)** | `archive/decrypt-tool-test-plan.md` |
 | **Session plan continuity** | `2026-05-11_session-plan.md` |
-| Code-quality refactor stream (87 findings) | `code_quality_review.md` |
-| UX overhaul stream (82 findings) | `ux_overhaul.md` |
-| Backup overhaul (mostly shipped) | `backup_overhaul.md` |
+| Code-quality refactor stream (87 findings) | `archive/code_quality_review.md` |
+| UX overhaul stream (82 findings) | `archive/ux_overhaul.md` |
+| Backup overhaul (mostly shipped) | `archive/backup_overhaul.md` |
 | v4.x stream rationale + sequencing | `v4-release-stream.md` |
 | i18n design (v4.0/v4.1/v4.6/v4.11) | `i18n-design.md` |
 | Multi-tenancy design (deferred) | `v4-tenancy-design.md` |

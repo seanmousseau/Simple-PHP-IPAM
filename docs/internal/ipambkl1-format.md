@@ -2,13 +2,13 @@
 
 **Status:** DRAFT — locks on merge of #824 (v3.23.0).
 **Owners:** F18 / #824. Source-of-truth for #849, #1076, #1042, #1044, and any future tooling that produces or consumes Logical backups.
-**Cross-references:** `backup_overhaul.md` §2.1.1, §5, §5c', §5d.
+**Cross-references:** `archive/backup_overhaul.md` §2.1.1, §5, §5c', §5d.
 
 ## Purpose
 
 `IPAMBKL1` is the on-disk format for the **Logical** backup type. It carries the operational data of an IPAM install in an **engine-agnostic, abstract-typed JSON form** that any of the three supported engines (SQLite, MySQL, PostgreSQL) can produce or consume via PDO.
 
-Logical backups are the **primary** path for most operators (per `backup_overhaul.md` §5d). They are portable across engines (sqlite-source → mysql-target restores cleanly), survive schema evolution within the same major IPAM version (older → newer applies forward migrations), and require no host-side CLI tools to dump or restore.
+Logical backups are the **primary** path for most operators (per `archive/backup_overhaul.md` §5d). They are portable across engines (sqlite-source → mysql-target restores cleanly), survive schema evolution within the same major IPAM version (older → newer applies forward migrations), and require no host-side CLI tools to dump or restore.
 
 ## Versioning model
 
