@@ -301,36 +301,6 @@ parameters:
 			path: Simple-PHP-IPAM/restore.php
 
 		-
-			message: '#^Offset ''db_host'' on array\{db_path\: string, session_name\: string, proxy_trust\: bool, app_name\: string, timezone\?\: string, base_url\?\: string\|null, bootstrap_admin\: array\{username\: string, password\: string\}, session_idle_seconds\: int, \.\.\.\} on left side of \?\? does not exist\.$#'
-			identifier: nullCoalesce.offset
-			count: 2
-			path: Simple-PHP-IPAM/restore.php
-
-		-
-			message: '#^Offset ''db_name'' on array\{db_path\: string, session_name\: string, proxy_trust\: bool, app_name\: string, timezone\?\: string, base_url\?\: string\|null, bootstrap_admin\: array\{username\: string, password\: string\}, session_idle_seconds\: int, \.\.\.\} on left side of \?\? does not exist\.$#'
-			identifier: nullCoalesce.offset
-			count: 2
-			path: Simple-PHP-IPAM/restore.php
-
-		-
-			message: '#^Offset ''db_pass'' on array\{db_path\: string, session_name\: string, proxy_trust\: bool, app_name\: string, timezone\?\: string, base_url\?\: string\|null, bootstrap_admin\: array\{username\: string, password\: string\}, session_idle_seconds\: int, \.\.\.\} on left side of \?\? does not exist\.$#'
-			identifier: nullCoalesce.offset
-			count: 2
-			path: Simple-PHP-IPAM/restore.php
-
-		-
-			message: '#^Offset ''db_port'' on array\{db_path\: string, session_name\: string, proxy_trust\: bool, app_name\: string, timezone\?\: string, base_url\?\: string\|null, bootstrap_admin\: array\{username\: string, password\: string\}, session_idle_seconds\: int, \.\.\.\} on left side of \?\? does not exist\.$#'
-			identifier: nullCoalesce.offset
-			count: 2
-			path: Simple-PHP-IPAM/restore.php
-
-		-
-			message: '#^Offset ''db_user'' on array\{db_path\: string, session_name\: string, proxy_trust\: bool, app_name\: string, timezone\?\: string, base_url\?\: string\|null, bootstrap_admin\: array\{username\: string, password\: string\}, session_idle_seconds\: int, \.\.\.\} on left side of \?\? does not exist\.$#'
-			identifier: nullCoalesce.offset
-			count: 2
-			path: Simple-PHP-IPAM/restore.php
-
-		-
 			message: '#^Parameter \#1 \$from of function copy expects string, string\|false given\.$#'
 			identifier: argument.type
 			count: 1
