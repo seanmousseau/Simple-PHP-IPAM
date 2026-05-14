@@ -118,7 +118,7 @@ try {
   <p class="muted">
     These three secrets protect your installation. Each lives in a different place;
     losing any one has different operational consequences. See
-    <a href="https://github.com/seanmousseau/Simple-PHP-IPAM/blob/main/docs/backups.md#disaster-recovery">backups.md &rarr; Disaster recovery</a>.
+    <a href="https://github.com/seanmousseau/Simple-PHP-IPAM/blob/main/docs/backups.md#disaster-recovery--back-up-your-keys-not-just-your-data">backups.md &rarr; Disaster recovery</a>.
   </p>
   <table class="install-keys" style="width:100%;border-collapse:collapse;">
     <thead>

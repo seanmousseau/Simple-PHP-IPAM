@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.28.3] - 2026-05-14
+
+Hotfix on top of v3.28.2. Three contained fixes:
+
+### Fixed
+
+- **Install-key UI links now resolve to the right section of `backups.md`.** Both the dismissible install-key auto-gen banner (`render_install_key_banner()` in `Simple-PHP-IPAM/lib.php`) and the new "Install keys" status panel (`Simple-PHP-IPAM/views/install_keys_panel.php`) link to `docs/backups.md#disaster-recovery`, but GitHub's slugger renders the section heading "Disaster recovery — back up your keys, not just your data" as `#disaster-recovery--back-up-your-keys-not-just-your-data` (em dash plus trailing words). The short form landed operators at the top of the doc, not the DR section. Anchor corrected in both link sites.
+- **Webhook signing secret: defensive 4096-char length cap.** `webhooks.php` `create` and `edit` actions now reject `$_POST['secret']` values longer than 4096 chars up-front in the field-validation chain (`Secret is too long (max 4096 characters).`). The DB column already enforced a limit at write time, so this is not load-bearing — but matches the rest of the input-validation policy and avoids putting an oversized secret through the libsodium encrypt path. From `docs/internal/cleanup.md` row 2026-05-11 (S-011) tagged "add when webhooks page is next touched"; the v3.28.2 `ipam_app_secret()` refactor was that touch window.
+
+### Documentation
+
+- **`CHANGELOG.md` gains the missing `[3.3.0]` compare-link entry.** Pre-existing gap noted in `docs/internal/cleanup.md` (added 2026-05-10 during the v3.27.7 link-block migration). Every other release from v0.10 onward had a corresponding `[X.Y.Z]: …compare/…` reference; v3.3.0 had the section header but no link. Trivial single-line addition placed in the existing descending order of the link block.
+
 ## [3.28.2] - 2026-05-14
 
 Install-key lifecycle release. Brings `app_secret` in line with `bootstrap_key` — both are now lazily auto-generated on first need, both audit the event, and both surface a one-shot dismissible admin banner. A new "Install keys" status panel in Settings shows the live state of all three install-root secrets (`app_secret`, `bootstrap_key`, `backup_vault_key`). Plus three contained test-tooling cleanups from CodeRabbit's review of v3.28.0. **No schema migration. No config-format change.**
@@ -1827,6 +1840,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.28.3]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.28.2...v3.28.3
 [3.28.2]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.28.1...v3.28.2
 [3.28.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.28.0...v3.28.1
 [3.28.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.9...v3.28.0
@@ -1873,6 +1887,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 [3.5.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.4.1...v3.5.0
 [3.4.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.4.0...v3.4.1
 [3.4.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.3.0...v3.4.0
+[3.3.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.2.0...v3.3.0
 [3.2.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.0.1...v3.1.0
 [3.0.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.0.0...v3.0.1

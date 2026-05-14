@@ -7795,7 +7795,7 @@ function render_install_key_banner(PDO $db, string $role): void
         echo "<div class='admin-notice admin-notice--warning' role='alert'>"
            . '&#9888; <strong>' . $text['headline'] . '.</strong> ' // nosemgrep: php.lang.security.tainted-user-input-in-php-script.tainted-user-input-in-php-script
            . $text['body']
-           . ' See <a href="https://github.com/seanmousseau/Simple-PHP-IPAM/blob/main/docs/backups.md#disaster-recovery">'
+           . ' See <a href="https://github.com/seanmousseau/Simple-PHP-IPAM/blob/main/docs/backups.md#disaster-recovery--back-up-your-keys-not-just-your-data">'
            . 'backups.md &rarr; Disaster recovery</a>'
            . ' or the <a href="settings.php#install-keys">Install keys panel</a>.'
            . ' <form method="post" action="" style="display:inline;margin-left:0.5rem;">'
