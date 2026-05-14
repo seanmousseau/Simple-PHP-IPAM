@@ -1,0 +1,63 @@
+name: Marketing cache bust
+
+# When docs/*.md changes land on main, POST the changed slugs to the
+# marketing site's invalidation endpoint so the SSR cache re-fetches.
+# Companion design: docs/internal/marketing-site-ssr-decision.md.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/*.md'
+
+jobs:
+  bust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 2
+
+      - name: Compute changed doc slugs
+        id: slugs
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          before="$BEFORE_SHA"
+          # First push to main of a new branch can have a zero before-SHA;
+          # fall back to HEAD~1 in that case.
+          if [ -z "$before" ] || [ "$before" = "0000000000000000000000000000000000000000" ]; then
+            before="HEAD~1"
+          fi
+          changed=$(git diff --name-only "$before" "$AFTER_SHA" -- 'docs/*.md' \
+            | xargs -n1 -I{} basename {} .md \
+            | sort -u)
+          if [ -z "$changed" ]; then
+            echo "json=[]" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          json=$(printf '%s\n' "$changed" | jq -R . | jq -s -c .)
+          echo "json=$json" >> "$GITHUB_OUTPUT"
+          echo "Changed slugs: $json"
+
+      - name: POST to marketing site
+        if: steps.slugs.outputs.json != '[]'
+        env:
+          SECRET: ${{ secrets.MARKETING_WEBHOOK_SECRET }}
+          SLUGS: ${{ steps.slugs.outputs.json }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SECRET:-}" ]; then
+            echo "::warning::MARKETING_WEBHOOK_SECRET not set; skipping POST"
+            exit 0
+          fi
+          # NB: docs source slugs (filename without .md) differ from marketing
+          # URL slugs in one case — install.md -> /docs/installation/. Map here.
+          mapped=$(echo "$SLUGS" | jq -c 'map(if . == "install" then "installation" else . end)')
+          curl -sS --fail-with-body -X POST https://simplephpipam.com/wp-json/sipam/v1/cache-bust \
+            -H "X-Webhook-Secret: $SECRET" \
+            -H "Content-Type: application/json" \
+            -d "{\"slugs\": $mapped}"
+          echo
