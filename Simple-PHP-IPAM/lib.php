@@ -10811,9 +10811,10 @@ function ipam_render_dhcpd_conf(PDO $db, array $subnetIds): string
         foreach (ipam_dhcp_load_reservations($db, to_int($s['id'])) as $r) {
             $mac  = ipam_normalize_mac_for_dhcp(to_str($r['mac']));
             if ($mac === null) continue;
-            $raw    = $r['hostname'] !== '' ? to_str($r['hostname']) : 'host';
-            $suffix = str_replace('.', '-', to_str($r['ip']));
-            $name   = (preg_replace('/[^a-zA-Z0-9\-]/', '-', $raw) ?? 'host') . '-' . $suffix;
+            $rawHost = to_str($r['hostname']);
+            $label   = ipam_dhcp_normalize_hostname($rawHost) ?? 'host';
+            $suffix  = str_replace('.', '-', to_str($r['ip']));
+            $name    = $label . '-' . $suffix;
             $lines[] = '  host ' . $name . ' {';
             $lines[] = '    hardware ethernet ' . $mac . ';';
             $lines[] = '    fixed-address ' . to_str($r['ip']) . ';';
@@ -10887,8 +10888,9 @@ function ipam_render_kea_json(PDO $db, array $subnetIds): string
                     'hw-address' => $mac,
                     'ip-address' => to_str($r['ip']),
                 ];
-                if (to_str($r['hostname']) !== '') {
-                    $resEntry['hostname'] = to_str($r['hostname']);
+                $label = ipam_dhcp_normalize_hostname(to_str($r['hostname']));
+                if ($label !== null) {
+                    $resEntry['hostname'] = $label;
                 }
                 $resArr[] = $resEntry;
             }
@@ -10964,6 +10966,31 @@ function ipam_normalize_mac_for_dhcp(string $mac): ?string
     $hex = preg_replace('/[^0-9a-fA-F]/', '', $mac);
     if (!is_string($hex) || strlen($hex) !== 12) return null;
     return implode(':', str_split(strtolower($hex), 2));
+}
+
+/**
+ * Normalise a DHCP reservation hostname for both Kea and ISC dhcpd output.
+ * Returns null if no usable label can be derived; caller falls back to
+ * 'host' synthesis.
+ *
+ * Single-label, RFC 1123 letter-digit-hyphen, leading alpha (after trimming
+ * leading digits/hyphens), max 63 chars per label. Dotted inputs take the
+ * leftmost label — multi-label FQDNs are out of scope; neither current
+ * renderer supports them well.
+ *
+ * (#1163, PASS-C F-S6-01) — both renderers must agree on what's emitted.
+ */
+function ipam_dhcp_normalize_hostname(string $raw): ?string
+{
+    $raw = trim($raw);
+    if ($raw === '') return null;
+    $label = explode('.', $raw, 2)[0];
+    $label = preg_replace('/[^a-zA-Z0-9-]/', '-', $label) ?? '';
+    $label = ltrim($label, '0123456789-');
+    $label = rtrim($label, '-');
+    if ($label === '') return null;
+    if (strlen($label) > 63) $label = substr($label, 0, 63);
+    return $label;
 }
 
 // ── Custom field definitions (v3.5.0, #313/#596) ──────────────────────────
