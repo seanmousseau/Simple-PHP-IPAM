@@ -7554,6 +7554,89 @@ function render_security_banner(string $context, string $message): void
        . '</div>';
 }
 
+/**
+ * v3.28.2 #1178 — render the admin-only "install key auto-generated" banner.
+ *
+ * Companion to `ipam_install_key_announce_record()` which sets the
+ * `install_keys_announce.<key>` flag in the `settings` table when an
+ * install-root secret is lazily generated on first use. This helper renders a
+ * dismissible alert until the operator acknowledges it; dismissal clears the
+ * flag (engine-portable via `ipam_setting_set()`) so it persists across
+ * sessions rather than the per-session `render_security_banner()` pattern.
+ *
+ * Dismissal is via a POST to whichever admin page page_header() runs on.
+ * `$_POST['action'] === 'dismiss_install_key_banner'` with `$_POST['key']`
+ * allowlisted to the two known secret names. CSRF-protected through
+ * `csrf_require()`.
+ *
+ * Safe to call when `$role !== 'admin'` (early return). Safe to call before
+ * the settings table is reachable (silently no-ops via try/catch).
+ */
+function render_install_key_banner(PDO $db, string $role): void
+{
+    if ($role !== 'admin') {
+        return;
+    }
+
+    // Handle dismissal first so the banner does not render after a successful
+    // POST. The action key is allowlisted; csrf_require() exits the request
+    // on a missing/bad token, so reaching the body means CSRF passed.
+    if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST'
+        && (($_POST['action'] ?? '') === 'dismiss_install_key_banner')) {
+        csrf_require();
+        $postedKey = is_string($_POST['key'] ?? null) ? $_POST['key'] : '';
+        if ($postedKey === 'app_secret' || $postedKey === 'bootstrap_key') {
+            try {
+                ipam_setting_set($db, 'install_keys_announce.' . $postedKey, '0');
+            } catch (\Throwable $e) {
+                error_log('[render_install_key_banner] dismiss failed: ' . $e->getMessage());
+            }
+        }
+        return;
+    }
+
+    $messages = [
+        'app_secret' => [
+            'headline' => 'A new <code>app_secret</code> was generated',
+            'body'     => "It's the key for your 2FA secrets and restore-staging tokens. "
+                        . 'Back up <code>config.php</code> now — if it ever changes, all 2FA enrollments break.',
+        ],
+        'bootstrap_key' => [
+            'headline' => 'A new <code>bootstrap_key</code> was generated',
+            'body'     => 'It wraps the <code>backup_vault_key</code> in the database. '
+                        . "Back up <code>config.php</code> now — without it, encrypted backups can't be decrypted.",
+        ],
+    ];
+
+    foreach ($messages as $key => $text) {
+        try {
+            $flag = ipam_setting('install_keys_announce.' . $key, '0');
+        } catch (\Throwable) {
+            continue;
+        }
+        $shouldShow = ($flag === '1' || $flag === 1 || $flag === true);
+        if (!$shouldShow) {
+            continue;
+        }
+
+        $csrf = e(csrf_token());
+        $keyAttr = e($key);
+        echo "<div class='admin-notice admin-notice--warning' role='alert'>"
+           . '&#9888; <strong>' . $text['headline'] . '.</strong> ' // nosemgrep: php.lang.security.tainted-user-input-in-php-script.tainted-user-input-in-php-script
+           . $text['body']
+           . ' See <a href="https://github.com/seanmousseau/Simple-PHP-IPAM/blob/main/docs/backups.md#disaster-recovery">'
+           . 'backups.md &rarr; Disaster recovery</a>'
+           . ' or the <a href="settings.php#install-keys">Install keys panel</a>.'
+           . ' <form method="post" action="" style="display:inline;margin-left:0.5rem;">'
+           . "<input type='hidden' name='csrf' value='{$csrf}'>"
+           . "<input type='hidden' name='action' value='dismiss_install_key_banner'>"
+           . "<input type='hidden' name='key' value='{$keyAttr}'>"
+           . '<button type="submit" class="button-secondary btn-sm">Dismiss</button>'
+           . '</form>'
+           . '</div>';
+    }
+}
+
 /* ---------------- Demo mode seed/reset ---------------- */
 
 function demo_reset_db(PDO $db): void
@@ -9556,6 +9639,16 @@ function page_header(string $title, array $opts = []): void
                . "⚠ <strong>Security warning:</strong> The default bootstrap admin password is still set in <code>config.php</code>. "
                . "<a href='change_password.php'>Change your password</a> and update <code>config.php</code> before this site receives any traffic."
                . "</div>";
+        }
+    }
+
+    // v3.28.2 #1178 — admin-only install-key auto-gen banner. Helper
+    // gates on $role itself; the global $db is opened by init.php and is
+    // the same handle audit() / ipam_setting_set() expect.
+    if ($role === 'admin') {
+        global $db;
+        if (isset($db) && $db instanceof PDO) {
+            render_install_key_banner($db, $role);
         }
     }
 
