@@ -76,9 +76,27 @@ function ipam_app_secret(?string $configPathOverride = null): string
     /** @var array<string,mixed> $config */
     global $config;
 
-    $existing = (isset($config['app_secret']) && is_string($config['app_secret']))
-        ? $config['app_secret']
-        : '';
+    // When a $configPathOverride is in play (test seam, multi-config callers),
+    // the source of truth for the existing value is THAT file's contents, not
+    // the live global $config which still describes the request's primary
+    // installation. Reading the override file ensures we don't return a
+    // secret meant for a different config — and skip the write the override
+    // path would have needed.
+    $existing = '';
+    if ($configPathOverride === null) {
+        $existing = (isset($config['app_secret']) && is_string($config['app_secret']))
+            ? $config['app_secret']
+            : '';
+    } else {
+        /** @var array<string,mixed>|false $overrideCfg */
+        $overrideCfg = @include $configPath;
+        if (is_array($overrideCfg)
+            && isset($overrideCfg['app_secret'])
+            && is_string($overrideCfg['app_secret'])
+        ) {
+            $existing = $overrideCfg['app_secret'];
+        }
+    }
 
     if ($existing !== '') {
         $cached[$configPath] = $existing;

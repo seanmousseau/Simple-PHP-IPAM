@@ -2066,6 +2066,30 @@ function ipam_setting_definitions(): array
             'sensitive'   => true,
             'hidden'      => true,
         ],
+        // --- Install-key announcement flags (v3.28.2 #1178) ---
+        // Internal one-shot flags consumed by render_install_key_banner().
+        // Set to '1' by ipam_install_key_announce_record() when ipam_app_secret()
+        // or ipam_bootstrap_key() auto-generates a new value; cleared to '0' when
+        // the admin dismisses the banner. Hidden from the Settings UI — the
+        // banner is the user-facing surface.
+        'install_keys_announce.app_secret' => [
+            'label'       => 'Install-key announce: app_secret (internal)',
+            'description' => 'Internal one-shot flag for the install-key auto-gen admin banner.',
+            'type'        => 'bool',
+            'group'       => 'security',
+            'default'     => false,
+            'sensitive'   => false,
+            'hidden'      => true,
+        ],
+        'install_keys_announce.bootstrap_key' => [
+            'label'       => 'Install-key announce: bootstrap_key (internal)',
+            'description' => 'Internal one-shot flag for the install-key auto-gen admin banner.',
+            'type'        => 'bool',
+            'group'       => 'security',
+            'default'     => false,
+            'sensitive'   => false,
+            'hidden'      => true,
+        ],
         // --- Notifications (v3.22.0 §2.4) ---
         // Per-event toggles split scheduled-vs-manual on the success/failure
         // axis (§2.4 lists the two as independent — operators commonly want
