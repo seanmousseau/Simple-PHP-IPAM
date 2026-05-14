@@ -168,7 +168,9 @@ final class PgsqlSmokeTest extends TestCase
         // the runtime migration is $tableExists-guarded so it's a no-op on
         // a fresh install, but pre-seeding keeps the gate + schema_version
         // parity honest).
-        $this->assertSame(61, (int)$row['c']);
+        // v3.29.0 #1102: replaced hardcoded literal with ipam_migrations_count()
+        // so this assertion auto-updates when new migrations are registered.
+        $this->assertSame(ipam_migrations_count(), (int)$row['c']);
     }
 
     public function testBootstrapAdminUserInserted(): void

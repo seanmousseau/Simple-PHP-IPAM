@@ -3540,6 +3540,16 @@ function apply_migrations(PDO $db): array
 }
 
 /**
+ * v3.29.0 #1102 — count of registered migrations. Tests auto-derive
+ * instead of hardcoding a literal that drifts every release.
+ */
+function ipam_migrations_count(): int
+{
+    require_once __DIR__ . '/migrations.php';
+    return count(ipam_migrations());
+}
+
+/**
  * @deprecated v3.0.0 — ipam_config_sync removed; config.php is now a bootstrap stub.
  * @return array<string, array{default: mixed, comment: string}>
  */
