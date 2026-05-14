@@ -107,12 +107,11 @@ $db->prepare("UPDATE users SET last_login_at = $nowExpr WHERE id=:id")
 
 ## Auth helpers
 
-Every protected page calls at least `require_login()` at the top. Admin-only pages add `require_role('admin')`. Write handlers add `require_write_access()` so readonly accounts hit the right 403.
+Every protected page calls `require_login()` at the top. Admin-only pages call `require_role('admin')` *instead* — it invokes `require_login()` as its first statement (see `lib.php`), so calling both back-to-back is redundant. Write handlers add `require_write_access()` so readonly accounts hit the right 403.
 
 ```php
 require __DIR__ . '/init.php';
-require_login();
-require_role('admin');
+require_role('admin'); // calls require_login() internally — do not call it again
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     csrf_require();

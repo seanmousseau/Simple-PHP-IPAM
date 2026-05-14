@@ -39,11 +39,13 @@ final class CronScanAuditTest extends TestCase
     public function testAuditDetailsHaveCronTag(): void
     {
         // The (cron) suffix disambiguates the surface from api_scan_run and
-        // scan_run.php in the audit log UI.
-        $this->assertStringContainsString(
-            '(cron)',
+        // scan_run.php in the audit log UI. Tie the check to the
+        // audit(... 'scan.run' ...) invocation so a (cron) substring buried
+        // in a comment elsewhere in cron.php can't satisfy the assertion.
+        $this->assertMatchesRegularExpression(
+            '/audit\(\s*\$db,\s*\'scan\.run\',\s*\'subnet\',\s*\$subnetId,.*\(cron\)/s',
             $this->cronSource,
-            'cron-emitted scan.run rows must carry a (cron) tag in details'
+            'cron-emitted scan.run rows must carry a (cron) tag in details, scoped to the scan.run audit call'
         );
     }
 

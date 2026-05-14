@@ -25,10 +25,17 @@ if (!function_exists('ipam_restore_resolve_db_conn')) {
      * restore.php caller detects this and surfaces a clear error before
      * proc_open.
      *
+     * `$targetDriver` is a hint from the caller (the SQL-engine restore.php
+     * branch). When `db_dsn` is absent, the parsed `$driver` is empty and
+     * the port/user defaults would otherwise fall to the mysql values even
+     * on a pgsql install. Pass `'mysql'` / `'pgsql'` from the caller to
+     * pick the right default. (#1177)
+     *
      * @param array<string,mixed> $gConf
+     * @param string $targetDriver  ''|'mysql'|'pgsql' — caller hint for defaults
      * @return array{driver:string,host:string,port:string,dbname:string,user:string,pass:string,unix_socket:string}
      */
-    function ipam_restore_resolve_db_conn(array $gConf): array
+    function ipam_restore_resolve_db_conn(array $gConf, string $targetDriver = ''): array
     {
         $dsn         = to_str($gConf['db_dsn'] ?? '');
         $driver      = '';
@@ -55,11 +62,15 @@ if (!function_exists('ipam_restore_resolve_db_conn')) {
             }
         }
 
+        // Prefer the DSN-parsed driver; fall back to the caller hint so a
+        // DSN-less install still picks the right port/user defaults.
+        $effectiveDriver = $driver !== '' ? $driver : $targetDriver;
+
         if ($host === '') {
             $host = to_str($gConf['db_host'] ?? '127.0.0.1');
         }
         if ($port === '') {
-            $port = to_str($gConf['db_port'] ?? ($driver === 'pgsql' ? '5432' : '3306'));
+            $port = to_str($gConf['db_port'] ?? ($effectiveDriver === 'pgsql' ? '5432' : '3306'));
         }
         if ($dbname === '') {
             $dbname = to_str($gConf['db_name'] ?? 'ipam');
@@ -70,7 +81,7 @@ if (!function_exists('ipam_restore_resolve_db_conn')) {
             'host'        => $host,
             'port'        => $port,
             'dbname'      => $dbname,
-            'user'        => to_str($gConf['db_user'] ?? ($driver === 'pgsql' ? 'postgres' : 'root')),
+            'user'        => to_str($gConf['db_user'] ?? ($effectiveDriver === 'pgsql' ? 'postgres' : 'root')),
             'pass'        => to_str($gConf['db_pass'] ?? ''),
             'unix_socket' => $unixSocket,
         ];

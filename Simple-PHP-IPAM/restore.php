@@ -163,8 +163,9 @@ if ($driver === 'sqlite') {
 
 } elseif ($driver === 'mysql') {
     // #1177: honour db_dsn (PDO-style host/port/dbname) with fallback to
-    // discrete db_host/db_port/db_name keys for legacy installs.
-    $conn   = ipam_restore_resolve_db_conn($gConf);
+    // discrete db_host/db_port/db_name keys for legacy installs. Pass the
+    // engine hint so port/user defaults are correct when db_dsn is absent.
+    $conn   = ipam_restore_resolve_db_conn($gConf, 'mysql');
     if ($conn['unix_socket'] !== '') {
         restore_die(
             'restore.php does not support a unix_socket DSN for mysql restore. ' .
@@ -338,8 +339,9 @@ if ($driver === 'sqlite') {
 
 } elseif ($driver === 'pgsql') {
     // #1177: honour db_dsn (PDO-style host/port/dbname) with fallback to
-    // discrete db_host/db_port/db_name keys for legacy installs.
-    $conn   = ipam_restore_resolve_db_conn($gConf);
+    // discrete db_host/db_port/db_name keys for legacy installs. Pass the
+    // engine hint so port/user defaults are correct when db_dsn is absent.
+    $conn   = ipam_restore_resolve_db_conn($gConf, 'pgsql');
     if ($conn['unix_socket'] !== '') {
         restore_die(
             'restore.php does not support a unix_socket DSN for pgsql restore. ' .

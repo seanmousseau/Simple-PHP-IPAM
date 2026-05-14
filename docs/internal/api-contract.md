@@ -16,7 +16,7 @@ OpenAPI 3.1 spec lives in `Simple-PHP-IPAM/assets/api-spec.yaml`. Every endpoint
 
 ## Authentication
 
-```
+```http
 Authorization: Bearer <api-key>
 ```
 

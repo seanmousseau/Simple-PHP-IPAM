@@ -1,6 +1,6 @@
 # Backup format matrix
 
-> Every backup archive format Simple-PHP-IPAM has ever produced — what it is, when it appeared, what it wraps, what credential reads it, and whether it's still produced / still readable. Companion to `docs/internal/ipambkl1-format.md` (the logical-inner format spec), `docs/internal/ipambkl1-format.md`, `docs/internal/archive/decrypt-tool-test-plan.md` (the `tools/decrypt-backup.php` conformance plan), and `docs/upgrading.md §v3.28.0` (the `app_secret`-encryption retirement path).
+> Every backup archive format Simple-PHP-IPAM has ever produced — what it is, when it appeared, what it wraps, what credential reads it, and whether it's still produced / still readable. Companion to `docs/internal/ipambkl1-format.md` (the logical-inner format spec), `docs/internal/archive/decrypt-tool-test-plan.md` (the `tools/decrypt-backup.php` conformance plan), and `docs/upgrading.md §v3.28.0` (the `app_secret`-encryption retirement path).
 >
 > **Why this exists:** the v4.0.0 cold break removes the in-app reader for the legacy formats, so `tools/decrypt-backup.php` becomes the only recovery path for anything pre-v4. Operators need a clear picture of what they have. There is also a local fixture library of one real, large-DB archive per format — see `tests/fixtures/backup-library/` (git-ignored; regenerate with the `generate-backup-library.php` in that directory; credentials in `~/.claude/dev-secrets.env` under `IPAM_BACKUP_LIBRARY_*`).
 

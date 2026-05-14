@@ -1443,6 +1443,13 @@ function ipam_restore_prepare_for_restore(PDO $db, array $config, int $destinati
  */
 function ipam_restore_stage_uploaded_file(string $src, string $dst): bool
 {
+    // Restore write-containment invariant: every restore write path goes
+    // through ipam_restore_assert_staged_path() so $dst is rooted under the
+    // sanctioned staging tmpdir, never an attacker-influenced path. Throws
+    // RuntimeException on violation; we let it propagate so the caller's
+    // upstream try/catch surfaces the exact error.
+    ipam_restore_assert_staged_path($dst);
+
     $moved = is_uploaded_file($src)
         ? @move_uploaded_file($src, $dst)
         : @rename($src, $dst);

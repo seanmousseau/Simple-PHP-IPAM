@@ -8897,8 +8897,18 @@ function ipam_validate_webhook_url(string $url, array $config = []): bool
 function ipam_webhook_test_fire_audit_detail(int $id, string $url): string
 {
     $host = parse_url($url, PHP_URL_HOST);
+    // parse_url returns a host *token*, not a validated hostname/IP. A
+    // malformed URL can still leave attacker-controlled bytes here, which
+    // would keep the S-001 sink partly open. Require a syntactically valid
+    // IPv4/IPv6 address or RFC 1123 hostname; otherwise '(invalid)'.
     if (!is_string($host) || $host === '') {
         $host = '(invalid)';
+    } else {
+        $isIp     = filter_var($host, FILTER_VALIDATE_IP) !== false;
+        $isDomain = filter_var($host, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) !== false;
+        if (!$isIp && !$isDomain) {
+            $host = '(invalid)';
+        }
     }
     if (strlen($host) > 100) {
         $host = substr($host, 0, 100);
@@ -10851,7 +10861,13 @@ function ipam_dhcp_normalize_hostname(string $raw): ?string
     $label = ltrim($label, '0123456789-');
     $label = rtrim($label, '-');
     if ($label === '') return null;
-    if (strlen($label) > 63) $label = substr($label, 0, 63);
+    if (strlen($label) > 63) {
+        $label = substr($label, 0, 63);
+        // Truncation can land on a hyphen; re-trim so the emitted label
+        // still conforms to RFC 1123 (no trailing '-').
+        $label = rtrim($label, '-');
+        if ($label === '') return null;
+    }
     return $label;
 }
 
