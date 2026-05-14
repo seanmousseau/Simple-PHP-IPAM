@@ -55,7 +55,7 @@ These are the rules a fresh agent must hold in working memory before touching co
 
 ## Current shipped version
 
-**v3.28.2** (see `Simple-PHP-IPAM/version.php`). Anything in the internal docs citing a version ≥ v4.0.0 is forward-looking design — do not apply to current code.
+**v3.28.3** (see `Simple-PHP-IPAM/version.php`). Anything in the internal docs citing a version ≥ v4.0.0 is forward-looking design — do not apply to current code.
 
 ---
 
