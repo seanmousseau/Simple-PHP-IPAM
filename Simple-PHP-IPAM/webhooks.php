@@ -153,6 +153,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $err = 'URL failed SSRF validation. Only public http/https URLs are allowed (enable Allow private IPs in Settings to override).';
         } elseif ($secret === '') {
             $err = 'Secret is required.';
+        } elseif (strlen($secret) > 4096) {
+            // v3.28.3 (S-011): defensive length cap. The DB column already
+            // enforces a limit at write time and PDO will fail noisily on
+            // a too-long bind, but rejecting in the validation chain keeps
+            // the error surface consistent with the other field-validation
+            // messages and avoids putting an oversized secret through the
+            // libsodium encrypt path. 4096 is well above any realistic
+            // HMAC / token / signing-secret size.
+            $err = 'Secret is too long (max 4096 characters).';
         } elseif (count($events) === 0) {
             $err = 'At least one event must be selected.';
         } else {
@@ -198,6 +207,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $err = 'URL failed SSRF validation. Only public http/https URLs are allowed.';
         } elseif ($secret === '') {
             $err = 'Secret is required.';
+        } elseif (strlen($secret) > 4096) {
+            // v3.28.3 (S-011): defensive length cap. See the create-branch
+            // comment above — same rationale.
+            $err = 'Secret is too long (max 4096 characters).';
         } elseif (count($events) === 0) {
             $err = 'At least one event must be selected.';
         } else {
