@@ -119,6 +119,14 @@ function ipam_bootstrap_key(): string
 
     $config['bootstrap_key'] = $newB64;
     $cached = $newRaw;
+
+    // v3.28.2 #1178 — surface the auto-gen event. Gated via function_exists
+    // because this file is required ahead of the announce helper in lib.php's
+    // bootstrap; the helper itself is defensive and never throws.
+    if (function_exists('ipam_install_key_announce_record')) {
+        ipam_install_key_announce_record('bootstrap_key');
+    }
+
     return $newRaw;
 }
 

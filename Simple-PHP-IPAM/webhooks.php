@@ -106,14 +106,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         // v3.27.7 (F-S3-01): decrypt before signing. The plaintext only lives
         // in this local scope for the duration of the test-fire HTTP call.
-        // CR review (PR #1148): pre-check app_secret so a misconfigured install
-        // surfaces a JSON validation error rather than a 500 from the helper.
-        $appSecret = to_str($config['app_secret'] ?? '');
-        $stored    = to_str($row['secret']);
-        if ($appSecret === '' && str_starts_with($stored, '$2W$')) {
-            echo json_encode(['ok' => false, 'error' => 'app_secret is not configured in config.php — webhook signing secrets cannot be decrypted.']);
+        // v3.28.2 (#1178): ipam_app_secret() auto-generates on first call so a
+        // missing value no longer blocks decrypt. The only remaining failure
+        // mode is a read-only config.php; surface it as a JSON error so the
+        // test_fire response shape stays consistent for the admin UI's fetch().
+        try {
+            $appSecret = ipam_app_secret();
+        } catch (\RuntimeException $e) {
+            echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
             exit;
         }
+        $stored      = to_str($row['secret']);
         $secretPlain = ipam_webhook_decrypt_secret($stored, $appSecret);
         if ($secretPlain === null) {
             echo json_encode(['ok' => false, 'error' => 'Webhook secret decryption failed (wrong app_secret or tampered ciphertext).']);
@@ -152,22 +155,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $err = 'Secret is required.';
         } elseif (count($events) === 0) {
             $err = 'At least one event must be selected.';
-        } elseif (to_str($config['app_secret'] ?? '') === '') {
-            // CR review (PR #1148): pre-check app_secret so a misconfigured
-            // install surfaces a validation error rather than a 500 from the
-            // helper. Same shape as the test-fire and edit paths.
-            $err = 'app_secret is not configured in config.php — webhook signing secrets cannot be encrypted at rest.';
         } else {
             // v3.27.7 (F-S3-01): encrypt at rest. Plain $secret is held in
             // memory long enough to sign the next test/delivery, then dropped.
-            $secretEnc = ipam_webhook_encrypt_secret($secret, to_str($config['app_secret'] ?? ''));
-            $st = $db->prepare("INSERT INTO webhooks (name, url, secret, events) VALUES (:n,:u,:s,:ev)");
-            $st->execute([':n' => $name, ':u' => $url, ':s' => $secretEnc, ':ev' => json_encode($events)]);
-            $newId = ipam_last_insert_id($db, 'webhooks');
-            audit($db, 'webhook.create', 'webhook', $newId, "name=$name url=$url");
-            flash_set("Webhook \"$name\" created.");
-            header('Location: webhooks.php');
-            exit;
+            // v3.28.2 (#1178): ipam_app_secret() replaces direct config read;
+            // catch the read-only-config RuntimeException so the admin form
+            // gets the actionable message via the normal $err render path
+            // rather than a 500.
+            try {
+                $secretEnc = ipam_webhook_encrypt_secret($secret, ipam_app_secret());
+                $st = $db->prepare("INSERT INTO webhooks (name, url, secret, events) VALUES (:n,:u,:s,:ev)");
+                $st->execute([':n' => $name, ':u' => $url, ':s' => $secretEnc, ':ev' => json_encode($events)]);
+                $newId = ipam_last_insert_id($db, 'webhooks');
+                audit($db, 'webhook.create', 'webhook', $newId, "name=$name url=$url");
+                flash_set("Webhook \"$name\" created.");
+                header('Location: webhooks.php');
+                exit;
+            } catch (\RuntimeException $e) {
+                $err = $e->getMessage();
+            }
         }
     }
 
@@ -194,18 +200,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $err = 'Secret is required.';
         } elseif (count($events) === 0) {
             $err = 'At least one event must be selected.';
-        } elseif (to_str($config['app_secret'] ?? '') === '') {
-            // CR review (PR #1148): pre-check app_secret.
-            $err = 'app_secret is not configured in config.php — webhook signing secrets cannot be encrypted at rest.';
         } else {
             // v3.27.7 (F-S3-01): encrypt at rest.
-            $secretEnc = ipam_webhook_encrypt_secret($secret, to_str($config['app_secret'] ?? ''));
-            $st = $db->prepare("UPDATE webhooks SET name=:n, url=:u, secret=:s, events=:ev WHERE id=:id");
-            $st->execute([':n' => $name, ':u' => $url, ':s' => $secretEnc, ':ev' => json_encode($events), ':id' => $id]);
-            audit($db, 'webhook.update', 'webhook', $id, "name=$name url=$url");
-            flash_set("Webhook updated.");
-            header('Location: webhooks.php');
-            exit;
+            // v3.28.2 (#1178): ipam_app_secret() replaces direct config read;
+            // catch the read-only-config RuntimeException so the admin form
+            // renders $err rather than 500.
+            try {
+                $secretEnc = ipam_webhook_encrypt_secret($secret, ipam_app_secret());
+                $st = $db->prepare("UPDATE webhooks SET name=:n, url=:u, secret=:s, events=:ev WHERE id=:id");
+                $st->execute([':n' => $name, ':u' => $url, ':s' => $secretEnc, ':ev' => json_encode($events), ':id' => $id]);
+                audit($db, 'webhook.update', 'webhook', $id, "name=$name url=$url");
+                flash_set("Webhook updated.");
+                header('Location: webhooks.php');
+                exit;
+            } catch (\RuntimeException $e) {
+                $err = $e->getMessage();
+            }
         }
     }
 

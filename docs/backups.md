@@ -215,6 +215,8 @@ The full byte layout of every format is in [On-disk format](#on-disk-format). Fo
 
 ## Disaster recovery — back up your keys, not just your data
 
+> **Pre-flight check:** Visit **Settings → Install keys** to confirm `app_secret`, `bootstrap_key`, and `backup_vault_key` are all set before relying on this disaster-recovery procedure.
+
 A backup archive is only as recoverable as the key that decrypts it. **The application does not back up its own keys** — that's on you. If your only copy of the keys is the install you're trying to recover *from*, an encrypted archive is just noise. Treat this as part of your backup procedure, not an afterthought.
 
 ### What you must save (and where)

@@ -20,7 +20,9 @@ $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM'
 $error   = '';
 $step    = 1;
 
-$appSecret = to_str($config['app_secret'] ?? '');
+// v3.28.2 (#1178): ipam_app_secret() auto-generates on first call; throws
+// RuntimeException only if config.php is unwritable (actionable message in logs).
+$appSecret = ipam_app_secret();
 
 // Step=3 must be checked before the already-enrolled guard: step 2 sets totp_enabled=1
 // then redirects here, so the guard would fire and swallow the backup codes page.
@@ -54,54 +56,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $step = to_int($_POST['step'] ?? 1);
 
     if ($step === 2) {
-        if ($appSecret === '') {
-            $error = 'app_secret is not configured in config.php. Contact your administrator.';
+        $secret = to_str($_SESSION['totp_pending_secret'] ?? '');
+        $code   = to_str(preg_replace('/\s+/', '', to_str($_POST['code'] ?? '')));
+
+        if ($secret === '') {
+            $error = 'Enrollment session expired. Please start again.';
+            $step  = 1;
+        } elseif (!preg_match('/^\d{6}$/', $code)) {
+            $error = 'Enter the 6-digit code from your authenticator app.';
+            $step  = 1;
+        } elseif (!ipam_totp_verify($secret, $code)) {
+            $error = 'Code did not match. Make sure your device clock is correct and try again.';
             $step  = 1;
         } else {
-            $secret = to_str($_SESSION['totp_pending_secret'] ?? '');
-            $code   = to_str(preg_replace('/\s+/', '', to_str($_POST['code'] ?? '')));
-
-            if ($secret === '') {
-                $error = 'Enrollment session expired. Please start again.';
-                $step  = 1;
-            } elseif (!preg_match('/^\d{6}$/', $code)) {
-                $error = 'Enter the 6-digit code from your authenticator app.';
-                $step  = 1;
-            } elseif (!ipam_totp_verify($secret, $code)) {
-                $error = 'Code did not match. Make sure your device clock is correct and try again.';
-                $step  = 1;
-            } else {
-                $enc   = ipam_totp_encrypt_secret($secret, $appSecret);
-                $db->prepare("UPDATE users SET totp_secret_enc=:enc, totp_enabled=1 WHERE id=:id")
-                   ->execute([':enc' => $enc, ':id' => $cur['id']]);
-                // Bug T (Pass A 2026-05-08, v3.27.1): MFA enrollment change
-                // is a documented sudo-grant invalidation event. A grant
-                // minted before the new factor was enrolled must not
-                // outlive that change.
-                ipam_sudo_invalidate();
-                $codes = ipam_totp_generate_backup_codes(8);
-                ipam_totp_save_backup_codes($db, to_int($cur['id']), $codes);
-                $_SESSION['totp_new_backup_codes'] = $codes;
-                audit($db, 'auth.totp_enroll', 'user', to_int($cur['id']), '');
-                unset($_SESSION['totp_pending_secret']);
-                header('Location: totp_enroll.php?step=3');
-                exit;
-            }
+            $enc   = ipam_totp_encrypt_secret($secret, $appSecret);
+            $db->prepare("UPDATE users SET totp_secret_enc=:enc, totp_enabled=1 WHERE id=:id")
+               ->execute([':enc' => $enc, ':id' => $cur['id']]);
+            // Bug T (Pass A 2026-05-08, v3.27.1): MFA enrollment change
+            // is a documented sudo-grant invalidation event. A grant
+            // minted before the new factor was enrolled must not
+            // outlive that change.
+            ipam_sudo_invalidate();
+            $codes = ipam_totp_generate_backup_codes(8);
+            ipam_totp_save_backup_codes($db, to_int($cur['id']), $codes);
+            $_SESSION['totp_new_backup_codes'] = $codes;
+            audit($db, 'auth.totp_enroll', 'user', to_int($cur['id']), '');
+            unset($_SESSION['totp_pending_secret']);
+            header('Location: totp_enroll.php?step=3');
+            exit;
         }
     }
 }
 
 // Step 1: generate secret if not already pending
-if ($appSecret === '') {
-    $error  = 'app_secret is not configured in config.php. Contact your administrator.';
-    $secret = '';
-    $uri    = '';
-} else {
-    if (empty($_SESSION['totp_pending_secret'])) {
-        $_SESSION['totp_pending_secret'] = ipam_totp_generate_secret();
-    }
-    $secret = to_str($_SESSION['totp_pending_secret']);
-    $uri    = ipam_totp_get_uri($secret, $appName, to_str($cur['username']));
+if (empty($_SESSION['totp_pending_secret'])) {
+    $_SESSION['totp_pending_secret'] = ipam_totp_generate_secret();
 }
+$secret = to_str($_SESSION['totp_pending_secret']);
+$uri    = ipam_totp_get_uri($secret, $appName, to_str($cur['username']));
 
 require __DIR__ . '/views/totp_enroll.php';
