@@ -477,6 +477,8 @@ page_header('Settings');
   </div>
 <?php endif; unset($_staleKeys); ?>
 
+<?php include __DIR__ . '/views/install_keys_panel.php'; ?>
+
 <div class="settings-shell">
   <!-- Mobile: <select> dropdown shown <768px in place of the rail. -->
   <form class="settings-mobile-nav" method="get" action="settings.php" aria-label="Settings tab">
