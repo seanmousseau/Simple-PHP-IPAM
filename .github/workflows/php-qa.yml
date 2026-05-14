@@ -135,13 +135,15 @@ jobs:
         run: find Simple-PHP-IPAM -name '*.php' -not -path '*/data/*' | sort | xargs -n1 php -l
 
       - name: PHPStan
-        run: vendor/bin/phpstan analyse --no-progress --memory-limit=1G
-
-      - name: PHPCS
-        run: vendor/bin/phpcs
+        run: vendor/bin/phpstan analyse --memory-limit=1G --no-progress
 
       - name: PHPUnit
-        run: vendor/bin/phpunit
+        if: always()
+        run: vendor/bin/phpunit --testdox
+
+      - name: PHPCS
+        if: always()
+        run: vendor/bin/phpcs -n
 
       # ----- MySQL slot only: test_api.sh against php -S backed by MySQL -----
       #
