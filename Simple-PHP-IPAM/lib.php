@@ -6,6 +6,7 @@ require_once __DIR__ . '/lib/S3Client.php';
 require_once __DIR__ . '/lib/SftpClient.php';
 require_once __DIR__ . '/lib/LocalBackupClient.php';
 require_once __DIR__ . '/lib/vault.php';
+require_once __DIR__ . '/lib/app_secret.php';
 require_once __DIR__ . '/lib/backup.php';
 require_once __DIR__ . '/lib/auth_step_up.php';
 
