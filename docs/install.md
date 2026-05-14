@@ -34,7 +34,7 @@ There are **no additional dependencies** for core features. VLANs, VRFs, contact
 | Login bot mitigation | Third-party CAPTCHA account (Turnstile, hCaptcha, reCAPTCHA, Friendly Captcha) |
 | reCAPTCHA Enterprise | Google Cloud project + reCAPTCHA Enterprise API key |
 | Utilization email alerts | Server-side MTA (`mail()` function; most PHP hosts provide this) |
-| TOTP / Email OTP 2FA | `app_secret` set in `config.php` (TOTP); SMTP configured + per-user email (Email OTP) |
+| TOTP / Email OTP 2FA | `app_secret` should be set in `config.php` before first 2FA enrollment (TOTP); SMTP configured + per-user email (Email OTP). v3.28.2+: if `app_secret` is left blank, the app auto-generates one on first TOTP enrollment provided `config.php` is writable — back up `config.php` immediately after either path completes. |
 | Passkeys (WebAuthn) | **HTTPS required** for the WebAuthn API to be available in the browser. Loopback IPs (`127.0.0.1`, `::1`) are accepted by browsers without HTTPS for local testing only |
 
 ### `upgrade.sh` dependencies (optional)
@@ -466,6 +466,8 @@ Each task throttles itself internally and is skipped cleanly when not yet due, s
 > The bootstrap admin account is only created if no users exist in the database. Once any user account exists, changes to `bootstrap_admin` in `config.php` have no effect.
 
 Starting in **v2.6.0**, most operational settings — branding, timezone, alerting, update checker, OIDC — live in the database and are editable from the admin UI under **⚙ Admin → Settings**. `config.php` is still used for bootstrap values (`db_path`, `session_name`, proxy/HTTPS), and still works as a fallback for the database-backed settings during the v2.6 → v3.0 transition. See [docs/configuration.md](configuration.md) for the full model.
+
+After first login, visit **Settings → Install keys** (v3.28.2+) to confirm that `app_secret`, `bootstrap_key`, and `backup_vault_key` are all in the expected state and to back up `config.php` if a key was auto-generated.
 
 ---
 

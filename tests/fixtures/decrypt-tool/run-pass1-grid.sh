@@ -5,6 +5,33 @@
 set -o pipefail
 cd "$(dirname "$0")/../../.." || exit 1
 
+# ---------------------------------------------------------------------------
+# Portability helpers (BSD macOS vs GNU Linux)
+# ---------------------------------------------------------------------------
+file_size() {
+  wc -c <"$1" | tr -d ' '
+}
+
+_measure_rss() {
+  # Usage: _measure_rss <output_file> -- <cmd> [args...]
+  local out="$1"; shift
+  [ "$1" = "--" ] && shift
+  if /usr/bin/time -l true >/dev/null 2>&1; then
+    /usr/bin/time -l "$@" 2>"$out"
+  else
+    /usr/bin/time -v "$@" 2>"$out"
+  fi
+}
+
+_extract_rss() {
+  local f="$1"
+  if grep -q 'maximum resident set size' "$f"; then
+    awk '/maximum resident set size/ {print $1}' "$f"
+  else
+    awk '/Maximum resident set size/ {print $6 * 1024}' "$f"
+  fi
+}
+
 TOOL=(php Simple-PHP-IPAM/tools/decrypt-backup.php)
 FX=tests/fixtures/decrypt-tool
 APPS=$(grep -h '^app_secret=' "$FX/F1/credential.txt" | cut -d= -f2)
@@ -57,7 +84,7 @@ run_fixture() {
 
   # case 3: tampered byte (~mid file)
   cp "$arc" "$d/tamper.bin"
-  local sz; sz=$(stat -f%z "$d/tamper.bin")
+  local sz; sz=$(file_size "$d/tamper.bin")
   printf '\x5a' | dd of="$d/tamper.bin" bs=1 seek=$((sz/2)) count=1 conv=notrunc status=none 2>/dev/null
   rm -f "$d/t.out"
   if [ "$hascred" = 1 ] || [ "$id" = F5 ]; then
@@ -147,12 +174,12 @@ ok "C6 no machine binding (caller-supplied keys; verified by code inspection of 
 gunzip -c "$FX/F6/archive.sql.gz" > "$T/c7_f6.out"
 if cmp -s "$T/c7_f1.out" "$T/c7_f6.out" && cmp -s "$T/c7_f1.out" "$PLAIN"; then ok "C7 round-trip parity (F1 == gunzip(F6) == plaintext-source.sqlite)"; else bad "C7 round-trip parity MISMATCH"; fi
 if [ "${1:-}" = "--large" ] && [ -f /tmp/decrypt-c8-F2.enc ]; then
-  /usr/bin/time -l "${TOOL[@]}" --in /tmp/decrypt-c8-F2.enc --out "$T/c8.out" --app-secret "$APPS" >"$T/out" 2>"$T/timed"
-  RSS=$(grep 'maximum resident set size' "$T/timed" | awk '{print $1}')
+  _measure_rss "$T/timed" -- "${TOOL[@]}" --in /tmp/decrypt-c8-F2.enc --out "$T/c8.out" --app-secret "$APPS" >"$T/out"
+  RSS=$(_extract_rss "$T/timed")
   echo "  NOTE  C8 IPAMBKP2 500MB: max RSS = ${RSS:-?} bytes ($(( ${RSS:-0}/1024/1024 )) MiB)"
   if [ -n "$RSS" ] && [ "$RSS" -lt 268435456 ]; then ok "C8 RSS bounded (<256 MiB)"; else bad "C8 RSS unbounded or unmeasured"; fi
-  /usr/bin/time -l "${TOOL[@]}" --in /tmp/decrypt-c8-F5.ipambku1 --out "$T/c8b.out" >"$T/out" 2>"$T/timed"
-  RSS2=$(grep 'maximum resident set size' "$T/timed" | awk '{print $1}')
+  _measure_rss "$T/timed" -- "${TOOL[@]}" --in /tmp/decrypt-c8-F5.ipambku1 --out "$T/c8b.out" >"$T/out"
+  RSS2=$(_extract_rss "$T/timed")
   echo "  NOTE  C8 IPAMBKU1 500MB: max RSS = ${RSS2:-?} bytes ($(( ${RSS2:-0}/1024/1024 )) MiB)"
 else echo "  NOTE  C8 skipped — run with --large after 'php tests/fixtures/decrypt-tool/generate-fixtures.php --large'"; fi
 

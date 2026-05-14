@@ -20,6 +20,7 @@ const CF_LABEL_SELECT = 'PW CF Select';
 
 let ctx: BrowserContext;
 let page: Page;
+let _lastSudoWarm = 0;
 
 test.beforeAll(async ({ browser }: { browser: Browser }) => {
   ctx = await newAuthContext(browser);
@@ -33,6 +34,7 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
   // TTL=300s) so the form-driven CRUD tests and the fetchPost cleanup helpers
   // below don't each land on the step-up prompt.
   await warmSudoGrant(page);
+  _lastSudoWarm = Date.now();
 
   // Clean up stale test custom field defs from previous failed runs
   await page.goto('custom_fields.php');
@@ -50,6 +52,15 @@ test.beforeAll(async ({ browser }: { browser: Browser }) => {
   }, [CF_KEY_TEXT, CF_KEY_NUMBER, CF_KEY_DATE, CF_KEY_BOOL, CF_KEY_SELECT]);
   for (const id of staleIds) {
     await fetchPost(page, appUrl('custom_fields.php'), { action: 'delete', id });
+  }
+});
+
+test.beforeEach(async () => {
+  // Re-warm sudo if more than 240 s (80% of the 300 s TTL) have elapsed since
+  // the last warm, so long test suites don't hit the step-up prompt mid-run.
+  if (Date.now() - _lastSudoWarm > 240_000) {
+    await warmSudoGrant(page);
+    _lastSudoWarm = Date.now();
   }
 });
 

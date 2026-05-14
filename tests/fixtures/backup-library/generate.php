@@ -40,6 +40,24 @@ declare(strict_types=1);
 require '/var/www/html/init.php';
 /** @var PDO $db */
 
+// ---------------------------------------------------------------------------
+// Write/copy helpers — fail fast on short or failed I/O.
+// ---------------------------------------------------------------------------
+function _must_write(string $path, string $contents): void {
+    $bytes = file_put_contents($path, $contents);
+    if ($bytes === false || $bytes !== strlen($contents)) {
+        fwrite(STDERR, "FATAL: short or failed write to $path\n");
+        exit(2);
+    }
+}
+
+function _must_copy(string $src, string $dst): void {
+    if (!@copy($src, $dst)) {
+        fwrite(STDERR, "FATAL: copy $src -> $dst failed\n");
+        exit(2);
+    }
+}
+
 // -- Credentials (deterministic) -------------------------------------------
 $appSecret   = str_repeat('cafef00d', 8);              // 64 hex chars
 $vaultKeyRaw = str_repeat("\xBE", 32);                  // 32 raw bytes
@@ -124,7 +142,7 @@ if ($driver === 'sqlite') {
     if (!$vacuumOk) {
         $live = '/var/www/html/data/ipam.sqlite';
         if (is_file($live)) {
-            copy($live, $l0);
+            _must_copy($live, $l0);
             $vacuumOk = is_file($l0) && filesize($l0) > 0;
         }
     }
@@ -148,7 +166,7 @@ echo "B-SQL  .sql.gz ...\n";
 $sqlGzTmp = ipam_backup_dump_to_tmp($db);  // returns a .sql.gz temp path
 $tmpFiles[] = $sqlGzTmp;
 $bsql = $A('.sql.gz');
-copy($sqlGzTmp, $bsql);
+_must_copy($sqlGzTmp, $bsql);
 $bsqlHead = match ($driver) {
     'mysql'  => 'gzip; `gunzip -c | head` -> "-- MySQL dump" / "-- MariaDB dump" (mysqldump banner)',
     'pgsql'  => 'gzip; `gunzip -c | head` -> "-- PostgreSQL database dump" (pg_dump banner)',
@@ -182,13 +200,13 @@ if ($head !== "\x1f\x8b") {
         exit(1);
     }
     $l1GzPath = $l1Tmp . '.gz';
-    file_put_contents($l1GzPath, $gz);
+    _must_write($l1GzPath, $gz);
     $tmpFiles[] = $l1GzPath;
 } else {
     echo "  (logical dump is already gzip -- good)\n";
 }
 $bl1 = $A('.ipambkl1.gz');
-copy($l1GzPath, $bl1);
+_must_copy($l1GzPath, $bl1);
 $records[] = [$bl1, 'B-L1 -- bare logical dump (`logical` type, unencrypted): gzip stream over IPAMBKL1 NDJSON',
     '(none)',
     'php Simple-PHP-IPAM/tools/decrypt-backup.php --in ' . basename($bl1) . ' --out copy.ipambkl1.gz --force   # bare: verbatim copy; `gunzip -c | head -c 9` -> "IPAMBKL1\\n"',
@@ -198,7 +216,7 @@ $records[] = [$bl1, 'B-L1 -- bare logical dump (`logical` type, unencrypted): gz
 echo "P1  .ipambkp1.enc ...\n";
 $p1 = $A('.ipambkp1.enc');
 $plain = (string) file_get_contents($sqlGzTmp);
-file_put_contents($p1, backup_encrypt($plain, $appSecret));
+_must_write($p1, backup_encrypt($plain, $appSecret));
 unset($plain);
 $records[] = [$p1, 'P1 -- IPAMBKP1 (`app_secret`, one-shot AES-256-GCM, whole file in memory). Wraps a B-SQL `.sql.gz`.',
     'app_secret = ' . $appSecret,
@@ -283,7 +301,7 @@ if ($driver === 'sqlite') {
     $m[] = '- No L0 `.sqlite` archive on this engine (see header). The `.sql.gz` here is a real `' . ($driver === 'mysql' ? 'mysqldump' : 'pg_dump') . '` dump piped through gzip, produced by `ipam_backup_dump_to_tmp()`; `gunzip -c | head` shows the engine\'s native SQL dump header.';
 }
 $m[] = '- Negative check: running a `*.enc` with the wrong `--app-secret` exits 3 (decrypt failure) and writes no partial output.';
-file_put_contents($archDir . '/MANIFEST.md', implode("\n", $m) . "\n");
+_must_write($archDir . '/MANIFEST.md', implode("\n", $m) . "\n");
 
 $cleanup();
 

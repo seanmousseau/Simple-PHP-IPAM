@@ -116,6 +116,14 @@ The backup is left in place after a successful upgrade. You can remove it manual
 
 ## Version-specific upgrade notes
 
+### v3.28.2
+
+- **Install-key lifecycle:** `app_secret` is now lazily auto-generated on first need (first TOTP enrollment, first restore staging). If you previously left `app_secret` blank, you'll see a one-time admin banner the first time the value is generated. Back up `config.php` immediately after. Auto-gen requires `config.php` to be writable; otherwise the page surfaces an actionable error.
+- **Install keys panel:** A new "Install keys" card at the top of **Settings** shows the live state of `app_secret`, `bootstrap_key`, and `backup_vault_key`.
+- **Bootstrap key announcement:** `bootstrap_key` auto-generation (already lazy since v3.26.0) now writes an audit-log row and surfaces the same banner. Existing installs whose `bootstrap_key` was auto-generated silently in an earlier release will NOT retroactively see the banner — it only fires on auto-gen events that happen on v3.28.2 or later.
+- **No schema changes.** No database migration is required.
+- **No config-format changes.** Existing `config.php` files keep working unchanged.
+
 ### v3.28.1
 
 DR + security overflow point release. No schema changes. No new pages. No operator action required for any of the security or passC fixes.
