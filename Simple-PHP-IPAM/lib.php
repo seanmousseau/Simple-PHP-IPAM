@@ -7649,9 +7649,24 @@ function ipam_install_key_banner_handle_dismiss(PDO $db, string $role): void
     }
     // Redirect to the same URL via GET so the dismiss is idempotent on
     // refresh (no stale POST in the navigation history) and the banner
-    // is gone on the next render.
-    $self = to_str($_SERVER['REQUEST_URI'] ?? '');
-    header('Location: ' . ($self !== '' ? $self : '/'));
+    // is gone on the next render. Reflecting raw REQUEST_URI into
+    // Location would accept a protocol-relative target like
+    // `//attacker.example/...` and redirect cross-origin; rebuild the
+    // target from a parsed path/query that's guaranteed same-origin.
+    $self  = to_str($_SERVER['REQUEST_URI'] ?? '/');
+    $parts = parse_url($self);
+    $path  = is_array($parts)
+        && is_string($parts['path'] ?? null)
+        && ($parts['path'][0] ?? '') === '/'
+        && !str_starts_with($parts['path'], '//')
+        ? $parts['path']
+        : '/';
+    $query = is_array($parts)
+        && is_string($parts['query'] ?? null)
+        && $parts['query'] !== ''
+        ? '?' . $parts['query']
+        : '';
+    header('Location: ' . $path . $query, true, 303);
     exit;
 }
 
