@@ -1519,7 +1519,17 @@ function _ipam_install_key_announce_write(PDO $db, string $key, string $value): 
     if (ipam_dialect()->driver_name() === 'mysql') {
         // 64-byte cap on MySQL lock names; hash to bound length.
         $lockName = 'ipam_setting:' . md5($key . ':__GLOBAL__');
-        $db->prepare("SELECT GET_LOCK(:n, 5)")->execute([':n' => $lockName]);
+        $lockStmt = $db->prepare("SELECT GET_LOCK(:n, 5)");
+        $lockStmt->execute([':n' => $lockName]);
+        // GET_LOCK returns 1 (acquired), 0 (timeout), or NULL (error). If
+        // we proceed without holding it, the duplicate-NULL-tenant race
+        // is back. Bail loudly — the caller's try/catch logs + swallows.
+        if ((string)$lockStmt->fetchColumn() !== '1') {
+            $lockName = null; // do not RELEASE_LOCK in finally
+            throw new RuntimeException(
+                '_ipam_install_key_announce_write: GET_LOCK timeout/error for ' . $key
+            );
+        }
     }
     try {
         $kc  = ipam_key_col();
@@ -1535,6 +1545,9 @@ function _ipam_install_key_announce_write(PDO $db, string $key, string $value): 
             $ins->execute([':k' => $key, ':v' => $value]);
         }
     } finally {
+        // $lockName === null on non-MySQL drivers (no lock taken); when
+        // it is set, we threw if GET_LOCK didn't return 1, so reaching
+        // this point means we hold the lock and must release it.
         if ($lockName !== null) {
             $db->prepare("SELECT RELEASE_LOCK(:n)")->execute([':n' => $lockName]);
         }
@@ -1588,6 +1601,10 @@ function ipam_install_key_announce_record(string $key): void
         return; // Truly no DB reachable — bootstrap is too early; nothing we can do.
     }
 
+    // The two writes are independent — an audit_log INSERT failure must
+    // NOT prevent the banner flag from being set, because the auto-gen
+    // path only runs once. If we lose the flag, the operator never sees
+    // the banner. Wrap each call in its own try/catch.
     try {
         audit(
             $conn,
@@ -1596,9 +1613,13 @@ function ipam_install_key_announce_record(string $key): void
             null,
             'Auto-generated on first use; review docs/internal/runbooks.md'
         );
+    } catch (\Throwable $e) {
+        error_log('[ipam_install_key_announce_record] audit ' . $key . ': ' . $e->getMessage());
+    }
+    try {
         _ipam_install_key_announce_write($conn, 'install_keys_announce.' . $key, '1');
     } catch (\Throwable $e) {
-        error_log('[ipam_install_key_announce_record] ' . $key . ': ' . $e->getMessage());
+        error_log('[ipam_install_key_announce_record] flag ' . $key . ': ' . $e->getMessage());
     }
 }
 
