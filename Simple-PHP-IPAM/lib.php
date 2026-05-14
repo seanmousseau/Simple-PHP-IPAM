@@ -1538,6 +1538,20 @@ function _ipam_install_key_announce_write(PDO $db, string $key, string $value): 
         );
         $upd->execute([':v' => $value, ':k' => $key]);
         if ($upd->rowCount() === 0) {
+            // MySQL's PDO rowCount() returns affected (changed) rows, not
+            // matched. An UPDATE that sets the same value the row already
+            // has reports 0 even though the row exists. Without this probe,
+            // every re-write of the same value would fall through to INSERT
+            // and accumulate duplicate NULL-tenant rows. The GET_LOCK above
+            // already serialises concurrent writers on MySQL, so this SELECT
+            // is race-free.
+            $probe = $db->prepare(
+                "SELECT 1 FROM settings WHERE tenant_id IS NULL AND {$kc} = :k"
+            );
+            $probe->execute([':k' => $key]);
+            if ($probe->fetchColumn() !== false) {
+                return;
+            }
             $ins = $db->prepare(
                 "INSERT INTO settings (tenant_id, {$kc}, value, type, updated_at) "
                 . "VALUES (NULL, :k, :v, 'bool', CURRENT_TIMESTAMP)"
