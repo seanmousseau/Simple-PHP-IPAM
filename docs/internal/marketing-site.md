@@ -6,7 +6,9 @@
 
 The marketing site is a WordPress install on OpenLiteSpeed at `root@192.168.80.23`. The theme repo is `simple-php-ipam-website` (separate from the IPAM repo) and is deployed via `rsync website/ → /usr/local/lsws/vhosts/simplephpipam.com/html/wp-content/themes/simplephpipam/`.
 
-Doc pages are served as WordPress pages at `/docs/<slug>/`. **The page content stored in WP is irrelevant** — `page.php` fetches the markdown live from `https://raw.githubusercontent.com/seanmousseau/Simple-PHP-IPAM/main/docs/<slug>.md` and renders it client-side via marked.js. The WP page only needs to **exist** for the URL to resolve.
+Doc pages are served as WordPress pages at `/docs/<slug>/`. As of the v3.28.2 SSR rollout, `page.php` server-side renders the markdown via `league/commonmark` (composer dep, vendor/ committed) before the response goes out — crawlers and social-card unfurls see real content, not an empty shell. The WP page still only needs to **exist** for the URL to resolve; its `post_content` is ignored by the SSR path. Markdown source is fetched live from `https://raw.githubusercontent.com/seanmousseau/Simple-PHP-IPAM/main/docs/<slug>.md` and cached in a WP transient (`sipam_doc_<slug>`, 24h TTL safety net, webhook-invalidated on every docs/*.md push to main). If the fetch/render fails the page falls back to the legacy JS-loader path.
+
+Design + rationale: [`marketing-site-ssr-decision.md`](marketing-site-ssr-decision.md).
 
 ## Per-release version bump
 
@@ -43,7 +45,11 @@ cd website/
 git add -A && git commit -m "chore(release): <message>"
 git push origin main
 cd ..
+# vendor/ is committed in the website repo (per ADR) so a single rsync ships
+# everything the SSR path needs. Include vendor/** explicitly because some
+# rsync wrappers/.cvsignore patterns would otherwise skip it.
 rsync -az --delete \
+  --include='vendor/' --include='vendor/**' \
   website/ root@192.168.80.23:/usr/local/lsws/vhosts/simplephpipam.com/html/wp-content/themes/simplephpipam/
 ssh root@192.168.80.23 "chown -R nobody:nogroup /usr/local/lsws/vhosts/simplephpipam.com/html/wp-content/themes/simplephpipam/"
 ```
@@ -66,7 +72,11 @@ ssh root@192.168.80.23 "
   rm -rf /usr/local/lsws/vhosts/simplephpipam.com/cachedata/*
   # 3. Flush WP rewrite rules (required after creating new pages — without this /docs/<slug>/ returns 404)
   wp --allow-root rewrite flush
-  # 4. Purge LSCache + QUIC.cloud edge in one shot (QUIC.cloud caches pre-creation 404s)
+  # 4. Flush WP object cache (the LiteSpeed Cache plugin's object-cache.php dropin
+  #    caches the SSR sipam_doc_<slug> transients independently of wp_options;
+  #    \`wp transient delete\` alone does NOT clear them).
+  wp --allow-root cache flush
+  # 5. Purge LSCache + QUIC.cloud edge in one shot (QUIC.cloud caches pre-creation 404s)
   wp --allow-root litespeed-purge all
 "
 ```
@@ -79,6 +89,21 @@ curl -sk -o /dev/null -w '%{http_code}\n' https://simplephpipam.com/docs/<slug>/
 
 In a browser, hard-refresh is **not** enough — browser caching on this site is aggressive. Use **DevTools → Application → Storage → Clear site data** to bypass it.
 
+## Webhook cache invalidation (post-SSR)
+
+Every push to `main` that touches `docs/*.md` triggers `.github/workflows/marketing-cache-bust.yml` in the IPAM repo. The workflow POSTs the changed slugs to `https://simplephpipam.com/wp-json/sipam/v1/cache-bust` with an `X-Webhook-Secret` header validated via `hash_equals` against the WP option `sipam_marketing_webhook_secret`.
+
+Set up (one-time):
+
+```bash
+# Generate a random secret and store it on both ends.
+secret=$(openssl rand -hex 32)
+ssh root@192.168.80.23 "wp --path=/usr/local/lsws/vhosts/simplephpipam.com/html --allow-root option update sipam_marketing_webhook_secret '$secret'"
+gh -R seanmousseau/Simple-PHP-IPAM secret set MARKETING_WEBHOOK_SECRET --body "$secret"
+```
+
+If the secret is unset the workflow emits a `::warning::` and exits 0 (no-op) so doc PRs don't fail before rollout. The 24h transient TTL is the safety net for missed webhooks.
+
 ## LSCache JS bundling — useful to know
 
 LSCache combines all inline `<script>` blocks into a single external `.js` bundle (e.g. `/wp-content/litespeed/js/<hash>.js`). The doc loader's `rawUrl` is in that bundle, not the HTML, so `curl … | grep raw.github` against the page HTML will return nothing. To verify the bundle for a doc page:
@@ -90,8 +115,9 @@ curl -k -s "https://simplephpipam.com${jsurl}" | grep -oE "raw\.githubuserconten
 
 ## Pitfalls (learned the hard way)
 
-- **Jekyll frontmatter leaks visible.** Never include `---\ntitle: …\n---` in new docs. marked.js does not strip it.
-- **OPcache + cachedata + rewrite rules + LSCache** are four distinct cache layers. `wp litespeed-purge all` alone is not enough after creating a new page; you also need rewrite-flush + cachedata wipe + opcache reset.
+- **Jekyll frontmatter leaks visible.** Never include `---\ntitle: …\n---` in new docs. The SSR renderer and the JS fallback both leave it as visible text at the top of the page.
+- **OPcache + cachedata + LSCache object-cache + rewrite rules + QUIC.cloud edge** are FIVE distinct cache layers. `wp litespeed-purge all` alone is not enough after a renderer change; you also need OPcache reset, cachedata wipe, **`wp cache flush` for the SSR transient via the LSCache object-cache dropin**, and rewrite-flush (only when creating new pages). Discovered the hard way during the SSR rollout — staging served stale SSR HTML for hours after a docs-ssr.php edit because the LSCache object-cache held the old transient.
 - **QUIC.cloud caches 404s.** A page that returned 404 before creation will continue to 404 at the edge until `wp litespeed-purge all` runs (which also flushes the QUIC.cloud edge).
-- **`rsync` from working tree silently skips `vendor/`** (gitignored). Not relevant for the website theme (no vendor dir), but worth remembering — the theme is the one place we *do* deploy via rsync.
+- **`rsync` working-tree includes `vendor/`** (per ADR the theme's vendor/ is committed, not gitignored). Make sure deploy rsyncs include `--include='vendor/' --include='vendor/**'`.
 - **`page-docs.php` doc cards** are separate from `page.php` `$docs` sidebar array and `header.php` dropdown. All three must be updated when adding a new doc.
+- **SSR renderer can be disabled** via `define('SIPAM_DOCS_SSR_ENABLED', false);` in `wp-config.php`. Use as kill switch if a doc edit ever produces broken output that can't be diagnosed quickly — `page.php` falls back to the legacy JS-loader path and the site stays up.

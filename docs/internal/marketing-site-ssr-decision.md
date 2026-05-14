@@ -1,8 +1,8 @@
 # Marketing site — server-side docs rendering decision (ADR)
 
-> **Status:** Proposed (not implemented). Reserved for a focused implementation session, not a side-quest during release work.
+> **Status:** Implemented on `feature/marketing-ssr` in the website repo (commits `3da02f5`, `8c306f0`); pending PR review + deploy to live theme. Staged on `simplephpipam-staging` theme behind cookie `sipam_theme=staging`.
 >
-> **Date:** 2026-05-14.
+> **Date:** 2026-05-14 (ADR + same-day implementation).
 >
 > **Scope:** `simplephpipam.com` (the WordPress marketing site). Does **not** affect the IPAM app itself.
 >
@@ -189,32 +189,19 @@ add_action('rest_api_init', function () {
 
 ---
 
-## Open questions (resolve at implementation start)
+## Open questions — resolved at implementation
 
-These don't need to be resolved tonight, but the implementer should pick a stance on each before opening the PR:
+1. **Commit `vendor/` or run `composer install` on deploy?** → **Commit `vendor/`.** Final repo size delta ~3-5 MB. Deploy stays single rsync (no PHP/composer step on the host — important because system `php` on deploy host lacks mbstring, only LSPHP does; running `composer install` against system PHP would risk dep-resolution drift). Sean's explicit choice over the ADR lean.
+2. **Safety-net TTL?** → **24h**, hard-coded in `SIPAM_DOC_CACHE_TTL` for now. No WP option (YAGNI — flip the constant if it ever needs to change).
+3. **Highlight CSS?** → **`atom-one-dark.css`** as planned. Fetched from cdnjs and committed at `assets/highlight-atom-one-dark.css`.
+4. **Server-side TOC?** → **Shipped in this PR.** Right-rail aside, sticky, collapses under 1100px. Built from h2/h3 with nested sublists. Heading IDs come from kramdown `{: #anchor }` when present (via `AttributesExtension`), slugified text otherwise.
+5. **GitHub raw rate limits?** → **No auth.** Webhook drives all invalidation; 60/h unauth quota has huge headroom.
 
-1. **Commit `vendor/` or run `composer install` on deploy?**
-   - Commit: deploy is one `rsync` step, no PHP needed on the deploy host. Adds ~3-5 MB to the repo.
-   - Build: smaller repo, but adds a `composer install` step to the deploy procedure and requires PHP + Composer on the deploy host (already true — the host runs WordPress).
-   - **Lean:** build (run `composer install --no-dev` on the host). The deploy host has PHP 8.4; the dep tree is small; runtime composer install is the standard convention.
+## Surprises that made it into the procedure doc
 
-2. **What's the TTL on the safety-net purge?**
-   - Bare-bones answer: 24h. A doc edit that misses the webhook is at most one day stale.
-   - **Lean:** 24h, configurable via WP option.
-
-3. **Inline CSS for highlight.php or shared stylesheet?**
-   - `highlight.php` doesn't ship CSS — it emits `<span class="hljs-…">` markup that needs styling from a `highlight.js` theme stylesheet.
-   - The theme currently uses (presumably) Prism's CSS. We'd swap to a highlight.js theme stylesheet. Choosing one that matches the existing visual style is a 30-minute task.
-   - **Lean:** use the `atom-one-dark.css` highlight.js theme (closest to the current site dark aesthetic).
-
-4. **Do we generate a TOC server-side or keep that JS-side?**
-   - Currently I believe a JS post-processor builds the floating TOC. Server-side generation is straightforward with CommonMark's `HeadingPermalinkExtension` + a custom walker.
-   - **Lean:** ship SSR for content first, TOC port is a follow-up PR.
-
-5. **`raw.githubusercontent.com` rate limits?**
-   - Unauthenticated fetches are 60/hour per IP. The webhook flow guarantees we only fetch on cache miss → only on `docs/*.md` push, so 60/hour is plenty.
-   - If we ever want to refresh independently of pushes (e.g. cron warm-up), authenticated fetches go to 5000/hour. Not needed for v1.
-   - **Lean:** no auth; revisit if we ever see 429s.
+- **`AttributesExtension` is required to consume kramdown `{: #anchor }` lines** — without it those lines render as literal `<p>` paragraphs under the heading. Slugifier was masking the regression by coincidentally producing identical ids.
+- **LiteSpeed Cache's `object-cache.php` dropin caches WP transients independently of `wp_options`.** After a renderer change, `wp transient delete` alone is insufficient. Full purge sequence (now documented in `marketing-site.md`): OPcache reset + cachedata wipe + `wp cache flush` (object cache) + `wp litespeed-purge all` (page cache + QUIC.cloud edge).
+- **System `php` on `192.168.80.23` lacks `ext-mbstring`; LSPHP 8.4 has it.** CommonMark's `RegexHelper::matchAt()` calls `mb_substr` / `mb_strcut`, so any wp-cli-driven render returns null. Keep renders in the web request path; if you ever script a warmup, target it through LSPHP not system PHP.
 
 ---
 
