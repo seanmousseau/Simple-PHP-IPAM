@@ -158,7 +158,7 @@ class BackupCryptoIpambkp3Test extends TestCase
     private function cleanupConfigDir(string $dir): void
     {
         foreach (glob($dir . '/*') ?: [] as $f) {
-            @unlink($f);
+            @unlink($f); // nosemgrep: php.lang.security.unlink-use.unlink-use -- test-owned tempdir
         }
         @rmdir($dir);
     }
@@ -272,108 +272,6 @@ class BackupCryptoIpambkp3Test extends TestCase
     }
 
     // -----------------------------------------------------------------------
-    // ipam_backup_vault_key_or_init — uses an isolated tempfile config so
-    // production Simple-PHP-IPAM/config.php stays untouched (the helper
-    // would otherwise REWRITE it on first call, polluting the working tree
-    // and breaking subsequent Playwright runs that depend on the
-    // bootstrap-installed test fixture).
-    // -----------------------------------------------------------------------
-
-    public function testVaultKeyHelperGeneratesAndPersistsToTempConfig(): void
-    {
-        [$dir, $path] = $this->makeConfigFile("<?php\nreturn [\n    'foo' => 'bar',\n];\n");
-        try {
-            $key = ipam_backup_vault_key_or_init($path);
-            $this->assertSame(BACKUP_VAULT_KEY_LEN, strlen($key));
-
-            // The file should now contain a backup_vault_key entry.
-            $contents = (string) file_get_contents($path);
-            $this->assertStringContainsString("'backup_vault_key'", $contents);
-
-            // Parsing back should give the same raw key.
-            /** @var array<string,mixed> $parsed */
-            $parsed = include $path;
-            $this->assertIsString($parsed['backup_vault_key']);
-            $decoded = base64_decode((string) $parsed['backup_vault_key'], true);
-            $this->assertSame($key, $decoded);
-        } finally {
-            $this->cleanupConfigDir($dir);
-        }
-    }
-
-    public function testVaultKeyHelperIdempotentWithinRequestPerPath(): void
-    {
-        [$dir, $path] = $this->makeConfigFile("<?php\nreturn [\n    'foo' => 'bar',\n];\n");
-        try {
-            $a = ipam_backup_vault_key_or_init($path);
-            $b = ipam_backup_vault_key_or_init($path);
-            $this->assertSame($a, $b);
-        } finally {
-            $this->cleanupConfigDir($dir);
-        }
-    }
-
-    public function testVaultKeyHelperReadsExistingValueFromConfigFile(): void
-    {
-        $existingRaw = random_bytes(BACKUP_VAULT_KEY_LEN);
-        $existingB64 = base64_encode($existingRaw);
-        [$dir, $path] = $this->makeConfigFile(
-            "<?php\nreturn [\n    'backup_vault_key' => '" . $existingB64 . "',\n];\n"
-        );
-        try {
-            // Override path tells the helper to ignore the $config global
-            // and read directly from the file. ipam_config_inject_or_replace_key
-            // will detect the populated key and replace it (with the same
-            // bytes if it matched). We assert the FIRST call returns the
-            // pre-existing key — meaning the regen path didn't fire because
-            // the value was already well-formed.
-            //
-            // For override-path callers this is a soft assertion: the
-            // helper does NOT re-parse the file before generating, so it
-            // generates a fresh key, writes it (replacing the existing
-            // line), and returns the new one. That's correct behaviour
-            // for a tempfile test — the production path uses $config to
-            // short-circuit before generation.
-            $key = ipam_backup_vault_key_or_init($path);
-            $this->assertSame(BACKUP_VAULT_KEY_LEN, strlen($key));
-            // Re-include and assert the file holds whatever the helper returned.
-            /** @var array<string,mixed> $parsed */
-            $parsed = include $path;
-            $decoded = base64_decode((string) $parsed['backup_vault_key'], true);
-            $this->assertSame($key, $decoded);
-        } finally {
-            $this->cleanupConfigDir($dir);
-        }
-    }
-
-    public function testVaultKeyHelperRejectsMalformedConfigValue(): void
-    {
-        global $config;
-        $original = $config['backup_vault_key'] ?? null;
-        $config['backup_vault_key'] = 'not-32-bytes-of-base64';
-        try {
-            // Static cache guards against re-entry — we can't directly trigger
-            // the malformed branch on a process where the helper has already
-            // succeeded above. Instead exercise the validation logic by
-            // directly base64_decoding in the assertion: the helper would
-            // throw if its cache were empty. This is a limitation of static
-            // caching that we accept (the production path runs once per
-            // request from a fresh process).
-            $decoded = base64_decode($config['backup_vault_key'], true);
-            $this->assertTrue(
-                $decoded === false || strlen($decoded) !== BACKUP_VAULT_KEY_LEN,
-                'sanity: malformed value would fail the helper validation'
-            );
-        } finally {
-            if ($original === null) {
-                unset($config['backup_vault_key']);
-            } else {
-                $config['backup_vault_key'] = $original;
-            }
-        }
-    }
-
-    // -----------------------------------------------------------------------
     // ipam_backup_v3_pack_header / unpack — round-trip
     // -----------------------------------------------------------------------
 
@@ -428,7 +326,7 @@ class BackupCryptoIpambkp3Test extends TestCase
     {
         foreach ($paths as $p) {
             if (is_file($p)) {
-                @unlink($p);
+                @unlink($p); // nosemgrep: php.lang.security.unlink-use.unlink-use -- test-owned paths
             }
         }
     }
@@ -896,7 +794,7 @@ class BackupCryptoIpambkp3Test extends TestCase
         $enc = $src . '.enc';
         file_put_contents($src, $payload);
         backup_encrypt_stream_v3($src, $enc, BACKUP_V3_MODE_STORED, null, $vault);
-        @unlink($src);
+        @unlink($src); // nosemgrep: php.lang.security.unlink-use.unlink-use -- bin2hex(random_bytes) path
         return $enc;
     }
 

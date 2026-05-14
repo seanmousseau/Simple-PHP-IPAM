@@ -7,11 +7,11 @@ use PHPUnit\Framework\TestCase;
 /**
  * Bug T (Pass A 2026-05-08, v3.27.1) — every documented sudo-grant
  * invalidation event must call ipam_sudo_invalidate() at its handler
- * site. step-up-auth.md "Sudo grant invalidation" lists 11 events; the
+ * site. auth-model.md "Step-up auth" "Sudo grant invalidation" lists 11 events; the
  * Pass A audit found 6 had no caller. v3.27.1 wires the 3 self-action
  * sites (TOTP enroll, Email OTP enroll, passkey add). The 3 cross-user
  * sites (users.php role downgrade, oidc_sub link/unlink) are documented
- * limitations — see in-code comments and step-up-auth.md update.
+ * limitations — see in-code comments and auth-model.md "Step-up auth" update.
  *
  * Source-level contract test. Asserts each handler file CONTAINS a
  * call to ipam_sudo_invalidate(). Locks the wiring against future
@@ -47,7 +47,7 @@ final class SudoInvalidateWiringTest extends TestCase
         $this->assertEmpty(
             $missing,
             'Every self-action handler that mutates auth state must call '
-            . 'ipam_sudo_invalidate() per step-up-auth.md contract. Missing in: '
+            . 'ipam_sudo_invalidate() per auth-model.md "Step-up auth" contract. Missing in: '
             . implode(', ', $missing)
         );
     }

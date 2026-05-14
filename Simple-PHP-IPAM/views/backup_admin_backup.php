@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 /**
  * Backup tab — manual run trigger. Schedule management lives in the
- * Destinations tab (per backup_overhaul.md §2.1 / §2.3 — the schedule editor
+ * Destinations tab (per archive/backup_overhaul.md §2.1 / §2.3 — the schedule editor
  * is colocated with the destination row that owns it).
  *
  * The Backup tab shows a destination selector + "Run backup now" button. The

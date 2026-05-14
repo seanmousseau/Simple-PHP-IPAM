@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.28.1] - 2026-05-14
+
+DR + security overflow point release. Nine surgical fixes carried over from the v3.28.0 milestone close-out — webhooks audit hygiene, backup upload file mode, `restore.php` engine-native semantics, scanner audit + clamp, DHCP generator parity, plus a dead-code removal and a regression-pin test. No schema changes. No new pages. No operator action required.
+
+### Security
+
+- Webhook test-fire audit details now record host only (no full URL with query string / fragment / XSS-shaped path). New helper `ipam_webhook_test_fire_audit_detail()` truncates host at 100 chars; falls back to `(invalid)` on malformed input. (#1152, S-001)
+- Backup restore upload staging files now `chmod 0640` after `move_uploaded_file()` so other webserver users on shared hosts can't read staged payloads. New helper `ipam_restore_stage_uploaded_file()` performs move-then-chmod and unlinks on failure. (#1154, S-004)
+- Regression test pins that `ipam_webhook_retry_pending()` does not decrypt secrets — decryption belongs only in `ipam_webhook_deliver()`. Source-level test prevents a future refactor from quietly reintroducing the original Critical-shape concern (batch-decrypting at retry time). (#1155, S-007)
+
+### Fixed
+
+- API sync-scan (`api_scan_run`) rejects IPv6 subnets with HTTP 400 instead of falling into the IPv4-only `ipam_scan_subnet()` scanner. The SELECT now includes `ip_version` and guards before the `/28` prefix cap (an IPv6 `/64` would otherwise satisfy `prefix >= 28`). (#1160, F-S2-01)
+- Scheduled scans run from `cron.php` now emit a `scan.run` audit row per scanned subnet, mirroring `api_scan_run` and `scan_run.php` with a `(cron)` tag to disambiguate the surface in the audit log UI. Previously scheduled scans were invisible in the audit trail. (#1161, F-S2-04)
+- `ipam_mark_stale_addresses` threshold defensively clamped to `[1, 50]` so a mis-edited tenant setting (0, negative, or huge) can't produce nonsense `LIMIT` bounds in the recent-misses subquery. (#1162, F-S2-05)
+- Kea JSON and ISC dhcpd reservation hostnames now agree on what's emitted for any given raw input. Both renderers route through new `ipam_dhcp_normalize_hostname()`: single-label, RFC 1123 letter-digit-hyphen, leading alpha (after trimming leading digits/hyphens), max 63 chars. Previously the dhcpd path sanitised while the Kea path passed the raw value through unchanged. (#1163, F-S6-01)
+- `restore.php`'s mysql/pgsql branches now parse the PDO-style `db_dsn` connection string (host/port/dbname). Legacy installs that set discrete `db_host`/`db_port`/`db_name` keys continue to work. A `db_dsn` containing `unix_socket=...` aborts with a clear error (restore.php cannot pipe `mysql`/`psql` over Unix-domain sockets). (#1177)
+- Engine-native restore now wipes target schema before replay — mysql drops all `BASE TABLE`s with `FOREIGN_KEY_CHECKS = 0/1` bracketed in try/finally; pgsql does `DROP SCHEMA public CASCADE; CREATE SCHEMA public;`. Both pre-steps run before the credential tempfile is written so a wipe failure can't leak a 0600 password file, and both skip under `--dry-run`. Previously a `database`-type dump restored onto a populated install **duplicated rows** for tables present in both. **Postgres extension caveat:** `DROP SCHEMA public CASCADE` removes extensions installed into `public` (`pgcrypto`, `pg_trgm`, etc.); see `docs/upgrading.md § v3.28.1` for the dump-with-extensions guidance. (#1177)
+- `restore.php` invokes `psql` with `-v ON_ERROR_STOP=1` so a mid-restore error aborts cleanly instead of ploughing through subsequent statements onto a partially-populated DB. mysql client default is already fail-on-error (no `-f`/`--force` passed); confirmed inline. (#1177)
+
+### Removed
+
+- Dead helper `ipam_backup_vault_key_or_init()` (139 lines + 4 unit tests in `BackupCryptoIpambkp3Test.php`) plus dangling comment refs in `lib.php`, `lib/vault.php`, and `migrations.php`. No production caller since v3.28.0/#1164 routed encrypted-backup preflight through the read-only `ipam_backup_vault_key_get_raw()`. **Kept:** `ipam_config_inject_or_replace_key()` — still used by `ipam_bootstrap_key()` in `lib/vault.php` to seed the bootstrap key on first use. (#1176)
+
 ## [3.28.0] - 2026-05-13
 
 DR + security stabilization release. Concurrency hardening on two racy state writes (a TOCTOU in the per-IP rate-limit audit dampener and a lost-update on the backup-notification cooldown blobs), the surgical security fixes carried over from the v3.27.x verification passes, the step-up coverage sweep, and the start of the legacy backup-encryption retirement. One schema migration — `3.28.0-state-tables` — adds two state tables, `rate_limit_dampener` and `backup_state`.
@@ -1782,6 +1806,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.28.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.28.0...v3.28.1
 [3.28.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.9...v3.28.0
 [3.27.9]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.8...v3.27.9
 [3.27.8]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.27.7...v3.27.8

@@ -21,6 +21,7 @@ if (PHP_SAPI !== 'cli') {
 }
 
 require __DIR__ . '/init.php';
+require_once __DIR__ . '/lib/restore_dsn.php';
 /** @var \PDO $db */
 /** @var IpamConfig $config */
 
@@ -161,11 +162,21 @@ if ($driver === 'sqlite') {
         "SQLite restore from: " . basename($fromAbs) . " sha256={$sha256}");
 
 } elseif ($driver === 'mysql') {
-    $host   = to_str($gConf['db_host'] ?? '127.0.0.1');
-    $port   = to_str($gConf['db_port'] ?? '3306');
-    $dbName = to_str($gConf['db_name'] ?? 'ipam');
-    $user   = to_str($gConf['db_user'] ?? 'root');
-    $pass   = to_str($gConf['db_pass'] ?? '');
+    // #1177: honour db_dsn (PDO-style host/port/dbname) with fallback to
+    // discrete db_host/db_port/db_name keys for legacy installs. Pass the
+    // engine hint so port/user defaults are correct when db_dsn is absent.
+    $conn   = ipam_restore_resolve_db_conn($gConf, 'mysql');
+    if ($conn['unix_socket'] !== '') {
+        restore_die(
+            'restore.php does not support a unix_socket DSN for mysql restore. ' .
+            'Set db_host/db_port to a TCP endpoint, or run restore.php from a host with TCP access to the DB.'
+        );
+    }
+    $host   = $conn['host'];
+    $port   = $conn['port'];
+    $dbName = $conn['dbname'];
+    $user   = $conn['user'];
+    $pass   = $conn['pass'];
 
     restore_info("Target      : {$user}@{$host}:{$port}/{$dbName}");
 
@@ -175,6 +186,58 @@ if ($driver === 'sqlite') {
         exit(0);
     }
 
+    // Wipe target schema before piping the dump in. Engine-native restore
+    // onto a populated install otherwise duplicates rows for tables present
+    // in both the dump and the live DB. Runs BEFORE the cred tempfile is
+    // written so a wipe failure can't leak a 0600 password file. (#1177)
+    //
+    // Filter to BASE TABLE so views (and MariaDB sequences) are not fed to
+    // DROP TABLE — that would throw and abort the loop with FK checks
+    // disabled. Views in the IPAM DB are uncommon but legal.
+    //
+    // FK checks restoration goes through a finally so a mid-loop drop
+    // failure does not leave the session FK-disabled for the subsequent
+    // apply_migrations($db) call.
+    $droppedCount = 0;
+    $dropErr = null;
+    try {
+        $db->exec('SET FOREIGN_KEY_CHECKS = 0');
+        try {
+            $tblStmt = $db->query(
+                "SELECT TABLE_NAME FROM information_schema.TABLES " .
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'"
+            );
+            if ($tblStmt !== false) {
+                /** @var list<array<string,mixed>> $rows */
+                $rows = $tblStmt->fetchAll();
+                foreach ($rows as $row) {
+                    $rawTbl = $row['TABLE_NAME'] ?? $row['table_name'] ?? '';
+                    $tbl    = is_string($rawTbl) ? $rawTbl : '';
+                    if ($tbl !== '') {
+                        // MySQL identifier quoting uses backticks; double internal backticks.
+                        $db->exec('DROP TABLE IF EXISTS `' . str_replace('`', '``', $tbl) . '`');
+                        $droppedCount++;
+                    }
+                }
+            }
+        } finally {
+            try {
+                $db->exec('SET FOREIGN_KEY_CHECKS = 1');
+            } catch (Throwable) {
+                // Best-effort restoration. If we can't re-enable, the session
+                // is broken anyway and the subsequent restore/migration step
+                // will surface its own actionable error.
+            }
+        }
+        restore_info("Dropped {$droppedCount} existing tables before restore.");
+    } catch (Throwable $e) {
+        $dropErr = $e;
+    }
+    if ($dropErr !== null) {
+        restore_die('Failed to drop existing tables before restore: ' . $dropErr->getMessage());
+    }
+
+    // mysql client aborts on error by default (no -f/--force passed) — fail-fast is already in effect.
     // Resolve setting before tempnam so an ipam_setting() throw doesn't
     // leak a 0600 password file (PR #1080 CR round 2).
     $verifySsl = (bool) ipam_setting('backup.dump_ssl_verify');
@@ -275,18 +338,40 @@ if ($driver === 'sqlite') {
         "MySQL restore from: " . basename($fromAbs) . " sha256={$sha256} ({$check['verdict']})");
 
 } elseif ($driver === 'pgsql') {
-    $host   = to_str($gConf['db_host'] ?? '127.0.0.1');
-    $port   = to_str($gConf['db_port'] ?? '5432');
-    $dbName = to_str($gConf['db_name'] ?? 'ipam');
-    $user   = to_str($gConf['db_user'] ?? 'postgres');
-    $pass   = to_str($gConf['db_pass'] ?? '');
+    // #1177: honour db_dsn (PDO-style host/port/dbname) with fallback to
+    // discrete db_host/db_port/db_name keys for legacy installs. Pass the
+    // engine hint so port/user defaults are correct when db_dsn is absent.
+    $conn   = ipam_restore_resolve_db_conn($gConf, 'pgsql');
+    if ($conn['unix_socket'] !== '') {
+        restore_die(
+            'restore.php does not support a unix_socket DSN for pgsql restore. ' .
+            'Set db_host/db_port to a TCP endpoint, or run restore.php from a host with TCP access to the DB.'
+        );
+    }
+    $host   = $conn['host'];
+    $port   = $conn['port'];
+    $dbName = $conn['dbname'];
+    $user   = $conn['user'];
+    $pass   = $conn['pass'];
 
     restore_info("Target      : {$user}@{$host}:{$port}/{$dbName}");
 
     if ($dryRun) {
-        restore_info("[DRY-RUN] Would run: psql -h {$host} -p {$port} -U {$user} {$dbName} < {$fromAbs}");
+        restore_info("[DRY-RUN] Would run: psql -v ON_ERROR_STOP=1 -h {$host} -p {$port} -U {$user} {$dbName} < {$fromAbs}");
         restore_info("Dry-run complete. No changes written.");
         exit(0);
+    }
+
+    // Wipe the public schema before piping the dump in. Engine-native restore
+    // onto a populated install otherwise duplicates rows for tables present
+    // in both the dump and the live DB. Runs BEFORE the cred tempfile is
+    // written so a wipe failure can't leak a 0600 password file. (#1177)
+    try {
+        $db->exec('DROP SCHEMA public CASCADE');
+        $db->exec('CREATE SCHEMA public');
+        restore_info('Dropped public schema before restore.');
+    } catch (Throwable $dropErr) {
+        restore_die('Failed to wipe public schema before restore: ' . $dropErr->getMessage());
     }
 
     // Route the password through a 0600 PGPASSFILE so it never appears in
@@ -294,7 +379,9 @@ if ($driver === 'sqlite') {
     // carrying a *path*, not the secret — libpq's documented pattern for
     // non-interactive scripts. The file is unlinked in the finally block below.
     $credFile = ipam_backup_write_pgpass_file($pass);
-    $cmd = ['psql', '-h', $host, '-p', $port, '-U', $user, $dbName];
+    // -v ON_ERROR_STOP=1: abort psql on first SQL error rather than ploughing
+    // through subsequent statements onto a partially-populated DB. (#1177)
+    $cmd = ['psql', '-v', 'ON_ERROR_STOP=1', '-h', $host, '-p', $port, '-U', $user, $dbName];
     $env = getenv() ?: [];
     // Strip any inherited DB password env vars before merging in PGPASSFILE
     // so the parent shell can't leak a secret into the child even though

@@ -2711,7 +2711,7 @@ function ipam_migrations(): array
             }
         },
 
-        // v3.21.0 #799 (§A1 of backup_overhaul.md): collapse the legacy
+        // v3.21.0 #799 (§A1 of archive/backup_overhaul.md): collapse the legacy
         // backup_history (v3.7.0 CLI runner) and backup_log (v3.17.0
         // destination runner) tables into a single backup_runs table.
         //
@@ -3612,8 +3612,8 @@ function ipam_migrations(): array
             // generate-and-write config.php on its first call; that is
             // intentional and matches the app_secret pattern. If the
             // config file is not writable we surface the error so the
-            // operator sees the same actionable remediation as
-            // ipam_backup_vault_key_or_init() produces.
+            // operator sees an actionable "config.php not writable"
+            // error rather than a silent regenerate-on-every-request loop.
             if (!function_exists('ipam_bootstrap_key') || !function_exists('ipam_vault_wrap')) {
                 // lib/vault.php not loaded yet — skip the migration step
                 // and let it run on a subsequent boot. This branch is

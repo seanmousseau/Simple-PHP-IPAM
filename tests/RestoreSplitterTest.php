@@ -7,7 +7,7 @@ use PHPUnit\Framework\TestCase;
  * T13 — property tests for ipam_restore_split_sql_statements().
  *
  * Filed against #810 / acceptance gate for #806 (B-P0-4 in
- * docs/internal/backup_overhaul.md §B). The pre-v3.21.0 splitter is
+ * docs/internal/archive/backup_overhaul.md §B). The pre-v3.21.0 splitter is
  * line-oriented + regex-based and silently mis-splits the failure modes
  * encoded below the first time an admin uploads a non-trivial dump.
  *

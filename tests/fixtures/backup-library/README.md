@@ -8,7 +8,7 @@ a populated database on each engine) rather than toy fixtures.
 
 The full format catalogue (history, magics, what wraps what, credentials) is in
 **`docs/internal/backup-formats-matrix.md`**. The `tools/decrypt-backup.php`
-conformance plan is in **`docs/internal/decrypt-tool-test-plan.md`**.
+conformance plan is in **`docs/internal/archive/decrypt-tool-test-plan.md`**.
 
 ## What's here
 

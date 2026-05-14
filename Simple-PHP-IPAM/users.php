@@ -144,7 +144,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                    ->execute([':r' => $role, ':id' => $id]);
                 audit($db, 'user.set_role', 'user', $id, "role=$role");
                 // Bug T (Pass A 2026-05-08, v3.27.1) — KNOWN LIMITATION:
-                // step-up-auth.md lists role-downgrade as a sudo-grant
+                // auth-model.md "Step-up auth" lists role-downgrade as a sudo-grant
                 // invalidation event. We cannot fully honour that contract
                 // here: ipam_sudo_invalidate() clears $_SESSION on the
                 // CURRENT request only, but the demoted user is necessarily

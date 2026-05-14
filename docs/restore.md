@@ -2,7 +2,7 @@
 
 > **v3.21.0** moves the restore wizard into the unified backup admin surface at **Admin → Backup & Restore → Restore** (`backup_admin.php?tab=restore`). The legacy `restore_web.php` URL still resolves but new bookmarks should use the unified surface. The CLI restore (`restore.php`) is unchanged.
 >
-> **What ships in v3.21.x:** restoring **Database** backups (engine-native dumps produced by the same engine) — through the web wizard for SQLite and through the CLI (`restore.php` + engine-native tools) for MySQL/PostgreSQL. **Logical-backup restore ships in v3.22.0** ([backup_overhaul §C](https://github.com/seanmousseau/Simple-PHP-IPAM/blob/main/docs/internal/backup_overhaul.md)). The Logical-backup paths described below ("Logical backup — restore through `restore.php`") document the v3.22.0 end-state; in v3.21.x there are no Logical backup files to restore because the [backup runner](backups.md) only produces Database backups.
+> **What ships in v3.21.x:** restoring **Database** backups (engine-native dumps produced by the same engine) — through the web wizard for SQLite and through the CLI (`restore.php` + engine-native tools) for MySQL/PostgreSQL. **Logical-backup restore ships in v3.22.0** ([backup_overhaul §C](https://github.com/seanmousseau/Simple-PHP-IPAM/blob/main/docs/internal/archive/backup_overhaul.md)). The Logical-backup paths described below ("Logical backup — restore through `restore.php`") document the v3.22.0 end-state; in v3.21.x there are no Logical backup files to restore because the [backup runner](backups.md) only produces Database backups.
 >
 > See **[Backups](backups.md)** for backup creation, destinations, schedules, and encryption.
 

@@ -12,16 +12,14 @@ No npm, no build step — just PHP and a web server. Runtime Composer dependenci
 
 ---
 
-## What's new in v3.28.0
+## What's new in v3.28.1
 
-DR + security stabilization release. One schema migration (runs automatically) and one behavior change worth knowing about — the legacy `app_secret`-based backup-encryption *write* path was removed.
+DR + security overflow point release. Nine fixes deferred from the v3.28.0 scope-bounded close-out. No schema changes, no new pages, no operator action required for the security/scanner/DHCP fixes; the restore.php changes introduce a target-schema wipe step (see `docs/upgrading.md §v3.28.1` for the Postgres extension caveat).
 
-- **Concurrency hardening.** The per-IP rate-limit audit dampener (#1143) and the backup-notification cooldown state (#1159) were racy — a TOCTOU on the dampener and a lost-update on JSON cooldown blobs. Both now use small dedicated tables with atomic single-row writes (`rate_limit_dampener`, `backup_state`). The Health page's per-destination connectivity readout, which had been silently broken, now reports real status.
-- **Step-up coverage sweep.** Webhook create/edit/delete (#1156), SMTP / backup-notification-recipient settings (#1157), and custom field definition changes (#1158) now require a fresh step-up proof under your `auth.step_up.*` policy.
-- **Surgical security fixes** carried over from the v3.27.x verification passes: restore upload now caps decompressed size against gzip bombs (#1149), the session-fallback API path re-checks `users.is_active` (#1151), webhook dispatch failures are logged instead of swallowed (#1150), and `ipam_db_init()` won't skip migrations on a half-bootstrapped DB (#1175).
-- **Database-format SQLite restores actually work now.** Restoring a `database`-type `.sql.gz` backup (or an IPAMBKP1/IPAMBKP2 `.enc` archive wrapping one) through the Restore wizard was broken — the replay collided with the dump's own transaction control and the live install's schema. The apply path now drops the existing tables first and filters the dump's transaction-control / `PRAGMA` / comment lines on replay. The logical (`.ipambkl1.gz`) restore path was already correct.
-- **`app_secret` backup encryption is being retired** (#1164/#1165). Encrypted scheduled backups now require a backup vault key (Stored mode) or a passphrase (Transitory mode); an `app_secret`-only install fails preflight with an actionable message. The in-app reader for legacy `app_secret`-encrypted archives is retained through the whole v3.x line — **v4.0.0 removes it (cold break)**, with `tools/decrypt-backup.php` as the long-term escape hatch. See `docs/upgrading.md §v3.28.0` for the migration path. The Backups → Destinations and Restore tabs carry a retirement banner.
-- **CSP regression guard in CI** (#906) — fails the build if any page introduces an inline `<script>`/`<style>` block that the app's Content-Security-Policy would silently break.
+- **Engine-native restore is correctness-fixed.** `restore.php`'s mysql/pgsql branches now (a) honour `db_dsn` (no more silently connecting to `127.0.0.1:3306/ipam` on DSN-configured installs), (b) wipe the target schema before replay so `database`-type dumps onto a populated install no longer duplicate rows, and (c) run `psql` with `-v ON_ERROR_STOP=1` so mid-restore errors abort cleanly (#1177).
+- **Security hygiene fixes.** Webhook test-fire audit details record host only (no full URL — strips query strings carrying tokens, plus any XSS-shaped path / fragment) (#1152); backup restore upload staging files `chmod 0640` after move (#1154); regression test pins the webhook retry path does not decrypt secrets (#1155).
+- **Scanner / DHCP polish.** API sync-scan rejects IPv6 subnets with HTTP 400 (use the CLI scanner for IPv6) (#1160); scheduled scans from `cron.php` now emit `scan.run` audit rows with a `(cron)` tag (#1161); `ipam_mark_stale_addresses` threshold defensively clamped to `[1, 50]` (#1162); Kea + ISC dhcpd reservation hostnames now agree (single-label, RFC 1123) (#1163).
+- **Internal cleanup.** Removed dead `ipam_backup_vault_key_or_init()` (139 lines + 4 unit tests + 5 comment refs). No production caller since v3.28.0/#1164 routed encrypted-backup preflight through the read-only accessor (#1176).
 
 [Full changelog →](CHANGELOG.md)
 

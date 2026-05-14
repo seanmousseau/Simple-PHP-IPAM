@@ -1434,6 +1434,36 @@ function ipam_restore_prepare_for_restore(PDO $db, array $config, int $destinati
 }
 
 /**
+ * Stage an uploaded backup file at the given path with 0640 mode.
+ *
+ * Used by ipam_restore_upload(); extracted so the post-move chmod can
+ * be exercised by unit tests without a full SAPI upload (#1154, S-004).
+ *
+ * @internal
+ */
+function ipam_restore_stage_uploaded_file(string $src, string $dst): bool
+{
+    // Restore write-containment invariant: every restore write path goes
+    // through ipam_restore_assert_staged_path() so $dst is rooted under the
+    // sanctioned staging tmpdir, never an attacker-influenced path. Throws
+    // RuntimeException on violation; we let it propagate so the caller's
+    // upstream try/catch surfaces the exact error.
+    ipam_restore_assert_staged_path($dst);
+
+    $moved = is_uploaded_file($src)
+        ? @move_uploaded_file($src, $dst)
+        : @rename($src, $dst);
+    if (!$moved) {
+        return false;
+    }
+    if (!@chmod($dst, 0640)) {
+        @unlink($dst); // nosemgrep: php.lang.security.unlink-use.unlink-use -- $dst is caller-computed staging path; cleanup on chmod failure
+        return false;
+    }
+    return true;
+}
+
+/**
  * Stage an operator-uploaded backup file (#837, v3.24.0).
  *
  * Mirrors ipam_restore_prepare_for_restore()'s output contract so the
@@ -1527,8 +1557,8 @@ function ipam_restore_prepare_for_upload(array $config, ?string $passphrase = nu
     $rand         = bin2hex(random_bytes(8));
     $downloadPath = $tmpDir . '/restore_dl_' . $rand;
 
-    if (!@move_uploaded_file($tmp, $downloadPath)) {
-        throw new RuntimeException('ipam_restore_upload: cannot move uploaded file into tmp');
+    if (!ipam_restore_stage_uploaded_file($tmp, $downloadPath)) {
+        throw new RuntimeException('ipam_restore_upload: cannot stage uploaded file into tmp (move or chmod failed)');
     }
 
     try {

@@ -4600,152 +4600,13 @@ function ipam_argon2id_derive(
     return $hash;
 }
 
-/**
- * Resolve the IPAMBKP3 stored-mode vault key, lazily generating and
- * persisting it on first use.
- *
- * Returns the raw 32-byte key (NOT base64). Idempotent within a request via
- * static cache; idempotent across requests via the config.php round-trip.
- *
- * Resolution order:
- *   1. Already in $config and well-formed → decode + return.
- *   2. Already in $config but malformed → throw (refuse to silently replace
- *      an operator-supplied value, even if broken).
- *   3. Empty / absent → generate 32 random bytes, write to config.php in
- *      place (replace empty slot OR inject before the trailing "];"), and
- *      return. On write failure, throw with an actionable message that
- *      includes the generated value as a copy-pasteable line so the
- *      operator can finish the install manually.
- *
- * @param string|null $configPathOverride  Internal hook for tests so they
- *        can exercise the autogen path against a tempfile rather than the
- *        production config.php. Production callers MUST pass null.
- * @throws RuntimeException if the existing value is malformed or the
- *         file rewrite fails.
- */
-function ipam_backup_vault_key_or_init(?string $configPathOverride = null): string
-{
-    // Defence-in-depth: the override is a test-only hook. Reject it
-    // outside CLI / PHPUnit context so a future caller that accidentally
-    // routes user input here cannot turn an `include` of an attacker-
-    // controlled path into LFI/RCE. Web-SAPI callers always operate on
-    // the production config.php only.
-    if ($configPathOverride !== null && PHP_SAPI !== 'cli') {
-        throw new RuntimeException(
-            'ipam_backup_vault_key_or_init: configPathOverride is test-only and not allowed in web SAPI'
-        );
-    }
-
-    // Static cache is keyed on the resolved config path so a test that
-    // overrides the path does not pin the production cache, and vice
-    // versa. Without keying, a single test run could leak a tempfile-
-    // generated key to a subsequent production-path call (or vice versa)
-    // and cause spurious assertion failures.
-    static $cachedRaw = [];
-    $rawPath = $configPathOverride ?? __DIR__ . '/config.php';
-    // Canonicalise so the include target is a resolved real path on
-    // disk, not a string with `..` segments or a non-existent file. The
-    // override path MUST exist when supplied; the production path always
-    // exists (init.php loaded it earlier this request).
-    $resolved = realpath($rawPath);
-    if ($resolved === false) {
-        throw new RuntimeException('ipam_backup_vault_key_or_init: config path does not resolve: ' . $rawPath);
-    }
-    $configPath = $resolved;
-    if (isset($cachedRaw[$configPath])) {
-        return $cachedRaw[$configPath];
-    }
-
-    // Source the existing-value check from $config (production path) or
-    // by re-including the override file (test / override path). Both
-    // paths apply the same well-formed/malformed validation so the
-    // semantics are identical for callers, regardless of where the key
-    // lives.
-    if ($configPathOverride === null) {
-        /** @var array<string,mixed> $config */
-        global $config;
-        $existingB64 = (isset($config['backup_vault_key']) && is_string($config['backup_vault_key']))
-            ? $config['backup_vault_key']
-            : '';
-    } else {
-        $overrideCfg = include $configPath;
-        $existingB64 = '';
-        if (is_array($overrideCfg)
-            && isset($overrideCfg['backup_vault_key'])
-            && is_string($overrideCfg['backup_vault_key'])) {
-            $existingB64 = $overrideCfg['backup_vault_key'];
-        }
-    }
-    if ($existingB64 !== '') {
-        $decoded = base64_decode($existingB64, true);
-        if (is_string($decoded) && strlen($decoded) === BACKUP_VAULT_KEY_LEN) {
-            $cachedRaw[$configPath] = $decoded;
-            return $decoded;
-        }
-        throw new RuntimeException(
-            'backup_vault_key in config.php is malformed (expected ' .
-            BACKUP_VAULT_KEY_LEN . ' bytes base64). Clear the value to allow ' .
-            'auto-generation, or replace it with: ' .
-            'php -r "echo base64_encode(random_bytes(32));"'
-        );
-    }
-
-    ipam_assert_random_bytes_available();
-    $newRaw = random_bytes(BACKUP_VAULT_KEY_LEN);
-    $newB64 = base64_encode($newRaw);
-
-    try {
-        ipam_config_inject_or_replace_key($configPath, 'backup_vault_key', $newB64);
-    } catch (Throwable $e) {
-        // Generic remediation message — never embed the raw key in the
-        // exception text, since it would land in error_log / UI and leak
-        // the secret protecting every stored-mode backup. Operator can
-        // generate one manually with the documented one-liner.
-        throw new RuntimeException(
-            'backup_vault_key auto-generation could not update config.php: ' .
-            $e->getMessage() . '. ' .
-            'Generate a key manually with `php -r "echo base64_encode(random_bytes(32));"` ' .
-            "and add `'backup_vault_key' => '<value>',` to config.php, then retry.",
-            0,
-            $e
-        );
-    }
-
-    // Concurrency guard: if two requests both reach the generate-and-
-    // write path simultaneously, only one rename wins persistence. The
-    // loser's in-memory $newRaw would still be used to encrypt the
-    // backup it's currently producing — and that backup would then be
-    // unreadable once the winner's key is the one persisted.
-    //
-    // Re-read the file post-rename to learn which key actually won,
-    // and adopt that as the canonical key for the rest of this request.
-    // Both racers end up using the same key — the one in config.php —
-    // so every produced backup is decryptable on restore.
-    /** @var array<string,mixed>|false $persistedCfg */
-    $persistedCfg = @include $configPath;
-    if (is_array($persistedCfg) && isset($persistedCfg['backup_vault_key'])
-        && is_string($persistedCfg['backup_vault_key'])) {
-        $persistedDecoded = base64_decode($persistedCfg['backup_vault_key'], true);
-        if (is_string($persistedDecoded) && strlen($persistedDecoded) === BACKUP_VAULT_KEY_LEN) {
-            $newRaw = $persistedDecoded;
-            $newB64 = $persistedCfg['backup_vault_key'];
-        }
-    }
-
-    if ($configPathOverride === null) {
-        global $config;
-        $config['backup_vault_key'] = $newB64;
-    }
-    $cachedRaw[$configPath] = $newRaw;
-    return $newRaw;
-}
 
 /**
  * Read-only accessor for the IPAMBKP3 vault key. Returns the 32 raw
  * bytes if config.php holds a well-formed value, NULL otherwise.
  *
- * Distinct from ipam_backup_vault_key_or_init(): this never generates,
- * never writes config.php, never throws on absent / malformed values.
+ * Read-only accessor: never generates, never writes config.php, never
+ * throws on absent / malformed values.
  * Intended for the decrypt path — autogen during a restore would mask
  * the real failure (the key that ENCRYPTED the backup is gone), and we
  * want to surface that as a clear error rather than silently produce a
@@ -4824,8 +4685,9 @@ function ipam_backup_vault_key_get_raw(): ?string
 
 /**
  * Atomic in-place rewrite of a config.php-style PHP file to set
- * `'$key' => '$valueB64'`. Used by ipam_backup_vault_key_or_init() and
- * available for any future autogen scenarios.
+ * `'$key' => '$valueB64'`. Used by ipam_bootstrap_key() (lib/vault.php)
+ * to seed the bootstrap key on first use, and available for any future
+ * autogen scenarios.
  *
  * Behaviour:
  *   - Existing single-quoted/double-quoted line for $key → replaced.
@@ -6002,7 +5864,7 @@ function ipam_retention_compute_deletions(PDO $db, int $destinationId): array
     // Pre-v3.25.0 retention lived on backup_schedules. v3.25.0 moved it to
     // backup_destinations so it describes "how much to keep at this storage
     // location" rather than "how often we write to it" (per
-    // backup_overhaul.md §3 AGREED). The migration backfilled values from
+    // archive/backup_overhaul.md §3 AGREED). The migration backfilled values from
     // any per-schedule rows; the schedule columns remain in place for one
     // release cycle for downgrade safety but are no longer the source of
     // truth.
@@ -9025,6 +8887,35 @@ function ipam_validate_webhook_url(string $url, array $config = []): bool
     return true;
 }
 
+/**
+ * Build the audit_log.details string for a webhook test-fire row.
+ *
+ * Records the webhook id and host only — never the full URL — so query
+ * strings carrying tokens/secrets and any XSS-shaped path or fragment
+ * never land in the audit details column. (#1152, S-001)
+ */
+function ipam_webhook_test_fire_audit_detail(int $id, string $url): string
+{
+    $host = parse_url($url, PHP_URL_HOST);
+    // parse_url returns a host *token*, not a validated hostname/IP. A
+    // malformed URL can still leave attacker-controlled bytes here, which
+    // would keep the S-001 sink partly open. Require a syntactically valid
+    // IPv4/IPv6 address or RFC 1123 hostname; otherwise '(invalid)'.
+    if (!is_string($host) || $host === '') {
+        $host = '(invalid)';
+    } else {
+        $isIp     = filter_var($host, FILTER_VALIDATE_IP) !== false;
+        $isDomain = filter_var($host, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) !== false;
+        if (!$isIp && !$isDomain) {
+            $host = '(invalid)';
+        }
+    }
+    if (strlen($host) > 100) {
+        $host = substr($host, 0, 100);
+    }
+    return "id={$id} host={$host}";
+}
+
 /** Sign a webhook payload with HMAC-SHA256. */
 function ipam_webhook_sign(string $payload, string $secret): string
 {
@@ -10356,6 +10247,14 @@ function ipam_scan_subnet(PDO $db, int $subnetId, string $method, ?int $tcpPort,
  */
 function ipam_mark_stale_addresses(PDO $db, int $subnetId, int $missThreshold = 3): int
 {
+    // Defensive clamp — caller threshold comes from a tenant setting that
+    // operators can mis-edit. 0/negative produces nonsense SQL (LIMIT 0
+    // means no stale marking ever happens; negative errors on some engines).
+    // Very large values fan out scan_results reads. Bound to [1, 50].
+    // (#1162, PASS-C F-S2-05)
+    if ($missThreshold < 1)  $missThreshold = 1;
+    if ($missThreshold > 50) $missThreshold = 50;
+
     // Reserved IPs (network, IPv4 broadcast) are excluded from stale marking so
     // they don't accrue a stale flag from historical scan_results rows.
     $reserved = ipam_subnet_reserved_bins($db, $subnetId);
@@ -10784,9 +10683,10 @@ function ipam_render_dhcpd_conf(PDO $db, array $subnetIds): string
         foreach (ipam_dhcp_load_reservations($db, to_int($s['id'])) as $r) {
             $mac  = ipam_normalize_mac_for_dhcp(to_str($r['mac']));
             if ($mac === null) continue;
-            $raw    = $r['hostname'] !== '' ? to_str($r['hostname']) : 'host';
-            $suffix = str_replace('.', '-', to_str($r['ip']));
-            $name   = (preg_replace('/[^a-zA-Z0-9\-]/', '-', $raw) ?? 'host') . '-' . $suffix;
+            $rawHost = to_str($r['hostname']);
+            $label   = ipam_dhcp_normalize_hostname($rawHost) ?? 'host';
+            $suffix  = str_replace('.', '-', to_str($r['ip']));
+            $name    = $label . '-' . $suffix;
             $lines[] = '  host ' . $name . ' {';
             $lines[] = '    hardware ethernet ' . $mac . ';';
             $lines[] = '    fixed-address ' . to_str($r['ip']) . ';';
@@ -10860,8 +10760,9 @@ function ipam_render_kea_json(PDO $db, array $subnetIds): string
                     'hw-address' => $mac,
                     'ip-address' => to_str($r['ip']),
                 ];
-                if (to_str($r['hostname']) !== '') {
-                    $resEntry['hostname'] = to_str($r['hostname']);
+                $label = ipam_dhcp_normalize_hostname(to_str($r['hostname']));
+                if ($label !== null) {
+                    $resEntry['hostname'] = $label;
                 }
                 $resArr[] = $resEntry;
             }
@@ -10937,6 +10838,37 @@ function ipam_normalize_mac_for_dhcp(string $mac): ?string
     $hex = preg_replace('/[^0-9a-fA-F]/', '', $mac);
     if (!is_string($hex) || strlen($hex) !== 12) return null;
     return implode(':', str_split(strtolower($hex), 2));
+}
+
+/**
+ * Normalise a DHCP reservation hostname for both Kea and ISC dhcpd output.
+ * Returns null if no usable label can be derived; caller falls back to
+ * 'host' synthesis.
+ *
+ * Single-label, RFC 1123 letter-digit-hyphen, leading alpha (after trimming
+ * leading digits/hyphens), max 63 chars per label. Dotted inputs take the
+ * leftmost label — multi-label FQDNs are out of scope; neither current
+ * renderer supports them well.
+ *
+ * (#1163, PASS-C F-S6-01) — both renderers must agree on what's emitted.
+ */
+function ipam_dhcp_normalize_hostname(string $raw): ?string
+{
+    $raw = trim($raw);
+    if ($raw === '') return null;
+    $label = explode('.', $raw, 2)[0];
+    $label = preg_replace('/[^a-zA-Z0-9-]/', '-', $label) ?? '';
+    $label = ltrim($label, '0123456789-');
+    $label = rtrim($label, '-');
+    if ($label === '') return null;
+    if (strlen($label) > 63) {
+        $label = substr($label, 0, 63);
+        // Truncation can land on a hyphen; re-trim so the emitted label
+        // still conforms to RFC 1123 (no trailing '-').
+        $label = rtrim($label, '-');
+        if ($label === '') return null;
+    }
+    return $label;
 }
 
 // ── Custom field definitions (v3.5.0, #313/#596) ──────────────────────────
