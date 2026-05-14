@@ -93,6 +93,12 @@ Most expensive bugs in this project's history involve migrations. Read `docs/int
 
 ---
 
+## 6.5. CI vs local-gate divergence (rare but real)
+
+| Lesson | Source |
+|---|---|
+| **PHPStan baseline entries can rot when code moves between files.** `phpstan-baseline.neon` ignores match by pattern AND file path. When a refactor extracts a code path into a new file (or deletes it), the old baseline entry no longer matches anything and CI fails with `ignore.unmatched (non-ignorable)` — local re-run reproduces it. The local gate WILL catch this if you re-run `vendor/bin/phpstan analyse` (full, not single-file) after any refactor that moves a code path; the single-file pre-commit hook does not. v3.28.1 #1177 hit this when `restore.php`'s discrete `$gConf['db_host']`-style reads moved into `lib/restore_dsn.php` and 5 baseline entries became orphans. Full procedure in `coding-guide.md § Static analysis tools`. | `docs/internal/coding-guide.md` § Static analysis tools; Memory MCP `roadmap:v3.28.1` |
+
 ## 7. Operational gotchas (cross-project)
 
 | Lesson | Source |

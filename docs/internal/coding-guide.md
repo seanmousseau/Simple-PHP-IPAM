@@ -184,6 +184,8 @@ UI conventions (nav, icons, sidebar, command palette, button hierarchy, card lay
 
 PHPStan baseline (`phpstan-baseline.neon`) suppresses known false-positives. Do not append to the baseline to silence real bugs.
 
+**Baseline hygiene when code moves between files.** PHPStan's `--report-on-unmatched-ignored-errors` flag (default in this project's `phpstan.neon`) fails CI when a baseline entry no longer matches anything in the source — i.e. an "ignore" for a code path that has been deleted, refactored, or moved into a differently-typed parameter. After any change that extracts code into a new file or removes a path, grep `phpstan-baseline.neon` for the source file you touched and prune entries that no longer apply, BEFORE pushing. v3.28.1 #1177 hit this: `restore.php`'s 5 `Offset 'db_host' on IpamConfig` ignores became unmatched once those reads moved into `lib/restore_dsn.php` (parameter typed `array<string,mixed>`), and the local gate was clean but CI failed on the unmatched-ignore identifier `(ignore.unmatched (non-ignorable))`. Re-running `vendor/bin/phpstan analyse` locally after a refactor will surface the same error if any baseline entry is now dead.
+
 PHPCS exclusions are deliberate — K&R braces, inline control structures, column-aligned `=>` arrays. Don't fight them; they match the codebase style. Run the `phpcs-style-fixer` subagent (in `.claude/agents/`) on diffs before commit.
 
 Full testing procedure (containerized + dev-direct fallback + recurring footguns) lives in `testing-guide.md`.

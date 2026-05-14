@@ -118,6 +118,8 @@ The backup is left in place after a successful upgrade. You can remove it manual
 
 ### v3.28.1
 
+DR + security overflow point release. No schema changes. No new pages. No operator action required for any of the security or passC fixes.
+
 **Engine-native restore now wipes target schema before replay.** `restore.php`'s mysql and pgsql branches drop all user tables (mysql, BASE TABLE filtered) / drop the `public` schema (pgsql) before piping the dump in. This fixes a long-standing bug where restoring a `database`-type dump onto a populated install duplicated rows. Run as `--yes` confirmation as before — no new flag.
 
 > **Postgres extension caveat.** `DROP SCHEMA public CASCADE` removes any extensions installed into the `public` schema (e.g. `pgcrypto`, `pg_trgm`, `citext`, `uuid-ossp`). A `pg_dump` taken with defaults re-emits the `CREATE EXTENSION` statements and the restore puts them back. A `--data-only` dump (or any dump that omits extensions) will leave the restored DB without them. If you use Postgres extensions outside what the IPAM schema migrations create, dump with extensions included.
@@ -127,6 +129,20 @@ The backup is left in place after a successful upgrade. You can remove it manual
 **`restore.php` now honours `db_dsn`.** mysql/pgsql restores parse the PDO-style `db_dsn` connection string (host/port/dbname) the rest of the app already uses. Legacy installs that set discrete `db_host`/`db_port`/`db_name` keys continue to work. **Limitation:** restore.php cannot pipe `mysql`/`psql` through a Unix-domain socket; a `db_dsn` containing `unix_socket=...` aborts with a clear error pointing the operator at the discrete TCP keys. (#1177)
 
 **psql fail-fast.** `restore.php` invokes psql with `-v ON_ERROR_STOP=1` so a mid-restore error aborts cleanly instead of ploughing through subsequent statements onto a partially-populated DB. (#1177)
+
+**Other security and bug fixes:**
+
+- Webhook test-fire audit details now record host only (no full URL with query string / fragment / XSS-shaped path). (#1152, S-001)
+- Backup restore upload staging files now `chmod 0640` after `move_uploaded_file()` so other webserver users on shared hosts can't read staged payloads. (#1154, S-004)
+- API sync-scan rejects IPv6 subnets with HTTP 400 (use `php scan_run.php` for IPv6 — `ipam_scan_subnet()` is IPv4-only). (#1160, F-S2-01)
+- Scheduled scans (cron) now emit a `scan.run` audit row per subnet, matching `api_scan_run` and `scan_run.php` with a `(cron)` tag. (#1161, F-S2-04)
+- `ipam_mark_stale_addresses` threshold defensively clamped to `[1, 50]` so a mis-edited tenant setting can't produce nonsense `LIMIT` bounds. (#1162, F-S2-05)
+- Kea JSON and ISC dhcpd reservation hostnames now agree — both routed through `ipam_dhcp_normalize_hostname()` (single-label, RFC 1123 letter-digit-hyphen, leading alpha, max 63 chars). (#1163, F-S6-01)
+
+**Internal cleanup:**
+
+- Removed dead `ipam_backup_vault_key_or_init()` (139 lines + 4 unit tests). No production caller since v3.28.0/#1164. `ipam_config_inject_or_replace_key()` is retained — still used by `ipam_bootstrap_key()` in `lib/vault.php`. (#1176)
+- Regression test pins that `ipam_webhook_retry_pending()` does not decrypt secrets (decryption belongs only in `ipam_webhook_deliver()`). (#1155, S-007)
 
 ### v3.28.0
 
