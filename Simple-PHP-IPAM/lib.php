@@ -1508,19 +1508,37 @@ function audit_export(PDO $db, string $what, string $details = ''): void
  */
 function _ipam_install_key_announce_write(PDO $db, string $key, string $value): void
 {
-    $kc = ipam_key_col();
-    $upd = $db->prepare(
-        "UPDATE settings SET value = :v WHERE tenant_id IS NULL AND {$kc} = :k"
-    );
-    $upd->execute([':v' => $value, ':k' => $key]);
-    if ($upd->rowCount() > 0) {
-        return;
+    // MySQL's UNIQUE(tenant_id, key) does NOT enforce uniqueness on
+    // rows with tenant_id = NULL (SQL standard: NULL != NULL in
+    // uniqueness). Two concurrent writers can both see
+    // `rowCount() === 0` and both INSERT, creating duplicate global
+    // rows. Mirror ipam_setting_set()'s GET_LOCK serialisation
+    // (SQLite + Postgres are immune via their partial-unique index
+    // on (key) WHERE tenant_id IS NULL).
+    $lockName = null;
+    if (ipam_dialect()->driver_name() === 'mysql') {
+        // 64-byte cap on MySQL lock names; hash to bound length.
+        $lockName = 'ipam_setting:' . md5($key . ':__GLOBAL__');
+        $db->prepare("SELECT GET_LOCK(:n, 5)")->execute([':n' => $lockName]);
     }
-    $ins = $db->prepare(
-        "INSERT INTO settings (tenant_id, {$kc}, value, type, updated_at) "
-        . "VALUES (NULL, :k, :v, 'bool', CURRENT_TIMESTAMP)"
-    );
-    $ins->execute([':k' => $key, ':v' => $value]);
+    try {
+        $kc  = ipam_key_col();
+        $upd = $db->prepare(
+            "UPDATE settings SET value = :v WHERE tenant_id IS NULL AND {$kc} = :k"
+        );
+        $upd->execute([':v' => $value, ':k' => $key]);
+        if ($upd->rowCount() === 0) {
+            $ins = $db->prepare(
+                "INSERT INTO settings (tenant_id, {$kc}, value, type, updated_at) "
+                . "VALUES (NULL, :k, :v, 'bool', CURRENT_TIMESTAMP)"
+            );
+            $ins->execute([':k' => $key, ':v' => $value]);
+        }
+    } finally {
+        if ($lockName !== null) {
+            $db->prepare("SELECT RELEASE_LOCK(:n)")->execute([':n' => $lockName]);
+        }
+    }
 }
 
 /**
