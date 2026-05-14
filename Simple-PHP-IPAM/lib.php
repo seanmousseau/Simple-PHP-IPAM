@@ -7653,17 +7653,22 @@ function ipam_install_key_banner_handle_dismiss(PDO $db, string $role): void
     // Location would accept a protocol-relative target like
     // `//attacker.example/...` and redirect cross-origin; rebuild the
     // target from a parsed path/query that's guaranteed same-origin.
+    // Also reject backslashes (browsers normalise `/\evil.example` to
+    // `//evil.example` cross-origin) and CR/LF (header-injection).
     $self  = to_str($_SERVER['REQUEST_URI'] ?? '/');
     $parts = parse_url($self);
     $path  = is_array($parts)
         && is_string($parts['path'] ?? null)
         && ($parts['path'][0] ?? '') === '/'
         && !str_starts_with($parts['path'], '//')
+        && !str_contains($parts['path'], '\\')
+        && preg_match('/[\r\n]/', $parts['path']) !== 1
         ? $parts['path']
         : '/';
     $query = is_array($parts)
         && is_string($parts['query'] ?? null)
         && $parts['query'] !== ''
+        && preg_match('/[\r\n]/', $parts['query']) !== 1
         ? '?' . $parts['query']
         : '';
     header('Location: ' . $path . $query, true, 303);
