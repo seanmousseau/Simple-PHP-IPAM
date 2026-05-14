@@ -292,4 +292,49 @@ class ScannerTest extends TestCase
         $row = $pdo->query("SELECT is_stale FROM addresses WHERE id=1")->fetch();
         $this->assertSame(0, (int) $row['is_stale']);
     }
+
+    // -----------------------------------------------------------------------
+    // ipam_mark_stale_addresses() threshold clamp (#1162, PASS-C F-S2-05)
+    //
+    // Threshold comes from a tenant setting an operator can mis-edit. 0
+    // produces LIMIT 0 (nothing ever stale-marked), negative errors on some
+    // engines, very large values fan out scan_results reads. Clamped to
+    // [1, 50] at function entry.
+    // -----------------------------------------------------------------------
+
+    public function testMarkStaleAddressesThresholdZeroClampedToOne(): void
+    {
+        $pdo = $this->makeFixtureDb();
+
+        // One down result; with the clamp, threshold 0 -> 1, so this miss
+        // should mark the address stale. Without the clamp, LIMIT 0 in the
+        // subquery would short-circuit to no rows and leave the flag clear.
+        $pdo->prepare("INSERT INTO scan_results (subnet_id, address_id, ip, method, is_up) VALUES (1,1,'10.0.0.1','icmp',0)")->execute();
+
+        $changed = ipam_mark_stale_addresses($pdo, 1, 0);
+        $this->assertGreaterThanOrEqual(1, $changed);
+
+        $row = $pdo->query("SELECT is_stale FROM addresses WHERE id=1")->fetch();
+        $this->assertSame(1, (int) $row['is_stale']);
+    }
+
+    public function testMarkStaleAddressesNegativeThresholdDoesNotThrow(): void
+    {
+        $pdo = $this->makeFixtureDb();
+        $pdo->prepare("INSERT INTO scan_results (subnet_id, address_id, ip, method, is_up) VALUES (1,1,'10.0.0.1','icmp',0)")->execute();
+
+        // Without the clamp this binds LIMIT -10, which errors on some engines.
+        // The clamp coerces to 1 and the call returns normally.
+        $changed = ipam_mark_stale_addresses($pdo, 1, -10);
+        $this->assertGreaterThanOrEqual(0, $changed);
+    }
+
+    public function testMarkStaleAddressesHugeThresholdDoesNotThrow(): void
+    {
+        $pdo = $this->makeFixtureDb();
+        // No need to seed scan_results — we're verifying call doesn't blow up
+        // on an absurd threshold. Clamp caps to 50.
+        $changed = ipam_mark_stale_addresses($pdo, 1, 1_000_000);
+        $this->assertSame(0, $changed);
+    }
 }

@@ -10375,6 +10375,14 @@ function ipam_scan_subnet(PDO $db, int $subnetId, string $method, ?int $tcpPort,
  */
 function ipam_mark_stale_addresses(PDO $db, int $subnetId, int $missThreshold = 3): int
 {
+    // Defensive clamp — caller threshold comes from a tenant setting that
+    // operators can mis-edit. 0/negative produces nonsense SQL (LIMIT 0
+    // means no stale marking ever happens; negative errors on some engines).
+    // Very large values fan out scan_results reads. Bound to [1, 50].
+    // (#1162, PASS-C F-S2-05)
+    if ($missThreshold < 1)  $missThreshold = 1;
+    if ($missThreshold > 50) $missThreshold = 50;
+
     // Reserved IPs (network, IPv4 broadcast) are excluded from stale marking so
     // they don't accrue a stale flag from historical scan_results rows.
     $reserved = ipam_subnet_reserved_bins($db, $subnetId);
