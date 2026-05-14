@@ -35,6 +35,18 @@ vendor/bin/phpunit
 semgrep --config=.semgrep/rules.yml --error Simple-PHP-IPAM/
 ```
 
+### PHPUnit against MySQL / Postgres containers
+
+After `bash testing/playwright/bootstrap-app.sh mysql` (or `pgsql`), use the helper script to run PHPUnit with the correct DSN env vars — no need to remember them manually:
+
+```bash
+testing/scripts/phpunit-against-driver.sh mysql
+testing/scripts/phpunit-against-driver.sh pgsql
+testing/scripts/phpunit-against-driver.sh mysql tests/MysqlSmokeTest.php
+```
+
+The script exits 1 with a bootstrap-app hint if the container is not running, and exits 2 (usage) if no driver argument is supplied.
+
 ### Deploy
 
 The API and Playwright suites run against the live `/claude/ipam/` deploy, not your local copy.
