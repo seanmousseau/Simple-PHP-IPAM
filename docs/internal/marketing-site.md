@@ -40,6 +40,16 @@ Wiring a new doc requires changes in **six places** plus a WordPress page. Missi
 
 ## Deploy
 
+**Step zero: verify the active theme.** The live site has both `simplephpipam` and `twentytwentyfive` installed; rsyncing to the inactive one produces zero observable change and looks like a deploy that "took silently". Confirm before deploying:
+
+```bash
+ssh root@192.168.80.23 "wp --path=/usr/local/lsws/vhosts/simplephpipam.com/html --allow-root theme list --status=active --fields=name"
+# expected: simplephpipam
+# if not, activate: wp ... theme activate simplephpipam
+```
+
+Then:
+
 ```bash
 cd website/
 git add -A && git commit -m "chore(release): <message>"
