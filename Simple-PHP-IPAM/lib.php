@@ -10413,6 +10413,12 @@ function oidc_extract_claims(array $payload): array
  */
 function oidc_resolve_user(PDO $db, string $sub, string $email, string $preferredUsername): ?array
 {
+    // PR #1205 review: an empty sub creates a shared oidc_sub='' bucket —
+    // any later token missing `sub` would resolve to whichever row was
+    // provisioned first. Refuse before touching the DB.
+    if ($sub === '') {
+        throw new RuntimeException('oidc_resolve_user: missing OIDC subject (sub)');
+    }
     $st = $db->prepare("SELECT id, username, role, is_active FROM users WHERE oidc_sub = :sub");
     $st->execute([':sub' => $sub]);
     $row = $st->fetch();
@@ -10482,6 +10488,11 @@ function oidc_provision_user(PDO $db, array $claims, string $role): array
     $effectiveRole = in_array($role, $allowedRoles, true) ? $role : 'readonly';
 
     $sub               = $claims['sub'];
+    // PR #1205 review: never persist an empty oidc_sub — see
+    // oidc_resolve_user() for the shared-bucket rationale.
+    if ($sub === '') {
+        throw new RuntimeException('oidc_provision_user: missing OIDC subject (sub)');
+    }
     $email             = $claims['email'];
     $name              = $claims['name'];
     $preferredUsername = $claims['preferred_username'];
