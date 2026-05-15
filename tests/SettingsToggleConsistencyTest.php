@@ -111,22 +111,25 @@ final class SettingsToggleConsistencyTest extends TestCase
         );
     }
 
-    public function testPerKeyHandlerIsNotWiredFromUi(): void
+    public function testPerKeyHandlerIsGone(): void
     {
-        // v3.27.2 stopgap: the server-side per-key save handler stays alive
-        // as a temporary fixture path for the Playwright suite (#1126). The
-        // UI is fully de-wired (no shadow form, no auto-submit JS, no
-        // setting-toggle-form/target — checked by other tests in this
-        // file). What this test prevents is the UI accidentally being
-        // re-wired: the comment marker "Do NOT re-wire from the UI" must
-        // remain in the controller as a load-bearing reminder for future
-        // refactors.
-        $this->assertStringContainsString(
-            'Do NOT re-wire from the UI',
+        // v3.29.0 (#1126): the server-side per-key save handler in
+        // settings.php that survived v3.27.2 as a Playwright-test
+        // stopgap has been removed now that every spec under
+        // testing/playwright/tests/ POSTs via the group form. This
+        // test pins the deletion so a future refactor can't quietly
+        // resurrect the per-key path.
+        $this->assertStringNotContainsString(
+            "\$postedKey = to_str(\$_POST['key'] ?? '');",
             $this->settingsPhp,
-            "#1121: the stopgap-rationale comment must remain in settings.php so a future refactor doesn't accidentally re-wire the UI"
+            "#1126: per-key save handler (\$postedKey detection) must remain removed from settings.php"
         );
-        // Inverse: the UI-side wirings stay gone.
+        $this->assertStringNotContainsString(
+            'Per-key save currently only supports boolean toggles.',
+            $this->settingsPhp,
+            "#1126: per-key save error path must remain removed from settings.php"
+        );
+        // UI-side wirings stay gone.
         $this->assertStringNotContainsString(
             'class="setting-toggle-form"',
             $this->groupForm,

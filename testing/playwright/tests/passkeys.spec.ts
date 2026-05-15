@@ -54,10 +54,17 @@ async function removeVirtualAuth(page: Page, authenticatorId: string) {
 async function enablePasskeys(page: import('@playwright/test').Page) {
     await login(page, ADMIN_USER, ADMIN_PASS);
     await page.goto(pkUrl('settings.php'));
-    // Per-key save (#756): flip passkeys without touching sibling MFA bools.
+    // v3.27.2 (#1121): per-key save path was removed. Use the group form
+    // and explicitly include every bool field in the group — programmatic
+    // POSTs that omit a bool would be treated as unchecked = 0, silently
+    // flipping it. Pass passkeys=1 while preserving the v3.x defaults of
+    // the sibling MFA bools so tests running after this spec aren't broken.
     await fetchPost(page, pkUrl('settings.php'), {
-        key: 'mfa.passkeys_enabled',
-        value: '1',
+        group: 'mfa',
+        k_mfa__totp_enabled:      '1',
+        k_mfa__email_otp_enabled: '0',
+        k_mfa__passkeys_enabled:  '1',
+        k_mfa__require:           '0',
     });
     await logout(page);
 }
@@ -65,11 +72,14 @@ async function enablePasskeys(page: import('@playwright/test').Page) {
 async function disablePasskeys(page: import('@playwright/test').Page) {
     await login(page, ADMIN_USER, ADMIN_PASS);
     await page.goto(pkUrl('settings.php'));
-    // Per-key save (#756): turn passkeys off cleanly without nuking siblings.
-    // No need to re-assert mfa.totp_enabled=1 — the per-key path doesn't touch it.
+    // v3.27.2 (#1121): group form, all bools explicit. Restore the v3.x
+    // defaults (totp on, email_otp off, passkeys off, require off).
     await fetchPost(page, pkUrl('settings.php'), {
-        key: 'mfa.passkeys_enabled',
-        value: '0',
+        group: 'mfa',
+        k_mfa__totp_enabled:      '1',
+        k_mfa__email_otp_enabled: '0',
+        k_mfa__passkeys_enabled:  '0',
+        k_mfa__require:           '0',
     });
     await logout(page);
 }
