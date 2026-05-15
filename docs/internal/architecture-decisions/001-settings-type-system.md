@@ -166,9 +166,11 @@ The "biggest payoff" framing in Option B's pros section is load-bearing for this
 
 ## Implications
 
-This is a substantial v3.30.0 workstream — calling out the scope honestly so it sizes correctly against the rest of milestone #56.
+**Sliced across two releases** (decision 2026-05-15): v3.30.0 lands the schema-and-dispatch portion (no crypto); v3.31.0 lands encrypt-at-rest + webhook consolidation. Each release tells one story and runs its own CR cycle. Roadmap §6 shifts: wave 2 → v3.32.0, wave 3 → v3.33.0.
 
-### Schema changes (v3.30.0 migration)
+### v3.30.0 — Setting definitions schema + dispatch refactor (no crypto)
+
+#### Schema changes (v3.30.0 migration)
 
 New table `setting_definitions`:
 
@@ -192,24 +194,35 @@ CREATE TABLE setting_definitions (
 
 `settings` table loses the `type` column (engine-portable via "create new table, INSERT-SELECT, drop old, rename" on SQLite; ALTER on mysql/pgsql).
 
-### Encrypt-at-rest pipeline
+#### v3.30.0 GH issues to open (milestone #56)
+
+- `feat(settings): setting_definitions table + ipam_setting_definitions() reads from DB`
+- `migration: drop settings.type column, populate setting_definitions from v3.29.0 registry seed` (needs `migration-reviewer` + `multi-engine-schema-parity` subagent passes)
+- `refactor(settings.php): dispatch on setting_definitions.type, eliminate $def['type'] PHP-side branching`
+- `tests(settings): full coverage of new subtype dispatch + migration idempotence` — bucketed under #1045
+- `docs(internal): coding-guide.md — settings entry mandatory keys; 'sensitive' / 'hidden' are now DB columns, not PHP keys`
+- `docs(internal): data-dictionary.md — setting_definitions entry + updated settings entry (no type column)`
+
+v3.30.0 explicitly **does not** change at-rest encryption for any value. Plaintext secrets remain plaintext through v3.30.x → the encrypt-at-rest pipeline lands in v3.31.0.
+
+### v3.31.0 — Encrypt-at-rest pipeline + webhook crypto consolidation
+
+#### Encrypt-at-rest pipeline
 
 - Every row in `settings` whose `setting_definitions.type = 'secret'` is libsodium-encrypted at write time using a KDF rooted at `app_secret` (already in `config.php`, not in DB — circular-key problem solved).
 - New helpers `ipam_secret_get(string $key): ?string` / `ipam_secret_set(string $key, string $value): void` wrap `ipam_setting_get/set` and handle encrypt/decrypt transparently.
 - Webhook secrets (already libsodium-encrypted since v3.3.0 via their own column-level path) migrate to this new shared pipeline — eliminates the duplicate crypto code path.
-- The migration that introduces the schema also re-encrypts every existing plaintext secret on the existing 60 rows.
+- A one-shot migration re-encrypts every existing plaintext secret row (~5 keys: SMTP password, OIDC client secret, recaptcha secret, …) using `ipam_secret_set`.
 
-### GH issues to open (milestone #56 unless noted)
+#### v3.31.0 GH issues to open (new milestone TBD — `Settings encrypt-at-rest + webhook crypto consolidation`)
 
-- `feat(settings): setting_definitions table + ipam_setting_definitions() reads from DB`
-- `migration: drop settings.type column, populate setting_definitions from v3.29.0 registry seed` (#56 + needs `migration-reviewer` + `multi-engine-schema-parity` subagent passes)
-- `feat(settings): ipam_secret_get / ipam_secret_set + libsodium pipeline` (#56)
-- `migration: re-encrypt existing plaintext secrets at-rest` (#56 + needs explicit DR runbook update)
-- `refactor(webhooks): collapse v3.3.0 webhook-secret crypto into shared ipam_secret_* pipeline` (#56)
-- `refactor(settings.php): dispatch on setting_definitions.type, eliminate $def['type'] PHP-side branching` (#56)
-- `tests(settings): full coverage of new subtype dispatch + encrypt-at-rest round-trip + migration idempotence` — bucketed under #1045
-- `docs(internal): backups.md DR section — at-rest-encrypted secrets require app_secret in config.php to decrypt; refresh the "back up your keys" guidance` (#56)
-- `docs(internal): coding-guide.md — settings entry mandatory keys + 'do not access ->value column for secrets, go through ipam_secret_get'` (#56)
+- `feat(settings): ipam_secret_get / ipam_secret_set + libsodium pipeline rooted at app_secret`
+- `migration: re-encrypt existing plaintext secret rows` (idempotent; safe to replay)
+- `refactor(webhooks): consolidate v3.3.0 webhook-secret crypto onto shared ipam_secret_* pipeline`
+- `tests: encrypt-at-rest round-trip across all secret subtype rows; key-rotation no-op smoke`
+- `docs(internal): backups.md DR section — at-rest-encrypted secrets require app_secret in config.php to decrypt; refresh the "back up your keys, not just your data" guidance`
+- `docs(internal): security-model.md — encrypt-at-rest secret pipeline section`
+- `docs/upgrading.md v3.31.0 — operator-facing note that app_secret in config.php is now the encryption root for all settings-table secrets; backup config.php` (operator-visible callout)
 
 ### Test umbrella
 
@@ -243,9 +256,18 @@ All test work for this ADR slots under **#1045** (lib.php decomposition tests). 
 - **ADR-003 (`$config` global):** the migration map (which settings keys mirror to `$config`) now has a DB representation via `setting_definitions.config_key`.
 - **ADR-004 (lib.php size):** the settings code path is one of the larger lib.php islands; this ADR shrinks it before decomposition starts.
 
-### Scope-sizing warning
+### Roadmap §6 shift
 
-Bundling the schema change, encrypt-at-rest pipeline, the webhook crypto refactor, and the migration into v3.30.0 makes this a **larger release than v3.29.0**. The original Option D recommendation deliberately kept v3.30.0 light. With Option B + encrypt-at-rest accepted, v3.30.0 becomes substantially bigger and the rest of milestone #56 may need to ship in v3.31.0 instead. **Re-scope milestone #56 against this ADR before kicking off the release.**
+The slice decision moves wave 2 and wave 3 by one slot each:
+
+| Was | Now |
+|---|---|
+| v3.30.0 → #56 lib.php decomposition | **v3.30.0 → #56 lib.php decomposition** (unchanged theme; subset of ADR-001 scope — schema + dispatch only) |
+| v3.31.0 → #57 wave 2 (api.php + import_csv + migrations) | **v3.31.0 → Settings encrypt-at-rest + webhook crypto consolidation** (new milestone) |
+| v3.32.0 → #58 wave 3 (frontend) | **v3.32.0 → #57 wave 2** (slid one slot) |
+| — | **v3.33.0 → #58 wave 3** (slid one slot) |
+
+`docs/internal/roadmap.md` §6 table needs the corresponding edits.
 
 ## Open questions
 

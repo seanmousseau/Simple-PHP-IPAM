@@ -249,19 +249,20 @@ Origin: post-v3.27.7-deploy CDP session with Sean against the SQLite test instan
 
 ---
 
-## 6. Refactor stream (v3.30.0 → v3.32.0)
+## 6. Refactor stream (v3.30.0 → v3.33.0)
 
-Three milestones, theme-named. Closes 50 of the 87 `archive/code_quality_review.md` findings (the other 37 already shipped through v3.26.0 + are absorbed into v3.29.0 test backfill).
+Four milestones, theme-named. Closes 50 of the 87 `archive/code_quality_review.md` findings (the other 37 already shipped through v3.26.0 + are absorbed into v3.29.0 test backfill). ADR-001 (settings type system) added a fourth slot — **v3.31.0 is dedicated to encrypt-at-rest + webhook crypto consolidation** so the refactor waves keep clean boundaries.
 
 | Suggested slot | Milestone | Theme | Issues | Closes findings |
 |---|---|---|---|---|
-| v3.30.0 | **Refactor wave 1 — lib.php decomposition** (#56) | `lib.php` (~9000 lines) split into focused modules + page-handler refactor | 19 (incl. orphan bugs U/V/Y #1120/#1121/#1122) | A11, A12, A14–A16, A23–A25, A27, A33, B7–B9, B11(re-order), C8 |
-| v3.31.0 | **Refactor wave 2 — api.php + import_csv + migrations** (#57) | `api.php` decomposition; `import_csv` rewrite (also addresses the 38 semgrep WARNINGs from §3.6); migration helpers | 18 | A6, A13, A17–A19, A29, A32, B5, B6, B10, B13, C2, C3-policy, C5–C7, C9–C12 |
-| v3.32.0 | **Refactor wave 3 — frontend modularization** (#58) | `assets/app.js` module split + P2/P3 polish | 16 | A20, A26, A31, A.P3, B.P3, C.P3, D4-full, D5, D13–D21 |
+| v3.30.0 | **Refactor wave 1 — lib.php decomposition** (#56) | `setting_definitions` schema + dispatch refactor (ADR-001 part 1); `lib.php` (~9000 lines) split into focused modules + page-handler refactor | 19 (incl. orphan bugs U/V/Y #1120/#1121/#1122) | A11, A12, A14–A16, A23–A25, A27, A33, B7–B9, B11(re-order), C8 |
+| v3.31.0 | **Settings encrypt-at-rest + webhook crypto consolidation** (new milestone TBD) | `ipam_secret_*` libsodium pipeline (ADR-001 part 2); re-encrypt existing plaintext secrets; collapse v3.3.0 webhook crypto onto shared pipeline | TBD at kickoff | ADR-001 implications only |
+| v3.32.0 | **Refactor wave 2 — api.php + import_csv + migrations** (#57) | `api.php` decomposition; `import_csv` rewrite (also addresses the 38 semgrep WARNINGs from §3.6); migration helpers | 18 | A6, A13, A17–A19, A29, A32, B5, B6, B10, B13, C2, C3-policy, C5–C7, C9–C12 |
+| v3.33.0 | **Refactor wave 3 — frontend modularization** (#58) | `assets/app.js` module split + P2/P3 polish | 16 | A20, A26, A31, A.P3, B.P3, C.P3, D4-full, D5, D13–D21 |
 
-**Per-milestone test umbrellas:** #1045 (wave 1), #1046 (wave 2), #1047 (wave 3). Each refactor PR must update or add the matching test in the same commit.
+**Per-milestone test umbrellas:** #1045 (wave 1 + ADR-001 work, both v3.30.0 and v3.31.0), #1046 (wave 2), #1047 (wave 3). Each refactor PR must update or add the matching test in the same commit.
 
-**Architecture-review dependency (§10):** the `lib.php size` candidate decision must land before wave 1 starts.
+**Architecture-review dependency (§10):** ADR-001 (settings type system) accepted 2026-05-15. Pre-wave-1 sprint continues with ADR-002–006 before wave 1 starts.
 
 ---
 
