@@ -204,4 +204,35 @@ interface Dialect
      *             non-ASCII coverage on the SQL side.
      */
     public function case_fold_value(string $value): string;
+
+    /**
+     * Run $work with the audit_log append-only triggers suspended on THIS
+     * connection only. Each engine sets up its bypass, runs $work, and tears
+     * the bypass down — including on the error path. Returns whatever $work
+     * returns.
+     *
+     * Introduced in v3.30.0 (#912) to collapse prune_audit_log()'s 3-arm
+     * driver branching into a single per-dialect strategy:
+     *
+     *  - SQLite  : BEGIN IMMEDIATE (reserved write lock), DROP the two
+     *              RAISE(ABORT) triggers, run $work, recreate the triggers
+     *              from append_only_trigger('audit_log'), COMMIT. The DDL is
+     *              transactional, so the whole window is atomic from every
+     *              other connection's point of view. On error: ROLLBACK.
+     *  - MySQL   : SET @ipam_bypass_append_only = 1 (session-scoped, so it
+     *              never leaks to other connections — their SIGNAL keeps
+     *              firing), run $work, clear the variable back to NULL. The
+     *              variable is cleared on the error path too.
+     *  - Postgres: SET LOCAL ipam.bypass_append_only = '1' inside a
+     *              transaction the helper owns only if not already in one
+     *              ($ownTx). SET LOCAL auto-unsets on COMMIT/ROLLBACK.
+     *
+     * The append-only guarantee stays observable-intact for every other
+     * connection throughout — see prune_audit_log() and #502.
+     *
+     * @template T
+     * @param callable():T $work
+     * @return T
+     */
+    public function with_append_only_bypass(PDO $db, callable $work): mixed;
 }

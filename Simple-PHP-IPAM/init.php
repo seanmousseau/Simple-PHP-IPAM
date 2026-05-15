@@ -114,6 +114,15 @@ require_once __DIR__ . '/lib/config.php';
 // always after init.php has finished loading. v3.30.0.
 require_once __DIR__ . '/lib/db.php';
 
+// Audit layer (#912, ADR-004 Phase 4 Task 4.2) — audit() / audit_export() /
+// prune_audit_log() / audit_filter_validate_* and the AUDIT_FILTER_PREFIXES
+// const. Loaded AFTER lib/db.php (prune_audit_log() calls ipam_dialect() and
+// the new Dialect::with_append_only_bypass() helper) and BEFORE lib.php so any
+// lib.php function can call audit() without a separate bootstrap step.
+// current_user() / client_ip() are still in lib.php; they resolve lazily at
+// call time, always after init.php has finished loading. v3.30.0.
+require_once __DIR__ . '/lib/audit.php';
+
 // Composer autoloader (#416). Conditional because v2.9.0 ships with an empty
 // require {} — vendor/autoload.php only exists in release tarballs (built by
 // releases/make_releases.sh) and in dev environments where the tester has run

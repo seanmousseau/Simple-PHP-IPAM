@@ -223,4 +223,29 @@ final class MysqlDialect implements Dialect
     {
         return mb_strtolower($value);
     }
+
+    /**
+     * MySQL append-only triggers wrap SIGNAL in an IF block gated on the
+     * session variable @ipam_bypass_append_only (see append_only_trigger()).
+     * Setting it to 1 suspends the bypass for THIS connection only — session
+     * variables never leak to other connections, so their SIGNAL keeps firing
+     * unconditionally. The variable is cleared back to NULL afterwards,
+     * including on the error path.
+     *
+     * @template T
+     * @param callable():T $work
+     * @return T
+     */
+    public function with_append_only_bypass(PDO $db, callable $work): mixed
+    {
+        try {
+            $db->exec("SET @ipam_bypass_append_only = 1");
+            $result = $work();
+            $db->exec("SET @ipam_bypass_append_only = NULL");
+            return $result;
+        } catch (\Throwable $e) {
+            try { $db->exec("SET @ipam_bypass_append_only = NULL"); } catch (\Throwable) {}
+            throw $e;
+        }
+    }
 }

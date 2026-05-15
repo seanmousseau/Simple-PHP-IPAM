@@ -449,12 +449,15 @@ function ensure_audit_log_table(PDO $db): void
 /**
  * (Re)create the audit_log append-only triggers (idempotent).
  *
- * Extracted from ensure_audit_log_table() so callers that explicitly
- * DROP the triggers — currently only prune_audit_log() under SQLite —
- * can put them back without relying on a side effect of the table-
- * creation function. ensure_audit_log_table()'s probe returns early
- * when the table exists, so it cannot be the recovery path for missing
- * triggers in isolation.
+ * A focused, idempotent trigger-(re)creation routine that
+ * ensure_audit_log_table() delegates to — both on the table-creation
+ * path and from its self-heal branch when the probe finds the triggers
+ * missing. apply_migrations() also calls it directly.
+ *
+ * Note the SQLite append-only-bypass path does NOT route through here:
+ * SqliteDialect::with_append_only_bypass() recreates the triggers
+ * itself via the dialect's own append_only_trigger('audit_log'), so the
+ * dialect stays free of any lib/ dependency.
  */
 function ensure_audit_log_triggers(PDO $db): void
 {

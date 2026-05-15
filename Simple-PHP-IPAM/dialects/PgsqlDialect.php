@@ -242,4 +242,45 @@ final class PgsqlDialect implements Dialect
     {
         return mb_strtolower($value);
     }
+
+    /**
+     * The Postgres append-only trigger function checks the custom GUC
+     * ipam.bypass_append_only via current_setting(..., true). SET LOCAL sets
+     * it for the duration of the current transaction only, so it auto-unsets
+     * on COMMIT/ROLLBACK — no explicit cleanup and no leak to other
+     * connections or later transactions.
+     *
+     * The helper opens its own transaction only if the caller is not already
+     * inside one ($ownTx); SET LOCAL requires a transaction context. On error,
+     * a helper-owned transaction is rolled back.
+     *
+     * @template T
+     * @param callable():T $work
+     * @return T
+     */
+    public function with_append_only_bypass(PDO $db, callable $work): mixed
+    {
+        // $ownTx tracks whether THIS call opened the transaction. It is only
+        // set true once beginTransaction() has actually succeeded, so the
+        // error path can safely roll back exactly the transaction we own and
+        // never one the caller started.
+        $ownTx = false;
+        try {
+            if (!$db->inTransaction()) {
+                $db->beginTransaction();
+                $ownTx = true;
+            }
+            $db->exec("SET LOCAL ipam.bypass_append_only = '1'");
+            $result = $work();
+            if ($ownTx) {
+                $db->commit();
+            }
+            return $result;
+        } catch (\Throwable $e) {
+            if ($ownTx && $db->inTransaction()) {
+                try { $db->rollBack(); } catch (\Throwable) {}
+            }
+            throw $e;
+        }
+    }
 }
