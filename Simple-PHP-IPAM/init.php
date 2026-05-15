@@ -91,6 +91,12 @@ $config = require __DIR__ . '/config.php';
 // pulling in the rest of lib.php. v3.30.0 ADR-004 Phase 2.
 require_once __DIR__ . '/lib/utils.php';
 
+// Pure IP/CIDR math + ipam_bind_binary() (invariant #1 from CLAUDE.md).
+// Loaded after utils (depends on to_int/to_str) and before lib.php so any
+// extracted helper can be called from early bootstrap if ever needed.
+// v3.30.0 ADR-004 Phase 2 Task 2.2.
+require_once __DIR__ . '/lib/ip.php';
+
 // Composer autoloader (#416). Conditional because v2.9.0 ships with an empty
 // require {} — vendor/autoload.php only exists in release tarballs (built by
 // releases/make_releases.sh) and in dev environments where the tester has run

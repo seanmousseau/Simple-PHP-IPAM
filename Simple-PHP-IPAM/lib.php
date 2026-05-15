@@ -2,6 +2,7 @@
 declare(strict_types=1);
 require_once __DIR__ . '/version.php';
 require_once __DIR__ . '/lib/utils.php';
+require_once __DIR__ . '/lib/ip.php';
 require_once __DIR__ . '/lib/BackupClientInterface.php';
 require_once __DIR__ . '/lib/S3Client.php';
 require_once __DIR__ . '/lib/SftpClient.php';
@@ -73,43 +74,6 @@ function ipam_dialect_from_config(array $config): Dialect
  */
 function ipam_sql_dump_supported(): bool {
     return ipam_dialect()->driver_name() === 'sqlite';
-}
-
-/**
- * Bind a raw binary value (typically inet_pton output) to a PDOStatement
- * parameter using PDO::PARAM_LOB on every driver (#410).
- *
- * **Why this helper exists.** Pre-v2.9.0 the codebase passed binary IP
- * values through positional execute(), which ultimately hits PDO::PARAM_STR.
- * On SQLite this stores the value with TEXT affinity even though the column
- * is declared BLOB — SQLite's loose typing honors the binding's affinity at
- * insert time, not the column's declared type. The bytes round-trip
- * correctly, but `ORDER BY ip_bin` and range queries break the moment new
- * rows arrive bound as BLOB, because SQLite's comparison rules say any BLOB
- * sorts greater than any TEXT regardless of byte content.
- *
- * On MySQL / Postgres the situation is worse: PARAM_STR string-escapes high
- * bytes and truncates at null bytes, corrupting every stored IP.
- *
- * This helper uses PARAM_LOB unconditionally so the same binding works on
- * SQLite (BLOB affinity), MySQL (VARBINARY), and Postgres (BYTEA). The
- * existing-data normalization happens in the 2.9.0-blob-affinity migration.
- *
- * **Storage format**: native length, never padded. IPv4 = 4 bytes,
- * IPv6 = 16 bytes. All three engines do byte-wise memcmp comparison on
- * native-length values, so sort order is equivalent across engines.
- *
- * Round-trip test vectors (covered by tests/BinaryBindTest.php):
- *   inet_pton('10.0.0.0')         = \x0A\x00\x00\x00  (null bytes after first)
- *   inet_pton('2001:db8::')       = \x20\x01\x0D\xB8...  (mostly null bytes)
- *   inet_pton('255.255.255.255')  = \xFF\xFF\xFF\xFF  (all high bytes)
- */
-/**
- * @param int|string $param 1-based positional index, or ':name' for a named placeholder.
- */
-function ipam_bind_binary(PDOStatement $stmt, int|string $param, string $bin): void
-{
-    $stmt->bindValue($param, $bin, PDO::PARAM_LOB);
 }
 
 /**
@@ -1241,52 +1205,6 @@ function logout_user(): void
 }
 
 /* ---------------- Audit ---------------- */
-
-/**
- * True if $ip falls inside any of the supplied CIDR blocks. Accepts both
- * IPv4 and IPv6 strings and CIDRs; returns false on parse error.
- *
- * @param list<string> $cidrs
- */
-function ip_in_any_cidr(string $ip, array $cidrs): bool
-{
-    $ipBin = @inet_pton($ip);
-    if ($ipBin === false) {
-        return false;
-    }
-    foreach ($cidrs as $cidr) {
-        $cidr = trim($cidr);
-        if ($cidr === '' || strpos($cidr, '/') === false) {
-            continue;
-        }
-        [$net, $prefixStr] = explode('/', $cidr, 2);
-        $net = trim($net);
-        $prefixStr = trim($prefixStr);
-        // CR #1100: reject non-numeric prefixes before casting. Without
-        // this guard, a typo like "10.0.0.0/abc" would cast to /0 and
-        // ip_in_any_cidr() would match every IPv4 address — turning a
-        // proxy_trust_cidrs typo into a "trust everyone" XFF spoofing
-        // foothold. ctype_digit() is strict (no whitespace, no signs).
-        if ($prefixStr === '' || !ctype_digit($prefixStr)) {
-            continue;
-        }
-        $netBin = @inet_pton($net);
-        if ($netBin === false || strlen($netBin) !== strlen($ipBin)) {
-            continue;
-        }
-        $prefix = (int)$prefixStr;
-        $bits   = strlen($ipBin) * 8;
-        if ($prefix < 0 || $prefix > $bits) {
-            continue;
-        }
-        $masked   = apply_prefix_mask($ipBin, $prefix);
-        $netMaskd = apply_prefix_mask($netBin, $prefix);
-        if ($masked === $netMaskd) {
-            return true;
-        }
-    }
-    return false;
-}
 
 function client_ip(): string
 {
@@ -8242,122 +8160,11 @@ function demo_seed_data(PDO $db): void
     }
 }
 
-/* ---------------- IP helpers ---------------- */
-
-/** @return array{version: int, network: string, prefix: int, net_bin: string}|null */
-function parse_cidr(string $cidr): ?array
-{
-    $cidr = trim($cidr);
-    if (strpos($cidr, '/') === false) return null;
-    [$ip, $prefixStr] = explode('/', $cidr, 2);
-
-    $ip = trim($ip);
-    $prefixStr = trim($prefixStr);
-
-    $ipBin = @inet_pton($ip);
-    if ($ipBin === false) return null;
-
-    $len = strlen($ipBin);
-    $version = ($len === 4) ? 4 : (($len === 16) ? 6 : 0);
-    if ($version === 0) return null;
-
-    if (!ctype_digit($prefixStr)) return null;
-    $prefix = (int)$prefixStr;
-    $max = ($version === 4) ? 32 : 128;
-    if ($prefix < 0 || $prefix > $max) return null;
-
-    $netBin = apply_prefix_mask($ipBin, $prefix);
-    $network = inet_ntop($netBin);
-    if ($network === false) return null;
-
-    return [
-        'version' => $version,
-        'network' => $network,
-        'prefix' => $prefix,
-        'net_bin' => $netBin,
-    ];
-}
-
-function apply_prefix_mask(string $ipBin, int $prefix): string
-{
-    $len = strlen($ipBin);
-    $maxBits = ($len === 4) ? 32 : 128;
-    $prefix = max(0, min($prefix, $maxBits));
-
-    $fullBytes = intdiv($prefix, 8);
-    $remBits = $prefix % 8;
-
-    $out = '';
-    for ($i = 0; $i < $len; $i++) {
-        $b = ord($ipBin[$i]);
-        if ($i < $fullBytes) $out .= chr($b);
-        elseif ($i === $fullBytes && $remBits !== 0) {
-            $mask = (0xFF << (8 - $remBits)) & 0xFF;
-            $out .= chr($b & $mask);
-        } else $out .= chr(0);
-    }
-    return $out;
-}
-
-/**
- * Compute the IPv4 broadcast address (binary) for a given network+prefix.
- *
- * Returns null when the concept does not apply:
- *   - IPv6 networks (no broadcast)
- *   - /32 (single host)
- *   - /31 (RFC 3021 point-to-point; both addresses are usable)
- *
- * @param string $netBin 4-byte IPv4 network address (output of apply_prefix_mask)
+/* ---------------- IP helpers ----------------
+ * Pure IP/CIDR math + ipam_bind_binary() now live in lib/ip.php
+ * (ADR-004 Phase 2 Task 2.2, v3.30.0). normalize_status() stays here
+ * because it is an address-record status string normaliser, not IP math.
  */
-function ipam_compute_broadcast_bin(string $netBin, int $prefix): ?string
-{
-    if (strlen($netBin) !== 4) return null;       // IPv6 has no broadcast
-    if ($prefix < 0 || $prefix >= 31) return null; // /31, /32 have no broadcast
-    $hostBits = 32 - $prefix;
-    $out = '';
-    for ($i = 0; $i < 4; $i++) {
-        $byteIdx = 3 - $i; // little-endian walk from LSB
-        $n = ord($netBin[$byteIdx]);
-        if ($hostBits >= 8) {
-            $out = chr(0xFF) . $out;
-            $hostBits -= 8;
-        } elseif ($hostBits > 0) {
-            $lowMask = (1 << $hostBits) - 1;
-            $out = chr($n | $lowMask) . $out;
-            $hostBits = 0;
-        } else {
-            $out = chr($n) . $out;
-        }
-    }
-    return $out;
-}
-
-function ipam_compute_gateway_bin(string $netBin, int $prefix): ?string
-{
-    if (strlen($netBin) !== 4) return null;
-    if ($prefix < 0 || $prefix > 30) return null;
-    $int = ipv4_bin_to_int($netBin);
-    return ipv4_int_to_bin($int + 1);
-}
-
-function ip_in_cidr(string $ip, string $network, int $prefix): bool
-{
-    $ipBin = @inet_pton(trim($ip));
-    $netBin = @inet_pton(trim($network));
-    if ($ipBin === false || $netBin === false) return false;
-    if (strlen($ipBin) !== strlen($netBin)) return false;
-    return hash_equals(apply_prefix_mask($ipBin, $prefix), $netBin);
-}
-
-/** @return array{ip: string, bin: string, version: int}|null */
-function normalize_ip(string $ip): ?array
-{
-    $bin = @inet_pton(trim($ip));
-    if ($bin === false) return null;
-    $normalized = inet_ntop($bin);
-    if ($normalized === false) return null;
-    return ['ip' => $normalized, 'bin' => $bin, 'version' => (strlen($bin) === 4) ? 4 : 6];
-}
 
 function normalize_status(?string $s): string
 {
@@ -8370,43 +8177,13 @@ function normalize_status(?string $s): string
     return 'used';
 }
 
-/* ---------------- IPv4 helpers ---------------- */
-
-function ipv4_bin_to_int(string $bin): int
-{
-    $unpacked = unpack('N', $bin);
-    $n = $unpacked !== false ? $unpacked[1] : 0;
-    return to_int($n & 0xFFFFFFFF);
-}
-
-function ipv4_int_to_bin(int $n): string
-{
-    $n = $n & 0xFFFFFFFF;
-    return pack('N', $n);
-}
-
-function ipv4_int_to_text(int $n): string
-{
-    return inet_ntop(ipv4_int_to_bin($n)) ?: '';
-}
-
-function ipv4_assignable_count(int $prefix): int
-{
-    if ($prefix >= 32) return 1;
-    if ($prefix === 31) return 2;
-    $hostBits = 32 - $prefix;
-    $total = ($hostBits === 32) ? 4294967296 : (1 << $hostBits);
-    $assignable = $total - 2;
-    return ($assignable > 0) ? (int)$assignable : 0;
-}
+/* ---------------- IPv4 helpers ----------------
+ * Pure IPv4 helpers (ipv4_bin_to_int, ipv4_int_to_bin, ipv4_int_to_text,
+ * ipv4_assignable_count, ipv4_broadcast_bin, ipv4_broadcast_int,
+ * subnet_contains_bin) now live in lib/ip.php (ADR-004 Phase 2 Task 2.2).
+ */
 
 /* ── Subnet tree + utilization helpers (shared by subnets.php, dashboard, API) ── */
-
-function subnet_contains_bin(string $parentNetBin, int $parentPrefix, string $childNetBin): bool
-{
-    $masked = apply_prefix_mask($childNetBin, $parentPrefix);
-    return hash_equals($masked, $parentNetBin);
-}
 
 /**
  * @param array<int, array<string, mixed>> $rows
@@ -8526,19 +8303,6 @@ function subnet_aggregated_counts(array $tree, array $directCounts): array
 
     foreach ($tree['byId'] as $id => $_row) $sumNode((int)$id);
     return $agg;
-}
-
-function ipv4_broadcast_bin(string $netBin, int $prefix): string
-{
-    $hostBits = 32 - $prefix;
-    if ($hostBits <= 0) return $netBin;
-
-    $unpacked = unpack('N', $netBin);
-    $n = $unpacked !== false ? $unpacked[1] : 0;
-    $hostMask = ($hostBits === 32) ? 0xFFFFFFFF : ((1 << $hostBits) - 1);
-    $b = ($n | $hostMask) & 0xFFFFFFFF;
-
-    return pack('N', $b);
 }
 
 /** @return array<int, array{assignable_total: int, assigned_assignable: int, unassigned_assignable: int}> */
@@ -8700,33 +8464,11 @@ function find_next_available_ipv4(PDO $db, int $subnetId, string $network, int $
     return null;
 }
 
-function ipv4_broadcast_int(int $networkInt, int $prefix): int
-{
-    $hostBits = 32 - $prefix;
-    if ($hostBits <= 0) return $networkInt;
-    $hostMask = ($hostBits === 32) ? 0xFFFFFFFF : ((1 << $hostBits) - 1);
-    return to_int(($networkInt | $hostMask) & 0xFFFFFFFF);
-}
-
-/* ---------------- IPv6 enumeration helpers ---------------- */
-
-/**
- * Increment a 16-byte IPv6 binary address by 1.
- * Returns all-zeros if the address overflows (all-0xFF).
+/* ---------------- IPv6 enumeration helpers ----------------
+ * Pure IPv6 helpers (ipv6_bin_increment) now live in lib/ip.php
+ * (ADR-004 Phase 2 Task 2.2). DB-driven enumeration stays here pending
+ * the v3.32.0 lib/addresses.php extraction.
  */
-function ipv6_bin_increment(string $bin): string
-{
-    /** @var array<int, int> $bytes */
-    $bytes = array_values(unpack('C16', $bin) ?: []);
-    for ($i = 15; $i >= 0; $i--) {
-        if ($bytes[$i] < 255) {
-            $bytes[$i]++;
-            return pack('C16', ...$bytes);
-        }
-        $bytes[$i] = 0;
-    }
-    return pack('C16', ...array_fill(0, 16, 0));
-}
 
 /**
  * Return the first $n unassigned IPv6 host addresses in a subnet.
@@ -8905,28 +8647,6 @@ function csv_read_preview(string $path, string $delimiter, int $maxRows = 20): a
     return $rows;
 }
 
-function netmask_to_prefix(string $mask): ?int
-{
-    $bin = @inet_pton(trim($mask));
-    if ($bin === false || strlen($bin) !== 4) return null;
-
-    $unpacked = unpack('N', $bin);
-    $n = $unpacked !== false ? $unpacked[1] : 0;
-    $prefix = 0;
-    $seenZero = false;
-
-    for ($i = 31; $i >= 0; $i--) {
-        $bit = ($n >> $i) & 1;
-        if ($bit === 1) {
-            if ($seenZero) return null;
-            $prefix++;
-        } else {
-            $seenZero = true;
-        }
-    }
-    return $prefix;
-}
-
 /**
  * @param array{ip: string, bin: string, version: int} $normIp
  * @return array<string, mixed>|null
@@ -8971,15 +8691,6 @@ function ensure_subnet_exists(PDO $db, string $cidr, string $description = ''): 
     $ins->execute();
 
     return ipam_last_insert_id($db, 'subnets');
-}
-
-/** @param array{ip: string, bin: string, version: int} $normIp */
-function cidr_from_ip_and_prefix(array $normIp, int $prefix): string
-{
-    $max = ($normIp['version'] === 4) ? 32 : 128;
-    if ($prefix < 0 || $prefix > $max) throw new RuntimeException("Bad prefix");
-    $netBin = apply_prefix_mask($normIp['bin'], $prefix);
-    return inet_ntop($netBin) . '/' . $prefix;
 }
 
 /* ---------------- Subnet overlap detection ---------------- */
@@ -9045,21 +8756,6 @@ function detect_subnet_overlaps(PDO $db, string $cidr, ?int $excludeId = null, ?
     }
 
     return ['parents' => $parents, 'children' => $children];
-}
-
-/** @param array{parents: list<string>, children: list<string>} $overlaps */
-function subnet_overlap_warning_text(array $overlaps): string
-{
-    $parts = [];
-    if (!empty($overlaps['parents'])) {
-        $list = implode(', ', $overlaps['parents']);
-        $parts[] = 'nested inside: ' . $list;
-    }
-    if (!empty($overlaps['children'])) {
-        $list = implode(', ', $overlaps['children']);
-        $parts[] = 'parent of: ' . $list;
-    }
-    return 'Hierarchy notice — this subnet is ' . implode('; and ', $parts) . '. Verify this nesting is intentional.';
 }
 
 /* ---------------- Webhook helpers ---------------- */
