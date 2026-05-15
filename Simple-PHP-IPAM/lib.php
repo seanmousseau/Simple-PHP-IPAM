@@ -3,6 +3,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/version.php';
 require_once __DIR__ . '/lib/utils.php';
 require_once __DIR__ . '/lib/ip.php';
+require_once __DIR__ . '/lib/config.php';
 require_once __DIR__ . '/lib/BackupClientInterface.php';
 require_once __DIR__ . '/lib/S3Client.php';
 require_once __DIR__ . '/lib/SftpClient.php';

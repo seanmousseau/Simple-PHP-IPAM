@@ -97,6 +97,14 @@ require_once __DIR__ . '/lib/utils.php';
 // v3.30.0 ADR-004 Phase 2 Task 2.2.
 require_once __DIR__ . '/lib/ip.php';
 
+// ipam_config() / ipam_config_nested() / ipam_config_invalidate_cache() —
+// ADR-003 Option D accessor. Must load AFTER config.php has populated
+// $GLOBALS['config'] (line 86 above) and BEFORE lib.php so that any module
+// extracted in v3.30.0+ (db, audit, settings, user_preferences, presentation,
+// auth ×4) can call ipam_config() at top-of-function instead of `global $config;`.
+// v3.30.0 ADR-004 Phase 2 Task 2.3.
+require_once __DIR__ . '/lib/config.php';
+
 // Composer autoloader (#416). Conditional because v2.9.0 ships with an empty
 // require {} — vendor/autoload.php only exists in release tarballs (built by
 // releases/make_releases.sh) and in dev environments where the tester has run
