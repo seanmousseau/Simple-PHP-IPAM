@@ -139,11 +139,11 @@ jobs:
 
       - name: PHPUnit
         if: always()
-        run: vendor/bin/phpunit --testdox
+        run: vendor/bin/phpunit
 
       - name: PHPCS
         if: always()
-        run: vendor/bin/phpcs -n
+        run: vendor/bin/phpcs
 
       # ----- MySQL slot only: test_api.sh against php -S backed by MySQL -----
       #
