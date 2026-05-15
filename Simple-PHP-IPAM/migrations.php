@@ -3970,6 +3970,179 @@ function ipam_migrations(): array
                 $migrateScope('backup.schedule_overdue_state', 'schedule_overdue');
             }
         },
+
+        // v3.30.0 Task 3.2 (ADR-001 § Implications) — DB-backed setting_definitions
+        // registry. Creates the `setting_definitions` table (engine-portable,
+        // IF NOT EXISTS) and seeds it from the v3.29.0 ipam_setting_definitions()
+        // PHP registry. Idempotent: replays use the dialect INSERT-OR-IGNORE
+        // clause so a re-run after a partial application completes the seed
+        // without raising on the existing PK rows.
+        //
+        // Invariant #2 (CLAUDE.md): apply_migrations() brackets every migration
+        // with PRAGMA foreign_keys = OFF; this closure must NOT start its own
+        // transaction or touch FK settings.
+        '3.30.0-setting-definitions' => static function (PDO $db): void {
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driver = is_string($driverRaw) ? $driverRaw : '';
+
+            // 1. CREATE TABLE IF NOT EXISTS — mirrors schema.{driver}.sql.
+            //    Fresh installs of MySQL/Postgres ship the table directly
+            //    from their schema file; upgrades and SQLite fresh installs
+            //    reach here. IF NOT EXISTS makes the DDL a no-op when the
+            //    schema file already provided the table.
+            if ($driver === 'sqlite') {
+                $db->exec(
+                    "CREATE TABLE IF NOT EXISTS setting_definitions ("
+                    . "  key            TEXT PRIMARY KEY,"
+                    . "  label          TEXT NOT NULL,"
+                    . "  description    TEXT NOT NULL DEFAULT '',"
+                    . "  type           TEXT NOT NULL,"
+                    . "  subtype        TEXT,"
+                    . "  default_value  TEXT,"
+                    . "  group_name     TEXT NOT NULL,"
+                    . "  is_sensitive   INTEGER NOT NULL DEFAULT 0,"
+                    . "  is_hidden      INTEGER NOT NULL DEFAULT 0,"
+                    . "  options_json   TEXT,"
+                    . "  config_key     TEXT,"
+                    . "  validator      TEXT,"
+                    . "  ordering       INTEGER NOT NULL DEFAULT 0"
+                    . ")"
+                );
+            } elseif ($driver === 'mysql') {
+                $db->exec(
+                    "CREATE TABLE IF NOT EXISTS setting_definitions ("
+                    . "  `key`         VARCHAR(191) COLLATE utf8mb4_bin NOT NULL,"
+                    . "  label         VARCHAR(191) NOT NULL,"
+                    . "  description   TEXT NOT NULL DEFAULT (''),"
+                    . "  type          VARCHAR(32) NOT NULL,"
+                    . "  subtype       VARCHAR(32) NULL,"
+                    . "  default_value TEXT NULL,"
+                    . "  group_name    VARCHAR(64) NOT NULL,"
+                    . "  is_sensitive  TINYINT(1) UNSIGNED NOT NULL DEFAULT 0,"
+                    . "  is_hidden     TINYINT(1) UNSIGNED NOT NULL DEFAULT 0,"
+                    . "  options_json  TEXT NULL,"
+                    . "  config_key    VARCHAR(191) NULL,"
+                    . "  validator     VARCHAR(191) NULL,"
+                    . "  ordering      INT NOT NULL DEFAULT 0,"
+                    . "  PRIMARY KEY (`key`)"
+                    . ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+                );
+            } else { // pgsql
+                $db->exec(
+                    "CREATE TABLE IF NOT EXISTS setting_definitions ("
+                    . "  \"key\"         TEXT COLLATE \"C\" NOT NULL,"
+                    . "  label         TEXT NOT NULL,"
+                    . "  description   TEXT NOT NULL DEFAULT '',"
+                    . "  type          TEXT NOT NULL,"
+                    . "  subtype       TEXT NULL,"
+                    . "  default_value TEXT NULL,"
+                    . "  group_name    TEXT NOT NULL,"
+                    . "  is_sensitive  SMALLINT NOT NULL DEFAULT 0,"
+                    . "  is_hidden     SMALLINT NOT NULL DEFAULT 0,"
+                    . "  options_json  TEXT NULL,"
+                    . "  config_key    TEXT NULL,"
+                    . "  validator     TEXT NULL,"
+                    . "  ordering      INTEGER NOT NULL DEFAULT 0,"
+                    . "  PRIMARY KEY (\"key\")"
+                    . ")"
+                );
+            }
+
+            // 2. Seed from the PHP registry. Skip if registry helper isn't
+            //    loaded — init.php loads lib.php before migrations run, so
+            //    this is just defensive against partial test fixtures.
+            if (!function_exists('ipam_setting_definitions')) {
+                return;
+            }
+
+            // Engine-specific column quoting for the reserved word `key`.
+            // MySQL needs backticks; Postgres needs double-quotes; SQLite
+            // accepts bare `key`. upsert_or_ignore() handles the conflict
+            // clause portably (INSERT IGNORE / ON CONFLICT DO NOTHING).
+            $keyCol = match ($driver) {
+                'mysql' => '`key`',
+                'pgsql' => '"key"',
+                default => 'key',
+            };
+            $ignore = ipam_dialect()->upsert_or_ignore('setting_definitions', ['key']);
+            $stmt = $db->prepare(
+                "INSERT INTO setting_definitions "
+                . "({$keyCol}, label, description, type, subtype, default_value, "
+                . " group_name, is_sensitive, is_hidden, options_json, config_key, "
+                . " validator, ordering) "
+                . "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) {$ignore}"
+            );
+
+            foreach (ipam_setting_definitions() as $key => $def) {
+                $label       = is_string($def['label'] ?? null) ? $def['label'] : (string) $key;
+                $description = is_string($def['description'] ?? null) ? $def['description'] : '';
+                $type        = is_string($def['type'] ?? null) ? $def['type'] : 'string';
+                $group       = is_string($def['group'] ?? null) ? $def['group'] : 'general';
+                $sensitive   = !empty($def['sensitive']) ? 1 : 0;
+                $hidden      = !empty($def['hidden']) ? 1 : 0;
+
+                // default_value: cast scalars to string; bools to '1'/'0';
+                // arrays JSON-encode (matches the 'json' type contract).
+                // NULL when absent.
+                if (!array_key_exists('default', $def)) {
+                    $default = null;
+                } else {
+                    $d = $def['default'];
+                    if (is_bool($d)) {
+                        $default = $d ? '1' : '0';
+                    } elseif (is_array($d)) {
+                        $enc = json_encode($d);
+                        $default = is_string($enc) ? $enc : null;
+                    } elseif (is_scalar($d)) {
+                        $default = (string) $d;
+                    } else {
+                        $default = null;
+                    }
+                }
+
+                // options: pass through string sentinel (e.g. '@timezone'),
+                // JSON-encode arrays, NULL when absent.
+                if (!array_key_exists('options', $def)) {
+                    $options = null;
+                } elseif (is_string($def['options'])) {
+                    $options = $def['options'];
+                } elseif (is_array($def['options'])) {
+                    $enc = json_encode($def['options']);
+                    $options = is_string($enc) ? $enc : null;
+                } else {
+                    $options = null;
+                }
+
+                // config_key: pass through string; JSON-encode array form
+                // (e.g. ['update_check','enabled']); NULL when absent.
+                if (!array_key_exists('config_key', $def) || $def['config_key'] === null) {
+                    $configKey = null;
+                } elseif (is_string($def['config_key'])) {
+                    $configKey = $def['config_key'];
+                } elseif (is_array($def['config_key'])) {
+                    $enc = json_encode($def['config_key']);
+                    $configKey = is_string($enc) ? $enc : null;
+                } else {
+                    $configKey = null;
+                }
+
+                $stmt->execute([
+                    (string) $key,
+                    $label,
+                    $description,
+                    $type,
+                    null,       // subtype — populated by later task / ADR-001 follow-up
+                    $default,
+                    $group,
+                    $sensitive,
+                    $hidden,
+                    $options,
+                    $configKey,
+                    null,       // validator — populated later
+                    0,          // ordering — populated later
+                ]);
+            }
+        },
     ];
 }
 
