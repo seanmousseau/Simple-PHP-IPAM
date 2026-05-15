@@ -62,17 +62,15 @@ header('Referrer-Policy: strict-origin-when-cross-origin');
 
 require_once __DIR__ . '/version.php';
 $appName = trim(to_str(ipam_setting('branding.site_name'))) ?: 'Simple PHP IPAM';
-// Mirror page_header()'s cache-buster scheme exactly: $av = IPAM_VERSION is the
-// buster for static-ish assets (favicons, vendored open-props); app.css/app.js
-// additionally append their mtime so an in-version edit busts the cache without
-// an IPAM_VERSION bump. demo_gate.php has its own <head> and does NOT call
-// page_header(), so it derives these the same way rather than hardcoding —
-// hardcoded version strings here drifted release-to-release (see cleanup.md).
-$av       = e(IPAM_VERSION);
-$cssMtime = (int)@filemtime(__DIR__ . '/assets/app.css');
-$jsMtime  = (int)@filemtime(__DIR__ . '/assets/app.js');
-$cssV     = $av . ($cssMtime > 0 ? '.' . $cssMtime : '');
-$jsV      = $av . ($jsMtime  > 0 ? '.' . $jsMtime  : '');
+// v3.29.0 #897: cache-buster values centralised in ipam_asset_buster()
+// (lib.php) so demo_gate.php and page_header() stay in lockstep without
+// per-call-site duplication. demo_gate.php has its own <head> (does NOT
+// call page_header) so it still renders the values inline — but the
+// derivation lives in lib.php and any future scheme change happens in
+// one place.
+$av   = e(ipam_asset_buster());
+$cssV = e(ipam_asset_buster('assets/app.css'));
+$jsV  = e(ipam_asset_buster('assets/app.js'));
 ?>
 <!doctype html>
 <html>

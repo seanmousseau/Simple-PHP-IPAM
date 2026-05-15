@@ -3552,6 +3552,42 @@ function ipam_migrations_count(): int
 }
 
 /**
+ * v3.29.0 #897 — Centralised cache-buster query value for asset URLs.
+ *
+ * Returns the value to embed after `?v=` in static asset URLs. With no
+ * argument, returns the bare IPAM_VERSION — the right buster for
+ * favicons / vendored open-props (where the file content only changes
+ * when IPAM_VERSION changes). With a path relative to the Simple-PHP-IPAM/
+ * directory, appends the file's mtime so in-version edits to that file
+ * invalidate the browser cache without requiring an IPAM_VERSION bump.
+ *
+ * Returns the RAW value — callers `e()` it where it lands in HTML.
+ * `IPAM_VERSION` is always a numeric string in practice but escaping at
+ * the call site keeps the contract uniform with the rest of page_header()'s
+ * defensive HTML emission.
+ *
+ * Pre-v3.29.0 this logic was duplicated between `page_header()` (lib.php)
+ * and `demo_gate.php`'s head block; both call sites now route through
+ * here so a future cache-buster change happens in one place.
+ *
+ * @param string $relPath Path relative to `__DIR__` (the Simple-PHP-IPAM/
+ *                        directory). Empty string returns the version
+ *                        only.
+ */
+function ipam_asset_buster(string $relPath = ''): string
+{
+    if (!defined('IPAM_VERSION')) {
+        require_once __DIR__ . '/version.php';
+    }
+    $av = (string) IPAM_VERSION;
+    if ($relPath === '') {
+        return $av;
+    }
+    $mtime = (int) @filemtime(__DIR__ . '/' . ltrim($relPath, '/'));
+    return $mtime > 0 ? $av . '.' . $mtime : $av;
+}
+
+/**
  * @deprecated v3.0.0 — ipam_config_sync removed; config.php is now a bootstrap stub.
  * @return array<string, array{default: mixed, comment: string}>
  */
@@ -9675,13 +9711,10 @@ function page_header(string $title, array $opts = []): void
 
     echo "<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
     echo "<title>" . e($appName) . " \u{2014} " . e($title) . "</title>";
-    $av = e(IPAM_VERSION);
-    // Append file mtime to JS/CSS cache busters so in-version edits invalidate
-    // the browser cache without requiring an IPAM_VERSION bump.
-    $cssMtime = (int)@filemtime(__DIR__ . '/assets/app.css');
-    $jsMtime  = (int)@filemtime(__DIR__ . '/assets/app.js');
-    $cssV     = $av . ($cssMtime > 0 ? '.' . $cssMtime : '');
-    $jsV      = $av . ($jsMtime  > 0 ? '.' . $jsMtime  : '');
+    // v3.29.0 #897: cache-buster values centralised in ipam_asset_buster().
+    $av   = e(ipam_asset_buster());
+    $cssV = e(ipam_asset_buster('assets/app.css'));
+    $jsV  = e(ipam_asset_buster('assets/app.js'));
     echo "<link rel='icon' type='image/webp' sizes='32x32' href='assets/favicon-32.webp?v={$av}'>";
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png?v={$av}'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp?v={$av}'>";
