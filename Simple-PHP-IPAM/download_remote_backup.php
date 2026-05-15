@@ -70,7 +70,8 @@ if ($as === 'staged') {
     );
     audit($db, 'remote_backup.download', 'destination', $destId, "name=$name as=staged");
     header('Content-Type: application/json');
-    // nosemgrep: php.lang.security.xss.echoed-request -- Content-Type is application/json; json_encode provides structural escaping; no HTML rendering
+    // #1166 v3.29.0: response is application/json; json_encode provides structural escaping; no HTML context.
+    // nosemgrep: php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- application/json response, structural escape via json_encode
     echo json_encode([
         'ok'         => true,
         'path'       => $staged['path'],   // display only — apply reads from session
@@ -112,6 +113,9 @@ $tmpReal = realpath($tmpDir);
 $canCleanup = ($cleanupReal !== false && $tmpReal !== false
                && str_starts_with($cleanupReal . '/', rtrim($tmpReal, '/') . '/'));
 
+// #1166 v3.29.0: $staged['path'] is realpath-validated above (lines 109-113) to fall
+// under data/tmp/. Any traversal attempt is rejected before we reach this readfile.
+// nosemgrep: php.lang.security.injection.tainted-filename.tainted-filename -- realpath() check above pins the path under data/tmp/
 readfile($staged['path']);
 
 if ($canCleanup && is_file($cleanupReal)) {

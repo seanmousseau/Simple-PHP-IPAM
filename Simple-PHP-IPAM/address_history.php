@@ -165,8 +165,14 @@ page_header('Address History');
       <thead>
         <tr>
           <?php $histQsBase = '?address_id=' . $addressId . '&page_size=' . $pageSize;
+                // #1166 v3.29.0: sort_th() escapes every interpolated value via e() internally
+                // (lib.php:7009-7019). semgrep's taint tracker doesn't recognise the helper as
+                // an escape boundary so the next three lines trip the unsafe-echo-tag rule.
+                // nosemgrep: php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- sort_th() applies e() to every dynamic field
                 echo sort_th('time',   'Time',   $histSort['col'], $histSort['dir'], $histQsBase);
+                // nosemgrep: php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- sort_th() applies e() to every dynamic field
                 echo sort_th('action', 'Action', $histSort['col'], $histSort['dir'], $histQsBase);
+                // nosemgrep: php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- sort_th() applies e() to every dynamic field
                 echo sort_th('user',   'User',   $histSort['col'], $histSort['dir'], $histQsBase);
           ?>
           <th>Client IP</th>

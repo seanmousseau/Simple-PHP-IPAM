@@ -250,7 +250,7 @@ page_header('Search');
   <a class="action-pill" href="export_search.php?<?= e(build_query_search()) ?>"><?= icon('download') ?> Export CSV</a>
   <a class="action-pill" href="addresses.php"><?= icon('map-pin') ?> Addresses</a>
   <?php if ($subnetId > 0): ?>
-    <a class="action-pill" href="addresses.php?subnet_id=<?= (int)$subnetId ?>"><?= icon('server-stack') ?> View Subnet Addresses</a>
+    <a class="action-pill" href="addresses.php?subnet_id=<?= /* nosemgrep: php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- #1166 integer cast neutralises taint */ (int)$subnetId ?>"><?= icon('server-stack') ?> View Subnet Addresses</a>
   <?php endif; ?>
 </div>
 
@@ -258,7 +258,7 @@ page_header('Search');
   <form method="get" action="search.php" class="row">
 
     <label>Query<br>
-      <input name="q" value="<?= e($q) ?>" placeholder="ip / hostname / owner / note">
+      <input name="q" value="<?= /* nosemgrep: php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- #1166 e() applies htmlspecialchars */ e($q) ?>" placeholder="ip / hostname / owner / note">
     </label>
 
     <label>Status<br>
@@ -342,10 +342,17 @@ page_header('Search');
                         . ($subnetId ? '&subnet_id=' . $subnetId : '')
                         . ($siteId ? '&site_id=' . $siteId : '')
                         . ($ipVersion ? '&ip_version=' . $ipVersion : '');
+                // #1166 v3.29.0: sort_th() (lib.php:7009) e()-escapes every dynamic field;
+                // semgrep's taint flow doesn't recognise it as an escape boundary.
+                // nosemgrep: php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- sort_th() applies e() to every dynamic field
                 echo sort_th('subnet',   'Subnet',   $searchSort['col'], $searchSort['dir'], $srchQs);
+                // nosemgrep: php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- sort_th() applies e() to every dynamic field
                 echo sort_th('ip',       'IP',       $searchSort['col'], $searchSort['dir'], $srchQs);
+                // nosemgrep: php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- sort_th() applies e() to every dynamic field
                 echo sort_th('hostname', 'Hostname', $searchSort['col'], $searchSort['dir'], $srchQs);
+                // nosemgrep: php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- sort_th() applies e() to every dynamic field
                 echo sort_th('owner',    'Owner',    $searchSort['col'], $searchSort['dir'], $srchQs);
+                // nosemgrep: php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- sort_th() applies e() to every dynamic field
                 echo sort_th('status',   'Status',   $searchSort['col'], $searchSort['dir'], $srchQs);
           ?>
           <th>Group</th>

@@ -35,4 +35,8 @@ if ($html === null) {
     exit;
 }
 
+// #1166 v3.29.0: $html is server-built by ipam_render_destination_edit_drawer()
+// which constrains $form to 'destination' | 'schedule' (line 25) and renders
+// from row data the admin already controls. No user-controlled HTML leaks.
+// nosemgrep: php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- server-rendered, $form pre-validated to allowlist
 echo $html;
