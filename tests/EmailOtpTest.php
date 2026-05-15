@@ -147,4 +147,79 @@ class EmailOtpTest extends TestCase
         $this->assertNull($row['email_otp_expires_at']);
         $this->assertSame(0, (int)$row['email_otp_attempts']);
     }
+
+    // ---- v3.29.0 #905 — TTL boundary edges ----
+    //
+    // The verify path uses `if ($expires < gmdate(...)) { reject }` (lib.php:12015).
+    // That's strict less-than, so:
+    //   - expires exactly equal to now  → still valid (boundary inclusive)
+    //   - expires one second before now → rejected
+    // These two tests pin both sides of that boundary so a future
+    // refactor to `<=` or a higher-resolution timestamp comparison
+    // (e.g. switching to microtime) fails noisily.
+    //
+    // CSRF-on-resend coverage (the other half of #905's issue body) is
+    // NOT applicable to v3.29.0: email_otp_verify.php has no `resend`
+    // action — re-issuing the OTP requires returning to login.php and
+    // re-authenticating. If a resend handler lands in a future release,
+    // its CSRF gate needs a sibling test here.
+
+    public function testVerifyTokenAtExactExpiryStillSucceeds(): void
+    {
+        // Pin the strict-less-than semantics: when expires_at equals the
+        // current UTC timestamp, the verify path treats the token as
+        // still valid. Set the expiry to whatever the DB clock reports
+        // as "now" so the comparison hits exact equality at the column
+        // value vs gmdate('Y-m-d H:i:s') in PHP. Because both sides go
+        // through second-resolution string comparison, this is stable.
+        ipam_email_otp_generate($this->db, $this->userId());
+        $known = '424242';
+        $hash  = password_hash($known, PASSWORD_DEFAULT);
+        // Use PHP's gmdate so the test mirrors the production path
+        // exactly (the verify function compares against gmdate('Y-m-d H:i:s')).
+        $now = gmdate('Y-m-d H:i:s');
+        $this->db->prepare("UPDATE users SET email_otp_hash = ?, email_otp_expires_at = ? WHERE id = ?")
+                 ->execute([$hash, $now, $this->userId()]);
+        $result = ipam_email_otp_verify($this->db, $this->userId(), $known);
+        $this->assertTrue($result, 'OTP with expiry exactly equal to "now" must still verify (strict-less-than boundary is inclusive)');
+    }
+
+    public function testVerifyTokenOneSecondPastExpiryFails(): void
+    {
+        ipam_email_otp_generate($this->db, $this->userId());
+        $known = '424242';
+        $hash  = password_hash($known, PASSWORD_DEFAULT);
+        // 1 second in the past relative to PHP's UTC clock. Use a 2-second
+        // offset to defuse millisecond-boundary races on slow CI runners.
+        $past = gmdate('Y-m-d H:i:s', time() - 2);
+        $this->db->prepare("UPDATE users SET email_otp_hash = ?, email_otp_expires_at = ? WHERE id = ?")
+                 ->execute([$hash, $past, $this->userId()]);
+        $result = ipam_email_otp_verify($this->db, $this->userId(), $known);
+        $this->assertFalse($result, 'OTP one second past expiry must be rejected');
+    }
+
+    public function testVerifyPastExpiryClearsHashAndAuditsExpired(): void
+    {
+        // Beyond rejecting the code, the production path clears the
+        // hash and writes an mfa.otp.expired audit row (lib.php:12015-12019).
+        // Pin both so a future refactor that just returns false without
+        // cleanup is caught.
+        ipam_email_otp_generate($this->db, $this->userId());
+        $known = '424242';
+        $hash  = password_hash($known, PASSWORD_DEFAULT);
+        $past  = gmdate('Y-m-d H:i:s', time() - 60);
+        $this->db->prepare("UPDATE users SET email_otp_hash = ?, email_otp_expires_at = ? WHERE id = ?")
+                 ->execute([$hash, $past, $this->userId()]);
+
+        ipam_email_otp_verify($this->db, $this->userId(), $known);
+
+        $row = $this->db->query("SELECT email_otp_hash, email_otp_expires_at FROM users WHERE id={$this->userId()}")->fetch();
+        $this->assertNull($row['email_otp_hash'], 'expired-path must clear stored hash');
+        $this->assertNull($row['email_otp_expires_at'], 'expired-path must clear stored expiry');
+
+        $auditCount = (int) $this->db->query(
+            "SELECT COUNT(*) FROM audit_log WHERE action = 'mfa.otp.expired' AND entity_type = 'user'"
+        )->fetchColumn();
+        $this->assertSame(1, $auditCount, 'expired-path must emit exactly one mfa.otp.expired audit row');
+    }
 }
