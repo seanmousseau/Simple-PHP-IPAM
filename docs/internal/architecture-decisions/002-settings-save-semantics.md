@@ -1,9 +1,9 @@
 # ADR-002: Settings save semantics — per-key vs group-form
 
-**Status:** draft
-**Decided:** —
+**Status:** accepted
+**Decided:** 2026-05-15
 **Scope:** prerequisite for refactor wave 1 (v3.30.0); forward-looking policy for `settings.php` save handling.
-**Stamped by:** —
+**Stamped by:** Sean Mousseau
 
 ---
 
@@ -159,10 +159,12 @@ If accepted:
 
 ## Open questions
 
-1. **Initial allowlist size.** Today's candidates: `site_theme` (definite), `sidebar_pinned` (doesn't exist yet, future), `density` (doesn't exist). Should v3.30.0 ship with **only** `site_theme` in user_preferences, and add others one-by-one with ADR amendments? Or ship with a slightly broader initial set?
-2. **Existing `site_theme` rows.** Today `site_theme` is in `settings` as a tenant-scoped row. The migration needs to back-fill `user_preferences` for every user with the tenant's current theme. Acceptable, or do we just leave existing users with no preference (falling back to tenant default) until they explicitly toggle?
-3. **Schema name.** `user_preferences` vs `view_preferences` vs `ui_preferences` — does the name "user preferences" set a scope that future contributors might misread as "things users can set about themselves" (which would include profile data)? Naming sets boundaries.
-4. **API authorization model.** Should `/api/user_preference` require step-up auth for any preference? My read: no — they're cosmetic. But locking that down explicitly in the ADR prevents future drift.
+All four resolved at stamping (2026-05-15):
+
+1. ~~Initial allowlist size?~~ **Resolved:** v3.30.0 ships with `site_theme` **only**. Every future entry requires an ADR-002 amendment recorded here, not just a code-review nod.
+2. ~~Existing `site_theme` row migration?~~ **Resolved:** **No backfill.** Users with no `user_preferences` row read the tenant default from `settings` at render time and opt in by toggling. Migration is "create table + endpoint," not "create table + populate N rows per user."
+3. ~~Schema name?~~ **Resolved:** **`user_preferences`**. Idiomatic across other CRUD apps; the scope-creep risk is mitigated by the explicit allowlist rule (open questions answer #1) — adding profile-shaped data to this table requires an ADR amendment.
+4. ~~Step-up auth for preference writes?~~ **Resolved:** **No.** Preferences are cosmetic; CSRF + session is the only gate. A future security-relevant preference (e.g. "show secret values in UI by default") would require an ADR-002 amendment that explicitly raises the auth bar for that key.
 
 ## References
 
