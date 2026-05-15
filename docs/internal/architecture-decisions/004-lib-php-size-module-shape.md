@@ -1,9 +1,9 @@
 # ADR-004: `lib.php` size + module shape
 
-**Status:** draft
-**Decided:** —
+**Status:** accepted
+**Decided:** 2026-05-15
 **Scope:** refactor wave 1's blueprint — defines the target module layout that v3.30.0's `#56` decomposition extracts toward.
-**Stamped by:** —
+**Stamped by:** Sean Mousseau
 
 ---
 
@@ -226,7 +226,7 @@ This ADR's implementation **spans v3.30.0 and v3.32.0**, with v3.31.0 (encrypt-a
 - `lib/audit.php` (deps: db, utils)
 - `lib/settings.php` (deps: db, audit, utils — ADR-001 dispatch lives here)
 - `lib/user_preferences.php` (deps: db, utils — ADR-002 endpoint lives here)
-- `lib/views.php` (deps: utils — page_header, render_* helpers)
+- `lib/presentation.php` (deps: utils — page_header, render_* helpers)
 - `lib/auth.php` (deps: db, audit, utils, views)
 - `lib/auth_password.php` (deps: auth, utils)
 - `lib/auth_rate_limit.php` (deps: auth, db)
@@ -285,7 +285,7 @@ This ADR's implementation **spans v3.30.0 and v3.32.0**, with v3.31.0 (encrypt-a
 - `feat(lib): extract lib/audit.php` — milestone #56
 - `feat(lib): extract lib/settings.php (ADR-001 dispatch home)` — milestone #56
 - `feat(lib): extract lib/user_preferences.php (ADR-002 endpoint home)` — milestone #56
-- `feat(lib): extract lib/views.php` — milestone #56
+- `feat(lib): extract lib/presentation.php` — milestone #56
 - `feat(lib): extract lib/auth.php + auth_password.php + auth_rate_limit.php + auth_recaptcha.php` — milestone #56
 - `tools: lib-module-linter.php — file header + cross-module require enforcement` — milestone #56
 - v3.32.0 issues land at wave-2 close; defer until wave-1 is shipped.
@@ -319,7 +319,7 @@ None. This ADR is pure code organisation; no DB shape changes are caused by it. 
 ## Open questions
 
 1. **`lib.php` survival.** After all functions move out, does the file get deleted entirely, or kept as a require-everything shim for backward compat with any external code that does `require_once 'Simple-PHP-IPAM/lib.php';`? My read: delete it. There is no such external caller in any known integration. But worth confirming.
-2. **`lib/views.php` naming.** `views.php` is a thematic label for "page_header, render_*, flash_*, paginate, sort_th, csv_*." Some of those (csv_*) are more "presentation utility" than "view." Should it be `lib/views.php` (theme-name) or `lib/presentation.php` (broader)?
+2. **`lib/presentation.php` naming.** `views.php` is a thematic label for "page_header, render_*, flash_*, paginate, sort_th, csv_*." Some of those (csv_*) are more "presentation utility" than "view." Should it be `lib/presentation.php` (theme-name) or `lib/presentation.php` (broader)?
 3. **Single auth file vs four.** I split auth into `auth.php` + `auth_password.php` + `auth_rate_limit.php` + `auth_recaptcha.php`. That's the highest function-count theme (~30 functions). Alternative: keep one `lib/auth.php` (~1,500 lines) for cohesion. Trade-off: cohesion vs PHPStan-per-file speed.
 4. **Phasing aggression.** Should v3.30.0 do **all** of the v3.30.0-bucket modules above (11), or split into a v3.30.0 + v3.30.x point-release sequence the way ADR-001's encrypt-at-rest was split? Scope-sizing concern is real: v3.30.0 with ADR-001 + ADR-002 + 11 file extractions is genuinely large.
 
