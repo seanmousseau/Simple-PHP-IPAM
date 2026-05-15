@@ -6,6 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 as of v1.15.0. Versions prior to 1.15.0 used two-part numbering.
 
+## [3.29.0] - 2026-05-14
+
+Test-infrastructure release. Closes milestone #80 (28 issues) — CI tooling, security sweep, and test-coverage cluster from the v3.28.0 code-quality review. **No schema migration. No new pages. No operator action required.** Strictly internal: tighter pre-push gate, harder-to-bypass linters, broader unit-test coverage of contracts that previously had only Playwright coverage.
+
+### Added
+
+- **CI gate split into PHPStan / PHPUnit / PHPCS with `if: always()` (#1103).** A failing PHPStan run no longer short-circuits PHPUnit and PHPCS — every gate runs every push, so a single fix surfaces every remaining issue. Composer audit step added under the same `if: always()` pattern (#899). PHPUnit `--testdox`/`-n` flag additions in the initial draft were reverted; the run matches local invocation exactly.
+- **`composer install --dry-run` lock-drift detection (#1104).** `testing/scripts/check-composer-lock-drift.sh` now actually detects vendor/lock skew (the prior `composer status` approach produced empty output). Wired into the dev gate so a stale `vendor/` fails fast instead of silently shadowing CI.
+- **Migration linter for SQLite-only patterns (#1101).** `testing/scripts/migration-linter.php` walks every migration closure and flags SQLite-only SQL (`PRAGMA`, `BEGIN`/`COMMIT` inside engine-portable blocks, `INSERT OR IGNORE`, `CREATE TRIGGER … FOR EACH ROW BEGIN … END`) unless driver-gated. Callable from PHPUnit (`tests/MigrationLinterTest.php`, 8 driver tests) and from CLI.
+- **`InMemoryDb` test helper (#903).** New `tests/Helpers/InMemoryDb.php` with `fresh()` (schema only) and `withMigrations()` (schema + `apply_migrations()`) factory methods, autoloaded via `composer.json` `autoload-dev` PSR-4 map. Cuts ~30 lines of bootstrap from every unit test that needs a real PDO.
+- **`MigrationTest` mega-file split into 7 focused suites (#902).** Was a single 4 000-line file; now `tests/Migration/{SqliteOnlyClosures,EngineParity,SettingsCascade,Mfa,Backup,IpStorage,Misc}Test.php` plus a shared `Base.php`. Test/assertion count parity verified at the split.
+- **DialectValidator bare-identifier guard (#1105).** New `Simple-PHP-IPAM/dialects/DialectValidator.php` rejects column names not matching `/^[a-zA-Z_][a-zA-Z0-9_]*$/`. Wired into every `Dialect::upsert_or_ignore()` and exercised by `tests/DialectUpsertOrIgnoreContractTest.php` (21 tests). Closes the "could a typo-derived column name reach the SQL planner unsanitized" review concern.
+- **Cache-buster centralised in `ipam_asset_buster()` (#897).** Both `page_header()` and `demo_gate.php` now go through one helper for `IPAM_VERSION.<mtime>` asset URLs — eliminates the per-call-site drift that bit v3.27.x.
+- **Auto-derived smoke-test migration count (#1102).** `ipam_migrations_count()` removes the hand-edited integer that drifted every release.
+- **Phpstan-baseline triage doc (#898).** `docs/internal/phpstan-baseline-triage.md` classifies all 52 remaining baseline entries (1 init.php-injection noise / 44 health.php fetch-on-mixed cluster / 6 restore.php real masked bugs). The two specific bugs cited in the original D7 review (`backup.php` cast, `db_tools.php` sha256) had already been fixed; follow-up issues #1203 and #1204 track the remaining clusters.
+
+### Tests (no production behaviour change)
+
+- **OIDC claim mapping + auto-link unit coverage (#1099).** New `lib.php` helpers `oidc_extract_claims()`, `oidc_resolve_user()`, `oidc_provision_user()` extracted from `oidc_callback.php`; `tests/OidcClaimMappingTest.php` (17 tests) pins every claim-precedence branch, the sub-collision retry path, and the SQLite PDO re-prepare quirk after a UNIQUE violation.
+- **Custom-fields validation contract (#894).** 32 tests pinning every type-system arm in `ipam_validate_custom_field_value()` (string/int/bool/enum/multi-enum, length caps, enum-domain check).
+- **Webhook signature contract pin (#888).** `tests/WebhookSignatureTest.php` (8 tests) including RFC 4231 HMAC-SHA256 known-answer.
+- **reCAPTCHA Enterprise verify + action-resolution contract (#887).** 6 tests covering misconfiguration fail-open and the legacy-config-vs-registry precedence for `recaptcha_expected_action_resolved()`.
+- **Alert-recipient resolution + empty-no-op (#889).** 10 tests against `ipam_resolve_recipients_for_user_ids()` + a `check_utilization_alerts()` empty-recipients smoke.
+- **Audit-log append-only trigger enforcement (#890).** 5 tests pinning that `UPDATE`/`DELETE` on `audit_log` is rejected at the trigger boundary.
+- **`ipam_normalise_version()` pre-release strings (#896).** 14 tests covering RC/beta/dev-suffix corner cases.
+- **EmailOTP TTL boundary edges (#905).** `testVerifyTokenAtExactExpiryStillSucceeds` / `…OneSecondPastExpiryFails` / `…ClearsHashAndAuditsExpired` extend `EmailOtpTest`.
+- **api-spec.yaml ↔ api.php resource-dispatcher drift detection (#893).** `tests/ApiSpecDriftTest.php` fails CI when a new resource lands in one but not the other. Pre-existing drift (`subnet_tags`, `address_tags`, `scan_history`, `custom_field_defs`) recorded in the test's allowlist with #1202 as the cleanup tracker.
+- **Playwright fixtures migrated off `settings.php` per-key save path (#1126).** The per-key handler block in `settings.php` has been deleted — all fixtures now drive the canonical group-form path. Regression assertion (`SettingsToggleConsistencyTest::testPerKeyHandlerIsGone`) fails the build if anyone re-introduces it.
+- **`SchemaParityTest` hard-fails on empty DSN env when `CI=true` (#901, D10).** Previously skipped in CI when the required `IPAM_MYSQL_DSN`/`IPAM_PGSQL_DSN` env vars were missing — a silent way to ship MySQL/PG-only schema drift. Now exits non-zero.
+
+### Security
+
+- **Cloud-platform semgrep WARNING triage on admin surface (#1166, partial).** Reviewed and annotated every `p/security-audit` finding on `address_history.php`, `destination_edit_drawer.php`, `settings_reveal.php`, `download_remote_backup.php`, `import_csv.php` (and others) with `nosemgrep` + rationale comments where the output is already escaped via project helpers (`e()`, `sort_th()`, JSON content-type). Remaining findings on `dhcp_pool.php` and `unassigned.php` deferred to #1201.
+- **`Dialect::upsert_or_ignore()` rejects non-bare conflict columns (#1105).** Defence in depth against any caller passing an unsanitised column name into the conflict-set.
+
+### Internal
+
+- **Phpstan-baseline pruned & re-classified (#898).** Documented in `docs/internal/phpstan-baseline-triage.md`. Follow-ups #1203 (health.php cluster) and #1204 (restore.php real-bug cleanup) opened.
+- **PHPMailer 7.x and TwoFactorAuth 3.x major-bump evaluations deferred to #1199 and #1200** (split off from #1167 to keep this release scope-locked).
+
 ## [3.28.3] - 2026-05-14
 
 Hotfix on top of v3.28.2. Three contained fixes:
@@ -1840,6 +1880,7 @@ Settings-in-database groundwork release. Introduces a new `settings` table, a ty
 - CSV exports for addresses, search results, audit log, unassigned IPs, and import reports.
 - CSV import safety: dry-run plan, row-level report, duplicate/conflict detection.
 
+[3.29.0]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.28.3...v3.29.0
 [3.28.3]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.28.2...v3.28.3
 [3.28.2]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.28.1...v3.28.2
 [3.28.1]: https://github.com/seanmousseau/Simple-PHP-IPAM/compare/v3.28.0...v3.28.1

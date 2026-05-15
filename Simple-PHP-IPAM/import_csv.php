@@ -20,8 +20,13 @@ $wiz =& $_SESSION['csv_import'];
 /** @var array<string, mixed> $wiz */
 
 if (isset($_GET['reset'])) {
+    // #1166 v3.29.0: $wiz['*_path'] entries are server-set under data/tmp/
+    // by the wizard's earlier upload/dry-run/apply steps. Not user-controlled.
+    // nosemgrep: php.lang.security.unlink-use.unlink-use -- session-stored server-controlled path under data/tmp/
     if (!empty($wiz['tmp_path']) && is_file(to_str($wiz['tmp_path']))) @unlink(to_str($wiz['tmp_path']));
+    // nosemgrep: php.lang.security.unlink-use.unlink-use -- session-stored server-controlled path under data/tmp/
     if (!empty($wiz['plan_path']) && is_file(to_str($wiz['plan_path']))) @unlink(to_str($wiz['plan_path']));
+    // nosemgrep: php.lang.security.unlink-use.unlink-use -- session-stored server-controlled path under data/tmp/
     if (!empty($wiz['result_path']) && is_file(to_str($wiz['result_path']))) @unlink(to_str($wiz['result_path']));
     $wiz = [];
     header('Location: import_csv.php');
@@ -451,6 +456,10 @@ if ($step === 2) {
     }
 }
 
+// #1166 v3.29.0: $wiz['tmp_path'] is server-set by the step-1 upload handler
+// to a random filename under Simple-PHP-IPAM/data/tmp/. Not user-controlled at
+// any call site that reaches is_file() here.
+// nosemgrep: php.lang.security.injection.tainted-filename.tainted-filename -- session-stored server-controlled path under data/tmp/
 if ($step === 3 && (empty($wiz['tmp_path']) || !is_file(to_str($wiz['tmp_path'])))) {
     header('Location: import_csv.php?step=1');
     exit;
@@ -593,6 +602,10 @@ if ($step === 2) {
             echo "<option value='ignore'>-- ignore --</option>";
             foreach ($colOptions as $idx => $name) {
                 $sel = (isset($map[$k]) && to_str($map[$k]) === (string)$idx) ? "selected" : "";
+                // #1166 v3.29.0: both interpolated values are e()-escaped above; $sel is the
+                // local 'selected' literal. semgrep's taint flow doesn't recognise e() as the
+                // escape boundary at this call site.
+                // nosemgrep: php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- both $idx and $name pass through e() in the same expression
                 echo "<option value='" . e((string)$idx) . "' $sel>" . e($name) . "</option>";
             }
             echo "</select></td></tr>";
@@ -611,6 +624,9 @@ if ($step === 2) {
 
 /* Step 3 - Dry run / analyze */
 if ($step === 3) {
+    // #1166 v3.29.0: $wiz['plan_path'] is server-set by the dry-run step to a path
+    // under data/tmp/. Same provenance as $wiz['tmp_path'] above.
+    // nosemgrep: php.lang.security.injection.tainted-filename.tainted-filename -- session-stored server-controlled path under data/tmp/
     $rebuildPlan = empty($wiz['plan_path']) || !is_file(to_str($wiz['plan_path'])) || ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'analyze');
 
     if ($rebuildPlan) {
@@ -719,6 +735,8 @@ if ($step === 3) {
 if (demo_mode_enabled()) {
     $err = "Import apply is disabled in demo mode.";
     $step = 3; // Fall back to dry-run results display
+// #1166 v3.29.0: $wiz['plan_path'] same provenance as above (server-set under data/tmp/).
+// nosemgrep: php.lang.security.injection.tainted-filename.tainted-filename -- session-stored server-controlled path under data/tmp/
 } elseif (empty($wiz['plan_path']) || !is_file(to_str($wiz['plan_path']))) {
     $err = "No import plan found. Run dry run first.";
 } else {
@@ -1065,7 +1083,10 @@ if (demo_mode_enabled()) {
         ]);
         $wiz['result_path'] = $resultFile;
 
+        // #1166 v3.29.0: post-apply cleanup of server-staged wizard files.
+        // nosemgrep: php.lang.security.unlink-use.unlink-use -- session-stored server-controlled path under data/tmp/
         if (!empty($wiz['tmp_path']) && is_file(to_str($wiz['tmp_path']))) @unlink(to_str($wiz['tmp_path']));
+        // nosemgrep: php.lang.security.unlink-use.unlink-use -- session-stored server-controlled path under data/tmp/
         if (is_file(to_str($wiz['plan_path']))) @unlink(to_str($wiz['plan_path']));
         unset($wiz['tmp_path'], $wiz['plan_path']);
 
@@ -1078,6 +1099,9 @@ if (demo_mode_enabled()) {
 
 $resultRows = [];
 $summary = [];
+// #1166 v3.29.0: $wiz['result_path'] same provenance as $wiz['tmp_path'] / ['plan_path'] —
+// server-set under data/tmp/ when the apply step runs.
+// nosemgrep: php.lang.security.injection.tainted-filename.tainted-filename -- session-stored server-controlled path under data/tmp/
 if (!empty($wiz['result_path']) && is_file(to_str($wiz['result_path']))) {
     try {
         $res = load_result_file(to_str($wiz['result_path']));
@@ -1109,7 +1133,10 @@ if (!empty($wiz['result_path']) && is_file(to_str($wiz['result_path']))) {
 
   <div class="page-actions mt-16">
     <a class="action-pill" href="import_csv.php"><?= icon('import') ?> Start New Import</a>
-    <?php if (!empty($wiz['result_path']) && is_file(to_str($wiz['result_path']))): ?>
+    <?php
+    // #1166 v3.29.0: same server-controlled-path provenance.
+    // nosemgrep: php.lang.security.injection.tainted-filename.tainted-filename -- session-stored server-controlled path under data/tmp/
+    if (!empty($wiz['result_path']) && is_file(to_str($wiz['result_path']))): ?>
       <a class="action-pill" href="export_import_report.php?mode=result"><?= icon('download') ?> Export Result Report</a>
     <?php endif; ?>
   </div>

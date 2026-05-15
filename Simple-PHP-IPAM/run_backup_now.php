@@ -26,6 +26,9 @@ if ($destId <= 0) {
 
 try {
     $result = ipam_backup_run_for_destination($db, $config, $destId, 'manual');
+    // #1166 v3.29.0: response is application/json (Content-Type set above).
+    // json_encode does structural escaping; no HTML context.
+    // nosemgrep: php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- application/json response, structural escape via json_encode
     echo json_encode([
         'ok' => true,
         'log_id' => $result['log_id'],

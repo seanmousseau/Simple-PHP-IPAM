@@ -96,21 +96,23 @@ try {
     }
 }
 
-$sub              = to_str($payload['sub']                ?? '');
-$claimEmail       = substr(trim(to_str($payload['email']           ?? '')), 0, 255);
-$claimName        = substr(trim(to_str($payload['name']            ?? '')), 0, 255);
-$claimPrefUsername = substr(trim(to_str($payload['preferred_username'] ?? '')), 0, 64);
-// Sanitise: strip characters not allowed in local usernames (#111)
-$claimPrefUsername = preg_replace('/[^a-zA-Z0-9._@\-]/', '', $claimPrefUsername);
+// v3.29.0 #1099: claim normalisation extracted to oidc_extract_claims().
+$claims = oidc_extract_claims($payload);
+$sub               = $claims['sub'];
+$claimEmail        = $claims['email'];
+$claimName         = $claims['name'];
+$claimPrefUsername = $claims['preferred_username'];
 
 if ($sub === '') oidc_fail($db, 'id_token missing sub claim');
 
 // ---- Find or provision local user ----
+//
+// v3.29.0 #1099: resolve logic extracted to oidc_resolve_user(). It does
+// the same three-step chain (current-by-sub → unlinked-by-username →
+// unlinked-by-email) the inline code did pre-refactor. Returns null if
+// nothing matches — auto-provision (when enabled) handles that branch.
 
-$st = $db->prepare("SELECT id, username, role, is_active FROM users WHERE oidc_sub = :sub");
-$st->execute([':sub' => $sub]);
-/** @var array<string, mixed>|false $user */
-$user = $st->fetch();
+$resolved = oidc_resolve_user($db, $sub, $claimEmail, $claimPrefUsername);
 
 // auto_link: link incoming OIDC login to an existing unlinked local account by username/email.
 // auto_provision: create a new account when no match is found. Implies
@@ -120,76 +122,60 @@ $user = $st->fetch();
 $autoProvision = (bool)ipam_setting('oidc.auto_provision');
 $autoLink      = (bool)ipam_setting('oidc.auto_link') || $autoProvision;
 
-if (!$user && $autoLink) {
-    // Try to link an existing local user by preferred_username then by email
-    $existing = false;
-    if ($claimPrefUsername !== '') {
-        $st2 = $db->prepare("SELECT id, username, role, is_active FROM users WHERE username = :u AND oidc_sub IS NULL");
-        $st2->execute([':u' => $claimPrefUsername]);
-        /** @var array<string, mixed>|false $existing */
-        $existing = $st2->fetch();
-    }
-    if (!$existing && $claimEmail !== '') {
-        // Email-only match — do NOT match username here to prevent cross-account linking (#107)
-        $st2 = $db->prepare("SELECT id, username, role, is_active FROM users WHERE email = :e AND oidc_sub IS NULL");
-        $st2->execute([':e' => $claimEmail]);
-        /** @var array<string, mixed>|false $existing */
-        $existing = $st2->fetch();
-    }
-
-    if ($existing) {
-        // Link the existing account to this OIDC subject and sync profile
-        $db->prepare("UPDATE users SET oidc_sub = :sub, name = CASE WHEN name='' THEN :n ELSE name END, email = CASE WHEN email='' THEN :e ELSE email END WHERE id = :id")
-           ->execute([':sub' => $sub, ':n' => $claimName, ':e' => $claimEmail, ':id' => to_int($existing['id'])]);
-        audit($db, 'auth.oidc_link', 'user', to_int($existing['id']), 'sub=' . $sub);
-        $user = $existing;
-    } elseif ($autoProvision) {
-        // Auto-provision a new local user
-        $role = to_str(ipam_setting('oidc.default_role'));
-        if (!in_array($role, ['admin', 'netops', 'readonly'], true)) $role = 'readonly';
-
-        // Derive a username: prefer preferred_username, fall back to email local-part, then sub
-        // Sanitise each candidate the same way as preferred_username (#111)
-        $emailLocalPart = $claimEmail !== '' ? preg_replace('/[^a-zA-Z0-9._@\-]/', '', explode('@', $claimEmail)[0]) : '';
-        $subSanitised   = preg_replace('/[^a-zA-Z0-9._@\-]/', '', substr($sub, 0, 64));
-        $newUsername = $claimPrefUsername !== '' ? $claimPrefUsername
-            : ($emailLocalPart !== '' ? $emailLocalPart : ($subSanitised !== '' ? $subSanitised : 'oidcuser'));
-
-        // Bug U / #1120 (v3.27.2): use the canonical '!disabled' sentinel
-        // documented in demo_seed.php and seeded for readonly-user /
-        // netops-user in lib.php. password_verify() returns false for any
-        // input against this string (it is not a valid bcrypt hash), and
-        // any future lockout-protection guard that checks for the sentinel
-        // will correctly recognise auto-provisioned accounts as OIDC-only.
-        // The pre-fix random-bcrypt hash worked functionally (unknown
-        // password) but mixed conventions in the auth model.
-        $unusableHash = '!disabled';
-
-        $ins = $db->prepare(
-            "INSERT INTO users (username, password_hash, role, is_active, oidc_sub, name, email)
-             VALUES (:u, :h, :r, 1, :sub, :n, :e)"
+// Determine whether $resolved represents an already-linked user (came
+// from the WHERE oidc_sub = :sub branch) or an unlinked candidate the
+// resolver returned for auto-link. Re-query by sub to disambiguate — a
+// row whose oidc_sub already equals $sub is the steady-state path;
+// anything else is an unlinked candidate.
+/** @var array<string, mixed>|false $user */
+$user = false;
+if ($resolved !== null) {
+    $checkSub = $db->prepare("SELECT 1 FROM users WHERE id = :id AND oidc_sub = :sub");
+    $checkSub->execute([':id' => to_int($resolved['id']), ':sub' => $sub]);
+    if ($checkSub->fetchColumn()) {
+        $user = $resolved;
+    } elseif ($autoLink) {
+        // Link the unlinked candidate to this OIDC subject and sync profile.
+        // PR #1205 review: constrain the UPDATE to only-unlinked rows and
+        // require exactly one affected row so a race that links the same
+        // account between resolve and update can't clobber another subject's
+        // binding.
+        $link = $db->prepare(
+            "UPDATE users
+                SET oidc_sub = :sub,
+                    name = CASE WHEN name='' THEN :n ELSE name END,
+                    email = CASE WHEN email='' THEN :e ELSE email END
+              WHERE id = :id
+                AND (oidc_sub IS NULL OR oidc_sub = '')"
         );
-        $baseUsername = $newUsername;
-        for ($attempt = 0; $attempt < 5; $attempt++) {
-            try {
-                $ins->execute([':u' => $newUsername, ':h' => $unusableHash, ':r' => $role,
-                               ':sub' => $sub, ':n' => $claimName, ':e' => $claimEmail]);
-                break;
-            } catch (PDOException $ex) {
-                if ($attempt >= 4) {
-                    oidc_fail($db, 'Unable to provision account — username collision after 5 attempts.');
-                }
-                $newUsername = $baseUsername . '_' . ($attempt + 2);
-            }
+        $link->execute([':sub' => $sub, ':n' => $claimName, ':e' => $claimEmail, ':id' => to_int($resolved['id'])]);
+        if ($link->rowCount() !== 1) {
+            oidc_fail($db, 'auto-link aborted: link state changed during callback');
         }
-        $newId = ipam_last_insert_id($db, 'users');
-        audit($db, 'auth.oidc_provision', 'user', $newId, 'username=' . $newUsername . ' sub=' . $sub);
-
-        $st3 = $db->prepare("SELECT id, username, role, is_active FROM users WHERE id = :id");
-        $st3->execute([':id' => $newId]);
-        /** @var array<string, mixed>|false $user */
-        $user = $st3->fetch();
+        audit($db, 'auth.oidc_link', 'user', to_int($resolved['id']), 'sub=' . $sub);
+        // Re-read the row post-link so $user reflects the persisted state.
+        $stLinked = $db->prepare("SELECT id, username, role, is_active FROM users WHERE id = :id");
+        $stLinked->execute([':id' => to_int($resolved['id'])]);
+        $linkedRow = $stLinked->fetch();
+        $user = is_array($linkedRow) ? $linkedRow : $resolved;
     }
+    // If we found an unlinked candidate but auto_link is off, treat as "no match".
+}
+
+if (!$user && $autoProvision) {
+    // v3.29.0 #1099: provisioning extracted to oidc_provision_user().
+    $role = to_str(ipam_setting('oidc.default_role'));
+    try {
+        $provisioned = oidc_provision_user($db, $claims, $role);
+    } catch (RuntimeException $e) {
+        oidc_fail($db, 'Unable to provision account — ' . $e->getMessage());
+    }
+    audit($db, 'auth.oidc_provision', 'user', $provisioned['id'], 'username=' . $provisioned['username'] . ' sub=' . $sub);
+
+    $st3 = $db->prepare("SELECT id, username, role, is_active FROM users WHERE id = :id");
+    $st3->execute([':id' => $provisioned['id']]);
+    /** @var array<string, mixed>|false $user */
+    $user = $st3->fetch();
 }
 
 // For already-linked users: sync name/email from IdP claims if blank

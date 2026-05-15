@@ -110,11 +110,46 @@ final class SchemaParityTest extends TestCase
     // Cross-engine parity — gated on the non-SQLite environments
     // -------------------------------------------------------------------------
 
+    /**
+     * D10 / #901: in CI, a missing engine DSN that *should* be set for the
+     * active matrix slot is a workflow misconfiguration — not a legitimate
+     * skip. Silent skips here have historically masked multi-engine parity
+     * regressions because the test ran "green" on every PR while quietly
+     * exercising only the SQLite path. Outside CI we preserve the existing
+     * skip behaviour so local `vendor/bin/phpunit` runs without MySQL or
+     * Postgres still pass.
+     *
+     * @param string $envName     Env var name (IPAM_MYSQL_DSN / IPAM_PGSQL_DSN).
+     * @param string $expectedDriver The IPAM_DB_DRIVER value that *requires*
+     *                            this DSN. When the active matrix slot
+     *                            matches, missing-or-empty DSN is fatal.
+     * @param string $skipReason   Human-readable reason for the local skip.
+     */
+    private function gateEngineDsn(string $envName, string $expectedDriver, string $skipReason): void
+    {
+        $dsn = getenv($envName);
+        if ($dsn !== false && $dsn !== '') {
+            return;
+        }
+
+        $isCi         = getenv('CI') === 'true';
+        $activeDriver = (string)getenv('IPAM_DB_DRIVER');
+
+        if ($isCi && $activeDriver === $expectedDriver) {
+            $this->fail(
+                "SchemaParityTest expected $envName to be set in CI for "
+                . "IPAM_DB_DRIVER=$expectedDriver but it was empty. "
+                . 'Check the workflow env block — silent skips here mask '
+                . 'multi-engine parity regressions. (D10 / #901)'
+            );
+        }
+
+        $this->markTestSkipped($skipReason);
+    }
+
     public function testSqliteAndMysqlConverge(): void
     {
-        if (getenv('IPAM_MYSQL_DSN') === false || getenv('IPAM_MYSQL_DSN') === '') {
-            $this->markTestSkipped('IPAM_MYSQL_DSN not set; skipping SQLite↔MySQL parity check');
-        }
+        $this->gateEngineDsn('IPAM_MYSQL_DSN', 'mysql', 'IPAM_MYSQL_DSN not set; skipping SQLite↔MySQL parity check');
         $sqlite = $this->canonicalSqlite();
         $mysql  = $this->canonicalMysql();
         $this->assertCanonicalShapesEqual($sqlite, $mysql, 'sqlite', 'mysql');
@@ -122,9 +157,7 @@ final class SchemaParityTest extends TestCase
 
     public function testSqliteAndPgsqlConverge(): void
     {
-        if (getenv('IPAM_PGSQL_DSN') === false || getenv('IPAM_PGSQL_DSN') === '') {
-            $this->markTestSkipped('IPAM_PGSQL_DSN not set; skipping SQLite↔Postgres parity check');
-        }
+        $this->gateEngineDsn('IPAM_PGSQL_DSN', 'pgsql', 'IPAM_PGSQL_DSN not set; skipping SQLite↔Postgres parity check');
         $sqlite = $this->canonicalSqlite();
         $pgsql  = $this->canonicalPgsql();
         $this->assertCanonicalShapesEqual($sqlite, $pgsql, 'sqlite', 'pgsql');
@@ -132,12 +165,14 @@ final class SchemaParityTest extends TestCase
 
     public function testMysqlAndPgsqlConverge(): void
     {
-        if (getenv('IPAM_MYSQL_DSN') === false || getenv('IPAM_MYSQL_DSN') === '') {
-            $this->markTestSkipped('IPAM_MYSQL_DSN not set; skipping MySQL↔Postgres parity check');
-        }
-        if (getenv('IPAM_PGSQL_DSN') === false || getenv('IPAM_PGSQL_DSN') === '') {
-            $this->markTestSkipped('IPAM_PGSQL_DSN not set; skipping MySQL↔Postgres parity check');
-        }
+        // This cross-engine test needs both DSNs. In a mysql slot the pgsql
+        // DSN is legitimately empty (and vice versa) — only the *currently
+        // active* engine's DSN is mandated by CI. The "other" engine's DSN
+        // missing means the test naturally degrades to a skip in that slot,
+        // which is fine: the converge check still fires on whichever slot
+        // happens to have both set (e.g. a future dual-engine slot).
+        $this->gateEngineDsn('IPAM_MYSQL_DSN', 'mysql', 'IPAM_MYSQL_DSN not set; skipping MySQL↔Postgres parity check');
+        $this->gateEngineDsn('IPAM_PGSQL_DSN', 'pgsql', 'IPAM_PGSQL_DSN not set; skipping MySQL↔Postgres parity check');
         $mysql = $this->canonicalMysql();
         $pgsql = $this->canonicalPgsql();
         $this->assertCanonicalShapesEqual($mysql, $pgsql, 'mysql', 'pgsql');

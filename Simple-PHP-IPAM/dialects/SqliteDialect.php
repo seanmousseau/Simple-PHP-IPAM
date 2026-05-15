@@ -53,6 +53,7 @@ final class SqliteDialect implements Dialect
         if ($conflictCols === []) {
             throw new InvalidArgumentException('upsert_or_ignore() requires at least one conflict column');
         }
+        DialectValidator::assertBareIdentifiers($conflictCols, 'SqliteDialect::upsert_or_ignore');
         return 'ON CONFLICT(' . implode(', ', $conflictCols) . ') DO NOTHING';
     }
 

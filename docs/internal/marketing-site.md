@@ -21,6 +21,34 @@ Design + rationale: [`marketing-site-ssr-decision.md`](marketing-site-ssr-decisi
 
 Plus: update or add **feature cards** for significant new features.
 
+### RankMath SEO `SoftwareApplication` schema
+
+The RankMath plugin attaches a `SoftwareApplication` JSON-LD block to the homepage (post ID 13) via post meta `rank_math_schema_SoftwareApplication`. The block's `softwareVersion` field is **independent of the theme** — bumping `front-page.php` does NOT update it. This field is what Google/Bing surface as "Latest version" in rich-result cards and software listings, so a stale value is search-visible even though it's invisible to operators browsing the site directly.
+
+The field is a leaf inside a PHP-serialized array, so `wp option update` won't work — use `wp eval` to read, mutate, re-write atomically:
+
+```bash
+ssh root@192.168.80.23 'wp --path=/usr/local/lsws/vhosts/simplephpipam.com/html --allow-root eval "
+\$pid = 13;
+\$key = \"rank_math_schema_SoftwareApplication\";
+\$meta = get_post_meta(\$pid, \$key, true);
+\$meta[\"softwareVersion\"] = \"X.Y.Z\";
+update_post_meta(\$pid, \$key, \$meta);
+echo get_post_meta(\$pid, \$key, true)[\"softwareVersion\"];
+"'
+```
+
+Then re-purge the LSCache/QUIC.cloud edge (`wp cache flush && wp litespeed-purge all && rm -rf /usr/local/lsws/vhosts/simplephpipam.com/cachedata/*`) — schema markup is embedded in the page HTML so it gets cached alongside everything else.
+
+Verify:
+
+```bash
+curl -skL "https://simplephpipam.com/" | grep -oE '"softwareVersion":"[0-9.]+"' | head -1
+# expect: "softwareVersion":"X.Y.Z"
+```
+
+History: missed during the v3.28.2 release; caught while shipping v3.28.3 — see `releases/2026-05-14_v3.28.3` (or the v3.28.3 release-prep observation in Memory MCP).
+
 ## Adding a new doc page
 
 Wiring a new doc requires changes in **six places** plus a WordPress page. Missing any one causes a blank render, broken nav entry, or 404. Do all of these in one website PR:

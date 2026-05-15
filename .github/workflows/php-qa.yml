@@ -135,13 +135,28 @@ jobs:
         run: find Simple-PHP-IPAM -name '*.php' -not -path '*/data/*' | sort | xargs -n1 php -l
 
       - name: PHPStan
-        run: vendor/bin/phpstan analyse --no-progress --memory-limit=1G
-
-      - name: PHPCS
-        run: vendor/bin/phpcs
+        run: vendor/bin/phpstan analyse --memory-limit=1G --no-progress
 
       - name: PHPUnit
+        if: always()
         run: vendor/bin/phpunit
+
+      - name: PHPCS
+        if: always()
+        run: vendor/bin/phpcs
+
+      - name: Composer audit (post-PHPCS, all deps) (#899)
+        # v3.29.0 #899: belt-and-suspenders audit. The earlier --no-dev
+        # --locked audit (line ~125) catches runtime CVEs at install time;
+        # this final pass runs with `if: always()` so it still surfaces
+        # advisories even when PHPStan/PHPUnit/PHPCS fail upstream, and
+        # includes dev dependencies so test-only deps are also vetted.
+        if: always()
+        run: composer audit
+
+      - name: Migration linter (#1101)
+        if: always()
+        run: php testing/scripts/migration-linter.php
 
       # ----- MySQL slot only: test_api.sh against php -S backed by MySQL -----
       #

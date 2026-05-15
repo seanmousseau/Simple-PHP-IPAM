@@ -18,6 +18,20 @@
         "squizlabs/php_codesniffer": "^4.0",
         "phpunit/phpunit": "^11.0"
     },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\Helpers\\": "tests/Helpers/",
+            "Tests\\Migration\\": "tests/Migration/"
+        }
+    },
+    "scripts": {
+        "post-install-cmd": [
+            "bash testing/scripts/check-composer-lock-drift.sh"
+        ],
+        "post-update-cmd": [
+            "bash testing/scripts/check-composer-lock-drift.sh"
+        ]
+    },
     "config": {
         "platform": {
             "php": "8.2"

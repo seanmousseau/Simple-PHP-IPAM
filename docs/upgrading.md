@@ -116,6 +116,14 @@ The backup is left in place after a successful upgrade. You can remove it manual
 
 ## Version-specific upgrade notes
 
+### v3.29.0
+
+- **No schema changes. No new pages. No operator action required.** Closes milestone #80 (test infrastructure / CI gate / unit-test coverage cluster from the v3.28.0 code-quality review).
+- **CI behaviour change (developers only):** GitHub Actions PHPStan / PHPUnit / PHPCS / composer-audit steps now all run with `if: always()`. A failing PHPStan run no longer short-circuits PHPUnit and PHPCS — expect to see all failures on a single push instead of the first one.
+- **Dev gate adds composer-lock-drift detection.** If your local `vendor/` is behind `composer.lock` the gate now fails fast (`testing/scripts/check-composer-lock-drift.sh`). Resolution: `composer install`. The prior `composer status`-based check produced empty output and missed real drift.
+- **`settings.php` per-key save handler removed.** Operators don't notice — the group-form Save button works as before. Internal: every Playwright fixture that previously POSTed to the per-key path has been migrated to the group form. A regression test (`SettingsToggleConsistencyTest::testPerKeyHandlerIsGone`) fails the build if the handler is reintroduced.
+- **No config-format changes.** Existing `config.php` files keep working unchanged.
+
 ### v3.28.2
 
 - **Install-key lifecycle:** `app_secret` is now lazily auto-generated on first need (first TOTP enrollment, first restore staging). If you previously left `app_secret` blank, you'll see a one-time admin banner the first time the value is generated. Back up `config.php` immediately after. Auto-gen requires `config.php` to be writable; otherwise the page surfaces an actionable error.

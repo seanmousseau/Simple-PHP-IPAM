@@ -75,4 +75,6 @@ if (!is_string($value)) $value = '';
 
 audit($db, 'setting.reveal', 'setting', null, "key={$key}");
 
+// #1166 v3.29.0: response is application/json; json_encode provides structural escaping.
+// nosemgrep: php.lang.security.taint-unsafe-echo-tag.taint-unsafe-echo-tag -- application/json response, structural escape via json_encode
 echo json_encode(['value' => $value]);

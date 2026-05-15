@@ -6,7 +6,7 @@
 >
 > **How to use it.** This doc is the authoritative *suggested ordering* reference — GitHub milestones are now theme-named, not version-named, from v3.30.0 onward (the **2026-05-11 reshape**). When deciding what ships next, this doc maps theme → suggested version slot. Drill into the source doc when you need per-finding detail. Update this doc whenever a stream gets re-chunked, a milestone is renamed, or scope flips.
 >
-> **Current shipped: v3.27.7** (released 2026-05-10). **Pass C complete** (2026-05-10). **Security review complete** (2026-05-10). **Roadmap reshape: 2026-05-11.** Last refreshed: 2026-05-11.
+> **Current shipped: v3.28.3** (released 2026-05-14, hotfix on top of v3.28.2 install-key lifecycle). v3.28.0 DR + security stabilization, v3.28.1 DR + security overflow, v3.28.2 install-key lifecycle, and v3.28.3 hotfix (anchor + webhook cap + CHANGELOG link) all shipped. **Pass C complete** (2026-05-10). **Security review complete** (2026-05-10). **Roadmap reshape: 2026-05-11.** Last refreshed: 2026-05-14.
 
 ---
 

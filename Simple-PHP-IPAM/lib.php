@@ -23,6 +23,7 @@ function ipam_dialect(): Dialect
 {
     if (!isset($GLOBALS['ipam_dialect']) || !($GLOBALS['ipam_dialect'] instanceof Dialect)) {
         require_once __DIR__ . '/dialects/Dialect.php';
+        require_once __DIR__ . '/dialects/DialectValidator.php';
         require_once __DIR__ . '/dialects/SqliteDialect.php';
         $GLOBALS['ipam_dialect'] = new SqliteDialect();
     }
@@ -39,6 +40,7 @@ function ipam_dialect(): Dialect
 function ipam_dialect_from_config(array $config): Dialect
 {
     require_once __DIR__ . '/dialects/Dialect.php';
+    require_once __DIR__ . '/dialects/DialectValidator.php';
     $driverRaw = $config['db_driver'] ?? 'sqlite';
     $driver = is_string($driverRaw) ? $driverRaw : 'sqlite';
     switch ($driver) {
@@ -3537,6 +3539,52 @@ function apply_migrations(PDO $db): array
     }
 
     return $appliedNow;
+}
+
+/**
+ * v3.29.0 #1102 — count of registered migrations. Tests auto-derive
+ * instead of hardcoding a literal that drifts every release.
+ */
+function ipam_migrations_count(): int
+{
+    require_once __DIR__ . '/migrations.php';
+    return count(ipam_migrations());
+}
+
+/**
+ * v3.29.0 #897 — Centralised cache-buster query value for asset URLs.
+ *
+ * Returns the value to embed after `?v=` in static asset URLs. With no
+ * argument, returns the bare IPAM_VERSION — the right buster for
+ * favicons / vendored open-props (where the file content only changes
+ * when IPAM_VERSION changes). With a path relative to the Simple-PHP-IPAM/
+ * directory, appends the file's mtime so in-version edits to that file
+ * invalidate the browser cache without requiring an IPAM_VERSION bump.
+ *
+ * Returns the RAW value — callers `e()` it where it lands in HTML.
+ * `IPAM_VERSION` is always a numeric string in practice but escaping at
+ * the call site keeps the contract uniform with the rest of page_header()'s
+ * defensive HTML emission.
+ *
+ * Pre-v3.29.0 this logic was duplicated between `page_header()` (lib.php)
+ * and `demo_gate.php`'s head block; both call sites now route through
+ * here so a future cache-buster change happens in one place.
+ *
+ * @param string $relPath Path relative to `__DIR__` (the Simple-PHP-IPAM/
+ *                        directory). Empty string returns the version
+ *                        only.
+ */
+function ipam_asset_buster(string $relPath = ''): string
+{
+    if (!defined('IPAM_VERSION')) {
+        require_once __DIR__ . '/version.php';
+    }
+    $av = (string) IPAM_VERSION;
+    if ($relPath === '') {
+        return $av;
+    }
+    $mtime = (int) @filemtime(__DIR__ . '/' . ltrim($relPath, '/'));
+    return $mtime > 0 ? $av . '.' . $mtime : $av;
 }
 
 /**
@@ -9663,13 +9711,10 @@ function page_header(string $title, array $opts = []): void
 
     echo "<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
     echo "<title>" . e($appName) . " \u{2014} " . e($title) . "</title>";
-    $av = e(IPAM_VERSION);
-    // Append file mtime to JS/CSS cache busters so in-version edits invalidate
-    // the browser cache without requiring an IPAM_VERSION bump.
-    $cssMtime = (int)@filemtime(__DIR__ . '/assets/app.css');
-    $jsMtime  = (int)@filemtime(__DIR__ . '/assets/app.js');
-    $cssV     = $av . ($cssMtime > 0 ? '.' . $cssMtime : '');
-    $jsV      = $av . ($jsMtime  > 0 ? '.' . $jsMtime  : '');
+    // v3.29.0 #897: cache-buster values centralised in ipam_asset_buster().
+    $av   = e(ipam_asset_buster());
+    $cssV = e(ipam_asset_buster('assets/app.css'));
+    $jsV  = e(ipam_asset_buster('assets/app.js'));
     echo "<link rel='icon' type='image/webp' sizes='32x32' href='assets/favicon-32.webp?v={$av}'>";
     echo "<link rel='icon' type='image/png' sizes='32x32' href='assets/favicon-32.png?v={$av}'>";
     echo "<link rel='apple-touch-icon' type='image/webp' sizes='180x180' href='assets/apple-touch-icon.webp?v={$av}'>";
@@ -10300,6 +10345,226 @@ function oidc_verify_id_token(string $idToken, array $jwks, array $expect): arra
     }
 
     return $payload;
+}
+
+/**
+ * v3.29.0 #1099 — Normalise OIDC ID-token claims into the four fields
+ * `oidc_callback.php` (and `oidc_resolve_user()` / `oidc_provision_user()`)
+ * actually use. Extracted from the inline payload-handling block at the
+ * top of `oidc_callback.php` for testability.
+ *
+ * Rules (unchanged from the v2.x behaviour):
+ *
+ *   - `sub`                 : whatever the IdP sent, stringified.
+ *   - `email`               : trim → first 255 bytes.
+ *   - `name`                : trim → first 255 bytes.
+ *   - `preferred_username`  : trim → first 64 bytes → strip everything
+ *                             except `[a-zA-Z0-9._@\-]` (#111). The
+ *                             sanitisation is necessary because this
+ *                             field flows directly into local username
+ *                             matching + auto-provisioning.
+ *
+ * Returns an associative array with exactly those four keys, all
+ * strings (possibly empty).
+ *
+ * @param array<string, mixed> $payload Raw decoded ID-token claims.
+ * @return array{sub: string, email: string, name: string, preferred_username: string}
+ */
+function oidc_extract_claims(array $payload): array
+{
+    $sub                = to_str($payload['sub']                ?? '');
+    $email              = substr(trim(to_str($payload['email']              ?? '')), 0, 255);
+    $name               = substr(trim(to_str($payload['name']               ?? '')), 0, 255);
+    $preferredUsername  = substr(trim(to_str($payload['preferred_username'] ?? '')), 0, 64);
+    // #111 sanitise: strip characters not allowed in local usernames.
+    $preferredUsername  = preg_replace('/[^a-zA-Z0-9._@\-]/', '', $preferredUsername) ?? '';
+    return [
+        'sub'                => $sub,
+        'email'              => $email,
+        'name'               => $name,
+        'preferred_username' => $preferredUsername,
+    ];
+}
+
+/**
+ * v3.29.0 #1099 — Resolve an OIDC login to an existing local user via
+ * the three-step lookup chain documented in #867:
+ *
+ *   1. **current-by-sub**: any user already linked to this `oidc_sub`.
+ *      Wins unconditionally — this is the steady-state path for every
+ *      established OIDC login.
+ *   2. **unlinked-by-username**: an existing local account whose
+ *      `username` matches the (sanitised) `preferred_username` claim
+ *      AND that has no `oidc_sub` yet. Allows auto-link to flip a
+ *      legacy local account onto OIDC on first SSO. Skipped if the
+ *      claim is empty.
+ *   3. **unlinked-by-email**: an existing local account whose `email`
+ *      matches AND that has no `oidc_sub` yet. Email-only match is
+ *      separate from username match by design (#107) — we never match
+ *      an account by BOTH username and email simultaneously, to
+ *      prevent cross-account linking when a user happens to have
+ *      another user's email in their preferred_username slot.
+ *
+ * Returns the user row (with `id`, `username`, `role`, `is_active`) or
+ * null when none of the three lookups hit. The caller is responsible
+ * for then calling `oidc_provision_user()` if auto-provision is on.
+ *
+ * @return array<string, mixed>|null
+ */
+function oidc_resolve_user(PDO $db, string $sub, string $email, string $preferredUsername): ?array
+{
+    // PR #1205 review: an empty sub creates a shared oidc_sub='' bucket —
+    // any later token missing `sub` would resolve to whichever row was
+    // provisioned first. Refuse before touching the DB.
+    if ($sub === '') {
+        throw new RuntimeException('oidc_resolve_user: missing OIDC subject (sub)');
+    }
+    $st = $db->prepare("SELECT id, username, role, is_active FROM users WHERE oidc_sub = :sub");
+    $st->execute([':sub' => $sub]);
+    $row = $st->fetch();
+    if (is_array($row)) {
+        /** @var array<string,mixed> $row */
+        return $row;
+    }
+
+    if ($preferredUsername !== '') {
+        $st2 = $db->prepare("SELECT id, username, role, is_active FROM users WHERE username = :u AND oidc_sub IS NULL");
+        $st2->execute([':u' => $preferredUsername]);
+        $row = $st2->fetch();
+        if (is_array($row)) {
+            /** @var array<string,mixed> $row */
+            return $row;
+        }
+    }
+
+    if ($email !== '') {
+        // PR #1205 review: SQLite and PostgreSQL compare email case-sensitively
+        // by default — an IdP that varies the email casing across requests
+        // would miss the existing local row and either auto-provision a
+        // duplicate or fail the SSO login. Normalise both sides to LOWER().
+        $st3 = $db->prepare("SELECT id, username, role, is_active FROM users WHERE LOWER(email) = LOWER(:e) AND oidc_sub IS NULL");
+        $st3->execute([':e' => $email]);
+        $row = $st3->fetch();
+        if (is_array($row)) {
+            /** @var array<string,mixed> $row */
+            return $row;
+        }
+    }
+
+    return null;
+}
+
+/**
+ * v3.29.0 #1099 — Provision a new local user from OIDC claims. Caller
+ * has decided auto-provision is allowed and the resolve-chain missed.
+ *
+ * Username derivation (each fallback is exercised by the unit tests):
+ *
+ *   1. `claims['preferred_username']` if non-empty (already sanitised
+ *      by `oidc_extract_claims()`).
+ *   2. Local-part of `claims['email']` (everything before the `@`),
+ *      with the same `#111` sanitisation rule applied.
+ *   3. First 64 bytes of `claims['sub']`, sanitised.
+ *   4. Literal string `'oidcuser'`.
+ *
+ * Username collisions are handled by appending `_2`, `_3`, … up to 5
+ * total attempts; throws `RuntimeException` on persistent collision so
+ * the caller can surface the failure (in production this surfaces via
+ * `oidc_fail()` which renders the public error page).
+ *
+ * Password hash is the `!disabled` sentinel (#1120) — `password_verify`
+ * returns false against it for any input, and lockout-protection
+ * guards can recognise the value as "OIDC-only account".
+ *
+ * Returns the new user's auto-increment ID. Audit is the caller's job
+ * (we don't have the canonical username back until the INSERT lands).
+ *
+ * @param array{sub: string, email: string, name: string, preferred_username: string} $claims
+ * @return array{id: int, username: string}
+ */
+function oidc_provision_user(PDO $db, array $claims, string $role): array
+{
+    $allowedRoles = ['admin', 'netops', 'readonly'];
+    $effectiveRole = in_array($role, $allowedRoles, true) ? $role : 'readonly';
+
+    $sub               = $claims['sub'];
+    // PR #1205 review: never persist an empty oidc_sub — see
+    // oidc_resolve_user() for the shared-bucket rationale.
+    if ($sub === '') {
+        throw new RuntimeException('oidc_provision_user: missing OIDC subject (sub)');
+    }
+    $email             = $claims['email'];
+    $name              = $claims['name'];
+    $preferredUsername = $claims['preferred_username'];
+
+    $emailLocalPart = '';
+    if ($email !== '' && strpos($email, '@') !== false) {
+        // PR #1205 review: cap at users.username's 64-char limit so a long
+        // local-part fallback doesn't hard-fail the initial INSERT before
+        // the collision-retry path ever runs.
+        $emailLocalPart = preg_replace('/[^a-zA-Z0-9._@\-]/', '', explode('@', $email)[0]) ?? '';
+        $emailLocalPart = substr($emailLocalPart, 0, 64);
+    }
+    $subSanitised = preg_replace('/[^a-zA-Z0-9._@\-]/', '', substr($sub, 0, 64)) ?? '';
+
+    $newUsername = $preferredUsername !== ''
+        ? $preferredUsername
+        : ($emailLocalPart !== ''
+            ? $emailLocalPart
+            : ($subSanitised !== '' ? $subSanitised : 'oidcuser'));
+
+    $unusableHash = '!disabled'; // #1120 sentinel — see oidc_callback.php
+
+    $baseUsername = $newUsername;
+    $insertSql = "INSERT INTO users (username, password_hash, role, is_active, oidc_sub, name, email)
+                  VALUES (:u, :h, :r, 1, :sub, :n, :e)";
+    for ($attempt = 0; $attempt < 5; $attempt++) {
+        // Re-prepare per attempt: SQLite leaves a PDOStatement in a "bad
+        // parameter or other API misuse" state after a UNIQUE-violation
+        // execute(), so re-using the same statement for the retry would
+        // fail with SQLSTATE[HY000] regardless of the bind values.
+        $ins = $db->prepare($insertSql);
+        try {
+            $ins->execute([
+                ':u'   => $newUsername,
+                ':h'   => $unusableHash,
+                ':r'   => $effectiveRole,
+                ':sub' => $sub,
+                ':n'   => $name,
+                ':e'   => $email,
+            ]);
+            $newId = ipam_last_insert_id($db, 'users');
+            return ['id' => $newId, 'username' => $newUsername];
+        } catch (PDOException $ex) {
+            // Only retry on a username UNIQUE violation. Any other DB error
+            // (e.g. an oidc_sub collision race, schema mismatch, connection
+            // loss) must surface — silently retrying 5x and rebranding as
+            // "username collision" was the original v3.29.0 PR #1205 finding.
+            $sqlstate = (string)($ex->errorInfo[0] ?? '');
+            $msg      = $ex->getMessage();
+            $isUnique = $sqlstate === '23000' || $sqlstate === '23505'
+                || stripos($msg, 'unique') !== false
+                || stripos($msg, 'duplicate') !== false;
+            $isUsernameCollision = $isUnique && stripos($msg, 'username') !== false;
+            if (!$isUsernameCollision) {
+                throw $ex;
+            }
+            if ($attempt >= 4) {
+                throw new RuntimeException(
+                    'oidc_provision_user: username collision after 5 attempts',
+                    0,
+                    $ex
+                );
+            }
+            // PR #1205 review: keep retry username within the users.username
+            // 64-char limit — a 64-char base would otherwise turn a recoverable
+            // collision into a hard insert failure on the retry path.
+            $suffix      = '_' . ($attempt + 2);
+            $newUsername = substr($baseUsername, 0, 64 - strlen($suffix)) . $suffix;
+        }
+    }
+    // Loop always returns or throws.
+    throw new RuntimeException('oidc_provision_user: unreachable');
 }
 
 /**
