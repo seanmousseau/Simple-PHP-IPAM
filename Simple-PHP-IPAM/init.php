@@ -105,6 +105,15 @@ require_once __DIR__ . '/lib/ip.php';
 // v3.30.0 ADR-004 Phase 2 Task 2.3.
 require_once __DIR__ . '/lib/config.php';
 
+// DB layer (#378, ADR-004 Phase 2 Task 4.1) — ipam_db() / ipam_dialect() /
+// apply_migrations() / audit_log + schema_migrations self-heal / SQLite dump
+// tooling. Loaded AFTER lib/config.php (its bootstrap-admin path reads via
+// ipam_config_nested()) and BEFORE lib.php so any lib.php function can call
+// these without a separate bootstrap step. The Dialect classes themselves are
+// required below; db.php's type hints resolve lazily at call time, which is
+// always after init.php has finished loading. v3.30.0.
+require_once __DIR__ . '/lib/db.php';
+
 // Composer autoloader (#416). Conditional because v2.9.0 ships with an empty
 // require {} — vendor/autoload.php only exists in release tarballs (built by
 // releases/make_releases.sh) and in dev environments where the tester has run
