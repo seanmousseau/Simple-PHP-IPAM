@@ -10432,7 +10432,11 @@ function oidc_resolve_user(PDO $db, string $sub, string $email, string $preferre
     }
 
     if ($email !== '') {
-        $st3 = $db->prepare("SELECT id, username, role, is_active FROM users WHERE email = :e AND oidc_sub IS NULL");
+        // PR #1205 review: SQLite and PostgreSQL compare email case-sensitively
+        // by default — an IdP that varies the email casing across requests
+        // would miss the existing local row and either auto-provision a
+        // duplicate or fail the SSO login. Normalise both sides to LOWER().
+        $st3 = $db->prepare("SELECT id, username, role, is_active FROM users WHERE LOWER(email) = LOWER(:e) AND oidc_sub IS NULL");
         $st3->execute([':e' => $email]);
         $row = $st3->fetch();
         if (is_array($row)) {
@@ -10537,7 +10541,11 @@ function oidc_provision_user(PDO $db, array $claims, string $role): array
                     $ex
                 );
             }
-            $newUsername = $baseUsername . '_' . ($attempt + 2);
+            // PR #1205 review: keep retry username within the users.username
+            // 64-char limit — a 64-char base would otherwise turn a recoverable
+            // collision into a hard insert failure on the retry path.
+            $suffix      = '_' . ($attempt + 2);
+            $newUsername = substr($baseUsername, 0, 64 - strlen($suffix)) . $suffix;
         }
     }
     // Loop always returns or throws.
