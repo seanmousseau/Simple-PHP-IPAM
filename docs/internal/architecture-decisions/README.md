@@ -67,7 +67,7 @@ Inspect each result. For any entity with zero relations and no explicit no-relat
 
 ### Check 2 — Stale release close-outs
 
-For each `project:simple-php-ipam:release:v*` entity older than the current shipped version (see `Simple-PHP-IPAM/version.php`), verify it has a `RELEASED` close-out observation including **tag**, **merge commit**, and **bundle SHA256**. Backfill any missing close-out from `git log` / `releases/` data before continuing.
+For each `project:simple-php-ipam:release:v*` entity older than the current shipped version (see `Simple-PHP-IPAM/version.php`), verify it has a `RELEASED` close-out observation including **tag**, **merge commit**, **bundle SHA256**, **deploy confirmation**, and **milestone close** (see ADR-006 § Implications #4 for the canonical field list). Backfill any missing close-out from `git log` / `releases/` data before continuing.
 
 ### Check 3 — Observation-vs-flat-file drift
 
