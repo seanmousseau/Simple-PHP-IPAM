@@ -21,41 +21,58 @@ use PHPUnit\Framework\TestCase;
  * bcrypt hash for auto-provisioned users and treat them as having a
  * real password they don't know.
  *
- * Source-level contract test: oidc_callback.php's auto-prov branch
- * stores the sentinel verbatim. End-to-end behaviour is covered by the
- * Pass A regression on the test instance.
+ * Source-level contract test: v3.29.0 #1099 extracted the inline
+ * auto-prov branch out of oidc_callback.php into oidc_provision_user()
+ * in lib.php (closes around line 10460). The sentinel contract now
+ * lives there; this test follows it.
+ *
+ * End-to-end behaviour is covered by the v3.29.0 #1099 unit suite
+ * (tests/OidcClaimMappingTest::testProvisionUsesPreferredUsername etc.,
+ * which assert the persisted row carries password_hash = '!disabled')
+ * and by the Pass A regression on the test instance.
  */
 final class OidcAutoProvSentinelTest extends TestCase
 {
     public function testAutoProvUsesDisabledSentinelNotRealBcrypt(): void
     {
-        $path = __DIR__ . '/../Simple-PHP-IPAM/oidc_callback.php';
-        $contents = (string) file_get_contents($path);
-        $this->assertNotEmpty($contents, 'oidc_callback.php must be readable');
+        $libPath = __DIR__ . '/../Simple-PHP-IPAM/lib.php';
+        $lib = (string) file_get_contents($libPath);
+        $this->assertNotEmpty($lib, 'lib.php must be readable');
 
-        // Locate the auto-provision branch. Bracket it from the
-        // `} elseif ($autoProvision) {` line through the matching close
-        // before the next `} else {` or end-of-block.
-        $start = strpos($contents, 'elseif ($autoProvision)');
-        $this->assertNotFalse($start, 'auto-provision branch not found in oidc_callback.php');
+        // Locate the oidc_provision_user() helper that owns the
+        // auto-provision INSERT in v3.29.0+.
+        $start = strpos($lib, 'function oidc_provision_user(');
+        $this->assertNotFalse($start, 'oidc_provision_user() function not found in lib.php');
 
-        // Reasonable upper bound for the branch — looking 4000 chars ahead
-        // is enough; the branch is ~50 lines today.
-        $branch = substr($contents, $start, 4000);
+        // The function body is ~80 lines; 4000 chars of look-ahead
+        // comfortably brackets it.
+        $branch = substr($lib, $start, 4000);
 
         $this->assertStringContainsString(
             "'!disabled'",
             $branch,
-            "#1120: auto-provision branch must store the '!disabled' sentinel into users.password_hash"
+            "#1120: oidc_provision_user() must store the '!disabled' sentinel into users.password_hash"
         );
 
-        // Negative: forbid generating a real password hash here. The
-        // pattern `password_hash(...PASSWORD_DEFAULT...)` was the pre-fix
-        // mechanism that produced random-but-real bcrypt hashes.
+        // Negative: the pre-fix mechanism (random bcrypt) must not return.
         $this->assertDoesNotMatchRegularExpression(
             '/password_hash\s*\([^)]*PASSWORD_(DEFAULT|BCRYPT)/',
             $branch,
-            "#1120: auto-provision branch must NOT call password_hash() — use the '!disabled' sentinel instead"
+            "#1120: oidc_provision_user() must NOT call password_hash() — use the '!disabled' sentinel instead"
+        );
+
+        // Also: oidc_callback.php must no longer contain inline password
+        // hashing for the auto-prov path. The whole inline block was
+        // replaced by a call to oidc_provision_user() in v3.29.0 #1099,
+        // so any reintroduction of `password_hash(...PASSWORD_DEFAULT...)`
+        // there would be a regression of #1120.
+        $cbPath = __DIR__ . '/../Simple-PHP-IPAM/oidc_callback.php';
+        $cb = (string) file_get_contents($cbPath);
+        $this->assertNotEmpty($cb, 'oidc_callback.php must be readable');
+        $this->assertDoesNotMatchRegularExpression(
+            '/password_hash\s*\([^)]*PASSWORD_(DEFAULT|BCRYPT)/',
+            $cb,
+            "#1120/#1099: oidc_callback.php must not contain inline password_hash() — provisioning is delegated to oidc_provision_user()"
         );
     }
 }

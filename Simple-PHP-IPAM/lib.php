@@ -10315,6 +10315,188 @@ function oidc_verify_id_token(string $idToken, array $jwks, array $expect): arra
 }
 
 /**
+ * v3.29.0 #1099 — Normalise OIDC ID-token claims into the four fields
+ * `oidc_callback.php` (and `oidc_resolve_user()` / `oidc_provision_user()`)
+ * actually use. Extracted from the inline payload-handling block at the
+ * top of `oidc_callback.php` for testability.
+ *
+ * Rules (unchanged from the v2.x behaviour):
+ *
+ *   - `sub`                 : whatever the IdP sent, stringified.
+ *   - `email`               : trim → first 255 bytes.
+ *   - `name`                : trim → first 255 bytes.
+ *   - `preferred_username`  : trim → first 64 bytes → strip everything
+ *                             except `[a-zA-Z0-9._@\-]` (#111). The
+ *                             sanitisation is necessary because this
+ *                             field flows directly into local username
+ *                             matching + auto-provisioning.
+ *
+ * Returns an associative array with exactly those four keys, all
+ * strings (possibly empty).
+ *
+ * @param array<string, mixed> $payload Raw decoded ID-token claims.
+ * @return array{sub: string, email: string, name: string, preferred_username: string}
+ */
+function oidc_extract_claims(array $payload): array
+{
+    $sub                = to_str($payload['sub']                ?? '');
+    $email              = substr(trim(to_str($payload['email']              ?? '')), 0, 255);
+    $name               = substr(trim(to_str($payload['name']               ?? '')), 0, 255);
+    $preferredUsername  = substr(trim(to_str($payload['preferred_username'] ?? '')), 0, 64);
+    // #111 sanitise: strip characters not allowed in local usernames.
+    $preferredUsername  = preg_replace('/[^a-zA-Z0-9._@\-]/', '', $preferredUsername) ?? '';
+    return [
+        'sub'                => $sub,
+        'email'              => $email,
+        'name'               => $name,
+        'preferred_username' => $preferredUsername,
+    ];
+}
+
+/**
+ * v3.29.0 #1099 — Resolve an OIDC login to an existing local user via
+ * the three-step lookup chain documented in #867:
+ *
+ *   1. **current-by-sub**: any user already linked to this `oidc_sub`.
+ *      Wins unconditionally — this is the steady-state path for every
+ *      established OIDC login.
+ *   2. **unlinked-by-username**: an existing local account whose
+ *      `username` matches the (sanitised) `preferred_username` claim
+ *      AND that has no `oidc_sub` yet. Allows auto-link to flip a
+ *      legacy local account onto OIDC on first SSO. Skipped if the
+ *      claim is empty.
+ *   3. **unlinked-by-email**: an existing local account whose `email`
+ *      matches AND that has no `oidc_sub` yet. Email-only match is
+ *      separate from username match by design (#107) — we never match
+ *      an account by BOTH username and email simultaneously, to
+ *      prevent cross-account linking when a user happens to have
+ *      another user's email in their preferred_username slot.
+ *
+ * Returns the user row (with `id`, `username`, `role`, `is_active`) or
+ * null when none of the three lookups hit. The caller is responsible
+ * for then calling `oidc_provision_user()` if auto-provision is on.
+ *
+ * @return array<string, mixed>|null
+ */
+function oidc_resolve_user(PDO $db, string $sub, string $email, string $preferredUsername): ?array
+{
+    $st = $db->prepare("SELECT id, username, role, is_active FROM users WHERE oidc_sub = :sub");
+    $st->execute([':sub' => $sub]);
+    $row = $st->fetch();
+    if (is_array($row)) {
+        /** @var array<string,mixed> $row */
+        return $row;
+    }
+
+    if ($preferredUsername !== '') {
+        $st2 = $db->prepare("SELECT id, username, role, is_active FROM users WHERE username = :u AND oidc_sub IS NULL");
+        $st2->execute([':u' => $preferredUsername]);
+        $row = $st2->fetch();
+        if (is_array($row)) {
+            /** @var array<string,mixed> $row */
+            return $row;
+        }
+    }
+
+    if ($email !== '') {
+        $st3 = $db->prepare("SELECT id, username, role, is_active FROM users WHERE email = :e AND oidc_sub IS NULL");
+        $st3->execute([':e' => $email]);
+        $row = $st3->fetch();
+        if (is_array($row)) {
+            /** @var array<string,mixed> $row */
+            return $row;
+        }
+    }
+
+    return null;
+}
+
+/**
+ * v3.29.0 #1099 — Provision a new local user from OIDC claims. Caller
+ * has decided auto-provision is allowed and the resolve-chain missed.
+ *
+ * Username derivation (each fallback is exercised by the unit tests):
+ *
+ *   1. `claims['preferred_username']` if non-empty (already sanitised
+ *      by `oidc_extract_claims()`).
+ *   2. Local-part of `claims['email']` (everything before the `@`),
+ *      with the same `#111` sanitisation rule applied.
+ *   3. First 64 bytes of `claims['sub']`, sanitised.
+ *   4. Literal string `'oidcuser'`.
+ *
+ * Username collisions are handled by appending `_2`, `_3`, … up to 5
+ * total attempts; throws `RuntimeException` on persistent collision so
+ * the caller can surface the failure (in production this surfaces via
+ * `oidc_fail()` which renders the public error page).
+ *
+ * Password hash is the `!disabled` sentinel (#1120) — `password_verify`
+ * returns false against it for any input, and lockout-protection
+ * guards can recognise the value as "OIDC-only account".
+ *
+ * Returns the new user's auto-increment ID. Audit is the caller's job
+ * (we don't have the canonical username back until the INSERT lands).
+ *
+ * @param array{sub: string, email: string, name: string, preferred_username: string} $claims
+ * @return array{id: int, username: string}
+ */
+function oidc_provision_user(PDO $db, array $claims, string $role): array
+{
+    $allowedRoles = ['admin', 'netops', 'readonly'];
+    $effectiveRole = in_array($role, $allowedRoles, true) ? $role : 'readonly';
+
+    $sub               = $claims['sub'];
+    $email             = $claims['email'];
+    $name              = $claims['name'];
+    $preferredUsername = $claims['preferred_username'];
+
+    $emailLocalPart = '';
+    if ($email !== '' && strpos($email, '@') !== false) {
+        $emailLocalPart = preg_replace('/[^a-zA-Z0-9._@\-]/', '', explode('@', $email)[0]) ?? '';
+    }
+    $subSanitised = preg_replace('/[^a-zA-Z0-9._@\-]/', '', substr($sub, 0, 64)) ?? '';
+
+    $newUsername = $preferredUsername !== ''
+        ? $preferredUsername
+        : ($emailLocalPart !== ''
+            ? $emailLocalPart
+            : ($subSanitised !== '' ? $subSanitised : 'oidcuser'));
+
+    $unusableHash = '!disabled'; // #1120 sentinel — see oidc_callback.php
+
+    $baseUsername = $newUsername;
+    $insertSql = "INSERT INTO users (username, password_hash, role, is_active, oidc_sub, name, email)
+                  VALUES (:u, :h, :r, 1, :sub, :n, :e)";
+    for ($attempt = 0; $attempt < 5; $attempt++) {
+        // Re-prepare per attempt: SQLite leaves a PDOStatement in a "bad
+        // parameter or other API misuse" state after a UNIQUE-violation
+        // execute(), so re-using the same statement for the retry would
+        // fail with SQLSTATE[HY000] regardless of the bind values.
+        $ins = $db->prepare($insertSql);
+        try {
+            $ins->execute([
+                ':u'   => $newUsername,
+                ':h'   => $unusableHash,
+                ':r'   => $effectiveRole,
+                ':sub' => $sub,
+                ':n'   => $name,
+                ':e'   => $email,
+            ]);
+            $newId = ipam_last_insert_id($db, 'users');
+            return ['id' => $newId, 'username' => $newUsername];
+        } catch (PDOException $_ex) {
+            if ($attempt >= 4) {
+                throw new RuntimeException(
+                    'oidc_provision_user: username collision after 5 attempts'
+                );
+            }
+            $newUsername = $baseUsername . '_' . ($attempt + 2);
+        }
+    }
+    // Loop always returns or throws.
+    throw new RuntimeException('oidc_provision_user: unreachable');
+}
+
+/**
  * Convert an RSA JWK (n, e fields) to a PEM-encoded public key.
  * Builds the DER SubjectPublicKeyInfo structure manually so we have
  * no dependency on ext-gmp or any JOSE library.
