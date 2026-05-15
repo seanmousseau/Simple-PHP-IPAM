@@ -10499,7 +10499,11 @@ function oidc_provision_user(PDO $db, array $claims, string $role): array
 
     $emailLocalPart = '';
     if ($email !== '' && strpos($email, '@') !== false) {
+        // PR #1205 review: cap at users.username's 64-char limit so a long
+        // local-part fallback doesn't hard-fail the initial INSERT before
+        // the collision-retry path ever runs.
         $emailLocalPart = preg_replace('/[^a-zA-Z0-9._@\-]/', '', explode('@', $email)[0]) ?? '';
+        $emailLocalPart = substr($emailLocalPart, 0, 64);
     }
     $subSanitised = preg_replace('/[^a-zA-Z0-9._@\-]/', '', substr($sub, 0, 64)) ?? '';
 
