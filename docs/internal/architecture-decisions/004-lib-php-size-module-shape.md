@@ -318,10 +318,12 @@ None. This ADR is pure code organisation; no DB shape changes are caused by it. 
 
 ## Open questions
 
-1. **`lib.php` survival.** After all functions move out, does the file get deleted entirely, or kept as a require-everything shim for backward compat with any external code that does `require_once 'Simple-PHP-IPAM/lib.php';`? My read: delete it. There is no such external caller in any known integration. But worth confirming.
-2. **`lib/presentation.php` naming.** `views.php` is a thematic label for "page_header, render_*, flash_*, paginate, sort_th, csv_*." Some of those (csv_*) are more "presentation utility" than "view." Should it be `lib/presentation.php` (theme-name) or `lib/presentation.php` (broader)?
-3. **Single auth file vs four.** I split auth into `auth.php` + `auth_password.php` + `auth_rate_limit.php` + `auth_recaptcha.php`. That's the highest function-count theme (~30 functions). Alternative: keep one `lib/auth.php` (~1,500 lines) for cohesion. Trade-off: cohesion vs PHPStan-per-file speed.
-4. **Phasing aggression.** Should v3.30.0 do **all** of the v3.30.0-bucket modules above (11), or split into a v3.30.0 + v3.30.x point-release sequence the way ADR-001's encrypt-at-rest was split? Scope-sizing concern is real: v3.30.0 with ADR-001 + ADR-002 + 11 file extractions is genuinely large.
+All four resolved at stamping (2026-05-15):
+
+1. ~~`lib.php` survival after drain?~~ **Resolved: delete entirely** at end of v3.32.0. No backward-compat shim; no external integration is known to require it directly.
+2. ~~Renderer file name?~~ **Resolved: `lib/presentation.php`** — broader than "views"; accurately covers `page_header`, `render_*`, `flash_*`, `paginate`, `sort_th`, `csv_*`.
+3. ~~Single auth file or four?~~ **Resolved: four files** — `auth.php` (session, CSRF, login/logout, current_user) + `auth_password.php` (complexity, argon2id, reset tokens) + `auth_rate_limit.php` (lockouts, attempt tracking) + `auth_recaptcha.php` (login_protection, recaptcha). Best PHPStan-per-file speed; clearest test isolation.
+4. ~~Phasing aggression?~~ **Resolved: all 11 extractions land in v3.30.0** alongside ADR-001 (schema) + ADR-002 (user_preferences). Single CR cycle, single migration window. Scope-sizing warning stays in the Implications section — Sean acknowledged the risk and accepted it.
 
 ## References
 
