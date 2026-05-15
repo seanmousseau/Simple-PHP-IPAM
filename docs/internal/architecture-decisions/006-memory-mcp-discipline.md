@@ -1,9 +1,9 @@
 # ADR-006: Memory MCP discipline as cross-session continuity
 
-**Status:** draft
-**Decided:** —
+**Status:** accepted
+**Decided:** 2026-05-15
 **Scope:** process / tooling decision. Locks the role Memory MCP plays in this project's session-to-session continuity and what we do when it's unavailable or wrong.
-**Stamped by:** —
+**Stamped by:** Sean Mousseau
 
 ---
 
@@ -113,7 +113,11 @@ The audit is a checklist in this ADR, executed manually at sprint kickoffs and p
 
 ## Recommendation
 
-**Pick Option A (status quo + session-start audit checklist), backed by the discipline rules below.**
+**Accepted: Option B (scripted audit) for the audit itself + Option A's discipline rules for everything else.**
+
+Claude's original draft recommended Option A (manual checklist). Sean overrode to scripted audit on 2026-05-15 with the following rationale: a manual checklist that depends on the controller-agent remembering to run it has the same failure mode as the orphan-relations problem the ADR was opened to fix. Automating it removes the discipline-on-discipline regress.
+
+The scripted audit lives at `testing/scripts/memory-audit.sh`, runs as part of `/release-kickoff`, and produces a structured report against the three failure modes. Manual checklist is preserved as a fallback if MCP is unavailable when the script runs.
 
 The decision drivers tip toward A because:
 
@@ -193,8 +197,9 @@ Each entity gets one observation: status, decided-date, scope, and a link to the
 
 ### GH issues to open
 
-- `docs(internal): add 'Session-start audit checklist' to architecture-decisions/README.md (ADR-006)` — milestone none, just docs hygiene, lands whenever convenient.
-- `chore(memory): backfill graph entities for ADR-001 through ADR-006 with their decided-date + flat-file pointer + cross-ADR relations` — same.
+- `tools: testing/scripts/memory-audit.sh — automated audit script for ADR-006's three failure modes (orphan bug relations / stale release close-outs / graph rules that should be in flat files)` — milestone none, lands when next convenient.
+- `docs(internal): add 'Session-start audit checklist' to architecture-decisions/README.md as the script's manual fallback (ADR-006)` — same.
+- `chore(memory): backfill graph entities for ADR-001 through ADR-006 with their decided-date + flat-file pointer (Option Q2 = pointer + status only) + cross-ADR relations` — same.
 
 ### Schema migrations needed
 
@@ -212,10 +217,12 @@ None directly. ADR-006 is process; it doesn't gate any code work.
 
 ## Open questions
 
-1. **Should the session-start audit be automated by a script after all?** Recommendation says no, but worth confirming — if the manual checklist gets forgotten three times running, the answer changes.
-2. **Should ADR entities in the graph carry the full ADR body, or just a pointer + status?** My read: pointer + status. The body lives in the flat file; the graph entry is the index card.
-3. **What's the close-out shape for ADR-006 itself?** This ADR is process; it has no "implementation lands in vX.Y.Z." Does it ever get a "RELEASED" observation, or does its acceptance close it out forever? My read: acceptance closes it. Process ADRs don't ship.
-4. **Backup of the backup.** Memory MCP backs up to OneDrive daily; the OneDrive backup itself is a third-party-managed file store. Should the project carry a copy of the daily backup in a project-local off-site (e.g. the same S3 destination used for IPAM backups) as a belt-and-braces? My read: no — the OneDrive TCC gotcha already documented in `~/.claude/CLAUDE.md` makes adding more pipes risky. One reliable backup beats two flaky ones.
+All four resolved at stamping (2026-05-15):
+
+1. ~~Automate the audit?~~ **Resolved: script it now.** `testing/scripts/memory-audit.sh` lands as the canonical audit; the manual checklist becomes a fallback only when MCP is unavailable. Reasoning: a manual checklist has the same forgetting-discipline failure mode as the orphan-relations problem this ADR exists to fix.
+2. ~~ADR graph shape?~~ **Resolved: pointer + status only.** Each ADR entity carries status, decided-date, scope (one line), and a path to the flat file. The body stays in `docs/internal/architecture-decisions/`. Graph is index cards; flat files are the documents.
+3. ~~ADR-006 close-out?~~ **Resolved: acceptance closes it forever.** Process ADRs don't ship. There is no future "RELEASED vX.Y.Z" observation expected on the `project:simple-php-ipam:adr:006-memory-mcp-discipline` entity. Reaffirmation is implicit — if practice diverges from the ADR, that's a re-stamping event whenever it happens.
+4. ~~Belt-and-braces backup?~~ **Resolved: skip for now.** Existing stack is 4 layers deep (live Docker volume → daily JSON dump in OneDrive → Time Machine local snapshot → load-bearing data already lives in git-versioned flat files). Sean is separately evaluating **Arq backup for macOS** which would add cloud-redundant fileystem-level snapshots; if Arq lands, that's effectively the 5th layer with no Memory-MCP-specific work needed. Re-evaluate only if (a) load-bearing data starts living in the graph without a flat-file mirror, or (b) a near-miss restore reveals a real gap.
 
 ## References
 
