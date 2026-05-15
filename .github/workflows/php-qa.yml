@@ -145,6 +145,10 @@ jobs:
         if: always()
         run: vendor/bin/phpcs
 
+      - name: Migration linter (#1101)
+        if: always()
+        run: php testing/scripts/migration-linter.php
+
       # ----- MySQL slot only: test_api.sh against php -S backed by MySQL -----
       #
       # Runs the full ~150-assertion API regression suite against a fresh
