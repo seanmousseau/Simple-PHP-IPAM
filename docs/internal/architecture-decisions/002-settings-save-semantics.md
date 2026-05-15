@@ -1,0 +1,173 @@
+# ADR-002: Settings save semantics — per-key vs group-form
+
+**Status:** draft
+**Decided:** —
+**Scope:** prerequisite for refactor wave 1 (v3.30.0); forward-looking policy for `settings.php` save handling.
+**Stamped by:** —
+
+---
+
+## Context
+
+`settings.php` historically had **two parallel write paths** for the same `settings` table rows:
+
+1. **Group form** — operator edits multiple fields in a Settings tab, clicks "Save Group," every field in the group commits atomically inside a transaction.
+2. **Per-key handler** — JavaScript-driven shadow form POSTed a single key/value on toggle/change, e.g. the security tab's "Enable OIDC" boolean would auto-commit the instant the operator flipped it.
+
+The two paths converged on `ipam_setting_set()` but had **distinct POST shapes, distinct CSRF handling, distinct redirect semantics, and distinct UI side-effects** — which meant they could disagree about what was "currently being edited" in the same browser tab.
+
+### Bug V (#1121) — the root incident
+
+> "Toggling a boolean in the settings page can wipe unsaved text-field input in the same group."
+
+Scenario: operator types a new value into an `int` field in the Security tab (e.g. session_idle_seconds = 3600), then before clicking Save Group, flips the "Enable WebAuthn" toggle in the same tab. The toggle's JS auto-submitted a per-key POST, which on redirect re-rendered the page **from DB state** — wiping the unsaved `int` field input.
+
+Two writes to the same logical state (the Settings form) raced; the per-key write always won because it autocommitted, and the operator's stage area silently lost the unsaved text. This was a Pass A regression in v3.27.1 and was deferred through v3.27.2 → v3.29.0.
+
+### Resolution trajectory
+
+| Release | Action | File |
+|---|---|---|
+| v3.27.2 | UI-side fix: shadow form removed, auto-submit JS removed, `data-setting-toggle-target` attribute gone. Bool toggles now stage in the group form like every other field. | `settings.php`, `assets/app.js` |
+| v3.29.0 (#1126) | Server-side per-key handler block deleted from `settings.php`. Every Playwright fixture migrated to the group-form path. New regression test `SettingsToggleConsistencyTest::testPerKeyHandlerIsGone`. | `settings.php` (block at lines 95-174 deleted) |
+
+**Today (post-v3.29.0):** there is only one save path. The group form. Bug V cannot recur because the second path doesn't exist.
+
+### Why an ADR if the bug is fixed?
+
+Two reasons:
+
+1. **No written policy.** The fact that we're down to one save path is implemented but not declared. A future contributor (or a future Claude session) could plausibly re-introduce a per-key shortcut for a "narrow" UX need — e.g. a nav-theme toggle that "should obviously commit instantly," a feature-flag toggle in a /dev admin tab, an "advanced" panel where everything autosaves. Each would be a defensible micro-decision that re-introduces the exact bifurcation Bug V proved is dangerous.
+
+2. **ADR-001's `setting_definitions` schema introduces an obvious knob.** With `setting_definitions.type = 'bool'` it's tempting to add `setting_definitions.save_mode = 'instant'|'group'` and say "now we have a controlled, schema-described bifurcation, what could go wrong?" Bug V is exactly what could go wrong. The decision shape needs to be locked **before** the schema lands so the column isn't there to be misused.
+
+## Decision drivers
+
+- **Bug V must remain impossible to recur.** A fixed bug is not a closed case; a fixed bug with a written policy preventing reintroduction is.
+- **UX expectation.** Some controls (theme toggle, sidebar pin, density toggle) historically autosave on other apps. Operators may expect this on IPAM too. Saying "no, click Save" is a deliberate UX cost.
+- **Atomicity guarantee.** Group form's transaction wrapping is load-bearing — the step-up auth and audit emission rely on "all fields in a group commit together or none do." A per-key path breaks that.
+- **Test surface.** The per-key handler doubled the Playwright fixture surface. Maintenance cost was real.
+- **Coupling to ADR-001.** Decision must land before `setting_definitions` schema commits so we know whether to add a `save_mode` column.
+
+## Options considered
+
+### Option A — Lock in "group form only," forever
+
+**Mechanism:** Declare that the group-form path is the single save semantic for `settings.php` permanently. No per-key endpoint, no instant-save, no schema knob. `SettingsToggleConsistencyTest::testPerKeyHandlerIsGone` becomes the load-bearing regression guard.
+
+**Pros:**
+- Zero risk of Bug V recurrence.
+- Simplest mental model: "type, click Save, persisted."
+- No schema-side toggle to misuse.
+
+**Cons:**
+- UX cost for controls where instant-save is a real ergonomic win (theme toggle in particular — operators flip it to see how the app looks in dark mode, and clicking Save to commit feels wrong).
+- Closes off a legitimate design direction without weighing future cases.
+
+### Option B — Group form is the default; per-key is opt-in via allowlist
+
+**Mechanism:** Group form is the only path **unless** a setting's `setting_definitions.save_mode = 'instant'` (or similar). The allowlist is small (current candidates: theme toggle, sidebar pinned/unpinned, density preference). Each allowlisted setting must:
+
+- Be a `'bool'` or `'enum'` subtype (not free-form text).
+- Be **user-scoped**, not tenant-scoped or global. Storage moves into a different table (`user_preferences` or similar) and stops sharing a row with system settings.
+- Have a CR-level review note explaining the UX justification.
+
+The instant-save path lives at a **different URL** (e.g. `/api/user_preference?key=…`) so it cannot accidentally race a `settings.php` group submit — the two paths target different tables.
+
+**Pros:**
+- Preserves the instant-save UX for the small set of controls where it matters.
+- The atomicity guarantee of the group form is preserved (no instant-save touches `settings`).
+- The new path is **operator preference, not system config** — a different shape, not a re-bifurcation.
+
+**Cons:**
+- Adds a new table + a new endpoint + a new auth model (user-scoped, not admin-only).
+- The "different URL, different table" framing is honest but a future contributor could still file a "wouldn't it be nice if X were instant-save" issue and the answer requires explaining why it's not allowed.
+- Scope drift candidate: once user_preferences exists, every "could this be a preference?" question runs through the same review filter.
+
+### Option C — All-AJAX commit-on-blur
+
+**Mechanism:** Every settings field auto-commits when it loses focus. No Save buttons. Each field is its own atomic write.
+
+**Pros:**
+- No "did I save?" anxiety.
+- Modern app pattern (Notion, Linear, Stripe Dashboard).
+
+**Cons:**
+- **Re-introduces Bug V in a worse form.** Now every field is its own per-key write; the "wipe unsaved input on toggle" interaction generalises to "wipe unsaved input on tab key."
+- Loses transactional atomicity entirely — a partial commit (some fields saved, some not) is now the normal case if the network blips mid-form.
+- Step-up auth and audit can't reason about "this group changed together" — they get N micro-events.
+- The validation-error path is hostile: an error on field 3 now means fields 1 and 2 are persisted but field 3 is rejected. Operator must figure out what's saved vs not.
+
+### Option D — Freeze status quo via lint; defer policy until a real UX need surfaces
+
+**Mechanism:** Keep the current state (single group-form path, regression test in place). Don't take a forward-looking position now. The next time someone files "we should add an instant-save toggle for X," **that** triggers an ADR-002A scoped to the specific case.
+
+**Pros:**
+- No premature decision; the real cases will be self-evident when they arrive.
+- Zero work in v3.30.0.
+
+**Cons:**
+- Doesn't actually close the ADR-002 prerequisite — anyone reading "settings save semantics is an open ADR" later will not know if the answer is "decided permanently" or "deferred indefinitely."
+- The ADR-001 schema lands without `save_mode`; that's correct under D but it should be declared on purpose rather than as an absence.
+
+## Recommendation
+
+**Pick Option B (group form default; per-key allowed only via user-preferences table + explicit allowlist).**
+
+The decision drivers tip toward B because:
+
+1. **It addresses both the bug-prevention and UX-preservation drivers.** A pure "lock to one path" (Option A) protects against Bug V but pays UX cost for the legitimate cases. B captures the legitimate cases in a structurally different shape — user preferences in their own table, system settings in `settings` — so the bifurcation isn't a bifurcation anymore; it's two distinct subsystems.
+
+2. **The atomicity guarantee is preserved.** Bug V's root cause was "two paths writing to the same logical state." B's split makes that impossible by construction: the instant-save path writes to a different table, the group-form path writes to `settings`. Two writes can't race because they're not writing the same rows.
+
+3. **The user-preferences split is a real architectural improvement on its own merits.** Today, "site_theme" sits as a tenant-scoped row in `settings` even though it's conceptually a per-user view preference. Splitting it out clarifies the data model.
+
+4. **B is forward-compatible with A.** If user_preferences turns out to be more trouble than the UX win is worth, we can collapse back to A in a future release by absorbing user_preferences rows back into `settings` (single migration) and re-locking. A → B → A round-tripping is straightforward; A → C → A isn't.
+
+5. **B forces the question every time.** Adding a setting to the user_preferences allowlist requires a CR-level review note. There's no "drift into bifurcation" — every entry is intentional.
+
+The `setting_definitions.save_mode` knob that ADR-001 might naively add is **explicitly not introduced** under B. The split lives in the table choice, not in a flag.
+
+## Implications
+
+If accepted:
+
+- **GH issues to open (milestone #56 unless noted):**
+  - `feat(prefs): introduce user_preferences table (key/value, user-scoped, no `type` column — schema-defined)` — schema mirrors the v3.30.0 `setting_definitions` shape but is user-scoped not global
+  - `feat(prefs): /api/user_preference endpoint — POST {key, value}, auth = current user, no admin gate, atomic single-row UPSERT`
+  - `refactor: move site_theme + future "view preferences" out of settings into user_preferences`
+  - `tests(prefs): per-key instant-save round-trip; verify writes never touch settings table; CSRF + auth gate`
+  - `docs(internal): security-model.md — user_preferences is user-scoped, no admin gate, distinct trust boundary from settings`
+  - `docs(internal): coding-guide.md — "new settings go in settings; new per-user view preferences go in user_preferences. Adding a NEW row to the per-key allowlist requires an ADR amendment, not just a code review."`
+- **GH issues to close / scope-cut:**
+  - Bug V #1121 already closed (in v3.27.2 + v3.29.0). This ADR formalises why it stays closed.
+- **Files that change:**
+  - `Simple-PHP-IPAM/schema.sql` + .mysql + .pgsql — new `user_preferences` table
+  - `Simple-PHP-IPAM/migrations.php` — new migration closure
+  - `Simple-PHP-IPAM/lib.php` — `ipam_user_preference_get/set` helpers
+  - `Simple-PHP-IPAM/api.php` — new resource `user_preference` (POST/GET only, no admin required)
+  - `Simple-PHP-IPAM/settings.php` — `site_theme` row moves out of the group form, replaced by a JS-driven toggle that POSTs to the new endpoint
+  - `assets/app.js` — theme toggle re-wires to the new endpoint
+- **Schema migrations needed in v3.30.0:** yes — new `user_preferences` table + move existing `site_theme` rows.
+- **Docs to update:**
+  - `docs/internal/data-dictionary.md` — new `user_preferences` table
+  - `docs/internal/security-model.md` — user-preference trust boundary
+  - `docs/internal/coding-guide.md` — settings vs preferences rule
+  - `docs/internal/roadmap.md` § 10 — strike "Per-key vs group-form bifurcation" from the locked-pre-wave-1 list; ADR-002 resolves it
+  - `docs/internal/architecture-decisions/README.md` — index update + ADR-001 cross-reference (ADR-001 explicitly does NOT add `save_mode` because of this decision)
+- **Future ADRs unblocked:** ADR-004 (lib.php module shape) can now treat settings dispatch and user-prefs dispatch as separate islands.
+
+## Open questions
+
+1. **Initial allowlist size.** Today's candidates: `site_theme` (definite), `sidebar_pinned` (doesn't exist yet, future), `density` (doesn't exist). Should v3.30.0 ship with **only** `site_theme` in user_preferences, and add others one-by-one with ADR amendments? Or ship with a slightly broader initial set?
+2. **Existing `site_theme` rows.** Today `site_theme` is in `settings` as a tenant-scoped row. The migration needs to back-fill `user_preferences` for every user with the tenant's current theme. Acceptable, or do we just leave existing users with no preference (falling back to tenant default) until they explicitly toggle?
+3. **Schema name.** `user_preferences` vs `view_preferences` vs `ui_preferences` — does the name "user preferences" set a scope that future contributors might misread as "things users can set about themselves" (which would include profile data)? Naming sets boundaries.
+4. **API authorization model.** Should `/api/user_preference` require step-up auth for any preference? My read: no — they're cosmetic. But locking that down explicitly in the ADR prevents future drift.
+
+## References
+
+- ADR-001 — settings table type system (accepted 2026-05-15) — explicitly does NOT add `save_mode` because ADR-002 locks the answer here.
+- `docs/internal/roadmap.md` § 10.1 (locked 2026-05-11)
+- Bug V #1121 — root incident
+- `Simple-PHP-IPAM/settings.php:89-99` — historical comment block documenting the v3.27.2 + v3.29.0 #1126 resolution
+- `tests/SettingsToggleConsistencyTest::testPerKeyHandlerIsGone` — regression guard

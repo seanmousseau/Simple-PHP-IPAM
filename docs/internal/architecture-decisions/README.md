@@ -41,7 +41,7 @@ See `_template.md`. Every ADR follows the same shape so reviewers can scan in se
 | # | Title | Status | Decided | Scope |
 |---|---|---|---|---|
 | 001 | Settings table type system | **accepted** | 2026-05-15 | refactor wave 1 prerequisite |
-| 002 | Per-key vs group-form bifurcation in `settings.php` | not started | — | refactor wave 1 prerequisite (Bug V #1121 root cause) |
+| 002 | Settings save semantics — per-key vs group-form | **draft** | — | refactor wave 1 prerequisite (Bug V #1121 root cause) |
 | 003 | `$config` global as the only config conduit | not started | — | refactor wave 2 prerequisite |
 | 004 | `lib.php` size + module shape | not started | — | refactor wave 1 blueprint |
 | 005 | `backup.php` orchestrator/codec/dispatcher separation | not started | — | v4.0.0 backup cold break prerequisite |
