@@ -123,6 +123,18 @@ require_once __DIR__ . '/lib/db.php';
 // call time, always after init.php has finished loading. v3.30.0.
 require_once __DIR__ . '/lib/audit.php';
 
+// Presentation layer (#910, ADR-004 Phase 5 Task 5.1) — page_header() /
+// page_footer(), the ipam_render() view-partial helpers, icon(), the flash
+// store, sortable-<th> / pagination / badge / banner / custom-field-input
+// renderers. Loaded AFTER lib/config.php (page_header() reads config via
+// ipam_config()) and BEFORE lib.php so any lib.php function can call these
+// without a separate bootstrap step. The DB-backed renderers and the helpers
+// they depend on (ipam_setting(), csrf_token(), recovery_mode_enabled(),
+// ipam_update_check(), ipam_install_key_banner_handle_dismiss(), …) still
+// live in lib.php; they resolve lazily at call time, always after init.php
+// has finished loading. v3.30.0.
+require_once __DIR__ . '/lib/presentation.php';
+
 // Composer autoloader (#416). Conditional because v2.9.0 ships with an empty
 // require {} — vendor/autoload.php only exists in release tarballs (built by
 // releases/make_releases.sh) and in dev environments where the tester has run

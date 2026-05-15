@@ -31,9 +31,16 @@ declare(strict_types=1);
  * Read a single key from $GLOBALS['config'] (or the whole array if $key is
  * null). Returns $default when the key is absent.
  *
+ * The no-key form ($key === null) returns the whole config array typed as
+ * IpamConfig — callers passing the result to functions that expect the full
+ * config shape (recovery_mode_enabled(), ipam_update_check(), …) get a
+ * precise type rather than `mixed`. A wholesale-replaced or never-populated
+ * $GLOBALS['config'] still flows through as IpamConfig; the static cache
+ * coerces a non-array value to []. The single-key form stays `mixed`.
+ *
  * @param string|null $key
  * @param mixed $default
- * @return mixed
+ * @return ($key is null ? IpamConfig : mixed)
  */
 function ipam_config(?string $key = null, mixed $default = null): mixed
 {
