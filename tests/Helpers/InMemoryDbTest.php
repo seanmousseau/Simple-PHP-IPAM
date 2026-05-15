@@ -28,12 +28,10 @@ final class InMemoryDbTest extends TestCase
         require_once __DIR__ . '/../../Simple-PHP-IPAM/migrations.php';
         $pdo = InMemoryDb::withMigrations();
         $applied = (int) $pdo->query("SELECT COUNT(*) FROM schema_migrations")->fetchColumn();
-        $expected = count(\ipam_migrations());
-        $this->assertGreaterThan(0, $applied, 'schema_migrations should be stamped by withMigrations()');
-        $this->assertGreaterThanOrEqual(
-            $expected,
+        $this->assertSame(
+            \ipam_migrations_count(),
             $applied,
-            'schema_migrations row count must cover every registered migration (#1102)'
+            'schema_migrations row count must equal ipam_migrations_count() (#1102) after withMigrations()'
         );
     }
 }
