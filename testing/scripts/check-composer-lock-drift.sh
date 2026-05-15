@@ -15,10 +15,19 @@ if ! composer validate --no-check-publish --strict >/dev/null 2>&1; then
   exit 1
 fi
 
-if [ -d vendor ]; then
-  # composer status exits non-zero if installed pins drift from the lock.
-  if ! composer status --no-interaction >/dev/null 2>&1; then
-    echo "vendor/ drifts from composer.lock. Run: composer install" >&2
-    exit 1
-  fi
+if [ ! -d vendor ]; then
+  echo "vendor/ is missing. Run: composer install" >&2
+  exit 1
+fi
+
+# composer install --dry-run reports any package that WOULD be installed,
+# updated, or removed if a real install ran now. Any such output means
+# vendor/ is out of sync with composer.lock. Filter the dry-run output
+# for the action verbs composer emits and bail on any hit.
+dryrun=$(composer install --dry-run --no-interaction --no-progress --no-plugins 2>&1 || true)
+if printf '%s\n' "$dryrun" | grep -qE '^[[:space:]]*-[[:space:]]+(Installing|Updating|Removing|Locking)[[:space:]]'; then
+  echo "vendor/ drifts from composer.lock. Run: composer install" >&2
+  echo "Drift detected (composer install --dry-run reported actions):" >&2
+  printf '%s\n' "$dryrun" | grep -E '^[[:space:]]*-[[:space:]]+(Installing|Updating|Removing|Locking)[[:space:]]' >&2
+  exit 1
 fi
