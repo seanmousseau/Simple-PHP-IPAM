@@ -1,9 +1,9 @@
 # ADR-001: Settings table type system
 
-**Status:** draft
-**Decided:** —
+**Status:** accepted
+**Decided:** 2026-05-15
 **Scope:** prerequisite for refactor wave 1 (v3.30.0) — informs ADR-002 (per-key vs group-form) and ADR-003 (`$config` global).
-**Stamped by:** —
+**Stamped by:** Sean Mousseau
 
 ---
 
@@ -153,47 +153,107 @@ ADR-002 (per-key vs group-form bifurcation in `settings.php`) and the lib.php-de
 
 ## Recommendation
 
-**Pick Option D (defer DB schema, formalise PHP registry).**
+**Decided: Option B (schema-defined registry) + encrypt-at-rest for the `secret` subtype, in v3.30.0.**
 
-The decision drivers tip toward D because:
+Claude's original draft recommended Option D (defer the DB shape, formalise the PHP layer). Sean overrode to Option B + encrypt-at-rest on 2026-05-15 with the following rationale:
 
-1. **The pain that's blocking refactor wave 1 is in the PHP layer**, not the DB. The dispatch sprawl that makes `settings.php` hard to refactor branches on `$def['type']`, `$def['sensitive']`, and `$def['options']` — all of which are PHP-side. A DB schema change doesn't reduce that dispatch surface; a PHP-layer subtype model does.
+- **Single source of truth is the higher-order win.** The "registry drift" surface that Option D leaves open is the root of multiple v3.21–v3.27 bugs (Bug V's per-key/group-form bifurcation is one example). Moving the registry into the DB closes that drift surface permanently rather than papering over it with a PHP-side lint.
+- **v4.0.0 is reserved for the backup cold break.** Adding settings migration to v4.0.0 inflates the cold-break scope on top of a release that is already a deliberately-narrow operator-visible disruption. Better to absorb the settings migration in v3.30.0 where there is no operator-visible UX change.
+- **Encrypt-at-rest for secrets is non-negotiable in this iteration.** Plaintext secrets in the `settings` table (SMTP password, OIDC client secret, recaptcha secret, others) are a real exposure — every backup export, every support bundle, every operator with `cat ipam.sqlite` access reads them. The webhook-secrets exception established the libsodium pattern in v3.3.0; ADR-001 extends that pattern to the full `secret`-subtype set.
+- **Reversibility is preserved differently.** Option B is reversible by writing a "B → D" migration that re-collapses the registry into PHP. That's a known migration shape, not a cold-break. The trade is real but acceptable given the payoff.
 
-2. **Migration cost is real.** Options A and B both require running a migration on every existing install across 3 engines. The footgun history (`apply_migrations()` FK-cascade incident, v2.2.1 wipe) means every migration we ship has an irreducible review tax — paying it for a change that doesn't unblock anything is not justified.
-
-3. **v4.0.0 is the right home for the schema change.** The backup cold-break already breaks the v3 → v4 upgrade path; bundling a settings schema migration there means one cold break instead of two.
-
-4. **D is reversible.** If the PHP-layer subtype model proves insufficient over the next 2–3 releases, we can still land Option A or B at v4.0.0 with no regret. A and B are NOT reversible — once we've migrated 60 rows on every install, rolling back is a second migration.
-
-The "discoverability from SQL alone" win that Options A and B offer is real but small in practice — every real support workflow already involves looking at code, not just SQL.
+The "biggest payoff" framing in Option B's pros section is load-bearing for this decision.
 
 ## Implications
 
-If accepted:
+This is a substantial v3.30.0 workstream — calling out the scope honestly so it sizes correctly against the rest of milestone #56.
 
-- **GH issues to open:**
-  - `refactor(settings): introduce PHP-layer subtype dispatch (enum/url/email/timezone/cidr/secret)` — milestone #56
-  - `tests(settings): assert every ipam_setting_definitions() entry declares 'sensitive' and 'hidden'` — milestone #56
-  - `tests(settings): freeze the v3.x DB schema; add an "intentional drift gate" so a future DB shape change requires explicit ADR override` — milestone #56
-  - `roadmap(v4.0.0): land settings schema migration (option A-shape) as part of the backup cold break` — milestone v4.0.0 / #19
-- **GH issues to close / scope-cut:**
-  - None directly; ADR-002 (per-key vs group-form) can now reference the locked subtype model rather than block on it.
-- **Files that change:**
-  - `Simple-PHP-IPAM/lib.php` — `ipam_setting_definitions()` gains mandatory keys; subtype dispatch helpers introduced
-  - `Simple-PHP-IPAM/settings.php` — render + validate dispatch flips to subtype
-  - `tests/SettingsTest.php` (or new `tests/SettingsRegistryShapeTest.php`) — schema-of-the-registry pinning
-- **Schema migrations needed:** NONE in v3.x. The migration is scheduled for v4.0.0.
-- **Docs to update:**
-  - `docs/internal/config-reference.md` — document the subtype list
-  - `docs/internal/coding-guide.md` — add "every new setting must declare type + subtype + sensitive + hidden"
-  - `docs/internal/roadmap.md` § 10 — strike "Settings table type system" from the locked-pre-wave-1 list; ADR-001 now resolves it
-- **Future ADRs unblocked:** ADR-002, ADR-004 can both now write against a stable subtype model.
+### Schema changes (v3.30.0 migration)
+
+New table `setting_definitions`:
+
+```sql
+CREATE TABLE setting_definitions (
+  key            TEXT PRIMARY KEY,
+  label          TEXT NOT NULL,
+  description    TEXT NOT NULL DEFAULT '',
+  type           TEXT NOT NULL,        -- 'string','int','bool','json','enum','secret','url','email','timezone','cidr','datetime'
+  subtype        TEXT,                 -- nullable; for type='enum' this is unused
+  default_value  TEXT,
+  group_name     TEXT NOT NULL,
+  is_sensitive   INTEGER NOT NULL DEFAULT 0,
+  is_hidden      INTEGER NOT NULL DEFAULT 0,
+  options_json   TEXT,                 -- for type='enum': JSON array of allowed values OR '@<resolver>' sentinel
+  config_key     TEXT,                 -- mirror name in config.php, nullable
+  validator      TEXT,                 -- nullable, names a PHP validator (kept light — most validation derives from type+subtype)
+  ordering       INTEGER NOT NULL DEFAULT 0
+);
+```
+
+`settings` table loses the `type` column (engine-portable via "create new table, INSERT-SELECT, drop old, rename" on SQLite; ALTER on mysql/pgsql).
+
+### Encrypt-at-rest pipeline
+
+- Every row in `settings` whose `setting_definitions.type = 'secret'` is libsodium-encrypted at write time using a KDF rooted at `app_secret` (already in `config.php`, not in DB — circular-key problem solved).
+- New helpers `ipam_secret_get(string $key): ?string` / `ipam_secret_set(string $key, string $value): void` wrap `ipam_setting_get/set` and handle encrypt/decrypt transparently.
+- Webhook secrets (already libsodium-encrypted since v3.3.0 via their own column-level path) migrate to this new shared pipeline — eliminates the duplicate crypto code path.
+- The migration that introduces the schema also re-encrypts every existing plaintext secret on the existing 60 rows.
+
+### GH issues to open (milestone #56 unless noted)
+
+- `feat(settings): setting_definitions table + ipam_setting_definitions() reads from DB`
+- `migration: drop settings.type column, populate setting_definitions from v3.29.0 registry seed` (#56 + needs `migration-reviewer` + `multi-engine-schema-parity` subagent passes)
+- `feat(settings): ipam_secret_get / ipam_secret_set + libsodium pipeline` (#56)
+- `migration: re-encrypt existing plaintext secrets at-rest` (#56 + needs explicit DR runbook update)
+- `refactor(webhooks): collapse v3.3.0 webhook-secret crypto into shared ipam_secret_* pipeline` (#56)
+- `refactor(settings.php): dispatch on setting_definitions.type, eliminate $def['type'] PHP-side branching` (#56)
+- `tests(settings): full coverage of new subtype dispatch + encrypt-at-rest round-trip + migration idempotence` — bucketed under #1045
+- `docs(internal): backups.md DR section — at-rest-encrypted secrets require app_secret in config.php to decrypt; refresh the "back up your keys" guidance` (#56)
+- `docs(internal): coding-guide.md — settings entry mandatory keys + 'do not access ->value column for secrets, go through ipam_secret_get'` (#56)
+
+### Test umbrella
+
+All test work for this ADR slots under **#1045** (lib.php decomposition tests). The subtype dispatch refactor IS lib.php decomposition; tests ship with the refactor commits.
+
+### GH issues to scope-out
+
+- ADR-002 (per-key vs group-form) — references the locked subtype model rather than blocking on it. Its scope shrinks because some dispatch surface moves into the new schema.
+- The "v4.0.0 settings schema migration" follow-up that the original recommendation would have opened is **no longer needed** — v3.30.0 absorbs it.
+
+### Files that change
+
+- `Simple-PHP-IPAM/schema.sql`, `schema.mysql.sql`, `schema.pgsql.sql` — new `setting_definitions` table, drop `settings.type` column
+- `Simple-PHP-IPAM/migrations.php` — new migration closure for setting_definitions + drop-type-column + re-encrypt plaintext secrets
+- `Simple-PHP-IPAM/lib.php` — `ipam_setting_definitions()` now reads DB, `ipam_secret_get/set` helpers, dispatch helpers
+- `Simple-PHP-IPAM/settings.php` — render/validate flips to subtype
+- `Simple-PHP-IPAM/webhooks.php` — switches to shared `ipam_secret_*` pipeline
+- `Simple-PHP-IPAM/views/install_keys_panel.php` — confirm display logic still works after schema move
+
+### Docs to update
+
+- `docs/internal/data-dictionary.md` — `setting_definitions` table entry; updated `settings` table entry (no `type` column)
+- `docs/internal/config-reference.md` — document the full subtype list + which subtypes are encrypted at rest
+- `docs/internal/coding-guide.md` — settings registry rules, "use `ipam_secret_get` for sensitive reads"
+- `docs/internal/backups.md` — DR consequence of encrypt-at-rest (already implied by app_secret backup, but make it explicit)
+- `docs/internal/roadmap.md` § 10 — strike "Settings table type system" from the locked-pre-wave-1 list (ADR-001 resolves it)
+
+### Future ADRs unblocked
+
+- **ADR-002 (per-key vs group-form):** can now reference `setting_definitions` rows directly.
+- **ADR-003 (`$config` global):** the migration map (which settings keys mirror to `$config`) now has a DB representation via `setting_definitions.config_key`.
+- **ADR-004 (lib.php size):** the settings code path is one of the larger lib.php islands; this ADR shrinks it before decomposition starts.
+
+### Scope-sizing warning
+
+Bundling the schema change, encrypt-at-rest pipeline, the webhook crypto refactor, and the migration into v3.30.0 makes this a **larger release than v3.29.0**. The original Option D recommendation deliberately kept v3.30.0 light. With Option B + encrypt-at-rest accepted, v3.30.0 becomes substantially bigger and the rest of milestone #56 may need to ship in v3.31.0 instead. **Re-scope milestone #56 against this ADR before kicking off the release.**
 
 ## Open questions
 
-1. **Is "defer the DB shape" actually acceptable per the v4.0.0 cold-break plan?** The cold break's existing scope is backup format. Adding settings-schema-migration to it inflates the cold-break scope. Acceptable cost? Or is the discoverability win in A worth doing in v3.x after all?
-2. **`secret` subtype — at-rest encryption?** Today secrets are stored plaintext in the `value` column (modulo libsodium-encrypted webhook secrets which are an exception). Does ADR-001's "secret subtype" imply encrypt-at-rest, or just "this field is sensitive, redact it in UI / exports"? The latter is the current behaviour; the former is a bigger change.
-3. **Test umbrella:** does this slot under #1045 ("behavioral parity for lib.php decomposition") or its own milestone? Leaning #1045 since the dispatch refactor IS lib.php decomposition.
+All three open questions resolved at stamping (2026-05-15):
+
+1. ~~Is "defer the DB shape" actually acceptable per the v4.0.0 cold-break plan?~~ **Resolved:** No — v3.30.0 absorbs the schema change (Option B).
+2. ~~`secret` subtype — at-rest encryption?~~ **Resolved:** Yes — encrypt-at-rest for all secrets via the shared libsodium pipeline, rooted at `app_secret`.
+3. ~~Test umbrella: #1045 or own?~~ **Resolved:** #1045.
 
 ## References
 
