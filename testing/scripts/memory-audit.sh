@@ -106,7 +106,10 @@ orphans=$(jq -rs --arg p "$PROJECT_PREFIX:bug:" '
   ([.[] | select(.type == "entity") | .name // empty
           | select(startswith($p))] | unique) as $bugs
   | ([.[] | select(.type == "relation") | .from // empty] | unique) as $froms
-  | ($bugs - $froms) | .[]
+  | ([.[] | select(.type == "entity")
+          | select((.observations // []) | join(" ") | test("no related bugs"; "i"))
+          | .name // empty] | unique) as $explicit
+  | ($bugs - $froms - $explicit) | .[]
 ' "$backup" || true)
 
 rc1=0
