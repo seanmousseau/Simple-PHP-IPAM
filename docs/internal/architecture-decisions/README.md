@@ -42,7 +42,7 @@ See `_template.md`. Every ADR follows the same shape so reviewers can scan in se
 |---|---|---|---|---|
 | 001 | Settings table type system | **accepted** | 2026-05-15 | refactor wave 1 prerequisite |
 | 002 | Settings save semantics — per-key vs group-form | **accepted** | 2026-05-15 | refactor wave 1 prerequisite (Bug V #1121 root cause) |
-| 003 | `$config` global as the only config conduit | **draft** | — | refactor wave 2 prerequisite |
+| 003 | `$config` global as the only config conduit | **accepted** | 2026-05-15 | refactor wave 2 prerequisite |
 | 004 | `lib.php` size + module shape | **accepted** | 2026-05-15 | refactor wave 1 blueprint |
 | 005 | `backup.php` orchestrator/codec/dispatcher separation | not started | — | v4.0.0 backup cold break prerequisite |
 | 006 | Memory MCP discipline as cross-session continuity | not started | — | process |

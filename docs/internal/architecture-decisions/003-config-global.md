@@ -1,9 +1,9 @@
 # ADR-003: `$config` global as the only config conduit
 
-**Status:** draft
-**Decided:** —
+**Status:** accepted
+**Decided:** 2026-05-15
 **Scope:** prerequisite for refactor wave 2 (v3.32.0 — api.php + import_csv + migrations); shapes how `Simple-PHP-IPAM/config.php` and DB-resident settings are read across the codebase.
-**Stamped by:** —
+**Stamped by:** Sean Mousseau
 
 ---
 
@@ -265,10 +265,12 @@ None. This ADR is pure code organisation around the existing `config.php` file.
 
 ## Open questions
 
-1. **Cache invalidation surface.** Should `ipam_config_invalidate_cache()` be a public-API call (test fixtures, lazy-gen helpers) or is auto-invalidation on `$GLOBALS['config']` reassignment safer? My read: public-API. Lazy-gen helpers already explicitly call it; test fixtures already explicitly call setup helpers. No magic.
-2. **Nested-key shape.** Some settings (`login_protection.method`, `update_check.enabled`) map to nested config keys (`$config['login_protection']['method']`). Should `ipam_config()` handle nested via dotted path (`ipam_config('login_protection.method')`) or a separate function (`ipam_config_nested('login_protection', 'method')`)? My read: separate function. Dotted paths are surprising (`'foo.bar'` could be a literal key or a nested path).
-3. **Backwards-compat for plugin/extension authors.** None known; no decision needed unless one is.
-4. **v3.30.0 vs v3.32.0 split aggression.** Should v3.30.0 also do api.php and the wave-2-extracted file conversions as a "while we're at it" sweep, or strict ADR-004 boundary (v3.32.0 picks up the rest)? My read: strict boundary. Aggregating churn into one release is what makes wave 1 risky.
+All four resolved at stamping (2026-05-15):
+
+1. ~~Cache invalidation surface?~~ **Resolved: both — explicit call AND auto-invalidate fallback.** `ipam_config_invalidate_cache()` exists for lazy-gen helpers and test fixtures that want determinism. The function additionally detects if `$GLOBALS['config']` has been reassigned since the last cached read and auto-flushes — protects against tests that forget to call the explicit helper. Implementation detail: cache stores a sentinel keyed on `spl_object_hash(...)`-equivalent for arrays (e.g. `count($GLOBALS['config']) . serialize_keys(...)`) or simply re-bind on every read if cost is negligible.
+2. ~~Nested-key shape?~~ **Resolved: separate `ipam_config_nested(string ...$path)` function.** Two functions in `lib/config.php`. No ambiguity between literal-dot keys and nested-path keys.
+3. ~~Sweep aggression?~~ **Resolved: strict ADR-004 boundary in v3.30.0 (only the 11 extracted modules); open a follow-up GH issue to sweep api.php / page handlers / remaining files in v3.31.0 or v3.32.0** (Sean's call at kickoff time). Keeps v3.30.0 CR scope contained while explicitly tracking the residual conversion.
+4. ~~Backwards-compat?~~ **Resolved: no-op.** No known external integrations.
 
 ## References
 
