@@ -20,7 +20,8 @@
     },
     "autoload-dev": {
         "psr-4": {
-            "Tests\\Helpers\\": "tests/Helpers/"
+            "Tests\\Helpers\\": "tests/Helpers/",
+            "Tests\\Migration\\": "tests/Migration/"
         }
     },
     "scripts": {
