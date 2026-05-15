@@ -1,9 +1,9 @@
 # ADR-005: `backup.php` orchestrator / codec / dispatcher separation
 
-**Status:** draft
-**Decided:** —
+**Status:** accepted
+**Decided:** 2026-05-15
 **Scope:** prerequisite for the v4.0.0 backup cold break; informs the v3.32.0 `lib/backup_codec.php` + `lib/backup_run.php` extractions in ADR-004's domain layer.
-**Stamped by:** —
+**Stamped by:** Sean Mousseau
 
 ---
 
@@ -228,10 +228,12 @@ v4.0.0 (deferred):
 
 ## Open questions
 
-1. **Migration tool location.** `Simple-PHP-IPAM/tools/migrate-backups.php` (alongside the app) vs `releases/v4.0.0-tools/migrate-backups.php` (release-bundle-adjacent, like the v3.x decrypt fixtures already in `tests/fixtures/decrypt-tool/`) vs a standalone Composer-installable package. My read: in-tree at `tools/`. Operators expect to find it next to `upgrade.sh`.
-2. **Codec error model.** Today codec functions throw `RuntimeException` with descriptive messages. Sealed module makes the error surface a contract — should we introduce typed exceptions (`BackupCodecException`, `BackupCodecAuthenticationFailedException` for HMAC mismatch, etc.) or stick with string-typed `RuntimeException`? Trade: stronger contract vs. another class hierarchy to maintain.
-3. **`backup_unencrypted_wrap_stream` / `_unwrap_stream` — codec or shim?** These exist for the "unencrypted" mode that's mostly a backward-compat path for the IPAMBKU1 unencrypted wrapper. They wrap a plain SQL dump in a checksum-only envelope. Is the unencrypted wrapper part of the codec's public API (codec handles "encrypt-or-not"), or a separate shim outside the codec? My read: part of the codec — mode is a parameter; "unencrypted" is just another value.
-4. **v3.32.0 vs v4.0.0 line.** Should v3.32.0 land **only** the sealed-codec refactor with zero new behaviour, or also build the migration tool against the v3.x codec (single-format migration: v3.x → v3.x, no-op data-wise but exercises the tool's code path)? The latter would prove the tool design before v4.0.0 commits to it. Cost: extra v3.32.0 scope.
+All four resolved at stamping (2026-05-15):
+
+1. ~~Migration tool location?~~ **Resolved: `Simple-PHP-IPAM/tools/migrate-backups.php`** — in-tree, ships in the release tarball next to `upgrade.sh`. Operators find it where they already extracted the bundle.
+2. ~~Codec error model?~~ **Resolved: stay with `RuntimeException` + descriptive messages.** Consistent with the rest of the codebase; no new class hierarchy. The sealed-module boundary is already enforced by the linter rule (leaf module) — the exception type isn't load-bearing for that contract.
+3. ~~`backup_unencrypted_*` — codec or shim?~~ **Resolved: part of the codec.** `ipam_backup_codec_encrypt_stream(..., mode: 'unencrypted', ...)` produces an IPAMBKU1 wrapper. One entry point for all encrypt operations; "unencrypted" is just another mode value.
+4. ~~v3.32.0 scope?~~ **Resolved: sealed-codec refactor only in v3.32.0.** Migration tool is v4.0.0-only. Smallest v3.32.0 scope; matches the roadmap's "v3.32.0 = refactor wave 2 (no cold-break work)" split.
 
 ## References
 
