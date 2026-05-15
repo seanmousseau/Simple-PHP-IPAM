@@ -24,7 +24,14 @@ fi
 # updated, or removed if a real install ran now. Any such output means
 # vendor/ is out of sync with composer.lock. Filter the dry-run output
 # for the action verbs composer emits and bail on any hit.
-dryrun=$(composer install --dry-run --no-interaction --no-progress --no-plugins 2>&1 || true)
+# PR #1205 review: do NOT mask composer dry-run errors with `|| true` —
+# an invalid composer.json or unresolvable dependency must fail the gate
+# rather than appear as "no drift detected" with empty dryrun output.
+if ! dryrun=$(composer install --dry-run --no-interaction --no-progress --no-plugins --no-scripts 2>&1); then
+  echo "composer install --dry-run failed (drift check cannot complete):" >&2
+  printf '%s\n' "$dryrun" >&2
+  exit 1
+fi
 if printf '%s\n' "$dryrun" | grep -qE '^[[:space:]]*-[[:space:]]+(Installing|Updating|Removing|Locking)[[:space:]]'; then
   echo "vendor/ drifts from composer.lock. Run: composer install" >&2
   echo "Drift detected (composer install --dry-run reported actions):" >&2

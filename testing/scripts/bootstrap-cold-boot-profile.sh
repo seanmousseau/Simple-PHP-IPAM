@@ -45,9 +45,11 @@ for d in "${drivers[@]}"; do
   # Poll login.php until 2xx/3xx, ceiling 30 s. curl --max-time 1 caps the
   # per-attempt wait; sleep 1 paces retries.
   curl_start=$(date +%s.%N)
+  responded=false
   for _ in $(seq 1 30); do
     if curl -sk --max-time 1 -o /dev/null -w '%{http_code}\n' https://127.0.0.1:8443/login.php 2>/dev/null \
         | grep -qE '^(2|3)[0-9]{2}$'; then
+      responded=true
       break
     fi
     sleep 1
@@ -60,7 +62,14 @@ for d in "${drivers[@]}"; do
   else
     json+=","
   fi
-  json+="\"$d\":{\"bootstrap_seconds\":$bootstrap_seconds,\"first_response_seconds\":$first_response_seconds}"
+  # PR #1205 review: a timeout produces a 30s "first_response_seconds" that
+  # looks like a valid slow success. Surface the timeout explicitly so
+  # downstream consumers can distinguish.
+  if [ "$responded" = true ]; then
+    json+="\"$d\":{\"bootstrap_seconds\":$bootstrap_seconds,\"first_response_seconds\":$first_response_seconds}"
+  else
+    json+="\"$d\":{\"bootstrap_seconds\":$bootstrap_seconds,\"first_response_seconds\":null,\"first_response_timeout\":true}"
+  fi
 done
 
 # Leave the host clean.

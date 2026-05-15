@@ -58,7 +58,7 @@ final class AlertEmailFanoutTest extends TestCase
                 tenant_id INTEGER,
                 key TEXT NOT NULL,
                 value TEXT NOT NULL DEFAULT '',
-                type TEXT NOT NULL DEFAULT 'string',
+                type TEXT NOT NULL DEFAULT 'string' CHECK(type IN ('string','int','bool','json')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_by INTEGER
             )",

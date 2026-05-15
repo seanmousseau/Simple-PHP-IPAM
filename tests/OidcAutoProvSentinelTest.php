@@ -44,9 +44,32 @@ final class OidcAutoProvSentinelTest extends TestCase
         $start = strpos($lib, 'function oidc_provision_user(');
         $this->assertNotFalse($start, 'oidc_provision_user() function not found in lib.php');
 
-        // The function body is ~80 lines; 4000 chars of look-ahead
-        // comfortably brackets it.
-        $branch = substr($lib, $start, 4000);
+        // PR #1205 review: extract the full function body by brace-balance
+        // instead of a fixed 4000-char window — the function grows over
+        // time and a hard cap would silently clip the regex search.
+        $open = strpos($lib, '{', $start);
+        $this->assertNotFalse($open, 'oidc_provision_user() opening brace not found');
+        $depth    = 0;
+        $inString = false;
+        $quote    = '';
+        $len      = strlen($lib);
+        $end      = -1;
+        for ($i = (int)$open; $i < $len; $i++) {
+            $ch = $lib[$i];
+            if ($inString) {
+                if ($ch === '\\') { $i++; continue; }
+                if ($ch === $quote) { $inString = false; }
+                continue;
+            }
+            if ($ch === "'" || $ch === '"') { $inString = true; $quote = $ch; continue; }
+            if ($ch === '{') { $depth++; continue; }
+            if ($ch === '}') {
+                $depth--;
+                if ($depth === 0) { $end = $i; break; }
+            }
+        }
+        $this->assertGreaterThan((int)$open, $end, 'oidc_provision_user() closing brace not found');
+        $branch = substr($lib, (int)$open, $end - (int)$open + 1);
 
         $this->assertStringContainsString(
             "'!disabled'",

@@ -16,7 +16,7 @@ case "$driver" in
 esac
 
 if ! docker ps --format '{{.Names}}' | grep -q "^${container}$"; then
-  echo "container $container not running. Run: bash testing/playwright/bootstrap-app.sh $driver" >&2
+  echo "container $container not running. Run: bash testing/bootstrap-app.sh $driver" >&2
   exit 1
 fi
 

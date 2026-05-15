@@ -136,10 +136,28 @@ if ($resolved !== null) {
         $user = $resolved;
     } elseif ($autoLink) {
         // Link the unlinked candidate to this OIDC subject and sync profile.
-        $db->prepare("UPDATE users SET oidc_sub = :sub, name = CASE WHEN name='' THEN :n ELSE name END, email = CASE WHEN email='' THEN :e ELSE email END WHERE id = :id")
-           ->execute([':sub' => $sub, ':n' => $claimName, ':e' => $claimEmail, ':id' => to_int($resolved['id'])]);
+        // PR #1205 review: constrain the UPDATE to only-unlinked rows and
+        // require exactly one affected row so a race that links the same
+        // account between resolve and update can't clobber another subject's
+        // binding.
+        $link = $db->prepare(
+            "UPDATE users
+                SET oidc_sub = :sub,
+                    name = CASE WHEN name='' THEN :n ELSE name END,
+                    email = CASE WHEN email='' THEN :e ELSE email END
+              WHERE id = :id
+                AND (oidc_sub IS NULL OR oidc_sub = '')"
+        );
+        $link->execute([':sub' => $sub, ':n' => $claimName, ':e' => $claimEmail, ':id' => to_int($resolved['id'])]);
+        if ($link->rowCount() !== 1) {
+            oidc_fail($db, 'auto-link aborted: link state changed during callback');
+        }
         audit($db, 'auth.oidc_link', 'user', to_int($resolved['id']), 'sub=' . $sub);
-        $user = $resolved;
+        // Re-read the row post-link so $user reflects the persisted state.
+        $stLinked = $db->prepare("SELECT id, username, role, is_active FROM users WHERE id = :id");
+        $stLinked->execute([':id' => to_int($resolved['id'])]);
+        $linkedRow = $stLinked->fetch();
+        $user = is_array($linkedRow) ? $linkedRow : $resolved;
     }
     // If we found an unlinked candidate but auto_link is off, treat as "no match".
 }

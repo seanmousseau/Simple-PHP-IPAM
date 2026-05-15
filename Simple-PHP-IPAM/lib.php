@@ -10516,10 +10516,25 @@ function oidc_provision_user(PDO $db, array $claims, string $role): array
             ]);
             $newId = ipam_last_insert_id($db, 'users');
             return ['id' => $newId, 'username' => $newUsername];
-        } catch (PDOException $_ex) {
+        } catch (PDOException $ex) {
+            // Only retry on a username UNIQUE violation. Any other DB error
+            // (e.g. an oidc_sub collision race, schema mismatch, connection
+            // loss) must surface — silently retrying 5x and rebranding as
+            // "username collision" was the original v3.29.0 PR #1205 finding.
+            $sqlstate = (string)($ex->errorInfo[0] ?? '');
+            $msg      = $ex->getMessage();
+            $isUnique = $sqlstate === '23000' || $sqlstate === '23505'
+                || stripos($msg, 'unique') !== false
+                || stripos($msg, 'duplicate') !== false;
+            $isUsernameCollision = $isUnique && stripos($msg, 'username') !== false;
+            if (!$isUsernameCollision) {
+                throw $ex;
+            }
             if ($attempt >= 4) {
                 throw new RuntimeException(
-                    'oidc_provision_user: username collision after 5 attempts'
+                    'oidc_provision_user: username collision after 5 attempts',
+                    0,
+                    $ex
                 );
             }
             $newUsername = $baseUsername . '_' . ($attempt + 2);
