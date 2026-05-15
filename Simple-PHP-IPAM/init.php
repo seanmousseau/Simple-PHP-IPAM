@@ -109,6 +109,7 @@ unset($_ipam_autoload);
 // ...) because STDIN/STDOUT/STDERR are only defined under CLI and phpdbg SAPIs
 // — referencing them under Apache or PHP-FPM would throw a fatal error.
 require_once __DIR__ . '/dialects/Dialect.php';
+require_once __DIR__ . '/dialects/DialectValidator.php';
 // Supported drivers: 'sqlite' (default), 'mysql', and 'pgsql' (all stable
 // as of v3.0.0). Unknown values are rejected here before any DB code runs.
 $_ipam_db_driver = (string)($config['db_driver'] ?? 'sqlite');

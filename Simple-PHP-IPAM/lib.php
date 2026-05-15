@@ -23,6 +23,7 @@ function ipam_dialect(): Dialect
 {
     if (!isset($GLOBALS['ipam_dialect']) || !($GLOBALS['ipam_dialect'] instanceof Dialect)) {
         require_once __DIR__ . '/dialects/Dialect.php';
+        require_once __DIR__ . '/dialects/DialectValidator.php';
         require_once __DIR__ . '/dialects/SqliteDialect.php';
         $GLOBALS['ipam_dialect'] = new SqliteDialect();
     }
@@ -39,6 +40,7 @@ function ipam_dialect(): Dialect
 function ipam_dialect_from_config(array $config): Dialect
 {
     require_once __DIR__ . '/dialects/Dialect.php';
+    require_once __DIR__ . '/dialects/DialectValidator.php';
     $driverRaw = $config['db_driver'] ?? 'sqlite';
     $driver = is_string($driverRaw) ? $driverRaw : 'sqlite';
     switch ($driver) {

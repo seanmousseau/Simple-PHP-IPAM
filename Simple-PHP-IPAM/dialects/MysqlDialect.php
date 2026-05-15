@@ -90,6 +90,7 @@ final class MysqlDialect implements Dialect
         if ($conflictCols === []) {
             throw new InvalidArgumentException('upsert_or_ignore() requires at least one conflict column');
         }
+        DialectValidator::assertBareIdentifiers($conflictCols, 'MysqlDialect::upsert_or_ignore');
         // Backtick-quote the column name so reserved words (notably
         // `settings.key`) do not trigger an ER_PARSE_ERROR on MySQL.
         $first = '`' . $conflictCols[0] . '`';

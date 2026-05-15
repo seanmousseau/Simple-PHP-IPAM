@@ -86,6 +86,7 @@ final class PgsqlDialect implements Dialect
         if ($conflictCols === []) {
             throw new InvalidArgumentException('upsert_or_ignore() requires at least one conflict column');
         }
+        DialectValidator::assertBareIdentifiers($conflictCols, 'PgsqlDialect::upsert_or_ignore');
         return 'ON CONFLICT (' . implode(', ', $conflictCols) . ') DO NOTHING';
     }
 
