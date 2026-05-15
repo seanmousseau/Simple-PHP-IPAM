@@ -100,22 +100,25 @@ jobs:
           CI: 'true'
         run: npx playwright test --project=chromium
 
-      # v3.29.0 #900: Visual regression projects (vr-1440 / vr-1024 / vr-768 /
-      # vr-375) capture pixel screenshots and are entirely UI-driven — the
-      # underlying SQL engine has no effect on the rendered DOM. Running them
-      # on every driver in the matrix burns ~3x the CI minutes for identical
-      # baselines, so gate them to the sqlite slot only. Other matrix slots
-      # stick to --project=chromium above.
-      - name: Run Playwright visual-regression projects (sqlite only)
-        if: matrix.driver == 'sqlite'
-        working-directory: testing/playwright
-        env:
-          IPAM_BASE_URL: https://127.0.0.1:8443
-          IPAM_ADMIN_USER: demo
-          IPAM_ADMIN_PASS: demo
-          IPAM_DRIVER: ${{ matrix.driver }}
-          CI: 'true'
-        run: npx playwright test --project=vr-1440 --project=vr-1024 --project=vr-768 --project=vr-375
+      # v3.29.0 #900 originally enabled vr-* (visual-regression projects) on the
+      # sqlite matrix slot in CI. The baselines committed under
+      # tests/visual-regression.spec.ts-snapshots/ are platform-suffixed
+      # (`*-darwin.png`) because they were generated on the maintainer's macOS
+      # workstation; CI runs on Linux and Playwright looks for `*-linux.png`,
+      # which don't exist — every vr-* run fails with "A snapshot doesn't
+      # exist, writing actual." Disabled here until linux baselines are
+      # generated (see follow-up #1206). vr-* still runs locally during the
+      # 3-driver release gate.
+      # - name: Run Playwright visual-regression projects (sqlite only)
+      #   if: matrix.driver == 'sqlite'
+      #   working-directory: testing/playwright
+      #   env:
+      #     IPAM_BASE_URL: https://127.0.0.1:8443
+      #     IPAM_ADMIN_USER: demo
+      #     IPAM_ADMIN_PASS: demo
+      #     IPAM_DRIVER: ${{ matrix.driver }}
+      #     CI: 'true'
+      #   run: npx playwright test --project=vr-1440 --project=vr-1024 --project=vr-768 --project=vr-375
 
       - name: Container logs on failure
         if: failure()
