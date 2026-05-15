@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/version.php';
+require_once __DIR__ . '/lib/utils.php';
 require_once __DIR__ . '/lib/BackupClientInterface.php';
 require_once __DIR__ . '/lib/S3Client.php';
 require_once __DIR__ . '/lib/SftpClient.php';
@@ -601,52 +602,6 @@ function ipam_db_init(PDO $db): void
             ? $dbPathRaw
             : __DIR__ . '/data/ipam.sqlite';
         @touch(dirname($dbFilePath) . '/.db_initialized');
-    }
-}
-
-function e(string $s): string
-{
-    return htmlspecialchars($s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-}
-
-/**
- * Safely coerce a mixed value (e.g. PDO fetch result or superglobal) to int.
- * Needed at PHPStan level 9 where (int) casts on mixed are disallowed.
- */
-function to_int(mixed $value): int
-{
-    if (is_int($value)) return $value;
-    if (is_float($value)) return (int)$value;
-    if (is_string($value)) return (int)$value;
-    if (is_bool($value)) return $value ? 1 : 0;
-    return 0;
-}
-
-function format_bytes(int $bytes): string
-{
-    if ($bytes <= 0) return '0 B';
-    $units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    $i = (int)floor(log($bytes, 1024));
-    $i = min($i, count($units) - 1);
-    $val = $bytes / (1024 ** $i);
-    return ($i === 0 ? (string)$bytes : round($val, 1)) . ' ' . $units[$i];
-}
-
-/**
- * Safely coerce a mixed value (e.g. PDO fetch result or superglobal) to string.
- * Needed at PHPStan level 9 where (string) casts on mixed are disallowed.
- * Defined here for api.php/status.php which load lib.php directly without init.php.
- * init.php defines this function earlier so pages that use init.php see it immediately;
- * the function_exists guard prevents a fatal redefinition error.
- */
-if (!function_exists('to_str')) {
-    function to_str(mixed $value): string
-    {
-        if (is_string($value)) return $value;
-        if (is_int($value) || is_float($value)) return (string)$value;
-        if (is_bool($value)) return $value ? '1' : '';
-        if ($value === null) return '';
-        return '';
     }
 }
 
@@ -6992,19 +6947,6 @@ function ipam_db_dump(PDO $db): string
 
 /* ---------------- Pagination ---------------- */
 
-function q_int(string $key, int $default, int $min, int $max): int
-{
-    $v = $_GET[$key] ?? null;
-    if ($v === null || $v === '') return $default;
-    if (!is_scalar($v)) return $default;
-    if (!preg_match('/^-?\d+$/', (string)$v)) return $default;
-
-    $n = (int)$v;
-    if ($n < $min) return $min;
-    if ($n > $max) return $max;
-    return $n;
-}
-
 /**
  * Escape SQL LIKE wildcard characters in a user-supplied search string.
  * Returns the escaped string ready to be wrapped in % delimiters.
@@ -9987,21 +9929,6 @@ function page_footer(): void
 }
 
 /**
- * Normalise a version string to three dot-separated segments so that
- * version_compare('1.2', '1.2.0') and version_compare('1.2.1', '1.2') work
- * as expected regardless of how many segments the installed version has.
- *
- * Examples: '1.2' → '1.2.0',  'v1.2.1' → '1.2.1',  '0.15' → '0.15.0'
- */
-function ipam_normalise_version(string $v): string
-{
-    $v = ltrim($v, 'v');
-    $parts = explode('.', $v);
-    while (count($parts) < 3) $parts[] = '0';
-    return implode('.', $parts);
-}
-
-/**
  * Check GitHub for a newer release. Results are cached in data/tmp/ for the
  * configured TTL (default 6 hours). Network failures are silently ignored.
  *
@@ -10246,21 +10173,7 @@ function oidc_http_post(string $url, array $params): array
 }
 
 /* ---- PKCE ---- */
-
-function base64url_encode(string $bytes): string
-{
-    return rtrim(strtr(base64_encode($bytes), '+/', '-_'), '=');
-}
-
-function base64url_decode(string $s): string
-{
-    $s = strtr($s, '-_', '+/');
-    $pad = strlen($s) % 4;
-    if ($pad) $s .= str_repeat('=', 4 - $pad);
-    $result = base64_decode($s, true);
-    if ($result === false) throw new RuntimeException('Invalid base64url string');
-    return $result;
-}
+/* base64url_encode() and base64url_decode() moved to lib/utils.php in v3.30.0 (ADR-004). */
 
 /**
  * Generate a PKCE verifier and S256 challenge pair.

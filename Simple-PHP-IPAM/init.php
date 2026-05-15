@@ -85,6 +85,12 @@ set_exception_handler(static function (\Throwable $e): void {
 /** @var IpamConfig $config */
 $config = require __DIR__ . '/config.php';
 
+// Pure utility helpers (e(), to_int(), to_str(), q_int(), format_bytes(),
+// base64url_*, ipam_normalise_version()). Loaded before lib.php so the
+// early HTTPS-redirect / session-setup code below can call to_str() without
+// pulling in the rest of lib.php. v3.30.0 ADR-004 Phase 2.
+require_once __DIR__ . '/lib/utils.php';
+
 // Composer autoloader (#416). Conditional because v2.9.0 ships with an empty
 // require {} — vendor/autoload.php only exists in release tarballs (built by
 // releases/make_releases.sh) and in dev environments where the tester has run
@@ -147,19 +153,6 @@ unset($_ipam_db_driver, $_ipam_driver_error);
 // setup) are deterministic. The real timezone is applied from the DB settings
 // (branding.timezone) once $db is open and lib.php is loaded — see below.
 date_default_timezone_set('UTC');
-
-/**
- * Convert a mixed value to string. Defined early in init.php so it is available
- * before lib.php is loaded; lib.php guards against redefinition with function_exists().
- */
-function to_str(mixed $value): string
-{
-    if (is_string($value)) return $value;
-    if (is_int($value) || is_float($value)) return (string)$value;
-    if (is_bool($value)) return $value ? '1' : '';
-    if ($value === null) return '';
-    return '';
-}
 
 /** @param array<string, mixed> $server */
 function request_is_https(array $server, bool $trustProxyHeaders): bool
