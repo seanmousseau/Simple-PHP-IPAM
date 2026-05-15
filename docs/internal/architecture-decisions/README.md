@@ -45,6 +45,6 @@ See `_template.md`. Every ADR follows the same shape so reviewers can scan in se
 | 003 | `$config` global as the only config conduit | **accepted** | 2026-05-15 | refactor wave 2 prerequisite |
 | 004 | `lib.php` size + module shape | **accepted** | 2026-05-15 | refactor wave 1 blueprint |
 | 005 | `backup.php` orchestrator/codec/dispatcher separation | **accepted** | 2026-05-15 | v4.0.0 backup cold break prerequisite |
-| 006 | Memory MCP discipline as cross-session continuity | not started | — | process |
+| 006 | Memory MCP discipline as cross-session continuity | **draft** | — | process |
 
 The locked sequence (smallest informing largest) is from roadmap § 10.1: **001 → 002 → 003 → 004 → 005 → 006**.
