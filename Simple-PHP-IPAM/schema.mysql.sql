@@ -44,7 +44,6 @@ CREATE TABLE IF NOT EXISTS users (
   oidc_sub            VARCHAR(191) COLLATE utf8mb4_bin NULL,
   last_login_at       DATETIME NULL,
   password_changed_at DATETIME NULL,
-  theme               VARCHAR(10)  NOT NULL DEFAULT 'auto',
   timezone                 TEXT         DEFAULT NULL,
   pending_email            VARCHAR(255) NULL,
   pending_email_token_hash VARCHAR(64)  COLLATE utf8mb4_bin NULL,
@@ -62,7 +61,7 @@ CREATE TABLE IF NOT EXISTS users (
   created_at          DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   updated_at          DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   UNIQUE KEY idx_users_oidc_sub (oidc_sub)
-  -- No CHECK on role or theme: schema.sql (SQLite) has none, and
+  -- No CHECK on role: schema.sql (SQLite) has none, and
   -- demo_seed_data() inserts a display-only 'netops' user. Enum
   -- enforcement lives at the application layer (settings.php,
   -- users.php) where it belongs.
@@ -850,8 +849,8 @@ CREATE TABLE IF NOT EXISTS backup_state (
 -- user_preferences (v3.30.0, ADR-002 § user_preferences) — user-scoped
 -- preference store. Replaces the per-column approach (users.theme) for user
 -- UI preferences; keyed by (user_id, key) so each user can have an arbitrary
--- set of named preferences. users.theme stays until Task 5.3 chunk 4 drops
--- it. Composite PK on (user_id, key) is sufficient — both columns are NOT
+-- set of named preferences. users.theme was dropped in Task 5.3 chunk 4
+-- (ADR-002). Composite PK on (user_id, key) is sufficient — both columns are NOT
 -- NULL so no partial-index workaround is needed (contrast settings, where
 -- tenant_id IS NULL for global rows).
 -- ---------------------------------------------------------------------------

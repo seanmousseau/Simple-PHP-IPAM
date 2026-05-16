@@ -75,7 +75,6 @@ Reference for every table, column, foreign key, and uniqueness constraint in the
 | `oidc_sub` | `TEXT` | `VARCHAR(191)` | `TEXT` | YES |  | IdP subject claim (unique when set) |
 | `last_login_at` | `TEXT` | `DATETIME` | `TIMESTAMP` | YES |  |  |
 | `password_changed_at` | `TEXT` | `DATETIME` | `TIMESTAMP` | YES |  | updated on every local password change; NULL for SSO-only accounts |
-| `theme` | `TEXT` | `VARCHAR(10)` | `TEXT` | NO | `'auto'` | persisted UI theme: auto\|light\|dark |
 | `timezone` | `TEXT` | `TEXT DEFAULT` | `TEXT` | YES |  | per-user display timezone; NULL = use app default |
 | `pending_email` | `TEXT` | `VARCHAR(255)` | `TEXT` | YES |  | v3.2.0: unverified email change pending confirmation |
 | `pending_email_token_hash` | `TEXT` | `VARCHAR(64)` | `TEXT` | YES |  | v3.2.0: SHA-256 hash of the email-verification token |

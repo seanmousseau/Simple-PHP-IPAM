@@ -4374,6 +4374,111 @@ function ipam_migrations(): array
             );
         },
 
+        // v3.30.0 Task 5.3 chunk 4b (ADR-002): drop the now-dead users.theme
+        // column. Every reader and writer was repointed to user_preferences in
+        // chunk 4a; the backfill ran in '3.30.0-user-preferences' (which sorts
+        // BEFORE this key). apply_migrations() already set
+        // PRAGMA foreign_keys = OFF before this closure runs (invariant #2).
+        '3.30.0-user-preferences-drop-theme' => static function (PDO $db): void {
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driver = is_string($driverRaw) ? $driverRaw : '';
+
+            if ($driver === 'sqlite') {
+                // Probe PRAGMA table_info for the `theme` column; no-op if gone.
+                $cols = ($db->query("PRAGMA table_info(users)")
+                    ?: throw new \RuntimeException('PRAGMA table_info(users) failed'))
+                    ->fetchAll();
+                $hasTheme = false;
+                foreach ($cols as $col) {
+                    if (($col['name'] ?? null) === 'theme') { $hasTheme = true; break; }
+                }
+                if (!$hasTheme) {
+                    return;
+                }
+                // SQLite cannot DROP COLUMN when the table has a partial index
+                // (idx_users_oidc_sub uses WHERE oidc_sub IS NOT NULL).
+                // Full table rebuild required. apply_migrations() has already set
+                // PRAGMA foreign_keys = OFF.
+                $db->exec(
+                    "CREATE TABLE users_new ("
+                    . "  id                       INTEGER PRIMARY KEY AUTOINCREMENT,"
+                    . "  username                 TEXT NOT NULL UNIQUE,"
+                    . "  password_hash            TEXT NOT NULL,"
+                    . "  role                     TEXT NOT NULL DEFAULT 'admin',"
+                    . "  is_active                INTEGER NOT NULL DEFAULT 1,"
+                    . "  name                     TEXT NOT NULL DEFAULT '',"
+                    . "  email                    TEXT NOT NULL DEFAULT '',"
+                    . "  oidc_sub                 TEXT,"
+                    . "  last_login_at            TEXT,"
+                    . "  password_changed_at      TEXT,"
+                    . "  timezone                 TEXT,"
+                    . "  pending_email            TEXT,"
+                    . "  pending_email_token_hash TEXT,"
+                    . "  pending_email_expires_at TEXT,"
+                    . "  totp_secret_enc          TEXT,"
+                    . "  totp_enabled             INTEGER NOT NULL DEFAULT 0,"
+                    . "  failed_auth_count        INTEGER NOT NULL DEFAULT 0,"
+                    . "  locked_until             TEXT,"
+                    . "  lock_reason              TEXT,"
+                    . "  email_otp_enabled        INTEGER NOT NULL DEFAULT 0,"
+                    . "  email_otp_hash           TEXT,"
+                    . "  email_otp_expires_at     TEXT,"
+                    . "  email_otp_attempts       INTEGER NOT NULL DEFAULT 0,"
+                    . "  preferred_mfa_method     TEXT,"
+                    . "  created_at               TEXT NOT NULL DEFAULT (datetime('now')),"
+                    . "  updated_at               TEXT NOT NULL DEFAULT (datetime('now'))"
+                    . ")"
+                );
+                $db->exec(
+                    "INSERT INTO users_new ("
+                    . "  id, username, password_hash, role, is_active, name, email,"
+                    . "  oidc_sub, last_login_at, password_changed_at,"
+                    . "  timezone, pending_email, pending_email_token_hash, pending_email_expires_at,"
+                    . "  totp_secret_enc, totp_enabled, failed_auth_count,"
+                    . "  locked_until, lock_reason,"
+                    . "  email_otp_enabled, email_otp_hash, email_otp_expires_at, email_otp_attempts,"
+                    . "  preferred_mfa_method, created_at, updated_at"
+                    . ") SELECT"
+                    . "  id, username, password_hash, role, is_active, name, email,"
+                    . "  oidc_sub, last_login_at, password_changed_at,"
+                    . "  timezone, pending_email, pending_email_token_hash, pending_email_expires_at,"
+                    . "  totp_secret_enc, totp_enabled, failed_auth_count,"
+                    . "  locked_until, lock_reason,"
+                    . "  email_otp_enabled, email_otp_hash, email_otp_expires_at, email_otp_attempts,"
+                    . "  preferred_mfa_method, created_at, updated_at"
+                    . " FROM users"
+                );
+                $db->exec("DROP TABLE users");
+                $db->exec("ALTER TABLE users_new RENAME TO users");
+                // Recreate the partial uniqueness index (schema.sql).
+                $db->exec(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_sub "
+                    . "ON users(oidc_sub) WHERE oidc_sub IS NOT NULL"
+                );
+                // Recreate the updated_at trigger (schema.sql).
+                $db->exec(
+                    "CREATE TRIGGER IF NOT EXISTS users_updated_at "
+                    . "AFTER UPDATE ON users "
+                    . "FOR EACH ROW BEGIN "
+                    . "UPDATE users SET updated_at = datetime('now') WHERE id = OLD.id; "
+                    . "END"
+                );
+            } else {
+                // MySQL / Postgres: probe information_schema then DROP COLUMN.
+                $schemaFn = $driver === 'mysql' ? 'DATABASE()' : 'current_schema()';
+                $chk = $db->prepare(
+                    "SELECT COUNT(*) FROM information_schema.columns "
+                    . "WHERE table_name = 'users' AND column_name = 'theme' "
+                    . "AND table_schema = {$schemaFn}"
+                );
+                $chk->execute();
+                if ((int) $chk->fetchColumn() === 0) {
+                    return;
+                }
+                $db->exec("ALTER TABLE users DROP COLUMN theme");
+            }
+        },
+
     ];
 }
 

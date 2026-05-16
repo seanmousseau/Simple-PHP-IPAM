@@ -11,7 +11,6 @@ CREATE TABLE IF NOT EXISTS users (
   oidc_sub             TEXT,                        -- IdP subject claim (unique when set)
   last_login_at        TEXT,
   password_changed_at  TEXT,                        -- updated on every local password change; NULL for SSO-only accounts
-  theme         TEXT NOT NULL DEFAULT 'auto',       -- persisted UI theme: auto|light|dark
   timezone      TEXT,                                -- per-user display timezone; NULL = use app default
   pending_email            TEXT,                   -- v3.2.0: unverified email change pending confirmation
   pending_email_token_hash TEXT,                   -- v3.2.0: SHA-256 hash of the email-verification token
@@ -725,7 +724,7 @@ CREATE TABLE IF NOT EXISTS backup_state (
 -- v3.30.0 (ADR-002 § user_preferences): user-scoped preference store.
 -- Replaces the per-column approach (users.theme) for user UI preferences;
 -- keyed by (user_id, key) so each user can have an arbitrary set of named
--- preferences. users.theme stays until Task 5.3 chunk 4 drops it.
+-- preferences. users.theme was dropped in Task 5.3 chunk 4 (ADR-002).
 -- Composite PK on (user_id, key) is sufficient — both columns are NOT NULL
 -- so no partial-index workaround is needed (contrast settings, where
 -- tenant_id IS NULL for global rows).

@@ -8,6 +8,7 @@ require_once __DIR__ . '/lib/db.php';
 require_once __DIR__ . '/lib/audit.php';
 require_once __DIR__ . '/lib/presentation.php';
 require_once __DIR__ . '/lib/settings.php';
+require_once __DIR__ . '/lib/user_preferences.php';
 require_once __DIR__ . '/lib/BackupClientInterface.php';
 require_once __DIR__ . '/lib/S3Client.php';
 require_once __DIR__ . '/lib/SftpClient.php';
