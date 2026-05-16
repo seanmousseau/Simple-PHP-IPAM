@@ -4117,6 +4117,7 @@ function ipam_migrations(): array
                 };
             };
 
+            $ordering = 0;
             foreach (ipam_setting_definitions_seed() as $key => $def) {
                 $label       = is_string($def['label'] ?? null) ? $def['label'] : (string) $key;
                 $description = is_string($def['description'] ?? null) ? $def['description'] : '';
@@ -4190,8 +4191,8 @@ function ipam_migrations(): array
                     $deprecated,
                     $options,
                     $configKey,
-                    null,       // validator — populated later
-                    0,          // ordering — populated later
+                    null,        // validator — populated later
+                    $ordering++, // ordering — 0-based registry array index
                 ]);
             }
         },

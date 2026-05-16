@@ -1230,6 +1230,7 @@ function ipam_setting_definitions(): array
                 . " options_json, config_key, min_value, max_value,"
                 . " is_multiline, is_deprecated"
                 . " FROM setting_definitions"
+                . " ORDER BY ordering ASC, {$kc} ASC"
             );
             $rows = $st !== false ? $st->fetchAll() : [];
             if (count($rows) > 0) {
