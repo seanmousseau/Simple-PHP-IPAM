@@ -21,12 +21,11 @@
 > embodies that separation; it is simply implemented as an ad-hoc `users` column
 > + bespoke endpoint rather than the generic `user_preferences` table.
 >
-> **What needs re-stamping (Sean):** the *mechanics* in the Recommendation
-> (point 3), Open Question 2 (backfill), and the Implications file list all
-> assume a `settings`-row migration that does not apply. Open Question 2 is
-> **re-opened** below — `users.theme` holds live per-user data, so the original
-> "no backfill" answer would silently wipe every user's saved theme. Task 5.3
-> is **paused** pending this re-stamp.
+> **Re-stamped (Sean, 2026-05-16):** Open Question 2 is resolved to **option (a)**
+> — migrate `users.theme` → `user_preferences` with a one-time backfill, retire
+> `set_theme.php`, drop the `users.theme` column. The Recommendation (point 3)
+> and the Implications file list below are corrected accordingly. Task 5.3
+> resumes on this basis.
 
 ---
 
@@ -186,10 +185,7 @@ If accepted:
 All four resolved at stamping (2026-05-15):
 
 1. ~~Initial allowlist size?~~ **Resolved:** v3.30.0 ships with `site_theme` **only**. Every future entry requires an ADR-002 amendment recorded here, not just a code-review nod.
-2. **RE-OPENED 2026-05-16 — theme migration / backfill.** The original "Resolved: no backfill" answer assumed `site_theme` was an unpopulated `settings` row. It is not — theme is the `users.theme` column and holds live per-user data for every user who has set one. Dropping `users.theme` / retiring `set_theme.php` without copying that data into `user_preferences` would wipe every user's saved theme. Sean to re-decide at re-stamp:
-   - **(a)** migrate `users.theme` → `user_preferences` with a one-time backfill, retire `set_theme.php`, drop the `users.theme` column;
-   - **(b)** build `user_preferences` + `/api/user_preference` but leave theme on `users.theme` for now — note this ships the table with no allowlisted key, conflicting with Open Question 1;
-   - **(c)** defer the whole `user_preferences` subsystem until a per-user toggle that is *not* already served by `users.theme` actually surfaces.
+2. **Re-opened then resolved 2026-05-16 — theme migration / backfill.** The original "no backfill" answer assumed `site_theme` was an unpopulated `settings` row. It is not — theme is the `users.theme` column and holds live per-user data for every user who has set one. **Resolved (re-stamp, Sean, 2026-05-16): option (a)** — migrate `users.theme` → `user_preferences` with a one-time backfill (every existing user's theme is copied into the new table), retire `set_theme.php`, repoint `assets/app.js` `cycleTheme()` and `page_header()` at `/api/user_preference`, and drop the `users.theme` column. The backfill is mandatory because live per-user data exists. Rejected: (b) build the subsystem but leave theme on `users.theme` (would ship the table with no allowlisted key, conflicting with Q1); (c) defer the subsystem entirely.
 3. ~~Schema name?~~ **Resolved:** **`user_preferences`**. Idiomatic across other CRUD apps; the scope-creep risk is mitigated by the explicit allowlist rule (open questions answer #1) — adding profile-shaped data to this table requires an ADR amendment.
 4. ~~Step-up auth for preference writes?~~ **Resolved:** **No.** Preferences are cosmetic; CSRF + session is the only gate. A future security-relevant preference (e.g. "show secret values in UI by default") would require an ADR-002 amendment that explicitly raises the auth bar for that key.
 
