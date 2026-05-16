@@ -17,16 +17,29 @@ declare(strict_types=1);
  * ADR-001 (settings type system, Option B). The authoritative registry now
  * lives in the `setting_definitions` DB table. ipam_setting_definitions()
  * reads that table and reconstructs the v3.29.0 array shape callers expect,
- * adding a NEW `logical_type` key (the 11-value type) while keeping `type`
- * as the 4-value STORAGE type so every existing caller keeps working
- * unchanged. The `settings.type` DB column and its
- * CHECK(type IN ('string','int','bool','json')) constraint were dropped in
- * v3.30.0 (Phase 5.4 / Task 3.3); `type` now survives only as the in-memory
- * storage-type key on the definition array.
- * ipam_setting_definitions_seed() is the frozen v3.29.0 PHP registry — the
- * install-time SEED source consumed by the `3.30.0-setting-definitions`
- * migration, and the fallback ipam_setting_definitions() uses when the
- * setting_definitions table is absent (fresh install pre-migration) or empty.
+ * exposing TWO type keys: `logical_type` (the 11-value type, verbatim from
+ * the DB `type` column) and `storage_type` (the 4-value STORAGE type:
+ * string|int|bool|json). There is NO bare `type` key on the returned array —
+ * `type` would collide in name with the DB column while meaning the opposite
+ * thing, so Finding 2 of the 2026-05-16 architecture review renamed the
+ * in-memory storage-type key to `storage_type`. The `settings.type` DB column
+ * and its CHECK(type IN ('string','int','bool','json')) constraint were
+ * dropped in v3.30.0 (Phase 5.4 / Task 3.3).
+ *
+ * SEED-FALLBACK LIFECYCLE. ipam_setting_definitions_seed() is the FROZEN
+ * v3.29.0 PHP registry. It serves two roles: the install-time SEED source
+ * consumed by the `3.30.0-setting-definitions` migration, and the fallback
+ * ipam_setting_definitions() returns when the `setting_definitions` table is
+ * absent (fresh install pre-migration) or empty. Because the seed is frozen,
+ * settings added in releases AFTER v3.30.0 live ONLY in their own migration's
+ * INSERT into `setting_definitions` — they are deliberately never added back
+ * to the seed. Consequence: if the fallback fires on a migrated post-v3.30.0
+ * schema, the newest settings are missing from the returned registry. The
+ * fallback is a boot / degraded-mode safety net, NOT a substitute for
+ * migrated state; normal operation always takes the DB-read path. Note that
+ * the seed's own internal entries still carry a raw `type` key (the v3.29.0
+ * registry format) — it is ipam_setting_definitions() that maps that raw
+ * `type` to `storage_type` when building the returned arrays.
  *
  * ADR-003 ($config global). $GLOBALS['config'] reads are routed through the
  * ipam_config() accessor from lib/config.php. $GLOBALS['db'] / `global $db`
@@ -1188,21 +1201,34 @@ function ipam_setting_definitions_seed(): array
  * caller expects, cached in a per-request static so repeated calls do not
  * re-query.
  *
- * Each reconstructed entry carries BOTH:
- *   - `type`         — the 4-value STORAGE type (string|int|bool|json),
+ * Each reconstructed entry carries BOTH (Finding 2, architecture review
+ * 2026-05-16 — the in-memory STORAGE-type key is `storage_type`, NOT a bare
+ * `type` key: `type` is reserved for the DB `setting_definitions.type` column,
+ * which holds the 11-value LOGICAL type — a same-name/opposite-meaning
+ * collision that this rename eliminates):
+ *   - `storage_type` — the 4-value STORAGE type (string|int|bool|json),
  *                      computed from the DB logical type via
- *                      ipam_setting_storage_type(). Keeps every existing
- *                      caller (ipam_setting / ipam_setting_set / encode /
- *                      decode / deprecated-keys) and the settings.type CHECK
- *                      working unchanged.
- *   - `logical_type` — NEW: the 11-value logical type stored verbatim in the
- *                      DB `type` column (string|int|bool|json|enum|secret|
+ *                      ipam_setting_storage_type(). Drives encode/decode and
+ *                      the per-row value serialization.
+ *   - `logical_type` — the 11-value logical type stored verbatim in the DB
+ *                      `type` column (string|int|bool|json|enum|secret|
  *                      url|email|timezone|cidr|datetime).
+ * A bare `type` key is NEVER present on the returned arrays.
  *
- * Fallback: when the table is missing (fresh install pre-migration), the
- * query fails, or it returns zero rows, this falls back to
- * ipam_setting_definitions_seed() and normalises each seed entry so it also
- * carries a `logical_type` (= its `type`) for shape consistency.
+ * SEED-FALLBACK LIFECYCLE. When the `setting_definitions` table is missing
+ * (fresh install pre-migration), the query fails, or it returns zero rows,
+ * this falls back to ipam_setting_definitions_seed() — the FROZEN v3.29.0
+ * registry. Settings introduced after v3.30.0 live ONLY in their own
+ * migration's INSERT into `setting_definitions`, never in the seed; so when
+ * the fallback fires on a migrated post-v3.30.0 schema the newest settings
+ * are ABSENT from the result. The fallback is therefore a boot / degraded-mode
+ * safety net — it is NOT a substitute for migrated state. In normal operation
+ * the DB-read path is what runs.
+ *
+ * Each returned entry is an `array<string, mixed>` with required keys
+ * `label`, `storage_type` (4-value), `logical_type` (11-value) and `group`,
+ * plus optional keys. It never carries a bare `type` key — that name belongs
+ * to the DB column. A contract test in the settings test suite enforces this.
  *
  * @return array<string, array<string, mixed>>
  */
@@ -1254,7 +1280,7 @@ function ipam_setting_definitions(): array
                     $def = [
                         'label'        => is_string($row['label'] ?? null) ? $row['label'] : $key,
                         'description'  => is_string($row['description'] ?? null) ? $row['description'] : '',
-                        'type'         => $storageType,
+                        'storage_type' => $storageType,
                         'logical_type' => $logicalType,
                         'group'        => is_string($row['group_name'] ?? null) ? $row['group_name'] : 'general',
                         'sensitive'    => (bool) ($row['is_sensitive'] ?? 0),
@@ -1297,13 +1323,20 @@ function ipam_setting_definitions(): array
                         );
                     }
 
+                    // min_value/max_value are float-capable columns (REAL /
+                    // DOUBLE / DOUBLE PRECISION). Preserve a whole number as
+                    // int and a fractional bound as float so the registry's
+                    // mixed int/float min/max values round-trip intact (e.g.
+                    // recaptcha_enterprise.score_threshold's 0.0/1.0 bounds).
                     $rawMin = $row['min_value'] ?? null;
                     if (is_numeric($rawMin)) {
-                        $def['min'] = (int) $rawMin;
+                        $minF = (float) $rawMin;
+                        $def['min'] = ($minF === floor($minF)) ? (int) $minF : $minF;
                     }
                     $rawMax = $row['max_value'] ?? null;
                     if (is_numeric($rawMax)) {
-                        $def['max'] = (int) $rawMax;
+                        $maxF = (float) $rawMax;
+                        $def['max'] = ($maxF === floor($maxF)) ? (int) $maxF : $maxF;
                     }
                     if ((bool) ($row['is_multiline'] ?? 0)) {
                         $def['multiline'] = true;
@@ -1342,19 +1375,29 @@ function ipam_setting_definitions(): array
         }
     }
 
-    // Fallback: seed registry. Normalise so every entry also carries a
-    // logical_type (= its storage type) — callers that branch on
-    // logical_type then behave identically pre- and post-migration.
-    // Deliberately NOT cached in $store: a call made before the migration
-    // seeds the table must not freeze the seed result for the rest of the
-    // request — later calls re-query the DB and pick up the real rows.
+    // Fallback: seed registry. The seed (ipam_setting_definitions_seed) is the
+    // raw frozen v3.29.0 registry whose entries carry a `type` key holding the
+    // 4-value STORAGE type. Normalise each entry into the DB-read shape so the
+    // return value of this function is identical regardless of which path
+    // produced it: expose the 4-value type as `storage_type`, the 11-value
+    // type as `logical_type`, and never a bare `type` key. The seed registry
+    // has no logical-type concept, so logical_type degrades to the storage
+    // type (string/int/bool/json) — boot/degraded mode, see the function
+    // docblock. Deliberately NOT cached in $store: a call made before the
+    // migration seeds the table must not freeze the seed result for the rest
+    // of the request — later calls re-query the DB and pick up the real rows.
     $seed = ipam_setting_definitions_seed();
+    $out  = [];
     foreach ($seed as $key => $def) {
-        if (!isset($seed[$key]['logical_type'])) {
-            $seed[$key]['logical_type'] = is_string($def['type'] ?? null) ? $def['type'] : 'string';
+        $storageType = is_string($def['type'] ?? null) ? $def['type'] : 'string';
+        unset($def['type']);
+        $def['storage_type'] = $storageType;
+        if (!isset($def['logical_type'])) {
+            $def['logical_type'] = $storageType;
         }
+        $out[$key] = $def;
     }
-    return $seed;
+    return $out;
 }
 
 /**
@@ -1634,7 +1677,7 @@ function ipam_setting(string $key, mixed $default = null, ?int $tenantId = null)
 
     $definitions = ipam_setting_definitions();
     $def         = $definitions[$key] ?? null;
-    $type        = is_array($def) && is_string($def['type'] ?? null) ? $def['type'] : 'string';
+    $storageType = is_array($def) && is_string($def['storage_type'] ?? null) ? $def['storage_type'] : 'string';
     $fallback = ($def !== null && array_key_exists('default', $def))
         ? $def['default']
         : $default;
@@ -1651,9 +1694,9 @@ function ipam_setting(string $key, mixed $default = null, ?int $tenantId = null)
                 $row = $st->fetch();
                 if (is_array($row)) {
                     // settings.type was dropped in v3.30.0 (ADR-001): the stored
-                    // type is always the definition's storage type ($type).
+                    // type is always the definition's storage type ($storageType).
                     $value      = is_string($row['value'] ?? null) ? $row['value'] : null;
-                    $decoded    = ipam_setting_decode($value, $type, $fallback);
+                    $decoded    = ipam_setting_decode($value, $storageType, $fallback);
                     ipam_setting_cache_set($key, $decoded, $tenantId);
                     return $decoded;
                 }
@@ -1665,9 +1708,9 @@ function ipam_setting(string $key, mixed $default = null, ?int $tenantId = null)
             $row = $st->fetch();
             if (is_array($row)) {
                 // settings.type was dropped in v3.30.0 (ADR-001): the stored
-                // type is always the definition's storage type ($type).
+                // type is always the definition's storage type ($storageType).
                 $value      = is_string($row['value'] ?? null) ? $row['value'] : null;
-                $decoded    = ipam_setting_decode($value, $type, $fallback);
+                $decoded    = ipam_setting_decode($value, $storageType, $fallback);
                 ipam_setting_cache_set($key, $decoded, $tenantId);
                 return $decoded;
             }
@@ -1739,12 +1782,12 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
 {
     $definitions = ipam_setting_definitions();
     $def         = $definitions[$key] ?? null;
-    $type        = (is_array($def) && is_string($def['type'] ?? null) && $def['type'] !== '')
-        ? $def['type']
+    $storageType = (is_array($def) && is_string($def['storage_type'] ?? null) && $def['storage_type'] !== '')
+        ? $def['storage_type']
         : ipam_setting_infer_type($value);
     $sensitive   = is_array($def) && !empty($def['sensitive']);
 
-    $encoded = ipam_setting_encode($value, $type);
+    $encoded = ipam_setting_encode($value, $storageType);
 
     $kc = ipam_key_col();
     $d  = ipam_dialect();
@@ -1836,8 +1879,8 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
         // change and its audit trail are committed atomically.
         $details = [
             'key' => $key,
-            'old' => $sensitive ? '***' : ipam_setting_decode($oldRaw, $type, null),
-            'new' => $sensitive ? '***' : ipam_setting_decode($encoded, $type, null),
+            'old' => $sensitive ? '***' : ipam_setting_decode($oldRaw, $storageType, null),
+            'new' => $sensitive ? '***' : ipam_setting_decode($encoded, $storageType, null),
         ];
         $encodedDetails = json_encode($details);
         audit($db, 'setting.update', 'setting', null, is_string($encodedDetails) ? $encodedDetails : $key);
@@ -1968,12 +2011,16 @@ function ipam_setting_all(): array
 }
 
 /**
- * Resolve where a setting's current value is coming from: 'db', 'config', or
- * 'default'. Used to render the source badge on settings.php. Queries the
- * database directly rather than through the cached helper so the badge
- * reflects ground truth.
+ * Resolve where a setting's current value is coming from: 'db' or 'default'.
+ * Used to render the source badge on settings.php. Queries the database
+ * directly rather than through the cached helper so the badge reflects ground
+ * truth.
  *
- * @return 'db'|'config'|'default'
+ * The legacy 'config' source was removed in v3.0.0 along with the config.php
+ * fallback this helper used to inspect — there are only two outcomes now: a
+ * row exists in the `settings` table ('db'), or it does not ('default').
+ *
+ * @return 'db'|'default'
  */
 function ipam_setting_source(PDO $db, string $key): string
 {
@@ -2060,11 +2107,11 @@ function ipam_setting_deprecated_keys(): array
         // reason the string branch normalises through (string) casts: the
         // registry default is '0.5' while config_defaults keeps 0.5 (float).
         $default = $def['default'] ?? null;
-        $type = is_string($def['type'] ?? null) ? $def['type'] : 'string';
-        if ($type === 'bool' && (bool)$current === (bool)$default) continue;
-        if ($type === 'int'  && is_numeric($current) && is_numeric($default) && (int)$current === (int)$default) continue;
-        if ($type === 'string' && is_scalar($current) && is_scalar($default) && (string)$current === (string)$default) continue;
-        if ($type === 'json'   && $current === $default) continue;
+        $storageType = is_string($def['storage_type'] ?? null) ? $def['storage_type'] : 'string';
+        if ($storageType === 'bool' && (bool)$current === (bool)$default) continue;
+        if ($storageType === 'int'  && is_numeric($current) && is_numeric($default) && (int)$current === (int)$default) continue;
+        if ($storageType === 'string' && is_scalar($current) && is_scalar($default) && (string)$current === (string)$default) continue;
+        if ($storageType === 'json'   && $current === $default) continue;
 
         if (is_array($configKey)) {
             $segments   = [];

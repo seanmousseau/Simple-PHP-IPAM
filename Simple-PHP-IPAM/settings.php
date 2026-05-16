@@ -112,9 +112,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (($def['group'] ?? '') !== $postedGroup) continue;
         if (!empty($def['deprecated'])) continue;
 
-        $fieldName = 'k_' . str_replace('.', '__', $key);
-        $type      = is_string($def['type'] ?? null) ? $def['type'] : 'string';
-        $sensitive = !empty($def['sensitive']);
+        $fieldName   = 'k_' . str_replace('.', '__', $key);
+        $storageType = is_string($def['storage_type'] ?? null) ? $def['storage_type'] : 'string';
+        $sensitive   = !empty($def['sensitive']);
         $current   = ipam_setting($key);
 
         if ($key === 'alert.recipient_user_ids') {
@@ -127,7 +127,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        if ($type === 'bool') {
+        if ($storageType === 'bool') {
             // #1121: read value, not presence. The hidden shim emits '0' for
             // unchecked, the checkbox emits '1' for checked. With shim,
             // `isset()` would always be true — making "unchecked" indistinguishable
@@ -147,16 +147,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         // ADR-001 (sub of #907), plan Task 5.2c: structural value coercion is
-        // still driven by the 4-value STORAGE type ($def['type']); semantic
+        // still driven by the 4-value STORAGE type ($def['storage_type']); semantic
         // validation is delegated to ipam_setting_validate() keyed on the
         // 11-value logical type. The branches below ONLY coerce the posted
         // value into the typed $newValue — they no longer carry validation.
-        $logicalType = is_string($def['logical_type'] ?? null) ? $def['logical_type'] : $type;
+        $logicalType = is_string($def['logical_type'] ?? null) ? $def['logical_type'] : $storageType;
 
-        if ($type === 'bool') {
+        if ($storageType === 'bool') {
             // #1121: see formOverrides note above — value, not presence.
             $newValue = (to_str($_POST[$fieldName] ?? '0') === '1');
-        } elseif ($type === 'int') {
+        } elseif ($storageType === 'int') {
             // Integer-FORMAT guard stays in the handler: ipam_setting_validate()'s
             // `int` case runs is_numeric(), which would let "1.5" through and
             // then (int)-truncate it. Reject anything that is not a clean
@@ -168,7 +168,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 continue;
             }
             $newValue = $raw === '' ? 0 : (int)$raw;
-        } elseif ($type === 'json') {
+        } elseif ($storageType === 'json') {
             $raw = to_str($_POST[$fieldName] ?? '');
             if (trim($raw) === '') {
                 $newValue = null;
@@ -207,8 +207,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if ($current === $newValue) continue;
-        if ($type === 'int' && to_int($current) === to_int($newValue)) continue;
-        if ($type === 'bool' && (bool)$current === (bool)$newValue) continue;
+        if ($storageType === 'int' && to_int($current) === to_int($newValue)) continue;
+        if ($storageType === 'bool' && (bool)$current === (bool)$newValue) continue;
 
         $pending[$key] = $newValue;
     }

@@ -132,13 +132,11 @@ final class SchemaParityTest extends TestCase
             'is_sensitive'  => ['type_class' => 'int',  'nullable' => false],
             'key'           => ['type_class' => 'text', 'nullable' => false],
             'label'         => ['type_class' => 'text', 'nullable' => false],
-            'max_value'     => ['type_class' => 'int',  'nullable' => true],
-            'min_value'     => ['type_class' => 'int',  'nullable' => true],
+            'max_value'     => ['type_class' => 'real', 'nullable' => true],
+            'min_value'     => ['type_class' => 'real', 'nullable' => true],
             'options_json'  => ['type_class' => 'text', 'nullable' => true],
             'ordering'      => ['type_class' => 'int',  'nullable' => false],
-            'subtype'       => ['type_class' => 'text', 'nullable' => true],
             'type'          => ['type_class' => 'text', 'nullable' => false],
-            'validator'     => ['type_class' => 'text', 'nullable' => true],
         ];
         $this->assertSame(
             array_keys($expected),

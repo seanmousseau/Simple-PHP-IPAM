@@ -607,18 +607,16 @@ Reference for every table, column, foreign key, and uniqueness constraint in the
 | `label` | `TEXT` | `VARCHAR(191)` | `TEXT` | NO |  |  |
 | `description` | `TEXT` | `TEXT` | `TEXT` | NO | `''` |  |
 | `type` | `TEXT` | `VARCHAR(32)` | `TEXT` | NO |  |  |
-| `subtype` | `TEXT` | `VARCHAR(32)` | `TEXT` | YES |  |  |
 | `default_value` | `TEXT` | `TEXT` | `TEXT` | YES |  |  |
 | `group_name` | `TEXT` | `VARCHAR(64)` | `TEXT` | NO |  |  |
 | `is_sensitive` | `INTEGER` | `TINYINT(1) UNSIGNED` | `SMALLINT` | NO | `0` |  |
 | `is_hidden` | `INTEGER` | `TINYINT(1) UNSIGNED` | `SMALLINT` | NO | `0` |  |
-| `min_value` | `INTEGER` | `INT` | `INTEGER` | YES |  |  |
-| `max_value` | `INTEGER` | `INT` | `INTEGER` | YES |  |  |
+| `min_value` | `REAL` | `DOUBLE` | `DOUBLE PRECISION` | YES |  |  |
+| `max_value` | `REAL` | `DOUBLE` | `DOUBLE PRECISION` | YES |  |  |
 | `is_multiline` | `INTEGER` | `TINYINT(1) UNSIGNED` | `SMALLINT` | NO | `0` |  |
 | `is_deprecated` | `INTEGER` | `TINYINT(1) UNSIGNED` | `SMALLINT` | NO | `0` |  |
 | `options_json` | `TEXT` | `TEXT` | `TEXT` | YES |  |  |
 | `config_key` | `TEXT` | `VARCHAR(191)` | `TEXT` | YES |  |  |
-| `validator` | `TEXT` | `VARCHAR(191)` | `TEXT` | YES |  |  |
 | `ordering` | `INTEGER` | `INT` | `INTEGER` | NO | `0` |  |
 
 ## `webhooks`

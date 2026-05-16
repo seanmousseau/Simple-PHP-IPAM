@@ -1118,11 +1118,11 @@ function ipam_migrations(): array
                 if ($cfgVal === null) continue;
 
                 $default = $def['default'] ?? null;
-                /** @var string $type */
-                $type = $def['type'] ?? 'string';
+                /** @var string $storageType */
+                $storageType = $def['storage_type'] ?? 'string';
                 /** @var mixed $cfgVal */
                 /** @var mixed $default */
-                $same = match ($type) {
+                $same = match ($storageType) {
                     'bool'   => (bool)$cfgVal === (bool)$default,
                     'int'    => (int)(is_numeric($cfgVal) ? $cfgVal : 0) === (int)(is_numeric($default) ? $default : 0),
                     'json'   => $cfgVal === $default,
@@ -2316,8 +2316,8 @@ function ipam_migrations(): array
                     continue;
                 }
                 $def = $definitions[$key];
-                $type = to_str($def['type']);
-                $encoded = ipam_setting_encode($def['default'], $type);
+                $storageType = to_str($def['storage_type']);
+                $encoded = ipam_setting_encode($def['default'], $storageType);
                 $ex = $db->prepare("SELECT 1 FROM settings WHERE tenant_id IS NULL AND {$kc} = :k");
                 $ex->execute([':k' => $key]);
                 if ($ex->fetch()) {
@@ -2327,7 +2327,7 @@ function ipam_migrations(): array
                     $st = $db->prepare(
                         "INSERT INTO settings (tenant_id, {$kc}, value, type) VALUES (NULL, :k, :v, :t)"
                     );
-                    $st->execute([':k' => $key, ':v' => $encoded, ':t' => $type]);
+                    $st->execute([':k' => $key, ':v' => $encoded, ':t' => $storageType]);
                 } catch (\PDOException $e) {
                     // Row already exists (duplicate key) — skip.
                     if (str_contains($e->getMessage(), 'UNIQUE') || str_contains($e->getMessage(), 'Duplicate')) {
@@ -3997,18 +3997,16 @@ function ipam_migrations(): array
                     . "  label          TEXT NOT NULL,"
                     . "  description    TEXT NOT NULL DEFAULT '',"
                     . "  type           TEXT NOT NULL,"
-                    . "  subtype        TEXT,"
                     . "  default_value  TEXT,"
                     . "  group_name     TEXT NOT NULL,"
                     . "  is_sensitive   INTEGER NOT NULL DEFAULT 0,"
                     . "  is_hidden      INTEGER NOT NULL DEFAULT 0,"
-                    . "  min_value      INTEGER,"
-                    . "  max_value      INTEGER,"
+                    . "  min_value      REAL,"
+                    . "  max_value      REAL,"
                     . "  is_multiline   INTEGER NOT NULL DEFAULT 0,"
                     . "  is_deprecated  INTEGER NOT NULL DEFAULT 0,"
                     . "  options_json   TEXT,"
                     . "  config_key     TEXT,"
-                    . "  validator      TEXT,"
                     . "  ordering       INTEGER NOT NULL DEFAULT 0"
                     . ")"
                 );
@@ -4019,18 +4017,16 @@ function ipam_migrations(): array
                     . "  label         VARCHAR(191) NOT NULL,"
                     . "  description   TEXT NOT NULL DEFAULT (''),"
                     . "  type          VARCHAR(32) NOT NULL,"
-                    . "  subtype       VARCHAR(32) NULL,"
                     . "  default_value TEXT NULL,"
                     . "  group_name    VARCHAR(64) NOT NULL,"
                     . "  is_sensitive  TINYINT(1) UNSIGNED NOT NULL DEFAULT 0,"
                     . "  is_hidden     TINYINT(1) UNSIGNED NOT NULL DEFAULT 0,"
-                    . "  min_value     INT NULL,"
-                    . "  max_value     INT NULL,"
+                    . "  min_value     DOUBLE NULL,"
+                    . "  max_value     DOUBLE NULL,"
                     . "  is_multiline  TINYINT(1) UNSIGNED NOT NULL DEFAULT 0,"
                     . "  is_deprecated TINYINT(1) UNSIGNED NOT NULL DEFAULT 0,"
                     . "  options_json  TEXT NULL,"
                     . "  config_key    VARCHAR(191) NULL,"
-                    . "  validator     VARCHAR(191) NULL,"
                     . "  ordering      INT NOT NULL DEFAULT 0,"
                     . "  PRIMARY KEY (`key`)"
                     . ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
@@ -4042,18 +4038,16 @@ function ipam_migrations(): array
                     . "  label         TEXT NOT NULL,"
                     . "  description   TEXT NOT NULL DEFAULT '',"
                     . "  type          TEXT NOT NULL,"
-                    . "  subtype       TEXT NULL,"
                     . "  default_value TEXT NULL,"
                     . "  group_name    TEXT NOT NULL,"
                     . "  is_sensitive  SMALLINT NOT NULL DEFAULT 0,"
                     . "  is_hidden     SMALLINT NOT NULL DEFAULT 0,"
-                    . "  min_value     INTEGER NULL,"
-                    . "  max_value     INTEGER NULL,"
+                    . "  min_value     DOUBLE PRECISION NULL,"
+                    . "  max_value     DOUBLE PRECISION NULL,"
                     . "  is_multiline  SMALLINT NOT NULL DEFAULT 0,"
                     . "  is_deprecated SMALLINT NOT NULL DEFAULT 0,"
                     . "  options_json  TEXT NULL,"
                     . "  config_key    TEXT NULL,"
-                    . "  validator     TEXT NULL,"
                     . "  ordering      INTEGER NOT NULL DEFAULT 0,"
                     . "  PRIMARY KEY (\"key\")"
                     . ")"
@@ -4079,11 +4073,11 @@ function ipam_migrations(): array
             $ignore = ipam_dialect()->upsert_or_ignore('setting_definitions', ['key']);
             $stmt = $db->prepare(
                 "INSERT INTO setting_definitions "
-                . "({$keyCol}, label, description, type, subtype, default_value, "
+                . "({$keyCol}, label, description, type, default_value, "
                 . " group_name, is_sensitive, is_hidden, min_value, max_value, "
                 . " is_multiline, is_deprecated, options_json, config_key, "
-                . " validator, ordering) "
-                . "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) {$ignore}"
+                . " ordering) "
+                . "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) {$ignore}"
             );
 
             // ADR-001 § Implications: derive the 11-value logical type from the
@@ -4127,8 +4121,8 @@ function ipam_migrations(): array
                 $hidden      = !empty($def['hidden']) ? 1 : 0;
                 $multiline   = !empty($def['multiline']) ? 1 : 0;
                 $deprecated  = !empty($def['deprecated']) ? 1 : 0;
-                $minValue    = (isset($def['min']) && is_numeric($def['min'])) ? (int) $def['min'] : null;
-                $maxValue    = (isset($def['max']) && is_numeric($def['max'])) ? (int) $def['max'] : null;
+                $minValue    = (isset($def['min']) && is_numeric($def['min'])) ? (float) $def['min'] : null;
+                $maxValue    = (isset($def['max']) && is_numeric($def['max'])) ? (float) $def['max'] : null;
 
                 // default_value: cast scalars to string; bools to '1'/'0';
                 // arrays JSON-encode (matches the 'json' type contract).
@@ -4180,7 +4174,6 @@ function ipam_migrations(): array
                     $label,
                     $description,
                     $type,
-                    null,       // subtype — reserved; populated by a later task
                     $default,
                     $group,
                     $sensitive,
@@ -4191,7 +4184,6 @@ function ipam_migrations(): array
                     $deprecated,
                     $options,
                     $configKey,
-                    null,        // validator — populated later
                     $ordering++, // ordering — 0-based registry array index
                 ]);
             }
@@ -4376,7 +4368,7 @@ function ipam_migrate_2_6_0_settings(PDO $db): void
         $check->execute([':k' => $key]);
         if ($check->fetchColumn() !== false) continue;
 
-        $type = is_string($def['type'] ?? null) ? $def['type'] : 'string';
+        $storageType = is_string($def['storage_type'] ?? null) ? $def['storage_type'] : 'string';
         $value = $def['default'] ?? null;
         if (is_array($config)) {
             $cfgKey = $def['config_key'] ?? null;
@@ -4387,10 +4379,10 @@ function ipam_migrate_2_6_0_settings(PDO $db): void
         }
 
         // v3.30.0 Task 3.3 (ADR-001): no :t bind — settings.type was dropped.
-        // $type is still used to encode the value to its stored TEXT form.
+        // $storageType is still used to encode the value to its stored TEXT form.
         $ins->execute([
             ':k' => $key,
-            ':v' => ipam_setting_encode($value, $type),
+            ':v' => ipam_setting_encode($value, $storageType),
         ]);
         $seeded++;
     }

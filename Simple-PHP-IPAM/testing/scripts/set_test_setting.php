@@ -62,11 +62,11 @@ $db = ipam_db($config);
 // Resolve the registry definition so we cast the stringy CLI arg to the
 // type the registry expects. ipam_setting_set() validates internally too.
 $defs = ipam_setting_definitions();
-$type = is_string($defs[$key]['type'] ?? null) ? $defs[$key]['type'] : 'string';
+$storageType = is_string($defs[$key]['storage_type'] ?? null) ? $defs[$key]['storage_type'] : 'string';
 
 // Validate input strictly so a typo (e.g. "ture") doesn't silently coerce to
 // false / 0 and produce a confusing test environment. (CodeRabbit #1116.)
-$value = match ($type) {
+$value = match ($storageType) {
     'bool'   => match (strtolower($rawValue)) {
         '1', 'true', 'on', 'yes'  => true,
         '0', 'false', 'off', 'no' => false,

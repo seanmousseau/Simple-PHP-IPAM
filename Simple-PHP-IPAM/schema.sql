@@ -494,18 +494,16 @@ CREATE TABLE IF NOT EXISTS setting_definitions (
   label          TEXT NOT NULL,
   description    TEXT NOT NULL DEFAULT '',
   type           TEXT NOT NULL,
-  subtype        TEXT,
   default_value  TEXT,
   group_name     TEXT NOT NULL,
   is_sensitive   INTEGER NOT NULL DEFAULT 0,
   is_hidden      INTEGER NOT NULL DEFAULT 0,
-  min_value      INTEGER,
-  max_value      INTEGER,
+  min_value      REAL,
+  max_value      REAL,
   is_multiline   INTEGER NOT NULL DEFAULT 0,
   is_deprecated  INTEGER NOT NULL DEFAULT 0,
   options_json   TEXT,
   config_key     TEXT,
-  validator      TEXT,
   ordering       INTEGER NOT NULL DEFAULT 0
 );
 

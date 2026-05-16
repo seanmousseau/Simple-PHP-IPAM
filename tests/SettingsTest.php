@@ -84,10 +84,17 @@ class SettingsTest extends TestCase
         $this->assertNotEmpty($defs);
         foreach ($defs as $key => $def) {
             $this->assertIsString($key);
-            $this->assertArrayHasKey('type', $def);
+            // Finding 2 (architecture review 2026-05-16): the in-memory
+            // definition array exposes the 4-value STORAGE type as
+            // `storage_type` and the 11-value type as `logical_type`. A bare
+            // `type` key (the DB column name) must NOT be present — it would
+            // collide in name while meaning the opposite thing.
+            $this->assertArrayHasKey('storage_type', $def);
+            $this->assertArrayHasKey('logical_type', $def);
+            $this->assertArrayNotHasKey('type', $def);
             $this->assertArrayHasKey('group', $def);
             $this->assertArrayHasKey('default', $def);
-            $this->assertContains($def['type'], ['string', 'int', 'bool', 'json']);
+            $this->assertContains($def['storage_type'], ['string', 'int', 'bool', 'json']);
         }
     }
 

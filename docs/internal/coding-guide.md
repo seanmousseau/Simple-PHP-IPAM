@@ -191,6 +191,32 @@ Full testing procedure (containerized + dev-direct fallback + recurring footguns
 
 ---
 
+## Settings registry (ADR-001)
+
+Since v3.30.0 the setting registry lives in the `setting_definitions` DB
+table, seeded once at install time from the frozen v3.29.0 PHP registry
+(`ipam_setting_definitions_seed()`).
+
+- **A new setting added after v3.30.0 is registered by its OWN migration.**
+  The migration `INSERT`s a row into `setting_definitions` with the setting's
+  11-value logical `type` stated **explicitly** (e.g. `'secret'`, `'enum'`,
+  `'url'`). Do **not** add the setting to `ipam_setting_definitions_seed()` —
+  that array is a frozen v3.29.0 snapshot and is intentionally never extended.
+- **The `3.30.0-setting-definitions` migration's `$logicalType` classifier
+  closure is frozen history.** It infers logical types for the v3.29.0
+  snapshot only; it is NOT updated when a new setting is added. New settings
+  carry their logical type in their own migration's INSERT, not via the
+  classifier.
+- **`ipam_setting_definitions()` returns `storage_type` (4-value) and
+  `logical_type` (11-value) — never a bare `type` key.** `type` is the DB
+  column name and means the *logical* type; the in-memory storage-type key is
+  `storage_type` to avoid the same-name/opposite-meaning collision.
+- **Invariant for the v3.31.0 encrypt-at-rest pipeline:** `is_sensitive = 1`
+  IFF `type = 'secret'` in `setting_definitions`. `SettingDefinitionsMigrationTest`
+  asserts it across the seed; keep new INSERTs consistent.
+
+---
+
 ## PR-time gates (non-negotiable)
 
 A PR that violates any of these gets bounced.

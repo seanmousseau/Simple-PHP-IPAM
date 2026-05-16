@@ -198,6 +198,140 @@ final class SettingDefinitionsMigrationTest extends TestCase
     }
 
     /**
+     * Finding 3 (architecture review 2026-05-16) — the speculative `subtype`
+     * and `validator` columns were dropped from the as-built schema. The
+     * seeded table must carry neither on any engine.
+     */
+    #[DataProvider('driverProvider')]
+    public function testSubtypeAndValidatorColumnsAreAbsent(string $driver): void
+    {
+        $db = $this->openConnection($driver);
+        $migration = $this->loadMigration();
+        $migration($db);
+
+        $cols = $this->settingDefinitionColumns($db, $driver);
+        $this->assertNotContains('subtype', $cols, 'subtype column must be dropped (Finding 3)');
+        $this->assertNotContains('validator', $cols, 'validator column must be dropped (Finding 3)');
+        // The replacement metadata columns must still be present.
+        $this->assertContains('min_value', $cols);
+        $this->assertContains('max_value', $cols);
+    }
+
+    /**
+     * Finding 6 (architecture review 2026-05-16) — the v3.31.0 encrypt-at-rest
+     * pipeline depends on `is_sensitive = 1` IFF `type = 'secret'`. Assert the
+     * invariant holds across the freshly seeded table. If the seed data
+     * violates it this test FAILS (a finding to report) rather than the data
+     * being silently patched.
+     */
+    #[DataProvider('driverProvider')]
+    public function testIsSensitiveIffSecretInvariant(string $driver): void
+    {
+        $db = $this->openConnection($driver);
+        $migration = $this->loadMigration();
+        $migration($db);
+
+        $keyCol = $driver === 'mysql' ? '`key`' : ($driver === 'pgsql' ? '"key"' : 'key');
+        $rows = $db->query("SELECT {$keyCol} AS k, type, is_sensitive FROM setting_definitions")
+            ->fetchAll(PDO::FETCH_ASSOC);
+        $this->assertIsArray($rows);
+        $this->assertNotEmpty($rows);
+        foreach ($rows as $row) {
+            $isSecret    = ($row['type'] ?? null) === 'secret';
+            $isSensitive = (int) ($row['is_sensitive'] ?? 0) === 1;
+            $this->assertSame(
+                $isSecret,
+                $isSensitive,
+                sprintf(
+                    "is_sensitive must equal (type=='secret') for key '%s' (type=%s, is_sensitive=%s)",
+                    (string) ($row['k'] ?? ''),
+                    (string) ($row['type'] ?? ''),
+                    (string) ($row['is_sensitive'] ?? '')
+                )
+            );
+        }
+    }
+
+    /**
+     * Finding 5 (architecture review 2026-05-16) — seed-fallback lifecycle.
+     * With NO setting_definitions table present, ipam_setting_definitions()
+     * returns exactly the frozen v3.29.0 seed key set; with the table seeded
+     * it returns the table's contents. Machine-checks the "seed is frozen"
+     * contract.
+     */
+    public function testSeedFallbackReturnsSeedKeySetWhenTableAbsent(): void
+    {
+        $db = $this->openConnection('sqlite');
+        $db->exec('DROP TABLE IF EXISTS setting_definitions');
+        ipam_setting_cache_bust();
+
+        $defs = ipam_setting_definitions();
+        $seed = ipam_setting_definitions_seed();
+        $this->assertSame(
+            array_keys($seed),
+            array_keys($defs),
+            'with the table absent, the fallback must return exactly the seed key set'
+        );
+        // The returned shape must already be normalised: storage_type present,
+        // bare `type` absent.
+        foreach ($defs as $key => $def) {
+            $this->assertArrayHasKey('storage_type', $def, "{$key} must carry storage_type");
+            $this->assertArrayHasKey('logical_type', $def, "{$key} must carry logical_type");
+            $this->assertArrayNotHasKey('type', $def, "{$key} must not carry a bare type key");
+        }
+    }
+
+    public function testDbBackedRegistryReturnsTableContentsWhenSeeded(): void
+    {
+        $db = $this->openConnection('sqlite');
+        $migration = $this->loadMigration();
+        $migration($db);
+        ipam_setting_cache_bust();
+
+        $defs = ipam_setting_definitions();
+        $keyCol = 'key';
+        $tableKeys = $db->query("SELECT {$keyCol} FROM setting_definitions ORDER BY ordering ASC, {$keyCol} ASC")
+            ->fetchAll(PDO::FETCH_COLUMN);
+        $this->assertIsArray($tableKeys);
+        $this->assertSame(
+            $tableKeys,
+            array_keys($defs),
+            'with the table seeded, the registry must return the table contents'
+        );
+    }
+
+    /**
+     * Engine-portable column-name lookup for setting_definitions.
+     *
+     * @return list<string>
+     */
+    private function settingDefinitionColumns(PDO $db, string $driver): array
+    {
+        if ($driver === 'sqlite') {
+            $cols = $db->query('PRAGMA table_info(setting_definitions)')->fetchAll(PDO::FETCH_ASSOC);
+            $out  = [];
+            foreach ($cols as $col) {
+                if (is_string($col['name'] ?? null)) {
+                    $out[] = $col['name'];
+                }
+            }
+            return $out;
+        }
+        $schemaFn = $driver === 'mysql' ? 'DATABASE()' : 'CURRENT_SCHEMA()';
+        $rows = $db->query(
+            "SELECT column_name FROM information_schema.columns "
+            . "WHERE table_name = 'setting_definitions' AND table_schema = {$schemaFn}"
+        )->fetchAll(PDO::FETCH_COLUMN);
+        $out = [];
+        foreach (is_array($rows) ? $rows : [] as $r) {
+            if (is_string($r)) {
+                $out[] = $r;
+            }
+        }
+        return $out;
+    }
+
+    /**
      * @return \Closure(PDO): void
      */
     private function loadMigration(): \Closure
