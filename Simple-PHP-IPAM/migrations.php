@@ -4063,7 +4063,7 @@ function ipam_migrations(): array
             // 2. Seed from the PHP registry. Skip if registry helper isn't
             //    loaded — init.php loads lib.php before migrations run, so
             //    this is just defensive against partial test fixtures.
-            if (!function_exists('ipam_setting_definitions')) {
+            if (!function_exists('ipam_setting_definitions_seed')) {
                 return;
             }
 
@@ -4117,7 +4117,7 @@ function ipam_migrations(): array
                 };
             };
 
-            foreach (ipam_setting_definitions() as $key => $def) {
+            foreach (ipam_setting_definitions_seed() as $key => $def) {
                 $label       = is_string($def['label'] ?? null) ? $def['label'] : (string) $key;
                 $description = is_string($def['description'] ?? null) ? $def['description'] : '';
                 $type        = $logicalType((string) $key, $def);

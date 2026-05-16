@@ -55,7 +55,7 @@ class SmtpTest extends TestCase
         unset($GLOBALS['db'], $GLOBALS['config']);
         // Flush ipam_setting() static cache so settings from one test don't
         // bleed into the next test's assertions.
-        ipam_setting_cache_storage(null, true);
+        ipam_setting_cache_bust();
     }
 
     // -----------------------------------------------------------------------

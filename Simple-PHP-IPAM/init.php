@@ -135,6 +135,19 @@ require_once __DIR__ . '/lib/audit.php';
 // has finished loading. v3.30.0.
 require_once __DIR__ . '/lib/presentation.php';
 
+// Settings layer (#907 / #915, ADR-004 Phase 5 Task 5.2b) — the setting
+// registry (ipam_setting_definitions / _seed / _groups), the encode/decode/
+// infer codec, ipam_setting() / ipam_setting_set() with their per-request
+// cache, the config.php back-compat fallback, ipam_setting_deprecated_keys(),
+// and the ADR-001 11-value logical-type dispatch layer
+// (ipam_setting_storage_type / ipam_setting_validate). Loaded AFTER
+// lib/config.php (ipam_setting() reads config.php via ipam_config()) and —
+// critically — BEFORE ipam_db_init() runs migrations below, because the
+// `3.30.0-setting-definitions` migration seeds the setting_definitions table
+// from ipam_setting_definitions_seed() in this module. ipam_key_col() /
+// ipam_dialect() / audit() resolve lazily at call time. v3.30.0.
+require_once __DIR__ . '/lib/settings.php';
+
 // Composer autoloader (#416). Conditional because v2.9.0 ships with an empty
 // require {} — vendor/autoload.php only exists in release tarballs (built by
 // releases/make_releases.sh) and in dev environments where the tester has run

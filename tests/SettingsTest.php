@@ -50,13 +50,20 @@ class SettingsTest extends TestCase
         $_SESSION          = [];
 
         ipam_setting_cache_bust();
+        // v3.30.0 ADR-003 — ipam_setting() / ipam_setting_deprecated_keys()
+        // now read config.php via the ipam_config() accessor, which memoises
+        // $GLOBALS['config']. Tests that mutate $GLOBALS['config'] directly
+        // must bump the generation counter so the accessor re-reads it.
+        ipam_config_invalidate_cache();
     }
 
     protected function tearDown(): void
     {
         unset($GLOBALS['db'], $GLOBALS['config']);
-        // Clear entire cache including tenant-keyed entries via the __CLEAR__ sentinel.
-        ipam_setting_cache_storage('__CLEAR__', true);
+        // Clear the entire ipam_setting() cache, including tenant-keyed entries.
+        // v3.30.0 #915 — ipam_setting_cache_storage() was split into the
+        // get/set/clear trio; ipam_setting_cache_bust() delegates to _clear().
+        ipam_setting_cache_bust();
     }
 
     // ------------------------------------------------------------------
@@ -387,8 +394,9 @@ class SettingsTest extends TestCase
     {
         // v2.7.0 #376: a fresh install with empty $config and empty settings
         // table must not light up the banner for every registered key.
-        $GLOBALS['config'] = [];
+        $GLOBALS["config"] = [];
         ipam_setting_cache_bust();
+        ipam_config_invalidate_cache();
         $this->assertSame([], ipam_setting_deprecated_keys());
     }
 
@@ -414,6 +422,7 @@ class SettingsTest extends TestCase
             'oidc'                => ['enabled' => true],    // customised
         ];
         ipam_setting_cache_bust();
+        ipam_config_invalidate_cache();
 
         $deprecated = ipam_setting_deprecated_keys();
         $keys = array_column($deprecated, 'key');
