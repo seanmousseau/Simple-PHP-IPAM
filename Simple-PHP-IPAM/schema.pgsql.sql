@@ -667,10 +667,8 @@ CREATE TABLE IF NOT EXISTS settings (
   tenant_id  INTEGER NULL,
   "key"      TEXT COLLATE "C" NOT NULL,
   value      TEXT NULL,
-  type       TEXT NOT NULL DEFAULT 'string',
   updated_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
-  updated_by BIGINT NULL REFERENCES users(id) ON DELETE SET NULL,
-  CONSTRAINT settings_type_check CHECK (type IN ('string','int','bool','json'))
+  updated_by BIGINT NULL REFERENCES users(id) ON DELETE SET NULL
 );
 -- Partial indexes enforce uniqueness correctly for NULL tenant_id (global rows).
 -- PostgreSQL treats NULL as distinct in composite UNIQUE constraints, so a plain

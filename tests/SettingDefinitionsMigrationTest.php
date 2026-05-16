@@ -74,6 +74,130 @@ final class SettingDefinitionsMigrationTest extends TestCase
     }
 
     /**
+     * v3.30.0 Task 3.3 (ADR-001) — the `3.30.0-drop-settings-type` migration
+     * removes the legacy `settings.type` column. After it runs, the settings
+     * table must carry no `type` column on any engine.
+     */
+    #[DataProvider('driverProvider')]
+    public function testSettingsTypeColumnIsDroppedAfterMigration(string $driver): void
+    {
+        $db = $this->openConnection($driver);
+        $this->createLegacySettingsTable($db, $driver);
+
+        // Sanity check: the legacy table starts WITH the type column.
+        $this->assertTrue(
+            $this->settingsHasTypeColumn($db, $driver),
+            'fixture should start with the legacy settings.type column'
+        );
+
+        // Seed representative rows so the SQLite INSERT-SELECT → DROP → RENAME
+        // table rebuild (invariant #2 — the v2.2.1 wipe class of migration) is
+        // proven to preserve user data, not just remove the column. One GLOBAL
+        // row (tenant_id IS NULL) and one TENANT-scoped row, each with distinct
+        // value / updated_at / updated_by.
+        $seedRows = [
+            [
+                'tenant_id'  => null,
+                'key'        => 'app.theme',
+                'value'      => 'midnight-blue',
+                'updated_at' => '2025-01-02 03:04:05',
+                'updated_by' => 11,
+            ],
+            [
+                'tenant_id'  => 7,
+                'key'        => 'app.theme',
+                'value'      => 'high-contrast',
+                'updated_at' => '2026-04-30 23:59:58',
+                'updated_by' => 42,
+            ],
+        ];
+        $keyCol = $driver === 'mysql' ? '`key`' : ($driver === 'pgsql' ? '"key"' : 'key');
+        $ins = $db->prepare(
+            "INSERT INTO settings (tenant_id, {$keyCol}, value, updated_at, updated_by) "
+            . 'VALUES (:tenant_id, :key, :value, :updated_at, :updated_by)'
+        );
+        foreach ($seedRows as $row) {
+            $ins->execute([
+                ':tenant_id'  => $row['tenant_id'],
+                ':key'        => $row['key'],
+                ':value'      => $row['value'],
+                ':updated_at' => $row['updated_at'],
+                ':updated_by' => $row['updated_by'],
+            ]);
+        }
+
+        $drop = $this->loadDropMigration();
+        $drop($db);
+
+        $this->assertFalse(
+            $this->settingsHasTypeColumn($db, $driver),
+            'settings.type must be gone after 3.30.0-drop-settings-type'
+        );
+
+        // Data-preservation: every seeded row must survive the rebuild with
+        // value / updated_at / updated_by / tenant_id / key byte-intact.
+        $countRow = $db->query('SELECT COUNT(*) AS c FROM settings')->fetch(PDO::FETCH_ASSOC);
+        $this->assertIsArray($countRow);
+        $this->assertSame(
+            count($seedRows),
+            (int) $countRow['c'],
+            'no rows may be lost in the settings table rebuild'
+        );
+        foreach ($seedRows as $row) {
+            if ($row['tenant_id'] === null) {
+                $sel = $db->prepare(
+                    "SELECT tenant_id, {$keyCol} AS k, value, updated_at, updated_by "
+                    . "FROM settings WHERE {$keyCol} = :key AND tenant_id IS NULL"
+                );
+                $sel->execute([':key' => $row['key']]);
+            } else {
+                $sel = $db->prepare(
+                    "SELECT tenant_id, {$keyCol} AS k, value, updated_at, updated_by "
+                    . "FROM settings WHERE {$keyCol} = :key AND tenant_id = :tenant_id"
+                );
+                $sel->execute([':key' => $row['key'], ':tenant_id' => $row['tenant_id']]);
+            }
+            $got = $sel->fetch(PDO::FETCH_ASSOC);
+            $this->assertIsArray($got, "seeded row {$row['key']} must survive the rebuild");
+            $this->assertSame($row['key'], $got['k'], 'key must be byte-intact');
+            $this->assertSame($row['value'], $got['value'], 'value must be byte-intact');
+            $this->assertSame(
+                $row['updated_at'],
+                (string) $got['updated_at'],
+                'updated_at must be byte-intact'
+            );
+            $this->assertSame(
+                $row['updated_by'],
+                (int) $got['updated_by'],
+                'updated_by must be byte-intact'
+            );
+            if ($row['tenant_id'] === null) {
+                $this->assertNull($got['tenant_id'], 'GLOBAL row tenant_id must stay NULL');
+            } else {
+                $this->assertSame(
+                    $row['tenant_id'],
+                    (int) $got['tenant_id'],
+                    'TENANT row tenant_id must be byte-intact'
+                );
+            }
+        }
+
+        // Replay must be a clean no-op once the column is already absent.
+        $drop($db);
+        $this->assertFalse(
+            $this->settingsHasTypeColumn($db, $driver),
+            'replay of 3.30.0-drop-settings-type must remain a no-op'
+        );
+        $replayCountRow = $db->query('SELECT COUNT(*) AS c FROM settings')->fetch(PDO::FETCH_ASSOC);
+        $this->assertIsArray($replayCountRow);
+        $this->assertSame(
+            count($seedRows),
+            (int) $replayCountRow['c'],
+            'replay must not change row count'
+        );
+    }
+
+    /**
      * @return \Closure(PDO): void
      */
     private function loadMigration(): \Closure
@@ -83,6 +207,90 @@ final class SettingDefinitionsMigrationTest extends TestCase
         /** @var \Closure(PDO): void $closure */
         $closure = $migs['3.30.0-setting-definitions'];
         return $closure;
+    }
+
+    /**
+     * @return \Closure(PDO): void
+     */
+    private function loadDropMigration(): \Closure
+    {
+        $migs = ipam_migrations();
+        $this->assertArrayHasKey('3.30.0-drop-settings-type', $migs);
+        /** @var \Closure(PDO): void $closure */
+        $closure = $migs['3.30.0-drop-settings-type'];
+        return $closure;
+    }
+
+    /**
+     * Create the pre-v3.30.0 settings table (WITH the legacy `type` column)
+     * so the drop migration has something to operate on.
+     */
+    private function createLegacySettingsTable(PDO $db, string $driver): void
+    {
+        $db->query('DROP TABLE IF EXISTS settings');
+        if ($driver === 'sqlite') {
+            $db->exec(
+                "CREATE TABLE settings ("
+                . "  tenant_id  INTEGER,"
+                . "  key        TEXT NOT NULL,"
+                . "  value      TEXT,"
+                . "  type       TEXT NOT NULL DEFAULT 'string'"
+                . "             CHECK(type IN ('string','int','bool','json')),"
+                . "  updated_at TEXT NOT NULL DEFAULT (datetime('now')),"
+                . "  updated_by INTEGER"
+                . ")"
+            );
+            $db->exec("CREATE UNIQUE INDEX uq_settings_global ON settings (key) WHERE tenant_id IS NULL");
+            $db->exec("CREATE UNIQUE INDEX uq_settings_tenant ON settings (tenant_id, key) WHERE tenant_id IS NOT NULL");
+        } elseif ($driver === 'mysql') {
+            $db->exec(
+                "CREATE TABLE settings ("
+                . "  tenant_id  INT NULL,"
+                . "  `key`      VARCHAR(191) COLLATE utf8mb4_bin NOT NULL,"
+                . "  value      TEXT NULL,"
+                . "  type       VARCHAR(16) NOT NULL DEFAULT 'string',"
+                . "  updated_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),"
+                . "  updated_by BIGINT UNSIGNED NULL,"
+                . "  CONSTRAINT settings_type_check CHECK (type IN ('string','int','bool','json')),"
+                . "  UNIQUE KEY uq_settings_tenant_key (tenant_id, `key`)"
+                . ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+            );
+        } else { // pgsql
+            $db->exec(
+                "CREATE TABLE settings ("
+                . "  tenant_id  INTEGER NULL,"
+                . "  \"key\"      TEXT COLLATE \"C\" NOT NULL,"
+                . "  value      TEXT NULL,"
+                . "  type       TEXT NOT NULL DEFAULT 'string',"
+                . "  updated_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),"
+                . "  updated_by BIGINT NULL,"
+                . "  CONSTRAINT settings_type_check CHECK (type IN ('string','int','bool','json'))"
+                . ")"
+            );
+            $db->exec("CREATE UNIQUE INDEX uq_settings_global ON settings (\"key\") WHERE tenant_id IS NULL");
+            $db->exec("CREATE UNIQUE INDEX uq_settings_tenant ON settings (tenant_id, \"key\") WHERE tenant_id IS NOT NULL");
+        }
+    }
+
+    private function settingsHasTypeColumn(PDO $db, string $driver): bool
+    {
+        if ($driver === 'sqlite') {
+            $cols = $db->query('PRAGMA table_info(settings)')->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($cols as $col) {
+                if (($col['name'] ?? null) === 'type') {
+                    return true;
+                }
+            }
+            return false;
+        }
+        $schemaFn = $driver === 'mysql' ? 'DATABASE()' : 'CURRENT_SCHEMA()';
+        $st = $db->prepare(
+            "SELECT COUNT(*) FROM information_schema.columns "
+            . "WHERE table_name = 'settings' AND column_name = 'type' "
+            . "AND table_schema = {$schemaFn}"
+        );
+        $st->execute();
+        return (int) $st->fetchColumn() > 0;
     }
 
     private function openConnection(string $driver): PDO

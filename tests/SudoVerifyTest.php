@@ -118,9 +118,9 @@ final class SudoVerifyTest extends TestCase
         // passkeys=off. Enable email_otp + passkeys for the tests that
         // exercise those branches; the policy defaults in
         // ipam_sudo_policy() already permit them.
-        $this->db->{'e'.'xec'}("INSERT INTO settings (tenant_id, key, value, type) VALUES "
-            . "(NULL, 'mfa.email_otp_enabled', '1', 'bool'),"
-            . "(NULL, 'mfa.passkeys_enabled',  '1', 'bool')");
+        $this->db->{'e'.'xec'}("INSERT INTO settings (tenant_id, key, value) VALUES "
+            . "(NULL, 'mfa.email_otp_enabled', '1'),"
+            . "(NULL, 'mfa.passkeys_enabled',  '1')");
         ipam_setting_cache_bust();
     }
 
@@ -202,10 +202,10 @@ final class SudoVerifyTest extends TestCase
     {
         $uid = $this->makeLocalAdmin('bob', 'pw1');
         // Tighten policy: only TOTP. bob has no TOTP enrolled.
-        $this->db->{'e'.'xec'}("INSERT INTO settings (tenant_id, key, value, type) VALUES "
-            . "(NULL, 'auth.step_up.allow_email_otp',       '0', 'bool'),"
-            . "(NULL, 'auth.step_up.allow_webauthn',        '0', 'bool'),"
-            . "(NULL, 'auth.step_up.allow_provider_reauth', '0', 'bool')");
+        $this->db->{'e'.'xec'}("INSERT INTO settings (tenant_id, key, value) VALUES "
+            . "(NULL, 'auth.step_up.allow_email_otp',       '0'),"
+            . "(NULL, 'auth.step_up.allow_webauthn',        '0'),"
+            . "(NULL, 'auth.step_up.allow_provider_reauth', '0')");
         ipam_setting_cache_bust();
 
         $this->assertFalse(ipam_sudo_verify($this->db, $uid, ['method' => 'password', 'password' => 'pw1']));
@@ -332,12 +332,12 @@ final class SudoVerifyTest extends TestCase
         // before reaching the oidc_reauth_redirect_required branch we mean
         // to exercise.
         $this->db->{'e'.'xec'}(
-            "INSERT INTO settings (tenant_id, key, value, type) VALUES "
-            . "(NULL, 'oidc.enabled', '1', 'bool'), "
-            . "(NULL, 'oidc.client_id', 'test-client', 'string'), "
-            . "(NULL, 'oidc.client_secret', 'test-secret', 'string'), "
-            . "(NULL, 'oidc.discovery_url', 'https://idp.example/.well-known/openid-configuration', 'string'), "
-            . "(NULL, 'oidc.redirect_uri', 'https://ipam.example/oidc_callback.php', 'string')"
+            "INSERT INTO settings (tenant_id, key, value) VALUES "
+            . "(NULL, 'oidc.enabled', '1'), "
+            . "(NULL, 'oidc.client_id', 'test-client'), "
+            . "(NULL, 'oidc.client_secret', 'test-secret'), "
+            . "(NULL, 'oidc.discovery_url', 'https://idp.example/.well-known/openid-configuration'), "
+            . "(NULL, 'oidc.redirect_uri', 'https://ipam.example/oidc_callback.php')"
         );
         ipam_setting_cache_bust();
 

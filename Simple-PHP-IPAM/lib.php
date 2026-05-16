@@ -698,8 +698,8 @@ function _ipam_install_key_announce_write(PDO $db, string $key, string $value): 
                 return;
             }
             $ins = $db->prepare(
-                "INSERT INTO settings (tenant_id, {$kc}, value, type, updated_at) "
-                . "VALUES (NULL, :k, :v, 'bool', CURRENT_TIMESTAMP)"
+                "INSERT INTO settings (tenant_id, {$kc}, value, updated_at) "
+                . "VALUES (NULL, :k, :v, CURRENT_TIMESTAMP)"
             );
             $ins->execute([':k' => $key, ':v' => $value]);
         }

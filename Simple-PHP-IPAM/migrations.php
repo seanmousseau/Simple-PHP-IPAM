@@ -4196,6 +4196,80 @@ function ipam_migrations(): array
                 ]);
             }
         },
+
+        // v3.30.0 Task 3.3 (ADR-001 § Implications) — drop the legacy
+        // `settings.type` column. setting_definitions is now the authoritative
+        // settings registry; the per-row storage type is always derivable from
+        // the definition, so the column is redundant. lib/settings.php was
+        // rewired in the same commit to stop reading/writing settings.type.
+        //
+        // Idempotent: a fresh install whose schema file already omits the
+        // column replays this as a no-op. Engine-portable: SQLite rebuilds the
+        // table; MySQL/Postgres use ALTER TABLE DROP COLUMN.
+        //
+        // Invariant #2 (CLAUDE.md): apply_migrations() brackets every migration
+        // with PRAGMA foreign_keys = OFF; this closure must NOT start its own
+        // transaction or touch FK settings.
+        '3.30.0-drop-settings-type' => static function (PDO $db): void {
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driver = is_string($driverRaw) ? $driverRaw : '';
+
+            if ($driver === 'sqlite') {
+                // Probe PRAGMA table_info for the `type` column; no-op if gone.
+                $cols = ($db->query("PRAGMA table_info(settings)")
+                    ?: throw new \RuntimeException('PRAGMA table_info(settings) failed'))
+                    ->fetchAll();
+                $hasType = false;
+                foreach ($cols as $col) {
+                    if (($col['name'] ?? null) === 'type') { $hasType = true; break; }
+                }
+                if (!$hasType) {
+                    return;
+                }
+                // SQLite cannot DROP COLUMN when the table has partial indexes
+                // — rebuild the table. apply_migrations() has already set
+                // PRAGMA foreign_keys = OFF.
+                $db->exec(
+                    "CREATE TABLE settings_new ("
+                    . "  tenant_id  INTEGER,"
+                    . "  key        TEXT NOT NULL,"
+                    . "  value      TEXT,"
+                    . "  updated_at TEXT NOT NULL DEFAULT (datetime('now')),"
+                    . "  updated_by INTEGER REFERENCES users(id) ON DELETE SET NULL"
+                    . ")"
+                );
+                $db->exec(
+                    "INSERT INTO settings_new (tenant_id, key, value, updated_at, updated_by) "
+                    . "SELECT tenant_id, key, value, updated_at, updated_by FROM settings"
+                );
+                $db->exec("DROP TABLE settings");
+                $db->exec("ALTER TABLE settings_new RENAME TO settings");
+                // Recreate the partial uniqueness indexes (schema.sql).
+                $db->exec(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_global "
+                    . "ON settings (key) WHERE tenant_id IS NULL"
+                );
+                $db->exec(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_settings_tenant "
+                    . "ON settings (tenant_id, key) WHERE tenant_id IS NOT NULL"
+                );
+            } else {
+                // MySQL / Postgres: check information_schema then DROP COLUMN.
+                $schemaFn = $driver === 'mysql' ? 'DATABASE()' : 'CURRENT_SCHEMA()';
+                $chk = $db->prepare(
+                    "SELECT COUNT(*) FROM information_schema.columns "
+                    . "WHERE table_name = 'settings' AND column_name = 'type' "
+                    . "AND table_schema = {$schemaFn}"
+                );
+                $chk->execute();
+                if ((int) $chk->fetchColumn() === 0) {
+                    return;
+                }
+                // The settings_type_check CHECK constraint is dropped
+                // implicitly with the column on both engines.
+                $db->exec("ALTER TABLE settings DROP COLUMN type");
+            }
+        },
     ];
 }
 
@@ -4272,19 +4346,28 @@ function ipam_migrate_2_6_0_settings(PDO $db): void
         $hasTenantCol = in_array('tenant_id', $cols, true);
     }
 
+    // v3.30.0 Task 3.3 (ADR-001): the legacy `settings.type` column was
+    // dropped — the storage type is now derived from setting_definitions.
+    // On a fresh install the schema file creates `settings` without `type`
+    // and every migration replays, so this seed INSERT must not reference
+    // the column. Pre-v3.30.0 upgrade installs replaying this migration
+    // still have the column (3.30.0-drop-settings-type removes it later),
+    // but it carries a NOT NULL DEFAULT 'string', so omitting it from the
+    // INSERT column list is safe on every install path.
+    //
     // Use CURRENT_TIMESTAMP rather than datetime('now') so the INSERT
     // is portable across all three drivers (CR #1100).
     if ($hasTenantCol) {
         $check = $db->prepare("SELECT 1 FROM settings WHERE tenant_id IS NULL AND ".ipam_key_col()." = :k");
         $ins = $db->prepare(
-            "INSERT INTO settings (tenant_id, ".ipam_key_col().", value, type, updated_at, updated_by)
-             VALUES (NULL, :k, :v, :t, CURRENT_TIMESTAMP, NULL)"
+            "INSERT INTO settings (tenant_id, ".ipam_key_col().", value, updated_at, updated_by)
+             VALUES (NULL, :k, :v, CURRENT_TIMESTAMP, NULL)"
         );
     } else {
         $check = $db->prepare("SELECT 1 FROM settings WHERE ".ipam_key_col()." = :k");
         $ins = $db->prepare(
-            "INSERT INTO settings (".ipam_key_col().", value, type, updated_at, updated_by)
-             VALUES (:k, :v, :t, CURRENT_TIMESTAMP, NULL)"
+            "INSERT INTO settings (".ipam_key_col().", value, updated_at, updated_by)
+             VALUES (:k, :v, CURRENT_TIMESTAMP, NULL)"
         );
     }
 
@@ -4303,10 +4386,11 @@ function ipam_migrate_2_6_0_settings(PDO $db): void
             }
         }
 
+        // v3.30.0 Task 3.3 (ADR-001): no :t bind — settings.type was dropped.
+        // $type is still used to encode the value to its stored TEXT form.
         $ins->execute([
             ':k' => $key,
             ':v' => ipam_setting_encode($value, $type),
-            ':t' => $type,
         ]);
         $seeded++;
     }

@@ -18,8 +18,11 @@ declare(strict_types=1);
  * lives in the `setting_definitions` DB table. ipam_setting_definitions()
  * reads that table and reconstructs the v3.29.0 array shape callers expect,
  * adding a NEW `logical_type` key (the 11-value type) while keeping `type`
- * as the 4-value STORAGE type so every existing caller and the settings.type
- * CHECK(type IN ('string','int','bool','json')) keep working unchanged.
+ * as the 4-value STORAGE type so every existing caller keeps working
+ * unchanged. The `settings.type` DB column and its
+ * CHECK(type IN ('string','int','bool','json')) constraint were dropped in
+ * v3.30.0 (Phase 5.4 / Task 3.3); `type` now survives only as the in-memory
+ * storage-type key on the definition array.
  * ipam_setting_definitions_seed() is the frozen v3.29.0 PHP registry — the
  * install-time SEED source consumed by the `3.30.0-setting-definitions`
  * migration, and the fallback ipam_setting_definitions() uses when the
@@ -1643,26 +1646,28 @@ function ipam_setting(string $key, mixed $default = null, ?int $tenantId = null)
 
             // Step 1: tenant-scoped row (only when a tenantId is provided).
             if ($tenantId !== null) {
-                $st = $db->prepare("SELECT value, type FROM settings WHERE tenant_id = :t AND {$kc} = :k");
+                $st = $db->prepare("SELECT value FROM settings WHERE tenant_id = :t AND {$kc} = :k");
                 $st->execute([':t' => $tenantId, ':k' => $key]);
                 $row = $st->fetch();
                 if (is_array($row)) {
-                    $storedType = is_string($row['type'] ?? null) && $row['type'] !== '' ? $row['type'] : $type;
+                    // settings.type was dropped in v3.30.0 (ADR-001): the stored
+                    // type is always the definition's storage type ($type).
                     $value      = is_string($row['value'] ?? null) ? $row['value'] : null;
-                    $decoded    = ipam_setting_decode($value, $storedType, $fallback);
+                    $decoded    = ipam_setting_decode($value, $type, $fallback);
                     ipam_setting_cache_set($key, $decoded, $tenantId);
                     return $decoded;
                 }
             }
 
             // Step 2: global row (tenant_id IS NULL) — always checked.
-            $st = $db->prepare("SELECT value, type FROM settings WHERE tenant_id IS NULL AND {$kc} = :k");
+            $st = $db->prepare("SELECT value FROM settings WHERE tenant_id IS NULL AND {$kc} = :k");
             $st->execute([':k' => $key]);
             $row = $st->fetch();
             if (is_array($row)) {
-                $storedType = is_string($row['type'] ?? null) && $row['type'] !== '' ? $row['type'] : $type;
+                // settings.type was dropped in v3.30.0 (ADR-001): the stored
+                // type is always the definition's storage type ($type).
                 $value      = is_string($row['value'] ?? null) ? $row['value'] : null;
-                $decoded    = ipam_setting_decode($value, $storedType, $fallback);
+                $decoded    = ipam_setting_decode($value, $type, $fallback);
                 ipam_setting_cache_set($key, $decoded, $tenantId);
                 return $decoded;
             }
@@ -1745,7 +1750,6 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
     $d  = ipam_dialect();
     $tenantWhere = $tenantId === null ? 'tenant_id IS NULL' : 'tenant_id = :tb';
     $oldRaw  = null;
-    $oldType = $type;
 
     // MySQL advisory lock: serialise SELECT->INSERT for this key/scope so that
     // two concurrent writers cannot both see "row does not exist" and both
@@ -1788,7 +1792,7 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
         // the data type (PostgreSQL raises "indeterminate datatype" on bare NULL
         // parameters in prepared statements).
         $st = $db->prepare(
-            "SELECT value, type FROM settings
+            "SELECT value FROM settings
              WHERE {$tenantWhere} AND {$kc} = :k"
         );
         $stParams = [':k' => $key];
@@ -1797,7 +1801,6 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
         $prev = $st->fetch();
         if (is_array($prev)) {
             $oldRaw  = is_string($prev['value'] ?? null) ? $prev['value'] : null;
-            $oldType = is_string($prev['type'] ?? null) && $prev['type'] !== '' ? $prev['type'] : $type;
         }
 
         // Write the new value. We use explicit UPDATE-then-INSERT rather than a
@@ -1809,23 +1812,22 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
             // Row exists — update in place.
             $up = $db->prepare(
                 "UPDATE settings
-                 SET value = :v, type = :ty, updated_at = {$d->now()}, updated_by = :u
+                 SET value = :v, updated_at = {$d->now()}, updated_by = :u
                  WHERE {$tenantWhere} AND {$kc} = :k"
             );
-            $upParams = [':v' => $encoded, ':ty' => $type, ':u' => $userId, ':k' => $key];
+            $upParams = [':v' => $encoded, ':u' => $userId, ':k' => $key];
             if ($tenantId !== null) { $upParams[':tb'] = $tenantId; }
             $up->execute($upParams);
         } else {
             // Row does not exist — insert.
             $up = $db->prepare(
-                "INSERT INTO settings (tenant_id, {$kc}, value, type, updated_at, updated_by)
-                 VALUES (:t, :k, :v, :ty, {$d->now()}, :u)"
+                "INSERT INTO settings (tenant_id, {$kc}, value, updated_at, updated_by)
+                 VALUES (:t, :k, :v, {$d->now()}, :u)"
             );
             $up->execute([
                 ':t'  => $tenantId,
                 ':k'  => $key,
                 ':v'  => $encoded,
-                ':ty' => $type,
                 ':u'  => $userId,
             ]);
         }
@@ -1834,7 +1836,7 @@ function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = nul
         // change and its audit trail are committed atomically.
         $details = [
             'key' => $key,
-            'old' => $sensitive ? '***' : ipam_setting_decode($oldRaw, $oldType, null),
+            'old' => $sensitive ? '***' : ipam_setting_decode($oldRaw, $type, null),
             'new' => $sensitive ? '***' : ipam_setting_decode($encoded, $type, null),
         ];
         $encodedDetails = json_encode($details);

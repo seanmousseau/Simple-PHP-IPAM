@@ -587,7 +587,6 @@ Reference for every table, column, foreign key, and uniqueness constraint in the
 | `tenant_id` | `INTEGER` | `INT` | `INTEGER` | YES |  |  |
 | `key` | `—` | `—` | `—` | NO |  |  |
 | `value` | `TEXT` | `TEXT` | `TEXT` | YES |  |  |
-| `type` | `TEXT` | `VARCHAR(16)` | `TEXT` | NO | `'string'` |  |
 | `updated_at` | `TEXT` | `DATETIME` | `TIMESTAMP` | NO | `datetime('now')` |  |
 | `updated_by` | `INTEGER` | `BIGINT UNSIGNED` | `BIGINT` | YES |  |  |
 

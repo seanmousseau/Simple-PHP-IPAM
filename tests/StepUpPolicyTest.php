@@ -96,9 +96,9 @@ final class StepUpPolicyTest extends TestCase
 
     public function testPolicyHonoursOperatorOverrides(): void
     {
-        $this->db->{'e'.'xec'}("INSERT INTO settings (tenant_id, key, value, type) VALUES "
-            . "(NULL, 'auth.step_up.allow_email_otp', '0',    'bool'),"
-            . "(NULL, 'auth.step_up.ttl_seconds',     '1800', 'string')");
+        $this->db->{'e'.'xec'}("INSERT INTO settings (tenant_id, key, value) VALUES "
+            . "(NULL, 'auth.step_up.allow_email_otp', '0'),"
+            . "(NULL, 'auth.step_up.ttl_seconds',     '1800')");
         ipam_setting_cache_bust();
 
         $p = ipam_sudo_policy();
@@ -109,8 +109,8 @@ final class StepUpPolicyTest extends TestCase
 
     public function testInvalidTtlFallsBackToFiveMinutes(): void
     {
-        $this->db->{'e'.'xec'}("INSERT INTO settings (tenant_id, key, value, type) VALUES "
-            . "(NULL, 'auth.step_up.ttl_seconds', '99999', 'string')");
+        $this->db->{'e'.'xec'}("INSERT INTO settings (tenant_id, key, value) VALUES "
+            . "(NULL, 'auth.step_up.ttl_seconds', '99999')");
         ipam_setting_cache_bust();
 
         $this->assertSame(300, ipam_sudo_policy()['ttl_seconds'],
@@ -149,12 +149,12 @@ final class StepUpPolicyTest extends TestCase
     private function seedOidcConfigured(): void
     {
         $this->db->{'e'.'xec'}(
-            "INSERT INTO settings (tenant_id, key, value, type) VALUES "
-            . "(NULL, 'oidc.enabled', '1', 'bool'), "
-            . "(NULL, 'oidc.client_id', 'test-client', 'string'), "
-            . "(NULL, 'oidc.client_secret', 'test-secret', 'string'), "
-            . "(NULL, 'oidc.discovery_url', 'https://idp.example/.well-known/openid-configuration', 'string'), "
-            . "(NULL, 'oidc.redirect_uri', 'https://ipam.example/oidc_callback.php', 'string')"
+            "INSERT INTO settings (tenant_id, key, value) VALUES "
+            . "(NULL, 'oidc.enabled', '1'), "
+            . "(NULL, 'oidc.client_id', 'test-client'), "
+            . "(NULL, 'oidc.client_secret', 'test-secret'), "
+            . "(NULL, 'oidc.discovery_url', 'https://idp.example/.well-known/openid-configuration'), "
+            . "(NULL, 'oidc.redirect_uri', 'https://ipam.example/oidc_callback.php')"
         );
         ipam_setting_cache_bust();
     }
