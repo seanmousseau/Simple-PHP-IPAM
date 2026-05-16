@@ -1130,7 +1130,15 @@ function ipam_migrations(): array
                 };
                 if ($same) continue;
 
-                ipam_setting_set($db, $key, $cfgVal, null);
+                // $validate=false: this replays values from an arbitrarily
+                // old config.php. A legacy install can hold a value the
+                // current ipam_setting_validate() would reject (e.g. a URL
+                // that pre-dates FILTER_VALIDATE_URL tightening, or an int
+                // outside today's min/max). Importing it must not hard-fail
+                // the upgrade — the value is preserved as-is and the operator
+                // can correct it later in the Settings UI. This is the ONLY
+                // call site that opts out of the data-layer gate (Finding 1).
+                ipam_setting_set($db, $key, $cfgVal, null, null, false);
                 $imported++;
             }
 

@@ -157,17 +157,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // #1121: see formOverrides note above — value, not presence.
             $newValue = (to_str($_POST[$fieldName] ?? '0') === '1');
         } elseif ($storageType === 'int') {
-            // Integer-FORMAT guard stays in the handler: ipam_setting_validate()'s
-            // `int` case runs is_numeric(), which would let "1.5" through and
-            // then (int)-truncate it. Reject anything that is not a clean
-            // optionally-signed integer here so "abc"/"1.5" cannot silently
-            // coerce to 0/1 and save. ipam_setting_validate() owns min/max.
+            // Coerce only — the integer-format check now lives wholly in
+            // ipam_setting_validate()'s `int` branch (Finding 4), which
+            // rejects non-integer input ('abc', '1.5') with a clear message.
+            // An empty field is treated as 0; any other raw string is passed
+            // verbatim to the validator below, which owns format + min/max.
             $raw = trim(to_str($_POST[$fieldName] ?? ''));
-            if ($raw !== '' && !preg_match('/^-?\d+$/', $raw)) {
-                $fieldErrors[$key] = 'Must be an integer.';
-                continue;
-            }
-            $newValue = $raw === '' ? 0 : (int)$raw;
+            $newValue = $raw === '' ? 0 : $raw;
         } elseif ($storageType === 'json') {
             $raw = to_str($_POST[$fieldName] ?? '');
             if (trim($raw) === '') {

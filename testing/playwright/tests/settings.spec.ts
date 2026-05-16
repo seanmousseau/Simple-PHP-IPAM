@@ -193,7 +193,10 @@ test.describe('Settings page', () => {
     // Validation error path re-renders the page (HTTP 200), not a redirect.
     expect(response.status()).toBe(200);
     const body = await response.text();
-    expect(body).toContain('Must be one of the listed values.');
+    // Task 5.2c routed enum validation through ipam_setting_validate(), whose
+    // enum branch emits "Must be one of: <comma-list>." — assert on the stable
+    // prefix so the test survives changes to the option set.
+    expect(body).toContain('Must be one of:');
 
     // Guarantee nothing persisted: reload the page and the select value must
     // still be one of the known-good entries, never the forged string.

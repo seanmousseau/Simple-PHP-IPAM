@@ -1447,10 +1447,17 @@ function ipam_setting_validate(string $logicalType, mixed $value, array $def): t
 {
     switch ($logicalType) {
         case 'int':
-            if (!is_numeric($value)) {
-                return 'Must be a number.';
+            // Reject non-integer input at the root (Finding 4): is_numeric()
+            // alone would let '1.5' through and then (int)-truncate it. Accept
+            // a native int or an integer-valued string ('42'); reject floats,
+            // fractional strings ('1.5'), and non-numeric strings ('abc').
+            if (is_int($value)) {
+                $n = $value;
+            } elseif (is_string($value) && preg_match('/^\s*-?\d+\s*$/', $value)) {
+                $n = (int) trim($value);
+            } else {
+                return 'Must be an integer.';
             }
-            $n = (int) $value;
             if (isset($def['min']) && is_numeric($def['min']) && $n < (int) $def['min']) {
                 return 'Must be at least ' . (int) $def['min'] . '.';
             }
@@ -1777,11 +1784,45 @@ function ipam_setting(string $key, mixed $default = null, ?int $tenantId = null)
  * When $tenantId is null the row is written to the global layer (tenant_id IS
  * NULL). When non-null it is written to the tenant-scoped layer. In v3.x all
  * callers pass null (the default), so existing behaviour is unchanged.
+ *
+ * Data-layer validation (architecture review Finding 1): when the key has a
+ * registry definition the value is validated against its logical type via
+ * ipam_setting_validate() *before* encoding/persisting. An invalid value
+ * raises \InvalidArgumentException carrying the validator's human-readable
+ * message. A key with no definition has no logical type and is written
+ * through unvalidated (the historic behaviour for unknown/synthetic keys).
+ *
+ * The $validate opt-out is a narrow, greppable escape hatch for the legacy
+ * config-import migration (3.0.0-config-import) which replays values from an
+ * arbitrarily old config.php — a value that pre-dates the current validator
+ * must still be importable, or the upgrade would hard-fail. Only that one
+ * call site passes false; every other caller gets the gate.
  */
-function ipam_setting_set(PDO $db, string $key, mixed $value, ?int $userId = null, ?int $tenantId = null): void
-{
+function ipam_setting_set(
+    PDO $db,
+    string $key,
+    mixed $value,
+    ?int $userId = null,
+    ?int $tenantId = null,
+    bool $validate = true
+): void {
     $definitions = ipam_setting_definitions();
     $def         = $definitions[$key] ?? null;
+
+    // Data-layer type gate. A key with no registry definition has no logical
+    // type, so validation is a no-op pass — never a throw — for unknown keys.
+    if ($validate && is_array($def)) {
+        $logicalType = is_string($def['logical_type'] ?? null) && $def['logical_type'] !== ''
+            ? $def['logical_type']
+            : (is_string($def['storage_type'] ?? null) ? $def['storage_type'] : 'string');
+        $verdict = ipam_setting_validate($logicalType, $value, $def);
+        if ($verdict !== true) {
+            throw new \InvalidArgumentException(
+                "Invalid value for setting '{$key}': {$verdict}"
+            );
+        }
+    }
+
     $storageType = (is_array($def) && is_string($def['storage_type'] ?? null) && $def['storage_type'] !== '')
         ? $def['storage_type']
         : ipam_setting_infer_type($value);

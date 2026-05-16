@@ -87,20 +87,33 @@ class SettingsValidateDispatchWiringTest extends TestCase
         );
     }
 
-    public function testIntegerFormatGuardStaysInline(): void
+    public function testIntegerFormatCheckOwnedByValidator(): void
     {
-        // ipam_setting_validate()'s int case runs is_numeric(), which accepts
-        // "1.5"; the handler must still reject non-integer formats so a bad
-        // value cannot silently coerce to an int and save.
-        $this->assertStringContainsString(
+        // v3.30.0 refactor wave 1 (architecture review Finding 4): the int
+        // FORMAT check is now wholly owned by ipam_setting_validate(). Its
+        // `int` branch rejects non-integer input ('abc', '1.5') outright; the
+        // redundant inline preg_match guard has been removed from the handler.
+        $this->assertStringNotContainsString(
             "preg_match('/^-?\\d+\$/', \$raw)",
             $this->settingsPhp,
-            'Task 5.2c: the integer-FORMAT guard must remain in the handler.'
+            'Finding 4: the redundant inline integer-format guard must be removed.'
         );
-        $this->assertStringContainsString(
-            "'Must be an integer.'",
-            $this->settingsPhp,
-            'Task 5.2c: the integer-format reject message must remain in the handler.'
+        $def = ['min' => 0, 'max' => 100];
+        $this->assertIsString(
+            ipam_setting_validate('int', '1.5', $def),
+            'Finding 4: ipam_setting_validate() must reject a fractional string.'
+        );
+        $this->assertIsString(
+            ipam_setting_validate('int', 'abc', $def),
+            'Finding 4: ipam_setting_validate() must reject a non-numeric string.'
+        );
+        $this->assertTrue(
+            ipam_setting_validate('int', '42', $def),
+            'Finding 4: ipam_setting_validate() must accept an integer-valued string.'
+        );
+        $this->assertTrue(
+            ipam_setting_validate('int', 42, $def),
+            'Finding 4: ipam_setting_validate() must accept a native int.'
         );
     }
 
