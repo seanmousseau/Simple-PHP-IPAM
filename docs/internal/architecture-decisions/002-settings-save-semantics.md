@@ -26,6 +26,16 @@
 > `set_theme.php`, drop the `users.theme` column. The Recommendation (point 3)
 > and the Implications file list below are corrected accordingly. Task 5.3
 > resumes on this basis.
+>
+> **Endpoint correction (2026-05-16):** earlier revisions of this ADR (Option B
+> mechanism, Recommendation, Implications) described the write endpoint as a
+> resource in `api.php` / a `/api/user_preference` URL. That is **wrong** and
+> would violate CLAUDE.md invariant #4: `api.php` is the Bearer-only,
+> CSRF-exempt surface and must stay that way. The preference write endpoint is
+> instead a **dedicated session-authenticated, CSRF-required JSON endpoint file**
+> (`user_preference.php` at the web root) that supersedes `set_theme.php`. All
+> "`api.php`" / "`/api/user_preference`" references below should be read as
+> "`user_preference.php`".
 
 ---
 
@@ -142,7 +152,7 @@ The decision drivers tip toward B because:
 
 2. **The atomicity guarantee is preserved.** Bug V's root cause was "two paths writing to the same logical state." B's split makes that impossible by construction: the instant-save path writes to a different table, the group-form path writes to `settings`. Two writes can't race because they're not writing the same rows.
 
-3. **The user-preferences split is a real architectural improvement on its own merits.** A consolidated `user_preferences` table gives per-user view preferences one schema-defined home. *(Correction 2026-05-16: theme is **already** a per-user preference — the `users.theme` column, written by `set_theme.php` — not a `settings` row. The improvement is consolidating that ad-hoc column + bespoke endpoint into the generic `user_preferences` table + `/api/user_preference`, not "splitting it out of `settings`.")*
+3. **The user-preferences split is a real architectural improvement on its own merits.** A consolidated `user_preferences` table gives per-user view preferences one schema-defined home. *(Correction 2026-05-16: theme is **already** a per-user preference — the `users.theme` column, written by `set_theme.php` — not a `settings` row. The improvement is consolidating that ad-hoc column + bespoke endpoint into the generic `user_preferences` table + `user_preference.php`, not "splitting it out of `settings`.")*
 
 4. **B is forward-compatible with A.** If user_preferences turns out to be more trouble than the UX win is worth, we can collapse back to A in a future release by absorbing user_preferences rows back into `settings` (single migration) and re-locking. A → B → A round-tripping is straightforward; A → C → A isn't.
 
@@ -156,7 +166,7 @@ If accepted:
 
 - **GH issues to open (milestone #56 unless noted):**
   - `feat(prefs): introduce user_preferences table (key/value, user-scoped, no `type` column — schema-defined)` — schema mirrors the v3.30.0 `setting_definitions` shape but is user-scoped not global
-  - `feat(prefs): /api/user_preference endpoint — POST {key, value}, auth = current user, no admin gate, atomic single-row UPSERT`
+  - `feat(prefs): user_preference.php endpoint — dedicated session-authed + CSRF-required JSON file, POST {key, value}, auth = current user, no admin gate, atomic single-row UPSERT (NOT a resource in api.php — invariant #4)`
   - `refactor: move site_theme + future "view preferences" out of settings into user_preferences`
   - `tests(prefs): per-key instant-save round-trip; verify writes never touch settings table; CSRF + auth gate`
   - `docs(internal): security-model.md — user_preferences is user-scoped, no admin gate, distinct trust boundary from settings`
@@ -167,8 +177,8 @@ If accepted:
   - `Simple-PHP-IPAM/schema.sql` + .mysql + .pgsql — new `user_preferences` table
   - `Simple-PHP-IPAM/migrations.php` — new migration closure (plus a `users.theme` → `user_preferences` backfill if re-opened Q2 lands on option (a))
   - `Simple-PHP-IPAM/lib/user_preferences.php` (new module per ADR-004 decomposition) — `ipam_user_preference_get/set` helpers
-  - `Simple-PHP-IPAM/api.php` — new resource `user_preference` (POST/GET only, no admin required)
-  - `Simple-PHP-IPAM/set_theme.php` — retired / superseded by `/api/user_preference` (if Q2 option (a))
+  - `Simple-PHP-IPAM/user_preference.php` — new dedicated endpoint file (POST/GET only, session-authed, CSRF-required for POST, no admin gate). **Not** a resource in `api.php` — `api.php` is the Bearer-only, CSRF-exempt surface (CLAUDE.md invariant #4) and stays that way.
+  - `Simple-PHP-IPAM/set_theme.php` — retired / superseded by `user_preference.php` (Q2 option (a))
   - `Simple-PHP-IPAM/assets/app.js` — `cycleTheme()` re-points from `set_theme.php` to the new endpoint
   - `Simple-PHP-IPAM/lib/presentation.php` — `page_header()` theme read sources from `user_preferences` instead of `$_SESSION['user_theme']` / `users.theme`
 - **Schema migrations needed in v3.30.0:** new `user_preferences` table; whether existing `users.theme` data is backfilled into it depends on the re-opened Open Question 2.
