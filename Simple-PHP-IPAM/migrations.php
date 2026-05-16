@@ -4270,6 +4270,110 @@ function ipam_migrations(): array
                 $db->exec("ALTER TABLE settings DROP COLUMN type");
             }
         },
+
+        '3.30.0-user-preferences' => static function (PDO $db): void {
+            $driverRaw = $db->getAttribute(PDO::ATTR_DRIVER_NAME);
+            $driver = is_string($driverRaw) ? $driverRaw : '';
+
+            // 1. CREATE TABLE IF NOT EXISTS — mirrors schema.{driver}.sql.
+            //    MySQL/Postgres fresh installs ship the table directly from
+            //    their schema file and skip this closure via the pre-seed in
+            //    schema_migrations. SQLite fresh installs and upgrades on all
+            //    three engines reach here; IF NOT EXISTS makes it a no-op when
+            //    the schema file already provided the table.
+            if ($driver === 'sqlite') {
+                $db->exec(
+                    "CREATE TABLE IF NOT EXISTS user_preferences ("
+                    . "  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,"
+                    . "  key        TEXT NOT NULL,"
+                    . "  value      TEXT,"
+                    . "  updated_at TEXT NOT NULL DEFAULT (datetime('now')),"
+                    . "  PRIMARY KEY (user_id, key)"
+                    . ")"
+                );
+            } elseif ($driver === 'mysql') {
+                $db->exec(
+                    "CREATE TABLE IF NOT EXISTS user_preferences ("
+                    . "  user_id    BIGINT UNSIGNED NOT NULL,"
+                    . "  `key`      VARCHAR(191) COLLATE utf8mb4_bin NOT NULL,"
+                    . "  value      TEXT NULL,"
+                    . "  updated_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),"
+                    . "  PRIMARY KEY (user_id, `key`),"
+                    . "  CONSTRAINT fk_user_prefs_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE"
+                    . ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+                );
+            } else { // pgsql
+                $db->exec(
+                    "CREATE TABLE IF NOT EXISTS user_preferences ("
+                    . '  user_id    BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,'
+                    . '  "key"      TEXT COLLATE "C" NOT NULL,'
+                    . "  value      TEXT NULL,"
+                    . "  updated_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),"
+                    . '  PRIMARY KEY (user_id, "key")'
+                    . ")"
+                );
+            }
+
+            // 2. Backfill: copy every existing users.theme value into
+            //    user_preferences under key 'theme', one row per user.
+            //    The WHERE NOT EXISTS guard makes repeated replay safe —
+            //    a row already written by a previous run is left unchanged.
+            //    users.theme is NOT NULL DEFAULT 'auto' so every user has a
+            //    value; backfill all of them verbatim. The users.theme column
+            //    itself is dropped in Task 5.3 chunk 4 once readers are
+            //    repointed (ADR-002).
+            //
+            //    Guard: some migration-test fixtures create a minimal users
+            //    table without the theme column (they mark 1.11 as already
+            //    applied but don't actually run it). Skip the backfill when
+            //    the column is absent rather than fail.
+            $nowExpr = match ($driver) {
+                'mysql' => 'UTC_TIMESTAMP()',
+                'pgsql' => "NOW() AT TIME ZONE 'utc'",
+                default => "datetime('now')", // sqlite
+            };
+            $keyCol = match ($driver) {
+                'mysql' => '`key`',
+                'pgsql' => '"key"',
+                default => 'key', // sqlite
+            };
+
+            // Probe for users.theme before backfilling.
+            $hasTheme = false;
+            if ($driver === 'sqlite') {
+                $cols = ($db->query("PRAGMA table_info(users)")
+                    ?: throw new \RuntimeException('PRAGMA table_info(users) failed'))
+                    ->fetchAll();
+                foreach ($cols as $col) {
+                    if (($col['name'] ?? null) === 'theme') {
+                        $hasTheme = true;
+                        break;
+                    }
+                }
+            } else {
+                $schemaFn = $driver === 'mysql' ? 'DATABASE()' : 'current_schema()';
+                $chk = $db->prepare(
+                    "SELECT COUNT(*) FROM information_schema.columns "
+                    . "WHERE table_name = 'users' AND column_name = 'theme' "
+                    . "AND table_schema = {$schemaFn}"
+                );
+                $chk->execute();
+                $hasTheme = (int) $chk->fetchColumn() > 0;
+            }
+            if (!$hasTheme) {
+                return;
+            }
+
+            $db->exec(
+                "INSERT INTO user_preferences (user_id, {$keyCol}, value, updated_at) "
+                . "SELECT u.id, 'theme', u.theme, {$nowExpr} FROM users u "
+                . "WHERE NOT EXISTS ("
+                . "  SELECT 1 FROM user_preferences up "
+                . "  WHERE up.user_id = u.id AND up.{$keyCol} = 'theme'"
+                . ")"
+            );
+        },
+
     ];
 }
 

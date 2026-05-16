@@ -847,6 +847,24 @@ CREATE TABLE IF NOT EXISTS backup_state (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- ---------------------------------------------------------------------------
+-- user_preferences (v3.30.0, ADR-002 § user_preferences) — user-scoped
+-- preference store. Replaces the per-column approach (users.theme) for user
+-- UI preferences; keyed by (user_id, key) so each user can have an arbitrary
+-- set of named preferences. users.theme stays until Task 5.3 chunk 4 drops
+-- it. Composite PK on (user_id, key) is sufficient — both columns are NOT
+-- NULL so no partial-index workaround is needed (contrast settings, where
+-- tenant_id IS NULL for global rows).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS user_preferences (
+  user_id    BIGINT UNSIGNED NOT NULL,
+  `key`      VARCHAR(191) COLLATE utf8mb4_bin NOT NULL,
+  value      TEXT NULL,
+  updated_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  PRIMARY KEY (user_id, `key`),
+  CONSTRAINT fk_user_prefs_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- ---------------------------------------------------------------------------
 -- Pre-seed schema_migrations with every historical version so apply_migrations
 -- is a no-op on fresh MySQL installs. New migrations added in v2.10.0+ must
 -- be idempotent and safe to run on MySQL, since they WILL execute here.
@@ -916,6 +934,9 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.26.0-vault-key-to-settings'),
   ('3.27.0-step-up-policy-settings'),
   ('3.27.7-webhook-secret-encrypt'),
-  ('3.28.0-state-tables');
+  ('3.28.0-state-tables'),
+  ('3.30.0-setting-definitions'),
+  ('3.30.0-drop-settings-type'),
+  ('3.30.0-user-preferences');
 
 SET FOREIGN_KEY_CHECKS = 1;

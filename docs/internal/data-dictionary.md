@@ -59,6 +59,7 @@ Reference for every table, column, foreign key, and uniqueness constraint in the
 - [`backup_runs`](#backup_runs)
 - [`rate_limit_dampener`](#rate_limit_dampener)
 - [`backup_state`](#backup_state)
+- [`user_preferences`](#user_preferences)
 
 ## `users`
 
@@ -813,4 +814,17 @@ Reference for every table, column, foreign key, and uniqueness constraint in the
 | `k` | `TEXT` | `VARCHAR(64)` | `VARCHAR(64)` | NO |  |  |
 | `payload_json` | `TEXT` | `TEXT` | `TEXT` | NO | `'{}'` |  |
 | `updated_at` | `TEXT` | `DATETIME` | `TIMESTAMP` | NO | `datetime('now')` |  |
+
+## `user_preferences`
+
+| Column | SQLite | MySQL | PostgreSQL | Null | Default | Notes |
+|---|---|---|---|---|---|---|
+| `user_id` | `INTEGER` | `BIGINT UNSIGNED` | `BIGINT` | NO |  |  |
+| `key` | `—` | `—` | `—` | NO |  |  |
+| `value` | `TEXT` | `TEXT` | `TEXT` | YES |  |  |
+| `updated_at` | `TEXT` | `DATETIME` | `TIMESTAMP` | NO | `datetime('now')` |  |
+
+**Foreign keys**
+
+- `user_id` → `users.id` ON DELETE CASCADE
 

@@ -721,3 +721,18 @@ CREATE TABLE IF NOT EXISTS backup_state (
   updated_at   TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (scope, k)
 );
+
+-- v3.30.0 (ADR-002 § user_preferences): user-scoped preference store.
+-- Replaces the per-column approach (users.theme) for user UI preferences;
+-- keyed by (user_id, key) so each user can have an arbitrary set of named
+-- preferences. users.theme stays until Task 5.3 chunk 4 drops it.
+-- Composite PK on (user_id, key) is sufficient — both columns are NOT NULL
+-- so no partial-index workaround is needed (contrast settings, where
+-- tenant_id IS NULL for global rows).
+CREATE TABLE IF NOT EXISTS user_preferences (
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  key        TEXT NOT NULL,
+  value      TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (user_id, key)
+);

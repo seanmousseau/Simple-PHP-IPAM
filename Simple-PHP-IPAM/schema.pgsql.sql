@@ -848,6 +848,23 @@ CREATE TABLE IF NOT EXISTS backup_state (
 );
 
 -- ---------------------------------------------------------------------------
+-- user_preferences (v3.30.0, ADR-002 § user_preferences) — user-scoped
+-- preference store. Replaces the per-column approach (users.theme) for user
+-- UI preferences; keyed by (user_id, key) so each user can have an arbitrary
+-- set of named preferences. users.theme stays until Task 5.3 chunk 4 drops
+-- it. Composite PK on (user_id, key) is sufficient — both columns are NOT
+-- NULL so no partial-index workaround is needed (contrast settings, where
+-- tenant_id IS NULL for global rows).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS user_preferences (
+  user_id    BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  "key"      TEXT COLLATE "C" NOT NULL,
+  value      TEXT NULL,
+  updated_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
+  PRIMARY KEY (user_id, "key")
+);
+
+-- ---------------------------------------------------------------------------
 -- Pre-seed schema_migrations with every historical version so apply_migrations
 -- is a no-op on fresh Postgres installs. New migrations added in v2.11.0+
 -- must be idempotent and safe to run on Postgres, since they WILL execute
@@ -919,5 +936,8 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.26.0-vault-key-to-settings'),
   ('3.27.0-step-up-policy-settings'),
   ('3.27.7-webhook-secret-encrypt'),
-  ('3.28.0-state-tables')
+  ('3.28.0-state-tables'),
+  ('3.30.0-setting-definitions'),
+  ('3.30.0-drop-settings-type'),
+  ('3.30.0-user-preferences')
 ON CONFLICT (version) DO NOTHING;
