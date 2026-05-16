@@ -180,17 +180,34 @@ CREATE TABLE setting_definitions (
   label          TEXT NOT NULL,
   description    TEXT NOT NULL DEFAULT '',
   type           TEXT NOT NULL,        -- 'string','int','bool','json','enum','secret','url','email','timezone','cidr','datetime'
-  subtype        TEXT,                 -- nullable; for type='enum' this is unused
   default_value  TEXT,
   group_name     TEXT NOT NULL,
   is_sensitive   INTEGER NOT NULL DEFAULT 0,
   is_hidden      INTEGER NOT NULL DEFAULT 0,
   options_json   TEXT,                 -- for type='enum': JSON array of allowed values OR '@<resolver>' sentinel
   config_key     TEXT,                 -- mirror name in config.php, nullable
-  validator      TEXT,                 -- nullable, names a PHP validator (kept light — most validation derives from type+subtype)
   ordering       INTEGER NOT NULL DEFAULT 0
 );
 ```
+
+> **Amendment (2026-05-16, Sean) — as-built v3.30.0 schema differs from the block above.**
+> An architecture review during v3.30.0 execution found `subtype` and `validator`
+> were speculative scaffolding (shipped seeded `NULL`, no reader, no concrete
+> design — `validator` was only ever listed as a *con* of Option B, `subtype` was
+> never specified). Carrying unused columns in a frozen migration across releases
+> is avoidable tech debt, so:
+> - **`subtype` and `validator` are dropped.** They will be re-added *with a real
+>   design* if and when a release concretely needs them.
+> - **Four columns are added** to carry the validation/render metadata the v3.29.0
+>   registry actually uses: `min_value`, `max_value` (numeric bounds — a float type,
+>   so float-bounded settings such as `recaptcha_enterprise.score_threshold` fit),
+>   `is_multiline`, `is_deprecated`.
+>
+> The 11-value `type` column and the dispatch model are unchanged. The in-memory
+> definition array returned by `ipam_setting_definitions()` exposes the 11-value
+> type as `logical_type` and the 4-value storage type as `storage_type` (never a
+> bare `type` key — that name is reserved for the DB column to avoid a same-name /
+> different-meaning collision).
 
 `settings` table loses the `type` column (engine-portable via "create new table, INSERT-SELECT, drop old, rename" on SQLite; ALTER on mysql/pgsql).
 
