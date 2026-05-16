@@ -4002,6 +4002,10 @@ function ipam_migrations(): array
                     . "  group_name     TEXT NOT NULL,"
                     . "  is_sensitive   INTEGER NOT NULL DEFAULT 0,"
                     . "  is_hidden      INTEGER NOT NULL DEFAULT 0,"
+                    . "  min_value      INTEGER,"
+                    . "  max_value      INTEGER,"
+                    . "  is_multiline   INTEGER NOT NULL DEFAULT 0,"
+                    . "  is_deprecated  INTEGER NOT NULL DEFAULT 0,"
                     . "  options_json   TEXT,"
                     . "  config_key     TEXT,"
                     . "  validator      TEXT,"
@@ -4020,6 +4024,10 @@ function ipam_migrations(): array
                     . "  group_name    VARCHAR(64) NOT NULL,"
                     . "  is_sensitive  TINYINT(1) UNSIGNED NOT NULL DEFAULT 0,"
                     . "  is_hidden     TINYINT(1) UNSIGNED NOT NULL DEFAULT 0,"
+                    . "  min_value     INT NULL,"
+                    . "  max_value     INT NULL,"
+                    . "  is_multiline  TINYINT(1) UNSIGNED NOT NULL DEFAULT 0,"
+                    . "  is_deprecated TINYINT(1) UNSIGNED NOT NULL DEFAULT 0,"
                     . "  options_json  TEXT NULL,"
                     . "  config_key    VARCHAR(191) NULL,"
                     . "  validator     VARCHAR(191) NULL,"
@@ -4039,6 +4047,10 @@ function ipam_migrations(): array
                     . "  group_name    TEXT NOT NULL,"
                     . "  is_sensitive  SMALLINT NOT NULL DEFAULT 0,"
                     . "  is_hidden     SMALLINT NOT NULL DEFAULT 0,"
+                    . "  min_value     INTEGER NULL,"
+                    . "  max_value     INTEGER NULL,"
+                    . "  is_multiline  SMALLINT NOT NULL DEFAULT 0,"
+                    . "  is_deprecated SMALLINT NOT NULL DEFAULT 0,"
                     . "  options_json  TEXT NULL,"
                     . "  config_key    TEXT NULL,"
                     . "  validator     TEXT NULL,"
@@ -4068,18 +4080,54 @@ function ipam_migrations(): array
             $stmt = $db->prepare(
                 "INSERT INTO setting_definitions "
                 . "({$keyCol}, label, description, type, subtype, default_value, "
-                . " group_name, is_sensitive, is_hidden, options_json, config_key, "
+                . " group_name, is_sensitive, is_hidden, min_value, max_value, "
+                . " is_multiline, is_deprecated, options_json, config_key, "
                 . " validator, ordering) "
-                . "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) {$ignore}"
+                . "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) {$ignore}"
             );
+
+            // ADR-001 § Implications: derive the 11-value logical type from the
+            // registry entry. The base type ($def['type']) is still one of
+            // string/int/bool/json (matching the settings.type CHECK); the
+            // logical type layers enum/secret/timezone/url/email/cidr on top so
+            // setting_definitions is authoritative without a PHP context. Pure
+            // function of the $def array — no external dependencies.
+            $logicalType = static function (string $key, array $def): string {
+                $base = is_string($def['type'] ?? null) ? $def['type'] : 'string';
+                if (!empty($def['sensitive'])) {
+                    return 'secret';
+                }
+                if (array_key_exists('options', $def)) {
+                    return ($def['options'] ?? null) === '@timezone' ? 'timezone' : 'enum';
+                }
+                // Reclassify to url/email/cidr only where the key name makes the
+                // semantic type unambiguous. Datetime: no registry entry today.
+                if ($base !== 'string') {
+                    return $base;
+                }
+                // Allow-list classifies the v3.29.0 registry snapshot this
+                // frozen migration seeds. Settings added in later releases are
+                // classified by their own future migrations, so this list is
+                // intentionally not kept in sync with the live registry.
+                return match ($key) {
+                    'oidc.discovery_url', 'oidc.redirect_uri' => 'url',
+                    'smtp.from_address', 'alert.email'        => 'email',
+                    'security.proxy_trust_cidrs'              => 'cidr',
+                    default                                   => $base,
+                };
+            };
 
             foreach (ipam_setting_definitions() as $key => $def) {
                 $label       = is_string($def['label'] ?? null) ? $def['label'] : (string) $key;
                 $description = is_string($def['description'] ?? null) ? $def['description'] : '';
-                $type        = is_string($def['type'] ?? null) ? $def['type'] : 'string';
+                $type        = $logicalType((string) $key, $def);
                 $group       = is_string($def['group'] ?? null) ? $def['group'] : 'general';
                 $sensitive   = !empty($def['sensitive']) ? 1 : 0;
                 $hidden      = !empty($def['hidden']) ? 1 : 0;
+                $multiline   = !empty($def['multiline']) ? 1 : 0;
+                $deprecated  = !empty($def['deprecated']) ? 1 : 0;
+                $minValue    = (isset($def['min']) && is_numeric($def['min'])) ? (int) $def['min'] : null;
+                $maxValue    = (isset($def['max']) && is_numeric($def['max'])) ? (int) $def['max'] : null;
 
                 // default_value: cast scalars to string; bools to '1'/'0';
                 // arrays JSON-encode (matches the 'json' type contract).
@@ -4131,11 +4179,15 @@ function ipam_migrations(): array
                     $label,
                     $description,
                     $type,
-                    null,       // subtype — populated by later task / ADR-001 follow-up
+                    null,       // subtype — reserved; populated by a later task
                     $default,
                     $group,
                     $sensitive,
                     $hidden,
+                    $minValue,
+                    $maxValue,
+                    $multiline,
+                    $deprecated,
                     $options,
                     $configKey,
                     null,       // validator — populated later
