@@ -4,7 +4,7 @@
  * flake across environments.
  *
  * Covers (v2.5.0):
- *   - Theme switching light/dark/auto via set_theme.php
+ *   - Theme switching light/dark/auto via user_preference.php
  *   - Sticky table headers on subnets.php (regression for 100cc95)
  *   - Status badge colour tokens on addresses.php
  *   - .util-bar fill width obeys inline style
@@ -47,20 +47,20 @@ adminTest.describe('CSS regression', () => {
   adminTest('theme toggle persists html[data-theme] across page navigation', async ({ adminPage: page }) => {
     await page.goto('dashboard.php');
 
-    // Get current CSRF token from the page (set_theme.php does not require CSRF,
-    // but try to grab one for forward-compatibility; skip gracefully if absent)
-    const csrfToken = await page.locator('input[name="csrf"]').first().inputValue().catch(() => '');
+    // Get current CSRF token from the page meta tag
+    const csrfToken = await page.locator('meta[name="ipam-csrf"]').getAttribute('content').catch(() => '');
     if (!csrfToken) {
       adminTest.skip(true, 'could not get CSRF token');
       return;
     }
 
-    // Set theme to dark via set_theme.php
+    // Set theme to dark via user_preference.php
     await page.evaluate(async (csrf: string) => {
       const fd = new FormData();
       fd.append('csrf', csrf);
-      fd.append('theme', 'dark');
-      await fetch('set_theme.php', { method: 'POST', body: fd });
+      fd.append('key', 'theme');
+      fd.append('value', 'dark');
+      await fetch('user_preference.php', { method: 'POST', body: fd });
     }, csrfToken);
 
     // Navigate to another page and check html[data-theme]
@@ -69,13 +69,14 @@ adminTest.describe('CSS regression', () => {
     expect(theme).toBe('dark');
 
     // Restore to auto
-    const csrfToken2 = await page.locator('input[name="csrf"]').first().inputValue().catch(() => '');
+    const csrfToken2 = await page.locator('meta[name="ipam-csrf"]').getAttribute('content').catch(() => '');
     if (csrfToken2) {
       await page.evaluate(async (csrf: string) => {
         const fd = new FormData();
         fd.append('csrf', csrf);
-        fd.append('theme', 'auto');
-        await fetch('set_theme.php', { method: 'POST', body: fd });
+        fd.append('key', 'theme');
+        fd.append('value', 'auto');
+        await fetch('user_preference.php', { method: 'POST', body: fd });
       }, csrfToken2);
     }
   });

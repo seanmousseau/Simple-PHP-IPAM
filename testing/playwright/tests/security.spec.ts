@@ -31,19 +31,19 @@ test.describe('API rate limit', () => {
   });
 });
 
-test.describe('set_theme.php CSRF', () => {
+test.describe('user_preference.php CSRF', () => {
   test('rejects POST without csrf token (#879)', async ({ page, request }) => {
     // Authenticate so we get past the is_logged_in() gate first; the csrf
     // check should still fire and return 403.
     await login(page, ADMIN_USER, ADMIN_PASS);
     const cookies = await page.context().cookies();
     const cookieHeader = cookies.map(c => `${c.name}=${c.value}`).join('; ');
-    const resp = await request.post('set_theme.php', {
+    const resp = await request.post('user_preference.php', {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         'Cookie': cookieHeader,
       },
-      data: 'theme=dark',
+      data: 'key=theme&value=dark',
       maxRedirects: 0,
     });
     expect(resp.status()).toBe(403);

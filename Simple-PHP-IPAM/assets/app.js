@@ -31,10 +31,10 @@
     }
     var csrfMeta = document.querySelector("meta[name='ipam-csrf']");
     var csrfTok = csrfMeta ? csrfMeta.getAttribute("content") || "" : "";
-    fetch("set_theme.php", {
+    fetch("user_preference.php", {
       method: "POST",
       headers: {"Content-Type": "application/x-www-form-urlencoded"},
-      body: "theme=" + encodeURIComponent(t) + "&csrf=" + encodeURIComponent(csrfTok)
+      body: "key=theme&value=" + encodeURIComponent(t) + "&csrf=" + encodeURIComponent(csrfTok)
     }).catch(function() {});
   }
 

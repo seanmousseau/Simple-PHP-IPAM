@@ -135,7 +135,7 @@ function csrf_require(): void
         // Hard 403 — never a redirect. PHP's `header('Location: ...')`
         // silently clobbers the response code to 302, which obscures the
         // CSRF failure and lets API/XHR clients silently follow the
-        // redirect to login.php and re-submit. The set_theme.php B1
+        // redirect to login.php and re-submit. The user_preference.php B1
         // CSRF spec (#879) caught this regression.
         http_response_code(403);
         header('Content-Type: text/plain; charset=utf-8');
@@ -318,9 +318,7 @@ function login_user(int $uid, string $username, string $role, ?PDO $db = null): 
     }
     // Load persisted theme preference so page_header() can prime localStorage
     if ($db !== null) {
-        $st = $db->prepare("SELECT theme FROM users WHERE id = :id");
-        $st->execute([':id' => $uid]);
-        $theme = to_str($st->fetchColumn() ?: 'auto');
+        $theme = to_str(ipam_user_preference_get($db, $uid, 'theme') ?? 'auto');
         $_SESSION['user_theme'] = in_array($theme, ['light', 'dark', 'auto'], true) ? $theme : 'auto';
     }
 }
