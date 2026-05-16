@@ -146,27 +146,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             continue;
         }
 
+        // ADR-001 (sub of #907), plan Task 5.2c: structural value coercion is
+        // still driven by the 4-value STORAGE type ($def['type']); semantic
+        // validation is delegated to ipam_setting_validate() keyed on the
+        // 11-value logical type. The branches below ONLY coerce the posted
+        // value into the typed $newValue — they no longer carry validation.
+        $logicalType = is_string($def['logical_type'] ?? null) ? $def['logical_type'] : $type;
+
         if ($type === 'bool') {
             // #1121: see formOverrides note above — value, not presence.
             $newValue = (to_str($_POST[$fieldName] ?? '0') === '1');
         } elseif ($type === 'int') {
+            // Integer-FORMAT guard stays in the handler: ipam_setting_validate()'s
+            // `int` case runs is_numeric(), which would let "1.5" through and
+            // then (int)-truncate it. Reject anything that is not a clean
+            // optionally-signed integer here so "abc"/"1.5" cannot silently
+            // coerce to 0/1 and save. ipam_setting_validate() owns min/max.
             $raw = trim(to_str($_POST[$fieldName] ?? ''));
             if ($raw !== '' && !preg_match('/^-?\d+$/', $raw)) {
                 $fieldErrors[$key] = 'Must be an integer.';
                 continue;
             }
             $newValue = $raw === '' ? 0 : (int)$raw;
-
-            $min = array_key_exists('min', $def) ? to_int($def['min']) : null;
-            $max = array_key_exists('max', $def) ? to_int($def['max']) : null;
-            if ($min !== null && $newValue < $min) {
-                $fieldErrors[$key] = "Must be at least {$min}.";
-                continue;
-            }
-            if ($max !== null && $newValue > $max) {
-                $fieldErrors[$key] = "Must be at most {$max}.";
-                continue;
-            }
         } elseif ($type === 'json') {
             $raw = to_str($_POST[$fieldName] ?? '');
             if (trim($raw) === '') {
@@ -182,21 +183,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $newValue = to_str($_POST[$fieldName] ?? '');
 
+            // Enum: ipam_setting_validate() checks the SUBMITTED value against
+            // the option domain. It does NOT check the STORED value, so the
+            // "your stored value drifted out of the domain" case stays inline.
             $options = ipam_setting_options($def);
             if ($options !== null) {
-                $currentStr     = is_scalar($current) ? (string)$current : '';
-                $storedValid    = array_key_exists($currentStr, $options);
-                $submittedValid = array_key_exists($newValue, $options);
-
-                if (!$submittedValid) {
-                    $fieldErrors[$key] = 'Must be one of the listed values.';
-                    continue;
-                }
+                $currentStr  = is_scalar($current) ? (string)$current : '';
+                $storedValid = array_key_exists($currentStr, $options);
                 if (!$storedValid && $newValue === $currentStr) {
                     $fieldErrors[$key] = 'Stored value is not a valid option. Select a valid option to fix it.';
                     continue;
                 }
             }
+        }
+
+        // Semantic validation via the logical-type dispatch. Covers int min/max,
+        // enum membership, and the newly-active url/email/timezone/cidr/datetime
+        // format checks. Replaces the inline per-type checks removed above.
+        $valid = ipam_setting_validate($logicalType, $newValue, $def);
+        if ($valid !== true) {
+            $fieldErrors[$key] = $valid;
+            continue;
         }
 
         if ($current === $newValue) continue;
