@@ -37,6 +37,7 @@ ADR-004 wave-1 refactor release. The 12 559-line `lib.php` monolith is decompose
 - **`subnets_handle_post` controller extracted (#919).** The `subnets.php` POST logic is lifted into a dedicated controller function.
 - **`change_password.php` POST actions collapsed to a dispatch table (#920).** Six inline POST action branches are replaced by a dispatch table.
 - **`ipam_table_exists()` helper (#921).** The migration-local `tableExists()` is promoted to a shared helper.
+- **`upgrade.sh` no longer drops `lib/config.php` on upgrade.** The bundle's `rsync` exclude for the install's root `config.php` was unanchored, so it also matched the new `lib/config.php` module — leaving the upgraded install unable to boot. The `config.php` and `data/` excludes are now anchored to the install root (`/config.php`, `/data/`).
 
 ### Internal
 
