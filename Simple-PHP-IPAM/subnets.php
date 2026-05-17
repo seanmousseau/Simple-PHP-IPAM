@@ -391,33 +391,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
 
-        // UPSERT: insert or update the schedule for this subnet.
-        // #380: route through the dialect so future engines pick up the right
-        // upsert + timestamp idioms automatically.
-        $d = ipam_dialect();
-        $upsertClause = $d->upsert('scan_schedules', ['subnet_id'], ['method', 'tcp_port', 'interval_minutes', 'is_active', 'updated_at']);
-        $st = $db->prepare("
-            INSERT INTO scan_schedules (subnet_id, method, tcp_port, interval_minutes, is_active, updated_at)
-            VALUES (:sid, :method, :port, :interval, :active, {$d->now()})
-            $upsertClause
-        ");
-        $st->execute([
-            ':sid'      => $id,
-            ':method'   => $method,
-            ':port'     => $tcpPort,
-            ':interval' => $intervalMins,
-            ':active'   => $isActive,
-        ]);
-        audit($db, 'scan.schedule_update', 'subnet', $id,
-            "method=$method interval={$intervalMins}m active=$isActive");
+        // Shared upsert + audit (v3.30.0 Task 8.1 #917): see ipam_scan_schedule_save().
+        ipam_scan_schedule_save($db, $id, $method, $tcpPort, $intervalMins, $isActive);
         flash_set('Scan schedule saved.');
         header('Location: scan_history.php?subnet_id=' . $id);
         exit;
     } elseif ($action === 'delete_scan_schedule') {
         require_write_access();
         $id = to_int($_POST['id'] ?? 0);
-        $db->prepare("DELETE FROM scan_schedules WHERE subnet_id = :sid")->execute([':sid' => $id]);
-        audit($db, 'scan.schedule_delete', 'subnet', $id, '');
+        ipam_scan_schedule_delete($db, $id);
         flash_set('Scan schedule removed.');
         header('Location: scan_history.php?subnet_id=' . $id);
         exit;

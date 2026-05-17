@@ -6,9 +6,9 @@ declare(strict_types=1);
  *
  * Extracted from scan_history.php in v2.9.0 CR sweep — `scan_history.php` is a
  * read-only history view by project convention (`require_login()` only, no
- * mutation). subnets.php has its own copy of this handler with different field
- * names (`method` / `interval_minutes` vs `scan_method` / `scan_interval`);
- * consolidating the two handlers is out of scope for the v2.9.0 release.
+ * mutation). The save/delete logic is shared with subnets.php via the
+ * `ipam_scan_schedule_save()` / `ipam_scan_schedule_delete()` helpers in lib.php
+ * (consolidated in v3.30.0, #917); only the POST field-name parsing differs.
  */
 require __DIR__ . '/init.php';
 /** @var \PDO $db */
@@ -48,27 +48,12 @@ if ($action === 'save_scan_schedule') {
         exit;
     }
 
-    // #380: dialect-routed upsert so future engines pick up the right idiom.
-    $d = ipam_dialect();
-    $upsertClause = $d->upsert('scan_schedules', ['subnet_id'], ['method', 'tcp_port', 'interval_minutes', 'is_active', 'updated_at']);
-    $db->prepare("
-        INSERT INTO scan_schedules (subnet_id, method, tcp_port, interval_minutes, is_active, updated_at)
-        VALUES (:sid, :method, :port, :interval, :active, {$d->now()})
-        $upsertClause
-    ")->execute([
-        ':sid'      => $sid,
-        ':method'   => $method,
-        ':port'     => $tcpPort,
-        ':interval' => $intervalMins,
-        ':active'   => $isActive,
-    ]);
-    audit($db, 'scan.schedule_update', 'subnet', $sid,
-        "method=$method interval={$intervalMins}m active=$isActive");
+    // Shared upsert + audit (v3.30.0 Task 8.1 #917): see ipam_scan_schedule_save().
+    ipam_scan_schedule_save($db, $sid, $method, $tcpPort, $intervalMins, $isActive);
     flash_set('Scan schedule saved.');
 
 } elseif ($action === 'delete_scan_schedule') {
-    $db->prepare("DELETE FROM scan_schedules WHERE subnet_id = :sid")->execute([':sid' => $sid]);
-    audit($db, 'scan.schedule_delete', 'subnet', $sid, '');
+    ipam_scan_schedule_delete($db, $sid);
     flash_set('Scan schedule removed.');
 }
 

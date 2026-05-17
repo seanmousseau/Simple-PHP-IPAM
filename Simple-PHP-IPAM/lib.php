@@ -6331,6 +6331,56 @@ function ipam_subnet_reserved_bins(PDO $db, int $subnetId): array
 }
 
 /**
+ * Upserts a scan schedule for a subnet and writes the audit trail.
+ *
+ * v3.30.0 Task 8.1 (#917) — consolidates the byte-identical save handler that
+ * scan_schedule_save.php and subnets.php each shipped inline. Callers parse and
+ * validate the POST payload (and own CSRF, flash, and redirect handling); this
+ * helper owns only the dialect-routed upsert and the `scan.schedule_update`
+ * audit event. Inputs are assumed already validated: $method is one of
+ * icmp/tcp/both, $tcpPort is null for icmp, $intervalMins >= 1, $isActive 0|1.
+ *
+ * #380: the upsert + timestamp idioms are routed through the dialect so future
+ * engines pick up the right syntax automatically.
+ */
+function ipam_scan_schedule_save(
+    PDO $db,
+    int $subnetId,
+    string $method,
+    ?int $tcpPort,
+    int $intervalMins,
+    int $isActive
+): void {
+    $d            = ipam_dialect();
+    $upsertClause = $d->upsert('scan_schedules', ['subnet_id'], ['method', 'tcp_port', 'interval_minutes', 'is_active', 'updated_at']);
+    $db->prepare("
+        INSERT INTO scan_schedules (subnet_id, method, tcp_port, interval_minutes, is_active, updated_at)
+        VALUES (:sid, :method, :port, :interval, :active, {$d->now()})
+        $upsertClause
+    ")->execute([
+        ':sid'      => $subnetId,
+        ':method'   => $method,
+        ':port'     => $tcpPort,
+        ':interval' => $intervalMins,
+        ':active'   => $isActive,
+    ]);
+    audit($db, 'scan.schedule_update', 'subnet', $subnetId,
+        "method=$method interval={$intervalMins}m active=$isActive");
+}
+
+/**
+ * Deletes the scan schedule for a subnet and writes the audit trail.
+ *
+ * v3.30.0 Task 8.1 (#917) — the delete twin of ipam_scan_schedule_save().
+ * Callers own CSRF, flash, and redirect handling.
+ */
+function ipam_scan_schedule_delete(PDO $db, int $subnetId): void
+{
+    $db->prepare("DELETE FROM scan_schedules WHERE subnet_id = :sid")->execute([':sid' => $subnetId]);
+    audit($db, 'scan.schedule_delete', 'subnet', $subnetId, '');
+}
+
+/**
  * @return array{scanned:int, up:int, down:int, skipped:int, stale_marked:int}
  */
 function ipam_scan_subnet(PDO $db, int $subnetId, string $method, ?int $tcpPort, int $staleThreshold = 3): array
