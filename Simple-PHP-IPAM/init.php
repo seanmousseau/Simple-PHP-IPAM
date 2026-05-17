@@ -161,6 +161,10 @@ require_once __DIR__ . '/lib/auth.php';
 // Task 6.2). Deps: auth, utils, db. v3.30.0.
 require_once __DIR__ . '/lib/auth_password.php';
 
+// Login/IP rate-limiting + account-lockout layer (ADR-004 Phase 6
+// Task 6.3). Deps: auth, db, audit. v3.30.0.
+require_once __DIR__ . '/lib/auth_rate_limit.php';
+
 // Composer autoloader (#416). Conditional because v2.9.0 ships with an empty
 // require {} — vendor/autoload.php only exists in release tarballs (built by
 // releases/make_releases.sh) and in dev environments where the tester has run
