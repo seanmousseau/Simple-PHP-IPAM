@@ -7,59 +7,55 @@ require_login();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') csrf_require();
 
-$err = '';
-$msg = '';
-$warn = '';
+/**
+ * POST controller for subnets.php. Behaviour-preserving extract of the inline
+ * POST handling block. CSRF is verified by the caller before this runs. The
+ * create/delete/save_scan_schedule/delete_scan_schedule actions terminate the
+ * request directly (header+exit). For the inline 'create'/'update' actions
+ * that fall through (validation errors, overlap confirmation) it returns the
+ * render-facing state — err/msg/warn plus the overlap-confirmation triplet
+ * (overlapWarning/pendingAction/pendingData) the render code replays.
+ *
+ * @param array<string, mixed>            $config
+ * @param array<int, array<string, mixed>> $vlanMap     key = vlans.id
+ * @param array<int, string>              $siteMap      key = sites.id
+ * @param list<int>                       $tagIdsKnown  tag IDs known to exist
+ * @return array{err: string, msg: string, warn: string, overlapWarning: string, pendingAction: string, pendingData: array<string, mixed>}
+ */
+function subnets_handle_post(\PDO $db, array $config, array $vlanMap, array $siteMap, array $tagIdsKnown): array
+{
+    $err = '';
+    $msg = '';
+    $warn = '';
+    $overlapWarning = '';
+    $pendingAction = '';
+    $pendingData = [];
 
-// Flash warnings are now rendered by page_header() via flash_get()
+    /**
+     * Identity passthrough that erases the overlap-confirm payload's literal
+     * array shape down to the heterogeneous bag the render code consumes
+     * (some keys present only for 'create', others only for 'update'). The
+     * render code guards every shape-specific key with isset()/?? — keeping
+     * pendingData as array<string,mixed> is its real contract.
+     *
+     * @param  array<string, mixed> $data
+     * @return array<string, mixed>
+     */
+    $ipam_pending_data = fn(array $data): array => $data;
 
-$st = $db->prepare("SELECT id, name, parent_id FROM sites ORDER BY name ASC");
-$st->execute();
-/** @var list<array<string, mixed>> $siteList */
-$siteList = $st->fetchAll();
+    /** Sanitise POSTed tag_ids[] into a list of int IDs known to exist in tags. */
+    $ipam_parse_subnet_tag_ids = function(array $known): array {
+        $known = array_map('intval', $known);
+        $rawIds = $_POST['tag_ids'] ?? [];
+        if (!is_array($rawIds)) return [];
+        $ids = [];
+        foreach ($rawIds as $v) {
+            $i = (int)to_str(is_scalar($v) ? $v : '');
+            if ($i > 0 && in_array($i, $known, true)) $ids[$i] = true;
+        }
+        return array_keys($ids);
+    };
 
-$siteMap = [];
-foreach ($siteList as $s) {
-    $siteMap[to_int($s['id'])] = to_str($s['name']);
-}
-
-/** @var list<array<string, mixed>> $vlanList */
-$vlanList = ($db->query("SELECT id, vlan_id, name FROM vlans ORDER BY vlan_id ASC") ?: throw new \RuntimeException('Query failed'))->fetchAll();
-/** @var array<int, array<string, mixed>> $vlanMap key = vlans.id */
-$vlanMap = [];
-foreach ($vlanList as $vl) {
-    $vlanMap[to_int($vl['id'])] = $vl;
-}
-
-/** @var list<array<string, mixed>> $vrfList */
-$vrfList = ($db->query("SELECT id, name FROM vrfs ORDER BY name ASC") ?: throw new \RuntimeException('Query failed'))->fetchAll();
-
-$_cSt = $db->query("SELECT id, name, email FROM contacts ORDER BY name");
-/** @var list<array<string, mixed>> $contactList */
-$contactList = $_cSt !== false ? $_cSt->fetchAll() : [];
-
-// #1138: tag picker on subnet add/edit drawer (WR-04). Loaded once for the
-// page so every row's edit button can render the same shared multi-select.
-$_tagSt = $db->query("SELECT id, name, colour FROM tags ORDER BY name");
-/** @var list<array<string, mixed>> $tagList */
-$tagList = $_tagSt !== false ? $_tagSt->fetchAll() : [];
-
-/** Sanitise POSTed tag_ids[] into a list of int IDs known to exist in tags. */
-$ipam_parse_subnet_tag_ids = function(array $known): array {
-    $known = array_map('intval', $known);
-    $rawIds = $_POST['tag_ids'] ?? [];
-    if (!is_array($rawIds)) return [];
-    $ids = [];
-    foreach ($rawIds as $v) {
-        $i = (int)to_str(is_scalar($v) ? $v : '');
-        if ($i > 0 && in_array($i, $known, true)) $ids[$i] = true;
-    }
-    return array_keys($ids);
-};
-/** @var list<int> $tagIdsKnown */
-$tagIdsKnown = array_map(fn($t) => to_int($t['id']), $tagList);
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = to_str($_POST['action'] ?? '');
 
     if ($action === 'create') {
@@ -114,7 +110,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $overlapWarning = subnet_overlap_warning_text($overlaps);
                 $pendingAction = 'create';
                 $pendingContacts = !empty($_POST['contact_id_present']) ? parse_contact_assignments($_POST) : [];
-                $pendingData = [
+                $pendingData = $ipam_pending_data([
                     'cidr'         => $cidr,
                     'description'  => $desc,
                     'notes'        => $notes,
@@ -128,7 +124,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // round-trip so the user's tag picks aren't lost when
                     // they confirm the overlap.
                     'tag_ids'      => $ipam_parse_subnet_tag_ids($tagIdsKnown),
-                ];
+                ]);
             } else {
                 try {
                     // UNIQUE(cidr, vrf_id) treats NULL as distinct from NULL in SQLite,
@@ -274,7 +270,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $overlapWarning = subnet_overlap_warning_text($overlaps);
                 $pendingAction = 'update';
                 $pendingContacts = !empty($_POST['contact_id_present']) ? parse_contact_assignments($_POST) : [];
-                $pendingData = [
+                $pendingData = $ipam_pending_data([
                     'id' => $id, 'cidr' => $cidr, 'description' => $desc, 'notes' => $notes,
                     'site_id' => $siteId ?? 0, 'vlan_fk' => $vlanFk ?? 0, 'vrf_id' => $vrfId ?? 0,
                     'alerts_enabled' => $alertsEnabled,
@@ -288,7 +284,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // lost on the confirm round-trip.
                     'tag_ids'         => !empty($_POST['tag_ids_present']) ? $ipam_parse_subnet_tag_ids($tagIdsKnown) : null,
                     'tag_ids_present' => !empty($_POST['tag_ids_present']) ? 1 : 0,
-                ];
+                ]);
             } else {
                 $dupChk = $db->prepare("SELECT id FROM subnets WHERE cidr = :cidr AND " . ipam_dialect()->null_safe_eq("vrf_id", ":vrf") . " AND id != :self");
                 $dupChk->execute([':cidr' => $normalized, ':vrf' => $vrfId, ':self' => $id]);
@@ -404,6 +400,67 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header('Location: scan_history.php?subnet_id=' . $id);
         exit;
     }
+
+    return [
+        'err'            => $err,
+        'msg'            => $msg,
+        'warn'           => $warn,
+        'overlapWarning' => $overlapWarning,
+        'pendingAction'  => $pendingAction,
+        'pendingData'    => $pendingData,
+    ];
+}
+
+$err = '';
+$msg = '';
+$warn = '';
+$overlapWarning = '';
+$pendingAction = '';
+$pendingData = [];
+
+// Flash warnings are now rendered by page_header() via flash_get()
+
+$st = $db->prepare("SELECT id, name, parent_id FROM sites ORDER BY name ASC");
+$st->execute();
+/** @var list<array<string, mixed>> $siteList */
+$siteList = $st->fetchAll();
+
+$siteMap = [];
+foreach ($siteList as $s) {
+    $siteMap[to_int($s['id'])] = to_str($s['name']);
+}
+
+/** @var list<array<string, mixed>> $vlanList */
+$vlanList = ($db->query("SELECT id, vlan_id, name FROM vlans ORDER BY vlan_id ASC") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+/** @var array<int, array<string, mixed>> $vlanMap key = vlans.id */
+$vlanMap = [];
+foreach ($vlanList as $vl) {
+    $vlanMap[to_int($vl['id'])] = $vl;
+}
+
+/** @var list<array<string, mixed>> $vrfList */
+$vrfList = ($db->query("SELECT id, name FROM vrfs ORDER BY name ASC") ?: throw new \RuntimeException('Query failed'))->fetchAll();
+
+$_cSt = $db->query("SELECT id, name, email FROM contacts ORDER BY name");
+/** @var list<array<string, mixed>> $contactList */
+$contactList = $_cSt !== false ? $_cSt->fetchAll() : [];
+
+// #1138: tag picker on subnet add/edit drawer (WR-04). Loaded once for the
+// page so every row's edit button can render the same shared multi-select.
+$_tagSt = $db->query("SELECT id, name, colour FROM tags ORDER BY name");
+/** @var list<array<string, mixed>> $tagList */
+$tagList = $_tagSt !== false ? $_tagSt->fetchAll() : [];
+
+// POST controller — extracted to subnets_handle_post() (v3.30.0 Task 8.3 #919).
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $tagIdsKnown = array_map(fn($t) => to_int($t['id']), $tagList);
+    $postResult = subnets_handle_post($db, $config, $vlanMap, $siteMap, $tagIdsKnown);
+    $err            = $postResult['err'];
+    $msg            = $postResult['msg'];
+    $warn           = $postResult['warn'];
+    $overlapWarning = $postResult['overlapWarning'];
+    $pendingAction  = $postResult['pendingAction'];
+    $pendingData    = $postResult['pendingData'];
 }
 
 $st = $db->prepare("
