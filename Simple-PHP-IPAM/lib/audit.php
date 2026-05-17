@@ -13,7 +13,7 @@ declare(strict_types=1);
  * filtering the audit_log table.
  *
  * Dependencies: lib/db.php (ipam_dialect), lib/utils.php (to_str),
- * plus current_user() / client_ip() which still live in lib.php (loaded
+ * plus current_user() / client_ip() which still live in lib/auth.php (loaded
  * after this module — resolved lazily at call time, never at include time).
  * The audit_log table/trigger self-heal helpers ensure_audit_log_table() /
  * ensure_audit_log_triggers() live in lib/db.php; this module never calls

@@ -153,6 +153,10 @@ require_once __DIR__ . '/lib/settings.php';
 // immediately after settings.php; deps: db (ipam_dialect, ipam_key_col). v3.30.0.
 require_once __DIR__ . '/lib/user_preferences.php';
 
+// Core session + CSRF + login layer (ADR-004 Phase 6 Task 6.1). Deps: db,
+// audit, utils, presentation, config, settings, user_preferences. v3.30.0.
+require_once __DIR__ . '/lib/auth.php';
+
 // Composer autoloader (#416). Conditional because v2.9.0 ships with an empty
 // require {} — vendor/autoload.php only exists in release tarballs (built by
 // releases/make_releases.sh) and in dev environments where the tester has run

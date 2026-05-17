@@ -9,6 +9,7 @@ require_once __DIR__ . '/lib/audit.php';
 require_once __DIR__ . '/lib/presentation.php';
 require_once __DIR__ . '/lib/settings.php';
 require_once __DIR__ . '/lib/user_preferences.php';
+require_once __DIR__ . '/lib/auth.php';     // core session + CSRF + login (ADR-004 Task 6.1)
 require_once __DIR__ . '/lib/BackupClientInterface.php';
 require_once __DIR__ . '/lib/S3Client.php';
 require_once __DIR__ . '/lib/SftpClient.php';
@@ -119,130 +120,12 @@ function ipam_format_datetime(string|int|null $utc, ?string $fmt = null, ?int $u
     }
 }
 
-/* ---------------- CSRF ---------------- */
+/* ---------------- Password policy ---------------- */
 
-function csrf_token(): string
-{
-    $t = $_SESSION['csrf'] ?? null;
-    return is_string($t) ? $t : '';
-}
-
-function csrf_require(): void
-{
-    if ($_SERVER['REQUEST_METHOD'] !== 'POST') return;
-    $sent = $_POST['csrf'] ?? null;
-    $real = csrf_token();
-    if (!is_string($sent) || !hash_equals($real, $sent)) {
-        // Hard 403 — never a redirect. PHP's `header('Location: ...')`
-        // silently clobbers the response code to 302, which obscures the
-        // CSRF failure and lets API/XHR clients silently follow the
-        // redirect to login.php and re-submit. The user_preference.php B1
-        // CSRF spec (#879) caught this regression.
-        http_response_code(403);
-        header('Content-Type: text/plain; charset=utf-8');
-        echo "CSRF token missing or invalid.\n";
-        exit;
-    }
-}
-
-/* ---------------- Auth / RBAC ---------------- */
-
-function is_logged_in(): bool { return !empty($_SESSION['uid']); }
-
-/**
- * Stash a same-origin request URI in the session so the user can be
- * redirected back to it after they finish logging in (including any MFA
- * detour). Only safe relative paths are accepted — schemes, hosts, embedded
- * newlines, and parent-directory traversal are all rejected to prevent
- * open-redirect and header-injection.
- */
-function ipam_post_login_redirect_stash(string $uri): void
-{
-    if ($uri === '' || $uri[0] !== '/' || str_starts_with($uri, '//')) return;
-    if (preg_match('/[\r\n]/', $uri)) return;
-    if (str_contains($uri, '..')) return;
-    // Reject backslashes — some browsers canonicalise them to forward slashes,
-    // which would let "/\evil.com" become "//evil.com" after normalisation.
-    if (str_contains($uri, '\\')) return;
-    if (strlen($uri) > 1024) return;
-    $_SESSION['post_login_redirect'] = $uri;
-}
-
-/**
- * Pull and clear the stashed post-login URI. Returns $default if nothing is
- * stashed or the stashed value fails revalidation (defence in depth — same
- * checks as stash, in case the session was tampered with).
- */
-function ipam_post_login_redirect_consume(string $default = 'dashboard.php'): string
-{
-    $uri = to_str($_SESSION['post_login_redirect'] ?? '');
-    unset($_SESSION['post_login_redirect']);
-    if ($uri === '' || $uri[0] !== '/' || str_starts_with($uri, '//')) return $default;
-    if (preg_match('/[\r\n]/', $uri)) return $default;
-    if (str_contains($uri, '..')) return $default;
-    // Reject backslashes — see note in ipam_post_login_redirect_stash().
-    if (str_contains($uri, '\\')) return $default;
-    if (strlen($uri) > 1024) return $default;
-    return $uri;
-}
-
-function require_login(): void
-{
-    if (!is_logged_in()) {
-        ipam_post_login_redirect_stash(to_str($_SERVER['REQUEST_URI'] ?? ''));
-        header('Location: login.php');
-        exit;
-    }
-    $idle = to_int(ipam_setting('security.session_idle_seconds'));
-    if (isset($_SESSION['last_active']) && (time() - to_int($_SESSION['last_active'])) > $idle) {
-        // Stash the URI before logout_user() wipes the session so the
-        // post-login redirect survives the idle-timeout bounce.
-        $stashUri = to_str($_SERVER['REQUEST_URI'] ?? '');
-        logout_user();
-        if ($stashUri !== '') {
-            session_start();
-            ipam_post_login_redirect_stash($stashUri);
-            session_write_close();
-        }
-        header('Location: login.php?timeout=1');
-        exit;
-    }
-    $_SESSION['last_active'] = time();
-
-    $maxAge = to_int(ipam_setting('password_policy.max_password_age_days'));
-    if ($maxAge > 0) {
-        $page = basename(to_str($_SERVER['SCRIPT_FILENAME'] ?? ''));
-        if (!in_array($page, ['change_password.php', 'logout.php'], true)) {
-            try {
-                $db = $GLOBALS['db'] ?? null;
-                if ($db instanceof PDO) {
-                    $st = $db->prepare("SELECT oidc_sub, password_changed_at FROM users WHERE id = :id");
-                    $st->execute([':id' => to_int($_SESSION['uid'] ?? 0)]);
-                    /** @var array<string, mixed>|false $row */
-                    $row = $st->fetch();
-                    if ($row && $row['oidc_sub'] === null) {
-                        $changedAt = to_str($row['password_changed_at'] ?? '');
-                        $cutoff    = date('Y-m-d H:i:s', time() - $maxAge * 86400);
-                        if ($changedAt === '' || $changedAt < $cutoff) {
-                            header('Location: change_password.php?expired=1');
-                            exit;
-                        }
-                    }
-                }
-            } catch (Throwable) {
-                // Column may not exist yet on pre-1.4 installs — silently skip
-            }
-        }
-    }
-
-    if (!empty($_SESSION['mfa_enrollment_required'])) {
-        $page = basename(to_str($_SERVER['SCRIPT_FILENAME'] ?? ''));
-        if (!in_array($page, ['change_password.php', 'totp_enroll.php', 'logout.php'], true)) {
-            header('Location: change_password.php?mfa_required=1');
-            exit;
-        }
-    }
-}
+/* csrf_token(), csrf_require(), is_logged_in(),                            */
+/* ipam_post_login_redirect_stash(), ipam_post_login_redirect_consume(),    */
+/* and require_login() moved to lib/auth.php in v3.30.0                     */
+/* (ADR-004 Phase 6 Task 6.1, #907).                                        */
 
 /**
  * Validate a password against the configured policy.
@@ -273,56 +156,8 @@ function validate_password_complexity(string $password, array $policy): array
     return $errors;
 }
 
-/** @return array<string, mixed> */
-function current_user(): array
-{
-    return [
-        'id' => to_int($_SESSION['uid'] ?? 0),
-        'username' => to_str($_SESSION['username'] ?? ''),
-        'role' => to_str($_SESSION['role'] ?? ''),
-    ];
-}
-
-function require_role(string $role): void
-{
-    require_login();
-    if (current_user()['role'] !== $role) {
-        http_response_code(403);
-        exit('Forbidden');
-    }
-}
-
-function require_write_access(): void
-{
-    require_login();
-    if (current_user()['role'] === 'readonly') {
-        http_response_code(403);
-        exit('Read-only account');
-    }
-}
-
-function login_user(int $uid, string $username, string $role, ?PDO $db = null): void
-{
-    session_regenerate_id(true);
-    $_SESSION['uid'] = $uid;
-    $_SESSION['username'] = $username;
-    $_SESSION['role'] = $role;
-    $_SESSION['last_active'] = time();
-    // Seed absolute session lifetime from config at login time
-    /** @var IpamConfig $cfg */
-    $cfg = $GLOBALS['config'] ?? [];
-    $absMin = (int)(($cfg['session']['absolute_lifetime_minutes'] ?? 480));
-    if ($absMin > 0) {
-        $_SESSION['_abs_expires'] = time() + ($absMin * 60);
-    } else {
-        unset($_SESSION['_abs_expires']);
-    }
-    // Load persisted theme preference so page_header() can prime localStorage
-    if ($db !== null) {
-        $theme = to_str(ipam_user_preference_get($db, $uid, 'theme') ?? 'auto');
-        $_SESSION['user_theme'] = in_array($theme, ['light', 'dark', 'auto'], true) ? $theme : 'auto';
-    }
-}
+/* current_user(), require_role(), require_write_access(), and login_user()  */
+/* moved to lib/auth.php in v3.30.0 (ADR-004 Phase 6 Task 6.1, #907).        */
 
 /* ---------------- Login rate limiting ---------------- */
 
@@ -566,76 +401,8 @@ function purge_old_login_attempts(PDO $db, int $windowSeconds): void
        ->execute([':cutoff' => $cutoff]);
 }
 
-function logout_user(): void
-{
-    $_SESSION = [];
-    if (ini_get("session.use_cookies")) {
-        $params = session_get_cookie_params();
-        setcookie((string)session_name(), '', time() - 42000,
-            $params["path"], $params["domain"], $params["secure"], $params["httponly"]
-        );
-    }
-    session_destroy();
-}
-
-/* ---------------- Audit ---------------- */
-
-function client_ip(): string
-{
-    $remote = to_str($_SERVER['REMOTE_ADDR'] ?? '127.0.0.1');
-
-    // New (v3.26.0+) preferred path: trust X-Forwarded-For only when the
-    // direct REMOTE_ADDR is one of the operator-listed proxy CIDRs, then walk
-    // the chain right-to-left and return the first untrusted hop. This is the
-    // OWASP-recommended pattern (see docs/configuration.md → proxy_trust_cidrs).
-    $cidrsRaw  = to_str(ipam_setting('security.proxy_trust_cidrs', ''));
-    $cidrs     = array_values(array_filter(array_map('trim', preg_split('/[\r\n,]+/', $cidrsRaw) ?: [])));
-    $xffHeader = to_str($_SERVER['HTTP_X_FORWARDED_FOR'] ?? '');
-
-    if (!empty($cidrs)) {
-        if (!ip_in_any_cidr($remote, $cidrs)) {
-            return $remote;
-        }
-        if ($xffHeader === '') {
-            return $remote;
-        }
-        $hops      = array_reverse(array_map('trim', explode(',', $xffHeader)));
-        $candidate = $remote;
-        foreach ($hops as $hop) {
-            if (filter_var($hop, FILTER_VALIDATE_IP) === false) {
-                return $candidate;
-            }
-            if (ip_in_any_cidr($hop, $cidrs)) {
-                $candidate = $hop;
-                continue;
-            }
-            return $hop;
-        }
-        return $candidate;
-    }
-
-    // Legacy back-compat: the old boolean `proxy_trust` flag in config.php
-    // unconditionally trusted the leftmost X-Forwarded-For value. That is
-    // unsafe (the leftmost hop is whatever the original client sent and is
-    // freely spoofable) but operators relying on it must not break silently
-    // on upgrade. Emit a one-shot deprecation log per request and keep the
-    // old behaviour. Operators should migrate to security.proxy_trust_cidrs.
-    /** @var IpamConfig|null $gConf */
-    $gConf = $GLOBALS['config'] ?? null;
-    if ($gConf !== null && !empty($gConf['proxy_trust']) && $xffHeader !== '') {
-        static $warned = false;
-        if (!$warned) {
-            error_log('client_ip: legacy `proxy_trust` config flag is deprecated; configure security.proxy_trust_cidrs instead (#876).');
-            $warned = true;
-        }
-        $parts     = array_map('trim', explode(',', $xffHeader));
-        $candidate = $parts[0];
-        if (filter_var($candidate, FILTER_VALIDATE_IP) !== false) {
-            return $candidate;
-        }
-    }
-    return $remote;
-}
+/* logout_user() and client_ip() moved to lib/auth.php in v3.30.0           */
+/* (ADR-004 Phase 6 Task 6.1, #907).                                        */
 
 /**
  * v3.28.2 #1178 — write the one-shot `install_keys_announce.<key>` banner
@@ -8244,37 +8011,9 @@ function ipam_api_key_rate_limit_check(PDO $db, string $bucketKey, int $windowSe
 }
 
 // ============================================================
-// Session absolute lifetime (v3.6.0, #420)
+// Session absolute lifetime moved to lib/auth.php in v3.30.0
+// (ADR-004 Phase 6 Task 6.1, #907).
 // ============================================================
-
-/** @param IpamConfig $config */
-function ipam_session_enforce_absolute_lifetime(array $config): void {
-    $lifetimeMin = (int)(($config['session']['absolute_lifetime_minutes'] ?? 480));
-    if ($lifetimeMin <= 0) {
-        return; // Disabled
-    }
-    if (!isset($_SESSION['_abs_expires'])) {
-        return; // Not yet seeded — pre-auth request; seeding happens in login_user()
-    }
-    $expires    = $_SESSION['_abs_expires'];
-    $expiresInt = is_int($expires) ? $expires : (is_numeric($expires) ? (int)$expires : 0);
-    if (time() > $expiresInt) {
-        // Stash REQUEST_URI before destroying the session so users who follow
-        // an authenticated link (e.g. email-verification) with a stale cookie
-        // are returned to that URL after re-login rather than dumped on the
-        // dashboard.
-        $stashUri = to_str($_SERVER['REQUEST_URI'] ?? '');
-        $_SESSION = [];
-        session_destroy();
-        if ($stashUri !== '') {
-            session_start();
-            ipam_post_login_redirect_stash($stashUri);
-            session_write_close();
-        }
-        header('Location: login.php?reason=session_expired');
-        exit;
-    }
-}
 
 // ============================================================
 // Persistent account lockout helpers (v3.6.0, #421)
