@@ -54,23 +54,28 @@ adminTest.describe('CSS regression', () => {
       return;
     }
 
-    // Set theme to dark via user_preference.php
-    await page.evaluate(async (csrf: string) => {
-      const fd = new FormData();
-      fd.append('csrf', csrf);
-      fd.append('key', 'theme');
-      fd.append('value', 'dark');
-      await fetch('user_preference.php', { method: 'POST', body: fd });
-    }, csrfToken);
+    try {
+      // Set theme to dark via user_preference.php
+      await page.evaluate(async (csrf: string) => {
+        const fd = new FormData();
+        fd.append('csrf', csrf);
+        fd.append('key', 'theme');
+        fd.append('value', 'dark');
+        await fetch('user_preference.php', { method: 'POST', body: fd });
+      }, csrfToken);
 
-    // Navigate to another page and check html[data-theme]
-    await page.goto('subnets.php');
-    const theme = await page.locator('html').getAttribute('data-theme');
-    expect(theme).toBe('dark');
-
-    // Restore to auto
-    const csrfToken2 = await page.locator('meta[name="ipam-csrf"]').getAttribute('content').catch(() => '');
-    if (csrfToken2) {
+      // Navigate to another page and check html[data-theme]
+      await page.goto('subnets.php');
+      const theme = await page.locator('html').getAttribute('data-theme');
+      expect(theme).toBe('dark');
+    } finally {
+      // Always restore the theme to auto so a persisted theme=dark cannot
+      // leak into later tests. If the restore CSRF token is unavailable the
+      // restore cannot be performed — fail loudly rather than leak state.
+      const csrfToken2 = await page.locator('meta[name="ipam-csrf"]').getAttribute('content').catch(() => '');
+      if (!csrfToken2) {
+        throw new Error('could not get CSRF token to restore theme=auto — persisted theme would leak');
+      }
       await page.evaluate(async (csrf: string) => {
         const fd = new FormData();
         fd.append('csrf', csrf);

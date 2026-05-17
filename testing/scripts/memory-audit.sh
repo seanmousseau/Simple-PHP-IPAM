@@ -102,7 +102,7 @@ echo
 echo "## Check 1 — Orphan bug entities"
 echo
 
-orphans=$(jq -rs --arg p "$PROJECT_PREFIX:bug:" '
+if ! orphans=$(jq -rs --arg p "$PROJECT_PREFIX:bug:" '
   ([.[] | select(.type == "entity") | .name // empty
           | select(startswith($p))] | unique) as $bugs
   | ([.[] | select(.type == "relation") | .from // empty] | unique) as $froms
@@ -110,7 +110,10 @@ orphans=$(jq -rs --arg p "$PROJECT_PREFIX:bug:" '
           | select((.observations // []) | join(" ") | test("no related bugs"; "i"))
           | .name // empty] | unique) as $explicit
   | ($bugs - $froms - $explicit) | .[]
-' "$backup" || true)
+' "$backup"); then
+    echo "memory-audit: jq failed parsing $backup (check 1) — cannot audit" >&2
+    exit 1
+fi
 
 rc1=0
 if [[ -z "$orphans" ]]; then
@@ -131,13 +134,16 @@ echo
 echo "## Check 2 — Release close-outs"
 echo
 
-stale=$(jq -rs --arg p "$PROJECT_PREFIX:release:" '
+if ! stale=$(jq -rs --arg p "$PROJECT_PREFIX:release:" '
   .[]
   | select(.type == "entity")
   | select((.name // "") | startswith($p))
   | select(((.observations // []) | join(" ")) | contains("RELEASED") | not)
   | .name
-' "$backup" || true)
+' "$backup"); then
+    echo "memory-audit: jq failed parsing $backup (check 2) — cannot audit" >&2
+    exit 1
+fi
 
 rc2=0
 if [[ -z "$stale" ]]; then

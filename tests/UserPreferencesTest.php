@@ -52,9 +52,34 @@ final class UserPreferencesTest extends TestCase
         $this->db = $db;
 
         // Load endpoint source once here so all wiring tests can use it.
+        // Strip PHP comments so commented-out or docblock occurrences of the
+        // wiring substrings can never false-pass a wiring assertion.
         $src = file_get_contents(__DIR__ . '/../Simple-PHP-IPAM/user_preference.php');
         $this->assertNotEmpty($src, 'user_preference.php must be readable');
-        $this->endpointSrc = (string) $src;
+        $this->endpointSrc = $this->stripPhpComments((string) $src);
+    }
+
+    /**
+     * Rebuild PHP source with all comment tokens (// , #, block, docblock)
+     * removed, so substring/regex wiring assertions only see executable code.
+     */
+    private function stripPhpComments(string $src): string
+    {
+        $out = '';
+        foreach (token_get_all($src) as $tok) {
+            if (is_array($tok)) {
+                if ($tok[0] === T_COMMENT || $tok[0] === T_DOC_COMMENT) {
+                    // Preserve any trailing newline a line-comment consumed so
+                    // line-oriented structure (and regex anchors) survive.
+                    $out .= (str_ends_with($tok[1], "\n") ? "\n" : '');
+                    continue;
+                }
+                $out .= $tok[1];
+            } else {
+                $out .= $tok;
+            }
+        }
+        return $out;
     }
 
     protected function tearDown(): void

@@ -204,14 +204,16 @@ final class SiteHierarchyDepthTest extends TestCase
 
     public function testDirectSelfParentGuardConditionMatchesSitesPhp(): void
     {
-        // Pin the ONE real guard in sites.php update: parentId === id.
-        // This mirrors the exact server-side condition without invoking
-        // the page (which needs a full HTTP/session context).
-        $id = $this->makeSite('Self');
-        $parentId = $id; // simulate POST parent_id == id
-        $this->assertTrue(
-            $parentId === $id,
-            'sites.php update rejects exactly this: a site set as its own parent'
+        // Source-pin the ONE real guard in sites.php update: a site set as
+        // its own parent is rejected with this exact error message. Pinning
+        // the literal string ensures the guard cannot be silently removed
+        // without this test failing.
+        $sitesPhp = file_get_contents(dirname(__DIR__) . '/Simple-PHP-IPAM/sites.php');
+        $this->assertNotFalse($sitesPhp, 'sites.php must be readable');
+        $this->assertStringContainsString(
+            'A site cannot be its own parent',
+            $sitesPhp,
+            'sites.php must reject a site set as its own parent'
         );
     }
 

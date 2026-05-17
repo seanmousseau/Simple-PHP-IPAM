@@ -157,17 +157,46 @@ function ipam_lml_check_header(string $path): ?string {
  * tokenizer rather than a raw regex.
  *
  * A require is flagged when its target path expression resolves to a
- * `.php` file in the module's own `lib/` directory. The two resolvable
- * shapes are:
+ * *sibling* `.php` file in the module's own `lib/` directory. The two
+ * resolvable shapes are:
  *   - `__DIR__ . '/Name.php'`            — sibling in the same directory
  *   - `... '/lib/Name.php'`              — explicit lib/ segment in the path
- * Targets that climb out of `lib/` (`__DIR__ . '/../dialects/...'`,
- * `dirname(__DIR__) . '/version.php'`, `__DIR__ . '/../views/...'`) are
- * NOT flagged. Dynamic targets (a bare variable) cannot be resolved and
- * are not flagged.
+ * For a `__DIR__`-anchored require the literal path fragment is resolved
+ * against the linted file's directory (`dirname($path)`), collapsing any
+ * `..`/`.` segments — so `require __DIR__ . '/../lib/sibling.php'`, which
+ * climbs out and back into lib/, is correctly flagged. Targets that
+ * genuinely climb out of `lib/` (`dirname(__DIR__) . '/version.php'`,
+ * `__DIR__ . '/../dialects/...'`) resolve elsewhere and are NOT flagged.
+ * Dynamic targets (a bare variable) cannot be resolved and are not flagged.
  *
  * Returns null on pass, or a human-readable reason on violation.
  */
+
+/**
+ * Lexically normalize a path: collapse '.' and '..' segments without
+ * touching the filesystem (the target may not exist on disk). Leading
+ * '/' is preserved. A '..' that would climb above the root is dropped.
+ */
+function ipam_lml_normalize_path(string $path): string {
+    $absolute = str_starts_with($path, '/');
+    $out = [];
+    foreach (explode('/', $path) as $segment) {
+        if ($segment === '' || $segment === '.') {
+            continue;
+        }
+        if ($segment === '..') {
+            if ($out !== [] && end($out) !== '..') {
+                array_pop($out);
+            } elseif (!$absolute) {
+                $out[] = '..';
+            }
+            continue;
+        }
+        $out[] = $segment;
+    }
+    return ($absolute ? '/' : '') . implode('/', $out);
+}
+
 function ipam_lml_check_cross_module_require(string $path): ?string {
     $contents = @file_get_contents($path);
     if ($contents === false) {
@@ -214,8 +243,9 @@ function ipam_lml_check_cross_module_require(string $path): ?string {
             continue;
         }
 
-        // An explicit "/../" segment climbs out of lib/ — not a sibling.
-        if (str_contains($literal, '../')) {
+        // Resolve the basename of the target.
+        $target = basename($literal);
+        if (!str_ends_with($target, '.php')) {
             continue;
         }
 
@@ -224,21 +254,22 @@ function ipam_lml_check_cross_module_require(string $path): ?string {
             continue;
         }
 
-        // Resolve the basename of the target.
-        $target = basename($literal);
-        if (!str_ends_with($target, '.php')) {
-            continue;
-        }
+        $libDir = dirname($path);
 
         $rootedInLib = false;
-        // Shape 1: __DIR__ . '/Name.php' — __DIR__ is the lib/ dir itself.
-        // (The __DIR__ . '/lib/Name.php' case is caught by Shape 2 below,
-        // so the bare-__DIR__ shape need not handle a '/lib/' literal.)
-        if (str_contains($expr, '__DIR__') && !str_contains($literal, '/lib/')) {
-            $rootedInLib = true;
-        }
-        // Shape 2: any path containing an explicit '/lib/Name.php' segment.
-        if (preg_match('#/lib/[^/]+\.php$#', $literal) === 1) {
+        if (str_contains($expr, '__DIR__')) {
+            // __DIR__-anchored: __DIR__ is the linted file's own directory.
+            // Resolve the literal fragment against it, collapsing ..  / .
+            // segments, so a require that climbs out and back into lib/
+            // (e.g. '/../lib/sibling.php') is still detected. A genuinely
+            // out-of-lib target resolves to a different directory.
+            $resolved = ipam_lml_normalize_path($libDir . '/' . $literal);
+            if (dirname($resolved) === $libDir
+                && basename($resolved) !== basename($path)) {
+                $rootedInLib = true;
+            }
+        } elseif (preg_match('#/lib/[^/]+\.php$#', $literal) === 1) {
+            // Non-__DIR__ path with an explicit '/lib/Name.php' segment.
             $rootedInLib = true;
         }
 
