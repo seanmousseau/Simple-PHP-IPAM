@@ -2194,9 +2194,15 @@ var IpamDrawer = (function () {
         if (_lastFocus && _lastFocus.focus) _lastFocus.focus();
     }
 
-    // Event delegation — handle [data-drawer-title] buttons (CSP-safe, no onclick)
+    // Event delegation — handle [data-drawer-tpl] buttons (CSP-safe, no onclick).
+    // Match on data-drawer-tpl (the template-id content source), NOT on
+    // data-drawer-title: a bare data-drawer-title is just a label and is also
+    // consumed by the slide-in form-drawer (#247) for its own title. Claiming
+    // every [data-drawer-title] element opened an empty global-drawer on top of
+    // those triggers' real drawer (e.g. the "Reserve Infra IPs" pill, which is a
+    // data-open-drawer/form-drawer trigger that also carries data-drawer-title).
     document.addEventListener('click', function (e) {
-        var btn = e.target.closest ? e.target.closest('[data-drawer-title]') : null;
+        var btn = e.target.closest ? e.target.closest('[data-drawer-tpl]') : null;
         if (!btn) return;
         // [data-drawer-url] elements have their own delegate below; don't double-handle.
         if (btn.hasAttribute('data-drawer-url')) return;
