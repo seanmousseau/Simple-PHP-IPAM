@@ -2,11 +2,11 @@
 declare(strict_types=1);
 
 /**
- * lib-module-linter.php — v3.30.0 ADR-004 enforcement (skeleton).
+ * lib-module-linter.php — v3.30.0 ADR-004 enforcement.
  *
- * Skeleton implementation: one rule today (header comment), more rules
- * added rule-by-rule as Phase 2+ extractions land (global $config; ban,
- * cross-module require ban, function-uniqueness).
+ * Two rules today: the header-comment rule and the cross-module require
+ * ban. More rules are added rule-by-rule as Phase 2+ extractions land
+ * (global $config; ban, function-uniqueness).
  *
  * Usage:
  *   php testing/scripts/lib-module-linter.php --root=<path>
@@ -140,6 +140,121 @@ function ipam_lml_check_header(string $path): ?string {
 }
 
 /**
+ * Check that a single lib/*.php module does not require/include a sibling
+ * lib/*.php module.
+ *
+ * v3.30.0 modules are loaded only by init.php (and lib.php); inter-module
+ * dependencies resolve lazily at call time. A `require`/`require_once`/
+ * `include`/`include_once` whose target resolves into the same `lib/`
+ * directory re-introduces the hidden dependency graph ADR-004 eliminates.
+ *
+ * Detection is tokenizer-based: the file is tokenized with token_get_all()
+ * and only genuine `T_REQUIRE` / `T_REQUIRE_ONCE` / `T_INCLUDE` /
+ * `T_INCLUDE_ONCE` tokens are examined. A `require`/`include` word that
+ * appears inside a comment (`// ...`, `/* ... *​/`) or inside a string
+ * literal / heredoc is not such a token, so commented-out or quoted
+ * requires are naturally ignored — that is the point of using the
+ * tokenizer rather than a raw regex.
+ *
+ * A require is flagged when its target path expression resolves to a
+ * `.php` file in the module's own `lib/` directory. The two resolvable
+ * shapes are:
+ *   - `__DIR__ . '/Name.php'`            — sibling in the same directory
+ *   - `... '/lib/Name.php'`              — explicit lib/ segment in the path
+ * Targets that climb out of `lib/` (`__DIR__ . '/../dialects/...'`,
+ * `dirname(__DIR__) . '/version.php'`, `__DIR__ . '/../views/...'`) are
+ * NOT flagged. Dynamic targets (a bare variable) cannot be resolved and
+ * are not flagged.
+ *
+ * Returns null on pass, or a human-readable reason on violation.
+ */
+function ipam_lml_check_cross_module_require(string $path): ?string {
+    $contents = @file_get_contents($path);
+    if ($contents === false) {
+        return 'unreadable';
+    }
+
+    $tokens = token_get_all($contents);
+    $n = count($tokens);
+
+    $requireKinds = [T_REQUIRE, T_REQUIRE_ONCE, T_INCLUDE, T_INCLUDE_ONCE];
+
+    for ($i = 0; $i < $n; $i++) {
+        $tok = $tokens[$i];
+        if (!is_array($tok) || !in_array($tok[0], $requireKinds, true)) {
+            continue;
+        }
+        $keyword = strtolower($tok[1]);
+
+        // Walk forward to the statement-terminating ';', collecting the
+        // string-literal path fragments and the raw expression text.
+        $literal = '';
+        $expr = '';
+        $sawDirname = false;
+        for ($j = $i + 1; $j < $n; $j++) {
+            $t = $tokens[$j];
+            if (is_string($t)) {
+                if ($t === ';') {
+                    break;
+                }
+                $expr .= $t;
+                continue;
+            }
+            $expr .= $t[1];
+            if ($t[0] === T_CONSTANT_ENCAPSED_STRING) {
+                // Strip the surrounding quote characters.
+                $literal .= substr($t[1], 1, -1);
+            } elseif ($t[0] === T_STRING && strtolower($t[1]) === 'dirname') {
+                $sawDirname = true;
+            }
+        }
+
+        if ($literal === '') {
+            // No string literal at all — dynamic target, cannot resolve.
+            continue;
+        }
+
+        // An explicit "/../" segment climbs out of lib/ — not a sibling.
+        if (str_contains($literal, '../')) {
+            continue;
+        }
+
+        // dirname(__DIR__) climbs to the parent of lib/ — not a sibling.
+        if ($sawDirname && str_contains($expr, '__DIR__')) {
+            continue;
+        }
+
+        // Resolve the basename of the target.
+        $target = basename($literal);
+        if (!str_ends_with($target, '.php')) {
+            continue;
+        }
+
+        $rootedInLib = false;
+        // Shape 1: __DIR__ . '/Name.php' — __DIR__ is the lib/ dir itself.
+        // (The __DIR__ . '/lib/Name.php' case is caught by Shape 2 below,
+        // so the bare-__DIR__ shape need not handle a '/lib/' literal.)
+        if (str_contains($expr, '__DIR__') && !str_contains($literal, '/lib/')) {
+            $rootedInLib = true;
+        }
+        // Shape 2: any path containing an explicit '/lib/Name.php' segment.
+        if (preg_match('#/lib/[^/]+\.php$#', $literal) === 1) {
+            $rootedInLib = true;
+        }
+
+        if ($rootedInLib) {
+            return sprintf(
+                'cross-module require: %s %s',
+                $keyword,
+                trim($expr)
+            );
+        }
+    }
+
+    return null;
+}
+
+/**
  * Walk `<root>/lib/*.php` and apply rules.
  *
  * @return int 0 on clean, 1 on violations.
@@ -167,6 +282,11 @@ function ipam_lml_run(string $root): int {
         $reason = ipam_lml_check_header($file);
         if ($reason !== null) {
             fwrite(STDERR, sprintf("%s: %s\n", $file, $reason));
+            $violations++;
+        }
+        $crossReason = ipam_lml_check_cross_module_require($file);
+        if ($crossReason !== null) {
+            fwrite(STDERR, sprintf("%s: %s\n", $file, $crossReason));
             $violations++;
         }
     }
