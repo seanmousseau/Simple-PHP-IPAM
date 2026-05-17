@@ -4,9 +4,9 @@ declare(strict_types=1);
 /**
  * lib-module-linter.php — v3.30.0 ADR-004 enforcement.
  *
- * Two rules today: the header-comment rule and the cross-module require
- * ban. More rules are added rule-by-rule as Phase 2+ extractions land
- * (global $config; ban, function-uniqueness).
+ * Three rules: the header-comment rule, the cross-module require ban,
+ * and function-uniqueness across lib/*.php. The ADR-004 lib-module-linter
+ * rule set is complete.
  *
  * Usage:
  *   php testing/scripts/lib-module-linter.php --root=<path>
@@ -255,6 +255,142 @@ function ipam_lml_check_cross_module_require(string $path): ?string {
 }
 
 /**
+ * Collect the names of top-level (file-scope) named function declarations
+ * in a single file.
+ *
+ * Detection is tokenizer-based. A declaration is a `T_FUNCTION` token
+ * followed (skipping whitespace, and an optional single `&` for a
+ * reference-return declaration — `function &foo()`) by a `T_STRING` —
+ * the function name. Anonymous functions (`T_FUNCTION` followed by `(`,
+ * or `&` then `(`) yield no `T_STRING` and are naturally skipped; arrow
+ * functions are a distinct `T_FN` token and are never `T_FUNCTION`.
+ *
+ * Class methods are excluded by brace-depth tracking: while inside a
+ * `class`/`interface`/`trait`/`enum` body the depth is non-zero, so a
+ * `T_FUNCTION` there is a method, not a free function, and is not
+ * collected. The legacy client classes (`S3Client.php`, etc.) declare
+ * only methods, so nothing is collected from them.
+ *
+ * @return list<string> file-scope function names declared in the file.
+ */
+function ipam_lml_collect_functions(string $path): array {
+    $contents = @file_get_contents($path);
+    if ($contents === false) {
+        return [];
+    }
+
+    $tokens = token_get_all($contents);
+    $n = count($tokens);
+
+    $names = [];
+    $braceDepth = 0;          // depth of all { } seen so far
+    $classBodyDepths = [];    // brace depths at which a class body opened
+
+    $classKinds = [T_CLASS, T_INTERFACE, T_TRAIT];
+    if (defined('T_ENUM')) {
+        $classKinds[] = T_ENUM;
+    }
+    $pendingClass = false;    // saw a class-like keyword, awaiting its `{`
+
+    for ($i = 0; $i < $n; $i++) {
+        $tok = $tokens[$i];
+
+        if (is_string($tok)) {
+            if ($tok === '{') {
+                $braceDepth++;
+                if ($pendingClass) {
+                    $classBodyDepths[] = $braceDepth;
+                    $pendingClass = false;
+                }
+            } elseif ($tok === '}') {
+                if ($classBodyDepths !== []
+                    && end($classBodyDepths) === $braceDepth) {
+                    array_pop($classBodyDepths);
+                }
+                $braceDepth--;
+            }
+            continue;
+        }
+
+        // String-interpolation openers (`"...{$x}..."`, `"...${x}..."`) are
+        // array-form tokens, but their matching `}` is a plain `}` string
+        // token. Count them as opening braces so depth stays balanced —
+        // otherwise heredocs / interpolated strings drive braceDepth
+        // negative and class-body tracking breaks.
+        if ($tok[0] === T_CURLY_OPEN
+            || $tok[0] === T_DOLLAR_OPEN_CURLY_BRACES) {
+            $braceDepth++;
+            continue;
+        }
+
+        if ($tok[0] === T_DOUBLE_COLON) {
+            // A `::` token means the preceding name is a reference, not a
+            // declaration — `Foo::class`, `Foo::method()`. `T_CLASS` also
+            // appears in `Foo::class`; clearing the pending-class flag here
+            // keeps it from latching onto an unrelated later `{`.
+            $pendingClass = false;
+            continue;
+        }
+
+        if (in_array($tok[0], $classKinds, true)) {
+            // A genuine class declaration opens a `{` body before the next
+            // class-like keyword. The `Foo::class` false positive is
+            // defused by the T_DOUBLE_COLON clear above.
+            $pendingClass = true;
+            continue;
+        }
+
+        if ($tok[0] !== T_FUNCTION) {
+            continue;
+        }
+
+        // Skip whitespace to the next significant token.
+        $j = $i + 1;
+        while ($j < $n
+            && is_array($tokens[$j])
+            && $tokens[$j][0] === T_WHITESPACE) {
+            $j++;
+        }
+
+        // Skip a single `&` for a reference-return declaration —
+        // `function &foo()`. On PHP 8 this `&` tokenizes as the array
+        // token T_AMPERSAND_NOT_FOLLOWED_BY_VAR_OR_VARARG; on older
+        // runtimes (or other positions) it can be a bare `'&'` string
+        // token. Handle both forms, then skip any trailing whitespace.
+        if ($j < $n) {
+            $amp = $tokens[$j];
+            $isAmp = ($amp === '&')
+                || (is_array($amp)
+                    && defined('T_AMPERSAND_NOT_FOLLOWED_BY_VAR_OR_VARARG')
+                    && $amp[0] === T_AMPERSAND_NOT_FOLLOWED_BY_VAR_OR_VARARG);
+            if ($isAmp) {
+                $j++;
+                while ($j < $n
+                    && is_array($tokens[$j])
+                    && $tokens[$j][0] === T_WHITESPACE) {
+                    $j++;
+                }
+            }
+        }
+
+        if ($j >= $n || !is_array($tokens[$j]) || $tokens[$j][0] !== T_STRING) {
+            // Anonymous function (`(` follows, possibly after `&`) — not a
+            // declaration.
+            continue;
+        }
+
+        // Inside a class/interface/trait/enum body → method, not a free fn.
+        if ($classBodyDepths !== []) {
+            continue;
+        }
+
+        $names[] = $tokens[$j][1];
+    }
+
+    return $names;
+}
+
+/**
  * Walk `<root>/lib/*.php` and apply rules.
  *
  * @return int 0 on clean, 1 on violations.
@@ -274,6 +410,9 @@ function ipam_lml_run(string $root): int {
     sort($files);
 
     $violations = 0;
+
+    // Per-file rules (header, cross-module require) apply to v3.30.0
+    // modules only — legacy files are allowlisted.
     foreach ($files as $file) {
         $name = basename($file);
         if (in_array($name, LEGACY_PRE_V3_30_FILES, true)) {
@@ -287,6 +426,29 @@ function ipam_lml_run(string $root): int {
         $crossReason = ipam_lml_check_cross_module_require($file);
         if ($crossReason !== null) {
             fwrite(STDERR, sprintf("%s: %s\n", $file, $crossReason));
+            $violations++;
+        }
+    }
+
+    // Cross-file rule: function uniqueness. A global function name may be
+    // declared in at most one lib/*.php file — a duplicate is a PHP
+    // "cannot redeclare" fatal. This is a global runtime invariant, so it
+    // covers ALL lib files including the legacy allowlisted ones.
+    /** @var array<string, list<string>> $declaredIn */
+    $declaredIn = [];
+    foreach ($files as $file) {
+        foreach (ipam_lml_collect_functions($file) as $fn) {
+            $declaredIn[$fn][] = $file;
+        }
+    }
+    foreach ($declaredIn as $fn => $where) {
+        if (count($where) > 1) {
+            fwrite(STDERR, sprintf(
+                "duplicate function: %s() declared in %d files: %s\n",
+                $fn,
+                count($where),
+                implode(', ', $where)
+            ));
             $violations++;
         }
     }
