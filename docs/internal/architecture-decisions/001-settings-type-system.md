@@ -1,11 +1,82 @@
 # ADR-001: Settings table type system
 
-**Status:** accepted
+**Status:** accepted — **core decision reversed 2026-05-16 (see Amendment 2 below): Option B withdrawn, Option D adopted.**
 **Decided:** 2026-05-15
 **Scope:** prerequisite for refactor wave 1 (v3.30.0) — informs ADR-002 (per-key vs group-form) and ADR-003 (`$config` global).
 **Stamped by:** Sean Mousseau
 
 ---
+
+> ## ⚠️ Amendment 2 (2026-05-16, Sean) — decision reversed to Option D; the `setting_definitions` table is withdrawn
+>
+> **The 2026-05-15 choice of Option B (a DB-backed `setting_definitions` table)
+> was wrong and is reversed. v3.30.0 adopts Option D instead: the settings
+> registry stays in PHP; no `setting_definitions` table ships.**
+>
+> **What exposed it.** During v3.30.0 execution a full 3-driver Playwright +
+> `run-engine-phpunit` gate run found `setting_definitions` is **empty on every
+> fresh install of every engine**. Root cause: `ipam_db_init()`'s fresh-install
+> branch *stamps* every migration as already-applied and never calls
+> `apply_migrations()` — the project's settled design is "on a fresh install the
+> schema file IS the final state; migrations only run on upgrades." The
+> `3.30.0-setting-definitions` migration *seeds* ~103 rows, so on a fresh install
+> that seed never executes, and no schema file carries the seed data. The table
+> was therefore populated only on upgrades and, by accident, on SQLite demo-mode
+> (where `demo_reset_db()` wipes `schema_migrations` and re-runs migrations).
+>
+> **Why Option B was the wrong call.** Option B was framed as "a heavier lift
+> with a long-term payoff." Both halves were wrong:
+> - The payoff — "single source of truth" — was *inverted*. The registry is
+>   authored in PHP (`ipam_setting_definitions()`); the table is only a
+>   projection of it. Option B's own cons section already conceded this ("the
+>   registry stays the source-of-truth-for-the-source-of-truth"). The table did
+>   not create a single source of truth — it created a *second copy* that had to
+>   be kept in sync, and the proposed fixes (schema-file seed INSERTs) would have
+>   added three more copies.
+> - The other claimed payoff — SQL-level discoverability — is marginal. Setting
+>   *definitions* are version-static application structure, identical across
+>   every install of a release; they are a `grep` of `lib/settings.php` away.
+>   (Setting *values* in the `settings` table are install-specific and remain
+>   SQL-discoverable — `settings` is unaffected.)
+> - The "lift" delivered no offsetting benefit: a table in three schema files, a
+>   data-seeding migration, a DB-read + per-request-cache + seed-fallback path,
+>   and 3-engine parity coverage — all to materialise a PHP array into SQL.
+>
+> Option D — keep the registry in PHP, add the type system as a PHP-layer model
+> — was the originally-recommended option. It is now adopted.
+>
+> **Clean to remove.** The `setting_definitions` table was introduced *entirely
+> within the unshipped v3.30.0 branch*. v3.29.0 (shipped) has no such table, so
+> removal needs no production drop-migration — the branch's own
+> `3.30.0-setting-definitions` migration and schema-file `CREATE TABLE` are
+> simply withdrawn.
+>
+> **What v3.30.0 keeps** (the genuine value of this ADR's work — all of it lives
+> in the PHP layer and is independent of the table):
+> - The **11-value logical-type model** (`string,int,bool,json,enum,secret,url,
+>   email,timezone,cidr,datetime`) and the **subtype dispatch / validation**
+>   (`ipam_setting_validate()` and the storage-vs-logical type split).
+> - `ipam_setting_definitions()` returns the registry array enriched with
+>   `logical_type` and `storage_type`, computed in PHP (via
+>   `ipam_setting_definitions_logical_type()`); no DB read, no fallback, no cache.
+> - The **`settings.type` column drop** (Phase 5.4) stays — the storage type is
+>   derived from the registry definition regardless.
+> - Per-setting metadata (`min_value`, `max_value`, `multiline`, `deprecated`,
+>   `options`) lives in the registry array, as it always did.
+>
+> **What is removed:** the `setting_definitions` table from `schema.sql` /
+> `schema.mysql.sql` / `schema.pgsql.sql`; the `3.30.0-setting-definitions`
+> migration and its amendments; the DB-read / per-request-cache / seed-fallback
+> code in `lib/settings.php`; and the "frozen seed + every new setting needs its
+> own migration INSERT" rule — new settings are simply new registry entries.
+>
+> **Amendment 1 (below, 2026-05-16) is now moot** — it tuned columns of a table
+> that no longer exists. It is retained only as history.
+>
+> **Knock-on:** the v3.31.0 encrypt-at-rest milestone keys "is this secret?" off
+> the registry's `sensitive` flag (as it always effectively did), not off a
+> `setting_definitions.type = 'secret'` row. ADR-002 and ADR-004 cross-references
+> to `setting_definitions` are corrected to "the PHP settings registry."
 
 ## Context
 
