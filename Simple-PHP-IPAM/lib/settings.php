@@ -1196,6 +1196,55 @@ function ipam_setting_definitions_seed(): array
 }
 
 /**
+ * Derive the 11-value logical type for a seed-registry entry.
+ *
+ * This is the single source of truth for the logical-type derivation used in
+ * two places:
+ *   1. The `3.30.0-setting-definitions` migration closure — when seeding
+ *      ~60 rows into the `setting_definitions` table it stores the logical
+ *      type in the `type` column.
+ *   2. The seed-fallback branch of ipam_setting_definitions() — when
+ *      setting_definitions is empty or absent it must return entries whose
+ *      `logical_type` key matches what the DB-read path would return for the
+ *      same entry (i.e. the value stored by the migration). Without this
+ *      function the fallback degraded every enum/secret/url/email/cidr/timezone
+ *      setting to its raw storage type ('string'), causing enum validation to
+ *      silently accept out-of-set values.
+ *
+ * Pure function of ($key, $def) — no external dependencies. The allow-list
+ * inside is frozen at the v3.29.0 registry snapshot; settings added in later
+ * releases are classified by their own migration's explicit type column value.
+ *
+ * @param string               $key the setting key (e.g. 'login_protection.method')
+ * @param array<string, mixed> $def one entry from ipam_setting_definitions_seed()
+ */
+function ipam_setting_definitions_logical_type(string $key, array $def): string
+{
+    $base = is_string($def['type'] ?? null) ? $def['type'] : 'string';
+    if (!empty($def['sensitive'])) {
+        return 'secret';
+    }
+    if (array_key_exists('options', $def)) {
+        return ($def['options'] ?? null) === '@timezone' ? 'timezone' : 'enum';
+    }
+    // Reclassify to url/email/cidr only where the key name makes the
+    // semantic type unambiguous. Datetime: no registry entry today.
+    if ($base !== 'string') {
+        return $base;
+    }
+    // Allow-list classifies the v3.29.0 registry snapshot this frozen
+    // function covers. Settings added in later releases are classified by
+    // their own future migrations, so this list is intentionally not kept in
+    // sync with the live registry.
+    return match ($key) {
+        'oidc.discovery_url', 'oidc.redirect_uri' => 'url',
+        'smtp.from_address', 'alert.email'        => 'email',
+        'security.proxy_trust_cidrs'              => 'cidr',
+        default                                   => $base,
+    };
+}
+
+/**
  * The DB-backed setting registry (ADR-001 Option B). Reads the
  * `setting_definitions` table and reconstructs the v3.29.0 array shape every
  * caller expects, cached in a per-request static so repeated calls do not
@@ -1379,22 +1428,21 @@ function ipam_setting_definitions(): array
     // raw frozen v3.29.0 registry whose entries carry a `type` key holding the
     // 4-value STORAGE type. Normalise each entry into the DB-read shape so the
     // return value of this function is identical regardless of which path
-    // produced it: expose the 4-value type as `storage_type`, the 11-value
-    // type as `logical_type`, and never a bare `type` key. The seed registry
-    // has no logical-type concept, so logical_type degrades to the storage
-    // type (string/int/bool/json) — boot/degraded mode, see the function
-    // docblock. Deliberately NOT cached in $store: a call made before the
-    // migration seeds the table must not freeze the seed result for the rest
-    // of the request — later calls re-query the DB and pick up the real rows.
+    // produced it: expose the 4-value type as `storage_type`, derive the
+    // 11-value logical type via ipam_setting_definitions_logical_type() (the
+    // same function the migration closure uses when seeding the DB), and never
+    // expose a bare `type` key. Deliberately NOT cached in $store: a call made
+    // before the migration seeds the table must not freeze the seed result for
+    // the rest of the request — later calls re-query the DB and pick up the
+    // real rows.
     $seed = ipam_setting_definitions_seed();
     $out  = [];
     foreach ($seed as $key => $def) {
-        $storageType = is_string($def['type'] ?? null) ? $def['type'] : 'string';
+        $logicalType = ipam_setting_definitions_logical_type((string) $key, $def);
+        $storageType = ipam_setting_storage_type($logicalType);
         unset($def['type']);
         $def['storage_type'] = $storageType;
-        if (!isset($def['logical_type'])) {
-            $def['logical_type'] = $storageType;
-        }
+        $def['logical_type'] = $logicalType;
         $out[$key] = $def;
     }
     return $out;

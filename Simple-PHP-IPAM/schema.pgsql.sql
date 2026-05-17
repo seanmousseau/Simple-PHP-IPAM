@@ -936,7 +936,7 @@ INSERT INTO schema_migrations (version) VALUES
   ('3.27.0-step-up-policy-settings'),
   ('3.27.7-webhook-secret-encrypt'),
   ('3.28.0-state-tables'),
-  ('3.30.0-setting-definitions'),
   ('3.30.0-drop-settings-type'),
-  ('3.30.0-user-preferences')
+  ('3.30.0-user-preferences'),
+  ('3.30.0-user-preferences-drop-theme')
 ON CONFLICT (version) DO NOTHING;

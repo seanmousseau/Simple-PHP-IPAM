@@ -4089,41 +4089,16 @@ function ipam_migrations(): array
             );
 
             // ADR-001 § Implications: derive the 11-value logical type from the
-            // registry entry. The base type ($def['type']) is still one of
-            // string/int/bool/json (matching the settings.type CHECK); the
-            // logical type layers enum/secret/timezone/url/email/cidr on top so
-            // setting_definitions is authoritative without a PHP context. Pure
-            // function of the $def array — no external dependencies.
-            $logicalType = static function (string $key, array $def): string {
-                $base = is_string($def['type'] ?? null) ? $def['type'] : 'string';
-                if (!empty($def['sensitive'])) {
-                    return 'secret';
-                }
-                if (array_key_exists('options', $def)) {
-                    return ($def['options'] ?? null) === '@timezone' ? 'timezone' : 'enum';
-                }
-                // Reclassify to url/email/cidr only where the key name makes the
-                // semantic type unambiguous. Datetime: no registry entry today.
-                if ($base !== 'string') {
-                    return $base;
-                }
-                // Allow-list classifies the v3.29.0 registry snapshot this
-                // frozen migration seeds. Settings added in later releases are
-                // classified by their own future migrations, so this list is
-                // intentionally not kept in sync with the live registry.
-                return match ($key) {
-                    'oidc.discovery_url', 'oidc.redirect_uri' => 'url',
-                    'smtp.from_address', 'alert.email'        => 'email',
-                    'security.proxy_trust_cidrs'              => 'cidr',
-                    default                                   => $base,
-                };
-            };
-
+            // registry entry. Delegated to ipam_setting_definitions_logical_type()
+            // in lib/settings.php — the single source of truth shared with the
+            // seed-fallback branch of ipam_setting_definitions() (Task 5.3).
             $ordering = 0;
             foreach (ipam_setting_definitions_seed() as $key => $def) {
                 $label       = is_string($def['label'] ?? null) ? $def['label'] : (string) $key;
                 $description = is_string($def['description'] ?? null) ? $def['description'] : '';
-                $type        = $logicalType((string) $key, $def);
+                $type        = function_exists('ipam_setting_definitions_logical_type')
+                    ? ipam_setting_definitions_logical_type((string) $key, $def)
+                    : (is_string($def['type'] ?? null) ? $def['type'] : 'string');
                 $group       = is_string($def['group'] ?? null) ? $def['group'] : 'general';
                 $sensitive   = !empty($def['sensitive']) ? 1 : 0;
                 $hidden      = !empty($def['hidden']) ? 1 : 0;
