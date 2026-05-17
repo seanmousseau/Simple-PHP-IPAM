@@ -61,6 +61,29 @@ flowchart TB
 
 Every arrow into the trusted core has a named validator at the boundary. The validators are documented in `coding-guide.md` → "Validation patterns".
 
+### User-preference endpoint (`user_preference.php`)
+
+The per-user preference store (`user_preferences` table) crosses the
+browser → core boundary through a **dedicated session-authed endpoint**, not
+through `api.php`. The boundary contract (ADR-002):
+
+- **Session-authed, not Bearer.** `user_preference.php` requires `init.php` and
+  a logged-in session (`is_logged_in()` → 401 otherwise). It is deliberately
+  **not** a resource in `api.php` — the Bearer/CSRF-exempt API surface must not
+  expose per-user, cookie-scoped state.
+- **CSRF-protected.** Every POST calls `csrf_require()` before any write,
+  exactly like a normal browser POST handler.
+- **No admin gate.** A preference is the user's own non-privileged choice;
+  there is intentionally no `require_role('admin')`. The user mutates only
+  their own row (keyed by `current_user()['id']`).
+- **Server-side key allowlist.** Writes are constrained to
+  `IPAM_PREF_ALLOWLIST` — a request for any key outside the allowlist is
+  rejected with 400. A user cannot create arbitrary key/value rows.
+- **Per-key value validation.** Each allowlisted key has its own `case` arm
+  that validates the value (e.g. `theme` must be `light|dark|auto`); an invalid
+  value is a 400. Adding a key means adding both an allowlist entry and a
+  validating `case`.
+
 ---
 
 ## Authentication layers

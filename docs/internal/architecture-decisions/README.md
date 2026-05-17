@@ -40,14 +40,16 @@ See `_template.md`. Every ADR follows the same shape so reviewers can scan in se
 
 | # | Title | Status | Decided | Scope |
 |---|---|---|---|---|
-| 001 | Settings table type system | **accepted** — amended 2026-05-16 (reversed to Option D, no DB table) | 2026-05-15 | refactor wave 1 prerequisite |
-| 002 | Settings save semantics — per-key vs group-form | **accepted** | 2026-05-15 | refactor wave 1 prerequisite (Bug V #1121 root cause) |
-| 003 | `$config` global as the only config conduit | **accepted** | 2026-05-15 | refactor wave 2 prerequisite |
-| 004 | `lib.php` size + module shape | **accepted** | 2026-05-15 | refactor wave 1 blueprint |
-| 005 | `backup.php` orchestrator/codec/dispatcher separation | **accepted** | 2026-05-15 | v4.0.0 backup cold break prerequisite |
-| 006 | Memory MCP discipline as cross-session continuity | **accepted** | 2026-05-15 | process |
+| 001 | Settings table type system | **accepted** — amended 2026-05-16 (reversed to Option D, no DB table); **implemented v3.30.0** | 2026-05-15 | refactor wave 1 prerequisite |
+| 002 | Settings save semantics — per-key vs group-form | **accepted** — corrected + re-stamped; **implemented v3.30.0** | 2026-05-15 | refactor wave 1 prerequisite (Bug V #1121 root cause) |
+| 003 | `$config` global as the only config conduit | **accepted** — **implemented v3.30.0** for extracted `lib/*.php` modules; full sweep tracked as #1207 | 2026-05-15 | refactor wave 2 prerequisite |
+| 004 | `lib.php` size + module shape | **accepted** — **implemented v3.30.0** (wave 1 — 12 modules extracted) | 2026-05-15 | refactor wave 1 blueprint |
+| 005 | `backup.php` orchestrator/codec/dispatcher separation | **accepted** — implementation deferred to a later release | 2026-05-15 | v4.0.0 backup cold break prerequisite |
+| 006 | Memory MCP discipline as cross-session continuity | **accepted** — **implemented v3.30.0** | 2026-05-15 | process |
 
 The locked sequence (smallest informing largest) is from roadmap § 10.1: **001 → 002 → 003 → 004 → 005 → 006**.
+
+ADR-001 was reversed to **Option D** during implementation: the originally-designed `setting_definitions` DB table was withdrawn — the settings type registry stays in PHP (`lib/settings.php`). The ADR-001 doc carries the amendment detail.
 
 ## Session-start audit checklist
 
